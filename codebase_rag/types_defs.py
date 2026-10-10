@@ -68,6 +68,25 @@ class FunctionMatch(TypedDict):
     line_number: int
 
 
+class MgclientProbeRequest(TypedDict):
+    """One Memgraph probe, as the parent hands it to the probe's own process."""
+
+    host: str
+    port: int
+    credentials: list[str] | None
+    # Run after connecting, or None to connect and close.
+    query: str | None
+    # The C runtime whose stdio buffers mgclient's stderr, by library name.
+    c_runtime: str
+
+
+class MgclientProbeReport(TypedDict):
+    succeeded: bool
+    # The message of the mgclient error connect raised, which is all that
+    # tells a refused login from a refused connection; None otherwise.
+    connect_error: str | None
+
+
 class StructuralSearchMatch(TypedDict):
     file: str
     line: int
@@ -93,6 +112,8 @@ class RelBatchRow(TypedDict):
     from_val: PropertyValue
     to_val: PropertyValue
     props: PropertyDict
+    # Set by the flush, which counts written rows by it (issue #2879).
+    row_index: NotRequired[int]
 
 
 BatchParams = NodeBatchRow | RelBatchRow | PropertyDict
@@ -435,6 +456,15 @@ class CSharpCallShape(NamedTuple):
     required: int
     variadic: bool
     is_static: bool
+
+
+class JavaStaticImport(NamedTuple):
+    """One Java `import static` declaration: the class whose static members
+    it brings into scope, and the member it names (`import static C.m;`), or
+    None for the on-demand form (`import static C.*;`)."""
+
+    class_path: str
+    member: str | None
 
 
 class CancelledResult(NamedTuple):
@@ -1046,6 +1076,11 @@ LanguageFamily = frozenset[SupportedLanguage]
 StemSiblingModules = dict[str, dict[LanguageFamily, str]]
 
 
+# A write tool's post-write step (issue #2916): the written paths in, a note
+# for the tool's result out ("" for nothing to say).
+AfterWrite = Callable[[list[str]], Awaitable[str]]
+
+
 class ReingestReport(NamedTuple):
     """What one GraphUpdater.reingest() call touched (issue #1524)."""
 
@@ -1154,7 +1189,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.MODULE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, unresolved_specifiers: list[string]?, unresolved_references: list[string]?}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, broken_links: list[string]?, unresolved_specifiers: list[string]?, unresolved_references: list[string]?}",
     ),
     NodeSchema(
         NodeLabel.CLASS,
@@ -1166,7 +1201,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.METHOD,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, overrides_external: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, overrides_external: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, extension_receiver: string?, extension_namespace: string?, extension_receiver_arity: int?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
     ),
     NodeSchema(
         NodeLabel.INTERFACE,
@@ -1387,11 +1422,14 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.EXTERNAL_PACKAGE,),
     ),
     # A relative link in a Markdown document to a file in the repository
-    # (issue #2394: emitted by the document tier but never documented).
+    # (issue #2394: emitted by the document tier but never documented). It
+    # starts at the innermost Section holding it, or at the Module above the
+    # first heading, and ends at the Section its anchor names, or at the File
+    # (issue #2458).
     RelationshipSchema(
-        (NodeLabel.MODULE,),
+        (NodeLabel.MODULE, NodeLabel.SECTION),
         RelationshipType.LINKS_TO,
-        (NodeLabel.FILE,),
+        (NodeLabel.FILE, NodeLabel.SECTION),
     ),
     RelationshipSchema(
         (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD),
@@ -1472,13 +1510,15 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         RelationshipType.HAS_FIELD,
         (NodeLabel.FIELD,),
     ),
-    # Only a Module declares one today: a class-level member is a Field
-    # (issue #1805), so the two labels never share a qualified name.
+    # A Python enum is a Class (an `enum.Enum` subclass), so its members hang
+    # off that Class (issue #2583); every other language's owner is an Enum.
     RelationshipSchema(
-        (NodeLabel.ENUM,),
+        (NodeLabel.ENUM, NodeLabel.CLASS),
         RelationshipType.HAS_VARIANT,
         (NodeLabel.ENUM_VARIANT,),
     ),
+    # Only a Module declares one today: a class-level member is a Field
+    # (issue #1805), so the two labels never share a qualified name.
     RelationshipSchema(
         (NodeLabel.MODULE,),
         RelationshipType.DEFINES_CONSTANT,

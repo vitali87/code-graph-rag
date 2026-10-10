@@ -70,6 +70,7 @@ from ..graph_dialects import (
     GraphDialect,
     get_dialect,
 )
+from ..stack.constants import MEMGRAPH_AUTH_FAILURE
 from ..types_defs import (
     BatchParams,
     BatchWrapper,
@@ -145,6 +146,7 @@ def _created_count(results: Sequence[ResultRow]) -> int:
 
 # pymgclient 1.6 re-exports its C extension through `import *`, which a type
 # checker cannot see into, so the exception types are bound once here.
+_MgclientError: type[Exception] = mgclient.Error  # ty: ignore[unresolved-attribute]
 _MgclientDatabaseError: type[Exception] = mgclient.DatabaseError  # ty: ignore[unresolved-attribute]
 _MgclientOperationalError: type[Exception] = mgclient.OperationalError  # ty: ignore[unresolved-attribute]
 
@@ -179,6 +181,14 @@ def _missing_endpoints(row: ResultRow) -> str:
         )
         if row.get(key) is True
     )
+
+
+class GraphUnavailableError(ConnectionError):
+    """The graph engine refused the connection or never answered it.
+
+    Raised at connect time with a message that says what to do, so every
+    command prints one line instead of mgclient's traceback (#2443).
+    """
 
 
 def _log_failed_relationships(
@@ -289,6 +299,8 @@ class MemgraphIngestor:
         logger.debug(ls.MG_CONNECTING.format(host=self._host, port=self._port))
         try:
             self.conn = self._create_connection()
+        except _MgclientError as e:
+            raise GraphUnavailableError(self._unavailable_message(e)) from e
         except Exception as e:
             # The driver's error does not say where it tried to connect, and
             # the line that did is DEBUG now (issue #2398).
@@ -299,6 +311,14 @@ class MemgraphIngestor:
         self._executor = ThreadPoolExecutor(max_workers=settings.FLUSH_THREAD_POOL_SIZE)
         logger.debug(ls.MG_CONNECTED)
         return self
+
+    def _unavailable_message(self, error: Exception) -> str:
+        # Memgraph refuses a login with the same exception type as a refused
+        # connection, so only the message tells the two apart.
+        address = f"{self._host}:{self._port}"
+        if MEMGRAPH_AUTH_FAILURE in str(error):
+            return ex.GRAPH_CREDENTIALS_REFUSED.format(address=address, error=error)
+        return ex.GRAPH_UNREACHABLE.format(address=address, error=error)
 
     def __exit__(
         self,
@@ -830,10 +850,11 @@ class MemgraphIngestor:
             logger.warning(ls.MG_NO_CONN_RELS.format(pattern=pattern))
             return len(params_list), 0
         lock = self._conn_lock if conn is None else nullcontext()
+        indexed = [
+            RelBatchRow(**row, row_index=index) for index, row in enumerate(params_list)
+        ]
         with lock:
-            results = self._execute_batch_with_return_on(
-                target_conn, query, params_list
-            )
+            results = self._execute_batch_with_return_on(target_conn, query, indexed)
             batch_successful = _created_count(results)
             failed_rows = (
                 self._missing_endpoint_rows(target_conn, pattern, params_list)
@@ -871,19 +892,19 @@ class MemgraphIngestor:
             return
 
         if self._executor and len(self._rel_groups) > 1:
-            total_attempted, total_successful, first_error = (
-                self._flush_rel_groups_parallel(self._executor)
+            _attempted, total_successful, first_error = self._flush_rel_groups_parallel(
+                self._executor
             )
         else:
-            total_attempted, total_successful, first_error = (
-                self._flush_rel_groups_serial()
-            )
+            _attempted, total_successful, first_error = self._flush_rel_groups_serial()
 
+        # Failed is what the total lacks, so the rows of a group whose write
+        # raised (never attempted) count too, and the three numbers add up.
         logger.info(
             ls.MG_RELS_FLUSHED.format(
                 total=self._rel_count,
                 success=total_successful,
-                failed=total_attempted - total_successful,
+                failed=self._rel_count - total_successful,
             )
         )
         self._rel_count = 0
