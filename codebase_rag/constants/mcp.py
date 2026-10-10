@@ -149,6 +149,11 @@ MCP_DELTA_HEADER = "Structural delta:"
 CONTEXT_DEFAULT_BUDGET = 4000
 MCP_CONTEXT_BUDGET_INVALID = "budget_tokens must be at least 1, got {budget}"
 MCP_DELTA_ERROR = "Structural delta unavailable: {error}"
+# Leads a write's result when the write left a file unparsable (issue #3232).
+MCP_PARSE_ERROR_LEAD = (
+    "The file no longer parses: {errors}. The graph now holds what the parser "
+    "recovered, so fix the syntax before acting on the delta below.\n\n"
+)
 MCP_REINGEST_NEEDS_INDEX = (
     "Project {project} is not indexed; run index_repository or update_repository "
     "before reingest"

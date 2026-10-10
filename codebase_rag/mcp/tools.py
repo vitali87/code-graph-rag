@@ -217,6 +217,18 @@ def _plain_function(tool: Tool) -> ToolFuncPlain[...]:
     return tool.function
 
 
+def _parse_error_lead(
+    delta: sd.StructuralDelta, bases: dict[str, bytes | None] | None
+) -> str:
+    # The lead naming the files a write left unparsable (issue #3232).
+    # Without the bases nothing was parsed, so there is nothing to lead.
+    if bases is None or not delta["parse_errors"]:
+        return ""
+    return cs.MCP_PARSE_ERROR_LEAD.format(
+        errors="; ".join(error["message"] for error in delta["parse_errors"])
+    )
+
+
 class MCPToolsRegistry:
     # Class-level default so the read guard cannot raise AttributeError on a
     # registry built through `__new__`. Tests construct it that way in a
@@ -2444,9 +2456,31 @@ class MCPToolsRegistry:
     def _note_structural_changes(self, changes: list[StructuralReplaceChange]) -> None:
         self._structural_written = [c["file"] for c in changes if c["applied"]]
 
-    def _delta_after_write(self, paths: list[str]) -> str:
-        """The structural delta of a write, as text to append to its result.
+    def _base_sources(self, paths: list[str]) -> dict[str, bytes | None]:
+        """Each path's content before a write: what a new parse error is
+        measured against (None for a file the write creates)."""
+        root = Path(self.project_root)
+        bases: dict[str, bytes | None] = {}
+        for rel in sd.normalise_paths(paths, root):
+            try:
+                bases[rel] = (root / rel).read_bytes()
+            except OSError:
+                bases[rel] = None
+        return bases
 
+    def _delta_after_write(self, paths: list[str]) -> str:
+        """The structural delta of a write, as text to append to its result."""
+        _lead, text = self._write_delta(paths)
+        return text
+
+    def _write_delta(
+        self, paths: list[str], bases: dict[str, bytes | None] | None = None
+    ) -> tuple[str, str]:
+        """The structural delta of a write: a lead for its result, and the
+        text to append to it.
+
+        The lead names any file the write left unparsable (issue #3232); it
+        needs `bases`, the content before the write, and is empty without.
         Never fails the write: a project that is not indexed yields nothing,
         and any other failure is reported in place of the delta.
         """
@@ -2459,7 +2493,7 @@ class MCPToolsRegistry:
             if self._live_updater is None and (
                 derive_project_name(root) not in self.ingestor.list_projects()
             ):
-                return ""
+                return "", ""
             # The marker-reading hydration, not `_updater_for_reingest`
             # (issue #1783). That helper guards on `_graph_incomplete` alone,
             # which lives on the registry and dies with the process: after a
@@ -2519,6 +2553,7 @@ class MCPToolsRegistry:
                     before_write=lambda: self._begin_writing_or_refuse(project_name),
                 ),
                 repo_root=root,
+                base_source=bases.get if bases is not None else None,
             )
         except (ValueError, ReingestAborted) as e:
             # Raised before any graph change (validation, an abort while the
@@ -2532,7 +2567,7 @@ class MCPToolsRegistry:
             # whichever failure owns it.
             if marked_here is not None:
                 self._abandon_before_writing(marked_here)
-            return "\n\n" + cs.MCP_DELTA_ERROR.format(error=e)
+            return "", "\n\n" + cs.MCP_DELTA_ERROR.format(error=e)
         except Exception as e:
             # The re-ingest may have deleted a subtree it never rebuilt: the
             # same invalidation `_reingest_sync` applies, so no later query
@@ -2554,7 +2589,7 @@ class MCPToolsRegistry:
             # Added on the rebase: this site landed on main (#1525) after the
             # attribution was written, so it had no way to know about it.
             self._flag_from_failed_clear = None
-            return "\n\n" + cs.MCP_DELTA_ERROR.format(error=e)
+            return "", "\n\n" + cs.MCP_DELTA_ERROR.format(error=e)
         if marked_here is not None:
             # Invariant (b): the hydration marked before its constraint
             # migration, so a completed delta must lift it. A failed clear is
@@ -2562,8 +2597,8 @@ class MCPToolsRegistry:
             # this method never raises, so the message is the only channel.
             if (stuck := self._require_marker_cleared(marked_here)) is not None:
                 logger.warning(lg.MCP_DELTA_FAILED.format(error=stuck))
-                return "\n\n" + cs.MCP_DELTA_ERROR.format(error=stuck)
-        return (
+                return "", "\n\n" + cs.MCP_DELTA_ERROR.format(error=stuck)
+        return _parse_error_lead(delta, bases), (
             "\n\n"
             + cs.MCP_DELTA_HEADER
             + "\n"
@@ -3467,6 +3502,7 @@ class MCPToolsRegistry:
         logger.info(lg.MCP_SURGICAL_REPLACE.format(path=file_path))
         try:
             async with self._ingestor_lock:
+                bases = self._base_sources([file_path])
                 result = await _plain_function(self._file_editor_tool)(
                     file_path=file_path,
                     target_code=target_code,
@@ -3474,8 +3510,10 @@ class MCPToolsRegistry:
                 )
                 if str(result) != cs.MSG_SURGICAL_SUCCESS.format(path=file_path):
                     return te.ToolFailure(result)
-                delta = await _run_in_thread(self._delta_after_write, [file_path])
-                return str(result) + delta
+                lead, delta = await _run_in_thread(
+                    self._write_delta, [file_path], bases
+                )
+                return lead + str(result) + delta
         except Exception as e:
             logger.error(lg.MCP_ERROR_REPLACE.format(error=e))
             return te.failure(e)
@@ -3508,13 +3546,16 @@ class MCPToolsRegistry:
         logger.info(lg.MCP_WRITE_FILE.format(path=file_path))
         try:
             async with self._ingestor_lock:
+                bases = self._base_sources([file_path])
                 result = await _plain_function(self._file_writer_tool)(
                     file_path=file_path, content=content
                 )
                 if not result.success:
                     return te.failure(result.error_message)
-                delta = await _run_in_thread(self._delta_after_write, [file_path])
-                return cs.MCP_WRITE_SUCCESS.format(path=file_path) + delta
+                lead, delta = await _run_in_thread(
+                    self._write_delta, [file_path], bases
+                )
+                return lead + cs.MCP_WRITE_SUCCESS.format(path=file_path) + delta
         except Exception as e:
             logger.error(lg.MCP_ERROR_WRITE.format(error=e))
             return te.failure(e)
