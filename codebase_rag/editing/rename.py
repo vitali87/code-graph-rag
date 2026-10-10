@@ -89,6 +89,10 @@ _ALL_ENTRY = cs.PY_DUNDER_ALL_ENTRY_PATTERN
 _MAX_IMPORT_LINES = 200
 
 
+def _is_go(rel_path: str) -> bool:
+    return get_language_for_extension(Path(rel_path).suffix) == cs.SupportedLanguage.GO
+
+
 class RenameSite(NamedTuple):
     """One place the old name is written and must become the new one."""
 
@@ -928,6 +932,14 @@ class Renamer:
                 ambiguous,
                 unlocatable,
             )
+        if crossing := self._go_sites_losing_visibility(qn, sites, old_name, new_name):
+            raise RenameRefused(
+                cs.RENAME_GO_UNEXPORTS.format(
+                    qn=qn, name=new_name, count=len(crossing)
+                ),
+                crossing,
+                unlocatable,
+            )
         for member in members:
             for site, module in self._import_sites(member, old_name):
                 sites.append(
@@ -959,6 +971,43 @@ class Renamer:
             diff="",
             message=cs.RENAME_PLANNED.format(count=len(sites)),
         )
+
+    def _go_sites_losing_visibility(
+        self, qn: str, sites: list[RenameSite], old_name: str, new_name: str
+    ) -> list[RenameSite]:
+        """Go sites outside the definition's package when the rename unexports.
+
+        Go reads an identifier's first letter as its visibility: `Slug` is
+        exported, `slug` is private to its package. Renaming one to the other
+        rewrote `strs.Slug(...)` in package `main` to `strs.slug(...)`, which
+        no build accepts, and every postcondition passed (issue #2813). A
+        package is a directory, except that an external test package
+        (`package strs_test`) beside it sees only exported names.
+        """
+        if not old_name[:1].isupper() or new_name[:1].isupper():
+            return []
+        home = next(
+            (
+                self._go_package(s.path)
+                for s in sites
+                if s.kind == "definition" and s.owner == qn and _is_go(s.path)
+            ),
+            None,
+        )
+        if home is None:
+            return []
+        return [s for s in sites if _is_go(s.path) and self._go_package(s.path) != home]
+
+    def _go_package(self, rel_path: str) -> tuple[str, str | None]:
+        directory = Path(rel_path).parent.as_posix()
+        try:
+            text = (self.repo_root / rel_path).read_text(
+                encoding=cs.ENCODING_UTF8, errors="replace"
+            )
+        except OSError:
+            return directory, None
+        clause = re.search(cs.GO_PACKAGE_CLAUSE_PATTERN, text, re.MULTILINE)
+        return directory, clause.group(1) if clause else None
 
     def _all_paths(self, hierarchy: list[str], old_name: str) -> set[str]:
         """Python modules whose `__all__` may list the name: the defining

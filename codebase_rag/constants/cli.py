@@ -763,6 +763,13 @@ RENAME_SITELESS = (
     "Cannot rename {qn}: {count} graph-known site(s) carry no rewrite location, "
     "so the rename would leave them under the old name"
 )
+# Go reads an identifier's first letter as its visibility (issue #2813).
+RENAME_GO_UNEXPORTS = (
+    "Refusing to rename {qn} to {name}: a Go name starting with a lower-case "
+    "letter is private to its package, and {count} site(s) are in another "
+    "package, where {name} would be undefined; keep the first letter upper-case "
+    "or move those uses into the package first"
+)
 RENAME_WRONG_ROOT = (
     "Project {project} was not indexed from this server's repository; "
     "rename it from the MCP server rooted at its source tree"
