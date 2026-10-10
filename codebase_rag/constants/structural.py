@@ -59,6 +59,10 @@ AST_GREP_UNKNOWN_LANGUAGE = (
     "Unknown or unsupported language '{language}'. Supported: {supported}"
 )
 AST_GREP_INVALID_PATTERN = "Invalid ast-grep pattern '{pattern}': {error}"
+# ast-grep's error carries its whole cause chain and a Rust backtrace; the
+# deepest numbered cause before the backtrace is the one that says why.
+AST_GREP_BACKTRACE_MARKER = "Stack backtrace:"
+AST_GREP_CAUSE = re.compile(r"^\s*\d+: (?P<cause>.+)$")
 AST_GREP_TRUNCATED = (
     "Result cap of {limit} reached; narrow the pattern or raise the limit for more."
 )

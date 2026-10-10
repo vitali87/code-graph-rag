@@ -237,6 +237,9 @@ def resolve(fetch_all: QueryFn, project_name: str, target: str) -> list[SymbolRo
     location = parse_location(target)
     if location is not None:
         path, line = location
+        if line > cs.GRAPH_MAX_SOURCE_LINE:
+            # No file has the line, and Bolt could not carry it (#3244).
+            return []
         rows = fetch_all(
             cq.CYPHER_GRAPH_RESOLVE_LOCATION,
             {

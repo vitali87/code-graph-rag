@@ -52,6 +52,22 @@ def _ast_grep_lang_ids() -> frozenset[str]:
     )
 
 
+def _deepest_cause(error: str) -> str:
+    """The last numbered cause of an ast-grep error, or its first line.
+
+    `cannot get matcher` is all the first line says; the cause that names
+    the problem (`No AST root is detected`, a standalone `$$$`) sits at the
+    end of the chain, above a backtrace no agent can act on (issue #3244).
+    """
+    chain = error.split(cs.AST_GREP_BACKTRACE_MARKER, 1)[0]
+    causes = [
+        match.group("cause")
+        for line in chain.splitlines()
+        if (match := cs.AST_GREP_CAUSE.match(line))
+    ]
+    return causes[-1] if causes else chain.strip().split("\n", 1)[0]
+
+
 class AstGrepService:
     __slots__ = ("project_root", "exclude_paths", "unignore_paths")
 
@@ -157,7 +173,9 @@ class AstGrepService:
             return root.find_all(pattern=pattern)
         except RuntimeError as exc:
             raise ValueError(
-                cs.AST_GREP_INVALID_PATTERN.format(pattern=pattern, error=exc)
+                cs.AST_GREP_INVALID_PATTERN.format(
+                    pattern=pattern, error=_deepest_cause(str(exc))
+                )
             ) from exc
 
     def search(
