@@ -157,7 +157,13 @@ class TestBuildLocalVariableTypeMapDispatch:
 
     @pytest.fixture
     def mock_node(self) -> MagicMock:
-        return MagicMock()
+        # A top-level node: a mock's `parent` would otherwise be another mock
+        # forever, and the walk to an enclosing function (issue #3200) never
+        # ends. Assigned, since `parent=` to the constructor means something
+        # else to a mock.
+        node = MagicMock()
+        node.parent = None
+        return node
 
     def test_dispatches_to_python_engine(
         self, engine: TypeInferenceEngine, mock_node: MagicMock
