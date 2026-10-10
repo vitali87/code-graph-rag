@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.test_incremental_duplicate_variants import (
@@ -543,7 +544,7 @@ def _resync(
 ) -> None:
     # A fresh updater reads the pairs back from the graph before the scoped
     # delete; a reused one also holds the pairs its own earlier parse recorded.
-    cache_mtime = (root / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
     _write(root, edits)
     for rel in edits:
         os.utime(root / rel, (cache_mtime + 1, cache_mtime + 1))
