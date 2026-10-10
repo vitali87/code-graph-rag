@@ -114,6 +114,14 @@ GO_FRONTEND_IMPLEMENTS_JOINED = (
 GO_FRONTEND_BUILD_FAILED = (
     "Go frontend tool failed to build; using tree-sitter.\nstderr: {stderr}"
 )
+GO_FRONTEND_TOOLCHAIN_TOO_OLD = (
+    "go/types frontend needs Go >= {required} (found {found}); using tree-sitter for Go"
+)
+GO_FRONTEND_BUILD_FAILED_EARLIER = (
+    "Go frontend tool failed to build with {version} on an earlier sync; using "
+    "tree-sitter. It is retried in {minutes} min, or sooner when Go or the "
+    "helper changes or {marker} is deleted"
+)
 GO_FRONTEND_PARSE_FAILED = (
     "Go frontend produced no parseable JSON; using tree-sitter.\n"
     "stdout: {stdout}\nstderr: {stderr}"

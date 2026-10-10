@@ -18,6 +18,13 @@
 // ill-typed package or an empty result all leave cgr on pure tree-sitter.
 //
 // Run: gotypes <repo-root>   (honours CGR_IGNORE_DIRS, comma-separated)
+//
+// The module asks for the oldest Go the helper builds with (issue #2395), and
+// below go 1.23 the default GODEBUG resolves `type A = B` to B's Named type,
+// which would list an alias as a second declaration of B in the implements
+// pass. The directive keeps aliases distinct on every supported toolchain.
+//
+//go:debug gotypesalias=1
 package main
 
 import (
