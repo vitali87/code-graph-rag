@@ -117,11 +117,17 @@ def leak():
     print(r)  # shape 3
 ```
 
-The three `FLOWS_TO` edges that body produces:
+The four `FLOWS_TO` edges that body produces. Shape 1 appears twice: once
+inside `leak`, and once through the call to `forward`:
 
 <div class="cgr-flow">
   <div class="edge">
     <span class="node res">ENV::K</span>
+    <span class="arrow flows"><span class="rel">FLOWS_TO · resource</span></span>
+    <span class="node res">STDOUT::&lt;dynamic&gt;</span>
+  </div>
+  <div class="edge">
+    <span class="node res">ENV::T</span>
     <span class="arrow flows"><span class="rel">FLOWS_TO · resource</span></span>
     <span class="node res">STDOUT::&lt;dynamic&gt;</span>
   </div>
@@ -154,6 +160,18 @@ Resource(ENV::K) -FLOWS_TO {kind: resource}-> Resource(STDOUT::<dynamic>)
 `x` is read from `ENV::K`, then passed to `print(x)`, which writes `STDOUT`. Both
 endpoints are **resource** nodes. This is the leak/provenance answer: a value
 from the environment reached standard output.
+
+The source and the sink need not share a body. `t` carries `ENV::T` into
+`forward`, whose `print(v)` writes `STDOUT`, so the same body also records
+
+```
+Resource(ENV::T) -FLOWS_TO {kind: resource}-> Resource(STDOUT::<dynamic>)
+```
+
+beside the shape 2 edge for the call itself (see the forward argument taint
+under [Scope of the current phase](#scope-of-the-current-phase)). `print(r)`
+adds no fifth edge: `r` carries `ENV::K` back from `build`, the same
+`ENV::K → STDOUT` pair as `print(x)`, and an edge is recorded once per pair.
 
 ### Shape 2 — caller to callee (`kind = arg`)
 
@@ -353,6 +371,9 @@ RETURN p;
 MATCH (fn)-[:READS_FROM]->(r:Resource {qualified_name: 'resource::ENV::K'})
 RETURN fn.qualified_name;
 ```
+
+On the example body above, the first query returns two rows: `resource::ENV::K`
+and `resource::ENV::T`, each to `resource::STDOUT::<dynamic>`.
 
 ![The snippet above saved as flow.py, indexed with cgr start --update-graph --capture io, then the first and third example queries run in mgconsole](../assets/demos/data-flow-edges.gif)
 
