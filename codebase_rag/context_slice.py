@@ -16,8 +16,10 @@ the slice is built from and drop what it does not need.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable, Iterable
+from functools import lru_cache, partial
 from pathlib import Path
 from typing import NamedTuple, TypedDict
 
@@ -27,7 +29,7 @@ from . import graph_query
 from .graph_query import QueryFn, ReachIndex
 from .types_defs import ResultRow, SemanticSearchResult
 from .utils.path_utils import cached_resolve_posix
-from .utils.source_extraction import extract_source_lines
+from .utils.source_extraction import read_source_lines, slice_source_lines
 from .utils.token_utils import count_tokens
 
 Searcher = Callable[[str], list[SemanticSearchResult]]
@@ -53,6 +55,8 @@ class Piece(TypedDict):
     span: list[int]
     why_included: str
     source: str
+    # What the piece costs against the budget as printed: its source and
+    # every field beside it (issue #3243).
     tokens: int
 
 
@@ -62,7 +66,10 @@ class ContextSlice(TypedDict):
     budget_tokens: int
     used_tokens: int
     pieces: list[Piece]
+    # The best-ranked candidates that did not fit, at most
+    # CONTEXT_OMITTED_SAMPLE of them; `omitted_count` counts them all.
     omitted: list[str]
+    omitted_count: int
     truncated: bool
 
 
@@ -75,6 +82,9 @@ class _Candidate(NamedTuple):
     span: tuple[int, int]
     why: str
     source: str
+    # Reads the source when the piece might still fit: a central symbol
+    # has thousands of callers and tests, nearly all of them left out.
+    loader: Callable[[], str] | None = None
 
     @property
     def order(self) -> tuple[int, int, float, str]:
@@ -104,6 +114,13 @@ def _normalise(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
+@lru_cache(maxsize=cs.CONTEXT_SOURCE_CACHE_FILES)
+def _file_lines(path: Path, stamp: tuple[int, int]) -> tuple[str, ...]:
+    # Keyed by modification time and size as well as path, so an edited
+    # file is read again; a slice quotes one test file once per test in it.
+    return tuple(read_source_lines(path))
+
+
 def _lines(repo_root: Path | None, path: str | None, start: int, end: int) -> str:
     if repo_root is None or not path or start < 1 or end < start:
         return ""
@@ -113,7 +130,12 @@ def _lines(repo_root: Path | None, path: str | None, start: int, end: int) -> st
     candidate = (root / path).resolve()
     if not candidate.is_relative_to(root):
         return ""
-    return _normalise(extract_source_lines(candidate, start, end) or "")
+    try:
+        stat = candidate.stat()
+        lines = _file_lines(candidate, (stat.st_mtime_ns, stat.st_size))
+    except (OSError, ValueError, LookupError):
+        return ""
+    return _normalise(slice_source_lines(lines, start, end, candidate) or "")
 
 
 def _line(repo_root: Path | None, path: str | None, line: int | None) -> str:
@@ -210,7 +232,8 @@ def _caller_pieces(
     out: list[_Candidate] = []
     for row in graph_query.callers(fetch_all, project, qn):
         line = row["line"]
-        source = _line(repo_root, row["path"], line)
+        source = ""
+        loader: Callable[[], str] | None = partial(_line, repo_root, row["path"], line)
         if line is None:
             definition = graph_query.definition(
                 fetch_all, project, row["qualified_name"], repo_root
@@ -219,6 +242,7 @@ def _caller_pieces(
             source = _header(
                 repo_root, row["path"], definition["start_line"], definition["end_line"]
             )
+            loader = None
         out.append(
             _Candidate(
                 1,
@@ -229,6 +253,7 @@ def _caller_pieces(
                 (line or 0, line or 0),
                 cs.CONTEXT_WHY_CALLER,
                 source,
+                loader,
             )
         )
     return out
@@ -306,10 +331,9 @@ def _test_pieces(
     out: list[_Candidate] = []
     reach = ReachIndex.build(fetch_all, project)
     for row in reach.tests_reaching(qn):
-        definition = graph_query.definition(
-            fetch_all, project, row["qualified_name"], repo_root
-        )
-        start, end = definition["start_line"] or 0, definition["end_line"] or 0
+        # The span is in the reach index already; the source is read only
+        # if the test can still fit, never one graph query per test.
+        start, end = reach.span(row["qualified_name"])
         out.append(
             _Candidate(
                 row["depth"] + 1,
@@ -319,7 +343,8 @@ def _test_pieces(
                 row["path"],
                 (start, end),
                 cs.CONTEXT_WHY_TEST.format(depth=row["depth"], through=row["through"]),
-                _normalise(definition["source"] or "").rstrip("\n"),
+                "",
+                partial(_lines, repo_root, row["path"], start, end),
             )
         )
     return out
@@ -391,55 +416,122 @@ def _doc_section(repo_root: Path, doc_qn: str, row: ResultRow) -> _Candidate | N
 # --- the slice ---------------------------------------------------------------------
 
 
-def _fit(
-    candidates: Iterable[_Candidate], budget: int
-) -> tuple[list[Piece], list[str], int, bool]:
+def _piece_tokens(
+    qualified_name: str, file: str | None, span: list[int], why: str, source: str
+) -> int:
+    """What a piece costs as printed: its source and every field beside it.
+
+    Counting the source alone let a slice of one-line call sites print ten
+    times its budget in names, paths and reasons (issue #3243).
+    """
+    piece = Piece(
+        qualified_name=qualified_name,
+        file=file,
+        span=span,
+        why_included=why,
+        source=source,
+        tokens=0,
+    )
+    return count_tokens(json.dumps(piece, indent=cs.MCP_JSON_INDENT))
+
+
+class _Fitted(NamedTuple):
+    pieces: list[Piece]
+    omitted: list[str]
+    omitted_count: int
+    used: int
+    truncated: bool
+
+
+def _fit(candidates: Iterable[_Candidate], budget: int) -> _Fitted:
     pieces: list[Piece] = []
     omitted: list[str] = []
+    omitted_count = 0
     used = 0
     truncated = False
     seen: set[tuple[str, str, tuple[int, int]]] = set()
+
+    def omit(candidate: _Candidate) -> None:
+        nonlocal omitted_count
+        omitted_count += 1
+        if len(omitted) < cs.CONTEXT_OMITTED_SAMPLE:
+            omitted.append(f"{candidate.qualified_name} ({candidate.why})")
+
     for candidate in sorted(candidates, key=lambda c: c.order):
         key = (candidate.qualified_name, candidate.why, candidate.span)
-        if key in seen or not candidate.source:
+        if key in seen:
             continue
         seen.add(key)
-        source = candidate.source
-        tokens = count_tokens(source)
+        span = [candidate.span[0], candidate.span[1]]
+        is_target = candidate.distance == 0 and not pieces
+        # Its fields alone are a floor on what it costs: past it, the
+        # source is never read.
+        floor = _piece_tokens(
+            candidate.qualified_name, candidate.file, span, candidate.why, ""
+        )
+        if used + floor > budget and not is_target:
+            omit(candidate)
+            continue
+        source = candidate.source or (candidate.loader() if candidate.loader else "")
+        if not source:
+            continue
+        tokens = _piece_tokens(
+            candidate.qualified_name, candidate.file, span, candidate.why, source
+        )
         if used + tokens > budget:
-            if candidate.distance == 0 and not pieces:
-                # The target itself must fit: keep as many of its lines as
-                # the budget allows and say so. A budget too small for even
-                # its first line leaves it out rather than padding with
-                # nothing.
-                source, tokens = _trim(source, budget)
-                truncated = True
-                if not source:
-                    omitted.append(f"{candidate.qualified_name} ({candidate.why})")
-                    continue
-            else:
-                omitted.append(f"{candidate.qualified_name} ({candidate.why})")
+            if not is_target:
+                omit(candidate)
+                continue
+            # The target itself must fit: keep as many of its lines as the
+            # budget allows and say so. A budget too small for even its
+            # first line leaves it out rather than padding with nothing.
+            source, tokens = _trim(candidate, span, source, budget - used)
+            truncated = True
+            if not source:
+                omit(candidate)
                 continue
         used += tokens
         pieces.append(
             Piece(
                 qualified_name=candidate.qualified_name,
                 file=candidate.file,
-                span=[candidate.span[0], candidate.span[1]],
+                span=span,
                 why_included=candidate.why,
                 source=source,
                 tokens=tokens,
             )
         )
-    return pieces, omitted, used, truncated
+    return _Fitted(pieces, omitted, omitted_count, used, truncated)
 
 
-def _trim(source: str, budget: int) -> tuple[str, int]:
+def _trim(
+    candidate: _Candidate, span: list[int], source: str, room: int
+) -> tuple[str, int]:
+    """The longest run of the source's leading lines whose piece fits `room`.
+
+    Bisected on the line count: a few dozen encodes where trimming a line
+    at a time re-encoded the whole remaining text once per line, minutes
+    for a class of thousands of lines (issue #3243).
+    """
     lines = source.split("\n")
-    while lines and count_tokens("\n".join(lines)) > budget:
-        lines.pop()
-    text = "\n".join(lines)
-    return text, count_tokens(text) if text else 0
+
+    def cost(count: int) -> int:
+        return _piece_tokens(
+            candidate.qualified_name,
+            candidate.file,
+            span,
+            candidate.why,
+            "\n".join(lines[:count]),
+        )
+
+    low, high = 0, len(lines)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if cost(middle) <= room:
+            low = middle
+        else:
+            high = middle - 1
+    return "\n".join(lines[:low]), cost(low)
 
 
 def context(
@@ -461,6 +553,7 @@ def context(
             used_tokens=0,
             pieces=[],
             omitted=[],
+            omitted_count=0,
             truncated=False,
         )
     definition = graph_query.definition(fetch_all, project, qn, repo_root)
@@ -472,6 +565,7 @@ def context(
             used_tokens=0,
             pieces=[],
             omitted=[],
+            omitted_count=0,
             truncated=False,
         )
     hotness = _hotness(fetch_all, project, qn)
@@ -488,13 +582,14 @@ def context(
         candidates = [
             c._replace(similarity=scores.get(c.qualified_name, 0.0)) for c in candidates
         ]
-    pieces, omitted, used, truncated = _fit(candidates, budget)
+    fitted = _fit(candidates, budget)
     return ContextSlice(
         target=target,
         resolved=qn,
         budget_tokens=budget,
-        used_tokens=used,
-        pieces=pieces,
-        omitted=omitted,
-        truncated=truncated,
+        used_tokens=fitted.used,
+        pieces=fitted.pieces,
+        omitted=fitted.omitted,
+        omitted_count=fitted.omitted_count,
+        truncated=fitted.truncated,
     )
