@@ -2951,8 +2951,8 @@ class MCPToolsRegistry:
     async def importers(
         self,
         module_qualified_name: str,
-        through_reexports: bool = False,
         project: str | None = None,
+        through_reexports: bool = False,
     ) -> object:
         # A single `return await` keeps the handler a pure delegation to the
         # locked `_graph_query`, so the read is serialised against a rebuild

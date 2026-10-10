@@ -654,3 +654,14 @@ async def test_mcp_importers_default_is_the_direct_rows(
     rows = await registry.importers(f"{P}.shop._client", project=P)
     assert _json(rows) == _cli(tmp_path)
     assert all("via" not in r for r in rows)
+
+
+async def test_mcp_importers_keeps_project_as_the_second_positional_argument(
+    registry: MCPToolsRegistry, tmp_path: Path
+) -> None:
+    # Callers of the earlier `importers(name, project)` signature still pass
+    # the project positionally; it must not bind to the new flag (CodeRabbit,
+    # PR 2627).
+    rows = await registry.importers(f"{P}.shop._client", P)
+    assert _json(rows) == _cli(tmp_path)
+    assert all("via" not in r for r in rows)
