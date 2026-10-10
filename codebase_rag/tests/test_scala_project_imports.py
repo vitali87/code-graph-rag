@@ -947,6 +947,93 @@ object App { def run(): Cart = new Cart() }
     assert imports == {("Module", f"{SRC}.shop.Cart")}, imports
 
 
+# A class the package block around a use declares in the file outranks what
+# that block (or a block around it) imports: a definition binds more tightly
+# than an import (Scala spec 2, "Identifiers, Names and Scopes"). Declared in
+# an inner block, it shadows an outer block's import outright; declared in
+# the importing block itself, scalac calls the reference ambiguous, and the
+# index takes the declaration the file makes rather than the import.
+_LOCAL_ITEM_USES = """class Item(n: Int) { def size: Int = n }
+    class Sub extends Item(0)
+    object Use {
+      def make(): Item = new Item(1)
+      def size(i: Item): Int = i.size
+    }
+"""
+_LOCAL_ITEM_LAYOUTS = {
+    "inner-block": "package outer {\n  import a.Item\n  package inner {\n    "
+    + _LOCAL_ITEM_USES
+    + "  }\n}\n",
+    "same-block": "package outer {\n  import a.Item\n  " + _LOCAL_ITEM_USES + "}\n",
+}
+_A_ITEM = """package a
+class Item(n: Int) { def size: Int = n }
+"""
+LOCAL_ITEM = f"{SRC}.app.Sides.Item"
+IMPORTED_ITEM = f"{SRC}.a.Item.Item"
+
+
+@pytest.mark.parametrize("layout", sorted(_LOCAL_ITEM_LAYOUTS))
+def test_a_class_the_block_declares_outranks_the_block_import(
+    project: Path, mock_ingestor: MagicMock, layout: str
+) -> None:
+    _index(
+        project,
+        mock_ingestor,
+        {
+            "src/main/scala/a/Item.scala": _A_ITEM,
+            "src/main/scala/app/Sides.scala": _LOCAL_ITEM_LAYOUTS[layout],
+        },
+    )
+
+    use = f"{SRC}.app.Sides.Use"
+    made = _targets_from(mock_ingestor, "INSTANTIATES", f"{use}.make")
+    sized = _targets_from(mock_ingestor, "CALLS", f"{use}.size")
+    bases = _targets_from(mock_ingestor, "INHERITS", f"{SRC}.app.Sides.Sub")
+
+    assert made == {("Class", LOCAL_ITEM)}, made
+    assert sized == {("Method", f"{LOCAL_ITEM}.size")}, sized
+    assert bases == {("Class", LOCAL_ITEM)}, bases
+
+
+def test_a_sibling_block_declaration_leaves_the_block_import_bound(
+    project: Path, mock_ingestor: MagicMock
+) -> None:
+    """Negative: `left` declares Item, `right` imports it; `right` sees only
+    its import, so every use there still reaches a.Item.
+    """
+    _index(
+        project,
+        mock_ingestor,
+        {
+            "src/main/scala/a/Item.scala": _A_ITEM,
+            "src/main/scala/app/Sides.scala": """package outer {
+  package left {
+    class Item(n: Int)
+  }
+  package right {
+    import a.Item
+    class Sub extends Item(0)
+    object Use {
+      def make(): Item = new Item(1)
+      def size(i: Item): Int = i.size
+    }
+  }
+}
+""",
+        },
+    )
+
+    use = f"{SRC}.app.Sides.Use"
+    made = _targets_from(mock_ingestor, "INSTANTIATES", f"{use}.make")
+    sized = _targets_from(mock_ingestor, "CALLS", f"{use}.size")
+    bases = _targets_from(mock_ingestor, "INHERITS", f"{SRC}.app.Sides.Sub")
+
+    assert made == {("Class", IMPORTED_ITEM)}, made
+    assert sized == {("Method", f"{IMPORTED_ITEM}.size")}, sized
+    assert bases == {("Class", IMPORTED_ITEM)}, bases
+
+
 # --- incremental runs -----------------------------------------------------------
 
 

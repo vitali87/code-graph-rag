@@ -2477,7 +2477,9 @@ class ImportProcessor:
 
         The innermost block binding it wins, an explicit import over a
         wildcard; None when no block around the position imports it, so the
-        file-level imports answer.
+        file-level imports answer. A class the importing block, or a block
+        inside it, declares in this file binds tighter than the import, so
+        that declaration answers instead.
         """
         scan = self._scala_scans.get(module_qn)
         blocks = {
@@ -2486,12 +2488,37 @@ class ImportProcessor:
         }
         if scan is None or not blocks:
             return None
+        declared: str | None = None
         for block in scala_blocks_at(scan.blocks, position):
-            mapping = blocks.get(block, {})
-            if name in mapping:
-                return mapping[name]
-            if candidate := self._scala_wildcard_member(mapping, name):
-                return candidate
+            declared = declared or self._scala_block_declared(
+                module_qn, scan, block, name
+            )
+            if imported := self._scala_block_mapped(blocks.get(block, {}), name):
+                return declared or imported
+        return None
+
+    def _scala_block_mapped(self, mapping: dict[str, str], name: str) -> str | None:
+        if name in mapping:
+            return mapping[name]
+        return self._scala_wildcard_member(mapping, name)
+
+    def _scala_block_declared(
+        self,
+        module_qn: str,
+        scan: ScalaPackageScan,
+        block: ScalaPackageBlock,
+        name: str,
+    ) -> str | None:
+        # A member the block's own package declares in this file, which the
+        # definition pass names under the module: package blocks add nothing.
+        own = f"{module_qn}{cs.SEPARATOR_DOT}{name}"
+        if (
+            block.enclosing
+            and name in scan.packages.get(block.enclosing[0], ())
+            and self.function_registry is not None
+            and own in self.function_registry
+        ):
+            return own
         return None
 
     def _scala_wildcard_member(self, mapping: dict[str, str], name: str) -> str | None:
@@ -2566,7 +2593,8 @@ class ImportProcessor:
         The base was bound while the file was parsed, before any package was
         known to be the project's own: to its file-level import's written
         path, or by name alone when only a package block imports it. A base
-        a block around the class imports resolves through that block.
+        a block around the class imports resolves through that block, or to
+        the class of that name the block declares in this file.
         """
         prefix = f"{module_qn}{cs.SEPARATOR_DOT}"
         scan = self._scala_scans.get(module_qn)
