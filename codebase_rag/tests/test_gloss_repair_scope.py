@@ -45,5 +45,6 @@ def test_every_sync_path_scopes_the_repair_to_its_project(
     (temp_repo / "a.py").write_text("def f(x):\n    return x + 2\n", encoding="utf-8")
     updater.reingest(["a.py"])
 
-    assert scopes and set(scopes) == {"app"}, scopes
+    assert scopes, scopes
+    assert set(scopes) == {"app"}, scopes
     assert len(scopes) >= 3, scopes
