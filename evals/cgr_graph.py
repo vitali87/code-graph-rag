@@ -164,11 +164,16 @@ _GO_TYPE_LABELS = _CSHARP_TYPE_LABELS | {
 # `CYPHER_QUERY_PROJECT_NODE_IDS` reads the internal ids a retired project's
 # vectors are keyed by (issue #2412). The double has no internal ids and no
 # vector store, so "no vectors to delete" is its true answer.
+#
+# `CYPHER_GLOSS_MENTION_ANCHORS` opens the mention pass that follows the
+# repair (issue #3230). With no Gloss nodes there is no note that mentions
+# anything, so the lookups it would lead to are never issued.
 _NOT_MODELLED: frozenset[str] = frozenset(
     {
         cs.CYPHER_QUERY_EMBEDDINGS,
         cs.CYPHER_QUERY_PROJECT_NODE_IDS,
         cq.CYPHER_UNANCHORED_GLOSSES,
+        cq.CYPHER_GLOSS_MENTION_ANCHORS,
     }
 )
 _MODULE_QN_LABELS = frozenset(

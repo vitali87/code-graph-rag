@@ -45,8 +45,21 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     # redundant on the wire (issue #1808). `candidate_qns` is the repair
     # pass's record of where an AMBIGUOUS note could belong, recomputed from
     # the graph after every sync, so exporting it would only freeze a verdict
-    # the next run replaces (stage four of #1808).
-    "Gloss": frozenset({"write_id", "mention_qns", "candidate_qns"}),
+    # the next run replaces (stage four of #1808). `mention_hashes` and
+    # `mention_quotes` are each mention's anchors, positional beside
+    # `mention_qns` and meaningless without it; `mentions_lost` is the
+    # mention pass's verdict, recomputed after every sync like
+    # `candidate_qns` (issue #3230).
+    "Gloss": frozenset(
+        {
+            "write_id",
+            "mention_qns",
+            "candidate_qns",
+            "mention_hashes",
+            "mention_quotes",
+            "mentions_lost",
+        }
+    ),
     "Package": frozenset({"absolute_path"}),
     "Folder": frozenset({"absolute_path"}),
     "File": frozenset({"absolute_path"}),

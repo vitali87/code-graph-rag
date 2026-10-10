@@ -298,6 +298,10 @@ MCP_GLOSSES = (
     "hash to compare) and is LOST if its name disappears (a module has no span "
     "to quote); a class, interface, enum, type or union carries a hash like a "
     "function and is graded and repaired the same way. "
+    "A note's `mentions` are anchored the same way: a mentioned definition "
+    "that is renamed or moved is followed by its hash or quote, one that "
+    "cannot be placed is listed in `mentions_lost` with no edge, and a new "
+    "definition that reuses its name does not inherit it. "
     "A target that no longer resolves returns the error plus `orphaned`: the "
     "unattached notes written against that name. " + _MCP_DETERMINISTIC_NOTE
 )

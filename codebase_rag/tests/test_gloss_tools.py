@@ -941,10 +941,14 @@ class _RecordingStore:
         # When set, the store reports one note the name tier left unattached
         # (no comparable hash), so the repair tier has something to mark.
         self.unanchored: list[ResultRow] = []
+        # When set, attached notes whose mentions the mention pass places.
+        self.mentioning: list[ResultRow] = []
 
     def fetch_all(self, query: str, params: PropertyDict | None = None) -> list:
         if query == cq.CYPHER_UNANCHORED_GLOSSES:
             return list(self.unanchored)
+        if query == cq.CYPHER_GLOSS_MENTION_ANCHORS:
+            return list(self.mentioning)
         return []
 
     def execute_write(self, query: str, params: PropertyDict | None = None) -> None:
@@ -975,6 +979,17 @@ def test_reanchoring_rebuilds_edges_from_the_notes_own_record(tmp_path: Path) ->
             cs.KEY_ANCHOR_STATE: cs.GlossAnchorState.EXACT.value,
         }
     ]
+    # An attached note whose one mention has no edge now: the mention pass
+    # rebuilds its edges (here, marks the mention lost: nothing carries it).
+    store.mentioning = [
+        {
+            cs.KEY_QUALIFIED_NAME: "gloss:attached",
+            cs.KEY_TARGET_QN: RUN,
+            cs.KEY_PROJECT: P,
+            cs.KEY_MENTION_QNS: [VALIDATE],
+            cs.KEY_ATTACHED: [],
+        }
+    ]
     updater = GraphUpdater(
         ingestor=store,  # type: ignore[arg-type]
         repo_path=tmp_path,
@@ -984,16 +999,16 @@ def test_reanchoring_rebuilds_edges_from_the_notes_own_record(tmp_path: Path) ->
     updater._reanchor_glosses()
     # Name tier first; then the repair tier places or marks what the name
     # tier left unattached (here: one note with no comparable hash, marked
-    # LOST); then the mentions restore, so a note that has just MOVED gets
-    # its MENTIONS edges back in the same run; then grading.
+    # LOST); then the mentions, so a note that has just MOVED gets its
+    # MENTIONS edges back in the same run; then grading.
     assert store.writes == [
         cq.CYPHER_REANCHOR_GLOSSES,
         cq.CYPHER_GLOSS_MARK,
-        cq.CYPHER_REANCHOR_GLOSS_MENTIONS,
+        cq.CYPHER_GLOSS_SET_MENTIONS,
         cq.CYPHER_GRADE_GLOSS_ANCHORS,
     ]
     assert "g.target_qn" in cq.CYPHER_REANCHOR_GLOSSES
-    assert "g.mention_qns" in cq.CYPHER_REANCHOR_GLOSS_MENTIONS
+    assert "g.mention_qns" in cq.CYPHER_GLOSS_MENTION_ANCHORS
     # Only an unattached note is re-anchored; an attached one is left alone.
     assert "WHERE subjects = 0" in cq.CYPHER_REANCHOR_GLOSSES
 
@@ -1162,6 +1177,36 @@ def test_a_note_records_its_subjects_text_quote_when_the_source_is_readable() ->
     assert stored[cs.KEY_ANCHOR_PREFIX] == expected.prefix
     assert stored[cs.KEY_ANCHOR_SUFFIX] == expected.suffix
     assert calls == [(P, "app.py")]
+
+
+def test_a_note_records_each_mentions_anchors_beside_its_name() -> None:
+    # A mention carries the anchors the subject does, in `mention_qns` order,
+    # so the repair can follow it when it is renamed or moved (issue #3230).
+    # An empty string stands for "none": a definition without a hash, or a
+    # file the reader cannot supply.
+    from codebase_rag.gloss_anchor import text_anchor
+
+    graph = FakeGraph()
+    _calls, read = _reader({"app.py": APP_PY})
+    row = _write(
+        graph, STORE_GET, mentions=f"{VALIDATE},{RUN},{UTIL_GET}", read_source=read
+    )
+    assert not _is_refusal(row)
+    stored = graph.glosses[row["qualified_name"]]
+    parsed = read(P, "app.py")
+    assert parsed is not None
+    run_anchor = text_anchor(parsed, "run", 3, 8)
+    assert run_anchor is not None
+    assert stored[cs.KEY_MENTION_QNS] == [RUN, UTIL_GET, VALIDATE]
+    assert stored[cs.KEY_MENTION_HASHES] == ["fp-run", "", "fp-validate"]
+    assert stored[cs.KEY_MENTION_QUOTES] == [run_anchor.quote, "", ""]
+
+
+def test_the_write_statement_records_the_mention_anchors() -> None:
+    # A fresh write is a fresh reading: no mention starts out lost.
+    assert "g.mention_hashes = $mention_hashes" in cq.CYPHER_GLOSS_WRITE
+    assert "g.mention_quotes = $mention_quotes" in cq.CYPHER_GLOSS_WRITE
+    assert "g.mentions_lost = null" in cq.CYPHER_GLOSS_WRITE
 
 
 def test_a_note_without_a_reader_or_without_the_file_carries_no_quote() -> None:

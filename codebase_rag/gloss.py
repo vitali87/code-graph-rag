@@ -69,6 +69,9 @@ class GlossRow(TypedDict):
     moved_from: str | None
     candidate_qns: list[str]
     mentions: list[str]
+    # Mentions whose definition the repair could not place after a rename,
+    # move or delete: still named, with no MENTIONS edge (issue #3230).
+    mentions_lost: list[str]
 
 
 class GlossRefusal(TypedDict, total=False):
@@ -268,6 +271,25 @@ class _TargetFacts(NamedTuple):
     anchor: TextAnchor | None
 
 
+def _mention_anchor_props(
+    fetch_all: QueryFn,
+    project_name: str,
+    mention_qns: list[str],
+    read_source: SourceReader | None,
+) -> PropertyDict:
+    # Each mention records the anchors the subject does, in `mention_qns`
+    # order, so the repair can follow a renamed or moved mention instead of
+    # dropping it or handing it to a newcomer with the old name (#3230).
+    facts = [
+        _target_facts(fetch_all, project_name, qn, read_source) for qn in mention_qns
+    ]
+    return {
+        cs.KEY_MENTION_QNS: mention_qns,
+        cs.KEY_MENTION_HASHES: [f.target_hash or "" for f in facts],
+        cs.KEY_MENTION_QUOTES: [f.anchor.quote if f.anchor else "" for f in facts],
+    }
+
+
 def _target_facts(
     fetch_all: QueryFn,
     project_name: str,
@@ -332,6 +354,7 @@ def _gloss_row(row: ResultRow) -> GlossRow:
         moved_from=_opt_str(row.get(cs.KEY_MOVED_FROM)),
         candidate_qns=_str_list(row.get(cs.KEY_CANDIDATE_QNS)),
         mentions=mentions,
+        mentions_lost=_str_list(row.get(cs.KEY_MENTIONS_LOST)),
     )
 
 
@@ -413,7 +436,12 @@ def write_gloss(
         cs.KEY_QN: key,
         cs.KEY_PROJECT_PREFIX: _prefix(project_name),
         cs.KEY_TARGET_QN: target_qn,
-        cs.KEY_MENTION_QNS: sorted({m["qualified_name"] for m in mentioned}),
+        **_mention_anchor_props(
+            fetch_all,
+            project_name,
+            sorted({m["qualified_name"] for m in mentioned}),
+            read_source,
+        ),
         cs.KEY_KIND: kind,
         cs.KEY_STATUS: cs.GLOSS_STATUS_ACCEPTED,
         cs.KEY_BODY: text,
