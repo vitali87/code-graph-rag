@@ -794,11 +794,14 @@ WHERE n.qualified_name STARTS WITH $project_prefix AND n.path = $path
   AND n.start_line <= $line AND $line <= n.end_line
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.path AS path,
        n.start_line AS start_line, n.end_line AS end_line"""
+# `decorated_start_line` is absent on a graph indexed before issue #2428 and
+# on undecorated definitions; the reader falls back to `start_line`.
 CYPHER_GRAPH_DEFINITION = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
 WHERE n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.name AS name,
        n.path AS path, n.start_line AS start_line, n.end_line AS end_line,
-       n.docstring AS docstring
+       n.decorated_start_line AS decorated_start_line, n.decorators AS decorators,
+       n.name_start_line AS name_start_line, n.docstring AS docstring
 {_DEFINITION_TIEBREAK}
 LIMIT 1"""
 # Gloss nodes (issue #1808). The node, its ANNOTATES edge and every MENTIONS

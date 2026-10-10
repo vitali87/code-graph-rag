@@ -197,9 +197,10 @@ MCP_RESOLVE = (
     "dotted-suffix matches, then same-name matches. " + _MCP_DETERMINISTIC_NOTE
 )
 MCP_DEFINITION = (
-    "File, line span, docstring and source of one definition by qualified "
-    "name (`found` is false when the graph has no such node). "
-    + _MCP_DETERMINISTIC_NOTE
+    "File, line span, decorators, docstring and source of one definition by "
+    "qualified name (`found` is false when the graph has no such node). "
+    "`start_line` and `source` open at the first decorator; `name_line` is "
+    "the line of its name (the `def`/`class` line). " + _MCP_DETERMINISTIC_NOTE
 )
 MCP_CALLERS = (
     "Call sites that invoke a qualified name, one row per site with the "

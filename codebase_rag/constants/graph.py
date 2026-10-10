@@ -56,6 +56,13 @@ KEY_VALUE = "value"
 CONSTANT_VALUE_MAX_CHARS = 200
 KEY_NAME_START_LINE = "name_start_line"
 KEY_NAME_START_COL = "name_start_col"
+# First line of the decorators or attributes written above a definition but
+# outside its own node (Python's `decorated_definition`, Rust attribute items,
+# TS method decorators, Dart metadata); set only when there are any. Kept
+# apart from `start_line`, which call attribution, rename and the incremental
+# deltas key on, and which a decorator's own call must stay outside of: it
+# runs at definition time in the enclosing scope (issue #2428).
+KEY_DECORATED_START_LINE = "decorated_start_line"
 KEY_END_LINE = "end_line"
 # Edge-site location properties (issue #1522). Every CALLS / REFERENCES /
 # INSTANTIATES edge records the span of the expression that produced it, and
