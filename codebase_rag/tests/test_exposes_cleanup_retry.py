@@ -14,6 +14,7 @@ from pathlib import Path
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag import graph_updater as gu
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from evals.cgr_graph import _StatefulIngestor
@@ -42,7 +43,7 @@ def test_a_skipped_cleanup_refuses_the_in_sync_path_until_done(tmp_path: Path) -
     store = _StatefulIngestor()
     _updater(root, store).run(force=True)
     assert _updater(root, store)._is_already_in_sync() is True
-    marker = root / cs.EXPOSES_CLEANUP_PENDING_FILENAME
+    marker = state_file(root, cs.EXPOSES_CLEANUP_PENDING_FILENAME)
     assert not marker.exists()
 
     down = _RegistryDown()
@@ -55,7 +56,7 @@ def test_a_skipped_cleanup_refuses_the_in_sync_path_until_done(tmp_path: Path) -
     # Record the root's mtime AFTER the marker was written, as the run that
     # skipped the cleanup does: the marker alone must refuse the fast path,
     # not the root's mtime moving.
-    mtimes_path = root / cs.DIR_MTIMES_FILENAME
+    mtimes_path = state_file(root, cs.DIR_MTIMES_FILENAME)
     mtimes = gu._load_dir_mtimes(mtimes_path)
     mtimes[cs.ROOT_DIR_KEY] = os.stat(root).st_mtime
     gu._save_dir_mtimes(mtimes_path, mtimes)
@@ -81,7 +82,7 @@ def test_a_skipped_cleanup_refuses_the_in_sync_path_until_done(tmp_path: Path) -
 def test_a_scoped_pass_never_settles_an_owed_cleanup(tmp_path: Path) -> None:
     root = tmp_path / "proj"
     root.mkdir()
-    marker = root / cs.EXPOSES_CLEANUP_PENDING_FILENAME
+    marker = state_file(root, cs.EXPOSES_CLEANUP_PENDING_FILENAME)
     marker.touch()
     updater = _updater(root, _StatefulIngestor())
     updater._record_exposes_cleanup(cleared_by_this_run=False)
@@ -101,7 +102,7 @@ def test_a_failed_cleanup_delete_is_owed_like_a_skipped_one(tmp_path: Path) -> N
     for cleanup in ("_drop_stale_handler_exposes", "_drop_stale_module_exposes"):
         root = tmp_path / cleanup / "proj"
         root.mkdir(parents=True)
-        marker = root / cs.EXPOSES_CLEANUP_PENDING_FILENAME
+        marker = state_file(root, cs.EXPOSES_CLEANUP_PENDING_FILENAME)
         marker.touch()
         updater = _updater(root, _DeletesFail())
         getattr(updater, cleanup)(["proj.api.items"])

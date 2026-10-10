@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from evals.cgr_graph import _StatefulIngestor
@@ -108,7 +109,7 @@ def _index(
 def _bump(root: Path, *rels: str) -> None:
     # Past the cache's mtime, so the next run sees the change even within
     # the filesystem's timestamp resolution.
-    cache_mtime = (root / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
     for rel in (*rels, "."):
         os.utime(root / rel, (cache_mtime + 1, cache_mtime + 1))
 

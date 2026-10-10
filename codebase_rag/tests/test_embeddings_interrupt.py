@@ -19,6 +19,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag import exceptions as ex
+from codebase_rag.checkout_state import state_dir
 from codebase_rag.cli import _run_graph_sync
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -85,7 +86,7 @@ def test_an_interrupted_embeddings_pass_commits_the_run_before_stopping(
     with pytest.raises(KeyboardInterrupt) as stopped:
         updater.run()
 
-    hashes = json.loads((py_project / cs.HASH_CACHE_FILENAME).read_text())
+    hashes = json.loads((state_dir(py_project) / cs.HASH_CACHE_FILENAME).read_text())
     assert {"module_a.py", "module_b.py"} <= set(hashes)
     assert isinstance(stopped.value, ex.EmbeddingsInterrupted)
     rerun = _updater(py_project, mock_ingestor, skip_embeddings=True)
@@ -125,7 +126,9 @@ def test_an_interrupt_before_the_embeddings_pass_commits_nothing(
 
     assert type(stopped.value) is KeyboardInterrupt
     # The walk leaves an empty placeholder; only a committed run fills it.
-    assert json.loads((py_project / cs.HASH_CACHE_FILENAME).read_text()) == {}
+    assert (
+        json.loads((state_dir(py_project) / cs.HASH_CACHE_FILENAME).read_text()) == {}
+    )
 
 
 def test_a_failed_embeddings_pass_still_ends_the_run_normally(
@@ -146,7 +149,7 @@ def test_a_failed_embeddings_pass_still_ends_the_run_normally(
 
     _updater(py_project, mock_ingestor).run()
 
-    hashes = json.loads((py_project / cs.HASH_CACHE_FILENAME).read_text())
+    hashes = json.loads((state_dir(py_project) / cs.HASH_CACHE_FILENAME).read_text())
     assert {"module_a.py", "module_b.py"} <= set(hashes)
 
 

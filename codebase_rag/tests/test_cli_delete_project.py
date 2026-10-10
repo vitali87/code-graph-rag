@@ -10,6 +10,7 @@ import pytest
 from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.cli import app
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
@@ -96,7 +97,7 @@ def test_delete_project_removes_hash_cache_when_repo_path_given(
     mock_memgraph_connect: MagicMock,
     tmp_path: Path,
 ) -> None:
-    cache_path = tmp_path / cs.HASH_CACHE_FILENAME
+    cache_path = state_file(tmp_path, cs.HASH_CACHE_FILENAME)
     cache_path.write_text(json.dumps({"file.py": "abc123"}))
 
     result = runner.invoke(
@@ -114,7 +115,7 @@ def test_delete_project_without_repo_path_leaves_unrelated_hash_caches(
     mock_memgraph_connect: MagicMock,
     tmp_path: Path,
 ) -> None:
-    cache_path = tmp_path / cs.HASH_CACHE_FILENAME
+    cache_path = state_file(tmp_path, cs.HASH_CACHE_FILENAME)
     cache_path.write_text(json.dumps({"file.py": "abc123"}))
 
     result = runner.invoke(app, ["delete-project", "--name", "platform"])

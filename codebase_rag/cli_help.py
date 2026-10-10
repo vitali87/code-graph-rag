@@ -113,7 +113,7 @@ EXAMPLES_EDITS_UNDO = (
 )
 HELP_EDITS_COUNT = "How many transactions to show or undo."
 HELP_EDITS_REPO_PATH = (
-    "Repository root holding .cgr-edit-history.json (default: current directory)."
+    "Repository whose edit history to use (default: current directory)."
 )
 HELP_EDITS_DIFF = "Print each transaction's unified diff."
 CMD_GRAPH = "Deterministic graph queries (resolve, definition, callers, callees, implementors, overrides, importers, tests-reaching) as JSON, no LLM."

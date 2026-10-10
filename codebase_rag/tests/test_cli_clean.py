@@ -9,6 +9,7 @@ import pytest
 from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.cli import app
 from codebase_rag.config import CgrignorePatterns
 
@@ -82,7 +83,7 @@ class TestCleanWithoutUpdateGraph:
         mock_memgraph_connect: MagicMock,
         tmp_path: Path,
     ) -> None:
-        cache_path = tmp_path / cs.HASH_CACHE_FILENAME
+        cache_path = state_file(tmp_path, cs.HASH_CACHE_FILENAME)
         cache_path.write_text(json.dumps({"file.py": "abc123"}))
 
         result = runner.invoke(
@@ -98,7 +99,7 @@ class TestCleanWithoutUpdateGraph:
         mock_memgraph_connect: MagicMock,
         tmp_path: Path,
     ) -> None:
-        cache_path = tmp_path / cs.HASH_CACHE_FILENAME
+        cache_path = state_file(tmp_path, cs.HASH_CACHE_FILENAME)
         assert not cache_path.exists()
 
         result = runner.invoke(
@@ -166,7 +167,7 @@ class TestCleanWithUpdateGraph:
             exclude=frozenset(), unignore=frozenset()
         )
 
-        cache_path = tmp_path / cs.HASH_CACHE_FILENAME
+        cache_path = state_file(tmp_path, cs.HASH_CACHE_FILENAME)
         cache_path.write_text(json.dumps({"file.py": "abc123"}))
 
         result = runner.invoke(
@@ -240,7 +241,7 @@ class TestCleanWithUpdateGraph:
             exclude=frozenset(), unignore=frozenset()
         )
 
-        cache_path = tmp_path / cs.HASH_CACHE_FILENAME
+        cache_path = state_file(tmp_path, cs.HASH_CACHE_FILENAME)
         cache_data = {"file.py": "abc123"}
         cache_path.write_text(json.dumps(cache_data))
 
