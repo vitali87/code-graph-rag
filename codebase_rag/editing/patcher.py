@@ -178,6 +178,31 @@ def _identifier_at(root: Node, start: int, end: int) -> Node | None:
     return None
 
 
+# The CommonJS export object, as written. Spelled here rather than imported:
+# the parsers package is not loaded at CLI startup.
+_JS_MODULE_EXPORTS = (
+    cs.JS_MODULE_KEYWORD + cs.SEPARATOR_DOT + cs.JS_EXPORTS_KEYWORD
+).encode()
+
+
+def _keeps_its_key(node: Node) -> bool:
+    """Whether a renamed shorthand property must keep its key (issue #3252).
+
+    `{ pad }` is `{ pad: pad }`: a key and a value, and the rename is about
+    the value. Renaming the token moves the key too, which breaks every
+    consumer that reads `obj.pad`, so the edit spells both out. The one
+    exception is `module.exports = { pad }`: that object is the module's
+    export list, its readers (`require("./u").pad`) are linked to the
+    function and renamed with it, so the key moves with them.
+    """
+    if node.type != cs.TS_SHORTHAND_PROPERTY_IDENTIFIER:
+        return False
+    # identifier -> object -> `module.exports = <object>`, when that holds it.
+    holder = node.parent.parent if node.parent is not None else None
+    left = holder.child_by_field_name(cs.FIELD_LEFT) if holder is not None else None
+    return left is None or left.text != _JS_MODULE_EXPORTS
+
+
 @lru_cache(maxsize=8)
 def _tool_runs(executable: str, probe_flag: str) -> bool:
     """Whether the binary at this path can actually run (issue #1639).
@@ -345,6 +370,7 @@ class Patcher:
                     found=source[start:end].decode(cs.ENCODING_UTF8, errors="replace"),
                 )
             )
+        replacement = new
         _language, parser = self._parser(key)
         if parser is not None:
             root = parser.parse(source).root_node
@@ -353,8 +379,10 @@ class Patcher:
                 raise PatcherError(
                     cs.PATCH_NOT_AN_IDENTIFIER.format(path=key, line=line, col=col)
                 )
+            if _keeps_its_key(node):
+                replacement = old + cs.PATCH_SHORTHAND_KEY_SEPARATOR + new
         self._edits.setdefault(key, []).append(
-            SpanEdit(start, end, new.encode(cs.ENCODING_UTF8))
+            SpanEdit(start, end, replacement.encode(cs.ENCODING_UTF8))
         )
 
     @property

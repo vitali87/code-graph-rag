@@ -195,7 +195,8 @@ class TestReach(TypedDict):
 
 
 class SiteCounts(TypedDict):
-    """CALLS sites into the touched files' definitions, before and after."""
+    """CALLS and REFERENCES sites into the touched files' definitions,
+    before and after."""
 
     before: int
     after: int
@@ -1937,12 +1938,20 @@ def _tests_reaching(
 # --- the delta ----------------------------------------------------------------
 
 
+# A site links its callee by a call or by a reference to it, and which one a
+# site is recorded as can follow its spelling alone: `{ pad }` references
+# `pad`, `{ pad: padLeft }` calls `padLeft` (issue #3252). An edit keeps
+# a link whichever kind it lands as, so the count takes both.
+_INBOUND_LINKS = frozenset(
+    {cs.RelationshipType.CALLS.value, cs.RelationshipType.REFERENCES.value}
+)
+
+
 def _inbound_calls(snap: Snapshot) -> int:
     return sum(
         1
         for site in snap.sites
-        if site.rel == cs.RelationshipType.CALLS.value
-        and site.callee in snap.definitions
+        if site.rel in _INBOUND_LINKS and site.callee in snap.definitions
     )
 
 

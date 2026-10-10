@@ -924,7 +924,9 @@ CONTRACT_OP_MOVE = "move"
 CONTRACT_RENAME_MISSING = "{old} was not renamed to {new}"
 CONTRACT_RENAME_UNEXPECTED = "unexpected rename: {pairs}"
 CONTRACT_SYMBOLS_MOVED = "symbol set changed: added {added}; removed {removed}"
-CONTRACT_CALLERS_MOVED = "call site count changed: {before} before, {after} after"
+CONTRACT_CALLERS_MOVED = (
+    "call and reference site count changed: {before} before, {after} after"
+)
 CONTRACT_DANGLING = "dangling callers: {sites}"
 CONTRACT_SITES_UNMAPPED = "call sites neither mapped nor listed as unmapped: {sites}"
 CONTRACT_HEURISTIC_REWRITTEN = "sites resolved by guesswork were rewritten: {sites}"
