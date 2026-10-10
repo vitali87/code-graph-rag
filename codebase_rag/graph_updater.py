@@ -12,6 +12,7 @@ import time
 from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import NamedTuple, cast
 
@@ -2374,6 +2375,35 @@ class GraphUpdater:
             raise ex.EmbeddingsInterrupted
         self._retire_legacy_dotted_project()
 
+    def _record_sync_time(self) -> None:
+        """Stamp the Project with when this sync completed (issue #2444).
+
+        Every whole-project sync commits in `_commit_run_state` or
+        `_finish_in_sync_run`, the CLI's, MCP's and the watcher's alike, and
+        stamps there, so `cgr status` reads the time from the graph it
+        reports on instead of a log that outlived deleted projects and mixed
+        in other graphs'. Part of the commit, so a Ctrl+C that lands after it
+        still finds the sync recorded (#2442). A single-file run brings one
+        file up to date, not the project, and a write-only sink has no graph
+        to stamp. Best effort: the sync is complete and durable by now.
+        """
+        if self._single_file is not None or not isinstance(
+            self.ingestor, QueryProtocol
+        ):
+            return
+        try:
+            self.ingestor.execute_write(
+                cq.CYPHER_RECORD_PROJECT_SYNC,
+                {
+                    cs.KEY_PROJECT_NAME: self.project_name,
+                    cs.KEY_LAST_SYNCED_AT: datetime.now(UTC).isoformat(),
+                },
+            )
+        except Exception as exc:
+            logger.warning(
+                ls.SYNC_TIME_NOT_RECORDED.format(project=self.project_name, error=exc)
+            )
+
     def _clear_python_inference_caches(self) -> None:
         py_engine = self.factory.type_inference._python_type_inference
         if py_engine is not None:
@@ -2394,6 +2424,7 @@ class GraphUpdater:
         self.ingestor.flush_all()
         if self._single_file is None and not self._graph_state_unknown:
             self._stamp_exclusion_state(only_if_changed=True)
+        self._record_sync_time()
         # Nothing to save on this path, and nothing left half-written.
         self.committed = True
 
@@ -2512,6 +2543,7 @@ class GraphUpdater:
                 logger.warning(ls.EXCLUSION_STATE_NOT_RECORDED)
             else:
                 self._stamp_exclusion_state()
+        self._record_sync_time()
         # Last, so an interrupt anywhere above still reads as a partial run.
         self.committed = True
 

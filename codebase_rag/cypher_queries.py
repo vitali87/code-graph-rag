@@ -134,6 +134,28 @@ CYPHER_MARK_PROJECT_INCOMPLETE = (
 CYPHER_CLEAR_PROJECT_INCOMPLETE = (
     "MATCH (m:IncompleteRun {project: $project_name, run_id: $run_id}) DELETE m"
 )
+# The CLI sync's mark also records WHO holds it (PR #2532 review): every CLI
+# sync of a project shares one run id, so the run id cannot say whether the
+# sync that left the marker still runs. `delete-project` reads the owner and
+# clears the marker only once that sync provably stopped. Set in the same
+# statement as the mark, so a marker never carries a stopped sync's owner
+# after a running sync has re-marked it.
+CYPHER_MARK_CLI_SYNC_INCOMPLETE = (
+    CYPHER_MARK_PROJECT_INCOMPLETE + ", "
+    "m.owner_host = $owner_host, m.owner_pid = $owner_pid, "
+    "m.owner_token = $owner_token"
+)
+CYPHER_CLI_SYNC_MARKER_OWNER = (
+    "MATCH (m:IncompleteRun {project: $project_name, run_id: $run_id}) "
+    "RETURN m.owner_host AS owner_host, m.owner_pid AS owner_pid, "
+    "m.owner_token AS owner_token"
+)
+# Compare-and-delete on the owner token read above: a sync that started
+# after that read re-marked the node under its own token and keeps it.
+CYPHER_CLEAR_STOPPED_CLI_SYNC_MARKER = (
+    "MATCH (m:IncompleteRun {project: $project_name, run_id: $run_id}) "
+    "WHERE m.owner_token = $owner_token DELETE m"
+)
 # RECOVERY: clears every outstanding marker for the project, whichever run
 # wrote it. Deliberately not run-scoped -- its whole purpose is to clear a
 # marker some OTHER run stranded (a run that stopped before its first graph
@@ -189,6 +211,20 @@ CYPHER_PROJECT_IS_INCOMPLETE = (
 # only to the next MCP process that trips over it (issue #2219).
 CYPHER_PROJECTS_WITH_INCOMPLETE_RUNS = (
     "MATCH (m:IncompleteRun) RETURN DISTINCT m.project AS project"
+)
+
+# When a sync of the project last completed (issue #2444). On the Project node
+# so the time lives exactly as long as the project does in THIS graph:
+# `delete-project` and `--clean` take it with the node, and a project synced
+# into another Memgraph is simply not here. The client-side log `cgr status`
+# read before could reconcile none of that.
+CYPHER_RECORD_PROJECT_SYNC = (
+    "MATCH (p:Project {name: $project_name}) SET p.last_synced_at = $last_synced_at"
+)
+# A project synced before the time was recorded reads back null.
+CYPHER_PROJECT_SYNC_TIMES = (
+    "MATCH (p:Project) "
+    "RETURN p.name AS name, p.last_synced_at AS last_synced_at ORDER BY p.name"
 )
 
 CYPHER_DELETE_PROJECT = """

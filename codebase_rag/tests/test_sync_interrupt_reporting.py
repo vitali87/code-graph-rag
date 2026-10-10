@@ -26,7 +26,6 @@ import typer
 from loguru import logger
 from typer.testing import CliRunner
 
-from codebase_rag import cgr_state
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag import exceptions as ex
@@ -63,7 +62,7 @@ def cli_sync() -> Generator[_CliSync, None, None]:
     ingestor = MagicMock()
 
     def write(query: str, _params: PropertyParams | None = None) -> None:
-        if query == cq.CYPHER_MARK_PROJECT_INCOMPLETE:
+        if query == cq.CYPHER_MARK_CLI_SYNC_INCOMPLETE:
             events.append("mark")
         elif query == cq.CYPHER_CLEAR_PROJECT_INCOMPLETE:
             events.append("clear")
@@ -446,7 +445,7 @@ def real_sync(mock_ingestor: MagicMock) -> Generator[MagicMock, None, None]:
 
 def _marker_events(ingestor: MagicMock) -> list[str]:
     names = {
-        cq.CYPHER_MARK_PROJECT_INCOMPLETE: "mark",
+        cq.CYPHER_MARK_CLI_SYNC_INCOMPLETE: "mark",
         cq.CYPHER_CLEAR_PROJECT_INCOMPLETE: "clear",
     }
     return [
@@ -454,6 +453,16 @@ def _marker_events(ingestor: MagicMock) -> list[str]:
         for call in ingestor.execute_write.call_args_list
         if call.args and call.args[0] in names
     ]
+
+
+def _recorded_sync(ingestor: MagicMock) -> bool:
+    # The sync time `cgr status` lists, stamped on the Project node (#2444).
+    return any(
+        call.args
+        and call.args[0] == cq.CYPHER_RECORD_PROJECT_SYNC
+        and call.args[1][cs.KEY_PROJECT_NAME] == PROJECT
+        for call in ingestor.execute_write.call_args_list
+    )
 
 
 def _interrupt_right_after_the_commit() -> AbstractContextManager[MagicMock]:
@@ -484,7 +493,7 @@ class TestAnInterruptAroundTheCommit:
         # Recorded and unmarked like any finished sync, so `cgr status` and
         # the MCP hydration guard do not take a whole graph for a partial one.
         assert _marker_events(real_sync) == ["mark", "clear"]
-        assert PROJECT in cgr_state.read_sync_timestamps()
+        assert _recorded_sync(real_sync)
         assert (py_project / cs.PARSER_FINGERPRINT_FILENAME).is_file()
 
     def test_one_before_the_commit_is_still_called_incomplete(
@@ -498,7 +507,7 @@ class TestAnInterruptAroundTheCommit:
         assert exit_code == 130, output
         assert len(_lines_calling_the_graph_incomplete(output)) == 1, output
         assert _marker_events(real_sync) == ["mark"]
-        assert PROJECT not in cgr_state.read_sync_timestamps()
+        assert not _recorded_sync(real_sync)
 
     def test_one_during_the_commit_is_still_called_incomplete(
         self, py_project: Path, real_sync: MagicMock

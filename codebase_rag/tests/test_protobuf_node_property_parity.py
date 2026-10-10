@@ -37,7 +37,11 @@ from codec import schema_pb2 as pb
 # unnoticed. Removing an entry (by adding the proto field) is always safe;
 # adding one should be a deliberate decision with a reason.
 _NOT_EXPORTED: dict[str, frozenset[str]] = {
-    "Project": frozenset({"root_path"}),
+    # `last_synced_at` (issue #2444) records when a sync last completed into
+    # the graph holding the node, for `cgr status`. It is stamped only on a
+    # graph cgr can write back to, which the protobuf sink is not, and as a
+    # per-run time it would make two exports of an unchanged project differ.
+    "Project": frozenset({"root_path", "last_synced_at"}),
     # `write_id` is the per-call nonce the write tool reads back to prove its
     # statement ran; it means nothing outside that call. `mention_qns` is the
     # note's own record of what it mentions, from which the MENTIONS edges are
