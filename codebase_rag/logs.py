@@ -489,6 +489,9 @@ MG_LIST_PROJECTS_FAILED = (
 )
 MG_DELETING_PROJECT = "--- Deleting project: {project_name} ---"
 MG_PROJECT_DELETED = "--- Project {project_name} deleted. ---"
+MG_PROJECT_NOT_DELETED = (
+    "--- Project {project_name} not deleted: its root no longer matches. ---"
+)
 MG_ENSURING_CONSTRAINTS = "Ensuring constraints..."
 MG_CONSTRAINTS_DONE = "Constraints checked/created."
 MG_LEGACY_PURGE = (
@@ -1065,6 +1068,7 @@ CLI_SYNC_MARKER_NOT_CLEARED = (
 CLI_SYNC_MARKERS_UNREADABLE = (
     "Could not read incomplete-run markers for cgr status: {error}"
 )
+CLI_PROJECT_ROOTS_UNREADABLE = "Could not read project roots for cgr status: {error}"
 MCP_SERVER_SHUTDOWN = "[GraphCode MCP] Shutting down server..."
 MCP_HTTP_SERVER_STARTING = "[GraphCode MCP] Starting HTTP server on {host}:{port}..."
 MCP_HTTP_EXPOSURE_REFUSED = (

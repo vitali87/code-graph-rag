@@ -39,6 +39,7 @@ Every top-level command, from the CLI's own help registry:
 | `cgr dead-code` | Report code that appears unreachable from known entry points |
 | `cgr duplicates` | Report structurally duplicated functions and methods |
 | `cgr delete-project` | Delete one project without changing other indexed projects |
+| `cgr prune` | Prune projects whose repository root no longer exists |
 | `cgr language` | Manage language grammars and parser metadata |
 | `cgr daemon` | Manage the shared Memgraph and Qdrant stack |
 | `cgr trace` | Ingest runtime call traces as dynamic CALLS edges |

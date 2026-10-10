@@ -1,6 +1,7 @@
 import hashlib
 import os
 import re
+import stat
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
@@ -628,6 +629,30 @@ def project_roots_from_rows(
         root = row.get("root_path")
         roots[name] = root if isinstance(root, str) else None
     return roots
+
+
+def root_proven_missing(root_path: str) -> bool:
+    """Whether a project root is provably gone, rather than unreadable.
+
+    Asked by `cgr prune` before it destroys a project (#2479): the cost of a
+    wrong answer is not a stale node but a lost graph. ``FileNotFoundError``
+    and ``NotADirectoryError`` establish absence -- a parent component that is
+    now a file makes the old directory unreachable by construction -- and a
+    stat that succeeds on a non-directory proves the checkout is gone too:
+    the recorded root is a path that no longer holds one. Every other
+    ``OSError`` (an EACCES on a protected parent, an EIO or ESTALE from a
+    mounted filesystem) leaves the question open, and open means live: such
+    a project is never a prune candidate. The stat is unbounded -- a
+    hard-mounted stale server hangs rather than raises, so the listing waits
+    on the mount instead of guessing.
+    """
+    try:
+        st = os.stat(root_path)
+    except (FileNotFoundError, NotADirectoryError):
+        return True
+    except OSError:
+        return False
+    return not stat.S_ISDIR(st.st_mode)
 
 
 def project_root_for_qualified_name(

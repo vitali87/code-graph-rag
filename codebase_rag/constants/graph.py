@@ -9,6 +9,9 @@ KEY_LABELS = "labels"
 KEY_LABEL = "label"
 KEY_PROPERTIES = "properties"
 KEY_PURGED = "purged"
+# Whether the conditional delete actually fired (`cgr prune`, #2479).
+KEY_DELETED_COUNT = "deleted"
+KEY_EXPECTED_ROOT = "expected_root"
 KEY_FROM_ID = "from_id"
 KEY_TO_ID = "to_id"
 KEY_TYPE = "type"
@@ -192,6 +195,8 @@ KEY_LONGER_PROJECT_PREFIXES = "longer_project_prefixes"
 KEY_VERSION_SPEC = "version_spec"
 KEY_PREFIX = "prefix"
 KEY_PROJECT_NAME = "project_name"
+# The residual-node count `cgr prune` reads back after a purge (#2479).
+KEY_RESIDUAL_NODES = "residual"
 # Registered projects whose names extend this one (`svc.v2` under `svc`).
 KEY_NESTED_PROJECTS = "nested_projects"
 # The incomplete-run marker's phase (#1705 review): whether the run it records

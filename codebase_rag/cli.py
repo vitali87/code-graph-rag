@@ -85,6 +85,7 @@ from .utils.path_utils import (
     project_name_error,
     project_roots_from_rows,
     resolve_repo_path,
+    root_proven_missing,
     unwritable_output_reason,
 )
 from .utils.terminal_console import terminal_aware_console
@@ -894,17 +895,28 @@ def _resolve_and_validate_repo(repo_path: str | None) -> Path:
     return resolved
 
 
-def _cleanup_project_embeddings(ingestor: MemgraphIngestor, project_name: str) -> None:
-    rows = ingestor.fetch_all(
-        cs.CYPHER_QUERY_PROJECT_NODE_IDS,
-        {cs.KEY_PROJECT_NAME: project_name},
-    )
+def _cleanup_project_embeddings(
+    ingestor: MemgraphIngestor,
+    project_name: str,
+    node_rows: list[ResultRow] | None = None,
+) -> bool:
+    """Delete the project's vectors; False when the store reports a miss.
+
+    The rows may be supplied pre-fetched: prune reads the ids before the
+    conditional purge fires, because once the graph is deleted no query can
+    recover them.
+    """
+    if node_rows is None:
+        node_rows = ingestor.fetch_all(
+            cs.CYPHER_QUERY_PROJECT_NODE_IDS,
+            {cs.KEY_PROJECT_NAME: project_name},
+        )
     node_ids: list[int] = []
-    for row in rows:
+    for row in node_rows:
         node_id = row.get(cs.KEY_NODE_ID)
         if isinstance(node_id, int):
             node_ids.append(node_id)
-    delete_project_embeddings(project_name, node_ids)
+    return delete_project_embeddings(project_name, node_ids)
 
 
 @app.command(
@@ -1841,12 +1853,22 @@ def status_command() -> None:
     if not timestamps and not incomplete:
         app_context.console.print("syncs:    (no projects synced via cgr yet)")
         return
+    roots = _graph_project_roots() if status.memgraph_reachable else {}
+    missing_roots = _missing_root_candidates(roots)
     app_context.console.print("syncs:")
     for project in sorted(timestamps.keys() | incomplete):
         ts = timestamps.get(project)
         line = f"  - {project}: last sync {ts}" if ts else f"  - {project}:"
+        root = roots.get(project)
+        if root is not None:
+            line = f"{line} ({root})"
         if project in incomplete:
             line = f"{line} ({cs.CLI_STATUS_SYNC_INCOMPLETE})"
+        if project in missing_roots:
+            app_context.console.print(
+                f"{line} " + style(cs.CLI_STATUS_ROOT_MISSING, cs.Color.RED)
+            )
+            continue
         app_context.console.print(line)
 
 
@@ -1862,6 +1884,19 @@ def _projects_with_incomplete_runs() -> set[str]:
         logger.warning(ls.CLI_SYNC_MARKERS_UNREADABLE.format(error=exc))
         return set()
     return {str(row["project"]) for row in rows if row.get("project")}
+
+
+def _graph_project_roots() -> dict[str, str | None]:
+    """Every project's recorded root, for the missing-root marks (#2479).
+
+    Best effort: status must still print when the graph cannot be read.
+    """
+    try:
+        with connect_memgraph(1) as ingestor:
+            return ingestor.list_project_roots()
+    except Exception as exc:
+        logger.warning(ls.CLI_PROJECT_ROOTS_UNREADABLE.format(error=exc))
+        return {}
 
 
 @app.command(
@@ -2957,6 +2992,225 @@ def delete_project(
             cs.Color.GREEN,
         )
     )
+
+
+def _missing_root_candidates(roots: dict[str, str | None]) -> dict[str, str]:
+    """Projects whose recorded root is provably gone (issue #2479).
+
+    The checkout cgr itself runs from is never a candidate, whatever the
+    stat says. A shell can survive its own directory being deleted, so a
+    dead cwd reads as an unknown, not as an exemption: the question is
+    undeterminable and nothing is a candidate.
+    """
+    try:
+        cwd = Path.cwd().resolve()
+    except OSError:
+        return {}
+    missing: dict[str, str] = {}
+    for project_name, root in roots.items():
+        if not root:
+            continue
+        if Path(root).resolve() == cwd:
+            continue
+        if root_proven_missing(root):
+            missing[project_name] = root
+    return missing
+
+
+def _report_prune_candidates(candidates: dict[str, str]) -> None:
+    if not candidates:
+        app_context.console.print(style(cs.CLI_MSG_PRUNE_NO_CANDIDATES, cs.Color.GREEN))
+        return
+    app_context.console.print(cs.CLI_MSG_PRUNE_CANDIDATES)
+    for project_name, root in sorted(candidates.items()):
+        app_context.console.print(
+            cs.CLI_MSG_PRUNE_CANDIDATE.format(project_name=project_name, root=root)
+        )
+
+
+def _prune_projects(
+    ingestor: MemgraphIngestor, candidates: dict[str, str]
+) -> tuple[list[str], list[str]]:
+    """Prune each candidate and verify the purge against a fresh graph read.
+
+    Returns the names verified as purged and the names whose removal could
+    not be verified; the caller reports the second list as failures, never
+    as successes, and a root that came back is neither (it is skipped
+    without entering either). The delete is conditional on the project
+    still naming the root this run checked -- check and delete are one
+    statement (Greptile P1 on PR #3221), so a concurrent sync repointing
+    the project's root_path is skipped, not destroyed, with no window to
+    close. A checkout recreated at the old path is still only narrowed by
+    the existence re-check. A purge that cannot be proven complete -- the
+    project still listed, or a non-zero residual count from the same
+    traversal the delete ran -- is a failure, never a success (#2479).
+    """
+    pruned: list[str] = []
+    failures: list[str] = []
+    for project_name, root in sorted(candidates.items()):
+        if not root_proven_missing(root):
+            app_context.console.print(
+                style(
+                    cs.CLI_WARN_PRUNE_ROOT_BACK.format(project_name=project_name),
+                    cs.Color.YELLOW,
+                )
+            )
+            continue
+        try:
+            # The vector ids are read while the project is still in the
+            # graph; embeddings go only when the conditional delete fires.
+            node_rows = ingestor.fetch_all(
+                cs.CYPHER_QUERY_PROJECT_NODE_IDS,
+                {cs.KEY_PROJECT_NAME: project_name},
+            )
+            _info(
+                style(
+                    cs.CLI_MSG_PRUNING_PROJECT.format(
+                        project_name=project_name, root=root
+                    ),
+                    cs.Color.YELLOW,
+                )
+            )
+            fired = ingestor.delete_project(project_name, expected_root=root)
+        except Exception as e:
+            app_context.console.print(
+                style(
+                    cs.CLI_ERR_PRUNE_FAILED.format(project_name=project_name, error=e),
+                    cs.Color.RED,
+                )
+            )
+            logger.exception(
+                cs.CLI_ERR_PRUNE_FAILED.format(project_name=project_name, error=e)
+            )
+            failures.append(project_name)
+            continue
+        if not fired:
+            app_context.console.print(
+                style(
+                    cs.CLI_WARN_PRUNE_ROOT_CHANGED.format(project_name=project_name),
+                    cs.Color.YELLOW,
+                )
+            )
+            continue
+        # The graph purge is proven either way; a vector deletion that
+        # fails or raises leaks vectors for dead node ids and is not
+        # recoverable by a retry, so it warns and the prune still counts.
+        try:
+            vectors_deleted = _cleanup_project_embeddings(
+                ingestor, project_name, node_rows
+            )
+        except Exception as e:
+            logger.warning(f"Embedding deletion failed for {project_name}: {e}")
+            vectors_deleted = False
+        if not vectors_deleted:
+            app_context.console.print(
+                style(
+                    cs.CLI_WARN_PRUNE_VECTORS_KEPT.format(project_name=project_name),
+                    cs.Color.YELLOW,
+                )
+            )
+        try:
+            remaining = ingestor.list_projects()
+            residual_rows = ingestor.fetch_all(
+                cq.CYPHER_COUNT_PROJECT_NODES,
+                {cs.KEY_PROJECT_NAME: project_name},
+            )
+        except Exception as e:
+            app_context.console.print(
+                style(
+                    cs.CLI_ERR_PRUNE_FAILED.format(project_name=project_name, error=e),
+                    cs.Color.RED,
+                )
+            )
+            logger.exception(
+                cs.CLI_ERR_PRUNE_FAILED.format(project_name=project_name, error=e)
+            )
+            failures.append(project_name)
+            continue
+        residual: object = None
+        if residual_rows:
+            residual = residual_rows[0].get(cs.KEY_RESIDUAL_NODES)
+        if project_name in remaining or residual != 0:
+            app_context.console.print(
+                style(
+                    cs.CLI_ERR_PRUNE_VERIFY_FAILED.format(project_name=project_name),
+                    cs.Color.RED,
+                )
+            )
+            failures.append(project_name)
+            continue
+        # The purge is proven: the local sync record for a project no
+        # longer in the graph would keep `cgr status` listing a ghost.
+        cgr_state.forget_sync(project_name)
+        app_context.console.print(
+            style(
+                cs.CLI_MSG_PROJECT_PRUNED.format(project_name=project_name),
+                cs.Color.GREEN,
+            )
+        )
+        pruned.append(project_name)
+    return pruned, failures
+
+
+@app.command(
+    name=ch.CLICommandName.PRUNE,
+    help=ch.CMD_PRUNE,
+    short_help=ch.CMD_PRUNE,
+    epilog=ch.EXAMPLES_PRUNE,
+    rich_help_panel=ch.PANEL_MANAGE,
+)
+def prune(
+    dry_run: bool = typer.Option(False, "--dry-run", help=ch.HELP_PRUNE_DRY_RUN),
+    yes: bool = typer.Option(False, "--yes", "-y", help=ch.HELP_PRUNE_YES),
+) -> None:
+    effective_batch_size = settings.resolve_batch_size(None)
+
+    try:
+        with connect_memgraph(effective_batch_size) as ingestor:
+            candidates = _missing_root_candidates(ingestor.list_project_roots())
+            _report_prune_candidates(candidates)
+            if not candidates or dry_run:
+                if dry_run and candidates:
+                    _info(
+                        style(
+                            cs.CLI_MSG_PRUNE_DRY_RUN.format(count=len(candidates)),
+                            cs.Color.CYAN,
+                        )
+                    )
+                return
+            if not yes:
+                if not _stdin_is_interactive():
+                    app_context.console.print(
+                        style(cs.CLI_ERR_PRUNE_NEEDS_CONFIRMATION, cs.Color.RED)
+                    )
+                    raise typer.Exit(1)
+                confirmed = typer.confirm(
+                    cs.CLI_PROMPT_PRUNE_CONFIRM.format(count=len(candidates)),
+                    default=False,
+                )
+                if not confirmed:
+                    app_context.console.print(
+                        style(cs.CLI_MSG_PRUNE_ABORTED, cs.Color.CYAN)
+                    )
+                    raise typer.Exit(1)
+            pruned, failures = _prune_projects(ingestor, candidates)
+            if pruned:
+                _info(
+                    style(
+                        cs.CLI_MSG_PRUNE_DONE.format(count=len(pruned)),
+                        cs.Color.GREEN,
+                    )
+                )
+            if failures:
+                raise typer.Exit(1)
+    except typer.Exit:
+        raise
+    except Exception as e:
+        app_context.console.print(
+            style(cs.CLI_ERR_PRUNE_RUN_FAILED.format(error=e), cs.Color.RED)
+        )
+        logger.exception(cs.CLI_ERR_PRUNE_RUN_FAILED.format(error=e))
+        raise typer.Exit(1) from e
 
 
 if __name__ == "__main__":
