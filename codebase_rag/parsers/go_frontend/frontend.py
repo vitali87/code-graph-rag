@@ -96,6 +96,8 @@ _TOOL_SRC = Path(__file__).parent / "gotypes"
 _TOOL_SOURCES = ("main.go", "go.mod", "go.sum")
 _BINARY_NAME = "gotypes"
 _BUILD_LOCK = ".build-lock"
+_CACHE_DIR_PREFIX = "go_gotypes"
+_UNKNOWN_FLOOR = "unknown"
 # Written when a build fails, as JSON holding the `go env GOVERSION` it failed
 # with and when it failed: a failed build is not retried every sync, only once
 # Go or the helper's sources change or GO_FRONTEND_BUILD_FAILURE_TTL_S passes
@@ -159,7 +161,13 @@ def find_go_module(repo_path: Path) -> Path | None:
 
 
 def _cache_dir() -> Path:
-    return settings.CGR_HOME.expanduser() / "go_gotypes"
+    # Keyed by the Go the helper requires. Freshness compares only mtimes, so
+    # a helper an older Go built while the floor was lower would otherwise be
+    # reused after the floor rose, before `_too_old` ever looks at the Go
+    # (PR #2417 review). Each floor gets a cache directory of its own.
+    required = _required_go_version()
+    key = _dotted(required) if required is not None else _UNKNOWN_FLOOR
+    return settings.CGR_HOME.expanduser() / f"{_CACHE_DIR_PREFIX}-{key}"
 
 
 def _newest_source_mtime() -> float:

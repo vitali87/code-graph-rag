@@ -427,6 +427,56 @@ def test_a_new_enough_go_builds_the_helper(
     assert warnings == []
 
 
+def test_a_helper_built_under_a_lower_floor_is_not_reused(
+    monkeypatch: pytest.MonkeyPatch, cgr_home: Path
+) -> None:
+    # A helper an older Go built while the floor was lower stays timestamp
+    # fresh, so the cache must not hand it back once the floor is raised: the
+    # old Go is named and nothing runs (PR #2417 review).
+    current_floor = fe._required_go_version
+    old_go = _FakeGo("go1.22.6", build_ok=True)
+    monkeypatch.setattr(fe.subprocess, "run", old_go)
+    monkeypatch.setattr(fe, "_required_go_version", lambda: (1, 22))
+    assert fe._build_tool("/usr/bin/go") is not None
+    monkeypatch.setattr(fe, "_required_go_version", current_floor)
+    warnings: list[str] = []
+    sink = logger.add(warnings.append, level="WARNING", format="{message}")
+    try:
+        binary = fe._build_tool("/usr/bin/go")
+    finally:
+        logger.remove(sink)
+
+    assert binary is None
+    assert old_go.builds == 1
+    assert len(warnings) == 1
+    assert "1.23.12" in warnings[0]
+
+
+def test_a_helper_built_under_the_current_floor_is_reused(
+    monkeypatch: pytest.MonkeyPatch, cgr_home: Path
+) -> None:
+    fake = _FakeGo("go1.23.12", build_ok=True)
+    monkeypatch.setattr(fe.subprocess, "run", fake)
+
+    first = fe._build_tool("/usr/bin/go")
+    second = fe._build_tool("/usr/bin/go")
+
+    assert first is not None
+    assert second == first
+    assert fake.builds == 1
+
+
+def test_an_unreadable_floor_gets_a_cache_of_its_own(
+    monkeypatch: pytest.MonkeyPatch, cgr_home: Path
+) -> None:
+    monkeypatch.setattr(fe, "_required_go_version", lambda: None)
+    unknown = fe._cache_dir()
+    monkeypatch.setattr(fe, "_required_go_version", lambda: SUPPORTED_FLOOR)
+
+    assert unknown != fe._cache_dir()
+    assert unknown.parent == fe._cache_dir().parent
+
+
 def test_an_unreadable_go_version_does_not_block_the_build(
     monkeypatch: pytest.MonkeyPatch, go_repo: Path, cgr_home: Path
 ) -> None:
