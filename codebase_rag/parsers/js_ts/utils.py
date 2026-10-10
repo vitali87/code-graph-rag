@@ -427,26 +427,37 @@ def js_ts_own_scope_names(func_node: Node) -> frozenset[str]:
     stack: list[Node] = list(body.children) if body is not None else []
     while stack:
         node = stack.pop()
-        if node.type in _JS_TS_DECLARATION_NAMED:
-            if (name_node := node.child_by_field_name(cs.FIELD_NAME)) is not None and (
-                name := safe_decode_text(name_node)
-            ):
-                names.add(name)
-        if node.type in cs.JS_TS_FUNCTION_NODES:
-            continue
-        if node.type == cs.TS_VARIABLE_DECLARATOR:
-            if (target := node.child_by_field_name(cs.FIELD_NAME)) is not None:
-                names |= js_ts_pattern_names(target)
-        elif node.type == cs.TS_JS_FOR_IN_STATEMENT:
-            if (left := node.child_by_field_name(cs.FIELD_LEFT)) is not None:
-                names |= js_ts_pattern_names(left)
-        elif node.type == cs.TS_JS_CATCH_CLAUSE:
-            if (param := node.child_by_field_name(cs.FIELD_PARAMETER)) is not None:
-                names |= js_ts_pattern_names(param)
-        elif node.type == cs.TS_JS_ASSIGNMENT_EXPRESSION:
-            left = node.child_by_field_name(cs.FIELD_LEFT)
-            if left is not None and left.type == cs.TS_IDENTIFIER:
-                if name := safe_decode_text(left):
-                    names.add(name)
-        stack.extend(node.children)
+        names |= _js_ts_names_bound_by(node)
+        # A nested function binds its own name here, the rest in its scope.
+        if node.type not in cs.JS_TS_FUNCTION_NODES:
+            stack.extend(node.children)
     return frozenset(names)
+
+
+# The node types that bind every name of a pattern, and the field holding it.
+_JS_TS_PATTERN_FIELDS = {
+    cs.TS_VARIABLE_DECLARATOR: cs.FIELD_NAME,
+    cs.TS_JS_FOR_IN_STATEMENT: cs.FIELD_LEFT,
+    cs.TS_JS_CATCH_CLAUSE: cs.FIELD_PARAMETER,
+}
+
+
+def _js_ts_names_bound_by(node: Node) -> set[str]:
+    # The names one node binds in the scope it sits in.
+    names: set[str] = set()
+    if node.type in _JS_TS_DECLARATION_NAMED:
+        name_node = node.child_by_field_name(cs.FIELD_NAME)
+        if name_node is not None and (name := safe_decode_text(name_node)):
+            names.add(name)
+    if (field := _JS_TS_PATTERN_FIELDS.get(node.type)) is not None:
+        if (target := node.child_by_field_name(field)) is not None:
+            names |= js_ts_pattern_names(target)
+    elif node.type == cs.TS_JS_ASSIGNMENT_EXPRESSION:
+        left = node.child_by_field_name(cs.FIELD_LEFT)
+        if (
+            left is not None
+            and left.type == cs.TS_IDENTIFIER
+            and (name := safe_decode_text(left))
+        ):
+            names.add(name)
+    return names
