@@ -16,6 +16,7 @@ so the incremental graph gained an OVERRIDES edge a clean index never has.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -500,3 +501,105 @@ def test_a_forced_build_on_a_reused_updater_matches_a_fresh_one(
     )
     assert _calls(store) == fresh_calls
     assert _snapshot(store) == _snapshot(fresh)
+
+
+# `Upper` stops implementing `Strategy` but keeps its `translate`: a clean
+# index of the edited tree has no implementer, so no companion edge.
+JAVA_UPPER_UNBOUND = JAVA_UPPER.replace(" implements Strategy", "")
+
+FRESH_REINGEST = "fresh-reingest"
+REUSED_REINGEST = "reused-reingest"
+REUSED_RUN = "reused-run"
+
+
+def _resync(
+    store: _StatefulIngestor,
+    root: Path,
+    updater: GraphUpdater,
+    edits: dict[str, str],
+    mode: str,
+) -> None:
+    # A fresh updater reads the pairs back from the graph before the scoped
+    # delete; a reused one also holds the pairs its own earlier parse recorded.
+    cache_mtime = (root / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    _write(root, edits)
+    for rel in edits:
+        os.utime(root / rel, (cache_mtime + 1, cache_mtime + 1))
+    if mode == REUSED_RUN:
+        updater.run(force=False)
+    elif mode == REUSED_REINGEST:
+        updater.reingest(sorted(edits))
+    else:
+        _updater(store, root).reingest(sorted(edits))
+
+
+@pytest.mark.parametrize("mode", [FRESH_REINGEST, REUSED_REINGEST, REUSED_RUN])
+def test_a_sync_retires_an_implementer_the_edit_removed(
+    temp_repo: Path, mode: str
+) -> None:
+    root = temp_repo / PROJECT
+    _write(root, JAVA)
+    store = _StatefulIngestor()
+    updater = _index(store, root, force=True)
+    assert JAVA_UPPER_QN in {
+        edge[1] for edge in _calls_from(_calls(store), JAVA_CALLER_QN)
+    }, "fixture must reach the sole implementer's method before the edit"
+
+    _resync(store, root, updater, {"src/demo/Upper.java": JAVA_UPPER_UNBOUND}, mode)
+
+    clean_store = _StatefulIngestor()
+    _index(clean_store, root, force=True)
+    clean_calls = _calls(clean_store)
+    assert {edge[1] for edge in _calls_from(clean_calls, JAVA_CALLER_QN)} == {
+        f"{PROJECT}.src.demo.Strategy.Strategy.translate(String)"
+    }
+    assert _calls_from(_calls(store), JAVA_CALLER_QN) == _calls_from(
+        clean_calls, JAVA_CALLER_QN
+    )
+    assert _calls(store) == clean_calls
+    assert _snapshot(store) == _snapshot(clean_store)
+
+
+@pytest.mark.parametrize("mode", [FRESH_REINGEST, REUSED_REINGEST, REUSED_RUN])
+@pytest.mark.parametrize(
+    ("files", "edited"),
+    [
+        (JAVA, "src/demo/Caller.java"),
+        (JAVA, "src/demo/Strategy.java"),
+        (JAVA, "src/demo/Upper.java"),
+        (JAVA_OVERRIDE_ORDER, "src/demo/Caller.java"),
+        (RUST, "src/strategy.rs"),
+        (RUST_PRIMITIVE, "src/lexical/algorithm.rs"),
+        (RUST_PRIMITIVE, "src/lexical/errors.rs"),
+        (RUST_EMPTY_PRIMITIVE_IMPL, "src/caller.rs"),
+        (RUST_EMPTY_PRIMITIVE_IMPL, "src/strategy.rs"),
+    ],
+    ids=[
+        "java-caller",
+        "java-interface",
+        "java-implementer",
+        "java-unchanged-override-order",
+        "rust-trait",
+        "rust-caller-of-a-primitive-impl",
+        "rust-primitive-impl",
+        "rust-caller-of-a-trait-with-an-untraceable-second-impl",
+        "rust-trait-with-an-untraceable-second-impl",
+    ],
+)
+def test_a_sync_keeps_the_pairs_a_clean_index_holds(
+    temp_repo: Path, files: dict[str, str], edited: str, mode: str
+) -> None:
+    # The pairs of the re-parsed files are dropped and re-recorded, so an
+    # interface or implementer re-parsed here, and every unchanged pair, must
+    # come out of the sync as a clean index has them.
+    root = temp_repo / PROJECT
+    _write(root, files)
+    store = _StatefulIngestor()
+    updater = _index(store, root, force=True)
+    clean_calls, clean = _calls(store), _snapshot(store)
+    edit = (root / edited).read_text(encoding="utf-8") + f"{_comment(edited)} x\n"
+
+    _resync(store, root, updater, {edited: edit}, mode)
+
+    assert _calls(store) == clean_calls
+    assert _snapshot(store) == clean

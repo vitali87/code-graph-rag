@@ -1208,6 +1208,22 @@ def _drop_class_keyed_entry(
     owner_module.pop(qn, None)
 
 
+def _drop_implementers(
+    implementers_by_interface: dict[str, set[str]], removed: set[str]
+) -> None:
+    """Forget the parsed implementer pairs of classes a removed file declared."""
+    # A class that stopped implementing an interface kept its pair on a
+    # reused updater, and a call typed to the interface still reached its
+    # method as the sole implementer's (#2403 review). The re-parse records
+    # the pairs the class still has. In place: the call resolver holds the
+    # map by reference.
+    for interface_qn in list(implementers_by_interface):
+        implementers = implementers_by_interface[interface_qn]
+        implementers -= removed
+        if not implementers:
+            del implementers_by_interface[interface_qn]
+
+
 def _advance_past_settled(progress: Progress, task: TaskID, scan: _FileScan) -> None:
     """Advance the bar past the files the hash pass settled without a parse."""
     if scan.skipped_count or scan.unreadable_count:
@@ -4964,7 +4980,8 @@ class GraphUpdater:
         self, module_qn_prefixes: set[str], file_path: Path
     ) -> None:
         """Drop a removed file's entries from `class_inheritance`,
-        `class_field_types` and the C# partial groups.
+        `class_field_types`, the C# partial groups and the parsed implementer
+        pairs.
 
         All three are keyed by a CLASS qn; the first two were never mentioned
         in `remove_file_from_state`, so a deleted file's rows outlived it on a
@@ -5019,6 +5036,7 @@ class GraphUpdater:
         # any of them would leave those readers on the pre-prune state.
         for qn in stale:
             _drop_class_keyed_entry(processor, owner_module, qn)
+        _drop_implementers(processor.interface_implementers, stale)
 
     @staticmethod
     def _under(qn: str, module_qn_prefixes: Collection[str]) -> bool:
@@ -7762,6 +7780,15 @@ class GraphUpdater:
             )
         )
         self._reingest_delete(reparse, gone, hashes)
+        # A fresh updater read the implementer pairs back BEFORE that delete,
+        # so a class the edit stopped implementing still counted as the sole
+        # implementer and the re-parsed caller kept its edge (#2403 review).
+        # Read back again now, as run() does after its own delete. The parsed
+        # pairs stay: the re-parse records the deleted files' pairs, and the
+        # unchanged files' include impls the graph cannot show.
+        self._rehydrate_interface_implementers(
+            {cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT}
+        )
         self._resync_dependencies((*reparse, *gone), reparse)
         parsed = self._reingest_reparse(reparse, gone)
         self._log_unparsable_manifests()
