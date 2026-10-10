@@ -167,6 +167,16 @@ class FunctionRegistryTrie:
             self._simple_name_lookup[name].add(qualified_name)
         self._invalidate_ending_with_cache(name)
 
+    def invalidate_name(self, name: str) -> None:
+        """Drop a `find_ending_with` answer cached for `name`.
+
+        For a caller that removes qns from the simple-name index itself:
+        `__delitem__` invalidates only a qn's last segment, never the name
+        `index_name` or a parser added it under (`Info` for
+        `ILog.Info(string)`).
+        """
+        self._invalidate_ending_with_cache(name)
+
     def get(
         self, qualified_name: QualifiedName, default: NodeType | None = None
     ) -> NodeType | None:

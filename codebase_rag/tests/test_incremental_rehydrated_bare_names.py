@@ -14,6 +14,8 @@ import os
 from collections import defaultdict
 from pathlib import Path
 
+import pytest
+
 from codebase_rag import constants as cs
 from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.graph_updater import GraphUpdater
@@ -128,3 +130,26 @@ def test_a_name_indexed_late_reaches_a_lookup_already_cached() -> None:
     registry.index_name("p.ILog.Info(string)", "Info")
 
     assert registry.find_ending_with("Info") == ["p.ILog.Info(string)"]
+
+
+@pytest.mark.parametrize("incremental", [False, True], ids=["parsed", "rehydrated"])
+def test_a_removed_definition_leaves_no_cached_name_lookup(
+    temp_repo: Path, incremental: bool
+) -> None:
+    # `Info` is not `ILog.Info(string)`'s last segment, so deleting the qn
+    # does not invalidate a lookup cached for `Info`; dropping it from the
+    # name's set must, or a reused updater (watch, MCP) still resolves a
+    # call to the removed method.
+    root = temp_repo / "proj"
+    _write(root, _FILES)
+    store = _StatefulIngestor()
+    updater = _index(store, root, force=True)
+    if incremental:
+        _edit(root, "Tests.cs", _FILES["Tests.cs"].replace(*_EDIT))
+        updater = _index(store, root, force=False)
+    registry = updater.function_registry
+    assert "proj.ILog.App.ILog.Info(string)" in registry.find_ending_with("Info")
+
+    updater.remove_file_from_state(root / "ILog.cs")
+
+    assert registry.find_ending_with("Info") == ["proj.Levels.App.Levels.Info"]
