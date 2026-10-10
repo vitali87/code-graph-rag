@@ -413,9 +413,11 @@ HELP_MAX_WAIT = (
 HELP_UPDATE_GRAPH = (
     "Parse the repository, sync its graph, then exit without starting the "
     "assistant (cgr start already syncs before it starts), so it cannot be "
-    "combined with --ask-agent or --projects. With --workspace, sync each of "
-    "the workspace's repositories instead, then start the assistant scoped to "
-    "the workspace. Cannot be combined with --no-sync."
+    "combined with --ask-agent, --output-format json or --projects. With "
+    "--workspace, sync each of the workspace's repositories instead, then "
+    "start the assistant scoped to the workspace, which takes --ask-agent, "
+    "--output-format and --projects as usual. Cannot be combined with "
+    "--no-sync in either case."
 )
 HELP_CLEAN_DB = (
     "DESTRUCTIVE: Delete every project from the shared graph and clear the selected "

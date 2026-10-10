@@ -72,7 +72,7 @@ cgr start --repo-path /path/to/repo [OPTIONS]
 | Option | Description |
 |------|-----------|
 | `--repo-path` | Repository to open. Defaults to the current directory. |
-| `--update-graph` | Parse the repository, sync its graph, then exit without starting the assistant (cgr start already syncs before it starts), so it cannot be combined with --ask-agent or --projects. With --workspace, sync each of the workspace's repositories instead, then start the assistant scoped to the workspace. Cannot be combined with --no-sync. |
+| `--update-graph` | Parse the repository, sync its graph, then exit without starting the assistant (cgr start already syncs before it starts), so it cannot be combined with --ask-agent, --output-format json or --projects. With --workspace, sync each of the workspace's repositories instead, then start the assistant scoped to the workspace, which takes --ask-agent, --output-format and --projects as usual. Cannot be combined with --no-sync in either case. |
 | `--clean` | DESTRUCTIVE: Delete every project from the shared graph and clear the selected repository's sync cache. With --update-graph, rebuild after deletion. Asks for confirmation when other projects would be destroyed; use --yes to skip the prompt. |
 | `--yes`, `-y` | Answer yes to destructive confirmations, such as the one --clean asks before deleting other projects from the shared graph. |
 | `--output`, `-o` | Write this repository's project graph to PATH as JSON. Requires --update-graph. Use cgr export for the whole shared graph. |

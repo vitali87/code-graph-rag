@@ -21,6 +21,7 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
+from codebase_rag import cli_help as ch
 from codebase_rag import constants as cs
 from codebase_rag.cli import _launch_session, _run_graph_sync, app
 from codebase_rag.cli_runtime import app_context
@@ -533,6 +534,20 @@ def test_a_workspace_update_graph_still_refuses_no_sync(
     assert "exits without starting the assistant" not in out
     sync.assert_not_called()
     session.assert_not_called()
+
+
+def test_the_help_refuses_the_assistants_options_for_a_repository_only() -> None:
+    # CodeRabbit review of PR 2507: the help said --update-graph "cannot be
+    # combined with --ask-agent or --projects", with no word of the workspace
+    # update this PR lets open the assistant, which reads them as usual.
+    repository, _, workspace = ch.HELP_UPDATE_GRAPH.partition("With --workspace")
+    for option in ("--ask-agent", "--output-format", "--projects"):
+        assert option in workspace, option
+    # Negative: a repository's --update-graph still refuses them, and every
+    # mode --no-sync.
+    for option in ("--ask-agent", "--projects"):
+        assert option in repository, option
+    assert "--no-sync" in workspace
 
 
 @pytest.fixture
