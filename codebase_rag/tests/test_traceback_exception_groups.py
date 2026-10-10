@@ -173,7 +173,8 @@ def test_a_task_group_lists_each_failed_task(temp_repo: Path) -> None:
     )
     # The group's stack runs through asyncio to the `async with` in main.
     names = [frame.qualname for frame in parsed.frames]
-    assert names[0] == "<module>" and "main" in names
+    assert names[0] == "<module>"
+    assert "main" in names
     assert [_outline(member) for member in parsed.members] == [
         ("KeyError", "'price'", ["total", "<genexpr>"], []),
         ("ValueError", "item has no name", ["name"], []),
@@ -307,7 +308,8 @@ def test_an_error_raised_while_handling_a_group_has_no_members() -> None:
         "RuntimeError",
         "cleanup failed",
     )
-    assert parsed.members == () and parsed.omitted_members == 0
+    assert parsed.members == ()
+    assert parsed.omitted_members == 0
 
 
 def test_one_member_pasted_alone_still_parses(temp_repo: Path) -> None:
@@ -465,7 +467,8 @@ def test_explain_reports_the_group_and_each_member(temp_repo: Path) -> None:
         ("KeyError", ["validate", "check_price"], 1.0),
         ("ValueError", ["validate", "check_name"], 1.0),
     ]
-    assert report.note is not None and "2 sub-exceptions" in report.note
+    assert report.note is not None
+    assert "2 sub-exceptions" in report.note
     assert "members" in report.note
     assert all(member.note is None for member in report.members)
 
@@ -488,7 +491,8 @@ def test_rank_anchors_each_member_on_its_own_failure(temp_repo: Path) -> None:
     for member in report.members:
         assert [_short(c.qualified_name) for c in member.candidates][0] == "validate"
         assert member.note is None
-    assert report.note is not None and "under members" in report.note
+    assert report.note is not None
+    assert "under members" in report.note
 
 
 def test_members_from_another_checkout_resolve_under_the_inferred_root(
@@ -525,7 +529,8 @@ def test_a_logged_group_resolves_its_members_from_another_checkout(
 
     report = explain_traceback(_fetch_all(store), project, temp_repo, text)
 
-    assert report.exception_type == "ExceptionGroup" and report.frames == ()
+    assert report.exception_type == "ExceptionGroup"
+    assert report.frames == ()
     assert [member.resolution.rate for member in report.members] == [1.0, 1.0]
 
 
@@ -550,7 +555,8 @@ def test_a_group_whose_only_member_was_cut_still_says_so(tmp_path: Path) -> None
     report = explain_traceback(lambda _q, _p=None: [], "p", tmp_path, text)
 
     assert (report.members, report.omitted_members) == ((), 1)
-    assert report.note is not None and "left out 1 more" in report.note
+    assert report.note is not None
+    assert "left out 1 more" in report.note
 
 
 def test_a_plain_traceback_reports_no_members(temp_repo: Path) -> None:
@@ -565,8 +571,10 @@ def test_a_plain_traceback_reports_no_members(temp_repo: Path) -> None:
     ranked = rank_root_causes(fetch_all, project, temp_repo, text)
 
     assert explained.exception_type == "KeyError"
-    assert explained.members == () and explained.note is None
-    assert _short(ranked.failing) == "check_price" and ranked.members == ()
+    assert explained.members == ()
+    assert explained.note is None
+    assert _short(ranked.failing) == "check_price"
+    assert ranked.members == ()
 
 
 # --- MCP ----------------------------------------------------------------------
