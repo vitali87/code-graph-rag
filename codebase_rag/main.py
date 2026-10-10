@@ -2029,6 +2029,12 @@ def _initialize_services_and_agent(
     search is deliberately absent from the orchestrator: it belongs to the
     research sub-agent instead (issue #1128).
     """
+    # Fail closed: `None` is a session with no scope at all (`cgr optimize`),
+    # but an empty list is a scope that came out empty, such as a workspace
+    # with no repositories, and the prompts and the query tool below would
+    # read it as every project in the graph (Greptile review of PR 2507).
+    if active_projects is not None and not active_projects:
+        raise ValueError(ex.EMPTY_PROJECT_SCOPE)
     _validate_provider_config(
         cs.ModelRole.ORCHESTRATOR, settings.active_orchestrator_config
     )
