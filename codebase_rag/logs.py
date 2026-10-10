@@ -224,6 +224,22 @@ EMBEDDING_RECONCILE_OK = (
 )
 EMBEDDING_RECONCILE_MISSING = "Vector store reconciliation: {missing} of {expected} embeddings missing (IDs: {sample_ids})"
 EMBEDDING_RECONCILE_FAILED = "Vector store reconciliation check failed: {error}"
+EMBEDDING_STALE_REMOVED = (
+    "Removed {count} stale embeddings of project '{project}' (functions/methods "
+    "deleted or re-created since they were stored)"
+)
+EMBEDDING_STALE_FAILED = (
+    "Failed to remove stale embeddings for project '{project}': {error}"
+)
+EMBEDDING_STALE_SKIPPED = (
+    "Skipped removing stale embeddings for project '{project}': the project "
+    "registry could not be read, so a nested project's vectors cannot be told "
+    "from this one's; the next sync removes them"
+)
+VECTOR_STORE_REKEYED = (
+    "Removed {count} {backend} vectors of project '{project}' that were keyed "
+    "by Memgraph node id; its vectors are keyed by symbol now"
+)
 VECTOR_STORE_BACKEND_UNAVAILABLE = (
     "Vector store backend '{backend}' dependencies are not available"
 )
