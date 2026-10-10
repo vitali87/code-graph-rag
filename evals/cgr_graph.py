@@ -696,6 +696,49 @@ class _StatefulIngestor:
                 )
         return rows
 
+    def _delta_module_importers(
+        self, prefix: str, paths: set[str], longer_project_prefixes: set[str]
+    ) -> list[ResultRow]:
+        # One row per IMPORTS edge between project modules whose target sits
+        # at one of `paths`, whatever name it binds (issue #3266).
+        module = cs.NodeLabel.MODULE.value
+        rows: list[ResultRow] = []
+        for node_id, props in self.nodes.items():
+            label, uid = node_id
+            source_qn = _str(uid)
+            if (
+                label != module
+                or not source_qn.startswith(prefix)
+                or _shadowed_by_longer_owner(source_qn, longer_project_prefixes)
+            ):
+                continue
+            for edge in self._out.get(node_id, ()):
+                _fl, fv, rel, tl, tv, _site = edge
+                if (
+                    rel != cs.RelationshipType.IMPORTS.value
+                    or tl != module
+                    or not _str(tv).startswith(prefix)
+                    or _shadowed_by_longer_owner(_str(tv), longer_project_prefixes)
+                    or self._delta_path_of(tl, tv) not in paths
+                ):
+                    continue
+                edge_props = self.edge_props.get(edge, {})
+                rows.append(
+                    {
+                        cs.KEY_FROM_QN: _result(fv),
+                        cs.KEY_FROM_PATH: _result(props.get(cs.KEY_PATH)),
+                        cs.KEY_TO_QN: _result(tv),
+                        cs.KEY_TO_PATH: _result(self._delta_path_of(tl, tv)),
+                        cs.KEY_IMPORTED_NAME: _result(
+                            edge_props.get(cs.KEY_IMPORTED_NAME)
+                        ),
+                        cs.KEY_ALIAS: _result(edge_props.get(cs.KEY_ALIAS)),
+                        cs.KEY_LINE: _result(edge_props.get(cs.KEY_LINE)),
+                        cs.KEY_COL: _result(edge_props.get(cs.KEY_COL)),
+                    }
+                )
+        return rows
+
     # --- deterministic graph queries the edit operations issue (#1523) -------
 
     _GRAPH_DEFINITION_KEYS = (
@@ -1086,6 +1129,22 @@ class _StatefulIngestor:
             return self._delta_module_imports(prefix, longer_project_prefixes)
         if query == cq.CYPHER_DELTA_NAMED_IMPORTS:
             return self._delta_named_imports(prefix, paths, longer_project_prefixes)
+        if query == cq.CYPHER_DELTA_MODULES:
+            return [
+                {
+                    cs.KEY_QUALIFIED_NAME: _result(props.get(cs.KEY_QUALIFIED_NAME)),
+                    cs.KEY_PATH: _result(props.get(cs.KEY_PATH)),
+                }
+                for (label, _uid), props in self.nodes.items()
+                if label == module
+                and props.get(cs.KEY_PATH) in paths
+                and _str(props.get(cs.KEY_QUALIFIED_NAME)).startswith(prefix)
+                and not _shadowed_by_longer_owner(
+                    _str(props.get(cs.KEY_QUALIFIED_NAME)), longer_project_prefixes
+                )
+            ]
+        if query == cq.CYPHER_DELTA_MODULE_IMPORTERS:
+            return self._delta_module_importers(prefix, paths, longer_project_prefixes)
         if query == cq.CYPHER_DEAD_CODE_RELS:
             return [
                 {
@@ -1138,6 +1197,8 @@ class _StatefulIngestor:
                 | cq.CYPHER_DELTA_SITES
                 | cq.CYPHER_DELTA_MODULE_IMPORTS
                 | cq.CYPHER_DELTA_NAMED_IMPORTS
+                | cq.CYPHER_DELTA_MODULES
+                | cq.CYPHER_DELTA_MODULE_IMPORTERS
                 | cq.CYPHER_DELTA_CALLERS_OF
                 | cq.CYPHER_DELTA_REMOTE_CALLERS_OF
                 | cq.CYPHER_DELTA_REMOTE_DIRECT_CALLERS_OF

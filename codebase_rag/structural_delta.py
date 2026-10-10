@@ -99,7 +99,9 @@ class Snapshot(NamedTuple):
 
     `definitions` are the symbols defined in the touched files; `callees`
     the definitions elsewhere that the touched files' sites resolve to;
-    `bindings` the by-name imports into and out of the touched files.
+    `bindings` the by-name imports into and out of the touched files;
+    `modules` the (qualified name, path) of each Module at a touched path,
+    and `module_bindings` every import of one of them.
     """
 
     paths: frozenset[str]
@@ -109,6 +111,8 @@ class Snapshot(NamedTuple):
     imports: dict[str, frozenset[str]]
     module_paths: dict[str, str]
     bindings: tuple[ImportBinding, ...] = ()
+    modules: frozenset[tuple[str, str]] = frozenset()
+    module_bindings: tuple[ImportBinding, ...] = ()
 
 
 class RenameFinding(TypedDict):
@@ -127,7 +131,8 @@ class DanglingCaller(TypedDict):
 
 
 class DanglingImporter(TypedDict):
-    """An import statement or `__all__` entry still naming a gone symbol."""
+    """An import statement or `__all__` entry still naming a gone symbol,
+    or an import statement still naming a gone module."""
 
     importer: str
     path: str
@@ -322,6 +327,30 @@ def _binding(row: ResultRow) -> ImportBinding:
     )
 
 
+def _touched_modules(
+    fetch_all: QueryFn, params: PropertyDict
+) -> frozenset[tuple[str, str]]:
+    """The (qualified name, path) of each Module at a touched path."""
+    return frozenset(
+        (qn, _text(row.get(cs.KEY_PATH)))
+        for row in fetch_all(cq.CYPHER_DELTA_MODULES, params)
+        if (qn := _text(row.get(cs.KEY_QUALIFIED_NAME)))
+    )
+
+
+def _module_import_bindings(
+    fetch_all: QueryFn, params: PropertyDict
+) -> tuple[ImportBinding, ...]:
+    """Every import of a Module at a touched path."""
+    return tuple(
+        binding
+        for binding in (
+            _binding(row) for row in fetch_all(cq.CYPHER_DELTA_MODULE_IMPORTERS, params)
+        )
+        if binding.importer and binding.module
+    )
+
+
 def _named_import_bindings(
     fetch_all: QueryFn, params: PropertyDict
 ) -> tuple[ImportBinding, ...]:
@@ -418,6 +447,8 @@ def snapshot(
         imports={qn: frozenset(targets) for qn, targets in imports.items()},
         module_paths=module_paths,
         bindings=_named_import_bindings(fetch_all, params),
+        modules=_touched_modules(fetch_all, params),
+        module_bindings=_module_import_bindings(fetch_all, params),
     )
 
 
@@ -1207,6 +1238,104 @@ def _all_findings(
     return out
 
 
+def _gone_modules(before: Snapshot, after: Snapshot) -> dict[str, str]:
+    """The modules at the touched paths the edit took away: qn -> old path.
+
+    A Python module turned into a package keeps its qualified name, so it is
+    not gone; neither is a JS/TS file turned into a directory whose `index`
+    the same specifier now resolves to (`./util` -> `util/index.ts`).
+    """
+    now = {qn for qn, _path in after.modules}
+    return {
+        qn: path
+        for qn, path in before.modules
+        if qn not in now
+        and not (
+            _language(path) in cs.JS_TS_LANGUAGES
+            and f"{qn}{cs.SEPARATOR_DOT}{cs.JS_INDEX_STEM}" in now
+        )
+    }
+
+
+def _module_destinations(
+    before: Snapshot, after: Snapshot, symbols: SymbolDelta, gone: dict[str, str]
+) -> dict[str, str]:
+    """Where each moved module went, when that is unambiguous.
+
+    The rename pass already paired the definitions that moved with it; a
+    module defining nothing (top-level statements only) is paired with the
+    one new module that has its file name.
+    """
+    module_before = {path: qn for qn, path in before.modules}
+    module_after = {path: qn for qn, path in after.modules}
+    targets: dict[str, set[str]] = {}
+    for renamed in symbols["renamed"]:
+        old = before.definitions.get(renamed["old"])
+        new = after.definitions.get(renamed["new"])
+        if old is None or new is None:
+            continue
+        source = module_before.get(old.path, "")
+        if source in gone and (target := module_after.get(new.path)):
+            targets.setdefault(source, set()).add(target)
+    existing = {qn for qn, _path in before.modules}
+    added = {path: qn for path, qn in module_after.items() if qn not in existing}
+    out: dict[str, str] = {}
+    for qn, path in gone.items():
+        found = targets.get(qn) or {
+            new_qn
+            for new_path, new_qn in added.items()
+            if Path(new_path).name == Path(path).name
+        }
+        if len(found) == 1:
+            out[qn] = next(iter(found))
+    return out
+
+
+def _module_findings(
+    before: Snapshot,
+    after: Snapshot,
+    symbols: SymbolDelta,
+    found: list[DanglingImporter],
+) -> list[DanglingImporter]:
+    """Import statements naming a module the edit deleted or moved.
+
+    `import pkg.signals`, `from pkg import util`, `export * from "./util"`
+    and `import * as u` hold the module itself, not a name in it, so no
+    removed symbol leads to them (issue #3266). As with a symbol, an importer
+    the edit left alone still holds the statement the base graph recorded,
+    and one it touched is read after the edit. A statement already listed
+    for a gone name it imports is not listed again.
+    """
+    gone = _gone_modules(before, after)
+    if not gone:
+        return []
+    moved_to = _module_destinations(before, after, symbols, gone)
+    listed = {
+        (d["path"], d["line"], d["col"])
+        for d in found
+        if d["kind"] == cs.DanglingImportKind.IMPORT
+    }
+    candidates = [
+        *(b for b in before.module_bindings if b.importer_path not in after.paths),
+        *(b for b in after.module_bindings if b.importer_path in after.paths),
+    ]
+    return [
+        DanglingImporter(
+            importer=binding.importer,
+            path=binding.importer_path,
+            line=binding.line,
+            col=binding.col,
+            kind=cs.DanglingImportKind.MODULE,
+            name=binding.bound,
+            target=binding.module,
+            renamed_to=moved_to.get(binding.module),
+        )
+        for binding in candidates
+        if binding.module in gone
+        and (binding.importer_path, binding.line, binding.col) not in listed
+    ]
+
+
 def _dangling_importers(
     before: Snapshot,
     after: Snapshot,
@@ -1221,16 +1350,18 @@ def _dangling_importers(
     left the package failing at import time with nothing reported (issue
     #2516). The IMPORTS edge records the name it binds; an entry is listed
     when that name, or an `__all__` string exporting it, points at a symbol
-    the edit removed or renamed and nothing still binds it in its place.
+    the edit removed or renamed and nothing still binds it in its place. An
+    import of a module the edit deleted or moved is listed as well (#3266).
     """
     gone = set(symbols["removed"]) | {r["old"] for r in symbols["renamed"]}
-    if not gone:
-        return []
-    renamed_to = {r["old"]: r["new"] for r in symbols["renamed"]}
-    still = _AfterBindings(after, gone, load, repo_root)
-    found = _import_findings(before, after, gone, renamed_to, still)
-    if repo_root is not None:
-        found.extend(_all_findings(before, after, gone, renamed_to, still))
+    found: list[DanglingImporter] = []
+    if gone:
+        renamed_to = {r["old"]: r["new"] for r in symbols["renamed"]}
+        still = _AfterBindings(after, gone, load, repo_root)
+        found = _import_findings(before, after, gone, renamed_to, still)
+        if repo_root is not None:
+            found.extend(_all_findings(before, after, gone, renamed_to, still))
+    found.extend(_module_findings(before, after, symbols, found))
     unique = {
         (d["kind"], d["path"], d["line"], d["col"], d["name"], d["target"]): d
         for d in found

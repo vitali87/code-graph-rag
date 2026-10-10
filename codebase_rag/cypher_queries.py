@@ -1308,6 +1308,31 @@ RETURN m.qualified_name AS from_qn, m.path AS from_path,
        t.qualified_name AS to_qn, t.path AS to_path,
        r.imported_name AS imported_name,
        r.alias AS alias, r.line AS line, r.col AS col"""
+# The modules at the touched paths, and every import of one (issue #3266):
+# a module the edit deleted or moved leaves each statement naming the module
+# itself dangling -- `import pkg.signals`, `export * from "./util"` -- which
+# the by-name query above, keyed on a symbol, cannot see.
+CYPHER_DELTA_MODULES = """MATCH (n:Module)
+WHERE n.qualified_name STARTS WITH $project_prefix
+  AND ALL(longer_project IN $longer_project_prefixes
+          WHERE n.qualified_name <> longer_project
+            AND NOT n.qualified_name STARTS WITH (longer_project + '.'))
+  AND n.path IN $paths
+RETURN n.qualified_name AS qualified_name, n.path AS path"""
+CYPHER_DELTA_MODULE_IMPORTERS = """MATCH (m:Module)-[r:IMPORTS]->(t:Module)
+WHERE m.qualified_name STARTS WITH $project_prefix
+  AND t.qualified_name STARTS WITH $project_prefix
+  AND ALL(longer_project IN $longer_project_prefixes
+          WHERE m.qualified_name <> longer_project
+            AND NOT m.qualified_name STARTS WITH (longer_project + '.'))
+  AND ALL(longer_project IN $longer_project_prefixes
+          WHERE t.qualified_name <> longer_project
+            AND NOT t.qualified_name STARTS WITH (longer_project + '.'))
+  AND t.path IN $paths
+RETURN m.qualified_name AS from_qn, m.path AS from_path,
+       t.qualified_name AS to_qn, t.path AS to_path,
+       r.imported_name AS imported_name,
+       r.alias AS alias, r.line AS line, r.col AS col"""
 # Context slice reads (issue #1536): trace hotness of the callers of one
 # symbol, the types it returns and accepts, and the sections of the
 # documents whose links point at its file.
