@@ -3254,6 +3254,13 @@ class GraphUpdater:
                 self.factory.definition_processor.cpp_module_interfaces.add(qn)
             else:
                 self._rehydrated_module_qns.add(qn)
+            # An unchanged PHP file's declared namespace, which a
+            # `use function App\\Util\\slug` is matched against (issue #3277).
+            if (
+                isinstance(namespace := row.get(cs.KEY_PHP_NAMESPACE), str)
+                and namespace
+            ):
+                self.factory.import_processor.php_module_namespaces[qn] = namespace
 
     def _rehydrate_definition_row(self, row: ResultRow) -> bool:
         """Re-register one definition row missing locally; True when added."""

@@ -67,10 +67,14 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     # `unresolved_references` (issue #1568) degrades the same way as
     # `unresolved_specifiers`: absent reads as "nothing waited", and the next
     # parse of the module rewrites the list.
+    # `php_namespace` (issue #3277) is read back only by an incremental run's
+    # rehydration; absent reads as "no namespace recorded", as every run did
+    # before #3277, until the file is next parsed.
     "Module": frozenset(
         {
             "absolute_path",
             "end_line",
+            "php_namespace",
             "start_line",
             "unresolved_specifiers",
             "unresolved_references",

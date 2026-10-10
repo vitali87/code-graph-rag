@@ -54,6 +54,7 @@ from .js_ts.module_paths import (
 )
 from .js_ts.reexports import JsExport, follow_js_reexports
 from .lua import utils as lua_utils
+from .php.namespaces import declared_namespace
 from .python_source_roots import discover_python_source_roots, resolve_via_source_roots
 from .rs import utils as rs_utils
 from .stdlib_extractor import (
@@ -5498,23 +5499,10 @@ class ImportProcessor:
         the status quo, and unlike a first-block guess it never asserts an
         answer it does not have.
         """
-        declarations = [
-            child
-            for child in root_node.children
-            if child.type == cs.TS_PHP_NAMESPACE_DEFINITION
-        ]
-        if len(declarations) != 1:
-            return
-        name_node = declarations[0].child_by_field_name(cs.TS_FIELD_NAME)
-        if name_node is None or not name_node.text:
-            # `namespace { ... }` -- the explicit GLOBAL namespace. It has no
-            # name, and binding it to "" would make every unqualified lookup
-            # match it.
-            return
-        declared = safe_decode_with_fallback(name_node)
-        if not declared:
-            return
-        self.php_module_namespaces[module_qn] = declared.replace("\\", cs.SEPARATOR_DOT)
+        # `namespace { ... }` -- the explicit GLOBAL namespace -- has no name,
+        # and binding it to "" would make every unqualified lookup match it.
+        if (declared := declared_namespace(root_node)) is not None:
+            self.php_module_namespaces[module_qn] = declared
 
     def _parse_php_imports(
         self, captures: dict, module_qn: str, root_node: Node | None = None
