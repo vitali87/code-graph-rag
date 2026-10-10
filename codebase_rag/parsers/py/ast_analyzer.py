@@ -368,6 +368,23 @@ def _locally_bound_names(caller: Node, import_map: dict[str, str]) -> frozenset[
     return frozenset(names)
 
 
+def own_scope_names(function: Node) -> frozenset[str]:
+    """Every name a def binds itself, and so does not read from the def
+    around it: its parameters, whatever its own statements bind, and what it
+    declares `global` or `nonlocal` (a name it may rebind, whose type is no
+    longer the enclosing one's to lend). Unlike `_locally_bound_names`, the
+    enclosing defs' names are not included: they are what a closure
+    captures (issue #3200)."""
+    names = set(_parameter_names(function))
+    names.update(
+        name
+        for _binder, identifier in _bindings_in(function)
+        if (name := safe_decode_text(identifier))
+    )
+    names.update(_declared_non_local(function))
+    return frozenset(names)
+
+
 # A comprehension is a scope of its own; a lambda is one too, but unlike a
 # def its calls are the enclosing function's (issue #2666).
 _PY_COMPREHENSION_TYPES = frozenset(

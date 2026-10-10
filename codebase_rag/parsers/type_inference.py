@@ -22,14 +22,46 @@ from .go import GoTypeInferenceEngine
 from .import_processor import ImportProcessor
 from .java import JavaTypeInferenceEngine
 from .js_ts import JsTypeInferenceEngine
+from .js_ts.utils import js_ts_own_scope_names
 from .lua import LuaTypeInferenceEngine
 from .py import PythonTypeInferenceEngine, resolve_class_name
+from .py.ast_analyzer import own_scope_names
 from .rs import RustTypeInferenceEngine
 from .rs import utils as rs_utils
 from .utils import follow_reexports
 
 if TYPE_CHECKING:
     from .factory import ASTCacheProtocol
+
+
+# Languages whose nested functions and named arrows read the enclosing
+# function's locals and whose maps type them by name (issue #3200).
+_CLOSURE_LANGUAGES = frozenset(
+    {
+        cs.SupportedLanguage.PYTHON,
+        cs.SupportedLanguage.JS,
+        cs.SupportedLanguage.TS,
+        cs.SupportedLanguage.TSX,
+    }
+)
+
+
+def _enclosing_function(
+    node: ASTNode, language: cs.SupportedLanguage
+) -> ASTNode | None:
+    # The function whose locals `node` closes over. A Python class body is
+    # not a scope its methods see, so it is passed through like any block.
+    function_types = (
+        (cs.TS_PY_FUNCTION_DEFINITION,)
+        if language == cs.SupportedLanguage.PYTHON
+        else cs.JS_TS_FUNCTION_NODES
+    )
+    current = node.parent
+    while current is not None:
+        if current.type in function_types:
+            return current
+        current = current.parent
+    return None
 
 
 def _shared[T](value: T | None, empty: Callable[[], T]) -> T:
@@ -91,6 +123,8 @@ class TypeInferenceEngine:
         "dart_extends_type_args",
         "dart_constructor_qns",
         "dart_extension_on_types",
+        "_scope_types_memo",
+        "_scope_types_module",
     )
 
     def __init__(
@@ -179,6 +213,11 @@ class TypeInferenceEngine:
         self.python_external_sites = _shared(python_external_sites, set)
         self._go_free_fn_index: dict[tuple[str, str], str] = {}
         self._go_free_fn_index_size = -1
+        # The own-scope types of each enclosing function, for the module
+        # whose callers are being walked: every nested caller of a function
+        # reads the same map, which would otherwise be rebuilt per caller.
+        self._scope_types_memo: dict[tuple[int, int, int], dict[str, str]] = {}
+        self._scope_types_module: str | None = None
         # Shared reference (as with class_field_types): C# partial-class part
         # groups, populated during ingestion and read by the C# resolver to
         # span all parts of a split type.
@@ -337,6 +376,9 @@ class TypeInferenceEngine:
         ):
             if engine is not None:
                 engine._rel_to_module.clear()
+        # A re-walked module's trees are new; a node id could come round again.
+        self._scope_types_memo.clear()
+        self._scope_types_module = None
 
     @property
     def lua_type_inference(self) -> LuaTypeInferenceEngine:
@@ -387,6 +429,13 @@ class TypeInferenceEngine:
         local = self._build_local_variable_type_map(
             caller_node, module_qn, language, class_context
         )
+        if language in _CLOSURE_LANGUAGES:
+            # Below the caller's own bindings, above the field overlay: a
+            # bare name is the closure's variable, never a field.
+            if captured := self._captured_variable_types(
+                caller_node, module_qn, language, class_context
+            ):
+                local = {**captured, **local}
         # When the caller is a method, overlay its class's member-field types as a
         # base so a bare `field_.method()` receiver resolves; a same-named parameter
         # or local shadows a field, so the local map wins on conflict.
@@ -418,6 +467,71 @@ class TypeInferenceEngine:
         elif language == cs.SupportedLanguage.DART:
             self._enrich_dart_call_locals(caller_node, local)
         return local
+
+    def _captured_variable_types(
+        self,
+        caller_node: ASTNode,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        class_context: str | None,
+    ) -> dict[str, str]:
+        """Types of the variables a nested function reads from the functions
+        around it (issue #3200). `r = Range()` in `outer` types `r.reset()`
+        in `outer.inner` too, unless `inner` or a function between them binds
+        `r` itself. Innermost scope first, so the nearest binding decides."""
+        scope = _enclosing_function(caller_node, language)
+        if scope is None:
+            # A top-level function or a method: nothing to capture, and its
+            # own names need not be listed.
+            return {}
+        hidden = set(self._own_scope_names(caller_node, language))
+        captured: dict[str, str] = {}
+        while scope is not None:
+            # Both builders type only what `scope` itself binds, so every
+            # entry is the enclosing scope's own variable (or `self.<attr>`).
+            types = self._scope_variable_types(
+                scope, module_qn, language, class_context
+            )
+            for name, type_name in types.items():
+                if name.split(cs.SEPARATOR_DOT, 1)[0] not in hidden:
+                    captured.setdefault(name, type_name)
+            hidden |= self._own_scope_names(scope, language)
+            scope = _enclosing_function(scope, language)
+        return captured
+
+    @staticmethod
+    def _own_scope_names(
+        func_node: ASTNode, language: cs.SupportedLanguage
+    ) -> frozenset[str]:
+        if language == cs.SupportedLanguage.PYTHON:
+            return own_scope_names(func_node)
+        return js_ts_own_scope_names(func_node)
+
+    def _scope_variable_types(
+        self,
+        scope: ASTNode,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        class_context: str | None,
+    ) -> dict[str, str]:
+        if module_qn != self._scope_types_module:
+            self._scope_types_memo.clear()
+            self._scope_types_module = module_qn
+        key = (scope.id, scope.start_byte, scope.end_byte)
+        if (cached := self._scope_types_memo.get(key)) is not None:
+            return cached
+        if language == cs.SupportedLanguage.PYTHON:
+            # The Python map is already this body's own: names a nested def
+            # binds are left out of it (#1922).
+            types = self.python_type_inference.build_local_variable_type_map(
+                scope, module_qn, class_context
+            )
+        else:
+            types = self.js_type_inference.own_scope_variable_types(
+                scope, module_qn, language
+            )
+        self._scope_types_memo[key] = types
+        return types
 
     def collect_rust_span_bindings(
         self, caller_node: ASTNode, module_qn: str, class_context: str | None
