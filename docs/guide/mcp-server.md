@@ -200,7 +200,7 @@ claude mcp add --transport stdio code-graph-rag-workspace \
 
 ![A workspace server for the backend workspace added and connected, then list_projects showing only the workspace's two projects and resolve refusing a project outside it](../assets/demos/mcp-server-workspace.gif)
 
-A workspace server lists the workspace's indexed projects, refuses a `project` argument outside the workspace (naming the projects it serves), defaults a request without `project` to the repo rooted at `TARGET_REPO_PATH` or to the only repo, and reads source for each repo from its own root. The workspace narrows the choice only: a workspace repo that is not indexed is still refused as unknown, exactly as without a workspace.
+A workspace server lists the workspace's indexed projects, refuses a `project` argument outside the workspace (naming the projects it serves), defaults a request without `project` to the repo rooted at `TARGET_REPO_PATH` or to the only repo, and reads source for each repo from its own root. The workspace narrows the choice only: a workspace repo that is not indexed is still refused as unknown, exactly as without a workspace, but the refusal's close matches and its list of indexed projects come from the workspace's own projects, never from others in the shared graph.
 
 ## Troubleshooting
 
