@@ -491,7 +491,10 @@ MCP_EXPLAIN_TRACEBACK = (
     "runner, a container, a teammate's machine, Windows) is matched by the "
     "checkout root its frames share, reported as inferred_checkout_root; "
     "pass path_prefix_map when that root cannot be inferred. When nothing "
-    "resolves, note says why. Use this to ground a failure report in "
+    "resolves, note says why. For an ExceptionGroup, frames is the stack "
+    "that raised the group, and members holds each sub-exception (nested "
+    "groups included) with its own frames; omitted_members counts those "
+    "the traceback itself left out. Use this to ground a failure report in "
     "the indexed code before deciding where to look."
 )
 
@@ -514,7 +517,9 @@ MCP_RANK_ROOT_CAUSES = (
     "index_repository or update_repository, then reindex after changing it. "
     "Frames from another checkout "
     "resolve as in explain_traceback, and resolution plus note say why a "
-    "ranking is empty."
+    "ranking is empty. For an ExceptionGroup, the ranking anchors where the "
+    "group was raised, and members ranks each sub-exception against its own "
+    "failing frame."
 )
 
 MCP_CONTEXT = (
@@ -536,7 +541,8 @@ MCP_PARAM_BUDGET_TOKENS = "Token budget for the slice (default 4000)."
 MCP_PARAM_TRACEBACK_TEXT = (
     "The traceback text exactly as Python printed it (the 'Traceback "
     "(most recent call last):' block; chained tracebacks are fine, the "
-    "final propagated section is used)"
+    "final propagated section is used, and an ExceptionGroup's "
+    "sub-exceptions are each analysed under members)"
 )
 MCP_PARAM_PATH_PREFIX_MAP = (
     "Optional. Maps the checkout root the traceback was recorded under to a "

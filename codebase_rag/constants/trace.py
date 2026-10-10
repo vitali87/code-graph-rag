@@ -198,6 +198,18 @@ TRACEBACK_NOTE_NOTHING_RESOLVED = (
     'e.g. {{"/app": "."}}.'
 )
 
+# An ExceptionGroup's report covers the group and, under `members`, each
+# sub-exception it printed (issue #3235).
+TRACEBACK_NOTE_EXCEPTION_GROUP = (
+    "{type} with {listed} sub-exception{plural}: frames is the stack that "
+    "raised the group, and each sub-exception is analysed on its own under "
+    "members."
+)
+TRACEBACK_NOTE_MEMBERS_OMITTED = (
+    " The traceback itself left out {omitted} more, past its "
+    "max_group_width or max_group_depth."
+)
+
 TRACE_ERR_BAD_HEADER = "Trace file {path} does not start with a valid cgr trace header."
 TRACE_ERR_VERSION = (
     "Trace file {path} has format version {found}; this build reads version {expected}."
