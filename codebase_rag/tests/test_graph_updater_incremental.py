@@ -11,6 +11,7 @@ from loguru import logger
 
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as graph_updater_module
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import (
     BoundedASTCache,
     FunctionRegistryTrie,
@@ -85,7 +86,7 @@ def test_an_edited_file_is_deleted_exactly_once(
     ).run()
     module_a = py_project / "module_a.py"
     module_a.write_text(module_a.read_text() + "\n")
-    cache_mtime = (py_project / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    cache_mtime = state_file(py_project, cs.HASH_CACHE_FILENAME).stat().st_mtime
     os.utime(module_a, (cache_mtime + 1, cache_mtime + 1))
 
     mock_ingestor.reset_mock()
@@ -181,7 +182,7 @@ class TestHashFile:
 
 class TestHashCacheIO:
     def test_save_and_load_cache(self, temp_repo: Path) -> None:
-        cache_path = temp_repo / cs.HASH_CACHE_FILENAME
+        cache_path = state_file(temp_repo, cs.HASH_CACHE_FILENAME)
         data = {"module_a.py": "abc123", "module_b.py": "def456"}
         _save_hash_cache(cache_path, data)
 
@@ -190,11 +191,11 @@ class TestHashCacheIO:
         assert loaded == data
 
     def test_load_nonexistent_returns_empty(self, temp_repo: Path) -> None:
-        cache_path = temp_repo / cs.HASH_CACHE_FILENAME
+        cache_path = state_file(temp_repo, cs.HASH_CACHE_FILENAME)
         assert _load_hash_cache(cache_path) == {}
 
     def test_load_corrupted_returns_empty(self, temp_repo: Path) -> None:
-        cache_path = temp_repo / cs.HASH_CACHE_FILENAME
+        cache_path = state_file(temp_repo, cs.HASH_CACHE_FILENAME)
         cache_path.write_text("not valid json {{{")
         assert _load_hash_cache(cache_path) == {}
 
@@ -204,7 +205,7 @@ class TestHashCacheIO:
         assert cache_path.is_file()
 
     def test_cache_file_is_valid_json(self, temp_repo: Path) -> None:
-        cache_path = temp_repo / cs.HASH_CACHE_FILENAME
+        cache_path = state_file(temp_repo, cs.HASH_CACHE_FILENAME)
         data = {"file.py": "sha256hash"}
         _save_hash_cache(cache_path, data)
         with cache_path.open() as f:
@@ -358,7 +359,7 @@ class TestIncrementalUpdates:
             parsers=parsers,
             queries=queries,
         )
-        cache_path = py_project / cs.HASH_CACHE_FILENAME
+        cache_path = state_file(py_project, cs.HASH_CACHE_FILENAME)
         assert not cache_path.exists()
 
         updater.run()
@@ -385,7 +386,7 @@ class TestIncrementalUpdates:
 
         updater.run()
 
-        cache_path = py_project / cs.HASH_CACHE_FILENAME
+        cache_path = state_file(py_project, cs.HASH_CACHE_FILENAME)
         assert cache_path.is_file()
         with cache_path.open() as f:
             data = json.load(f)
@@ -404,7 +405,7 @@ class TestIncrementalUpdates:
         )
         updater.run()
 
-        cache_path = py_project / cs.HASH_CACHE_FILENAME
+        cache_path = state_file(py_project, cs.HASH_CACHE_FILENAME)
         with cache_path.open() as f:
             old_data = json.load(f)
         assert "module_b.py" in old_data
@@ -639,7 +640,7 @@ class TestCrashBetweenCacheSaveAndFlush:
             queries=queries,
         ).run()
 
-        cache = py_project / cs.HASH_CACHE_FILENAME
+        cache = state_file(py_project, cs.HASH_CACHE_FILENAME)
         before = cache.read_text(encoding="utf-8")
         assert "module_b.py" in before, (
             "fixture guard: run 1 wrote no usable cache, so leaving it intact "
@@ -741,7 +742,7 @@ class TestCrashBetweenCacheSaveAndFlush:
             queries=queries,
         ).run()
 
-        mtimes_path = py_project / cs.DIR_MTIMES_FILENAME
+        mtimes_path = state_file(py_project, cs.DIR_MTIMES_FILENAME)
         before = mtimes_path.read_text(encoding="utf-8")
         assert before.strip() not in ("", "{}"), (
             "fixture guard: run 1 recorded no directory mtimes, so an "
@@ -821,7 +822,7 @@ class TestCrashBetweenCacheSaveAndFlush:
             queries=queries,
         ).run()
 
-        cache = py_project / cs.HASH_CACHE_FILENAME
+        cache = state_file(py_project, cs.HASH_CACHE_FILENAME)
         before = cache.read_text(encoding="utf-8")
         assert "module_b.py" in before, (
             "fixture guard: run 1 wrote no usable cache to preserve"
@@ -1225,7 +1226,7 @@ class TestFastPathInSync:
             queries=queries,
         ).run()
 
-        cache = py_project / cs.HASH_CACHE_FILENAME
+        cache = state_file(py_project, cs.HASH_CACHE_FILENAME)
         assert cache.is_file(), "fixture guard: run 1 wrote no cache to stamp"
         ahead = time.time() + 3600
         os.utime(cache, (ahead, ahead))
@@ -1329,7 +1330,7 @@ class TestFastPathInSync:
             queries=queries,
         ).run()
 
-        cache = py_project / cs.HASH_CACHE_FILENAME
+        cache = state_file(py_project, cs.HASH_CACHE_FILENAME)
         assert cache.is_file(), "fixture guard: run 1 wrote no cache to stamp"
         ahead = time.time() + 3600
         os.utime(cache, (ahead, ahead))
@@ -1384,7 +1385,7 @@ class TestFastPathInSync:
             queries=queries,
         ).run()
 
-        cache = py_project / cs.HASH_CACHE_FILENAME
+        cache = state_file(py_project, cs.HASH_CACHE_FILENAME)
         assert cache.is_file(), "fixture guard: run 1 wrote no cache to stamp"
         ahead = time.time() + 3600
         os.utime(cache, (ahead, ahead))
@@ -1542,7 +1543,7 @@ class TestFastPathInSync:
         # Deleting is not enough: a run that deleted and then re-parsed the
         # file would put every node straight back.
         assert not (_EXCLUDED_QNS & _emitted_qns(mock_ingestor))
-        with (excludable_project / cs.HASH_CACHE_FILENAME).open() as f:
+        with state_file(excludable_project, cs.HASH_CACHE_FILENAME).open() as f:
             assert "module_a.py" not in json.load(f)
 
     def test_cgrignore_exclusion_leaves_the_index(
@@ -1597,8 +1598,8 @@ class TestFastPathInSync:
             queries=queries,
         ).run()
 
-        assert (py_project / cs.EXCLUSION_STATE_FILENAME).is_file()
-        with (py_project / cs.HASH_CACHE_FILENAME).open() as f:
+        assert state_file(py_project, cs.EXCLUSION_STATE_FILENAME).is_file()
+        with state_file(py_project, cs.HASH_CACHE_FILENAME).open() as f:
             assert cs.EXCLUSION_STATE_FILENAME not in json.load(f)
 
         updater2 = GraphUpdater(
@@ -1627,7 +1628,7 @@ class TestFastPathInSync:
             queries=queries,
         ).run()
 
-        stamp = excludable_project / cs.EXCLUSION_STATE_FILENAME
+        stamp = state_file(excludable_project, cs.EXCLUSION_STATE_FILENAME)
         before = stamp.read_text()
 
         exclusions = frozenset({"module_a.py"})
@@ -1705,14 +1706,16 @@ class TestFastPathInSync:
             queries=queries,
             exclude_paths=exclusions,
         ).run()
-        cache = json.loads((excludable_project / cs.HASH_CACHE_FILENAME).read_text())
+        cache = json.loads(
+            state_file(excludable_project, cs.HASH_CACHE_FILENAME).read_text()
+        )
         assert "module_a.py" not in cache, (
             "fixture guard: the cache still names module_a.py, so old_hashes "
             "could supply the deletion and the graph query would not be "
             "measured by anything below"
         )
         # The stamp is what would let the next run fast-path over the subtree.
-        (excludable_project / cs.EXCLUSION_STATE_FILENAME).unlink()
+        state_file(excludable_project, cs.EXCLUSION_STATE_FILENAME).unlink()
 
         # The graph is now the ONLY place module_a.py still exists, so the sink
         # has to be able to answer for it or the test would turn on the fake's
@@ -1741,7 +1744,7 @@ class TestFastPathInSync:
         # query contributes anything, which is what happened when #1615
         # changed where the cache commits and left this test measuring
         # `old_hashes` instead.
-        (excludable_project / cs.EXCLUSION_STATE_FILENAME).unlink()
+        state_file(excludable_project, cs.EXCLUSION_STATE_FILENAME).unlink()
         mock_ingestor.reset_mock()
         with patch.object(
             GraphUpdater, "_existing_module_paths", return_value=frozenset()
@@ -1784,7 +1787,7 @@ class TestFastPathInSync:
             parsers=parsers,
             queries=queries,
         ).run()
-        stamp = excludable_project / cs.EXCLUSION_STATE_FILENAME
+        stamp = state_file(excludable_project, cs.EXCLUSION_STATE_FILENAME)
         before = stamp.read_text()
 
         exclusions = frozenset({"module_a.py"})
@@ -1863,7 +1866,7 @@ class TestFastPathInSync:
             parsers=parsers,
             queries=queries,
         ).run()
-        stamp = excludable_project / cs.EXCLUSION_STATE_FILENAME
+        stamp = state_file(excludable_project, cs.EXCLUSION_STATE_FILENAME)
         before = stamp.read_text()
 
         mock_ingestor.reset_mock()
@@ -1903,7 +1906,7 @@ class TestFastPathInSync:
             parsers=parsers,
             queries=queries,
         ).run()
-        (excludable_project / cs.EXCLUSION_STATE_FILENAME).unlink()
+        state_file(excludable_project, cs.EXCLUSION_STATE_FILENAME).unlink()
 
         updater = GraphUpdater(
             ingestor=mock_ingestor,
@@ -1953,7 +1956,7 @@ class TestFastPathInSync:
         updater.run()
         assert updater._exclusion_match is True
 
-        (excludable_project / cs.EXCLUSION_STATE_FILENAME).write_text(
+        state_file(excludable_project, cs.EXCLUSION_STATE_FILENAME).write_text(
             json.dumps({"exclude": ["module_a.py"], "unignore": []})
         )
         mock_ingestor.reset_mock()
@@ -2085,7 +2088,7 @@ def test_a_parse_failure_still_rebuilds_the_other_changed_modules(
     GraphUpdater(
         ingestor=mock_ingestor, repo_path=py_project, parsers=parsers, queries=queries
     ).run()
-    cache_mtime = (py_project / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    cache_mtime = state_file(py_project, cs.HASH_CACHE_FILENAME).stat().st_mtime
     for name in ("module_a.py", "module_b.py"):
         path = py_project / name
         path.write_text(path.read_text() + "\n")
@@ -2132,7 +2135,7 @@ def test_a_pre_parse_failure_leaves_the_old_subtrees_in_place(
     ).run()
     module_a = py_project / "module_a.py"
     module_a.write_text(module_a.read_text() + "\n")
-    cache_mtime = (py_project / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    cache_mtime = state_file(py_project, cs.HASH_CACHE_FILENAME).stat().st_mtime
     os.utime(module_a, (cache_mtime + 1, cache_mtime + 1))
 
     mock_ingestor.reset_mock()
