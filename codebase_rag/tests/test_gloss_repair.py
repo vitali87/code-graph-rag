@@ -968,3 +968,97 @@ def test_a_module_is_never_a_quote_candidate() -> None:
         for label in cs.DEFINITION_NODE_LABELS
         if label is not cs.NodeLabel.MODULE
     }
+
+
+# --- scoped to the syncing project (issue #3236) -------------------------------
+
+
+def _scoped(
+    store: FakeStore, project: str, *, with_source: bool = False
+) -> RepairReport:
+    return repair_unanchored(
+        store.fetch_all,
+        store.execute_write,
+        store.read_source if with_source else None,
+        project_name=project,
+    )
+
+
+def test_a_scoped_pass_leaves_another_projects_notes_alone() -> None:
+    # A sync of beta changed beta's definitions only, so alpha's unattached
+    # note is neither looked up nor re-graded: the lookups were full-graph
+    # scans, paid per project on every sync of every other project.
+    store = FakeStore()
+    store.define(f"{B}.new", H2)
+    store.note("gloss:a", f"{A}.gone", H)
+    store.note("gloss:b", f"{B}.old", H2)
+
+    report = _scoped(store, B)
+
+    assert report == RepairReport(moved=["gloss:b"], ambiguous=[], lost=[])
+    lookups = [p for q, p in store.reads if q == cq.CYPHER_DEFINITIONS_BY_ANCHOR_HASH]
+    assert lookups == [{cs.KEY_HASHES: [H2], cs.KEY_PROJECT_PREFIX: f"{B}."}]
+    assert all(p is None or p.get(cs.KEY_QN) != "gloss:a" for _q, p in store.writes), (
+        store.writes
+    )
+    assert store.glosses["gloss:a"][cs.KEY_ANCHOR_STATE] == (
+        cs.GlossAnchorState.EXACT.value
+    )
+
+
+def test_a_scoped_pass_reads_no_span_of_another_project() -> None:
+    store = _quoted_store()
+    store.note(
+        "gloss:b",
+        f"{B}.mod.gone",
+        "ah1:eeee",
+        anchor=text_anchor(_parsed(_ORIGINAL), "run", 4, 6),
+    )
+
+    _scoped(store, B, with_source=True)
+
+    spans = [p for q, p in store.reads if q == cq.CYPHER_DEFINITION_SPANS]
+    assert spans == [{cs.KEY_PROJECT_PREFIX: f"{B}."}], spans
+    assert all(project == B for project, _path in store.source_reads)
+
+
+def test_a_scoped_pass_with_no_note_of_its_own_looks_nothing_up() -> None:
+    # The "already in sync" path of an unrelated project: no lookup at all,
+    # not even the project list a legacy note elsewhere would need.
+    store = FakeStore()
+    store.projects = [A, B]
+    store.note("gloss:a", f"{A}.gone", H)
+    store.note("gloss:legacy", f"{A}.older", H, project=None)
+
+    assert _scoped(store, B) == RepairReport(moved=[], ambiguous=[], lost=[])
+    assert [q for q, _p in store.reads] == [cq.CYPHER_UNANCHORED_GLOSSES]
+    assert store.writes == []
+
+
+def test_a_scoped_pass_still_claims_its_legacy_notes_by_prefix() -> None:
+    # A note written before `project` existed belongs to the longest
+    # registered project prefixing its target: `alpha.sub` claims
+    # `alpha.sub.x`, so a pass scoped to `alpha` leaves it alone.
+    store = FakeStore()
+    store.projects = [A, f"{A}.sub"]
+    store.define(f"{A}.here", H)
+    store.note("gloss:own", f"{A}.gone", H, project=None)
+    store.note("gloss:sub", f"{A}.sub.gone", H2, project=None)
+
+    report = _scoped(store, A)
+
+    assert report == RepairReport(moved=["gloss:own"], ambiguous=[], lost=[])
+    assert store.glosses["gloss:sub"][cs.KEY_ANCHOR_STATE] == (
+        cs.GlossAnchorState.EXACT.value
+    )
+
+
+def test_an_unscoped_pass_still_repairs_every_project() -> None:
+    # Negative: the default stays whole-graph for a caller that asks for it.
+    store = FakeStore()
+    store.define(f"{A}.here", H)
+    store.define(f"{B}.new", H2)
+    store.note("gloss:a", f"{A}.gone", H)
+    store.note("gloss:b", f"{B}.old", H2)
+
+    assert _run(store).moved == ["gloss:a", "gloss:b"]
