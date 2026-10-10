@@ -36,6 +36,7 @@ from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.utils.path_utils import (
     derive_project_name,
     is_eligible_rel_file,
+    is_symlink_entry,
     is_walked_dir,
 )
 
@@ -150,11 +151,30 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         # the path inside the repository, so relativise first -- a checkout
         # under /tmp would otherwise have `tmp` as an ignored component.
         relative = self._repo_relative(Path(path_str))
-        return is_eligible_rel_file(
+        if not is_eligible_rel_file(
             relative.as_posix(),
             exclude_paths=getattr(self.updater, "exclude_paths", None),
             unignore_paths=getattr(self.updater, "unignore_paths", None),
-        )
+        ):
+            return False
+        # The walk follows no link (issue #2451). Handed on, an outside link
+        # was refused with a warning and an in-repo one re-ingested its
+        # target; a deleted link is no longer a link, so its removal passes.
+        if is_symlink_entry(path_str):
+            logger.debug(logs.WATCHER_SYMLINK_IGNORED.format(path=relative))
+            return False
+        return True
+
+    def _indexed_file_now_a_link(self, path_str: str) -> bool:
+        """Whether a link now stands where the graph holds an indexed file.
+
+        `_is_relevant` judges the path as it is now, so a file replaced by a
+        link before its events were handled lost its delete and its create
+        alike, and its definitions stayed until the next sync (Greptile
+        review, PR #2828). Its nodes go as a deletion; the link itself is
+        still never re-ingested. The hash cache names what was indexed.
+        """
+        return is_symlink_entry(path_str) and self.updater.has_indexed(Path(path_str))
 
     def _is_walked(self, directory: Path) -> bool:
         return is_walked_dir(
@@ -264,7 +284,9 @@ class CodeChangeEventHandler(FileSystemEventHandler):
     def _dispatch_file(self, event: FileSystemEvent) -> None:
         src_path = _event_path(event.src_path)
         if not self._is_relevant(src_path):
-            return
+            if not self._indexed_file_now_a_link(src_path):
+                return
+            event = FileDeletedEvent(src_path)
 
         if not self.debounce_enabled:
             # No debouncing: process immediately (legacy behaviour)
