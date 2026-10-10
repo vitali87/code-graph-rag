@@ -363,6 +363,10 @@ EDIT_TX_APPLIED = "Edit transaction {tx} applied {count} file(s)"
 EDIT_TX_RESTORE_FAILED = "Edit transaction could not restore {path}: {error}"
 REINGEST_DONE = "Re-ingested {reparsed} file(s) (+{affected} dependent, -{removed} removed) in {ms} ms"
 REINGEST_SKIPPED_IGNORED = "Re-ingest skipped path(s) the ignore rules exclude: {paths}"
+CHAT_REINGEST_FAILED = (
+    "Re-ingesting the chat agent's write failed ({error}); the next write "
+    "runs a full sync first"
+)
 TRUNCATED_SYMBOL_NAME = (
     "{path}: the name {name!r} was extracted from bytes that are not valid "
     "UTF-8; the grammar splits the token at the bad byte, so this symbol is "
@@ -395,6 +399,7 @@ REINGEST_UNREADABLE = (
 TYPE_EDGES_EMITTED = "Emitted {count} RETURNS/ACCEPTS edges from type annotations"
 GRAPH_UPDATED = "Graph updated successfully for change in: {name}"
 WATCHER_REINGEST_REFUSED = "Re-ingest refused for {path}: {error}"
+WATCHER_SYMLINK_IGNORED = "Ignoring a change to symlink {path}: links are not followed"
 # A refusal and an abort leave the graph untouched; anything else may have
 # deleted the affected subtrees without rebuilding them, so the retained
 # updater describes a graph that no longer exists (issue #1681).
@@ -463,8 +468,8 @@ SOURCE_AST_FAILED = "AST extraction failed for {name}: {error}"
 
 # Memgraph logs
 MG_CONNECTING = "Connecting to Memgraph at {host}:{port}..."
-MG_CONNECTED = "Successfully connected to Memgraph."
 MG_CONNECT_FAILED = "Could not connect to Memgraph at {host}:{port}: {error}"
+MG_CONNECTED = "Successfully connected to Memgraph."
 MG_EXCEPTION = "An exception occurred: {error}. Attempting best-effort flush..."
 MG_DELIBERATE_EXIT = (
     "Command ended with {kind} inside the graph connection; closing it normally"
@@ -817,6 +822,30 @@ IMP_PY_SOURCE_ROOT = "Python source root: {name} -> {path}"
 STRUCT_IDENTIFIED_PACKAGE = "  Identified Package: {package_qn}"
 STRUCT_IDENTIFIED_FOLDER = "  Identified Folder: '{relative_root}'"
 
+# ast-grep tier and finding analyzer logs. Without the extra the tier speaks
+# up only once it has met a file it would have parsed (issue #2634): a line
+# at construction named no file and printed for every repository.
+AST_GREP_TIER_UNAVAILABLE = (
+    "ast-grep-py is not installed; the ast-grep language tier is disabled"
+)
+AST_GREP_TIER_FILES_UNPARSED = (
+    "{count} file(s) ({languages}) were indexed as plain File nodes, with no "
+    "modules, functions, classes or imports: the ast-grep tier parses these "
+    "languages and needs the ast-grep extra. Install it, e.g. "
+    'uv tool install "code-graph-rag[treesitter-full,ast-grep,semantic]" or '
+    'pip install "code-graph-rag[ast-grep]", then sync again.'
+)
+AST_GREP_TIER_LANGUAGE_COUNT = "{language}: {count}"
+AST_GREP_TIER_DISABLED = "ast-grep language tier disabled: {error}"
+AST_GREP_PARSE_FAILED = "ast-grep failed to parse {path}: {error}"
+AST_GREP_BAD_RULE = "bad ast-grep rule {rule} for {path}: {error}"
+AST_GREP_FINDINGS_UNAVAILABLE = (
+    "The findings capture group needs the ast-grep extra, which is not "
+    "installed; no Pattern, CodeSmell or SecurityIssue nodes are written. "
+    'Install it with: pip install "code-graph-rag[ast-grep]"'
+)
+AST_GREP_FINDINGS_DISABLED = "ast-grep finding analyzer disabled: {error}"
+
 # Class ingest logs
 CLASS_CPP_MODULE_INTERFACE = "  Found C++ Module Interface: {qn}"
 CLASS_CPP_MODULE_IMPL = "  Found C++ Module Implementation: {qn}"
@@ -850,6 +879,10 @@ JAVA_RESOLVING_CALL = "Resolving Java method call: method={method}, object={obje
 JAVA_RESOLVING_STATIC = "Resolving static/local method: {method}"
 JAVA_FOUND_STATIC = "Found static/local method: {result}"
 JAVA_STATIC_NOT_FOUND = "Static/local method not found: {method}"
+JAVA_FOUND_STATIC_IMPORT = "Found statically imported method: {result}"
+JAVA_STATIC_IMPORT_EXTERNAL = (
+    "Statically imported {method} from {classes} is not in the repo: no edge"
+)
 JAVA_RESOLVING_OBJ_TYPE = "Resolving object type for: {object}"
 JAVA_OBJ_TYPE_UNKNOWN = "Could not determine type of object: {object}"
 JAVA_OBJ_TYPE_RESOLVED = "Object type resolved to: {type}"
@@ -1134,6 +1167,22 @@ HASH_CACHE_ORPHANED = (
     "the database was likely wiped since the last sync. Discarding the cache "
     "and rebuilding fully."
 )
+MG_PROJECT_ROOT_READ_FAILED = (
+    "Could not read which repository the project was indexed from: {error}"
+)
+PROJECT_OWNER_REPLACED = (
+    "Project '{project_name}' indexed {root}; --yes given, replacing it with "
+    "this repository."
+)
+PROJECT_CLAIM_RELEASE_FAILED = (
+    "Could not release the claim on project '{project_name}' that this failed "
+    "sync made: {error}. Another repository syncing under that name will "
+    "need --yes."
+)
+HASH_CACHE_OTHER_ROOT = (
+    "Project '{project}' in the graph was last indexed from {root}, not this "
+    "repository; discarding the hash cache and rebuilding fully."
+)
 PREVIOUS_SYNC_UNFINISHED = (
     "The previous sync of '{project}' did not finish; re-indexing the whole repository."
 )
@@ -1253,13 +1302,25 @@ HASH_CACHE_SKIPPED_SINGLE_FILE = (
 FILE_HASH_UNCHANGED = "File unchanged (hash match): {path}"
 FILE_HASH_CHANGED = "File changed (hash mismatch): {path}"
 FILE_HASH_NEW = "New file detected: {path}"
-FILE_UNREADABLE = (
-    "Skipping unreadable file (broken symlink or removed): {path} ({error})"
-)
-INCREMENTAL_UNREADABLE = "Skipped {count} unreadable files (broken symlinks or removed)"
+FILE_UNREADABLE = "Skipping unreadable file (removed or not readable): {path} ({error})"
+INCREMENTAL_UNREADABLE = "Skipped {count} unreadable files (removed or not readable)"
 INCREMENTAL_UNREADABLE_RETRY = (
     "{count} unreadable file(s) are marked in the cache, so the next update "
     "retries them whatever their directories' mtimes say"
+)
+# Symlinks are never followed by a repository walk (issue #2451).
+SYMLINK_SKIPPED_OUTSIDE = (
+    "Skipping symlink {path}: its target {target} is outside the repository "
+    "and is never read"
+)
+SYMLINK_SKIPPED_INSIDE = (
+    "Skipping symlink {path}: its target {target} is in the repository and is "
+    "indexed only under its own path"
+)
+SYMLINKS_SKIPPED = (
+    "Skipped {count} symlink(s): links are not followed, so a target outside "
+    "the repository is never read and one inside it is indexed only under its "
+    "own path (each is logged at DEBUG)"
 )
 
 # Exclude prompt logs
