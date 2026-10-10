@@ -68,16 +68,40 @@ cgr start --repo-path /path/to/repo [OPTIONS]
 
 ![cgr start --repo-path . --update-graph indexing the pallets/click repository](../assets/demos/quickstart-update-graph.gif)
 
+<!-- SECTION:cli_options_start -->
 | Option | Description |
-|--------|-------------|
-| `--repo-path` | Path to repository (defaults to current directory) |
-| `--update-graph` | Parse and ingest the repository into the knowledge graph, then exit without starting the assistant (`cgr start` already syncs before it starts). Cannot be combined with `-a`/`--ask-agent`, `--no-sync` or `--projects`. |
-| `--clean` | **Destructive.** Delete every project from the shared graph and clear the selected repository's sync cache. With `--update-graph`, rebuild after deletion. Asks for confirmation when other projects would be destroyed. |
-| `-y`, `--yes` | Answer yes to destructive confirmations, such as the one `--clean` asks. Required when `--clean` runs non-interactively and other projects would be destroyed, or when the existing projects cannot be listed. |
-| `--batch-size` | Override Memgraph flush batch size |
-| `--orchestrator` | Specify provider:model for main operations (e.g., `anthropic:claude-sonnet-5`, `google:gemini-3.6-flash`, `ollama:qwen2.5-coder`) |
-| `--cypher` | Specify provider:model for graph queries (e.g., `anthropic:claude-sonnet-5`, `google:gemini-3.5-flash-lite`, `ollama:qwen2.5-coder`) |
-| `-o`, `--output` | Write this repository's project graph to a JSON path: what the project owns, the relationships that start there, the nodes they reach and the links between the resources it holds. Requires `--update-graph`. `cgr export` writes the whole shared graph. |
+|------|-----------|
+| `--repo-path` | Repository to open. Defaults to the current directory. |
+| `--update-graph` | Parse the repository, sync its graph, then exit without starting the assistant (cgr start already syncs before it starts). Cannot be combined with --ask-agent, --no-sync or --projects. |
+| `--clean` | DESTRUCTIVE: Delete every project from the shared graph and clear the selected repository's sync cache. With --update-graph, rebuild after deletion. Asks for confirmation when other projects would be destroyed; use --yes to skip the prompt. |
+| `--yes`, `-y` | Answer yes to destructive confirmations, such as the one --clean asks before deleting other projects from the shared graph. |
+| `--output`, `-o` | Write this repository's project graph to PATH as JSON. Requires --update-graph. Use cgr export for the whole shared graph. |
+| `--orchestrator` | Model for the planning assistant, in provider:model form (for example openai:gpt-5.6-terra or ollama:qwen2.5-coder). |
+| `--cypher` | Model used to generate Cypher, in provider:model form. |
+| `--no-confirm` | Skip edit confirmation prompts. |
+| `--no-instructions` | Do not load ~/.cgr.md or &lt;repo>/.cgr.md into the session prompt. |
+| `--batch-size` | Flush to Memgraph after this many buffered nodes or relationships. [x>=1] |
+| `--project-name` | Project name to store in the graph. Defaults to the directory name plus a hash of its absolute path (e.g. myrepo__1a2b3c4d); cgr status lists the names already stored. |
+| `--exclude` | Exclude paths matching PATTERN from indexing. Repeat the option to add patterns. |
+| `--capture` | Capture GROUP on top of the defaults (structure, calls, types, imports). Opt-in groups: io, findings, glosses, parameters, fields, enum_variants, constants. +NAME adds and -NAME drops a GROUP or a relationship type such as OVERRIDES; all or none replaces the selection, so none first captures only what follows (none,structure). Repeatable or comma-separated; later values override CGR_CAPTURE. An unknown group or type is an error. |
+| `--interactive-setup` | Choose which detected directories remain included. |
+| `--ask-agent`, `-a` | Ask one question, write the answer to stdout, and exit. |
+| `--output-format` | Format --ask-agent output as table or json. [default: table] |
+| `--no-start-stack` | Do not start the shared stack automatically. |
+| `--no-sync` | Do not synchronise the graph before starting the assistant. |
+| `--no-embeddings` | Do not generate semantic embeddings during sync. Graph nodes and relationships are still updated. Equivalent env: CGR_SKIP_EMBEDDINGS=1. |
+| `--projects` | Limit queries to comma-separated project names. Overrides --project-name; defaults to the selected repository or workspace. |
+| `--workspace` | Query every project defined in workspace NAME. |
+<!-- /SECTION:cli_options_start -->
+
+`--clean` asks for confirmation before it deletes other projects. When it runs
+non-interactively and other projects would be destroyed, or when the existing
+projects cannot be listed, it stops unless `--yes` is given.
+
+`-o` writes only this repository's project, scoped the way
+`cgr export --project-name` scopes it: what the project owns, the
+relationships that start there, the nodes they reach and the links between
+the resources it holds.
 
 ### `cgr export`
 
@@ -88,11 +112,13 @@ project in the shared graph.
 cgr export -o OUTPUT [OPTIONS]
 ```
 
+<!-- SECTION:cli_options_export -->
 | Option | Description |
-|--------|-------------|
-| `-o`, `--output` | File to write. Checked before the graph is read: a directory, or a path that cannot be written, is a one-line error. |
-| `--project-name`, `-n` | Export only this project: what it owns, the relationships that start there, the nodes they reach, and the links between the resources it holds (`RESOLVES_TO`, `FLOWS_TO`). Repeatable. |
-| `--workspace` | Export only the projects of workspace NAME. |
+|------|-----------|
+| `--output`, `-o` | Write the exported graph to PATH. [required] |
+| `--project-name`, `-n` | Export only this project: what it owns, the relationships that start there, the nodes they reach, and the links between the resources it holds (RESOLVES_TO, FLOWS_TO). Repeatable; without it the whole shared graph is exported. |
+| `--workspace` | Export only the projects defined in workspace NAME. |
+<!-- /SECTION:cli_options_export -->
 
 A name that is not indexed is an error that lists the projects that are. A
 scoped file records its projects under `metadata.projects`. `--batch-size` and
@@ -108,12 +134,17 @@ AI-powered codebase optimisation.
 cgr optimize <language> --repo-path /path/to/repo [OPTIONS]
 ```
 
+<!-- SECTION:cli_options_optimize -->
 | Option | Description |
-|--------|-------------|
-| `--repo-path` | Path to repository |
-| `--orchestrator` | Specify provider:model for operations |
-| `--batch-size` | Override Memgraph flush batch size |
-| `--reference-document` | Path to reference documentation for guided optimisation |
+|------|-----------|
+| `--repo-path` | Repository to optimise. Defaults to the current directory. |
+| `--reference-document` | Reference document to use during optimisation. |
+| `--orchestrator` | Model for the planning assistant, in provider:model form (for example openai:gpt-5.6-terra or ollama:qwen2.5-coder). |
+| `--cypher` | Model used to generate Cypher, in provider:model form. |
+| `--no-confirm` | Skip edit confirmation prompts. |
+| `--no-instructions` | Do not load ~/.cgr.md or &lt;repo>/.cgr.md into the session prompt. |
+| `--batch-size` | Flush to Memgraph after this many buffered nodes or relationships. [x>=1] |
+<!-- /SECTION:cli_options_optimize -->
 
 Supported languages: `python`, `javascript`, `typescript`, `rust`, `go`, `java`, `scala`, `c`, `cpp`
 
@@ -127,12 +158,16 @@ per project when there is more than one.
 cgr stats [OPTIONS]
 ```
 
+<!-- SECTION:cli_options_stats -->
 | Option | Description |
-|--------|-------------|
-| `--project-name`, `-n` | Count only this project: its containment tree, what it defines, and the relationships that start there. Repeatable. |
-| `--workspace` | Count only the projects of workspace NAME. |
+|------|-----------|
+| `--project-name`, `-n` | Count only this project's nodes and relationships. Repeatable; without it the totals cover every project in the shared graph. |
+| `--workspace` | Count only the projects defined in workspace NAME. |
+<!-- /SECTION:cli_options_stats -->
 
-A name that is not indexed is an error that lists the projects that are.
+A project's count covers its containment tree, what it defines, and the
+relationships that start there. A name that is not indexed is an error that
+lists the projects that are.
 
 ![cgr stats totals with one line per project, then cgr stats --project-name with a name that is not indexed](../assets/demos/cli-stats.gif)
 
@@ -145,17 +180,21 @@ review, not a guaranteed delete list). See [Dead Code Detection](dead-code.md).
 cgr dead-code [OPTIONS]
 ```
 
+<!-- SECTION:cli_options_dead_code -->
 | Option | Description |
-|--------|-------------|
-| `--project-name`, `-n` | Project to scan. Defaults to the sole indexed project. |
-| `--entry-point`, `-e` | Treat symbols whose qualified name ends with this value as reachable roots. Repeatable. |
-| `--decorator-root` | Treat symbols carrying this decorator as roots. Repeatable. |
-| `--exclude` | Glob matched against a symbol's whole repo-relative file path to exclude it; quote it. Repeatable. |
-| `--include-tests` / `--no-include-tests` | Treat test code as reachable roots. On by default. |
-| `--classes` / `--no-classes` | Also report unreachable classes. Off by default. |
-| `--format` | Output format: `table` (default) or `json`. |
-| `--output`, `-o` | Write the report to a file instead of stdout. |
-| `--fail-on-found` | Exit with code 1 when any candidate is found (useful in CI). |
+|------|-----------|
+| `--project-name`, `-n` | Project to scan. If omitted, cgr uses the only indexed project. |
+| `--entry-point`, `-e` | Mark symbols ending with this qualified-name suffix as entry points. Repeatable. |
+| `--decorator-root` | Mark symbols with this decorator as entry points. Extends the built-in set. |
+| `--exclude` | Exclude symbols whose file path matches GLOB. The glob must cover the whole repo-relative path ('\*' spans directories) and be quoted ('tests/\*' for a root-level tests directory, '\*/tests/\*' for nested ones) so the shell cannot expand it first. Repeatable. |
+| `--include-tests` / `--no-include-tests` | Treat test code as reachable so exercised production code is not reported. [default: include-tests] |
+| `--classes` / `--no-classes` | Also report unreachable classes. This can include false positives for types used only by annotations or dynamic lookups. [default: no-classes] |
+| `--format` | Report format: table or json. [default: table] |
+| `--output`, `-o` | Write the report to this file instead of stdout. |
+| `--fail-on-found` | Exit with status 1 when any candidate is found. Useful in CI. |
+| `--min-resolution` | Ignore call edges below this confidence when deciding liveness: heuristic &lt; overload &lt; exact &lt; trace_confirmed (dynamic counts as confirmed). |
+| `--endpoint-roots` / `--no-endpoint-roots` | Treat a decorator-routed handler (FastAPI, Flask) as reachable by its route decorator alone (default). With --no-endpoint-roots, such a handler is live only if some indexed call site resolves to its endpoint (RESOLVES_TO into it, or a direct READS_FROM/WRITES_TO for RPC and dispatch resources), so an endpoint nobody calls is reported. A handler registered by a call (Go HandleFunc, Express app.get) stays live through that call. [default: endpoint-roots] |
+<!-- /SECTION:cli_options_dead_code -->
 
 ![cgr dead-code --project-name listing unreachable C functions in pallets/markupsafe](../assets/demos/cli-dead-code.gif)
 
@@ -169,16 +208,19 @@ including renamed and lightly edited copies). See
 cgr duplicates [OPTIONS]
 ```
 
+<!-- SECTION:cli_options_duplicates -->
 | Option | Description |
-|--------|-------------|
-| `--project-name`, `-n` | Project to scan. Defaults to the sole indexed project. |
-| `--threshold` | Minimum similarity for a near-duplicate pair, 0-1. Default `0.8`. |
-| `--min-size` | Minimum skeleton size (tree nodes) for a function to be considered. Default `15`. |
+|------|-----------|
+| `--project-name`, `-n` | Project to scan. If omitted, cgr uses the only indexed project. |
+| `--threshold` | Minimum branch-overlap similarity for a near-duplicate pair, 0-1. [default: 0.8; 0.0&lt;=x&lt;=1.0] |
+| `--min-size` | Minimum skeleton size (tree nodes) for a function to be considered. Filters trivial getters and one-liners. [default: 15; x>=1] |
 | `--exact-only` | Report only identical-fingerprint clone groups; skip similarity scoring. |
-| `--exclude` | Glob matched against a symbol's whole repo-relative file path to exclude it; quote it. Repeatable. |
-| `--format` | Output format: `table` (default) or `json`. |
-| `--output`, `-o` | Write the report to a file instead of stdout. |
-| `--fail-on-found` | Exit with code 1 when any duplicate is found (useful in CI). |
+| `--exclude` | Exclude symbols whose file path matches GLOB. The glob must cover the whole repo-relative path ('\*' spans directories) and be quoted ('tests/\*' for a root-level tests directory, '\*/tests/\*' for nested ones) so the shell cannot expand it first. Repeatable. |
+| `--format` | Report format: table or json. [default: table] |
+| `--output`, `-o` | Write the report to this file instead of stdout. |
+| `--fail-on-found` | Exit with status 1 when any duplicate is found. Useful in CI. |
+| `--open` | Open group N's first two members side by side in your editor (CGR_EDITOR picks the editor; CGR_DIFF_COMMAND overrides the command). [x>=1] |
+<!-- /SECTION:cli_options_duplicates -->
 
 ![cgr duplicates --project-name finding one exact clone group in pallets/itsdangerous](../assets/demos/cli-duplicates.gif)
 
@@ -190,6 +232,15 @@ Serve cgr tools to MCP clients over stdio or HTTP.
 cgr mcp-server
 ```
 
+<!-- SECTION:cli_options_mcp_server -->
+| Option | Description |
+|------|-----------|
+| `--transport` | Transport to serve: stdio or http. [default: stdio] |
+| `--host` | HTTP bind host. Used only with --transport http. |
+| `--port` | HTTP bind port. Used only with --transport http. |
+| `--workspace` | Serve the projects of workspace NAME: `list_projects` shows them, a `project` argument, when given, must name one (omitted, the server takes the project rooted at its directory, or the workspace's only one), and source is read from each repo's own root. Also read from the MCP_WORKSPACE environment variable. |
+<!-- /SECTION:cli_options_mcp_server -->
+
 ### `cgr index`
 
 Index a repository to protobuf for offline use.
@@ -197,6 +248,17 @@ Index a repository to protobuf for offline use.
 ```bash
 cgr index -o ./index-output --repo-path ./my-project
 ```
+
+<!-- SECTION:cli_options_index -->
+| Option | Description |
+|------|-----------|
+| `--repo-path` | Repository to index. Defaults to the current directory. |
+| `--output-proto-dir`, `-o` | Write protobuf index files under DIRECTORY. [required] |
+| `--split-index` | Write separate nodes.bin and relationships.bin files. |
+| `--exclude` | Exclude paths matching PATTERN from indexing. Repeat the option to add patterns. |
+| `--capture` | Capture GROUP on top of the defaults (structure, calls, types, imports). Opt-in groups: io, findings, glosses, parameters, fields, enum_variants, constants. +NAME adds and -NAME drops a GROUP or a relationship type such as OVERRIDES; all or none replaces the selection, so none first captures only what follows (none,structure). Repeatable or comma-separated; later values override CGR_CAPTURE. An unknown group or type is an error. |
+| `--interactive-setup` | Choose which detected directories remain included. |
+<!-- /SECTION:cli_options_index -->
 
 ![cgr index -o ./index-output --repo-path ./itsdangerous writing a protobuf index and provenance manifest](../assets/demos/cli-index.gif)
 

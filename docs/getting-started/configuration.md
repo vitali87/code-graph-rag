@@ -117,7 +117,7 @@ Get your MiniMax API key from the [MiniMax Platform](https://platform.minimax.io
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GRAPH_BACKEND` | `memgraph` | Graph engine: `memgraph` or `neo4j`. Neo4j needs the `neo4j` extra (`uv pip install 'code-graph-rag[neo4j]'`) and is configured with the `NEO4J_*` variables below; the bundled `cgr stack` only launches Memgraph, so a Neo4j server is yours to run. |
+| `GRAPH_BACKEND` | `memgraph` | Graph engine: `memgraph` or `neo4j`. Neo4j needs the `neo4j` extra (`uv pip install 'code-graph-rag[neo4j]'`) and is configured with the `NEO4J_*` variables below; the bundled stack (`cgr daemon`) only launches Memgraph, so a Neo4j server is yours to run. |
 | `MEMGRAPH_HOST` | `localhost` | Memgraph hostname |
 | `MEMGRAPH_PORT` | `7687` | Memgraph port |
 | `MEMGRAPH_HTTP_PORT` | `7444` | Memgraph HTTP port |
