@@ -134,6 +134,7 @@ from .utils.path_utils import (
     default_project_name,
     project_roots_from_rows,
     python_stub_has_implementation,
+    rescued_files,
     should_keep_dir,
     should_skip_path,
     should_skip_rel_file,
@@ -1570,7 +1571,7 @@ class GraphUpdater:
         logger.info(
             ls.CSHARP_FRONTEND_RUNNING.format(path=find_csharp_project(self.repo_path))
         )
-        facts = frontend.run(self.repo_path, ())
+        facts = frontend.run(self.repo_path, (), rescued_files=self._rescued_files())
         self._apply_semantic_facts(facts)
         logger.info(ls.CSHARP_FRONTEND_TYPES.format(count=len(facts.base_kinds)))
         logger.info(
@@ -1581,6 +1582,12 @@ class GraphUpdater:
                 externals=len(facts.external_sites),
             )
         )
+
+    def _rescued_files(self) -> frozenset[str]:
+        # The compiler tools skip the default-excluded names on their own; the
+        # files this walk keeps under one (a tracked `pkg/out/out.go`, a `!`
+        # line) must reach them, or they are parsed without their facts.
+        return rescued_files(self.repo_path, self.exclude_paths, self.unignore_paths)
 
     def _reset_semantic_facts(self) -> None:
         # A reused updater (watch mode) that previously ran a frontend must not
@@ -1631,7 +1638,7 @@ class GraphUpdater:
                 logger.warning(ls.GO_FRONTEND_UNAVAILABLE)
             return
         logger.info(ls.GO_FRONTEND_RUNNING.format(path=find_go_module(self.repo_path)))
-        facts = frontend.run(self.repo_path, ())
+        facts = frontend.run(self.repo_path, (), rescued_files=self._rescued_files())
         self._apply_go_semantic_facts(facts)
         logger.info(
             ls.GO_FRONTEND_FACTS.format(
@@ -1659,7 +1666,7 @@ class GraphUpdater:
         if not frontend.available():
             logger.warning(ls.JAVA_FRONTEND_UNAVAILABLE)
             return
-        facts = frontend.run(self.repo_path, ())
+        facts = frontend.run(self.repo_path, (), rescued_files=self._rescued_files())
         dp.java_call_sites.update(facts.resolved_call_sites)
         dp.java_external_sites.update(facts.external_sites)
         logger.info(

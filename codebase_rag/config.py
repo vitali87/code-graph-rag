@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TypedDict, Unpack
@@ -629,8 +630,102 @@ def load_ignore_patterns(repo_path: Path) -> CgrignorePatterns:
     negations = cgr.unignore | git.unignore
     return CgrignorePatterns(
         exclude=cgr.exclude | (git.exclude - negations),
-        unignore=negations,
+        unignore=negations | _tracked_source_dirs(repo_path),
     )
+
+
+_TRACKED_SOURCE_LOGGED: set[tuple[Path, frozenset[str]]] = set()
+
+
+def _tracked_source_dirs(repo_path: Path) -> frozenset[str]:
+    """Anchored un-ignores for tracked directories with ambiguous names.
+
+    A default exclusion matches a directory NAME at any depth, and `bin`,
+    `out`, `env` and the like hold committed first-party source as often as
+    build output: a Dart project's only entry point is `bin/main.dart`. Each
+    tracked file under such a directory is rescued by its own anchored path,
+    not the directory: a directory-level `!` would let untracked build output
+    written beside the tracked source (`bin/generated.js`) through as well
+    (review of PR 2490). An untracked `tools/bin/` stays excluded too, and an
+    explicit exclude still wins as for any `!` line (issue #2406). Outside a
+    git checkout, or if git cannot answer, nothing is rescued.
+    """
+    try:
+        listing = subprocess.run(
+            [cs.SHELL_CMD_GIT, "ls-files", "-z"],
+            cwd=repo_path,
+            capture_output=True,
+            encoding=cs.ENCODING_UTF8,
+            errors="replace",
+            check=False,
+            timeout=cs.GIT_LS_FILES_TIMEOUT_S,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return frozenset()
+    if listing.returncode != 0:
+        return frozenset()
+    rescued: set[str] = set()
+    dirs: set[str] = set()
+    for entry in listing.stdout.split("\0"):
+        parts = entry.split(cs.SEPARATOR_SLASH)
+        # Rescued only when every excluded directory on the path is one of
+        # the ambiguous names: a tracked `vendor/bin/x.js` is still vendored
+        # code. A name with pattern characters or trailing whitespace is left
+        # excluded rather than written as a pattern that could match untracked
+        # files beside it (review of PR 2490).
+        if (
+            cs.TRACKED_PATH_PATTERN_CHARS.search(entry)
+            or entry[-1:].isspace()
+            or any(
+                part in cs.IGNORE_PATTERNS and part not in cs.TRACKED_SOURCE_DIR_NAMES
+                for part in parts[:-1]
+            )
+        ):
+            continue
+        for index, part in enumerate(parts[:-1]):
+            if part in cs.TRACKED_SOURCE_DIR_NAMES:
+                rescued.add(f"{cs.SEPARATOR_SLASH}{entry}")
+                dirs.add(cs.SEPARATOR_SLASH.join(parts[: index + 1]))
+                break
+    kept_dirs = frozenset(dirs)
+    # Logged once per repository and set: several entry points load the
+    # patterns in one run.
+    if kept_dirs and (repo_path, kept_dirs) not in _TRACKED_SOURCE_LOGGED:
+        _TRACKED_SOURCE_LOGGED.add((repo_path, kept_dirs))
+        logger.info(
+            logs.TRACKED_SOURCE_DIRS_KEPT.format(
+                dirs=", ".join(f"{d}/" for d in sorted(kept_dirs))
+            )
+        )
+    return frozenset(rescued)
+
+
+def git_index_path(repo_path: Path) -> Path | None:
+    """The git index `load_ignore_patterns` reads the tracked files from.
+
+    A watcher re-reads its rules when this file changes: `git mv`, `git add`
+    and `git rm` move the tracked-file rescues without touching any ignore
+    file. It lies outside the checkout for a linked worktree. None outside a
+    git checkout, or when git cannot answer.
+    """
+    try:
+        answer = subprocess.run(
+            [cs.SHELL_CMD_GIT, "rev-parse", "--git-path", cs.GIT_INDEX_FILENAME],
+            cwd=repo_path,
+            capture_output=True,
+            encoding=cs.ENCODING_UTF8,
+            errors="replace",
+            check=False,
+            timeout=cs.GIT_LS_FILES_TIMEOUT_S,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if answer.returncode != 0 or not (relative := answer.stdout.strip()):
+        return None
+    # Relative to the checkout for a plain repository, absolute for a linked
+    # worktree. Normalised but not resolved, to compare equal to the paths a
+    # watch on the checkout as given reports.
+    return Path(os.path.normpath(repo_path / relative))
 
 
 CGR_INSTRUCTIONS_FILENAME = ".cgr.md"

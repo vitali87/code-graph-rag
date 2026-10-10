@@ -48,7 +48,7 @@ def _gotypes(monkeypatch: pytest.MonkeyPatch, facts: GoSemanticFacts) -> None:
 
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
     monkeypatch.setattr(go_fe, "go_frontend_available", lambda: True)
-    monkeypatch.setattr(go_fe, "run_go_frontend", lambda repo_path: facts)
+    monkeypatch.setattr(go_fe, "run_go_frontend", lambda repo_path, ignored_dirs: facts)
 
 
 _AMBIGUOUS_SRC = """package sample

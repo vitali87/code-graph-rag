@@ -10,6 +10,7 @@ them in one WARNING; an empty one stays at DEBUG, since nothing is lost.
 
 from __future__ import annotations
 
+import gc
 from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -81,6 +82,10 @@ _EMPTY_MANIFESTS = pytest.mark.parametrize(
 
 @pytest.fixture
 def records() -> Generator[list[tuple[str, str]], None, None]:
+    # An updater an earlier test left in a reference cycle saves the stdlib
+    # cache from its finalizer, logging at DEBUG whenever the collector gets
+    # to it; collected now, so it cannot land in this test's records.
+    gc.collect()
     captured: list[tuple[str, str]] = []
     sink_id = logger.add(
         lambda message: captured.append(

@@ -435,7 +435,9 @@ def _base_kinds(bases: list[dict[str, str]]) -> dict[str, str]:
     return kinds
 
 
-def run_csharp_frontend(repo_path: Path) -> CSharpSemanticFacts:
+def run_csharp_frontend(
+    repo_path: Path, ignored_dirs: frozenset[str] = cs.IGNORE_PATTERNS
+) -> CSharpSemanticFacts:
     dotnet = shutil.which(_DOTNET)
     if dotnet is None:
         return _empty_facts()
@@ -461,7 +463,7 @@ def run_csharp_frontend(repo_path: Path) -> CSharpSemanticFacts:
             env={
                 **os.environ,
                 **_DOTNET_ENV,
-                "CGR_IGNORE_DIRS": ",".join(sorted(cs.IGNORE_PATTERNS)),
+                "CGR_IGNORE_DIRS": ",".join(sorted(ignored_dirs)),
             },
         )
     except (subprocess.SubprocessError, OSError) as error:

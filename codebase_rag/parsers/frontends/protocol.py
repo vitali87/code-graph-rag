@@ -135,7 +135,16 @@ class LanguageFrontend(Protocol):
 
     def applies(self, repo_path: Path) -> bool: ...
 
-    def run(self, repo_path: Path, files: Sequence[Path]) -> SemanticFacts: ...
+    # `rescued_files` are the repo-relative files the indexing walk keeps
+    # although a default-excluded directory name is on their path; a
+    # whole-repo tool that skips those names must still cover them, or they
+    # reach the graph without compiler facts (review of PR 2490).
+    def run(
+        self,
+        repo_path: Path,
+        files: Sequence[Path],
+        rescued_files: frozenset[str] = frozenset(),
+    ) -> SemanticFacts: ...
 
 
 class FrontendPhase(StrEnum):

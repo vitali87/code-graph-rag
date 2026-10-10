@@ -16,6 +16,7 @@ TARGET_FILES = (
     "docs/guide/interactive-querying.md",
     "docs/guide/cli-reference.md",
     "docs/getting-started/installation.md",
+    "docs/advanced/ignore-patterns.md",
 )
 
 SECTION_PATTERN = re.compile(
