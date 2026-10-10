@@ -10,6 +10,7 @@ from loguru import logger
 from . import constants as cs
 from .models import FQNSpec, LanguageSpec
 from .sql_names import normalize_sql_reference
+from .utils import path_utils
 from .utils.path_utils import module_extension, module_stem, should_skip_path
 from .utils.qn_markers import strip_dup_marker
 
@@ -521,6 +522,20 @@ _TS_CLASS_NODE_TYPES = cs.JS_TS_CLASS_NODES + (
     cs.TS_TYPE_ALIAS_DECLARATION,
     cs.TS_INTERNAL_MODULE,
 )
+# Bodiless members are captured by POSITION, not by type (issue #2524): see
+# TS_METHOD_SIGNATURE for the class-overload and object-type spellings of the
+# same node that must not register. They stay out of function_node_types, whose
+# consumers treat a listed type as a scope that can hold calls and closures.
+_TS_FUNCTION_QUERY = " ".join(
+    [
+        *(
+            f"({node_type}) @{cs.CAPTURE_FUNCTION}"
+            for node_type in _TS_FUNCTION_NODE_TYPES
+        ),
+        f"({cs.TS_INTERFACE_BODY} ({cs.TS_METHOD_SIGNATURE}) @{cs.CAPTURE_FUNCTION})",
+        f"({cs.TS_CLASS_BODY} ({cs.TS_ABSTRACT_METHOD_SIGNATURE}) @{cs.CAPTURE_FUNCTION})",
+    ]
+)
 
 LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
     cs.SupportedLanguage.PYTHON: LanguageSpec(
@@ -548,6 +563,7 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         language=cs.SupportedLanguage.TS,
         file_extensions=cs.TS_EXTENSIONS,
         function_node_types=_TS_FUNCTION_NODE_TYPES,
+        function_query=_TS_FUNCTION_QUERY,
         class_node_types=_TS_CLASS_NODE_TYPES,
         module_node_types=cs.SPEC_JS_MODULE_TYPES,
         call_node_types=cs.SPEC_JS_CALL_TYPES,
@@ -562,6 +578,7 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         language=cs.SupportedLanguage.TSX,
         file_extensions=cs.TSX_EXTENSIONS,
         function_node_types=_TS_FUNCTION_NODE_TYPES,
+        function_query=_TS_FUNCTION_QUERY,
         class_node_types=_TS_CLASS_NODE_TYPES,
         module_node_types=cs.SPEC_JS_MODULE_TYPES,
         call_node_types=cs.SPEC_JS_CALL_TYPES,
@@ -791,6 +808,8 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
             (name) @name) @call
         (object_creation_expression
             (qualified_name) @name) @call
+        (object_creation_expression
+            (relative_name) @name) @call
         """,
     ),
     cs.SupportedLanguage.LUA: LanguageSpec(
@@ -940,6 +959,9 @@ def has_other_language_sibling(
         ):
             continue
         candidate = path.parent / name
+        # A linked file is no sibling: the walk leaves links out (#2451).
+        if path_utils.is_symlink_entry(candidate):
+            continue
         if candidate.is_file() and not should_skip_path(
             candidate,
             repo_path,

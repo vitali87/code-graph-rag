@@ -12,7 +12,7 @@ from codebase_rag import constants as cs
 
 from .. import constants as ec
 from ..types_defs import GraphData, OraclePayload
-from ._common import is_ignored, payload_to_graph
+from ._common import is_ignored, payload_to_graph, reason_stderr
 
 _ORACLE_DIR = Path(__file__).parent / ec.CSHARP_ORACLE_DIRNAME
 _SOURCE = _ORACLE_DIR / ec.CSHARP_ORACLE_SOURCE
@@ -65,7 +65,7 @@ def csharp_oracle_skip_reason() -> str | None:
             return ec.DOTNET_SKIP_BUILD_INCOMPLETE
     except subprocess.CalledProcessError as e:
         return ec.DOTNET_SKIP_BUILD_FAILED.format(
-            stderr=((e.stderr or e.stdout or "").strip())[: ec.SKIP_REASON_STDERR_CHARS]
+            stderr=reason_stderr(e.stderr or e.stdout or "")
         )
     except subprocess.TimeoutExpired as e:
         return ec.DOTNET_SKIP_BUILD_TIMEOUT.format(seconds=e.timeout)
