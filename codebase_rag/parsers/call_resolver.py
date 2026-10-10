@@ -1764,7 +1764,9 @@ class CallResolver:
         if self._is_super_call(call_name):
             return True, self._resolve_super_call(call_name, call.class_context)
 
-        if cs.SEPARATOR_DOT in call_name and self._is_method_chain(call_name):
+        if cs.SEPARATOR_DOT in call_name and self._is_method_chain(
+            call_name, call.language
+        ):
             # A chained call resolves via return-type inference only; it does NOT
             # fall through to the trie fallback, because a hop returning a container
             # (`Kids() []Command`) or an unknown type must drop the edge rather than
@@ -5476,10 +5478,17 @@ class CallResolver:
             )
         return ret
 
-    def _is_method_chain(self, call_name: str) -> bool:
+    def _is_method_chain(
+        self, call_name: str, language: cs.SupportedLanguage | None = None
+    ) -> bool:
         if cs.CHAR_PAREN_OPEN not in call_name or cs.CHAR_PAREN_CLOSE not in call_name:
             return False
         parts = call_name.split(cs.SEPARATOR_DOT)
+        # Rust: split between hops only. The `.` in a float argument cut
+        # `Circle::new(2.0).area` into `Circle::new(2` and `0)`, so no hop held
+        # both parens and `area` fell to a by-name guess (issue #2698).
+        if language == cs.SupportedLanguage.RUST:
+            parts = _split_receiver_chain(call_name) or parts
         method_calls = sum(
             cs.CHAR_PAREN_OPEN in part and cs.CHAR_PAREN_CLOSE in part for part in parts
         )

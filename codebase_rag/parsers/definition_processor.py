@@ -580,6 +580,10 @@ class DefinitionProcessor(
                 # Julia ingests types BEFORE functions: a struct and a free
                 # function may share a name (separate namespaces), and the
                 # TYPE is the primary owner of it (issue #1882 review).
+                # The inline-module pass is skipped: a Julia `module` block
+                # is the file's declared module (an import index), not a
+                # nested module node, so a synthetic `fileqn.Module` node
+                # would clobber that model.
                 self._ingest_classes_and_methods(
                     root_node,
                     module_qn,
@@ -595,6 +599,13 @@ class DefinitionProcessor(
                     combined_captures=combined_captures,
                 )
             else:
+                self._ingest_inline_modules(
+                    root_node,
+                    module_qn,
+                    language,
+                    queries,
+                    combined_captures=combined_captures,
+                )
                 self._ingest_all_functions(
                     root_node,
                     module_qn,
