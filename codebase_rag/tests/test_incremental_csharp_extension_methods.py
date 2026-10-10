@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from evals.cgr_graph import _StatefulIngestor
@@ -66,7 +67,7 @@ def _run_calls(store: _StatefulIngestor) -> set[tuple[str, str]]:
 
 
 def _edit(root: Path, rel: str, text: str) -> None:
-    cache_mtime = (root / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
     path = root / rel
     path.write_text(text, encoding="utf-8")
     os.utime(path, (cache_mtime + 1, cache_mtime + 1))
