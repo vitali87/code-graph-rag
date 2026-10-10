@@ -281,7 +281,7 @@ MCP_GLOSSES = (
     "Notes (Glosses) about one definition: `annotating` are filed on it, "
     "`mentioning` are filed on other definitions and refer to it. `target` "
     "is resolved as `annotate` resolves it. Each note's `anchor_state` is "
-    "graded after each sync: EXACT when its definition's content hash still "
+    "graded after each sync of its project: EXACT when its definition's content hash still "
     "equals the one recorded at writing, STALE when it differs (EXACT again "
     "on revert), MOVED when the name is gone and exactly one definition in "
     "the project carries the recorded hash (the note follows it; "

@@ -7783,6 +7783,8 @@ class GraphUpdater:
                 self.ingestor.fetch_all,
                 self.ingestor.execute_write,
                 self._read_project_source,
+                # Only this project's definitions changed (issue #3236).
+                project_name=self.project_name,
             )
             self.ingestor.execute_write(cq.CYPHER_REANCHOR_GLOSS_MENTIONS)
             # Then grade: the subject's `anchor_hash` was just re-emitted by
