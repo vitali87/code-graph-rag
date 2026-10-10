@@ -559,14 +559,12 @@ class ClassIngestMixin:
 
         if combined_captures is not None:
             class_nodes = list(combined_captures.get(cs.CAPTURE_CLASS, []))
-            module_nodes = combined_captures.get(cs.ONEOF_MODULE, [])
         else:
             if not (query := lang_queries[cs.QUERY_CLASSES]):
                 return
             cursor = QueryCursor(query)
             captures = sorted_captures(cursor, root_node)
             class_nodes = captures.get(cs.CAPTURE_CLASS, [])
-            module_nodes = captures.get(cs.ONEOF_MODULE, [])
 
         if language == cs.SupportedLanguage.CPP:
             class_nodes.extend(self._find_cpp_exported_classes(root_node))
@@ -591,7 +589,32 @@ class ClassIngestMixin:
                 func_node_starts=func_node_starts,
             )
 
-        self._process_inline_modules(module_nodes, module_qn, lang_config)
+    def _ingest_inline_modules(
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        combined_captures: dict[str, list] | None = None,
+    ) -> None:
+        # Runs before the file's function and class passes: an item inside a
+        # bodied `mod` buffers its DEFINES from that mod's Module node, and
+        # when a batch flush fell between the item and the node (buffered
+        # last) the edge's MATCH found no source and the row was dropped,
+        # leaving the item outside every deletion walk (issue #3000).
+        lang_queries = queries[language]
+        if combined_captures is not None:
+            module_nodes = combined_captures.get(cs.ONEOF_MODULE, [])
+        else:
+            if not (query := lang_queries[cs.QUERY_CLASSES]):
+                return
+            module_nodes = sorted_captures(QueryCursor(query), root_node).get(
+                cs.ONEOF_MODULE, []
+            )
+        if module_nodes:
+            self._process_inline_modules(
+                module_nodes, module_qn, lang_queries[cs.QUERY_CONFIG]
+            )
 
     def _reserve_python_class_qns(
         self,
