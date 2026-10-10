@@ -64,7 +64,8 @@ def test_an_unchanged_mention_writes_nothing() -> None:
     report = repair_mentions(store.fetch_all, store.execute_write)
 
     assert store.writes == []
-    assert report.moved == [] and report.lost == []
+    assert report.moved == []
+    assert report.lost == []
 
 
 def test_a_mention_whose_edge_was_dropped_is_rebound_by_name() -> None:
@@ -96,7 +97,8 @@ def test_a_moved_mention_is_bound_only_while_it_carries_the_hash() -> None:
     ]
     assert params[cs.KEY_KEY_SEPARATOR] == cs.GLOSS_MENTION_KEY_SEPARATOR
     assert params[cs.KEY_PROJECT_PREFIX] == f"{P}."
-    assert report.moved == ["gloss:n"] and report.lost == []
+    assert report.moved == ["gloss:n"]
+    assert report.lost == []
 
 
 def test_a_mention_with_no_home_is_recorded_lost() -> None:
@@ -108,7 +110,8 @@ def test_a_mention_with_no_home_is_recorded_lost() -> None:
     assert params is not None
     assert params[cs.KEY_MENTION_QNS] == [RUN]
     assert params[cs.KEY_MENTIONS_LOST] == [RUN]
-    assert params[cs.KEY_ATTACH_QNS] == [] and params[cs.KEY_ATTACH_KEYS] == []
+    assert params[cs.KEY_ATTACH_QNS] == []
+    assert params[cs.KEY_ATTACH_KEYS] == []
     assert report.lost == ["gloss:n"]
 
 
@@ -125,7 +128,8 @@ def test_a_mention_edited_in_place_renews_its_recorded_hash() -> None:
     assert params[cs.KEY_MENTION_HASHES] == [edited]
     assert params[cs.KEY_ATTACH_QNS] == [RUN]
     assert params[cs.KEY_ATTACH_KEYS] == []
-    assert report.moved == [] and report.lost == []
+    assert report.moved == []
+    assert report.lost == []
 
 
 def test_the_set_statement_re_validates_a_moved_binding() -> None:

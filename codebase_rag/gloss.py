@@ -271,6 +271,25 @@ class _TargetFacts(NamedTuple):
     anchor: TextAnchor | None
 
 
+def _mention_anchor_props(
+    fetch_all: QueryFn,
+    project_name: str,
+    mention_qns: list[str],
+    read_source: SourceReader | None,
+) -> PropertyDict:
+    # Each mention records the anchors the subject does, in `mention_qns`
+    # order, so the repair can follow a renamed or moved mention instead of
+    # dropping it or handing it to a newcomer with the old name (#3230).
+    facts = [
+        _target_facts(fetch_all, project_name, qn, read_source) for qn in mention_qns
+    ]
+    return {
+        cs.KEY_MENTION_QNS: mention_qns,
+        cs.KEY_MENTION_HASHES: [f.target_hash or "" for f in facts],
+        cs.KEY_MENTION_QUOTES: [f.anchor.quote if f.anchor else "" for f in facts],
+    }
+
+
 def _target_facts(
     fetch_all: QueryFn,
     project_name: str,
@@ -410,13 +429,6 @@ def write_gloss(
     target_qn = subject_row["qualified_name"]
     key = gloss_id(target_qn, kind, text)
     facts = _target_facts(fetch_all, project_name, target_qn, read_source)
-    # Each mention records the anchors the subject does, in `mention_qns`
-    # order, so the repair can follow a renamed or moved mention instead of
-    # dropping it or handing it to a newcomer with the old name (#3230).
-    mention_qns = sorted({m["qualified_name"] for m in mentioned})
-    mention_facts = [
-        _target_facts(fetch_all, project_name, qn, read_source) for qn in mention_qns
-    ]
     # A None here unsets the property (Cypher SET with null), so a gloss on a
     # target without a fingerprint, or written outside a checkout, simply
     # lacks that property rather than carrying a placeholder.
@@ -424,11 +436,12 @@ def write_gloss(
         cs.KEY_QN: key,
         cs.KEY_PROJECT_PREFIX: _prefix(project_name),
         cs.KEY_TARGET_QN: target_qn,
-        cs.KEY_MENTION_QNS: mention_qns,
-        cs.KEY_MENTION_HASHES: [f.target_hash or "" for f in mention_facts],
-        cs.KEY_MENTION_QUOTES: [
-            f.anchor.quote if f.anchor else "" for f in mention_facts
-        ],
+        **_mention_anchor_props(
+            fetch_all,
+            project_name,
+            sorted({m["qualified_name"] for m in mentioned}),
+            read_source,
+        ),
         cs.KEY_KIND: kind,
         cs.KEY_STATUS: cs.GLOSS_STATUS_ACCEPTED,
         cs.KEY_BODY: text,
