@@ -54,6 +54,7 @@ from codebase_rag.types_defs import (
     DeleteProjectErrorResult,
     DeleteProjectResult,
     DeleteProjectSuccessResult,
+    GraphRowsPage,
     ListProjectsErrorResult,
     ListProjectsResult,
     ListProjectsSuccessResult,
@@ -508,26 +509,32 @@ class MCPToolsRegistry:
                 {
                     cs.MCPParamName.QUALIFIED_NAME: td.MCP_PARAM_QUALIFIED_NAME,
                     cs.MCPParamName.DEPTH: td.MCP_PARAM_DEPTH,
+                    cs.MCPParamName.LIMIT: td.MCP_PARAM_GRAPH_LIMIT,
                 },
                 [cs.MCPParamName.QUALIFIED_NAME],
                 self.callers,
-                integer_params={cs.MCPParamName.DEPTH},
+                integer_params={cs.MCPParamName.DEPTH, cs.MCPParamName.LIMIT},
             ),
             cs.MCPToolName.CALLEES: self._graph_tool(
                 cs.MCPToolName.CALLEES,
                 {
                     cs.MCPParamName.QUALIFIED_NAME: td.MCP_PARAM_QUALIFIED_NAME,
                     cs.MCPParamName.DEPTH: td.MCP_PARAM_DEPTH,
+                    cs.MCPParamName.LIMIT: td.MCP_PARAM_GRAPH_LIMIT,
                 },
                 [cs.MCPParamName.QUALIFIED_NAME],
                 self.callees,
-                integer_params={cs.MCPParamName.DEPTH},
+                integer_params={cs.MCPParamName.DEPTH, cs.MCPParamName.LIMIT},
             ),
             cs.MCPToolName.IMPLEMENTORS: self._graph_tool(
                 cs.MCPToolName.IMPLEMENTORS,
-                {cs.MCPParamName.QUALIFIED_NAME: td.MCP_PARAM_QUALIFIED_NAME},
+                {
+                    cs.MCPParamName.QUALIFIED_NAME: td.MCP_PARAM_QUALIFIED_NAME,
+                    cs.MCPParamName.LIMIT: td.MCP_PARAM_GRAPH_LIMIT,
+                },
                 [cs.MCPParamName.QUALIFIED_NAME],
                 self.implementors,
+                integer_params={cs.MCPParamName.LIMIT},
             ),
             cs.MCPToolName.OVERRIDES: self._graph_tool(
                 cs.MCPToolName.OVERRIDES,
@@ -555,15 +562,24 @@ class MCPToolsRegistry:
             ),
             cs.MCPToolName.IMPORTERS: self._graph_tool(
                 cs.MCPToolName.IMPORTERS,
-                {cs.MCPParamName.MODULE_QN: td.MCP_PARAM_MODULE_QN},
+                {
+                    cs.MCPParamName.MODULE_QN: td.MCP_PARAM_MODULE_QN,
+                    cs.MCPParamName.LIMIT: td.MCP_PARAM_GRAPH_LIMIT,
+                },
                 [cs.MCPParamName.MODULE_QN],
                 self.importers,
+                integer_params={cs.MCPParamName.LIMIT},
             ),
             cs.MCPToolName.TESTS_REACHING: self._graph_tool(
                 cs.MCPToolName.TESTS_REACHING,
-                {cs.MCPParamName.QUALIFIED_NAME: td.MCP_PARAM_QUALIFIED_NAME},
+                {
+                    cs.MCPParamName.QUALIFIED_NAME: td.MCP_PARAM_QUALIFIED_NAME,
+                    cs.MCPParamName.MAX_DEPTH: td.MCP_PARAM_MAX_DEPTH,
+                    cs.MCPParamName.LIMIT: td.MCP_PARAM_GRAPH_LIMIT,
+                },
                 [cs.MCPParamName.QUALIFIED_NAME],
                 self.tests_reaching,
+                integer_params={cs.MCPParamName.MAX_DEPTH, cs.MCPParamName.LIMIT},
             ),
             cs.MCPToolName.ENDPOINTS: self._graph_tool(
                 cs.MCPToolName.ENDPOINTS, {}, [], self.endpoints
@@ -2756,6 +2772,24 @@ class MCPToolsRegistry:
     def _depth(depth: int | None) -> int:
         return max(1, min(int(depth or 1), cs.GRAPH_QUERY_MAX_DEPTH))
 
+    @staticmethod
+    def _bounded[Row](rows: list[Row], limit: int | None) -> list[Row] | GraphRowsPage:
+        """`rows` as they are, or the first `limit` of them and what was cut.
+
+        The graph tools sort nearest first, so a capped answer keeps the
+        closest rows; an agent told the total can ask again for more instead
+        of receiving an answer its host rejects or truncates (issue #2815).
+        """
+        cap = cs.MCP_GRAPH_ROW_LIMIT if limit is None else max(1, int(limit))
+        if len(rows) <= cap:
+            return rows
+        return GraphRowsPage(
+            rows=rows[:cap],
+            total=len(rows),
+            truncated=True,
+            hint=cs.MCP_GRAPH_TRUNCATED_HINT.format(shown=cap, total=len(rows)),
+        )
+
     async def resolve(self, target: str, project: str | None = None) -> object:
         return await self._graph_query(
             cs.MCPToolName.RESOLVE,
@@ -2887,37 +2921,55 @@ class MCPToolsRegistry:
         )
 
     async def callers(
-        self, qualified_name: str, depth: int | None = None, project: str | None = None
+        self,
+        qualified_name: str,
+        depth: int | None = None,
+        limit: int | None = None,
+        project: str | None = None,
     ) -> object:
         return await self._graph_query(
             cs.MCPToolName.CALLERS,
             project,
-            lambda name: graph_query.callers(
-                self.ingestor.fetch_all, name, qualified_name, self._depth(depth)
+            lambda name: self._bounded(
+                graph_query.callers(
+                    self.ingestor.fetch_all, name, qualified_name, self._depth(depth)
+                ),
+                limit,
             ),
             target=qualified_name,
         )
 
     async def callees(
-        self, qualified_name: str, depth: int | None = None, project: str | None = None
+        self,
+        qualified_name: str,
+        depth: int | None = None,
+        limit: int | None = None,
+        project: str | None = None,
     ) -> object:
         return await self._graph_query(
             cs.MCPToolName.CALLEES,
             project,
-            lambda name: graph_query.callees(
-                self.ingestor.fetch_all, name, qualified_name, self._depth(depth)
+            lambda name: self._bounded(
+                graph_query.callees(
+                    self.ingestor.fetch_all, name, qualified_name, self._depth(depth)
+                ),
+                limit,
             ),
             target=qualified_name,
         )
 
     async def implementors(
-        self, qualified_name: str, project: str | None = None
+        self,
+        qualified_name: str,
+        limit: int | None = None,
+        project: str | None = None,
     ) -> object:
         return await self._graph_query(
             cs.MCPToolName.IMPLEMENTORS,
             project,
-            lambda name: graph_query.implementors(
-                self.ingestor.fetch_all, name, qualified_name
+            lambda name: self._bounded(
+                graph_query.implementors(self.ingestor.fetch_all, name, qualified_name),
+                limit,
             ),
             target=qualified_name,
         )
@@ -2935,25 +2987,41 @@ class MCPToolsRegistry:
         )
 
     async def importers(
-        self, module_qualified_name: str, project: str | None = None
+        self,
+        module_qualified_name: str,
+        limit: int | None = None,
+        project: str | None = None,
     ) -> object:
         return await self._graph_query(
             cs.MCPToolName.IMPORTERS,
             project,
-            lambda name: graph_query.importers(
-                self.ingestor.fetch_all, name, module_qualified_name
+            lambda name: self._bounded(
+                graph_query.importers(
+                    self.ingestor.fetch_all, name, module_qualified_name
+                ),
+                limit,
             ),
             target=module_qualified_name,
         )
 
     async def tests_reaching(
-        self, qualified_name: str, project: str | None = None
+        self,
+        qualified_name: str,
+        max_depth: int | None = None,
+        limit: int | None = None,
+        project: str | None = None,
     ) -> object:
         return await self._graph_query(
             cs.MCPToolName.TESTS_REACHING,
             project,
-            lambda name: graph_query.tests_reaching(
-                self.ingestor.fetch_all, name, qualified_name
+            lambda name: self._bounded(
+                graph_query.tests_reaching(
+                    self.ingestor.fetch_all,
+                    name,
+                    qualified_name,
+                    None if max_depth is None else max(1, int(max_depth)),
+                ),
+                limit,
             ),
             target=qualified_name,
         )
