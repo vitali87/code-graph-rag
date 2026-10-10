@@ -1824,7 +1824,8 @@ def _member_access(
     of a chain shares (`Cart().total()`), so the access is found among the
     nodes starting there; two such accesses to the same name are ambiguous.
     """
-    assert site.line is not None and site.col is not None
+    assert site.line is not None
+    assert site.col is not None
     point = (site.line - 1, site.col)
     node: Node | None = root.descendant_for_point_range(point, point)
     found: list[Node] = []
