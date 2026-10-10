@@ -49,6 +49,8 @@ A label marked opt-in belongs to a [capture group](#capture-groups) that a defau
 
 `Pattern`, `CodeSmell`, and `SecurityIssue` are ast-grep finding nodes, captured only when the `findings` capture group is enabled.
 
+`EnumVariant` is one member of an enum, captured only when the `enum_variants` capture group is enabled. Its `qualified_name` is the enum's plus `.<name>`, `index` is its declaration order (also on the `HAS_VARIANT` edge), and `value` is the discriminant exactly as written after `=`, absent when there is none. Rust, Java, C, C++, C#, PHP, TypeScript/TSX (`enum`, `const enum`, `declare enum`) and Dart (plain and enhanced enums; constructor arguments are not a `value`) hang their variants off the `Enum` node. A Python enum is a class whose direct base is `enum.Enum`, `IntEnum`, `StrEnum`, `Flag`, `IntFlag` or `ReprEnum` (under any import alias), so it stays a `Class` and its variants hang off that `Class`. Its members are its class-level assignments, except the `_ignore_` list and the names in it, dunder, sunder and private names, bare annotations, and descriptors (`lambda`, `property()`, `staticmethod()`, `classmethod()`, `nonmember()`). A class that only reaches `enum.Enum` through a first-party base is not recognised.
+
 ## Relationships
 
 Every relationship type belongs to exactly one [capture group](#capture-groups). A relationship marked opt-in belongs to a group that a default index leaves out, so it appears only once that group is enabled.
@@ -90,7 +92,7 @@ Every relationship type belongs to exactly one [capture group](#capture-groups).
 | Gloss | MENTIONS (opt-in: [`glosses`](#capture-groups)) | Module, Class, Function, Method, Interface, Enum, Type, Union |
 | Function, Method | HAS_PARAMETER (opt-in: [`parameters`](#capture-groups)) | Parameter |
 | Class, Interface, Enum, Type, Union | HAS_FIELD (opt-in: [`fields`](#capture-groups)) | Field |
-| Enum | HAS_VARIANT (opt-in: [`enum_variants`](#capture-groups)) | EnumVariant |
+| Enum, Class | HAS_VARIANT (opt-in: [`enum_variants`](#capture-groups)) | EnumVariant |
 | Module | DEFINES_CONSTANT (opt-in: [`constants`](#capture-groups)) | Constant |
 | Parameter, Field, Constant | OF_TYPE (opt-in: [`parameters`](#capture-groups)) | Class, Interface, Enum, Type, Union |
 <!-- /SECTION:relationship_schemas -->
