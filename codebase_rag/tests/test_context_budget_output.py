@@ -237,7 +237,8 @@ def test_a_neighbourhood_that_fits_omits_nothing(temp_repo: Path) -> None:
 
     slice_ = context(store.fetch_all, PROJECT, f"{PROJECT}.app.core", 4000, temp_repo)
 
-    assert slice_["omitted"] == [] and slice_["omitted_count"] == 0
+    assert slice_["omitted"] == []
+    assert slice_["omitted_count"] == 0
     assert {p["why_included"] for p in slice_["pieces"]} == {
         cs.CONTEXT_WHY_TARGET,
         cs.CONTEXT_WHY_CALLER,

@@ -443,20 +443,27 @@ class _Fitted(NamedTuple):
     truncated: bool
 
 
+class _Omitted:
+    # The best-ranked candidates that did not fit: a sample to print, and
+    # the count of all of them.
+    __slots__ = ("count", "sample")
+
+    def __init__(self) -> None:
+        self.sample: list[str] = []
+        self.count = 0
+
+    def add(self, candidate: _Candidate) -> None:
+        self.count += 1
+        if len(self.sample) < cs.CONTEXT_OMITTED_SAMPLE:
+            self.sample.append(f"{candidate.qualified_name} ({candidate.why})")
+
+
 def _fit(candidates: Iterable[_Candidate], budget: int) -> _Fitted:
     pieces: list[Piece] = []
-    omitted: list[str] = []
-    omitted_count = 0
+    omitted = _Omitted()
     used = 0
     truncated = False
     seen: set[tuple[str, str, tuple[int, int]]] = set()
-
-    def omit(candidate: _Candidate) -> None:
-        nonlocal omitted_count
-        omitted_count += 1
-        if len(omitted) < cs.CONTEXT_OMITTED_SAMPLE:
-            omitted.append(f"{candidate.qualified_name} ({candidate.why})")
-
     for candidate in sorted(candidates, key=lambda c: c.order):
         key = (candidate.qualified_name, candidate.why, candidate.span)
         if key in seen:
@@ -464,32 +471,18 @@ def _fit(candidates: Iterable[_Candidate], budget: int) -> _Fitted:
         seen.add(key)
         span = [candidate.span[0], candidate.span[1]]
         is_target = candidate.distance == 0 and not pieces
-        # Its fields alone are a floor on what it costs: past it, the
-        # source is never read.
-        floor = _piece_tokens(
-            candidate.qualified_name, candidate.file, span, candidate.why, ""
-        )
-        if used + floor > budget and not is_target:
-            omit(candidate)
+        if (sized := _sized(candidate, span, budget - used, is_target)) is None:
+            omitted.add(candidate)
             continue
-        source = candidate.source or (candidate.loader() if candidate.loader else "")
-        if not source:
-            continue
-        tokens = _piece_tokens(
-            candidate.qualified_name, candidate.file, span, candidate.why, source
-        )
-        if used + tokens > budget:
-            if not is_target:
-                omit(candidate)
-                continue
-            # The target itself must fit: keep as many of its lines as the
-            # budget allows and say so. A budget too small for even its
-            # first line leaves it out rather than padding with nothing.
-            source, tokens = _trim(candidate, span, source, budget - used)
+        source, tokens, trimmed = sized
+        if trimmed:
             truncated = True
-            if not source:
-                omit(candidate)
-                continue
+        if not source:
+            # No source to quote, or a target too big for even its first
+            # line: only the latter is a candidate the budget left out.
+            if trimmed:
+                omitted.add(candidate)
+            continue
         used += tokens
         pieces.append(
             Piece(
@@ -501,7 +494,35 @@ def _fit(candidates: Iterable[_Candidate], budget: int) -> _Fitted:
                 tokens=tokens,
             )
         )
-    return _Fitted(pieces, omitted, omitted_count, used, truncated)
+    return _Fitted(pieces, omitted.sample, omitted.count, used, truncated)
+
+
+def _sized(
+    candidate: _Candidate, span: list[int], room: int, is_target: bool
+) -> tuple[str, int, bool] | None:
+    # (source, tokens, trimmed) of the candidate within `room` tokens, or
+    # None when it does not fit. Its fields alone are a floor on what it
+    # costs: past it, the source is never read.
+    floor = _piece_tokens(
+        candidate.qualified_name, candidate.file, span, candidate.why, ""
+    )
+    if floor > room and not is_target:
+        return None
+    source = candidate.source or (candidate.loader() if candidate.loader else "")
+    if not source:
+        return "", 0, False
+    tokens = _piece_tokens(
+        candidate.qualified_name, candidate.file, span, candidate.why, source
+    )
+    if tokens <= room:
+        return source, tokens, False
+    if not is_target:
+        return None
+    # The target itself must fit: keep as many of its lines as the budget
+    # allows and say so. A budget too small for even its first line leaves
+    # it out rather than padding with nothing.
+    source, tokens = _trim(candidate, span, source, room)
+    return source, tokens, True
 
 
 def _trim(
