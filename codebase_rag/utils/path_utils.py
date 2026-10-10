@@ -183,6 +183,106 @@ def unignore_could_match_within(pattern: str, rel_dir: str) -> bool:
     )
 
 
+@lru_cache(maxsize=64)
+def nested_keeps(unignore_paths: frozenset[str]) -> tuple[str, ...]:
+    """The unignore patterns that name one path below the repository root.
+
+    Literal and containing a slash, like the `!generated/node_modules` an
+    interactive setup saves: only such a keep has enclosing directories a
+    walk can be sent through. A bare name or a glob names no single path.
+    """
+    return tuple(
+        sorted(
+            keep
+            for pattern in unignore_paths
+            if (keep := _nested_keep(pattern)) is not None
+        )
+    )
+
+
+def _nested_keep(pattern: str) -> str | None:
+    keep = pattern.strip().strip(cs.SEPARATOR_SLASH)
+    if cs.SEPARATOR_SLASH in keep and not _GLOB_MAGIC.search(keep):
+        return keep
+    return None
+
+
+def keeps_outside_run_excludes(
+    unignore_paths: frozenset[str] | None, run_excludes: frozenset[str]
+) -> frozenset[str] | None:
+    """`unignore_paths` without the nested keeps a run's `--exclude` encloses.
+
+    A nested keep lifts the exclusion of the directories enclosing it, which
+    is meant for the ignore files it is saved in. `--exclude` is the run's
+    own choice and must win: with `!generated/node_modules` saved,
+    `--exclude generated` indexed the kept directory anyway (Greptile review
+    of PR 2510). Dropping the keep for the run, rather than telling the walk
+    which excludes came from where, keeps the recorded exclusion state the
+    exact scope that was indexed.
+    """
+    if not unignore_paths or not run_excludes:
+        return unignore_paths
+    overridden = frozenset(
+        pattern
+        for pattern in unignore_paths
+        if (keep := _nested_keep(pattern)) is not None
+        and _enclosing_excludes(keep, run_excludes)
+    )
+    return unignore_paths - overridden or None
+
+
+@lru_cache(maxsize=256)
+def _enclosing_excludes(keep: str, exclude_paths: frozenset[str]) -> frozenset[str]:
+    # The exclude patterns that match a directory enclosing `keep`.
+    parts = keep.split(cs.SEPARATOR_SLASH)
+    enclosing = [
+        f"{cs.SEPARATOR_SLASH.join(parts[:depth])}{cs.SEPARATOR_SLASH}"
+        for depth in range(1, len(parts))
+    ]
+    # Compiled here, one pattern at a time, rather than through
+    # compiled_ignore_spec, whose small cache holds the walk's whole sets.
+    return frozenset(
+        pattern
+        for pattern in exclude_paths
+        if any(
+            PathSpec.from_lines(cs.GITWILDMATCH_STYLE, [pattern]).match_file(directory)
+            for directory in enclosing
+        )
+    )
+
+
+def excludes_applying_to(
+    rel_path_str: str,
+    exclude_paths: frozenset[str] | None,
+    unignore_paths: frozenset[str] | None,
+) -> frozenset[str] | None:
+    """The exclude patterns that decide `rel_path_str`.
+
+    Excludes win over unignores, with one exception: the exclusion of a
+    directory ENCLOSING a nested keep gives way on the path down to the keep
+    and inside it. Otherwise `!generated/node_modules` under a `.gitignore`d
+    `generated/` could never take effect -- the walk pruned `generated/`
+    first -- although setup reported it saved (Greptile review of PR 2510).
+    The files beside that path stay excluded, and a pattern that excludes
+    paths inside the keep itself (`*.js`) still wins there.
+    """
+    if not exclude_paths or not unignore_paths:
+        return exclude_paths
+    lifted: set[str] = set()
+    for keep in nested_keeps(unignore_paths):
+        if _on_the_way_to_or_inside(rel_path_str, keep):
+            lifted |= _enclosing_excludes(keep, exclude_paths)
+    return exclude_paths - lifted if lifted else exclude_paths
+
+
+def _on_the_way_to_or_inside(rel_path_str: str, keep: str) -> bool:
+    return (
+        rel_path_str == keep
+        or rel_path_str.startswith(f"{keep}{cs.SEPARATOR_SLASH}")
+        or keep.startswith(f"{rel_path_str}{cs.SEPARATOR_SLASH}")
+    )
+
+
 def should_keep_dir(
     dirname: str,
     dir_prefix: str,
@@ -197,7 +297,9 @@ def should_keep_dir(
     """
     rel_dir = f"{dir_prefix}{dirname}"
     # an explicit exclude can never be rescued by unignore (excludes win
-    # at the file level too), so prune the subtree outright.
+    # at the file level too), so prune the subtree outright -- unless it
+    # encloses a nested keep, whose way down stays open (PR 2510).
+    exclude_paths = excludes_applying_to(rel_dir, exclude_paths, unignore_paths)
     if exclude_paths and matches_ignore_patterns(f"{rel_dir}/", exclude_paths):
         return False
     if dirname not in cs.IGNORE_PATTERNS:
@@ -269,6 +371,10 @@ def should_skip_path(
     rel_path_str = rel_path.as_posix()
     # a trailing slash marks the path as a directory for dir-only patterns.
     match_path = rel_path_str if _is_file else f"{rel_path_str}/"
+    # A directory enclosing a nested keep loses its exclusion here and is
+    # then kept by the unignore-beneath rule below, as in should_keep_dir,
+    # so the kept files get their Folder ancestry.
+    exclude_paths = excludes_applying_to(rel_path_str, exclude_paths, unignore_paths)
     if exclude_paths and matches_ignore_patterns(match_path, exclude_paths):
         return True
     # The rescuable half, decided BEFORE the general unignore below: that check
@@ -323,6 +429,7 @@ def should_skip_rel_file(
     filename = rel_path_str.rsplit(cs.SEPARATOR_SLASH, 1)[-1]
     if is_unconditionally_ignored_filename(filename):
         return True
+    exclude_paths = excludes_applying_to(rel_path_str, exclude_paths, unignore_paths)
     if exclude_paths and matches_ignore_patterns(rel_path_str, exclude_paths):
         return True
     # Same position and rule as `should_skip_path`: the rescuable half needs a
