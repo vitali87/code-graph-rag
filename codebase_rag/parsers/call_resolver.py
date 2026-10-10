@@ -251,6 +251,22 @@ def _binds_identifier(target: Node, name: str) -> bool:
     return False
 
 
+def _ts_single_named_type(value: Node | None) -> Node | None:
+    # The one type a TS alias value names, through parentheses and
+    # `| null`/`| undefined`; None for a wider union.
+    while value is not None and value.type in (
+        cs.TS_PARENTHESIZED_TYPE,
+        cs.TS_UNION_TYPE,
+    ):
+        members = [
+            child
+            for child in value.named_children
+            if (safe_decode_text(child) or "") not in cs.TS_NULLISH_TYPE_TEXTS
+        ]
+        value = members[0] if len(members) == 1 else None
+    return value
+
+
 class CallResolver:
     __slots__ = (
         "_py_rel_to_module",
@@ -281,6 +297,7 @@ class CallResolver:
         "rehydrated_definition_paths",
         "rust_function_modules",
         "declared_module_qns",
+        "_ts_alias_targets",
     )
 
     def __init__(
@@ -324,6 +341,8 @@ class CallResolver:
         # C++ typedef/using alias -> underlying bare type, consulted when a
         # receiver type name is mapped to a class (empty for other languages).
         self.type_aliases = type_aliases if type_aliases is not None else {}
+        # TS alias qn -> the first-party class it names, or None (#3276).
+        self._ts_alias_targets: dict[str, str | None] = {}
         self._simple_resolution_cache: dict[
             tuple[str, str, bool], tuple[str, str] | None
         ] = {}
@@ -2350,6 +2369,54 @@ class CallResolver:
             stack.extend(self.class_inheritance.get(current, ()))
         return False
 
+    def ts_type_alias(self, module_qn: str, name: str) -> Node | None:
+        """The module's top-level `type <name> = ...` declaration, if any."""
+        file_path = self.type_inference.module_qn_to_file_path.get(module_qn)
+        entry = self.type_inference.ast_cache.load(file_path) if file_path else None
+        if not entry:
+            return None
+        root, _language = entry
+        for child in root.named_children:
+            declaration = (
+                child.child_by_field_name(cs.TS_DECLARATION)
+                if child.type == cs.TS_EXPORT_STATEMENT
+                else child
+            )
+            if (
+                declaration is not None
+                and declaration.type == cs.TS_TYPE_ALIAS_DECLARATION
+                and safe_decode_text(declaration.child_by_field_name(cs.FIELD_NAME))
+                == name
+            ):
+                return declaration
+        return None
+
+    def ts_alias_class(self, qn: str, depth: int = 0) -> str | None:
+        """The first-party class the type alias `qn` names (issue #3276).
+
+        `type Handler = Box`, `type MaybeBox = Box | undefined` and an alias
+        of such an alias name `Box`; a generic alias or a wider union names
+        no one class.
+        """
+        if qn in self._ts_alias_targets:
+            return self._ts_alias_targets[qn]
+        target = None
+        module_qn, _, name = qn.rpartition(cs.SEPARATOR_DOT)
+        alias = self.ts_type_alias(module_qn, name) if module_qn else None
+        value = _ts_single_named_type(
+            alias.child_by_field_name(cs.FIELD_VALUE) if alias else None
+        )
+        if value is not None and value.type == cs.TS_TYPE_IDENTIFIER:
+            named = safe_decode_text(value) or ""
+            import_map = self.import_processor.import_mapping.get(module_qn) or {}
+            candidate = import_map.get(named) or f"{module_qn}{cs.SEPARATOR_DOT}{named}"
+            if self.function_registry.get(candidate) == NodeType.CLASS:
+                target = candidate
+            elif depth < cs.TS_ALIAS_MAX_DEPTH:
+                target = self.ts_alias_class(candidate, depth + 1)
+        self._ts_alias_targets[qn] = target
+        return target
+
     def _resolve_js_member_call_unique(
         self, call_name: str, module_qn: str
     ) -> tuple[str, str] | None:
@@ -2374,6 +2441,14 @@ class CallResolver:
         # candidate's parent may equal an import or sit anywhere under one.
         import_map = self.import_processor.import_mapping.get(module_qn) or {}
         imported = set(import_map.values())
+        # An imported type alias brings the class it names into view, as
+        # importing the class would (`import { Handler }` for `type Handler
+        # = Box`, issue #3276).
+        imported |= {
+            target
+            for value in tuple(imported)
+            if (target := self.ts_alias_class(value)) is not None
+        }
         visible = [
             qn
             for qn in candidates

@@ -287,6 +287,14 @@ JS_LIST_TYPE_FORMAT = "list[{element}]"
 TS_PREDEFINED_TYPE = "predefined_type"
 TS_TUPLE_TYPE = "tuple_type"
 TS_PARENTHESIZED_TYPE = "parenthesized_type"
+# `readonly T[]` (issue #3276).
+TS_READONLY_TYPE = "readonly_type"
+# The generic containers whose `xs[i]` is an element: indexable, unlike a
+# `Set` or an `Iterable` (issue #3276).
+TS_INDEXABLE_GENERIC_NAMES = frozenset({"Array", "ReadonlyArray"})
+# How deep a type alias may refer to another before the chain is abandoned:
+# `type A = B; type B = A` names nothing (issue #3276).
+TS_ALIAS_MAX_DEPTH = 8
 TS_FIELD_TYPE_ARGUMENTS = "type_arguments"
 TS_TYPE_DECLARATION_NODES = frozenset(
     {
