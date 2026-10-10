@@ -244,6 +244,22 @@ PY_DUNDER_BOOL = "__bool__"
 PY_OPERAND_REJECT_CHARS = "()[]{}\n\t "
 # Optional annotation handling: X | None names a single concrete class.
 PY_UNION_SEPARATOR = "|"
+# Statements whose body may not run, so a name rebound inside one may still
+# hold the type it had before (issue #2842).
+PY_BRANCH_SCOPES = frozenset(
+    {
+        "if_statement",
+        "elif_clause",
+        "else_clause",
+        "for_statement",
+        "while_statement",
+        "try_statement",
+        "except_clause",
+        "finally_clause",
+        "match_statement",
+        "case_clause",
+    }
+)
 PY_NONE = "None"
 # `-> Self` names the enclosing class, not a class called Self.
 PY_ANNOTATION_SELF = "Self"
