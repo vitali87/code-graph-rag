@@ -959,6 +959,18 @@ def _natural_qn(qualified_name: str) -> str:
     return qn_markers.natural_qn(qualified_name)
 
 
+def _registration_order(row: ResultRow) -> tuple[int, int]:
+    """Where a definition row's qn fell among its same-named twins.
+
+    Registration gives the first twin the natural qn and each later one an
+    `@line` (then `@line_col`) marker in document order, so the natural qn
+    sorts first and the variants follow by position.
+    """
+    qn = row.get(cs.KEY_QUALIFIED_NAME)
+    position = qn_markers.marker_position(qn) if isinstance(qn, str) else None
+    return position or (0, -1)
+
+
 _GLOSS_RELS = frozenset(
     {cs.RelationshipType.ANNOTATES.value, cs.RelationshipType.MENTIONS.value}
 )
@@ -3418,11 +3430,14 @@ class GraphUpdater:
         # `let b = Builder::new(); b.m()`) types from that record. Without it
         # an unchanged file's fn types nothing, and the method falls to a
         # name-only match a clean index never makes (issue #2559).
-        records = [
-            record
-            for row in rows
-            if (record := self._rust_return_type_record(row)) is not None
-        ]
+        records = sorted(
+            (
+                (_registration_order(row), record)
+                for row in rows
+                if (record := self._rust_return_type_record(row)) is not None
+            ),
+            key=lambda ordered: ordered[0],
+        )
         if not records:
             return
         # Read only now: the parser view loads a grammar on first access, and
@@ -3430,9 +3445,13 @@ class GraphUpdater:
         parser = self.parsers.get(cs.SupportedLanguage.RUST)
         if parser is None:
             return
-        return_types = self.factory.definition_processor.method_return_types
         reduced: dict[tuple[str, str | None], str | None] = {}
-        for key, annotation, impl_target in records:
+        restored: dict[str, str] = {}
+        # Methods of two trait impls on one type share a key (`S.run` and
+        # `S.run@13`), and parsing writes each one's type over the last in
+        # registration order. The rows come in no fixed order, so they are
+        # replayed in that order and the last typed one stands (#2805 review).
+        for _position, (key, annotation, impl_target) in records:
             if (annotation, impl_target) not in reduced:
                 reduced[(annotation, impl_target)] = (
                     rs_utils.return_type_name_from_annotation(
@@ -3440,8 +3459,11 @@ class GraphUpdater:
                     )
                 )
             if name := reduced[(annotation, impl_target)]:
-                # A re-parsed file's own record is current; keep it.
-                return_types.setdefault(key, name)
+                restored[key] = name
+        return_types = self.factory.definition_processor.method_return_types
+        for key, name in restored.items():
+            # A re-parsed file's own record is current; keep it.
+            return_types.setdefault(key, name)
 
     def _rust_return_type_record(
         self, row: ResultRow

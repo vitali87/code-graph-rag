@@ -583,3 +583,104 @@ class TestReturnTypeFromAnnotation:
             rs_utils.return_type_name_from_annotation(parser, "Result<Self, ()>", "W")
             == "W"
         )
+
+
+# `S` implements two traits that each declare `run` with a different return
+# type, so `S.run` registers twice (`S.run` and `S.run@<line>`). Parsing
+# records the return type of each in turn, and the later one stands.
+RS_TWO_TRAIT_RUNS: dict[str, str] = {
+    "Cargo.toml": '[package]\nname = "proj"\nversion = "0.1.0"\n',
+    "src/lib.rs": "pub mod shapes;\npub mod app;\n",
+    "src/shapes.rs": (
+        "pub struct Alpha;\n\n"
+        "impl Alpha {\n    pub fn go(&self) -> u32 {\n        1\n    }\n}\n\n"
+        "pub struct Beta;\n\n"
+        "impl Beta {\n    pub fn go(&self) -> u32 {\n        2\n    }\n}\n\n"
+        "pub trait First {\n    fn run(&self) -> Alpha;\n}\n\n"
+        "pub trait Second {\n    fn run(&self) -> Beta;\n}\n\n"
+        "pub struct S;\n\n"
+        "impl First for S {\n    fn run(&self) -> Alpha {\n        Alpha\n    }\n}\n\n"
+        "impl Second for S {\n    fn run(&self) -> Beta {\n        Beta\n    }\n}\n"
+    ),
+    "src/app.rs": (
+        "use crate::shapes::{First, Second, S};\n\n"
+        "pub fn chained(s: S) -> u32 {\n    s.run().go()\n}\n"
+    ),
+}
+RS_TWO_TRAIT_RUN_KEY = "proj.src.shapes.S.run"
+RS_TWO_TRAIT_CALLER = "proj.src.app.chained"
+
+
+def _rust_row(qn: str, annotation: str) -> dict[str, PropertyValue]:
+    return {
+        cs.KEY_QUALIFIED_NAME: qn,
+        cs.KEY_LABEL: cs.NodeLabel.METHOD.value,
+        cs.KEY_PATH: "src/shapes.rs",
+        cs.KEY_RETURN_TYPE: annotation,
+    }
+
+
+class TestRustDuplicateMethodReturnTypes:
+    def test_the_later_definition_types_the_receiver_as_on_a_clean_index(
+        self, tmp_path: Path
+    ) -> None:
+        synced = _sync_after_edit(
+            tmp_path, RS_TWO_TRAIT_RUNS, "src/app.rs", _UNRELATED_RS_FN, "rust"
+        )
+        clean = synced.clean_updater.factory.definition_processor.method_return_types
+        clean_calls = _calls_from(synced.clean, RS_TWO_TRAIT_CALLER)
+        assert clean.get(RS_TWO_TRAIT_RUN_KEY) == "Beta", (
+            "fixture must let the later definition's return type stand"
+        )
+        assert clean_calls.get("proj.src.shapes.Beta.go") == _EXACT
+        incremental = synced.updater.factory.definition_processor.method_return_types
+        calls = _calls_from(synced.store, RS_TWO_TRAIT_CALLER)
+
+        assert incremental.get(RS_TWO_TRAIT_RUN_KEY) == "Beta"
+        assert calls.get("proj.src.shapes.Beta.go") == _EXACT
+        assert "proj.src.shapes.Alpha.go" not in calls
+        # Not the whole graph: the `s.run()` edge itself fans out to both
+        # `run`s on a clean index and binds one here, the read-back variant
+        # gap #2403 closes.
+
+    @pytest.mark.parametrize("reverse", [False, True], ids=["in-order", "reversed"])
+    def test_row_order_does_not_pick_the_restored_type(
+        self, tmp_path: Path, reverse: bool
+    ) -> None:
+        # The graph returns rows in no fixed order; the one defined last wins
+        # whichever arrives first, and a later variant beats an earlier one
+        # by line and then by column.
+        updater = _updater(_StatefulIngestor(), tmp_path, "rust")
+        rows = [
+            _rust_row(RS_TWO_TRAIT_RUN_KEY, "Alpha"),
+            _rust_row(f"{RS_TWO_TRAIT_RUN_KEY}@30", "Beta"),
+            _rust_row(f"{RS_TWO_TRAIT_RUN_KEY}@9", "Gamma"),
+            _rust_row(f"{RS_TWO_TRAIT_RUN_KEY}@30_4", "Delta"),
+        ]
+        updater._rehydrate_rust_return_types(rows[::-1] if reverse else rows)
+        return_types = updater.factory.definition_processor.method_return_types
+        assert return_types.get(RS_TWO_TRAIT_RUN_KEY) == "Delta"
+
+    def test_a_later_definition_with_no_type_does_not_unset_an_earlier_one(
+        self, tmp_path: Path
+    ) -> None:
+        # Parsing records nothing for a fn whose annotation names no type, so
+        # the earlier record stands; the read-back must not erase it either.
+        updater = _updater(_StatefulIngestor(), tmp_path, "rust")
+        updater._rehydrate_rust_return_types(
+            [
+                _rust_row(f"{RS_TWO_TRAIT_RUN_KEY}@30", "()"),
+                _rust_row(RS_TWO_TRAIT_RUN_KEY, "Alpha"),
+            ]
+        )
+        return_types = updater.factory.definition_processor.method_return_types
+        assert return_types.get(RS_TWO_TRAIT_RUN_KEY) == "Alpha"
+
+    def test_a_reparsed_record_is_kept(self, tmp_path: Path) -> None:
+        updater = _updater(_StatefulIngestor(), tmp_path, "rust")
+        return_types = updater.factory.definition_processor.method_return_types
+        return_types[RS_TWO_TRAIT_RUN_KEY] = "Parsed"
+        updater._rehydrate_rust_return_types(
+            [_rust_row(f"{RS_TWO_TRAIT_RUN_KEY}@30", "Beta")]
+        )
+        assert return_types.get(RS_TWO_TRAIT_RUN_KEY) == "Parsed"
