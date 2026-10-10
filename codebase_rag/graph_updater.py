@@ -4101,6 +4101,62 @@ class GraphUpdater:
         except Exception:
             logger.warning(ls.PRUNE_QUERY_FAILED, label="unresolved references write")
 
+    def _queue_foreign_members(
+        self,
+        reindexed_keys: list[str],
+        deleted_keys: list[str],
+        present: set[str],
+        eligible_by_key: dict[str, Path],
+        scan: _FileScan,
+    ) -> list[str]:
+        """Queue the files that attach members to a module about to go.
+
+        A Go method keys under its receiver type's module whatever file
+        declares it, and a C++ out-of-line definition hangs on its header's
+        class. The re-parse delete walks the module's subtree and takes them,
+        and only their own file recreates them, so a type's file re-parsed as
+        a mere dependent left `Box.Grow` (box_extra.go) deleted until
+        box_extra.go itself changed (issue #3271). Read from the graph, so a
+        fresh process finds them too; `_foreign_definer_keys` reads this
+        run's span records, which a new updater does not have yet. Repeated
+        until nothing new joins: a joined file's own module can hold another
+        file's members.
+        """
+        while True:
+            joined = len(present)
+            reindexed_keys = self._queue_affected_callers(
+                self._foreign_member_keys(sorted({*reindexed_keys, *deleted_keys})),
+                present,
+                eligible_by_key,
+                scan,
+                reindexed_keys,
+            )
+            if len(present) == joined:
+                return reindexed_keys
+
+    def _foreign_member_keys(self, keys: list[str]) -> list[str]:
+        if not keys or not isinstance(self.ingestor, QueryProtocol):
+            return []
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_FOREIGN_MEMBER_PATHS,
+                {
+                    cs.CYPHER_PARAM_PATHS: keys,
+                    cs.KEY_PROJECT_NAME: self.project_name,
+                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                },
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="foreign members")
+            return []
+        return sorted(
+            {
+                path
+                for row in rows
+                if isinstance(path := row.get(cs.KEY_PATH), str) and path
+            }
+        )
+
     def _foreign_definer_keys(self, gone_keys: Iterable[str]) -> set[str]:
         """Files that registered definitions keyed under a module going away.
 
@@ -5642,6 +5698,9 @@ class GraphUpdater:
             eligible_by_key,
             scan,
             reindexed_keys,
+        )
+        reindexed_keys = self._queue_foreign_members(
+            reindexed_keys, deleted_before_parse, present, eligible_by_key, scan
         )
         # Pass 2 order decides which same-stem file claims the bare module
         # qn; a clean build processes files in walk order, so the re-parse

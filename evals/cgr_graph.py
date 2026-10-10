@@ -1327,6 +1327,13 @@ class _StatefulIngestor:
                         continue
                     callers.add(caller_path)
                 return [{cs.KEY_CALLER_PATH: path} for path in sorted(callers)]
+            case cs.CYPHER_FOREIGN_MEMBER_PATHS:
+                raw_paths = params.get(cs.CYPHER_PARAM_PATHS) if params else None
+                return self._foreign_member_rows(
+                    set(raw_paths) if isinstance(raw_paths, list) else set(),
+                    _text(params.get(cs.KEY_PROJECT_NAME)) if params else None,
+                    _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None,
+                )
             case cs.CYPHER_ALL_DEFINITION_QNS:
                 prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
                 defs: list[ResultRow] = []
@@ -2138,6 +2145,30 @@ class _StatefulIngestor:
             for (node_label, uid), props in self.nodes.items()
             if node_label == label and props.get(key) == path
         }
+
+    def _foreign_member_rows(
+        self,
+        paths: set[str],
+        project_name: str | None,
+        project_prefix: str | None,
+    ) -> list[ResultRow]:
+        # Mirrors CYPHER_FOREIGN_MEMBER_PATHS: the subtree the re-parse delete
+        # walks from each of the project's modules at `paths`, read for nodes
+        # another file declares (issue #3271).
+        found: set[str] = set()
+        for path in paths:
+            for module in self._nodes_at_path(_MODULE_LABEL, path):
+                qn = _text(self.nodes[module].get(cs.KEY_QUALIFIED_NAME))
+                if qn is None or not (
+                    qn == project_name
+                    or (project_prefix is not None and qn.startswith(project_prefix))
+                ):
+                    continue
+                for child in self._reachable(module, _MODULE_SUBTREE_RELS):
+                    child_path = _text(self.nodes.get(child, {}).get(cs.KEY_PATH))
+                    if child_path is not None and child_path not in paths:
+                        found.add(child_path)
+        return [{cs.KEY_PATH: path} for path in sorted(found)]
 
     def _delete_module_subtree(
         self,
