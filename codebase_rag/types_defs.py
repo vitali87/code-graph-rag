@@ -68,6 +68,25 @@ class FunctionMatch(TypedDict):
     line_number: int
 
 
+class MgclientProbeRequest(TypedDict):
+    """One Memgraph probe, as the parent hands it to the probe's own process."""
+
+    host: str
+    port: int
+    credentials: list[str] | None
+    # Run after connecting, or None to connect and close.
+    query: str | None
+    # The C runtime whose stdio buffers mgclient's stderr, by library name.
+    c_runtime: str
+
+
+class MgclientProbeReport(TypedDict):
+    succeeded: bool
+    # The message of the mgclient error connect raised, which is all that
+    # tells a refused login from a refused connection; None otherwise.
+    connect_error: str | None
+
+
 class StructuralSearchMatch(TypedDict):
     file: str
     line: int
@@ -1170,7 +1189,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.MODULE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, unresolved_specifiers: list[string]?, unresolved_references: list[string]?}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, broken_links: list[string]?, unresolved_specifiers: list[string]?, unresolved_references: list[string]?}",
     ),
     NodeSchema(
         NodeLabel.CLASS,
@@ -1213,9 +1232,13 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
         NodeLabel.EXTERNAL_MODULE,
         "{qualified_name: string, name: string, path: string}",
     ),
+    # `project` is set on ENDPOINT resources only: an endpoint is scoped to the
+    # project that serves it, and the endpoint linker reads the property back
+    # to match a URL's host to that project. The other kinds are shared
+    # across projects and carry none, hence optional (issue #2536).
     NodeSchema(
         NodeLabel.RESOURCE,
-        "{qualified_name: string, name: string, kind: string}",
+        "{qualified_name: string, name: string, kind: string, project: string?}",
     ),
     NodeSchema(
         NodeLabel.SECTION,
@@ -1375,6 +1398,22 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
             NodeLabel.EXTERNAL_MODULE,
         ),
     ),
+    # TypeScript heritage onto a `type` alias of an object type:
+    # `interface InvalidType extends IssueBase` and `class LazyPath implements
+    # ParseInput` (zod's ZodError.ts and types.ts). The parent resolves to the
+    # alias's Type node. Listed as two exact triples rather than adding Type
+    # to the target lists above, which would also document a class that
+    # `extends` an alias and an enum that `implements` one (issue #2536).
+    RelationshipSchema(
+        (NodeLabel.INTERFACE,),
+        RelationshipType.INHERITS,
+        (NodeLabel.TYPE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.CLASS,),
+        RelationshipType.IMPLEMENTS,
+        (NodeLabel.TYPE,),
+    ),
     RelationshipSchema(
         # A method-body anonymous-class override is a Function node, so it
         # can source an OVERRIDES edge onto the base Method.
@@ -1403,11 +1442,14 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.EXTERNAL_PACKAGE,),
     ),
     # A relative link in a Markdown document to a file in the repository
-    # (issue #2394: emitted by the document tier but never documented).
+    # (issue #2394: emitted by the document tier but never documented). It
+    # starts at the innermost Section holding it, or at the Module above the
+    # first heading, and ends at the Section its anchor names, or at the File
+    # (issue #2458).
     RelationshipSchema(
-        (NodeLabel.MODULE,),
+        (NodeLabel.MODULE, NodeLabel.SECTION),
         RelationshipType.LINKS_TO,
-        (NodeLabel.FILE,),
+        (NodeLabel.FILE, NodeLabel.SECTION),
     ),
     RelationshipSchema(
         (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD),
