@@ -957,32 +957,18 @@ class Renamer:
         owners: list[str] = []
         broken: list[str] = []
         for member in members:
-            path = graph_query.definition(self.fetch_all, self.project, member, None)[
-                "path"
-            ]
-            if (
-                not path
-                or get_language_for_extension(Path(path).suffix)
-                != cs.SupportedLanguage.GO
-            ):
+            if not self._is_go_definition(member):
                 continue
             for receiver in self.fetch_all(
                 cq.CYPHER_RENAME_GO_RECEIVER, {**params, cs.KEY_QN: member}
             ):
                 if interfaces is None:
                     interfaces = self.fetch_all(cq.CYPHER_RENAME_GO_INTERFACES, params)
-                methods = set(_str_list(receiver.get(cs.KEY_METHODS)))
-                proven = set(_str_list(receiver.get(cs.KEY_INTERFACES)))
-                for row in interfaces:
-                    declared = self._go_declared_methods(row, sources)
-                    iface = str(row.get(cs.KEY_QUALIFIED_NAME) or "")
-                    if old_name in declared and (
-                        iface in proven or declared <= methods
-                    ):
-                        owners.append(str(receiver.get(cs.KEY_QUALIFIED_NAME) or ""))
-                        broken.append(
-                            f"{iface} ({row.get(cs.KEY_PATH)}:{row.get(cs.KEY_START_LINE)})"
-                        )
+                for owner, iface in self._go_interfaces_needing(
+                    receiver, interfaces, sources, old_name
+                ):
+                    owners.append(owner)
+                    broken.append(iface)
         if broken:
             raise RenameRefused(
                 cs.RENAME_GO_INTERFACE_METHOD.format(
@@ -994,6 +980,33 @@ class Renamer:
                 [],
                 [],
             )
+
+    def _is_go_definition(self, qn: str) -> bool:
+        path = graph_query.definition(self.fetch_all, self.project, qn, None)["path"]
+        return bool(path) and (
+            get_language_for_extension(Path(path).suffix) == cs.SupportedLanguage.GO
+        )
+
+    def _go_interfaces_needing(
+        self,
+        receiver: ResultRow,
+        interfaces: list[ResultRow],
+        sources: dict[str, bytes],
+        name: str,
+    ) -> list[tuple[str, str]]:
+        # (receiver, "Iface (path:line)") for each interface declaring `name`
+        # that the receiver satisfies: proven by go/types, or by method names.
+        methods = set(_str_list(receiver.get(cs.KEY_METHODS)))
+        proven = set(_str_list(receiver.get(cs.KEY_INTERFACES)))
+        owner = str(receiver.get(cs.KEY_QUALIFIED_NAME) or "")
+        needing: list[tuple[str, str]] = []
+        for row in interfaces:
+            declared = self._go_declared_methods(row, sources)
+            iface = str(row.get(cs.KEY_QUALIFIED_NAME) or "")
+            if name in declared and (iface in proven or declared <= methods):
+                site = f"{row.get(cs.KEY_PATH)}:{row.get(cs.KEY_START_LINE)}"
+                needing.append((owner, f"{iface} ({site})"))
+        return needing
 
     def _go_declared_methods(
         self, row: ResultRow, sources: dict[str, bytes]

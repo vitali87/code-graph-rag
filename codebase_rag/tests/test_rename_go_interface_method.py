@@ -134,7 +134,8 @@ def test_a_type_missing_an_interface_method_does_not_satisfy_it(
     )
 
     text = (root / "main.go").read_text()
-    assert "func (b Box) Len() int" in text and "Box{n: 2}.Len()" in text, text
+    assert "func (b Box) Len() int" in text, text
+    assert "Box{n: 2}.Len()" in text, text
     _go_build(root)
 
 
