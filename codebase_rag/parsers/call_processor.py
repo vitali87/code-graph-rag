@@ -1773,6 +1773,7 @@ class CallProcessor:
         rehydrated_definition_paths: dict[str, str] | None = None,
         rust_function_modules: dict[str, str] | None = None,
         declared_module_qns: set[str] | None = None,
+        rehydrated_interface_implementers: dict[str, set[str]] | None = None,
     ) -> None:
         self.ingestor = ingestor
         # The tree-sitter node whose span every edge emitted right now records
@@ -1836,6 +1837,7 @@ class CallProcessor:
             rehydrated_definition_paths=rehydrated_definition_paths,
             rust_function_modules=rust_function_modules,
             declared_module_qns=declared_module_qns,
+            rehydrated_interface_implementers=rehydrated_interface_implementers,
         )
         # Inter-procedural callable-parameter flow: ordered params per function and
         # the per-call-site argument bindings, resolved to a fixpoint in finalize.

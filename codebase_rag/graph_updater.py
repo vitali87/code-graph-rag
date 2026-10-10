@@ -3217,8 +3217,94 @@ class GraphUpdater:
             return
         self._rehydrate_module_qns(module_rows)
         self._rehydrate_class_inheritance_from_graph()
+        self._rehydrate_interface_implementers(project_params)
         self._requeue_parameter_types(project_params)
         self._requeue_field_types(project_params)
+
+    def _rehydrate_interface_implementers(self, project_params: PropertyParams) -> None:
+        # Parsing records implementer -> interface pairs only for the files it
+        # reads. A call typed to an interface with ONE implementer also reaches
+        # that implementer's method, so a run that re-parsed only the caller
+        # saw no implementer and dropped the edge a clean index emits: gson's
+        # getFieldNames into FieldNamingPolicy, serde_json's
+        # u64::error_halfscale() (issue #2403).
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        try:
+            implements = self._owned_rows(
+                self.ingestor.fetch_all(cs.CYPHER_ALL_IMPLEMENTS, project_params),
+                cs.KEY_CHILD_QN,
+            )
+            rust_overrides = self._owned_rows(
+                self.ingestor.fetch_all(cs.CYPHER_ALL_RUST_OVERRIDES, project_params),
+                cs.KEY_FROM_QN,
+            )
+            required = self._owned_rows(
+                self.ingestor.fetch_all(
+                    cs.CYPHER_RUST_TRAITS_WITH_REQUIRED_METHODS, project_params
+                ),
+                cs.KEY_QUALIFIED_NAME,
+            )
+        except Exception:
+            if not self._is_full_build:
+                raise
+            logger.warning(ls.REHYDRATE_QUERY_FAILED)
+            return
+        pairs = [
+            (child, base)
+            for row in implements
+            if isinstance(child := row.get(cs.KEY_CHILD_QN), str)
+            and isinstance(base := row.get(cs.KEY_BASE_QN), str)
+        ]
+        pairs.extend(self._nodeless_rust_impls(rust_overrides))
+        closed = {
+            qn
+            for row in required
+            if isinstance(qn := row.get(cs.KEY_QUALIFIED_NAME), str)
+        }
+        # Rebuilt, not accumulated, and cleared only once the rows are in
+        # hand: the _rehydrate_module_qns posture.
+        rehydrated = self.factory.definition_processor.rehydrated_interface_implementers
+        rehydrated.clear()
+        for implementer, interface in pairs:
+            if not self._may_hide_rust_impls(interface, closed):
+                rehydrated.setdefault(interface, set()).add(implementer)
+
+    def _may_hide_rust_impls(self, interface_qn: str, closed: set[str]) -> bool:
+        # An impl of a Rust trait whose every method has a default body may
+        # define nothing, and one for a type with no node (`impl Visit for ()
+        # {}`) then leaves no trace in the graph: the pairs read back would
+        # count one implementer short and invent a sole-implementer edge a
+        # clean index does not emit. Such a trait, read back rather than
+        # parsed, keeps to its parsed pairs as before. A trait parsed this run
+        # has every implementer that left a trace re-parsed beside it.
+        dp = self.factory.definition_processor
+        path = dp.rehydrated_definition_paths.get(interface_qn)
+        return (
+            path is not None and path.endswith(cs.EXT_RS) and interface_qn not in closed
+        )
+
+    def _nodeless_rust_impls(
+        self, override_rows: list[ResultRow]
+    ) -> Iterable[tuple[str, str]]:
+        """(implementer, trait) for each Rust impl whose type has no node."""
+        # `impl FloatErrors for u64` has no node to hang an IMPLEMENTS edge
+        # on, so its methods' OVERRIDES name the pair. Only such a type: one
+        # with a node has its IMPLEMENTS edge, and a trait's default method
+        # overriding a supertrait's names no implementer at all.
+        for row in override_rows:
+            method = row.get(cs.KEY_FROM_QN)
+            base = row.get(cs.KEY_TO_QN)
+            if not isinstance(method, str) or not isinstance(base, str):
+                continue
+            implementer = method.rpartition(cs.SEPARATOR_DOT)[0]
+            trait = base.rpartition(cs.SEPARATOR_DOT)[0]
+            if (
+                implementer
+                and implementer not in self.function_registry
+                and self.function_registry.get(trait) == NodeType.INTERFACE
+            ):
+                yield implementer, trait
 
     def _rehydrate_module_qns(self, module_rows: list[ResultRow]) -> None:
         """Rebuild the module and interface qn sets from the graph's rows."""
@@ -3267,6 +3353,13 @@ class GraphUpdater:
         except ValueError:
             return False
         self.function_registry[qn] = node_type
+        # A `@line` variant rejoins its natural qn's duplicate list: a call
+        # into the name fans out to every same-named definition, and one read
+        # back as a plain entry left the incremental graph with a single edge
+        # where a clean index has one per definition (issue #2403).
+        self.function_registry.restore_variant(qn)
+        if isinstance(name := row.get(cs.KEY_NAME), str):
+            self.function_registry.index_declared_name(qn, name)
         # Restore the property-name set for unchanged files: property-dispatch
         # resolution (`obj.prop`) consults it, so a re-parsed file's call to a
         # @property defined elsewhere would otherwise drop.
@@ -5526,6 +5619,9 @@ class GraphUpdater:
         baseline = self._hash_baseline(force, cache_path, dir_mtimes_path)
         old_hashes = baseline.old_hashes
         is_full_build = baseline.is_full_build
+        # Before the parse, which re-records every pair a full build holds.
+        if is_full_build:
+            self.factory.definition_processor.reset_interface_implementers()
 
         eligible_files = self._collect_eligible_files()
 
