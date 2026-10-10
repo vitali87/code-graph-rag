@@ -104,6 +104,12 @@ def local_binding_scopes(func_node: Node) -> GoLocalScopes:
     return {name: tuple(spans) for name, spans in scopes.items()}
 
 
+def bound_at(scopes: GoLocalScopes, name: str, point: int) -> bool:
+    """Whether a local `name` from `local_binding_scopes` is in scope at byte
+    `point`, so the name there is that local, not a package or import."""
+    return any(start <= point < end for start, end in scopes.get(name, ()))
+
+
 def _bound_names(node: Node) -> list[str]:
     if (field := _GO_BINDING_LIST_FIELDS.get(node.type)) is not None:
         bound = node.child_by_field_name(field)

@@ -178,7 +178,7 @@ class TypeInferenceEngine:
         # external proofs (issue #1183), populated after construction.
         self.python_call_sites = _shared(python_call_sites, dict)
         self.python_external_sites = _shared(python_external_sites, set)
-        self._go_free_fn_index: dict[tuple[str, str], str] = {}
+        self._go_free_fn_index: dict[tuple[str, str], set[str]] = {}
         self._go_free_fn_index_size = -1
         # Shared reference (as with class_field_types): C# partial-class part
         # groups, populated during ingestion and read by the C# resolver to
@@ -572,11 +572,23 @@ class TypeInferenceEngine:
         # Resolves the callee selector hop by hop: base local type, struct-field
         # types for middle hops, then the final method's recorded return type. Only
         # fills names not already typed.
-        for name, segments in self.go_type_inference.collect_call_var_bindings(
-            caller_node
-        ):
+        scopes: go_utils.GoLocalScopes | None = None
+        for (
+            name,
+            segments,
+            call_point,
+        ) in self.go_type_inference.collect_call_var_bindings(caller_node):
             if name in var_types:
                 continue
+            if len(segments) == 2 and not var_types.get(segments[0]):
+                # `r := router.New()` where a local `router` the walker could
+                # not type is in scope calls that local's method: the import it
+                # hides says nothing about `r` (#2616 review). A local declared
+                # only after the call, or in a block already closed, hides
+                # nothing there.
+                scopes = scopes or go_utils.local_binding_scopes(caller_node)
+                if go_utils.bound_at(scopes, segments[0], call_point):
+                    continue
             if return_type := self._infer_go_call_return_type(
                 segments, module_qn, var_types
             ):
@@ -711,19 +723,40 @@ class TypeInferenceEngine:
             return hit
         if cs.SEPARATOR_DOT not in module_qn:
             return None
-        package_prefix = module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-        return self._go_package_fn_return_type(package_prefix, name)
+        return self._go_package_fn_return_type(self._go_file_package(module_qn), name)
+
+    def _go_file_package(self, module_qn: str) -> str:
+        # The package of Go file module `module_qn`, spelled the way the import
+        # map spells one (`project.dir.sub`): its file's directory, whatever
+        # dots the file's stem holds. `types.gen.go` is filed as
+        # `pkg.types.gen` but is a file of `pkg` (#2616 review). A module with
+        # no recorded file (a mock harness, or an unchanged file on an
+        # incremental run) falls back to the qn above it.
+        path = self.module_qn_to_file_path.get(module_qn)
+        try:
+            parts = path.parent.relative_to(self.repo_path).parts if path else None
+        except ValueError:
+            parts = None
+        if parts is None:
+            return module_qn.rpartition(cs.SEPARATOR_DOT)[0]
+        return cs.SEPARATOR_DOT.join((self.project_name, *parts))
 
     def _go_package_fn_return_type(self, package_qn: str, name: str) -> str | None:
+        # The one return type the package's functions named `name` declare, or
+        # None when they disagree: build-tag variants (`router_linux.go`,
+        # `router_windows.go`) each declare it, and neither variant's type is
+        # the call's in every build (#2616 review).
         if len(self.go_function_return_types) != self._go_free_fn_index_size:
             self._go_free_fn_index = {}
             for qn, return_type in self.go_function_return_types.items():
-                head, _, fn_name = qn.rpartition(cs.SEPARATOR_DOT)
-                package, _, _file = head.rpartition(cs.SEPARATOR_DOT)
-                if package:
-                    self._go_free_fn_index.setdefault((package, fn_name), return_type)
+                module_qn, _, fn_name = qn.rpartition(cs.SEPARATOR_DOT)
+                if package := self._go_file_package(module_qn):
+                    self._go_free_fn_index.setdefault((package, fn_name), set()).add(
+                        return_type
+                    )
             self._go_free_fn_index_size = len(self.go_function_return_types)
-        return self._go_free_fn_index.get((package_qn, name))
+        returns = self._go_free_fn_index.get((package_qn, name), set())
+        return next(iter(returns)) if len(returns) == 1 else None
 
     def _go_package_call_return_type(
         self, qualifier: str, name: str, module_qn: str
@@ -742,16 +775,14 @@ class TypeInferenceEngine:
         return_type = self._go_package_fn_return_type(package_qn, name)
         if not return_type or cs.SEPARATOR_DOT in return_type:
             return None
-        # The import map knows the package by its qn, not its directory, so
-        # its files are the modules one segment below that qn, the shape
-        # `_go_package_fn_return_type` keys its functions by.
+        # A type of the package is one whose file sits in its directory, the
+        # same test `_go_package_fn_return_type` keys its functions by.
         declared = go_utils.package_level_definitions(
             self.function_registry,
             return_type,
             go_utils.TYPE_DECLARATION_TYPES,
             lambda qn: (
-                qn.rpartition(cs.SEPARATOR_DOT)[0].rpartition(cs.SEPARATOR_DOT)[0]
-                == package_qn
+                self._go_file_package(qn.rpartition(cs.SEPARATOR_DOT)[0]) == package_qn
             ),
         )
         return declared[0] if len(declared) == 1 else None

@@ -784,3 +784,220 @@ def test_an_incremental_run_finds_an_unchanged_file_with_a_dotted_stem(
     assert calls == {
         ("proj.pkg.a.Run", "proj.pkg.helper.gen.Helper"): cs.EdgeResolution.EXACT
     }
+
+
+# --- #2616 review: a qualified constructor (`r := gotest.NewRouter()`) types
+# its local only when the qualifier is the import where the call is, the
+# package's variants agree on what it returns, and the package is found by its
+# files' directory. ---
+
+_EXACT = {cs.EdgeResolution.EXACT}
+_SHADOW_TEST = (
+    "package gotest_test\n"
+    "\n"
+    "import (\n"
+    '\t"testing"\n'
+    "\n"
+    '\t"example.com/proj/gotest"\n'
+    ")\n"
+    "\n"
+    "type fakeMux struct{}\n"
+    "\n"
+    "func (f *fakeMux) Get(p string) {}\n"
+    "\n"
+    "type fakeFactory struct{}\n"
+    "\n"
+    "func (fakeFactory) NewRouter() *fakeMux { return &fakeMux{} }\n"
+    "\n"
+    "func TestShadowed(t *testing.T) {\n"
+    "\tfactories := []fakeFactory{{}}\n"
+    "\tgotest := factories[0]\n"
+    "\tr := gotest.NewRouter()\n"
+    '\tr.Get("/s")\n'
+    "\t_ = t\n"
+    "}\n"
+    "\n"
+    "func TestLaterLocal(t *testing.T) {\n"
+    "\tr := gotest.NewRouter()\n"
+    '\tr.Get("/l")\n'
+    "\t{\n"
+    "\t\tgotest := 1\n"
+    "\t\t_ = gotest\n"
+    "\t}\n"
+    "\t_ = t\n"
+    "}\n"
+)
+
+
+def _shadow_repo(temp_repo: Path) -> dict[tuple[str, str], set[str]]:
+    return _calls(
+        temp_repo / "proj",
+        {
+            "go.mod": GO_MOD,
+            "gotest/router.go": ROUTER,
+            "gotest/shadow_test.go": _SHADOW_TEST,
+        },
+    )
+
+
+def test_a_local_shadowing_the_import_is_not_the_package(temp_repo: Path) -> None:
+    # `gotest := factories[0]` hides the import, and its type is unknown:
+    # `gotest.NewRouter()` is the local's method, so `r` is no gotest.Mux.
+    calls = _shadow_repo(temp_repo)
+
+    edge = ("proj.gotest.shadow_test.TestShadowed", "proj.gotest.router.Mux.Get")
+    assert cs.EdgeResolution.EXACT not in calls.get(edge, set())
+
+
+def test_a_local_named_like_the_import_in_a_later_block_does_not_shadow_it(
+    temp_repo: Path,
+) -> None:
+    # Negative: the inner block's `gotest` starts after the call, so the call
+    # is still the package's constructor.
+    calls = _shadow_repo(temp_repo)
+
+    edge = ("proj.gotest.shadow_test.TestLaterLocal", "proj.gotest.router.Mux.Get")
+    assert calls[edge] == _EXACT
+
+
+def _variant(tag: str, mux: str, body: str) -> str:
+    return (
+        f"//go:build {tag}\n\npackage gotest\n\n"
+        f"{body}func NewRouter() *{mux} {{ return &{mux}{{}} }}\n"
+    )
+
+
+_BUILD_APP = 'package gotest\n\nfunc Build() {\n\tr := NewRouter()\n\tr.Get("/a")\n}\n'
+
+
+def test_build_tag_variants_returning_different_types_leave_the_local_untyped(
+    temp_repo: Path,
+) -> None:
+    calls = _calls(
+        temp_repo / "proj",
+        {
+            "go.mod": GO_MOD,
+            "gotest/router_a.go": _variant(
+                "a", "MuxA", "type MuxA struct{}\n\nfunc (m *MuxA) Get(p string) {}\n\n"
+            ),
+            "gotest/router_b.go": _variant(
+                "!a",
+                "MuxB",
+                "type MuxB struct{}\n\nfunc (m *MuxB) Get(p string) {}\n\n",
+            ),
+            "gotest/app.go": _BUILD_APP,
+            "gotest/external_test.go": EXTERNAL_TEST,
+        },
+    )
+
+    exact = [
+        edge
+        for edge, resolutions in calls.items()
+        if edge[1].endswith(".Get") and cs.EdgeResolution.EXACT in resolutions
+    ]
+    assert exact == []
+
+
+def test_build_tag_variants_returning_one_type_still_type_the_local(
+    temp_repo: Path,
+) -> None:
+    # Negative: both variants return gotest's one Mux, so either way `r.Get`
+    # is its method.
+    calls = _calls(
+        temp_repo / "proj",
+        {
+            "go.mod": GO_MOD,
+            "gotest/mux.go": (
+                "package gotest\n\ntype Mux struct{}\n\nfunc (m *Mux) Get(p string) {}\n"
+            ),
+            "gotest/router_a.go": _variant("a", "Mux", ""),
+            "gotest/router_b.go": _variant("!a", "Mux", ""),
+            "gotest/app.go": _BUILD_APP,
+            "gotest/external_test.go": EXTERNAL_TEST,
+        },
+    )
+
+    assert calls[("proj.gotest.app.Build", "proj.gotest.mux.Mux.Get")] == _EXACT
+    assert (
+        calls[("proj.gotest.external_test.TestExternal", "proj.gotest.mux.Mux.Get")]
+        == _EXACT
+    )
+
+
+_MUX_ONLY = "package gotest\n\ntype Mux struct{}\n\nfunc (m *Mux) Get(p string) {}\n"
+_NEW_ROUTER_ONLY = "package gotest\n\nfunc NewRouter() *Mux { return &Mux{} }\n"
+
+
+def test_a_qualified_constructor_types_its_local_from_a_dotted_stem_type(
+    temp_repo: Path,
+) -> None:
+    calls = _calls(
+        temp_repo / "proj",
+        {
+            "go.mod": GO_MOD,
+            "gotest/router.go": _NEW_ROUTER_ONLY,
+            "gotest/types.gen.go": _MUX_ONLY,
+            "gotest/external_test.go": EXTERNAL_TEST,
+        },
+    )
+
+    edge = ("proj.gotest.external_test.TestExternal", "proj.gotest.types.gen.Mux.Get")
+    assert calls[edge] == _EXACT
+
+
+def test_a_constructor_in_a_dotted_stem_file_types_its_local(
+    temp_repo: Path,
+) -> None:
+    calls = _calls(
+        temp_repo / "proj",
+        {
+            "go.mod": GO_MOD,
+            "gotest/router.gen.go": _NEW_ROUTER_ONLY,
+            "gotest/mux.go": _MUX_ONLY,
+            "gotest/app.go": _BUILD_APP,
+            "gotest/external_test.go": EXTERNAL_TEST,
+        },
+    )
+
+    assert calls[("proj.gotest.app.Build", "proj.gotest.mux.Mux.Get")] == _EXACT
+    assert (
+        calls[("proj.gotest.external_test.TestExternal", "proj.gotest.mux.Mux.Get")]
+        == _EXACT
+    )
+
+
+def test_a_caller_in_a_dotted_stem_file_types_its_local(temp_repo: Path) -> None:
+    calls = _calls(
+        temp_repo / "proj",
+        {
+            "go.mod": GO_MOD,
+            "gotest/router.go": ROUTER,
+            "gotest/app.gen.go": _BUILD_APP,
+        },
+    )
+
+    assert calls[("proj.gotest.app.gen.Build", "proj.gotest.router.Mux.Get")] == (
+        _EXACT
+    )
+
+
+def test_a_sub_packages_same_named_type_is_not_the_constructors(
+    temp_repo: Path,
+) -> None:
+    # Negative: `gotest/aaa` also declares a Mux; the constructor's `*Mux` is
+    # still gotest's own.
+    calls = _calls(
+        temp_repo / "proj",
+        {
+            "go.mod": GO_MOD,
+            "gotest/router.go": ROUTER,
+            "gotest/aaa/mux.go": OTHER_PACKAGE,
+            "gotest/external_test.go": EXTERNAL_TEST,
+        },
+    )
+
+    caller = "proj.gotest.external_test.TestExternal"
+    assert calls[(caller, "proj.gotest.router.Mux.Get")] == _EXACT
+    assert cs.EdgeResolution.EXACT not in calls.get(
+        (caller, "proj.gotest.aaa.mux.Mux.Get"), set()
+    )
