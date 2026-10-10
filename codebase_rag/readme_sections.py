@@ -11,10 +11,13 @@ from pathlib import Path
 from threading import Lock
 from typing import NamedTuple
 
+import typer
 from loguru import logger
+from typer.core import TyperCommand, TyperOption
 
 from . import capture as cp
 from . import cli_help as ch
+from .cli import app as cli_app
 from .constants import (
     ENCODING_UTF8,
     LANGUAGE_METADATA,
@@ -44,6 +47,30 @@ DASH = "-"
 # group, under the `## Capture Groups` heading of graph-schema.md (#2584).
 # Only those rows change, so a concurrent edit to any other row still merges.
 CAPTURE_OPT_IN_NOTE = " (opt-in: [`{group}`](#capture-groups))"
+
+# Commands whose option table in docs/guide/cli-reference.md is generated from
+# their Click parameters. The tables were hand-written and drifted from
+# `--help` until `cgr start` documented 8 of its 21 options (#2426).
+CLI_OPTION_COMMANDS = (
+    ch.CLICommandName.START,
+    ch.CLICommandName.INDEX,
+    ch.CLICommandName.EXPORT,
+    ch.CLICommandName.OPTIMIZE,
+    ch.CLICommandName.MCP_SERVER,
+    ch.CLICommandName.STATS,
+    ch.CLICommandName.DEAD_CODE,
+    ch.CLICommandName.DUPLICATES,
+)
+CLI_OPTIONS_SECTION = "cli_options_{name}"
+SECTION_NAME_SEPARATOR = "_"
+LONG_FLAG_PREFIX = "--"
+FLAG_SEPARATOR = ", "
+SECONDARY_FLAG_SEPARATOR = " / "
+CODE_SPAN_DELIMITER = "`"
+NOT_A_TYPER_COMMAND = "cgr {name} is not a TyperCommand, so it has no option table"
+# Help text is written for a terminal. In a markdown table cell `<repo>` would
+# parse as an HTML tag and `'*/tests/*'` as emphasis.
+MARKDOWN_ESCAPES = (("<", "&lt;"), ("*", "\\*"))
 
 
 class MakeCommand(NamedTuple):
@@ -178,6 +205,78 @@ def format_capture_groups_table() -> str:
 def format_cli_commands_table() -> str:
     rows = [[f"`cgr {cmd.value}`", desc] for cmd, desc in ch.CLI_COMMANDS.items()]
     return format_markdown_table(["Command", "Description"], rows)
+
+
+def cli_options_section_name(command: ch.CLICommandName) -> str:
+    # A section marker name is `\w+`, which a dashed command name is not.
+    return CLI_OPTIONS_SECTION.format(
+        name=command.value.replace(DASH, SECTION_NAME_SEPARATOR)
+    )
+
+
+def _markdown_text(text: str) -> str:
+    # Even-numbered pieces lie outside code spans; a code span shows its
+    # characters literally, so an escape there would be printed.
+    pieces = text.split(CODE_SPAN_DELIMITER)
+    for index in range(0, len(pieces), 2):
+        for char, escaped in MARKDOWN_ESCAPES:
+            pieces[index] = pieces[index].replace(char, escaped)
+    return CODE_SPAN_DELIMITER.join(pieces)
+
+
+def _code_flags(flags: list[str]) -> str:
+    return FLAG_SEPARATOR.join(f"`{flag}`" for flag in flags)
+
+
+def _option_flags(option: TyperOption) -> str:
+    # Long names first, as `--help` lists them, whatever order they were
+    # declared in (`-o, --output` and `--project-name, -n` both occur).
+    primary = sorted(
+        option.opts, key=lambda flag: not flag.startswith(LONG_FLAG_PREFIX)
+    )
+    flags = _code_flags(primary)
+    if option.secondary_opts:
+        flags += SECONDARY_FLAG_SEPARATOR + _code_flags(option.secondary_opts)
+    return flags
+
+
+def format_cli_options_table(command: TyperCommand) -> str:
+    # Typer's own classes throughout, never the real Click's: a typer that
+    # vendors Click as `typer._click`, as the locked one does, builds options
+    # that are not `click.Option`, so filtering on that class found no option
+    # at all and wrote every table empty, on every platform.
+    context = typer.Context(command, info_name=command.name)
+    rows: list[list[str]] = []
+    # `--help` is not among `params` (Click adds it per context), and an
+    # argument belongs to the usage line rather than the option table.
+    for param in command.params:
+        if not isinstance(param, TyperOption):
+            continue
+        # The option's own help record, so each row reads as `--help` does, with
+        # its `[default: ...]` and `[required]` notes; a hidden option has no
+        # record and stays out of the docs as it stays out of `--help`.
+        record = param.get_help_record(context)
+        if record is None:
+            continue
+        _, help_text = record
+        rows.append([_option_flags(param), _markdown_text(" ".join(help_text.split()))])
+    return format_markdown_table(["Option", "Description"], rows)
+
+
+def cli_option_command(name: ch.CLICommandName) -> TyperCommand:
+    command = typer.main.get_group(cli_app).commands[name]
+    if not isinstance(command, TyperCommand):
+        raise TypeError(NOT_A_TYPER_COMMAND.format(name=name))
+    return command
+
+
+def format_cli_option_sections() -> dict[str, str]:
+    return {
+        cli_options_section_name(name): format_cli_options_table(
+            cli_option_command(name)
+        )
+        for name in CLI_OPTION_COMMANDS
+    }
 
 
 def format_language_mappings() -> str:
@@ -370,4 +469,5 @@ def generate_all_sections(project_root: Path) -> dict[str, str]:
             deps, committed_dependency_summaries(project_root / DEPENDENCIES_DOC)
         ),
         "latest_news": format_latest_news(project_root / "NEWS.md"),
+        **format_cli_option_sections(),
     }
