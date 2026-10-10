@@ -68,6 +68,13 @@ def separator_free_project_name(name: str) -> str:
     )
 
 
+def normalize_project_name(project_name: str | None, repo_path: Path) -> str:
+    # The name a sync writes its project under. The CLI's ownership check
+    # asks about the same name, so a padded one cannot pass the check under
+    # one spelling and be written under another (review of PR 2499).
+    return (project_name and project_name.strip()) or default_project_name(repo_path)
+
+
 def resolve_repo_path(repo_path: str | None, target_default: str) -> Path:
     if repo_path:
         return Path(repo_path).resolve()
