@@ -1,5 +1,7 @@
 # PHP tree-sitter node types.
 
+from enum import StrEnum
+
 TS_PHP_FUNCTION_DEFINITION = "function_definition"
 TS_PHP_METHOD_DECLARATION = "method_declaration"
 TS_PHP_TRAIT_DECLARATION = "trait_declaration"
@@ -28,6 +30,10 @@ TS_PHP_NAMESPACE_DEFINITION = "namespace_definition"
 TS_PHP_NAMESPACE_USE_DECLARATION = "namespace_use_declaration"
 TS_PHP_NAMESPACE_USE_CLAUSE = "namespace_use_clause"
 TS_PHP_FUNCTION = "function"
+TS_PHP_CONST = "const"
+# `$flag ? [$this, 'a'] : [$this, 'b']`. Elvis (`?:`) is the same node
+# with no `body`.
+TS_PHP_CONDITIONAL_EXPRESSION = "conditional_expression"
 TS_PHP_INCLUDE_EXPRESSION = "include_expression"
 TS_PHP_INCLUDE_ONCE_EXPRESSION = "include_once_expression"
 TS_PHP_REQUIRE_EXPRESSION = "require_expression"
@@ -46,6 +52,27 @@ TS_PHP_PROPERTY_ELEMENT = "property_element"
 TS_PHP_DECLARATION_LIST = "declaration_list"
 TS_PHP_VARIABLE_NAME = "variable_name"
 TS_PHP_USE_DECLARATION = "use_declaration"
+TS_PHP_ARRAY_CREATION_EXPRESSION = "array_creation_expression"
+TS_PHP_ARRAY_ELEMENT_INITIALIZER = "array_element_initializer"
+TS_PHP_CLASS_CONSTANT_ACCESS_EXPRESSION = "class_constant_access_expression"
+TS_PHP_RELATIVE_SCOPE = "relative_scope"
+TS_PHP_OPTIONAL_TYPE = "optional_type"
+TS_PHP_UNION_TYPE = "union_type"
+TS_PHP_NAMED_TYPE = "named_type"
+TS_PHP_PRIMITIVE_TYPE = "primitive_type"
+# PHP constructors are methods named `__construct`. A `new` expression runs
+# that method; Python's `__init__` is a different language (issue #3117).
+PHP_CONSTRUCTOR = "__construct"
+PHP_CLASS_CONST = "class"
+# `$this` is case-sensitive. The relative scopes are not: PHP folds them.
+PHP_THIS = "$this"
+
+
+class PhpRelativeScope(StrEnum):
+    SELF = "self"
+    STATIC = "static"
+    PARENT = "parent"
+
 
 # FLOWS_TO lean-walk node types (issue #1174). PHP variables carry a `$` prefix
 # (`variable_name` -> `.text == "$s"`), so a local can never shadow a builtin sink.
