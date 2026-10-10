@@ -424,6 +424,47 @@ def _js_export_specifiers(statement: Node) -> Iterator[tuple[str, str]]:
                 yield local, name
 
 
+def _is_js_side_effect_import(site: PropertyDict | None) -> bool:
+    # `import "./x"` and `require("./x");` bind no name and import none: the
+    # only import sites with neither an alias nor an imported name. The
+    # target is then the whole module, never `module.name` (issue #3267).
+    return (
+        site is not None
+        and cs.KEY_ALIAS not in site
+        and cs.KEY_IMPORTED_NAME not in site
+    )
+
+
+def _js_side_effect_call(statement: Node) -> tuple[str, bool] | None:
+    # (specifier, is_require) of a statement that is only `require("./db")`
+    # or `import("./cache")`, awaited or not; None for anything else.
+    if statement.type != cs.TS_EXPRESSION_STATEMENT:
+        return None
+    call = statement.named_child(0)
+    if call is not None and call.type == cs.TS_AWAIT_EXPRESSION:
+        call = call.named_child(0)
+    if call is None or call.type != cs.TS_CALL_EXPRESSION:
+        return None
+    func = call.child_by_field_name(cs.FIELD_FUNCTION)
+    args = call.child_by_field_name(cs.FIELD_ARGUMENTS)
+    if func is None or args is None:
+        return None
+    is_require = (
+        func.type == cs.TS_IDENTIFIER and safe_decode_text(func) == cs.IMPORT_REQUIRE
+    )
+    if not is_require and func.type != cs.TS_JS_DYNAMIC_IMPORT:
+        return None
+    arg = next((a for a in args.named_children if a.type == cs.TS_STRING), None)
+    if arg is None:
+        return None
+    return safe_decode_with_fallback(arg).strip("'\""), is_require
+
+
+def _is_js_whole_module_import(site: PropertyDict | None) -> bool:
+    # A star re-export or a side-effect import targets the module itself.
+    return _is_js_star_reexport(site) or _is_js_side_effect_import(site)
+
+
 def _is_js_star_reexport(site: PropertyDict | None) -> bool:
     # `export * from` records `*` as its imported name and binds no alias,
     # where `import * as ns` binds one.
@@ -958,6 +999,7 @@ class ImportProcessor:
         "_csharp_module_identifiers",
         "_cpp_declaration_mappings",
         "_cpp_shadowed_include_targets",
+        "_js_side_effect_imports",
         "_rust_dir_listing",
         "_rust_entry_mod_decls",
         "_rust_module_mod_decls",
@@ -1243,6 +1285,10 @@ class ImportProcessor:
         # survived (issue #1758). The binding can hold one name, but the file
         # really does include both headers, so the edge is kept here.
         self._cpp_shadowed_include_targets: set[tuple[str, str]] = set()
+        # Per JS/TS module, the modules it imports for side effects only
+        # (`import "./instrument"`, `require("./db");`), with each statement's
+        # site. They bind no name, so the map cannot carry them (#3267).
+        self._js_side_effect_imports: dict[str, list[tuple[str, PropertyDict]]] = {}
         # Local names brought in by a PHP `use function A\B\c` import, keyed by
         # module. A PHP namespace path never matches cgr's file-path qn (a global
         # helper declares `namespace Illuminate\Support` from
@@ -1425,6 +1471,7 @@ class ImportProcessor:
         nothing the edited file no longer says.
         """
         self.import_mapping[module_qn] = {}
+        self._js_side_effect_imports.pop(module_qn, None)
         self.csharp_static_imports.pop(module_qn, None)
         self.csharp_global_static_imports.pop(module_qn, None)
         # Cleared with the mapping it shadows: these entries ADD edges, so a
@@ -1502,6 +1549,16 @@ class ImportProcessor:
                     full_name=full_name,
                     language=language,
                     site=sites.get(local_name),
+                )
+            )
+        # Side-effect imports bind no name, so the map above never lists them.
+        for target, site in self._js_side_effect_imports.get(module_qn, ()):
+            self._deferred_import_edges.append(
+                DeferredImportEdge(
+                    module_qn=module_qn,
+                    full_name=target,
+                    language=language,
+                    site=site,
                 )
             )
         # Includes whose local binding a later include took over: the
@@ -1591,6 +1648,7 @@ class ImportProcessor:
                     | cs.SupportedLanguage.TSX
                 ):
                     self._parse_js_ts_imports(captures, module_qn)
+                    self._parse_js_side_effect_calls(root_node, module_qn)
                 case cs.SupportedLanguage.JAVA:
                     self._parse_java_imports(captures, module_qn)
                 case cs.SupportedLanguage.RUST:
@@ -2180,7 +2238,9 @@ class ImportProcessor:
                 self.note_unresolved(entry.module_qn, entry.full_name)
                 return 0
             module_path = verified
-        if entry.language in cs.JS_TS_LANGUAGES and _is_js_star_reexport(entry.site):
+        if entry.language in cs.JS_TS_LANGUAGES and _is_js_whole_module_import(
+            entry.site
+        ):
             # `export * from "./add"` in `math/index.ts` stores the module
             # `math.add`, which the resolution above reads as the name `add`
             # of the `math` barrel: the barrel itself (issue #2464).
@@ -3933,6 +3993,29 @@ class ImportProcessor:
 
         return cs.SEPARATOR_DOT.join(target_parts)
 
+    def _record_js_side_effect_import(
+        self, module_qn: str, target: str, statement: Node
+    ) -> None:
+        self._js_side_effect_imports.setdefault(module_qn, []).append(
+            (target, _import_site_props(statement, cs.IMPORTED_NAME_WILDCARD, None))
+        )
+
+    def _parse_js_side_effect_calls(self, root_node: Node, module_qn: str) -> None:
+        # A top-level statement that is only `require("./db")` or
+        # `import("./cache")` (awaited or not): the call's value is dropped,
+        # so it is imported for its side effects (issue #3267). Statements
+        # binding the result are `_parse_js_require`'s.
+        for statement in root_node.named_children:
+            if (call := _js_side_effect_call(statement)) is None:
+                continue
+            specifier, is_require = call
+            target = self._resolve_js_import_target(specifier, module_qn, is_require)
+            self._note_unresolved_js_specifier(module_qn, specifier)
+            if target.module_qn:
+                self._record_js_side_effect_import(
+                    module_qn, target.module_qn, statement
+                )
+
     def _parse_js_ts_imports(self, captures: dict, module_qn: str) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type == cs.TS_IMPORT_STATEMENT:
@@ -4296,6 +4379,10 @@ class ImportProcessor:
         if not target.module_qn:
             return
         is_aliased_scheme = _has_aliased_scheme(source_text)
+        if not any(child.type == cs.TS_IMPORT_CLAUSE for child in import_node.children):
+            # `import "./instrument"`: still an import of the module.
+            self._record_js_side_effect_import(module_qn, target.module_qn, import_node)
+            return
         for child in import_node.children:
             if child.type == cs.TS_IMPORT_CLAUSE:
                 self._parse_js_import_clause(
