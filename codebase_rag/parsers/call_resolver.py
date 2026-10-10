@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict, deque
-from collections.abc import Collection, Iterator
+from collections.abc import Collection, Iterator, Mapping
 from pathlib import PurePath
 from typing import NamedTuple
 
@@ -15,6 +15,7 @@ from ..language_spec import get_language_for_extension
 from ..types_defs import CppOperatorSignature, FunctionRegistryTrieProtocol, NodeType
 from ..utils import qn_markers
 from .cpp import utils as cpp_utils
+from .go import utils as go_utils
 from .import_processor import ImportProcessor
 from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
@@ -54,6 +55,9 @@ _RS_TYPE_NODE_TYPES = frozenset(
 _CONSTRUCTIBLE_NODE_TYPES = frozenset(
     {NodeType.CLASS, NodeType.ENUM, NodeType.TYPE, NodeType.INTERFACE}
 )
+# An unqualified Go call names a package-level function: a method needs its
+# receiver.
+_GO_PACKAGE_FUNCTION_TYPES = frozenset({NodeType.FUNCTION})
 # A definition nested inside one of these is scoped to that body, so the
 # simple-name fallback prefers candidates that are not (issue #945).
 _SCOPING_PARENT_TYPES = frozenset({NodeType.FUNCTION, NodeType.METHOD})
@@ -255,6 +259,7 @@ class CallResolver:
     __slots__ = (
         "_py_rel_to_module",
         "python_shadowed_imports",
+        "go_local_scopes",
         "python_local_names",
         "function_registry",
         "import_processor",
@@ -281,6 +286,7 @@ class CallResolver:
         "rehydrated_definition_paths",
         "rust_function_modules",
         "declared_module_qns",
+        "go_package_names",
     )
 
     def __init__(
@@ -294,6 +300,7 @@ class CallResolver:
         rehydrated_definition_paths: dict[str, str] | None = None,
         rust_function_modules: dict[str, str] | None = None,
         declared_module_qns: set[str] | None = None,
+        go_package_names: Mapping[str, str] | None = None,
     ) -> None:
         self.function_registry = function_registry
         self.import_processor = import_processor
@@ -303,6 +310,11 @@ class CallResolver:
         # caller qn -> import-map names that caller binds as locals (#1907);
         # filled by the call processor before the caller's calls resolve.
         self.python_shadowed_imports: dict[str, frozenset[str]] = {}
+        # Go caller qn -> the names it binds for itself (params, locals,
+        # closures) and the byte spans each is in scope over, filled by the
+        # call processor before the caller's calls resolve: a bare call to
+        # one of them inside its span calls that value (#2571).
+        self.go_local_scopes: dict[str, go_utils.GoLocalScopes] = {}
         # caller qn -> every name that Python function binds itself (#2666);
         # filled alongside python_shadowed_imports.
         self.python_local_names: dict[str, frozenset[str]] = {}
@@ -364,6 +376,12 @@ class CallResolver:
         # written inside it climbs (issue #1086).
         self.rust_function_modules = (
             rust_function_modules if rust_function_modules is not None else {}
+        )
+        # {Go module qn: its `package` clause} (shared ref). A directory is not
+        # a package: `package p_test` and `//go:build ignore` generators sit
+        # beside `package p`, so package scope is (directory, clause).
+        self.go_package_names: Mapping[str, str] = (
+            go_package_names if go_package_names is not None else {}
         )
 
     def record_ctor_params(self, class_qn: str, params: tuple[str, ...]) -> None:
@@ -1324,6 +1342,7 @@ class CallResolver:
         pkg_dir, dsep, _file = file_module_qn.rpartition(cs.SEPARATOR_DOT)
         if not dsep:
             return set()
+        clause = self.go_package_names.get(file_module_qn)
         targets: set[tuple[str, str]] = set()
         for qn in self.function_registry.find_ending_with(name):
             label = self.function_registry.get(qn)
@@ -1337,14 +1356,187 @@ class CallResolver:
             # permits an external test package (`package p_test`) in a `_test.go` file
             # sharing the directory. Production code can never call a function defined
             # in a `_test.go` file, so exclude such siblings; else a genuinely
-            # test-only dead function would be masked as live.
+            # test-only dead function would be masked as live. A file under
+            # another `package` clause (a `//go:build ignore` generator's
+            # `package main`) is another package too, never a build variant,
+            # and its edge would carry the callee's `exact` label (#2571).
+            other_clause = self.go_package_names.get(other_module)
             if (
                 d2
                 and other_pkg == pkg_dir
                 and not other_file.endswith(cs.GO_TEST_FILE_SUFFIX)
+                and (clause is None or other_clause in (None, clause))
             ):
                 targets.add((label, qn))
         return targets
+
+    def _go_declaring_path(self, declaration_qn: str) -> PurePath | None:
+        # The file declaring Go `declaration_qn`, which cgr files directly
+        # under that file's module (`pkg.file.Name`). An incremental run
+        # parses changed files only, so an unchanged file is known by the
+        # repo-relative path its definition was rehydrated with.
+        modules = self.type_inference.module_qn_to_file_path
+        declaring_qn = declaration_qn.rpartition(cs.SEPARATOR_DOT)[0]
+        if (path := modules.get(declaring_qn)) is not None:
+            return path
+        if rehydrated := self.rehydrated_definition_paths.get(declaration_qn):
+            return self.type_inference.repo_path / rehydrated
+        return None
+
+    def _go_declaring_dir(self, declaration_qn: str) -> PurePath | None:
+        path = self._go_declaring_path(declaration_qn)
+        return path.parent if path is not None else None
+
+    def go_declaration_is_visible(self, declaration_qn: str, module_qn: str) -> bool:
+        """Whether Go `declaration_qn` is in scope for `module_qn`.
+
+        A directory is not a package: `package m_test` files sit beside
+        `package m` files and are a DIFFERENT package, and any `_test.go` is
+        compiled only under `go test`. Without this filter a production
+        `Error{}` in a third file of the package saw both `types.Error` and a
+        same-named `Error` from `m_test.go`, and the ambiguity rule emitted
+        nothing (CodeRabbit, #1747). A test file is visible only to a test
+        requester of the same package, and within the requester's own
+        directory the `package` clauses must agree. A lookup through an
+        import is into ANOTHER package, whose clause the requester does not
+        share, so only the test rule applies there.
+
+        An incremental run parses changed files only, so an unchanged
+        declaring file is known by the path its definition was rehydrated
+        with; its clause is unknown then and does not exclude it.
+        """
+        declaring_path = self._go_declaring_path(declaration_qn)
+        if declaring_path is None:
+            return True
+        declaring_qn = declaration_qn.rpartition(cs.SEPARATOR_DOT)[0]
+        requester = self.type_inference.module_qn_to_file_path.get(module_qn)
+        requester_is_test = requester is not None and requester.stem.endswith(
+            cs.GO_TEST_FILE_SUFFIX
+        )
+        # The package is the directory, whatever dots the file stems hold
+        # (#2616 review); path-less registrations (mock harnesses) group by qn.
+        own_package = (
+            declaring_path.parent == requester.parent
+            if requester is not None
+            else declaring_qn.rpartition(cs.SEPARATOR_DOT)[0]
+            == module_qn.rpartition(cs.SEPARATOR_DOT)[0]
+        )
+        if declaring_path.stem.endswith(cs.GO_TEST_FILE_SUFFIX) and not (
+            requester_is_test and own_package
+        ):
+            return False
+        if not own_package:
+            return True
+        requester_package = self.go_package_names.get(module_qn)
+        declaring_package = self.go_package_names.get(declaring_qn)
+        return (
+            requester_package is None
+            or declaring_package is None
+            or declaring_package == requester_package
+        )
+
+    def _go_package_scope(
+        self, name: str, module_qn: str, labels: frozenset[NodeType]
+    ) -> list[str]:
+        # The `labels` definitions an unqualified `name` in Go file `module_qn`
+        # can bind through its package block: declared in any file of the same
+        # directory and `package` clause, `_test.go` files for test callers
+        # only. Every parsed Go file has its clause recorded, so a caller
+        # without one is another language and gets no answer here.
+        if module_qn not in self.go_package_names:
+            return []
+        requester = self.type_inference.module_qn_to_file_path.get(module_qn)
+        if requester is None:
+            return []
+        package_dir = requester.parent
+        prefix = self._go_package_prefix(module_qn, package_dir)
+        return [
+            qn
+            for qn in go_utils.package_level_definitions(
+                self.function_registry,
+                name,
+                labels,
+                lambda qn: (
+                    qn.startswith(prefix) and self._go_declaring_dir(qn) == package_dir
+                ),
+            )
+            # The directory alone would let `pkg/helper.py`'s `helper` pass
+            # for a Go function of `pkg`.
+            if self._module_language(qn) == cs.SupportedLanguage.GO
+            and self.go_declaration_is_visible(qn, module_qn)
+        ]
+
+    def _go_package_prefix(self, module_qn: str, package_dir: PurePath) -> str:
+        # `project.dir.`, the qn prefix `base_module_qn` gives every file of
+        # `package_dir`: a string test that drops the other packages' same
+        # names before any path lookup. Empty, dropping nothing, when the
+        # caller's own qn does not carry it.
+        try:
+            parts = package_dir.relative_to(self.type_inference.repo_path).parts
+        except ValueError:
+            return ""
+        project = self.import_processor.project_name
+        prefix = cs.SEPARATOR_DOT.join((project, *parts, ""))
+        return prefix if module_qn.startswith(prefix) else ""
+
+    def _try_resolve_go_same_package(
+        self, call_name: str, module_qn: str
+    ) -> tuple[str, str] | None:
+        # `helper()` in `a.go` naming `func helper()` in `b.go` of the same
+        # package is as certain as a same-file call: Go shares one namespace
+        # across the package's files and rejects a duplicate (#2571). Two
+        # candidates are mutually exclusive build-tag variants, which the
+        # heuristic fallback and its sibling fan-out already cover.
+        candidates = self._go_package_scope(
+            call_name, module_qn, _GO_PACKAGE_FUNCTION_TYPES
+        )
+        if len(candidates) != 1:
+            return None
+        qn = candidates[0]
+        logger.debug(ls.CALL_GO_SAME_PACKAGE, call_name=call_name, qn=qn)
+        return self.function_registry[qn], qn
+
+    def _go_package_type(self, name: str, module_qn: str) -> str | None:
+        # A bare Go type name (`var m Mux`, `q *Mux`, the `*Mux` a same-package
+        # `NewRouter()` returns) is the caller's package's type. The repo-wide
+        # search by simple name behind this took whichever same-named type
+        # sorted first, often another package's, and labelled the method call
+        # on it exact (#2571).
+        if cs.SEPARATOR_DOT in name:
+            return None
+        candidates = self._go_package_scope(
+            name, module_qn, go_utils.TYPE_DECLARATION_TYPES
+        )
+        if len(candidates) > 1:
+            # A function-local type is filed directly under its module too,
+            # and shadows the package-level one in its own file. Directly:
+            # a sibling's stem can extend this file's (`helper.gen.go` beside
+            # `helper.go`), so a qn prefix is not enough.
+            own = [
+                qn
+                for qn in candidates
+                if qn.rpartition(cs.SEPARATOR_DOT)[0] == module_qn
+            ]
+            candidates = own if own else candidates
+        if len(candidates) != 1:
+            return None
+        # The Go type walker reduces a declared `*aaa.Mux` to `Mux` as well,
+        # so a name that a package this file imports also declares may be
+        # that one; it keeps the lookup it had before.
+        if self._go_imports_declare_type(name, module_qn):
+            return None
+        return candidates[0]
+
+    def _go_imports_declare_type(self, name: str, module_qn: str) -> bool:
+        imported = set(
+            (self.import_processor.import_mapping.get(module_qn) or {}).values()
+        )
+        return any(
+            self.function_registry.get(qn) in go_utils.TYPE_DECLARATION_TYPES
+            and qn.rpartition(cs.SEPARATOR_DOT)[0].rpartition(cs.SEPARATOR_DOT)[0]
+            in imported
+            for qn in self.function_registry.find_ending_with(name)
+        )
 
     def java_constructor_targets(self, class_qn: str) -> set[tuple[str, str]]:
         # A Java constructor is registered as a method directly under its class whose
@@ -1706,7 +1898,30 @@ class CallResolver:
             call.call_name, call.caller_qn, call.language
         ):
             return True, result
+
+        # `helper := func() {...}; helper()`, or a `helper func()` parameter,
+        # calls the local value, so the package-scope probes must not certify
+        # a same-named package function as the target (#2571). Caller-specific,
+        # so it answers before the module-keyed cache; the name trie keeps
+        # the edge it gave before, labelled for what it is.
+        if call.language == cs.SupportedLanguage.GO and self._go_local_in_scope(call):
+            return True, self._try_resolve_via_trie(
+                call.call_name, call.module_qn, call.language, call.call_point
+            )
         return False, None
+
+    def _go_local_in_scope(self, call: _CallSite) -> bool:
+        # Only where the local is in scope: a `helper()` before an inner
+        # block's `helper := ...`, or after that block closes, is the
+        # package's function (#2616 review). A call with no position falls
+        # back to the whole function.
+        if not call.caller_qn or cs.SEPARATOR_DOT in call.call_name:
+            return False
+        spans = self.go_local_scopes.get(call.caller_qn, {}).get(call.call_name)
+        if not spans:
+            return False
+        point = call.call_point
+        return point is None or any(start <= point < end for start, end in spans)
 
     def _resolution_cache_key(self, call: _CallSite) -> tuple[str, str, bool] | None:
         module_qn, caller_qn = call.module_qn, call.caller_qn
@@ -1884,6 +2099,14 @@ class CallResolver:
 
         if result := self._try_resolve_same_module(
             call_name, module_qn, call.call_point
+        ):
+            self._remember_cacheable(cache_key, result)
+            return True, result
+
+        if (
+            call.language == cs.SupportedLanguage.GO
+            and cs.SEPARATOR_DOT not in call_name
+            and (result := self._try_resolve_go_same_package(call_name, module_qn))
         ):
             self._remember_cacheable(cache_key, result)
             return True, result
@@ -5752,6 +5975,8 @@ class CallResolver:
         # class qn missing from the registry can never be a real node;
         # require registration so an import-map module entry (a C++ header
         # stem shadowing its class name) cannot mask the real class.
+        if (package_type := self._go_package_type(class_name, module_qn)) is not None:
+            return package_type
         return resolve_class_name(
             self._dealias_type(class_name),
             module_qn,

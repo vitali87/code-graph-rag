@@ -726,6 +726,7 @@ CALL_SAME_MODULE = "Same-module resolution: {call_name} -> {qn}"
 CALL_LUA_TABLE_MEMBER = "Lua table-member resolution: {call_name} -> {qn}"
 CALL_TRIE_FALLBACK = "Trie-based fallback resolution: {call_name} -> {qn}"
 CALL_PACKAGE_MEMBER = "Package-member resolved call: {member} -> {qn}"
+CALL_GO_SAME_PACKAGE = "Go same-package resolution: {call_name} -> {qn}"
 CALL_UNRESOLVED = "Could not resolve call: {call_name}"
 CALL_RUST_OWNER_UNRESOLVED = (
     "No method of the type a Rust call names matches: {call_name}"
