@@ -10,6 +10,8 @@ Set a role's `*_PROVIDER` and `*_MODEL` together. If neither is set, that role u
 
 ![A .env with ORCHESTRATOR_PROVIDER but no ORCHESTRATOR_MODEL: cgr doctor fails the check and cgr start exits naming the missing variable](../assets/demos/configuration-provider-model-pair.gif)
 
+A value cgr cannot use (a port that is not a number, `MEMGRAPH_BATCH_SIZE=0`) stops every command before it runs, with one line per variable naming the value and whether it came from `./.env` or the environment, and exit status 2. `cgr --version`, `cgr --help` and `cgr help <command>` still work, so you can find the fix. A variable set to an empty value (`MEMGRAPH_HOST=`) counts as unset and takes its default. A `./.env` value the operating system will not hold in a variable (one with a NUL byte, or longer than the 32,767 characters Windows allows) is reported the same way, naming the variable but not the value, and the rest of the file still loads.
+
 ## Provider Examples
 
 ### All Ollama (Local Models)
@@ -122,7 +124,7 @@ Get your MiniMax API key from the [MiniMax Platform](https://platform.minimax.io
 | `MEMGRAPH_PORT` | `7687` | Memgraph port |
 | `MEMGRAPH_HTTP_PORT` | `7444` | Memgraph HTTP port |
 | `LAB_PORT` | `3000` | Memgraph Lab port |
-| `MEMGRAPH_BATCH_SIZE` | `1000` | Batch size for Memgraph operations |
+| `MEMGRAPH_BATCH_SIZE` | `1000` | Batch size for Memgraph operations; at least 1, as for `--batch-size` |
 | `NEO4J_URI` | `bolt://localhost:7687` | Neo4j connection URI. The scheme selects routing (`neo4j://` for a cluster, `bolt://` for a single instance) and TLS (`+s`/`+ssc`). |
 | `NEO4J_USERNAME` | _(unset)_ | Neo4j username; leave unset for an unauthenticated server |
 | `NEO4J_PASSWORD` | _(unset)_ | Neo4j password |

@@ -40,7 +40,7 @@ from .capture import (
     unknown_tokens,
 )
 from .cli_runtime import app_context, connect_memgraph, style
-from .config import load_ignore_patterns, settings
+from .config import load_ignore_patterns, settings, settings_errors
 from .console_marks import status_mark
 from .editing.cli import cli as edits_cli
 from .editor_links import (
@@ -234,8 +234,20 @@ def _update_and_validate_models(orchestrator: str | None, cypher: str | None) ->
     validate_models_early()
 
 
+def _refuse_invalid_settings(command: str | None) -> None:
+    # Checked here rather than when the settings load, so `--version`,
+    # `--help` and `cgr help` (all handled before or without a command) still
+    # work, and no command runs on the default a refused value fell back to.
+    if not settings_errors or command == ch.CLICommandName.HELP:
+        return
+    for problem in settings_errors:
+        typer.echo(cs.CLI_ERR_INVALID_SETTING.format(problem=problem), err=True)
+    raise typer.Exit(cs.CLI_EXIT_USAGE_ERROR)
+
+
 @app.callback()
 def _global_options(
+    ctx: typer.Context,
     version: bool | None = typer.Option(
         None,
         "--version",
@@ -252,6 +264,7 @@ def _global_options(
         is_eager=True,
     ),
 ) -> None:
+    _refuse_invalid_settings(ctx.invoked_subcommand)
     settings.QUIET = quiet
     if quiet:
         logger.remove()
