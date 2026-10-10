@@ -456,6 +456,9 @@ IGNORE_PATTERNS = frozenset(
         ".gradle",
         ".hg",
         ".idea",
+        # Jupyter's autosaved copy of each notebook beside it: indexing it
+        # would define every notebook function twice (issue #2480).
+        ".ipynb_checkpoints",
         ".maven",
         ".mypy_cache",
         ".nox",
