@@ -661,6 +661,23 @@ class TestNeighboursUnchanged:
         assert registry.member_alias_targets(f"{CLS}.__call__") == (f"{CLS}._slow",)
         assert registry.member_alias_targets(f"{CLS}.run") == ()
 
+    def test_removing_an_alias_last_target_drops_its_holder(self) -> None:
+        # Which classes alias a name decides whether a lookup of it walks
+        # the C3 MRO, so a swept alias stops counting; one with a target
+        # left still counts.
+        registry = FunctionRegistryTrie()
+        registry[f"{CLS}._fast"] = NodeType.METHOD
+        registry[f"{CLS}._slow"] = NodeType.METHOD
+        registry.add_member_alias(f"{CLS}.__call__", f"{CLS}._fast")
+        registry.add_member_alias(f"{CLS}.__call__", f"{CLS}._slow")
+        registry.add_member_alias(f"{CLS}.run", f"{CLS}._fast")
+        assert registry.alias_holders("run") == frozenset({CLS})
+
+        del registry[f"{CLS}._fast"]
+
+        assert registry.alias_holders("run") == frozenset()
+        assert registry.alias_holders("__call__") == frozenset({CLS})
+
     def test_call_argument_form_is_unchanged(
         self, temp_repo: Path, mock_ingestor: MagicMock
     ) -> None:
@@ -1368,3 +1385,82 @@ class TestValueBindingEndsTheLookup:
         calls = _targets(_edges(mock_ingestor, _CALLS), f"{SUB}.use")
 
         assert f"{MODULE}.Mid.execute" in calls, calls
+
+
+# ---------------------------------------------------------------------------
+# An inherited alias follows the C3 MRO even when no class binds a value
+# ---------------------------------------------------------------------------
+
+# `class C(A, B)` with `A(Base)` linearises to C, A, Base, B, so Base's `run`
+# comes before B's whatever form either takes.
+_ALIAS_BASE = (
+    "class Base:\n    def _base_impl(self):\n        return 1\n    run = _base_impl\n\n"
+)
+_DEF_BASE = "class Base:\n    def run(self):\n        return 1\n\n"
+_ALIAS_B = "class B:\n    def _b_impl(self):\n        return 2\n    run = _b_impl\n\n"
+_DEF_B = "class B:\n    def run(self):\n        return 2\n\n"
+_DIAMOND_TAIL = (
+    "class A(Base):\n"
+    "    pass\n"
+    "\n"
+    "class C(A, B):\n"
+    "    def go(self):\n"
+    "        return self.run()\n"
+    "\n"
+    "def via_c():\n"
+    "    return C().run()\n"
+)
+
+
+class TestInheritedAliasFollowsTheMro:
+    @pytest.mark.parametrize(
+        ("base", "b", "wanted", "unwanted"),
+        [
+            (_ALIAS_BASE, _ALIAS_B, "Base._base_impl", "B._b_impl"),
+            (_ALIAS_BASE, _DEF_B, "Base._base_impl", "B.run"),
+            (_DEF_BASE, _ALIAS_B, "Base.run", "B._b_impl"),
+        ],
+        ids=["alias-alias", "alias-def", "def-alias"],
+    )
+    def test_first_base_chain_wins(
+        self,
+        temp_repo: Path,
+        mock_ingestor: MagicMock,
+        base: str,
+        b: str,
+        wanted: str,
+        unwanted: str,
+    ) -> None:
+        _index(temp_repo, mock_ingestor, base + b + _DIAMOND_TAIL)
+
+        calls = _edges(mock_ingestor, _CALLS)
+        via_c = _targets(calls, f"{MODULE}.via_c")
+        go = _targets(calls, f"{MODULE}.C.go")
+
+        assert f"{MODULE}.{wanted}" in via_c, calls
+        assert f"{MODULE}.{unwanted}" not in via_c, calls
+        assert f"{MODULE}.{wanted}" in go, calls
+        assert f"{MODULE}.{unwanted}" not in go, calls
+
+    # Negative: listing B first puts B's alias ahead of Base's in the MRO.
+
+    def test_swapped_bases_pick_the_other_alias(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        _index(
+            temp_repo,
+            mock_ingestor,
+            _ALIAS_BASE + _ALIAS_B + "class A(Base):\n"
+            "    pass\n"
+            "\n"
+            "class D(B, A):\n"
+            "    pass\n"
+            "\n"
+            "def via_d():\n"
+            "    return D().run()\n",
+        )
+
+        calls = _targets(_edges(mock_ingestor, _CALLS), f"{MODULE}.via_d")
+
+        assert f"{MODULE}.B._b_impl" in calls, calls
+        assert f"{MODULE}.Base._base_impl" not in calls, calls

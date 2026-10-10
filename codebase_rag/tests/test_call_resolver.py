@@ -76,6 +76,9 @@ class MockFunctionRegistry:
     def non_method_holders(self, member: str) -> frozenset[QualifiedName]:
         return frozenset()
 
+    def alias_holders(self, member: str) -> frozenset[QualifiedName]:
+        return frozenset()
+
     def mark_property(self, qn: QualifiedName) -> None:
         self._properties.add(qn)
         self._property_names.add(qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])

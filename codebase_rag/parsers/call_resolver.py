@@ -5601,7 +5601,7 @@ class CallResolver:
             or (local_var_types and receiver in local_var_types)
         ):
             return False, None
-        order = self._value_aware_mro(class_context, member) or [
+        order = self._binding_aware_mro(class_context, member) or [
             self._follow_reexports(class_qn) for class_qn in self._mro(class_context)
         ]
         hidden = False
@@ -5706,13 +5706,17 @@ class CallResolver:
             stack.extend(subclass_map.get(current, ()))
         return found
 
-    def _value_aware_mro(self, class_qn: str, member: str) -> list[str] | None:
-        """class_qn's C3 MRO when a class in it binds `member` to a value.
+    def _binding_aware_mro(self, class_qn: str, member: str) -> list[str] | None:
+        """class_qn's C3 MRO when a class body in it binds `member` by assignment.
 
-        Only Python class bodies record such values, so every other lookup
-        keeps the breadth-first walk it always had (None).
+        A value (`run = None`) or an alias (`run = _impl`) is recorded only
+        for a Python class body, and Python looks either up in C3 order:
+        `class C(A, B)` with `A(Base)` reaches Base's `run` before B's. Every
+        other lookup keeps the breadth-first walk it always had (None).
         """
-        if not (holders := self.function_registry.non_method_holders(member)):
+        registry = self.function_registry
+        holders = registry.non_method_holders(member) | registry.alias_holders(member)
+        if not holders:
             return None
         order = self._c3_mro(class_qn)
         return None if holders.isdisjoint(order) else order
@@ -5783,8 +5787,8 @@ class CallResolver:
         # Which class binds the name first decides whether a value hides
         # it, and that order is the C3 MRO, not this walk's breadth-first
         # order: `class C(A, B)` reaches a `run` that A inherits before B's
-        # `run = None`.
-        if (order := self._value_aware_mro(class_qn, method_name)) is not None:
+        # `run = None` or `run = _impl`.
+        if (order := self._binding_aware_mro(class_qn, method_name)) is not None:
             return self._resolve_inherited_along_mro(order, method_name)
         return self._resolve_inherited_breadth_first(class_qn, method_name)
 

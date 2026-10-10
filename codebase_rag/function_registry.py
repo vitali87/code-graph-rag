@@ -29,6 +29,7 @@ class FunctionRegistryTrie:
         "_property_names",
         "_member_aliases",
         "_aliases_by_target",
+        "_alias_holders",
         "_non_method_members",
         "_non_method_holders",
         "_object_members",
@@ -56,6 +57,9 @@ class FunctionRegistryTrie:
         # #2620); the alias is no node, so it never enters the trie.
         self._member_aliases: dict[QualifiedName, list[QualifiedName]] = {}
         self._aliases_by_target: dict[QualifiedName, set[QualifiedName]] = {}
+        # Member name -> the classes whose body aliases it, so only a lookup
+        # of an aliased name pays for the exact (C3) MRO walk.
+        self._alias_holders: dict[str, set[QualifiedName]] = {}
         # Class -> the member names its body binds to something other than a
         # method (`run = None`); attribute lookup stops there instead of
         # reaching a base's `run`.
@@ -350,6 +354,8 @@ class FunctionRegistryTrie:
         if target_qn not in targets:
             targets.append(target_qn)
         self._aliases_by_target.setdefault(target_qn, set()).add(alias_qn)
+        class_qn, _, member = alias_qn.rpartition(cs.SEPARATOR_DOT)
+        self._alias_holders.setdefault(member, set()).add(class_qn)
 
     def member_alias_targets(
         self, alias_qn: QualifiedName
@@ -376,6 +382,9 @@ class FunctionRegistryTrie:
     def non_method_holders(self, member: str) -> frozenset[QualifiedName]:
         return frozenset(self._non_method_holders.get(member, ()))
 
+    def alias_holders(self, member: str) -> frozenset[QualifiedName]:
+        return frozenset(self._alias_holders.get(member, ()))
+
     def _drop_member_alias_target(self, target_qn: QualifiedName) -> None:
         # A re-parsed file registers its aliases again with its methods, so a
         # removed method takes its alias entries with it.
@@ -385,3 +394,11 @@ class FunctionRegistryTrie:
                 targets.remove(target_qn)
             if not targets:
                 self._member_aliases.pop(alias_qn, None)
+                self._drop_alias_holder(alias_qn)
+
+    def _drop_alias_holder(self, alias_qn: QualifiedName) -> None:
+        class_qn, _, member = alias_qn.rpartition(cs.SEPARATOR_DOT)
+        if (holders := self._alias_holders.get(member)) is not None:
+            holders.discard(class_qn)
+            if not holders:
+                del self._alias_holders[member]
