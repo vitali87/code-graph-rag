@@ -22,6 +22,7 @@ from tree_sitter import Parser
 
 import codec.schema_pb2 as pb
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
@@ -303,7 +304,7 @@ def test_an_incremental_run_binds_like_a_clean_index(
     root = tmp_path / "proj"
     store = _index(root, files)
     use = root / USE_PATH
-    cache_mtime = (root / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
     use.write_text(USE_SOURCE, encoding="utf-8")
     os.utime(use, (cache_mtime + 1, cache_mtime + 1))
     _run(store, root, force=False)
