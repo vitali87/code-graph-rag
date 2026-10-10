@@ -43,8 +43,11 @@ cgr export -o shop.json --workspace shop
 A project's export holds what the project owns (its folders, files, modules
 and definitions), the relationships that start there, and the nodes those
 relationships reach, such as a shared external module, so every relationship
-in the file has both ends in it. The file lists its projects under
-`metadata.projects`.
+in the file has both ends in it. A shared `Resource` node is never owned, so
+the links that start at one, a client URL's `RESOLVES_TO` to an endpoint or
+an env var's `FLOWS_TO` into a URL, are added when both of their ends are in
+the file: export a client together with its server and the calls between
+them are kept. The file lists its projects under `metadata.projects`.
 
 ## Working with Exported Data
 
