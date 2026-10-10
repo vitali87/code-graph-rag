@@ -50,7 +50,7 @@ from .parsers.cpp_frontend import (
 from .parsers.csharp import utils as csharp_utils
 from .parsers.csharp_frontend import find_csharp_project
 from .parsers.definition_processor import DefinitionProcessor
-from .parsers.document_tier import DocumentTier
+from .parsers.document_tier import DocumentTier, broken_link_keys
 from .parsers.endpoint_prefixes import (
     CYPHER_DELETE_HANDLER_EXPOSES,
     CYPHER_PROJECT_PY_MODULES,
@@ -94,6 +94,7 @@ from .parsers.java_lombok import (
     current_lombok_identity,
     overlay_identity,
 )
+from .parsers.notebook import NotebookSkipped, is_notebook_path, read_notebook
 from .parsers.parameter_nodes import PendingParameterType
 from .parsers.structure_processor import StructureProcessor
 from .parsers.utils import sorted_captures
@@ -2139,6 +2140,7 @@ class GraphUpdater:
         linked = self.factory.definition_processor.resolve_deferred_parent_links()
         if linked:
             logger.info("Resolved {} deferred containment parents", linked)
+        self._ungroup_rehydrated_non_partials()
         # Return/parameter annotations resolve against the complete registry
         # (issue #1527), so a type defined in a later file still gets its edge.
         typed = self.factory.definition_processor.emit_type_edges()
@@ -3845,6 +3847,42 @@ class GraphUpdater:
         if restored:
             logger.info(ls.CSHARP_TYPE_LOCATIONS_REHYDRATED.format(count=restored))
 
+    def _ungroup_rehydrated_non_partials(self) -> None:
+        # The registry rehydration joins every unchanged C# type to the partial
+        # group of its directory and declared name, as its rows do not say
+        # whether the type was declared `partial`; parsing groups only the
+        # types that are. `class Box` and `class Box<T>` side by side are two
+        # types, and grouped they read as one candidate for a type reference:
+        # an edge an incremental sync drew and a clean index does not (#2469).
+        # Only rehydrated types are judged by the graph's rows: a re-parsed
+        # one's row may still describe the source before the edit.
+        dp = self.factory.definition_processor
+        rehydrated = dp.rehydrated_definition_paths
+        if not isinstance(self.ingestor, QueryProtocol) or not any(
+            len(group) > 1 and qn in rehydrated
+            for qn, group in dp.csharp_partial_groups.items()
+        ):
+            return
+        rows = self._owned_rows(
+            self.ingestor.fetch_all(
+                cs.CYPHER_ALL_CSHARP_TYPE_LOCATIONS,
+                {cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT},
+            ),
+            cs.KEY_QUALIFIED_NAME,
+        )
+        for row in rows:
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            modifiers = row.get(cs.KEY_MODIFIERS)
+            if (
+                isinstance(qn, str)
+                and qn in rehydrated
+                and isinstance(modifiers, list)
+                and cs.TS_CSHARP_MODIFIER_PARTIAL not in modifiers
+                and (group := dp.csharp_partial_groups.pop(qn, None)) is not None
+            ):
+                # In place: the list is the one `_csharp_partial_index` holds.
+                group[:] = [part for part in group if part != qn]
+
     def _rehydrate_go_type_locations(self) -> None:
         # Incremental runs fill go_type_locations only from re-parsed files,
         # but _join_go_implements resolves BOTH ends of each pair against it.
@@ -3987,7 +4025,45 @@ class GraphUpdater:
                 for row in rows
                 if isinstance(path := row.get(cs.KEY_CALLER_PATH), str) and path
             }
+            | self._linking_document_keys(reindexed_keys)
         )
+
+    def _linking_document_keys(self, reindexed_keys: list[str]) -> set[str]:
+        """Documents whose links end in a re-indexed or deleted file.
+
+        A link that names a heading ends at its Section, which the linked
+        document's re-parse recreates without the edge; a link to a deleted
+        file has lost its File and is now broken. Re-parsing the linking
+        document re-resolves both, as a clean index would (issue #2458). A
+        link to a File that still exists needs nothing: the node, and the
+        edge with it, outlive its file's re-parse.
+        """
+        if not isinstance(self.ingestor, QueryProtocol):
+            return set()
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_LINKING_DOCUMENT_PATHS,
+                {
+                    cs.CYPHER_PARAM_PATHS: reindexed_keys,
+                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                },
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="linking documents")
+            return set()
+        return {
+            path
+            for row in rows
+            if isinstance(path := row.get(cs.KEY_CALLER_PATH), str)
+            and path
+            and (
+                row.get(cs.KEY_TARGET_LABEL) == cs.NodeLabel.SECTION
+                or not (
+                    isinstance(target := row.get(cs.KEY_TARGET_PATH), str)
+                    and (self.repo_path / target).is_file()
+                )
+            )
+        }
 
     def _module_names_for(self, keys: list[str]) -> list[str]:
         """Import spellings a file could be named by, from its relative path.
@@ -4066,6 +4142,7 @@ class GraphUpdater:
                 if isinstance(path := row.get(cs.KEY_CALLER_PATH), str) and path
             }
             | self._specifier_waiter_keys(present_keys)
+            | self._broken_link_waiter_keys(present_keys)
         )
 
     def _unresolved_reference_waiters(
@@ -4334,6 +4411,37 @@ class GraphUpdater:
                 waiters.add(caller)
         return waiters
 
+    def _broken_link_waiter_keys(self, present_keys: list[str]) -> set[str]:
+        """Documents with a broken link to one of these files.
+
+        A link to a file that did not exist yet left no edge to find the
+        document by, only the path on its Module's `broken_links`, so a
+        created file is matched against those (issue #2458). Without this
+        the document keeps listing the link as broken, and keeps lacking the
+        edge, until it is edited itself.
+        """
+        if not isinstance(self.ingestor, QueryProtocol):
+            return set()
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_BROKEN_LINK_DOCUMENTS,
+                {cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT},
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="broken links")
+            return set()
+        wanted = set(present_keys)
+        waiters: set[str] = set()
+        for row in rows:
+            document = row.get(cs.KEY_CALLER_PATH)
+            links = row.get(cs.KEY_BROKEN_LINKS)
+            if not isinstance(document, str) or not isinstance(links, list):
+                continue
+            written = [link for link in links if isinstance(link, str)]
+            if not wanted.isdisjoint(broken_link_keys(document, written)):
+                waiters.add(document)
+        return waiters
+
     def _package_paths(self) -> set[str] | None:
         """Relative paths of this project's Package nodes, None if unreadable."""
         if not isinstance(self.ingestor, QueryProtocol):
@@ -4463,8 +4571,7 @@ class GraphUpdater:
             and isinstance(target_qn, str)
         ):
             return None
-        module_label = cs.NodeLabel.MODULE.value
-        if target_label != module_label and target_qn not in self.function_registry:
+        if not self._restore_target_exists(target_label, target_qn):
             return None
         caller_key = cs.NODE_UNIQUE_CONSTRAINTS.get(caller_label)
         target_key = cs.NODE_UNIQUE_CONSTRAINTS.get(target_label)
@@ -4475,6 +4582,22 @@ class GraphUpdater:
             rel,
             (target_label, target_key, target_qn),
         )
+
+    def _restore_target_exists(self, label: str, qualified_name: str) -> bool:
+        """Whether a captured edge's target is back after the re-parse.
+
+        A Section is not a definition, so the function registry never holds
+        one; the document tier answers for the headings it emitted. A File
+        target is never restored: its node outlives the re-parse, and so
+        does the edge (issue #2458).
+        """
+        match label:
+            case cs.NodeLabel.MODULE:
+                return True
+            case cs.NodeLabel.SECTION:
+                return self.document_tier.emitted_section(qualified_name)
+            case _:
+                return qualified_name in self.function_registry
 
     def _restore_inbound_edges(self, captured: list[ResultRow]) -> None:
         # Re-emit each captured inbound edge whose target still exists after the
@@ -6767,6 +6890,8 @@ class GraphUpdater:
                 self._parsed_files.append((filepath, language))
         elif self._is_dependency_file(filepath.name, filepath):
             self.factory.definition_processor.process_dependencies(filepath)
+        elif is_notebook_path(filepath):
+            self._process_notebook(filepath, file_bytes)
         else:
             self.process_with_secondary_tier(filepath)
 
@@ -6819,6 +6944,39 @@ class GraphUpdater:
         self.ast_grep_tier.note_unparsed(filepath.suffix)
         return False
 
+    def _process_notebook(self, filepath: Path, file_bytes: bytes | None) -> None:
+        """Parse a Python notebook's code cells as the module they make.
+
+        Registered with the call pass like any parsed file, so its imports and
+        calls become edges; a notebook in another language, or one that does
+        not read as nbformat 4, keeps only its `File` node (issue #2480).
+        """
+        if cs.SupportedLanguage.PYTHON not in self.parsers:
+            return
+        notebook = read_notebook(
+            _read_bytes(filepath) if file_bytes is None else file_bytes
+        )
+        rel = cached_relative_path(filepath, self.repo_path).as_posix()
+        if isinstance(notebook, NotebookSkipped):
+            if notebook.reason == cs.NotebookSkip.NOT_PYTHON:
+                logger.debug(
+                    ls.NOTEBOOK_NOT_PYTHON, path=rel, language=notebook.language
+                )
+            else:
+                logger.warning(ls.NOTEBOOK_UNREADABLE, path=rel, reason=notebook.reason)
+            return
+        result = self.factory.definition_processor.process_file(
+            filepath,
+            cs.SupportedLanguage.PYTHON,
+            self.queries,
+            self.factory.structure_processor.structural_elements,
+            source_bytes=notebook.source,
+        )
+        if result:
+            self.ast_cache[filepath] = result
+            self._parsed_files.append((filepath, cs.SupportedLanguage.PYTHON))
+            logger.debug(ls.NOTEBOOK_INDEXED, path=rel, cells=len(notebook.cells))
+
     def _ast_for(self, file_path: Path) -> Node | None:
         """The cached AST root for a file, or None when it is not cached."""
         entry = self.ast_cache.load(file_path)
@@ -6832,6 +6990,8 @@ class GraphUpdater:
         Evicted files carry stale captures (nodes from the discarded tree),
         so those are dropped: downstream recomputes them from the fresh tree.
         """
+        if is_notebook_path(file_path):
+            return self._load_notebook_ast(file_path)
         language = get_language_for_extension(file_path.suffix)
         if language is None or language not in self.parsers:
             return None
@@ -6852,6 +7012,27 @@ class GraphUpdater:
         ).root_node
         self.factory._func_class_captures_cache.pop(file_path, None)
         return (root_node, language)
+
+    def _load_notebook_ast(
+        self, file_path: Path
+    ) -> tuple[Node, cs.SupportedLanguage] | None:
+        """Re-parse an evicted notebook from the Python source it was parsed as."""
+        language_queries = self.queries.get(cs.SupportedLanguage.PYTHON)
+        parser = language_queries.get(cs.KEY_PARSER) if language_queries else None
+        if parser is None:
+            return None
+        try:
+            notebook = read_notebook(file_path.read_bytes())
+        except OSError as e:
+            logger.error(ls.AST_RELOAD_FAILED, path=file_path, error=e)
+            return None
+        if isinstance(notebook, NotebookSkipped):
+            return None
+        root_node = parse_with_preproc_recovery(
+            parser, notebook.source, cs.SupportedLanguage.PYTHON
+        ).root_node
+        self.factory._func_class_captures_cache.pop(file_path, None)
+        return (root_node, cs.SupportedLanguage.PYTHON)
 
     def _process_function_calls(self, only: Collection[Path] | None = None) -> None:
         # `only` scopes the pass to a re-ingested subset (issue #1524); every

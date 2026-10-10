@@ -94,7 +94,8 @@ class EdgeResolution(StrEnum):
 
     `exact`: the resolver bound the target through scope, import, type or
     signature. `overload`: one edge per same-named candidate. `heuristic`:
-    a name-only match (trie suffix, wildcard import, package member).
+    a name-only match (trie suffix, wildcard import, package member, a
+    receiver typed only by its parameter's name).
     `trace_confirmed`: a static edge a runtime trace observed. `dynamic`: a
     call only a trace saw, with the dispatch literal's site when found.
     """
@@ -196,6 +197,8 @@ KEY_FROM_HASH = "from_hash"
 KEY_TO_HASH = "to_hash"
 KEY_FROM_QNS = "from_qns"
 KEY_TO_QNS = "to_qns"
+# The frontier node a hierarchy hop row was reached from (issue #2624).
+KEY_THROUGH = "through"
 KEY_PROJECT_PREFIX = "project_prefix"
 KEY_LONGER_PROJECT_PREFIXES = "longer_project_prefixes"
 KEY_VERSION_SPEC = "version_spec"
@@ -719,7 +722,18 @@ NODE_PROJECT = NodeLabel.PROJECT
 KEY_PARAMETERS = "parameters"
 KEY_TYPE_PARAMETERS = "type_parameters"
 # Declared Markdown front-matter, as sorted "key=value" entries (issue #1448).
+# A list value is one entry with its items comma-joined, "tags=a,b" (#2458).
 KEY_FRONT_MATTER = "front_matter"
+# A Markdown link's own words and fragment, on its LINKS_TO edge beside the
+# shared site keys `line`/`col`/`end_line`/`end_col` (issue #2458). `anchor`
+# is the fragment as written, absent when the link has none.
+KEY_LINK_TEXT = "text"
+KEY_ANCHOR = "anchor"
+# The relative link paths a document writes that name no file in the
+# repository, as written and in source order. Always emitted, empty included,
+# for the reason KEY_FRONT_MATTER is: `SET n += props` cannot clear an
+# omitted key, so a fixed link would otherwise stay listed as broken.
+KEY_BROKEN_LINKS = "broken_links"
 KEY_DECORATORS = "decorators"
 # Return and parameter annotations as written (issue #1527). `return_type` is
 # absent when the definition has none; `param_types` is parallel to the
@@ -1106,8 +1120,13 @@ CYPHER_INBOUND_EDGES = (
     # the graph, so the edge that attaches it to a re-parsed symbol has no
     # source to be re-derived from and would otherwise die with the subtree,
     # leaving the note orphaned for the next sweep to delete.
+    # LINKS_TO joins it too (issue #2458): a document re-parsed only because
+    # it links into an edited one recreates its own Sections, and the links
+    # other documents hold into those Sections come back from here. A
+    # captured link into a File is skipped on restore: the File outlives the
+    # re-parse, and so does the edge.
     "MATCH (caller)-[r:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS|IMPLEMENTS|OVERRIDES"
-    "|RETURNS|ACCEPTS|ANNOTATES|MENTIONS]->(target) "
+    "|RETURNS|ACCEPTS|ANNOTATES|MENTIONS|LINKS_TO]->(target) "
     "WHERE target.path IN $paths AND caller.qualified_name IS NOT NULL "
     "AND (caller.path IS NULL OR NOT caller.path IN $paths) "
     "RETURN head(labels(caller)) AS caller_label, "
@@ -1130,6 +1149,36 @@ CYPHER_AFFECTED_CALLER_PATHS = (
     "AND caller.qualified_name STARTS WITH $project_prefix "
     "AND target.qualified_name STARTS WITH $project_prefix "
     "RETURN DISTINCT caller.path AS caller_path"
+)
+# Documents whose links point into $paths (issue #2458). A link that names a
+# heading ends at that heading's Section, which a re-parse of the linked
+# document deletes and recreates, taking the edge with it; a link whose file
+# is deleted loses its File the same way. Either way the linking document is
+# re-parsed, so its edges and its `broken_links` end where a clean index puts
+# them. The target's label and path come back so the caller can skip a File
+# whose file still exists: that node outlives a re-parse, and so does the
+# edge. Kept apart from CYPHER_AFFECTED_CALLER_PATHS, which requires a
+# qualified name on the target, and a File has none.
+CYPHER_LINKING_DOCUMENT_PATHS = (
+    "MATCH (source)-[:LINKS_TO]->(target) "
+    "WHERE target.path IN $paths AND source.path IS NOT NULL "
+    "AND NOT source.path IN $paths "
+    "AND source.qualified_name STARTS WITH $project_prefix "
+    "RETURN DISTINCT source.path AS caller_path, "
+    "head(labels(target)) AS target_label, target.path AS target_path"
+)
+# Documents holding a link to a file that did not exist when they were parsed
+# (issue #2458), with those links as written. Read when a sync creates files,
+# so a document waiting on one is re-parsed and gains the edge a clean index
+# gives it. The paths are relative to the document, so the match is resolved
+# in Python, as CYPHER_UNRESOLVED_SPECIFIER_IMPORTERS' is.
+CYPHER_BROKEN_LINK_DOCUMENTS = (
+    "MATCH (m:Module) "
+    "WHERE m.path IS NOT NULL "
+    "AND m.qualified_name STARTS WITH $project_prefix "
+    "AND m.broken_links IS NOT NULL "
+    "AND size(m.broken_links) > 0 "
+    "RETURN m.path AS caller_path, m.broken_links AS broken_links"
 )
 # Rehydrate class_inheritance on an incremental run: every INHERITS edge
 # (child -> base) with resolved qns, so protocol dispatch and inherited-method
@@ -1220,7 +1269,26 @@ CYPHER_ALL_CSHARP_TYPE_LOCATIONS = (
     "AND n.qualified_name STARTS WITH $project_prefix "
     "AND n.path ENDS WITH '.cs' "
     "RETURN n.qualified_name AS qualified_name, n.path AS path, "
-    "n.start_line AS start_line"
+    "n.start_line AS start_line, n.modifiers AS modifiers"
+)
+
+# The labels a C# `partial` declaration registers under: a partial class,
+# struct or record is a Class and a partial interface an Interface; an enum
+# or a delegate cannot be partial (issue #2469).
+CSHARP_PARTIAL_TYPE_LABELS: frozenset[NodeLabel] = frozenset(
+    {NodeLabel.CLASS, NodeLabel.INTERFACE}
+)
+# A project's types of those labels under one name, with their modifiers: a
+# rename reads which of them are the parts of one `partial` type by the key
+# parsing groups them under (`csharp_partial_key_from_graph`).
+_CSHARP_PARTIAL_LABELS = "|".join(
+    sorted(label.value for label in CSHARP_PARTIAL_TYPE_LABELS)
+)
+CYPHER_SAME_NAMED_CSHARP_TYPES = (
+    f"MATCH (n:{_CSHARP_PARTIAL_LABELS}) "
+    "WHERE n.name = $name AND n.qualified_name STARTS WITH $project_prefix "
+    "RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, "
+    "n.path AS path, n.modifiers AS modifiers"
 )
 
 # Col-keyed location rehydration fetches (issue #1240). Both guard for
@@ -1280,6 +1348,7 @@ CYPHER_PARAM_LABELS = "labels"
 CYPHER_PARAM_QUALIFIED_NAMES = "qualified_names"
 KEY_TARGET_LABEL = "target_label"
 KEY_TARGET_QN = "target_qn"
+KEY_TARGET_PATH = "target_path"
 
 # Gloss nodes (issue #1808): the properties an agent-authored note carries and
 # the keys its read tools answer with.
@@ -1392,6 +1461,9 @@ MERGE_KEY_PROPS_BY_REL: dict[str, tuple[str, ...]] = {
     # One edge per bound name: `from x import a, b` shares a statement span
     # but binds two names, each its own edge.
     RelationshipType.IMPORTS.value: (KEY_LINE, KEY_COL, KEY_ALIAS),
+    # One edge per Markdown link (issue #2458): a README linking one file
+    # twice says two things, each with its own words and anchor.
+    RelationshipType.LINKS_TO.value: (KEY_LINE, KEY_COL),
 }
 
 NODE_UNIQUE_CONSTRAINTS: dict[str, str] = {
