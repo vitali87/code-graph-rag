@@ -59,6 +59,12 @@ TS_JS_STAR = "*"
 # share these); the closing element repeats the name and must not double-emit.
 TS_JSX_SELF_CLOSING_ELEMENT = "jsx_self_closing_element"
 TS_JSX_OPENING_ELEMENT = "jsx_opening_element"
+# A JSX element with children, its closing tag, and the fields that hold the
+# two tags' names: a rename rewrites the closing tag with the opening one,
+# which is the only one the graph records (issue #2811).
+TS_JSX_ELEMENT = "jsx_element"
+TS_JSX_CLOSING_ELEMENT = "jsx_closing_element"
+FIELD_JSX_CLOSE_TAG = "close_tag"
 # The `{...}` wrapper around an expression in a JSX attribute value or child
 # (`onClick={handleLogout}`, `onClick={() => x()}`); its inner expression can
 # hand a function to the element as a prop.

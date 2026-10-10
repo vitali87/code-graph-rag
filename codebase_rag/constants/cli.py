@@ -668,6 +668,15 @@ INTERACTIVE_BFS_MAX_DEPTH = 10
 INTERACTIVE_DEFAULT_GROUP = "."
 
 MSG_SURGICAL_SUCCESS = "Successfully applied surgical code replacement in: {path}"
+# Appended to a chat write tool's result by its re-ingest (issue #2916).
+MSG_CHAT_GRAPH_UPDATED = (
+    " The knowledge graph now reflects this change: re-ingested {files} "
+    "file(s) and {dependents} dependent file(s)."
+)
+MSG_CHAT_GRAPH_NOT_UPDATED = (
+    " The knowledge graph was NOT updated ({error}): graph queries still "
+    "describe the code before this change until `cgr start --update-graph` runs."
+)
 # Span-preserving patchers (issue #1529).
 PATCH_BAD_POSITION = "No such position: line {line}, column {col}"
 PATCH_BAD_OFFSET = "Byte offset {offset} is outside the file"

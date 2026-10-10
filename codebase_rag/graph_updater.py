@@ -47,6 +47,7 @@ from .parsers.cpp_frontend import (
     cpp_frontend_available,
     find_compile_commands,
 )
+from .parsers.csharp import utils as csharp_utils
 from .parsers.csharp_frontend import find_csharp_project
 from .parsers.definition_processor import DefinitionProcessor
 from .parsers.document_tier import DocumentTier
@@ -1904,15 +1905,19 @@ class GraphUpdater:
         logger.info(ls.CPP_FRONTEND_EXPANSION_CALLS.format(count=emitted))
 
     def _repo_has_c_or_cpp_files(self) -> bool:
-        # Cheap early-exit scan: the frontend (and its warnings) only make
-        # sense when there is C/C++ to index.
+        # Early-exit scan: the frontend (and its warnings) only make sense
+        # when there is C/C++ to index. The indexer's own walk, not the raw
+        # tree: a `.c` under an excluded `vendor/` or a default-ignored
+        # `node_modules/` is never parsed, so there is no fidelity to lose
+        # and nothing to warn about (issue #2883).
         extensions = set(cs.CPP_EXTENSIONS) | set(cs.C_EXTENSIONS)
-        for _root, dirs, files in os.walk(self.repo_path):
-            dirs[:] = [d for d in dirs if not d.startswith(cs.SEPARATOR_DOT)]
-            # splitext, not Path(): no object allocation per repo file.
-            if any(os.path.splitext(f)[1].lower() in extensions for f in files):
-                return True
-        return False
+        # splitext, not Path(): no object allocation per repo file.
+        return any(
+            os.path.splitext(fname)[1].lower() in extensions
+            for _dirpath, fname, _rel in walk_eligible_files(
+                self.repo_path, self.exclude_paths, self.unignore_paths
+            )
+        )
 
     def _is_dependency_file(self, file_name: str, filepath: Path) -> bool:
         return (
@@ -3263,6 +3268,11 @@ class GraphUpdater:
         except ValueError:
             return False
         self.function_registry[qn] = node_type
+        # Parsing indexes a definition under its name as well as its qn's
+        # last segment, which for `ILog.Info(string)` is not `Info`; without
+        # it a re-parsed caller's name lookup misses the method (#3261).
+        if isinstance(name := row.get(cs.KEY_NAME), str) and name:
+            self.function_registry.index_name(qn, name)
         # Restore the property-name set for unchanged files: property-dispatch
         # resolution (`obj.prop`) consults it, so a re-parsed file's call to a
         # @property defined elsewhere would otherwise drop.
@@ -3283,6 +3293,19 @@ class GraphUpdater:
         # only its own body can call by that name (issue #2402).
         if row.get(cs.KEY_IS_BODY_SCOPED_NAME):
             self.function_registry.mark_body_scoped_name(qn)
+        # Restore a C# extension method's index entry for unchanged files, or
+        # a re-parsed `b.Describe()` finds no extension and gets no edge
+        # (issue #3275).
+        if isinstance(receiver := row.get(cs.KEY_EXTENSION_RECEIVER), str) and receiver:
+            namespace = row.get(cs.KEY_EXTENSION_NAMESPACE)
+            arity = row.get(cs.KEY_EXTENSION_RECEIVER_ARITY)
+            csharp_utils.add_extension_method(
+                self.factory.definition_processor.csharp_extension_methods,
+                qn,
+                receiver,
+                namespace if isinstance(namespace, str) else "",
+                arity if isinstance(arity, int) else 0,
+            )
         # Record the defining file so _is_cpp_defined can language-check
         # rehydrated candidates (deferred C++ INHERITS resolution runs
         # after this and must reach bases in UNCHANGED headers).
@@ -4765,6 +4788,10 @@ class GraphUpdater:
             new_qn_set = qn_set - qns_to_remove
             if len(new_qn_set) < original_count:
                 self.simple_name_lookup[simple_name] = new_qn_set
+                # Deleting `ILog.Info(string)` invalidated `Info(string)`, not
+                # `Info`: a lookup cached for the name would keep answering
+                # with the removed definition on a reused updater.
+                self.function_registry.invalidate_name(simple_name)
                 logger.debug(ls.CLEANED_SIMPLE_NAME, name=simple_name)
 
         # The file no longer owns any module qn: a replacement with the same

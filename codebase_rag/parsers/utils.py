@@ -1494,6 +1494,11 @@ def ingest_method(
 
     type_facts = extract_type_facts(method_node, language)
     method_props.update(type_facts_props(type_facts))
+    if language == cs.SupportedLanguage.CSHARP:
+        # Local import: the C# helpers import this module.
+        from .csharp import utils as csharp_utils
+
+        method_props.update(csharp_utils.extension_method_props(method_node))
     method_path = method_props.get(cs.KEY_PATH)
     queue_type_facts(
         type_fact_sink,

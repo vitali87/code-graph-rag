@@ -32,6 +32,7 @@ from .constants import (
     DEFINITION_NODE_LABELS,
     KEY_FROM_MISSING,
     KEY_FROM_VAL,
+    KEY_ROW_INDEX,
     KEY_TO_MISSING,
     KEY_TO_VAL,
     NODE_UNIQUE_CONSTRAINTS,
@@ -353,7 +354,12 @@ WITH DISTINCT n
 # A project's export is what it owns, the relationships that start there, and
 # the nodes those relationships reach (a shared ExternalModule, another
 # project's callee), so every relationship in the file has both of its ends
-# in it (issue #2410).
+# in it (issue #2410). A Resource is never owned, so the links between
+# resources (a client URL's RESOLVES_TO, an env var's FLOWS_TO into a URL)
+# start outside the owned set; each one whose two ends are both exported is
+# added, or a file holding a client and its server showed two services that
+# never call each other (issue #3189). Another project's node reached here
+# stays a leaf: nothing starting at it is added.
 CYPHER_EXPORT_PROJECT_NODES = (
     _CYPHER_PROJECT_OWNED_NODES
     + """OPTIONAL MATCH (n)-->(reached)
@@ -365,13 +371,26 @@ RETURN id(node) as node_id, labels(node) as labels, properties(node) as properti
 )
 CYPHER_EXPORT_PROJECT_RELATIONSHIPS = (
     _CYPHER_PROJECT_OWNED_NODES
-    + """MATCH (n)-[r]->(b)
-RETURN id(n) as from_id, id(b) as to_id, type(r) as type, properties(r) as properties
+    + """WITH collect(n) AS owned
+UNWIND owned AS n
+OPTIONAL MATCH (n)-->(reached)
+WITH owned, collect(DISTINCT reached) AS reached
+WITH owned, owned + reached AS exported, [x IN reached WHERE x:Resource] AS resources
+UNWIND owned + resources AS a
+MATCH (a)-[r]->(b)
+WHERE NOT a:Resource OR b IN exported
+RETURN id(a) as from_id, id(b) as to_id, type(r) as type, properties(r) as properties
 """
 )
 
-CYPHER_RETURN_COUNT = "RETURN count(r) as created"
-CYPHER_SET_PROPS_RETURN_COUNT = "SET r += row.props\nRETURN count(r) as created"
+# Rows written, not edges matched: a MERGE without the per-site keys matches
+# every parallel edge between its endpoints, so `count(r)` let one row count
+# several times and a flush report more writes than rows (issue #2879). A row
+# without its ordinal (one built outside the flush) counts as itself.
+CYPHER_RETURN_COUNT = (
+    f"RETURN count(DISTINCT coalesce(row.{KEY_ROW_INDEX}, row)) as created"
+)
+CYPHER_SET_PROPS_RETURN_COUNT = f"SET r += row.props\n{CYPHER_RETURN_COUNT}"
 
 CYPHER_GET_FUNCTION_SOURCE_LOCATION = """
 MATCH (m:Module)-[:DEFINES]->(n)
