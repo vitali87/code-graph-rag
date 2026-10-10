@@ -23,6 +23,7 @@ KEY_EXPORTED_AT = "exported_at"
 KEY_PARSER = "parser"
 KEY_NAME = "name"
 KEY_ROOT_PATH = "root_path"
+KEY_ROOT_PATHS = "root_paths"
 KEY_QUALIFIED_NAME = "qualified_name"
 KEY_IS_PROPERTY = "is_property"
 # A JS/TS function that is an object literal's property value, reached only
@@ -125,6 +126,10 @@ KEY_STAR_KWARGS = "star_kwargs"
 # Call-site rows: where the invoked symbol is defined. `path` on those rows is
 # the file holding the site, which is the caller's (issue #2460).
 KEY_CALLEE_PATH = "callee_path"
+# CALLS from a function to a callback it receives (issue #2459): the
+# parameter the function invokes it through. The site is that invocation,
+# where the name written is the parameter's, never the callee's.
+KEY_VIA_PARAM = "via_param"
 # IMPORTS only: the name the statement binds in the importing scope (the
 # `as` name when renamed, else the imported/module name) and, for
 # symbol-level imports (`from x import y`, `import { y }`, `use a::b::y`),
@@ -164,6 +169,9 @@ KEY_INBOUND = "inbound"
 KEY_CREATED = "created"
 KEY_FROM_VAL = "from_val"
 KEY_TO_VAL = "to_val"
+# A relationship row's ordinal in its batch: the flush counts the rows it
+# wrote by it, so two identical rows stay two (issue #2879).
+KEY_ROW_INDEX = "row_index"
 # Columns of the endpoint lookup a relationship flush runs when rows were lost:
 # whether each failed row's source/target node was absent (issue #2438).
 KEY_FROM_MISSING = "from_missing"
@@ -715,6 +723,14 @@ KEY_DECORATORS = "decorators"
 # languages the extractor does not read (the positional_params rule).
 KEY_RETURN_TYPE = "return_type"
 KEY_PARAM_TYPES = "param_types"
+# A C# extension method's index entry (`static string Describe(this Box b)`):
+# the receiver type a `b.Describe()` call binds against, the declaring
+# namespace, and the receiver's written generic arity (`this Builder<T>` ->
+# 1). Only a parse of the declaring file indexes it, so an incremental run
+# reads it back from here for the callers it re-parses (issue #3275).
+KEY_EXTENSION_RECEIVER = "extension_receiver"
+KEY_EXTENSION_NAMESPACE = "extension_namespace"
+KEY_EXTENSION_RECEIVER_ARITY = "extension_receiver_arity"
 # Declared POSITIONAL parameter names of a Python function, receiver included,
 # for arity-TypeError diagnosis (issue #227). Positional-only because CPython's
 # "takes N positional arguments" counts nothing after `*`/`*args`, and
@@ -873,6 +889,20 @@ CYPHER_DELETE_MODULE = (
 CYPHER_DELETE_FILE = "MATCH (f:File {absolute_path: $path}) DETACH DELETE f"
 CYPHER_DELETE_FOLDER = "MATCH (f:Folder {absolute_path: $path}) DETACH DELETE f"
 CYPHER_DELETE_PACKAGE = "MATCH (p:Package {absolute_path: $path}) DETACH DELETE p"
+# The orphan prune removes a Package by its own name, the key its upsert
+# MERGEs on: one derived through an in-repo directory link carried its
+# target's absolute path, so removing it by that path took the target's
+# Package with it (issue #2451). Scoped to the node as the prune read it:
+# this project's name, and the absolute path the prune judged. A project name
+# two checkouts share puts both on one node holding the path of whichever
+# wrote it last, so the prune of one never matches the other's.
+CYPHER_DELETE_PACKAGE_BY_QN = (
+    "MATCH (p:Package {qualified_name: $qualified_name}) "
+    "WHERE (p.qualified_name = $project_name "
+    "OR p.qualified_name STARTS WITH $project_prefix) "
+    "AND p.absolute_path = $absolute_path "
+    "DETACH DELETE p"
+)
 # Which container kind the GRAPH records for a directory, independent of what
 # is on disk now. `_package_ness_changed` cannot ask the structure map for
 # this: on a fresh updater (the MCP tool builds one per project) the map has
@@ -1035,11 +1065,15 @@ CYPHER_ALL_DEFINITION_QNS = (
     "OR n:Enum OR n:Type OR n:Union) "
     "AND n.qualified_name STARTS WITH $project_prefix "
     "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label, "
+    "n.name AS name, "
     "n.is_property AS is_property, n.is_macro AS is_macro, "
     "n.is_body_scoped_name AS is_body_scoped_name, n.path AS path, "
     "n.start_line AS start_line, n.end_line AS end_line, "
     "n.return_type AS return_type, n.param_types AS param_types, "
-    "n.namespace AS namespace, n.is_object_member AS is_object_member"
+    "n.namespace AS namespace, n.is_object_member AS is_object_member, "
+    "n.extension_receiver AS extension_receiver, "
+    "n.extension_namespace AS extension_namespace, "
+    "n.extension_receiver_arity AS extension_receiver_arity"
 )
 
 # Module-level qns (plus C++20 module interfaces) for incremental runs:

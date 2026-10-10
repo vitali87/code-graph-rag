@@ -32,6 +32,7 @@ from .constants import (
     DEFINITION_NODE_LABELS,
     KEY_FROM_MISSING,
     KEY_FROM_VAL,
+    KEY_ROW_INDEX,
     KEY_TO_MISSING,
     KEY_TO_VAL,
     NODE_UNIQUE_CONSTRAINTS,
@@ -82,6 +83,49 @@ CYPHER_LIST_PROJECTS = (
 # strength of a matching project name alone.
 CYPHER_PROJECT_ROOT_PATH = (
     "MATCH (p:Project {name: $project_name}) RETURN p.root_path AS root_path"
+)
+# A sync's claim on a project name (issue #2411): one statement, so two syncs
+# of the same unowned name cannot both read "no owner" before either writes.
+# The first claim records its root; every later one, this repository's own
+# included, gets back the root already stored and compares it with its own.
+# `created` says this claim made the Project, so only it may release it.
+CYPHER_CLAIM_PROJECT_ROOT = (
+    "OPTIONAL MATCH (held:Project {name: $project_name}) "
+    "WITH count(held) AS holders "
+    "MERGE (p:Project {name: $project_name}) "
+    "ON CREATE SET p.root_path = $root_path "
+    "RETURN p.root_path AS root_path, holders = 0 AS created"
+)
+# The marker write of a sync that holds a claim (review of PR 2499). Another
+# sync of this repository may have created the claim, failed and released it
+# since this sync's check, and a different repository claimed the name. So
+# the marker goes down only while the Project's root is still one the check
+# accepted, read in this same statement; a Project released meanwhile is
+# claimed again here. Setting the name to itself writes the Project, so a
+# release at the same moment conflicts with this write instead of deleting
+# the node out from under the marker.
+CYPHER_MARK_CLAIMED_PROJECT_INCOMPLETE = (
+    "MERGE (p:Project {name: $project_name}) "
+    "ON CREATE SET p.root_path = $root_path "
+    "WITH p WHERE p.root_path IN $root_paths "
+    "SET p.name = p.name "
+    "MERGE (m:IncompleteRun {project: $project_name, run_id: $run_id}) "
+    "SET m.run_incomplete = true, "
+    "m.writing = coalesce(m.writing, false) OR $writing "
+    "RETURN p.root_path AS root_path"
+)
+# Gives back a claim whose first sync failed before writing anything (review
+# of PR 2499): a bare Project would refuse every other repository the name.
+# Kept once the sync has put down its incomplete-run marker or any node hangs
+# off the Project, since a partial graph is then this repository's to finish.
+CYPHER_RELEASE_PROJECT_CLAIM = (
+    "MATCH (p:Project {name: $project_name, root_path: $root_path}) "
+    "OPTIONAL MATCH (p)--(linked) "
+    "WITH p, count(linked) AS links "
+    "OPTIONAL MATCH (m:IncompleteRun {project: $project_name}) "
+    "WITH p, links, count(m) AS markers "
+    "WHERE links = 0 AND markers = 0 "
+    "DELETE p"
 )
 
 # The incomplete-run marker (issue #1679). `_graph_incomplete` on the tools
@@ -353,7 +397,12 @@ WITH DISTINCT n
 # A project's export is what it owns, the relationships that start there, and
 # the nodes those relationships reach (a shared ExternalModule, another
 # project's callee), so every relationship in the file has both of its ends
-# in it (issue #2410).
+# in it (issue #2410). A Resource is never owned, so the links between
+# resources (a client URL's RESOLVES_TO, an env var's FLOWS_TO into a URL)
+# start outside the owned set; each one whose two ends are both exported is
+# added, or a file holding a client and its server showed two services that
+# never call each other (issue #3189). Another project's node reached here
+# stays a leaf: nothing starting at it is added.
 CYPHER_EXPORT_PROJECT_NODES = (
     _CYPHER_PROJECT_OWNED_NODES
     + """OPTIONAL MATCH (n)-->(reached)
@@ -365,13 +414,26 @@ RETURN id(node) as node_id, labels(node) as labels, properties(node) as properti
 )
 CYPHER_EXPORT_PROJECT_RELATIONSHIPS = (
     _CYPHER_PROJECT_OWNED_NODES
-    + """MATCH (n)-[r]->(b)
-RETURN id(n) as from_id, id(b) as to_id, type(r) as type, properties(r) as properties
+    + """WITH collect(n) AS owned
+UNWIND owned AS n
+OPTIONAL MATCH (n)-->(reached)
+WITH owned, collect(DISTINCT reached) AS reached
+WITH owned, owned + reached AS exported, [x IN reached WHERE x:Resource] AS resources
+UNWIND owned + resources AS a
+MATCH (a)-[r]->(b)
+WHERE NOT a:Resource OR b IN exported
+RETURN id(a) as from_id, id(b) as to_id, type(r) as type, properties(r) as properties
 """
 )
 
-CYPHER_RETURN_COUNT = "RETURN count(r) as created"
-CYPHER_SET_PROPS_RETURN_COUNT = "SET r += row.props\nRETURN count(r) as created"
+# Rows written, not edges matched: a MERGE without the per-site keys matches
+# every parallel edge between its endpoints, so `count(r)` let one row count
+# several times and a flush report more writes than rows (issue #2879). A row
+# without its ordinal (one built outside the flush) counts as itself.
+CYPHER_RETURN_COUNT = (
+    f"RETURN count(DISTINCT coalesce(row.{KEY_ROW_INDEX}, row)) as created"
+)
+CYPHER_SET_PROPS_RETURN_COUNT = f"SET r += row.props\n{CYPHER_RETURN_COUNT}"
 
 CYPHER_GET_FUNCTION_SOURCE_LOCATION = """
 MATCH (m:Module)-[:DEFINES]->(n)
@@ -1437,4 +1499,13 @@ CYPHER_GRAPH_REFERENCES = """MATCH (src)-[r:REFERENCES|INSTANTIATES]->(target)
 WHERE target.qualified_name = $qn AND src.qualified_name STARTS WITH $project_prefix
 RETURN labels(src)[0] AS label, src.qualified_name AS qualified_name,
        src.path AS path, type(r) AS rel_type, r.line AS line, r.col AS col,
-       r.end_line AS end_line, r.end_col AS end_col, r.resolution AS resolution"""
+       r.end_line AS end_line, r.end_col AS end_col, r.resolution AS resolution,
+       r.via_param AS via_param"""
+# The CALLS sites where a function runs `$qn` after receiving it as an
+# argument (issue #2459). Each spells the parameter, not `$qn`'s name, so a
+# rename must leave it alone even where the two are spelled alike.
+CYPHER_GRAPH_CALLBACK_SITES = """MATCH (src)-[r:CALLS]->(target)
+WHERE target.qualified_name = $qn AND src.qualified_name STARTS WITH $project_prefix
+  AND r.via_param IS NOT NULL
+RETURN src.qualified_name AS qualified_name, r.line AS line, r.col AS col,
+       r.via_param AS via_param"""
