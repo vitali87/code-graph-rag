@@ -783,6 +783,9 @@ IMP_CREATED_RELATIONSHIP = (
     "  Created IMPORTS relationship: {from_module} -> {to_module} (from {full_name})"
 )
 IMP_PARSE_FAILED = "Failed to parse imports in {module}: {error}"
+RUST_WORKSPACE_MEMBER_UNEXPANDED = (
+    "Rust workspace member {pattern!r} could not be expanded, skipped: {error}"
+)
 IMP_DROPPED_PHANTOM_TARGET = (
     "  Dropped IMPORTS edge to unverifiable internal target: "
     "{from_module} -> {to_module}"

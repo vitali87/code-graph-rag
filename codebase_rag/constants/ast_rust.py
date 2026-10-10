@@ -291,6 +291,9 @@ RS_MANIFEST_KIND_DIRS = {
 }
 RS_MANIFEST_WORKSPACE_KEY = "workspace"
 RS_MANIFEST_MEMBERS_KEY = "members"
+# A workspace member that is the root package itself, and its `./` prefix.
+RS_CURRENT_DIR = "."
+RS_CURRENT_DIR_PREFIX = "./"
 RS_MANIFEST_NAME_KEY = "name"
 RS_MANIFEST_LIB_SECTION = "lib"
 RS_MANIFEST_DEP_SECTIONS = ("dependencies", "dev-dependencies", "build-dependencies")
