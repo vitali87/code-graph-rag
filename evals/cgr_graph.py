@@ -115,6 +115,9 @@ _MODULE_SUBTREE_RELS = _DEFINES_RELS | {
     cs.RelationshipType.HAS_VARIANT.value,
     cs.RelationshipType.CONTAINS_SECTION.value,
     cs.RelationshipType.DEFINES_CONSTANT.value,
+    cs.RelationshipType.IMPLEMENTS_PATTERN.value,
+    cs.RelationshipType.HAS_SMELL.value,
+    cs.RelationshipType.HAS_VULNERABILITY.value,
 }
 # What CYPHER_RETIRE_PROJECT walks: the project's containers, then what the
 # ones carrying its prefix define.
