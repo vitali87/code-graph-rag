@@ -33,6 +33,7 @@ from ..types_defs import (
 from ..utils.json_io import loads_json
 from ..utils.path_utils import (
     base_module_qn,
+    cached_relative_path,
     declaration_extension,
     module_extension,
     should_keep_dir,
@@ -798,6 +799,23 @@ def _ts_alias_target(raw_path: str) -> str | None:
     return normalized
 
 
+def _js_binds_whole_module(site: PropertyDict | None) -> bool:
+    # A JS/TS binding that names one export records it as the site's imported
+    # name; a namespace import and `export *` record the wildcard, and a bare
+    # `require` or the CommonJS fallback (no site) record none.
+    if site is None:
+        return True
+    return site.get(cs.KEY_IMPORTED_NAME) in (None, cs.IMPORTED_NAME_WILDCARD)
+
+
+def _is_known_js_module(qn: str, known_module_paths: Mapping[str, str]) -> bool:
+    # A registered module whose FILE is JS/TS. Another language can own the
+    # same qn (`pkg/__init__.py` is `proj.pkg`), and a JS/TS import must never
+    # bind to it.
+    path = known_module_paths.get(qn)
+    return path is not None and path.endswith(cs.JS_TS_MODULE_EXTENSIONS)
+
+
 def _lua_relative_module(import_path: str, current_module: str) -> str:
     # Resolve `./x` / `../x` against the importing module's package.
     parts = current_module.split(cs.SEPARATOR_DOT)[:-1]
@@ -923,6 +941,7 @@ class ImportProcessor:
         "function_registry",
         "exclude_paths",
         "unignore_paths",
+        "module_qn_to_file_path",
         "import_mapping",
         "csharp_static_imports",
         "csharp_global_static_imports",
@@ -996,6 +1015,7 @@ class ImportProcessor:
         function_registry: FunctionRegistryTrieProtocol | None = None,
         exclude_paths: frozenset[str] | None = None,
         unignore_paths: frozenset[str] | None = None,
+        module_qn_to_file_path: dict[str, Path] | None = None,
     ) -> None:
         self.repo_path = repo_path
         self.project_name = project_name
@@ -1005,6 +1025,13 @@ class ImportProcessor:
         # exactly the files the graph holds (issue #1088).
         self.exclude_paths = exclude_paths
         self.unignore_paths = unignore_paths
+        # The factory's shared module -> file map, filled before a file's
+        # imports are parsed. A JS/TS relative specifier resolves against the
+        # importer's DIRECTORY, which only the file path spells reliably: a
+        # dotted stem (`url.test.ts`) keeps its dots in the qn (issue #2565).
+        self.module_qn_to_file_path: dict[str, Path] = (
+            module_qn_to_file_path if module_qn_to_file_path is not None else {}
+        )
         self.import_mapping: dict[str, dict[str, str]] = {}
         # `using static N.T;` brings T's MEMBERS into bare-call scope, which
         # import_mapping cannot express: it maps the TYPE name (T -> N.T), so a
@@ -2145,7 +2172,9 @@ class ImportProcessor:
         module_aliases: dict[str, str],
         siblings: StemSiblingModules,
     ) -> int:
-        module_path = self._resolve_module_path(entry.full_name, entry.language)
+        module_path = self._resolve_module_path(
+            entry.full_name, entry.language, known_module_paths, entry.site
+        )
         target_label = self._module_label(module_path)
         if target_label == cs.NodeLabel.EXTERNAL_MODULE:
             # An external import target has no file pass to create its
@@ -2498,9 +2527,22 @@ class ImportProcessor:
     def _is_local_js_import(self, full_name: str) -> bool:
         return full_name.startswith(self.project_name + cs.SEPARATOR_DOT)
 
-    def _resolve_js_internal_module(self, full_name: str) -> str:
+    def _resolve_js_internal_module(
+        self,
+        full_name: str,
+        known_module_paths: Mapping[str, str] | None = None,
+        site: PropertyDict | None = None,
+    ) -> str:
         if full_name.endswith(cs.IMPORT_DEFAULT_SUFFIX):
             return full_name[: -len(cs.IMPORT_DEFAULT_SUFFIX)]
+
+        # A namespace import, `export *` or bare `require` binds the module
+        # itself, so a real module under the full name is the target. Probing
+        # a shorter prefix first would send `* as c from './app.config'` to
+        # `app.ts`, since the dotted stem spells `app` plus one more segment.
+        known = known_module_paths or {}
+        if _is_known_js_module(full_name, known) and _js_binds_whole_module(site):
+            return full_name
 
         parts = full_name.split(cs.SEPARATOR_DOT)
         if len(parts) <= 2:
@@ -2525,6 +2567,16 @@ class ImportProcessor:
         # from the #1682 review: a canonical set restated at a second site and
         # drifting from it. Delegating is what stops it recurring here.
         if self._js_module_rel_on_disk(relative_path) is not None:
+            return potential_module
+
+        # The slash-join above splits a dotted stem or directory
+        # (`users.service.ts`, `v1.2/`) into two path segments, so the disk
+        # probe misses it. The registry of real module qns spells it the way
+        # the indexer did (issue #2565); a directory is found by its `index`
+        # entry point, as the disk probe finds `v1/`.
+        if _is_known_js_module(potential_module, known) or _is_known_js_module(
+            f"{potential_module}{cs.SEPARATOR_DOT}{cs.JS_INDEX_STEM}", known
+        ):
             return potential_module
 
         return full_name
@@ -3770,6 +3822,8 @@ class ImportProcessor:
         self,
         full_name: str,
         language: cs.SupportedLanguage,
+        known_module_paths: Mapping[str, str] | None = None,
+        site: PropertyDict | None = None,
     ) -> str:
         project_prefix = self.project_name + cs.SEPARATOR_DOT
         match language:
@@ -3787,7 +3841,9 @@ class ImportProcessor:
                 | cs.SupportedLanguage.TSX
             ):
                 if self._is_local_js_import(full_name):
-                    return self._resolve_js_internal_module(full_name)
+                    return self._resolve_js_internal_module(
+                        full_name, known_module_paths, site
+                    )
             case cs.SupportedLanguage.RUST:
                 return self._resolve_rust_import_path(full_name)
 
@@ -4055,16 +4111,52 @@ class ImportProcessor:
         """
         if not specifier.startswith(cs.PATH_CURRENT_DIR):
             return
-        resolved = self._resolve_js_module_path(specifier, module_qn)
-        prefix = f"{self.project_name}{cs.SEPARATOR_DOT}"
-        if not resolved.startswith(prefix):
+        parts = self._js_relative_target_parts(specifier, module_qn)
+        if len(parts) < 2 or parts[0] != self.project_name:
             # Escapes the project (`../../outside`), so no file this repo can
             # create would ever satisfy it.
             return
-        rel = resolved[len(prefix) :].replace(cs.SEPARATOR_DOT, cs.SEPARATOR_SLASH)
+        # Joined from the path segments, not re-split from the dotted qn:
+        # `users.service` is one file name, not a `users/` directory.
+        rel = cs.SEPARATOR_SLASH.join(parts[1:])
         if self._js_module_rel_on_disk(rel) is not None:
             return
         self.unresolved_specifiers.setdefault(module_qn, set()).add(specifier)
+
+    def _js_module_directory_parts(self, module_qn: str) -> list[str]:
+        """The project name plus the importer's directory, one part per segment.
+
+        Read from the module's FILE when it is known. A dotted stem keeps its
+        dots in the qn (`url.test.ts` is `proj.src.url.test`, as a dotted C#
+        stem is under `module_directory_qn`), so dropping the qn's last
+        segment lands inside the file name (`proj.src.url`) and every
+        relative specifier resolved from there misses (issue #2565). The path
+        also keeps a dotted DIRECTORY (`v1.2/`) as the single segment the
+        on-disk probe needs.
+        """
+        file_path = self.module_qn_to_file_path.get(module_qn)
+        if file_path is not None:
+            try:
+                rel_dir = cached_relative_path(file_path, self.repo_path).parent
+            except ValueError:
+                rel_dir = None
+            if rel_dir is not None:
+                return [self.project_name, *rel_dir.parts]
+        return module_qn.split(cs.SEPARATOR_DOT)[:-1]
+
+    def _js_relative_target_parts(self, import_path: str, module_qn: str) -> list[str]:
+        # A relative specifier applied to the importer's directory; the first
+        # part is the project name unless `..` climbed out of the project.
+        current_parts = self._js_module_directory_parts(module_qn)
+        for part in self._strip_js_extension(import_path).split(cs.SEPARATOR_SLASH):
+            if part == cs.PATH_CURRENT_DIR:
+                continue
+            if part == cs.PATH_PARENT_DIR:
+                if current_parts:
+                    current_parts.pop()
+            elif part:
+                current_parts.append(part)
+        return current_parts
 
     def _resolve_js_module_path(
         self, import_path: str, current_module: str, require: bool = False
@@ -4089,21 +4181,12 @@ class ImportProcessor:
                 not _has_aliased_scheme(import_path)
                 and not self._js_base_url_names_file(import_path, current_module),
             )
-        import_path = self._strip_js_extension(import_path)
-
-        current_parts = current_module.split(cs.SEPARATOR_DOT)[:-1]
-        import_parts = import_path.split(cs.SEPARATOR_SLASH)
-
-        for part in import_parts:
-            if part == cs.PATH_CURRENT_DIR:
-                continue
-            if part == cs.PATH_PARENT_DIR:
-                if current_parts:
-                    current_parts.pop()
-            elif part:
-                current_parts.append(part)
-
-        return JsImportTarget(cs.SEPARATOR_DOT.join(current_parts), False)
+        return JsImportTarget(
+            cs.SEPARATOR_DOT.join(
+                self._js_relative_target_parts(import_path, current_module)
+            ),
+            False,
+        )
 
     def _parse_js_import_clause(
         self,
