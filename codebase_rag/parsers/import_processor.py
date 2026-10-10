@@ -424,6 +424,14 @@ def _js_export_specifiers(statement: Node) -> Iterator[tuple[str, str]]:
                 yield local, name
 
 
+def _js_namespace_export_name(namespace_export: Node) -> str | None:
+    # The `ns` of `export * as ns from "./x"`.
+    identifier = next(
+        (c for c in namespace_export.children if c.type == cs.TS_IDENTIFIER), None
+    )
+    return safe_decode_text(identifier) if identifier is not None else None
+
+
 def _is_js_star_reexport(site: PropertyDict | None) -> bool:
     # `export * from` records `*` as its imported name and binds no alias,
     # where `import * as ns` binds one.
@@ -4103,7 +4111,26 @@ class ImportProcessor:
             elif part:
                 current_parts.append(part)
 
-        return JsImportTarget(cs.SEPARATOR_DOT.join(current_parts), False)
+        return JsImportTarget(
+            self._js_directory_index_qn(cs.SEPARATOR_DOT.join(current_parts)), False
+        )
+
+    def _js_directory_index_qn(self, module_qn: str) -> str:
+        """`./fmt` as Node and TypeScript resolve it: `fmt.ts`/`fmt.js` when
+        one exists, else the directory's `fmt/index.*` (issue #3249).
+
+        Without the `index` leaf a named import was recorded under
+        `<dir>.fmt.pad`, a qn no definition has, so every call through it
+        bound by name while the explicit `./fmt/index` bound exactly.
+        """
+        prefix = f"{self.project_name}{cs.SEPARATOR_DOT}"
+        if not module_qn.startswith(prefix):
+            return module_qn
+        rel = module_qn[len(prefix) :].replace(cs.SEPARATOR_DOT, cs.SEPARATOR_SLASH)
+        on_disk = self._js_module_rel_on_disk(rel)
+        if on_disk is None or on_disk == rel:
+            return module_qn
+        return f"{module_qn}{cs.SEPARATOR_DOT}{cs.JS_INDEX_STEM}"
 
     def _parse_js_import_clause(
         self,
@@ -4326,6 +4353,17 @@ class ImportProcessor:
                         self._record_js_reexport_specifier(
                             grandchild, export_node, current_module, source_module
                         )
+            elif child.type == cs.TS_NAMESPACE_EXPORT and (
+                namespace := _js_namespace_export_name(child)
+            ):
+                # `export * as math from "./math"` binds `math` to the whole
+                # module, as `import * as math` does, and publishes it. Only
+                # the coincidence of `lib` + `math` spelling the `lib/math`
+                # directory made `math.add()` resolve before (issue #3249).
+                self.import_mapping[current_module][namespace] = source_module
+                self._record_import_site(
+                    current_module, namespace, export_node, cs.IMPORTED_NAME_WILDCARD
+                )
 
     def _record_js_reexport_specifier(
         self,
@@ -4395,6 +4433,13 @@ class ImportProcessor:
                 )
         # `_parse_js_reexport` has just mapped this statement's re-exports.
         mapped = self.import_mapping.get(module_qn, {})
+        for child in statement.named_children:
+            if (
+                child.type == cs.TS_NAMESPACE_EXPORT
+                and (namespace := _js_namespace_export_name(child))
+                and (target := mapped.get(namespace)) is not None
+            ):
+                exported[namespace] = JsExport(target, local=False)
         for local, name in _js_export_specifiers(statement):
             if not reexport:
                 exported[name] = JsExport(
