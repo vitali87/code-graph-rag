@@ -439,6 +439,15 @@ class CSharpCallShape(NamedTuple):
     is_static: bool
 
 
+class JavaStaticImport(NamedTuple):
+    """One Java `import static` declaration: the class whose static members
+    it brings into scope, and the member it names (`import static C.m;`), or
+    None for the on-demand form (`import static C.*;`)."""
+
+    class_path: str
+    member: str | None
+
+
 class CancelledResult(NamedTuple):
     cancelled: bool
 
@@ -1173,7 +1182,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.METHOD,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, overrides_external: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, overrides_external: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, extension_receiver: string?, extension_namespace: string?, extension_receiver_arity: int?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
     ),
     NodeSchema(
         NodeLabel.INTERFACE,
@@ -1479,13 +1488,15 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         RelationshipType.HAS_FIELD,
         (NodeLabel.FIELD,),
     ),
-    # Only a Module declares one today: a class-level member is a Field
-    # (issue #1805), so the two labels never share a qualified name.
+    # A Python enum is a Class (an `enum.Enum` subclass), so its members hang
+    # off that Class (issue #2583); every other language's owner is an Enum.
     RelationshipSchema(
-        (NodeLabel.ENUM,),
+        (NodeLabel.ENUM, NodeLabel.CLASS),
         RelationshipType.HAS_VARIANT,
         (NodeLabel.ENUM_VARIANT,),
     ),
+    # Only a Module declares one today: a class-level member is a Field
+    # (issue #1805), so the two labels never share a qualified name.
     RelationshipSchema(
         (NodeLabel.MODULE,),
         RelationshipType.DEFINES_CONSTANT,

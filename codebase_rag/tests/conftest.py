@@ -184,9 +184,16 @@ def _grammars_missing_for(updater: GraphUpdater) -> frozenset[rag_cs.SupportedLa
     # The updater's own eligibility walk, not a raw rglob: a file the run
     # would ignore anyway (node_modules, exclusions, hidden dirs) must not
     # gate the test on its language's grammar.
+    # The probe is the harness's, not the run's: what the walk logs (each
+    # skipped symlink and their summary, issue #2451) belongs to the run.
+    logger.disable(GraphUpdater.__module__)
+    try:
+        files = updater._collect_eligible_files()
+    finally:
+        logger.enable(GraphUpdater.__module__)
     return frozenset(
         language
-        for path, _rel_path in updater._collect_eligible_files()
+        for path, _rel_path in files
         if (language := get_language_for_extension(path.suffix)) is not None
         and language in unavailable
     )
