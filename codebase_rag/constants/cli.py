@@ -43,6 +43,9 @@ HELP_ARG = "help"
 CLI_ERR_OUTPUT_REQUIRES_UPDATE = (
     "Error: --output/-o option requires --update-graph to be specified."
 )
+CLI_ERR_INVALID_SETTING = "Error: {problem}"
+# click's own exit status for a bad parameter value.
+CLI_EXIT_USAGE_ERROR = 2
 # `-o` checks, made before a graph is read or indexed (issue #2410).
 CLI_ERR_OUTPUT_IS_DIR = "Error: --output is a directory, not a file: {path}"
 CLI_ERR_OUTPUT_PARENT_NOT_DIR = (

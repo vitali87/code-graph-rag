@@ -10,6 +10,7 @@ import io
 from collections.abc import Generator
 from contextlib import redirect_stderr
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from loguru import logger
@@ -118,6 +119,8 @@ def test_the_quiet_sink_keeps_the_secret_out(monkeypatch: pytest.MonkeyPatch) ->
     buffer = io.StringIO()
     monkeypatch.setattr(cli.settings, "QUIET", cli.settings.QUIET)
     with redirect_stderr(buffer):
-        cli._global_options(version=None, quiet=True)
+        cli._global_options(
+            SimpleNamespace(invoked_subcommand=None), version=None, quiet=True
+        )
         _log_a_failure_holding_the_secret()
     _assert_logged_without_the_secret(buffer.getvalue())
