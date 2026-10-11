@@ -1416,3 +1416,114 @@ def test_subclass_static_lookup_binds_the_nearest_method(
     callees = _callees(shadow_edges, f"sshadow.sh.{fn}")
     assert callees.get(expected) == _EXACT
     assert {c for c in callees if c.endswith(".other")} == {expected}
+
+
+# ---------------------------------------------------------------------------
+# A hop reads the class its qn names: a same-named class declared earlier in
+# the file, inside a function or another class's method, is a different
+# class and must not answer for the module-level one, nor the reverse
+# ---------------------------------------------------------------------------
+
+_NESTED_FN_FIRST = """\
+export class Wrong { finish() { return 0; } }
+export class Right { finish() { return 1; } }
+export function early() {
+  class Box {
+    make() { return new Wrong(); }
+    selfChain() { return this.make().finish(); }
+  }
+  return new Box();
+}
+export class Box { make() { return new Right(); } }
+export function useTop() { return new Box().make().finish(); }
+"""
+
+_NESTED_METHOD_FIRST = """\
+export class Wrong { finish() { return 0; } }
+export class Right { finish() { return 1; } }
+export class Holder {
+  m() {
+    class Box { make() { return new Wrong(); } }
+    return new Box();
+  }
+}
+export class Box { make() { return new Right(); } }
+export function useTop() { return new Box().make().finish(); }
+"""
+
+_LONE_AND_DEFAULT = """\
+class Right { finish() { return 1; } }
+class Lone { make() { return new Right(); } }
+export default class Dflt { make() { return new Right(); } }
+export function useLone() { return new Lone().make().finish(); }
+export function useDefault() { return new Dflt().make().finish(); }
+"""
+
+_NAMESPACED = """\
+export class Right { finish() { return 1; } }
+export class Wrong { finish() { return 0; } }
+export function holder() {
+  class Inner { make() { return new Wrong(); } }
+  return new Inner();
+}
+export namespace N {
+  export class Inner { make() { return new Right(); } }
+  export function useInside() { return new Inner().make().finish(); }
+}
+"""
+
+
+@pytest.fixture(params=[".ts", ".js"])
+def nested_class_edges(
+    request: pytest.FixtureRequest, temp_repo: Path, mock_ingestor: MagicMock
+) -> dict[tuple[str, str], str | None]:
+    ext = request.param
+    files = {
+        f"nfn{ext}": _NESTED_FN_FIRST,
+        f"nmeth{ext}": _NESTED_METHOD_FIRST,
+        f"lone{ext}": _LONE_AND_DEFAULT,
+    }
+    root = temp_repo / "nested"
+    _write(root, files)
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="typescript")
+    return _calls(mock_ingestor)
+
+
+@pytest.mark.parametrize("module", ["nested.nfn", "nested.nmeth"])
+def test_top_level_class_hop_is_not_read_from_an_earlier_nested_class(
+    nested_class_edges: dict[tuple[str, str], str | None], module: str
+) -> None:
+    callees = _callees(nested_class_edges, f"{module}.useTop")
+    assert callees.get(f"{module}.Right.finish") == _EXACT
+    assert f"{module}.Wrong.finish" not in callees
+
+
+def test_nested_class_hop_reads_its_own_class(
+    nested_class_edges: dict[tuple[str, str], str | None],
+) -> None:
+    # Reached through its own qn (`early.Box`), the nested class answers for
+    # itself, not the module-level Box declared after it.
+    callees = _callees(nested_class_edges, "nested.nfn.early.Box.selfChain")
+    assert callees.get("nested.nfn.Wrong.finish") == _EXACT
+    assert "nested.nfn.Right.finish" not in callees
+
+
+@pytest.mark.parametrize("fn", ["useLone", "useDefault"])
+def test_module_level_and_default_export_classes_still_chain(
+    nested_class_edges: dict[tuple[str, str], str | None], fn: str
+) -> None:
+    callees = _callees(nested_class_edges, f"nested.lone.{fn}")
+    assert callees.get("nested.lone.Right.finish") == _EXACT
+
+
+def test_namespace_class_hop_reads_the_class_in_its_namespace(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # TypeScript only: JS has no namespaces. `N.Inner` is read inside N, not
+    # from the function-local Inner declared before it.
+    root = temp_repo / "nsproj"
+    _write(root, {"ns.ts": _NAMESPACED})
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="typescript")
+    callees = _callees(_calls(mock_ingestor), "nsproj.ns.N.useInside")
+    assert callees.get("nsproj.ns.Right.finish") == _EXACT
+    assert "nsproj.ns.Wrong.finish" not in callees

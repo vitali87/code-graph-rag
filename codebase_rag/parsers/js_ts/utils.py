@@ -196,10 +196,63 @@ def find_method_in_ast(
     return None
 
 
-def find_class_body(root_node: Node, class_name: str) -> Node | None:
-    """The body of the first class declared as `class_name`, in source order."""
-    declaration = _class_declaration_named(root_node, class_name)
-    return declaration.child_by_field_name(cs.FIELD_BODY) if declaration else None
+# Statements that wrap a declaration without opening a scope: `export`,
+# `export default`, `declare`, and the expression statement the grammar
+# parses a bare `namespace N {}` as.
+_DECLARATION_WRAPPERS = frozenset(
+    {cs.TS_EXPORT_STATEMENT, cs.TS_AMBIENT_DECLARATION, cs.TS_EXPRESSION_STATEMENT}
+)
+_CLASS_DECLARATIONS = frozenset(
+    {cs.TS_CLASS_DECLARATION, cs.TS_ABSTRACT_CLASS_DECLARATION}
+)
+# What may hold a class on its qn path: a namespace or `declare module`
+# block, a function, a class, or one of a class's methods.
+_CLASS_PATH_HOLDERS = _CLASS_DECLARATIONS | {
+    cs.TS_INTERNAL_MODULE,
+    cs.TS_MODULE,
+    cs.TS_FUNCTION_DECLARATION,
+    cs.TS_GENERATOR_FUNCTION_DECLARATION,
+    cs.TS_METHOD_DEFINITION,
+}
+
+
+def find_class_body_at(root_node: Node, path: list[str]) -> Node | None:
+    """The body of the class a qn names, `path` being its segments below
+    the module: each but the last names the namespace, function, class or
+    method declaring the next, read in that scope alone. A same-named class
+    declared anywhere else in the file is a different class and never
+    answers, so a function-local `Box` does not stand in for the module's.
+    """
+    scope: Node | None = root_node
+    for index, name in enumerate(path):
+        wanted = _CLASS_DECLARATIONS if index == len(path) - 1 else _CLASS_PATH_HOLDERS
+        member = _scope_member(scope, name, wanted) if scope is not None else None
+        scope = member.child_by_field_name(cs.FIELD_BODY) if member else None
+    return scope
+
+
+def _scope_member(scope: Node, name: str, wanted: frozenset[str]) -> Node | None:
+    # The first declaration of `name` among the scope's own statements.
+    stack = list(reversed(scope.named_children))
+    while stack:
+        node = stack.pop()
+        if node.type in _DECLARATION_WRAPPERS:
+            stack.extend(reversed(node.named_children))
+        elif node.type in wanted and _declared_name(node) == name:
+            return node
+    return None
+
+
+def _declared_name(node: Node) -> str | None:
+    # `declare module "x"` names its block with a string literal.
+    name_node = node.child_by_field_name(cs.FIELD_NAME)
+    if name_node is None:
+        return None
+    fragment = next(
+        (c for c in name_node.named_children if c.type == cs.TS_STRING_FRAGMENT),
+        None,
+    )
+    return safe_decode_text(fragment or name_node)
 
 
 def _class_declaration_named(root_node: Node, class_name: str) -> Node | None:

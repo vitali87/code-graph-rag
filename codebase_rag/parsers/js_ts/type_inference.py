@@ -174,21 +174,15 @@ def _overload_signatures(callable_node: ASTNode) -> list[ASTNode]:
     ]
 
 
-def _method_implementation(
-    root: ASTNode, class_name: str, method_name: str, static: bool
+def _method_in_body(
+    class_body: ASTNode, method_name: str, static: bool
 ) -> ASTNode | None:
-    """The class's own `method_name` body with the wanted staticness.
-
-    The class lookup answers the first body of that name, which may be the
-    static one when an instance call is typed, or the reverse.
-    """
-    first = ut.find_method_in_ast(root, class_name, method_name)
-    if first is None or first.parent is None:
-        return None
+    """The class's own `method_name` body with the wanted staticness: a
+    static and an instance method may share the name."""
     return next(
         (
             member
-            for member in first.parent.named_children
+            for member in class_body.named_children
             if member.type == cs.TS_METHOD_DEFINITION
             and safe_decode_text(member.child_by_field_name(cs.FIELD_NAME))
             == method_name
@@ -576,9 +570,7 @@ class JsTypeInferenceEngine:
         return self._annotation_type(annotation, module_qn) if annotation else None
 
     @staticmethod
-    def static_member(
-        root: ASTNode, class_name: str, member_name: str
-    ) -> tuple[bool, int | None]:
+    def static_member(class_body: ASTNode, member_name: str) -> tuple[bool, int | None]:
         """Whether the class declares a static `member_name` of its own, and
         the line of its body when that member is a plain method.
 
@@ -586,11 +578,8 @@ class JsTypeInferenceEngine:
         a parent's, so a caller walking up `extends` stops at it; one with no
         method body to read answers no line.
         """
-        body = ut.find_class_body(root, class_name)
-        if body is None:
-            return False, None
         declared = False
-        for member in body.named_children:
+        for member in class_body.named_children:
             if not ut.is_static_member(member) or _member_name(member) != member_name:
                 continue
             declared = True
@@ -621,19 +610,20 @@ class JsTypeInferenceEngine:
     def callable_return_type(
         self,
         root: ASTNode,
-        names: list[str],
+        path: list[str],
         module_qn: str,
         language: cs.SupportedLanguage,
         static: bool,
     ) -> str | None:
-        """`names`: `[class, method]` for a method, `[function]` otherwise.
-        `static`: the call reaches the class's static member of that name,
-        not its instance one."""
-        callable_node = (
-            _method_implementation(root, names[0], names[1], static)
-            if len(names) == 2
-            else _find_function_declaration(root, names[0])
-        )
+        """`path`: the callable's qn segments below its module, a method's
+        last one following its class's path, a function's alone. `static`:
+        the call reaches the class's static member of that name, not its
+        instance one."""
+        if len(path) == 1:
+            callable_node = _find_function_declaration(root, path[0])
+        else:
+            body = ut.find_class_body_at(root, path[:-1])
+            callable_node = _method_in_body(body, path[-1], static) if body else None
         if callable_node is None:
             return None
         return self._chain_return_type(callable_node, module_qn, language)
