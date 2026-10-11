@@ -393,6 +393,7 @@ class ClassIngestMixin:
     pending_type_facts: list[PendingTypeFact]
     pending_parameter_types: list[PendingParameterType]
     pending_field_types: list[PendingFieldType]
+    python_overload_stubs: dict[str, frozenset[int]]
 
     def _namespace_qn(self, class_qn: str, module_qn: str) -> str:
         # Strip the module-file prefix so two nodes for the same C++ type in
@@ -2078,6 +2079,7 @@ class ClassIngestMixin:
         )
         if method_nodes is None:
             return
+        method_nodes = self._without_overload_stubs(method_nodes, module_qn)
 
         external_override_names, annotated_override_sink = (
             self._method_override_context(class_qn, language)
@@ -2125,6 +2127,16 @@ class ClassIngestMixin:
                 self._record_ingested_method(scope, method_node, ingested_qn)
             if language == cs.SupportedLanguage.CPP:
                 self._record_cpp_method_return_type(method_node, class_qn)
+
+    def _without_overload_stubs(
+        self, method_nodes: list[Node], module_qn: str | None
+    ) -> list[Node]:
+        # The implementation after an `@overload` stub owns the method's
+        # name; the stub is no method of its own (issue #2590).
+        stubs = self.python_overload_stubs.get(module_qn or "")
+        if not stubs:
+            return method_nodes
+        return [node for node in method_nodes if node.start_byte not in stubs]
 
     def _method_override_context(
         self, class_qn: str, language: cs.SupportedLanguage
