@@ -310,14 +310,57 @@ def _has_module_construct(root: Node) -> bool:
 def _is_module_construct(statement: Node) -> bool:
     if statement.type in (cs.TS_IMPORT_STATEMENT, cs.TS_EXPORT_STATEMENT):
         return True
+    return _JS_REQUIRE_CALL in (statement.text or b"") or _publishes_through_commonjs(
+        statement
+    )
+
+
+def _publishes_through_commonjs(statement: Node) -> bool:
     text = statement.text or b""
-    if (
-        _JS_REQUIRE_CALL in text
-        or _JS_MODULE_EXPORTS in text
-        or text.startswith(_JS_EXPORTS_MEMBER)
-    ):
+    if _JS_MODULE_EXPORTS in text or text.startswith(_JS_EXPORTS_MEMBER):
         return True
     return _JS_EXPORTS_KEYWORD_BYTES in text and _has_commonjs_export(statement)
+
+
+def is_commonjs_module(root: Node) -> bool:
+    """Whether a JS/TS module publishes its values through CommonJS alone.
+
+    Only then do the names it binds stand in for its exports: its
+    `module.exports = { Svc }` is not parsed into an export table. What it
+    imports says nothing about what it exports, so an `import type` or a
+    value import beside `module.exports` leaves it CommonJS (Greptile, PR
+    #3355), as does a type-only export, which is erased at runtime. Any value
+    export statement makes the export table the module's whole API, even
+    beside `module.exports`: an ES module's `module` is not its export
+    object, and following its bindings could pass on a private import. A
+    module with neither exports nothing, so it is not CommonJS either.
+    """
+    commonjs = False
+    for statement in root.children:
+        if statement.type == cs.TS_EXPORT_STATEMENT:
+            if _is_export_assignment(statement):
+                commonjs = True
+            elif not _is_type_only_export(statement):
+                return False
+        elif statement.type != cs.TS_IMPORT_STATEMENT and _publishes_through_commonjs(
+            statement
+        ):
+            commonjs = True
+    return commonjs
+
+
+def _is_export_assignment(statement: Node) -> bool:
+    return any(
+        child.type == cs.TS_EXPORT_ASSIGNMENT_TOKEN for child in statement.children
+    )
+
+
+def _is_type_only_export(statement: Node) -> bool:
+    return any(
+        child.type == cs.TS_TYPE_ONLY_TOKEN
+        or child.type in cs.TS_TYPE_ONLY_EXPORT_DECLARATIONS
+        for child in statement.children
+    )
 
 
 def _has_commonjs_export(statement: Node) -> bool:

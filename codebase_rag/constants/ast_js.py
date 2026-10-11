@@ -3,8 +3,10 @@
 from .ast_nodes import (
     TS_CALL_EXPRESSION,
     TS_IDENTIFIER,
+    TS_INTERFACE_DECLARATION,
     TS_MEMBER_EXPRESSION,
     TS_NEW_EXPRESSION,
+    TS_TYPE_ALIAS_DECLARATION,
 )
 
 # Locals query patterns for JS/TS
@@ -55,6 +57,15 @@ JS_TS_PARENT_REF_TYPES = (TS_IDENTIFIER, TS_MEMBER_EXPRESSION)
 # The `*` of `export * from './m'`. The JavaScript and TypeScript grammars
 # spell it as an anonymous token, not Java's named `asterisk` node.
 TS_JS_STAR = "*"
+# TypeScript's CommonJS export (`export = value`) is an export_statement whose
+# token after `export` is `=`.
+TS_EXPORT_ASSIGNMENT_TOKEN = "="
+# A type-only export (`export type { T }`, `export interface I`) is erased at
+# runtime, so it says nothing about the module's value exports.
+TS_TYPE_ONLY_TOKEN = "type"
+TS_TYPE_ONLY_EXPORT_DECLARATIONS = frozenset(
+    {TS_INTERFACE_DECLARATION, TS_TYPE_ALIAS_DECLARATION}
+)
 # JSX element nodes that carry a component name (javascript and tsx grammars
 # share these); the closing element repeats the name and must not double-emit.
 TS_JSX_SELF_CLOSING_ELEMENT = "jsx_self_closing_element"

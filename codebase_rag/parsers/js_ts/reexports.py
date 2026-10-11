@@ -31,7 +31,7 @@ def follow_js_reexports(
     qn: str,
     import_mapping: Mapping[str, Mapping[str, str]],
     exports: Mapping[str, Mapping[str, JsExport]],
-    es_modules: Collection[str],
+    commonjs_modules: Collection[str],
     module_paths: Mapping[str, Path],
     function_registry: FunctionRegistryTrieProtocol,
 ) -> str:
@@ -45,7 +45,7 @@ def follow_js_reexports(
     if qn in function_registry:
         return qn
     return _ReexportWalk(
-        import_mapping, exports, es_modules, module_paths, function_registry
+        import_mapping, exports, commonjs_modules, module_paths, function_registry
     ).follow(qn)[0]
 
 
@@ -87,7 +87,7 @@ class _ReexportWalk:
     __slots__ = (
         "_imports",
         "_exports",
-        "_es_modules",
+        "_commonjs_modules",
         "_modules",
         "_registry",
         "_path",
@@ -98,13 +98,13 @@ class _ReexportWalk:
         self,
         import_mapping: Mapping[str, Mapping[str, str]],
         exports: Mapping[str, Mapping[str, JsExport]],
-        es_modules: Collection[str],
+        commonjs_modules: Collection[str],
         module_paths: Mapping[str, Path],
         function_registry: FunctionRegistryTrieProtocol,
     ) -> None:
         self._imports = import_mapping
         self._exports = exports
-        self._es_modules = es_modules
+        self._commonjs_modules = commonjs_modules
         self._modules = module_paths
         self._registry = function_registry
         self._path: set[_Step] = set()
@@ -148,7 +148,7 @@ class _ReexportWalk:
             return None, False
         if (export := self._exports.get(barrel, {}).get(name)) is not None:
             return _Step(export.target, export.local), False
-        if barrel not in self._es_modules:
+        if barrel in self._commonjs_modules:
             # A CommonJS module records no export table (`module.exports =
             # { Svc }` is not parsed into one), so the names it binds stand in
             # for the names it exports.

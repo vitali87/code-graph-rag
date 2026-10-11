@@ -56,6 +56,7 @@ from .dart import (
     dart_local_name,
     dart_resolve_import,
 )
+from .export_detection import is_commonjs_module
 from .go import discover_go_module_paths, resolve_go_import_path
 from .js_ts.module_paths import (
     discover_js_workspace_packages,
@@ -993,7 +994,7 @@ class ImportProcessor:
         "unresolved_specifiers",
         "unresolved_references",
         "js_export_bindings",
-        "js_es_modules",
+        "js_commonjs_modules",
         "_import_sites",
         "_import_site_owners",
         "_import_site_writers",
@@ -1130,11 +1131,11 @@ class ImportProcessor:
         # only through it, since a module's own imports are not its exports
         # (issue #2464).
         self.js_export_bindings: dict[str, dict[str, JsExport]] = {}
-        # JS/TS modules written with an `import` or `export` statement. Only
-        # these have their exports in the table above; a CommonJS module's
-        # `module.exports` is not parsed into it, so the walk falls back to
-        # what such a module binds.
-        self.js_es_modules: set[str] = set()
+        # JS/TS modules that publish their values through CommonJS alone
+        # (`export_detection.is_commonjs_module`). Their `module.exports` is
+        # not parsed into the table above, so the walk falls back to what such
+        # a module binds; for every other module the table is the whole API.
+        self.js_commonjs_modules: set[str] = set()
         # Per scope qn: the site props of each bound import name (#1522),
         # attached to the IMPORTS edge when the deferred edge flushes.
         self._import_sites: dict[str, dict[str, PropertyDict]] = {}
@@ -1547,7 +1548,7 @@ class ImportProcessor:
         }
         # Re-derived from the export statements the re-parse finds.
         self.js_export_bindings.pop(module_qn, None)
-        self.js_es_modules.discard(module_qn)
+        self.js_commonjs_modules.discard(module_qn)
         # The Dart prefix maps share the same invariant. Both are written
         # only when the file HAS prefixed imports, so removing the last one
         # left the previous parse's entries in place: a stale alias kept
@@ -1693,7 +1694,7 @@ class ImportProcessor:
                     | cs.SupportedLanguage.TS
                     | cs.SupportedLanguage.TSX
                 ):
-                    self._parse_js_ts_imports(captures, module_qn)
+                    self._parse_js_ts_imports(captures, module_qn, root_node)
                 case cs.SupportedLanguage.JAVA:
                     self._parse_java_imports(captures, module_qn)
                 case cs.SupportedLanguage.RUST:
@@ -4389,10 +4390,12 @@ class ImportProcessor:
 
         return cs.SEPARATOR_DOT.join(target_parts)
 
-    def _parse_js_ts_imports(self, captures: dict, module_qn: str) -> None:
+    def _parse_js_ts_imports(
+        self, captures: dict, module_qn: str, root_node: Node
+    ) -> None:
+        if is_commonjs_module(root_node):
+            self.js_commonjs_modules.add(module_qn)
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
-            if import_node.type in (cs.TS_IMPORT_STATEMENT, cs.TS_EXPORT_STATEMENT):
-                self.js_es_modules.add(module_qn)
             if import_node.type == cs.TS_IMPORT_STATEMENT:
                 self._parse_js_import_statement(import_node, module_qn)
 
@@ -4855,7 +4858,7 @@ class ImportProcessor:
             qn,
             self.import_mapping,
             self.js_export_bindings,
-            self.js_es_modules,
+            self.js_commonjs_modules,
             module_paths,
             function_registry,
         )
