@@ -2962,3 +2962,97 @@ def test_a_sync_reads_a_stored_result_list_as_its_parse_did(
         "proj.results.results.Boths",
         "heuristic",
     ) in _interface_edges(store)
+
+
+# --- a sync re-parsing only the caller (CodeRabbit review 5484914382) ---------
+
+CALLER_ONLY = {
+    "shapes/shape.go": """package shapes
+
+type Shape interface {
+\tArea() float64
+}
+""",
+    "shapes/square.go": """package shapes
+
+type Square struct{}
+
+func (s Square) Area() float64 { return 1 }
+""",
+    "shapes/circle.go": """package shapes
+
+type Circle struct{}
+
+func (c *Circle) Area() float64 { return 2 }
+""",
+    # Its own package, so a sync touching it re-parses this directory alone
+    # and reads every implementer back from the graph.
+    "app/app.go": """package app
+
+import "proj/shapes"
+
+func Total(xs []shapes.Shape) float64 {
+\tt := 0.0
+\tfor _, s := range xs {
+\t\tt += s.Area()
+\t}
+\treturn t
+}
+""",
+}
+
+
+def _caller_only_repo(root: Path) -> Path:
+    root.mkdir()
+    (root / "go.mod").write_text("module proj\n\ngo 1.22\n", encoding="utf-8")
+    for rel, text in CALLER_ONLY.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    return root
+
+
+def _total_calls(store: _StatefulIngestor) -> set[tuple[str, ...]]:
+    return {
+        edge
+        for edge in _interface_edges(store)
+        if edge[0] == "proj.app.app.Total" and edge[1] == "CALLS"
+    }
+
+
+@pytest.mark.parametrize(
+    "sync", ["fresh", "reused", "reingest-fresh", "reingest-reused"]
+)
+@pytest.mark.parametrize("frontend", ["treesitter", "gotypes"])
+def test_a_sync_reparsing_only_the_caller_keeps_every_dispatch_target(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch, frontend: str, sync: str
+) -> None:
+    # Only app/ is re-parsed: Square and Circle, and their pairs with Shape,
+    # come from the unchanged shapes/ files, and `s.Area()` still reaches
+    # both, labelled as a clean index labels them.
+    root = _caller_only_repo(temp_repo / "synced")
+    _sig_frontend(monkeypatch, frontend, root)
+    store = _StatefulIngestor()
+    first = _go_updater(store, root)
+    first.run(force=True)
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
+    path = root / "app" / "app.go"
+    path.write_text(path.read_text(encoding="utf-8") + "// synced\n")
+    os.utime(path, (cache_mtime + 1, cache_mtime + 1))
+    updater = first if sync.endswith("reused") else _go_updater(store, root)
+    if sync.startswith("reingest"):
+        updater.reingest(["app/app.go"])
+    else:
+        updater.run(force=False)
+
+    clean_root = _caller_only_repo(temp_repo / "clean")
+    (clean_root / "app" / "app.go").write_text(path.read_text(encoding="utf-8"))
+    clean = _StatefulIngestor()
+    _go_updater(clean, clean_root).run(force=True)
+    assert _interface_edges(store) == _interface_edges(clean)
+    label = "heuristic" if frontend == "treesitter" else "overload"
+    assert _total_calls(store) == {
+        ("proj.app.app.Total", "CALLS", "proj.shapes.shape.Shape.Area", "exact"),
+        ("proj.app.app.Total", "CALLS", "proj.shapes.square.Square.Area", label),
+        ("proj.app.app.Total", "CALLS", "proj.shapes.circle.Circle.Area", label),
+    }
