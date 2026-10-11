@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
+from loguru import logger
 from typer.testing import CliRunner
 
 from codebase_rag import cgr_state
@@ -43,6 +44,81 @@ class TestRecordSync:
 
     def test_read_when_no_state_returns_empty(self, _temp_home: Path) -> None:
         assert cgr_state.read_sync_timestamps() == {}
+
+    def test_malformed_last_sync_is_ignored(self, _temp_home: Path) -> None:
+        _temp_home.mkdir(parents=True, exist_ok=True)
+        cgr_state.state_path().write_text('{"last_sync": ["not", "a", "dict"]}')
+        assert cgr_state.read_sync_timestamps() == {}
+        cgr_state.record_sync("alpha")
+        assert set(cgr_state.read_sync_timestamps()) == {"alpha"}
+
+    def test_undecodable_state_is_ignored(self, _temp_home: Path) -> None:
+        _temp_home.mkdir(parents=True, exist_ok=True)
+        cgr_state.state_path().write_bytes(b"\xff\xfe\x00not utf-8")
+        assert cgr_state.read_sync_timestamps() == {}
+        cgr_state.record_sync("alpha")
+        assert set(cgr_state.read_sync_timestamps()) == {"alpha"}
+
+    def test_untakeable_lock_degrades_to_an_unlocked_write(
+        self, _temp_home: Path
+    ) -> None:
+        # The lock is best effort: a home that refuses one must not fail a
+        # sync whose graph commit already succeeded (#2479). Loguru does not
+        # feed pytest's caplog, so the warning is read off a direct sink.
+        _temp_home.mkdir(parents=True, exist_ok=True)
+        messages: list[str] = []
+        sink_id = logger.add(
+            lambda message: messages.append(message.record["message"]),
+            level="WARNING",
+        )
+        try:
+            with patch("codebase_rag.cgr_state.fcntl.flock", side_effect=OSError):
+                cgr_state.record_sync("alpha")
+        finally:
+            logger.remove(sink_id)
+        assert any("proceeding without a lock" in message for message in messages)
+        assert set(cgr_state.read_sync_timestamps()) == {"alpha"}
+
+    def test_concurrent_writers_do_not_lose_updates(self, _temp_home: Path) -> None:
+        import threading
+
+        def record_many(name: str) -> None:
+            for _ in range(50):
+                cgr_state.record_sync(name)
+
+        threads = [
+            threading.Thread(target=record_many, args=(name,)) for name in ("a", "b")
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert set(cgr_state.read_sync_timestamps()) == {"a", "b"}
+
+    def test_forget_sync_keeps_a_concurrent_writers_record(
+        self, _temp_home: Path
+    ) -> None:
+        import threading
+
+        cgr_state.record_sync("ghost")
+        cgr_state.record_sync("live")
+
+        def forget_many() -> None:
+            for _ in range(50):
+                cgr_state.forget_sync("ghost")
+
+        def record_many() -> None:
+            for _ in range(50):
+                cgr_state.record_sync("live")
+
+        forget_thread = threading.Thread(target=forget_many)
+        record_thread = threading.Thread(target=record_many)
+        forget_thread.start()
+        record_thread.start()
+        forget_thread.join()
+        record_thread.join()
+        assert cgr_state.read_sync_timestamps().get("live") is not None
+        assert "ghost" not in cgr_state.read_sync_timestamps()
 
 
 class TestStatusCommand:
@@ -95,3 +171,94 @@ class TestStopCommand:
             result = runner.invoke(app, ["stop"])
         assert result.exit_code == 0, result.output
         instance.down.assert_called_once()
+
+
+class TestStatusMissingRoots:
+    """The missing-root marks `cgr status` prints (issue #2479)."""
+
+    @pytest.fixture
+    def _stack_running(self, monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+        from codebase_rag.stack.constants import StackState
+        from codebase_rag.stack.manager import StackStatus
+
+        fake = StackStatus(
+            state=StackState.RUNNING,
+            memgraph_reachable=True,
+            qdrant_reachable=True,
+            compose_file=Path("/tmp/cgr/docker-compose.yaml"),
+            memgraph_endpoint="localhost:7687",
+            qdrant_endpoint="localhost:6333",
+        )
+        manager = MagicMock()
+        manager.status.return_value = fake
+        monkeypatch.setattr("codebase_rag.cli.StackManager", lambda: manager)
+        return manager
+
+    def test_marks_project_whose_root_is_missing(
+        self,
+        _temp_home: Path,
+        _stack_running: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        cgr_state.record_sync("dead__22222222")
+        monkeypatch.setattr(
+            "codebase_rag.cli.connect_memgraph",
+            lambda *a, **k: _graph_mock({"dead__22222222": str(tmp_path / "gone")}),
+        )
+        result = runner.invoke(app, ["status"])
+
+        assert result.exit_code == 0, result.output
+        assert "dead__22222222" in result.output
+        assert "(missing)" in result.output
+        assert str(tmp_path / "gone") in result.output
+
+    def test_live_project_is_not_marked_missing(
+        self,
+        _temp_home: Path,
+        _stack_running: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        live = tmp_path / "live"
+        live.mkdir()
+        cgr_state.record_sync("live__11111111")
+        monkeypatch.setattr(
+            "codebase_rag.cli.connect_memgraph",
+            lambda *a, **k: _graph_mock({"live__11111111": str(live)}),
+        )
+        result = runner.invoke(app, ["status"])
+
+        assert result.exit_code == 0, result.output
+        assert "live__11111111" in result.output
+        assert "(missing)" not in result.output
+        assert str(live) in result.output
+
+    def test_unreadable_graph_still_prints_status(
+        self,
+        _temp_home: Path,
+        _stack_running: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Status is best effort: an unreadable graph leaves the missing-root
+        # marks out rather than failing the command.
+        cgr_state.record_sync("live__11111111")
+        monkeypatch.setattr(
+            "codebase_rag.cli.connect_memgraph",
+            MagicMock(side_effect=ConnectionError("graph down")),
+        )
+        result = runner.invoke(app, ["status"])
+
+        assert result.exit_code == 0, result.output
+        assert "live__11111111" in result.output
+        assert "(missing)" not in result.output
+
+
+def _graph_mock(roots: dict[str, str | None]) -> MagicMock:
+    ingestor = MagicMock()
+    ingestor.list_project_roots.return_value = roots
+    ingestor.fetch_all.return_value = []
+    context = MagicMock()
+    context.__enter__ = MagicMock(return_value=ingestor)
+    context.__exit__ = MagicMock(return_value=False)
+    return context
