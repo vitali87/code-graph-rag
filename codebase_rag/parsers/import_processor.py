@@ -61,7 +61,7 @@ from .js_ts.module_paths import (
     discover_js_workspace_packages,
     resolve_js_workspace_import,
 )
-from .js_ts.reexports import JsExport, follow_js_reexports
+from .js_ts.reexports import JsExport, follow_js_reexports, js_ts_module_qn
 from .lua import utils as lua_utils
 from .python_source_roots import discover_python_source_roots, resolve_via_source_roots
 from .rs import utils as rs_utils
@@ -85,6 +85,7 @@ from .stdlib_extractor import (
     save_persistent_cache,
 )
 from .utils import (
+    follow_reexports,
     get_query_cursor,
     node_site_properties,
     safe_decode_text,
@@ -992,6 +993,7 @@ class ImportProcessor:
         "unresolved_specifiers",
         "unresolved_references",
         "js_export_bindings",
+        "js_es_modules",
         "_import_sites",
         "_import_site_owners",
         "_import_site_writers",
@@ -1128,6 +1130,11 @@ class ImportProcessor:
         # only through it, since a module's own imports are not its exports
         # (issue #2464).
         self.js_export_bindings: dict[str, dict[str, JsExport]] = {}
+        # JS/TS modules written with an `import` or `export` statement. Only
+        # these have their exports in the table above; a CommonJS module's
+        # `module.exports` is not parsed into it, so the walk falls back to
+        # what such a module binds.
+        self.js_es_modules: set[str] = set()
         # Per scope qn: the site props of each bound import name (#1522),
         # attached to the IMPORTS edge when the deferred edge flushes.
         self._import_sites: dict[str, dict[str, PropertyDict]] = {}
@@ -1540,6 +1547,7 @@ class ImportProcessor:
         }
         # Re-derived from the export statements the re-parse finds.
         self.js_export_bindings.pop(module_qn, None)
+        self.js_es_modules.discard(module_qn)
         # The Dart prefix maps share the same invariant. Both are written
         # only when the file HAS prefixed imports, so removing the last one
         # left the previous parse's entries in place: a stale alias kept
@@ -4383,6 +4391,8 @@ class ImportProcessor:
 
     def _parse_js_ts_imports(self, captures: dict, module_qn: str) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
+            if import_node.type in (cs.TS_IMPORT_STATEMENT, cs.TS_EXPORT_STATEMENT):
+                self.js_es_modules.add(module_qn)
             if import_node.type == cs.TS_IMPORT_STATEMENT:
                 self._parse_js_import_statement(import_node, module_qn)
 
@@ -4845,9 +4855,29 @@ class ImportProcessor:
             qn,
             self.import_mapping,
             self.js_export_bindings,
+            self.js_es_modules,
             module_paths,
             function_registry,
         )
+
+    def follow_module_reexports(
+        self,
+        qn: str,
+        module_paths: Mapping[str, Path],
+        function_registry: FunctionRegistryTrieProtocol,
+    ) -> str:
+        """Where `qn` leads through the modules re-exporting it, by the rule
+        of the language its module is written in.
+
+        A JS/TS module passes on only what it exports: its own imports are
+        not its exports (issue #2464), so a name a barrel only imports must
+        not lead anywhere (#2560 follow-up). Every other module is followed
+        through its import map.
+        """
+        module_qn, separator, _name = qn.rpartition(cs.SEPARATOR_DOT)
+        if separator and js_ts_module_qn(module_qn, module_paths) is not None:
+            return self.follow_js_reexports(qn, module_paths, function_registry)
+        return follow_reexports(qn, self.import_mapping, function_registry)
 
     def _record_js_export_bindings(self, statement: Node, module_qn: str) -> None:
         """Record what each name an `export` statement publishes stands for.
