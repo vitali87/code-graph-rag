@@ -1129,6 +1129,317 @@ class TestAnExactEdgeIsOneTheIndexProves:
         assert calls["Same"] == {("Nv.C.M(T)", _EXACT)}, calls
 
 
+# Fixtures of round 17, each case checked against Roslyn by PR 2814's
+# differential oracle: every overload prints its signature, the corpus is
+# compiled and run, and the overload C# ran is the one an exact edge names.
+NAMED_PARAMS_CS = """\
+namespace Np;
+public class C {
+    public void M(int x, params int[] xs) { }
+    public void M(int x, object y) { }
+    public void N(int x = 0, params int[] xs) { }
+    public void N(int x, long y) { }
+}
+public class Use {
+    public void Element() { new C().M(x: 1, 2); }
+    public void NamedElement() { new C().N(xs: 2); }
+    public void ByName() { new C().M(x: 1, y: 2); }
+    public void Boxed() { new C().M(1, "s"); }
+}
+"""
+
+FACTORY_RESULT_CS = """\
+namespace Fr;
+public class Box<T> { }
+public class Holder<T> { public T Get() => default!; }
+public static class F {
+    public static Box<T> Make<T>(T v) => new Box<T>();
+    public static T Id<T>(T v) => v;
+}
+public class C {
+    public void M(Box<int> b) { }
+    public void M(Box<string> b) { }
+    public void M(object o) { }
+    public void S(string s) { }
+    public void S(object o) { }
+    public void V(int i) { }
+    public void V(object o) { }
+}
+public class Use {
+    public void IntBox() { var b = F.Make(1); new C().M(b); }
+    public void StringBox() { var b = F.Make("x"); new C().M(b); }
+    public void Identity() { var s = F.Id("x"); new C().S(s); }
+    public void Unbound() { var b = F.Make(Ext.Thing()); new C().M(b); }
+    public void Receiver() { var h = new Holder<int>(); var v = h.Get(); new C().V(v); }
+}
+"""
+
+SINGLE_TIER_CS = """\
+namespace St;
+public class C {
+    public void M(int a, int b = 1, params int[] rest) { }
+    public void M(int a, long b) { }
+    public void M(long a) { }
+    public void Q(int a, int b = 1) { }
+    public void Q(int a) { }
+    public void S(int a, params int[] xs) { }
+    public void S(int a, int b = 2) { }
+    public void R(params int[] xs) { }
+    public void R() { }
+    public void P(params int[] xs) { }
+    public void P(int x, params int[] xs) { }
+}
+public class Use {
+    public void One() { new C().M(1); }
+    public void Two() { new C().M(1, 2); }
+    public void Named() { new C().M(b: 2, a: 1); }
+    public void Long() { new C().M(1L); }
+    public void NoDefault() { new C().Q(1); }
+    public void Normal() { new C().S(1); }
+    public void Empty() { new C().R(); }
+    public void MoreDeclared() { new C().P(1, 2, 3); }
+}
+"""
+
+REF_KINDS_CS = """\
+namespace Rk;
+public class C {
+    public void N(ref int x) { }
+    public void N(long x) { }
+    public void K(in int x) { }
+    public void K(string s) { }
+    public void O(out int x) { x = 0; }
+    public void O(long x) { }
+}
+public class Use {
+    public void Plain() { new C().N(1); }
+    public void ByRef() { int r = 0; new C().N(ref r); }
+    public void ByIn() { int r = 0; new C().K(in r); }
+    public void InByValue() { new C().K(1); }
+    public void Out() { new C().O(out var v); }
+    public void OutPlain() { new C().O(1); }
+}
+"""
+
+# A second `C` in another namespace makes the receiver's type name alone
+# ambiguous; its class, resolved where the call is, is not.
+EXTENSION_RANK_FILES = {
+    "A.cs": """\
+namespace Ea;
+public class C { public void M(int x) { } public void N(long x) { } }
+public static class Ext {
+    public static void M(this C c, string s) { }
+    public static void M(this C c, int x) { }
+    public static void N(this C c, int x) { }
+    public static void K(this C c, object o) { }
+    public static void K(this C c, string s) { }
+}
+public class Use {
+    public void Text() { new C().M("s"); }
+    public void Instance() { new C().M(1); }
+    public void Better() { new C().N(1); }
+    public void Ranked() { new C().K("s"); }
+    public void Boxed() { new C().K(1); }
+}
+""",
+    "B.cs": "namespace Eb;\npublic class C { }\n",
+}
+
+UNKNOWN_HIERARCHY_CS = """\
+namespace Uh;
+public class B { public void M(int x) { } public virtual void V(int x) { } }
+public class D : B { public void M(string s) { } public override void V(int x) { } }
+public class Use {
+    public void Unknown() { new D().M(Ext.Thing()); }
+    public void Literal() { new D().M(1); }
+    public void Text() { new D().M("s"); }
+    public void Override() { new D().V(Ext.Thing()); }
+}
+"""
+
+# The receiver is a `Box<T>` whose type argument the call site does not
+# spell: what closes T is not known there.
+OPEN_PARAMETER_FILES = {
+    "L.cs": """\
+namespace L;
+public class Box<T> {
+    public void Put(T x) { }
+    public void Put(long x) { }
+    public void Set(T x) { }
+    public void Set(int x) { }
+}
+public static class Holder { public static Box<string> Make() => new Box<string>(); }
+""",
+    "U.cs": """\
+using L;
+namespace U;
+public class Use {
+    public void Open() { var b = Holder.Make(); b.Put(1); }
+    public void Closed() { var b = Holder.Make(); b.Set(1); }
+}
+""",
+}
+
+OVERRIDES_CS = """\
+namespace Ov;
+public class B {
+    public virtual void M(object o) { }
+    public void M(int x) { }
+    public virtual void N(int x) { }
+}
+public class D : B {
+    public override void M(object o) { }
+    public override void N(int x) { }
+    public void N(object o) { }
+}
+public class Use {
+    public void Base() { new D().M(1); }
+    public void Derived() { new D().N(1); }
+    public void Override() { new D().M("s"); }
+}
+"""
+
+NAME_ONLY_CS = """\
+namespace Nf;
+public class C { public void M(int x) { } public void G(int x) { } }
+public class Use {
+    public void Text() { new C().M("s"); }
+    public void Spelled() { new C().G<int>(1); }
+}
+"""
+
+_HEURISTIC = str(cs.EdgeResolution.HEURISTIC)
+
+
+class TestEveryExactEdgeIsTheOneRoslynRuns:
+    # Greptile review of PR 2814, round 17, and the Roslyn differential
+    # oracle run after it: an exact edge names the overload C# runs, and a
+    # call the index cannot settle fans out over every candidate C# might
+    # run, never dropping it.
+    def test_a_named_call_passes_its_positional_tail_to_params(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Greptile 4243370510: `M(x: 1, 2)` passes 2 to `params int[] xs`
+        # as an int, better than boxing it to `object`.
+        calls = _resolved_calls(NAMED_PARAMS_CS, temp_repo, mock_ingestor)
+        assert calls["Element"] == {("Np.C.M(int, int[])", _EXACT)}, calls
+        assert calls["NamedElement"] == {("Np.C.N(int, int[])", _EXACT)}, calls
+        # Negatives: a name only the other overload has, and an element type
+        # the argument is not.
+        assert calls["ByName"] == {("Np.C.M(int, object)", _EXACT)}, calls
+        assert calls["Boxed"] == {("Np.C.M(int, object)", _EXACT)}, calls
+
+    def test_a_generic_factory_returns_its_inferred_type(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Greptile 4243370512: `Make<T>(T)` called with 1 returns a
+        # `Box<int>`, which binds `M(Box<int>)`, not `M(object)`.
+        calls = _resolved_calls(FACTORY_RESULT_CS, temp_repo, mock_ingestor)
+        assert _ranked(calls, "IntBox", "Fr.C.") == {("Fr.C.M(Box<int>)", _EXACT)}
+        assert _ranked(calls, "StringBox", "Fr.C.") == {("Fr.C.M(Box<string>)", _EXACT)}
+        assert _ranked(calls, "Identity", "Fr.C.") == {("Fr.C.S(string)", _EXACT)}
+        assert _ranked(calls, "Receiver", "Fr.C.") == {("Fr.C.V(int)", _EXACT)}
+
+    def test_an_unbound_type_parameter_leaves_the_result_unknown(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Negative: T inferred from nothing the index knows leaves `Box<T>`
+        # of no known type: no overload is ruled out, none is exact.
+        calls = _resolved_calls(FACTORY_RESULT_CS, temp_repo, mock_ingestor)
+        assert _ranked(calls, "Unbound", "Fr.C.") == {
+            ("Fr.C.M(Box<int>)", _OVERLOAD),
+            ("Fr.C.M(Box<string>)", _OVERLOAD),
+            ("Fr.C.M(object)", _OVERLOAD),
+        }, calls
+
+    def test_defaulted_and_params_overloads_compete_with_exact_arity(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(SINGLE_TIER_CS, temp_repo, mock_ingestor)
+        best = {("St.C.M(int, int, int[])", _EXACT)}
+        assert calls["One"] == best, calls
+        assert calls["Two"] == best, calls
+        assert calls["Named"] == best, calls
+        assert calls["MoreDeclared"] == {("St.C.P(int, int[])", _EXACT)}, calls
+        # Negatives: C#'s tie-breaks between equally good conversions.
+        assert calls["Long"] == {("St.C.M(long)", _EXACT)}, calls
+        assert calls["NoDefault"] == {("St.C.Q(int)", _EXACT)}, calls
+        assert calls["Normal"] == {("St.C.S(int, int)", _EXACT)}, calls
+        assert calls["Empty"] == {("St.C.R", _EXACT)}, calls
+
+    def test_an_argument_binds_only_a_parameter_of_its_mode(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(REF_KINDS_CS, temp_repo, mock_ingestor)
+        assert calls["Plain"] == {("Rk.C.N(long)", _EXACT)}, calls
+        assert calls["OutPlain"] == {("Rk.C.O(long)", _EXACT)}, calls
+        # Negatives: an argument passed in its parameter's mode binds it,
+        # and an `in` parameter takes a value too.
+        assert calls["ByRef"] == {("Rk.C.N(int)", _EXACT)}, calls
+        assert calls["ByIn"] == {("Rk.C.K(int)", _EXACT)}, calls
+        assert calls["InByValue"] == {("Rk.C.K(int)", _EXACT)}, calls
+        assert calls["Out"] == {("Rk.C.O(int)", _EXACT)}, calls
+
+    def test_extension_methods_are_ranked_by_their_arguments(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_file_calls(EXTENSION_RANK_FILES, temp_repo, mock_ingestor)
+        assert calls["Text"] == {("Ea.Ext.M(C, string)", _EXACT)}, calls
+        assert calls["Ranked"] == {("Ea.Ext.K(C, string)", _EXACT)}, calls
+        assert calls["Boxed"] == {("Ea.Ext.K(C, object)", _EXACT)}, calls
+        # Negatives: an applicable instance method wins over any extension.
+        assert calls["Instance"] == {("Ea.C.M(int)", _EXACT)}, calls
+        assert calls["Better"] == {("Ea.C.N(long)", _EXACT)}, calls
+
+    def test_a_derived_overload_that_may_not_apply_keeps_the_base_ones(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(UNKNOWN_HIERARCHY_CS, temp_repo, mock_ingestor)
+        assert _ranked(calls, "Unknown", "Uh.") == {
+            ("Uh.D.M(string)", _OVERLOAD),
+            ("Uh.B.M(int)", _OVERLOAD),
+        }, calls
+        # Negatives: a derived overload known to apply decides, one known
+        # not to gives way, and an override stands for the base's method.
+        assert calls["Text"] == {("Uh.D.M(string)", _EXACT)}, calls
+        assert calls["Literal"] == {("Uh.B.M(int)", _EXACT)}, calls
+        assert _ranked(calls, "Override", "Uh.") == {("Uh.D.V(int)", _EXACT)}, calls
+
+    def test_an_override_is_weighed_where_its_virtual_is_declared(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # C# weighs `D.M(object)` as `B.M(object)`, beside `B.M(int)`; and
+        # `D.N(object)`, declared in D, applies, which drops every base
+        # method, `B.N(int)` that `D.N(int)` overrides included.
+        calls = _resolved_calls(OVERRIDES_CS, temp_repo, mock_ingestor)
+        assert calls["Base"] == {("Ov.B.M(int)", _EXACT)}, calls
+        assert calls["Derived"] == {("Ov.D.N(object)", _EXACT)}, calls
+        # Negative: what the virtual's place takes runs as the override.
+        assert calls["Override"] == {("Ov.D.M(object)", _EXACT)}, calls
+
+    def test_an_unbound_class_type_parameter_wins_no_comparison(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # `Put(T)` takes 1 by identity only when T is int; on the
+        # `Box<string>` Roslyn sees, `Put(long)` runs.
+        calls = _resolved_file_calls(OPEN_PARAMETER_FILES, temp_repo, mock_ingestor)
+        assert _ranked(calls, "Open", "L.Box.") == {
+            ("L.Box.Put(T)", _OVERLOAD),
+            ("L.Box.Put(long)", _OVERLOAD),
+        }, calls
+        # Negative: an identity to a known type is never worse.
+        assert _ranked(calls, "Closed", "L.Box.") == {("L.Box.Set(int)", _EXACT)}
+
+    def test_a_name_alone_binds_no_exact_edge(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(NAME_ONLY_CS, temp_repo, mock_ingestor)
+        # Proved to take no string, `M(int)` is no exact target of `M("s")`.
+        assert ("Nf.C.M(int)", _EXACT) not in calls.get("Text", set()), calls
+        # No overload scored: the arity match is a guess.
+        assert calls["Spelled"] == {("Nf.C.G(int)", _HEURISTIC)}, calls
+
+
 CONSTRAINT_CS = """\
 namespace K;
 public interface IThing { }
@@ -1325,6 +1636,7 @@ public class Derived<U> : Base<string, U>, IBox<U> where U : Shape {
     public Derived(int a = 2) { }
     public static implicit operator Shape(Derived<U> d) => null;
     public static explicit operator int(Derived<U> d) => 0;
+    public override string ToString() => "";
 }
 public interface IFlow<in A, out B, C> { }
 public struct Money { }
@@ -1367,6 +1679,12 @@ def test_what_a_node_stores_rebuilds_what_the_parse_recorded(
         qn for qn, shape in processor.csharp_call_shapes.items() if shape.constraints
     }
     assert constrained == {f"{PROJECT}.Rt.Rt.Derived.S(T, W)"}, constrained
+    # How each parameter is passed, and an override, are stored too.
+    call_shapes = processor.csharp_call_shapes
+    assert call_shapes[f"{PROJECT}.Rt.Rt.Derived.S(T, W)"].modes == ("", "ref")
+    assert {qn for qn, shape in call_shapes.items() if shape.overrides} == {
+        f"{PROJECT}.Rt.Rt.Derived.ToString"
+    }
     # A variant interface's variances and a value type are stored too.
     shapes = processor.csharp_generic_shapes
     assert shapes[f"{PROJECT}.Rt.Rt.IFlow"].variances == ("in", "out", "")
@@ -2398,8 +2716,9 @@ INVARIANT_CASES: dict[str, _Case] = {
         frozenset({"C.M(Box<int>)", "C.M(object)"}),
     ),
     # An exact-arity overload the ranking proves inapplicable gives way to
-    # the later tiers (CodeRabbit, PR 2814): a defaulted overload, then an
-    # extension method. An argument nothing types still takes it.
+    # a defaulted overload, then an extension method (CodeRabbit, PR 2814).
+    # An argument nothing types rules neither overload out: C# weighs the
+    # defaulted one beside the exact-arity one (PR 2814's Roslyn oracle).
     "arity-to-defaulted": _Case(
         "namespace L; public class C { public void Log(string s) { } "
         "public void Log(int a, int level = 0) { } }",
@@ -2416,7 +2735,7 @@ INVARIANT_CASES: dict[str, _Case] = {
         "namespace L; public class C { public void Log(string s) { } "
         "public void Log(int a, int level = 0) { } }",
         _use("new C().Log(Make.Thing());"),
-        frozenset({"C.Log(string)"}),
+        frozenset({"C.Log(string)", "C.Log(int, int)"}),
     ),
     # A method's own type parameter in a `where` clause names no type, even
     # beside a class `U` in its file.

@@ -66,6 +66,8 @@ def method_props(method_node: Node) -> PropertyDict:
         ]
     if conversion := implicit_conversion(method_node):
         props[cs.KEY_IMPLICIT_CONVERSION] = list(conversion)
+    if shape.modes:
+        props[cs.KEY_PARAMETER_MODES] = list(shape.modes)
     return props
 
 
@@ -101,6 +103,7 @@ def method_call_shape(row: ResultRow) -> CSharpCallShape | None:
     if not isinstance(declared, list):
         return None
     entries = _strings(declared)
+    modifiers = _strings(row.get(cs.KEY_MODIFIERS))
     constraints = tuple(
         (name, bound)
         for name, _, bound in (
@@ -118,13 +121,15 @@ def method_call_shape(row: ResultRow) -> CSharpCallShape | None:
             for entry in entries
         ),
         variadic=any(entry.startswith(cs.POSITIONAL_REST_PREFIX) for entry in entries),
-        is_static=cs.TS_CSHARP_MODIFIER_STATIC in _strings(row.get(cs.KEY_MODIFIERS)),
+        is_static=cs.TS_CSHARP_MODIFIER_STATIC in modifiers,
         type_parameters=tuple(_strings(row.get(cs.KEY_TYPE_PARAMETERS))),
         constraints=constraints,
         names=tuple(_declared_name(entry) for entry in entries),
         returns=returns
         if isinstance(returns := row.get(cs.KEY_RETURN_TYPE), str)
         else "",
+        modes=tuple(_strings(row.get(cs.KEY_PARAMETER_MODES))),
+        overrides=cs.TS_CSHARP_MODIFIER_OVERRIDE in modifiers,
     )
 
 

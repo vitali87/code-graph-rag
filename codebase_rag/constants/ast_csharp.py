@@ -190,6 +190,15 @@ TS_CSHARP_PREDEFINED_TYPE = "predefined_type"
 TS_CSHARP_MODIFIER = "modifier"
 TS_CSHARP_MODIFIER_OVERRIDE = "override"
 TS_CSHARP_MODIFIER_STATIC = "static"
+# How an argument is passed: a parameter's `ref`, `out`, `in` or `ref
+# readonly` modifiers, and the `ref`, `out` or `in` written before an
+# argument. A `ref` or `out` parameter takes only an argument passed the same
+# way, and an argument so passed only a parameter of the same mode (PR 2814).
+CSHARP_MODE_REF = "ref"
+CSHARP_MODE_OUT = "out"
+CSHARP_MODE_IN = "in"
+CSHARP_MODE_REF_READONLY = "ref readonly"
+CSHARP_PASSING_MODIFIERS = frozenset({"ref", "out", "in", "readonly"})
 # A type split across files carries `partial` on every part; parts with the
 # same namespace-qualified name are one logical type, unified for member and
 # base resolution (see csharp_partial_groups).

@@ -6348,6 +6348,12 @@ class CallProcessor:
         # the resolver's verdict carries the label onto the edge it returned
         # too (issue #2619).
         engine = self._resolver.type_inference.csharp_type_inference
+        if engine.csharp_call_guessed(call_node, ctx.module_qn, ctx.caller_qn):
+            # Bound by name alone, which no ranking of its arguments chose:
+            # a guess, never an exact edge (PR 2814 review).
+            self._resolution = cs.EdgeResolution.HEURISTIC
+            self._resolver.last_resolution = cs.EdgeResolution.HEURISTIC
+            return
         family = engine.csharp_member_overload_family(
             call_node, ctx.module_qn, ctx.caller_qn
         )

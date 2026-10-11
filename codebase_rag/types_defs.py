@@ -513,6 +513,12 @@ class CSharpCallShape(NamedTuple):
     names: tuple[str, ...] = ()
     # The return type as written (`Widget[]`, `List<Widget>`), "" for none.
     returns: str = ""
+    # How each parameter is passed, in declared order ("ref", "out", "in",
+    # "ref readonly", "" by value); empty when every one is by value.
+    modes: tuple[str, ...] = ()
+    # Whether it overrides a base's virtual method (`override`), which it
+    # stands for in overload resolution.
+    overrides: bool = False
 
 
 class JavaStaticImport(NamedTuple):
@@ -1397,7 +1403,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.METHOD,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, member_aliases: list[string]?, overrides_external: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, extension_receiver: string?, extension_namespace: string?, extension_receiver_arity: int?, type_parameters: list[string]?, type_constraints: list[string]?, implicit_conversion: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, member_aliases: list[string]?, overrides_external: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, extension_receiver: string?, extension_namespace: string?, extension_receiver_arity: int?, type_parameters: list[string]?, type_constraints: list[string]?, implicit_conversion: list[string]?, parameter_modes: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
     ),
     NodeSchema(
         NodeLabel.INTERFACE,

@@ -495,7 +495,9 @@ class TestACallThatLeavesADefaultedArgumentOut:
         # Two `params` overloads of different length both take four ints
         # expanded. Scored on the declared parameters alone, their fits had
         # different lengths, the comparison raised, and the file lost this
-        # call and every later one.
+        # call and every later one. Of two expanded forms binding the
+        # arguments alike, C# takes the one declaring more parameters
+        # (Roslyn runs `M(int x, params int[] xs)`; PR 2814's oracle).
         _index(
             temp_repo,
             mock_ingestor,
@@ -520,8 +522,8 @@ public class Use {
         klass = f"{PROJECT}.Params.P.C"
         use = f"{PROJECT}.Params.P.Use"
         four = _calls_from(mock_ingestor, f"{use}.Four")
-        assert set(four) == {f"{klass}.M(int[])", f"{klass}.M(int, int[])"}, four
-        assert {_resolution(p) for p in four.values()} == {cs.EdgeResolution.OVERLOAD}
+        assert set(four) == {f"{klass}.M(int, int[])"}, four
+        assert {_resolution(p) for p in four.values()} == {cs.EdgeResolution.EXACT}
         # The element type is what each expanded argument is scored against,
         # so the overload whose fixed `string` a literal int cannot bind drops.
         assert set(_calls_from(mock_ingestor, f"{use}.Three")) == {f"{klass}.N(int[])"}

@@ -93,10 +93,11 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     ),
     # `type_parameters`, `generic_bases` and `base_types` on a C# type, its
     # interface's `type_parameter_variances`, a struct's `value_type`, and
-    # `type_parameters`, `type_constraints` and `implicit_conversion` on a C#
-    # method (PR 2814 review), are what overload ranking reads, read back only
-    # by an incremental run's rehydration; absent reads as a non-generic
-    # declaration, as every run did before them, until the file is next parsed.
+    # `type_parameters`, `type_constraints`, `implicit_conversion` and
+    # `parameter_modes` on a C# method (PR 2814 review), are what overload
+    # ranking reads, read back only by an incremental run's rehydration;
+    # absent reads as a non-generic declaration taking every argument by
+    # value, as every run did before them, until the file is next parsed.
     # `decorated_start_line` (issue #2428) degrades like `positional_params`:
     # a graph round-tripped through protobuf answers `definition` with the
     # span below the decorators, exactly as a graph indexed before the
@@ -188,6 +189,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "name_start_col",
             "name_start_line",
             "overrides_external",
+            "parameter_modes",
             "path",
             "positional_params",
             "start_col",

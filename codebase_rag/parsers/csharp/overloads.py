@@ -6,9 +6,9 @@ Arity alone cannot choose between `Validate(T)`, `Validate(Ctx<T>)` and
 parameter, after the receiver's closed type arguments are substituted for the
 declaring type's parameters (`T := Person` on `PersonValidator :
 Inline<Person>`). C#'s betterness order decides between the fits: an
-identity beats a type parameter, which beats a conversion. A candidate the
-argument provably cannot bind drops out; what is left undecided stays a set,
-for the caller to fan out over.
+identity beats a conversion, and a type parameter nothing binds, of no known
+type, beats nothing. A candidate the argument provably cannot bind drops out;
+what is left undecided stays a set, for the caller to fan out over.
 """
 
 from __future__ import annotations
@@ -1200,7 +1200,12 @@ class Scored(NamedTuple):
     types with the type parameters in scope where they are written. A
     candidate whose own type parameter inference could not settle is not
     `settled`: its fits hold for some type, not the one every argument must
-    agree on, so it neither beats another candidate nor loses to one."""
+    agree on, so it neither beats another candidate nor loses to one.
+    `omits` says a defaulted parameter takes no argument, `count` how many
+    parameters it declares, and `open` which type parameters no receiver,
+    call or inference binds: a parameter naming one is of no known type, so
+    the fit there wins no comparison (PR 2814 review). `binds` is what each
+    bound one is bound to."""
 
     qn: str
     fits: Sequence[Fit | None]
@@ -1210,6 +1215,28 @@ class Scored(NamedTuple):
     declared: Sequence[str] = ()
     type_parameters: frozenset[str] = frozenset()
     settled: bool = True
+    omits: bool = False
+    count: int = 0
+    open: frozenset[str] = frozenset()
+    binds: tuple[tuple[str, str], ...] = ()
+
+
+# The fits a candidate certainly takes an argument by.
+_CERTAIN_FITS = frozenset({Fit.EXACT, Fit.CONVERTIBLE})
+
+
+def certainly_applies(candidate: Scored) -> bool:
+    """Whether a candidate is known to take its arguments: each binds by an
+    identity or a known conversion to a parameter of a known type."""
+    return candidate.settled and all(
+        f in _CERTAIN_FITS and not _names_open(p, candidate.open)
+        for f, p in zip(candidate.fits, candidate.parameters, strict=True)
+    )
+
+
+def _names_open(parameter: str, open_names: frozenset[str]) -> bool:
+    # Whether a parameter type names a type parameter nothing bound.
+    return bool(open_names) and not open_names.isdisjoint(mentioned_names(parameter))
 
 
 # (a parameter type, another) an argument converts to both -> +1 when the
@@ -1220,14 +1247,14 @@ type TargetOrder = Callable[[str, str], int]
 
 def best_candidates(
     scored: Sequence[Scored], target_order: TargetOrder | None = None
-) -> list[str]:
+) -> list[Scored]:
     """The applicable candidates no other applicable one is better than, as
     C# finds a better function member, in their given order; empty when
     none applies. `target_order` ranks two types two known conversions
     reach; without it, such conversions tie."""
     viable = [c for c in scored if None not in c.fits]
     return [
-        c.qn
+        c
         for c in viable
         if not any(_better(o, c, target_order) for o in viable if o is not c)
     ]
@@ -1243,7 +1270,7 @@ def _better(p: Scored, q: Scored, target_order: TargetOrder | None) -> bool:
     if len(p.fits) != len(q.fits) or len(p.parameters) != len(q.parameters):
         return False
     verdicts = {
-        _better_conversion(conversion, target_order)
+        _better_conversion(conversion, target_order, (p.open, q.open))
         for conversion in zip(p.fits, q.fits, p.parameters, q.parameters, strict=True)
     }
     if None in verdicts or -1 in verdicts:
@@ -1256,6 +1283,7 @@ def _better(p: Scored, q: Scored, target_order: TargetOrder | None) -> bool:
 def _better_conversion(
     conversion: tuple[Fit | None, Fit | None, str, str],
     target_order: TargetOrder | None,
+    open_names: tuple[frozenset[str], frozenset[str]] = (frozenset(), frozenset()),
 ) -> int | None:
     # Which of two conversions of one argument is better: the better fit,
     # or, between two known conversions, the better target. None when one
@@ -1266,6 +1294,12 @@ def _better_conversion(
         return None
     if Fit.UNKNOWN in (p_fit, q_fit):
         return 0 if p_type == q_type or same_type(p_type, q_type) else None
+    opened = (
+        _is_open(p_fit, p_type, open_names[0]),
+        _is_open(q_fit, q_type, open_names[1]),
+    )
+    if any(opened):
+        return _open_conversion(conversion, *opened)
     if Fit.OTHER in (p_fit, q_fit):
         return _uncertain_conversion(p_fit, q_fit, p_type, q_type)
     if p_fit != q_fit:
@@ -1273,6 +1307,30 @@ def _better_conversion(
     if p_fit is Fit.CONVERTIBLE and target_order is not None:
         return target_order(p_type, q_type)
     return 0
+
+
+def _is_open(fit: Fit | None, parameter: str, open_names: frozenset[str]) -> bool:
+    # Whether an argument binds a type parameter nothing bound, or a type
+    # naming one.
+    return fit is Fit.OPEN or _names_open(parameter, open_names)
+
+
+def _open_conversion(
+    conversion: tuple[Fit | None, Fit | None, str, str], p_open: bool, q_open: bool
+) -> int | None:
+    # A parameter naming a type parameter nothing bound is of no known type
+    # (PR 2814 review): its conversion is never the better one. It is the
+    # worse one only against an identity to a known type, which whatever
+    # binds the type parameter at best ties, and a tie then goes to the
+    # more specific known type; against anything else it is not known.
+    p_fit, q_fit, p_type, q_type = conversion
+    if p_type == q_type or same_type(p_type, q_type):
+        return 0
+    if p_open and q_open:
+        return None
+    if p_open:
+        return -1 if q_fit is Fit.EXACT else None
+    return 1 if p_fit is Fit.EXACT else None
 
 
 def _uncertain_conversion(
@@ -1299,15 +1357,23 @@ def _equivalent(given: Sequence[str], wanted: Sequence[str]) -> bool:
 
 def _tie_break(p: Scored, q: Scored) -> int:
     # C#'s tie-breaks, in order: a non-generic method beats a generic one, a
-    # normal form an expanded one, and more specific declared parameter
-    # types less specific ones. +1 for `p`, -1 for `q`, 0 for neither.
+    # normal form an expanded one, of two expanded forms the one declaring
+    # more parameters, one passing every parameter an argument one leaving
+    # a default out, and more specific declared parameter types less
+    # specific ones. +1 for `p`, -1 for `q`, 0 for neither.
     return (
         int(q.generic) - int(p.generic)
         or int(q.expanded) - int(p.expanded)
+        or (_sign(p.count - q.count) if p.expanded and q.expanded else 0)
+        or int(q.omits) - int(p.omits)
         or _more_specific(
             p.declared, q.declared, (p.type_parameters, q.type_parameters)
         )
     )
+
+
+def _sign(difference: int) -> int:
+    return (difference > 0) - (difference < 0)
 
 
 def _more_specific(

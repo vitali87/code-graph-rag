@@ -809,6 +809,9 @@ KEY_VALUE_TYPE = "value_type"
 # list writes, as written, so what it implements is known.
 KEY_BASE_TYPES = "base_types"
 KEY_IMPLICIT_CONVERSION = "implicit_conversion"
+# How each of a C# method's parameters is passed ("ref", "out", "in", "ref
+# readonly", "" by value), stored only when one is not by value (PR 2814).
+KEY_PARAMETER_MODES = "parameter_modes"
 CSHARP_CONSTRAINT_SEPARATOR = ":"
 # Declared POSITIONAL parameter names of a Python function, receiver included,
 # for arity-TypeError diagnosis (issue #227). Positional-only because CPython's
@@ -1174,6 +1177,7 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.type_parameters AS type_parameters, "
     "n.type_constraints AS type_constraints, "
     "n.implicit_conversion AS implicit_conversion, "
+    "n.parameter_modes AS parameter_modes, "
     "n.generic_bases AS generic_bases, "
     "n.type_parameter_variances AS type_parameter_variances, "
     "n.value_type AS value_type, n.base_types AS base_types"
