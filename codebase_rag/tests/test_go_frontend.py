@@ -91,6 +91,7 @@ def test_parse_payload_reads_call_and_external_sections() -> None:
                 }
             ],
             "checked": ["a.go", "b.go"],
+            "compared": [{"file": "a.go", "line": 9, "col": 5}],
         }
     )
     facts = _parse_payload(payload)
@@ -101,6 +102,7 @@ def test_parse_payload_reads_call_and_external_sections() -> None:
     assert facts.external_sites == {("a.go", 11, 8, "Println")}
     assert facts.implements == [GoImplements("a.go", 9, 5, "b.go", 5, 5)]
     assert facts.checked_files == {"a.go", "b.go"}
+    assert facts.compared_types == {("a.go", 9, 5)}
 
 
 def test_parse_payload_without_sections_yields_empty_facts() -> None:
@@ -113,10 +115,15 @@ def test_parse_payload_without_sections_yields_empty_facts() -> None:
     assert facts.implements == []
     # No file listed is no file type-checked: every pair keeps the fallback.
     assert facts.checked_files == frozenset()
+    assert facts.compared_types == frozenset()
 
 
 def test_parse_payload_with_a_malformed_checked_file_signals_failure() -> None:
     assert _parse_payload(json.dumps({"checked": ["a.go", 7]})) is None
+
+
+def test_parse_payload_with_a_malformed_compared_type_signals_failure() -> None:
+    assert _parse_payload(json.dumps({"compared": [{"file": "a.go"}]})) is None
 
 
 def test_parse_payload_non_json_signals_failure() -> None:
@@ -157,6 +164,7 @@ def test_adapter_maps_go_facts_to_semantic_facts() -> None:
         external_sites={("a.go", 11, 8, "Println")},
         implements=[GoImplements("a.go", 9, 5, "b.go", 5, 5)],
         checked_files=frozenset({"a.go", "b.go"}),
+        compared_types=frozenset({("a.go", 9, 5)}),
     )
     adapted = _adapt_go_semantic_facts(facts)
     assert isinstance(adapted, SemanticFacts)
@@ -167,6 +175,7 @@ def test_adapter_maps_go_facts_to_semantic_facts() -> None:
     # GoImplements maps 1:1 onto the generic implements_pairs family.
     assert adapted.implements_pairs == [ImplementsPair("a.go", 9, 5, "b.go", 5, 5)]
     assert adapted.checked_files == {"a.go", "b.go"}
+    assert adapted.compared_types == {("a.go", 9, 5)}
     # The Go frontend leaves the C#-specific families empty.
     assert adapted.base_kinds == {}
     assert adapted.partial_groups == []
@@ -337,6 +346,7 @@ def test_nested_modules_each_get_a_tool_run_with_reanchored_paths(
                     }
                 ],
                 "checked": ["cmd.go", "iface.go"],
+                "compared": [{"file": "cmd.go", "line": 12, "col": 5}],
             },
         },
     )
@@ -361,6 +371,7 @@ def test_nested_modules_each_get_a_tool_run_with_reanchored_paths(
         "sub/tool/cmd.go",
         "sub/tool/iface.go",
     }
+    assert facts.compared_types == {("sub/tool/cmd.go", 12, 5)}
 
 
 def test_ignored_directories_never_get_a_tool_run(

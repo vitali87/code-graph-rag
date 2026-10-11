@@ -2066,6 +2066,7 @@ class GraphUpdater:
         dp.go_implements.clear()
         dp.go_analysed_roots.clear()
         dp.go_checked_files.clear()
+        dp.go_compared_types.clear()
 
     def _apply_go_semantic_facts(self, facts: SemanticFacts) -> None:
         dp = self.factory.definition_processor
@@ -2074,6 +2075,7 @@ class GraphUpdater:
         dp.go_implements.extend(facts.implements_pairs)
         dp.go_analysed_roots.update(facts.analysed_roots)
         dp.go_checked_files.update(facts.checked_files)
+        dp.go_compared_types.update(facts.compared_types)
 
     def _join_go_implements(self) -> None:
         # go/types proved each implementer->interface pair structurally; both
@@ -2118,7 +2120,13 @@ class GraphUpdater:
         # on the modules it analysed, not on whether it returned any facts.
         dp = self.factory.definition_processor
         dp.link_go_interfaces(
-            frozenset(dp.go_analysed_roots), frozenset(dp.go_checked_files)
+            frozenset(dp.go_analysed_roots),
+            frozenset(dp.go_checked_files),
+            frozenset(
+                located[0]
+                for position in dp.go_compared_types
+                if (located := dp.go_type_locations.get(position)) is not None
+            ),
         )
 
     def _join_csharp_partials(self) -> None:

@@ -11,6 +11,7 @@ go/types frontend off, which is what most installs run.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -507,6 +508,16 @@ def _position(source: str, needle: str, offset: int = 0) -> tuple[int, int]:
     raise AssertionError(needle)
 
 
+def _compared(rel: str, source: str) -> frozenset[tuple[str, int, int]]:
+    # Every package-level type a go/types run compares in `source`, as the
+    # helper reports them: the declaring identifier of each non-generic
+    # `type` and its non-empty interfaces alike.
+    return frozenset(
+        (rel, *_position(source, f"type {name} ", len("type ")))
+        for name in re.findall(r"^type (\w+) ", source, re.MULTILINE)
+    )
+
+
 def _gotypes(
     monkeypatch: pytest.MonkeyPatch,
     call_sites: dict[tuple[str, int, int, str], GoCallSite],
@@ -531,6 +542,7 @@ def _gotypes(
         implements=implements,
         analysed_modules=(".",),
         checked_files=frozenset({"shapes.go"}),
+        compared_types=_compared("shapes.go", SHAPES),
     )
     monkeypatch.setattr(go_fe, "go_frontend_available", lambda: True)
     monkeypatch.setattr(go_fe, "run_go_frontend", lambda repo_path, ignored_dirs: facts)
@@ -1069,6 +1081,7 @@ def test_a_go_types_run_that_proves_no_pair_adds_no_name_match(
             implements=[],
             analysed_modules=(".",),
             checked_files=frozenset({"sink.go"}),
+            compared_types=_compared("sink.go", SINK),
         ),
     )
     create_and_run_updater(root, mock_ingestor, skip_if_missing="go")
@@ -1134,6 +1147,7 @@ def test_a_degraded_module_keeps_the_fallback_and_an_analysed_one_does_not(
             degraded_modules=("legacy",),
             analysed_modules=(".",),
             checked_files=frozenset({"shapes.go"}),
+            compared_types=_compared("shapes.go", SHAPES),
         ),
     )
     create_and_run_updater(root, mock_ingestor, skip_if_missing="go")
@@ -1261,6 +1275,7 @@ def test_a_proven_override_and_sole_target_rename_without_opt_in(
             ],
             analysed_modules=(".",),
             checked_files=frozenset({"app.go"}),
+            compared_types=_compared("app.go", PROVEN_GETTER),
         ),
     )
     _write(temp_repo, "go.mod", "module goproven\n\ngo 1.22\n")
@@ -1550,6 +1565,7 @@ def test_a_pair_that_changes_source_stays_an_implementer(
             ],
             analysed_modules=(".",),
             checked_files=frozenset({"app.go"}),
+            compared_types=_compared("app.go", PROVEN_GETTER),
         ),
     }
     second = "analysed" if first == "degraded" else "degraded"
@@ -2104,6 +2120,7 @@ def _recorded_gotypes(monkeypatch: pytest.MonkeyPatch) -> None:
             ],
             analysed_modules=(".",),
             checked_files=frozenset({"shapes.go"}),
+            compared_types=_compared("shapes.go", BUILT),
         ),
     )
 
@@ -2564,6 +2581,7 @@ def _recorded_variant_gotypes(monkeypatch: pytest.MonkeyPatch) -> None:
             ],
             analysed_modules=(".",),
             checked_files=frozenset({"shape.go", "t_other.go"}),
+            compared_types=_compared("shape.go", VARIANT_SHAPE),
         ),
     )
 
@@ -2929,6 +2947,7 @@ def test_a_go_types_proof_is_never_vetoed_by_the_signature_check(
             ],
             analysed_modules=(".",),
             checked_files=frozenset({"shape.go", "t_other.go"}),
+            compared_types=_compared("shape.go", VARIANT_SHAPE),
         ),
     )
     root = temp_repo / "govar"
@@ -3232,6 +3251,8 @@ def _two_modules(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
             ],
             analysed_modules=(".", "modb"),
             checked_files=frozenset({"a.go", "modb/b.go"}),
+            compared_types=_compared("a.go", MODULE_A)
+            | _compared("modb/b.go", MODULE_B),
         ),
     )
 
@@ -3296,6 +3317,7 @@ def test_a_proven_hierarchy_renames_without_the_opt_in(
             ],
             analysed_modules=(".",),
             checked_files=frozenset({"a.go"}),
+            compared_types=_compared("a.go", MODULE_A),
         ),
     )
     graph = _rename_index(temp_repo, mock_ingestor)
@@ -3305,3 +3327,209 @@ def test_a_proven_hierarchy_renames_without_the_opt_in(
     assert report.applied, report.message
     text = (temp_repo / "a.go").read_text(encoding="utf-8")
     assert "\tN() int" in text and "func (T1) N() int" in text
+
+
+# --- a package's own `error` and `any` (Greptile, PR #3360) ------------------
+
+OWN_BUILTINS = """package errs
+
+type error interface {
+\tCode() int
+}
+
+type any interface {
+\tCode() int
+}
+
+type I interface {
+\terror
+\tN()
+}
+
+type J interface {
+\tany
+\tN()
+}
+
+type T struct{}
+
+func (T) Code() int { return 0 }
+func (T) N()        {}
+
+type U struct{}
+
+func (U) N() {}
+
+var _ I = T{}
+"""
+
+# Another package, so a sync touching it reads errs/ back from the graph.
+OWN_BUILTINS_CALLER = """package other
+
+import "proj/errs"
+
+func Run(i errs.I) { i.N() }
+"""
+
+
+def _own_builtins_repo(root: Path) -> Path:
+    root.mkdir()
+    (root / "go.mod").write_text("module proj\n\ngo 1.22\n", encoding="utf-8")
+    for rel, text in (
+        ("errs/errs.go", OWN_BUILTINS),
+        ("other/other.go", OWN_BUILTINS_CALLER),
+    ):
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    return root
+
+
+def test_an_embedded_name_its_package_declares_is_its_own_interface(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `error` here asks for Code(), not Error() string, and `any` asks for
+    # Code() too: T is an I and a J, and U, lacking Code, is neither.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    root = _own_builtins_repo(temp_repo / "proj")
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="go")
+    pkg = "proj.errs.errs"
+    implements = _labels(mock_ingestor, cs.RelationshipType.IMPLEMENTS)
+    assert implements[(f"{pkg}.T", f"{pkg}.I")] == cs.EdgeResolution.HEURISTIC
+    assert implements[(f"{pkg}.T", f"{pkg}.J")] == cs.EdgeResolution.HEURISTIC
+    assert (f"{pkg}.U", f"{pkg}.I") not in implements
+    assert (f"{pkg}.U", f"{pkg}.J") not in implements
+    overrides = _labels(mock_ingestor, cs.RelationshipType.OVERRIDES)
+    assert overrides[(f"{pkg}.T.N", f"{pkg}.I.N")] == cs.EdgeResolution.HEURISTIC
+    assert (f"{pkg}.U.N", f"{pkg}.J.N") not in overrides
+    calls = {
+        callee
+        for caller, callee in _edges(mock_ingestor, cs.RelationshipType.CALLS)
+        if caller == "proj.other.other.Run"
+    }
+    assert f"{pkg}.T.N" in calls
+    assert f"{pkg}.U.N" not in calls
+    if (go := shutil.which("go")) is not None:
+        built = subprocess.run(
+            [go, "vet", "./..."],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            encoding=cs.ENCODING_UTF8,
+            check=False,
+        )
+        assert built.returncode == 0, built.stderr
+
+
+@pytest.mark.parametrize("sync", ["fresh", "reused"])
+def test_a_sync_reads_a_packages_own_error_back_as_its_parse_did(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch, sync: str
+) -> None:
+    # Re-parsing other/ alone reads I back with its stored embeds, where
+    # `error` is errs' own interface, and Run still reaches T.N.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    root = _own_builtins_repo(temp_repo / "synced")
+    store = _StatefulIngestor()
+    first = _go_updater(store, root)
+    first.run(force=True)
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
+    path = root / "other" / "other.go"
+    path.write_text(path.read_text(encoding="utf-8") + "// synced\n")
+    os.utime(path, (cache_mtime + 1, cache_mtime + 1))
+    (first if sync == "reused" else _go_updater(store, root)).run(force=False)
+
+    clean_root = _own_builtins_repo(temp_repo / "clean")
+    (clean_root / "other" / "other.go").write_text(path.read_text(encoding="utf-8"))
+    clean = _StatefulIngestor()
+    _go_updater(clean, clean_root).run(force=True)
+    assert _interface_edges(store) == _interface_edges(clean)
+    assert (
+        "proj.other.other.Run",
+        "CALLS",
+        "proj.errs.errs.T.N",
+        "heuristic",
+    ) in _interface_edges(store)
+
+
+# --- a type go/types skips keeps the name match (Greptile, PR #3360) ----------
+
+GENERIC = """package gen
+
+type Speaker interface {
+\tSpeak() string
+}
+
+type Box[T any] struct{ v T }
+
+func (b Box[T]) Speak() string { return "box" }
+
+type Getter[T any] interface {
+\tGet() T
+}
+
+type IntBox struct{}
+
+func (IntBox) Get() int { return 1 }
+
+type Label string
+
+type Cat struct{}
+
+func (Cat) Speak() Label { return "" }
+
+func Use(s Speaker) string { return s.Speak() }
+
+var _ Speaker = Box[int]{}
+var _ Getter[int] = IntBox{}
+"""
+
+
+@pytest.mark.parametrize("facts", ["real", "recorded", "treesitter"])
+def test_a_generic_type_or_interface_keeps_the_name_match(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    facts: str,
+) -> None:
+    # go/types compares no generic type or interface, so its silence about
+    # Box and Getter is no verdict; Cat's Speak() Label is one it gave.
+    root = temp_repo / "gogen"
+    root.mkdir()
+    (root / "go.mod").write_text("module gogen\n\ngo 1.22\n", encoding="utf-8")
+    (root / "gen.go").write_text(GENERIC, encoding="utf-8")
+    if facts == "real":
+        _sig_frontend(monkeypatch, "gotypes", root)
+    elif facts == "recorded":
+        _gotypes_facts(
+            monkeypatch,
+            GoSemanticFacts(
+                call_sites={},
+                external_sites=set(),
+                implements=[],
+                analysed_modules=(".",),
+                checked_files=frozenset({"gen.go"}),
+                compared_types=_compared("gen.go", GENERIC),
+            ),
+        )
+    else:
+        monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="go")
+    pkg = "gogen.gen"
+    implements = _labels(mock_ingestor, cs.RelationshipType.IMPLEMENTS)
+    assert implements[(f"{pkg}.Box", f"{pkg}.Speaker")] == "heuristic"
+    assert implements[(f"{pkg}.IntBox", f"{pkg}.Getter")] == "heuristic"
+    overrides = _labels(mock_ingestor, cs.RelationshipType.OVERRIDES)
+    assert overrides[(f"{pkg}.Box.Speak", f"{pkg}.Speaker.Speak")] == "heuristic"
+    calls = {
+        callee
+        for caller, callee in _edges(mock_ingestor, cs.RelationshipType.CALLS)
+        if caller == f"{pkg}.Use"
+    }
+    assert f"{pkg}.Box.Speak" in calls
+    cat = (f"{pkg}.Cat", f"{pkg}.Speaker")
+    if facts == "treesitter":
+        assert implements[cat] == "heuristic"
+    else:
+        # A type go/types compared and rejected stays rejected.
+        assert cat not in implements
+        assert f"{pkg}.Cat.Speak" not in calls

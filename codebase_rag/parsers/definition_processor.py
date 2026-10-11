@@ -315,6 +315,9 @@ class DefinitionProcessor(
         # The repo-relative files those runs type-checked: a pair resting on
         # a file the build left out was never compared by the compiler.
         self.go_checked_files: set[str] = set()
+        # The declarations (file, line, col) of the types and interfaces
+        # those runs compared; a generic one in a checked file was not.
+        self.go_compared_types: set[tuple[str, int, int]] = set()
         # Directory -> the predeclared type names (`int`, `error`) a Go package
         # there declares itself, refilled by each link (shared with the call
         # resolver): there the name is the package's own type.

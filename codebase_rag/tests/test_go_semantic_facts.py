@@ -301,6 +301,10 @@ def _impl_facts(implements: list[GoImplements]) -> GoSemanticFacts:
         implements=implements,
         analysed_modules=(".",),
         checked_files=frozenset({"sample.go"}),
+        compared_types=frozenset(
+            ("sample.go", *_byte_loc(_IMPLEMENTS_SRC, name))
+            for name in ("Speaker interface", "Dog struct")
+        ),
     )
 
 

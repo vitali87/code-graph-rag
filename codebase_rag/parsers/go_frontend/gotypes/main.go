@@ -90,6 +90,19 @@ type payload struct {
 	// (another GOOS's, a build tag's, cgo's) or one in an ill-typed package
 	// was never seen, so a pair missing from Implements says nothing there.
 	Checked []string `json:"checked"`
+	// Compared lists the declarations of every type and interface the
+	// implements pass compared. A checked file can still declare one it
+	// skips (a generic type, a generic interface), and a pair missing from
+	// Implements says nothing of it either.
+	Compared []positionFact `json:"compared"`
+}
+
+// positionFact is a declaring identifier's repo-relative file, 1-based line
+// and 0-based byte column, as every other fact spells a position.
+type positionFact struct {
+	File string `json:"file"`
+	Line int    `json:"line"`
+	Col  int    `json:"col"`
 }
 
 // typeEntry is a first-party named type gathered for the implements pass: the
@@ -129,11 +142,17 @@ type collector struct {
 	// Test binary (`p.test`) -> the types its variants declare.
 	variants map[string]*variantTypes
 	checked  map[string]bool
+	compared map[string]positionFact
 }
 
 func main() {
 	if len(os.Args) < 2 {
-		emit(payload{Calls: []callFact{}, Externals: []externalFact{}, Checked: []string{}})
+		emit(payload{
+			Calls:     []callFact{},
+			Externals: []externalFact{},
+			Checked:   []string{},
+			Compared:  []positionFact{},
+		})
 		return
 	}
 	root, err := filepath.Abs(os.Args[1])
@@ -175,13 +194,31 @@ func main() {
 		seenTypes: map[string]bool{},
 		variants:  map[string]*variantTypes{},
 		checked:   map[string]bool{},
+		compared:  map[string]positionFact{},
 	}
 	for _, pkg := range pkgs {
 		col.collectPackage(pkg)
 	}
 	col.collectImplements()
 	col.out.Checked = sortedKeys(col.checked)
+	col.out.Compared = sortedPositions(col.compared)
 	emit(*col.out)
+}
+
+func sortedPositions(positions map[string]positionFact) []positionFact {
+	out := make([]positionFact, 0, len(positions))
+	for _, key := range sortedKeys(keySet(positions)) {
+		out = append(out, positions[key])
+	}
+	return out
+}
+
+func keySet(positions map[string]positionFact) map[string]bool {
+	keys := make(map[string]bool, len(positions))
+	for key := range positions {
+		keys[key] = true
+	}
+	return keys
 }
 
 func sortedKeys(set map[string]bool) []string {
@@ -242,6 +279,7 @@ func (c *collector) gatherTypes(pkg *packages.Package) {
 		// Each test variant re-declares every type of its package; the plain
 		// pass pairs a type once, from the variant that first held it.
 		key := fmt.Sprintf("%s:%d:%d", entry.rel, entry.line, entry.col)
+		c.compared[key] = positionFact{File: entry.rel, Line: entry.line, Col: entry.col}
 		first := !c.seenTypes[key]
 		c.seenTypes[key] = true
 		entry.testOnly = first && universe != ""

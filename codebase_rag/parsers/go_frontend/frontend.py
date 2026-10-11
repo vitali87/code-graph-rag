@@ -95,6 +95,10 @@ class GoSemanticFacts(NamedTuple):
     # the pairs above are the answer only where every file a pair rests on
     # is here (PR #3360 review).
     checked_files: frozenset[str] = frozenset()
+    # The declarations (file, line, col) of the types and interfaces the
+    # runs compared. A checked file can declare one they skip, a generic
+    # type or interface, and no pair says anything of it.
+    compared_types: frozenset[tuple[str, int, int]] = frozenset()
 
 
 def _empty_facts() -> GoSemanticFacts:
@@ -446,6 +450,10 @@ def _parse_payload(stdout: str, stderr: str = "") -> GoSemanticFacts | None:
             checked_files=frozenset(
                 _checked_file(path) for path in payload.get("checked", [])
             ),
+            compared_types=frozenset(
+                (str(_checked_file(fact["file"])), int(fact["line"]), int(fact["col"]))
+                for fact in payload.get("compared", [])
+            ),
         )
     except (KeyError, TypeError, ValueError, AttributeError):
         # A malformed fact entry (missing key, non-int position, non-object
@@ -509,6 +517,9 @@ def _prefix_facts(facts: GoSemanticFacts, prefix: str) -> GoSemanticFacts:
             for pair in facts.implements
         ],
         checked_files=frozenset(_rel(path) for path in facts.checked_files),
+        compared_types=frozenset(
+            (_rel(file), line, col) for file, line, col in facts.compared_types
+        ),
     )
 
 
@@ -568,6 +579,7 @@ def run_go_frontend(
     degraded: list[str] = []
     analysed: list[str] = []
     checked: set[str] = set()
+    compared: set[tuple[str, int, int]] = set()
     for anchor in anchors:
         prefix = "" if anchor == repo_path else anchor.relative_to(repo_path).as_posix()
         raw = _run_tool_once(binary, anchor, ignored_dirs)
@@ -585,8 +597,10 @@ def run_go_frontend(
         merged.external_sites.update(facts.external_sites)
         merged.implements.extend(facts.implements)
         checked.update(facts.checked_files)
+        compared.update(facts.compared_types)
     return merged._replace(
         degraded_modules=tuple(degraded),
         analysed_modules=tuple(analysed),
         checked_files=frozenset(checked),
+        compared_types=frozenset(compared),
     )

@@ -86,16 +86,21 @@ class _GoCompilerView:
     repo_path: Path
     analysed_roots: frozenset[str]
     checked_files: frozenset[str]
+    # The types and interfaces it compared: a checked file can declare one it
+    # skips (a generic type or interface), and no pair speaks for that one.
+    compared: frozenset[str] = frozenset()
     roots: dict[str, str | None] = field(default_factory=dict)
 
     def owns(
         self,
+        pair: tuple[str, str],
         type_package: str | None,
         interface: go_ifaces.GoInterfaceDecl,
         method_files: list[set[str]],
     ) -> bool:
-        if interface.file not in self.checked_files or not all(
-            files and files <= self.checked_files for files in method_files
+        if not self.compared.issuperset(pair) or (
+            interface.file not in self.checked_files
+            or not all(files and files <= self.checked_files for files in method_files)
         ):
             return False
         type_root = self._root(type_package)
@@ -208,23 +213,30 @@ class GoInterfaceMixin:
         )
 
     def link_go_interfaces(
-        self, analysed_roots: frozenset[str], checked_files: frozenset[str]
+        self,
+        analysed_roots: frozenset[str],
+        checked_files: frozenset[str],
+        compared: frozenset[str],
     ) -> int:
         """Embedding, implicit satisfaction and the overrides it implies.
 
         `analysed_roots` are the module roots (`.` for the repository's own)
-        the go/types frontend analysed, and `checked_files` the files of them
-        it type-checked. A type and an interface of one such module whose
-        declarations it read are paired by the compiler alone: a pair it did
+        the go/types frontend analysed, `checked_files` the files of them it
+        type-checked, and `compared` the types and interfaces it compared. A
+        type and an interface of one such module that it compared, whose
+        declarations it read, are paired by the compiler alone: a pair it did
         not prove does not hold, whatever the names say. Every other pair, in
-        a module it never ran on or whose run failed, or resting on a file
-        its build left out, is matched by name and arity. Returns the number
-        of IMPLEMENTS edges written here.
+        a module it never ran on or whose run failed, resting on a file its
+        build left out, or on a type or interface it skips (a generic one),
+        is matched by name. Returns the number of IMPLEMENTS edges written
+        here.
         """
-        embeds = self._resolve_go_embeds()
         self._record_go_builtin_shadows()
+        embeds = self._resolve_go_embeds()
         owners = self._go_method_sets()
-        compiler = _GoCompilerView(self.repo_path, analysed_roots, checked_files)
+        compiler = _GoCompilerView(
+            self.repo_path, analysed_roots, checked_files, compared
+        )
         linked = self._link_implicit_implementations(embeds, owners, compiler)
         self._link_go_overrides(owners.method_sets, checked_files)
         if linked:
@@ -248,6 +260,7 @@ class GoInterfaceMixin:
             declared = owners.declarations.get(type_qn, {})
             required = interfaces[interface_qn] or {}
             return compiler.owns(
+                (type_qn, interface_qn),
                 owners.packages.get(type_qn),
                 self.go_interfaces[interface_qn],
                 [
@@ -440,7 +453,9 @@ class GoInterfaceMixin:
     def _parsed_embeds(
         self, interface_qn: str, module_qn: str, written: tuple[str, ...]
     ) -> tuple[str, ...] | None:
-        resolve = self._parsed_embed_resolver(module_qn)
+        resolve = self._parsed_embed_resolver(
+            module_qn, self._go_shadowed(interface_qn)
+        )
         bases = [base for text in written if (base := resolve(text)) is not None]
         self._record_go_embedding(interface_qn, bases)
         return tuple(bases) if len(bases) == len(written) else None
@@ -455,9 +470,10 @@ class GoInterfaceMixin:
         # alone both would find the first. A count or name that disagrees
         # means an embed did not resolve then, so the method set is unknown.
         stored = iter(self.class_inheritance.get(interface_qn, []))
+        shadowed = self._go_shadowed(interface_qn)
         bases: list[str] = []
         for text in written:
-            if text in cs.GO_BUILTIN_INTERFACE_METHODS:
+            if text in cs.GO_BUILTIN_INTERFACE_METHODS and text not in shadowed:
                 bases.append(text)
                 continue
             base = next(stored, None)
@@ -467,9 +483,19 @@ class GoInterfaceMixin:
             bases.append(base)
         return None if next(stored, None) is not None else tuple(bases)
 
-    def _parsed_embed_resolver(self, module_qn: str) -> Callable[[str], str | None]:
+    def _go_shadowed(self, interface_qn: str) -> frozenset[str]:
+        # The predeclared names the interface's package declares itself.
+        directory = PurePosixPath(self.go_interfaces[interface_qn].file).parent
+        return self.go_builtin_shadows.get(directory.as_posix(), frozenset())
+
+    def _parsed_embed_resolver(
+        self, module_qn: str, shadowed: frozenset[str]
+    ) -> Callable[[str], str | None]:
+        # A package that declares `error` or `any` itself means its own by
+        # the name, an interface of its methods or no interface at all, and
+        # never the predeclared one (issue #2483).
         def resolve(text: str) -> str | None:
-            if text in cs.GO_BUILTIN_INTERFACE_METHODS:
+            if text in cs.GO_BUILTIN_INTERFACE_METHODS and text not in shadowed:
                 return text
             qualifier, dot, name = text.partition(cs.SEPARATOR_DOT)
             if not dot:

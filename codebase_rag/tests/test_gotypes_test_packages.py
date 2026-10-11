@@ -355,6 +355,15 @@ def test_a_package_without_tests_is_unchanged(tmp_path: Path) -> None:
             }
         ],
         "checked": ["speak.go"],
+        # Every type the implements pass compared, ordered as the helper
+        # orders them, by "file:line:col".
+        "compared": sorted(
+            (
+                {"file": "speak.go", "line": line, "col": col}
+                for line, col in ((dog_line, dog_col), (iface_line, iface_col))
+            ),
+            key=lambda fact: f"{fact['file']}:{fact['line']}:{fact['col']}",
+        ),
     }
 
 
