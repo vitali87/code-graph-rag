@@ -1023,6 +1023,67 @@ def test_a_verified_commit_with_no_older_cgr_creates_no_lock_in_the_tree(
     assert _state_in_tree(repo) == []
 
 
+def _an_upgraded_edit(repo: Path) -> str:
+    tx = EditTransaction(repo)
+    tx.stage("pkg/core.py", "def run():\n    return 0\n")
+    assert tx.commit().applied
+    return tx.transaction_id
+
+
+def test_a_tree_history_with_a_list_id_neither_fails_the_sync_nor_is_added(
+    repo: Path,
+) -> None:
+    # The history is data on disk: an id no cgr writes (unhashable here)
+    # marks a copy that is not an older cgr's history, which is dropped as
+    # a stale copy is rather than raising out of the sync (Codex, PR #3344).
+    kept = _an_upgraded_edit(repo)
+    (repo / cs.EDIT_HISTORY_FILENAME).write_text(
+        json.dumps([{cs.EDIT_KEY_ID: ["not", "an", "id"]}])
+    )
+
+    prepare_state_dir(repo)
+
+    assert _ids(repo) == [kept]
+    assert _state_in_tree(repo) == []
+
+
+def test_a_cgr_home_history_with_a_dict_id_neither_fails_the_sync_nor_is_rewritten(
+    repo: Path,
+) -> None:
+    _an_upgraded_edit(repo)
+    history = state_dir(repo) / cs.EDIT_HISTORY_FILENAME
+    malformed = json.dumps([{cs.EDIT_KEY_ID: {"not": "an id"}}]).encode()
+    history.write_bytes(malformed)
+    _an_older_cgr_edits(repo, "pkg/util.py", _UTIL_BY_AN_OLDER_CGR, "older-cgr")
+
+    prepare_state_dir(repo)
+
+    assert history.read_bytes() == malformed
+
+
+def test_a_deeply_nested_tree_history_does_not_fail_the_sync(repo: Path) -> None:
+    kept = _an_upgraded_edit(repo)
+    depth = 100_000
+    (repo / cs.EDIT_HISTORY_FILENAME).write_text("[" * depth + "]" * depth)
+
+    prepare_state_dir(repo)
+
+    assert _ids(repo) == [kept]
+
+
+def test_a_well_formed_older_history_is_added_entry_for_entry(repo: Path) -> None:
+    # Negative: with string ids on both sides, the merge keeps every entry
+    # of both copies as it was, the older cgr's last.
+    _an_upgraded_edit(repo)
+    kept = json.loads((state_dir(repo) / cs.EDIT_HISTORY_FILENAME).read_text())
+    _an_older_cgr_edits(repo, "pkg/util.py", _UTIL_BY_AN_OLDER_CGR, "older-cgr")
+    recorded = json.loads((repo / cs.EDIT_HISTORY_FILENAME).read_text())
+
+    prepare_state_dir(repo)
+
+    assert load_history(repo) == [*kept, *recorded]
+
+
 def test_a_history_git_puts_back_does_not_bring_back_an_undone_edit(
     repo: Path,
 ) -> None:

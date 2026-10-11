@@ -283,7 +283,9 @@ def _adopt_history(repo_path: Path, directory: Path) -> None:
     added. The older cgr started its history afresh once the old one
     moved, so one that shares an entry is an older copy, such as one `git`
     put back from a commit that tracked it: it is dropped as any stale
-    copy is, since adding it would bring back the edits undone since.
+    copy is, since adding it would bring back the edits undone since. So
+    is a copy when either is not a history cgr wrote (`_history_entries`):
+    the one under CGR_HOME is rewritten only to add to a well-formed one.
     """
     legacy = repo_path / cs.EDIT_HISTORY_FILENAME
     target = directory / cs.EDIT_HISTORY_FILENAME
@@ -301,9 +303,12 @@ def _adopt_history(repo_path: Path, directory: Path) -> None:
     try:
         recorded = _history_entries(legacy)
         kept = _history_entries(target)
-        known = {entry.get(cs.EDIT_KEY_ID) for entry in kept}
-        if recorded and known.isdisjoint(
-            entry.get(cs.EDIT_KEY_ID) for entry in recorded
+        if (
+            recorded
+            and kept is not None
+            and {e[cs.EDIT_KEY_ID] for e in kept}.isdisjoint(
+                e[cs.EDIT_KEY_ID] for e in recorded
+            )
         ):
             _write_history(target, [*kept, *recorded])
             logger.info(
@@ -321,18 +326,25 @@ def _adopt_history(repo_path: Path, directory: Path) -> None:
     _discard(legacy)
 
 
-def _history_entries(path: Path) -> list[dict]:
-    """The entries of the edit history at `path`; none if it is not one.
+def _history_entries(path: Path) -> list[dict] | None:
+    """The entries of the edit history at `path`, or None if it is not one.
+
+    One cgr wrote is a JSON list of objects, each with a string id. The
+    file is data on disk, though: anything else (an id that is a list, or
+    nesting deeper than the decoder recurses) must leave a sync running
+    rather than raise out of it.
 
     Raises OSError when it cannot be read, so a history that may still
     hold entries is never taken for an empty one.
     """
     try:
         data = json.loads(path.read_text(encoding=cs.ENCODING_UTF8))
-    except ValueError:
-        return []
-    if not isinstance(data, list) or not all(isinstance(e, dict) for e in data):
-        return []
+    except (ValueError, RecursionError):
+        return None
+    if not isinstance(data, list) or not all(
+        isinstance(e, dict) and isinstance(e.get(cs.EDIT_KEY_ID), str) for e in data
+    ):
+        return None
     return data
 
 
