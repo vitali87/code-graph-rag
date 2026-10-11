@@ -955,23 +955,105 @@ INVARIANT_CASES: dict[str, _Case] = {
     ),
 }
 
+
 # An override must spell the base member it overrides.
-OVERRIDE_CASES: dict[str, tuple[str, tuple[str, str]]] = {
-    "override-alias": (
+class _OverrideCase(NamedTuple):
+    lib: str
+    use: str
+    pair: tuple[str, str]
+    linked: bool
+
+
+_SCOPED_LIB = (
+    "namespace L; using System.Collections.Generic;\npublic class Widget { }\n"
+)
+_SCOPED_USE = (
+    "using L; using System.Collections.Generic;\nnamespace U;\n"
+    "public class Widget {{ }}\n{body}\npublic class Use {{ {run} }}\n"
+)
+
+OVERRIDE_CASES: dict[str, _OverrideCase] = {
+    "override-alias": _OverrideCase(
         "namespace L; using System.Collections.Generic;\n"
         "public class Base<T> { public virtual void Put(List<T> x) { } "
         "public virtual void Put(List<string> x) { } }\n"
         "public class D : Base<System.Int32> { public override void Put(List<int> x) { } }",
+        _use(""),
         ("D.Put(List<int>)", "Base.Put(List<T>)"),
+        True,
     ),
-    "override-generic": (
+    "override-generic": _OverrideCase(
         "namespace L; using System.Collections.Generic;\n"
         "public class Base<T> { public virtual void Put(List<T> x) { } "
         "public virtual void Put(List<string> x) { } }\n"
         "public class D : Base<int> { public override void Put(List<int> x) { } }",
+        _use(""),
         ("D.Put(List<int>)", "Base.Put(List<T>)"),
+        True,
+    ),
+    # Greptile review of PR 2814: the base's bare `Widget` is L.Widget, so
+    # only `Put(List<T>)` with T := U.Widget is what the override spells.
+    "override-scope": _OverrideCase(
+        _SCOPED_LIB + "public class Base<T> { public virtual void Put(List<T> x) { } "
+        "public virtual void Put(List<Widget> x) { } }",
+        _SCOPED_USE.format(
+            body="public class D : Base<U.Widget> "
+            "{ public override void Put(List<U.Widget> x) { } }",
+            run="",
+        ),
+        ("D.Put(List<U.Widget>)", "Base.Put(List<T>)"),
+        True,
+    ),
+    # Negative: a base whose only `Put` takes L.Widgets is not what an
+    # override taking U.Widgets overrides, by any fallback.
+    "override-scope-neg": _OverrideCase(
+        _SCOPED_LIB
+        + "public class Base<T> { public virtual void Put(List<Widget> x) { } }",
+        _SCOPED_USE.format(
+            body="public class D : Base<U.Widget> "
+            "{ public override void Put(List<U.Widget> x) { } }",
+            run="",
+        ),
+        ("D.Put(List<U.Widget>)", "Base.Put(List<Widget>)"),
+        False,
+    ),
+    # Negative: a plain generic override in one namespace still links.
+    "override-plain-neg": _OverrideCase(
+        _SCOPED_LIB
+        + "public class Base<T> { public virtual void Put(List<T> x) { } }\n"
+        "public class D : Base<Widget> { public override void Put(List<Widget> x) { } }",
+        _use(""),
+        ("D.Put(List<Widget>)", "Base.Put(List<T>)"),
+        True,
+    ),
+    # The explicit implementation's own OVERRIDES, under the same scope rule.
+    "override-explicit-scope": _OverrideCase(
+        _SCOPED_LIB
+        + "public interface IPut<T> { void Put(List<T> x); void Put(List<Widget> x); }",
+        _SCOPED_USE.format(
+            body="public class P : IPut<U.Widget> { "
+            "void IPut<U.Widget>.Put(List<U.Widget> x) { } "
+            "void IPut<U.Widget>.Put(List<L.Widget> x) { } }",
+            run="",
+        ),
+        ("P.IPut<U#Widget>#Put(List<U.Widget>)", "IPut.Put(List<T>)"),
+        True,
     ),
 }
+
+# Interface dispatch to a sole implementer's explicit body, under the scope
+# rule: `IPut.Put(List<Widget>)` is the body taking L.Widgets.
+INVARIANT_CASES["explicit-scope"] = _Case(
+    _SCOPED_LIB
+    + "public interface IPut<T> { void Put(List<T> x); void Put(List<Widget> x); }",
+    _SCOPED_USE.format(
+        body="public class P : IPut<U.Widget> { "
+        "void IPut<U.Widget>.Put(List<U.Widget> x) { } "
+        "void IPut<U.Widget>.Put(List<L.Widget> x) { } }",
+        run="public void Run(IPut<U.Widget> p) { p.Put(new List<L.Widget>()); }",
+    ),
+    frozenset({"IPut.Put(List<Widget>)", "P.IPut<U#Widget>#Put(List<L.Widget>)"}),
+)
 
 
 def _leaf_pair(qn: str) -> str:
@@ -1006,10 +1088,10 @@ def test_each_comparison_path_keeps_each_invariant(
 def test_each_override_path_keeps_each_invariant(
     case: str, temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    lib, (child, parent) = OVERRIDE_CASES[case]
-    _index_pair(temp_repo, mock_ingestor, lib, _use(""))
+    lib, use, pair, linked = OVERRIDE_CASES[case]
+    _index_pair(temp_repo, mock_ingestor, lib, use)
     overrides = {
         (_leaf_pair(str(c.args[0][2])), _leaf_pair(str(c.args[2][2])))
         for c in get_relationships(mock_ingestor, cs.RelationshipType.OVERRIDES)
     }
-    assert (child, parent) in overrides, (case, overrides)
+    assert (pair in overrides) is linked, (case, overrides)

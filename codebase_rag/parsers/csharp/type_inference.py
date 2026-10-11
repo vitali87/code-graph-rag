@@ -28,6 +28,8 @@ from ..utils import safe_decode_text
 from .overloads import (
     ArgumentType,
     Fit,
+    Resolver,
+    TypeScopes,
     arguments_match,
     best_candidates,
     bindings_for_base,
@@ -2563,6 +2565,37 @@ class CSharpTypeInferenceEngine:
                 return None
             return tuple(bound[p] for p in closed)
         return None
+
+    def type_scopes(self, given_type: str, wanted_type: str) -> TypeScopes | None:
+        """Where a member of `given_type` and one of `wanted_type` resolve the
+        types they write: each in its own declaring file (PR 2814 review).
+        None when either file is not recorded, which leaves the comparison
+        to spelling."""
+        given = self._type_resolver(given_type)
+        wanted = self._type_resolver(wanted_type)
+        if given is None or wanted is None:
+            return None
+        return TypeScopes(given, wanted)
+
+    def _type_resolver(self, type_qn: str) -> Resolver | None:
+        # Resolves a type written in `type_qn`'s declaration, in its file. Its
+        # own type parameters name no type there.
+        module_qn = self.csharp_class_owner_module.get(type_qn)
+        if module_qn is None:
+            return None
+        shape = self.csharp_generic_shapes.get(type_qn)
+        own = frozenset(shape.parameters) if shape is not None else frozenset()
+        return partial(self._resolve_in, module_qn, own)
+
+    def _resolve_in(
+        self, module_qn: str, own: frozenset[str], name: str, arity: int
+    ) -> str | None:
+        # The first-party type `name` names in `module_qn`, one partial part
+        # standing for every part.
+        if name in own:
+            return None
+        qn = self._type_name_to_qn(name, module_qn, arity)
+        return min(self._partial_roots(qn)) if qn is not None else None
 
     def _declaring_module(self, type_qn: str, fallback: str) -> str:
         # The module whose file declares `type_qn`, the scope its written

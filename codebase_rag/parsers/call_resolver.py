@@ -1538,6 +1538,9 @@ class CallResolver:
         declared = self._csharp_declared_type_parameters(
             f"{interface_qn}{cs.SEPARATOR_DOT}{method_name}"
         )
+        # Each side's types resolve in its own file, so an interface's bare
+        # `Widget` is never an implementer's other `Widget` (PR 2814 review).
+        scopes = inference.csharp_type_inference.type_scopes(impl_qn, interface_qn)
         # A type parameter the member declares itself is not the interface's,
         # so the spelling's argument never reaches it.
         found = [
@@ -1548,6 +1551,7 @@ class CallResolver:
                 member,
                 method_name,
                 unshadowed(written_bindings(written, shape), declared),
+                scopes,
             )
         ]
         # Two closings of one generic interface (`IRun<int>`, `IRun<string>`)

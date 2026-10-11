@@ -550,6 +550,11 @@ CSHARP_JUDGED_PARAM_TYPES: frozenset[str] = frozenset().union(
     *CSHARP_LITERAL_ACCEPTS.values()
 )
 CSHARP_SYSTEM_PREFIX = "System."
+# The alias spelling a type's fully qualified name (`global::N.Widget`), which
+# a resolved type is written with when two declaring files' types are compared.
+CSHARP_GLOBAL_PREFIX = "global::"
+# Array ranks and nullable marks trailing a type: `List<T>[]?`, `int[,]`.
+CSHARP_TYPE_SUFFIX_PATTERN = r"(?:\[[,\s]*\]|\?)+$"
 # What nests inside a signature's parameter list: generics, tuples, arrays.
 CSHARP_SIGNATURE_OPENERS = "<(["
 CSHARP_SIGNATURE_CLOSERS = ">)]"

@@ -14,7 +14,7 @@ for the caller to fan out over.
 from __future__ import annotations
 
 import re
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from enum import IntEnum
 from typing import NamedTuple, Protocol
 
@@ -30,6 +30,7 @@ from .utils import (
 )
 
 _TYPE_IDENTIFIER = re.compile(cs.CSHARP_TYPE_IDENTIFIER_PATTERN)
+_TYPE_SUFFIX = re.compile(cs.CSHARP_TYPE_SUFFIX_PATTERN)
 
 
 class ArgumentType(NamedTuple):
@@ -51,6 +52,19 @@ class Fit(IntEnum):
     CONVERTIBLE = 2
     OPEN = 3
     EXACT = 4
+
+
+# (written type name, its type-argument count) -> the first-party type qn it
+# names in one declaring file, None when it names none there.
+type Resolver = Callable[[str, int], str | None]
+
+
+class TypeScopes(NamedTuple):
+    """Where each side of a member comparison resolves the types it writes:
+    the given member's file and the wanted member's (PR 2814 review)."""
+
+    given: Resolver
+    wanted: Resolver
 
 
 class TypeJudge(Protocol):
@@ -154,24 +168,116 @@ def written_bindings(written: str, shape: CSharpGenericShape | None) -> dict[str
 
 
 def spells_member(
-    member: str, interface_member: str, bindings: Mapping[str, str]
+    member: str,
+    interface_member: str,
+    bindings: Mapping[str, str],
+    scopes: TypeScopes | None = None,
 ) -> bool:
     """Whether `member` (`Validate(Person)`) is `interface_member`
     (`Validate(T)`) once `bindings` (T := Person) are substituted into the
     interface member's parameters, each parameter compared as a type, so
     `Go(System.Int32)` is `Go(int)` (PR 2814 review). Erasing the arguments
     cannot pair the two up beside a `Validate(string)`, nor can counting
-    them (issue #2619). Explicit implementations and overrides both use it."""
+    them (issue #2619). With `scopes`, each side's types resolve in its own
+    file first (see `member_verdict`). Explicit implementations and
+    overrides both use it."""
+    return member_verdict(member, interface_member, bindings, scopes) is True
+
+
+def member_verdict(
+    member: str,
+    interface_member: str,
+    bindings: Mapping[str, str],
+    scopes: TypeScopes | None,
+) -> bool | None:
+    """`spells_member` with its reason: True on a match; False when the two
+    provably differ, a parameter naming two different resolved types; None
+    when they differ only in spelling, which may be one type.
+
+    With `scopes`, each first-party type is resolved in the file that wrote
+    it: the member's in its own, the interface member's in the interface's,
+    and a binding, written in the member's file's base list, in the member's
+    before it is substituted. So a base's bare `Widget` (A.Widget) is never
+    the override's `B.Widget`. A type neither side resolves keeps its
+    spelling, as it always did.
+    """
     name = member.partition(cs.CHAR_PAREN_OPEN)[0]
     wanted_name, paren, wanted_params = interface_member.partition(cs.CHAR_PAREN_OPEN)
-    if name != wanted_name:
-        return False
     given = parameter_types(member)
-    wanted = parameter_types(
-        f"{wanted_name}{paren}{substitute(wanted_params, bindings)}"
+    if name != wanted_name or len(given) != len(parameter_types(interface_member)):
+        return False
+    if scopes is None:
+        wanted = parameter_types(
+            f"{wanted_name}{paren}{substitute(wanted_params, bindings)}"
+        )
+    else:
+        bound = {
+            key: canonical_type(value, scopes.given) for key, value in bindings.items()
+        }
+        given = [canonical_type(p, scopes.given) for p in given]
+        wanted = [
+            canonical_type(p, scopes.wanted)
+            for p in parameter_types(
+                f"{wanted_name}{paren}{substitute(wanted_params, bound)}"
+            )
+        ]
+    if all(same_type(g, w) for g, w in zip(given, wanted, strict=True)):
+        return True
+    return (
+        False
+        if any(_proven_apart(g, w) for g, w in zip(given, wanted, strict=True))
+        else None
     )
-    return len(given) == len(wanted) and all(
-        same_type(g, w) for g, w in zip(given, wanted, strict=True)
+
+
+def canonical_type(written: str, resolve: Resolver) -> str:
+    """`written` with each first-party type it names spelled as its qn
+    behind `global::`, as `resolve` finds it: `List<Widget>` ->
+    `List<global::proj.A.Widget>`. A type it does not resolve (external,
+    predefined, a type parameter) keeps its spelling, and one already
+    resolved is kept as it is."""
+    core, suffix = _split_type_suffix(written.strip())
+    if core.startswith(cs.CHAR_PAREN_OPEN) or core.startswith(cs.CSHARP_GLOBAL_PREFIX):
+        return f"{core}{suffix}"
+    arguments = type_arguments(core)
+    name = strip_generic_arguments(core)
+    qn = resolve(name, len(arguments))
+    head = f"{cs.CSHARP_GLOBAL_PREFIX}{qn}" if qn else name
+    if arguments:
+        inner = cs.SEPARATOR_COMMA_SPACE.join(
+            canonical_type(a, resolve) for a in arguments
+        )
+        head = f"{head}{cs.CHAR_ANGLE_OPEN}{inner}{cs.CHAR_ANGLE_CLOSE}"
+    return f"{head}{suffix}"
+
+
+def _split_type_suffix(written: str) -> tuple[str, str]:
+    # `List<T>[]?` -> ("List<T>", "[]?"): the array ranks and nullable
+    # marks after a type, which stay as they are written.
+    match = _TYPE_SUFFIX.search(written)
+    if match is None:
+        return written, ""
+    return written[: match.start()], match.group(0)
+
+
+def _proven_apart(given: str, wanted: str) -> bool:
+    # Whether two canonical types name, at some matching position, two
+    # different resolved first-party types.
+    given_core = _split_type_suffix(given)[0]
+    wanted_core = _split_type_suffix(wanted)[0]
+    if (
+        given_core.startswith(cs.CSHARP_GLOBAL_PREFIX)
+        and wanted_core.startswith(cs.CSHARP_GLOBAL_PREFIX)
+        and strip_generic_arguments(given_core) != strip_generic_arguments(wanted_core)
+    ):
+        return True
+    given_arguments, wanted_arguments = (
+        type_arguments(given_core),
+        type_arguments(wanted_core),
+    )
+    return len(given_arguments) == len(wanted_arguments) and any(
+        _proven_apart(g, w)
+        for g, w in zip(given_arguments, wanted_arguments, strict=True)
     )
 
 

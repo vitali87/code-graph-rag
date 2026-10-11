@@ -2496,7 +2496,9 @@ class ClassIngestMixin:
             else cs.SEPARATOR_DOT.join([self.project_name, *parts])
         )
 
-    def process_all_method_overrides(self) -> None:
+    def process_all_method_overrides(
+        self, csharp_type_scopes: mo.ScopesOf | None = None
+    ) -> None:
         mo.process_all_method_overrides(
             self.function_registry,
             self.class_inheritance,
@@ -2510,6 +2512,7 @@ class ClassIngestMixin:
             self.csharp_generic_shapes,
             self.csharp_class_namespaced,
             self.csharp_call_shapes,
+            csharp_type_scopes,
         )
         self._resolve_java_anon_overrides()
 

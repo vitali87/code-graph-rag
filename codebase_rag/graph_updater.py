@@ -52,6 +52,7 @@ from .parsers.cpp_frontend import (
 )
 from .parsers.csharp import graph_facts as csharp_graph_facts
 from .parsers.csharp import utils as csharp_utils
+from .parsers.csharp.overloads import TypeScopes
 from .parsers.csharp_frontend import find_csharp_project
 from .parsers.definition_processor import DefinitionProcessor
 from .parsers.document_tier import DocumentTier, broken_link_keys
@@ -2471,7 +2472,9 @@ class GraphUpdater:
         self._emit_csharp_query_calls()
         self._write_unresolved_references()
 
-        self.factory.definition_processor.process_all_method_overrides()
+        self.factory.definition_processor.process_all_method_overrides(
+            self._csharp_type_scopes
+        )
 
         # Deferred endpoint emission: every module is parsed now, so router
         # mount prefixes (possibly cross-module) can resolve (issue #877).
@@ -3524,6 +3527,16 @@ class GraphUpdater:
             self._rehydrated_cpp_spans.setdefault(path, []).append(
                 CppDefinitionSpan(start, end, node_type.value, qn)
             )
+
+    def _csharp_type_scopes(
+        self, given_type: str, wanted_type: str
+    ) -> TypeScopes | None:
+        # Where an overriding C# type and the type it overrides resolve the
+        # types their members write (PR 2814 review); the engine is built
+        # only when a C# override asks.
+        return self.factory.type_inference.csharp_type_inference.type_scopes(
+            given_type, wanted_type
+        )
 
     def _rehydrate_csharp_ranking_facts(
         self, node_type: NodeType, qn: str, path: str, row: ResultRow
@@ -7879,7 +7892,9 @@ class GraphUpdater:
         import_processor.flush_deferred_import_edges(known_module_paths)
         self._emit_csharp_query_calls()
         self._write_unresolved_references()
-        self.factory.definition_processor.process_all_method_overrides()
+        self.factory.definition_processor.process_all_method_overrides(
+            self._csharp_type_scopes
+        )
         # Endpoints and route registrations, scoped to the re-parsed modules:
         # the project-wide passes would load every route-capable module's
         # AST, which on a fresh updater means re-parsing most of the repo.
