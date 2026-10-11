@@ -310,14 +310,12 @@ def _has_module_construct(root: Node) -> bool:
 def _is_module_construct(statement: Node) -> bool:
     if statement.type in (cs.TS_IMPORT_STATEMENT, cs.TS_EXPORT_STATEMENT):
         return True
-    return _JS_REQUIRE_CALL in (statement.text or b"") or _publishes_through_commonjs(
-        statement
-    )
-
-
-def _publishes_through_commonjs(statement: Node) -> bool:
     text = statement.text or b""
-    if _JS_MODULE_EXPORTS in text or text.startswith(_JS_EXPORTS_MEMBER):
+    if (
+        _JS_REQUIRE_CALL in text
+        or _JS_MODULE_EXPORTS in text
+        or text.startswith(_JS_EXPORTS_MEMBER)
+    ):
         return True
     return _JS_EXPORTS_KEYWORD_BYTES in text and _has_commonjs_export(statement)
 
@@ -334,6 +332,10 @@ def is_commonjs_module(root: Node) -> bool:
     beside `module.exports`: an ES module's `module` is not its export
     object, and following its bindings could pass on a private import. A
     module with neither exports nothing, so it is not CommonJS either.
+
+    Only an assignment that runs at module load publishes (`_has_commonjs_export`):
+    the text `module.exports` in a string, a comment, a read or a function body
+    does not, and counting it let a private import through (Greptile, PR #3355).
     """
     commonjs = False
     for statement in root.children:
@@ -342,9 +344,9 @@ def is_commonjs_module(root: Node) -> bool:
                 commonjs = True
             elif not _is_type_only_export(statement):
                 return False
-        elif statement.type != cs.TS_IMPORT_STATEMENT and _publishes_through_commonjs(
-            statement
-        ):
+        elif _JS_EXPORTS_KEYWORD_BYTES in (
+            statement.text or b""
+        ) and _has_commonjs_export(statement):
             commonjs = True
     return commonjs
 
@@ -356,11 +358,27 @@ def _is_export_assignment(statement: Node) -> bool:
 
 
 def _is_type_only_export(statement: Node) -> bool:
-    return any(
-        child.type == cs.TS_TYPE_ONLY_TOKEN
-        or child.type in cs.TS_TYPE_ONLY_EXPORT_DECLARATIONS
-        for child in statement.children
-    )
+    # `export type { T }`, `export interface I`, `export type A = ...`, and a
+    # clause whose every specifier is `type` (`export { type T }`; CodeRabbit,
+    # PR #3355). One value specifier (`export { type T, U }`) exports a value,
+    # and `export {}` names none.
+    for child in statement.children:
+        if (
+            child.type == cs.TS_TYPE_ONLY_TOKEN
+            or child.type in cs.TS_TYPE_ONLY_EXPORT_DECLARATIONS
+        ):
+            return True
+        if child.type == cs.TS_EXPORT_CLAUSE:
+            return all(
+                _is_type_only_specifier(specifier)
+                for specifier in child.named_children
+                if specifier.type == cs.TS_EXPORT_SPECIFIER
+            )
+    return False
+
+
+def _is_type_only_specifier(specifier: Node) -> bool:
+    return any(child.type == cs.TS_TYPE_ONLY_TOKEN for child in specifier.children)
 
 
 def _has_commonjs_export(statement: Node) -> bool:
