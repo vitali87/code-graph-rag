@@ -56,8 +56,8 @@ from .dart import (
     dart_local_name,
     dart_resolve_import,
 )
-from .export_detection import commonjs_export_bindings, is_commonjs_module
 from .go import discover_go_module_paths, resolve_go_import_path
+from .js_ts.commonjs_exports import commonjs_export_bindings, is_commonjs_module
 from .js_ts.module_paths import (
     discover_js_workspace_packages,
     resolve_js_workspace_import,
@@ -4413,16 +4413,19 @@ class ImportProcessor:
         """
         if not is_commonjs_module(root_node):
             return
-        # A published import leads straight to what it imports: a nested
-        # declaration of the same name registers under the module's qn too
-        # (`{ class Svc {} }` inside an IIFE), and must not stand in for it.
+        # A name only a top-level `require` or `import` binds leads straight
+        # to what it imports, so a nested declaration of the same name, which
+        # registers under the module's qn too, cannot stand in for it. The
+        # reader has already dropped a name anything else imports or declares.
         imports = self.import_mapping.get(module_qn, {})
-        published = {
-            name: JsExport(imports[binding], local=False)
-            if binding in imports
-            else JsExport(f"{module_qn}{cs.SEPARATOR_DOT}{binding}", local=True)
-            for name, binding in commonjs_export_bindings(root_node).items()
-        }
+        published: dict[str, JsExport] = {}
+        for name, found in commonjs_export_bindings(root_node).items():
+            if not found.imported:
+                published[name] = JsExport(
+                    f"{module_qn}{cs.SEPARATOR_DOT}{found.binding}", local=True
+                )
+            elif (target := imports.get(found.binding)) is not None:
+                published[name] = JsExport(target, local=False)
         if published:
             self.js_export_bindings.setdefault(module_qn, {}).update(published)
 

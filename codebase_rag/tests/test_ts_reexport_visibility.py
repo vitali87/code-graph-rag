@@ -23,7 +23,7 @@ from codebase_rag import constants as cs
 from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.parsers.export_detection import (
+from codebase_rag.parsers.js_ts.commonjs_exports import (
     commonjs_export_bindings,
     is_commonjs_module,
 )
@@ -754,9 +754,14 @@ def test_a_module_is_commonjs_only_by_what_it_exports(
     assert is_commonjs_module(parser.parse(source.encode()).root_node) is commonjs
 
 
+# Every name these sources publish is bound at the top by a `require`.
+_PUBLISHED_HEADER = "const { A, B, C, a, b, h, p, r, x, y, S } = require('./m');\n"
+
+
 @pytest.mark.parametrize(
     ("source", "published"),
     [
+        # The modelled forms.
         (
             "module.exports = { A, B: x, 'C': y }\n",
             {"A": "A", "B": "x", "C": "y"},
@@ -765,18 +770,31 @@ def test_a_module_is_commonjs_only_by_what_it_exports(
         ("module.exports.X = y\n", {"X": "y"}),
         ("exports['X'] = y\n", {"X": "y"}),
         ("module.exports['X'] = y\n", {"X": "y"}),
-        ("if (ok) { exports.X = y }\n", {"X": "y"}),
         ("export = { A, B: x }\n", {"A": "A", "B": "x"}),
         ("Object.freeze(module.exports = { A })\n", {"A": "A"}),
         (
             "Object.assign(module.exports, { A, B: x }, { C })\n",
             {"A": "A", "B": "x", "C": "C"},
         ),
-        ("Object.assign(exports, require('./x'))\n", {}),
         ("(function () { exports.X = y })()\n", {"X": "y"}),
-        ("setTimeout(() => { exports.X = y })\n", {}),
+        ("exports.A = a, exports.B = b\n", {"A": "a", "B": "b"}),
+        # Opaque values publish nothing.
+        ("module.exports = lib\n", {}),
+        ("module.exports = require('./x')\n", {}),
+        ("module.exports = class Svc {}\n", {}),
+        ("module.exports = { [key]: v }\n", {}),
+        ("module.exports = { run() {} }\n", {}),
+        ("module.exports = { ...require('./a'), A }\n", {}),
+        ("exports.X = require('./x').X\n", {}),
+        ("exports.X = function () {}\n", {}),
+        ("export = lib\n", {}),
+        ("Object.assign(exports, require('./x'))\n", {}),
+        # Not a load-time publication, or none at all.
+        ("console.log('exports.X = y')\n", {}),
+        ("const m = module.exports.X\n", {}),
         # Publication order: a replacement of `module.exports` discards the
-        # old object and leaves `exports` on it.
+        # old object and leaves `exports` on it; `exports` and
+        # `module.exports` are references to objects.
         ("exports.Hidden = h\nmodule.exports = { A }\n", {"A": "A"}),
         ("module.exports = { A }\nexports.X = x\n", {"A": "A"}),
         ("module.exports = { A }\nmodule.exports.B = b\n", {"A": "A", "B": "b"}),
@@ -786,10 +804,7 @@ def test_a_module_is_commonjs_only_by_what_it_exports(
         ("exports.A = exports.B = a\n", {"A": "a", "B": "a"}),
         ("exports.A = a\nmodule.exports = require('./x')\n", {}),
         ("Object.freeze(module.exports = { A })\nexports.X = x\n", {"A": "A"}),
-        (
-            "(function () { exports.H = h; module.exports = { A } })()\n",
-            {"A": "A"},
-        ),
+        ("(function () { exports.H = h; module.exports = { A } })()\n", {"A": "A"}),
         ("exports = module.exports = app\nexports.R = r\n", {"R": "r"}),
         ("module.exports = exports = { A }\nexports.B = b\n", {"A": "A", "B": "b"}),
         ("exports = {}\nexports.X = x\n", {}),
@@ -800,6 +815,11 @@ def test_a_module_is_commonjs_only_by_what_it_exports(
             {"Other": "b"},
         ),
         ("exports.A = a\nObject.assign(module.exports, { A: lib.A })\n", {}),
+        ("module.exports = {}\nexports = module.exports\nexports.A = a\n", {"A": "a"}),
+        ("exports.A = a\nmodule.exports = exports\n", {"A": "a"}),
+        ("exports = { A }\nmodule.exports = exports\n", {"A": "A"}),
+        ("exports = {}\nexports.A = a\nmodule.exports = exports\n", {"A": "a"}),
+        ("exports.self = exports\n", {}),
         # Parentheses on either side change nothing.
         ("(module.exports = { A })\n", {"A": "A"}),
         ("module.exports = ({ A })\n", {"A": "A"}),
@@ -808,7 +828,7 @@ def test_a_module_is_commonjs_only_by_what_it_exports(
         ("exports.X = (y)\n", {"X": "y"}),
         ("module.exports = { A: (a) }\n", {"A": "a"}),
         ("Object.assign(module.exports, ({ A }))\n", {"A": "A"}),
-        # A name a scope on the way to the module binds is not the module's.
+        # A name a scope enclosing the publication binds is not the module's.
         ("(function (S) { exports.P = S })(o)\n", {}),
         ("(function ({ S }) { exports.P = S })(o)\n", {}),
         ("(S => { exports.P = S })(o)\n", {}),
@@ -816,54 +836,106 @@ def test_a_module_is_commonjs_only_by_what_it_exports(
         ("(function () { exports.P = S; var S = 1 })()\n", {}),
         ("(function () { module.exports = { S }; let S = 1 })()\n", {}),
         ("(function S() { exports.P = S })()\n", {}),
-        ("if (ok) { class S {} exports.P = S }\n", {}),
-        ("try {} catch (S) { exports.P = S }\n", {}),
-        ("for (const S of xs) { exports.P = S }\n", {}),
+        ("(function () { if (1) { var S = 0 } exports.P = S })()\n", {}),
+        ("(function () { { function S() {} } exports.P = S })()\n", {}),
+        ("(function () { for (var S of xs) {} exports.P = S })()\n", {}),
         ("(function (exports) { exports.P = p })({})\n", {}),
-        ("(function (module) { module.exports = { P } })({})\n", {}),
+        ("(function (module) { module.exports = { P: p } })({})\n", {}),
+        # A closed scope keeps its names.
         ("(function () { exports.P = S })()\n", {"P": "S"}),
         ("(function () { function f(S) {} exports.P = S })()\n", {"P": "S"}),
-        # A closed block keeps its own names; `var` and a sloppy function
-        # declaration reach the function.
         ("(() => { { const S = 0 } exports.P = S })()\n", {"P": "S"}),
         ("(() => { if (1) { class S {} } exports.P = S })()\n", {"P": "S"}),
         ("(() => { for (let S of xs) {} exports.P = S })()\n", {"P": "S"}),
         ("{ const S = 0 }\nexports.P = S\n", {"P": "S"}),
-        ("(function () { if (1) { var S = 0 } exports.P = S })()\n", {}),
-        ("(function () { { function S() {} } exports.P = S })()\n", {}),
-        ("(function () { for (var S of xs) {} exports.P = S })()\n", {}),
-        # Evaluation order: a target is fixed before its value runs, and an
-        # assignment inside the value runs before the one holding it.
-        ("module.exports = { A, side: (module.exports = {}) }\n", {"A": "A"}),
+        # Outside the modelled subset the module records nothing at all
+        # (Greptile, PR #3355): a write in a condition, a loop, a `switch`, a
+        # `try`, a function body, a nested value, a computed key or an
+        # assignment target's sub-expression.
+        ("exports.A = a\nif (ok) { exports.B = b }\n", {}),
+        ("exports.A = a\ntry {} catch (S) { exports.P = S }\n", {}),
+        ("exports.A = a\nfor (const S of xs) { exports.P = S }\n", {}),
+        (
+            "exports.A = a\n(() => { switch (1) { case 1: "
+            "const S = 0; exports.P = S } })()\n",
+            {},
+        ),
+        ("exports.A = a\nfunction later() { exports.X = y }\n", {}),
+        ("exports.A = a\nsetTimeout(() => { exports.X = y })\n", {}),
+        ("module.exports = { A, side: (module.exports = {}) }\n", {}),
         ("module.exports.A = (module.exports = {}, a)\n", {}),
-        # Two references to objects.
-        ("module.exports = {}\nexports = module.exports\nexports.A = a\n", {"A": "a"}),
-        ("exports.A = a\nmodule.exports = exports\n", {"A": "a"}),
-        ("exports = { A }\nmodule.exports = exports\n", {"A": "A"}),
-        ("exports = {}\nexports.A = a\nmodule.exports = exports\n", {"A": "a"}),
-        ("exports.self = exports\n", {}),
-        ("module.exports = { ...require('./a'), A }\n", {"A": "A"}),
-        # Opaque: no binding per published name.
-        ("module.exports = lib\n", {}),
-        ("module.exports = require('./x')\n", {}),
-        ("module.exports = class Svc {}\n", {}),
-        ("module.exports = { [key]: v }\n", {}),
-        ("module.exports = { run() {} }\n", {}),
-        ("exports.X = require('./x').X\n", {}),
-        ("exports.X = function () {}\n", {}),
-        ("export = lib\n", {}),
-        # Not a load-time publication.
-        ("function later() { exports.X = y }\n", {}),
-        ("console.log('exports.X = y')\n", {}),
-        ("const m = module.exports.X\n", {}),
+        ("exports.A = a\nexports[key] = b\n", {}),
+        ("holder[(module.exports = {}, 'x')] = exports.P = p\n", {}),
+        ("cond && (module.exports = { A })\n", {}),
+        # Every other reference must read: `exports` aliased, passed, deleted,
+        # called through at load, the module's `this`, `eval`.
+        ("exports.A = a\nconst e = exports\ne.B = b\n", {}),
+        ("exports.A = a\ninit(module)\n", {}),
+        ("exports.A = a\ndelete exports.A\n", {}),
+        ("exports.A = a\nexports.A()\n", {}),
+        ("exports.A = a\nthis.B = b\n", {}),
+        ("exports.A = a\neval('')\n", {}),
+        # Reads leave the module's exports known.
+        (
+            "exports.A = a\nexports.B = function () { return exports.A() }\n",
+            {"A": "a"},
+        ),
+        ("exports.A = a\nif (require.main === module) { a() }\n", {"A": "a"}),
+        ("exports.A = a\nif (typeof module !== 'undefined') {}\n", {"A": "a"}),
     ],
 )
 def test_a_commonjs_module_publishes_only_load_time_named_bindings(
     source: str, published: dict[str, str]
 ) -> None:
     parser = load_parsers()[0][cs.SupportedLanguage.TS]
-    root = parser.parse(source.encode()).root_node
-    assert commonjs_export_bindings(root) == published
+    root = parser.parse((_PUBLISHED_HEADER + source).encode()).root_node
+    found = commonjs_export_bindings(root)
+    assert {name: b.binding for name, b in found.items()} == published
+
+
+@pytest.mark.parametrize(
+    ("source", "published"),
+    [
+        # A top-level `require` leads to what it imports.
+        ("const { K } = require('./k')\nexports.P = K\n", {"P": ("K", True)}),
+        ("import { K } from './k'\nexport = { P: K }\n", {"P": ("K", True)}),
+        # A top-level declaration of the module's own is followed in the
+        # registry.
+        ("class K {}\nexports.P = K\n", {"P": ("K", False)}),
+        ("function K() {}\nmodule.exports = { K }\n", {"K": ("K", False)}),
+        # A nested `require` of the same name could stand in for it in the
+        # import map (Greptile, PR #3355).
+        (
+            "class K {}\nfunction later() { const { K } = require('./o') }\n"
+            "module.exports = { P: K }\n",
+            {},
+        ),
+        (
+            "const { K } = require('./k')\nfunction later() { const { K } = "
+            "require('./o') }\nexports.P = K\n",
+            {},
+        ),
+        # A nested class of the same name only matters for the registry.
+        (
+            "const { K } = require('./k')\n;(() => { { class K {} } })()\n"
+            "exports.P = K\n",
+            {"P": ("K", True)},
+        ),
+        ("const K = 1\n;(() => { class K {} })()\nexports.P = K\n", {}),
+        # A name declared twice, reassigned, or not declared at all.
+        ("var K = 1\nvar K = 2\nexports.P = K\n", {}),
+        ("let K = require('./k').K\nK = class Other {}\nexports.P = K\n", {}),
+        ("var K = 1\nif (ok) { var K = 2 }\nexports.P = K\n", {}),
+        ("exports.P = undeclared\n", {}),
+        ("exports.P = require\n", {}),
+    ],
+)
+def test_a_published_name_is_kept_only_when_its_binding_is_certain(
+    source: str, published: dict[str, tuple[str, bool]]
+) -> None:
+    parser = load_parsers()[0][cs.SupportedLanguage.TS]
+    found = commonjs_export_bindings(parser.parse(source.encode()).root_node)
+    assert {name: (b.binding, b.imported) for name, b in found.items()} == published
 
 
 # --- a module reached by two star paths is walked on each ------------------

@@ -171,6 +171,20 @@ JS_OBJECT_NAME = "Object"
 JS_CREATE_METHOD = "create"
 # `Object.assign(module.exports, { Svc })` publishes the keys it copies.
 JS_OBJECT_ASSIGN_METHOD = "assign"
+# The other `Object` calls the CommonJS export reader models.
+JS_OBJECT_FREEZE_METHOD = "freeze"
+JS_OBJECT_DEFINE_PROPERTY_METHOD = "defineProperty"
+# What the CommonJS export reader (`js_ts.commonjs_exports`) must recognise
+# to keep a module's exports knowable: a read of `exports` through `typeof`
+# or an equality test, and the constructs that hide a write from it.
+TS_JS_UNARY_EXPRESSION = "unary_expression"
+TS_JS_THIS = "this"
+TS_JS_ASYNC_KEYWORD = "async"
+JS_TYPEOF_OPERATOR = "typeof"
+JS_DELETE_OPERATOR = "delete"
+JS_EQUALITY_OPERATORS = frozenset({"===", "!==", "==", "!="})
+JS_ARGUMENTS_NAME = "arguments"
+JS_EVAL_NAME = "eval"
 
 # JS/TS ingest query capture names
 CAPTURE_CHILD_CLASS = "child_class"
