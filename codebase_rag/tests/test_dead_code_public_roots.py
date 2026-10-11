@@ -18,18 +18,21 @@ from typer.testing import CliRunner
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.cli import app
+from codebase_rag.config import settings
 from codebase_rag.dead_code import (
     collect_dead_code,
     dead_code_from_graph,
     default_dead_code_config,
 )
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import (
     DeadCodeConfig,
     PropertyDict,
     PropertyValue,
     ResultRow,
 )
-from evals.cgr_graph import _capture
+from evals.cgr_graph import _CapturingIngestor
 
 _PROJECT = "proj"
 _PREFIX = _PROJECT + cs.SEPARATOR_DOT
@@ -38,6 +41,15 @@ _Graph = tuple[
     dict[tuple[str, PropertyValue], PropertyDict],
     list[tuple[str, PropertyValue, str, str, PropertyValue]],
 ]
+
+_LANGUAGES = (
+    cs.SupportedLanguage.PYTHON,
+    cs.SupportedLanguage.TS,
+    cs.SupportedLanguage.JAVA,
+    cs.SupportedLanguage.CSHARP,
+    cs.SupportedLanguage.DART,
+    cs.SupportedLanguage.GO,
+)
 
 _FIXTURE: dict[str, str] = {
     "svc/__init__.py": "",
@@ -262,12 +274,33 @@ _LIVE_IN_BOTH_MODES = (
 def graph(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> _Graph:
+    # Parsed once for the module, so this runs before the per-test autouse
+    # fixtures: it must skip a missing grammar, keep off the developer's
+    # vector store and pin the C# frontend itself.
+    parsers, queries = load_parsers()
+    missing = [str(lang) for lang in _LANGUAGES if lang not in parsers]
+    if missing:
+        pytest.skip(f"{', '.join(missing)} parser not available")
     root = tmp_path_factory.mktemp("public_roots") / _PROJECT
     for relative, source in _FIXTURE.items():
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(source, encoding="utf-8")
-    ingestor = _capture(root, _PROJECT)
+    ingestor = _CapturingIngestor()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(settings, "CSHARP_FRONTEND", cs.CSharpFrontend.TREESITTER)
+        mp.setattr(settings, "QDRANT_URL", None)
+        mp.setattr(
+            settings, "QDRANT_DB_PATH", str(tmp_path_factory.mktemp("qdrant-iso"))
+        )
+        GraphUpdater(
+            ingestor=ingestor,
+            repo_path=root,
+            parsers=parsers,
+            queries=queries,
+            project_name=_PROJECT,
+            skip_embeddings=True,
+        ).run(force=True)
     return ingestor.nodes, list(ingestor.rels)
 
 
