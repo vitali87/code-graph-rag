@@ -949,3 +949,109 @@ def test_py_async_generator_still_types_its_async_for_target(
     # loop target keeps the element type the coroutine rule must not erase.
     callees = _callees(py_async_edges, "pyaio.app.aio.async_for_over_generator")
     assert callees.get("pyaio.app.aio.Box.close") == _EXACT
+
+
+# ---------------------------------------------------------------------------
+# TypeScript `this` / `super` bases: inside a static member they are the
+# class, so the first hop reaches its static method
+# ---------------------------------------------------------------------------
+
+_TS_STATIC_THIS = """\
+export class A {
+  static make(): A { return new A(); }
+  done(): number { return 1; }
+  static run(): number { return this.make().done(); }
+  static runArrow(): number { const f = () => this.make().done(); return f(); }
+  static runNested(): number {
+    const f = function () { return this.make().done(); };
+    return f();
+  }
+}
+
+export class Base {
+  static make(): Base { return new Base(); }
+  done(): number { return 2; }
+}
+
+export class Sub extends Base {
+  static run(): number { return super.make().done(); }
+}
+
+export class PS { finish(): number { return 1; } }
+export class QS { finish(): number { return 2; } }
+
+export class M {
+  static make(s: string): PS;
+  static make(x?: any): PS { return new PS(); }
+  make(s: string): QS;
+  make(x?: any): QS { return new QS(); }
+  static viaStatic(): number { return this.make("s").finish(); }
+  viaInstance(): number { return this.make("s").finish(); }
+}
+"""
+
+
+@pytest.fixture
+def ts_static_this_edges(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> dict[tuple[str, str], str | None]:
+    root = temp_repo / "tsthis"
+    _write(root, {"st.ts": _TS_STATIC_THIS})
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="typescript")
+    return _calls(mock_ingestor)
+
+
+def _from_callers(
+    edges: dict[tuple[str, str], str | None], caller_prefix: str
+) -> dict[str, str | None]:
+    # An arrow's calls belong to the arrow, which is registered under the
+    # method that holds it.
+    return {
+        callee: res
+        for (src, callee), res in edges.items()
+        if src == caller_prefix or src.startswith(f"{caller_prefix}.")
+    }
+
+
+@pytest.mark.parametrize(
+    ("caller", "expected"),
+    [
+        ("tsthis.st.A.run", "tsthis.st.A.done"),
+        ("tsthis.st.A.runArrow", "tsthis.st.A.done"),
+        ("tsthis.st.Sub.run", "tsthis.st.Base.done"),
+    ],
+)
+def test_ts_this_or_super_in_a_static_method_reaches_the_static_member(
+    ts_static_this_edges: dict[tuple[str, str], str | None],
+    caller: str,
+    expected: str,
+) -> None:
+    callees = _from_callers(ts_static_this_edges, caller)
+    assert callees.get(expected) == _EXACT
+
+
+def test_ts_this_in_a_nested_function_types_no_hop(
+    ts_static_this_edges: dict[tuple[str, str], str | None],
+) -> None:
+    # A plain `function` has its own `this`, which is neither the class nor
+    # an instance of it.
+    callees = _from_callers(ts_static_this_edges, "tsthis.st.A.runNested")
+    assert "tsthis.st.A.done" not in callees
+
+
+@pytest.mark.parametrize(
+    ("caller", "expected", "other"),
+    [
+        ("tsthis.st.M.viaStatic", "tsthis.st.PS.finish", "tsthis.st.QS.finish"),
+        ("tsthis.st.M.viaInstance", "tsthis.st.QS.finish", "tsthis.st.PS.finish"),
+    ],
+)
+def test_ts_this_picks_the_make_of_its_own_kind_of_method(
+    ts_static_this_edges: dict[tuple[str, str], str | None],
+    caller: str,
+    expected: str,
+    other: str,
+) -> None:
+    callees = _from_callers(ts_static_this_edges, caller)
+    assert callees.get(expected) == _EXACT
+    assert other not in callees

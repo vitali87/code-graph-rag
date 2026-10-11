@@ -21,6 +21,44 @@ def get_js_ts_language_obj(
     return lang_queries.get(cs.QUERY_LANGUAGE)
 
 
+# Callables that bind a `this` of their own; an arrow takes the one around it.
+_OWN_THIS_CALLABLES = frozenset(
+    {
+        cs.TS_FUNCTION_DECLARATION,
+        cs.TS_FUNCTION_EXPRESSION,
+        cs.TS_GENERATOR_FUNCTION,
+        cs.TS_GENERATOR_FUNCTION_DECLARATION,
+    }
+)
+# Class members whose `this` is the class when they are static.
+_CLASS_THIS_MEMBERS = frozenset(
+    {cs.TS_METHOD_DEFINITION, cs.TS_PUBLIC_FIELD_DEFINITION, cs.TS_JS_FIELD_DEFINITION}
+)
+
+
+def is_static_member(member: Node) -> bool:
+    # The `static` keyword is an anonymous token among the member's own
+    # children; a free function never has one.
+    return any(child.type == cs.TS_STATIC for child in member.children)
+
+
+def this_names_class_at(root: Node, point: int) -> bool | None:
+    """What `this` written at byte `point` is: the class itself (``True``,
+    inside a static method, field initialiser or static block), an instance
+    (``False``), or neither (``None``: a plain function's own `this`, or
+    none at all). An arrow reads `this` from where it is written."""
+    node = root.named_descendant_for_byte_range(point, point)
+    while node is not None:
+        if node.type == cs.TS_CLASS_STATIC_BLOCK:
+            return True
+        if node.type in _CLASS_THIS_MEMBERS:
+            return is_static_member(node)
+        if node.type in _OWN_THIS_CALLABLES:
+            return None
+        node = node.parent
+    return None
+
+
 def _extract_class_qn(method_qn: str) -> str | None:
     qn_parts = method_qn.split(cs.SEPARATOR_DOT)
     return cs.SEPARATOR_DOT.join(qn_parts[:-1]) if len(qn_parts) >= 2 else None

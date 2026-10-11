@@ -158,7 +158,7 @@ def _overload_signatures(callable_node: ASTNode) -> list[ASTNode]:
     its own overloads, so only signatures of the same staticness count.
     """
     signature_type = _OVERLOAD_SIGNATURE_TYPES.get(callable_node.type)
-    static = _is_static(callable_node)
+    static = ut.is_static_member(callable_node)
     name = safe_decode_text(callable_node.child_by_field_name(cs.FIELD_NAME))
     scope = callable_node.parent
     if scope is not None and scope.type == cs.TS_EXPORT_STATEMENT:
@@ -170,14 +170,8 @@ def _overload_signatures(callable_node: ASTNode) -> list[ASTNode]:
         for child in scope.named_children
         if (member := _exported_declaration(child)).type == signature_type
         and safe_decode_text(member.child_by_field_name(cs.FIELD_NAME)) == name
-        and _is_static(member) == static
+        and ut.is_static_member(member) == static
     ]
-
-
-def _is_static(member: ASTNode) -> bool:
-    # The `static` keyword is an anonymous token among the member's own
-    # children; a free function never has one.
-    return any(child.type == cs.TS_STATIC for child in member.children)
 
 
 def _method_implementation(
@@ -198,7 +192,7 @@ def _method_implementation(
             if member.type == cs.TS_METHOD_DEFINITION
             and safe_decode_text(member.child_by_field_name(cs.FIELD_NAME))
             == method_name
-            and _is_static(member) == static
+            and ut.is_static_member(member) == static
         ),
         None,
     )
@@ -215,7 +209,9 @@ def _exported_declaration(node: ASTNode) -> ASTNode:
 def _instance_class_of(callable_node: ASTNode, callable_qn: str) -> str | None:
     # `this` is an instance of the class only inside a non-static method; in
     # a static one it is the class itself.
-    if callable_node.type != cs.TS_METHOD_DEFINITION or _is_static(callable_node):
+    if callable_node.type != cs.TS_METHOD_DEFINITION or ut.is_static_member(
+        callable_node
+    ):
         return None
     return callable_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
 

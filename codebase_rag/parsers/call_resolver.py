@@ -43,6 +43,8 @@ _RustBlockScope = tuple[
 ]
 _SEARCH_NAME_CACHE: dict[str, str] = {}
 _CHAINED_METHOD_PATTERN = re.compile(r"\.([^.()]+)$")
+# Chain bases whose value depends on the member they are written in.
+_JS_THIS_RECEIVERS = frozenset({cs.TS_THIS, cs.KEYWORD_SUPER})
 _QN_SPLIT_CACHE: dict[str, tuple[list[str], int]] = {}
 _CHAIN_OPEN_BRACKETS = "([{"
 _CHAIN_CLOSE_BRACKETS = ")]}"
@@ -2182,7 +2184,12 @@ class CallResolver:
         if result := self._try_resolve_iife(call_name, module_qn):
             return True, result
 
-        if self._is_super_call(call_name):
+        # A JS/TS chain off `super.m()` is typed hop by hop like one off
+        # `this.m()`; the super lookup reads only a single member name.
+        if self._is_super_call(call_name) and not (
+            call.language in cs.JS_TS_LANGUAGES
+            and self._is_method_chain(call_name, call.language)
+        ):
             return True, self._resolve_super_call(call_name, call.class_context)
 
         if cs.SEPARATOR_DOT in call_name and self._is_method_chain(
@@ -5865,10 +5872,7 @@ class CallResolver:
         return recorded
 
     def _callee_return_type(
-        self,
-        callee_qn: str,
-        language: cs.SupportedLanguage | None,
-        static: bool = False,
+        self, callee_qn: str, language: cs.SupportedLanguage | None
     ) -> str | None:
         # Read right after the callee resolved. A JS/TS callee bound only by
         # name is a guess, and typing the rest of the chain from its return
@@ -5878,7 +5882,7 @@ class CallResolver:
             and self.last_resolution != cs.EdgeResolution.EXACT
         ):
             return None
-        return self._hop_return_type(callee_qn, language, static)
+        return self._hop_return_type(callee_qn, language)
 
     def _js_return_class(self, callable_qn: str, static: bool) -> str | None:
         # Only a class registered under the qn the declaring module resolved
@@ -5923,25 +5927,72 @@ class CallResolver:
         ):
             return None
         method = hop.split(cs.CHAR_PAREN_OPEN, 1)[0]
-        resolved = self.resolve_function_call(
-            f"{base}{cs.SEPARATOR_DOT}{method}",
-            module_qn,
-            local_var_types,
-            class_context,
-            caller_qn,
-            language,
-            call_point,
+        callee_qn = self._exact_first_hop(
+            base,
+            method,
+            _CallSite(
+                f"{base}{cs.SEPARATOR_DOT}{method}",
+                module_qn,
+                local_var_types,
+                class_context,
+                caller_qn,
+                language,
+                call_point,
+                False,
+            ),
         )
-        if resolved is None:
+        if callee_qn is None:
             return None
-        # `D.make()` names the class, so it reaches D's static `make`; any
-        # other base (`this`, a value) reaches the instance one.
-        static = (
-            self._chain_class_qn(base, module_qn)
-            == resolved[1].rsplit(cs.SEPARATOR_DOT, 1)[0]
-        )
-        returned = self._callee_return_type(resolved[1], language, static)
+        static = self._js_receiver_is_class(base, callee_qn, module_qn, call_point)
+        if static is None:
+            return None
+        returned = self._hop_return_type(callee_qn, language, static)
         return (returned, parts[1:]) if returned else None
+
+    def _exact_first_hop(self, base: str, method: str, call: _CallSite) -> str | None:
+        # The callee of the chain's first hop, bound exactly or not at all: a
+        # callee bound only by name is a guess, and typing the rest of the
+        # chain from its return would build every later hop on that guess.
+        resolved = self.resolve_function_call(
+            call.call_name,
+            call.module_qn,
+            call.local_var_types,
+            call.class_context,
+            call.caller_qn,
+            call.language,
+            call.call_point,
+        )
+        if resolved is not None:
+            return (
+                resolved[1] if self.last_resolution == cs.EdgeResolution.EXACT else None
+            )
+        # `this.m()` in an arrow: name resolution climbs from the arrow to its
+        # method, not the class, so the call processor anchors such a call on
+        # the enclosing class instead (#971). The hop is typed the same way.
+        if base != cs.TS_THIS or not call.class_context:
+            return None
+        own_qn = f"{call.class_context}{cs.SEPARATOR_DOT}{method}"
+        if own_qn in self.function_registry:
+            return own_qn
+        inherited = self._resolve_inherited_method(call.class_context, method)
+        return inherited[1] if inherited else None
+
+    def _js_receiver_is_class(
+        self, base: str, callee_qn: str, module_qn: str, call_point: int | None
+    ) -> bool | None:
+        # Whether `base.m()` reaches the class's static `m` or the instance
+        # one. `D.make()` names the class. `this` and `super` name it inside
+        # a static member and an instance elsewhere; a plain function's own
+        # `this` is neither, and types no hop.
+        if base not in _JS_THIS_RECEIVERS:
+            return (
+                self._chain_class_qn(base, module_qn)
+                == callee_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            )
+        root = self._cached_module_root(module_qn)
+        if root is None or call_point is None:
+            return None
+        return js_ts_utils.this_names_class_at(root, call_point)
 
     def _dart_member_return_type(
         self, class_qn: str, member: str, module_qn: str
