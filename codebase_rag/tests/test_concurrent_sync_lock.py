@@ -814,9 +814,10 @@ class TestUnwritableCgrHome:
     def test_another_thread_of_the_process_is_still_refused(
         self, repo: Path, mock_ingestor: MagicMock
     ) -> None:
+        updater = _updater(repo, mock_ingestor)
         with _held_by_another_thread(repo, "click"):
             with pytest.raises(SyncInProgressError):
-                _updater(repo, mock_ingestor).run()
+                updater.run()
 
         mock_ingestor.ensure_node_batch.assert_not_called()
 
