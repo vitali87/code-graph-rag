@@ -1318,11 +1318,13 @@ def _drop_implementers(
     # map by reference.
     if not removed:
         return
-    for interface_qn in list(implementers_by_interface):
-        implementers = implementers_by_interface[interface_qn]
+    emptied = []
+    for interface_qn, implementers in implementers_by_interface.items():
         implementers -= removed
         if not implementers:
-            del implementers_by_interface[interface_qn]
+            emptied.append(interface_qn)
+    for interface_qn in emptied:
+        del implementers_by_interface[interface_qn]
 
 
 def _pop_owned(owner_module: dict[str, str], module_qns: Collection[str]) -> set[str]:
