@@ -3451,6 +3451,347 @@ def test_a_sync_reads_a_packages_own_error_back_as_its_parse_did(
     ) in _interface_edges(store)
 
 
+# --- a shadow is its package's, not its directory's (Greptile, PR #3360) -----
+
+# Greptile's fixture: `p_test`, the external test package `go test` builds
+# beside p, declares an `error` (or `any`) of its own. That name is another
+# package's: p's `error` is still the predeclared one, and T is an I.
+TEST_SHADOW_PACKAGE = """package p
+
+type I interface {
+\tBUILTIN
+\tN()
+}
+
+type T struct{}
+
+func (T) Error() string { return "" }
+func (T) N()            {}
+
+var _ I = T{}
+
+func Run(i I) { i.N() }
+"""
+
+TEST_SHADOW = """package p_test
+
+type BUILTIN interface {
+\tCode()
+}
+"""
+
+# p declares the name itself, in a production file or in one of its own
+# `_test.go` files. T has Code() as well, so p compiles under `go test`
+# (whose I asks for Code()) as under `go build`.
+OWN_SHADOW_PACKAGE = """package p
+
+type I interface {
+\tBUILTIN
+\tN()
+}
+
+type T struct{}
+
+func (T) Code()         {}
+func (T) Error() string { return "" }
+func (T) N()            {}
+
+type U struct{}
+
+func (U) Error() string { return "" }
+func (U) N()            {}
+
+var _ I = T{}
+
+func Run(i I) { i.N() }
+"""
+
+OWN_SHADOW = """package p
+
+type BUILTIN interface {
+\tCode()
+}
+
+type K interface {
+\tBUILTIN
+\tN()
+}
+
+type V struct{}
+
+func (V) Code() {}
+func (V) N()    {}
+
+type W struct{}
+
+func (W) Error() string { return "" }
+func (W) N()            {}
+
+var _ K = V{}
+"""
+
+SHADOW_CALLER = """package other
+
+import "proj/p"
+
+func Call(i p.I) { i.N() }
+"""
+
+_SHADOW_FILES = {
+    "external_test": {"p/p.go": TEST_SHADOW_PACKAGE, "p/shadow_test.go": TEST_SHADOW},
+    "production": {"p/p.go": OWN_SHADOW_PACKAGE, "p/own.go": OWN_SHADOW},
+    "in_package_test": {"p/p.go": OWN_SHADOW_PACKAGE, "p/own_test.go": OWN_SHADOW},
+}
+
+
+def _shadow_repo(root: Path, name: str, files: dict[str, str]) -> Path:
+    root.mkdir()
+    (root / "go.mod").write_text("module proj\n\ngo 1.22\n", encoding="utf-8")
+    for rel, text in files.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text.replace("BUILTIN", name), encoding="utf-8")
+    return root
+
+
+def _go_checks(root: Path) -> None:
+    # `go vet` type-checks the test packages as well, which `go build` skips.
+    if (go := shutil.which("go")) is None:
+        return
+    for command in ("build", "vet"):
+        done = subprocess.run(
+            [go, command, "./..."],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            encoding=cs.ENCODING_UTF8,
+            check=False,
+        )
+        assert done.returncode == 0, (command, done.stderr)
+
+
+@pytest.mark.parametrize("name", ["error", "any"])
+def test_a_test_packages_own_error_leaves_the_package_alone(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+) -> None:
+    # The directory was taken for the package: p_test's `error` hid the
+    # predeclared one from p, I's method set was unknown, and T lost its
+    # IMPLEMENTS, OVERRIDES and dispatch edges. Renaming T.N then left I.N,
+    # and p no longer compiled (`T does not implement I`).
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    root = _shadow_repo(temp_repo / "proj", name, _SHADOW_FILES["external_test"])
+    _go_checks(root)
+    graph = _rename_index(root, mock_ingestor)
+    pkg = "proj.p.p"
+    implements = _labels(mock_ingestor, cs.RelationshipType.IMPLEMENTS)
+    assert implements[(f"{pkg}.T", f"{pkg}.I")] == cs.EdgeResolution.HEURISTIC
+    overrides = _labels(mock_ingestor, cs.RelationshipType.OVERRIDES)
+    assert overrides[(f"{pkg}.T.N", f"{pkg}.I.N")] == cs.EdgeResolution.HEURISTIC
+    assert (f"{pkg}.Run", f"{pkg}.T.N") in _edges(
+        mock_ingestor, cs.RelationshipType.CALLS
+    )
+
+    report = rename(
+        root, _query(graph), graph.project, f"{pkg}.T.N", "M", allow_heuristic=True
+    )
+    assert report.applied, report.message
+    text = (root / "p" / "p.go").read_text(encoding="utf-8")
+    assert "\tM()\n" in text and "func (T) M()" in text, text
+    _go_checks(root)
+
+
+@pytest.mark.parametrize("name", ["error", "any"])
+@pytest.mark.parametrize("where", ["production", "in_package_test"])
+def test_a_package_declaring_error_in_a_test_file_shadows_it_there_alone(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    where: str,
+) -> None:
+    # p's own `error` is p's in every file of p: K asks for Code(), so V is
+    # a K and W is not. Declared in a production file it is I's as well, and
+    # U, lacking Code(), is no I. Declared in p's own `_test.go` file only
+    # `go test` compiles it: `go build`, and the go/types helper answering a
+    # production file from the plain package, read I's `error` as the
+    # predeclared one, and U is an I there.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    root = _shadow_repo(temp_repo / "proj", name, _SHADOW_FILES[where])
+    _go_checks(root)
+    graph = _rename_index(root, mock_ingestor)
+    pkg = "proj.p.p"
+    own = "proj.p.own" if where == "production" else "proj.p.own_test"
+    implements = _labels(mock_ingestor, cs.RelationshipType.IMPLEMENTS)
+    assert implements[(f"{pkg}.T", f"{pkg}.I")] == cs.EdgeResolution.HEURISTIC
+    assert ((f"{pkg}.U", f"{pkg}.I") in implements) is (where != "production")
+    assert implements[(f"{own}.V", f"{own}.K")] == cs.EdgeResolution.HEURISTIC
+    assert (f"{own}.W", f"{own}.K") not in implements
+
+    report = rename(
+        root, _query(graph), graph.project, f"{pkg}.T.N", "M", allow_heuristic=True
+    )
+    assert report.applied, report.message
+    text = (root / "p" / "p.go").read_text(encoding="utf-8")
+    assert "\tM()\n" in text and "func (T) M()" in text, text
+    assert ("func (U) M()" in text) is (where != "production"), text
+    _go_checks(root)
+
+
+@pytest.mark.parametrize("sync", ["fresh", "reused"])
+@pytest.mark.parametrize("name", ["error", "any"])
+@pytest.mark.parametrize("where", sorted(_SHADOW_FILES))
+def test_a_sync_reads_a_shadow_back_by_its_package(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch, sync: str, name: str, where: str
+) -> None:
+    # Re-parsing other/ alone reads p back: I's stored embeds meet the
+    # shadows the graph's own files declare, and they must be read as the
+    # parse read them.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    files = {**_SHADOW_FILES[where], "other/other.go": SHADOW_CALLER}
+    root = _shadow_repo(temp_repo / "synced", name, files)
+    store = _StatefulIngestor()
+    first = _go_updater(store, root)
+    first.run(force=True)
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
+    path = root / "other" / "other.go"
+    path.write_text(path.read_text(encoding="utf-8") + "// synced\n")
+    os.utime(path, (cache_mtime + 1, cache_mtime + 1))
+    (first if sync == "reused" else _go_updater(store, root)).run(force=False)
+
+    clean_root = _shadow_repo(temp_repo / "clean", name, files)
+    (clean_root / "other" / "other.go").write_text(path.read_text(encoding="utf-8"))
+    clean = _StatefulIngestor()
+    _go_updater(clean, clean_root).run(force=True)
+    synced = _interface_edges(store)
+    assert synced == _interface_edges(clean)
+    assert ("proj.p.p.T", "IMPLEMENTS", "proj.p.p.I", "heuristic") in synced
+    assert ("proj.other.other.Call", "CALLS", "proj.p.p.T.N", "heuristic") in synced
+
+
+# An import names a directory's importable package: p_test's Reader, which
+# no importer can see, is no candidate for q's `p.Reader`.
+IMPORTED_READER = """package p
+
+type Reader interface {
+\tRead()
+}
+"""
+
+TEST_READER = """package p_test
+
+type Reader interface {
+\tClose()
+}
+"""
+
+READER_EMBEDDER = """package q
+
+import "proj/p"
+
+type I interface {
+\tp.Reader
+\tN()
+}
+
+type T struct{}
+
+func (T) Read() {}
+func (T) N()    {}
+
+var _ I = T{}
+"""
+
+
+def test_an_embedded_import_names_the_package_not_its_external_tests(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Two Readers in p/ made `p.Reader` ambiguous, I's method set unknown,
+    # and T no I; renaming T.N then left I.N and q no longer compiled.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    root = _shadow_repo(
+        temp_repo / "proj",
+        "error",
+        {
+            "p/p.go": IMPORTED_READER,
+            "p/reader_test.go": TEST_READER,
+            "q/q.go": READER_EMBEDDER,
+        },
+    )
+    _go_checks(root)
+    graph = _rename_index(root, mock_ingestor)
+    implements = _labels(mock_ingestor, cs.RelationshipType.IMPLEMENTS)
+    assert implements[("proj.q.q.T", "proj.q.q.I")] == cs.EdgeResolution.HEURISTIC
+    inherits = _edges(mock_ingestor, cs.RelationshipType.INHERITS)
+    assert ("proj.q.q.I", "proj.p.p.Reader") in inherits
+    assert ("proj.q.q.I", "proj.p.reader_test.Reader") not in inherits
+
+    report = rename(
+        root, _query(graph), graph.project, "proj.q.q.T.N", "M", allow_heuristic=True
+    )
+    assert report.applied, report.message
+    text = (root / "q" / "q.go").read_text(encoding="utf-8")
+    assert "\tM()\n" in text and "func (T) M()" in text, text
+    _go_checks(root)
+
+
+# A method named `error` declares nothing in its package's scope.
+METHOD_NAMED_ERROR = """package p
+
+type I interface {
+\terror
+\tN()
+}
+
+type scanner struct{}
+
+func (s *scanner) error(msg string) {}
+"""
+
+METHOD_NAMED_ERROR_USER = """package q
+
+import "proj/p"
+
+type T struct{}
+
+func (T) Error() string { return "" }
+func (T) N()            {}
+
+var _ p.I = T{}
+"""
+
+
+@pytest.mark.parametrize("sync", ["fresh", "reused"])
+def test_a_method_named_error_shadows_nothing(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch, sync: str
+) -> None:
+    # Read back from the graph, `scanner.error` counted as p declaring
+    # `error`: I's stored embeds no longer matched, and a sync touching q
+    # dropped T's IMPLEMENTS edge that a clean index has.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    files = {"p/p.go": METHOD_NAMED_ERROR, "q/q.go": METHOD_NAMED_ERROR_USER}
+    root = _shadow_repo(temp_repo / "synced", "error", files)
+    _go_checks(root)
+    store = _StatefulIngestor()
+    first = _go_updater(store, root)
+    first.run(force=True)
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
+    path = root / "q" / "q.go"
+    path.write_text(path.read_text(encoding="utf-8") + "// synced\n")
+    os.utime(path, (cache_mtime + 1, cache_mtime + 1))
+    (first if sync == "reused" else _go_updater(store, root)).run(force=False)
+
+    clean_root = _shadow_repo(temp_repo / "clean", "error", files)
+    (clean_root / "q" / "q.go").write_text(path.read_text(encoding="utf-8"))
+    clean = _StatefulIngestor()
+    _go_updater(clean, clean_root).run(force=True)
+    synced = _interface_edges(store)
+    assert synced == _interface_edges(clean)
+    assert ("proj.q.q.T", "IMPLEMENTS", "proj.p.p.I", "heuristic") in synced
+
+
 # --- a type go/types skips keeps the name match (Greptile, PR #3360) ----------
 
 GENERIC = """package gen

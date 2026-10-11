@@ -14,7 +14,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 from loguru import logger
@@ -320,29 +320,36 @@ class GoInterfaceMixin:
         # Go lets a package declare a predeclared name for itself (`type int
         # = string`, a defined `type uint8 int`), and its files then mean the
         # package's type by it. Any package-level declaration of the name
-        # counts, and a package is its directory, so the name is unknown in
-        # every file there.
+        # counts, and a method of that name declares none. A package is its
+        # directory and `package` clause: `p_test`, the external test package
+        # `go test` builds beside `p`, declaring `error` leaves p's `error`
+        # the predeclared one (#3360 review). What p's own `_test.go` files
+        # declare is p's too, but `go build` never compiles it, so it is
+        # recorded for those files alone (`go_utils.declaration_scope`).
         shadows: dict[str, set[str]] = {}
         for name in (*cs.GO_PREDECLARED_TYPES, *cs.GO_PREDECLARED_ALIASES):
             for qn in self.function_registry.find_ending_with(name):
-                if (path := self._go_declaring_file(qn)) is not None:
-                    directory = PurePosixPath(path).parent.as_posix()
-                    shadows.setdefault(directory, set()).add(name)
+                if (scope := self._go_declaration_scope(qn)) is not None:
+                    shadows.setdefault(scope, set()).add(name)
         # In place: the call resolver holds the map.
         self.go_builtin_shadows.clear()
         self.go_builtin_shadows.update(
-            {directory: frozenset(names) for directory, names in shadows.items()}
+            {scope: frozenset(names) for scope, names in shadows.items()}
         )
 
-    def _go_declaring_file(self, qn: str) -> str | None:
-        # The Go file declaring package-level `qn`, read back or parsed.
-        path = self.rehydrated_definition_paths.get(qn)
-        if path is None:
-            module_path = self.module_qn_to_file_path.get(
-                qn.rpartition(cs.SEPARATOR_DOT)[0]
-            )
-            path = go_utils.rel_file(module_path, self.repo_path) or None
-        return path if path is not None and path.endswith(cs.EXT_GO) else None
+    def _go_declaration_scope(self, qn: str) -> str | None:
+        # The files that see Go declaration `qn`, read back or parsed, when it
+        # is package-level: its file module is the qn above it.
+        if self.function_registry.get(qn) == NodeType.METHOD:
+            return None
+        module_qn = qn.rpartition(cs.SEPARATOR_DOT)[0]
+        path = self.rehydrated_definition_paths.get(qn) or go_utils.rel_file(
+            self.module_qn_to_file_path.get(module_qn), self.repo_path
+        )
+        if not path.endswith(cs.EXT_GO):
+            return None
+        package = go_utils.package_key(path, self.go_package_names.get(module_qn))
+        return go_utils.declaration_scope(path, package)
 
     def _go_method_sets(self) -> _GoMethodOwners:
         owners = _GoMethodOwners({}, {}, {})
@@ -485,8 +492,8 @@ class GoInterfaceMixin:
 
     def _go_shadowed(self, interface_qn: str) -> frozenset[str]:
         # The predeclared names the interface's package declares itself.
-        directory = PurePosixPath(self.go_interfaces[interface_qn].file).parent
-        return self.go_builtin_shadows.get(directory.as_posix(), frozenset())
+        decl = self.go_interfaces[interface_qn]
+        return go_ifaces.shadowed_in(decl.file, decl.package, self.go_builtin_shadows)
 
     def _parsed_embed_resolver(
         self, module_qn: str, shadowed: frozenset[str]
@@ -516,12 +523,26 @@ class GoInterfaceMixin:
             self.function_registry,
             name,
             {NodeType.INTERFACE},
-            lambda qn: (
-                self._go_module_package(qn.rpartition(cs.SEPARATOR_DOT)[0])
-                == package_qn
+            lambda qn: self._go_imported_file(
+                qn.rpartition(cs.SEPARATOR_DOT)[0], package_qn
             ),
         )
         return candidates[0] if len(candidates) == 1 else None
+
+    def _go_imported_file(self, module_qn: str, package_qn: str) -> bool:
+        # Whether Go file `module_qn` is a file of the package an import
+        # binding `package_qn` names: in its directory, and not in `p_test`,
+        # the external test package beside it that nothing imports. Its
+        # `Reader` is no candidate for `p.Reader` (#3360 review). A module
+        # with no recorded file (an unchanged one) is judged by its stem.
+        path = self.module_qn_to_file_path.get(module_qn)
+        stem = path.stem if path else module_qn.rpartition(cs.SEPARATOR_DOT)[2]
+        return self._go_module_package(module_qn) == package_qn and not (
+            go_utils.is_external_test(
+                self.go_package_names.get(module_qn),
+                stem.endswith(cs.GO_TEST_FILE_SUFFIX),
+            )
+        )
 
     def _go_module_package(self, module_qn: str) -> str:
         return go_utils.file_package_qn(

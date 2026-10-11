@@ -66,6 +66,20 @@ def rel_file(file_path: Path | None, repo_path: Path) -> str:
     return cached_relative_path(file_path, repo_path).as_posix() if file_path else ""
 
 
+def is_test_file(rel_path: str) -> bool:
+    # A `_test.go` file, compiled only under `go test`.
+    return PurePosixPath(rel_path).stem.endswith(cs.GO_TEST_FILE_SUFFIX)
+
+
+def declaration_scope(rel_path: str, package: str) -> str:
+    """The files of `package` (a `package_key`) that see a package-level
+    declaration in its Go file `rel_path`: all of them, or, for one in a
+    `_test.go` file, the test files alone. `go build` compiles none of
+    those, and the go/types helper answers a production file from the plain
+    package, built without them."""
+    return f"{package}{cs.GO_TEST_SCOPE_SUFFIX}" if is_test_file(rel_path) else package
+
+
 def package_key_dir(key: str) -> str:
     return key.rpartition(cs.CHAR_COLON)[0]
 

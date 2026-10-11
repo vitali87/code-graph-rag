@@ -14,7 +14,6 @@ and it never overrules a pair go/types proved.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from pathlib import PurePosixPath
 from typing import NamedTuple
 
 from tree_sitter import Node, Parser
@@ -23,6 +22,7 @@ from ... import constants as cs
 from ...types_defs import PropertyDict
 from ..type_facts import extract_type_facts
 from ..utils import safe_decode_text
+from . import utils as go_utils
 
 # A method's identity in a method set: (package, name). Go qualifies an
 # unexported name with the package declaring it, so `get` of package store
@@ -210,10 +210,23 @@ def _builtin(name: str, shadowed: frozenset[str]) -> str | None:
 def in_package(
     spec: GoMethodSpec, shadows: Mapping[str, frozenset[str]]
 ) -> GoSignature:
-    """`spec`'s signature with the predeclared names its package declares:
-    `shadows` maps a directory to them, a Go package being its directory."""
-    directory = PurePosixPath(spec.file).parent.as_posix()
-    return spec.signature._replace(shadowed=shadows.get(directory, frozenset()))
+    """`spec`'s signature with the predeclared names its package declares."""
+    return spec.signature._replace(
+        shadowed=shadowed_in(spec.file, spec.package, shadows)
+    )
+
+
+def shadowed_in(
+    file: str, package: str, shadows: Mapping[str, frozenset[str]]
+) -> frozenset[str]:
+    """The predeclared names Go file `file` of `package` (a `package_key`)
+    sees its package declare. `shadows` maps a `declaration_scope` to them:
+    a package is its directory and `package` clause, so `p_test` declaring
+    `error` beside `p` leaves p's `error` the predeclared one, and what p's
+    `_test.go` files declare is seen from those files alone."""
+    return shadows.get(package, frozenset()) | shadows.get(
+        go_utils.declaration_scope(file, package), frozenset()
+    )
 
 
 def _type_text(node: Node | None) -> str:

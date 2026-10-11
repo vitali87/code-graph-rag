@@ -318,9 +318,10 @@ class DefinitionProcessor(
         # The declarations (file, line, col) of the types and interfaces
         # those runs compared; a generic one in a checked file was not.
         self.go_compared_types: set[tuple[str, int, int]] = set()
-        # Directory -> the predeclared type names (`int`, `error`) a Go package
-        # there declares itself, refilled by each link (shared with the call
-        # resolver): there the name is the package's own type.
+        # Go package (`dir:clause`, or its test files' scope) -> the
+        # predeclared type names (`int`, `error`) it declares itself, refilled
+        # by each link (shared with the call resolver): there the name is the
+        # package's own type.
         self.go_builtin_shadows: dict[str, frozenset[str]] = {}
         # (rel_file, type_start_line) -> class qn for every ingested C# type,
         # the reverse of the Roslyn fact keys, so partial declaration groups

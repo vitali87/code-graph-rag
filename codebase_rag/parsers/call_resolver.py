@@ -408,8 +408,9 @@ class CallResolver:
         self.go_checked_files = (
             go_checked_files if go_checked_files is not None else set()
         )
-        # Directory -> the predeclared names its Go package declares itself
-        # (shared ref): there `int` may be any type.
+        # Go package (`dir:clause`, or its test files' scope) -> the
+        # predeclared names it declares itself (shared ref): there `int` may
+        # be any type.
         self.go_builtin_shadows = (
             go_builtin_shadows if go_builtin_shadows is not None else {}
         )
