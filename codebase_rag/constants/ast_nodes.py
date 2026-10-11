@@ -501,6 +501,9 @@ TS_BINARY_EXPRESSION = "binary_expression"
 TS_ATTRIBUTE = "attribute"
 
 TS_FUNCTION_SIGNATURE = "function_signature"
+# `declare function f(): void;` wraps its signature the way `export` wraps a
+# declaration in an export_statement (and `export declare` nests both).
+TS_AMBIENT_DECLARATION = "ambient_declaration"
 # Bodiless TS members (issue #2524): an interface's `find(id: string): T;` and a
 # class's `abstract area(): number;`. The same `method_signature` node also
 # spells a class overload signature (the bodied implementation below it is the

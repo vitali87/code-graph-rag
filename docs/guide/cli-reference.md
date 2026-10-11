@@ -56,6 +56,28 @@ Every top-level command, from the CLI's own help registry:
 | `cgr diff-index` | Structural diff between two protobuf index snapshots |
 <!-- /SECTION:cli_commands -->
 
+## Choosing the Project
+
+Indexed projects are named `<dir>__<hash>` (for example `click__d1899da0`),
+so the commands that read or delete one project choose it the same way:
+
+- `-p`/`--project NAME` names it; `cgr status` lists the names.
+- Without it, the project `--repo-path` (default: the current directory) was
+  indexed as. Run from inside an indexed checkout, `cgr dead-code`,
+  `cgr duplicates` and `cgr graph` need no option.
+- `cgr dead-code` and `cgr duplicates`, run outside any indexed checkout with
+  no option, still use the graph's only project when there is just one.
+- `cgr stats` and `cgr export` cover the whole graph unless `--project`,
+  `--repo-path` or `--workspace` scopes them.
+- `cgr delete-project` never defaults to the current directory: it takes
+  `--project`, or an explicit `--repo-path` (`--repo-path .` deletes this
+  repository's project and its local hash cache).
+
+A name or directory that is not indexed is refused with its close matches,
+and with the indexed projects only when nothing is close. The spellings this
+replaced (`-n`/`--project-name`, and `--name` on `delete-project`) still work.
+`cgr start --project-name` is different: it names the project a sync writes.
+
 ## Core Commands
 
 ### `cgr start`
@@ -99,7 +121,7 @@ non-interactively and other projects would be destroyed, or when the existing
 projects cannot be listed, it stops unless `--yes` is given.
 
 `-o` writes only this repository's project, scoped the way
-`cgr export --project-name` scopes it: what the project owns, the
+`cgr export --project` scopes it: what the project owns, the
 relationships that start there, the nodes they reach and the links between
 the resources it holds.
 
@@ -116,12 +138,14 @@ cgr export -o OUTPUT [OPTIONS]
 | Option | Description |
 |------|-----------|
 | `--output`, `-o` | Write the exported graph to PATH. [required] |
-| `--project-name`, `-n` | Export only this project: what it owns, the relationships that start there, the nodes they reach, and the links between the resources it holds (RESOLVES_TO, FLOWS_TO). Repeatable; without it the whole shared graph is exported. |
+| `--project`, `-p` | Export only this project: what it owns, the relationships that start there, the nodes they reach, and the links between the resources it holds (RESOLVES_TO, FLOWS_TO). Repeatable; without it the whole shared graph is exported. |
+| `--repo-path` | Export the project this repository was indexed as, alongside any --project. |
 | `--workspace` | Export only the projects defined in workspace NAME. |
 <!-- /SECTION:cli_options_export -->
 
-A name that is not indexed is an error that lists the projects that are. A
-scoped file records its projects under `metadata.projects`. `--batch-size` and
+A name that is not indexed is an error that names its close matches, or lists
+the indexed projects when none is close. A scoped file records its projects
+under `metadata.projects`. `--batch-size` and
 `--json` are deprecated and ignored with a warning; `--no-json` is an error.
 
 ![cgr export writing the whole graph and one project, then refusing a directory as --output and an unindexed project name](../assets/demos/cli-export.gif)
@@ -161,13 +185,14 @@ cgr stats [OPTIONS]
 <!-- SECTION:cli_options_stats -->
 | Option | Description |
 |------|-----------|
-| `--project-name`, `-n` | Count only this project's nodes and relationships. Repeatable; without it the totals cover every project in the shared graph. |
+| `--project`, `-p` | Count only this project's nodes and relationships. Repeatable; without it the totals cover every project in the shared graph. |
+| `--repo-path` | Count the project this repository was indexed as, alongside any --project. |
 | `--workspace` | Count only the projects defined in workspace NAME. |
 <!-- /SECTION:cli_options_stats -->
 
 A project's count covers its containment tree, what it defines, and the
 relationships that start there. A name that is not indexed is an error that
-lists the projects that are.
+names its close matches, or lists the indexed projects when none is close.
 
 ![cgr stats totals with one line per project, then cgr stats --project-name with a name that is not indexed](../assets/demos/cli-stats.gif)
 
@@ -183,7 +208,8 @@ cgr dead-code [OPTIONS]
 <!-- SECTION:cli_options_dead_code -->
 | Option | Description |
 |------|-----------|
-| `--project-name`, `-n` | Project to scan. If omitted, cgr uses the only indexed project. |
+| `--project`, `-p` | Project to scan (default: the one --repo-path was indexed as; outside any indexed checkout, the only indexed project). |
+| `--repo-path` | Repository whose project to scan when --project is not given (default: the current directory). |
 | `--entry-point`, `-e` | Mark symbols ending with this qualified-name suffix as entry points. Repeatable. |
 | `--decorator-root` | Mark symbols with this decorator as entry points. Extends the built-in set. |
 | `--exclude` | Exclude symbols whose file path matches GLOB. The glob must cover the whole repo-relative path ('\*' spans directories) and be quoted ('tests/\*' for a root-level tests directory, '\*/tests/\*' for nested ones) so the shell cannot expand it first. Repeatable. |
@@ -212,7 +238,8 @@ cgr duplicates [OPTIONS]
 <!-- SECTION:cli_options_duplicates -->
 | Option | Description |
 |------|-----------|
-| `--project-name`, `-n` | Project to scan. If omitted, cgr uses the only indexed project. |
+| `--project`, `-p` | Project to scan (default: the one --repo-path was indexed as; outside any indexed checkout, the only indexed project). |
+| `--repo-path` | Repository whose project to scan when --project is not given (default: the current directory). |
 | `--threshold` | Minimum branch-overlap similarity for a near-duplicate pair, 0-1. [default: 0.8; 0.0&lt;=x&lt;=1.0] |
 | `--min-size` | Minimum skeleton size (tree nodes) for a function to be considered. Filters trivial getters and one-liners. [default: 15; x>=1] |
 | `--exact-only` | Report only identical-fingerprint clone groups; skip similarity scoring. |

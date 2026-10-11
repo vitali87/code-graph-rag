@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from bisect import bisect_left, bisect_right
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
@@ -400,7 +400,7 @@ class ClassIngestMixin:
     pending_type_facts: list[PendingTypeFact]
     pending_parameter_types: list[PendingParameterType]
     pending_field_types: list[PendingFieldType]
-    python_overload_stubs: dict[str, frozenset[int]]
+    folded_overloads: dict[str, frozenset[int]]
 
     def _namespace_qn(self, class_qn: str, module_qn: str) -> str:
         # Strip the module-file prefix so two nodes for the same C++ type in
@@ -2250,8 +2250,9 @@ class ClassIngestMixin:
         self, method_nodes: list[Node], module_qn: str | None
     ) -> list[Node]:
         # The implementation after an `@overload` stub owns the method's
-        # name; the stub is no method of its own (issue #2590).
-        stubs = self.python_overload_stubs.get(module_qn or "")
+        # name; the stub is no method of its own (issue #2590), nor is a TS
+        # namespace member's overload signature (issue #2457).
+        stubs = self.folded_overloads.get(module_qn or "")
         if not stubs:
             return method_nodes
         return [node for node in method_nodes if node.start_byte not in stubs]
@@ -2700,7 +2701,9 @@ class ClassIngestMixin:
             else cs.SEPARATOR_DOT.join([self.project_name, *parts])
         )
 
-    def process_all_method_overrides(self) -> None:
+    def process_all_method_overrides(self, module_qns: Collection[str] = ()) -> None:
+        # Every module the graph holds, read-back ones included: a C++ type
+        # name is looked up by its path within its module (issue #2455).
         mo.process_all_method_overrides(
             self.function_registry,
             self.class_inheritance,
@@ -2710,6 +2713,7 @@ class ClassIngestMixin:
             self.csharp_override_methods,
             self.rust_impl_method_traits,
             self.rust_inherent_impl_methods,
+            module_qns={*self.module_qn_to_file_path, *module_qns},
         )
         self._resolve_java_anon_overrides()
 

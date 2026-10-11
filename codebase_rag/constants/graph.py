@@ -790,6 +790,14 @@ KEY_PARAM_TYPES = "param_types"
 # is spelled. `param_types` cannot say it, since `String args[]` and a scalar
 # `String arg` both record `String` (issue #2527). Set only when true.
 KEY_IS_JAVA_MAIN = "is_java_main"
+# A C++ member's overload identity, `(int,double) const` (issue #2455): what
+# tells `Sep.g` from `Sep.g@4`, and what an incremental run reads back so a
+# re-parsed out-of-class definition lands on the overload it defines.
+KEY_SIGNATURE = "signature"
+# True on a C++ member whose declaration was read from its class body. An
+# incremental run restores only these as declarations: a member known only
+# from its definition is re-read with that definition, not paired with it.
+KEY_DECLARED_IN_CLASS = "declared_in_class"
 # A C# extension method's index entry (`static string Describe(this Box b)`):
 # the receiver type a `b.Describe()` call binds against, the declaring
 # namespace, and the receiver's written generic arity (`this Builder<T>` ->
@@ -1153,6 +1161,7 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.modifiers AS modifiers, n.decorators AS decorators, "
     "n.return_type AS return_type, n.param_types AS param_types, "
     "n.namespace AS namespace, n.is_object_member AS is_object_member, "
+    "n.signature AS signature, n.declared_in_class AS declared_in_class, "
     "n.generic_arity AS generic_arity, "
     "n.is_exported AS is_exported, "
     "n.extension_receiver AS extension_receiver, "

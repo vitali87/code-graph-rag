@@ -218,7 +218,8 @@ EXAMPLES_INDEX = "EXAMPLE\n\n  cgr index --repo-path ./my-repo -o ./index-out"
 EXAMPLES_EXPORT = (
     "EXAMPLES\n\n"
     "  cgr export -o graph.json\n\n"
-    "  cgr export -o my-project.json --project-name my-project\n\n"
+    "  cgr export -o my-project.json --project my-project\n\n"
+    "  cgr export -o this-repo.json --repo-path .\n\n"
     "  cgr export -o shop.json --workspace shop"
 )
 EXAMPLES_OPTIMIZE = "EXAMPLE\n\n  cgr optimize python --repo-path ./my-repo"
@@ -231,11 +232,12 @@ EXAMPLES_LANGUAGE_REMOVE = "EXAMPLE\n\n  cgr language remove-language ruby"
 EXAMPLES_STATS = (
     "EXAMPLES\n\n"
     "  cgr stats\n\n"
-    "  cgr stats --project-name my-project\n\n"
+    "  cgr stats --project my-project\n\n"
+    "  cgr stats --repo-path .\n\n"
     "  cgr stats --workspace my-workspace"
 )
 EXAMPLES_DEAD_CODE = (
-    "EXAMPLE\n\n  cgr dead-code --project-name my-project --format json"
+    "EXAMPLES\n\n  cgr dead-code\n\n  cgr dead-code --project my-project --format json"
 )
 # `cgr dead-code --help` states which symbols are roots: with public symbols
 # among them, a clean report on an application can just mean every function
@@ -254,7 +256,8 @@ DESC_DEAD_CODE = (
 )
 EXAMPLES_DUPLICATES = (
     "EXAMPLES\n\n"
-    "  cgr duplicates --project-name my-project\n\n"
+    "  cgr duplicates\n\n"
+    "  cgr duplicates --project my-project\n\n"
     "  cgr duplicates --threshold 0.9 --format json --fail-on-found"
 )
 # `cgr duplicates --help` spells out what a group is: its count drives
@@ -272,7 +275,11 @@ DESC_DUPLICATES = (
     "Members of a similar group that are exact copies of each other share a "
     "number in the Exact column (exact_subgroups in JSON)."
 )
-EXAMPLES_DELETE_PROJECT = "EXAMPLE\n\n  cgr delete-project --name my-project"
+EXAMPLES_DELETE_PROJECT = (
+    "EXAMPLES\n\n"
+    "  cgr delete-project --project my-project\n\n"
+    "  cgr delete-project --repo-path ."
+)
 EXAMPLES_HELP = "EXAMPLES\n\n  cgr help start\n\n  cgr help daemon logs"
 
 EPILOG_LANGUAGE = "Run 'cgr help language COMMAND' for command-specific help."
@@ -462,13 +469,16 @@ HELP_OUTPUT_GRAPH = (
     "--update-graph. Use cgr export for the whole shared graph."
 )
 HELP_OUTPUT_PATH = "Write the exported graph to PATH."
-HELP_EXPORT_PROJECT_NAME = (
+HELP_EXPORT_PROJECT = (
     "Export only this project: what it owns, the relationships that start "
     "there, the nodes they reach, and the links between the resources it "
     "holds (RESOLVES_TO, FLOWS_TO). Repeatable; without it the whole shared "
     "graph is exported."
 )
 HELP_EXPORT_WORKSPACE = "Export only the projects defined in workspace NAME."
+HELP_EXPORT_REPO_PATH = (
+    "Export the project this repository was indexed as, alongside any --project."
+)
 HELP_OUTPUT_PROTO_DIR = "Write protobuf index files under DIRECTORY."
 HELP_SPLIT_INDEX = "Write separate nodes.bin and relationships.bin files."
 HELP_LANGUAGE_ARG = "Language to optimise, such as python, java, javascript, or cpp."
@@ -528,13 +538,23 @@ HELP_MCP_WORKSPACE = (
     "MCP_WORKSPACE environment variable."
 )
 
-HELP_STATS_PROJECT_NAME = (
+HELP_STATS_PROJECT = (
     "Count only this project's nodes and relationships. Repeatable; without it "
     "the totals cover every project in the shared graph."
 )
 HELP_STATS_WORKSPACE = "Count only the projects defined in workspace NAME."
-HELP_DEADCODE_PROJECT_NAME = (
-    "Project to scan. If omitted, cgr uses the only indexed project."
+HELP_STATS_REPO_PATH = (
+    "Count the project this repository was indexed as, alongside any --project."
+)
+# `dead-code` and `duplicates` choose their project as `cgr graph` does
+# (issue #2415).
+HELP_SCAN_PROJECT = (
+    "Project to scan (default: the one --repo-path was indexed as; outside "
+    "any indexed checkout, the only indexed project)."
+)
+HELP_SCAN_REPO_PATH = (
+    "Repository whose project to scan when --project is not given "
+    "(default: the current directory)."
 )
 HELP_DEADCODE_ENTRY_POINT = (
     "Mark symbols ending with this qualified-name suffix as entry points. Repeatable."
@@ -582,9 +602,6 @@ HELP_DEADCODE_PUBLIC_ROOTS = (
     "stay roots, having no call graph."
 )
 
-HELP_DUPLICATES_PROJECT_NAME = (
-    "Project to scan. If omitted, cgr uses the only indexed project."
-)
 HELP_DUPLICATES_THRESHOLD = (
     "Minimum branch-overlap similarity for a near-duplicate pair, 0-1."
 )
@@ -611,9 +628,10 @@ HELP_DUPLICATES_OPEN = (
     "(CGR_EDITOR picks the editor; CGR_DIFF_COMMAND overrides the command)."
 )
 
-HELP_DELETE_PROJECT_NAME = "Project name to delete from the graph."
+HELP_DELETE_PROJECT = "Project to delete from the graph."
 HELP_DELETE_PROJECT_REPO_PATH = (
-    "Optional repo path. If set, the local hash cache is removed too."
+    "Repository whose project to delete when --project is not given. Its "
+    "local hash cache is removed too."
 )
 HELP_COMMAND = "Command path to document, such as 'start' or 'daemon logs'."
 

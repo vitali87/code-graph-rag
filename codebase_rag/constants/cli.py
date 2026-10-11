@@ -77,11 +77,8 @@ CLI_ERR_OUTPUT_PARENT_NOT_DIR = (
 CLI_ERR_OUTPUT_NOT_WRITABLE = "Error: --output cannot be written here: {target}"
 # `cgr export` scope and retired options (issue #2410).
 CLI_EXPORT_SCOPE = "Scoped to: {projects}"
-CLI_ERR_EXPORT_UNKNOWN_PROJECTS = (
-    "Not indexed: {missing}. Indexed projects: {projects}."
-)
 CLI_ERR_EXPORT_EMPTY_SCOPE = (
-    "Error: --project-name/--workspace named no project. "
+    "Error: --project/--workspace named no project. "
     "Leave both out to export the whole graph."
 )
 CLI_WARN_EXPORT_BATCH_SIZE = (
@@ -147,6 +144,13 @@ CLI_OPT_ASK_AGENT = "--ask-agent"
 CLI_OPT_OUTPUT_FORMAT_JSON = "--output-format json"
 CLI_OPT_NO_SYNC = "--no-sync"
 CLI_OPT_PROJECTS = "--projects"
+# The spellings `--project` replaced on the commands that read or delete one
+# project (issue #2415); still accepted, hidden from --help.
+CLI_OPT_PROJECT_NAME = "--project-name"
+CLI_OPT_NAME = "--name"
+CLI_ERR_PROJECT_GIVEN_TWICE = (
+    "--project {project} and {alias} {other} name different projects; pass one."
+)
 
 CLI_MSG_UPDATING_GRAPH = "Updating knowledge graph for: {path}"
 CLI_MSG_SYNCING_GRAPH = "Syncing knowledge graph for: {path} (use --no-sync to skip)"
@@ -226,11 +230,9 @@ CLI_ERR_CLEAN_UNKNOWN_PROJECTS = (
 CLI_MSG_CLEAN_ABORTED = "Aborted: the graph was left untouched."
 CLI_MSG_DELETING_PROJECT = "Deleting project '{project_name}' from the graph..."
 CLI_MSG_PROJECT_DELETED = "Project '{project_name}' deleted successfully."
-CLI_ERR_PROJECT_NOT_FOUND = (
-    "Project '{project_name}' not found. Available projects: {projects}"
-)
+# Deleting never defaults to the current directory (issue #2415).
 CLI_ERR_PROJECT_NAME_REQUIRED = (
-    "Error: --name is required and must be a non-empty project name."
+    "Error: name the project with --project, or pass --repo-path."
 )
 CLI_ERR_DELETE_PROJECT_FAILED = "Failed to delete project '{project_name}': {error}"
 CLI_MSG_EXPORTING_TO = "Exporting project '{project}' to: {path}"
@@ -285,15 +287,16 @@ CLI_STATS_PER_PROJECT_TITLE = "Per project:"
 CLI_STATS_PER_PROJECT_ROW = (
     "  {project}: {nodes:,} nodes / {relationships:,} relationships"
 )
-CLI_ERR_STATS_UNKNOWN_PROJECTS = "Not indexed: {missing}. Indexed projects: {projects}."
+# A `cgr stats`/`cgr export` scope naming projects the graph does not hold.
+CLI_ERR_PROJECTS_NOT_INDEXED = "Not indexed: {missing}."
 CLI_ERR_STATS_EMPTY_WORKSPACE = (
     "Workspace '{name}' has no repositories, so there is nothing to count. Add "
     "one with `cgr workspace add-repo {name} PATH`, or leave out --workspace to "
     "count every project."
 )
 CLI_ERR_STATS_EMPTY_PROJECT_NAME = (
-    "--project-name was given without a project name. Name a project, or leave "
-    "out -n to count every project."
+    "--project was given without a project name. Name a project, or leave "
+    "out -p to count every project."
 )
 # `cgr check` (issue #1525).
 CHECK_GIT_FAILED = "Cannot diff the working tree against {base}: {error}"
@@ -361,15 +364,6 @@ CLI_DEADCODE_STRUCTURAL_TIER_SKIPPED = (
     "(no call graph for these languages)."
 )
 CLI_ERR_DEADCODE_FAILED = "Failed to scan for dead code: {error}"
-CLI_ERR_DEADCODE_NO_PROJECTS = (
-    "No projects found in the graph. Index a repository first with 'cgr start'."
-)
-CLI_ERR_DEADCODE_AMBIGUOUS_PROJECT = (
-    "Multiple projects found: {projects}. Specify which one with --project-name/-n."
-)
-CLI_ERR_DEADCODE_UNKNOWN_PROJECT = (
-    "Project '{project}' is not indexed. Indexed projects: {projects}."
-)
 
 CLI_DUPLICATES_CONNECTING = "Scanning for structurally duplicated functions..."
 CLI_DUPLICATES_TABLE_TITLE = "Duplicate Code Groups ({project_name})"
@@ -402,12 +396,10 @@ CLI_DUPLICATES_TRUNCATED_NOTICE = (
     "be missing. Raise --threshold or --min-size to narrow the scan."
 )
 CLI_ERR_DUPLICATES_FAILED = "Failed to scan for duplicates: {error}"
-CLI_ERR_DUPLICATES_UNKNOWN_PROJECT = (
-    "Project '{project}' is not indexed. Indexed projects: {projects}."
-)
 
 # `cgr graph` refuses a project or a name the graph does not hold (issue
-# #2461). Both used to answer `[]` with exit 0, the same as "exists, nothing
+# #2461); every command that reads one project refuses it the same way
+# (issue #2415). Both used to answer `[]` with exit 0, the same as "exists, nothing
 # matches", and scripts and agents act on that answer: a function nobody
 # calls is safe to delete, a change no test reaches needs no test run. The
 # statuses sit above click's 1 (error) and 2 (usage) so a caller can tell

@@ -60,11 +60,13 @@ cgr dead-code
 
 *Recorded on psf/requests.*
 
-If a single project is indexed it is used automatically. When several are
-indexed, name one:
+Run from inside an indexed checkout, it reads that checkout's project (the
+one `--repo-path`, default the current directory, was indexed as). Outside
+any indexed checkout it uses the graph's only project; when there are
+several, name one (see [Choosing the Project](cli-reference.md#choosing-the-project)):
 
 ```bash
-cgr dead-code --project-name my-project
+cgr dead-code --project my-project
 ```
 
 ## Declaring Entry Points
