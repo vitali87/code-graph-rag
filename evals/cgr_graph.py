@@ -1518,6 +1518,12 @@ class _StatefulIngestor:
                         cs.KEY_IS_OBJECT_MEMBER: bool(
                             props.get(cs.KEY_IS_OBJECT_MEMBER)
                         ),
+                        cs.KEY_SIGNATURE: _text(props[cs.KEY_SIGNATURE])
+                        if cs.KEY_SIGNATURE in props
+                        else None,
+                        cs.KEY_DECLARED_IN_CLASS: bool(
+                            props.get(cs.KEY_DECLARED_IN_CLASS)
+                        ),
                         cs.KEY_GENERIC_ARITY: _int(props.get(cs.KEY_GENERIC_ARITY)),
                         cs.KEY_IS_EXPORTED: bool(props[cs.KEY_IS_EXPORTED])
                         if cs.KEY_IS_EXPORTED in props

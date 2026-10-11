@@ -21,9 +21,11 @@ from collections.abc import Iterator, Mapping
 from tree_sitter import Node
 
 from ... import constants as cs
-from ...types_defs import FunctionLocation, FunctionSpanKey
+from ...function_registry import FunctionRegistryTrie
+from ...types_defs import FunctionLocation, FunctionSpanKey, NodeType
 from ..utils import function_span_key, safe_decode_text
 from . import utils as cpp_utils
+from .overloads import cpp_overload_signature
 
 _CALLABLE_TYPES = frozenset(
     {cs.CppNodeType.FUNCTION_DEFINITION, cs.TS_CPP_LAMBDA_EXPRESSION}
@@ -43,6 +45,24 @@ _NON_LOCAL_SCOPE_TYPES = frozenset(
 _FILE_SCOPE_CONTAINER_TYPES = (
     _NON_LOCAL_SCOPE_TYPES | cs.CPP_DECLARATION_CONTAINER_TYPES
 )
+# Nodes a named class body can sit in, at file, namespace or class scope.
+_CLASS_SCOPE_CONTAINER_TYPES = _FILE_SCOPE_CONTAINER_TYPES | {
+    cs.CppNodeType.DECLARATION,
+    cs.CppNodeType.FIELD_DECLARATION,
+    cs.CppNodeType.TYPE_DEFINITION,
+}
+# The class-body nodes the class pass registers a member function from, and
+# the ones it looks through for more.
+_MEMBER_TYPES = frozenset(
+    {
+        cs.CppNodeType.FIELD_DECLARATION,
+        cs.CppNodeType.DECLARATION,
+        cs.CppNodeType.FUNCTION_DEFINITION,
+    }
+)
+_MEMBER_CONTAINER_TYPES = cs.CPP_DECLARATION_CONTAINER_TYPES | {
+    cs.CppNodeType.FRIEND_DECLARATION
+}
 _POSITIONAL_NAME_RE = re.compile(rf"{re.escape(cs.PREFIX_ANONYMOUS)}\d+_\d+")
 
 
@@ -147,11 +167,13 @@ def callable_anchor_qn(
     """The qn a local type of `callable_node` is named under.
 
     An out-of-line method (`int Widget::run() {...}`) is named from what is
-    written, the file's namespaces plus `Widget.run`: its node binds to the
-    class only once every file is parsed, and a header parsed later would
-    otherwise give the same source two names across runs. Any other callable
-    uses the qn the definition pass registered for it, a duplicate marker
-    included (`over@29`), so each overload's local types stay its own.
+    written, the file's namespaces plus `Widget.run`, and the marker of the
+    overload it defines (`Widget.run@8`): its node binds to the class only
+    once every file is parsed, and a header parsed later would otherwise give
+    the same source two names across runs. With its class in the same file,
+    that is the very qn of its Method node. Any other callable uses the qn
+    the definition pass registered for it, a duplicate marker included
+    (`over@29`), so each overload's local types stay its own.
     """
     if cpp_utils.is_out_of_class_method_definition(callable_node):
         if (written := _out_of_class_written_name(callable_node)) is None:
@@ -177,11 +199,12 @@ def _out_of_class_written_name(callable_node: Node) -> str | None:
 
 def _overload_marker(callable_node: Node) -> str:
     # Out-of-class overloads (`Widget::run(int)`, `Widget::run(double)`)
-    # share the written name, so each later one carries the registry's
-    # duplicate marker for its own position, `@<line>`, as a function
-    # overload's qn does (`over@4`). Its local types then stay its own in
-    # both the definition and the call pass (#2631 re-review). Read from the
-    # file alone, so a header parsed later cannot move it between runs.
+    # share the written name, so each carries the marker of the Method node
+    # it defines (#2455): none for the overload its class body declares
+    # first, `@<line>` of its declaration for another (`run@8`). Its local
+    # types then hang off that node's name and stay its own in both the
+    # definition and the call pass (#2631 re-review). Read from the file
+    # alone, so a header parsed later cannot move it between runs.
     root = callable_node
     while root.parent is not None:
         root = root.parent
@@ -191,24 +214,167 @@ def _overload_marker(callable_node: Node) -> str:
 @functools.lru_cache(maxsize=16)
 def _overload_markers(root: Node) -> dict[int, str]:
     # One pass over the file's declarations, reopened namespace blocks
-    # included: start byte -> marker for each out-of-class definition after
-    # the first of its namespace-qualified written name. Cached per file, as
-    # every callable in it asks.
-    claimed: dict[str, list[int]] = {}
-    markers: dict[int, str] = {}
+    # included: start byte -> marker for each out-of-class definition whose
+    # node is not the plain-named one. Cached per file, as every callable in
+    # it asks.
+    by_name: dict[str, list[Node]] = {}
     for definition in _out_of_class_definitions(root):
-        if (written := _out_of_class_written_name(definition)) is None:
-            continue
-        key = cpp_utils.build_qualified_name(definition, "", written)
-        line, col = definition.start_point
-        earlier = claimed.setdefault(key, [])
-        if earlier:
-            marker = f"{cs.DUP_QN_MARKER}{line + 1}"
-            if line in earlier:
-                marker = f"{marker}{cs.DUP_QN_COLUMN_MARKER}{col}"
-            markers[definition.start_byte] = marker
-        earlier.append(line)
+        if (written := _out_of_class_written_name(definition)) is not None:
+            key = cpp_utils.build_qualified_name(definition, "", written)
+            by_name.setdefault(key, []).append(definition)
+    bodies = _class_bodies(root) if by_name else {}
+    markers: dict[int, str] = {}
+    for key, definitions in by_name.items():
+        class_key, _, method_name = key.rpartition(cs.SEPARATOR_DOT)
+        members = _members_named(bodies.get(class_key), method_name)
+        if members or len(definitions) > 1:
+            markers.update(_definition_markers(method_name, members, definitions))
     return markers
+
+
+def _definition_markers(
+    method_name: str, members: list[Node], definitions: list[Node]
+) -> dict[int, str]:
+    """Each definition's marker: the one the registry gives the Method node it
+    defines when this file is all it has read.
+
+    The class body's members register first, as the class pass registers
+    them, then the definitions, as the deferred out-of-class pass does, so a
+    definition lands on the overload its class declares (`run@8`, after the
+    declaration's line) in whatever order the file defines them. With the
+    class in another file, the first definition keeps the plain name and
+    each other one takes `@<its line>`. A name already anchoring a body here
+    (an inline overload's, or another definition's of the same signature)
+    gives way to `@<its line>`, so two bodies' local types never share one.
+    """
+    registry = FunctionRegistryTrie()
+    taken: set[str] = set()
+    for member in members:
+        registered = _register_overload(registry, method_name, member, in_class=True)
+        if _has_body(member):
+            taken.add(registered)
+    markers: dict[int, str] = {}
+    for definition in definitions:
+        registered = _register_overload(
+            registry, method_name, definition, in_class=False
+        )
+        if registered in taken:
+            registered = _position_name(method_name, definition, taken)
+        taken.add(registered)
+        if marker := registered[len(method_name) :]:
+            markers[definition.start_byte] = marker
+    return markers
+
+
+def _register_overload(
+    registry: FunctionRegistryTrie, natural: str, node: Node, *, in_class: bool
+) -> str:
+    # What the class pass (`in_class`) or the deferred out-of-class pass
+    # registers for `node`: the plain name when its parameter list cannot be
+    # read, as both passes keep it.
+    signature = cpp_overload_signature(node)
+    registered = (
+        natural
+        if signature is None
+        else registry.register_overload_qn(
+            natural,
+            signature,
+            node.start_point[0] + 1,
+            node.start_point[1],
+            declared_in_class=in_class,
+        )
+    )
+    registry[registered] = NodeType.METHOD
+    return registered
+
+
+def _position_name(natural: str, definition: Node, taken: set[str]) -> str:
+    line, col = definition.start_point
+    name = f"{natural}{cs.DUP_QN_MARKER}{line + 1}"
+    if name in taken:
+        name = f"{name}{cs.DUP_QN_COLUMN_MARKER}{col}"
+    return name
+
+
+def _class_bodies(root: Node) -> dict[str, Node]:
+    # The bodies of the file's classes, nested ones included, under the key
+    # an out-of-class definition's class takes in `_overload_markers`
+    # (`.ui.Widget`); the first of two bodies with one key wins. Never into
+    # a function body: no out-of-class definition names a class written there.
+    bodies: dict[str, Node] = {}
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        children = node.named_children
+        if node.type in _MEMBER_BEARING_TYPES:
+            body = node.child_by_field_name(cs.FIELD_BODY)
+            path = _class_path(node)
+            if body is None or path is None:
+                continue
+            bodies.setdefault(cpp_utils.build_qualified_name(node, "", path), body)
+            children = body.named_children
+        elif node.type not in _CLASS_SCOPE_CONTAINER_TYPES:
+            continue
+        stack.extend(reversed(children))
+    return bodies
+
+
+def _class_path(type_node: Node) -> str | None:
+    # `Outer.Inner` for `Inner` written in `Outer`'s body; None when it or a
+    # class around it has no name.
+    names: list[str] = []
+    current: Node | None = type_node
+    while current is not None and current.type not in _NON_LOCAL_SCOPE_TYPES:
+        if current.type in _MEMBER_BEARING_TYPES:
+            if (name := _written_name(current)) is None:
+                return None
+            names.append(name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT))
+        current = current.parent
+    return cs.SEPARATOR_DOT.join(reversed(names))
+
+
+def _members_named(body: Node | None, method_name: str) -> list[Node]:
+    # The members a class body declares or defines as `method_name`, in
+    # source order: the nodes the class pass registers for it, a friend
+    # included, and a member template definition at its `template` line.
+    if body is None:
+        return []
+    members: list[Node] = []
+    stack = list(reversed(body.named_children))
+    while stack:
+        node = stack.pop()
+        if _is_member(node):
+            if _member_name(node) == method_name:
+                members.append(node)
+        elif node.type in _MEMBER_CONTAINER_TYPES:
+            stack.extend(reversed(node.named_children))
+    return members
+
+
+def _is_member(node: Node) -> bool:
+    if node.type == cs.CppNodeType.TEMPLATE_DECLARATION:
+        return _template_definition(node)
+    return node.type in _MEMBER_TYPES
+
+
+def _template_definition(node: Node) -> bool:
+    return any(
+        child.type == cs.CppNodeType.FUNCTION_DEFINITION
+        for child in node.named_children
+    )
+
+
+def _member_name(node: Node) -> str | None:
+    if cpp_utils.is_macro_invocation_artifact(node):
+        return None
+    return cpp_utils.extract_function_name(node)
+
+
+def _has_body(member: Node) -> bool:
+    return (
+        member.type == cs.CppNodeType.TEMPLATE_DECLARATION
+        or member.child_by_field_name(cs.FIELD_BODY) is not None
+    )
 
 
 def _out_of_class_definitions(root: Node) -> Iterator[Node]:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Collection
+from functools import partial
 from itertools import chain
 from typing import TYPE_CHECKING
 
@@ -8,8 +10,24 @@ from loguru import logger
 
 from ... import constants as cs
 from ... import logs
-from ...types_defs import NodeType
+from ...types_defs import NodeType, OverloadSignature
 from ...utils import qn_markers
+from ...utils.cpp_signatures import (
+    ClassLookups,
+    parameter_types_may_match,
+    pick_overload,
+)
+
+# The graph's type nodes. Every one but a Type alias is a distinct type.
+_TYPE_KINDS = frozenset(
+    {
+        NodeType.CLASS,
+        NodeType.TYPE,
+        NodeType.ENUM,
+        NodeType.UNION,
+        NodeType.INTERFACE,
+    }
+)
 
 if TYPE_CHECKING:
     from ...services import IngestorProtocol
@@ -25,10 +43,12 @@ def process_all_method_overrides(
     csharp_override_methods: set[str] | None = None,
     impl_method_traits: dict[str, str] | None = None,
     inherent_impl_methods: set[str] | None = None,
+    module_qns: Collection[str] = (),
 ) -> None:
     logger.info(logs.CLASS_PASS_4)
 
     implemented_interfaces = _invert_implementers(interface_implementers or {})
+    type_scopes = TypeScopes(function_registry, module_qns)
     for method_qn in function_registry.keys():
         if function_registry[method_qn] != NodeType.METHOD:
             continue
@@ -64,6 +84,7 @@ def process_all_method_overrides(
             implemented_interfaces,
             csharp_methods,
             csharp_override_methods,
+            type_scopes,
         )
     _process_mro_shadow_overrides(function_registry, class_inheritance, ingestor)
 
@@ -317,10 +338,149 @@ def _csharp_override_gated(
     return csharp_override_methods is None or method_qn not in csharp_override_methods
 
 
+def _signed_base_overloads(
+    parent_class: str,
+    method_name: str,
+    function_registry: FunctionRegistryTrieProtocol,
+) -> list[tuple[str, OverloadSignature]] | None:
+    """The base's C++ overloads of this name with their signatures.
+
+    Base overloads are one node each (issue #2455), and a lookup by name finds
+    only the plain-named one, whatever its signature: `f(double) override`
+    would land on `f(int)`, and an override named `f@13` would find nothing.
+    None when there is nothing to choose by signature (no such member, or a
+    graph written before signatures were stored), so the name lookup decides
+    as it always did.
+    """
+    natural = (
+        f"{parent_class}{cs.SEPARATOR_DOT}{qn_markers.strip_dup_marker(method_name)}"
+    )
+    overloads: list[tuple[str, OverloadSignature]] = []
+    for candidate in function_registry.variants(natural):
+        if function_registry.get(candidate) != NodeType.METHOD:
+            continue
+        known = function_registry.overload_signature(candidate)
+        if known is None:
+            return None
+        overloads.append((candidate, known))
+    return overloads or None
+
+
+class TypeScopes:
+    """Where a C++ parameter's type name is looked up, whatever file holds it.
+
+    A qualified name starts with the module of the file that declares it
+    (`proj.types.h.lib.Foo`), but C++ finds `Foo` by namespace, wherever the
+    header is: a member of `lib::Derived` in derived.h names `lib::Foo` from
+    types.h by its namespace path `lib.Foo`. So every type the graph holds is
+    indexed by that path, once, on first use (issue #2455).
+    """
+
+    def __init__(
+        self,
+        function_registry: FunctionRegistryTrieProtocol,
+        module_qns: Collection[str],
+    ) -> None:
+        self._registry = function_registry
+        self._module_qns = frozenset(module_qns)
+        self._kinds: dict[str, set[NodeType]] | None = None
+
+    def namespace_path(self, qualified_name: str) -> str:
+        # The qn without its module: the longest prefix naming a module. A
+        # qn under no known module is kept whole, so it is at least
+        # consistent with the other qns of its file.
+        candidate = qualified_name
+        while cs.SEPARATOR_DOT in candidate:
+            candidate = candidate.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            if candidate in self._module_qns:
+                return qualified_name[len(candidate) + 1 :]
+        return qualified_name
+
+    def is_class(self, name: str, class_qn: str) -> bool:
+        """Whether `name`, written in a member of `class_qn`, names a class.
+
+        Looked up from the class outward through each enclosing scope, as
+        C++ does, and the innermost declaration decides: a class (or enum or
+        union) there is no typedef, and a name found nowhere, or found as a
+        Type alias, might be one. A class of the same name in an unrelated
+        namespace is never on that path, so it decides nothing.
+        """
+        kinds_by_path = self._type_kinds()
+        dotted = name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
+        scope = self.namespace_path(class_qn)
+        while True:
+            path = f"{scope}{cs.SEPARATOR_DOT}{dotted}" if scope else dotted
+            if (kinds := kinds_by_path.get(path)) is not None:
+                return NodeType.TYPE not in kinds
+            if not scope:
+                return False
+            scope = scope.rpartition(cs.SEPARATOR_DOT)[0]
+
+    def _type_kinds(self) -> dict[str, set[NodeType]]:
+        if self._kinds is None:
+            self._kinds = {}
+            for qualified_name, kind in self._registry.items():
+                if kind in _TYPE_KINDS:
+                    self._kinds.setdefault(
+                        self.namespace_path(qualified_name), set()
+                    ).add(kind)
+        return self._kinds
+
+
+def _overridden_overload(
+    signature: OverloadSignature,
+    overloads: list[tuple[str, OverloadSignature]],
+    base_class: str,
+    derived_class: str,
+    type_scopes: TypeScopes,
+) -> str | None:
+    """The base overload `signature` overrides, if the types allow it at all.
+
+    `pick_overload` settles a respelling by arity when nothing closer
+    matches, which pairs a definition with its declaration because C++ makes
+    a definition define a declared member. A derived member has no such
+    duty: `f(double)` beside a lone base `f(int)` hides it. So a pick that is
+    not verbatim stands only when the types could be one through a typedef,
+    each side's names read in its own class's scope.
+    """
+    picked = pick_overload(signature, overloads)
+    if picked is None:
+        return None
+    known = dict(overloads)[picked]
+    classes = ClassLookups(
+        left=partial(type_scopes.is_class, class_qn=base_class),
+        right=partial(type_scopes.is_class, class_qn=derived_class),
+    )
+    if known.text == signature.text or parameter_types_may_match(
+        known.text, signature.text, classes
+    ):
+        return picked
+    return None
+
+
 def _parent_method_qn(
-    parent_class: str, method_name: str, function_registry: FunctionRegistryTrieProtocol
+    parent_class: str,
+    method_name: str,
+    function_registry: FunctionRegistryTrieProtocol,
+    signature: OverloadSignature | None = None,
+    class_qn: str = "",
+    type_scopes: TypeScopes | None = None,
 ) -> str | None:
     """The METHOD on `parent_class` an override of `method_name` would target."""
+    if signature is not None and (
+        overloads := _signed_base_overloads(
+            parent_class, method_name, function_registry
+        )
+    ):
+        # No settled match is no edge: the plain-named overload is not a
+        # default, it is whichever one happened to be seen first.
+        return _overridden_overload(
+            signature,
+            overloads,
+            parent_class,
+            class_qn,
+            type_scopes or TypeScopes(function_registry, ()),
+        )
     parent_method_qn = f"{parent_class}.{method_name}"
     if parent_method_qn not in function_registry:
         # Fall back to name+arity so a generic type-var rename in the override
@@ -348,6 +508,7 @@ def check_method_overrides(
     implemented_interfaces: dict[str, list[str]] | None = None,
     csharp_methods: set[str] | None = None,
     csharp_override_methods: set[str] | None = None,
+    type_scopes: TypeScopes | None = None,
 ) -> None:
     implemented = implemented_interfaces or {}
     if class_qn not in class_inheritance and class_qn not in implemented:
@@ -362,12 +523,20 @@ def check_method_overrides(
 
     queue = deque([class_qn])
     visited = {class_qn}
+    signature = function_registry.overload_signature(method_qn)
 
     while queue:
         current_class = queue.popleft()
 
         parent_method_qn = (
-            _parent_method_qn(current_class, method_name, function_registry)
+            _parent_method_qn(
+                current_class,
+                method_name,
+                function_registry,
+                signature,
+                class_qn,
+                type_scopes,
+            )
             if current_class != class_qn
             else None
         )
