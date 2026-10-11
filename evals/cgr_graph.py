@@ -305,6 +305,11 @@ _CSHARP_RANKING_KEYS = (
 )
 
 
+def _csharp_ranking_columns(props: dict[str, PropertyValue]) -> ResultRow:
+    # The read-back's C# ranking columns, each as stored or None.
+    return {key: _result(props.get(key)) for key in _CSHARP_RANKING_KEYS}
+
+
 def _int(value: PropertyValue) -> int | None:
     # start_line / end_line are always integral; narrow the general
     # PropertyValue (whose list[str] member clashes with ResultValue) to the
@@ -1487,8 +1492,7 @@ class _StatefulIngestor:
                             props.get(cs.KEY_IS_OBJECT_MEMBER)
                         ),
                     }
-                    for key in _CSHARP_RANKING_KEYS:
-                        row[key] = _result(props.get(key))
+                    row.update(_csharp_ranking_columns(props))
                     defs.append(row)
                 return defs
             case cs.CYPHER_PROJECT_PARAMETER_TYPES:
