@@ -889,17 +889,20 @@ namespace P;
 public class Plain {
     public void Run() { }
     public void Take(int a, string b) { }
-    public void Maybe(int? a) { }
+    public void Maybe(string? a) { }
     public void Many(params object[] xs) { }
 }
 """
             },
         )
         plain = f"{PROJECT}.Plain.P.Plain"
+        # A nullable reference type is only an annotation, so its `?` stays
+        # out of the name; a nullable VALUE type is its own type, `F(int?)`
+        # (see test_csharp_overload_applicability.py).
         assert {
             f"{plain}.Run",
             f"{plain}.Take(int, string)",
-            f"{plain}.Maybe(int)",
+            f"{plain}.Maybe(string)",
             f"{plain}.Many(object[])",
         } <= _method_qns(mock_ingestor)
 

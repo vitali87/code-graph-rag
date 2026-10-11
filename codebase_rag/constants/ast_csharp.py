@@ -551,3 +551,49 @@ CSHARP_JUDGED_PARAM_TYPES: frozenset[str] = frozenset().union(
 )
 CSHARP_SYSTEM_PREFIX = "System."
 CSHARP_NULLABLE_SUFFIX = "?"
+# Each C# predefined type keyword and the framework type it names, so
+# `Target<System.Int32>` closes `Target<int>`.
+CSHARP_PREDEFINED_TYPE_NAMES: dict[str, str] = {
+    "bool": "Boolean",
+    "byte": "Byte",
+    "sbyte": "SByte",
+    "char": "Char",
+    "decimal": "Decimal",
+    "double": "Double",
+    "float": "Single",
+    "int": "Int32",
+    "uint": "UInt32",
+    "nint": "IntPtr",
+    "nuint": "UIntPtr",
+    "long": "Int64",
+    "ulong": "UInt64",
+    "short": "Int16",
+    "ushort": "UInt16",
+    "object": "Object",
+    "string": "String",
+}
+# Value types a signature can tell from their nullable form: `F(int)` and
+# `F(int?)` are two overloads, since `int?` is `Nullable<int>`, where a `?`
+# on a reference type is only an annotation. A first-party struct is not
+# known to be one when its declaring file is parsed, so it is not listed.
+CSHARP_NULLABLE_VALUE_TYPES = frozenset(
+    {
+        *(
+            keyword
+            for keyword, framework in CSHARP_PREDEFINED_TYPE_NAMES.items()
+            if framework not in {"Object", "String"}
+        ),
+        *(
+            framework
+            for framework in CSHARP_PREDEFINED_TYPE_NAMES.values()
+            if framework not in {"Object", "String"}
+        ),
+        "DateTime",
+        "DateTimeOffset",
+        "DateOnly",
+        "TimeOnly",
+        "TimeSpan",
+        "Guid",
+        "Half",
+    }
+)

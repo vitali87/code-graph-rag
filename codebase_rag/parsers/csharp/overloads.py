@@ -188,7 +188,9 @@ def _literal_fit(parameter: str, literal: str) -> Fit | None:
         return Fit.OTHER
     if plain not in cs.CSHARP_LITERAL_ACCEPTS[literal]:
         return None
-    return Fit.EXACT if plain == literal else Fit.CONVERTIBLE
+    # `int?` takes an int through a nullable conversion, which `int` beats.
+    nullable = parameter.strip().endswith(cs.CSHARP_NULLABLE_SUFFIX)
+    return Fit.EXACT if plain == literal and not nullable else Fit.CONVERTIBLE
 
 
 def _same_type_fit(
@@ -227,11 +229,21 @@ def _qualified_apart(argument_name: str, parameter: str) -> bool:
     return longer[-len(shorter) :] != shorter
 
 
+def _framework_name(name: str) -> str:
+    # `int` and `Int32` are one type: the framework name stands for both.
+    return cs.CSHARP_PREDEFINED_TYPE_NAMES.get(name, name)
+
+
 def same_type(given: str, wanted: str) -> bool:
-    """Whether two written types name one type: `Target<int>` twice, or
-    `Lib.Person` and `Person`; never `Target<int>` and `Target<string>`, nor
-    `A.Widget` and `B.Widget`."""
-    if _simple_name(given) != _simple_name(wanted) or _qualified_apart(given, wanted):
+    """Whether two written types name one type: `Target<int>` twice,
+    `Lib.Person` and `Person`, or `System.Int32` and `int` (PR 2814 review);
+    never `Target<int>` and `Target<string>`, nor `A.Widget` and
+    `B.Widget`."""
+    name = _framework_name(_simple_name(given))
+    if name != _framework_name(_simple_name(wanted)):
+        return False
+    predefined = name in cs.CSHARP_PREDEFINED_TYPE_NAMES.values()
+    if not predefined and _qualified_apart(given, wanted):
         return False
     given_arguments, wanted_arguments = type_arguments(given), type_arguments(wanted)
     return len(given_arguments) == len(wanted_arguments) and all(

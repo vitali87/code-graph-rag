@@ -198,8 +198,10 @@ def signature_type_name(text: str) -> str:
     Generic arguments are kept, because `Validate(Ctx<T>)` and
     `Validate(Ctx)` are two overloads and erasing them made the second a
     line-suffixed duplicate of the first (issue #2619). They get one
-    canonical spacing so two spellings of a type name one overload, and a
-    trailing nullable `?` is dropped as the type maps drop it.
+    canonical spacing so two spellings of a type name one overload. A
+    trailing nullable `?` is dropped as the type maps drop it, except on a
+    known value type: `int?` is `Nullable<int>`, so `F(int)` and `F(int?)`
+    are two overloads (CodeRabbit, PR 2814).
     """
     collapsed = cs.CHAR_SPACE.join(text.split())
     out: list[str] = []
@@ -215,7 +217,22 @@ def signature_type_name(text: str) -> str:
         out.append(char)
         if char == cs.CHAR_COMMA and depth:
             out.append(cs.CHAR_SPACE)
-    return "".join(out).strip().rstrip(cs.CHAR_QUESTION_MARK)
+    spelled = "".join(out).strip()
+    underlying = spelled.rstrip(cs.CHAR_QUESTION_MARK)
+    if underlying != spelled and _is_nullable_value_type(underlying):
+        return f"{underlying}{cs.CSHARP_NULLABLE_SUFFIX}"
+    return underlying
+
+
+def _is_nullable_value_type(underlying: str) -> bool:
+    # A value tuple (`(int, string)?`) or a known value type, however
+    # qualified (`System.Int32?`).
+    if underlying.startswith(cs.CHAR_PAREN_OPEN):
+        return True
+    return (
+        underlying.removeprefix(cs.CSHARP_SYSTEM_PREFIX)
+        in cs.CSHARP_NULLABLE_VALUE_TYPES
+    )
 
 
 def _drops_signature_space(out: list[str], following: str, depth: int) -> bool:

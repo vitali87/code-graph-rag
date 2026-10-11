@@ -614,3 +614,140 @@ class TestAConversionResolvesWhereItsOperatorIsDeclared:
         )
         assert {c for c in fresh if c[0] == "None"} == {("None", "Demo", "M(object)")}
         assert edited == fresh
+
+
+ALIASED_CONVERSION_CS = """\
+namespace Al;
+public class Target<X> { }
+public class Source { public static implicit operator Target<System.Int32>(Source s) => null; }
+public class Ints { public void M(Target<int> t) { } public void M(object o) { } }
+public class Strs { public void M(Target<string> t) { } public void M(object o) { } }
+public class Use {
+    public void Aliased() { new Ints().M(new Source()); }
+    public void Other() { new Strs().M(new Source()); }
+}
+"""
+
+
+class TestAPredefinedTypeIsItsAlias:
+    # Greptile review of PR 2814: `System.Int32` is `int`.
+    def test_a_closing_spelled_with_the_framework_name_still_applies(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _calls(ALIASED_CONVERSION_CS, temp_repo, mock_ingestor)
+        assert calls["Aliased"] == {"Al.Ints.M(Target<int>)"}, calls
+
+    def test_another_predefined_type_is_still_another_closing(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Negative: `Int32` is not `string`.
+        calls = _calls(ALIASED_CONVERSION_CS, temp_repo, mock_ingestor)
+        assert calls["Other"] == {"Al.Strs.M(object)"}, calls
+
+
+BASE_CONVERSION_CS = """\
+namespace Bs;
+public class Base<X> { }
+public class Mid<U> : Base<U> { }
+public class Derived : Base<int> { }
+public class Deep : Mid<int> { }
+public class Source { public static implicit operator Derived(Source s) => null; }
+public class Further { public static implicit operator Deep(Further f) => null; }
+public class Ints { public void M(Base<int> b) { } public void M(object o) { } }
+public class Strs { public void M(Base<string> b) { } public void M(object o) { } }
+public class Use {
+    public void Direct() { new Ints().M(new Source()); }
+    public void Chained() { new Ints().M(new Further()); }
+    public void Other() { new Strs().M(new Source()); }
+}
+"""
+
+
+class TestAConversionClosesTheBasesItsTargetDerivesFrom:
+    # Greptile review of PR 2814: `Derived : Base<int>` is a `Base<int>`,
+    # whatever its own (empty) type-argument list says.
+    def test_the_targets_base_list_closes_the_parameter(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _calls(BASE_CONVERSION_CS, temp_repo, mock_ingestor)
+        assert calls["Direct"] == {"Bs.Ints.M(Base<int>)"}, calls
+        # Through `Mid<U> : Base<U>` with U := int.
+        assert calls["Chained"] == {"Bs.Ints.M(Base<int>)"}, calls
+
+    def test_a_base_closed_otherwise_still_does_not_apply(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Negative: a `Base<int>` is no `Base<string>`.
+        calls = _calls(BASE_CONVERSION_CS, temp_repo, mock_ingestor)
+        assert calls["Other"] == {"Bs.Strs.M(object)"}, calls
+
+
+NULLABLE_CS = """\
+namespace Nu;
+public class C {
+    public void F(int x) { }
+    public void F(int? x) { }
+    public void H(string? s) { }
+}
+public class Use { public void Run() { var c = new C(); c.F(1); } }
+"""
+
+
+class TestANullableValueTypeIsItsOwnParameterType:
+    # CodeRabbit review of PR 2814: `int?` is `Nullable<int>`, so `F(int)`
+    # and `F(int?)` are two overloads, not one name and a line marker.
+    def test_each_overload_has_its_own_name(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _calls(NULLABLE_CS, temp_repo, mock_ingestor)
+        methods = {
+            c.args[1][cs.KEY_QUALIFIED_NAME].split(f"{PROJECT}.F.", 1)[1]
+            for c in mock_ingestor.ensure_node_batch.call_args_list
+            if c.args[0] == cs.NodeLabel.METHOD
+        }
+        assert {"Nu.C.F(int)", "Nu.C.F(int?)"} <= methods, methods
+        # An int binds the identity, not the nullable conversion.
+        assert calls["Run"] == {"Nu.C.F(int)"}, calls
+
+    def test_a_nullable_reference_type_keeps_its_plain_name(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Negative: `string?` is an annotation on `string`, not a type.
+        _calls(NULLABLE_CS, temp_repo, mock_ingestor)
+        methods = {
+            c.args[1][cs.KEY_QUALIFIED_NAME].split(f"{PROJECT}.F.", 1)[1]
+            for c in mock_ingestor.ensure_node_batch.call_args_list
+            if c.args[0] == cs.NodeLabel.METHOD
+        }
+        assert "Nu.C.H(string)" in methods, methods
+
+
+EXTENSION_ORDER_CS = """\
+namespace Ex;
+public class C { public int Foo(int value = 0) => value; public int Bar() => 0; }
+public static class CExt {
+    public static int Foo(this C c) => 1;
+    public static int Bar(this C c, int x) => 2;
+}
+public class Use {
+    public void Defaulted() { var c = new C(); c.Foo(); }
+    public void Extended() { var c = new C(); c.Bar(1); }
+}
+"""
+
+
+class TestAnApplicableInstanceMethodBeatsAnExtension:
+    # CodeRabbit review of PR 2814: C# looks at extension methods only once
+    # no instance member applies, defaulted parameters included.
+    def test_a_defaulted_instance_method_takes_the_call(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _calls(EXTENSION_ORDER_CS, temp_repo, mock_ingestor)
+        assert calls["Defaulted"] == {"Ex.C.Foo(int)"}, calls
+
+    def test_an_extension_still_beats_an_instance_method_that_cannot_apply(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Negative: `C.Bar()` takes no argument, so the extension binds.
+        calls = _calls(EXTENSION_ORDER_CS, temp_repo, mock_ingestor)
+        assert calls["Extended"] == {"Ex.CExt.Bar(C, int)"}, calls

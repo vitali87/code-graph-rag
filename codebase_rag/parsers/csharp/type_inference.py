@@ -663,12 +663,20 @@ class CSharpTypeInferenceEngine:
             caller_qn,
         )
         # Resolution order matters: an EXACT-ARITY instance method wins, then
-        # an (always arity-exact) extension method, and only then the instance
-        # name-only fallback. Trying the name-only fallback before extensions
-        # would bind `c.Foo(1)` to a lone `C.Foo()` and never reach the
-        # arity-correct `static Foo(this C, int)` extension.
+        # one that takes the arguments through defaults or a `params` tail
+        # (C# looks at extensions only once no instance member applies, so
+        # `c.Foo()` binds `C.Foo(int value = 0)` over `Foo(this C)`;
+        # CodeRabbit, PR 2814), then an (always arity-exact) extension
+        # method, and only then the instance name-only fallback. Trying the
+        # name-only fallback before extensions would bind `c.Foo(1)` to a
+        # lone `C.Foo()` and never reach the arity-correct
+        # `static Foo(this C, int)` extension.
         if arity_target := self._arity_member_target(member_call, receiver_class_qn):
             return arity_target
+        if compatible_target := self._compatible_member_target(
+            member_call, receiver_class_qn
+        ):
+            return compatible_target
         # An extension method (`static M(this T x, ...)` on an unrelated static
         # class) whose `this` receiver type matches the call's receiver; the
         # only path that binds `x.M()` to a method not in x's hierarchy.
@@ -715,11 +723,11 @@ class CSharpTypeInferenceEngine:
         # `entry.Callback()` is Delegate.Invoke, not a call to the property.
         return self._method_or_property_target(arity_hit)
 
-    def _fallback_member_target(
+    def _compatible_member_target(
         self, member_call: _MemberCall, receiver_class_qn: str | None
     ) -> tuple[str, str] | None:
-        """The receiver's class member a call binds to once neither an
-        exact-arity method nor an extension method took it."""
+        """The receiver's class member that takes a call no overload's
+        arity matches, through defaulted parameters or a `params` tail."""
         if receiver_class_qn is None:
             return None
         # A call that leaves defaulted parameters out (`v.ValidateAsync(p)`
@@ -731,6 +739,15 @@ class CSharpTypeInferenceEngine:
             member_call, receiver_class_qn, compatible=True
         ):
             return self._method_or_property_target(defaulted_hit)
+        return None
+
+    def _fallback_member_target(
+        self, member_call: _MemberCall, receiver_class_qn: str | None
+    ) -> tuple[str, str] | None:
+        """The receiver's class member a call binds to by name alone, once no
+        instance overload applies and no extension method took it."""
+        if receiver_class_qn is None:
+            return None
         if name_hit := self._find_name_across_parts(
             receiver_class_qn, member_call.method_name
         ):
@@ -2395,7 +2412,9 @@ class CSharpTypeInferenceEngine:
                     or param_qn not in self._class_ancestry(target_qn)
                 ):
                     continue
-                closing = self._same_closing(target, param_name, declaring)
+                closing = self._same_closing(
+                    (target, target_qn), (param_name, param_qn), declaring
+                )
                 if closing:
                     return True
                 if closing is None:
@@ -2403,24 +2422,51 @@ class CSharpTypeInferenceEngine:
         return verdict
 
     def _same_closing(
-        self, target: str, param_name: str, declaring: str
+        self, target: tuple[str, str], parameter: tuple[str, str], declaring: str
     ) -> bool | None:
-        # Whether an operator's written target is closed as the parameter:
-        # True when the parameter spells no type arguments (it is not
-        # generic, or still open), None when the target's arguments name the
+        # Whether an operator's target, as written and as resolved, closes
+        # the parameter's class as the parameter does. True when the
+        # parameter spells no type arguments (it is not generic, or still
+        # open); None when that closing cannot be told, or names the
         # declaring type's own parameters, which only its use closes.
+        param_name, param_qn = parameter
         wanted = type_arguments(param_name)
         if not wanted:
             return True
-        given = type_arguments(target)
+        given = self._closing_through(target, param_qn)
         shape = self.csharp_generic_shapes.get(declaring)
-        if shape is not None and any(
-            mentioned_names(argument) & set(shape.parameters) for argument in given
-        ):
+        owned = set(shape.parameters) if shape is not None else set()
+        if given is None or any(mentioned_names(a) & owned for a in given):
             return None
         return len(given) == len(wanted) and all(
             same_type(g, w) for g, w in zip(given, wanted, strict=True)
         )
+
+    def _closing_through(
+        self, target: tuple[str, str], param_qn: str
+    ) -> tuple[str, ...] | None:
+        # The type arguments a target type passes `param_qn`'s parameters:
+        # its own written ones when it is that class, otherwise what its base
+        # lists pass down (`Derived : Base<int>`, or `Deep : Mid<int>` with
+        # `Mid<U> : Base<U>`; PR 2814 review). None when one is not bound.
+        written, target_qn = target
+        shape = self.csharp_generic_shapes.get(target_qn)
+        parameters = shape.parameters if shape is not None else ()
+        arguments = type_arguments(written)
+        bindings = (
+            dict(zip(parameters, arguments, strict=True))
+            if len(parameters) == len(arguments)
+            else {}
+        )
+        for current, bound, _open in self._typed_hierarchy(target_qn, bindings):
+            if current != param_qn:
+                continue
+            base = self.csharp_generic_shapes.get(current)
+            closed = base.parameters if base is not None else ()
+            if not all(p in bound for p in closed):
+                return None
+            return tuple(bound[p] for p in closed)
+        return None
 
     def _declaring_module(self, type_qn: str, fallback: str) -> str:
         # The module whose file declares `type_qn`, the scope its written
