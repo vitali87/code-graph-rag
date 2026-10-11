@@ -254,8 +254,9 @@ EXCLUSION_STATE_PROJECTS_KEY = "projects"
 # Recorded edit transactions for `cgr edits show|undo` (issue #1528).
 EDIT_HISTORY_FILENAME = ".cgr-edit-history.json"
 EDIT_LOCK_FILENAME = ".cgr-edit-lock"
-# The ids of edit history entries taken from the tree or undone, which are
-# never added from a history in the tree again (issue #2427).
+# The ids of edit history entries taken from the tree, or that left the
+# history (undone or aged out), which are never added from a history in the
+# tree again (issue #2427).
 EDIT_HISTORY_LEDGER_FILENAME = ".cgr-edit-history-ledger.json"
 PLATFORM_WINDOWS = "win32"
 # Permission bits copied onto a replacement file (rwx for u/g/o, setuid etc.).

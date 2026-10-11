@@ -273,15 +273,33 @@ class EditHistoryPending(OSError):
         self.reason = reason
 
 
-def settle_history_ids(repo_path: Path, ids: Iterable[str]) -> None:
-    """Record that the entries `ids` must never be added from the tree again.
+class TreeLockUnavailable(OSError):
+    """The lock an older cgr left in the tree is there but cannot be taken.
 
-    Called for an entry being undone, with the edit lock held: a copy of it
-    left in the tree, or put back there by git, would otherwise bring the
-    undone edit back.
+    An edit refuses to go ahead without it, since that cgr may hold it.
     """
-    directory = state_dir(repo_path)
-    _settle(directory, _settled_ids(directory), ids)
+
+    def __init__(self, path: Path, error: OSError) -> None:
+        super().__init__(
+            ls.CHECKOUT_STATE_TREE_LOCK_UNAVAILABLE.format(path=path, error=error)
+        )
+
+
+def write_history(repo_path: Path, entries: list[dict]) -> None:
+    """Write the checkout's edit history: the last EDIT_HISTORY_LIMIT `entries`.
+
+    The one writer of the history, called with the edit lock held. Every
+    entry it leaves out that the history held, aged out past the limit or
+    undone, is settled first (`_settle`): a copy of it in the tree must
+    never bring it back. A ledger that cannot be written then leaves the
+    history as it was, never shortened with those ids unsettled.
+    """
+    directory = prepare_state_dir(repo_path, adopt=False)
+    target = directory / cs.EDIT_HISTORY_FILENAME
+    kept = entries[-cs.EDIT_HISTORY_LIMIT :]
+    dropped = (_recorded_ids(target) | _ids_of(entries)) - _ids_of(kept)
+    _settle(directory, dropped)
+    _write_json(target, kept)
 
 
 def _adopt_history_unless_editing(repo_path: Path) -> None:
@@ -319,9 +337,10 @@ def _adopt_history(repo_path: Path, directory: Path) -> None:
     history moved records its entries in a history at the root again: a
     new one, one `git` put back (a commit tracked it), or one left behind
     because removing it failed. So whatever is there is added entry by
-    entry, skipping every entry ever taken from the tree before or undone
-    since (`settle_history_ids`) as well as those the history holds: an
-    undone edit never comes back, and nothing is added twice.
+    entry, skipping every entry ever taken from the tree before, or that
+    left the history since (undone or aged out, see `write_history`), as
+    well as those the history holds: an edit that left it never comes
+    back, and nothing is added twice.
 
     Only what cgr wrote is taken (`_history_entries`, `_is_undoable`). A
     tree copy that is not a history is removed; an entry undo could not
@@ -348,8 +367,7 @@ def _adopt_history(repo_path: Path, directory: Path) -> None:
                 target,
                 ls.CHECKOUT_STATE_HISTORY_NOT_CGRS.format(target=target),
             )
-        settled = _settled_ids(directory)
-        known = settled | {entry[cs.EDIT_KEY_ID] for entry in kept}
+        known = _settled_ids(directory) | {entry[cs.EDIT_KEY_ID] for entry in kept}
         root = repo_path.resolve()
         added = [
             entry
@@ -357,7 +375,7 @@ def _adopt_history(repo_path: Path, directory: Path) -> None:
             if entry[cs.EDIT_KEY_ID] not in known and _is_undoable(entry, root)
         ]
         if added:
-            _write_history(target, [*kept, *added])
+            write_history(repo_path, [*kept, *added])
             logger.info(
                 ls.CHECKOUT_STATE_HISTORY_MERGED,
                 count=len(added),
@@ -366,7 +384,7 @@ def _adopt_history(repo_path: Path, directory: Path) -> None:
             )
         # After the write, never before: an id settled for an entry that
         # did not land would keep it out for good.
-        _settle(directory, settled, (entry[cs.EDIT_KEY_ID] for entry in recorded))
+        _settle(directory, (entry[cs.EDIT_KEY_ID] for entry in recorded))
     except EditHistoryPending:
         raise
     except OSError as error:
@@ -476,14 +494,31 @@ def _settled_ids(directory: Path) -> set[str]:
     return {tx_id for tx_id in data if isinstance(tx_id, str)}
 
 
-def _settle(directory: Path, settled: set[str], ids: Iterable[str]) -> None:
+def _settle(directory: Path, ids: Iterable[str]) -> None:
+    # Read now, not earlier: a write of the history in between may have
+    # settled the ids it dropped.
+    settled = _settled_ids(directory)
     updated = settled | {tx_id for tx_id in ids if tx_id}
     if updated != settled:
         _write_json(directory / cs.EDIT_HISTORY_LEDGER_FILENAME, sorted(updated))
 
 
-def _write_history(target: Path, entries: list[dict]) -> None:
-    _write_json(target, entries[-cs.EDIT_HISTORY_LIMIT :])
+def _recorded_ids(target: Path) -> set[str]:
+    """The ids the history at `target` holds now, as far as it can be read."""
+    try:
+        data = json.loads(target.read_text(encoding=cs.ENCODING_UTF8))
+    except (FileNotFoundError, ValueError, RecursionError):
+        return set()
+    return _ids_of(data) if isinstance(data, list) else set()
+
+
+def _ids_of(entries: list[dict] | list[JsonValue]) -> set[str]:
+    return {
+        tx_id
+        for entry in entries
+        if isinstance(entry, dict)
+        and isinstance(tx_id := entry.get(cs.EDIT_KEY_ID), str)
+    }
 
 
 def _write_json(target: Path, data: list[dict] | list[str]) -> None:
@@ -558,15 +593,20 @@ def _open_tree_lock(repo_path: Path) -> IO[bytes] | None:
 
     Opened for reading, never created: a tree no older cgr edited gets no
     lock file. Only a regular file is cgr's; a link or a FIFO by that name
-    is neither followed nor opened.
+    is neither followed nor opened. None means only that there is no such
+    file; one that is there but cannot be opened raises TreeLockUnavailable.
     """
     path = repo_path / cs.EDIT_LOCK_FILENAME
     if not _is_regular(path):
         return None
     try:
         return path.open("rb")
-    except OSError:
+    except FileNotFoundError:
         return None
+    except OSError as error:
+        # It is there, and the older cgr may hold it: going on without it
+        # would let both edit at once.
+        raise TreeLockUnavailable(path, error) from error
 
 
 class EditLock:
@@ -645,12 +685,21 @@ class EditLock:
         return True
 
     def _take_tree_lock(self, *, wait: bool) -> bool:
-        """Take the older cgr's lock if it is there; False if it is busy."""
+        """Take the older cgr's lock if it is there; False if it is busy.
+
+        Raises TreeLockUnavailable when it is there but cannot be taken.
+        """
         handle = _open_tree_lock(self._repo_path)
         if handle is None:
             return True
         self._held.enter_context(handle)
-        if not self._take(handle, wait=wait):
+        try:
+            taken = self._take(handle, wait=wait)
+        except OSError as error:
+            raise TreeLockUnavailable(
+                self._repo_path / cs.EDIT_LOCK_FILENAME, error
+            ) from error
+        if not taken:
             return False
         self._in_tree = True
         return True

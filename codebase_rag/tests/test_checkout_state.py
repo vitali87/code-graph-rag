@@ -27,6 +27,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import IO
 from unittest.mock import MagicMock
 
 import pytest
@@ -1267,15 +1268,15 @@ def test_an_edit_waits_for_an_older_cgrs_history_that_could_not_be_added(
     # newer one, and undo reversed the wrong edit.
     kept = _an_upgraded_edit(repo)
     _an_older_cgr_edits(repo, "pkg/util.py", _UTIL_BY_AN_OLDER_CGR, "older-cgr")
-    real_write = checkout_state._write_history
+    real_write = checkout_state.write_history
     failures = [OSError(errno.ENOSPC, "No space left on device")]
 
-    def write_once_failing(target: Path, entries: list[dict]) -> None:
+    def write_once_failing(repo_path: Path, entries: list[dict]) -> None:
         if failures:
             raise failures.pop()
-        real_write(target, entries)
+        real_write(repo_path, entries)
 
-    monkeypatch.setattr(checkout_state, "_write_history", write_once_failing)
+    monkeypatch.setattr(checkout_state, "write_history", write_once_failing)
     tx = EditTransaction(repo)
     tx.stage("pkg/__init__.py", "VERSION = 2\n")
 
@@ -1288,6 +1289,119 @@ def test_an_edit_waits_for_an_older_cgrs_history_that_could_not_be_added(
     retry.stage("pkg/__init__.py", "VERSION = 2\n")
     assert retry.commit().applied
     assert _ids(repo) == [kept, "older-cgr", retry.transaction_id]
+
+
+def _commit_util(repo: Path, text: str) -> str:
+    tx = EditTransaction(repo)
+    tx.stage("pkg/util.py", f"def helper():\n    {text}\n")
+    assert tx.commit().applied
+    return tx.transaction_id
+
+
+def test_an_entry_aged_out_of_the_history_is_not_added_back_from_the_tree(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # CodeRabbit, PR #3344: the oldest entry dropped past the limit was not
+    # settled, so a copy of the history in the tree that still held it put
+    # it back as the newest entry.
+    monkeypatch.setattr(cs, "EDIT_HISTORY_LIMIT", 2)
+    aged = _commit_util(repo, "return 2")
+    copy = (state_dir(repo) / cs.EDIT_HISTORY_FILENAME).read_bytes()
+    _commit_util(repo, "return 3")
+    _commit_util(repo, "return 4")
+    (repo / cs.EDIT_HISTORY_FILENAME).write_bytes(copy)
+
+    prepare_state_dir(repo)
+
+    assert aged not in _ids(repo)
+
+
+def test_an_entry_aged_out_while_adding_an_older_cgrs_is_not_added_back(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cs, "EDIT_HISTORY_LIMIT", 2)
+    aged = _commit_util(repo, "return 2")
+    copy = (state_dir(repo) / cs.EDIT_HISTORY_FILENAME).read_bytes()
+    _an_upgraded_edit(repo)
+    _an_older_cgr_edits(repo, "pkg/__init__.py", "VERSION = 2\n", "older-cgr")
+    prepare_state_dir(repo)
+    (repo / cs.EDIT_HISTORY_FILENAME).write_bytes(copy)
+
+    prepare_state_dir(repo)
+
+    assert aged not in _ids(repo)
+
+
+def test_entries_within_the_history_limit_are_neither_dropped_nor_settled(
+    repo: Path,
+) -> None:
+    # Negative: below the limit, nothing leaves the history and no id is
+    # recorded as settled.
+    ids = [_commit_util(repo, "return 2"), _commit_util(repo, "return 3")]
+
+    assert _ids(repo) == ids
+    assert not (state_dir(repo) / cs.EDIT_HISTORY_LEDGER_FILENAME).exists()
+
+
+def _tree_lock_cannot_be_opened(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    lock = repo / cs.EDIT_LOCK_FILENAME
+    lock.touch()
+    real_open = Path.open
+
+    def refusing(path: Path, *args: str, **kwargs: str) -> IO:
+        if path == lock:
+            raise PermissionError(errno.EACCES, "Permission denied")
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", refusing)
+
+
+def test_an_edit_stops_when_an_older_cgrs_lock_cannot_be_opened(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # CodeRabbit, PR #3344: a tree lock that is there but could not be
+    # opened was taken for no lock at all, so the edit ran beside an older
+    # cgr that may hold it.
+    _tree_lock_cannot_be_opened(repo, monkeypatch)
+    tx = EditTransaction(repo)
+    tx.stage("pkg/util.py", "def helper():\n    return 2\n")
+
+    with pytest.raises(OSError, match=cs.EDIT_LOCK_FILENAME):
+        tx.commit()
+    assert (repo / "pkg" / "util.py").read_text() == SOURCES["pkg/util.py"]
+    assert load_history(repo) == []
+
+
+def test_an_undo_stops_when_an_older_cgrs_lock_cannot_be_opened(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    edited = _commit_util(repo, "return 2")
+    _tree_lock_cannot_be_opened(repo, monkeypatch)
+
+    with pytest.raises(OSError, match=cs.EDIT_LOCK_FILENAME):
+        undo_last(repo)
+    assert _ids(repo) == [edited]
+
+
+def test_a_tree_lock_gone_before_it_is_opened_counts_as_none(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Negative: only a lock that is there stops an edit. One removed between
+    # the check and the open is no lock, as is none at all.
+    lock = repo / cs.EDIT_LOCK_FILENAME
+    lock.touch()
+    real_open = Path.open
+
+    def removed_first(path: Path, *args: str, **kwargs: str) -> IO:
+        if path == lock:
+            lock.unlink()
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", removed_first)
+    tx = EditTransaction(repo)
+    tx.stage("pkg/util.py", "def helper():\n    return 2\n")
+
+    assert tx.commit().applied
 
 
 def test_migrating_a_history_already_added_adds_nothing(repo: Path) -> None:
