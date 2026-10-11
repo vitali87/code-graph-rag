@@ -765,6 +765,7 @@ class CSharpTypeInferenceEngine:
         "_call_memo",
         "_overload_families",
         "_typing_initializers",
+        "_methods_by_name",
     )
 
     def __init__(
@@ -823,6 +824,9 @@ class CSharpTypeInferenceEngine:
         # rather than recomputed: the memo may answer the call node long
         # after the ranking ran for it as a chained receiver.
         self._overload_families: dict[tuple[str, str | None, int, int], list[str]] = {}
+        # class qn -> method name -> the methods the class itself declares
+        # under that name, in registry order; see `_direct_same_name_methods`.
+        self._methods_by_name: dict[str, dict[str, tuple[str, ...]]] = {}
         self.import_processor = import_processor
         self.function_registry = function_registry
         self.repo_path = repo_path
@@ -4483,9 +4487,23 @@ class CSharpTypeInferenceEngine:
                 return resolved
         return None
 
+    def reset_member_index(self) -> None:
+        # Read off the registry, so it expires when a re-parse changes that.
+        self._methods_by_name.clear()
+
     def _direct_same_name_methods(self, class_qn: str, method_name: str) -> list[str]:
+        # Every bare call asked this, and answering it enumerated every member
+        # of the class through the registry trie before filtering on the
+        # name, so a class's calls cost O(calls x members) (issue #2453). The
+        # class is enumerated once per pass and grouped by name instead.
+        by_name = self._methods_by_name.get(class_qn)
+        if by_name is None:
+            by_name = self._methods_by_name[class_qn] = self._index_methods(class_qn)
+        return list(by_name.get(method_name, ()))
+
+    def _index_methods(self, class_qn: str) -> dict[str, tuple[str, ...]]:
         prefix = f"{class_qn}{cs.SEPARATOR_DOT}"
-        matches: list[str] = []
+        grouped: dict[str, list[str]] = {}
         for qn, node_type in self.function_registry.find_with_prefix(class_qn):
             if node_type != NodeType.METHOD or not qn.startswith(prefix):
                 continue
@@ -4493,10 +4511,10 @@ class CSharpTypeInferenceEngine:
             base = leaf.split(cs.CHAR_PAREN_OPEN, 1)[0]
             # Directly on this class only (a nested class's method has an extra
             # dot in its name portion).
-            if cs.SEPARATOR_DOT in base or base != method_name:
+            if cs.SEPARATOR_DOT in base:
                 continue
-            matches.append(qn)
-        return matches
+            grouped.setdefault(base, []).append(qn)
+        return {name: tuple(qns) for name, qns in grouped.items()}
 
     def _find_method_by_arity(
         self, class_qn: str, method_name: str, arg_count: int, seen: set[str]
