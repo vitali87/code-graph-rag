@@ -306,21 +306,26 @@ def member_qn_leaf(member_node: Node) -> str | None:
     return f"{name}{signature}"
 
 
-def _generic_base(node: Node) -> CSharpGenericBase | None:
-    # A base list entry that passes type arguments, else None: a plain base
-    # binds no parameter. A qualified base carries them on its last segment,
-    # a record's positional base on its type.
-    if node.type in (
+def _base_type_name(node: Node | None) -> Node | None:
+    # The name a base list entry writes its type arguments on: a qualified
+    # base's last segment, a record's positional base's type.
+    while node is not None and node.type in (
         cs.TS_CSHARP_QUALIFIED_NAME,
         cs.TS_CSHARP_PRIMARY_CONSTRUCTOR_BASE_TYPE,
     ):
-        inner = (
+        node = (
             node.child_by_field_name(cs.FIELD_NAME)
             if node.type == cs.TS_CSHARP_QUALIFIED_NAME
             else next(iter(node.named_children), None)
         )
-        return _generic_base(inner) if inner is not None else None
-    if node.type != cs.TS_CSHARP_GENERIC_NAME:
+    return node
+
+
+def _generic_base(entry: Node) -> CSharpGenericBase | None:
+    # A base list entry that passes type arguments, else None: a plain base
+    # binds no parameter.
+    node = _base_type_name(entry)
+    if node is None or node.type != cs.TS_CSHARP_GENERIC_NAME:
         return None
     name_node = next(
         (c for c in node.children if c.type == cs.TS_CSHARP_IDENTIFIER), None

@@ -720,19 +720,9 @@ def check_method_overrides(
             )
             return
 
-        # Superclasses first: when both a base class and an interface declare
-        # the method, the edge lands on the base, matching Java resolution.
-        # chain() instead of list concat: this runs per BFS node per method.
-        fresh = [
-            parent_class_qn
-            for parent_class_qn in dict.fromkeys(
-                chain(
-                    class_inheritance.get(current_class, ()),
-                    implemented.get(current_class, ()),
-                )
-            )
-            if parent_class_qn not in visited
-        ]
+        fresh = _unvisited_parents(
+            current_class, class_inheritance, implemented, visited
+        )
         visited.update(fresh)
         queue.extend(fresh)
         _bind_fresh_ancestors(
@@ -741,6 +731,27 @@ def check_method_overrides(
             fresh,
             bindings_of,
         )
+
+
+def _unvisited_parents(
+    current_class: str,
+    class_inheritance: Mapping[str, list[str]],
+    implemented: Mapping[str, list[str]],
+    visited: set[str],
+) -> list[str]:
+    # Superclasses first: when both a base class and an interface declare
+    # the method, the edge lands on the base, matching Java resolution.
+    # chain() instead of list concat: this runs per BFS node per method.
+    return [
+        parent_class_qn
+        for parent_class_qn in dict.fromkeys(
+            chain(
+                class_inheritance.get(current_class, ()),
+                implemented.get(current_class, ()),
+            )
+        )
+        if parent_class_qn not in visited
+    ]
 
 
 def _bind_fresh_ancestors(

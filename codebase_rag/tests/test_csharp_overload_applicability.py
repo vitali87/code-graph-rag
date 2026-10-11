@@ -1171,6 +1171,38 @@ class TestALiteralConvertsThroughAUserDefinedOperator:
         assert calls[caller] == {expected}, calls
 
 
+TYPED_VALUE_CS = """\
+namespace Tv;
+public class Target { public static implicit operator Target(long l) => null; }
+public class Box<T> { public static implicit operator T(Box<T> value) => default; }
+public class C {
+    public void M(long l) { } public void M(Target t) { }
+    public void N(int i) { } public void N(object o) { }
+}
+public class Use {
+    public void Local() { int k = 1; new C().M(k); }
+    public void Unwrapped() { new C().N(new Box<int>()); }
+}
+"""
+
+
+class TestATypedValueConvertsAsCSharpRanksIt:
+    # Greptile review of PR 2814: an int converts to long by a standard
+    # conversion and to Target only through it, so long is the better
+    # target; and `Box<T>`'s `operator T(Box<T>)` gives a Box<int> an int.
+    def test_a_typed_int_binds_long_over_the_user_defined_target(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _calls(TYPED_VALUE_CS, temp_repo, mock_ingestor)
+        assert calls["Local"] == {"Tv.C.M(long)"}, calls
+
+    def test_a_generic_operator_gives_its_bound_type_argument(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _calls(TYPED_VALUE_CS, temp_repo, mock_ingestor)
+        assert calls["Unwrapped"] == {"Tv.C.N(int)"}, calls
+
+
 VARIANCE_LIB_CS = """\
 namespace App;
 public interface IBox<out X> { }
@@ -2232,6 +2264,87 @@ INVARIANT_CASES: dict[str, _Case] = {
         f"public class C {{ public void M(long l) {{ }} {_PAIR} }}",
         _use("new C().M(new Money());"),
         frozenset({"C.M(long)", "C.M(object)"}),
+    ),
+    # Greptile review of PR 2814: a typed value converts as C# converts its
+    # type, a `const` local as its constant, and a value that may be a
+    # constant (a field) neither wins nor loses on a narrowing it may take.
+    "typed-widening-target": _Case(
+        "namespace L; public class C { public void M(int i) { } "
+        "public void M(long l) { } }",
+        _use("short s = 1; new C().M(s);"),
+        frozenset({"C.M(int)"}),
+    ),
+    "typed-narrowing-variable": _Case(
+        "namespace L; public class C { public void M(byte b) { } "
+        "public void M(long l) { } }",
+        _use("int k = 1; new C().M(k);"),
+        frozenset({"C.M(long)"}),
+    ),
+    "typed-const-local": _Case(
+        "namespace L; public class C { public void M(byte b) { } "
+        "public void M(long l) { } }",
+        _use("const int k = 5; new C().M(k);"),
+        frozenset({"C.M(byte)"}),
+    ),
+    "typed-const-local-overflow": _Case(
+        "namespace L; public class C { public void M(byte b) { } "
+        "public void M(long l) { } }",
+        _use("const int k = 300; new C().M(k);"),
+        frozenset({"C.M(long)"}),
+    ),
+    "typed-field-constant-neg": _Case(
+        "namespace L; public class K { public const int Five = 5; }\n"
+        "public class C { public void M(byte b) { } public void M(long l) { } }",
+        _use("new C().M(K.Five);"),
+        frozenset({"C.M(byte)", "C.M(long)"}),
+    ),
+    "typed-operator-widened": _Case(
+        "namespace L; public class Tgt { public static implicit operator Tgt(int i) => null; }\n"
+        f"public class C {{ public void M(Tgt t) {{ }} {_PAIR} }}",
+        _use("byte b = 1; new C().M(b);"),
+        frozenset({"C.M(Tgt)"}),
+    ),
+    "typed-operator-narrower-neg": _Case(
+        "namespace L; public class Tgt { public static implicit operator Tgt(int i) => null; }\n"
+        f"public class C {{ public void M(Tgt t) {{ }} {_PAIR} }}",
+        _use("long l = 1; new C().M(l);"),
+        frozenset({"C.M(object)"}),
+    ),
+    "typed-operator-variable": _Case(
+        "namespace L; public class Tgt { public static implicit operator Tgt(byte b) => null; }\n"
+        f"public class C {{ public void M(Tgt t) {{ }} {_PAIR} }}",
+        _use("int k = 5; new C().M(k);"),
+        frozenset({"C.M(object)"}),
+    ),
+    "operator-generic-first-party": _Case(
+        "namespace L; public class Widget { }\n"
+        "public class Box<T> { public static implicit operator T(Box<T> value) => default; }\n"
+        f"public class C {{ public void M(Widget w) {{ }} {_PAIR} }}",
+        _use("new C().M(new Box<Widget>());"),
+        frozenset({"C.M(Widget)"}),
+    ),
+    "operator-generic-predefined-neg": _Case(
+        "namespace L; public class Box<T> { public static implicit operator T(Box<T> value) => default; }\n"
+        "public class C { public void M(int i) { } public void M(object o) { } }",
+        _use("new C().M(new Box<string>());"),
+        frozenset({"C.M(object)"}),
+    ),
+    # The ground-truth harness for PR 2814: an operator its target type
+    # declares binds that type's parameters from the parameter's closing,
+    # so `Wrap<T>(T)` gives a Widget, a Base, a Wrap<Base>.
+    "operator-generic-from-first-party": _Case(
+        "namespace L; public class Base { } public class Widget : Base { }\n"
+        "public class Wrap<T> { public static implicit operator Wrap<T>(T value) => null; }\n"
+        f"public class C {{ public void M(Wrap<Base> w) {{ }} {_PAIR} }}",
+        _use("new C().M(new Widget());"),
+        frozenset({"C.M(Wrap<Base>)"}),
+    ),
+    "operator-generic-from-first-party-neg": _Case(
+        "namespace L; public class Base { } public class Widget { }\n"
+        "public class Wrap<T> { public static implicit operator Wrap<T>(T value) => null; }\n"
+        f"public class C {{ public void M(Wrap<Base> w) {{ }} {_PAIR} }}",
+        _use("new C().M(new Widget());"),
+        frozenset({"C.M(object)"}),
     ),
     "across-receiver-neg": _Case(
         "namespace L; public class G<X> { public void M(X a, X b) { } "

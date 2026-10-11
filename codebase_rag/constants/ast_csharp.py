@@ -454,6 +454,9 @@ CSHARP_DECIMAL_BASE = 10
 # A unary minus or plus written on a literal (`-1`) folds into the constant.
 TS_CSHARP_PREFIX_UNARY_EXPRESSION = "prefix_unary_expression"
 CSHARP_UNARY_MINUS = "-"
+# The modifier that makes a local a constant, whose value C#'s constant
+# conversions read: `const int k = 5`.
+CSHARP_CONST_MODIFIER = "const"
 CSHARP_UNARY_PLUS = "+"
 # The two unsuffixed decimal literals a minus makes the least int and long:
 # `-2147483648` is an int, though `2147483648` alone is a uint.

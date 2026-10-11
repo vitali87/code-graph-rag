@@ -352,15 +352,55 @@ def _lower_bounds(
     return lower
 
 
-def _predefined_origin(argument: ArgumentType) -> str | None:
+class _Origin(NamedTuple):
+    """A value of a predefined type: the type, its value when a literal or
+    a `const` spells it, and whether it is a constant (C#'s constant
+    conversions take only a constant) or may be one."""
+
+    type: str
+    value: int | None
+    constant: bool
+
+
+def _predefined_origin(argument: ArgumentType) -> _Origin | None:
     # The predefined type an argument's value has, when it has one: a
-    # literal's, or a typed argument's spelled with a predefined name.
+    # constant's (a literal, a `const`, a value that may be one), or a typed
+    # variable's spelled with a predefined name.
     if argument.literal is not None:
-        return argument.literal
+        return _Origin(argument.literal, argument.value, True)
     if argument.name is None or argument.arity:
         return None
     core, suffix = type_shape(argument.name)
-    return None if suffix else predefined_keyword(core)
+    keyword = None if suffix else predefined_keyword(core)
+    return _Origin(keyword, None, False) if keyword is not None else None
+
+
+def _takes(origin: _Origin, keyword: str) -> bool | None:
+    # Whether a predefined value converts to the predefined type `keyword`
+    # by a standard implicit conversion: a constant by C#'s constant rules
+    # (a narrowing only when its value fits), a variable by its type alone.
+    if origin.constant:
+        return constant_converts(origin.type, origin.value, keyword)
+    return predefined_converts(origin.type, keyword)
+
+
+def _const_constant(statement: Node, decl: Node, declarator: Node) -> _Constant | None:
+    # The constant a `const` local of a predefined type is: `const int k =
+    # 5` is an int of 5, one with a value not read an int of value unknown.
+    # None for a local that is not `const`.
+    if not any(
+        child.type == cs.TS_CSHARP_MODIFIER
+        and safe_decode_text(child) == cs.CSHARP_CONST_MODIFIER
+        for child in statement.children
+    ):
+        return None
+    written = safe_decode_text(decl.child_by_field_name(cs.FIELD_TYPE)) or ""
+    keyword = predefined_keyword(signature_type_name(written))
+    if keyword is None:
+        return None
+    parts = declarator.named_children
+    spelled = _literal_constant(parts[-1]) if len(parts) > 1 else None
+    return _Constant(keyword, spelled.value if spelled is not None else None)
 
 
 def _exact(bound: Inferred) -> dict[str, str]:
@@ -2228,19 +2268,27 @@ class CSharpTypeInferenceEngine:
                         call.node, call.local_var_types, call.module_qn, call.caller_qn
                     )
                 ]
-            scored = [
-                self._score_overload(
-                    qn, form, arguments, (bindings, open_names, spelled)
-                )
-                for qn in qns
-                for form in self._call_parameter_forms(qn, len(arguments))
-            ]
-            # A method scored in both its forms is one candidate.
-            if best := list(
-                dict.fromkeys(best_candidates(scored, self._better_target))
+            if best := self._best_overloads(
+                qns, arguments, (bindings, open_names, spelled)
             ):
                 return best
         return None if arguments is None else []
+
+    def _best_overloads(
+        self,
+        qns: Sequence[str],
+        arguments: list[ArgumentType | None],
+        receiver: tuple[Mapping[str, str], frozenset[str], tuple[str, ...]],
+    ) -> list[str]:
+        # The overloads of one declaring type no other one is better than,
+        # each scored in every form C# may call it in; a method scored in
+        # both its forms is one candidate.
+        scored = [
+            self._score_overload(qn, form, arguments, receiver)
+            for qn in qns
+            for form in self._call_parameter_forms(qn, len(arguments))
+        ]
+        return list(dict.fromkeys(best_candidates(scored, self._better_target)))
 
     def _candidate_methods(
         self, declaring: str, call: _MemberCall, compatible: bool, spelled: int
@@ -2650,13 +2698,21 @@ class CSharpTypeInferenceEngine:
         return None
 
     def _block_local_type(self, block: Node, name: str) -> str | None:
+        found = self._block_declaration(block, name)
+        return self._declarator_written_type(*found[1:]) if found else None
+
+    def _block_declaration(
+        self, block: Node, name: str
+    ) -> tuple[Node, Node, Node] | None:
+        # (statement, declaration, declarator) of the local `name` a block
+        # declares.
         for statement in block.named_children:
             for decl in statement.named_children:
                 if decl.type != cs.TS_CSHARP_VARIABLE_DECLARATION:
                     continue
                 declarator = self._declarator_named(decl, name)
                 if declarator is not None:
-                    return self._declarator_written_type(decl, declarator)
+                    return statement, decl, declarator
         return None
 
     @staticmethod
@@ -2807,9 +2863,14 @@ class CSharpTypeInferenceEngine:
             return _written_argument(raw) if raw else None
         # A parameter or local carries the type it was declared with, type
         # arguments included (`Box<int> b`), so its closing is known too.
+        # A `const` local passes its constant, so C#'s constant conversions
+        # take it as they take the literal.
         if value.type == cs.TS_CSHARP_IDENTIFIER and (
             declared := self._written_receiver_type(value)
         ):
+            constant = self._local_constant(value)
+            if constant is not None:
+                return ArgumentType(constant.type, None, 0, None, constant.value)
             return _written_argument(declared)
         annotated = self._receiver_type_name(
             value, local_var_types, module_qn, caller_qn
@@ -2817,7 +2878,29 @@ class CSharpTypeInferenceEngine:
         if not annotated:
             return None
         name, arity = split_type_ref(annotated)
+        # A field or property of a predefined type may be a constant whose
+        # value is not read: a narrowing it takes stays undecided.
+        if not arity and (keyword := predefined_keyword(name)) is not None:
+            return ArgumentType(keyword, None, 0, None)
         return ArgumentType(None, name, arity, None)
+
+    def _local_constant(self, identifier: Node) -> _Constant | None:
+        # The constant a `const` local an identifier names is, found as
+        # `_written_receiver_type` finds its declaration; None for a variable
+        # or a parameter.
+        name = safe_decode_text(identifier)
+        current = identifier.parent
+        while name and current is not None:
+            if current.type == cs.TS_CSHARP_DECLARATION_LIST:
+                return None
+            if current.type == cs.TS_CSHARP_BLOCK and (
+                found := self._block_declaration(current, name)
+            ):
+                return _const_constant(*found)
+            if self._parameter_type(current, name):
+                return None
+            current = current.parent
+        return None
 
     def _names_enum(self, parameter: str) -> bool:
         # Whether a resolved parameter type, or the value its nullable
@@ -2911,7 +2994,7 @@ class CSharpTypeInferenceEngine:
         # Only a conversion up the hierarchy infers (into `inferred`): C#
         # infers no type parameter through an operator.
         if (origin := _predefined_origin(argument)) is not None:
-            return self._from_predefined((origin, argument.value), parameter)
+            return self._from_predefined(origin, parameter)
         given_text = written_type(argument)
         varies = self._variance_converts(given_text, parameter, open_names)
         if varies is not None:
@@ -3105,27 +3188,25 @@ class CSharpTypeInferenceEngine:
             for source, target in self.csharp_implicit_conversions.get(declaring, ())
         ]
 
-    def _from_predefined(
-        self, constant: tuple[str, int | None], parameter: str
-    ) -> bool | None:
-        # Whether a value of a predefined type (and, for a literal, of a known
-        # value) converts to a first-party class or struct, or its nullable:
-        # only through an implicit operator the type or a base declares (a
-        # predefined type declares none to it), from a type the value
-        # converts to by a standard implicit conversion. None for any other
-        # parameter, which C#'s predefined rules judge or nothing does.
+    def _from_predefined(self, origin: _Origin, parameter: str) -> bool | None:
+        # Whether a value of a predefined type converts to the parameter, or
+        # the value its nullable wraps: to a predefined type by a standard
+        # implicit conversion (`_takes`), to a first-party class or struct
+        # only through an implicit operator it or a base declares (a
+        # predefined type declares none to it), from a type the value takes.
+        # None for any other parameter.
         core, suffix = type_shape(parameter)
+        if suffix.strip(cs.CSHARP_NULLABLE_SUFFIX):
+            return None
+        if (keyword := predefined_keyword(core)) is not None:
+            return _takes(origin, keyword)
         wanted_qn = self._first_party_type(core)
-        if (
-            suffix.strip(cs.CSHARP_NULLABLE_SUFFIX)
-            or wanted_qn is None
-            or self.function_registry.get(wanted_qn) != NodeType.CLASS
-        ):
+        if wanted_qn is None or self.function_registry.get(wanted_qn) != NodeType.CLASS:
             return None
         return self._any_operator(
             self._class_ancestry(wanted_qn),
             lambda operator, declaring: self._operator_from_predefined(
-                constant, operator, declaring, (core, wanted_qn)
+                origin, operator, declaring, (core, wanted_qn)
             ),
             False,
         )
@@ -3164,25 +3245,30 @@ class CSharpTypeInferenceEngine:
     ) -> bool | None:
         # Whether `implicit operator Target(Source)` takes a first-party value
         # to the predefined type `keyword`: the value converts to its source
-        # (that class or a base, closed as written), and its predefined
-        # target converts to `keyword` by a standard implicit conversion.
+        # (that class or a base, closed as written), and its target, with
+        # the declaring type's own parameters bound from the value
+        # (`operator T(Box<T>)` gives a Box<int> an int), is a predefined
+        # type converting to `keyword` by a standard implicit conversion.
         source, target = operator
-        target_core, target_shape = type_shape(target)
-        target_keyword = predefined_keyword(target_core)
-        if target_keyword is None or target_shape:
-            return False
-        if predefined_converts(target_keyword, keyword) is not True:
-            return False
         source_qn = self._first_party_type(type_shape(source)[0])
         if source_qn is None:
             return False
-        shape = self.csharp_generic_shapes.get(declaring)
-        owned = frozenset(shape.parameters) if shape is not None else frozenset()
-        return self._class_conversion(given, (source, source_qn), owned)
+        owned = self._owned_parameters(declaring)
+        takes = self._class_conversion(given, (source, source_qn), owned)
+        if takes is False:
+            return False
+        bound = substitute(
+            target, self._operator_bindings(given, (source, source_qn), owned)
+        )
+        target_core, target_shape = type_shape(bound)
+        target_keyword = predefined_keyword(target_core)
+        if target_keyword is None or target_shape:
+            return None if mentioned_names(bound) & owned else False
+        return takes if predefined_converts(target_keyword, keyword) else False
 
     def _operator_from_predefined(
         self,
-        constant: tuple[str, int | None],
+        origin: _Origin,
         operator: tuple[str, str],
         declaring: str,
         wanted: tuple[str, str],
@@ -3194,25 +3280,15 @@ class CSharpTypeInferenceEngine:
         # value converts to its source by a standard implicit conversion, a
         # constant only when it fits (`ByteTarget(byte)` takes 5, not 300).
         source, target = operator
-        target_qn = self._first_party_type(type_shape(target)[0])
-        if target_qn is None or wanted[1] not in self._class_ancestry(target_qn):
-            return False
-        shape = self.csharp_generic_shapes.get(declaring)
-        owned = frozenset(shape.parameters) if shape is not None else frozenset()
-        closing = self._closing_through((target, target_qn), wanted[1])
-        bound: Inferred = {}
-        matched = (
-            arguments_match(type_arguments(wanted[0]), closing, owned, bound)
-            if closing is not None
-            else None
-        )
+        owned = self._owned_parameters(declaring)
+        matched, bindings = self._target_bindings(target, wanted, owned)
         if not matched:
             return matched
-        source_core, source_suffix = type_shape(substitute(source, _exact(bound)))
+        source_core, source_suffix = type_shape(substitute(source, bindings))
         keyword = predefined_keyword(source_core)
         if keyword is None or source_suffix.strip(cs.CSHARP_NULLABLE_SUFFIX):
             return None if mentioned_names(source_core) & owned else False
-        return constant_converts(constant[0], constant[1], keyword)
+        return _takes(origin, keyword)
 
     def _operator_applies(
         self,
@@ -3224,29 +3300,71 @@ class CSharpTypeInferenceEngine:
         # Whether `implicit operator Target(Source)` takes the argument and
         # gives the parameter: the argument converts to its source, closed as
         # the source is written (`Source<int>` takes no `Source<string>`), and
-        # its target, with the declaring type's own parameters bound from the
-        # argument, converts to the parameter.
+        # its target converts to the parameter. The declaring type's own
+        # parameters are bound before either is judged, from the parameter
+        # its target closes (`operator Wrap<T>(T)` takes a Widget to a
+        # Wrap<Base> as a Base) and from the argument its source closes
+        # (`operator T(Box<T>)` gives a Box<Widget> a Widget).
         source, target = operator
+        owned = self._owned_parameters(declaring)
+        matched, bindings = self._target_bindings(target, wanted[0], owned)
+        bindings = bindings if matched else {}
+        source = substitute(source, bindings)
         source_qn = self._first_party_type(type_shape(source)[0])
-        target_qn = self._first_party_type(type_shape(target)[0])
-        if source_qn is None or target_qn is None:
-            return False
-        shape = self.csharp_generic_shapes.get(declaring)
-        owned = frozenset(shape.parameters) if shape is not None else frozenset()
+        if source_qn is None:
+            return (
+                None if matched is None and mentioned_names(source) & owned else False
+            )
         takes = self._class_conversion(given, (source, source_qn), owned)
         if takes is False:
             return False
         bound = substitute(
-            target, self._operator_bindings(given, (source, source_qn), owned)
+            target,
+            {**bindings, **self._operator_bindings(given, (source, source_qn), owned)},
         )
-        wanted_type, open_names = wanted
-        gives = self._class_conversion((bound, target_qn), wanted_type, open_names)
-        if gives is False and mentioned_names(bound) & owned:
-            # A target still naming the declaring type's parameters is open.
-            gives = None if wanted_type[1] in self._class_ancestry(target_qn) else False
+        gives = self._operator_gives(bound, wanted, owned)
         if takes and gives:
             return True
         return False if gives is False else None
+
+    def _operator_gives(
+        self,
+        target: str,
+        wanted: tuple[tuple[str, str], Collection[str]],
+        owned: frozenset[str],
+    ) -> bool | None:
+        # Whether an operator's target, its declaring type's parameters bound,
+        # converts to the parameter; one still naming them is open.
+        target_qn = self._first_party_type(type_shape(target)[0])
+        if target_qn is None:
+            return None if mentioned_names(target) & owned else False
+        wanted_type, open_names = wanted
+        gives = self._class_conversion((target, target_qn), wanted_type, open_names)
+        if gives is False and mentioned_names(target) & owned:
+            return None if wanted_type[1] in self._class_ancestry(target_qn) else False
+        return gives
+
+    def _owned_parameters(self, declaring: str) -> frozenset[str]:
+        # The type parameters an operator's declaring type declares.
+        shape = self.csharp_generic_shapes.get(declaring)
+        return frozenset(shape.parameters) if shape is not None else frozenset()
+
+    def _target_bindings(
+        self, target: str, wanted: tuple[str, str], owned: frozenset[str]
+    ) -> tuple[bool | None, dict[str, str]]:
+        # Whether an operator's target is the parameter's type or derives
+        # from it, closed as the parameter is (None when that closing is not
+        # known), with the declaring type's own parameters that closing binds:
+        # `Wrap<T>` for a `Wrap<Base>` binds T := Base.
+        target_qn = self._first_party_type(type_shape(target)[0])
+        if target_qn is None or wanted[1] not in self._class_ancestry(target_qn):
+            return False, {}
+        closing = self._closing_through((target, target_qn), wanted[1])
+        if closing is None:
+            return None, {}
+        bound: Inferred = {}
+        matched = arguments_match(type_arguments(wanted[0]), closing, owned, bound)
+        return matched, _exact(bound)
 
     def _operator_bindings(
         self, given: tuple[str, str], source: tuple[str, str], owned: frozenset[str]

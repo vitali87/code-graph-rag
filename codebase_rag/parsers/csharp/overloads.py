@@ -50,11 +50,15 @@ class ArgumentType(NamedTuple):
 class Fit(IntEnum):
     # Ordered as C#'s betterness rules rank conversions. UNKNOWN is the same
     # for every candidate at that position, so it never tells two apart.
+    # UNDECIDED is a narrowing constant conversion of a value that may be a
+    # constant not read (a field): it applies or not by that value, so the
+    # candidate neither beats another nor loses to one (PR 2814 review).
     UNKNOWN = 0
     OTHER = 1
     CONVERTIBLE = 2
     OPEN = 3
     EXACT = 4
+    UNDECIDED = 5
 
 
 class Bound(IntEnum):
@@ -497,8 +501,8 @@ def literal_fit(
     its nullable, is judged by the keyword it names (`predefined_keyword`),
     so `System.Int32` is an int's identity and a first-party `Int32` is not
     judged that way; an `enum` parameter as C# converts a constant to one.
-    A narrowing constant conversion whose value is not known is not judged,
-    so it never wins alone."""
+    A narrowing constant conversion of a constant whose value is not known
+    is UNDECIDED, so it never wins or loses alone."""
     core, suffix = type_shape(parameter)
     # An array or pointer (`int[]`) is not judged.
     if suffix.removesuffix(cs.CSHARP_NULLABLE_SUFFIX):
@@ -508,7 +512,7 @@ def literal_fit(
         return _enum_literal_fit(literal, value) if enum else Fit.OTHER
     converts = constant_converts(literal, value, keyword)
     if converts is None:
-        return Fit.OTHER
+        return Fit.UNDECIDED
     if not converts:
         return None
     # `int?` takes an int through a nullable conversion, which `int` beats.
@@ -522,7 +526,7 @@ def _enum_literal_fit(literal: str, value: int | None) -> Fit | None:
     if literal not in cs.CSHARP_INTEGRAL_MAX:
         return None
     if value is None:
-        return Fit.OTHER
+        return Fit.UNDECIDED
     return Fit.CONVERTIBLE if value == 0 else None
 
 
@@ -995,7 +999,7 @@ def _better(p: Scored, q: Scored, target_order: TargetOrder | None) -> bool:
     # Whether `p` is the better function member: better for some argument
     # and worse for none, or, binding every argument to one type as `q`
     # does, better by C#'s tie-breaks. Candidates scored on different
-    # arguments, or either unsettled, are never compared.
+    # arguments, or either unsettled or undecided, are never compared.
     if not (p.settled and q.settled):
         return False
     if len(p.fits) != len(q.fits) or len(p.parameters) != len(q.parameters):
@@ -1004,7 +1008,7 @@ def _better(p: Scored, q: Scored, target_order: TargetOrder | None) -> bool:
         _better_conversion(conversion, target_order)
         for conversion in zip(p.fits, q.fits, p.parameters, q.parameters, strict=True)
     }
-    if -1 in verdicts:
+    if None in verdicts or -1 in verdicts:
         return False
     if 1 in verdicts:
         return True
@@ -1014,10 +1018,13 @@ def _better(p: Scored, q: Scored, target_order: TargetOrder | None) -> bool:
 def _better_conversion(
     conversion: tuple[Fit | None, Fit | None, str, str],
     target_order: TargetOrder | None,
-) -> int:
+) -> int | None:
     # Which of two conversions of one argument is better: the better fit,
-    # or, between two known conversions, the better target.
+    # or, between two known conversions, the better target. None when one
+    # is undecided, which compares with nothing.
     p_fit, q_fit, p_type, q_type = conversion
+    if Fit.UNDECIDED in (p_fit, q_fit):
+        return None
     if p_fit != q_fit:
         return 1 if (p_fit or 0) > (q_fit or 0) else -1
     if p_fit is Fit.CONVERTIBLE and target_order is not None:
