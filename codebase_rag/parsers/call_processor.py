@@ -5,8 +5,9 @@ from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from functools import wraps
+from functools import lru_cache, wraps
 from pathlib import Path
+from types import MappingProxyType
 from typing import Concatenate, NamedTuple
 
 from loguru import logger
@@ -1800,6 +1801,222 @@ def _peel_ts_getter_receiver(recv: Node | None) -> tuple[Node | None, str | None
     return recv, None
 
 
+def _start_byte(node: Node) -> int:
+    return node.start_byte
+
+
+# One introduction of a name: the byte span of the scope it governs, its kind,
+# and the value it binds (the callable itself for a parameter).
+_JsIntroduction = tuple[int, int, str, Node | None]
+
+# Scopes whose introductions stay indexed. A receiver lookup walks out from
+# the call through every enclosing callable to the module, so the scopes in
+# use at once are the current file's nesting chain plus the factory modules
+# it reads; bounded because every entry keeps its parse tree alive.
+_JS_SCOPE_INDEX_CACHE_SIZE = 64
+# Trees whose named functions stay indexed: the file being processed and the
+# few modules its factories live in.
+_JS_FUNCTION_INDEX_CACHE_SIZE = 8
+
+
+@lru_cache(maxsize=_JS_SCOPE_INDEX_CACHE_SIZE)
+def _js_scope_introductions(
+    scope: Node,
+) -> Mapping[str, tuple[_JsIntroduction, ...]]:
+    """Every introduction owned by this callable (or module root), by name.
+
+    Each with the byte span of the scope it governs; nested callables own
+    their locals and are skipped. Built once per scope: answering one name
+    per receiver rescanned the scope's whole body at every call site, and for
+    a module-level receiver that is the module, or in a bundle the namespace
+    IIFE around everything (issue #2453). Keyed on the scope node, which
+    tree-sitter compares by tree, so a re-parsed file builds its own.
+    """
+    intros: defaultdict[str, list[_JsIntroduction]] = defaultdict(list)
+    if scope.type in cs.JS_TS_FUNCTION_NODES:
+        param = (scope.start_byte, scope.end_byte, _JS_DECL_PARAM, scope)
+        for name in _js_param_names(scope):
+            intros[name].append(param)
+    stack: list[Node] = list(scope.children)
+    while stack:
+        node = stack.pop()
+        if node.type in cs.JS_TS_FUNCTION_NODES:
+            continue
+        if node.type == cs.TS_VARIABLE_DECLARATOR:
+            _js_declarator_introduction(node, scope, intros)
+        elif node.type == cs.TS_JS_FOR_IN_STATEMENT:
+            _js_loop_introduction(node, scope, intros)
+        elif node.type == cs.TS_JS_CATCH_CLAUSE:
+            _js_catch_introduction(node, intros)
+        stack.extend(node.children)
+    return MappingProxyType({name: tuple(found) for name, found in intros.items()})
+
+
+def _js_innermost_enclosing(
+    intros: tuple[_JsIntroduction, ...], pos: int
+) -> tuple[bool, tuple[str, Node | None] | None]:
+    """Whether one scope's introductions decide the name read at `pos`, and how.
+
+    Undecided when none of them encloses `pos`, so the next scope out is
+    asked; decided with no answer when the innermost enclosing ones tie.
+    """
+    enclosing = [e for e in intros if e[0] <= pos < e[1]]
+    if not enclosing:
+        return False, None
+    best_start = max(e[0] for e in enclosing)
+    best = [e for e in enclosing if e[0] == best_start]
+    if len(best) != 1:
+        return True, None
+    return True, (best[0][2], best[0][3])
+
+
+def _js_loop_introduction(
+    node: Node, scope: Node, intros: defaultdict[str, list[_JsIntroduction]]
+) -> None:
+    left = node.child_by_field_name(cs.FIELD_LEFT)
+    kind_node = node.child_by_field_name(cs.FIELD_KIND)
+    if left is None or kind_node is None:
+        return
+    # `for (var x of xs)` hoists x to the FUNCTION; a read after the loop
+    # still reads the loop variable.
+    span_node = scope if kind_node.type == cs.TS_JS_VAR_KIND else node
+    intro = (span_node.start_byte, span_node.end_byte, _JS_DECL_OPAQUE, None)
+    for name in _js_binding_names(left):
+        intros[name].append(intro)
+
+
+def _js_catch_introduction(
+    node: Node, intros: defaultdict[str, list[_JsIntroduction]]
+) -> None:
+    param = node.child_by_field_name(cs.FIELD_PARAMETER)
+    if param is None:
+        return
+    intro = (node.start_byte, node.end_byte, _JS_DECL_OPAQUE, None)
+    for name in _js_binding_names(param):
+        intros[name].append(intro)
+
+
+def _js_declarator_introduction(
+    node: Node, scope: Node, intros: defaultdict[str, list[_JsIntroduction]]
+) -> None:
+    target = node.child_by_field_name(cs.FIELD_NAME)
+    if target is None:
+        return
+    if target.type == cs.TS_IDENTIFIER:
+        text = safe_decode_text(target)
+        names = [text] if text else []
+        kind = _JS_DECL_PLAIN
+    else:
+        names = _js_binding_names(target)
+        kind = _JS_DECL_DESTRUCTURED
+    if not names:
+        return
+    value = node.child_by_field_name(cs.FIELD_VALUE)
+    if value is None:
+        kind = _JS_DECL_OPAQUE
+    span_node = _js_declarator_span(node, scope)
+    intro = (span_node.start_byte, span_node.end_byte, kind, value)
+    for name in names:
+        intros[name].append(intro)
+
+
+def _js_declarator_span(node: Node, scope: Node) -> Node:
+    # A `let`/`const` binds to the nearest block-like container below the
+    # scope; a `var` to the whole scope.
+    is_lexical = (
+        node.parent is not None and node.parent.type == cs.TS_LEXICAL_DECLARATION
+    )
+    if not is_lexical:
+        return scope
+    current = node.parent
+    while current is not None and current.id != scope.id:
+        if current.type in _JS_SCOPE_CONTAINER_TYPES:
+            return current
+        current = current.parent
+    return scope
+
+
+def _js_param_names(scope: Node) -> list[str]:
+    names: dict[str, None] = {}
+    for field in (cs.FIELD_PARAMETERS, cs.FIELD_PARAMETER):
+        params = scope.child_by_field_name(field)
+        if params is not None:
+            names.update(dict.fromkeys(_js_binding_names(params)))
+    return list(names)
+
+
+def _js_binding_names(target: Node) -> list[str]:
+    """Each name `target` binds, once, in the order the walk meets them.
+
+    BINDING positions only: pattern defaults' right sides, computed keys and
+    pair keys are reads of the enclosing scope.
+    """
+    names: dict[str, None] = {}
+    stack: list[Node] = [target]
+    while stack:
+        node = stack.pop()
+        node_type = node.type
+        if node_type in (
+            cs.TS_IDENTIFIER,
+            cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN,
+        ):
+            if name := safe_decode_text(node):
+                names[name] = None
+        elif node_type in (
+            cs.TS_ASSIGNMENT_PATTERN,
+            cs.TS_OBJECT_ASSIGNMENT_PATTERN,
+        ):
+            if (left := node.child_by_field_name(cs.FIELD_LEFT)) is not None:
+                stack.append(left)
+        elif node_type == cs.TS_PAIR_PATTERN:
+            if (value := node.child_by_field_name(cs.FIELD_VALUE)) is not None:
+                stack.append(value)
+        elif node_type in (
+            cs.TS_OBJECT_PATTERN,
+            cs.TS_ARRAY_PATTERN,
+            cs.TS_REST_PATTERN,
+            cs.TS_JS_FORMAL_PARAMETERS,
+            cs.TS_REQUIRED_PARAMETER,
+            cs.TS_OPTIONAL_PARAMETER,
+        ):
+            stack.extend(node.named_children)
+    return list(names)
+
+
+@lru_cache(maxsize=_JS_FUNCTION_INDEX_CACHE_SIZE)
+def _js_named_functions(root: Node) -> Mapping[str, Node]:
+    """The first function each name declares in one tree, as the walk meets it.
+
+    A function declaration, or the callable a declarator binds. Locating a
+    factory by its qn walked the whole module tree at every call-result
+    receiver it typed (issue #2453); the walk now runs once per tree, keyed
+    on the root node, which tree-sitter compares by tree.
+    """
+    first: dict[str, Node] = {}
+    stack: list[Node] = [root]
+    while stack:
+        node = stack.pop()
+        if (named := _js_named_function(node)) is not None:
+            first.setdefault(*named)
+        stack.extend(node.children)
+    return MappingProxyType(first)
+
+
+def _js_named_function(node: Node) -> tuple[str, Node] | None:
+    if node.type == cs.TS_FUNCTION_DECLARATION:
+        name = node.child_by_field_name(cs.FIELD_NAME)
+        text = safe_decode_text(name) if name is not None else None
+        return (text, node) if text else None
+    if node.type != cs.TS_VARIABLE_DECLARATOR:
+        return None
+    name = node.child_by_field_name(cs.FIELD_NAME)
+    value = node.child_by_field_name(cs.FIELD_VALUE)
+    if name is None or value is None or value.type not in cs.JS_TS_FUNCTION_NODES:
+        return None
+    text = safe_decode_text(name)
+    return (text, value) if text else None
+
+
 class CallProcessor:
     __slots__ = (
         "ingestor",
@@ -1834,6 +2051,7 @@ class CallProcessor:
         "_js_proto_evidence_cache",
         "_c_file_scopes",
         "_c_include_closures",
+        "_js_factory_classes",
     )
 
     def __init__(
@@ -1906,6 +2124,9 @@ class CallProcessor:
         # The repo headers each C/C++ file includes, directly or through
         # another header (#2593 review).
         self._c_include_closures: dict[str, frozenset[str]] = {}
+        # factory qn -> the class its returns construct, read once per pass
+        # (issue #2453). Strings only, so no tree is pinned.
+        self._js_factory_classes: dict[str, str | None] = {}
 
         # The import processor owns the record (#1568); every pass notes
         # through it so the empty-name guard lives in one place.
@@ -2498,6 +2719,12 @@ class CallProcessor:
         self._path_to_module_qn = None
         self._c_file_scopes = {}
         self._c_include_closures = {}
+        # A re-parsed factory may construct something else now.
+        self._js_factory_classes = {}
+        # The C# per-class member index (issue #2453) is read off the
+        # registry, which a re-parse just changed.
+        if (csharp := self._resolver.type_inference._csharp_type_inference) is not None:
+            csharp.reset_member_index()
 
     def process_calls_in_file(
         self,
@@ -3643,12 +3870,17 @@ class CallProcessor:
         # it, so a call in a nested function is attributed only to the nested
         # function, never also to the enclosing one.
         own = self._filter_calls_in_node(all_call_nodes, call_starts, func_node)
+        # The siblings come sorted by (start, end) (`sorted_captures`), so the
+        # ones starting inside func_node are one slice. Scanning them all for
+        # every function made a class of N methods cost O(N^2) (issue #2453).
+        start, end = func_node.start_byte, func_node.end_byte
+        lo = bisect_left(sibling_func_nodes, start, key=_start_byte)
+        hi = bisect_right(sibling_func_nodes, end, lo=lo, key=_start_byte)
         descendant_bodies = [
             body
-            for n in sibling_func_nodes
+            for n in sibling_func_nodes[lo:hi]
             if n is not func_node
-            and n.start_byte >= func_node.start_byte
-            and n.end_byte <= func_node.end_byte
+            and n.end_byte <= end
             and (body := n.child_by_field_name(cs.FIELD_BODY)) is not None
         ]
         if not descendant_bodies:
@@ -11463,20 +11695,15 @@ class CallProcessor:
         # Scopes are visited innermost first and the first one introducing
         # the name around `ident` decides: an outer scope's introductions
         # span all of the inner scope, so they can never be the innermost,
-        # and the whole-module scan runs only for a module-level name.
+        # and the module's introductions are read only for a module-level name.
         pos = ident.start_byte
         scope = ident.parent
         while scope is not None:
             if scope.type in cs.JS_TS_FUNCTION_NODES or scope.parent is None:
-                intros: list[tuple[int, int, str, Node | None]] = []
-                self._js_scope_introductions(scope, name, intros)
-                enclosing = [e for e in intros if e[0] <= pos < e[1]]
-                if enclosing:
-                    best_start = max(e[0] for e in enclosing)
-                    best = [e for e in enclosing if e[0] == best_start]
-                    if len(best) != 1:
-                        return None
-                    return best[0][2], best[0][3]
+                intros = _js_scope_introductions(scope).get(name, ())
+                decided, intro = _js_innermost_enclosing(intros, pos)
+                if decided:
+                    return intro
             scope = scope.parent
         return None
 
@@ -11488,136 +11715,6 @@ class CallProcessor:
         if kind == _JS_DECL_DESTRUCTURED and value is not None:
             return self._js_destructured_return_class(value, name, module_qn, depth + 1)
         return None
-
-    def _js_scope_introductions(
-        self,
-        scope: Node,
-        name: str,
-        intros: list[tuple[int, int, str, Node | None]],
-    ) -> None:
-        # All introductions of `name` owned by this callable (or module
-        # root), each with the byte span of the scope it governs. Nested
-        # callables own their locals and are skipped.
-        if scope.type in cs.JS_TS_FUNCTION_NODES and self._js_params_bind(scope, name):
-            intros.append((scope.start_byte, scope.end_byte, _JS_DECL_PARAM, scope))
-        stack: list[Node] = list(scope.children)
-        while stack:
-            node = stack.pop()
-            if node.type in cs.JS_TS_FUNCTION_NODES:
-                continue
-            if node.type == cs.TS_VARIABLE_DECLARATOR:
-                self._js_declarator_introduction(node, scope, name, intros)
-            elif node.type == cs.TS_JS_FOR_IN_STATEMENT:
-                self._js_loop_introduction(node, scope, name, intros)
-            elif node.type == cs.TS_JS_CATCH_CLAUSE:
-                self._js_catch_introduction(node, name, intros)
-            stack.extend(node.children)
-
-    def _js_loop_introduction(
-        self,
-        node: Node,
-        scope: Node,
-        name: str,
-        intros: list[tuple[int, int, str, Node | None]],
-    ) -> None:
-        left = node.child_by_field_name(cs.FIELD_LEFT)
-        kind_node = node.child_by_field_name(cs.FIELD_KIND)
-        if (
-            left is not None
-            and kind_node is not None
-            and self._js_pattern_binds(left, name)
-        ):
-            # `for (var x of xs)` hoists x to the FUNCTION; a read after
-            # the loop still reads the loop variable.
-            span_node = scope if kind_node.type == cs.TS_JS_VAR_KIND else node
-            intros.append(
-                (span_node.start_byte, span_node.end_byte, _JS_DECL_OPAQUE, None)
-            )
-
-    def _js_catch_introduction(
-        self,
-        node: Node,
-        name: str,
-        intros: list[tuple[int, int, str, Node | None]],
-    ) -> None:
-        param = node.child_by_field_name(cs.FIELD_PARAMETER)
-        if param is not None and self._js_pattern_binds(param, name):
-            intros.append((node.start_byte, node.end_byte, _JS_DECL_OPAQUE, None))
-
-    def _js_declarator_introduction(
-        self,
-        node: Node,
-        scope: Node,
-        name: str,
-        intros: list[tuple[int, int, str, Node | None]],
-    ) -> None:
-        target = node.child_by_field_name(cs.FIELD_NAME)
-        if target is None:
-            return
-        if target.type == cs.TS_IDENTIFIER:
-            if safe_decode_text(target) != name:
-                return
-            kind = _JS_DECL_PLAIN
-        elif self._js_pattern_binds(target, name):
-            kind = _JS_DECL_DESTRUCTURED
-        else:
-            return
-        value = node.child_by_field_name(cs.FIELD_VALUE)
-        if value is None:
-            kind = _JS_DECL_OPAQUE
-        is_lexical = (
-            node.parent is not None and node.parent.type == cs.TS_LEXICAL_DECLARATION
-        )
-        span_node = scope
-        if is_lexical:
-            current = node.parent
-            while current is not None and current.id != scope.id:
-                if current.type in _JS_SCOPE_CONTAINER_TYPES:
-                    span_node = current
-                    break
-                current = current.parent
-        intros.append((span_node.start_byte, span_node.end_byte, kind, value))
-
-    def _js_params_bind(self, scope: Node, name: str) -> bool:
-        for field in (cs.FIELD_PARAMETERS, cs.FIELD_PARAMETER):
-            params = scope.child_by_field_name(field)
-            if params is not None and self._js_pattern_binds(params, name):
-                return True
-        return False
-
-    @staticmethod
-    def _js_pattern_binds(target: Node, name: str) -> bool:
-        # BINDING positions only: pattern defaults' right sides, computed
-        # keys and pair keys are reads of the enclosing scope.
-        stack: list[Node] = [target]
-        while stack:
-            node = stack.pop()
-            node_type = node.type
-            if node_type in (
-                cs.TS_IDENTIFIER,
-                cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN,
-            ):
-                if safe_decode_text(node) == name:
-                    return True
-            elif node_type in (
-                cs.TS_ASSIGNMENT_PATTERN,
-                cs.TS_OBJECT_ASSIGNMENT_PATTERN,
-            ):
-                if (left := node.child_by_field_name(cs.FIELD_LEFT)) is not None:
-                    stack.append(left)
-            elif node_type == cs.TS_PAIR_PATTERN:
-                if (value := node.child_by_field_name(cs.FIELD_VALUE)) is not None:
-                    stack.append(value)
-            elif node_type in (
-                cs.TS_OBJECT_PATTERN,
-                cs.TS_ARRAY_PATTERN,
-                cs.TS_REST_PATTERN,
-                cs.TS_JS_FORMAL_PARAMETERS,
-                cs.TS_REQUIRED_PARAMETER,
-                cs.TS_OPTIONAL_PARAMETER,
-            ):
-                stack.extend(node.named_children)
-        return False
 
     def _js_call_result_class_qn(self, call: Node, module_qn: str) -> str | None:
         func = call.child_by_field_name(cs.FIELD_FUNCTION)
@@ -11707,8 +11804,20 @@ class CallProcessor:
         return None
 
     def _js_factory_return_class(self, fn_qn: str | None) -> str | None:
+        # Once per factory per pass: every call-result receiver a factory
+        # types asked again, re-reading its returns each time (issue #2453).
+        # The answer depends on the registry and the parsed trees only, and
+        # `reset_resolution_caches` drops it when either may have changed.
+        if fn_qn is None:
+            return None
+        memo = self._js_factory_classes
+        if fn_qn not in memo:
+            memo[fn_qn] = self._js_read_factory_return_class(fn_qn)
+        return memo[fn_qn]
+
+    def _js_read_factory_return_class(self, fn_qn: str) -> str | None:
         registry = self._resolver.function_registry
-        if fn_qn is None or fn_qn not in registry:
+        if fn_qn not in registry:
             return None
         fn_node = self._js_function_node_by_qn(fn_qn)
         if fn_node is None:
@@ -11824,25 +11933,7 @@ class CallProcessor:
         if file_path is None or not (entry := type_inference.ast_cache.load(file_path)):
             return None
         root_node, _language = entry
-        stack: list[Node] = [root_node]
-        while stack:
-            node = stack.pop()
-            if node.type == cs.TS_FUNCTION_DECLARATION:
-                name = node.child_by_field_name(cs.FIELD_NAME)
-                if name is not None and safe_decode_text(name) == fn_name:
-                    return node
-            elif node.type == cs.TS_VARIABLE_DECLARATOR:
-                name = node.child_by_field_name(cs.FIELD_NAME)
-                value = node.child_by_field_name(cs.FIELD_VALUE)
-                if (
-                    name is not None
-                    and value is not None
-                    and value.type in cs.JS_TS_FUNCTION_NODES
-                    and safe_decode_text(name) == fn_name
-                ):
-                    return value
-            stack.extend(node.children)
-        return None
+        return _js_named_functions(root_node).get(fn_name)
 
     def _js_symbol_name_qn(self, name: str, module_qn: str) -> str | None:
         # The qn a bare name denotes in this module: the imported member's qn
