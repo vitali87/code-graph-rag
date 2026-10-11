@@ -242,6 +242,9 @@ CPP_LITERAL_ARGUMENT_TYPES = frozenset(
 # one line.
 CPP_LITERAL_LINE_ESCAPES = {"\n": "\\n", "\r": "\\r", "\t": "\\t"}
 CPP_LITERAL_BACKSLASH = "\\"
+# A CRLF source line ending, which translation phase 1 reads as one new-line.
+CPP_SOURCE_CRLF = "\r\n"
+CPP_SOURCE_NEWLINE = "\n"
 CPP_LITERAL_ESCAPED_BACKSLASH = "\\\\"
 TS_CPP_STRING_CONTENT = "string_content"
 TS_CPP_COMPOUND_STATEMENT = "compound_statement"

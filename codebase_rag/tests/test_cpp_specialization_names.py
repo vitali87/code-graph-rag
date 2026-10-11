@@ -384,6 +384,54 @@ def test_a_raw_line_break_and_a_raw_backslash_n_stay_two_names(
     assert {'Box<R"(a\\\\nb)">', 'Box<R"(a\\nb)">'} <= names
 
 
+def test_a_crlf_checkout_names_a_raw_line_break_as_one_newline(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Translation phase 1 reads a CRLF line ending as one new-line, so a raw
+    # literal spanning one holds the same value as in an LF checkout (a
+    # Windows clone with autocrlf writes every line ending as CRLF).
+    (temp_repo / "spec.cpp").write_bytes(
+        b"template <auto S> struct Box {};\r\n"
+        b'template <> struct Box<R"(x\r\ny)"> {};\r\n'
+    )
+    run_updater(temp_repo, mock_ingestor, skip_if_missing="cpp")
+
+    names = set(_class_names(mock_ingestor).values())
+
+    assert 'Box<R"(x\\ny)">' in names
+    assert not any("\\r" in name for name in names)
+
+
+def test_a_crlf_checkout_keeps_a_raw_backslash_n_apart_from_a_line_break(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    (temp_repo / "spec.cpp").write_bytes(
+        b"template <auto S> struct Box {};\r\n"
+        b'template <> struct Box<R"(a\\nb)"> {};\r\n'
+        b'template <> struct Box<R"(a\r\nb)"> {};\r\n'
+    )
+    run_updater(temp_repo, mock_ingestor, skip_if_missing="cpp")
+
+    names = set(_class_names(mock_ingestor).values())
+
+    assert {'Box<R"(a\\\\nb)">', 'Box<R"(a\\nb)">'} <= names
+
+
+def test_a_lone_carriage_return_in_a_raw_literal_keeps_its_escape(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Only a CRLF pair is a line ending to fold; a carriage return on its own
+    # inside the literal stays the character it is.
+    (temp_repo / "spec.cpp").write_bytes(
+        b'template <auto S> struct Box {};\ntemplate <> struct Box<R"(x\ry)"> {};\n'
+    )
+    run_updater(temp_repo, mock_ingestor, skip_if_missing="cpp")
+
+    names = set(_class_names(mock_ingestor).values())
+
+    assert 'Box<R"(x\\ry)">' in names
+
+
 def test_a_literal_dot_leader_is_not_mistaken_for_an_argument_dot(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:

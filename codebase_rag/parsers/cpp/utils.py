@@ -76,7 +76,9 @@ def _token_text(token: Node) -> str:
         # backslashes are escaped first, so `R"(a\nb)"` and a raw literal
         # holding a real line break stay two names.
         if token.type == cs.TS_CPP_RAW_STRING_LITERAL:
-            raw = raw.replace(
+            # A CRLF checkout's line break is the same one new-line as an LF
+            # checkout's (translation phase 1), so both give one name.
+            raw = raw.replace(cs.CPP_SOURCE_CRLF, cs.CPP_SOURCE_NEWLINE).replace(
                 cs.CPP_LITERAL_BACKSLASH, cs.CPP_LITERAL_ESCAPED_BACKSLASH
             )
         # A dot leader the literal already holds is written as its escape, so
