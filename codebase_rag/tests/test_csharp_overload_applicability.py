@@ -1371,6 +1371,15 @@ def _use(call: str, extra: str = "") -> str:
 
 _PAIR = "public void M(object o) { }"
 
+LIB_TU = (
+    "namespace L; public interface IThing { } public class Base : IThing { } "
+    "public class Widget : Base { } public class Other { }\n"
+    "public class Disposer : System.IDisposable { public void Dispose() { } } "
+    "public class Held : Disposer { }\n"
+    "public class C { public void M<T, U>(T x, U y) where T : U { } "
+    "public void M(object a, object b) { } }"
+)
+
 INVARIANT_CASES: dict[str, _Case] = {
     # Scoring: the argument IS the parameter's type.
     "score-alias": _Case(
@@ -2563,6 +2572,87 @@ INVARIANT_CASES: dict[str, _Case] = {
         "public void M(object o) { } }",
         _use("Color c = Color.Red; new C().M(c);"),
         frozenset({"C.M(T)"}),
+    ),
+    # Greptile review of PR 2814: `where T : U` with U fixed to `object`
+    # holds for every type, a reference type by a reference conversion and
+    # a value type by boxing, so C# binds the generic; and with U fixed to
+    # a type the argument derives from or implements, through its bases.
+    "constraint-bound-object": _Case(
+        LIB_TU,
+        _use("object o = new object(); new C().M(new Widget(), o);"),
+        frozenset({"C.M(T, U)"}),
+    ),
+    "constraint-bound-system-object": _Case(
+        LIB_TU,
+        _use("System.Object o = null; new C().M(new Widget(), o);"),
+        frozenset({"C.M(T, U)"}),
+    ),
+    "constraint-bound-object-value": _Case(
+        LIB_TU,
+        _use("object o = null; new C().M(1, o);"),
+        frozenset({"C.M(T, U)"}),
+    ),
+    "constraint-bound-base-class": _Case(
+        LIB_TU,
+        _use("Base b = null; new C().M(new Widget(), b);"),
+        frozenset({"C.M(T, U)"}),
+    ),
+    "constraint-bound-inherited-interface": _Case(
+        LIB_TU,
+        _use("IThing t = null; new C().M(new Widget(), t);"),
+        frozenset({"C.M(T, U)"}),
+    ),
+    "constraint-bound-external-interface": _Case(
+        LIB_TU,
+        _use("System.IDisposable d = null; new C().M(new Held(), d);"),
+        frozenset({"C.M(T, U)"}),
+    ),
+    "constraint-bound-same-value": _Case(
+        LIB_TU,
+        _use("new C().M(1, 2);"),
+        frozenset({"C.M(T, U)"}),
+    ),
+    # Negatives: an unrelated class, and a value type no other converts to
+    # by identity, reference or boxing (an int is no long here).
+    "constraint-bound-unrelated-neg": _Case(
+        LIB_TU,
+        _use("Other o = null; new C().M(new Widget(), o);"),
+        frozenset({"C.M(object, object)"}),
+    ),
+    "constraint-bound-other-value-neg": _Case(
+        LIB_TU,
+        _use("new C().M(1, 2L);"),
+        frozenset({"C.M(object, object)"}),
+    ),
+    "constraint-bound-nullable-neg": _Case(
+        LIB_TU,
+        _use("int? n = null; new C().M(1, n);"),
+        frozenset({"C.M(object, object)"}),
+    ),
+    "constraint-bound-enum-neg": _Case(
+        LIB_TU,
+        _use("System.Enum e = null; new C().M(1, e);"),
+        frozenset({"C.M(object, object)"}),
+    ),
+    "constraint-bound-first-party-enum-neg": _Case(
+        LIB_TU + "\npublic enum Color { Red }",
+        _use("Color c = Color.Red; new C().M(new Widget(), c);"),
+        frozenset({"C.M(object, object)"}),
+    ),
+    "constraint-bound-array-neg": _Case(
+        LIB_TU,
+        _use("int[] a = null; new C().M(1, a);"),
+        frozenset({"C.M(object, object)"}),
+    ),
+    "constraint-bound-nullable-given-neg": _Case(
+        LIB_TU,
+        _use("int? n = 1; System.IComparable c = null; new C().M(n, c);"),
+        frozenset({"C.M(object, object)"}),
+    ),
+    "constraint-bound-sealed-neg": _Case(
+        LIB_TU,
+        _use('new C().M(new Widget(), "s");'),
+        frozenset({"C.M(object, object)"}),
     ),
     "across-receiver-neg": _Case(
         "namespace L; public class G<X> { public void M(X a, X b) { } "

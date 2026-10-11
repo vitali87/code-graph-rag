@@ -133,8 +133,10 @@ CSHARP_UNMANAGED_CONSTRAINT = "unmanaged"
 CSHARP_KIND_CONSTRAINTS = frozenset(
     {CSHARP_STRUCT_CONSTRAINT, CSHARP_CLASS_CONSTRAINT, CSHARP_UNMANAGED_CONSTRAINT}
 )
-# `where T : System.Enum` is met by an enum alone.
+# `where T : System.Enum` is met by an enum alone, and `System.ValueType`
+# (a type parameter fixed to it) by a value type alone.
 CSHARP_ENUM_BASE_TYPE = "Enum"
+CSHARP_VALUE_TYPE_BASE = "ValueType"
 # A record implements `IEquatable<>` of itself, which its base list does not
 # write; it is recorded among the bases it writes so its interfaces are not
 # taken as known.

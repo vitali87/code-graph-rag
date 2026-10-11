@@ -419,14 +419,61 @@ def _const_constant(statement: Node, decl: Node, declarator: Node) -> _Constant 
     return _Constant(keyword, spelled.value if spelled is not None else None)
 
 
+def _bound_keyword(bound: str) -> str | None:
+    # The predefined type a bound is, `dynamic` among them, when it is one.
+    core, suffix = type_shape(bound)
+    if suffix:
+        return None
+    return (
+        cs.CSHARP_DYNAMIC_KEYWORD
+        if core == cs.CSHARP_DYNAMIC_KEYWORD
+        else (predefined_keyword(core))
+    )
+
+
+def _meets_predefined(keyword: str, given: str) -> bool | None:
+    # A bound a type parameter was fixed to a predefined type: every type
+    # converts to `object` (and `dynamic`) by a reference conversion or
+    # boxing; any other is a value type or sealed, met by itself alone,
+    # which `given` is not, when its type is known.
+    if keyword in (cs.CSHARP_OBJECT_KEYWORD, cs.CSHARP_DYNAMIC_KEYWORD):
+        return True
+    return False if _known_type(given) else None
+
+
+def _known_type(given: str) -> bool:
+    # Whether a resolved type is one this resolver tells apart from any
+    # other: predefined, first-party, a tuple, or a shape built on a type.
+    core, suffix = type_shape(given)
+    return (
+        predefined_keyword(core) is not None
+        or core.startswith(cs.CSHARP_RESOLVED_PREFIX)
+        or is_tuple(core)
+        or bool(suffix)
+    )
+
+
+def _framework_name(bound: str) -> str:
+    # A framework bound's simple name: `Enum` of `System.Enum`.
+    return strip_generic_arguments(type_shape(bound)[0]).rpartition(cs.SEPARATOR_DOT)[2]
+
+
+def _external_spelling(written: str) -> str:
+    # An external type as spelled, its `global::` and `System.` aside:
+    # `System.IDisposable` and `IDisposable` under `using System;` are one.
+    path = written.strip().rpartition(cs.SEPARATOR_DOUBLE_COLON)[2]
+    return path.removeprefix(cs.CSHARP_SYSTEM_PREFIX)
+
+
 def _built_in_meets(given: str, bound: str, first_party_bound: bool) -> bool | None:
     # Whether a type no file declares meets a bound, None when that is not
     # known: no predefined type, array, nullable or tuple derives from or
-    # implements a first-party type, and a predefined type implements the
-    # framework interfaces `predefined_implements` lists.
+    # implements a first-party type or is an enum, and a predefined type
+    # implements the framework interfaces `predefined_implements` lists.
     core, suffix = type_shape(given)
     keyword = None if suffix else predefined_keyword(core)
-    if first_party_bound:
+    if first_party_bound or _framework_name(bound) == cs.CSHARP_ENUM_BASE_TYPE:
+        # Nor is any of them an enum.
         built_in = predefined_keyword(core) is not None or is_tuple(core)
         return False if built_in or suffix else None
     return True if keyword and predefined_implements(keyword, bound) else None
@@ -2694,16 +2741,24 @@ class CSharpTypeInferenceEngine:
 
     def _meets(self, bound: str, given: str, open_names: frozenset[str]) -> bool | None:
         # Whether `given` meets one bound, None when that is not known. A
-        # kind is met by its kind of type. A type no file declares meets a
-        # bound as `_built_in_meets` tells. A first-party type
-        # meets a first-party bound by its bases, through the bases each
-        # writes (a user-defined conversion never meets one), and an
-        # external bound only through an external base, so not at all when
-        # every base it reaches is first-party (`_meets_external`). A bound
-        # naming a type parameter still open (the method's own, or one the
-        # receiver leaves unbound) is open there.
+        # kind is met by its kind of type, a bound by the type itself, and a
+        # bound or a type of a shape as `_shape_meets` tells: a type
+        # parameter fixed to `object` (`where T : U`) by every type
+        # (Greptile review of PR 2814). A type no file declares meets a
+        # bound as `_built_in_meets` tells. A first-party type meets a
+        # first-party bound by its bases, through the bases each writes (a
+        # user-defined conversion never meets one), and an external bound
+        # only through an external base, so not at all when every base it
+        # reaches is first-party (`_meets_external`). A bound naming a type
+        # parameter still open (the method's own, or one the receiver leaves
+        # unbound) is open there.
         if bound in cs.CSHARP_KIND_CONSTRAINTS:
             return self._meets_kind(bound, given)
+        if given == bound or same_type(given, bound):
+            return True
+        decided, verdict = self._shape_meets(bound, given)
+        if decided:
+            return verdict
         bound_qn = self._first_party_type(bound)
         given_qn = self._first_party_type(given)
         if given_qn is None:
@@ -2715,6 +2770,27 @@ class CSharpTypeInferenceEngine:
         if mentioned_names(bound) & open_names:
             return None
         return self._meets_external(bound, given_qn)
+
+    def _shape_meets(self, bound: str, given: str) -> tuple[bool, bool | None]:
+        # (whether the bound's or the type's shape decides, how): a bound of
+        # a predefined type as `_meets_predefined` tells; a nullable bound,
+        # a value type, by itself alone; an array bound by no type that is
+        # not an array; `System.ValueType` by a value type alone; and a
+        # nullable value, which implements no interface, by no other bound.
+        if (keyword := _bound_keyword(bound)) is not None:
+            return True, _meets_predefined(keyword, given)
+        bound_shape, given_shape = type_shape(bound)[1], type_shape(given)[1]
+        if cs.CSHARP_NULLABLE_SUFFIX in bound_shape or (
+            cs.CSHARP_ARRAY_RANK_OPEN in bound_shape
+            and cs.CSHARP_ARRAY_RANK_OPEN not in given_shape
+        ):
+            return True, False if _known_type(given) else None
+        reference = self._is_reference(given)
+        if _framework_name(bound) == cs.CSHARP_VALUE_TYPE_BASE:
+            return True, None if reference is None else not reference
+        if reference is False and cs.CSHARP_NULLABLE_SUFFIX in given_shape:
+            return True, False
+        return False, None
 
     def _meets_kind(self, kind: str, given: str) -> bool | None:
         # `class` takes a reference type alone; `struct` a value type that is
@@ -2742,6 +2818,9 @@ class CSharpTypeInferenceEngine:
         kind = self.function_registry.get(bound[1])
         if kind == NodeType.CLASS:
             return self._class_conversion(given, bound, open_names)
+        if kind == NodeType.ENUM:
+            # An enum is a value type: met by itself alone.
+            return given[1] == bound[1]
         if kind != NodeType.INTERFACE:
             return None
         if bound[1] not in self._ancestor_closure(given[1])[0]:
@@ -2750,48 +2829,54 @@ class CSharpTypeInferenceEngine:
 
     def _meets_external(self, bound: str, given_qn: str) -> bool | None:
         # An external bound: `System.Enum` is met by an enum alone; any other
-        # by a first-party type only through an external base, so not by one
-        # whose every base is first-party. An enum implements the framework's
-        # interfaces, and a record `IEquatable<>`, which no base list writes.
+        # by a first-party type only through an external base: one the type
+        # or a base of it writes as the bound meets it (`Held : Disposer :
+        # IDisposable`), and none when every base is first-party. An enum
+        # implements the framework's interfaces, and a record `IEquatable<>`
+        # of itself, which its bases record.
         is_enum = self.function_registry.get(given_qn) == NodeType.ENUM
-        name = strip_generic_arguments(type_shape(bound)[0])
-        if name.rpartition(cs.SEPARATOR_DOT)[2] == cs.CSHARP_ENUM_BASE_TYPE:
+        if _framework_name(bound) == cs.CSHARP_ENUM_BASE_TYPE:
             return is_enum
         if is_enum:
             return None
-        return False if self._ancestor_closure(given_qn)[1] else None
+        external = self._ancestor_closure(given_qn)[1]
+        if _external_spelling(bound) in {_external_spelling(e) for e in external}:
+            return True
+        return None if external else False
 
-    def _ancestor_closure(self, type_qn: str) -> tuple[set[str], bool]:
+    def _ancestor_closure(self, type_qn: str) -> tuple[set[str], set[str]]:
         # Every first-party type `type_qn` is, derives from or implements,
-        # through the bases each part of each writes, and whether every base
-        # on the way is first-party: one that is not may implement anything.
+        # through the bases each part of each writes, and every base on the
+        # way that is not first-party, as resolved: one may implement
+        # anything.
         seen: set[str] = set()
-        complete = True
+        external: set[str] = set()
         queue = deque(self._partial_roots(type_qn))
         while queue:
             current = queue.popleft()
             if current in seen:
                 continue
             seen.add(current)
-            for base in self._first_party_bases(current):
+            for base, spelled in self._first_party_bases(current):
                 if base is None:
-                    complete = False
+                    external.add(spelled)
                 else:
                     queue.extend(self._partial_roots(base))
-        return seen, complete
+        return seen, external
 
-    def _first_party_bases(self, type_qn: str) -> list[str | None]:
-        # The first-party type each base of `type_qn` is, resolved in its
-        # file, None for one that is not: those it writes (interfaces too)
+    def _first_party_bases(self, type_qn: str) -> list[tuple[str | None, str]]:
+        # Each base of `type_qn`, resolved in its file, as (the first-party
+        # type it is or None, its spelling): those it writes (interfaces too)
         # and those the inheritance pass linked.
         shape = self.csharp_generic_shapes.get(type_qn)
         scope = self.scope_of(type_qn)
         written = [
-            self._first_party_type(canonical_type(base, scope))
+            (self._first_party_type(canonical), canonical)
             for base in (shape.base_types if shape is not None else ())
+            if (canonical := canonical_type(base, scope))
         ]
         linked = [
-            base if self.function_registry.get(base) in _TYPE_DECLS else None
+            (base if self.function_registry.get(base) in _TYPE_DECLS else None, base)
             for base in self.class_inheritance.get(type_qn, ())
         ]
         return written + linked
