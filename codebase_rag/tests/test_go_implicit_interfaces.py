@@ -2140,3 +2140,125 @@ def test_without_go_types_every_file_is_matched_by_name(
         (name, "Shape"): cs.EdgeResolution.HEURISTIC
         for name in ("Square", "Wrong", "Tile", "Tagged", "Mixed")
     }
+
+
+# --- the pairs an incremental sync reads back (PR #3360, after #2503) --------
+
+SYNCED = {
+    "shape.go": """package shapes
+
+type Shape interface {
+\tArea() float64
+}
+""",
+    "square.go": """package shapes
+
+type Square struct{}
+""",
+    # Square's method lives apart from its type, as Go allows.
+    "square_area.go": """package shapes
+
+func (s Square) Area() float64 { return 1 }
+""",
+    "circle.go": """package shapes
+
+type Circle struct{}
+
+func (c Circle) Area() float64      { return 2 }
+func (c Circle) Perimeter() float64 { return 3 }
+""",
+    "caller.go": """package shapes
+
+func Total(xs []Shape) float64 {
+\tt := 0.0
+\tfor _, s := range xs {
+\t\tt += s.Area()
+\t}
+\treturn t
+}
+""",
+}
+
+# Each edit, as (file, old, new): a caller-only sync, and an interface that
+# Square stops satisfying while the file holding Square.Area is not re-parsed.
+SYNC_EDITS = {
+    "caller": ("caller.go", "return t\n", "return t // synced\n"),
+    "interface": (
+        "shape.go",
+        "\tArea() float64\n",
+        "\tArea() float64\n\tPerimeter() float64\n",
+    ),
+}
+
+
+def _synced_repo(root: Path, edit: str | None = None) -> Path:
+    root.mkdir()
+    (root / "go.mod").write_text("module proj\n\ngo 1.22\n", encoding="utf-8")
+    for rel, text in SYNCED.items():
+        (root / rel).write_text(text, encoding="utf-8")
+    if edit is not None:
+        _apply_sync_edit(root, edit)
+    return root
+
+
+def _apply_sync_edit(root: Path, edit: str) -> None:
+    rel, old, new = SYNC_EDITS[edit]
+    path = root / rel
+    text = path.read_text(encoding="utf-8")
+    assert old in text
+    path.write_text(text.replace(old, new), encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "sync", ["fresh", "reused", "reingest-fresh", "reingest-reused"]
+)
+@pytest.mark.parametrize("edit", list(SYNC_EDITS))
+def test_a_sync_reading_go_pairs_back_matches_a_clean_index(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch, edit: str, sync: str
+) -> None:
+    # A sync reads every IMPLEMENTS edge back from the graph (#2503), the Go
+    # ones too, and restores the edges unchanged files held into re-parsed
+    # ones, while link_go_interfaces recomputes the Go pairs from every
+    # method set. Neither may add an edge a clean index lacks: no OVERRIDES
+    # or IMPLEMENTS the edit took away, and no unlabelled copy.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    root = _synced_repo(temp_repo / "synced")
+    store = _StatefulIngestor()
+    first = _go_updater(store, root)
+    first.run(force=True)
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
+    _apply_sync_edit(root, edit)
+    rel = SYNC_EDITS[edit][0]
+    os.utime(root / rel, (cache_mtime + 1, cache_mtime + 1))
+    updater = first if sync.endswith("reused") else _go_updater(store, root)
+    if sync.startswith("reingest"):
+        updater.reingest([rel])
+    else:
+        updater.run(force=False)
+
+    clean = _StatefulIngestor()
+    _go_updater(clean, _synced_repo(temp_repo / "clean", edit)).run(force=True)
+    assert _interface_edges(store) == _interface_edges(clean)
+
+
+def test_go_pairs_read_back_stay_out_of_the_generic_override_walk(
+    temp_repo: Path,
+) -> None:
+    # link_go_interfaces writes a Go pair's OVERRIDES, labelled with its
+    # confidence, from the pairs it recomputes; the read-back copy of the
+    # graph's edge may be one the edit took away. A Java pair read back
+    # still joins the walk (#2503).
+    updater = _go_updater(_StatefulIngestor(), temp_repo)
+    dp = updater.factory.definition_processor
+    dp.rehydrated_definition_paths.update(
+        {"proj.square.Square": "square.go", "proj.Upper.Upper": "Upper.java"}
+    )
+    dp.rehydrated_interface_implementers.update(
+        {
+            "proj.shape.Shape": {"proj.square.Square"},
+            "proj.Strategy.Strategy": {"proj.Upper.Upper"},
+        }
+    )
+    assert dp._override_walk_implementers() == {
+        "proj.Strategy.Strategy": {"proj.Upper.Upper"}
+    }

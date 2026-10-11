@@ -1448,6 +1448,23 @@ def _carried_pair_rows(
     return implements, overrides
 
 
+def _relinked_go_edge(row: ResultRow) -> bool:
+    """A captured IMPLEMENTS or OVERRIDES edge out of a Go file."""
+    # Go's are recomputed every run from every method set, read-back ones
+    # included (issue #2483), so a pair that still holds comes back without
+    # this edge. Restored, one an edit took away stayed: a method in a file
+    # the sync never re-parsed kept its OVERRIDES into an interface that had
+    # gained a method its type lacks, and a pair that changed source kept
+    # the label it had before.
+    path = row.get(cs.KEY_CALLER_PATH)
+    return (
+        row.get(cs.KEY_REL)
+        in (cs.RelationshipType.IMPLEMENTS.value, cs.RelationshipType.OVERRIDES.value)
+        and isinstance(path, str)
+        and path.endswith(cs.EXT_GO)
+    )
+
+
 def _is_rust_method_edge(row: ResultRow) -> bool:
     """A captured edge between two Methods out of a Rust file."""
     method = cs.NodeLabel.METHOD.value
@@ -5214,8 +5231,12 @@ class GraphUpdater:
 
         None for a malformed row, a target the re-index did not recreate (a
         renamed or removed definition is correctly left without its stale
-        inbound edge, matching a clean re-index), or a label without a key.
+        inbound edge, matching a clean re-index), a label without a key, or
+        a Go type's IMPLEMENTS or OVERRIDES edge, which `_link_go_interfaces`
+        writes again for every pair that still holds.
         """
+        if _relinked_go_edge(row):
+            return None
         caller_label = row.get(cs.KEY_CALLER_LABEL)
         caller_qn = row.get(cs.KEY_CALLER_QN)
         rel = row.get(cs.KEY_REL)
