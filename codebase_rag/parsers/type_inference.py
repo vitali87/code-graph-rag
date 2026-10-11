@@ -23,6 +23,7 @@ from .go import utils as go_utils
 from .import_processor import ImportProcessor
 from .java import JavaTypeInferenceEngine
 from .js_ts import JsTypeInferenceEngine
+from .js_ts import utils as js_ts_utils
 from .lua import LuaTypeInferenceEngine
 from .py import PythonTypeInferenceEngine, resolve_class_name
 from .rs import RustTypeInferenceEngine
@@ -722,6 +723,61 @@ class TypeInferenceEngine:
         # return type, so it leaves with it; a stale one would keep stamping
         # INSTANTIATES on a call that now reaches a static factory (#2012).
         self.dart_constructor_qns.difference_update(qns)
+
+    def js_callable_return_type(self, callable_qn: str, static: bool) -> str | None:
+        """The class a JS/TS method or function returns, read in its own file.
+
+        Unlike the languages that record a hop's return in
+        `method_return_types` as they ingest, TS needs its whole module scope
+        (imports included) to say which class a return names (issue #2468).
+        A method is found through its class's own qn path (a namespace, a
+        function or a method may hold the class); only a module-level
+        function is read. `static` picks a class's static member over an
+        instance one of the same name.
+        """
+        kind = self.function_registry.get(callable_qn)
+        if (
+            kind not in (NodeType.METHOD, NodeType.FUNCTION)
+            or (located := self._js_qn_path(callable_qn)) is None
+        ):
+            return None
+        root, language, module_qn, path = located
+        # A method's path holds its class; a function is read at module level.
+        if (kind == NodeType.FUNCTION) != (len(path) == 1):
+            return None
+        return self.js_type_inference.callable_return_type(
+            root, path, module_qn, language, static
+        )
+
+    def js_static_member(
+        self, class_qn: str, member_name: str
+    ) -> tuple[bool, int | None]:
+        """Whether a JS/TS class declares a static `member_name`, and its
+        method's line (see `JsTypeInferenceEngine.static_member`)."""
+        located = self._js_qn_path(class_qn)
+        body = (
+            js_ts_utils.find_class_body_at(located[0], located[3]) if located else None
+        )
+        if body is None:
+            return False, None
+        return self.js_type_inference.static_member(body, member_name)
+
+    def _js_qn_path(
+        self, qualified_name: str
+    ) -> tuple[ASTNode, cs.SupportedLanguage, str, list[str]] | None:
+        """The parsed JS/TS module a qn lives in (the longest prefix naming
+        one), and the qn's segments below it."""
+        module_qn = qualified_name
+        while cs.SEPARATOR_DOT in module_qn:
+            module_qn = module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            if (file_path := self.module_qn_to_file_path.get(module_qn)) is None:
+                continue
+            entry = self.ast_cache.load(file_path)
+            if entry is None or entry[1] not in cs.JS_TS_LANGUAGES:
+                return None
+            path = qualified_name[len(module_qn) + 1 :].split(cs.SEPARATOR_DOT)
+            return entry[0], entry[1], module_qn, path
+        return None
 
     def _go_free_fn_return_type(self, name: str, module_qn: str) -> str | None:
         # Same module (file) first; then the enclosing package's sibling files
