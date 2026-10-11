@@ -266,6 +266,10 @@ SYNC_LOCK_REGION_OFFSET = 1 << 20
 # A refused writer reads at most this much of the holder's name, well short
 # of the locked byte above.
 SYNC_LOCK_HOLDER_MAX_BYTES = 4096
+# The ids of edit history entries taken from the tree, or that left the
+# history (undone or aged out), which are never added from a history in the
+# tree again (issue #2427).
+EDIT_HISTORY_LEDGER_FILENAME = ".cgr-edit-history-ledger.json"
 PLATFORM_WINDOWS = "win32"
 # Permission bits copied onto a replacement file (rwx for u/g/o, setuid etc.).
 EDIT_MODE_MASK = 0o7777
@@ -287,6 +291,7 @@ CGR_STATE_FILENAMES: frozenset[str] = frozenset(
         DELOMBOK_STATE_FILENAME,
         EXCLUSION_STATE_FILENAME,
         EDIT_HISTORY_FILENAME,
+        EDIT_HISTORY_LEDGER_FILENAME,
         EDIT_LOCK_FILENAME,
         SYNC_LOCK_FILENAME,
     }
