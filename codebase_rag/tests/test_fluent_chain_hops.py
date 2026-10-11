@@ -1055,3 +1055,130 @@ def test_ts_this_picks_the_make_of_its_own_kind_of_method(
     callees = _from_callers(ts_static_this_edges, caller)
     assert callees.get(expected) == _EXACT
     assert other not in callees
+
+
+# ---------------------------------------------------------------------------
+# Object literals: a method of an object literal (shorthand, getter, or a
+# `function` property) binds `this` to that object, never to the class whose
+# method builds it. Its chains must not reach the class around it
+# ---------------------------------------------------------------------------
+
+_OBJECT_LITERAL_THIS = """\
+export class Other { done() { return 1; } }
+export class Maker { make() { return new Other(); } }
+
+export class Outer {
+  make() { return this; }
+  done() { return 2; }
+  static smake() { return new Outer(); }
+
+  arrowInLiteral() {
+    const o = {
+      make() { return new Other(); },
+      go() { const f = () => this.make().done(); return f(); },
+    };
+    return o.go();
+  }
+
+  shorthand() {
+    const o = { go() { return this.make().done(); } };
+    Object.setPrototypeOf(o, new Maker());
+    return o.go();
+  }
+
+  arrowInShorthand() {
+    const o = { go() { const f = () => this.make().done(); return f(); } };
+    Object.setPrototypeOf(o, new Maker());
+    return o.go();
+  }
+
+  getter() {
+    const o = { get value() { return this.make().done(); } };
+    Object.setPrototypeOf(o, new Maker());
+    return o.value;
+  }
+
+  functionProperty() {
+    const o = { go: function () { return this.make().done(); } };
+    Object.setPrototypeOf(o, new Maker());
+    return o.go();
+  }
+
+  direct() { return this.make().done(); }
+
+  arrowInMethod() { const f = () => this.make().done(); return f(); }
+
+  static viaStatic() { return this.smake().done(); }
+
+  classInLiteral() {
+    const o = {
+      K: class {
+        make() { return new Other(); }
+        go() { return this.make().done(); }
+      },
+    };
+    return new o.K().go();
+  }
+}
+"""
+
+
+@pytest.fixture
+def object_literal_edges(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> dict[tuple[str, str], str | None]:
+    root = temp_repo / "objlit"
+    _write(
+        root,
+        {"lit.ts": _OBJECT_LITERAL_THIS, "lit_js.js": _OBJECT_LITERAL_THIS},
+    )
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="typescript")
+    return _calls(mock_ingestor)
+
+
+_LIT_MODULES = ["objlit.lit", "objlit.lit_js"]
+
+
+@pytest.mark.parametrize("module", _LIT_MODULES)
+@pytest.mark.parametrize(
+    "method",
+    [
+        "arrowInLiteral",
+        "shorthand",
+        "arrowInShorthand",
+        "getter",
+        "functionProperty",
+    ],
+)
+def test_object_literal_this_chain_does_not_reach_the_outer_class(
+    object_literal_edges: dict[tuple[str, str], str | None],
+    module: str,
+    method: str,
+) -> None:
+    # Node runs Other.done here, never Outer.done.
+    callees = _from_callers(object_literal_edges, f"{module}.Outer.{method}")
+    assert f"{module}.Outer.done" not in callees
+
+
+@pytest.mark.parametrize("module", _LIT_MODULES)
+@pytest.mark.parametrize("method", ["direct", "arrowInMethod", "viaStatic"])
+def test_class_this_chain_still_reaches_the_class(
+    object_literal_edges: dict[tuple[str, str], str | None],
+    module: str,
+    method: str,
+) -> None:
+    callees = _from_callers(object_literal_edges, f"{module}.Outer.{method}")
+    assert callees.get(f"{module}.Outer.done") == _EXACT
+
+
+@pytest.mark.parametrize("module", _LIT_MODULES)
+def test_class_expression_inside_an_object_literal_keeps_its_own_this(
+    object_literal_edges: dict[tuple[str, str], str | None], module: str
+) -> None:
+    # The class expression's methods bind `this` to that class, not to the
+    # object holding it and not to Outer. Its anonymous members have no
+    # module-level qn to read a return from, so the hop stays untyped, as
+    # before.
+    callees = _from_callers(object_literal_edges, f"{module}.Outer.classInLiteral")
+    assert f"{module}.Outer.done" not in callees
+    assert f"{module}.Other.done" not in callees

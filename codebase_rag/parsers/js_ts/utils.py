@@ -45,14 +45,19 @@ def is_static_member(member: Node) -> bool:
 def this_names_class_at(root: Node, point: int) -> bool | None:
     """What `this` written at byte `point` is: the class itself (``True``,
     inside a static method, field initialiser or static block), an instance
-    (``False``), or neither (``None``: a plain function's own `this`, or
-    none at all). An arrow reads `this` from where it is written."""
+    (``False``), or neither (``None``: a plain function's or an object
+    literal method's own `this`, or none at all). An arrow reads `this` from
+    where it is written."""
     node = root.named_descendant_for_byte_range(point, point)
     while node is not None:
         if node.type == cs.TS_CLASS_STATIC_BLOCK:
             return True
         if node.type in _CLASS_THIS_MEMBERS:
-            return is_static_member(node)
+            # A shorthand method, getter or setter of an object literal binds
+            # `this` to that object; only a member of a class body is the
+            # class's, so the walk never climbs past it to the class around.
+            in_class = node.parent is not None and node.parent.type == cs.TS_CLASS_BODY
+            return is_static_member(node) if in_class else None
         if node.type in _OWN_THIS_CALLABLES:
             return None
         node = node.parent

@@ -5926,6 +5926,16 @@ class CallResolver:
             or (local_var_types and base in local_var_types)
         ):
             return None
+        # What `this` / `super` name is settled before anything resolves: an
+        # object literal's or a plain function's own `this` is no class, so
+        # neither the resolver nor the class-anchored fallback below may
+        # answer for it with the class around it.
+        is_this = base in _JS_THIS_RECEIVERS
+        this_static = (
+            self._js_this_names_class(module_qn, call_point) if is_this else False
+        )
+        if this_static is None:
+            return None
         method = hop.split(cs.CHAR_PAREN_OPEN, 1)[0]
         callee_qn = self._exact_first_hop(
             base,
@@ -5943,9 +5953,13 @@ class CallResolver:
         )
         if callee_qn is None:
             return None
-        static = self._js_receiver_is_class(base, callee_qn, module_qn, call_point)
-        if static is None:
-            return None
+        # `D.make()` names the class, so it reaches D's static `make`; any
+        # other named base is a value and reaches the instance one.
+        static = this_static or (
+            not is_this
+            and self._chain_class_qn(base, module_qn)
+            == callee_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        )
         returned = self._hop_return_type(callee_qn, language, static)
         return (returned, parts[1:]) if returned else None
 
@@ -5977,18 +5991,12 @@ class CallResolver:
         inherited = self._resolve_inherited_method(call.class_context, method)
         return inherited[1] if inherited else None
 
-    def _js_receiver_is_class(
-        self, base: str, callee_qn: str, module_qn: str, call_point: int | None
+    def _js_this_names_class(
+        self, module_qn: str, call_point: int | None
     ) -> bool | None:
-        # Whether `base.m()` reaches the class's static `m` or the instance
-        # one. `D.make()` names the class. `this` and `super` name it inside
-        # a static member and an instance elsewhere; a plain function's own
-        # `this` is neither, and types no hop.
-        if base not in _JS_THIS_RECEIVERS:
-            return (
-                self._chain_class_qn(base, module_qn)
-                == callee_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-            )
+        # `this` / `super` at the call: the class inside a static member, an
+        # instance inside an instance member, and neither (None) inside a
+        # plain function or an object literal's method.
         root = self._cached_module_root(module_qn)
         if root is None or call_point is None:
             return None
