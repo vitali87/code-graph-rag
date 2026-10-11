@@ -43,6 +43,32 @@ HELP_ARG = "help"
 CLI_ERR_OUTPUT_REQUIRES_UPDATE = (
     "Error: --output/-o option requires --update-graph to be specified."
 )
+CLI_OPT_CLEAN = "--clean"
+CLI_OPT_OUTPUT = "--output"
+CLI_OPT_INTERACTIVE_SETUP = "--interactive-setup"
+CLI_ERR_WORKSPACE_UPDATE_OPTION = (
+    "Error: {option} applies to one repository and cannot be combined with "
+    "--workspace --update-graph. Run it with --repo-path <repository> instead."
+)
+CLI_ERR_WORKSPACE_UPDATE_NO_SYNC = (
+    "Error: --no-sync cannot be combined with --workspace --update-graph, "
+    "which syncs every repository in the workspace and then opens the "
+    "assistant. Drop --no-sync to sync first, or --update-graph to open the "
+    "assistant on the graph as it is."
+)
+CLI_ERR_START_EMPTY_WORKSPACE = (
+    "Error: workspace '{name}' has no repositories, so there is nothing to sync "
+    "or to scope the assistant to. Add one with `cgr workspace add-repo {name} "
+    "PATH`, or leave out --workspace."
+)
+CLI_ERR_SYNC_HOME_OR_ROOT = (
+    "Error: refusing to index {path}: it is your home directory or the "
+    "filesystem root, so every file under it would enter the graph. Pass "
+    "--repo-path <repository>, or --yes to index it anyway."
+)
+CLI_ERR_INVALID_SETTING = "Error: {problem}"
+# click's own exit status for a bad parameter value.
+CLI_EXIT_USAGE_ERROR = 2
 # `-o` checks, made before a graph is read or indexed (issue #2410).
 CLI_ERR_OUTPUT_IS_DIR = "Error: --output is a directory, not a file: {path}"
 CLI_ERR_OUTPUT_PARENT_NOT_DIR = (
@@ -76,6 +102,17 @@ CLI_ERR_JSON_REQUIRES_ASK_AGENT = (
 )
 CLI_ERR_PATH_NOT_EXISTS = "Error: --repo-path does not exist: {path}"
 CLI_ERR_PATH_NOT_DIR = "Error: --repo-path is not a directory: {path}"
+CLI_ERR_PROJECT_OWNED_ELSEWHERE = (
+    "Error: project '{project_name}' already indexes {root}. Choose another "
+    "--project-name, or pass --yes to replace it with this repository."
+)
+# An owner that cannot be read is not an absent one: syncing anyway would
+# replace the root that shows whose project it is (review of PR 2499).
+CLI_ERR_PROJECT_OWNER_UNREADABLE = (
+    "Error: could not read which repository project '{project_name}' indexes "
+    "({error}); nothing was changed. Retry once the graph answers, or pass "
+    "--yes to sync this repository into it regardless."
+)
 CLI_ERR_WORKSPACE_PROJECT_NAME = (
     "Error: workspace '{workspace}' cannot be synced. Repo {path}: {error} "
     "Re-add it with `cgr workspace remove-repo {workspace} {path}` and "
@@ -143,6 +180,13 @@ CLI_MSG_CLEANING_DB = "Cleaning database..."
 # again. Sharing the id lets that run's run-scoped clear remove the marker the
 # interrupted one stranded, while MCP runs keep their own ids untouched.
 CLI_SYNC_RUN_ID = "cli-sync"
+# What tells two process tables apart beyond the hostname, which containers
+# with host networking share while each has its own pid namespace: the
+# kernel's boot id (per machine and boot) and this process's pid namespace.
+# Linux only; elsewhere the hostname stands alone.
+PROCESS_BOOT_ID_PATH = "/proc/sys/kernel/random/boot_id"
+PROCESS_PID_NAMESPACE_PATH = "/proc/self/ns/pid"
+PROCESS_HOST_SEPARATOR = "|"
 CLI_ERR_SYNC_MARKER_FAILED = (
     "Refusing to sync '{project}': the incomplete-run marker could not be "
     "written, so an interrupted sync would leave a partial graph that looks "
@@ -151,6 +195,17 @@ CLI_ERR_SYNC_MARKER_FAILED = (
 CLI_STATUS_SYNC_INCOMPLETE = (
     "sync interrupted or in progress -- re-run if no sync is active"
 )
+# `cgr status` lists the projects of the graph it reports on (issue #2444).
+CLI_STATUS_SYNCS_HEADER = "syncs:"
+CLI_STATUS_SYNCS_NONE = "syncs:    (no projects in the graph at {endpoint})"
+CLI_STATUS_SYNCS_NEED_GRAPH = (
+    "syncs:    unknown -- sync times are kept in the graph, and Memgraph at "
+    "{endpoint} could not be read"
+)
+CLI_STATUS_SYNC_ROW = "  - {project}: {detail}"
+CLI_STATUS_SYNC_TIME = "last sync {time}"
+CLI_STATUS_SYNC_NOT_RECORDED = "last sync not recorded (the next sync records it)"
+CLI_STATUS_SYNC_MARKED = "({marker})"
 CLI_MSG_CLEANING_HASH_CACHE = "Removing hash cache: {path}"
 CLI_MSG_CLEAN_DONE = "Clean completed successfully!"
 CLI_WARN_CLEAN_OTHER_PROJECTS = (
@@ -698,6 +753,15 @@ INTERACTIVE_BFS_MAX_DEPTH = 10
 INTERACTIVE_DEFAULT_GROUP = "."
 
 MSG_SURGICAL_SUCCESS = "Successfully applied surgical code replacement in: {path}"
+# Appended to a chat write tool's result by its re-ingest (issue #2916).
+MSG_CHAT_GRAPH_UPDATED = (
+    " The knowledge graph now reflects this change: re-ingested {files} "
+    "file(s) and {dependents} dependent file(s)."
+)
+MSG_CHAT_GRAPH_NOT_UPDATED = (
+    " The knowledge graph was NOT updated ({error}): graph queries still "
+    "describe the code before this change until `cgr start --update-graph` runs."
+)
 # Span-preserving patchers (issue #1529).
 PATCH_BAD_POSITION = "No such position: line {line}, column {col}"
 PATCH_BAD_OFFSET = "Byte offset {offset} is outside the file"
@@ -778,8 +842,39 @@ RENAME_AMBIGUOUS = (
     "Refusing to rename {qn}: {count} site(s) were resolved heuristically, by overload "
     "fan-out, or only by a trace; pass {option} to rewrite through them"
 )
+RENAME_UNPLANNED = (
+    "Refusing to rename {qn}: {count} occurrence(s) of {name} in code have no site in "
+    "the graph ({locations}), so renaming only the sites it knows would leave them "
+    "under the old name. The index may have missed them, or they may belong to a "
+    "symbol it does not model; review them and pass {option} to rewrite them as "
+    "guessed sites"
+)
+RENAME_UNPLANNED_RECEIVER_UNKNOWN = (
+    ". {count} of them may name another symbol (a call through an object the source "
+    "does not show to be of its class, or a name an import may bring in from a module "
+    "it does not resolve), which {option} does not rewrite: check those by hand"
+)
+RENAME_RECEIVER_UNKNOWN = (
+    "Refusing to rename {qn}: {count} use(s) of {name} may name another symbol "
+    "({locations}), and the graph has no site for them: a call through an object the "
+    "source does not show to be of its class, or a name an import may bring in from a "
+    "module it does not resolve. {option} does not rewrite them: check them by hand"
+)
+RENAME_UNPLANNED_ALSO_GUESSED = (
+    ". {count} graph site(s) were also resolved heuristically, by overload fan-out, "
+    "or only by a trace"
+)
+# How many unplanned locations the refusal message spells out; the full list
+# is the refusal's `unplanned` sites.
+RENAME_UNPLANNED_SHOWN = 10
+RENAME_UNPLANNED_MORE = "{shown}, and {more} more"
 RENAME_CLI_ALLOW_HEURISTIC = "--allow-heuristic"
 RENAME_UNLOCATABLE_SITE = "{owner}: site cannot be located ({resolution})"
+RENAME_RESOLUTION_BAD_POSITION = "position outside its file"
+RENAME_RESOLUTION_CLASS_VIA_PARAM = (
+    "constructed through parameter {param}; where the class is passed is "
+    "not recorded against it"
+)
 RENAME_SITELESS = (
     "Cannot rename {qn}: {count} graph-known site(s) carry no rewrite location, "
     "so the rename would leave them under the old name"
@@ -791,6 +886,11 @@ RENAME_WRONG_ROOT = (
 RENAME_STRUCTURAL_UNLOCATABLE = (
     "Cannot rename {qn}: {count} structural edge(s) (inherits, accepts, returns) "
     "carry no rewrite site, so the rename would leave them pointing at the old name"
+)
+RENAME_TWIN_BOUND_IMPORT = (
+    "Cannot rename {qn}: the import of `{name}` in {paths} also binds the "
+    "same-named type, which that file uses; rewriting the import would leave "
+    "the type unbound"
 )
 RENAME_PLANNED = "{count} site(s) would be rewritten"
 RENAME_PARSE_FAILED = "Rename rolled back: {files} would no longer parse"
@@ -963,6 +1063,10 @@ GREP_SUGGESTION = " Use 'rg' instead of 'grep' for text searching."
 QUERY_NOT_AVAILABLE = "N/A"
 DICT_KEY_RESULTS = "results"
 DICT_KEY_ERROR = "error"
+# The fields a JSON tool result reports completed work in: an applied rename or
+# a deleted project that also carries an error did its work (issue #2802).
+DICT_KEY_APPLIED = "applied"
+DICT_KEY_SUCCESS = "success"
 DICT_KEY_QUERY_USED = "query_used"
 TIKTOKEN_ENCODING = "cl100k_base"
 QUERY_SUMMARY_SUCCESS = "Successfully retrieved {count} item(s) from the graph."

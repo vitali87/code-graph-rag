@@ -8,12 +8,14 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Coroutine
+import uuid
+from collections.abc import Callable, Coroutine, Iterator
+from contextlib import contextmanager
 from fnmatch import fnmatch
-from functools import partial
+from functools import partial, wraps
 from importlib.metadata import version as get_version
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import TYPE_CHECKING, Any, NamedTuple, NoReturn
 
 import click
 import typer
@@ -22,11 +24,14 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+from typer.core import TyperGroup
 
-from . import (
-    _cli_env,  # noqa: F401  (must run before settings load)
-    cgr_state,
-)
+if TYPE_CHECKING:
+    # What `TyperGroup.invoke` takes on the locked typer, which vendors click;
+    # an older typer passes click's own Context at runtime (#1409).
+    from typer._click import Context as _GroupContext
+
+from . import _cli_env  # noqa: F401  (must run before settings load)
 from . import cli_help as ch
 from . import constants as cs
 from . import cypher_queries as cq
@@ -39,8 +44,9 @@ from .capture import (
     split_spec,
     unknown_tokens,
 )
+from .checkout_state import prepare_state_dir
 from .cli_runtime import app_context, connect_memgraph, style
-from .config import load_ignore_patterns, settings
+from .config import load_ignore_patterns, settings, settings_errors
 from .console_marks import status_mark
 from .editing.cli import cli as edits_cli
 from .editor_links import (
@@ -54,7 +60,7 @@ from .editor_links import (
 from .graph_cli import cli as graph_cli
 from .parser_loader import load_parsers
 from .services.graph_diff import DiffError, diff_indexes, diff_is_empty
-from .services.graph_service import MemgraphIngestor
+from .services.graph_service import GraphUnavailableError, MemgraphIngestor
 from .services.protobuf_service import ProtobufFileIngestor
 from .services.provenance import (
     capture_description,
@@ -76,6 +82,7 @@ from .types_defs import (
     DuplicateMember,
     DuplicatesConfig,
     DuplicatesReport,
+    ProjectSync,
     PropertyValue,
     ResultRow,
     ResultValue,
@@ -83,11 +90,13 @@ from .types_defs import (
 from .utils.path_utils import (
     derive_project_name,
     keeps_outside_run_excludes,
+    normalize_project_name,
     project_name_error,
     project_roots_from_rows,
     resolve_repo_path,
     unwritable_output_reason,
 )
+from .utils.process_owner import pid_may_be_running, process_host
 from .utils.terminal_console import terminal_aware_console
 from .workspaces import WorkspaceConfig, WorkspaceError, load_workspace
 from .workspaces.cli import cli as workspace_cli
@@ -175,12 +184,25 @@ def main_optimize_async(*args: Any, **kwargs: Any) -> Coroutine[Any, Any, None]:
     return impl(*args, **kwargs)
 
 
+class _CgrGroup(TyperGroup):
+    def invoke(self, ctx: "_GroupContext") -> object:
+        # Every command reaches the graph through the ingestor, which raises
+        # this at connect time with the fix in its message; printing it here
+        # covers them all, the delegated groups and the chat included (#2443).
+        try:
+            return super().invoke(ctx)
+        except GraphUnavailableError as e:
+            app_context.console.print(style(str(e), cs.Color.RED))
+            raise typer.Exit(1) from e
+
+
 app = typer.Typer(
     name=cs.PACKAGE_NAME,
     help=ch.APP_DESCRIPTION,
     epilog=ch.APP_EPILOG,
     no_args_is_help=True,
     add_completion=False,
+    cls=_CgrGroup,
 )
 
 
@@ -235,8 +257,20 @@ def _update_and_validate_models(orchestrator: str | None, cypher: str | None) ->
     validate_models_early()
 
 
+def _refuse_invalid_settings(command: str | None) -> None:
+    # Checked here rather than when the settings load, so `--version`,
+    # `--help` and `cgr help` (all handled before or without a command) still
+    # work, and no command runs on the default a refused value fell back to.
+    if not settings_errors or command == ch.CLICommandName.HELP:
+        return
+    for problem in settings_errors:
+        typer.echo(cs.CLI_ERR_INVALID_SETTING.format(problem=problem), err=True)
+    raise typer.Exit(cs.CLI_EXIT_USAGE_ERROR)
+
+
 @app.callback()
 def _global_options(
+    ctx: typer.Context,
     version: bool | None = typer.Option(
         None,
         "--version",
@@ -253,6 +287,7 @@ def _global_options(
         is_eager=True,
     ),
 ) -> None:
+    _refuse_invalid_settings(ctx.invoked_subcommand)
     settings.QUIET = quiet
     if quiet:
         logger.remove()
@@ -288,11 +323,28 @@ def _pre_chat_sync(
     exclude: list[str] | None,
     capture: list[str] | None,
     no_embeddings: bool,
+    assume_yes: bool = False,
 ) -> tuple[Callable[[], None], str]:
     # The sync to run before the chat opens: every workspace repo when a
     # workspace is active, else just the target repo.
     if workspace_config is None:
         return repo_sync, cs.MSG_SYNCING_KNOWLEDGE_GRAPH
+    _exit_if_workspace_names_unstorable(workspace_config)
+    workspace_sync = partial(
+        _sync_workspace,
+        workspace_config,
+        batch_size,
+        exclude,
+        capture=capture,
+        skip_embeddings=no_embeddings or None,
+        assume_yes=assume_yes,
+    )
+    return workspace_sync, cs.MSG_SYNCING_WORKSPACE.format(
+        name=workspace_config.name, count=len(workspace_config.repos)
+    )
+
+
+def _exit_if_workspace_names_unstorable(workspace_config: WorkspaceConfig) -> None:
     # A workspace file written before names were checked can still hold a
     # dotted one; syncing it would merge nodes across projects (#2412).
     for repo in workspace_config.repos:
@@ -302,17 +354,6 @@ def _pre_chat_sync(
                     workspace=workspace_config.name, path=repo.path, error=error
                 )
             )
-    workspace_sync = partial(
-        _sync_workspace,
-        workspace_config,
-        batch_size,
-        exclude,
-        capture=capture,
-        skip_embeddings=no_embeddings or None,
-    )
-    return workspace_sync, cs.MSG_SYNCING_WORKSPACE.format(
-        name=workspace_config.name, count=len(workspace_config.repos)
-    )
 
 
 def _exit_with_error(message: str) -> NoReturn:
@@ -326,11 +367,20 @@ def _refuse_options_update_graph_drops(
     output_format: cs.QueryFormat,
     no_sync: bool,
     projects: str | None,
+    *,
+    workspace_given: bool,
 ) -> None:
     # `--update-graph` returns once its sync is done, before anything that
     # reads these, so they were accepted and dropped with exit 0 (#2478).
-    # `--workspace` is left out: it decides what the sync covers (#2418).
+    # With `--workspace` it syncs the workspace's repositories and then opens
+    # the assistant, which reads `-a`, `--output-format` and `--projects`, so
+    # only `--no-sync` is refused there, by its own message: a sync asked for
+    # with `--no-sync` contradicts itself (#2418).
     if not update_graph:
+        return
+    if workspace_given:
+        if no_sync:
+            _exit_with_error(cs.CLI_ERR_WORKSPACE_UPDATE_NO_SYNC)
         return
     for option, given, remedy in (
         (cs.CLI_OPT_ASK_AGENT, ask_agent is not None, cs.CLI_REMEDY_DROP_UPDATE_GRAPH),
@@ -352,6 +402,7 @@ def _start_update_graph(
     repo: Path,
     project_name: str,
     *,
+    workspace_config: WorkspaceConfig | None = None,
     project_named: bool,
     batch_size: int,
     exclude: list[str] | None,
@@ -361,8 +412,32 @@ def _start_update_graph(
     capture: list[str] | None,
     skip_embeddings: bool | None,
     assume_yes: bool,
-) -> None:
-    # `start --update-graph`: sync the repo into the graph, then stop.
+    defer_workspace_sync: bool = False,
+) -> bool:
+    """`start --update-graph`: sync, and say whether the assistant opens next.
+
+    A repository is synced and the command stops, as it always has. With
+    --workspace, each of the workspace's repositories is synced under its own
+    name, the set the chat's own sync uses, and the assistant then opens
+    scoped to the workspace (#2418). `--repo-path`, defaulting to the current
+    directory, is not one of them. With `-a` that sync is deferred: the
+    single query runs it, reporting on stderr so that stdout holds only the
+    answer (see `_keep_stdout_for_the_answer`).
+    """
+    if workspace_config is not None:
+        # The same check the chat's own workspace sync makes (#2412).
+        _exit_if_workspace_names_unstorable(workspace_config)
+        if not defer_workspace_sync:
+            _sync_workspace(
+                workspace_config,
+                batch_size,
+                exclude,
+                capture=capture,
+                skip_embeddings=skip_embeddings,
+                assume_yes=assume_yes,
+            )
+            _info(style(cs.CLI_MSG_GRAPH_UPDATED, cs.Color.GREEN))
+        return True
     _info(style(cs.CLI_MSG_UPDATING_GRAPH.format(path=repo), cs.Color.GREEN))
     if not interactive_setup:
         _info(style(cs.CLI_MSG_AUTO_EXCLUDE, cs.Color.YELLOW))
@@ -393,6 +468,7 @@ def _start_update_graph(
             )
         raise typer.Exit(cs.CLI_EXIT_INTERRUPTED) from stop
     _info(style(cs.CLI_MSG_GRAPH_UPDATED, cs.Color.GREEN))
+    return False
 
 
 def _clean_database_only(
@@ -411,6 +487,22 @@ def _clean_database_only(
     _info(style(cs.CLI_MSG_CLEAN_DONE, cs.Color.GREEN))
 
 
+def _session_project(
+    workspace_config: WorkspaceConfig | None,
+    target_repo_path: str,
+    resolved_project_name: str,
+    project_name: str | None,
+) -> tuple[str, bool]:
+    # The project the session's writes re-ingest into: a workspace syncs a
+    # repo under the name it was registered with, whatever --project-name
+    # says, so that name is the one in the graph (bot review on PR #2986).
+    if workspace_config is not None and (
+        repo := workspace_config.find_repo(target_repo_path)
+    ):
+        return repo.project_name, repo.project_named
+    return resolved_project_name, project_name is not None
+
+
 def _start_active_projects(
     workspace_config: WorkspaceConfig | None,
     projects: str | None,
@@ -427,6 +519,34 @@ def _start_active_projects(
         )
         return _resolve_active_projects(projects, default_project)
     return active_projects
+
+
+@contextmanager
+def _console_on_stderr() -> Iterator[None]:
+    console = app_context.console
+    app_context.console = terminal_aware_console(stderr=True)
+    try:
+        yield
+    finally:
+        app_context.console = console
+
+
+def _keep_stdout_for_the_answer[**P](command: Callable[P, None]) -> Callable[P, None]:
+    # `-a` prints its answer, and only that, on stdout, which `main_single_query`
+    # keeps clean of its logs for a script to read: the command's warnings,
+    # its sync's progress (Greptile review of PR 2507) and the query's result
+    # tables go to stderr, from the first check until the command ends
+    # (CodeRabbit review of PR 2507). A decorator rather than a `typer.Context`
+    # parameter, which `start` has too many of already (Sonar S107).
+    @wraps(command)
+    def run(*args: P.args, **kwargs: P.kwargs) -> None:
+        if not kwargs.get("ask_agent"):
+            command(*args, **kwargs)
+            return
+        with _console_on_stderr():
+            command(*args, **kwargs)
+
+    return run
 
 
 def _run_single_query(
@@ -456,6 +576,8 @@ def _launch_session(
     output_format: cs.QueryFormat,
     sync_task: Callable[[], None] | None,
     sync_message: str,
+    project_name: str | None = None,
+    project_named: bool = False,
 ) -> None:
     # `-a` answers one question and exits; otherwise open the chat loop.
     try:
@@ -477,6 +599,8 @@ def _launch_session(
                     show_config_table=False,
                     pre_chat_sync=sync_task,
                     pre_chat_sync_message=sync_message,
+                    project_name=project_name,
+                    project_named=project_named,
                 )
             )
     except KeyboardInterrupt:
@@ -484,6 +608,58 @@ def _launch_session(
     except ValueError as e:
         app_context.console.print(
             style(cs.CLI_ERR_STARTUP.format(error=e), cs.Color.RED)
+        )
+
+
+def _sync_before_session(no_sync: bool, update_graph: bool, answering: bool) -> bool:
+    # Past `_start_update_graph`, `update_graph` means a workspace's, which
+    # has synced every repository already unless `-a` deferred that sync.
+    return not no_sync and (answering or not update_graph)
+
+
+def _exit_if_output_unusable(output: str | None, update_graph: bool) -> None:
+    if output and not update_graph:
+        _exit_with_error(cs.CLI_ERR_OUTPUT_REQUIRES_UPDATE)
+    if output:
+        _exit_if_unwritable(output)
+
+
+def _refuse_unsupported_workspace_update(
+    workspace_config: WorkspaceConfig | None,
+    update_graph: bool,
+    *,
+    clean: bool,
+    output: str | None,
+    interactive_setup: bool,
+) -> None:
+    # Each is defined for one repository: `--clean` wipes the graph before
+    # that repository's sync, `-o` writes that sync's result, and the setup
+    # prompt asks about that repository's directories.
+    if workspace_config is None or not update_graph:
+        return
+    for option, given in (
+        (cs.CLI_OPT_CLEAN, clean),
+        (cs.CLI_OPT_OUTPUT, output is not None),
+        (cs.CLI_OPT_INTERACTIVE_SETUP, interactive_setup),
+    ):
+        if given:
+            _exit_with_error(cs.CLI_ERR_WORKSPACE_UPDATE_OPTION.format(option=option))
+
+
+def _refuse_empty_workspace(
+    workspace_config: WorkspaceConfig | None,
+    update_graph: bool,
+    active_projects: list[str],
+) -> None:
+    # A workspace with no repositories gives `--update-graph` nothing to sync,
+    # and leaves the assistant's scope empty unless `--projects` names one: an
+    # empty scope reads as every project in the shared graph (Greptile review
+    # of PR 2507). Refused before the stack starts or anything is synced.
+    if workspace_config is None or workspace_config.repos:
+        return
+    if update_graph or not active_projects:
+        _exit_with_error(
+            cs.CLI_ERR_START_EMPTY_WORKSPACE.format(name=workspace_config.name)
         )
 
 
@@ -503,6 +679,7 @@ def _sync_workspace(
     exclude: list[str] | None,
     capture: list[str] | None = None,
     skip_embeddings: bool | None = None,
+    assume_yes: bool = False,
 ) -> None:
     total = len(config.repos)
     if total == 0:
@@ -538,6 +715,7 @@ def _sync_workspace(
             interactive_setup=False,
             capture=capture,
             skip_embeddings=skip_embeddings,
+            assume_yes=assume_yes,
         )
 
 
@@ -662,22 +840,173 @@ def _confirm_destructive_clean(
         raise typer.Exit(1)
 
 
+class _OwnerCheck(NamedTuple):
+    refusal: str | None
+    created: bool = False
+    # The roots the sync's marker write must still find on the Project, this
+    # repository's first; None when there is nothing to hold it to (no
+    # recorded root, or --yes taking the project over).
+    owned_roots: list[str] | None = None
+
+
+def _project_owner_refusal(
+    ingestor: MemgraphIngestor, project_name: str, repo: Path, assume_yes: bool
+) -> _OwnerCheck:
+    """Why a sync must not replace what another repository indexed (#2411),
+    and what its claim holds.
+
+    A derived name carries a hash of its path, so only a chosen one can
+    collide; the sync would delete the other repository's modules as stale
+    and leave that repository's hash cache describing code no longer there.
+    Refused rather than asked: the chat's own sync runs behind a status bar.
+
+    The check claims the name for this repository in the same statement
+    that reads its owner. A separate read let two syncs of a name nobody
+    held both see no owner and both go ahead, and the later one replaced
+    the first one's graph (review of PR 2499).
+    """
+    if not repo.is_dir():
+        return _OwnerCheck(None)
+    root = str(repo.resolve())
+    try:
+        rows = ingestor.fetch_all(
+            cq.CYPHER_CLAIM_PROJECT_ROOT,
+            {cs.KEY_PROJECT_NAME: project_name, cs.KEY_ROOT_PATH: root},
+        )
+    except Exception as exc:
+        logger.warning(ls.MG_PROJECT_ROOT_READ_FAILED.format(error=exc))
+        if assume_yes:
+            return _OwnerCheck(None)
+        return _OwnerCheck(
+            cs.CLI_ERR_PROJECT_OWNER_UNREADABLE.format(
+                project_name=project_name, error=exc
+            )
+        )
+    owner = rows[0].get(cs.KEY_ROOT_PATH) if rows else None
+    if not isinstance(owner, str) or not owner:
+        return _OwnerCheck(None)
+    if Path(owner).resolve() == repo.resolve():
+        # --yes would replace whoever holds it by then, so nothing to hold.
+        held = None if assume_yes else list(dict.fromkeys((root, owner)))
+        return _OwnerCheck(None, rows[0].get(cs.KEY_CREATED) is True, held)
+    if assume_yes:
+        logger.warning(
+            ls.PROJECT_OWNER_REPLACED.format(project_name=project_name, root=owner)
+        )
+        return _OwnerCheck(None)
+    return _OwnerCheck(
+        cs.CLI_ERR_PROJECT_OWNED_ELSEWHERE.format(project_name=project_name, root=owner)
+    )
+
+
+def _exit_if_project_owned_elsewhere(
+    batch_size: int, project_name: str, repo: Path, *, clean: bool, assume_yes: bool
+) -> _OwnerCheck:
+    """Stop before the sync when `_project_owner_refusal` refuses it (#2411).
+
+    A `--clean` rebuild is not checked: it wipes every project in the graph,
+    and `_confirm_destructive_clean` already asks before it does.
+    """
+    if clean:
+        return _OwnerCheck(None)
+    # On its own connection: exiting inside the sync's would report the
+    # refusal as a failed session.
+    with connect_memgraph(batch_size) as ingestor:
+        check = _project_owner_refusal(ingestor, project_name, repo, assume_yes)
+    if check.refusal is not None:
+        _exit_with_error(check.refusal)
+    return check
+
+
+def _release_project_claim(batch_size: int, project_name: str, repo: Path) -> None:
+    params: dict[str, PropertyValue] = {
+        cs.KEY_PROJECT_NAME: project_name,
+        cs.KEY_ROOT_PATH: str(repo.resolve()),
+    }
+    # Best effort: the sync's own failure is what is being reported.
+    try:
+        with connect_memgraph(batch_size) as ingestor:
+            ingestor.execute_write(cq.CYPHER_RELEASE_PROJECT_CLAIM, params)
+    except Exception as exc:
+        logger.warning(
+            ls.PROJECT_CLAIM_RELEASE_FAILED.format(project_name=project_name, error=exc)
+        )
+
+
+@contextmanager
+def _project_claim(
+    batch_size: int, project_name: str, repo: Path, *, clean: bool, assume_yes: bool
+) -> Iterator[list[str] | None]:
+    """Hold this sync's claim on its project name while the sync runs (#2411).
+
+    Yields the roots `_mark_sync_incomplete` must still find on the Project.
+    A claim the sync created is given back when the sync fails before its
+    incomplete-run marker or any code is written; the release query checks
+    that, so a failure further in keeps it (review of PR 2499).
+    """
+    check = _exit_if_project_owned_elsewhere(
+        batch_size, project_name, repo, clean=clean, assume_yes=assume_yes
+    )
+    try:
+        yield check.owned_roots
+    except BaseException:
+        if check.created:
+            _release_project_claim(batch_size, project_name, repo)
+        raise
+
+
 def _sync_marker_params(project_name: str) -> dict[str, PropertyValue]:
     return {cs.KEY_PROJECT_NAME: project_name, cs.KEY_RUN_ID: cs.CLI_SYNC_RUN_ID}
 
 
-def _mark_sync_incomplete(ingestor: MemgraphIngestor, project_name: str) -> None:
+# The CLI syncs THIS process is running, by the owner token on their marker.
+# A delete in the same process sees its own pid alive whether or not the sync
+# that wrote a marker has returned, so the pid cannot answer for these.
+_RUNNING_SYNC_TOKENS: set[str] = set()
+
+
+@contextmanager
+def _sync_owner() -> Iterator[dict[str, PropertyValue]]:
+    """Who this sync is, for its marker; registered as running while held."""
+    token = uuid.uuid4().hex
+    _RUNNING_SYNC_TOKENS.add(token)
+    try:
+        yield {
+            cs.KEY_OWNER_HOST: process_host(),
+            cs.KEY_OWNER_PID: os.getpid(),
+            cs.KEY_OWNER_TOKEN: token,
+        }
+    finally:
+        _RUNNING_SYNC_TOKENS.discard(token)
+
+
+def _mark_sync_incomplete(
+    ingestor: MemgraphIngestor,
+    project_name: str,
+    owner: dict[str, PropertyValue],
+    owned_roots: list[str] | None = None,
+) -> None:
     """Put the `:IncompleteRun` marker down before the sync writes (#2219).
 
     The same marker the MCP mutating paths write (#1679), so a later MCP
     process refuses to hydrate from a graph an interrupted CLI sync left
     partial. Failing to write it aborts the sync: nothing has changed yet,
     and proceeding would make exactly that partial graph look complete.
+    It names its `owner`, so a delete can tell whether this sync still runs.
+
+    With `owned_roots`, the marker goes down only while the Project still
+    has one of them, checked in the same statement: the claim the ownership
+    check saw may have been released and taken since (review of PR 2499).
     """
-    params = _sync_marker_params(project_name)
+    params = _sync_marker_params(project_name) | owner
     params[cs.KEY_WRITING] = True
     try:
-        ingestor.execute_write(cq.CYPHER_MARK_PROJECT_INCOMPLETE, params)
+        if owned_roots is None:
+            ingestor.execute_write(cq.CYPHER_MARK_CLI_SYNC_INCOMPLETE, params)
+            return
+        params[cs.KEY_ROOT_PATH] = owned_roots[0]
+        params[cs.KEY_ROOT_PATHS] = owned_roots
+        marked = ingestor.fetch_all(cq.CYPHER_MARK_CLAIMED_PROJECT_INCOMPLETE, params)
     except Exception as exc:
         app_context.console.print(
             style(
@@ -686,6 +1015,23 @@ def _mark_sync_incomplete(ingestor: MemgraphIngestor, project_name: str) -> None
             )
         )
         raise typer.Exit(1) from exc
+    if not marked:
+        _exit_with_error(_claim_lost_refusal(ingestor, project_name))
+
+
+def _claim_lost_refusal(ingestor: MemgraphIngestor, project_name: str) -> str:
+    try:
+        rows = ingestor.fetch_all(
+            cq.CYPHER_PROJECT_ROOT_PATH, {cs.KEY_PROJECT_NAME: project_name}
+        )
+    except Exception as exc:
+        return cs.CLI_ERR_PROJECT_OWNER_UNREADABLE.format(
+            project_name=project_name, error=exc
+        )
+    owner = rows[0].get(cs.KEY_ROOT_PATH) if rows else None
+    return cs.CLI_ERR_PROJECT_OWNED_ELSEWHERE.format(
+        project_name=project_name, root=owner
+    )
 
 
 def _clear_sync_incomplete(ingestor: MemgraphIngestor, project_name: str) -> None:
@@ -704,13 +1050,97 @@ def _clear_sync_incomplete(ingestor: MemgraphIngestor, project_name: str) -> Non
         )
 
 
+def _is_home_or_root(repo: Path) -> bool:
+    """Whether a sync of `repo` would crawl a whole home directory or disk.
+
+    `--repo-path` defaults to the current directory, so a sync started from
+    `$HOME` indexed every file under it (#2418).
+    """
+    resolved = repo.resolve()
+    return resolved == Path.home().resolve() or resolved == resolved.parent
+
+
+def _exit_if_syncing_home_or_root(repo: Path, assume_yes: bool) -> None:
+    # A home directory or disk root is synced only when `--yes` says so.
+    if not assume_yes and _is_home_or_root(repo):
+        _exit_with_error(cs.CLI_ERR_SYNC_HOME_OR_ROOT.format(path=repo.resolve()))
+
+
+def _stopped_sync_token(owner: ResultRow) -> str | None:
+    """The marker's owner token if the CLI sync that wrote it provably stopped.
+
+    Only a sync in this process table can be checked: one whose process is
+    gone, or one of this process's own that has returned. A marker from
+    another host, from a live process, or from before markers named their
+    owner is kept, since it may guard a graph that sync is still writing.
+    """
+    pid = owner.get(cs.KEY_OWNER_PID)
+    token = owner.get(cs.KEY_OWNER_TOKEN)
+    if (
+        owner.get(cs.KEY_OWNER_HOST) != process_host()
+        or not isinstance(pid, int)
+        or not isinstance(token, str)
+    ):
+        return None
+    if pid == os.getpid():
+        stopped = token not in _RUNNING_SYNC_TOKENS
+    else:
+        stopped = not pid_may_be_running(pid)
+    return token if stopped else None
+
+
+def _clear_stopped_sync_marker(ingestor: MemgraphIngestor, project_name: str) -> bool:
+    """Clear the CLI sync's marker if its sync stopped; True if one is kept."""
+    params = _sync_marker_params(project_name)
+    kept = False
+    for owner in ingestor.fetch_all(cq.CYPHER_CLI_SYNC_MARKER_OWNER, params):
+        if (token := _stopped_sync_token(owner)) is None:
+            kept = True
+            continue
+        ingestor.execute_write(
+            cq.CYPHER_CLEAR_STOPPED_CLI_SYNC_MARKER,
+            params | {cs.KEY_OWNER_TOKEN: token},
+        )
+    return kept
+
+
+def _clear_deleted_project_markers(
+    ingestor: MemgraphIngestor, project_name: str
+) -> None:
+    """Take off the markers a deleted project no longer needs (#2444 review).
+
+    A marker sits on its own node, out of the delete's reach, so without this
+    a sync that failed before the delete keeps the project in `cgr status`
+    as interrupted. A marker goes only when its run cannot still be writing:
+    the CLI sync's once that sync provably stopped (PR #2532 review: a sync
+    still running would otherwise write on unguarded), and any run's that
+    never wrote the graph. A run that had begun writing owns its marker
+    (#1709). Best effort, like `_clear_sync_incomplete`: the project is
+    deleted.
+    """
+    try:
+        kept = _clear_stopped_sync_marker(ingestor, project_name)
+        ingestor.execute_write(
+            cq.CYPHER_RECOVER_PROJECT_INCOMPLETE,
+            {cs.KEY_PROJECT_NAME: project_name},
+        )
+    except Exception as exc:
+        logger.warning(
+            ls.CLI_DELETE_MARKER_NOT_CLEARED.format(project=project_name, error=exc)
+        )
+        return
+    if kept:
+        logger.warning(ls.CLI_DELETE_SYNC_MARKER_KEPT.format(project=project_name))
+
+
 def _run_updater_deferring_interrupt(
     updater: "GraphUpdater",
 ) -> KeyboardInterrupt | None:
     """Run the sync's graph update; return a Ctrl+C that landed after its commit.
 
-    The caller records the sync and clears its marker before re-raising what
-    this returns; a Ctrl+C before the commit raises `SyncInterrupted` instead.
+    The run stamps the sync time as part of its commit (#2444), and the
+    caller clears its marker before re-raising what this returns; a Ctrl+C
+    before the commit raises `SyncInterrupted` instead.
     """
     try:
         updater.run()
@@ -748,6 +1178,11 @@ def _run_graph_sync(
     # Resolved before any graph write: see `_import_vector_store`.
     from .graph_updater import GraphUpdater
 
+    _exit_if_syncing_home_or_root(repo, assume_yes)
+
+    # Once, as the updater would: the ownership check, the marker and the
+    # write below must all name the same project.
+    project_name = normalize_project_name(project_name, repo)
     if clean:
         _import_vector_store()
 
@@ -765,7 +1200,13 @@ def _run_graph_sync(
     exclude_paths = cli_excludes | cgrignore.exclude or None
 
     elapsed = time.monotonic()
-    with connect_memgraph(batch_size) as ingestor:
+    with (
+        _project_claim(
+            batch_size, project_name, repo, clean=clean, assume_yes=assume_yes
+        ) as owned_roots,
+        connect_memgraph(batch_size) as ingestor,
+        _sync_owner() as owner,
+    ):
         if clean:
             _confirm_destructive_clean(ingestor, project_name, assume_yes)
             _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
@@ -777,7 +1218,7 @@ def _run_graph_sync(
 
         # After the wipe, which would delete the marker with everything else,
         # and before `ensure_constraints`, whose migration can already purge.
-        _mark_sync_incomplete(ingestor, project_name)
+        _mark_sync_incomplete(ingestor, project_name, owner, owned_roots)
         ingestor.ensure_constraints()
 
         parsers, queries = load_parsers()
@@ -795,7 +1236,6 @@ def _run_graph_sync(
             skip_embeddings=skip_embeddings,
         )
         interrupted = _run_updater_deferring_interrupt(updater)
-        cgr_state.record_sync(project_name)
         _clear_sync_incomplete(ingestor, project_name)
         # Taken before the export: counting it made a no-op sync of a small
         # repo report the time to dump the whole shared graph (issue #2440).
@@ -839,7 +1279,10 @@ def _run_graph_sync(
 
 
 def _delete_hash_cache(repo_path: Path) -> None:
-    cache_path = repo_path / cs.HASH_CACHE_FILENAME
+    # Resolving the state directory also moves in what an older cgr left in
+    # the tree, so a clean right after upgrading clears that copy too.
+    state = prepare_state_dir(repo_path)
+    cache_path = state / cs.HASH_CACHE_FILENAME
     if cache_path.exists():
         _info(
             style(
@@ -848,10 +1291,17 @@ def _delete_hash_cache(repo_path: Path) -> None:
             )
         )
         cache_path.unlink(missing_ok=True)
-    (repo_path / cs.DIR_MTIMES_FILENAME).unlink(missing_ok=True)
-    (repo_path / cs.EXPOSES_CLEANUP_PENDING_FILENAME).unlink(missing_ok=True)
-    (repo_path / cs.PARSER_FINGERPRINT_FILENAME).unlink(missing_ok=True)
-    (repo_path / cs.EXCLUSION_STATE_FILENAME).unlink(missing_ok=True)
+    (state / cs.DIR_MTIMES_FILENAME).unlink(missing_ok=True)
+    (state / cs.EXPOSES_CLEANUP_PENDING_FILENAME).unlink(missing_ok=True)
+    (state / cs.PARSER_FINGERPRINT_FILENAME).unlink(missing_ok=True)
+    (state / cs.EXCLUSION_STATE_FILENAME).unlink(missing_ok=True)
+
+
+def _start_project_name(project_name: str | None, repo: Path) -> str:
+    # Stripped as `normalize_project_name` strips it, so the ownership check
+    # asks about the name the sync writes (review of PR 2499). A blank name
+    # falls back to the derived one, which carries a hash of the path.
+    return (project_name and project_name.strip()) or derive_project_name(repo)
 
 
 def _storable_project_name(value: str | None) -> str | None:
@@ -898,6 +1348,7 @@ def _cleanup_project_embeddings(ingestor: MemgraphIngestor, project_name: str) -
     epilog=ch.EXAMPLES_START,
     rich_help_panel=ch.PANEL_USE,
 )
+@_keep_stdout_for_the_answer
 def start(
     repo_path: str | None = typer.Option(
         None, "--repo-path", help=ch.HELP_REPO_PATH_RETRIEVAL
@@ -1013,19 +1464,34 @@ def start(
     app_context.session.load_cgr_instructions = not no_instructions
 
     _refuse_options_update_graph_drops(
-        update_graph, ask_agent, output_format, no_sync, projects
+        update_graph,
+        ask_agent,
+        output_format,
+        no_sync,
+        projects,
+        workspace_given=workspace is not None,
     )
     if output_format == cs.QueryFormat.JSON and not ask_agent:
         _exit_with_error(cs.CLI_ERR_JSON_REQUIRES_ASK_AGENT)
 
     resolved_repo = _resolve_and_validate_repo(repo_path)
     target_repo_path = str(resolved_repo)
-    resolved_project_name = project_name or derive_project_name(resolved_repo)
+    resolved_project_name = _start_project_name(project_name, resolved_repo)
 
-    if output and not update_graph:
-        _exit_with_error(cs.CLI_ERR_OUTPUT_REQUIRES_UPDATE)
-    if output:
-        _exit_if_unwritable(output)
+    _exit_if_output_unusable(output, update_graph)
+
+    workspace_config = _load_workspace_or_exit(workspace)
+    _refuse_unsupported_workspace_update(
+        workspace_config,
+        update_graph,
+        clean=clean,
+        output=output,
+        interactive_setup=interactive_setup,
+    )
+    active_projects = _start_active_projects(
+        workspace_config, projects, resolved_project_name
+    )
+    _refuse_empty_workspace(workspace_config, update_graph, active_projects)
 
     if not no_start_stack:
         _maybe_start_stack()
@@ -1043,27 +1509,26 @@ def start(
     if not ask_agent and not update_graph:
         app_context.console.print(_create_configuration_table(target_repo_path))
 
-    if update_graph:
-        _start_update_graph(
-            resolved_repo,
-            resolved_project_name,
-            project_named=project_name is not None,
-            batch_size=effective_batch_size,
-            exclude=exclude,
-            interactive_setup=interactive_setup,
-            clean=clean,
-            output=output,
-            capture=capture,
-            skip_embeddings=no_embeddings or None,
-            assume_yes=yes,
-        )
+    if update_graph and not _start_update_graph(
+        resolved_repo,
+        resolved_project_name,
+        workspace_config=workspace_config,
+        project_named=project_name is not None,
+        batch_size=effective_batch_size,
+        exclude=exclude,
+        interactive_setup=interactive_setup,
+        clean=clean,
+        output=output,
+        capture=capture,
+        skip_embeddings=no_embeddings or None,
+        assume_yes=yes,
+        defer_workspace_sync=bool(ask_agent),
+    ):
         return
-
-    workspace_config = _load_workspace_or_exit(workspace)
 
     sync_task: Callable[[], None] | None = None
     sync_message = cs.MSG_SYNCING_KNOWLEDGE_GRAPH
-    if not no_sync:
+    if _sync_before_session(no_sync, update_graph, bool(ask_agent)):
         sync_task, sync_message = _pre_chat_sync(
             workspace_config,
             partial(
@@ -1076,17 +1541,18 @@ def start(
                 interactive_setup=interactive_setup,
                 capture=capture,
                 skip_embeddings=no_embeddings or None,
+                assume_yes=yes,
             ),
             effective_batch_size,
             exclude,
             capture,
             no_embeddings,
+            assume_yes=yes,
         )
 
-    active_projects = _start_active_projects(
-        workspace_config, projects, resolved_project_name
+    session_project, session_named = _session_project(
+        workspace_config, target_repo_path, resolved_project_name, project_name
     )
-
     _launch_session(
         target_repo_path,
         effective_batch_size,
@@ -1095,6 +1561,8 @@ def start(
         output_format,
         sync_task,
         sync_message,
+        project_name=session_project,
+        project_named=session_named,
     )
 
 
@@ -1292,6 +1760,8 @@ def export(
                 missing = [name for name in requested if name not in indexed]
             if not missing:
                 exported = _export_to_file(ingestor, output, requested)
+    except GraphUnavailableError:
+        raise
     except Exception as e:
         app_context.console.print(
             style(cs.CLI_ERR_EXPORT_FAILED.format(error=e), cs.Color.RED)
@@ -1477,6 +1947,12 @@ def mcp_server(
         # too, and the hint sent the user to a variable that was set (#2881).
         if isinstance(e, ex.RepoPathError) and not settings.QUIET:
             _mcp_server_notice(style(cs.CLI_MSG_HINT_TARGET_REPO, cs.Color.YELLOW))
+        raise typer.Exit(1) from e
+    except GraphUnavailableError as e:
+        # Its message names the fix, so it is printed as is, as the app's
+        # group prints it for every other command (#2443); but to stderr,
+        # since stdout is the stdio transport's protocol stream (#2518).
+        _mcp_server_notice(style(str(e), cs.Color.RED))
         raise typer.Exit(1) from e
     except Exception as e:
         _mcp_server_notice(style(cs.CLI_ERR_MCP_SERVER.format(error=e), cs.Color.RED))
@@ -1731,7 +2207,7 @@ def rename_command(
             )
         except RenameRefused as refused:
             typer.echo(str(refused), err=True)
-            for site in sites_for(refused.ambiguous):
+            for site in sites_for([*refused.ambiguous, *refused.unplanned]):
                 typer.echo(f"  {site}", err=True)
             for entry in refused.unlocatable:
                 typer.echo(f"  {entry}", err=True)
@@ -1739,6 +2215,7 @@ def rename_command(
     payload = dict(report._asdict())
     payload[cs.KEY_SITES] = sites_for(report.sites)
     payload[cs.KEY_AMBIGUOUS] = sites_for(report.ambiguous)
+    payload[cs.KEY_UNPLANNED] = sites_for(report.unplanned)
     payload["verdict"] = report.verdict._asdict() if report.verdict else None
     typer.echo(json.dumps(payload, indent=cs.MCP_JSON_INDENT, sort_keys=True))
     if not report.applied and not dry_run:
@@ -1817,34 +2294,70 @@ def status_command() -> None:
         f"qdrant={status.qdrant_endpoint} reachable={status.qdrant_reachable})"
     )
     app_context.console.print(f"compose:  {status.compose_file}")
-    timestamps = cgr_state.read_sync_timestamps()
-    incomplete = (
-        _projects_with_incomplete_runs() if status.memgraph_reachable else set()
-    )
-    if not timestamps and not incomplete:
-        app_context.console.print("syncs:    (no projects synced via cgr yet)")
+    syncs = _project_syncs() if status.memgraph_reachable else None
+    if syncs is None:
+        app_context.console.print(
+            cs.CLI_STATUS_SYNCS_NEED_GRAPH.format(endpoint=status.memgraph_endpoint)
+        )
         return
-    app_context.console.print("syncs:")
-    for project in sorted(timestamps.keys() | incomplete):
-        ts = timestamps.get(project)
-        line = f"  - {project}: last sync {ts}" if ts else f"  - {project}:"
-        if project in incomplete:
-            line = f"{line} ({cs.CLI_STATUS_SYNC_INCOMPLETE})"
-        app_context.console.print(line)
+    if not syncs:
+        app_context.console.print(
+            cs.CLI_STATUS_SYNCS_NONE.format(endpoint=status.memgraph_endpoint)
+        )
+        return
+    app_context.console.print(cs.CLI_STATUS_SYNCS_HEADER)
+    for sync in syncs:
+        app_context.console.print(_sync_row(sync))
 
 
-def _projects_with_incomplete_runs() -> set[str]:
-    """Projects with an outstanding `:IncompleteRun` marker (#2219).
+def _stamp_text(stamp: ResultValue | None) -> str | None:
+    """A recorded sync time as `cgr status` prints it; None when never stamped."""
+    return str(stamp) if stamp else None
 
-    Best effort: status must still print when the graph cannot be read.
+
+def _project_syncs() -> list[ProjectSync] | None:
+    """Every project the connected graph holds, with its last sync (#2444).
+
+    The graph is the only source: a project deleted or wiped goes with its
+    node, and one synced into another Memgraph is not in this one. A project
+    whose first sync never finished has only its `:IncompleteRun` marker
+    (#2219), so it is listed from that. None when the graph cannot be read:
+    status must still print without it.
     """
     try:
         with connect_memgraph(1) as ingestor:
-            rows = ingestor.fetch_all(cq.CYPHER_PROJECTS_WITH_INCOMPLETE_RUNS)
+            projects = ingestor.fetch_all(cq.CYPHER_PROJECT_SYNC_TIMES)
+            markers = ingestor.fetch_all(cq.CYPHER_PROJECTS_WITH_INCOMPLETE_RUNS)
     except Exception as exc:
-        logger.warning(ls.CLI_SYNC_MARKERS_UNREADABLE.format(error=exc))
-        return set()
-    return {str(row["project"]) for row in rows if row.get("project")}
+        logger.warning(ls.CLI_SYNC_STATE_UNREADABLE.format(error=exc))
+        return None
+    synced_at = {
+        str(row[cs.KEY_NAME]): row.get(cs.KEY_LAST_SYNCED_AT)
+        for row in projects
+        if row.get(cs.KEY_NAME)
+    }
+    interrupted = {str(row["project"]) for row in markers if row.get("project")}
+    return [
+        ProjectSync(
+            name=name,
+            last_synced_at=_stamp_text(synced_at.get(name)),
+            interrupted=name in interrupted,
+        )
+        for name in sorted(synced_at.keys() | interrupted)
+    ]
+
+
+def _sync_row(sync: ProjectSync) -> str:
+    details: list[str] = []
+    if sync.last_synced_at:
+        details.append(cs.CLI_STATUS_SYNC_TIME.format(time=sync.last_synced_at))
+    elif not sync.interrupted:
+        details.append(cs.CLI_STATUS_SYNC_NOT_RECORDED)
+    if sync.interrupted:
+        details.append(
+            cs.CLI_STATUS_SYNC_MARKED.format(marker=cs.CLI_STATUS_SYNC_INCOMPLETE)
+        )
+    return cs.CLI_STATUS_SYNC_ROW.format(project=sync.name, detail=" ".join(details))
 
 
 @app.command(
@@ -2031,6 +2544,9 @@ def stats(
                 node_results, rel_results, breakdown = _stats_rows(
                     ingestor, requested, len(projects)
                 )
+
+    except GraphUnavailableError:
+        raise
     except Exception as e:
         app_context.console.print(
             style(cs.CLI_ERR_STATS_FAILED.format(error=e), cs.Color.RED)
@@ -2418,6 +2934,8 @@ def dead_code(
                 )
                 if not endpoint_roots and len(projects) <= 1:
                     _notice_single_project_endpoint_roots(show_progress)
+    except GraphUnavailableError:
+        raise
     except Exception as e:
         app_context.console.print(
             style(cs.CLI_ERR_DEADCODE_FAILED.format(error=e), cs.Color.RED)
@@ -2815,6 +3333,8 @@ def duplicates(
                         exclude_patterns=tuple(exclude),
                     ),
                 )
+    except GraphUnavailableError:
+        raise
     except Exception as e:
         app_context.console.print(
             style(cs.CLI_ERR_DUPLICATES_FAILED.format(error=e), cs.Color.RED)
@@ -2915,7 +3435,10 @@ def delete_project(
             )
             _cleanup_project_embeddings(ingestor, project_name)
             ingestor.delete_project(project_name)
+            _clear_deleted_project_markers(ingestor, project_name)
     except typer.Exit:
+        raise
+    except GraphUnavailableError:
         raise
     except Exception as e:
         app_context.console.print(

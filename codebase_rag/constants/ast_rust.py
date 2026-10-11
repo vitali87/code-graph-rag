@@ -152,6 +152,11 @@ TS_RS_TOKEN_DOT = "."
 # both for macro-token receiver reconstruction and value-chain base flattening).
 RS_IDENT_OR_SELF = (TS_IDENTIFIER, KEYWORD_SELF)
 RS_MACRO_RECEIVER_TYPES = RS_IDENT_OR_SELF
+# The tokens that join a callee to its receiver or path in a macro body
+# (`server . run`, `Config :: load`), and the segments a `::` path takes
+# (`Self` is an identifier token; `crate`, `super`, `self` are keywords).
+RS_MACRO_CHAIN_SEPARATORS = (TS_RS_TOKEN_DOT, TS_RS_TOKEN_SCOPE)
+RS_MACRO_PATH_SEGMENT_TYPES = (TS_IDENTIFIER, KEYWORD_SELF, TS_RS_CRATE, KEYWORD_SUPER)
 # Rust `Self` return type resolves to the enclosing impl target.
 RS_SELF_TYPE = "Self"
 # Transparent smart pointers that auto-deref to their inner type: a method call
@@ -290,6 +295,19 @@ RS_MANIFEST_NAME_KEY = "name"
 RS_MANIFEST_LIB_SECTION = "lib"
 RS_MANIFEST_DEP_SECTIONS = ("dependencies", "dev-dependencies", "build-dependencies")
 RS_MANIFEST_TARGET_TABLE_KEY = "target"
+# A dependency entry's source keys, and the registry an entry with none
+# fetches from; root `[patch.<source>]` tables substitute per source.
+RS_MANIFEST_GIT_KEY = "git"
+RS_MANIFEST_REGISTRY_KEY = "registry"
+RS_MANIFEST_REGISTRY_INDEX_KEY = "registry-index"
+RS_MANIFEST_DEP_SOURCE_KEYS = (
+    RS_MANIFEST_GIT_KEY,
+    RS_MANIFEST_REGISTRY_INDEX_KEY,
+    RS_MANIFEST_REGISTRY_KEY,
+)
+RS_MANIFEST_PATCH_KEY = "patch"
+RS_MANIFEST_VERSION_KEY = "version"
+RS_DEFAULT_REGISTRY = "crates-io"
 # Crates shipped with the toolchain: external by construction, no
 # manifest needed to know a use head naming one is outside the project.
 RS_STDLIB_CRATES = frozenset({"std", "core", "alloc", "proc_macro"})

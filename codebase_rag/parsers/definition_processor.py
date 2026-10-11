@@ -47,7 +47,9 @@ from .handlers import get_handler
 from .java_generated import generator_hint
 from .js_ts.ingest import JsTsIngestMixin
 from .module_docstring import extract_module_docstring
+from .notebook import is_notebook_path
 from .parameter_nodes import PendingParameterType
+from .py.overloads import folded_overload_stubs
 from .utils import safe_decode_with_fallback, sorted_captures
 
 if TYPE_CHECKING:
@@ -126,6 +128,10 @@ class DefinitionProcessor(
         # constructor call resolves to its own method, so the call pass
         # needs this set to record the construction (issue #2012).
         self.dart_constructor_qns: set[str] = set()
+        # {python module qn: start bytes of its `@overload` stubs that an
+        # implementation follows}; both the function and the method pass skip
+        # them so the implementation owns the name (issue #2590).
+        self.python_overload_stubs: dict[str, frozenset[int]] = {}
         # {interface_qn: [implementer_class_qns]} from IMPLEMENTS edges, so the
         # resolver can redirect an interface-typed call `I.m` to the concrete
         # `Impl.m` when I has exactly one first-party implementer (unambiguous).
@@ -377,6 +383,12 @@ class DefinitionProcessor(
         self._func_class_captures_cache = func_class_captures_cache
 
     def _disambiguate_module_qn(self, module_qn: str, file_path: Path) -> str:
+        # A notebook always carries its extension (`proj.analysis.ipynb`). No
+        # import can load it, so the bare name belongs to `analysis.py` or the
+        # package `analysis/` whether or not one exists yet, and adding one
+        # beside it never renames the notebook's definitions (issue #2480).
+        if is_notebook_path(file_path):
+            module_qn = own_extension_module_qn(module_qn, file_path.name)
         # A TypeScript declaration file and its implementation strip to the
         # SAME module qn once `.d.ts` is treated as one extension (#1720), and
         # the rule below would award it to whichever is walked first. That is
@@ -460,6 +472,7 @@ class DefinitionProcessor(
             self.import_processor.import_mapping,
             self.project_name,
         )
+        resolver.join_partial_groups(self.csharp_partial_groups)
         emitted = emit_type_edges(self.pending_type_facts, resolver, self.ingestor)
         # Parameter OF_TYPE edges resolve in the same pass, for the same
         # reason: the annotation may name a type from a later file.
@@ -576,6 +589,15 @@ class DefinitionProcessor(
                 CppTypeInferenceEngine().collect_type_aliases(
                     root_node, self.type_aliases, self._type_alias_conflicts
                 )
+            if language == cs.SupportedLanguage.PYTHON:
+                self.python_overload_stubs[module_qn] = folded_overload_stubs(root_node)
+            self._ingest_inline_modules(
+                root_node,
+                module_qn,
+                language,
+                queries,
+                combined_captures=combined_captures,
+            )
             self._ingest_all_functions(
                 root_node,
                 module_qn,

@@ -113,6 +113,7 @@ class ProcessorFactory:
                 function_registry=self.function_registry,
                 exclude_paths=self.exclude_paths,
                 unignore_paths=self.unignore_paths,
+                module_qn_to_file_path=self.module_qn_to_file_path,
             )
         return self._import_processor
 
@@ -167,6 +168,7 @@ class ProcessorFactory:
                 class_field_element_types=self.definition_processor.class_field_element_types,
                 method_return_types=self.definition_processor.method_return_types,
                 go_function_return_types=self.definition_processor.go_function_return_types,
+                go_package_names=self.definition_processor.go_package_names,
                 go_call_sites=self.definition_processor.go_call_sites,
                 python_call_sites=self.definition_processor.python_call_sites,
                 python_external_sites=self.definition_processor.python_external_sites,

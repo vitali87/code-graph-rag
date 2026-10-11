@@ -5,7 +5,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import lru_cache
-from pathlib import Path
+from pathlib import Path, PurePath
 
 from pathspec import PathSpec
 
@@ -66,6 +66,13 @@ def separator_free_project_name(name: str) -> str:
         _PROJECT_NAME_SEPARATORS.sub("_", name.strip(cs.SEPARATOR_DOT))
         or _PROJECT_NAME_FALLBACK_BASE
     )
+
+
+def normalize_project_name(project_name: str | None, repo_path: Path) -> str:
+    # The name a sync writes its project under. The CLI's ownership check
+    # asks about the same name, so a padded one cannot pass the check under
+    # one spelling and be written under another (review of PR 2499).
+    return (project_name and project_name.strip()) or default_project_name(repo_path)
 
 
 def resolve_repo_path(repo_path: str | None, target_default: str) -> Path:
@@ -318,6 +325,22 @@ def should_keep_dir(
     )
 
 
+def is_symlink_entry(path: str | os.PathLike[str]) -> bool:
+    """Whether a repository walk leaves this entry out as a symbolic link.
+
+    The one symlink rule every walk applies (issue #2451): a link is never
+    followed, whether it names a file or a directory and wherever it points.
+    A target outside the repository would put content from beyond
+    `--repo-path` into a graph every project shares. A target inside it is
+    indexed once, under its own path, when the walk reaches it; following
+    the link as well made a second module of the same code, while the walk
+    already declined to enter linked directories. `os.path.islink` judges the
+    entry itself and answers False on any error, and a dangling link or a
+    cycle is a link like any other.
+    """
+    return os.path.islink(path)
+
+
 def is_ignored_filename(name: str) -> bool:
     """Whether a filename is a machine-generated artefact, by its ending.
 
@@ -532,7 +555,8 @@ def has_implementation_sibling(
     stem = module_stem(path.name)
     for ext in _IMPLEMENTATION_EXTS:
         candidate = path.parent / f"{stem}{ext}"
-        if not candidate.is_file():
+        # A linked sibling is no sibling: the walk leaves links out (#2451).
+        if not candidate.is_file() or is_symlink_entry(candidate):
             continue
         if should_skip_path(
             candidate,
@@ -566,15 +590,19 @@ def python_stub_has_implementation(
     `__init__.py` beside it. As with `has_implementation_sibling`, this asks
     the disk and the walk's own skip predicate, not the parse registry, so the
     answer does not depend on which file was walked first.
+
+    And the walk's symlink rule (#2451): a candidate that is a link, or a
+    package behind a linked `x/`, is never walked, so it is never indexed.
+    Yielding to one left nothing defining the module, neither the stub nor
+    the implementation it deferred to.
     """
-    if path.suffix != cs.EXT_PYI:
-        return False
-    if path.name == cs.INIT_PYI:
-        candidates = (path.with_name(cs.INIT_PY),)
-    else:
-        candidates = (path.with_suffix(cs.EXT_PY), path.with_suffix("") / cs.INIT_PY)
     return any(
         candidate.is_file()
+        # A linked implementation is no implementation: the walk leaves links
+        # out (#2451).
+        and not is_symlink_entry(candidate)
+        # The walk does not enter a linked package directory `x/` (#2451).
+        and not (candidate.parent != path.parent and is_symlink_entry(candidate.parent))
         and not should_skip_path(
             candidate,
             repo_path,
@@ -582,8 +610,34 @@ def python_stub_has_implementation(
             unignore_paths=unignore_paths,
             is_file=True,
         )
-        for candidate in candidates
+        for candidate in python_stub_implementations(path)
     )
+
+
+def declaration_implementations[P: PurePath](path: P) -> list[P]:
+    """The files that may implement the module a declaration file declares,
+    by path alone, as the indexer pairs them: a `.pyi` stub's (see
+    `python_stub_implementations`), and for a TypeScript declaration
+    (`x.d.ts`, `x.d.mts`, `x.d.cts`) every same-stem implementation module
+    (`x.ts`, `x.js`, ...), as `has_implementation_sibling` asks. Nothing for
+    any other file.
+    """
+    if declaration_extension(path.name) is None:
+        return python_stub_implementations(path)
+    stem = module_stem(path.name)
+    return [path.with_name(f"{stem}{ext}") for ext in _IMPLEMENTATION_EXTS]
+
+
+def python_stub_implementations[P: PurePath](path: P) -> list[P]:
+    """The files that may implement the module a `.pyi` stub declares, by
+    path alone: `x.py` or the package `x/__init__.py` for `x.pyi`, and the
+    `__init__.py` beside it for `__init__.pyi`. Nothing for any other file.
+    """
+    if path.suffix != cs.EXT_PYI:
+        return []
+    if path.name == cs.INIT_PYI:
+        return [path.with_name(cs.INIT_PY)]
+    return [path.with_suffix(cs.EXT_PY), path.with_suffix("") / cs.INIT_PY]
 
 
 def base_module_qn(rel_path: Path, project_name: str) -> str:
@@ -628,11 +682,26 @@ def _walk_dir_keys(
     )
 
 
+def _skipped_link(
+    dirpath: str,
+    name: str,
+    rel_path_str: str,
+    on_symlink: Callable[[str], None] | None,
+) -> bool:
+    """Whether the walk leaves this entry out as a link, reporting it if so."""
+    if not is_symlink_entry(os.path.join(dirpath, name)):
+        return False
+    if on_symlink is not None:
+        on_symlink(rel_path_str)
+    return True
+
+
 def walk_eligible_files(
     repo_path: Path,
     exclude_paths: frozenset[str] | None = None,
     unignore_paths: frozenset[str] | None = None,
     on_dir: Callable[[str, str], None] | None = None,
+    on_symlink: Callable[[str], None] | None = None,
 ) -> Iterator[tuple[str, str, str]]:
     """Yield ``(dirpath, filename, rel_path)`` for every indexable file, in order.
 
@@ -649,6 +718,10 @@ def walk_eligible_files(
 
     ``on_dir`` receives ``(dir_key, dirpath)`` per visited directory, for the
     indexer's mtime bookkeeping; it must not mutate the walk.
+
+    A symbolic link is never walked (`is_symlink_entry`), and ``on_symlink``
+    receives the repo-relative path of each one the ignore rules would
+    otherwise have let through, file or directory.
     """
     repo_str = str(repo_path)
     # A repo path that already ends in a separator (the filesystem root, "/")
@@ -664,6 +737,7 @@ def walk_eligible_files(
             d
             for d in dirnames
             if should_keep_dir(d, dir_prefix, exclude_paths, unignore_paths)
+            and not _skipped_link(dirpath, d, f"{dir_prefix}{d}", on_symlink)
         )
         for fname in sorted(filenames):
             if fname in state_filenames:
@@ -674,7 +748,7 @@ def walk_eligible_files(
                 dir_parts,
                 exclude_paths=exclude_paths,
                 unignore_paths=unignore_paths,
-            ):
+            ) and not _skipped_link(dirpath, fname, rel_path_str, on_symlink):
                 yield dirpath, fname, rel_path_str
 
 

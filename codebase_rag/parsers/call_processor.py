@@ -30,11 +30,13 @@ from ..types_defs import (
     LanguageQueries,
     NodeType,
     PropertyDict,
+    ScalaBinding,
 )
 from ..utils import qn_markers
 from ..utils.path_utils import cached_relative_path
 from .call_resolver import PY_EXTERNAL_TARGET, CallResolver
 from .class_ingest.identity import build_nested_qualified_name_for_class
+from .cpp import local_types as cpp_local_types
 from .cpp import utils as cpp_utils
 from .cpp.function_values import (
     CFileScope,
@@ -58,12 +60,17 @@ from .java import type_inference as java_ti
 from .java import utils as java_utils
 from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
+from .php import class_names as php_class_names
 from .php import utils as php_utils
+from .py.class_aliases import scan_class_body_aliases
+from .py.receiver_rebinding import ReceiverRebinding, receiver_rebinding
 from .rpc_exposure import GoRpcExposureProcessor
 from .rs import utils as rs_utils
+from .scala import utils as scala_utils
 from .string_call import load_string_call_specs, string_call_target
 from .type_inference import TypeInferenceEngine
 from .utils import (
+    callable_parameter_invocations,
     cpp_parameter_names,
     enclosing_class_node,
     function_span_key,
@@ -102,16 +109,31 @@ class _FactoryCall(NamedTuple):
     keyword: tuple[tuple[str, str], ...]
 
 
+class _PassedCallback(NamedTuple):
+    # A callback one call site hands to a callable parameter, resolved there.
+    # Its edge is written in finalize at the receiver's own invocations of the
+    # parameter, whose file the walk may not have reached yet (issue #2459).
+    source_spec: tuple[str, str, str]
+    param_name: str
+    rel_type: str
+    target_spec: tuple[str, str, str]
+    resolution: str
+
+
 class _FileCallableFlow:
     # One file's callable-flow records. Kept per file because the processor
     # outlives a pass: a re-walk must replace only that file's records, while
     # a file the pass leaves alone still seeds slots finalize resolves.
-    __slots__ = ("args", "returned_callables", "factory_calls")
+    __slots__ = ("args", "returned_callables", "factory_calls", "invocations", "passed")
 
     def __init__(self) -> None:
         self.args: list[_CallableFlowArg] = []
         self.returned_callables: dict[str, set[str]] = {}
         self.factory_calls: list[_FactoryCall] = []
+        # (function, parameter) -> the edge site of each place this file's
+        # function invokes that parameter: where a callback it receives runs.
+        self.invocations: dict[tuple[str, str], tuple[PropertyDict, ...]] = {}
+        self.passed: list[_PassedCallback] = []
 
 
 class _RefEmitScope(NamedTuple):
@@ -140,6 +162,22 @@ class _GoPackageFunctionLookup(NamedTuple):
     # order. No packages means a call owned here that types nothing.
     name: str
     packages: tuple[tuple[str, bool], ...]
+
+
+class _ScalaCallee(NamedTuple):
+    # What a Scala call binds to through the compiler's lookup. `decided`
+    # False leaves the call to the name-based resolver; True means `callee`
+    # is the answer, and None there is a known non-edge.
+    decided: bool
+    callee: tuple[str, str] | None
+
+
+class _PhpClassCallee(NamedTuple):
+    # What a PHP call whose class the site shows binds to. `decided` False
+    # leaves the call to the name-based resolver; True means `callee` is the
+    # answer, and None there is a known non-edge.
+    decided: bool
+    callee: tuple[str, str] | None
 
 
 @dataclass(slots=True)
@@ -171,9 +209,11 @@ class _CallScanContext:
     resolve_cpp_op: Callable[[str, str], tuple[str, str] | None] | None
     ensure_rel: Callable[..., None]
     arg_ref_rel: cs.RelationshipType
+    scala_bindings: dict[str, list[ScalaBinding]] | None = None
     alias_map: dict[str, str] | None = None
     factory_aliases: dict[str, str] | None = None
     cpp_local_aliases: dict[str, list[tuple[str, int, int]]] | None = None
+    php_scope_classes: php_class_names.ScopeCache | None = None
     cpp_indirection: dict[str, int] | None = None
 
 
@@ -197,10 +237,17 @@ _TYPED_LANGUAGES = frozenset(
 # name lives in a nested declarator (no `name` field), needing the libclang
 # declarator-aware extractor rather than a plain child_by_field_name("name").
 _C_FAMILY_LANGUAGES = frozenset({cs.SupportedLanguage.C, cs.SupportedLanguage.CPP})
+# The node kinds a C++ type written in a function body registers as.
+_CPP_LOCAL_TYPE_NODE_TYPES = frozenset({NodeType.CLASS, NodeType.UNION, NodeType.ENUM})
 _JS_TS_LANGUAGES = cs.JS_TS_LANGUAGES
 # Python callers whose own bindings shadow module and class names for the
 # whole body (issue #2666); a class body or module is excluded on purpose.
 _PY_LOCAL_SCOPE_CALLERS = frozenset({cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA})
+# A callee written as a name or attribute may be a typed instance; one written
+# as a call (`Dispatcher()(1)`) is typed by what that call returns.
+_PY_INSTANCE_CALLEE_TYPES = frozenset(
+    {cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE, cs.TS_PY_CALL}
+)
 
 # Declarator kinds for the symbol-index value chase (issue #989). OPAQUE
 # marks an introduction whose value cannot be known statically (a loop or
@@ -378,6 +425,38 @@ def _class_qn_for_calls(
     )
 
 
+def _cpp_scoped_bindings(
+    scopes: list[tuple[int, int, str, bool]],
+    name: str,
+    type_name: str,
+    local_qn: str,
+) -> list[tuple[int, int, str, str]]:
+    # Each C++ declaration of `name` as a span binding, widest first: a
+    # qualified one keeps the bare type name, which the module-wide lookup
+    # resolves to the class the qualifier names; an unqualified one binds
+    # the local type.
+    bindings = [
+        (start, end, name, type_name if qualified else local_qn)
+        for start, end, scope_name, qualified in scopes
+        if scope_name == name
+    ]
+    bindings.sort(key=lambda binding: binding[0] - binding[1])
+    return bindings
+
+
+def _cpp_types_at(
+    var_types: dict[str, str], spans: list[tuple[int, int, str, str]], pos: int
+) -> dict[str, str]:
+    # The type map as a C++ use at byte `pos` sees it: each spanned name
+    # bound by the narrowest of its declarations whose window holds `pos`.
+    narrowest: dict[str, tuple[int, str]] = {}
+    for start, end, name, bound in spans:
+        best = narrowest.get(name)
+        if start <= pos < end and (best is None or end - start < best[0]):
+            narrowest[name] = (end - start, bound)
+    return {**var_types, **{name: bound for name, (_, bound) in narrowest.items()}}
+
+
 def _dart_scope_span(decl: Node, walk_root: Node) -> tuple[int, int]:
     # The byte span a declaration shadows: its nearest enclosing scope, with
     # statement scopes (for/try) starting at the declaration END because the
@@ -534,7 +613,12 @@ _OBJECT_CREATION_NODE_TYPES = frozenset(
     {
         cs.TS_OBJECT_CREATION_EXPRESSION,
         cs.TS_CSHARP_IMPLICIT_OBJECT_CREATION_EXPRESSION,
+        cs.TS_SCALA_INSTANCE_EXPRESSION,
     }
+)
+# Languages whose `new X(...)` names a TYPE, never a method or function.
+_NEW_CONSTRUCTS_LANGUAGES = frozenset(
+    {cs.SupportedLanguage.JAVA, cs.SupportedLanguage.CSHARP, cs.SupportedLanguage.SCALA}
 )
 _CALLABLE_NODE_LABELS = (
     cs.NodeLabel.FUNCTION,
@@ -1836,6 +1920,7 @@ class CallProcessor:
             rehydrated_definition_paths=rehydrated_definition_paths,
             rust_function_modules=rust_function_modules,
             declared_module_qns=declared_module_qns,
+            go_package_names=self._go_package_names,
         )
         # Inter-procedural callable-parameter flow: ordered params per function and
         # the per-call-site argument bindings, resolved to a fixpoint in finalize.
@@ -1961,7 +2046,17 @@ class CallProcessor:
             return self._calls_owned_by(
                 func_node, owned_func_nodes, all_call_nodes, call_starts
             )
-        return self._filter_calls_in_node(all_call_nodes, call_starts, func_node)
+        calls = self._filter_calls_in_node(all_call_nodes, call_starts, func_node)
+        if language == cs.SupportedLanguage.CPP:
+            # A member function of a type written in this body is its own
+            # caller; its calls are not also this function's (issue #2555).
+            # A lambda is no caller of its own, so its calls still count here.
+            return [
+                call
+                for call in calls
+                if not cpp_local_types.in_local_type_member(call, func_node)
+            ]
+        return calls
 
     def _filter_calls_in_node(
         self,
@@ -2622,6 +2717,9 @@ class CallProcessor:
                 combined_captures,
                 sorted_func_nodes,
             )
+            self._ingest_class_alias_references(
+                module_qn, combined_captures.get(cs.CAPTURE_CLASS) or []
+            )
         if language == cs.SupportedLanguage.JAVA:
             # A constant runs its enum's constructor without any call
             # expression, so a file holding only an enum has to be covered
@@ -2868,6 +2966,53 @@ class CallProcessor:
                 root_node,
                 queries[language][cs.QUERY_CONFIG],
             )
+
+    @_site_scoped
+    def _ingest_class_alias_references(
+        self, module_qn: str, class_nodes: list[Node]
+    ) -> None:
+        # `run = _plain` in a class body uses the method when the body runs
+        # (issue #2620): at import for a top-level class, so from the module,
+        # the way a call written there (`prop = property(_get, _set)`) is
+        # already attributed; for a class inside a function, from that
+        # function, so a dead factory keeps its class's implementation dead.
+        module_spec = (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn)
+        self._resolution = cs.EdgeResolution.EXACT
+        for class_node in class_nodes:
+            body = class_node.child_by_field_name(cs.FIELD_BODY)
+            if body is None:
+                continue
+            references = scan_class_body_aliases(body).references
+            if not references:
+                continue
+            scope = self._class_body_scope(class_node, module_qn, module_spec)
+            if scope is None:
+                continue
+            for site, method in references:
+                if (target := self._recorded_caller(method, module_qn)) is None:
+                    continue
+                self._site_node = site
+                self._emit_rel(
+                    scope,
+                    cs.RelationshipType.REFERENCES,
+                    (target.label, cs.KEY_QUALIFIED_NAME, target.qualified_name),
+                )
+
+    def _class_body_scope(
+        self,
+        class_node: Node,
+        module_qn: str,
+        module_spec: tuple[str, str, str],
+    ) -> tuple[str, str, str] | None:
+        ancestor = class_node.parent
+        while ancestor is not None:
+            if ancestor.type == cs.TS_PY_FUNCTION_DEFINITION:
+                owner = self._recorded_caller(ancestor, module_qn)
+                if owner is None:
+                    return None
+                return (owner.label, cs.KEY_QUALIFIED_NAME, owner.qualified_name)
+            ancestor = ancestor.parent
+        return module_spec
 
     def _module_level_calls(
         self,
@@ -3682,25 +3827,54 @@ class CallProcessor:
         return self._resolver.cpp_operand_class_qn(name, var_types, ctx.module_qn)
 
     def _macro_call_name(self, ident: Node) -> str | None:
-        # Reconstruct a `<recv>.method` chain from a macro token stream by walking
-        # the method identifier's preceding siblings over `("." <ident|self>)*`.
-        # `server . run` -> "server.run"; `self . shutdown . recv` ->
-        # "self.shutdown.recv". A method with no preceding `.` stays bare.
+        # Rebuild the callee a macro token stream spells, walking the method
+        # identifier's preceding siblings, into the name the same call gets
+        # outside a macro: `server . run` -> "server.run", `Config :: load` ->
+        # "Config::load", `Circle :: new ( 2.0 ) . area` ->
+        # "Circle::new(2.0).area". Stopping at `::` dropped `Type::assoc()` and
+        # anything chained on it, since a bare method name never binds (issue
+        # #2698). A method with no preceding `.` or `::` stays bare.
         if not (method := ident.text.decode(cs.ENCODING_UTF8) if ident.text else None):
             return None
         parts = [method]
         cur = ident.prev_sibling
-        while cur is not None and cur.type == cs.TS_RS_TOKEN_DOT:
-            if (recv := cur.prev_sibling) is None or (
-                recv.type not in cs.RS_MACRO_RECEIVER_TYPES
-            ):
+        while cur is not None and cur.type in cs.RS_MACRO_CHAIN_SEPARATORS:
+            if (receiver := self._macro_receiver(cur)) is None:
                 break
-            if not recv.text:
-                break
-            parts.append(recv.text.decode(cs.ENCODING_UTF8))
-            cur = recv.prev_sibling
+            text, head = receiver
+            parts += [cur.type, text]
+            cur = head.prev_sibling
         parts.reverse()
-        return cs.SEPARATOR_DOT.join(parts)
+        return "".join(parts)
+
+    @staticmethod
+    def _macro_receiver(sep: Node) -> tuple[str, Node] | None:
+        # The receiver token(s) just before a `.` / `::` in a macro token
+        # stream, as (text, first token): a path segment (`Config`, `Self`,
+        # `crate`, `super`) before `::`; before `.`, an identifier or `self`,
+        # or a call result `new ( 2.0 )` (callee plus its argument group).
+        if (recv := sep.prev_sibling) is None or not recv.text:
+            return None
+        if sep.type == cs.TS_RS_TOKEN_SCOPE:
+            if recv.type not in cs.RS_MACRO_PATH_SEGMENT_TYPES:
+                return None
+            return recv.text.decode(cs.ENCODING_UTF8), recv
+        if recv.type in cs.RS_MACRO_RECEIVER_TYPES:
+            return recv.text.decode(cs.ENCODING_UTF8), recv
+        if (
+            recv.type == cs.TS_RS_TOKEN_TREE
+            and recv.child_count > 0
+            and recv.children[0].type == cs.CHAR_PAREN_OPEN
+            and (callee := recv.prev_sibling) is not None
+            and callee.type == cs.TS_IDENTIFIER
+            and callee.text
+        ):
+            return (
+                callee.text.decode(cs.ENCODING_UTF8)
+                + recv.text.decode(cs.ENCODING_UTF8),
+                callee,
+            )
+        return None
 
     def _get_call_target_name(
         self, call_node: Node, language: cs.SupportedLanguage | None = None
@@ -3962,6 +4136,12 @@ class CallProcessor:
         call_node: Node, language: cs.SupportedLanguage | None
     ) -> str | None:
         match call_node.type:
+            case cs.TS_SCALA_INSTANCE_EXPRESSION if (
+                language == cs.SupportedLanguage.SCALA
+            ):
+                # Scala `new C(...)` holds its type as an unnamed child, so
+                # it fell through nameless and emitted nothing (issue #2450).
+                return scala_utils.scala_instance_type_name(call_node)
             case cs.TS_NEW_EXPRESSION if language in _JS_TS_LANGUAGES:
                 # JS/TS `new Foo(...)` names the class via the `constructor` field
                 # (no `function` field). Returning the constructor name routes
@@ -3986,6 +4166,16 @@ class CallProcessor:
                     return decode_node_text(type_node.text).split(
                         cs.CHAR_ANGLE_OPEN, 1
                     )[0]
+            case cs.TS_PHP_OBJECT_CREATION_EXPRESSION if (
+                language == cs.SupportedLanguage.PHP
+            ):
+                # PHP `new Box(...)` writes the class as an unfielded child, so
+                # no case above named it and construction emitted nothing
+                # (issue #2466). The class's own simple name, after `use`
+                # aliases, is what a file added later would define; the
+                # resolver reads the full namespace path off the node.
+                if path := php_class_names.new_expression_class_path(call_node):
+                    return path[-1]
         return None
 
     def _operator_call_name(
@@ -4259,8 +4449,15 @@ class CallProcessor:
             )
         else:
             local_var_types = None
+        cpp_spans: list[tuple[int, int, str, str]] = []
+        if language == cs.SupportedLanguage.CPP and local_var_types:
+            cpp_spans = self._bind_cpp_local_types(
+                caller_node, module_qn, local_var_types
+            )
         if language == cs.SupportedLanguage.PYTHON:
             self._record_python_shadowed_imports(caller_node, caller_qn, module_qn)
+        elif language == cs.SupportedLanguage.GO:
+            self._record_go_local_names(caller_node, caller_qn, caller_type)
 
         # Rust match arms and iterator-adaptor closures both reuse one binding
         # name for different types at different byte ranges (`cmd` per arm;
@@ -4343,12 +4540,29 @@ class CallProcessor:
             span_bindings,
             caller_params,
         )
-        for call_node in call_nodes:
-            self._ingest_call_node(ctx, call_node)
+        self._ingest_call_nodes(ctx, call_nodes, cpp_spans)
         # Edges the later passes emit (decorators, property reads, operator
         # dispatch) are exact bindings; they must not carry the verdict the
         # last call node of this loop left behind.
         self._resolution = cs.EdgeResolution.EXACT
+
+    def _ingest_call_nodes(
+        self,
+        ctx: _CallScanContext,
+        call_nodes: list[Node],
+        cpp_spans: list[tuple[int, int, str, str]],
+    ) -> None:
+        # A C++ name whose declarations disagree (a block local `B b` hiding
+        # a `::B b` field) is typed per call by the declaration in force
+        # there, for every use the call makes of it: a receiver, a functor
+        # called (`b(1)`) or handed over (`keep(b)`), an operator operand.
+        flat_types = ctx.local_var_types
+        for call_node in call_nodes:
+            if cpp_spans and flat_types is not None:
+                ctx.local_var_types = _cpp_types_at(
+                    flat_types, cpp_spans, call_node.start_byte
+                )
+            self._ingest_call_node(ctx, call_node)
 
     def _record_python_shadowed_imports(
         self, caller_node: Node, caller_qn: str, module_qn: str
@@ -4374,6 +4588,36 @@ class CallProcessor:
             self._resolver.python_local_names[caller_qn] = local
         else:
             self._resolver.python_local_names.pop(caller_qn, None)
+        self._record_python_name_typed_params(caller_node, caller_qn, module_qn)
+
+    def _record_python_name_typed_params(
+        self, caller_node: Node, caller_qn: str, module_qn: str
+    ) -> None:
+        # Parameters whose class only their name spells: a call through one
+        # is labelled heuristic (issue #2608).
+        python_inference = self._resolver.type_inference.python_type_inference
+        guessed = python_inference.name_typed_parameters(caller_node, module_qn)
+        if guessed:
+            self._resolver.python_name_typed_params[caller_qn] = frozenset(guessed)
+        else:
+            self._resolver.python_name_typed_params.pop(caller_qn, None)
+
+    def _record_go_local_names(
+        self, caller_node: Node, caller_qn: str, caller_type: str
+    ) -> None:
+        # A file's package-level names cannot collide with its functions'
+        # (the compiler rejects it), so only a function or method binds
+        # names a bare call might mean instead of the package's (#2571),
+        # and only where each is in scope (#2616 review).
+        scopes = (
+            {}
+            if caller_type == cs.NodeLabel.MODULE
+            else go_utils.local_binding_scopes(caller_node)
+        )
+        if scopes:
+            self._resolver.go_local_scopes[caller_qn] = scopes
+        else:
+            self._resolver.go_local_scopes.pop(caller_qn, None)
 
     def _record_caller_flow_params(
         self,
@@ -4401,6 +4645,7 @@ class CallProcessor:
             # flow cb into the returned closure regardless of source language.
             self._flow_param_names[caller_qn] = ordered_params
             caller_params = frozenset(ordered_params)
+            self._record_param_invocations(caller_node, caller_qn, language)
             self._collect_returned_callables(
                 caller_node,
                 caller_qn,
@@ -4538,10 +4783,12 @@ class CallProcessor:
                 self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
                 caller_qn,
             )
+        if language in _JS_TS_LANGUAGES or language == cs.SupportedLanguage.PYTHON:
             # A DEFAULT PARAMETER value naming a function (`useStore(api,
-            # selector = identity as any)`, zustand) references it: the default
-            # is invoked through the parameter when the caller omits the
-            # argument, never by a visible call.
+            # selector = identity as any)`, zustand; Python's
+            # `def run(self, conv=_via_default)`, issue #2838) references it:
+            # the default is invoked through the parameter when the caller
+            # omits the argument, never by a visible call.
             self._ingest_default_param_references(
                 caller_node,
                 caller_spec,
@@ -4767,6 +5014,12 @@ class CallProcessor:
             self._ingest_java_method_reference(ctx, call_node)
             return
         call_name = self._scan_call_name(ctx, call_node)
+        if (
+            ctx.language == cs.SupportedLanguage.SCALA
+            and call_node.type == cs.TS_SCALA_FIELD_EXPRESSION
+        ):
+            self._ingest_scala_selection(ctx, call_node)
+            return
         # A declared dispatcher (`callSp('usp_x')`) names its real callee in
         # a string, which no parser resolves as a call: without this the
         # edge stops at the dispatcher and the routine looks unreachable.
@@ -4774,6 +5027,23 @@ class CallProcessor:
         # one the syntax hides.
         if self._string_call_specs and call_name:
             self._emit_string_call_edges(ctx, call_node, call_name)
+        # `enter_state(n)` on a functor local, `Cmp{}(a, b)` on a temporary:
+        # a call on an object of class type runs that type's operator(),
+        # which no name lookup of the callee text reaches (issue #2555).
+        if (
+            ctx.is_cpp
+            and call_node.type == cs.TS_CPP_CALL_EXPRESSION
+            and (callee := call_node.child_by_field_name(cs.TS_FIELD_FUNCTION))
+            and (
+                functor := self._cpp_functor_operator(
+                    callee, ctx.module_qn, ctx.local_var_types
+                )
+            )
+        ):
+            self._ingest_resolved_call(
+                ctx, call_node, cs.CPP_OPERATOR_CALL_NAME, functor
+            )
+            return
         # An inline function ARGUMENT is handed to the callee regardless of
         # whether the callee resolves: an external/param callee
         # (`create((set) => ...)` passing `set((state) => ...)`, zustand) or a
@@ -4883,6 +5153,53 @@ class CallProcessor:
                     (target_label, cs.KEY_QUALIFIED_NAME, target_qn),
                 )
 
+    def _ingest_scala_selection(self, ctx: _CallScanContext, node: Node) -> None:
+        # `c.size` with no parentheses: a parameterless method call, or a
+        # field read spelled the same way. It binds only through a receiver
+        # whose class is known (issue #2450); the selection that is a call's
+        # callee is left to the call node, which names it with its args.
+        selection = scala_utils.scala_selection(node)
+        if selection is None:
+            return
+        if ctx.scala_bindings is None:
+            ctx.scala_bindings = scala_utils.scala_bindings(ctx.caller_node)
+        receiver, member = selection
+        binding = scala_utils.scala_binding_at(
+            ctx.scala_bindings, receiver, node.start_byte
+        )
+        # A local's binding types it; an unbound name is an object named
+        # outright. A local of unknown type is neither, so it binds nothing.
+        receiver_type = binding.type_name if binding is not None else receiver
+        if receiver_type is None:
+            return
+        callee_info = self._resolver.resolve_scala_selection(
+            receiver_type, member, ctx.module_qn, ctx.class_context, node.start_byte
+        )
+        if callee_info is None:
+            return
+        call_name = f"{receiver}{cs.SEPARATOR_DOT}{member}"
+        self._ingest_resolved_call(ctx, node, call_name, callee_info)
+
+    def _emit_scala_auxiliary_ctor_calls(
+        self, ctx: _CallScanContext, class_variants: list[str]
+    ) -> None:
+        # A Scala class's primary constructor is its body, which has no node
+        # of its own; an auxiliary `def this(...)` is a method, and any of
+        # them may be the one `new C(...)` runs.
+        registry = self._resolver.function_registry
+        for class_variant in class_variants:
+            ctor_qn = (
+                f"{class_variant}{cs.SEPARATOR_DOT}{cs.SCALA_AUXILIARY_CONSTRUCTOR}"
+            )
+            if registry.get(ctor_qn) != NodeType.METHOD:
+                continue
+            for variant in registry.variants(ctor_qn):
+                ctx.ensure_rel(
+                    ctx.caller_spec,
+                    cs.RelationshipType.CALLS,
+                    (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, variant),
+                )
+
     def _ingest_js_call_site(
         self, ctx: _CallScanContext, call_node: Node, call_name: str | None
     ) -> str | None:
@@ -4954,6 +5271,19 @@ class CallProcessor:
             call_var_types = self._overlay_span_binding(
                 call_name, call_node, ctx.local_var_types, ctx.span_bindings
             )
+        if (
+            call_var_types
+            and (rebinding := self._receiver_rebinding_at(ctx, call_node, call_name))
+            and not rebinding.sometimes
+        ):
+            # No `self = Other()` can run before this call, so the method-wide
+            # type of `self` does not apply to it (issue #2620).
+            receiver = call_name.partition(cs.SEPARATOR_DOT)[0]
+            call_var_types = {
+                name: var_type
+                for name, var_type in call_var_types.items()
+                if name != receiver
+            }
 
         if ctx.is_cpp:
             self._emit_cpp_template_dispatch(ctx, call_name, call_var_types)
@@ -5043,6 +5373,11 @@ class CallProcessor:
         call_name: str,
         call_var_types: dict[str, str] | None,
     ) -> tuple[str, str] | None:
+        if (
+            ctx.language == cs.SupportedLanguage.SCALA
+            and (scala := self._resolve_scala_callee(ctx, call_node, call_name)).decided
+        ):
+            return scala.callee
         if ctx.is_java and call_node.type == cs.TS_METHOD_INVOCATION:
             return self._resolve_java_callee(ctx, call_node)
         if ctx.is_csharp and call_node.type == cs.TS_CSHARP_INVOCATION_EXPRESSION:
@@ -5061,6 +5396,13 @@ class CallProcessor:
             and call_node.type == cs.TS_GO_CALL_EXPRESSION
         ):
             return self._resolve_go_callee(ctx, call_node, call_name, call_var_types)
+        if (
+            ctx.language == cs.SupportedLanguage.PHP
+            and (
+                php := self._resolve_php_class_callee(ctx, call_node, call_name)
+            ).decided
+        ):
+            return php.callee
         callee_info = ctx.resolve_func(
             call_name,
             ctx.module_qn,
@@ -5069,9 +5411,8 @@ class CallProcessor:
             ctx.caller_qn,
             ctx.language,
             call_point=call_node.start_byte,
-            # A Java/C# `new X(...)` names a type, never a method.
-            constructing=ctx.language
-            in (cs.SupportedLanguage.JAVA, cs.SupportedLanguage.CSHARP)
+            # A Java/C#/Scala `new X(...)` names a type, never a method.
+            constructing=ctx.language in _NEW_CONSTRUCTS_LANGUAGES
             and call_node.type in _OBJECT_CREATION_NODE_TYPES,
         )
         if ctx.is_js_ts and callee_info is not None:
@@ -5528,6 +5869,61 @@ class CallProcessor:
                     return current.parent is None
             current = current.parent
         return None
+
+    def _resolve_scala_callee(
+        self, ctx: _CallScanContext, call_node: Node, call_name: str
+    ) -> _ScalaCallee:
+        # Named the way the compiler looks it up: the imports in scope at
+        # the call, the file, its package's other files. A path-qualified
+        # `new shop.Cart()` names no import, so only the package index
+        # reaches it.
+        return _ScalaCallee(
+            *self._resolver.resolve_scala_callee(
+                call_name,
+                ctx.module_qn,
+                call_node.start_byte,
+                constructing=call_node.type == cs.TS_SCALA_INSTANCE_EXPRESSION,
+            )
+        )
+
+    def _resolve_php_class_callee(
+        self, ctx: _CallScanContext, call_node: Node, call_name: str
+    ) -> _PhpClassCallee:
+        # `new C(...)` is always decided here; a member call only when its
+        # receiver's class is known, so a miss keeps the name-only fallback.
+        if call_node.type == cs.TS_PHP_OBJECT_CREATION_EXPRESSION:
+            return _PhpClassCallee(True, self._resolve_php_new_callee(ctx, call_node))
+        if call_node.type in cs.PHP_MEMBER_CALL_TYPES and (
+            typed := self._resolve_php_typed_member(ctx, call_node, call_name)
+        ):
+            return _PhpClassCallee(True, typed)
+        return _PhpClassCallee(False, None)
+
+    def _resolve_php_new_callee(
+        self, ctx: _CallScanContext, call_node: Node
+    ) -> tuple[str, str] | None:
+        # `new C(...)` names a class through PHP's namespace and `use` rules
+        # alone; the generic resolver would judge a `use`d namespace path
+        # external, or rebind the bare name to a function (issue #2466).
+        path = php_class_names.new_expression_class_path(call_node)
+        if not path:
+            return None
+        return self._resolver.resolve_php_class_path(path, ctx.module_qn)
+
+    def _resolve_php_typed_member(
+        self, ctx: _CallScanContext, call_node: Node, call_name: str
+    ) -> tuple[str, str] | None:
+        # A receiver the site shows was built by `new C` has class C, so the
+        # method binds on C (or what C inherits) rather than by bare name. A
+        # miss here leaves the name-only fallback exactly as it was.
+        if ctx.php_scope_classes is None:
+            ctx.php_scope_classes = {}
+        path = php_class_names.receiver_class_path(call_node, ctx.php_scope_classes)
+        if not path:
+            return None
+        return self._resolver.resolve_php_method_on_class_path(
+            path, call_name, ctx.module_qn
+        )
 
     def _resolve_java_callee(
         self, ctx: _CallScanContext, call_node: Node
@@ -6030,6 +6426,128 @@ class CallProcessor:
             return (cs.NodeLabel.CLASS, aliased_qn)
         return None
 
+    def _cpp_local_anchors(self, node: Node, module_qn: str) -> list[str]:
+        # The qns the types written in each function and local type around
+        # `node` are named under, innermost first.
+        return cpp_local_types.scope_anchor_qns(
+            node, module_qn, self.function_locations
+        )
+
+    def _cpp_local_type_under(self, anchors: list[str], type_name: str) -> str | None:
+        registry = self._resolver.function_registry
+        for anchor in anchors:
+            local_qn = f"{anchor}{cs.SEPARATOR_DOT}{type_name}"
+            if registry.get(local_qn) in _CPP_LOCAL_TYPE_NODE_TYPES:
+                return local_qn
+        return None
+
+    def _bind_cpp_local_types(
+        self, caller_node: Node, module_qn: str, var_types: dict[str, str]
+    ) -> list[tuple[int, int, str, str]]:
+        # A variable of a type written in an enclosing function body binds
+        # to that type's node, not whichever same-named class the
+        # module-wide lookup meets first, so two functions' local
+        # `Checker`s stay apart (issue #2555). A position name that binds to
+        # nothing names a type with no node, and must not reach the
+        # name-based lookups.
+        # A name declared with a qualified type (`::B g`, `ns::B n`) keeps
+        # the class its qualifier names (#2631 re-review). Where a name's
+        # declarations disagree (a block local `B b` hiding a `::B b`
+        # field), the widest one is the flat binding and each is returned
+        # as a span binding over its window, so a call binds to the
+        # declaration in force where it sits.
+        anchors = self._cpp_local_anchors(caller_node, module_qn)
+        scopes: list[tuple[int, int, str, bool]] | None = None
+        spans: list[tuple[int, int, str, str]] = []
+        for name, type_name in list(var_types.items()):
+            if local_qn := self._cpp_local_type_under(anchors, type_name):
+                if scopes is None:
+                    scopes = CppTypeInferenceEngine().declaration_scopes(caller_node)
+                bindings = _cpp_scoped_bindings(scopes, name, type_name, local_qn)
+                var_types[name] = bindings[0][3] if bindings else local_qn
+                if any(binding[3] != var_types[name] for binding in bindings):
+                    spans.extend(bindings)
+            elif cpp_local_types.is_positional_name(type_name):
+                del var_types[name]
+        return spans
+
+    def _emit_cpp_functor_callback(
+        self,
+        arg_node: Node,
+        source_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        ensure_rel: Callable[..., None],
+        language: cs.SupportedLanguage | None,
+    ) -> bool:
+        # A functor handed over (`std::sort(b, e, Cmp{})`) keeps its
+        # operator() reachable (issue #2555). The object is passed as a
+        # value: whether the callee runs it or only stores it
+        # (`values.push_back(f)`) is not visible here, so the pass is a
+        # REFERENCES edge, never an invocation (#2631 review). True when the
+        # argument was one and its edge is out.
+        if language != cs.SupportedLanguage.CPP:
+            return False
+        functor = self._cpp_functor_operator(arg_node, module_qn, local_var_types)
+        if functor is None:
+            return False
+        self._resolver.last_resolution = cs.EdgeResolution.EXACT
+        self._emit_callback_targets(
+            source_spec,
+            functor[0],
+            functor[1],
+            cs.RelationshipType.REFERENCES,
+            ensure_rel,
+            module_qn,
+            language,
+        )
+        return True
+
+    def _cpp_functor_operator(
+        self, node: Node, module_qn: str, var_types: dict[str, str] | None
+    ) -> tuple[str, str] | None:
+        # The operator() an object-valued expression runs when it is called:
+        # a local or parameter of class type (`enter_state`), or a temporary
+        # (`Cmp{}`, `Cmp()`). None for anything else, so every other callee
+        # and argument keeps its name-based resolution.
+        if (class_qn := self._cpp_functor_class(node, module_qn, var_types)) is None:
+            return None
+        return self._resolver._try_resolve_method(class_qn, cs.CPP_OPERATOR_CALL_NAME)
+
+    def _cpp_functor_class(
+        self, node: Node, module_qn: str, var_types: dict[str, str] | None
+    ) -> str | None:
+        match node.type:
+            case cs.TS_CPP_IDENTIFIER:
+                return self._resolver.cpp_operand_class_qn(
+                    safe_decode_text(node), var_types, module_qn
+                )
+            case cs.TS_CPP_COMPOUND_LITERAL_EXPRESSION:
+                type_node = node.child_by_field_name(cs.FIELD_TYPE)
+            case cs.TS_CPP_CALL_EXPRESSION:
+                type_node = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+            case _:
+                return None
+        if type_node is None or not (
+            type_name := cpp_local_types.named_type(type_node)
+        ):
+            return None
+        if not cpp_local_types.is_qualified_type(type_node) and (
+            local_qn := self._cpp_local_type_under(
+                self._cpp_local_anchors(node, module_qn), type_name
+            )
+        ):
+            return local_qn
+        class_qn = self._resolver._resolve_class_name(type_name, module_qn)
+        # The same spelling calls a function (`make(x)`) as often as it
+        # constructs a class (`Cmp(x)`); only a class is a functor.
+        if (
+            class_qn is None
+            or self._resolver.function_registry.get(class_qn) != NodeType.CLASS
+        ):
+            return None
+        return class_qn
+
     def _bare_name_callee(
         self,
         ctx: _CallScanContext,
@@ -6280,8 +6798,16 @@ class CallProcessor:
         callee_type: str,
         callee_qn: str,
     ) -> None:
-        if ctx.is_python and (
-            dispatch_targets := self._resolver.protocol_dispatch_targets(callee_qn)
+        if (
+            ctx.is_python
+            # A stub the name-only fallback merely guessed (a dict literal's
+            # `.get(...)`) says nothing about the receiver: fanning it out
+            # turned one guess into exact edges to every conformer, test
+            # doubles included (issue #2931). It stays one heuristic edge.
+            and self._resolver.last_resolution != cs.EdgeResolution.HEURISTIC
+            and (
+                dispatch_targets := self._resolver.protocol_dispatch_targets(callee_qn)
+            )
         ):
             # The call resolved to a Protocol stub; the stub never runs, so emit
             # edges to the method on every conformer instead of the stub.
@@ -6294,6 +6820,12 @@ class CallProcessor:
             and (
                 call_name.startswith(cs.PY_SELF_PREFIX)
                 or call_name.startswith(cs.PY_CLS_PREFIX)
+            )
+            # A call that runs after `self = Other()` on every path calls
+            # through that value's type, which the resolved edge follows.
+            and not (
+                (rebinding := self._receiver_rebinding_at(ctx, call_node, call_name))
+                and rebinding.always
             )
         ):
             # self.M()/cls.M() statically targets the enclosing class's own or
@@ -6308,6 +6840,19 @@ class CallProcessor:
             # (a call on a member, not on self).
             self._emit_python_self_dispatch(ctx, ctx.class_context, call_name)
 
+        if (
+            ctx.is_js_ts
+            and ctx.class_context
+            and call_name.startswith(cs.JS_THIS_CALL_PREFIX)
+            and self._resolver.function_registry.is_abstract(callee_qn)
+            and self._js_this_is_class_instance(call_node)
+        ):
+            # `this.m()` bound to an `abstract m()` declaration (issue #2524)
+            # runs a subclass override, never the declaration. Before the
+            # declaration had a node the call went unresolved and dispatched
+            # to those overrides; keep those edges beside the static one.
+            self._emit_js_this_dispatch(ctx, ctx.class_context, call_name)
+
         if ctx.is_flow_lang:
             # f(...) invoked through a parameter: the edge runs from the
             # callee to whatever each call site binds to that parameter.
@@ -6319,17 +6864,12 @@ class CallProcessor:
                 ctx.local_var_types,
                 ctx.class_context,
                 ctx.resolve_func,
-                ctx.ensure_rel,
                 ctx.caller_qn,
             )
 
         if (
-            ctx.language in (cs.SupportedLanguage.JAVA, cs.SupportedLanguage.CSHARP)
-            and call_node.type
-            in (
-                cs.TS_OBJECT_CREATION_EXPRESSION,
-                cs.TS_CSHARP_IMPLICIT_OBJECT_CREATION_EXPRESSION,
-            )
+            ctx.language in _NEW_CONSTRUCTS_LANGUAGES
+            and call_node.type in _OBJECT_CREATION_NODE_TYPES
             and callee_type != cs.NodeLabel.CLASS
         ):
             # `new X(...)` where X resolves to a non-class: a Java interface
@@ -6357,13 +6897,42 @@ class CallProcessor:
     def _emit_protocol_conformer_edges(
         self, ctx: _CallScanContext, dispatch_targets: set[tuple[str, str]]
     ) -> None:
-        for conformer_type, conformer_qn in dispatch_targets:
-            for target_qn in self._resolver.function_registry.variants(conformer_qn):
-                ctx.ensure_rel(
-                    ctx.caller_spec,
-                    cs.RelationshipType.CALLS,
-                    (conformer_type, cs.KEY_QUALIFIED_NAME, target_qn),
-                )
+        edges = [
+            (conformer_type, target_qn)
+            for conformer_type, conformer_qn in dispatch_targets
+            for target_qn in self._resolver.function_registry.variants(conformer_qn)
+        ]
+        # The receiver is one of the conformers, so with several the call is
+        # a fan-out like any other same-named candidate set (issue #1526):
+        # renaming one conformer must not rewrite the shared call site.
+        self._resolution = (
+            cs.EdgeResolution.OVERLOAD
+            if len(edges) > 1
+            else self._resolver.last_resolution
+        )
+        for conformer_type, target_qn in edges:
+            ctx.ensure_rel(
+                ctx.caller_spec,
+                cs.RelationshipType.CALLS,
+                (conformer_type, cs.KEY_QUALIFIED_NAME, target_qn),
+            )
+
+    @staticmethod
+    def _receiver_rebinding_at(
+        ctx: _CallScanContext, call_node: Node, call_name: str
+    ) -> ReceiverRebinding | None:
+        # Only a `self.M()` / `cls.M()` in a method whose type map holds the
+        # receiver can have been rebound; every other call skips the scan.
+        receiver, _, member = call_name.partition(cs.SEPARATOR_DOT)
+        if (
+            not ctx.is_python
+            or not member
+            or receiver not in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS)
+            or not ctx.local_var_types
+            or receiver not in ctx.local_var_types
+        ):
+            return None
+        return receiver_rebinding(call_node, receiver)
 
     def _emit_python_self_dispatch(
         self, ctx: _CallScanContext, class_context: str, call_name: str
@@ -6413,6 +6982,7 @@ class CallProcessor:
             cs.SupportedLanguage.CSHARP,
             cs.SupportedLanguage.CPP,
             cs.SupportedLanguage.DART,
+            cs.SupportedLanguage.SCALA,
         ):
             # A Java/C#/C++/Dart constructor is a method named like its
             # class (`Foo.Foo`), not `__init__`; `new Foo(...)` / `Foo(...)`
@@ -6428,6 +6998,10 @@ class CallProcessor:
             # label is a hash-randomized StrEnum, so sort for determinism.
             self._emit_declared_ctor_calls(ctx, callee_qn, class_variants, ctor_rel)
             return None
+        if ctx.language == cs.SupportedLanguage.PHP:
+            # A PHP `new X(...)` runs `__construct`, X's own or, when X
+            # declares none, the one it inherits (issue #2466).
+            return self._resolver.php_constructor(callee_qn)
         # A JS/TS `new X(...)` runs X's `constructor` method (leaf name
         # `constructor`, not Python's `__init__`); redirect the CALLS
         # edge there so an explicitly-declared constructor is reachable.
@@ -6450,6 +7024,9 @@ class CallProcessor:
     ) -> None:
         if ctx.language == cs.SupportedLanguage.CPP:
             self._emit_cpp_ctor_calls(ctx.caller_spec, callee_qn)
+            return
+        if ctx.language == cs.SupportedLanguage.SCALA:
+            self._emit_scala_auxiliary_ctor_calls(ctx, class_variants)
             return
         # Every class variant INSTANTIATES above, so every one
         # takes its constructors too: `Box@8` for `class Box<T>`
@@ -6555,10 +7132,21 @@ class CallProcessor:
     def _emit_resolved_callee_targets(
         self, ctx: _CallScanContext, call_name: str, callee_type: str, callee_qn: str
     ) -> None:
+        callees = (
+            self._resolver.member_alias_fanout(
+                callee_qn, call_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            )
+            if ctx.is_python and cs.SEPARATOR_DOT in call_name
+            else [callee_qn]
+        )
         targets = self._resolver.lexical_call_targets(
             call_name,
             ctx.module_qn,
-            self._resolver.function_registry.variants(callee_qn),
+            [
+                variant
+                for callee in callees
+                for variant in self._resolver.function_registry.variants(callee)
+            ],
             ctx.caller_qn,
         )
         if len(
@@ -6594,10 +7182,17 @@ class CallProcessor:
                 if ctx.is_python:
                     self._emit_python_binding_twin(ctx, target_qn, target_type)
                 continue
+            # A callable variant takes its OWN label: a Scala method's local
+            # def or anonymous-object member registers as a Function beside
+            # the class's same-named Method, and the primary's label on the
+            # other is the same phantom (issue #2848).
+            label = (
+                callee_type if target_type is None else cs.NodeLabel(target_type.value)
+            )
             ctx.ensure_rel(
                 ctx.caller_spec,
                 cs.RelationshipType.CALLS,
-                (callee_type, cs.KEY_QUALIFIED_NAME, target_qn),
+                (label, cs.KEY_QUALIFIED_NAME, target_qn),
             )
 
     def _emit_python_binding_twin(
@@ -6754,6 +7349,8 @@ class CallProcessor:
                 self._emit_operator_dunder(
                     dunder[0], dunder[1], caller_spec, module_qn, local_var_types
                 )
+            elif node.type == cs.TS_PY_CALL:
+                self._emit_instance_call(node, caller_spec, module_qn, local_var_types)
             for operand in _truthiness_operands(node):
                 self._emit_truthiness(operand, caller_spec, module_qn, local_var_types)
             stack.extend(node.children)
@@ -6813,6 +7410,43 @@ class CallProcessor:
                     (callee_type, cs.KEY_QUALIFIED_NAME, target_qn),
                 )
         return True
+
+    @_site_scoped
+    def _emit_instance_call(
+        self,
+        call_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+    ) -> None:
+        # `obj(...)` on a first-party instance runs type(obj).__call__, which
+        # the class body may bind to another method (issue #2620).
+        callee = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        if callee is None or callee.type not in _PY_INSTANCE_CALLEE_TYPES:
+            return
+        is_call_result = callee.type == cs.TS_PY_CALL
+        if not is_call_result and not local_var_types:
+            return
+        if not (callee_text := safe_decode_text(callee)):
+            return
+        targets = self._resolver.instance_call_targets(
+            callee_text, is_call_result, module_qn, local_var_types
+        )
+        self._site_node = call_node
+        for callee_type, callee_qn in sorted(targets):
+            methods = self._resolver.member_alias_fanout(callee_qn, cs.PY_DUNDER_CALL)
+            self._resolution = (
+                cs.EdgeResolution.OVERLOAD
+                if len(methods) > 1
+                else cs.EdgeResolution.EXACT
+            )
+            for method in methods:
+                for variant in self._resolver.function_registry.variants(method):
+                    self._emit_rel(
+                        caller_spec,
+                        cs.RelationshipType.CALLS,
+                        (callee_type, cs.KEY_QUALIFIED_NAME, variant),
+                    )
 
     @staticmethod
     def _js_is_logical_binary(node: Node) -> bool:
@@ -8023,9 +8657,7 @@ class CallProcessor:
             for qn in registry.find_with_prefix_and_suffix(package_qn, name)
             if registry.get(qn) == NodeType.CLASS
             and qn.count(cs.SEPARATOR_DOT) == depth
-            and self._go_declaration_is_visible(
-                qn.rpartition(cs.SEPARATOR_DOT)[0], package_qn, module_qn
-            )
+            and self._resolver.go_declaration_is_visible(qn, module_qn)
         ]
         if len(candidates) > 1:
             own = [
@@ -8035,42 +8667,6 @@ class CallProcessor:
             ]
             candidates = own if own else candidates
         return candidates[0] if len(candidates) == 1 else None
-
-    def _go_declaration_is_visible(
-        self, declaring_qn: str, package_qn: str, module_qn: str
-    ) -> bool:
-        """Whether a type declared in `declaring_qn` is in scope for `module_qn`.
-
-        A directory is not a package: `package m_test` files sit beside
-        `package m` files and are a DIFFERENT package, and any `_test.go` is
-        compiled only under `go test`. Without this filter a production
-        `Error{}` in a third file of the package saw both `types.Error` and a
-        same-named `Error` from `m_test.go`, and the ambiguity rule emitted
-        nothing (CodeRabbit, #1747). Same rules as `_go_package_receiver_qn`:
-        a test file is visible only to a test requester of the same package,
-        and within the requester's own directory the `package` clauses must
-        agree. A lookup through an import is into ANOTHER package, whose
-        clause the requester does not share, so only the test rule applies.
-        """
-        declaring_path = self.module_qn_to_file_path.get(declaring_qn)
-        if declaring_path is None:
-            return True
-        requester = self.module_qn_to_file_path.get(module_qn)
-        requester_is_test = requester is not None and requester.stem.endswith(
-            cs.GO_TEST_FILE_SUFFIX
-        )
-        own_package = package_qn == module_qn.rpartition(cs.SEPARATOR_DOT)[0]
-        if declaring_path.stem.endswith(cs.GO_TEST_FILE_SUFFIX) and not (
-            requester_is_test and own_package
-        ):
-            return False
-        if not own_package:
-            return True
-        requester_package = self._go_package_names.get(module_qn)
-        return (
-            requester_package is None
-            or self._go_package_names.get(declaring_qn) == requester_package
-        )
 
     def _go_visible_class_variants(
         self, class_qn: str, module_qn: str, literal: Node
@@ -8797,6 +9393,10 @@ class CallProcessor:
                 arg_node, source_spec, ensure_rel, caller_qn, rel_type, module_qn
             )
             return
+        if self._emit_cpp_functor_callback(
+            arg_node, source_spec, module_qn, local_var_types, ensure_rel, language
+        ):
+            return
         # Only a name can hand a callable over. The whole source text of any
         # other argument (`items.length - start`, `-x`, `xs[0]`) was resolved
         # as if it were one (issue #2438).
@@ -9038,7 +9638,6 @@ class CallProcessor:
         local_var_types: dict[str, str] | None,
         class_context: str | None,
         resolve_func,
-        ensure_rel,
         caller_qn: str | None = None,
     ) -> None:
         if not (params := self._resolver.function_registry.callable_params(callee_qn)):
@@ -9057,9 +9656,45 @@ class CallProcessor:
                     local_var_types,
                     class_context,
                     resolve_func,
-                    ensure_rel,
+                    self._passed_callback_recorder(param_name),
                     caller_qn,
                 )
+
+    def _passed_callback_recorder(self, param_name: str) -> Callable[..., None]:
+        # Stands in for ensure_rel: the edge's source is the callee, which runs
+        # the callback where it invokes `param_name`, so the edge waits for
+        # finalize and that site instead of taking the argument's, a position
+        # in this file rather than the callee's (issue #2459). The verdict is
+        # the one the callback resolution set for this edge (#1543 review).
+        passed = self._flow_bucket.passed
+
+        def record(
+            source_spec: tuple[str, str, str],
+            rel_type: str,
+            target_spec: tuple[str, str, str],
+        ) -> None:
+            passed.append(
+                _PassedCallback(
+                    source_spec, param_name, rel_type, target_spec, self._resolution
+                )
+            )
+
+        return record
+
+    def _record_param_invocations(
+        self, caller_node: Node, caller_qn: str, language: cs.SupportedLanguage
+    ) -> None:
+        # Only a function the registry marked as invoking a parameter is ever
+        # the source of a callable-parameter edge, so no other body is scanned
+        # a second time.
+        if not self._resolver.function_registry.callable_params(caller_qn):
+            return
+        invocations = callable_parameter_invocations(caller_node, language)
+        for param_name, nodes in invocations.items():
+            self._flow_bucket.invocations[(caller_qn, param_name)] = tuple(
+                {**node_site_properties(node), cs.KEY_VIA_PARAM: param_name}
+                for node in nodes
+            )
 
     @_preserves_verdict
     def _collect_callable_flow(
@@ -9125,16 +9760,68 @@ class CallProcessor:
         # parameter-taint the same way (issue #1142).
         self._flow_processor.finalize()
 
+    @_site_scoped
     def finalize_callable_param_flow(self) -> None:
         # Resolve the recorded call-site argument bindings to a fixpoint and emit a
         # CALLS edge from every function that invokes a callable parameter to each
         # concrete function that can reach it (directly or via pass-through params).
+        # No walk is running, so an edge with no recorded site carries none rather
+        # than the last node a walk left behind (Go's 1:0-7, issue #2459).
+        self._site_node = None
         returned_callables = self._merged_returned_callables()
         seeds, edges = self._callable_flow_slots()
         self._emit_returned_closure_calls(returned_callables)
         self._emit_factory_closure_calls(returned_callables, seeds)
         bindings = self._propagate_flow_bindings(seeds, edges)
-        self._emit_callable_param_calls(bindings)
+        invocations = self._merged_param_invocations()
+        self._emit_callable_param_calls(bindings, invocations)
+        self._emit_passed_callbacks(invocations)
+
+    def _merged_param_invocations(
+        self,
+    ) -> dict[tuple[str, str], tuple[PropertyDict, ...]]:
+        merged: dict[tuple[str, str], tuple[PropertyDict, ...]] = {}
+        for flow in self._callable_flow.values():
+            merged.update(flow.invocations)
+        return merged
+
+    @staticmethod
+    def _param_invocation_sites(
+        invocations: dict[tuple[str, str], tuple[PropertyDict, ...]],
+        func_qn: str,
+        param_name: str,
+    ) -> tuple[PropertyDict, ...]:
+        # A receiver whose walk recorded no invocation still invokes the
+        # parameter (the registry says so): keep the edge, without a site and
+        # so without `via_param`, since a site-less row merges on its endpoints
+        # alone and would stamp it on a direct call joining the same pair.
+        return invocations.get((func_qn, param_name)) or ({},)
+
+    def _emit_passed_callbacks(
+        self, invocations: dict[tuple[str, str], tuple[PropertyDict, ...]]
+    ) -> None:
+        # After the propagated bindings, so where both reach one site the
+        # direct argument's own verdict is the one that stays (#1543 review).
+        registry = self._resolver.function_registry
+        file_flows = self._callable_flow.values()
+        for passed in (p for flow in file_flows for p in flow.passed):
+            source_qn = passed.source_spec[2]
+            # A record outlives the walk that made it, and either end may have
+            # been deleted by a later pass that did not re-walk this file.
+            invoked = registry.callable_params(source_qn)
+            if (
+                not invoked
+                or passed.param_name not in invoked
+                or passed.target_spec[2] not in registry
+            ):
+                continue
+            self._resolution = passed.resolution
+            for site in self._param_invocation_sites(
+                invocations, source_qn, passed.param_name
+            ):
+                self._emit_rel(
+                    passed.source_spec, passed.rel_type, passed.target_spec, site
+                )
 
     def _merged_returned_callables(self) -> dict[str, set[str]]:
         returned_callables: dict[str, set[str]] = defaultdict(set)
@@ -9263,7 +9950,9 @@ class CallProcessor:
         return bindings
 
     def _emit_callable_param_calls(
-        self, bindings: dict[tuple[str, str], set[str]]
+        self,
+        bindings: dict[tuple[str, str], set[str]],
+        invocations: dict[tuple[str, str], tuple[PropertyDict, ...]],
     ) -> None:
         registry = self._resolver.function_registry
         for func_qn, invoked in (
@@ -9274,13 +9963,16 @@ class CallProcessor:
             source_spec = (func_type, cs.KEY_QUALIFIED_NAME, func_qn)
             for param_name in invoked:
                 self._emit_bound_target_calls(
-                    source_spec, bindings.get((func_qn, param_name), ())
+                    source_spec,
+                    bindings.get((func_qn, param_name), ()),
+                    self._param_invocation_sites(invocations, func_qn, param_name),
                 )
 
     def _emit_bound_target_calls(
         self,
         source_spec: tuple[str, str, str],
         target_qns: set[str] | tuple[()],
+        sites: tuple[PropertyDict, ...],
     ) -> None:
         registry = self._resolver.function_registry
         for target_qn in target_qns:
@@ -9288,11 +9980,13 @@ class CallProcessor:
             if target_type is None:
                 continue
             for variant in registry.variants(target_qn):
-                self._emit_rel(
-                    source_spec,
-                    cs.RelationshipType.CALLS,
-                    (target_type, cs.KEY_QUALIFIED_NAME, variant),
-                )
+                for site in sites:
+                    self._emit_rel(
+                        source_spec,
+                        cs.RelationshipType.CALLS,
+                        (target_type, cs.KEY_QUALIFIED_NAME, variant),
+                        site,
+                    )
 
     def _ingest_callable_field_calls(
         self,

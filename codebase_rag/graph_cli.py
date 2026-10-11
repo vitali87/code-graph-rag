@@ -116,6 +116,15 @@ def _run_query_and_emit(
         # under typer, where click turns its own Exit into a return value and
         # the status would be lost.
         sys.exit(refusal.exit_code)
+    # A refusal from the query itself is the `{"error": ...}` the MCP tools
+    # answer with (a `path:line` target naming no indexed file, or one two
+    # files share): stderr with a status too, not stdout as JSON a script
+    # would read as an answer.
+    if isinstance(result, dict) and isinstance(
+        error := result.get(cs.DICT_KEY_ERROR), str
+    ):
+        click.secho(error, fg=cs.Color.RED, err=True)
+        sys.exit(cs.GRAPH_EXIT_UNKNOWN_TARGET)
     _emit(result)
 
 
@@ -145,7 +154,7 @@ def cli() -> None:
 @_graph_options
 def resolve_cmd(target: str, project: str | None, repo_path: Path) -> None:
     _run_query_and_emit(
-        project, repo_path, lambda f, n: graph_query.resolve(f, n, target)
+        project, repo_path, lambda f, n: graph_query.resolve_or_refuse(f, n, target)
     )
 
 
@@ -208,12 +217,15 @@ def callees_cmd(
     "implementors", help=ch.CMD_GRAPH_IMPLEMENTORS, short_help=ch.CMD_GRAPH_IMPLEMENTORS
 )
 @click.argument("qualified_name")
+@_depth_option
 @_graph_options
-def implementors_cmd(qualified_name: str, project: str | None, repo_path: Path) -> None:
+def implementors_cmd(
+    qualified_name: str, depth: int, project: str | None, repo_path: Path
+) -> None:
     _run_query_and_emit(
         project,
         repo_path,
-        lambda f, n: graph_query.implementors(f, n, qualified_name),
+        lambda f, n: graph_query.implementors(f, n, qualified_name, depth),
         target=qualified_name,
     )
 
@@ -222,12 +234,15 @@ def implementors_cmd(qualified_name: str, project: str | None, repo_path: Path) 
     "overrides", help=ch.CMD_GRAPH_OVERRIDES, short_help=ch.CMD_GRAPH_OVERRIDES
 )
 @click.argument("qualified_name")
+@_depth_option
 @_graph_options
-def overrides_cmd(qualified_name: str, project: str | None, repo_path: Path) -> None:
+def overrides_cmd(
+    qualified_name: str, depth: int, project: str | None, repo_path: Path
+) -> None:
     _run_query_and_emit(
         project,
         repo_path,
-        lambda f, n: graph_query.overrides(f, n, qualified_name),
+        lambda f, n: graph_query.overrides(f, n, qualified_name, depth),
         target=qualified_name,
     )
 
@@ -236,10 +251,24 @@ def overrides_cmd(qualified_name: str, project: str | None, repo_path: Path) -> 
     "importers", help=ch.CMD_GRAPH_IMPORTERS, short_help=ch.CMD_GRAPH_IMPORTERS
 )
 @click.argument("module_qualified_name")
+@click.option("--through-reexports", is_flag=True, help=ch.HELP_GRAPH_THROUGH_REEXPORTS)
 @_graph_options
 def importers_cmd(
-    module_qualified_name: str, project: str | None, repo_path: Path
+    module_qualified_name: str,
+    through_reexports: bool,
+    project: str | None,
+    repo_path: Path,
 ) -> None:
+    if through_reexports:
+        _run_query_and_emit(
+            project,
+            repo_path,
+            lambda f, n: graph_query.importers_through_reexports(
+                f, n, module_qualified_name
+            ),
+            target=module_qualified_name,
+        )
+        return
     _run_query_and_emit(
         project,
         repo_path,
