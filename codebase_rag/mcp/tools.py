@@ -585,9 +585,13 @@ class MCPToolsRegistry:
             ),
             cs.MCPToolName.IMPORTERS: self._graph_tool(
                 cs.MCPToolName.IMPORTERS,
-                {cs.MCPParamName.MODULE_QN: td.MCP_PARAM_MODULE_QN},
+                {
+                    cs.MCPParamName.MODULE_QN: td.MCP_PARAM_MODULE_QN,
+                    cs.MCPParamName.THROUGH_REEXPORTS: td.MCP_PARAM_THROUGH_REEXPORTS,
+                },
                 [cs.MCPParamName.MODULE_QN],
                 self.importers,
+                boolean_params={cs.MCPParamName.THROUGH_REEXPORTS},
             ),
             cs.MCPToolName.TESTS_REACHING: self._graph_tool(
                 cs.MCPToolName.TESTS_REACHING,
@@ -2645,13 +2649,13 @@ class MCPToolsRegistry:
         required: list[str],
         handler: MCPHandlerType,
         integer_params: set[str] | None = None,
+        boolean_params: set[str] | None = None,
     ) -> ToolMetadata:
+        kinds = dict.fromkeys(integer_params or (), cs.MCPSchemaType.INTEGER)
+        kinds |= dict.fromkeys(boolean_params or (), cs.MCPSchemaType.BOOLEAN)
         properties = {
             key: MCPInputSchemaProperty(
-                type=cs.MCPSchemaType.INTEGER
-                if integer_params and key in integer_params
-                else cs.MCPSchemaType.STRING,
-                description=description,
+                type=kinds.get(key, cs.MCPSchemaType.STRING), description=description
             )
             for key, description in params.items()
         }
@@ -2999,14 +3003,22 @@ class MCPToolsRegistry:
         )
 
     async def importers(
-        self, module_qualified_name: str, project: str | None = None
+        self,
+        module_qualified_name: str,
+        project: str | None = None,
+        through_reexports: bool = False,
     ) -> object:
+        # A single `return await` keeps the handler a pure delegation to the
+        # locked `_graph_query`, so the read is serialised against a rebuild
+        # (issue #1471) whichever query the flag picks.
         return await self._graph_query(
             cs.MCPToolName.IMPORTERS,
             project,
-            lambda name: graph_query.importers(
-                self.ingestor.fetch_all, name, module_qualified_name
-            ),
+            lambda name: (
+                graph_query.importers_through_reexports
+                if through_reexports
+                else graph_query.importers
+            )(self.ingestor.fetch_all, name, module_qualified_name),
             target=module_qualified_name,
         )
 
@@ -3368,6 +3380,7 @@ class MCPToolsRegistry:
                 cs.DICT_KEY_ERROR: str(refused),
                 cs.KEY_AMBIGUOUS: sites_for(refused.ambiguous),
                 cs.KEY_UNLOCATABLE: list(refused.unlocatable),
+                cs.KEY_UNPLANNED: sites_for(refused.unplanned),
             }
         payload_marker_error: str | None = None
         if getattr(report, "graph_incomplete", False):
@@ -3387,6 +3400,7 @@ class MCPToolsRegistry:
         payload = dict(report._asdict())
         payload[cs.KEY_SITES] = sites_for(report.sites)
         payload[cs.KEY_AMBIGUOUS] = sites_for(report.ambiguous)
+        payload[cs.KEY_UNPLANNED] = sites_for(report.unplanned)
         payload["verdict"] = report.verdict._asdict() if report.verdict else None
         if payload_marker_error is not None:
             # The graph is partial AND the record of it could not be written.

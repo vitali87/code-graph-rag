@@ -81,6 +81,23 @@ KEY_UNLOCATABLE = "unlocatable"
 # Rename report fields (issue #1532).
 KEY_SITES = "sites"
 KEY_AMBIGUOUS = "ambiguous"
+# Occurrences of the old name in code that no graph site accounts for (#2564).
+KEY_UNPLANNED = "unplanned"
+
+
+class RenameTargetKind(StrEnum):
+    """Which occurrences of a renamed name the cross-check holds against the
+    plan (#2564): a function's bare uses and those through its module, a
+    method's uses through its class, its own object or a variable of its
+    class (and, uncertain, other calls in files naming the class or
+    importing from its module), a type's every occurrence but another
+    module's that an import names."""
+
+    FUNCTION = "function"
+    METHOD = "method"
+    TYPE = "type"
+
+
 # Change-signature report fields (issue #1533); `verdict` is shared
 # with rename.
 KEY_UNMAPPED = "unmapped"
@@ -214,6 +231,15 @@ KEY_WRITING = "writing"
 # keyed only by project let the second run's clear delete the first run's
 # marker (issue #1709).
 KEY_RUN_ID = "run_id"
+# Who wrote the CLI sync's incomplete-run marker (PR #2532 review): the host
+# (machine and pid namespace) and pid of its process, and a token unique to
+# that one sync, so `delete-project` clears it only once that sync provably
+# stopped, and only if no newer sync has re-marked it since.
+KEY_OWNER_HOST = "owner_host"
+KEY_OWNER_PID = "owner_pid"
+KEY_OWNER_TOKEN = "owner_token"
+# When a sync of the project last completed, on its Project node (#2444).
+KEY_LAST_SYNCED_AT = "last_synced_at"
 # ast-grep finding node properties (issue #413)
 KEY_MESSAGE = "message"
 KEY_SNIPPET = "snippet"
