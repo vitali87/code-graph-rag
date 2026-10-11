@@ -35,6 +35,12 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 # pytester drives the cgr-trace pytest plugin end-to-end in its own sessions.
 pytest_plugins = ["pytester"]
 
+# The milvus-lite tests start gRPC in the worker. Where a child is a real fork
+# (macOS), gRPC's fork handlers then log "FD from fork parent still in poll
+# list" at INFO into every later child's stderr, which the tests that read a
+# child's exact output catch. Set before any test imports gRPC.
+os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
+
 
 class NodeProtocol(Protocol):
     @property
