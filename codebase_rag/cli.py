@@ -9,7 +9,7 @@ import sys
 import tempfile
 import time
 import uuid
-from collections.abc import Callable, Coroutine, Iterator
+from collections.abc import Callable, Coroutine, Iterable, Iterator
 from contextlib import contextmanager
 from fnmatch import fnmatch
 from functools import partial, wraps
@@ -89,6 +89,7 @@ from .types_defs import (
 )
 from .utils.path_utils import (
     derive_project_name,
+    nested_project_names,
     normalize_project_name,
     project_name_error,
     project_roots_from_rows,
@@ -1324,7 +1325,9 @@ def _resolve_and_validate_repo(repo_path: str | None) -> Path:
     return resolved
 
 
-def _cleanup_project_embeddings(ingestor: MemgraphIngestor, project_name: str) -> None:
+def _cleanup_project_embeddings(
+    ingestor: MemgraphIngestor, project_name: str, projects: Iterable[str]
+) -> None:
     rows = ingestor.fetch_all(
         cs.CYPHER_QUERY_PROJECT_NODE_IDS,
         {cs.KEY_PROJECT_NAME: project_name},
@@ -1334,7 +1337,11 @@ def _cleanup_project_embeddings(ingestor: MemgraphIngestor, project_name: str) -
         node_id = row.get(cs.KEY_NODE_ID)
         if isinstance(node_id, int):
             node_ids.append(node_id)
-    delete_project_embeddings(project_name, node_ids)
+    # A project nested under this one (`svc.v2` under `svc`) keeps its
+    # vectors, which the prefix-scoped node-id read also names.
+    delete_project_embeddings(
+        project_name, node_ids, nested_project_names(project_name, projects)
+    )
 
 
 @app.command(
@@ -3425,7 +3432,7 @@ def delete_project(
                     cs.Color.YELLOW,
                 )
             )
-            _cleanup_project_embeddings(ingestor, project_name)
+            _cleanup_project_embeddings(ingestor, project_name, projects)
             ingestor.delete_project(project_name)
             _clear_deleted_project_markers(ingestor, project_name)
     except typer.Exit:

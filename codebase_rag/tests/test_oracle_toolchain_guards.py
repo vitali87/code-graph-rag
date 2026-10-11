@@ -592,22 +592,23 @@ class TestInheritedLogNoise:
         )
         assert _CHILD_LOG_LINE in reason
 
-    def test_the_inherited_lines_follow_when_the_budget_allows(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    # The exact-order checks below call `reason_stderr` itself: a stub forked
+    # from an xdist worker that holds a live gRPC client gets that worker's
+    # own fork lines ahead of the stub's stderr (macOS CI on PR #2550), which
+    # the guard rightly moves as well, so an exact reason is not reproducible
+    # through a real child there. This class's end-to-end tests only pin
+    # what comes first, which holds with or without those live lines.
+
+    def test_the_inherited_lines_follow_when_the_budget_allows(self) -> None:
         """Reordered, not dropped: nothing is lost when it all fits."""
         inherited = _GRPC_FORK_NOISE.splitlines()[1]
-        reason = self._node_reason(
-            tmp_path, monkeypatch, f"{inherited}\nError [ERR_REQUIRE_ESM]: nope"
-        )
-        assert reason == ec.NODE_SKIP_CANNOT_REQUIRE.format(
-            package="@ruby/prism",
-            stderr=f"Error [ERR_REQUIRE_ESM]: nope\n{inherited}",
+        stderr = f"{inherited}\nError [ERR_REQUIRE_ESM]: nope"
+        assert (
+            _common.reason_stderr(stderr)
+            == f"Error [ERR_REQUIRE_ESM]: nope\n{inherited}"
         )
 
-    def test_only_the_leading_block_moves(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_only_the_leading_block_moves(self) -> None:
         """A fork-source line AFTER the child's output is left where it is.
 
         gRPC's fork handlers run before exec, so only a leading block can be
@@ -615,10 +616,7 @@ class TestInheritedLogNoise:
         """
         inherited = _GRPC_FORK_NOISE.splitlines()[1]
         stderr = f"Error [ERR_REQUIRE_ESM]: nope\n{inherited}\nNode.js v18.19.1"
-        reason = self._node_reason(tmp_path, monkeypatch, stderr)
-        assert reason == ec.NODE_SKIP_CANNOT_REQUIRE.format(
-            package="@ruby/prism", stderr=stderr
-        )
+        assert _common.reason_stderr(stderr) == stderr
 
     def test_a_failed_npm_install_reason_puts_npm_first_too(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -667,14 +665,11 @@ class TestInheritedLogNoise:
             ec.DOTNET_SKIP_BUILD_FAILED.format(stderr="error NETSDK1045: too old")
         ), reason
 
-    def test_a_stderr_of_only_inherited_lines_is_kept_as_it_is(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_a_stderr_of_only_inherited_lines_is_kept_as_it_is(self) -> None:
         """Noise is still better than a reason that ends in a bare colon."""
-        reason = self._node_reason(tmp_path, monkeypatch, _GRPC_FORK_NOISE)
-        assert reason == ec.NODE_SKIP_CANNOT_REQUIRE.format(
-            package="@ruby/prism",
-            stderr=_GRPC_FORK_NOISE[: ec.SKIP_REASON_STDERR_CHARS],
+        assert (
+            _common.reason_stderr(_GRPC_FORK_NOISE)
+            == _GRPC_FORK_NOISE[: ec.SKIP_REASON_STDERR_CHARS]
         )
 
     @pytest.mark.parametrize(
