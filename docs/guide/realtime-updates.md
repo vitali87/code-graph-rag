@@ -128,13 +128,16 @@ altogether. A comment, a reformatted line, or a change inside a function body
 that no other file's call resolution reads all count. The file's Module records
 an `interface_fingerprint`: its definitions, signatures, annotations, bases and
 module-level statements, plus the parts of function bodies that cross-file
-type inference reads. When the new source hashes to the same value, the
-dependents keep their edges and only the edited file is re-parsed. A dependent
-whose edges with the file could not be restored by name is still re-parsed.
-The same rule applies to `cgr start --update-graph`. Python, Java, JavaScript
-and TypeScript files carry the fingerprint; the dependents of any other file
-are re-parsed as before, as they are when a capture group beyond the default
-ones is enabled or a semantic frontend (Jedi, javac) is selected.
+type inference reads and the functions a body hands to other files as call
+arguments (a constructor argument filling a field another file invokes, a
+callback forwarded to the function that calls it). When the new source hashes
+to the same value, the dependents keep their edges and only the edited file is
+re-parsed. A dependent whose edges with the file could not be restored by name
+is still re-parsed. The same rule applies to `cgr start --update-graph`.
+Python, Java, JavaScript and TypeScript files carry the fingerprint; the
+dependents of any other file are re-parsed as before, as they are when a
+capture group beyond the default ones is enabled or a semantic frontend (Jedi,
+javac) is selected.
 
 Agents that edit files directly can call the MCP `reingest` tool with the paths
 they touched instead of waiting for the watcher or running `update_repository`.
