@@ -314,6 +314,13 @@ TS_ARRAY_GENERIC_NAMES = frozenset(
 )
 JS_LIST_TYPE_PREFIX = "list["
 JS_LIST_TYPE_FORMAT = "list[{element}]"
+# A fluent chain hop types from the callee's return (issue #2468). `: this`
+# names the receiver's own class. A callable carrying one of these keywords
+# does not hand the caller what its body returns: an `async` one gives a
+# Promise, a `*` generator an iterator, and an accessor is read or written as
+# a property, never called.
+TS_THIS_TYPE = "this_type"
+TS_CHAIN_OPAQUE_CALLABLE_KEYWORDS = frozenset({"async", "*", "get", "set"})
 # A member call's receiver declaration, read to confirm or rule out a method
 # bound only by name (issue #2609).
 TS_PREDEFINED_TYPE = "predefined_type"

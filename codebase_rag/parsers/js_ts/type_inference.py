@@ -120,6 +120,40 @@ def _find_function_declaration(root: ASTNode, name: str) -> ASTNode | None:
     return matches[0] if len(matches) == 1 else None
 
 
+def _own_return_values(callable_node: ASTNode) -> list[ASTNode | None]:
+    """What each of the callable's own returns hands back, parentheses
+    dropped; ``None`` for a bare `return;`. An arrow's expression body is
+    its one return value."""
+    body = callable_node.child_by_field_name(cs.FIELD_BODY)
+    if body is None:
+        return []
+    if body.type != cs.TS_STATEMENT_BLOCK:
+        return [_unparenthesized(body)]
+    returns: list[ASTNode] = []
+    ut.find_return_statements(body, returns)
+    return [
+        _unparenthesized(next(iter(node.named_children), None))
+        for node in returns
+        if JsTypeInferenceEngine._return_belongs_to(node, callable_node)
+    ]
+
+
+def _unparenthesized(node: ASTNode | None) -> ASTNode | None:
+    while node is not None and node.type == cs.TS_PARENTHESIZED_EXPRESSION:
+        node = next(iter(node.named_children), None)
+    return node
+
+
+def _instance_class_of(callable_node: ASTNode, callable_qn: str) -> str | None:
+    # `this` is an instance of the class only inside a non-static method; in
+    # a static one it is the class itself.
+    if callable_node.type != cs.TS_METHOD_DEFINITION or any(
+        child.type == cs.TS_STATIC for child in callable_node.children
+    ):
+        return None
+    return callable_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+
+
 def _js_await_call(arguments: ASTNode) -> ASTNode | None:
     # The call whose argument list this is, when that call is the grammar's
     # parse of `await (X)()`: a call to an identifier spelled `await`.
@@ -464,6 +498,88 @@ class JsTypeInferenceEngine:
     ) -> str | None:
         annotation = callable_node.child_by_field_name("return_type")
         return self._annotation_type(annotation, module_qn) if annotation else None
+
+    def callable_return_type(
+        self,
+        root: ASTNode,
+        names: list[str],
+        callable_qn: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+    ) -> str | None:
+        """`names`: `[class, method]` for a method, `[function]` otherwise."""
+        callable_node = (
+            ut.find_method_in_ast(root, names[0], names[1])
+            if len(names) == 2
+            else _find_function_declaration(root, names[0])
+        )
+        if callable_node is None:
+            return None
+        return self._chain_return_type(callable_node, callable_qn, module_qn, language)
+
+    def _chain_return_type(
+        self,
+        callable_node: ASTNode,
+        callable_qn: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+    ) -> str | None:
+        """The class a call to this callable evaluates to, read in its own
+        module, so the next hop of a fluent chain can bind (issue #2468).
+
+        A declared return is the answer when it names one class (`: this` is
+        the method's own); with none, every return must hand back `this`, or
+        every one construct the same class. Anything else names no class,
+        and the chain ends there rather than guess.
+        """
+        if any(
+            child.type in cs.TS_CHAIN_OPAQUE_CALLABLE_KEYWORDS
+            for child in callable_node.children
+        ):
+            return None
+        own_class = _instance_class_of(callable_node, callable_qn)
+        annotation = callable_node.child_by_field_name(cs.FIELD_RETURN_TYPE)
+        if annotation is not None:
+            return self._declared_chain_type(annotation, own_class, module_qn)
+        return self._evident_return_class(callable_node, own_class, module_qn, language)
+
+    def _declared_chain_type(
+        self, annotation: ASTNode, own_class: str | None, module_qn: str
+    ) -> str | None:
+        declared = next(iter(annotation.named_children), None)
+        if declared is None:
+            return None
+        if declared.type == cs.TS_THIS_TYPE:
+            return own_class
+        if declared.type == cs.TS_GENERIC_TYPE:
+            # `Builder<T>` is a Builder; an array-shaped generic is a
+            # container, and `Promise<T>` names no first-party class.
+            name = safe_decode_text(declared.child_by_field_name(cs.FIELD_NAME))
+            if not name or name in cs.TS_ARRAY_GENERIC_NAMES:
+                return None
+            return self._resolve_js_class_name(name, module_qn)
+        return self._type_from_type_node(declared, module_qn)
+
+    def _evident_return_class(
+        self,
+        callable_node: ASTNode,
+        own_class: str | None,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+    ) -> str | None:
+        values = _own_return_values(callable_node)
+        if not values or None in values:
+            return None
+        if all(value.type == cs.TS_THIS for value in values if value is not None):
+            return own_class
+        constructed = {
+            self._infer_js_variable_type_from_value(value, module_qn, language)
+            if value.type == cs.TS_NEW_EXPRESSION
+            else None
+            for value in values
+            if value is not None
+        }
+        return constructed.pop() if len(constructed) == 1 else None
 
     def _infer_js_variable_type_from_value(
         self,

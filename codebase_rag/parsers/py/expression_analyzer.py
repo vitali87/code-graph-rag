@@ -32,6 +32,10 @@ _INLINE_EXPRESSION_NODE_TYPES = frozenset(
     }
 )
 _MAX_INLINE_EXPRESSION_CHARS = 512
+# The call resolver asks this engine to type a chained receiver whatever the
+# caller's language; only a Python module's chain is typed by Python's rules.
+_PY_MODULE_SUFFIXES = frozenset((*cs.PY_EXTENSIONS, cs.EXT_IPYNB))
+_HOP_SEPARATOR = f"{cs.CHAR_PAREN_CLOSE}{cs.SEPARATOR_DOT}"
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -243,6 +247,15 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
                 method_call, module_qn, local_var_types
             )
 
+        if (hop := self._called_chain_hop(method_call, module_qn)) is not None:
+            # `new_box().with_(1)`: the hop is called too, so the suffix test
+            # above (`a().b`) missed it, and the single-receiver path below
+            # read `new_box()` as a class name. Every hop after the first was
+            # lost (issue #2468).
+            return self._infer_chained_call_return_type_fixed(
+                hop, module_qn, local_var_types
+            )
+
         if cs.SEPARATOR_DOT not in method_call and cs.CHAR_PAREN_OPEN in method_call:
             # A bare call as chain receiver (`get_resolver()._is_callback()`,
             # django) is a free-function factory or a constructor; type it from
@@ -405,6 +418,21 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
             and bool(re.search(cs.REGEX_METHOD_CHAIN_SUFFIX, call_name))
         )
 
+    def _called_chain_hop(self, method_call: str, module_qn: str) -> str | None:
+        """`a().b(x)` -> `a().b`, when the called method hangs off a call."""
+        # Each hop is typed from the one before, one level of recursion per
+        # hop, so a generated chain past the cap stays untyped as the call
+        # processor leaves it (#2262) instead of overflowing the stack.
+        if method_call.count(_HOP_SEPARATOR) >= cs.MAX_RECEIVER_CHAIN_HOPS:
+            return None
+        callee = _called_callee(method_call)
+        if callee is None or not self._is_method_chain(callee):
+            return None
+        path = self.module_qn_to_file_path.get(module_qn)
+        if path is None or path.suffix not in _PY_MODULE_SUFFIXES:
+            return None
+        return callee
+
     def _infer_chained_call_return_type_fixed(
         self,
         call_name: str,
@@ -432,7 +460,14 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         ) or object_type
 
         method_qn = f"{full_object_type}{cs.SEPARATOR_DOT}{final_method}"
-        return self._get_method_return_type_from_ast(method_qn)
+        returned = self._get_method_return_type_from_ast(method_qn)
+        if returned and cs.SEPARATOR_DOT not in returned:
+            # A bare name is the one the method's own module sees. The next hop
+            # reads it in the caller's, where it may not be imported and a
+            # same-named class elsewhere can answer instead.
+            declaring_module = method_qn.rsplit(cs.SEPARATOR_DOT, 2)[0]
+            return self._resolve_class_name(returned, declaring_module) or returned
+        return returned
 
     def _infer_object_type_for_chained_call(
         self,
@@ -711,6 +746,23 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         return resolve_class_name(
             class_name, module_qn, self.import_processor, self.function_registry
         )
+
+
+def _called_callee(text: str) -> str | None:
+    """The callee of a call written as text (`a().b(x)` -> `a().b`), or
+    ``None`` when the text does not end in that call's argument list."""
+    text = text.rstrip()
+    if not text.endswith(cs.CHAR_PAREN_CLOSE):
+        return None
+    depth = 0
+    for index in range(len(text) - 1, -1, -1):
+        if text[index] == cs.CHAR_PAREN_CLOSE:
+            depth += 1
+        elif text[index] == cs.CHAR_PAREN_OPEN:
+            depth -= 1
+            if depth == 0:
+                return text[:index].rstrip() or None
+    return None
 
 
 def _variant_at(node: Node, kinds: dict[str, NodeType | None]) -> str | None:

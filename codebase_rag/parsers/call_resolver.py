@@ -302,6 +302,7 @@ class CallResolver:
         "go_package_names",
         "_php_class_namespaces",
         "_php_cased_index",
+        "_js_return_class_cache",
     )
 
     def __init__(
@@ -386,6 +387,9 @@ class CallResolver:
         # read off each file's declarations on first use (issue #2466).
         self._php_class_namespaces: dict[str, dict[str, PhpClassPath]] = {}
         self._php_cased_index: _PhpCasedIndex | None = None
+        # {JS/TS callable qn: the class a call to it returns}, read off its
+        # declaration on first use (issue #2468).
+        self._js_return_class_cache: dict[str, str | None] = {}
         # {definition qn: recorded file path} for definitions an incremental
         # run rehydrated from the graph instead of re-parsing (shared ref).
         self.rehydrated_definition_paths = (
@@ -598,6 +602,8 @@ class CallResolver:
         # A re-parsed PHP file may have moved a class between namespaces.
         self._php_class_namespaces.clear()
         self._php_cased_index = None
+        # A re-parsed TS file may declare a different return.
+        self._js_return_class_cache.clear()
         # The rel-path -> module qn inverse rebuilds only when its size
         # differs from `module_qn_to_file_path`; a rename removes one entry
         # and adds one, so the size is unchanged and the memo would keep the
@@ -5808,6 +5814,18 @@ class CallResolver:
             # chain before the construction hop is seen (issue #2033). Fold
             # the prefix into the next hop and type that hop instead.
             current_type, parts = folded
+        elif (
+            folded := self._fold_js_call_hop(
+                parts,
+                module_qn,
+                local_var_types,
+                class_context,
+                caller_qn,
+                language,
+                call_point,
+            )
+        ) is not None:
+            current_type, parts = folded
         elif local_var_types:
             current_type = local_var_types.get(base)
         else:
@@ -5826,10 +5844,88 @@ class CallResolver:
             class_qn = self._chain_class_qn(
                 current_type, module_qn, _rust_caller(language, caller_qn)
             )
-            current_type = self.type_inference.method_return_types.get(
-                f"{class_qn}{cs.SEPARATOR_DOT}{method}"
+            current_type = self._hop_return_type(
+                f"{class_qn}{cs.SEPARATOR_DOT}{method}", language
             )
         return current_type
+
+    def _hop_return_type(
+        self, callable_qn: str, language: cs.SupportedLanguage | None
+    ) -> str | None:
+        # The type a call to `callable_qn` hands the next hop. Most languages
+        # record it as they ingest; a JS/TS return is read off the callee's
+        # declaration on demand (issue #2468).
+        recorded = self.type_inference.method_return_types.get(callable_qn)
+        if recorded is None and language in cs.JS_TS_LANGUAGES:
+            return self._js_return_class(callable_qn)
+        return recorded
+
+    def _callee_return_type(
+        self, callee_qn: str, language: cs.SupportedLanguage | None
+    ) -> str | None:
+        # Read right after the callee resolved. A JS/TS callee bound only by
+        # name is a guess, and typing the rest of the chain from its return
+        # would build every later hop on that guess.
+        if (
+            language in cs.JS_TS_LANGUAGES
+            and self.last_resolution != cs.EdgeResolution.EXACT
+        ):
+            return None
+        return self._hop_return_type(callee_qn, language)
+
+    def _js_return_class(self, callable_qn: str) -> str | None:
+        # Only a class registered under the qn the declaring module resolved
+        # counts: a name that module could not place is not looked up again
+        # from the caller, where a same-named class may answer.
+        if callable_qn in self._js_return_class_cache:
+            return self._js_return_class_cache[callable_qn]
+        returned = self.type_inference.js_callable_return_type(callable_qn)
+        class_qn = (
+            self._follow_reexports(returned)
+            if returned and cs.SEPARATOR_DOT in returned
+            else None
+        )
+        if class_qn is not None and self.function_registry.get(class_qn) != (
+            NodeType.CLASS
+        ):
+            class_qn = None
+        self._js_return_class_cache[callable_qn] = class_qn
+        return class_qn
+
+    def _fold_js_call_hop(
+        self,
+        parts: list[str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        caller_qn: str | None,
+        language: cs.SupportedLanguage | None,
+        call_point: int | None,
+    ) -> tuple[str, list[str]] | None:
+        # `TBox.create().with(1)`, `this.with(1).bump()`: the base is no typed
+        # local, but its first hop binds the way that call written alone
+        # does. Its return types the rest of the chain (issue #2468).
+        if language not in cs.JS_TS_LANGUAGES or len(parts) < 2:
+            return None
+        base, hop = parts[0], parts[1]
+        if (
+            cs.CHAR_PAREN_OPEN in base
+            or cs.CHAR_PAREN_OPEN not in hop
+            or (local_var_types and base in local_var_types)
+        ):
+            return None
+        method = hop.split(cs.CHAR_PAREN_OPEN, 1)[0]
+        resolved = self.resolve_function_call(
+            f"{base}{cs.SEPARATOR_DOT}{method}",
+            module_qn,
+            local_var_types,
+            class_context,
+            caller_qn,
+            language,
+            call_point,
+        )
+        returned = self._callee_return_type(resolved[1], language) if resolved else None
+        return (returned, parts[1:]) if returned else None
 
     def _dart_member_return_type(
         self, class_qn: str, member: str, module_qn: str
@@ -6282,7 +6378,7 @@ class CallResolver:
             call_point,
         )
         if resolved is not None:
-            return_type = self.type_inference.method_return_types.get(resolved[1])
+            return_type = self._callee_return_type(resolved[1], language)
             if return_type:
                 return self._resolve_type_to_class_qn(return_type, module_qn)
         if language in (cs.SupportedLanguage.CPP, cs.SupportedLanguage.DART):

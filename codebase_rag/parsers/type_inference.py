@@ -723,6 +723,35 @@ class TypeInferenceEngine:
         # INSTANTIATES on a call that now reaches a static factory (#2012).
         self.dart_constructor_qns.difference_update(qns)
 
+    def js_callable_return_type(self, callable_qn: str) -> str | None:
+        """The class a JS/TS method or function returns, read in its own file.
+
+        Unlike the languages that record a hop's return in
+        `method_return_types` as they ingest, TS needs its whole module scope
+        (imports included) to say which class a return names (issue #2468).
+        A method of a top-level class sits two segments below its module and
+        a module-level function one; anything nested deeper finds no module
+        and stays untyped.
+        """
+        match self.function_registry.get(callable_qn):
+            case NodeType.METHOD:
+                depth = 2
+            case NodeType.FUNCTION:
+                depth = 1
+            case _:
+                return None
+        module_qn, *names = callable_qn.rsplit(cs.SEPARATOR_DOT, depth)
+        if len(names) != depth:
+            return None
+        path = self.module_qn_to_file_path.get(module_qn)
+        entry = self.ast_cache.load(path) if path else None
+        if entry is None or entry[1] not in cs.JS_TS_LANGUAGES:
+            return None
+        root, language = entry
+        return self.js_type_inference.callable_return_type(
+            root, names, callable_qn, module_qn, language
+        )
+
     def _go_free_fn_return_type(self, name: str, module_qn: str) -> str | None:
         # Same module (file) first; then the enclosing package's sibling files
         # (same parent dir), since Go free functions are package-scoped, not
