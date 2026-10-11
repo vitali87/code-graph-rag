@@ -237,12 +237,20 @@ _BINDING_WRAPPERS = _DECLARATION_WRAPPERS | {
     cs.TS_VARIABLE_DECLARATION,
 }
 # What binds a name a type annotation or a `new` reads.
-_NAME_BINDINGS = _CLASS_DECLARATIONS | {
+# TypeScript keeps types and values in separate namespaces. In a type
+# position only a type declaration shadows (a class, interface, type alias or
+# enum; a type parameter, read separately); a namespace is no type, and a
+# `const` or plain `function` is a value. In a value position (`new X()`) any
+# value declaration shadows: a class, function, variable, enum or namespace.
+_TYPE_BINDINGS = _CLASS_DECLARATIONS | {
+    cs.TS_INTERFACE_DECLARATION,
+    cs.TS_TYPE_ALIAS_DECLARATION,
+    cs.TS_ENUM_DECLARATION,
+}
+_VALUE_BINDINGS = _CLASS_DECLARATIONS | {
     cs.TS_FUNCTION_DECLARATION,
     cs.TS_GENERATOR_FUNCTION_DECLARATION,
     cs.TS_VARIABLE_DECLARATOR,
-    cs.TS_INTERFACE_DECLARATION,
-    cs.TS_TYPE_ALIAS_DECLARATION,
     cs.TS_ENUM_DECLARATION,
     cs.TS_INTERNAL_MODULE,
 }
@@ -250,28 +258,51 @@ _NAME_BINDINGS = _CLASS_DECLARATIONS | {
 _PATH_TRANSPARENT = _DECLARATION_WRAPPERS | {cs.TS_STATEMENT_BLOCK, cs.TS_CLASS_BODY}
 
 
-def enclosing_declaration(site: Node, name: str) -> Node | None:
-    """What `name`, read at `site`, binds to below module level: the
-    nearest enclosing block's own declaration of it (a function's, a
-    method's or a namespace's), or a type parameter of an enclosing class,
-    function or method. ``None`` when only the module, an import, or
-    nothing declares it."""
+def enclosing_type_declaration(site: Node, name: str) -> Node | None:
+    """The declaration a type name read at `site` binds to below module
+    level: the nearest enclosing block's own type declaration of it, or a
+    type parameter of an enclosing class, function or method. ``None`` when
+    only the module, an import, or nothing declares it."""
+    return _enclosing_binding(site, name, _TYPE_BINDINGS, type_parameters=True)
+
+
+def enclosing_value_declaration(site: Node, name: str) -> Node | None:
+    """The nearest enclosing block's own value declaration of `name`, read
+    at `site`, below module level. Parameters, hoisted `var`s and catch or
+    loop bindings are left to the callable's binding index."""
+    return _enclosing_binding(site, name, _VALUE_BINDINGS, type_parameters=False)
+
+
+def declaring_block(declaration: Node) -> Node | None:
+    """The block a declaration's name is bound in (past `export`/`const`)."""
+    node = declaration.parent
+    while node is not None and node.type != cs.TS_STATEMENT_BLOCK:
+        node = node.parent
+    return node
+
+
+def _enclosing_binding(
+    site: Node, name: str, kinds: frozenset[str], type_parameters: bool
+) -> Node | None:
     node = site.parent
     while node is not None and node.type != cs.TS_PROGRAM:
         if node.type == cs.TS_STATEMENT_BLOCK and (
-            found := _scope_member(node, name, _NAME_BINDINGS, _BINDING_WRAPPERS)
+            found := _scope_member(node, name, kinds, _BINDING_WRAPPERS)
         ):
             return found
-        type_params = node.child_by_field_name(cs.TS_FIELD_TYPE_PARAMETERS)
-        if type_params is not None and (
-            param := next(
-                (p for p in type_params.named_children if _declared_name(p) == name),
-                None,
-            )
-        ):
+        if type_parameters and (param := _type_parameter(node, name)) is not None:
             return param
         node = node.parent
     return None
+
+
+def _type_parameter(node: Node, name: str) -> Node | None:
+    type_params = node.child_by_field_name(cs.TS_FIELD_TYPE_PARAMETERS)
+    if type_params is None:
+        return None
+    return next(
+        (p for p in type_params.named_children if _declared_name(p) == name), None
+    )
 
 
 def class_qn_path(declaration: Node) -> list[str] | None:

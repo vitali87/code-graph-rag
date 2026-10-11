@@ -719,9 +719,13 @@ class JsTypeInferenceEngine:
         qn), else the module's own or an imported one. A nearer binding that
         is no class, or one a qn cannot name, answers nothing rather than
         letting the module-level class of that name stand in."""
-        declaration = ut.enclosing_declaration(site, name)
+        declaration = ut.enclosing_type_declaration(site, name)
         if declaration is None:
             return self._resolve_js_class_name(name, module_qn)
+        return self._declared_class_qn(declaration, module_qn)
+
+    @staticmethod
+    def _declared_class_qn(declaration: ASTNode, module_qn: str) -> str | None:
         path = ut.class_qn_path(declaration)
         return cs.SEPARATOR_DOT.join([module_qn, *path]) if path else None
 
@@ -736,13 +740,17 @@ class JsTypeInferenceEngine:
         )
         if constructor is None or not name:
             return self._infer_js_variable_type_from_value(value, module_qn, language)
-        # A parameter or other local value of that name, which the block walk
-        # does not see, is not the class either.
-        if ut.enclosing_declaration(
-            constructor, name
-        ) is None and self._js_bound_by_enclosing_callable(value, name, language):
+        # A value position: the nearest value binding of the name wins. The
+        # block walk finds the nearest declaration; a parameter, hoisted
+        # `var`, catch or loop binding in a callable between the call and
+        # that declaration is nearer still, and is no class.
+        declaration = ut.enclosing_value_declaration(constructor, name)
+        limit = ut.declaring_block(declaration) if declaration is not None else None
+        if self._js_bound_by_enclosing_callable(value, name, language, limit):
             return None
-        return self._scoped_class(constructor, name, module_qn)
+        if declaration is None:
+            return self._resolve_js_class_name(name, module_qn)
+        return self._declared_class_qn(declaration, module_qn)
 
     def _evident_return_class(
         self,
@@ -1197,7 +1205,11 @@ class JsTypeInferenceEngine:
         return names
 
     def _js_bound_by_enclosing_callable(
-        self, site: ASTNode, name: str, language: cs.SupportedLanguage | None
+        self,
+        site: ASTNode,
+        name: str,
+        language: cs.SupportedLanguage | None,
+        limit: ASTNode | None = None,
     ) -> bool:
         # `new Box()` constructs whatever `Box` is in scope at the site. A
         # parameter, local, loop or catch binding, or a function or class
@@ -1205,18 +1217,24 @@ class JsTypeInferenceEngine:
         # the module's class, often a constructor the caller is handed, and
         # typing the instance as the module class gave that class's methods
         # callers that never reach them (#2465). Only the module's own
-        # binding, which the class lookup resolves, may type it.
+        # binding, which the class lookup resolves, may type it. `limit`: a
+        # block that declares the name itself; only callables inside it can
+        # bind it nearer.
         callables: list[ASTNode] = []
         root = site
         current = site.parent
+        inside = True
         while current is not None:
-            if current.type in _JS_SELF_NAMED_EXPRESSIONS and (
-                self._js_declared_name(current) == name
+            inside = inside and (limit is None or current.id != limit.id)
+            if (
+                inside
+                and current.type in _JS_SELF_NAMED_EXPRESSIONS
+                and self._js_declared_name(current) == name
             ):
                 # A named function or class expression binds its own name
                 # inside itself only.
                 return True
-            if current.type in _JS_NESTED_CALLABLE_TYPES:
+            if inside and current.type in _JS_NESTED_CALLABLE_TYPES:
                 callables.append(current)
             root = current
             current = current.parent

@@ -1650,3 +1650,88 @@ def test_type_parameter_named_like_a_class_types_no_hop(
     # `Generic<Product>`'s `Product` is its type parameter, not the class.
     callees = _callees(scoped_edges, "scp.fn.Generic.use")
     assert not {c for c in callees if c.endswith(".finish")}
+
+
+# ---------------------------------------------------------------------------
+# Types and values are separate namespaces. In a `new X()` (a value), the
+# nearest value binding wins, a parameter included. In an annotation (a
+# type), only type declarations shadow: a `const X` or `function X` does not
+# hide the class type X
+# ---------------------------------------------------------------------------
+
+_VALUE_PARAM_SHADOW = """\
+export class Product { finish() { return 0; } }
+export function f() {
+  class Product { finish() { return 1; } }
+  class Other { finish() { return 2; } }
+  class Builder {
+    make(Product) { return new Product(); }
+    use() { return this.make(Other).finish(); }
+  }
+  return new Builder();
+}
+export class Top {
+  make(Product) { return new Product(); }
+  use() { return this.make(Top).finish(); }
+}
+"""
+
+_TYPE_VALUE_SPLIT_TS = """\
+export class Product { finish() { return 0; } }
+export function withConst() {
+  const Product = 0;
+  class Builder {
+    make(): Product { return undefined as any; }
+    use() { return this.make().finish(); }
+  }
+  return [Product, new Builder()];
+}
+export function withFunction() {
+  function Product() { return 0; }
+  class Builder {
+    make(): Product { return undefined as any; }
+    use() { return this.make().finish(); }
+  }
+  return [Product, new Builder()];
+}
+"""
+
+
+@pytest.fixture
+def namespace_split_edges(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> dict[tuple[str, str], str | None]:
+    root = temp_repo / "nsplit"
+    _write(
+        root,
+        {
+            "vp.ts": _VALUE_PARAM_SHADOW.replace("make(Product)", "make(Product: any)"),
+            "vp_js.js": _VALUE_PARAM_SHADOW,
+            "tv.ts": _TYPE_VALUE_SPLIT_TS,
+        },
+    )
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="typescript")
+    return _calls(mock_ingestor)
+
+
+@pytest.mark.parametrize("module", ["nsplit.vp", "nsplit.vp_js"])
+@pytest.mark.parametrize("caller", ["f.Builder.use", "Top.use"])
+def test_parameter_named_like_a_class_shadows_it_in_new(
+    namespace_split_edges: dict[tuple[str, str], str | None],
+    module: str,
+    caller: str,
+) -> None:
+    # `make(Product)` builds whatever it is handed (`Other` here), never the
+    # local or module-level class named Product.
+    callees = _callees(namespace_split_edges, f"{module}.{caller}")
+    assert not {c for c in callees if c.endswith(".finish")}
+
+
+@pytest.mark.parametrize("fn", ["withConst", "withFunction"])
+def test_value_declaration_does_not_hide_a_class_type(
+    namespace_split_edges: dict[tuple[str, str], str | None], fn: str
+) -> None:
+    # `make(): Product` names the class type; the enclosing `const Product`
+    # or `function Product` is a value, in the other namespace.
+    callees = _callees(namespace_split_edges, f"nsplit.tv.{fn}.Builder.use")
+    assert callees.get("nsplit.tv.Product.finish") == _EXACT
