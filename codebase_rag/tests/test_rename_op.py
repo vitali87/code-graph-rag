@@ -24,13 +24,16 @@ class RecordedGraph:
 
     def __init__(self, mock: MagicMock, project: str) -> None:
         self.nodes: dict[str, dict] = {}
+        # Every label written under a qn: a TS type and a same-named value
+        # are two nodes sharing it (#2520), merged in `nodes`.
+        self.labels: dict[str, set[str]] = {}
         self.edges: list[tuple[str, str, str, dict]] = []
         for c in mock.ensure_node_batch.call_args_list:
             props = dict(c.args[1])
             props[cs.KEY_LABEL] = str(c.args[0])
-            self.nodes.setdefault(str(props.get(cs.KEY_QUALIFIED_NAME, "")), {}).update(
-                props
-            )
+            node_qn = str(props.get(cs.KEY_QUALIFIED_NAME, ""))
+            self.labels.setdefault(node_qn, set()).add(props[cs.KEY_LABEL])
+            self.nodes.setdefault(node_qn, {}).update(props)
         for c in mock.ensure_relationship_batch.call_args_list:
             props = (
                 c.kwargs.get("properties")
@@ -82,9 +85,13 @@ class RecordedGraph:
                 cq.CYPHER_GRAPH_REFERENCES: {"REFERENCES", "INSTANTIATES"},
                 cq.CYPHER_GRAPH_TYPE_EDGES: {"INHERITS", "ACCEPTS", "RETURNS"},
             }[query]
+            # `$label IN labels(target)`: the twin-aware reads scope to one.
+            label = p.get(cs.KEY_LABEL)
             out: list[ResultRow] = []
             for src, rel, dst, props in self.edges:
                 if dst != qn or rel not in rels or src not in self.nodes:
+                    continue
+                if label is not None and label not in self.labels.get(dst, set()):
                     continue
                 out.append(
                     {
