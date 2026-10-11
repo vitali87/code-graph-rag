@@ -5079,6 +5079,22 @@ class ImportProcessor:
                 (line, col, resolved_imports, True)
             )
 
+    def rust_mod_scope_targets(self, writer_qn: str) -> list[str]:
+        """What the inline `mod` uses of the file `writer_qn` name.
+
+        Read before `finalise_rust_mod_scope_uses` decides which of them
+        commit: until then a parsed or restored file's inline-scope maps are
+        held back, and a walk out from the file has to see them (#2805
+        review). This run's entries if it parsed the file, else the last
+        finalised ones.
+        """
+        entries = self._rust_pending_mod_scope_uses.get(writer_qn)
+        if entries is None:
+            entries = self._rust_mod_scope_registry.get(writer_qn, [])
+        return [
+            target for _key, _pure, imports in entries for target in imports.values()
+        ]
+
     def retract_rust_mod_scope_uses(self, module_qn: str) -> None:
         # Reverse replay so a key shadowing another file's entries (the
         # collision finalise arbitrates later) gets them back exactly.

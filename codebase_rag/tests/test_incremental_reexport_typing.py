@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.graph_updater import GraphUpdater, _file_module_holding
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.rs import utils as rs_utils
 from codebase_rag.tests.conftest import force_mtime_after_cache
@@ -783,3 +783,110 @@ class TestRustTwinsAcrossFiles:
         updater._rehydrate_rust_return_types(rows[::-1] if reverse else rows)
         return_types = updater.factory.definition_processor.method_return_types
         assert return_types.get(RS_TWINS_KEY) == "Beta"
+
+
+# The consumer imports `Widget` through `api::inner`, an inline `mod` whose
+# `pub use` names the shim, which re-exports the real type. `decoy` holds a
+# same-named `render` that a lost receiver type reaches by name. `unrelated`
+# has an inline re-export nothing imports.
+RS_INLINE_REEXPORT: dict[str, str] = {
+    "Cargo.toml": '[package]\nname = "proj"\nversion = "0.1.0"\nedition = "2021"\n',
+    "src/lib.rs": (
+        "pub mod api;\npub mod consumer;\npub mod decoy;\n"
+        "pub mod shim;\npub mod unrelated;\npub mod widget;\n"
+    ),
+    "src/widget.rs": (
+        "pub struct Widget;\n\nimpl Widget {\n"
+        "    pub fn new() -> Widget {\n        Widget\n    }\n\n"
+        "    pub fn render(&self) -> u32 {\n        1\n    }\n}\n"
+    ),
+    "src/decoy.rs": (
+        "pub struct Other;\n\nimpl Other {\n"
+        "    pub fn render(&self) -> u32 {\n        2\n    }\n}\n"
+    ),
+    "src/shim.rs": "pub use crate::widget::Widget;\n",
+    "src/api.rs": "pub mod inner {\n    pub use crate::shim::Widget;\n}\n",
+    "src/unrelated.rs": "pub mod hidden {\n    pub use crate::decoy::Other;\n}\n",
+    "src/consumer.rs": (
+        "use crate::api::inner::Widget;\n\n"
+        "pub fn draw(w: Widget) -> u32 {\n    w.render()\n}\n\n"
+        "pub fn chained() -> u32 {\n    Widget::new().render()\n}\n"
+    ),
+}
+RS_INLINE_CONSUMER = "src/consumer.rs"
+RS_WIDGET_RENDER = "proj.src.widget.Widget.render"
+
+
+class TestRustInlineModuleReexport:
+    @pytest.mark.parametrize(
+        "edited", [RS_INLINE_CONSUMER, "src/api.rs", "src/shim.rs"]
+    )
+    def test_receiver_through_an_inline_reexport_stays_exact(
+        self, tmp_path: Path, edited: str
+    ) -> None:
+        synced = _sync_after_edit(
+            tmp_path, RS_INLINE_REEXPORT, edited, _UNRELATED_RS_FN, "rust"
+        )
+        for fn in ("draw", "chained"):
+            clean = _calls_from(synced.clean, f"proj.src.consumer.{fn}")
+            assert clean.get(RS_WIDGET_RENDER) == _EXACT, (fn, clean)
+            calls = _calls_from(synced.store, f"proj.src.consumer.{fn}")
+
+            assert calls.get(RS_WIDGET_RENDER) == _EXACT, (fn, calls)
+            assert "proj.src.decoy.Other.render" not in calls, (fn, calls)
+
+    def test_incremental_graph_equals_a_clean_index(self, tmp_path: Path) -> None:
+        synced = _sync_after_edit(
+            tmp_path, RS_INLINE_REEXPORT, RS_INLINE_CONSUMER, _UNRELATED_RS_FN, "rust"
+        )
+        assert _snapshot(synced.store, synced.root) == _snapshot(
+            synced.clean, synced.root
+        )
+
+    def test_the_inline_scope_and_its_target_get_the_clean_maps(
+        self, tmp_path: Path
+    ) -> None:
+        # Restored under its file's module, not under the inline `mod`: that
+        # keyed the `mod`'s uses one scope too deep and left its own empty.
+        synced = _sync_after_edit(
+            tmp_path, RS_INLINE_REEXPORT, RS_INLINE_CONSUMER, _UNRELATED_RS_FN, "rust"
+        )
+        incremental = synced.updater.factory.import_processor.import_mapping
+        clean = synced.clean_updater.factory.import_processor.import_mapping
+        for scope in ("proj.src.api.inner", "proj.src.shim"):
+            assert incremental.get(scope) == clean.get(scope), scope
+        assert "proj.src.api.inner.inner" not in incremental
+
+    def test_an_inline_reexport_nothing_reaches_is_not_restored(
+        self, tmp_path: Path
+    ) -> None:
+        synced = _sync_after_edit(
+            tmp_path, RS_INLINE_REEXPORT, RS_INLINE_CONSUMER, _UNRELATED_RS_FN, "rust"
+        )
+        clean = synced.clean_updater.factory.import_processor.import_mapping
+        assert "proj.src.unrelated.hidden" in clean, "fixture must map the scope"
+        incremental = synced.updater.factory.import_processor.import_mapping
+        assert "proj.src.unrelated.hidden" not in incremental
+        assert "proj.src.unrelated" not in incremental
+
+
+@pytest.mark.parametrize(
+    ("name", "holder"),
+    [
+        ("p.a.inner.Widget", "p.a"),
+        ("p.a.inner", "p.a"),
+        ("p.a.b.Widget", "p.a.b"),
+        ("p.a.Widget", "p.a"),
+        ("q.Widget", None),
+    ],
+    ids=["inline-mod", "inline-mod-itself", "child-file", "file", "unknown"],
+)
+def test_only_an_inline_mod_widens_to_its_file(name: str, holder: str | None) -> None:
+    # `a/b.rs` sits under `a`'s qn but is a file of its own; only a module on
+    # its file's own path is an inline `mod` of it.
+    paths = {
+        "p.a": Path("src/a.rs"),
+        "p.a.inner": Path("src/a.rs"),
+        "p.a.b": Path("src/a/b.rs"),
+    }
+    assert _file_module_holding(name, paths) == holder

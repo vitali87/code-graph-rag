@@ -1023,6 +1023,26 @@ def _module_holding(name: str, module_paths: Mapping[str, Path]) -> str | None:
     return None
 
 
+def _file_module_holding(name: str, module_paths: Mapping[str, Path]) -> str | None:
+    """`_module_holding`, widened from an inline `mod` to its file's module.
+
+    An incremental run seeds an inline `mod`'s node, which carries its file's
+    path, as a module of its own. Its imports are its file's to restore, and
+    restored under the `mod`'s qn they keyed one scope too deep (#2805
+    review). The file's module is the shortest dotted prefix on that path.
+    """
+    holder = _module_holding(name, module_paths)
+    if holder is None:
+        return None
+    path = module_paths[holder]
+    parts = holder.split(cs.SEPARATOR_DOT)
+    for end in range(1, len(parts)):
+        prefix = cs.SEPARATOR_DOT.join(parts[:end])
+        if module_paths.get(prefix) == path:
+            return prefix
+    return holder
+
+
 def _project_root_for_single_file(target: Path) -> Path:
     """The project root owning `target`, or its parent when none is found.
 
@@ -2292,9 +2312,15 @@ class GraphUpdater:
             # inline-`mod` uses under their scope keys until its parse is
             # retracted, and `mod b {}` in `a.rs` keys on the same qn as a
             # cfg-twin `a/b.rs`, so `scope`'s own dict can change mid-loop.
-            targets = list(mapping.get(scope, {}).values())
+            # Its inline `mod`s' uses join it: they stay held back until the
+            # arbitration after this walk, and an import through one
+            # (`use crate::api::inner::Widget`) leads on from there.
+            targets = [
+                *mapping.get(scope, {}).values(),
+                *import_processor.rust_mod_scope_targets(scope),
+            ]
             for target in targets:
-                holder = _module_holding(target, module_paths)
+                holder = _file_module_holding(target, module_paths)
                 if holder is None or holder in walked:
                     continue
                 walked.add(holder)
