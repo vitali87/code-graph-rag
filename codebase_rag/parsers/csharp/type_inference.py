@@ -25,6 +25,15 @@ from ..frontends.protocol import ResolvedCallSite
 from ..import_processor import ImportProcessor
 from ..semantic_call_join import call_site_key, declared_location
 from ..utils import safe_decode_text
+from .name_lookup import (
+    Lookup,
+    LookupKind,
+    member_of,
+    member_type,
+    simple_name,
+    simple_type_name,
+    type_body,
+)
 from .overloads import (
     ArgumentType,
     Bound,
@@ -64,8 +73,10 @@ from .overloads import (
 from .utils import (
     _normalize_type_name,
     annotate_type_ref,
+    binds_local,
     generic_arity_of_type_text,
     leaf_type_segment,
+    local_binder,
     signature_type_name,
     split_type_ref,
     strip_generic_arguments,
@@ -76,22 +87,6 @@ if TYPE_CHECKING:
     from ..factory import ASTCacheProtocol
 
 _TYPE_DECLS = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
-# The declarations whose body holds members, and the nodes a walk for one
-# descends through: namespaces, bodies, and types for the types they nest.
-_BODY_OWNERS = frozenset(
-    {
-        cs.TS_CSHARP_CLASS_DECLARATION,
-        cs.TS_CSHARP_STRUCT_DECLARATION,
-        cs.TS_CSHARP_RECORD_DECLARATION,
-        cs.TS_CSHARP_INTERFACE_DECLARATION,
-    }
-)
-_BODY_HOLDERS = _BODY_OWNERS | {
-    cs.TS_CSHARP_NAMESPACE_DECLARATION,
-    cs.TS_CSHARP_FILE_SCOPED_NAMESPACE_DECLARATION,
-    cs.TS_CSHARP_DECLARATION_LIST,
-}
-
 # Sentinel: the call's target is provably EXTERNAL (a BCL/base member, a
 # static call on an unregistered type). The dispatcher must emit nothing
 # and must NOT fall back to the name-only trie, which would fabricate an
@@ -496,23 +491,94 @@ def _enclosing_body(node: Node) -> Node | None:
     return current
 
 
-def _file_type_body(node: Node, name: str) -> Node | None:
-    # The body of the one type named `name` the node's file declares, None
-    # when it declares none or several.
-    root = node
-    while root.parent is not None:
-        root = root.parent
-    bodies: list[Node] = []
-    pending = [root]
-    while pending and len(bodies) < 2:
-        current = pending.pop()
-        if current.type in _BODY_OWNERS and (
-            safe_decode_text(current.child_by_field_name(cs.FIELD_NAME)) == name
-        ):
-            if (body := current.child_by_field_name(cs.FIELD_BODY)) is not None:
-                bodies.append(body)
-        pending.extend(c for c in current.named_children if c.type in _BODY_HOLDERS)
-    return bodies[0] if len(bodies) == 1 else None
+class _Unread:
+    """A value whose member C#'s lookup would read is not known here."""
+
+
+_UNREAD = _Unread()
+
+
+def _named_member(value: Node) -> tuple[Node, str] | None:
+    # The field or property a bare name reads, as C#'s lookup finds it
+    # among what the file declares, when no local or parameter has it.
+    name = safe_decode_text(value) or ""
+    found = None if binds_local(value, name) else simple_name(value, name)
+    if found is None or found.kind is not LookupKind.MEMBER or found.node is None:
+        return None
+    return found.node, name
+
+
+def _owner_body(owner: Node, local_type: str | None) -> Node | _Unread | None:
+    # The body of the type a member access's owner names: `this`'s; for a
+    # local or parameter, the type it is declared with (`local_type`); else
+    # the type `_owner_type` finds. `_UNREAD` when a base the file does not
+    # declare may hold a name on the way; None for a name or type the file
+    # does not declare.
+    if owner.type == cs.TS_CSHARP_THIS:
+        return _enclosing_body(owner)
+    if owner.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
+        found = _this_member_type(owner)
+    elif owner.type != cs.TS_CSHARP_IDENTIFIER:
+        return None
+    elif binds_local(owner, name := safe_decode_text(owner) or ""):
+        type_name = simple_type_name(local_type) if local_type else None
+        found = simple_name(owner, type_name, types_only=True) if type_name else None
+    else:
+        found = _owner_type(owner, simple_name(owner, name), name)
+    if found is None or isinstance(found, _Unread):
+        return found
+    return _UNREAD if found.kind is LookupKind.UNKNOWN else type_body(found)
+
+
+def _this_member_type(owner: Node) -> Lookup | _Unread | None:
+    # The type `this.K` is, `K` a member of the enclosing type or one it
+    # inherits; None for any other member access.
+    target = owner.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
+    name = safe_decode_text(owner.child_by_field_name(cs.FIELD_NAME)) or ""
+    body = _enclosing_body(owner)
+    if target is None or target.type != cs.TS_CSHARP_THIS or body is None or not name:
+        return None
+    holder = body.parent
+    return _owner_type(owner, member_of(holder, name), name) if holder else None
+
+
+def _binder_type(binder: Node) -> str | None:
+    # The type a local's or parameter's binder is declared with, None for
+    # one written `var` or with none.
+    holder = binder.parent
+    if holder is not None and holder.type == cs.TS_CSHARP_VARIABLE_DECLARATOR:
+        holder = holder.parent
+    type_node = holder.child_by_field_name(cs.FIELD_TYPE) if holder else None
+    if type_node is None or type_node.type == cs.TS_CSHARP_IMPLICIT_TYPE:
+        return None
+    return safe_decode_text(type_node)
+
+
+def _owner_type(
+    owner: Node, found: Lookup | None, name: str
+) -> Lookup | _Unread | None:
+    # The type a name `found` as a member access's owner is: the type it
+    # found, or the type of a field or property it found, even one sharing
+    # the member's name ("Color Color", whose static and instance readings
+    # both read that type's members). `_UNREAD` for a method or event of
+    # the name; None for a member whose type this file's lookup cannot name.
+    if found is None or found.kind is not LookupKind.MEMBER or found.node is None:
+        return found
+    written = member_type(found.node, name)
+    if not written:
+        return _UNREAD
+    type_name = simple_type_name(written)
+    return simple_name(owner, type_name, types_only=True) if type_name else None
+
+
+def _declares_value(member: Node, name: str) -> bool:
+    # Whether a type member is the field or property `name`.
+    if member.type == cs.TS_CSHARP_PROPERTY_DECLARATION:
+        return safe_decode_text(member.child_by_field_name(cs.FIELD_NAME)) == name
+    return (
+        member.type == cs.TS_CSHARP_FIELD_DECLARATION
+        and member_type(member, name) is not None
+    )
 
 
 def _exact(bound: Inferred) -> dict[str, str]:
@@ -3138,7 +3204,22 @@ class CSharpTypeInferenceEngine:
             if constant is not None:
                 return ArgumentType(constant.type, None, 0, None, constant.value)
             return _written_argument(declared)
-        if (member := self._file_member_argument(value)) is not None:
+        return self._member_argument(value, local_var_types, module_qn, caller_qn)
+
+    def _member_argument(
+        self,
+        value: Node,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        caller_qn: str | None,
+    ) -> ArgumentType | None:
+        # A field or property read: off its declaration when the caller's
+        # file declares it, else as its annotation tells; nothing when what
+        # it reads is not known.
+        member = self._file_member_argument(value)
+        if isinstance(member, _Unread):
+            return None
+        if member is not None:
             return member
         annotated = self._receiver_type_name(
             value, local_var_types, module_qn, caller_qn
@@ -3152,26 +3233,60 @@ class CSharpTypeInferenceEngine:
             return ArgumentType(keyword, None, 0, None)
         return ArgumentType(None, name, arity, None)
 
-    def _file_member_argument(self, value: Node) -> ArgumentType | None:
+    def _file_member_argument(self, value: Node) -> ArgumentType | _Unread | None:
         # A field or property the caller's own file declares, read off its
         # declaration, which is parsed whenever the call is (PR 2814 review):
         # a `const` field passes its constant, any other member is a variable
-        # of its written type, type arguments included. None for one this
-        # file does not declare, which stays as its annotation tells.
-        found = self._member_body(value)
-        if found is None:
-            return None
-        body, name = found
-        for member in body.named_children:
-            if member.type == cs.TS_CSHARP_PROPERTY_DECLARATION:
-                passed = _property_argument(member, name)
-            elif member.type == cs.TS_CSHARP_FIELD_DECLARATION:
-                passed = self._field_argument(member, name)
-            else:
-                continue
-            if passed is not None:
-                return passed
+        # of its written type, type arguments included. Found as C#'s
+        # simple-name lookup finds it (`name_lookup`); `_UNREAD` when what the
+        # name reads is not known there, None for one this file does not
+        # declare, which stays as its annotation tells.
+        found = self._read_member(value)
+        if found is None or isinstance(found, _Unread):
+            return found
+        member, name = found
+        if member.type == cs.TS_CSHARP_PROPERTY_DECLARATION:
+            return _property_argument(member, name)
+        if member.type == cs.TS_CSHARP_FIELD_DECLARATION:
+            return self._field_argument(member, name)
         return None
+
+    def _read_member(self, value: Node) -> tuple[Node, str] | _Unread | None:
+        # The member declaration a value reads, with its name: one a bare
+        # name finds, or one the body of the type a member access's owner
+        # names declares.
+        if value.type == cs.TS_CSHARP_IDENTIFIER:
+            return _named_member(value)
+        if value.type != cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
+            return None
+        owner = value.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
+        name = safe_decode_text(value.child_by_field_name(cs.FIELD_NAME)) or ""
+        body = (
+            _owner_body(owner, self._local_written_type(owner))
+            if owner is not None and name
+            else None
+        )
+        if body is None or isinstance(body, _Unread):
+            return body
+        return next(
+            (
+                (member, name)
+                for member in body.named_children
+                if _declares_value(member, name)
+            ),
+            None,
+        )
+
+    def _local_written_type(self, owner: Node) -> str | None:
+        # The type a local or parameter an owner names is declared with: a
+        # block's local (a `var` one's construction), a parameter, or any
+        # other binder in scope (`foreach`, `catch`, a pattern, `out var`).
+        if owner.type != cs.TS_CSHARP_IDENTIFIER:
+            return None
+        if written := self._written_receiver_type(owner):
+            return written
+        binder = local_binder(owner, safe_decode_text(owner) or "")
+        return _binder_type(binder) if binder is not None else None
 
     def _field_argument(self, field: Node, name: str) -> ArgumentType | None:
         # What a field declaration passes for `name`, when it declares it.
@@ -3191,29 +3306,6 @@ class CSharpTypeInferenceEngine:
             return ArgumentType(constant.type, None, 0, None, constant.value)
         written = self._declarator_written_type(decl, declarator)
         return _written_argument(written) if written else None
-
-    def _member_body(self, value: Node) -> tuple[Node, str] | None:
-        # The type body a member access reads its member from, with the
-        # member's name: the enclosing type's for a bare name or `this.x`,
-        # the one type of that name the file declares for `K.x`.
-        if value.type == cs.TS_CSHARP_IDENTIFIER:
-            body, name = _enclosing_body(value), safe_decode_text(value)
-        elif value.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
-            owner = value.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
-            body = self._owner_body(owner) if owner is not None else None
-            name = safe_decode_text(value.child_by_field_name(cs.FIELD_NAME))
-        else:
-            return None
-        return (body, name) if body is not None and name else None
-
-    def _owner_body(self, owner: Node) -> Node | None:
-        # The body of the type a member access's owner is: `this`'s, or the
-        # file's one type of the name, when no local or parameter has it.
-        if owner.type == cs.TS_CSHARP_THIS:
-            return _enclosing_body(owner)
-        if owner.type != cs.TS_CSHARP_IDENTIFIER or self._written_receiver_type(owner):
-            return None
-        return _file_type_body(owner, safe_decode_text(owner) or "")
 
     def _local_constant(self, identifier: Node) -> _Constant | None:
         # The constant a `const` local an identifier names is, found as

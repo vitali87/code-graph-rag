@@ -400,6 +400,8 @@ TS_CSHARP_CATCH_DECLARATION = "catch_declaration"
 TS_CSHARP_FROM_CLAUSE = "from_clause"
 TS_CSHARP_LET_CLAUSE = "let_clause"
 TS_CSHARP_EVENT_FIELD_DECLARATION = "event_field_declaration"
+# An event with accessors, named by its `name` (PR 2814 review).
+TS_CSHARP_EVENT_DECLARATION = "event_declaration"
 # A top-level statement (C# 9); its locals are in scope across the file.
 TS_CSHARP_GLOBAL_STATEMENT = "global_statement"
 # Nodes that bound the scope of the value names declared inside them.

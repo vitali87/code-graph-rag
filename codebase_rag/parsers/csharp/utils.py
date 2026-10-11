@@ -951,15 +951,16 @@ def _binding(node: Node) -> str | None:
 
 
 @lru_cache(maxsize=_SCOPE_CACHE_SIZE)
-def _member_values(member: Node) -> Mapping[str, tuple[Node, ...]]:
+def _member_values(member: Node) -> Mapping[str, tuple[tuple[Node, Node], ...]]:
     """Every value name bound inside one type member, nested types aside,
-    with the nodes it is in scope over: the scope nearest each binder."""
-    scopes: dict[str, list[Node]] = {}
+    with each binder and the node it is in scope over: the scope nearest
+    it."""
+    scopes: dict[str, list[tuple[Node, Node]]] = {}
     stack = [(member, member)]
     while stack:
         node, scope = stack.pop()
         if (name := _binding(node)) is not None:
-            scopes.setdefault(name, []).append(scope)
+            scopes.setdefault(name, []).append((scope, node))
         inner = node if node.type in _VALUE_SCOPES else scope
         stack.extend(
             (child, _child_scope(node, child, inner))
@@ -991,10 +992,18 @@ def _child_scope(node: Node, child: Node, inner: Node) -> Node:
 
 def _member_binds(member: Node, name: str, site: Node) -> bool:
     """Whether a binder of `name` in `member` is in scope at `site`."""
-    return any(
-        scope.start_byte <= site.start_byte and site.end_byte <= scope.end_byte
-        for scope in _member_values(member).get(name, ())
-    )
+    return _member_binder(member, name, site) is not None
+
+
+def _member_binder(member: Node, name: str, site: Node) -> Node | None:
+    """The binder of `name` in `member` in scope at `site`, the one whose
+    scope is nearest it."""
+    holding = [
+        (scope, binder)
+        for scope, binder in _member_values(member).get(name, ())
+        if scope.start_byte <= site.start_byte and site.end_byte <= scope.end_byte
+    ]
+    return max(holding, key=lambda held: held[0].start_byte)[1] if holding else None
 
 
 def _first_named_child(node: Node, node_type: str) -> Node | None:
@@ -1044,22 +1053,37 @@ def _type_values(type_node: Node) -> frozenset[str]:
 
 def binds_value(site: Node, name: str) -> bool:
     """Whether `name` at `site` may name a parameter, local or member value."""
+    current = site.parent
+    while current is not None:
+        if current.type in _TYPE_DECLARATIONS and name in _type_values(current):
+            return True
+        current = current.parent
+    return binds_local(site, name)
+
+
+def binds_local(site: Node, name: str) -> bool:
+    """Whether `name` at `site` may name a parameter or local in scope there:
+    of the type member holding it, or a top-level statement's."""
+    return local_binder(site, name) is not None
+
+
+def local_binder(site: Node, name: str) -> Node | None:
+    """The binder of the parameter or local `name` in scope at `site`, of
+    the type member holding it or a top-level statement's; None when none
+    is."""
     child: Node = site
     current = site.parent
     top_level = False
     while current is not None:
-        if current.type in _TYPE_DECLARATIONS:
-            if name in _type_values(current):
-                return True
-        elif (
+        if (
             current.type == cs.TS_CSHARP_DECLARATION_LIST
             and child.type not in _TYPE_DECLARATIONS
             and current.parent is not None
             and current.parent.type in _TYPE_DECLARATIONS
-            and _member_binds(child, name, site)
+            and (binder := _member_binder(child, name, site)) is not None
         ):
-            return True
+            return binder
         top_level = top_level or current.type == cs.TS_CSHARP_GLOBAL_STATEMENT
         child, current = current, current.parent
     # Top-level statements share their outermost locals across the file.
-    return top_level and _member_binds(child, name, site)
+    return _member_binder(child, name, site) if top_level else None

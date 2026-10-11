@@ -1380,6 +1380,18 @@ LIB_TU = (
     "public void M(object a, object b) { } }"
 )
 
+LIB_MS = "namespace L; public class C { public void M(int i) { } public void M(string s) { } }"
+SHADOW_USE = (
+    "using L;\nnamespace U;\npublic class Holder {{ public string Value; }}\n"
+    "public class K {{ public static int Value; }}\n"
+    "public class Use {{ {member} public void Run() {{ {run} }} }}\n"
+)
+COLOR_USE = (
+    "using L;\nnamespace U;\n"
+    "public class Color {{ public static int Shade; public string Name; }}\n"
+    "public class Use {{ public Color Color; public void Run() {{ {run} }} }}\n"
+)
+
 INVARIANT_CASES: dict[str, _Case] = {
     # Scoring: the argument IS the parameter's type.
     "score-alias": _Case(
@@ -2432,6 +2444,82 @@ INVARIANT_CASES: dict[str, _Case] = {
         "using L;\nnamespace U;\npublic class Use { public int P { get; set; } "
         "public void Run() { new C().M(this.P); } }\n",
         frozenset({"C.M(long)"}),
+    ),
+    # Greptile review of PR 2814: in `K.Value`, C#'s simple-name lookup
+    # finds `Use`'s field `K` (a Holder) before the file's type `K`, so the
+    # string `Holder.Value` is passed; and its neighbours: a property, a
+    # local and a parameter of the name, one inherited from a base in this
+    # file, a nested type nearer than the namespace's, and "Color Color".
+    "shadow-field": _Case(
+        LIB_MS,
+        SHADOW_USE.format(member="public Holder K;", run="new C().M(K.Value);"),
+        frozenset({"C.M(string)"}),
+    ),
+    "shadow-field-control-neg": _Case(
+        LIB_MS,
+        SHADOW_USE.format(member="", run="new C().M(K.Value);"),
+        frozenset({"C.M(int)"}),
+    ),
+    "shadow-property": _Case(
+        LIB_MS,
+        SHADOW_USE.format(
+            member="public Holder K { get; set; }", run="new C().M(K.Value);"
+        ),
+        frozenset({"C.M(string)"}),
+    ),
+    "shadow-local": _Case(
+        LIB_MS,
+        SHADOW_USE.format(
+            member="", run="Holder K = new Holder(); new C().M(K.Value);"
+        ),
+        frozenset({"C.M(string)"}),
+    ),
+    "shadow-foreach": _Case(
+        LIB_MS,
+        SHADOW_USE.format(
+            member="", run="foreach (Holder K in new Holder[0]) { new C().M(K.Value); }"
+        ),
+        frozenset({"C.M(string)"}),
+    ),
+    "shadow-inherited-same-file": _Case(
+        LIB_MS,
+        SHADOW_USE.format(member="", run="new C().M(K.Value);").replace(
+            "public class Use {",
+            "public class Owner { public Holder K; }\npublic class Use : Owner {",
+        ),
+        frozenset({"C.M(string)"}),
+    ),
+    "shadow-this-field": _Case(
+        LIB_MS,
+        SHADOW_USE.format(member="public Holder K;", run="new C().M(this.K.Value);"),
+        frozenset({"C.M(string)"}),
+    ),
+    "shadow-nested-type": _Case(
+        LIB_MS,
+        SHADOW_USE.format(
+            member="public class K { public static string Value; }",
+            run="new C().M(K.Value);",
+        ),
+        frozenset({"C.M(string)"}),
+    ),
+    "shadow-color-color-static": _Case(
+        LIB_MS,
+        COLOR_USE.format(run="new C().M(Color.Shade);"),
+        frozenset({"C.M(int)"}),
+    ),
+    "shadow-color-color-instance": _Case(
+        LIB_MS,
+        COLOR_USE.format(run="new C().M(Color.Name);"),
+        frozenset({"C.M(string)"}),
+    ),
+    # A base this file does not declare may declare a member `K`, which
+    # would hide the type: not known, both stay.
+    "shadow-inherited-elsewhere-neg": _Case(
+        LIB_MS + "\npublic class Holder { public string Value; } "
+        "public class Owner { public Holder K; }",
+        "using L;\nnamespace U;\npublic class K { public static int Value; }\n"
+        "public class Use : Owner { public void Run() { new C().M(K.Value); } }\n",
+        frozenset({"C.M(int)", "C.M(string)"}),
     ),
     "typed-operator-widened": _Case(
         "namespace L; public class Tgt { public static implicit operator Tgt(int i) => null; }\n"
