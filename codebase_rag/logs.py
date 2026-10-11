@@ -258,6 +258,11 @@ EMBEDDING_STALE_SKIPPED = (
     "registry could not be read, so a nested project's vectors cannot be told "
     "from this one's; the next sync removes them"
 )
+EMBEDDINGS_PENDING = (
+    "Embeddings of project '{project}' are incomplete; the next sync retries "
+    "them even if no file changed"
+)
+EMBEDDINGS_PENDING_NOT_UPDATED = "Embeddings pending marker not updated"
 VECTOR_STORE_REKEYED = (
     "Removed {count} {backend} vectors of project '{project}' that were keyed "
     "by Memgraph node id; its vectors are keyed by symbol now"

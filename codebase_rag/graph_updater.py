@@ -260,9 +260,13 @@ def _flush_embedding_batch(
     # Embeds and stores the pending batch, then empties it in place so the
     # caller keeps appending to the same list. `stored_ids` gains the nodes
     # whose points the store confirmed, which `expected` cannot vouch for: it
-    # is filled before the store is asked.
+    # is filled before the embeddings are even computed, so the check after
+    # the pass counts a batch the model failed on as missing, and the sync
+    # owes it to the next one like a batch the store refused.
     if not pending:
         return 0
+    for node_id, symbol, _src in pending:
+        expected[node_id] = symbol
     snippets = [item[2] for item in pending]
     try:
         embeddings = embed_code_batch(snippets)
@@ -277,8 +281,6 @@ def _flush_embedding_batch(
     points: list[EmbeddingPoint] = [
         (node_id, emb, symbol) for (node_id, symbol, _), emb in zip(pending, embeddings)
     ]
-    for node_id, symbol, _src in pending:
-        expected[node_id] = symbol
     stored = store_embedding_batch(points)
     if stored:
         stored_ids.update(node_id for node_id, _emb, _symbol in points)
@@ -6154,6 +6156,8 @@ class GraphUpdater:
             return True
         if (self.state_dir / cs.PRUNE_PENDING_FILENAME).exists():
             return True
+        if self._embeddings_owed():
+            return True
         # Nothing on disk changes when only the exclusion set does, so no
         # hash or directory mtime below can see it: a file excluded by a CLI
         # flag alone would keep the Module, Class and Method nodes the last
@@ -9146,13 +9150,52 @@ class GraphUpdater:
             return None
         return parsed[cs.KEY_NODE_ID], _embedding_symbol(parsed), source_code
 
-    def _generate_semantic_embeddings(self) -> None:
+    def _embeddings_off_reason(self) -> str | None:
+        """Why this run is set up to generate no embeddings, or None."""
         if self.skip_embeddings:
-            logger.info(ls.EMBEDDINGS_SKIPPED)
-            return
-
+            return ls.EMBEDDINGS_SKIPPED
         if not has_semantic_dependencies():
-            logger.info(ls.SEMANTIC_NOT_AVAILABLE)
+            return ls.SEMANTIC_NOT_AVAILABLE
+        return None
+
+    def _embeddings_owed(self) -> bool:
+        # Only a run that embeds can pay what an earlier one owes, so a run
+        # without embeddings keeps the fast path and leaves the marker for
+        # the next run that has them.
+        return (
+            (self.state_dir / cs.EMBEDDINGS_PENDING_FILENAME).exists()
+            and self._embeddings_off_reason() is None
+            and isinstance(self.ingestor, QueryProtocol)
+        )
+
+    def _record_embeddings_pending(self, pending: bool) -> None:
+        """Owe the embeddings pass to the next sync, or settle what was owed.
+
+        The run publishes its hash cache whatever the pass did, so after a
+        pass that left a symbol without its point, or a stale point behind,
+        an unchanged checkout took the in-sync fast path, which never
+        embeds: an edited function whose new point the store refused stayed
+        unsearchable until another file changed (review of PR #2550). The
+        marker makes that fast path refuse. Each pass covers every function
+        of the project, so one that stores, verifies and prunes them all
+        settles whatever an earlier run owed.
+        """
+        if pending:
+            logger.warning(ls.EMBEDDINGS_PENDING.format(project=self.project_name))
+        marker = self.state_dir / cs.EMBEDDINGS_PENDING_FILENAME
+        try:
+            if pending:
+                marker.touch()
+            else:
+                marker.unlink(missing_ok=True)
+        except OSError:
+            # Best effort, like the other markers: a read-only state
+            # directory must not lose the run to a marker it could not write.
+            logger.debug(ls.EMBEDDINGS_PENDING_NOT_UPDATED)
+
+    def _generate_semantic_embeddings(self) -> None:
+        if (off_reason := self._embeddings_off_reason()) is not None:
+            logger.info(off_reason)
             return
 
         if not isinstance(self.ingestor, QueryProtocol):
@@ -9187,9 +9230,10 @@ class GraphUpdater:
                 logger.info(ls.NO_FUNCTIONS_FOR_EMBEDDING)
                 # The project's last function may just have gone; its point
                 # must go with it.
-                self._delete_stale_embeddings(
+                pruned = self._delete_stale_embeddings(
                     current, stored_ids, delete_stale_embeddings
                 )
+                self._record_embeddings_pending(not pruned)
                 close_qdrant_client()
                 return
 
@@ -9223,8 +9267,15 @@ class GraphUpdater:
             logger.info(ls.EMBEDDINGS_COMPLETE, count=embedded_count)
 
             # Before the check, so it reads the store as the sync leaves it.
-            self._delete_stale_embeddings(current, stored_ids, delete_stale_embeddings)
-            self._reconcile_embeddings(expected, verify_stored_ids)
+            # The prune still drops the point of a symbol whose replacement
+            # was refused: search answers with the node a point names, and
+            # this one names the node the re-parse deleted. The symbol is
+            # owed to the next sync instead.
+            pruned = self._delete_stale_embeddings(
+                current, stored_ids, delete_stale_embeddings
+            )
+            verified = self._reconcile_embeddings(expected, verify_stored_ids)
+            self._record_embeddings_pending(not (pruned and verified))
 
             get_embedding_cache().save()
             close_qdrant_client()
@@ -9233,6 +9284,7 @@ class GraphUpdater:
             self._stop_interrupted_embeddings()
         except Exception as e:
             logger.warning(ls.EMBEDDING_GENERATION_FAILED, error=e)
+            self._record_embeddings_pending(True)
 
     def _current_symbols(self, rows: list[ResultRow]) -> dict[int, EmbeddingSymbol]:
         """Every function and method the graph holds for the project now,
@@ -9251,8 +9303,9 @@ class GraphUpdater:
         delete_fn: Callable[
             [str, Mapping[int, EmbeddingSymbol], Collection[int], Sequence[str]], int
         ],
-    ) -> None:
-        """Drop the project's vectors of symbols `current` no longer holds.
+    ) -> bool:
+        """Drop the project's vectors of symbols `current` no longer holds,
+        and say whether the delete ran.
 
         A re-parse re-creates a file's nodes, and a deleted function leaves
         nothing to overwrite its vector, so without this the store kept a
@@ -9265,20 +9318,21 @@ class GraphUpdater:
         nested = self._nested_project_names()
         if self._registry_unread:
             logger.warning(ls.EMBEDDING_STALE_SKIPPED.format(project=self.project_name))
-            return
+            return False
         try:
             removed = delete_fn(self.project_name, current, stored_ids, nested)
         except Exception as e:
             logger.warning(
                 ls.EMBEDDING_STALE_FAILED.format(project=self.project_name, error=e)
             )
-            return
+            return False
         if removed:
             logger.info(
                 ls.EMBEDDING_STALE_REMOVED.format(
                     count=removed, project=self.project_name
                 )
             )
+        return True
 
     def _stop_interrupted_embeddings(self) -> None:
         """Hold a Ctrl+C in the embeddings pass until `run` has committed.
@@ -9302,25 +9356,29 @@ class GraphUpdater:
         self,
         expected: Mapping[int, EmbeddingSymbol],
         verify_fn: Callable[[str, Mapping[int, EmbeddingSymbol]], set[int]],
-    ) -> None:
+    ) -> bool:
+        """Check the store holds a point for each node in `expected`, and say
+        whether it does; a check that failed proves nothing."""
         if not expected:
-            return
+            return True
         try:
             stored_ids = verify_fn(self.project_name, expected)
-            missing = set(expected) - stored_ids
-            if missing:
-                sample = sorted(missing)[:10]
-                logger.warning(
-                    ls.EMBEDDING_RECONCILE_MISSING.format(
-                        missing=len(missing),
-                        expected=len(expected),
-                        sample_ids=sample,
-                    )
-                )
-            else:
-                logger.info(ls.EMBEDDING_RECONCILE_OK.format(count=len(expected)))
         except Exception as e:
             logger.warning(ls.EMBEDDING_RECONCILE_FAILED.format(error=e))
+            return False
+        missing = set(expected) - stored_ids
+        if missing:
+            sample = sorted(missing)[:10]
+            logger.warning(
+                ls.EMBEDDING_RECONCILE_MISSING.format(
+                    missing=len(missing),
+                    expected=len(expected),
+                    sample_ids=sample,
+                )
+            )
+            return False
+        logger.info(ls.EMBEDDING_RECONCILE_OK.format(count=len(expected)))
+        return True
 
     def _extract_source_code(
         self, qualified_name: str, file_path: str, start_line: int, end_line: int
