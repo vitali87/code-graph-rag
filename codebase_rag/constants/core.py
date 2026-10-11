@@ -238,11 +238,13 @@ EXPOSES_CLEANUP_PENDING_FILENAME = ".cgr-exposes-cleanup-pending"
 # could not establish were left (issue #1985). Unchanged files would otherwise
 # take the in-sync fast path, which never prunes, and keep those rows forever.
 PRUNE_PENDING_FILENAME = ".cgr-prune-pending"
-# Present while an embeddings pass the last run left incomplete is still owed:
-# a symbol's point was not stored and verified, or a stale point was not
+# Present while an embeddings pass a run left incomplete is still owed: a
+# symbol's point was not stored and verified, or a stale point was not
 # removed. Unchanged files would otherwise take the in-sync fast path, which
 # never embeds, and an edited function whose new point the store refused
-# stayed unsearchable until another file changed (review of PR #2550).
+# stayed unsearchable until another file changed (review of PR #2550). It
+# holds a JSON list of the projects that owe, since one checkout can be
+# indexed under several.
 EMBEDDINGS_PENDING_FILENAME = ".cgr-embeddings-pending"
 PARSER_FINGERPRINT_FILENAME = ".cgr-parser-fingerprint"
 DELOMBOK_STATE_FILENAME = ".cgr-delombok-state.json"

@@ -18,6 +18,7 @@ under new node ids, a deleted function does not come back at all.
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Callable, Generator, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
@@ -26,6 +27,7 @@ from unittest.mock import patch
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag import exceptions as ex
 from codebase_rag import vector_store as vs
 from codebase_rag.checkout_state import state_file
 from codebase_rag.constants import VectorStoreBackend
@@ -118,14 +120,19 @@ def graph() -> _Graph:
     return _Graph()
 
 
-def _updater(repo: Path, graph: _Graph, skip_embeddings: bool = False) -> GraphUpdater:
+def _updater(
+    repo: Path,
+    graph: _Graph,
+    skip_embeddings: bool = False,
+    project: str = _PROJECT,
+) -> GraphUpdater:
     parsers, queries = load_parsers()
     return GraphUpdater(
         ingestor=graph,
         repo_path=repo,
         parsers=parsers,
         queries=queries,
-        project_name=_PROJECT,
+        project_name=project,
         skip_embeddings=skip_embeddings,
     )
 
@@ -147,8 +154,10 @@ def _sync(
     source: str | None = None,
     embed: Embed = _fake_embed_batch,
     skip_embeddings: bool = False,
+    project: str = _PROJECT,
 ) -> GraphUpdater:
-    """One whole sync, the graph's functions by node id as `functions` says."""
+    """One sync of `repo` (a file for a single-file run), the graph's
+    functions by node id as `functions` says."""
     if source is not None:
         (repo / _MODULE).write_text(source)
     graph.rows = (
@@ -156,7 +165,7 @@ def _sync(
         if isinstance(functions, Mapping)
         else list(functions)
     )
-    updater = _updater(repo, graph, skip_embeddings)
+    updater = _updater(repo, graph, skip_embeddings, project)
     with (
         _semantic_extra(),
         patch("codebase_rag.embedder.embed_code_batch", side_effect=embed),
@@ -165,10 +174,16 @@ def _sync(
     return updater
 
 
-def _in_sync(repo: Path, graph: _Graph, skip_embeddings: bool = False) -> bool:
+def _in_sync(
+    repo: Path,
+    graph: _Graph,
+    skip_embeddings: bool = False,
+    project: str = _PROJECT,
+) -> bool:
     """What the next sync's fast-path check answers, before it runs."""
     with _semantic_extra():
-        return _updater(repo, graph, skip_embeddings)._is_already_in_sync()
+        updater = _updater(repo, graph, skip_embeddings, project)
+        return updater._is_already_in_sync()
 
 
 @contextmanager
@@ -348,6 +363,188 @@ class TestWhatTheRetryLeavesAlone:
         retry = _sync(repo, graph, {2: _KEEP})
         assert retry.skipped_because_in_sync is False
         assert _points() == [(_KEEP, 2)]
+
+
+_OTHER = "other"
+_OTHER_KEEP = f"{_OTHER}.m.keep_me"
+
+
+def _marker(repo: Path) -> Path:
+    return state_file(repo, cs.EMBEDDINGS_PENDING_FILENAME)
+
+
+def _owed(repo: Path) -> list[str]:
+    """The projects the marker names."""
+    return json.loads(_marker(repo).read_text(encoding="utf-8"))
+
+
+def _interrupting_batch(number: int) -> Embed:
+    """An embedder that a Ctrl+C stops at its `number`th batch."""
+    calls = 0
+
+    def embed(snippets: list[str], **_: bool | int | str) -> list[list[float]]:
+        nonlocal calls
+        calls += 1
+        if calls == number:
+            raise KeyboardInterrupt
+        return _fake_embed_batch(snippets)
+
+    return embed
+
+
+class TestAnInterruptedPassIsRetried:
+    """Ctrl+C in the pass commits the run, then stops (issue #2442); the
+    functions it had not reached yet must not stay missing."""
+
+    @pytest.fixture(autouse=True)
+    def one_function_per_batch(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(vs.settings, "QDRANT_BATCH_SIZE", 1)
+
+    def _interrupted(self, repo: Path, graph: _Graph) -> None:
+        with pytest.raises(ex.EmbeddingsInterrupted):
+            _sync(repo, graph, {1: _KEEP, 2: _DELETE}, embed=_interrupting_batch(2))
+        assert _points() == [(_KEEP, 1)]
+
+    def test_an_unchanged_sync_embeds_what_an_interrupt_left_out(
+        self, repo: Path, graph: _Graph
+    ) -> None:
+        self._interrupted(repo, graph)
+
+        retry = _sync(repo, graph, {1: _KEEP, 2: _DELETE})
+
+        assert retry.skipped_because_in_sync is False
+        assert _points() == [(_DELETE, 2), (_KEEP, 1)]
+        assert _in_sync(repo, graph) is True
+
+    def test_an_uninterrupted_pass_clears_what_an_interrupt_owed(
+        self, repo: Path, graph: _Graph
+    ) -> None:
+        # Negative: the debt is the interrupted project's, and its next
+        # complete pass settles it.
+        self._interrupted(repo, graph)
+        assert _owed(repo) == [_PROJECT]
+
+        _sync(repo, graph, {1: _KEEP, 2: _DELETE})
+
+        assert not _marker(repo).exists()
+
+    def test_an_interrupted_run_without_embeddings_writes_nothing(
+        self, repo: Path, graph: _Graph
+    ) -> None:
+        # Negative: a --skip-embeddings run never enters the pass, so a
+        # Ctrl+C anywhere in it owes no embeddings.
+        _sync(repo, graph, {1: _KEEP, 2: _DELETE}, skip_embeddings=True)
+        with (
+            patch.object(
+                GraphUpdater, "_prune_orphan_nodes", side_effect=KeyboardInterrupt
+            ),
+            pytest.raises(KeyboardInterrupt),
+        ):
+            _sync(
+                repo,
+                graph,
+                {3: _KEEP},
+                source=_SOURCE_KEEP_ONLY,
+                skip_embeddings=True,
+            )
+
+        assert not _marker(repo).exists()
+
+
+class TestEachProjectOwesItsOwn:
+    """One checkout indexed under two project names keeps two debts apart."""
+
+    def test_another_projects_clean_pass_keeps_this_projects_retry(
+        self, repo: Path, graph: _Graph
+    ) -> None:
+        # svc's pass fails; then other, indexed from the same tree, runs a
+        # clean pass. A single-file run of it leaves svc's stamp and cache
+        # as they were, so svc's next sync is unchanged and would take the
+        # fast path if other's pass had settled svc's debt.
+        _sync(repo, graph, {1: _KEEP}, source=_SOURCE_KEEP_ONLY)
+        with _store_down():
+            _sync(repo, graph, {2: _KEEP}, source=_SOURCE_KEEP_EDITED)
+        _sync(repo / _MODULE, graph, {7: _OTHER_KEEP}, project=_OTHER)
+        assert (_OTHER_KEEP, 7) in _points()
+
+        retry = _sync(repo, graph, {2: _KEEP})
+
+        assert retry.skipped_because_in_sync is False
+        assert (_KEEP, 2) in _points()
+
+    def test_a_projects_own_clean_pass_settles_its_debt(
+        self, repo: Path, graph: _Graph
+    ) -> None:
+        # Negative: other's debt is other's to clear, and its clean retry
+        # does, taking the marker with it once nobody else owes.
+        with _store_down():
+            _sync(repo, graph, {7: _OTHER_KEEP}, project=_OTHER)
+        assert _owed(repo) == [_OTHER]
+
+        retry = _sync(repo, graph, {7: _OTHER_KEEP}, project=_OTHER)
+
+        assert retry.skipped_because_in_sync is False
+        assert not _marker(repo).exists()
+        assert _in_sync(repo, graph, project=_OTHER) is True
+
+    def test_this_projects_clean_pass_keeps_another_projects_debt(
+        self, repo: Path, graph: _Graph
+    ) -> None:
+        # Negative: the mirror of the first test. svc's clean single-file
+        # pass leaves other's stamp in place, so the marker alone is what
+        # still sends other's unchanged sync through the passes.
+        _sync(repo, graph, {1: _KEEP})
+        with _store_down():
+            _sync(repo, graph, {7: _OTHER_KEEP}, project=_OTHER)
+
+        _sync(repo / _MODULE, graph, {1: _KEEP})
+
+        assert _owed(repo) == [_OTHER]
+        assert _in_sync(repo, graph, project=_OTHER) is False
+
+    def test_a_marker_naming_only_another_project_keeps_this_fast_path(
+        self, repo: Path, graph: _Graph
+    ) -> None:
+        _sync(repo, graph, {1: _KEEP})
+        _marker(repo).write_text(json.dumps([_OTHER]), encoding="utf-8")
+
+        assert _in_sync(repo, graph) is True
+
+    def test_a_sync_without_embeddings_never_writes_the_marker(
+        self, repo: Path, graph: _Graph
+    ) -> None:
+        # Negative: not even when the store is down and an edit re-parses,
+        # and another project's debt is left exactly as it was.
+        with _store_down():
+            _sync(repo, graph, {1: _KEEP}, skip_embeddings=True)
+            assert not _marker(repo).exists()
+            _marker(repo).write_text(json.dumps([_OTHER]), encoding="utf-8")
+            _sync(
+                repo,
+                graph,
+                {2: _KEEP},
+                source=_SOURCE_KEEP_EDITED,
+                skip_embeddings=True,
+            )
+
+        assert _owed(repo) == [_OTHER]
+
+    @pytest.mark.parametrize("content", ["", "not json", '{"svc": true}', "[1]"])
+    def test_an_unreadable_marker_makes_every_project_retry_once(
+        self, repo: Path, graph: _Graph, content: str
+    ) -> None:
+        # Which project failed cannot be read back, so each one indexed from
+        # the tree retries; svc's clean retry leaves other's still owed.
+        _sync(repo, graph, {7: _OTHER_KEEP}, project=_OTHER)
+        _sync(repo, graph, {1: _KEEP})
+        _marker(repo).write_text(content, encoding="utf-8")
+        assert _in_sync(repo, graph) is False
+
+        assert _sync(repo, graph, {1: _KEEP}).skipped_because_in_sync is False
+
+        assert _owed(repo) == [_OTHER]
+        _sync(repo, graph, {7: _OTHER_KEEP}, project=_OTHER)
+        assert not _marker(repo).exists()
 
 
 def _write_legacy(points: Mapping[int, str]) -> None:

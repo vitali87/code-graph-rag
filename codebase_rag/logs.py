@@ -234,7 +234,7 @@ EMBEDDINGS_COMPLETE = "Successfully generated {count} semantic embeddings"
 EMBEDDING_GENERATION_FAILED = "Failed to generate semantic embeddings: {error}"
 EMBEDDINGS_INTERRUPTED = (
     "Semantic embedding generation interrupted; the graph is saved without the"
-    " remaining embeddings, which the next sync that finds a code change generates"
+    " remaining embeddings"
 )
 EMBEDDING_STORE_FAILED = "Failed to store embedding for {name}: {error}"
 EMBEDDING_STORE_RETRY = "Vector store upsert failed (attempt {attempt}/{max_attempts}), retrying in {delay:.1f}s: {error}"

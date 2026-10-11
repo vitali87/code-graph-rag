@@ -870,6 +870,37 @@ def _save_parser_fingerprint(stamp_path: Path, fingerprint: str) -> None:
         logger.warning(ls.PARSER_FINGERPRINT_SAVE_FAILED, path=stamp_path, error=e)
 
 
+def _load_embeddings_owed(marker: Path) -> frozenset[str] | None:
+    """The projects whose embeddings pass is owed, as the marker names them.
+
+    Empty without a marker. None for one that does not name them in the form
+    `_save_embeddings_owed` writes, as a write cut short leaves it: which
+    project failed cannot be told then, so every project owes.
+    """
+    try:
+        loaded = loads_json(marker.read_text(encoding=cs.ENCODING_UTF8))
+    except FileNotFoundError:
+        return frozenset()
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(loaded, list):
+        return None
+    names = [name for name in loaded if isinstance(name, str)]
+    return frozenset(names) if len(names) == len(loaded) else None
+
+
+def _save_embeddings_owed(marker: Path, projects: frozenset[str]) -> None:
+    try:
+        if projects:
+            marker.write_text(json.dumps(sorted(projects)), encoding=cs.ENCODING_UTF8)
+        else:
+            marker.unlink(missing_ok=True)
+    except OSError:
+        # Best effort, like the other markers: a read-only state directory
+        # must not lose the run to a marker it could not write.
+        logger.debug(ls.EMBEDDINGS_PENDING_NOT_UPDATED)
+
+
 class ReingestAborted(RuntimeError):
     """`reingest()` gave up before its first delete or content write.
 
@@ -9159,13 +9190,14 @@ class GraphUpdater:
         return None
 
     def _embeddings_owed(self) -> bool:
+        owed = _load_embeddings_owed(self.state_dir / cs.EMBEDDINGS_PENDING_FILENAME)
+        if owed is not None and self.project_name not in owed:
+            return False
         # Only a run that embeds can pay what an earlier one owes, so a run
         # without embeddings keeps the fast path and leaves the marker for
         # the next run that has them.
-        return (
-            (self.state_dir / cs.EMBEDDINGS_PENDING_FILENAME).exists()
-            and self._embeddings_off_reason() is None
-            and isinstance(self.ingestor, QueryProtocol)
+        return self._embeddings_off_reason() is None and isinstance(
+            self.ingestor, QueryProtocol
         )
 
     def _record_embeddings_pending(self, pending: bool) -> None:
@@ -9178,20 +9210,31 @@ class GraphUpdater:
         unsearchable until another file changed (review of PR #2550). The
         marker makes that fast path refuse. Each pass covers every function
         of the project, so one that stores, verifies and prunes them all
-        settles whatever an earlier run owed.
+        settles whatever an earlier run of it owed.
+
+        The marker names the projects that owe: one checkout can be indexed
+        under several, and a clean pass of one must not settle another's
+        debt, which a single-file run of it would leave behind an unchanged
+        stamp and cache (review of PR #3358).
         """
         if pending:
             logger.warning(ls.EMBEDDINGS_PENDING.format(project=self.project_name))
         marker = self.state_dir / cs.EMBEDDINGS_PENDING_FILENAME
-        try:
-            if pending:
-                marker.touch()
-            else:
-                marker.unlink(missing_ok=True)
-        except OSError:
-            # Best effort, like the other markers: a read-only state
-            # directory must not lose the run to a marker it could not write.
-            logger.debug(ls.EMBEDDINGS_PENDING_NOT_UPDATED)
+        owed = self._projects_owing_embeddings(marker)
+        _save_embeddings_owed(
+            marker,
+            (owed | {self.project_name}) if pending else (owed - {self.project_name}),
+        )
+
+    def _projects_owing_embeddings(self, marker: Path) -> frozenset[str]:
+        owed = _load_embeddings_owed(marker)
+        if owed is not None:
+            return owed
+        # A marker naming no one is every project's debt. Rewritten as the
+        # projects indexed from this tree, each of them still retries once.
+        return frozenset(
+            _load_project_stamps(self.state_dir / cs.EXCLUSION_STATE_FILENAME)
+        )
 
     def _generate_semantic_embeddings(self) -> None:
         if (off_reason := self._embeddings_off_reason()) is not None:
@@ -9340,14 +9383,18 @@ class GraphUpdater:
         The graph writes are flushed before this pass, so letting the
         interrupt escape here would only skip `_commit_run_state`: with no
         hash cache the next sync re-parses the whole repository, and after
-        `--clean` there is not even the old cache to fall back on. The next
-        sync that re-indexes embeds every function again, so saving the
+        `--clean` there is not even the old cache to fall back on. The run
+        publishes its hash cache, so the pass is owed before that: otherwise
+        an unchanged checkout took the in-sync fast path and the functions
+        this pass had not reached stayed out of search (review of PR
+        #3358). The next sync embeds every function again, and saving the
         embedding cache lets it reuse the vectors this pass already computed.
         """
         from .embedder import get_embedding_cache
         from .vector_store import close_qdrant_client
 
         logger.warning(ls.EMBEDDINGS_INTERRUPTED)
+        self._record_embeddings_pending(True)
         get_embedding_cache().save()
         close_qdrant_client()
         self._embeddings_interrupted = True
