@@ -53,7 +53,15 @@ def follow_reexports(
     # module (pkg.sym), not the real definition (pkg.mod.sym), so an unregistered
     # qn may be a re-export. Follow the module's import map one hop at a time
     # until a registered symbol is reached, guarding against cycles.
-    seen: set[str] = set()
+    return _follow_reexports(qn, import_mapping, function_registry, set())
+
+
+def _follow_reexports(
+    qn: str,
+    import_mapping: dict[str, dict[str, str]],
+    function_registry: FunctionRegistryTrieProtocol,
+    seen: set[str],
+) -> str:
     current = qn
     while (
         current
@@ -64,10 +72,60 @@ def follow_reexports(
         seen.add(current)
         module_qn, _, name = current.rpartition(cs.SEPARATOR_DOT)
         following = import_mapping.get(module_qn, {}).get(name)
+        if not following:
+            following = _star_reexport_target(
+                module_qn, name, import_mapping, function_registry, seen
+            )
         if not following or following == current:
             break
         current = following
     return current
+
+
+def _star_reexport_target(
+    module_qn: str,
+    name: str,
+    import_mapping: dict[str, dict[str, str]],
+    function_registry: FunctionRegistryTrieProtocol,
+    seen: set[str],
+) -> str | None:
+    # A star re-export (`export * from './router'`, `from .mod import *`)
+    # binds no name of its own, so a barrel's member is whichever star source
+    # exports it, possibly through further stars. Only a source that reaches
+    # a registered definition its module exports counts: a private one is
+    # never re-exported, so it neither stands in for the name nor makes an
+    # exported one ambiguous. Two exported ones are ambiguous (TypeScript
+    # exports neither), so nothing is guessed. `seen` is shared so a cycle of
+    # stars ends.
+    reached = {
+        target
+        for key, source in import_mapping.get(module_qn, {}).items()
+        if key.startswith(cs.GLOB_ALL)
+        and (
+            target := _follow_reexports(
+                f"{source}{cs.SEPARATOR_DOT}{name}",
+                import_mapping,
+                function_registry,
+                seen,
+            )
+        )
+        in function_registry
+        and not function_registry.is_module_private(target)
+    }
+    return reached.pop() if len(reached) == 1 else None
+
+
+def mark_js_ts_module_private(
+    function_registry: FunctionRegistryTrieProtocol,
+    qualified_name: str,
+    is_exported: bool,
+    language: cs.SupportedLanguage | None,
+) -> None:
+    # `export * from` passes on only what a module exports, so the star lookup
+    # in follow_reexports must tell a private declaration from an exported
+    # one; the flag the node already carries is recorded where it can ask.
+    if language in cs.JS_TS_LANGUAGES and not is_exported:
+        function_registry.mark_module_private(qualified_name)
 
 
 def function_span_key(module_qn: str, node: Node) -> FunctionSpanKey:
@@ -1500,6 +1558,12 @@ def _method_container_label(
     # carry the container's real node label. Callers pass Class by default, but a
     # trait/interface (Interface) or enum (Enum) container would then never match
     # and drop the containment edge. Prefer the label it was registered with.
+    # Where a TS interface shares its name with a value (issue #2520) the
+    # registry holds the value's kind, so the label the owner was declared with
+    # decides: an interface's members stay on the Interface node.
+    type_side = function_registry.type_kind(container_qn)
+    if type_side is not None and type_side.value == container_type.value:
+        return container_type
     container_label = container_type
     registered = function_registry.get(container_qn)
     if registered is not None and registered != NodeType.METHOD:
@@ -1556,6 +1620,23 @@ def _ingest_method_endpoints(
             method_qn,
             decorators,
         )
+
+
+def _register_method_qn(
+    function_registry: FunctionRegistryTrieProtocol,
+    method_qn: str,
+    language: cs.SupportedLanguage,
+    start_line: int,
+    start_col: int,
+) -> str:
+    if language == cs.SupportedLanguage.CPP:
+        return method_qn
+    return function_registry.register_unique_qn(
+        method_qn,
+        start_line,
+        start_col,
+        kind=NodeType.METHOD if language in cs.JS_TS_LANGUAGES else None,
+    )
 
 
 def _record_member_aliases(
@@ -1635,11 +1716,13 @@ def ingest_method(
     # function and class sites are guarded at their own extraction points.
     warn_if_name_truncated(method_node, method_name, file_path)
 
-    method_qn = method_qualified_name or f"{container_qn}.{method_name}"
-    if language != cs.SupportedLanguage.CPP:
-        method_qn = function_registry.register_unique_qn(
-            method_qn, method_start_line, method_start_col
-        )
+    method_qn = _register_method_qn(
+        function_registry,
+        method_qualified_name or f"{container_qn}.{method_name}",
+        language,
+        method_start_line,
+        method_start_col,
+    )
 
     decorators = []
     modifiers = []

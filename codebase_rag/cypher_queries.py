@@ -84,6 +84,13 @@ CYPHER_LIST_PROJECTS = (
 CYPHER_PROJECT_ROOT_PATH = (
     "MATCH (p:Project {name: $project_name}) RETURN p.root_path AS root_path"
 )
+# What the project's last sync captured (issue #2521), with the root the
+# re-index hint names.
+CYPHER_PROJECT_CAPTURE = (
+    "MATCH (p:Project {name: $project_name}) "
+    "RETURN p.captured_relationships AS captured_relationships, "
+    "p.root_path AS root_path"
+)
 # A sync's claim on a project name (issue #2411): one statement, so two syncs
 # of the same unowned name cannot both read "no owner" before either writes.
 # The first claim records its root; every later one, this repository's own
@@ -1574,14 +1581,19 @@ SET r.resolution = $resolution
 # Edges that name a definition without calling it (a base class, a parameter
 # or return annotation): a rename must rewrite their sites too, and refuses
 # when an edge carries none.
+# Both are scoped to the renamed node's label: a TS `type input` and `function
+# input` are two nodes under one qualified name (issue #2520), and the return
+# annotation naming the type is not a site of the function.
 CYPHER_GRAPH_TYPE_EDGES = """MATCH (src)-[r:INHERITS|ACCEPTS|RETURNS]->(target)
-WHERE target.qualified_name = $qn AND src.qualified_name STARTS WITH $project_prefix
+WHERE target.qualified_name = $qn AND $label IN labels(target)
+  AND src.qualified_name STARTS WITH $project_prefix
 RETURN labels(src)[0] AS label, src.qualified_name AS qualified_name,
        src.path AS path, type(r) AS rel_type, r.line AS line, r.col AS col,
        r.end_line AS end_line, r.end_col AS end_col, r.resolution AS resolution"""
 
 CYPHER_GRAPH_REFERENCES = """MATCH (src)-[r:REFERENCES|INSTANTIATES]->(target)
-WHERE target.qualified_name = $qn AND src.qualified_name STARTS WITH $project_prefix
+WHERE target.qualified_name = $qn AND $label IN labels(target)
+  AND src.qualified_name STARTS WITH $project_prefix
 RETURN labels(src)[0] AS label, src.qualified_name AS qualified_name,
        src.path AS path, type(r) AS rel_type, r.line AS line, r.col AS col,
        r.end_line AS end_line, r.end_col AS end_col, r.resolution AS resolution,

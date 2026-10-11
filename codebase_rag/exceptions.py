@@ -84,6 +84,10 @@ SETTING_JSON_LIST_TOO_DEEP = (
 # Windows holds in a variable. The error names the limit, not the value.
 SETTING_NOT_SETTABLE = "the operating system refused it ({error})."
 CONFIG = "{role} configuration error: {error}"
+EMPTY_PROJECT_SCOPE = (
+    "The assistant has no project to work on: an empty project scope would "
+    "cover every project in the graph."
+)
 MODEL_ROLE_HALF_CONFIGURED = (
     "{set_var}={value} is set but {missing_var} is not. "
     "Set both {role}_PROVIDER and {role}_MODEL, or neither to use the local "

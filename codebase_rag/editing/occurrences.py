@@ -110,6 +110,10 @@ _SELF_RECEIVERS: dict[cs.SupportedLanguage, frozenset[str]] = {
 # a name routinely (`fn name(&self)` returning `self.name`), and the read
 # is the field.
 _METHOD_READ_LANGUAGES = frozenset({cs.SupportedLanguage.PYTHON, *cs.JS_TS_LANGUAGES})
+# Where a type position is its own token kind and never names a value: a
+# TypeScript `input<T>` annotation or `implements Opts` names a type, which
+# may share its name with the function (issue #2520) and keeps it.
+_TYPE_SPACE_LANGUAGES = frozenset({cs.SupportedLanguage.TS, cs.SupportedLanguage.TSX})
 # Where a bare call reaches a method, through the implicit `this` of the
 # class it is written in or a static import of it. Elsewhere a bare call is
 # a function's.
@@ -979,7 +983,10 @@ def _type_use(file: _File, token: Node, access: _Access) -> bool | None:
 def _function_use(file: _File, token: Node, access: _Access) -> bool | None:
     """A function by its bare name, or through its module (`util.helper`,
     `util::helper`, a name the file imports the module as). Through anything
-    else it is another object's method: `d.get(x)`, `subprocess.run(...)`."""
+    else it is another object's method: `d.get(x)`, `subprocess.run(...)`.
+    A TypeScript type position names a type, never the function."""
+    if file.language in _TYPE_SPACE_LANGUAGES and token.type == cs.TS_TYPE_IDENTIFIER:
+        return None
     if access is _Access.BARE:
         return file.bare_function_use(token)
     receiver = _receiver_node(token)

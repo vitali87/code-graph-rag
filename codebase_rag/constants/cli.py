@@ -43,6 +43,29 @@ HELP_ARG = "help"
 CLI_ERR_OUTPUT_REQUIRES_UPDATE = (
     "Error: --output/-o option requires --update-graph to be specified."
 )
+CLI_OPT_CLEAN = "--clean"
+CLI_OPT_OUTPUT = "--output"
+CLI_OPT_INTERACTIVE_SETUP = "--interactive-setup"
+CLI_ERR_WORKSPACE_UPDATE_OPTION = (
+    "Error: {option} applies to one repository and cannot be combined with "
+    "--workspace --update-graph. Run it with --repo-path <repository> instead."
+)
+CLI_ERR_WORKSPACE_UPDATE_NO_SYNC = (
+    "Error: --no-sync cannot be combined with --workspace --update-graph, "
+    "which syncs every repository in the workspace and then opens the "
+    "assistant. Drop --no-sync to sync first, or --update-graph to open the "
+    "assistant on the graph as it is."
+)
+CLI_ERR_START_EMPTY_WORKSPACE = (
+    "Error: workspace '{name}' has no repositories, so there is nothing to sync "
+    "or to scope the assistant to. Add one with `cgr workspace add-repo {name} "
+    "PATH`, or leave out --workspace."
+)
+CLI_ERR_SYNC_HOME_OR_ROOT = (
+    "Error: refusing to index {path}: it is your home directory or the "
+    "filesystem root, so every file under it would enter the graph. Pass "
+    "--repo-path <repository>, or --yes to index it anyway."
+)
 CLI_ERR_INVALID_SETTING = "Error: {problem}"
 # click's own exit status for a bad parameter value.
 CLI_EXIT_USAGE_ERROR = 2
@@ -833,6 +856,11 @@ RENAME_WRONG_ROOT = (
 RENAME_STRUCTURAL_UNLOCATABLE = (
     "Cannot rename {qn}: {count} structural edge(s) (inherits, accepts, returns) "
     "carry no rewrite site, so the rename would leave them pointing at the old name"
+)
+RENAME_TWIN_BOUND_IMPORT = (
+    "Cannot rename {qn}: the import of `{name}` in {paths} also binds the "
+    "same-named type, which that file uses; rewriting the import would leave "
+    "the type unbound"
 )
 RENAME_PLANNED = "{count} site(s) would be rewritten"
 RENAME_PARSE_FAILED = "Rename rolled back: {files} would no longer parse"

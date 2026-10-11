@@ -37,11 +37,16 @@ from codec import schema_pb2 as pb
 # unnoticed. Removing an entry (by adding the proto field) is always safe;
 # adding one should be a deliberate decision with a reason.
 _NOT_EXPORTED: dict[str, frozenset[str]] = {
+    # `captured_relationships` (issue #2521) says which edges the endpoint
+    # tools can trust an empty answer for. An exported index records the
+    # same selection in its provenance manifest (`capture`), and a graph
+    # loaded without the property reads as "capture unknown", which the
+    # tools answer as before rather than flagging.
     # `last_synced_at` (issue #2444) records when a sync last completed into
     # the graph holding the node, for `cgr status`. It is stamped only on a
     # graph cgr can write back to, which the protobuf sink is not, and as a
     # per-run time it would make two exports of an unchanged project differ.
-    "Project": frozenset({"root_path", "last_synced_at"}),
+    "Project": frozenset({"root_path", "captured_relationships", "last_synced_at"}),
     # `write_id` is the per-call nonce the write tool reads back to prove its
     # statement ran; it means nothing outside that call. `mention_qns` is the
     # note's own record of what it mentions, from which the MENTIONS edges are
