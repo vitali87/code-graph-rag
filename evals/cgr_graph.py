@@ -1761,7 +1761,11 @@ class _StatefulIngestor:
                 return [{cs.KEY_CALLER_PATH: p} for p in sorted(waiting)]
             case cs.CYPHER_LINKING_DOCUMENT_PATHS:
                 return self._linking_document_rows(params or {})
-            case cs.CYPHER_INTERFACE_FINGERPRINTS | cs.CYPHER_INTERFACE_BOUNDARY_EDGES:
+            case (
+                cs.CYPHER_INTERFACE_FINGERPRINTS
+                | cs.CYPHER_INTERFACE_BOUNDARY_EDGES
+                | cs.CYPHER_INTERFACE_FLOW_SOURCE_PATHS
+            ):
                 return self._interface_rows(query, params or {})
             case cs.CYPHER_BROKEN_LINK_DOCUMENTS:
                 return self._broken_link_rows(params or {})
@@ -2294,10 +2298,30 @@ class _StatefulIngestor:
         return inbound
 
     def _interface_rows(self, query: str, params: PropertyDict) -> list[ResultRow]:
-        # The two reads the interface skip makes (issue #2531).
+        # The three reads the interface skip makes (issue #2531).
         if query == cs.CYPHER_INTERFACE_FINGERPRINTS:
             return self._interface_fingerprint_rows(params)
+        if query == cs.CYPHER_INTERFACE_FLOW_SOURCE_PATHS:
+            return self._interface_flow_source_rows(params)
         return self._interface_boundary_rows(params)
+
+    def _interface_flow_source_rows(self, params: PropertyDict) -> list[ResultRow]:
+        """CYPHER_INTERFACE_FLOW_SOURCE_PATHS: the `$paths` holding a node
+        that starts a CALLS edge carrying `via_param`."""
+        raw_paths = params.get(cs.CYPHER_PARAM_PATHS)
+        paths = set(raw_paths) if isinstance(raw_paths, list) else set()
+        found = {
+            path
+            for node, props in self.nodes.items()
+            if isinstance(path := props.get(cs.KEY_PATH), str)
+            and path in paths
+            and any(
+                edge[2] == cs.RelationshipType.CALLS
+                and self.edge_props.get(edge, {}).get(cs.KEY_VIA_PARAM) is not None
+                for edge in self._out.get(node, ())
+            )
+        }
+        return [{cs.KEY_PATH: path} for path in sorted(found)]
 
     def _interface_fingerprint_rows(self, params: PropertyDict) -> list[ResultRow]:
         """CYPHER_INTERFACE_FINGERPRINTS: the Modules at `$paths` under the

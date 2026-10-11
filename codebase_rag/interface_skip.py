@@ -13,9 +13,12 @@ re-parses when one of its edges with the changed file is anything but a
 restorable one -- an edge kind the capture leaves behind, an edge from the
 changed file into the dependent (its own parse may have written it), or a
 target whose qualified name a position may have minted (`f@12`,
-`anonymous_3_4`), which an edit above it renames. These functions read the
-rows the graph answered with; the queries and their failure handling stay
-with the updater.
+`anonymous_3_4`), which an edit above it renames. And a file holding a
+function that invokes a callable another file passes it keeps no
+dependent's edges at all: the flow edge to that callable starts in the file
+and is written by the passer's parse. These functions read the rows the
+graph answered with; the queries and their failure handling stay with the
+updater.
 """
 
 from __future__ import annotations
@@ -55,6 +58,16 @@ def stable_interface_modules(
         for path, modules in stored.items()
         if path in fresh and len(modules) == 1 and modules[0][1] == fresh[path]
     }
+
+
+def without_flow_sources(
+    stable: Mapping[str, str], rows: list[ResultRow]
+) -> dict[str, str]:
+    """`stable` less every file a row names as the start of a callback flow
+    edge: that edge is written by the parse of whoever passed the callback,
+    so the dependents must re-parse with the file, as before."""
+    sources = {path for row in rows if isinstance(path := row.get(cs.KEY_PATH), str)}
+    return {path: qn for path, qn in stable.items() if path not in sources}
 
 
 def _within(qualified_name: str, project: str) -> bool:

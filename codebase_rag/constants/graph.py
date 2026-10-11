@@ -1312,6 +1312,16 @@ CYPHER_INTERFACE_BOUNDARY_EDGES = (
     "inner.qualified_name AS target_qn"
 )
 CYPHER_PARAM_CALLERS = "callers"
+# The re-indexed files that hold a function invoking a callable another file
+# hands it (issue #2531). The flow edge `run -> on_done` starts in such a
+# file, so its re-parse drops the edge, and only the parse of the file that
+# passed `on_done` (directly, or through functions that forward it) writes
+# it back: whatever its fingerprint says, every dependent re-parses.
+CYPHER_INTERFACE_FLOW_SOURCE_PATHS = (
+    "MATCH (fn)-[flow:CALLS]->() "
+    "WHERE fn.path IN $paths AND flow.via_param IS NOT NULL "
+    "RETURN DISTINCT fn.path AS path"
+)
 KEY_INBOUND = "inbound"
 # Documents holding a link to a file that did not exist when they were parsed
 # (issue #2458), with those links as written. Read when a sync creates files,

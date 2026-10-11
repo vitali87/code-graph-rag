@@ -1225,6 +1225,10 @@ INTERFACE_BOUNDARY_UNREAD = (
     "Could not read the edges between re-indexed files and their callers; "
     "every dependent caller is re-parsed."
 )
+INTERFACE_FLOW_SOURCES_UNREAD = (
+    "Could not read which re-indexed files invoke callables other files pass "
+    "in; every dependent caller is re-parsed."
+)
 INCREMENTAL_DELETED = "Removed state for {count} deleted files"
 DEPENDENCIES_RESYNC = (
     "A dependency manifest changed; rebuilding the external dependencies of "

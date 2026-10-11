@@ -32,7 +32,11 @@ from .config import settings
 from .function_registry import FunctionRegistryTrie
 from .gloss_anchor import ParsedSource, parse_source
 from .gloss_repair import repair_unanchored
-from .interface_skip import callers_to_reparse, stable_interface_modules
+from .interface_skip import (
+    callers_to_reparse,
+    stable_interface_modules,
+    without_flow_sources,
+)
 from .language_spec import (
     LANGUAGE_FQN_SPECS,
     csharp_namespaced_from_graph,
@@ -4801,7 +4805,24 @@ class GraphUpdater:
         longer_projects = [
             name for name in self._registered_project_names() if name.startswith(prefix)
         ]
-        return stable_interface_modules(rows, fresh, longer_projects)
+        return self._without_flow_sources(
+            stable_interface_modules(rows, fresh, longer_projects)
+        )
+
+    def _without_flow_sources(self, stable: dict[str, str]) -> dict[str, str]:
+        """`stable` less the files whose callback flow edges other files'
+        parses write; none at all when that cannot be read."""
+        if not stable or not isinstance(self.ingestor, QueryProtocol):
+            return stable
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_INTERFACE_FLOW_SOURCE_PATHS,
+                {cs.CYPHER_PARAM_PATHS: sorted(stable)},
+            )
+        except Exception:
+            logger.warning(ls.INTERFACE_FLOW_SOURCES_UNREAD)
+            return {}
+        return without_flow_sources(stable, rows)
 
     def _source_interface_fingerprint(self, path: Path, data: bytes) -> str | None:
         """The interface fingerprint of `data` parsed as the run will parse

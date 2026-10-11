@@ -1384,3 +1384,45 @@ def test_a_scoped_reingest_of_a_returned_method_read_through_a_local(
     assert "user.py" in report.affected
     clean = _clean(root)
     assert _snapshot(store) == clean, _diff(_snapshot(store), clean)
+
+
+# `driver.py` hands `on_done` to `run`, and the flow edge `run -> on_done`
+# that its parse seeds lies wholly inside `engine.py`: re-parsing
+# `engine.py` drops it, and only `driver.py`'s parse writes it back, however
+# little the edit to `engine.py` changed.
+FLOW_SEEDED: dict[str, str] = {
+    "engine.py": "def run(cb):\n    cb()\n\n\ndef on_done():\n    return 1\n",
+    "driver.py": "from engine import on_done, run\n\n\ndef go():\n    run(on_done)\n",
+}
+
+
+def test_a_comment_in_a_file_whose_callbacks_others_seed_reparses_its_dependents(
+    temp_repo: Path,
+) -> None:
+    root = temp_repo / PROJECT
+    reparsed, synced = _sync(
+        root, FLOW_SEEDED, {"engine.py": _comment(FLOW_SEEDED["engine.py"])}
+    )
+
+    assert "driver.py" in reparsed
+    clean = _clean(root)
+    assert "proj.engine.on_done" in _calls(clean, "proj.engine.run")
+    assert synced == clean, _diff(synced, clean)
+
+
+def test_a_scoped_reingest_of_a_file_whose_callbacks_others_seed(
+    temp_repo: Path,
+) -> None:
+    root = temp_repo / PROJECT
+    _materialise(root, FLOW_SEEDED)
+    store = _StatefulIngestor()
+    _updater(store, root).run(force=True)
+    (root / "engine.py").write_text(
+        _comment(FLOW_SEEDED["engine.py"]), encoding="utf-8"
+    )
+
+    report = _updater(store, root).reingest(["engine.py"])
+
+    assert "driver.py" in report.affected
+    clean = _clean(root)
+    assert _snapshot(store) == clean, _diff(_snapshot(store), clean)
