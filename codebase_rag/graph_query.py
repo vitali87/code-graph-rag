@@ -25,6 +25,7 @@ from typing import NamedTuple, TypedDict
 from . import constants as cs
 from . import cypher_queries as cq
 from .dead_code import (
+    _as_str_list,
     _is_test_symbol,
     _node_props,
     _NodeId,
@@ -67,6 +68,12 @@ class SymbolRow(TypedDict):
 
 
 class DefinitionRow(SymbolRow):
+    # `start_line` and `source` open at the first decorator, as
+    # `inspect.getsource` does; `name_line` is the line of the definition's
+    # name, its `def`/`class` line, or the node's own start where the graph
+    # records no name position (issue #2428).
+    name_line: int | None
+    decorators: list[str]
     name: str | None
     docstring: str | None
     source: str | None
@@ -101,6 +108,12 @@ class RemoteDependencyRow(TypedDict):
     endpoint: str | None
     handler: str | None
     handler_project: str | None
+
+
+class CaptureGap(TypedDict):
+    groups: list[str]
+    relationships: list[str]
+    root_path: str | None
 
 
 class CallSiteRow(TypedDict):
@@ -541,13 +554,28 @@ def source_root_for(
     return local if Path(stored).resolve() == local else None
 
 
+def _decorated_start(row: ResultRow, own_start: int | None) -> int | None:
+    """The first decorator's line when the node records one above its own
+    start, else that start (issue #2428).
+
+    A graph indexed before the property existed has none and keeps the span
+    it always answered with; a value that is not a line above the definition
+    cannot be a decorator of it and is not trusted.
+    """
+    decorated = _opt_int(row.get(cs.KEY_DECORATED_START_LINE))
+    if decorated is None or own_start is None or not 0 < decorated < own_start:
+        return own_start
+    return decorated
+
+
 def definition(
     fetch_all: QueryFn, project_name: str, qualified_name: str, repo_root: Path | None
 ) -> DefinitionRow:
-    """File, span, docstring and source of one definition.
+    """File, span, decorators, docstring and source of one definition.
 
-    Source is read from `repo_root` when the node's repo-relative path stays
-    inside it; a graph indexed elsewhere still answers with the span.
+    The span and source include the decorators written above it (issue
+    #2428). Source is read from `repo_root` when the node's repo-relative path
+    stays inside it; a graph indexed elsewhere still answers with the span.
     """
     rows = fetch_all(
         cq.CYPHER_GRAPH_DEFINITION,
@@ -562,6 +590,8 @@ def definition(
             path=None,
             start_line=None,
             end_line=None,
+            name_line=None,
+            decorators=[],
             name=None,
             docstring=None,
             source=None,
@@ -570,7 +600,8 @@ def definition(
     row = rows[0]
     symbol = _symbol_row(row)
     source: str | None = None
-    path, start, end = symbol["path"], symbol["start_line"], symbol["end_line"]
+    path, own_start, end = symbol["path"], symbol["start_line"], symbol["end_line"]
+    start = _decorated_start(row, own_start)
     if repo_root is not None and path and start and end:
         candidate = (repo_root / path).resolve()
         if candidate.is_relative_to(repo_root.resolve()) and candidate.is_file():
@@ -581,6 +612,8 @@ def definition(
         path=path,
         start_line=start,
         end_line=end,
+        name_line=_opt_int(row.get(cs.KEY_NAME_START_LINE)) or own_start,
+        decorators=_as_str_list(row.get(cs.KEY_DECORATORS)),
         name=_opt_str(row.get(cs.KEY_NAME)),
         docstring=_opt_str(row.get(cs.KEY_DOCSTRING)),
         source=source,
@@ -1196,6 +1229,35 @@ def _endpoint_caller_row(row: ResultRow) -> EndpointCallerRow:
         direction=_opt_str(row.get(cs.KEY_DIRECTION)),
         endpoint=str(row.get(cs.KEY_ENDPOINT) or ""),
         handler=str(row.get(cs.KEY_HANDLER) or ""),
+    )
+
+
+def capture_gap(
+    fetch_all: QueryFn,
+    project_name: str,
+    required: frozenset[cs.RelationshipType],
+) -> CaptureGap | None:
+    """What the project's last sync left out of `required`, or None.
+
+    None when every required relationship was captured, and also for a
+    graph synced before the capture was recorded: an unknown selection is
+    not evidence that a group was off, so it stays silent (issue #2521).
+    """
+    rows = fetch_all(cq.CYPHER_PROJECT_CAPTURE, {cs.KEY_PROJECT_NAME: project_name})
+    recorded = rows[0].get(cs.KEY_CAPTURED_RELATIONSHIPS) if rows else None
+    if not isinstance(recorded, list):
+        return None
+    missing = {rel for rel in required if rel.value not in recorded}
+    if not missing:
+        return None
+    return CaptureGap(
+        groups=sorted(
+            group.value
+            for group, rels in cs.CAPTURE_GROUP_RELS.items()
+            if rels & missing
+        ),
+        relationships=sorted(rel.value for rel in missing),
+        root_path=_opt_str(rows[0].get(cs.KEY_ROOT_PATH)),
     )
 
 

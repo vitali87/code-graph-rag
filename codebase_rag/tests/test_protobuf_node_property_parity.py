@@ -37,11 +37,16 @@ from codec import schema_pb2 as pb
 # unnoticed. Removing an entry (by adding the proto field) is always safe;
 # adding one should be a deliberate decision with a reason.
 _NOT_EXPORTED: dict[str, frozenset[str]] = {
+    # `captured_relationships` (issue #2521) says which edges the endpoint
+    # tools can trust an empty answer for. An exported index records the
+    # same selection in its provenance manifest (`capture`), and a graph
+    # loaded without the property reads as "capture unknown", which the
+    # tools answer as before rather than flagging.
     # `last_synced_at` (issue #2444) records when a sync last completed into
     # the graph holding the node, for `cgr status`. It is stamped only on a
     # graph cgr can write back to, which the protobuf sink is not, and as a
     # per-run time it would make two exports of an unchanged project differ.
-    "Project": frozenset({"root_path", "last_synced_at"}),
+    "Project": frozenset({"root_path", "captured_relationships", "last_synced_at"}),
     # `write_id` is the per-call nonce the write tool reads back to prove its
     # statement ran; it means nothing outside that call. `mention_qns` is the
     # note's own record of what it mentions, from which the MENTIONS edges are
@@ -86,6 +91,12 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "broken_links",
         }
     ),
+    # `decorated_start_line` (issue #2428) degrades like `positional_params`:
+    # a graph round-tripped through protobuf answers `definition` with the
+    # span below the decorators, exactly as a graph indexed before the
+    # property existed does; the Class, Function and Method `decorators`
+    # lists still travel. Exporting it needs a proto field plus regenerated
+    # bindings (protoc).
     # `non_method_members` (issue #2620) lets an incremental run re-register
     # the names an unchanged class body binds to a value (`run = None`), which
     # hide a base class's `run`. A graph round-tripped through protobuf loses
@@ -96,6 +107,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
         {
             "anchor_hash",
             "absolute_path",
+            "decorated_start_line",
             "modifiers",
             "non_method_members",
             "path",
@@ -128,6 +140,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
         {
             "absolute_path",
             "anchor_hash",
+            "decorated_start_line",
             "is_body_scoped_name",
             "is_macro",
             "modifiers",
@@ -153,6 +166,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
         {
             "absolute_path",
             "anchor_hash",
+            "decorated_start_line",
             "extension_namespace",
             "extension_receiver",
             "extension_receiver_arity",
@@ -171,6 +185,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     "Interface": frozenset(
         {
             "anchor_hash",
+            "decorated_start_line",
             "decorators",
             "docstring",
             "end_line",
@@ -183,6 +198,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     "Enum": frozenset(
         {
             "anchor_hash",
+            "decorated_start_line",
             "decorators",
             "docstring",
             "end_line",
@@ -196,6 +212,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
         {
             "anchor_hash",
             "absolute_path",
+            "decorated_start_line",
             "decorators",
             "docstring",
             "end_line",
@@ -210,6 +227,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
         {
             "anchor_hash",
             "absolute_path",
+            "decorated_start_line",
             "decorators",
             "docstring",
             "end_line",

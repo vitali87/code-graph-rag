@@ -72,7 +72,7 @@ cgr start --repo-path /path/to/repo [OPTIONS]
 | Option | Description |
 |------|-----------|
 | `--repo-path` | Repository to open. Defaults to the current directory. |
-| `--update-graph` | Parse the repository, sync its graph, then exit without starting the assistant (cgr start already syncs before it starts). Cannot be combined with --ask-agent, --no-sync or --projects. |
+| `--update-graph` | Parse the repository, sync its graph, then exit without starting the assistant (cgr start already syncs before it starts), so it cannot be combined with --ask-agent, --output-format json or --projects. With --workspace, sync each of the workspace's repositories instead, then start the assistant scoped to the workspace, which takes --ask-agent, --output-format and --projects as usual. Cannot be combined with --no-sync in either case. |
 | `--clean` | DESTRUCTIVE: Delete every project from the shared graph and clear the selected repository's sync cache. With --update-graph, rebuild after deletion. Asks for confirmation when other projects would be destroyed; use --yes to skip the prompt. |
 | `--yes`, `-y` | Answer yes to destructive confirmations, such as the one --clean asks before deleting other projects from the shared graph. |
 | `--output`, `-o` | Write this repository's project graph to PATH as JSON. Requires --update-graph. Use cgr export for the whole shared graph. |
@@ -81,7 +81,7 @@ cgr start --repo-path /path/to/repo [OPTIONS]
 | `--no-confirm` | Skip edit confirmation prompts. |
 | `--no-instructions` | Do not load ~/.cgr.md or &lt;repo>/.cgr.md into the session prompt. |
 | `--batch-size` | Flush to Memgraph after this many buffered nodes or relationships. [x>=1] |
-| `--project-name` | Project name to store in the graph. Defaults to the directory name plus a hash of its absolute path (e.g. myrepo__1a2b3c4d), so two checkouts never share one; cgr status lists the names already stored. A chosen name has no hash: syncing a repository under a name another repository already indexes needs --yes and replaces that project. |
+| `--project-name` | Project name to store in the graph. Defaults to the directory name plus an 8-hex hash of its absolute path (e.g. myrepo__1a2b3c4d), so two checkouts on one machine get different names barring a rare hash collision; machines that sync into one graph should each pass their own name, since the same path hashes alike on every machine. cgr status lists the names already stored. A chosen name has no hash: syncing a repository under a name another repository already indexes needs --yes and replaces that project. |
 | `--exclude` | Exclude paths matching PATTERN from indexing. Repeat the option to add patterns. |
 | `--capture` | Capture GROUP on top of the defaults (structure, calls, types, imports). Opt-in groups: io, findings, glosses, parameters, fields, enum_variants, constants. +NAME adds and -NAME drops a GROUP or a relationship type such as OVERRIDES; all or none replaces the selection, so none first captures only what follows (none,structure). Repeatable or comma-separated; later values override CGR_CAPTURE. An unknown group or type is an error. |
 | `--interactive-setup` | Choose which detected directories remain included. |

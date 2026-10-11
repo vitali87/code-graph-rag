@@ -48,9 +48,12 @@ from ..py.class_aliases import scan_class_body_aliases
 from ..rs import RustTypeInferenceEngine
 from ..rs import utils as rs_utils
 from ..utils import (
+    decorated_start_props,
     extract_modifiers_and_decorators,
+    follow_reexports,
     function_span_key,
     ingest_method,
+    mark_js_ts_module_private,
     module_qn_for_entity,
     record_cpp_definition_span,
     safe_decode_text,
@@ -1069,6 +1072,22 @@ class ClassIngestMixin:
         # Only a type declaration is a base: a registered member of the same
         # name (a C# property, a method) is not, however it was reached.
         target_kinds = bt.base_target_kinds(entry.language)
+        if entry.language == cs.SupportedLanguage.SCALA and (
+            (
+                imported := self.import_processor.scala_base_qn(
+                    entry.module_qn,
+                    entry.child_qn,
+                    entry.parent_qn,
+                    entry.base_index,
+                )
+            )
+            is not None
+            and self.function_registry.get(imported) in target_kinds
+        ):
+            # Ahead of the registry check: parse time bound the base by name
+            # alone when only a package block imports it, and a sibling
+            # block's same-named class can be what that found.
+            return imported, False
         if self.function_registry.get(entry.parent_qn) in target_kinds:
             return entry.parent_qn, False
         if (followed := self._rust_reexport_target(entry)) is not None:
@@ -1095,6 +1114,8 @@ class ClassIngestMixin:
         # The module-anchored fallback shape carries the raw written name
         # as the remainder after the module qn.
         raw_name = entry.parent_qn[len(prefix) :]
+        if (bound := self._js_ts_namespace_member(raw_name, entry)) is not None:
+            return bound, False
         resolved = self._resolve_class_name(raw_name, entry.module_qn, entry.language)
         if (
             resolved is not None
@@ -1105,6 +1126,37 @@ class ClassIngestMixin:
         ):
             return resolved, False
         return self._externalize_written_base(raw_name, entry.language)
+
+    def _js_ts_namespace_member(
+        self, raw_name: str, entry: DeferredInherit
+    ) -> str | None:
+        # `implements r.Plain` or `extends r.Base` after `import * as r from
+        # './router'` (issue #2560): the head is an import binding, so the
+        # member is declared in the module it names, which outranks the name
+        # sweep below. Only a registered type answers. A head bound outside
+        # the project (`React` from a default import is `react.default`)
+        # registers nothing, so `React.Component` keeps the written name it is
+        # externalized under, which React dead-code rooting matches on.
+        if entry.language not in cs.JS_TS_LANGUAGES:
+            return None
+        import_mapping = self.import_processor.import_mapping
+        candidate = pe.js_ts_namespace_member_qn(
+            raw_name, import_mapping.get(entry.module_qn, {})
+        )
+        if candidate is not None:
+            # `r` is often a barrel (`export { Router } from './router'`): the
+            # member is mapped on to its declaring module, not declared there.
+            candidate = follow_reexports(
+                candidate, import_mapping, self.function_registry
+            )
+        if (
+            candidate is None
+            or candidate == entry.child_qn
+            or self.function_registry.get(candidate)
+            not in bt.base_target_kinds(entry.language)
+        ):
+            return None
+        return candidate
 
     def _resolve_self_edge_parent(
         self, entry: DeferredInherit
@@ -1391,6 +1443,7 @@ class ClassIngestMixin:
         # (STALE/EXACT), movable by hash, and re-validatable by the quote
         # move, which refuses a hash-less candidate (issue #1808).
         class_props.update(anchor_hash_props(class_node, decorators))
+        class_props.update(decorated_start_props(class_node))
         if language == cs.SupportedLanguage.CSHARP:
             self._record_csharp_namespace(class_node, class_qn, class_props)
         # Stored on the node so an incremental run that does not re-parse
@@ -1399,6 +1452,9 @@ class ClassIngestMixin:
             class_props[cs.KEY_NON_METHOD_MEMBERS] = non_method_members
         self.ingestor.ensure_node_batch(node_type, class_props)
         self.function_registry[class_qn] = node_type
+        mark_js_ts_module_private(
+            self.function_registry, class_qn, is_exported, language
+        )
         self.function_registry.set_non_method_members(class_qn, non_method_members)
         if class_name:
             self._index_class_simple_name(class_name, class_qn)
