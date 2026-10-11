@@ -237,6 +237,21 @@ EXAMPLES_STATS = (
 EXAMPLES_DEAD_CODE = (
     "EXAMPLE\n\n  cgr dead-code --project-name my-project --format json"
 )
+# `cgr dead-code --help` states which symbols are roots: with public symbols
+# among them, a clean report on an application can just mean every function
+# is public (issue #2527). The commands table keeps the one-line CMD_DEAD_CODE.
+DESC_DEAD_CODE = (
+    f"{CMD_DEAD_CODE}.\n\n"
+    "Roots are program entry points (main, Main), module-level code such as an "
+    'if __name__ == "__main__" block, tests (unless --no-include-tests), '
+    "decorated handlers (routes, tasks, CLI commands), runtime hooks such as "
+    "dunder and lifecycle methods, and every --entry-point and "
+    "--decorator-root.\n\n"
+    "By default every public or exported symbol is a root as well, which "
+    "suits a library whose API is called from outside the repository. In an "
+    "application or service that rule hides unused public code; pass "
+    "--no-public-roots to report it."
+)
 EXAMPLES_DUPLICATES = (
     "EXAMPLES\n\n"
     "  cgr duplicates --project-name my-project\n\n"
@@ -557,6 +572,14 @@ HELP_DEADCODE_MIN_RESOLUTION = (
 )
 HELP_DEADCODE_FAIL_ON_FOUND = (
     "Exit with status 1 when any candidate is found. Useful in CI."
+)
+HELP_DEADCODE_PUBLIC_ROOTS = (
+    "Treat every public or exported symbol as a root (default), as suits a "
+    "library whose API is called from outside the repository. With "
+    "--no-public-roots, for an application or service, a symbol is a root "
+    "only as an entry point, test, decorated handler or runtime hook, so "
+    "unused public code is reported. Symbols in structural-tier languages "
+    "stay roots, having no call graph."
 )
 
 HELP_DUPLICATES_PROJECT_NAME = (

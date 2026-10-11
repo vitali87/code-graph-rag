@@ -2686,6 +2686,7 @@ def _dead_code_config(
     decorator_roots: list[str],
     min_resolution: cs.EdgeResolution | None = None,
     endpoint_roots: bool = True,
+    public_roots: bool = True,
 ) -> DeadCodeConfig:
     from .dead_code import normalize_decorator_root
 
@@ -2699,6 +2700,7 @@ def _dead_code_config(
         entry_points=tuple(entry_points),
         min_resolution=str(min_resolution) if min_resolution is not None else None,
         endpoint_roots=endpoint_roots,
+        public_roots=public_roots,
     )
 
 
@@ -2794,6 +2796,7 @@ def _emit_dead_code(
     output: Path | None,
     project_name: str,
     structural_tier_symbols: int = 0,
+    public_roots: bool = True,
 ) -> None:
     if output_format == cs.DeadCodeFormat.JSON:
         payload = json.dumps(candidates, indent=2)
@@ -2836,6 +2839,15 @@ def _emit_dead_code(
 
     if not candidates:
         app_context.console.print(style(cs.CLI_DEADCODE_NONE, cs.Color.GREEN))
+        # A clean report says which root rule produced it: with public roots
+        # on, it can just mean every function is public (issue #2527).
+        app_context.console.print(
+            cs.CLI_DEADCODE_RULE_PUBLIC_ROOTS
+            if public_roots
+            else cs.CLI_DEADCODE_RULE_NO_PUBLIC_ROOTS,
+            markup=False,
+            highlight=False,
+        )
     else:
         _print_report_table(app_context.console, table)
         app_context.console.print(
@@ -2886,7 +2898,7 @@ def _require_dead_code_project(resolved: str | None, projects: list[str]) -> str
 
 @app.command(
     name=ch.CLICommandName.DEAD_CODE,
-    help=ch.CMD_DEAD_CODE,
+    help=ch.DESC_DEAD_CODE,
     short_help=ch.CMD_DEAD_CODE,
     epilog=ch.EXAMPLES_DEAD_CODE,
     rich_help_panel=ch.PANEL_GRAPH,
@@ -2929,6 +2941,11 @@ def dead_code(
         "--endpoint-roots/--no-endpoint-roots",
         help=ch.HELP_DEADCODE_ENDPOINT_ROOTS,
     ),
+    public_roots: bool = typer.Option(
+        True,
+        "--public-roots/--no-public-roots",
+        help=ch.HELP_DEADCODE_PUBLIC_ROOTS,
+    ),
 ) -> None:
     from .dead_code import collect_dead_code_with_coverage
 
@@ -2956,6 +2973,7 @@ def dead_code(
                         decorator_root,
                         min_resolution,
                         endpoint_roots,
+                        public_roots,
                     ),
                 )
                 if not endpoint_roots and len(projects) <= 1:
@@ -2975,7 +2993,12 @@ def dead_code(
         _to_dead_code_row(row) for row in _filter_excluded_rows(rows, exclude)
     ]
     _emit_dead_code(
-        candidates, output_format, output, resolved, structural_tier_symbols
+        candidates,
+        output_format,
+        output,
+        resolved,
+        structural_tier_symbols,
+        public_roots,
     )
 
     if fail_on_found and candidates:

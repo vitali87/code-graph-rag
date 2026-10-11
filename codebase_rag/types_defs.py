@@ -707,6 +707,11 @@ class DeadCodeConfig(NamedTuple):
     # exposing an endpoint is live only if an indexed call site reaches that
     # endpoint, so an endpoint nobody calls is reported (issue #1603).
     endpoint_roots: bool = True
+    # Every public or exported symbol is a root (the default, right for a
+    # library, whose API is called from outside the repository). Off, a
+    # symbol roots only as an entry point, test, decorated handler or runtime
+    # hook, so an application's unused public code is reported (issue #2527).
+    public_roots: bool = True
 
 
 class ProjectSync(NamedTuple):

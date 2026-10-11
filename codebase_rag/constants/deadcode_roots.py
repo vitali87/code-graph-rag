@@ -14,6 +14,16 @@ C_CPP_ENTRY_FUNCTION_NAMES: frozenset[str] = frozenset(
     {"main", "wmain", "WinMain", "wWinMain", "DllMain"}
 )
 
+# The `main` a launcher calls with no call site the graph sees: the
+# module-level function a console script or `dart run` names, and the JVM's
+# `void main` taking nothing or a String array. The parser records the
+# C-style `String args[]` as plain `String`, so that spelling counts too.
+PROGRAM_MAIN_NAME = "main"
+JAVA_MAIN_RETURN_TYPE = "void"
+JAVA_MAIN_ARGS_TYPES: frozenset[str] = frozenset(
+    {"String[]", "String...", "java.lang.String[]", "java.lang.String...", "String"}
+)
+
 # Decorators whose presence marks a function/method as an implicit entry point
 # (web routes, task/flow handlers, fixtures, CLI commands, event listeners, and
 # Pydantic validators/serializers the framework invokes by registration).
