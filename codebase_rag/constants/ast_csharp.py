@@ -550,6 +550,9 @@ CSHARP_JUDGED_PARAM_TYPES: frozenset[str] = frozenset().union(
     *CSHARP_LITERAL_ACCEPTS.values()
 )
 CSHARP_SYSTEM_PREFIX = "System."
+# What nests inside a signature's parameter list: generics, tuples, arrays.
+CSHARP_SIGNATURE_OPENERS = "<(["
+CSHARP_SIGNATURE_CLOSERS = ">)]"
 CSHARP_NULLABLE_SUFFIX = "?"
 # Each C# predefined type keyword and the framework type it names, so
 # `Target<System.Int32>` closes `Target<int>`.

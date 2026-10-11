@@ -14,7 +14,7 @@ from ...utils import qn_markers
 from ..csharp import utils as csharp_utils
 from ..csharp.overloads import (
     bindings_for_base,
-    substitute,
+    spells_member,
     unshadowed,
     written_bindings,
 )
@@ -521,7 +521,9 @@ def _find_override_by_substitution(
         visible = unshadowed(
             bindings, shape.type_parameters if shape is not None else ()
         )
-        if f"{name}{paren}{substitute(params, visible)}" == method_name:
+        # Each parameter compared as a type: `Put(List<System.Int32>)` is
+        # `Put(List<int>)` (PR 2814 review).
+        if spells_member(method_name, f"{name}{paren}{params}", visible):
             matches.append(qn)
     return matches[0] if len(matches) == 1 else None
 

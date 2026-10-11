@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -27,16 +28,18 @@ from ..utils import safe_decode_text
 from .overloads import (
     ArgumentType,
     Fit,
-    Relation,
+    arguments_match,
     best_candidates,
     bindings_for_base,
     fit,
     mentioned_names,
+    parameter_types,
     plain_type_name,
-    same_type,
+    same_type_name,
     substitute,
     type_arguments,
     unshadowed,
+    written_type,
 )
 from .utils import (
     _normalize_type_name,
@@ -93,25 +96,7 @@ def _given[T](value: T | None, empty: Callable[[], T]) -> T:
 def _param_types(leaf: str) -> list[str]:
     # The depth-0 parameter types of a signatured leaf, split as _arity
     # counts them: `M(int, Dictionary<K, V>)` -> ["int", "Dictionary<K, V>"].
-    open_idx = leaf.find(cs.CHAR_PAREN_OPEN)
-    if open_idx < 0:
-        return []
-    inner = leaf[open_idx + 1 : leaf.rfind(cs.CHAR_PAREN_CLOSE)]
-    if not inner.strip():
-        return []
-    types: list[str] = []
-    depth = 0
-    start = 0
-    for idx, ch in enumerate(inner):
-        if ch in "<([":
-            depth += 1
-        elif ch in ">)]":
-            depth -= 1
-        elif ch == cs.CHAR_COMMA and depth == 0:
-            types.append(inner[start:idx].strip())
-            start = idx + 1
-    types.append(inner[start:].strip())
-    return types
+    return parameter_types(leaf)
 
 
 def _accepts_arg_count(
@@ -223,6 +208,43 @@ def _extension_receiver_matches(
     if cand_qualified:
         return False
     return not ambiguous_unqualified
+
+
+def _written_argument(raw: str) -> ArgumentType:
+    # An argument typed by a type the source writes: its name, arity and
+    # type arguments, canonically spelled.
+    written = signature_type_name(raw)
+    return ArgumentType(
+        None,
+        strip_generic_arguments(written),
+        generic_arity_of_type_text(written),
+        type_arguments(written),
+    )
+
+
+class _ScopedJudge:
+    """The `TypeJudge` ranking one candidate: its arguments resolve in the
+    caller's file and its parameters in the file declaring the candidate."""
+
+    __slots__ = ("_converts", "_identical")
+
+    def __init__(
+        self,
+        identical: Callable[[ArgumentType, str, Collection[str]], bool | None],
+        converts: Callable[[ArgumentType, str, Collection[str]], bool | None],
+    ) -> None:
+        self._identical = identical
+        self._converts = converts
+
+    def identical(
+        self, argument: ArgumentType, parameter: str, open_names: Collection[str]
+    ) -> bool | None:
+        return self._identical(argument, parameter, open_names)
+
+    def converts(
+        self, argument: ArgumentType, parameter: str, open_names: Collection[str]
+    ) -> bool | None:
+        return self._converts(argument, parameter, open_names)
 
 
 class _MemberCall(NamedTuple):
@@ -1984,12 +2006,6 @@ class CSharpTypeInferenceEngine:
         applicable.
         """
         arguments: list[ArgumentType | None] | None = None
-
-        def relation(
-            arg: str, arg_arity: int, param: str, param_arity: int
-        ) -> bool | None:
-            return self._converts_to(arg, arg_arity, param, param_arity, call.module_qn)
-
         for declaring, bindings, open_names in self._typed_hierarchy(
             class_qn, self._receiver_bindings(call.receiver, class_qn)
         ):
@@ -2010,7 +2026,6 @@ class CSharpTypeInferenceEngine:
                         parameters,
                         arguments,
                         (bindings, open_names),
-                        relation,
                         call.module_qn,
                     ),
                 )
@@ -2028,7 +2043,6 @@ class CSharpTypeInferenceEngine:
         parameters: list[str],
         arguments: list[ArgumentType | None],
         receiver: tuple[Mapping[str, str], frozenset[str]],
-        relation: Relation,
         module_qn: str,
     ) -> list[Fit | None]:
         # How each argument binds its parameter of `method_qn`, given the
@@ -2041,13 +2055,17 @@ class CSharpTypeInferenceEngine:
         own = self._method_type_parameters(method_qn)
         visible = unshadowed(bindings, own)
         bounds = self._constraint_bounds(method_qn)
+        # The argument's types resolve in the caller's file, the parameter's
+        # in the method's (PR 2814 review).
         scopes = (module_qn, self._member_module(method_qn, module_qn))
+        judge = _ScopedJudge(
+            partial(self._identical, scopes=scopes),
+            partial(self._converts, scopes=scopes),
+        )
         return [
             None
-            if self._breaks_constraint(bounds.get(parameter, ()), argument, scopes)
-            else fit(
-                substitute(parameter, visible), argument, open_names | own, relation
-            )
+            if self._breaks_constraint(bounds.get(parameter, ()), argument, scopes, own)
+            else fit(substitute(parameter, visible), argument, open_names | own, judge)
             for parameter, argument in zip(parameters, arguments, strict=True)
         ]
 
@@ -2071,25 +2089,30 @@ class CSharpTypeInferenceEngine:
         bounds: Sequence[str],
         argument: ArgumentType | None,
         scopes: tuple[str, str],
+        own: Collection[str],
     ) -> bool:
         # Inferred from an argument that does not derive from a class its
-        # `where` clause names, a type parameter fails its constraint, and
-        # C# drops the generic overload (`M<T>(T) where T : Person` takes no
-        # Circle; PR 2814 review). A user-defined conversion never satisfies
-        # a constraint, and an interface or external bound cannot be judged.
-        # The argument resolves in the caller's file, the bound in the
-        # method's (`scopes`), so another file's `Person` is never the bound.
+        # `where` clause names, closed as the bound is, a type parameter
+        # fails its constraint, and C# drops the generic overload
+        # (`M<T>(T) where T : Person` takes no Circle; PR 2814 review). A
+        # user-defined conversion never satisfies a constraint, and an
+        # interface or external bound cannot be judged. The argument resolves
+        # in the caller's file, the bound in the method's (`scopes`); a bound
+        # naming the method's `own` type parameters is open there.
         if not bounds or argument is None or argument.name is None:
             return False
         caller_module, method_module = scopes
-        return any(
-            self._derives_from(
-                (argument.name, argument.arity, caller_module),
-                (bound, generic_arity_of_type_text(bound), method_module),
-            )
-            is False
-            for bound in bounds
-        )
+        given_qn = self._type_name_to_qn(argument.name, caller_module, argument.arity)
+        if given_qn is None:
+            return False
+        for bound in bounds:
+            bound_qn = self._scoped_qn(bound, method_module)
+            if bound_qn is None or not self._judgeable(given_qn, bound_qn):
+                continue
+            given = (written_type(argument), given_qn)
+            if self._class_conversion(given, (bound, bound_qn), own) is False:
+                return True
+        return False
 
     def _call_parameter_forms(self, method_qn: str, arg_count: int) -> list[list[str]]:
         # The parameters the arguments bind, in each form C# may call the
@@ -2318,15 +2341,13 @@ class CSharpTypeInferenceEngine:
             # The written type keeps its arguments: `new Ctx<Person>()` is
             # an identity for `Ctx<T>` with T := Person, not for `Ctx<Order>`.
             raw = safe_decode_text(value.child_by_field_name(cs.FIELD_TYPE))
-            if not raw:
-                return None
-            written = signature_type_name(raw)
-            return ArgumentType(
-                None,
-                strip_generic_arguments(written),
-                generic_arity_of_type_text(written),
-                type_arguments(written),
-            )
+            return _written_argument(raw) if raw else None
+        # A parameter or local carries the type it was declared with, type
+        # arguments included (`Box<int> b`), so its closing is known too.
+        if value.type == cs.TS_CSHARP_IDENTIFIER and (
+            declared := self._written_receiver_type(value)
+        ):
+            return _written_argument(declared)
         annotated = self._receiver_type_name(
             value, local_var_types, module_qn, caller_qn
         )
@@ -2335,112 +2356,176 @@ class CSharpTypeInferenceEngine:
         name, arity = split_type_ref(annotated)
         return ArgumentType(None, name, arity, None)
 
-    def _converts_to(
+    def _scoped_qn(self, written: str, module_qn: str) -> str | None:
+        # A written type's first-party qn, resolved in the file that wrote it:
+        # the caller's for an argument, the declaring file's for a parameter,
+        # bound or operator type (PR 2814 review).
+        return self._type_name_to_qn(
+            strip_generic_arguments(written),
+            module_qn,
+            generic_arity_of_type_text(written),
+        )
+
+    def _judgeable(self, given_qn: str, wanted_qn: str) -> bool:
+        # Whether the hierarchy can settle a conversion between the two: the
+        # wanted type a first-party class, the given one a class or enum. An
+        # interface is implemented outside `class_inheritance`.
+        return self.function_registry.get(wanted_qn) == NodeType.CLASS and (
+            self.function_registry.get(given_qn) in (NodeType.CLASS, NodeType.ENUM)
+        )
+
+    def _same_class(self, given_qn: str, wanted_qn: str) -> bool:
+        return given_qn == wanted_qn or wanted_qn in self._partial_roots(given_qn)
+
+    def _identical(
         self,
-        arg_name: str,
-        arg_arity: int,
-        param_name: str,
-        param_arity: int,
-        module_qn: str,
+        argument: ArgumentType,
+        parameter: str,
+        open_names: Collection[str],
+        scopes: tuple[str, str],
     ) -> bool | None:
-        # Known only between first-party classes: an argument class converts
-        # to a parameter class it derives from, or that a declared `implicit
-        # operator` reaches (PR 2814 review), and to no other class. An
-        # interface on either side is implemented outside
-        # `class_inheritance`, so it stays unknown, as does anything external.
-        # `param_name` keeps its type arguments when they are closed.
-        classes = self._first_party_classes(
-            (arg_name, arg_arity, module_qn), (param_name, param_arity, module_qn)
+        # Whether the argument's type IS the parameter's: one class, each
+        # side resolved in its own file (or, unresolved, spelled alike up to
+        # aliases), closed with the same type arguments. None when they are
+        # not known on the argument's side.
+        caller_module, declaring_module = scopes
+        given_qn = self._type_name_to_qn(
+            argument.name or "", caller_module, argument.arity
         )
-        if classes is None:
-            return None
-        arg_qn, param_qn = classes
-        if param_qn in self._class_ancestry(arg_qn):
+        wanted_qn = self._scoped_qn(parameter, declaring_module)
+        if given_qn is not None and wanted_qn is not None:
+            if not self._same_class(given_qn, wanted_qn):
+                return False
+        elif not same_type_name(argument.name or "", parameter, argument.arity):
+            return False
+        wanted = type_arguments(parameter)
+        if not wanted:
             return True
-        return self._converts_implicitly(arg_qn, param_qn, param_name, module_qn)
+        return arguments_match(argument.arguments, wanted, open_names)
 
-    def _derives_from(
-        self, argument: tuple[str, int, str], parameter: tuple[str, int, str]
+    def _converts(
+        self,
+        argument: ArgumentType,
+        parameter: str,
+        open_names: Collection[str],
+        scopes: tuple[str, str],
     ) -> bool | None:
-        # `_converts_to` without user-defined conversions, which a `where`
-        # constraint does not admit. Each side is (written name, arity,
-        # module it resolves in).
-        classes = self._first_party_classes(argument, parameter)
-        if classes is None:
-            return None
-        arg_qn, param_qn = classes
-        return param_qn in self._class_ancestry(arg_qn)
-
-    def _first_party_classes(
-        self, argument: tuple[str, int, str], parameter: tuple[str, int, str]
-    ) -> tuple[str, str] | None:
-        # (argument class qn, parameter class qn) when the hierarchy can
-        # settle their conversion: the parameter a class, the argument a
-        # class or enum, both first-party. Each side is resolved in its own
-        # file's scope.
-        arg_name, arg_arity, arg_module = argument
-        param_name, param_arity, param_module = parameter
-        param_qn = self._type_name_to_qn(
-            strip_generic_arguments(param_name), param_module, param_arity
+        # Whether the argument converts implicitly to the parameter: up its
+        # class hierarchy, or through a declared `implicit operator`, closed
+        # as the parameter is either way. Known only between first-party
+        # classes; anything else is not told.
+        caller_module, declaring_module = scopes
+        given_qn = self._type_name_to_qn(
+            argument.name or "", caller_module, argument.arity
         )
-        arg_qn = self._type_name_to_qn(arg_name, arg_module, arg_arity)
-        if param_qn is None or arg_qn is None:
-            return None
-        if self.function_registry.get(param_qn) != NodeType.CLASS or (
-            self.function_registry.get(arg_qn) not in (NodeType.CLASS, NodeType.ENUM)
+        wanted_qn = self._scoped_qn(parameter, declaring_module)
+        if (
+            given_qn is None
+            or wanted_qn is None
+            or not self._judgeable(given_qn, wanted_qn)
         ):
             return None
-        return arg_qn, param_qn
+        given = (written_type(argument), given_qn)
+        wanted = (parameter, wanted_qn)
+        derived = self._class_conversion(given, wanted, open_names)
+        if derived:
+            return True
+        implicit = self._converts_implicitly(given, wanted, open_names, caller_module)
+        if implicit:
+            return True
+        return None if None in (derived, implicit) else False
+
+    def _class_conversion(
+        self,
+        given: tuple[str, str],
+        wanted: tuple[str, str],
+        open_names: Collection[str],
+    ) -> bool | None:
+        # A conversion up the class hierarchy, each side as (written, qn):
+        # the wanted class is the given one or a base of it, and the given
+        # type closes it as the wanted one is (`Derived : Base<int>` is no
+        # `Base<string>`; PR 2814 review). None when that closing is not
+        # known.
+        wanted_text, wanted_qn = wanted
+        if wanted_qn not in self._class_ancestry(given[1]):
+            return False
+        expected = type_arguments(wanted_text)
+        if not expected:
+            return True
+        return arguments_match(
+            self._closing_through(given, wanted_qn), expected, open_names
+        )
 
     def _converts_implicitly(
-        self, arg_qn: str, param_qn: str, param_name: str, module_qn: str
+        self,
+        given: tuple[str, str],
+        wanted: tuple[str, str],
+        open_names: Collection[str],
+        module_qn: str,
     ) -> bool | None:
         # A user-defined implicit conversion is declared on its source or its
-        # target type, or a base of either. It applies when the argument
-        # derives from its source and its target, closed as the parameter
-        # is (`Target<int>` is no `Target<string>`), derives from the
-        # parameter. Its written types resolve in its declaring file.
-        sources = self._class_ancestry(arg_qn)
+        # target type, or a base of either, and its written types resolve in
+        # its declaring file. True when one applies, None when one might.
+        sources = self._class_ancestry(given[1])
         verdict: bool | None = False
-        for declaring in sources | self._class_ancestry(param_qn):
+        for declaring in sources | self._class_ancestry(wanted[1]):
             scope = self._declaring_module(declaring, module_qn)
-            for source, target in self.csharp_implicit_conversions.get(declaring, ()):
-                target_qn = self._written_type_qn(target, scope)
-                if (
-                    self._written_type_qn(source, scope) not in sources
-                    or target_qn is None
-                    or param_qn not in self._class_ancestry(target_qn)
-                ):
-                    continue
-                closing = self._same_closing(
-                    (target, target_qn), (param_name, param_qn), declaring
+            for operator in self.csharp_implicit_conversions.get(declaring, ()):
+                applies = self._operator_applies(
+                    operator, (declaring, scope), given, (wanted, open_names)
                 )
-                if closing:
+                if applies:
                     return True
-                if closing is None:
+                if applies is None:
                     verdict = None
         return verdict
 
-    def _same_closing(
-        self, target: tuple[str, str], parameter: tuple[str, str], declaring: str
+    def _operator_applies(
+        self,
+        operator: tuple[str, str],
+        declared: tuple[str, str],
+        given: tuple[str, str],
+        wanted: tuple[tuple[str, str], Collection[str]],
     ) -> bool | None:
-        # Whether an operator's target, as written and as resolved, closes
-        # the parameter's class as the parameter does. True when the
-        # parameter spells no type arguments (it is not generic, or still
-        # open); None when that closing cannot be told, or names the
-        # declaring type's own parameters, which only its use closes.
-        param_name, param_qn = parameter
-        wanted = type_arguments(param_name)
-        if not wanted:
-            return True
-        given = self._closing_through(target, param_qn)
+        # Whether `implicit operator Target(Source)` takes the argument and
+        # gives the parameter: the argument converts to its source, closed as
+        # the source is written (`Source<int>` takes no `Source<string>`), and
+        # its target, with the declaring type's own parameters bound from the
+        # argument, converts to the parameter.
+        source, target = operator
+        declaring, scope = declared
+        source_qn = self._scoped_qn(source, scope)
+        target_qn = self._scoped_qn(target, scope)
+        if source_qn is None or target_qn is None:
+            return False
         shape = self.csharp_generic_shapes.get(declaring)
-        owned = set(shape.parameters) if shape is not None else set()
-        if given is None or any(mentioned_names(a) & owned for a in given):
-            return None
-        return len(given) == len(wanted) and all(
-            same_type(g, w) for g, w in zip(given, wanted, strict=True)
+        owned = frozenset(shape.parameters) if shape is not None else frozenset()
+        takes = self._class_conversion(given, (source, source_qn), owned)
+        if takes is False:
+            return False
+        bound = substitute(
+            target, self._operator_bindings(given, (source, source_qn), owned)
         )
+        wanted_type, open_names = wanted
+        gives = self._class_conversion((bound, target_qn), wanted_type, open_names)
+        if gives is False and mentioned_names(bound) & owned:
+            # A target still naming the declaring type's parameters is open.
+            gives = None if wanted_type[1] in self._class_ancestry(target_qn) else False
+        if takes and gives:
+            return True
+        return False if gives is False else None
+
+    def _operator_bindings(
+        self, given: tuple[str, str], source: tuple[str, str], owned: frozenset[str]
+    ) -> dict[str, str]:
+        # The declaring type's own parameters an operator's source spells
+        # bare (`Source<U>`), bound to what the argument passes there.
+        closing = self._closing_through(given, source[1]) or ()
+        return {
+            written: passed
+            for written, passed in zip(type_arguments(source[0]), closing, strict=False)
+            if written in owned
+        }
 
     def _closing_through(
         self, target: tuple[str, str], param_qn: str
@@ -2472,13 +2557,6 @@ class CSharpTypeInferenceEngine:
         # The module whose file declares `type_qn`, the scope its written
         # types resolve in; `fallback` when it was never recorded.
         return self.csharp_class_owner_module.get(type_qn, fallback)
-
-    def _written_type_qn(self, written: str, module_qn: str) -> str | None:
-        return self._type_name_to_qn(
-            strip_generic_arguments(written),
-            module_qn,
-            generic_arity_of_type_text(written),
-        )
 
     def _class_ancestry(self, class_qn: str) -> set[str]:
         seen: set[str] = set()

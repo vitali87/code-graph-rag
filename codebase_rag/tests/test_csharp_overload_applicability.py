@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import NamedTuple
 from unittest.mock import MagicMock
 
 import pytest
@@ -751,3 +752,243 @@ class TestAnApplicableInstanceMethodBeatsAnExtension:
         # Negative: `C.Bar()` takes no argument, so the extension binds.
         calls = _calls(EXTENSION_ORDER_CS, temp_repo, mock_ingestor)
         assert calls["Extended"] == {"Ex.CExt.Bar(C, int)"}, calls
+
+
+# Every place overload ranking compares, resolves or walks types, against
+# each of three invariants (PR 2814 review): (a) a predefined type is its
+# alias (`int` is `System.Int32`), (b) an argument's type resolves in the
+# caller's file and a parameter's, bound's or operator's in its declaring
+# file, (c) closed type arguments are carried and compared, through the base
+# list too. Each row is one path under one invariant; `neg` rows are the
+# negatives. The caller's file always declares `namespace U` beside `using L`.
+
+
+class _Case(NamedTuple):
+    lib: str
+    use: str
+    expected: frozenset[str]
+
+
+_USE = "using L;\nnamespace U;\n{extra}public class Use {{ public void Run() {{ {call} }} }}\n"
+
+
+def _use(call: str, extra: str = "") -> str:
+    return _USE.format(call=call, extra=extra)
+
+
+_PAIR = "public void M(object o) { }"
+
+INVARIANT_CASES: dict[str, _Case] = {
+    # Scoring: the argument IS the parameter's type.
+    "score-alias": _Case(
+        "namespace L; public class Box<X> { }\n"
+        f"public class C {{ public void M(Box<System.Int32> b) {{ }} {_PAIR} }}",
+        _use("new C().M(new Box<int>());"),
+        frozenset({"C.M(Box<System.Int32>)"}),
+    ),
+    "score-alias-neg": _Case(
+        "namespace L; public class Box<X> { }\n"
+        f"public class C {{ public void M(Box<System.Int32> b) {{ }} {_PAIR} }}",
+        _use("new C().M(new Box<string>());"),
+        frozenset({"C.M(object)"}),
+    ),
+    "score-scope": _Case(
+        f"namespace L; public class Base {{ }}\npublic class C {{ public void M(Base b) {{ }} {_PAIR} }}",
+        _use("new C().M(new Base());", "public class Base { }\n"),
+        frozenset({"C.M(object)"}),
+    ),
+    "score-scope-neg": _Case(
+        f"namespace L; public class Base {{ }}\npublic class C {{ public void M(Base b) {{ }} {_PAIR} }}",
+        _use("new C().M(new L.Base());", "public class Base { }\n"),
+        frozenset({"C.M(Base)"}),
+    ),
+    "score-generic": _Case(
+        "namespace L; public class Box<X> { }\n"
+        f"public class C {{ public void M(Box<int> b) {{ }} {_PAIR} }}",
+        _use("new C().M(new Box<string>());"),
+        frozenset({"C.M(object)"}),
+    ),
+    "score-generic-local": _Case(
+        "namespace L; public class Box<X> { }\n"
+        f"public class C {{ public void M(Box<int> b) {{ }} {_PAIR} }}",
+        _use("Box<string> b = new Box<string>(); new C().M(b);"),
+        frozenset({"C.M(object)"}),
+    ),
+    "score-generic-local-neg": _Case(
+        "namespace L; public class Box<X> { }\n"
+        f"public class C {{ public void M(Box<int> b) {{ }} {_PAIR} }}",
+        _use("Box<int> b = new Box<int>(); new C().M(b);"),
+        frozenset({"C.M(Box<int>)"}),
+    ),
+    # A closing nothing spells (a field's) is not known: no overload is
+    # guessed, both stay candidates.
+    "score-generic-unknown": _Case(
+        "namespace L; public class Box<X> { }\n"
+        f"public class C {{ public void M(Box<int> b) {{ }} {_PAIR} }}",
+        "using L;\nnamespace U;\npublic class Use { private Box<string> f; "
+        "public void Run() { new C().M(f); } }\n",
+        frozenset({"C.M(Box<int>)", "C.M(object)"}),
+    ),
+    # Scoring: the argument converts to the parameter through its bases.
+    "base-alias": _Case(
+        "namespace L; public class Base<X> { } public class Derived : Base<System.Int32> { }\n"
+        f"public class C {{ public void M(Base<int> b) {{ }} {_PAIR} }}",
+        _use("new C().M(new Derived());"),
+        frozenset({"C.M(Base<int>)"}),
+    ),
+    "base-scope": _Case(
+        "namespace L; public class Base { } public class Student : Base { }\n"
+        f"public class C {{ public void M(Base b) {{ }} {_PAIR} }}",
+        _use("new C().M(new Student());", "public class Base { }\n"),
+        frozenset({"C.M(Base)"}),
+    ),
+    "base-generic": _Case(
+        "namespace L; public class Base<X> { } public class Derived : Base<int> { }\n"
+        f"public class C {{ public void M(Base<string> b) {{ }} {_PAIR} }}",
+        _use("new C().M(new Derived());"),
+        frozenset({"C.M(object)"}),
+    ),
+    "base-generic-neg": _Case(
+        "namespace L; public class Base<X> { } public class Derived : Base<int> { }\n"
+        f"public class C {{ public void M(Base<int> b) {{ }} {_PAIR} }}",
+        _use("new C().M(new Derived());"),
+        frozenset({"C.M(Base<int>)"}),
+    ),
+    # An implicit operator's source must take the argument.
+    "source-alias": _Case(
+        "namespace L; public class Source<X> { }\n"
+        "public class Target { public static implicit operator Target(Source<System.Int32> s) => null; }\n"
+        f"public class C {{ public void M(Target t) {{ }} {_PAIR} }}",
+        _use("new C().M(new Source<int>());"),
+        frozenset({"C.M(Target)"}),
+    ),
+    "source-scope": _Case(
+        "namespace L; public class Source { }\n"
+        "public class Target { public static implicit operator Target(Source s) => null; }\n"
+        f"public class C {{ public void M(Target t) {{ }} {_PAIR} }}",
+        _use("new C().M(new L.Source());", "public class Source { }\n"),
+        frozenset({"C.M(Target)"}),
+    ),
+    "source-generic": _Case(
+        "namespace L; public class Source<X> { }\n"
+        "public class Target { public static implicit operator Target(Source<int> s) => null; }\n"
+        f"public class C {{ public void M(Target t) {{ }} {_PAIR} }}",
+        _use("new C().M(new Source<string>());"),
+        frozenset({"C.M(object)"}),
+    ),
+    # An implicit operator's target must be the parameter.
+    "target-alias": _Case(
+        "namespace L; public class Target<X> { }\n"
+        "public class Source { public static implicit operator Target<System.Int32>(Source s) => null; }\n"
+        f"public class C {{ public void M(Target<int> t) {{ }} {_PAIR} }}",
+        _use("new C().M(new Source());"),
+        frozenset({"C.M(Target<int>)"}),
+    ),
+    "target-scope": _Case(
+        "namespace L; public class Target { }\n"
+        "public class Source { public static implicit operator Target(Source s) => null; }\n"
+        f"public class C {{ public void M(L.Target t) {{ }} {_PAIR} }}",
+        _use("new C().M(new Source());", "public class Target { }\n"),
+        frozenset({"C.M(L.Target)"}),
+    ),
+    "target-generic": _Case(
+        "namespace L; public class Target<X> { }\n"
+        "public class Source { public static implicit operator Target<int>(Source s) => null; }\n"
+        f"public class C {{ public void M(Target<string> t) {{ }} {_PAIR} }}",
+        _use("new C().M(new Source());"),
+        frozenset({"C.M(object)"}),
+    ),
+    # A `where` bound must take the argument.
+    "bound-alias": _Case(
+        "namespace L; public class Base<X> { } public class D : Base<int> { }\n"
+        "public class C { public void M<T>(T x) where T : Base<System.Int32> { } "
+        f"{_PAIR} }}",
+        _use("new C().M(new D());"),
+        frozenset({"C.M(T)"}),
+    ),
+    "bound-scope": _Case(
+        "namespace L; public class Person { } public class Student : Person { }\n"
+        f"public class C {{ public void M<T>(T x) where T : Person {{ }} {_PAIR} }}",
+        _use("new C().M(new Student());", "public class Person { }\n"),
+        frozenset({"C.M(T)"}),
+    ),
+    "bound-generic": _Case(
+        "namespace L; public class Base<X> { } public class D : Base<string> { }\n"
+        f"public class C {{ public void M<T>(T x) where T : Base<int> {{ }} {_PAIR} }}",
+        _use("new C().M(new D());"),
+        frozenset({"C.M(object)"}),
+    ),
+    # An explicit implementation must spell the interface member.
+    "explicit-alias": _Case(
+        "namespace L; public interface IRun<T> { void Go(T x); }\n"
+        "public class Runner : IRun<System.Int32> { void IRun<System.Int32>.Go(int x) { } }",
+        "using L;\nnamespace U;\npublic class Use { public void Run(IRun<int> r) { r.Go(1); } }\n",
+        # The explicit member's qn writes each dot of the interface as `#`.
+        frozenset({"IRun.Go(T)", "Runner.IRun<System#Int32>#Go(int)"}),
+    ),
+    "explicit-generic": _Case(
+        "namespace L; public interface IRun<T> { void Go(T x); }\n"
+        "public class Runner : IRun<int> { void IRun<int>.Go(int x) { } }",
+        "using L;\nnamespace U;\npublic class Use { public void Run(IRun<int> r) { r.Go(1); } }\n",
+        frozenset({"IRun.Go(T)", "Runner.IRun<int>#Go(int)"}),
+    ),
+}
+
+# An override must spell the base member it overrides.
+OVERRIDE_CASES: dict[str, tuple[str, tuple[str, str]]] = {
+    "override-alias": (
+        "namespace L; using System.Collections.Generic;\n"
+        "public class Base<T> { public virtual void Put(List<T> x) { } "
+        "public virtual void Put(List<string> x) { } }\n"
+        "public class D : Base<System.Int32> { public override void Put(List<int> x) { } }",
+        ("D.Put(List<int>)", "Base.Put(List<T>)"),
+    ),
+    "override-generic": (
+        "namespace L; using System.Collections.Generic;\n"
+        "public class Base<T> { public virtual void Put(List<T> x) { } "
+        "public virtual void Put(List<string> x) { } }\n"
+        "public class D : Base<int> { public override void Put(List<int> x) { } }",
+        ("D.Put(List<int>)", "Base.Put(List<T>)"),
+    ),
+}
+
+
+def _leaf_pair(qn: str) -> str:
+    # `proj.Lib.L.C.M(Box<int>)` -> `C.M(Box<int>)`.
+    head, paren, params = qn.partition("(")
+    return ".".join(head.rsplit(".", 2)[-2:]) + paren + params
+
+
+def _index_pair(temp_repo: Path, mock_ingestor: MagicMock, lib: str, use: str) -> None:
+    root = temp_repo / PROJECT
+    root.mkdir()
+    (root / "Lib.cs").write_text(lib, encoding="utf-8")
+    (root / "Use.cs").write_text(use, encoding="utf-8")
+    create_and_run_updater(root, mock_ingestor, skip_if_missing=SKIP)
+
+
+@pytest.mark.parametrize("case", sorted(INVARIANT_CASES))
+def test_each_comparison_path_keeps_each_invariant(
+    case: str, temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    lib, use, expected = INVARIANT_CASES[case]
+    _index_pair(temp_repo, mock_ingestor, lib, use)
+    targets = {
+        _leaf_pair(str(c.args[2][2]))
+        for c in get_relationships(mock_ingestor, cs.RelationshipType.CALLS)
+        if ".Use.Run" in str(c.args[0][2])
+    }
+    assert targets == expected, (case, targets)
+
+
+@pytest.mark.parametrize("case", sorted(OVERRIDE_CASES))
+def test_each_override_path_keeps_each_invariant(
+    case: str, temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    lib, (child, parent) = OVERRIDE_CASES[case]
+    _index_pair(temp_repo, mock_ingestor, lib, _use(""))
+    overrides = {
+        (_leaf_pair(str(c.args[0][2])), _leaf_pair(str(c.args[2][2])))
+        for c in get_relationships(mock_ingestor, cs.RelationshipType.OVERRIDES)
+    }
+    assert (child, parent) in overrides, (case, overrides)

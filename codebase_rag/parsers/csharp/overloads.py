@@ -14,9 +14,9 @@ for the caller to fan out over.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from enum import IntEnum
-from typing import NamedTuple
+from typing import NamedTuple, Protocol
 
 from ... import constants as cs
 from ...types_defs import CSharpGenericShape
@@ -53,10 +53,23 @@ class Fit(IntEnum):
     EXACT = 4
 
 
-# (argument name, arity, parameter name, arity) -> whether the argument
-# converts to the parameter: True or False when both are first-party types
-# whose relation is known, None when it cannot be told.
-type Relation = Callable[[str, int, str, int], bool | None]
+class TypeJudge(Protocol):
+    """How one candidate's parameters relate to a call's arguments, each side
+    resolved in its own file (the argument in the caller's, the parameter in
+    the method's) and with closed type arguments compared alias-blind. Each
+    answer is True, False, or None when it cannot be told; never a guess."""
+
+    def identical(
+        self, argument: ArgumentType, parameter: str, open_names: Collection[str]
+    ) -> bool | None:
+        """Whether the argument's type IS the parameter's."""
+        ...
+
+    def converts(
+        self, argument: ArgumentType, parameter: str, open_names: Collection[str]
+    ) -> bool | None:
+        """Whether the argument's type converts implicitly to the parameter's."""
+        ...
 
 
 def plain_type_name(type_name: str) -> str:
@@ -145,10 +158,45 @@ def spells_member(
 ) -> bool:
     """Whether `member` (`Validate(Person)`) is `interface_member`
     (`Validate(T)`) once `bindings` (T := Person) are substituted into the
-    interface member's parameters. Erasing the arguments cannot pair the
-    two up beside a `Validate(string)`, nor can counting them (issue #2619)."""
-    name, paren, params = interface_member.partition(cs.CHAR_PAREN_OPEN)
-    return member == f"{name}{paren}{substitute(params, bindings)}"
+    interface member's parameters, each parameter compared as a type, so
+    `Go(System.Int32)` is `Go(int)` (PR 2814 review). Erasing the arguments
+    cannot pair the two up beside a `Validate(string)`, nor can counting
+    them (issue #2619). Explicit implementations and overrides both use it."""
+    name = member.partition(cs.CHAR_PAREN_OPEN)[0]
+    wanted_name, paren, wanted_params = interface_member.partition(cs.CHAR_PAREN_OPEN)
+    if name != wanted_name:
+        return False
+    given = parameter_types(member)
+    wanted = parameter_types(
+        f"{wanted_name}{paren}{substitute(wanted_params, bindings)}"
+    )
+    return len(given) == len(wanted) and all(
+        same_type(g, w) for g, w in zip(given, wanted, strict=True)
+    )
+
+
+def parameter_types(signature: str) -> list[str]:
+    """The depth-0 parameter types of a signatured leaf or qn:
+    `M(int, Dictionary<K, V>)` -> ["int", "Dictionary<K, V>"]."""
+    open_idx = signature.find(cs.CHAR_PAREN_OPEN)
+    if open_idx < 0:
+        return []
+    inner = signature[open_idx + 1 : signature.rfind(cs.CHAR_PAREN_CLOSE)]
+    if not inner.strip():
+        return []
+    types: list[str] = []
+    depth = 0
+    start = 0
+    for idx, ch in enumerate(inner):
+        if ch in cs.CSHARP_SIGNATURE_OPENERS:
+            depth += 1
+        elif ch in cs.CSHARP_SIGNATURE_CLOSERS:
+            depth -= 1
+        elif ch == cs.CHAR_COMMA and depth == 0:
+            types.append(inner[start:idx].strip())
+            start = idx + 1
+    types.append(inner[start:].strip())
+    return types
 
 
 def type_arguments(type_text: str) -> tuple[str, ...]:
@@ -193,24 +241,48 @@ def _literal_fit(parameter: str, literal: str) -> Fit | None:
     return Fit.EXACT if plain == literal and not nullable else Fit.CONVERTIBLE
 
 
-def _same_type_fit(
-    parameter: str, argument: ArgumentType, open_names: Collection[str]
-) -> Fit:
-    # Same name and arity. Written type arguments on both sides must agree,
-    # except where the parameter's still mentions an open type parameter,
-    # which inference would bind to whatever the argument passes.
-    if argument.arguments is None:
-        return Fit.EXACT
-    for wanted, given in zip(
-        type_arguments(parameter), argument.arguments, strict=False
-    ):
-        if mentioned_names(wanted) & set(open_names):
-            continue
-        if _simple_name(wanted) != _simple_name(given) or type_arguments(
-            wanted
-        ) != type_arguments(given):
-            return Fit.OTHER
-    return Fit.EXACT
+def arguments_match(
+    given: Sequence[str] | None, wanted: Sequence[str], open_names: Collection[str]
+) -> bool | None:
+    """Whether closed type arguments agree, position by position and alias-
+    blind (`Box<System.Int32>` is `Box<int>`). A wanted argument naming an
+    `open_names` parameter is the one inference binds, so any given argument
+    fits it; `given` None (not known) answers None, never a match."""
+    if given is None:
+        return None
+    if len(given) != len(wanted):
+        return False
+    return all(
+        bool(mentioned_names(w) & set(open_names)) or same_type(g, w)
+        for g, w in zip(given, wanted, strict=True)
+    )
+
+
+def written_type(argument: ArgumentType) -> str:
+    """An argument's type as written, its type arguments included when the
+    syntax spells them: `Box<int>`, or `Box` when they are not known."""
+    name = argument.name or ""
+    if not argument.arguments:
+        return name
+    return (
+        f"{name}{cs.CHAR_ANGLE_OPEN}"
+        f"{cs.SEPARATOR_COMMA_SPACE.join(argument.arguments)}{cs.CHAR_ANGLE_CLOSE}"
+    )
+
+
+def same_type_name(given: str, wanted: str, given_arity: int | None = None) -> bool:
+    """Whether two written types name one class, arguments aside: the same
+    simple name, alias-blind (`Int32`, `int`), with as many type arguments
+    (`given_arity` when `given` does not spell them), and no qualification
+    that sets them apart (`A.Widget`, `B.Widget`)."""
+    name = _framework_name(_simple_name(given))
+    if name != _framework_name(_simple_name(wanted)):
+        return False
+    arity = generic_arity_of_type_text(given) if given_arity is None else given_arity
+    if arity != generic_arity_of_type_text(wanted):
+        return False
+    predefined = name in cs.CSHARP_PREDEFINED_TYPE_NAMES.values()
+    return predefined or not _qualified_apart(given, wanted)
 
 
 def _type_path(type_text: str) -> list[str]:
@@ -238,29 +310,23 @@ def same_type(given: str, wanted: str) -> bool:
     """Whether two written types name one type: `Target<int>` twice,
     `Lib.Person` and `Person`, or `System.Int32` and `int` (PR 2814 review);
     never `Target<int>` and `Target<string>`, nor `A.Widget` and
-    `B.Widget`."""
-    name = _framework_name(_simple_name(given))
-    if name != _framework_name(_simple_name(wanted)):
+    `B.Widget`. The one alias-blind comparison every path uses."""
+    if not same_type_name(given, wanted):
         return False
-    predefined = name in cs.CSHARP_PREDEFINED_TYPE_NAMES.values()
-    if not predefined and _qualified_apart(given, wanted):
-        return False
-    given_arguments, wanted_arguments = type_arguments(given), type_arguments(wanted)
-    return len(given_arguments) == len(wanted_arguments) and all(
-        same_type(g, w) for g, w in zip(given_arguments, wanted_arguments, strict=True)
-    )
+    return bool(arguments_match(type_arguments(given), type_arguments(wanted), ()))
 
 
 def fit(
     parameter: str,
     argument: ArgumentType | None,
     open_names: Collection[str],
-    relation: Relation,
+    judge: TypeJudge,
 ) -> Fit | None:
     """How well `argument` binds `parameter`, or None when it cannot.
 
     `open_names` are the type parameters still unbound for this candidate:
-    one standing alone takes any argument, as inference would make it.
+    one standing alone takes any argument, as inference would make it, and
+    one inside a type argument takes whatever the argument passes there.
     """
     if argument is None:
         return Fit.UNKNOWN
@@ -270,26 +336,13 @@ def fit(
         return _literal_fit(parameter, argument.literal)
     if argument.name is None:
         return Fit.UNKNOWN
-    wanted_name = _simple_name(parameter)
-    wanted_arity = generic_arity_of_type_text(parameter)
-    given_name = _simple_name(argument.name)
-    if (
-        wanted_name == given_name
-        and wanted_arity == argument.arity
-        and not _qualified_apart(argument.name, parameter)
-    ):
-        return _same_type_fit(parameter, argument, open_names)
-    # The written path, not the bare name, so a qualified parameter type
-    # resolves to the type it names; with its type arguments while they are
-    # closed, so a conversion to `Target<int>` is not one to `Target<string>`.
-    related = relation(
-        argument.name,
-        argument.arity,
-        parameter
-        if not mentioned_names(parameter) & set(open_names)
-        else strip_generic_arguments(parameter),
-        wanted_arity,
-    )
+    identical = judge.identical(argument, parameter, open_names)
+    if identical:
+        return Fit.EXACT
+    if identical is None:
+        # One class whose type arguments are not known on one side.
+        return Fit.OTHER
+    related = judge.converts(argument, parameter, open_names)
     if related is None:
         return Fit.OTHER
     return Fit.CONVERTIBLE if related else None
