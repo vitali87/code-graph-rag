@@ -799,21 +799,19 @@ def _is_public_main_root(
     name: str, is_method: bool, path: str, props: PropertyDict
 ) -> bool:
     # A launcher calls `main` with no call site the graph sees: a console
-    # script or `dart run` calls a module-level function, the JVM a method
-    # whose declaration the parser judged (KEY_IS_JAVA_MAIN). Only the
-    # exported rule rooted them, so without public roots an application's
-    # whole call tree read as dead (issue #2527). Requiring the export keeps
-    # the rule inside what library mode already roots, and excludes a Python
-    # `main` nested in a function. The C, C++, C#, Go and Rust entries have
-    # their own rules.
+    # script calls a module-level Python function, while `dart run` and the
+    # JVM start a `main` the parser judged from its declaration
+    # (KEY_IS_PROGRAM_MAIN). Only the exported rule rooted them, so without
+    # public roots an application's whole call tree read as dead (issue
+    # #2527). Requiring the export keeps the rule inside what library mode
+    # already roots; a Python `main` nested in a function is not exported.
+    # The C, C++, C#, Go and Rust entries have their own rules.
     if name != cs.PROGRAM_MAIN_NAME or props.get(cs.KEY_IS_EXPORTED) is not True:
         return False
-    if path.endswith((cs.EXT_PY, cs.EXT_DART)):
+    if path.endswith(cs.EXT_PY):
         return not is_method
-    return (
-        is_method
-        and path.endswith(cs.EXT_JAVA)
-        and props.get(cs.KEY_IS_JAVA_MAIN) is True
+    return path.endswith((cs.EXT_DART, cs.EXT_JAVA)) and (
+        props.get(cs.KEY_IS_PROGRAM_MAIN) is True
     )
 
 
@@ -1324,8 +1322,8 @@ def _node_props(row: ResultRow) -> PropertyDict:
         cs.KEY_DECORATORS: _as_str_list(row.get(cs.KEY_DECORATORS)),
         cs.KEY_IS_EXPORTED: row.get(cs.KEY_IS_EXPORTED) is True,
         cs.KEY_OVERRIDES_EXTERNAL: row.get(cs.KEY_OVERRIDES_EXTERNAL) is True,
-        # The JVM `main` the parser judged from its declaration (issue #2527).
-        cs.KEY_IS_JAVA_MAIN: row.get(cs.KEY_IS_JAVA_MAIN) is True,
+        # The launcher `main` the parser judged from its declaration (#2527).
+        cs.KEY_IS_PROGRAM_MAIN: row.get(cs.KEY_IS_PROGRAM_MAIN) is True,
         # Spans feed the Rust nested-test-symbol exclusion (issue #1008);
         # non-int values coalesce to 0 so the containment checks skip them.
         cs.KEY_START_LINE: _as_line(row.get(cs.KEY_START_LINE)),

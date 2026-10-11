@@ -162,12 +162,6 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     # index entry, read back only by an incremental run's rehydration;
     # absent reads as "not an extension", as every run did before #3275,
     # until the declaring file is next parsed.
-    # `is_java_main` (issue #2527) roots a Java `main` for
-    # `cgr dead-code --no-public-roots`, beside `is_exported` and
-    # `overrides_external`, which do not travel either: absent reads as "not
-    # an entry point", so an imported graph reports such a `main` in that
-    # mode only, until its file is next parsed. Exporting it needs a proto
-    # field and protoc, which #1490 carries.
     "Method": frozenset(
         {
             "absolute_path",
@@ -176,8 +170,6 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "extension_namespace",
             "extension_receiver",
             "extension_receiver_arity",
-            "is_exported",
-            "is_java_main",
             "is_property",
             "member_aliases",
             "modifiers",

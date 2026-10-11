@@ -465,7 +465,7 @@ class Section(_message.Message):
     def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., heading_level: _Optional[int] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., path: _Optional[str] = ..., absolute_path: _Optional[str] = ...) -> None: ...
 
 class Function(_message.Message):
-    __slots__ = ("qualified_name", "name", "docstring", "start_line", "end_line", "decorators", "is_exported", "ast_fingerprint", "ast_fingerprint_nodes", "ast_branch_fingerprints", "return_type", "param_types", "is_object_member")
+    __slots__ = ("qualified_name", "name", "docstring", "start_line", "end_line", "decorators", "is_exported", "ast_fingerprint", "ast_fingerprint_nodes", "ast_branch_fingerprints", "return_type", "param_types", "is_object_member", "is_program_main")
     QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     DOCSTRING_FIELD_NUMBER: _ClassVar[int]
@@ -479,6 +479,7 @@ class Function(_message.Message):
     RETURN_TYPE_FIELD_NUMBER: _ClassVar[int]
     PARAM_TYPES_FIELD_NUMBER: _ClassVar[int]
     IS_OBJECT_MEMBER_FIELD_NUMBER: _ClassVar[int]
+    IS_PROGRAM_MAIN_FIELD_NUMBER: _ClassVar[int]
     qualified_name: str
     name: str
     docstring: str
@@ -492,10 +493,11 @@ class Function(_message.Message):
     return_type: str
     param_types: _containers.RepeatedScalarFieldContainer[str]
     is_object_member: bool
-    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ..., is_exported: bool = ..., ast_fingerprint: _Optional[str] = ..., ast_fingerprint_nodes: _Optional[int] = ..., ast_branch_fingerprints: _Optional[_Iterable[str]] = ..., return_type: _Optional[str] = ..., param_types: _Optional[_Iterable[str]] = ..., is_object_member: bool = ...) -> None: ...
+    is_program_main: bool
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ..., is_exported: bool = ..., ast_fingerprint: _Optional[str] = ..., ast_fingerprint_nodes: _Optional[int] = ..., ast_branch_fingerprints: _Optional[_Iterable[str]] = ..., return_type: _Optional[str] = ..., param_types: _Optional[_Iterable[str]] = ..., is_object_member: bool = ..., is_program_main: bool = ...) -> None: ...
 
 class Method(_message.Message):
-    __slots__ = ("qualified_name", "name", "docstring", "start_line", "end_line", "decorators", "ast_fingerprint", "ast_fingerprint_nodes", "ast_branch_fingerprints", "return_type", "param_types", "signature", "declared_in_class")
+    __slots__ = ("qualified_name", "name", "docstring", "start_line", "end_line", "decorators", "ast_fingerprint", "ast_fingerprint_nodes", "ast_branch_fingerprints", "return_type", "param_types", "signature", "declared_in_class", "is_exported", "is_program_main")
     QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     DOCSTRING_FIELD_NUMBER: _ClassVar[int]
@@ -509,6 +511,8 @@ class Method(_message.Message):
     PARAM_TYPES_FIELD_NUMBER: _ClassVar[int]
     SIGNATURE_FIELD_NUMBER: _ClassVar[int]
     DECLARED_IN_CLASS_FIELD_NUMBER: _ClassVar[int]
+    IS_EXPORTED_FIELD_NUMBER: _ClassVar[int]
+    IS_PROGRAM_MAIN_FIELD_NUMBER: _ClassVar[int]
     qualified_name: str
     name: str
     docstring: str
@@ -522,7 +526,9 @@ class Method(_message.Message):
     param_types: _containers.RepeatedScalarFieldContainer[str]
     signature: str
     declared_in_class: bool
-    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ..., ast_fingerprint: _Optional[str] = ..., ast_fingerprint_nodes: _Optional[int] = ..., ast_branch_fingerprints: _Optional[_Iterable[str]] = ..., return_type: _Optional[str] = ..., param_types: _Optional[_Iterable[str]] = ..., signature: _Optional[str] = ..., declared_in_class: bool = ...) -> None: ...
+    is_exported: bool
+    is_program_main: bool
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ..., ast_fingerprint: _Optional[str] = ..., ast_fingerprint_nodes: _Optional[int] = ..., ast_branch_fingerprints: _Optional[_Iterable[str]] = ..., return_type: _Optional[str] = ..., param_types: _Optional[_Iterable[str]] = ..., signature: _Optional[str] = ..., declared_in_class: bool = ..., is_exported: bool = ..., is_program_main: bool = ...) -> None: ...
 
 class Class(_message.Message):
     __slots__ = ("qualified_name", "name", "docstring", "start_line", "end_line", "decorators", "is_exported", "namespace", "generic_arity")

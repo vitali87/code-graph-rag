@@ -785,11 +785,13 @@ KEY_DECORATORS = "decorators"
 # languages the extractor does not read (the positional_params rule).
 KEY_RETURN_TYPE = "return_type"
 KEY_PARAM_TYPES = "param_types"
-# A Java method whose declaration the JVM launcher accepts as `main`: named
-# main, returning void, taking nothing or one String array however the array
-# is spelled. `param_types` cannot say it, since `String args[]` and a scalar
-# `String arg` both record `String` (issue #2527). Set only when true.
-KEY_IS_JAVA_MAIN = "is_java_main"
+# A `main` the language's launcher starts, judged by the parser because the
+# graph cannot say it otherwise (issue #2527). A Java method qualifies when it
+# returns void, has an implementation and takes nothing or one String array
+# however the array is spelled (`param_types` records `String args[]` and a
+# scalar `String arg` alike); a Dart function when it is top-level (a local
+# one registers under its module too). Set only when true.
+KEY_IS_PROGRAM_MAIN = "is_program_main"
 # A C++ member's overload identity, `(int,double) const` (issue #2455): what
 # tells `Sep.g` from `Sep.g@4`, and what an incremental run reads back so a
 # re-parsed out-of-class definition lands on the overload it defines.

@@ -15,8 +15,8 @@ C_CPP_ENTRY_FUNCTION_NAMES: frozenset[str] = frozenset(
 )
 
 # The `main` a launcher calls with no call site the graph sees: the
-# module-level function a console script or `dart run` names. The JVM's
-# `main` is read from its declaration at parse time (KEY_IS_JAVA_MAIN).
+# module-level function a console script or `dart run` names. The JVM's and
+# Dart's `main` are judged at parse time (KEY_IS_PROGRAM_MAIN).
 PROGRAM_MAIN_NAME = "main"
 
 # Decorators whose presence marks a function/method as an implicit entry point

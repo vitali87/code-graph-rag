@@ -26,12 +26,14 @@ from codebase_rag.dead_code import (
 )
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 from codebase_rag.types_defs import (
     DeadCodeConfig,
     PropertyDict,
     PropertyValue,
     ResultRow,
 )
+from codec import schema_pb2 as pb
 from evals.cgr_graph import _CapturingIngestor
 
 _PROJECT = "proj"
@@ -108,6 +110,12 @@ def serve():
 class Command:
     def main(self):
         return 6
+
+    def build(self):
+        def main():
+            return 8
+
+        return main
 
 
 def build_command():
@@ -208,6 +216,19 @@ void run() {}
 
 void neverCalled() {}
 """,
+    # Dart registers a local function under its module, as it does a
+    # top-level one, so only the parser can tell this `main` is local.
+    "dartapp/tool.dart": """\
+void outer() {
+  void main() {
+    helper();
+  }
+
+  main();
+}
+
+void helper() {}
+""",
     "gocmd/main.go": """\
 package main
 
@@ -226,11 +247,13 @@ _UNUSED_PUBLIC = (
     "proj.svc.jobs.truly_unused",
     "proj.svc.jobs.Report.render",
     "proj.svc.cli.build_command",
+    "proj.svc.cli.Command.build",
     "proj.web.index.neverCalled",
     "proj.web.index.Svc.stale",
     "proj.java.app.App.App.unusedPublic()",
     "proj.cs.Program.Demo.Program.Unused",
     "proj.dartapp.main.neverCalled",
+    "proj.dartapp.tool.outer",
     "proj.gocmd.main.Unused",
 )
 
@@ -329,6 +352,16 @@ _JAVA_MAINS: dict[str, str] = {
     "Objects": "public static void main(Object[] a)",
     "TwoParams": "public static void main(String[] a, String b)",
     "PackagePrivate": "static void main(String[] args)",
+    # Nothing to launch: no body.
+    "AbstractMain": "public abstract void main(String[] args);",
+    "InterfaceMain": "public void main(String[] args);",
+    # A concrete static main in an abstract class launches as usual.
+    "AbstractStatic": "public static void main(String[] args)",
+}
+_JAVA_TYPE_HEADERS = {
+    "AbstractMain": "public abstract class",
+    "AbstractStatic": "public abstract class",
+    "InterfaceMain": "public interface",
 }
 _JAVA_ENTRY_CLASSES = (
     "CStyle",
@@ -339,6 +372,7 @@ _JAVA_ENTRY_CLASSES = (
     "QualifiedCStyle",
     "Annotated",
     "Instance",
+    "AbstractStatic",
 )
 # The launcher accepts a package-private `main` too, so the parser records
 # it; only the root needs the export.
@@ -346,9 +380,13 @@ _JAVA_MAIN_DECLARATIONS = (*_JAVA_ENTRY_CLASSES, "PackagePrivate")
 
 
 def _java_main_source(name: str, signature: str) -> str:
-    body = "{ return helper(); }" if " int " in signature else "{ helper(); }"
+    if signature.endswith(";"):
+        body = ""
+    else:
+        body = "{ return helper(); }" if " int " in signature else "{ helper(); }"
+    header = _JAVA_TYPE_HEADERS.get(name, "public class")
     return (
-        f"package j;\n\npublic class {name} {{\n    {signature} {body}\n\n"
+        f"package j;\n\n{header} {name} {{\n    {signature} {body}\n\n"
         "    private static int helper() { return 0; }\n}\n"
     )
 
@@ -407,6 +445,9 @@ class TestApplicationMode:
             "proj.svc.jobs.plugin_hook",
             "proj.svc.cli.Command.main",
             "proj.svc.cli.build_command.main",
+            "proj.svc.cli.Command.build.main",
+            "proj.dartapp.tool.main",
+            "proj.dartapp.tool.helper",
             "proj.web.index.main",
             "proj.java.app.App.App.main(int)",
         }
@@ -440,6 +481,11 @@ class TestApplicationMode:
             # Only a module-level Python `main` is a console script's target.
             "proj.svc.cli.Command.main",
             "proj.svc.cli.build_command.main",
+            "proj.svc.cli.Command.build.main",
+            # Only a top-level Dart `main` is the program's entry, and the
+            # helper only a local `main` calls is dead with it.
+            "proj.dartapp.tool.main",
+            "proj.dartapp.tool.helper",
             # JS and TS have no `main` convention.
             "proj.web.index.main",
             # The JVM calls `void main()` or `void main(String[])` only.
@@ -485,7 +531,7 @@ class TestJavaMainFromItsDeclaration:
         qn = _java_main_qn(java_graph, name)
         props = nodes[(cs.NodeLabel.METHOD.value, qn)]
 
-        assert (props.get(cs.KEY_IS_JAVA_MAIN) is True) == (
+        assert (props.get(cs.KEY_IS_PROGRAM_MAIN) is True) == (
             name in _JAVA_MAIN_DECLARATIONS
         ), props
 
@@ -498,6 +544,68 @@ class TestJavaMainFromItsDeclaration:
         assert (_java_main_qn(java_graph, name) in dead) == (
             name == "PackagePrivate"
         ), sorted(dead)
+
+
+class TestProgramMainMark:
+    def test_only_the_top_level_dart_main_is_marked(self, graph: _Graph) -> None:
+        nodes, _ = graph
+        function = cs.NodeLabel.FUNCTION.value
+
+        top_level = nodes[(function, "proj.dartapp.main.main")]
+        local = nodes[(function, "proj.dartapp.tool.main")]
+
+        assert top_level.get(cs.KEY_IS_PROGRAM_MAIN) is True
+        assert local.get(cs.KEY_IS_PROGRAM_MAIN) is not True
+
+    def test_the_marks_travel_in_a_protobuf_export(self, tmp_path: Path) -> None:
+        # Both marks decide a launcher main's root, so an exported index
+        # without them reads every such main as plain unused code.
+        root = tmp_path / _PROJECT
+        files = {
+            "j/Launcher.java": _java_main_source(
+                "Launcher", "public static void main(String args[])"
+            ),
+            "j/Scalar.java": _java_main_source(
+                "Scalar", "public static void main(String arg)"
+            ),
+            "dartapp/main.dart": _FIXTURE["dartapp/main.dart"],
+            "dartapp/tool.dart": _FIXTURE["dartapp/tool.dart"],
+        }
+        for relative, source in files.items():
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(source, encoding="utf-8")
+        out = tmp_path / "export"
+        out.mkdir()
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=ProtobufFileIngestor(str(out), split_index=False),
+            repo_path=root,
+            parsers=parsers,
+            queries=queries,
+            project_name=_PROJECT,
+            skip_embeddings=True,
+        ).run(force=True)
+
+        index = pb.GraphCodeIndex()
+        index.ParseFromString((out / cs.PROTOBUF_INDEX_FILE).read_bytes())
+        methods = {
+            node.method.qualified_name: node.method
+            for node in index.nodes
+            if node.WhichOneof(cs.PROTOBUF_PAYLOAD_ONEOF) == "method"
+        }
+        functions = {
+            node.function.qualified_name: node.function
+            for node in index.nodes
+            if node.WhichOneof(cs.PROTOBUF_PAYLOAD_ONEOF) == "function"
+        }
+
+        launcher = methods["proj.j.Launcher.Launcher.main(String)"]
+        scalar = methods["proj.j.Scalar.Scalar.main(String)"]
+        assert (launcher.is_exported, launcher.is_program_main) == (True, True)
+        assert (scalar.is_exported, scalar.is_program_main) == (True, False)
+        assert functions["proj.dartapp.main.main"].is_program_main is True
+        assert functions["proj.dartapp.tool.main"].is_program_main is False
 
 
 class TestRootsThatStayInApplicationMode:

@@ -260,6 +260,9 @@ TS_JAVA_ARRAY_TYPE = "array_type"
 TS_JAVA_FIELD_DIMENSIONS = "dimensions"
 TS_JAVA_FIELD_ELEMENT = "element"
 TS_JAVA_DIMENSION_OPEN = "["
+# A body-less `main` (abstract, or an interface's) has nothing to launch; a
+# native one is implemented outside Java.
+TS_JAVA_NATIVE = "native"
 
 # Java path parsing constants
 JAVA_PATH_JAVA = "java"

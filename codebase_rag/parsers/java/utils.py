@@ -358,19 +358,38 @@ def _extract_method_parameters(method_node: ASTNode) -> list[str]:
 def is_main_declaration(method_node: ASTNode) -> bool:
     """Whether the JVM launcher accepts this declaration as `main`.
 
-    It must return void and take nothing or one String array, whether the
-    array is written on the type, on the name or as varargs. The recorded
-    parameter types cannot decide this: `String args[]` and a scalar
-    `String arg` both record `String` (issue #2527).
+    It must return void, have an implementation and take nothing or one
+    String array, whether the array is written on the type, on the name or
+    as varargs. The recorded parameter types cannot decide this: `String
+    args[]` and a scalar `String arg` both record `String` (issue #2527).
     """
-    if method_node.type != cs.TS_METHOD_DECLARATION:
-        return False
-    name = safe_decode_text(method_node.child_by_field_name(cs.TS_FIELD_NAME))
     return_type = method_node.child_by_field_name(cs.TS_FIELD_TYPE)
-    if name != cs.JAVA_MAIN_METHOD_NAME or return_type is None:
-        return False
-    if return_type.type != cs.TS_VOID_TYPE:
-        return False
+    return (
+        method_node.type == cs.TS_METHOD_DECLARATION
+        and safe_decode_text(method_node.child_by_field_name(cs.TS_FIELD_NAME))
+        == cs.JAVA_MAIN_METHOD_NAME
+        and return_type is not None
+        and return_type.type == cs.TS_VOID_TYPE
+        and _has_implementation(method_node)
+        and _takes_main_args(method_node)
+    )
+
+
+def _has_implementation(method_node: ASTNode) -> bool:
+    # An abstract `main`, or an interface's without `static`, has no body for
+    # the launcher to run; a native one is implemented outside Java.
+    if method_node.child_by_field_name(cs.TS_FIELD_BODY) is not None:
+        return True
+    modifiers = next(
+        (child for child in method_node.children if child.type == cs.TS_MODIFIERS),
+        None,
+    )
+    return modifiers is not None and any(
+        child.type == cs.TS_JAVA_NATIVE for child in modifiers.children
+    )
+
+
+def _takes_main_args(method_node: ASTNode) -> bool:
     params_node = method_node.child_by_field_name(cs.TS_FIELD_PARAMETERS)
     params = (
         [

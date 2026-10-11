@@ -1706,7 +1706,7 @@ def _language_method_props(
         from .java import utils as java_utils
 
         if java_utils.is_main_declaration(method_node):
-            return {cs.KEY_IS_JAVA_MAIN: True}
+            return {cs.KEY_IS_PROGRAM_MAIN: True}
     return {}
 
 
