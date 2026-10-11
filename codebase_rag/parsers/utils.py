@@ -1546,6 +1546,12 @@ def _method_container_label(
     # carry the container's real node label. Callers pass Class by default, but a
     # trait/interface (Interface) or enum (Enum) container would then never match
     # and drop the containment edge. Prefer the label it was registered with.
+    # Where a TS interface shares its name with a value (issue #2520) the
+    # registry holds the value's kind, so the label the owner was declared with
+    # decides: an interface's members stay on the Interface node.
+    type_side = function_registry.type_kind(container_qn)
+    if type_side is not None and type_side.value == container_type.value:
+        return container_type
     container_label = container_type
     registered = function_registry.get(container_qn)
     if registered is not None and registered != NodeType.METHOD:
@@ -1627,7 +1633,12 @@ def _register_method_qn(
             method_node, method_qn, function_registry, start_line, start_col
         )
         return cpp_member.qualified_name, cpp_member
-    return function_registry.register_unique_qn(method_qn, start_line, start_col), None
+    # TypeScript keeps a type and a same-named value as two nodes (#2520).
+    kind = NodeType.METHOD if language in cs.JS_TS_LANGUAGES else None
+    registered = function_registry.register_unique_qn(
+        method_qn, start_line, start_col, kind=kind
+    )
+    return registered, None
 
 
 def _cpp_member_props(cpp_member: _CppMember | None) -> PropertyDict:
