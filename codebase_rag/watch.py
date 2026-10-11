@@ -52,7 +52,7 @@ from .services import IngestorProtocol, QueryProtocol
 from .services.graph_service import MemgraphIngestor
 from .sync_guard import (
     SyncRefusedError,
-    clear_sync_incomplete,
+    clear_own_sync_incomplete,
     mark_sync_incomplete,
     project_claim,
     sync_marker_down,
@@ -104,10 +104,12 @@ class WriteMarker:
     Down before the initial scan, a full re-index or a re-ingest's first
     write, and off once that write succeeded, so a watcher stopped part-way
     leaves a graph `cgr status` and the MCP server know to be partial. It is
-    the CLI sync's own marker, so `cgr start` clears what the watcher left
-    and the other way round. Every mark holds to the claim `cgr watch` took
-    on its project (#2411): once another repository has the name, the write
-    is refused instead of replacing that repository's graph.
+    the CLI sync's own marker, so `cgr start` clears what the watcher left;
+    the watcher takes off only a marker it put down itself, so one another
+    writer put down since stays (review of PR 3365). Every mark holds to the
+    claim `cgr watch` took on its project (#2411): once another repository
+    has the name, the write is refused instead of replacing that
+    repository's graph.
     """
 
     def __init__(
@@ -127,6 +129,14 @@ class WriteMarker:
             self._ingestor, self._project_name, self._owner, self._owned_roots
         )
 
+    def unfinished(self) -> bool:
+        """Whether a CLI sync's marker is already down: one did not finish.
+
+        Asked with the checkout lock held, so no writer of this checkout can
+        still be running behind it.
+        """
+        return sync_marker_down(self._ingestor, self._project_name)
+
     def mark_scoped(self) -> None:
         """Mark before a re-ingest writes, unless a sync left the graph partial.
 
@@ -135,12 +145,12 @@ class WriteMarker:
         unfinished `cgr start` left partial. The MCP `reingest` refuses there
         for the same reason (#1705); the watcher re-indexes instead.
         """
-        if sync_marker_down(self._ingestor, self._project_name):
+        if self.unfinished():
             raise UnfinishedSyncError(self._project_name)
         self.mark()
 
     def clear(self) -> None:
-        clear_sync_incomplete(self._ingestor, self._project_name)
+        clear_own_sync_incomplete(self._ingestor, self._project_name, self._owner)
 
 
 def _marked_run(
@@ -157,12 +167,25 @@ def _marked_run(
     Ctrl+C landing after the commit found the graph whole. Any other failure
     leaves it down. `before_run` runs between the mark and the run, where
     `cgr start` ensures the graph's constraints.
+
+    A marker already down is an earlier writer's that did not finish: a
+    watcher stopped part-way through a re-ingest may have deleted an
+    unchanged dependent's definitions, which an incremental run skips by
+    their saved hash. So the run is forced, and only that rebuild takes the
+    marker off (review of PR 3365).
     """
     if marker is None:
         if before_run is not None:
             before_run()
         updater.run(force=force)
         return
+    if not force and marker.unfinished():
+        logger.warning(
+            logs.WATCHER_FULL_RUN_OVER_UNFINISHED_SYNC.format(
+                project=updater.project_name
+            )
+        )
+        force = True
     marker.mark()
     try:
         if before_run is not None:
@@ -668,15 +691,23 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         first write leaves it down until the full re-index owed then clears
         it (issue #1681).
         """
-        reingest: Callable[..., ReingestReport] = self.updater.reingest
-        if self._marker is not None:
-            reingest = partial(reingest, before_write=self._marker.mark_scoped)
-        if deleted:
-            reingest((), deleted=(path,))
-        else:
-            reingest((path,))
-        if self._marker is not None and self.updater.reingest_mutated:
-            self._marker.clear()
+        marker = self._marker
+        if marker is None:
+            _reingest_path(self.updater.reingest, path, deleted)
+            return
+        updater = self.updater
+        # Held from before the first write until the marker is off, and
+        # re-entered by the re-ingest itself: let go in between, a sync of
+        # the checkout could mark for this clear to take off (review of PR
+        # 3365).
+        with repo_sync_lock(updater.repo_path, updater.project_name, wait=True):
+            _reingest_path(
+                partial(updater.reingest, before_write=marker.mark_scoped),
+                path,
+                deleted,
+            )
+            if updater.reingest_mutated:
+                marker.clear()
 
     def _rebuild_unfinished_sync(self) -> None:
         """Re-index the whole checkout over a graph an unfinished sync left.
@@ -688,6 +719,15 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         self._rebuild_after_failure(
             logs.WATCHER_SYNC_UNFINISHED.format(project=self.updater.project_name)
         )
+
+
+def _reingest_path(
+    reingest: Callable[..., ReingestReport], path: Path, deleted: bool
+) -> None:
+    if deleted:
+        reingest((), deleted=(path,))
+    else:
+        reingest((path,))
 
 
 def _coalesce(

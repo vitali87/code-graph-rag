@@ -204,7 +204,9 @@ CYPHER_CLI_SYNC_MARKER_OWNER = (
     "m.owner_token AS owner_token"
 )
 # Compare-and-delete on the owner token read above: a sync that started
-# after that read re-marked the node under its own token and keeps it.
+# after that read re-marked the node under its own token and keeps it. `cgr
+# watch` takes its own marker off the same way, so a marker another writer
+# has put down since its mark is left to that writer (review of PR 3365).
 CYPHER_CLEAR_STOPPED_CLI_SYNC_MARKER = (
     "MATCH (m:IncompleteRun {project: $project_name, run_id: $run_id}) "
     "WHERE m.owner_token = $owner_token DELETE m"

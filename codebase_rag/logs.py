@@ -458,6 +458,10 @@ WATCHER_REBUILDING_AFTER_FAILURE = (
     "Re-indexing the whole repository before this change, because the last "
     "re-ingest failed part way through."
 )
+WATCHER_FULL_RUN_OVER_UNFINISHED_SYNC = (
+    "A sync of project {project} did not finish, so its graph may be partial. "
+    "Re-indexing the whole repository instead of only what changed."
+)
 WATCHER_SYNC_UNFINISHED = (
     "A sync of project {project} did not finish, so its graph may be partial. "
     "Re-indexing the whole repository instead of re-ingesting this change."

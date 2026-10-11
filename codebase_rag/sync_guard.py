@@ -232,6 +232,26 @@ def clear_sync_incomplete(ingestor: QueryProtocol, project_name: str) -> None:
         )
 
 
+def clear_own_sync_incomplete(
+    ingestor: QueryProtocol, project_name: str, owner: dict[str, PropertyValue]
+) -> None:
+    """Take off the marker `owner` put down, and no other; never fails the write.
+
+    The CLI sync's marker is one node per project, re-marked by whichever
+    writer marks next. A writer the checkout lock does not hold back (a sync
+    of another checkout under the same name) may have marked since, and its
+    warning is its own to lift (review of PR 3365).
+    """
+    params = sync_marker_params(project_name)
+    params[cs.KEY_OWNER_TOKEN] = owner[cs.KEY_OWNER_TOKEN]
+    try:
+        ingestor.execute_write(cq.CYPHER_CLEAR_STOPPED_CLI_SYNC_MARKER, params)
+    except Exception as exc:
+        logger.warning(
+            ls.CLI_SYNC_MARKER_NOT_CLEARED.format(project=project_name, error=exc)
+        )
+
+
 def sync_marker_down(ingestor: QueryProtocol, project_name: str) -> bool:
     """Whether a CLI sync's marker is down on the project: one did not finish."""
     return bool(

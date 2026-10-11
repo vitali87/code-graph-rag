@@ -50,7 +50,13 @@ from codebase_rag import cypher_queries as cq
 from codebase_rag.cli import app
 from codebase_rag.config import settings
 from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.types_defs import PropertyDict, PropertyValue, ResultRow
+from codebase_rag.sync_lock import SyncInProgressError, repo_sync_lock
+from codebase_rag.types_defs import (
+    PropertyDict,
+    PropertyValue,
+    ReingestReport,
+    ResultRow,
+)
 from codebase_rag.utils.path_utils import derive_project_name
 from evals.cgr_graph import _StatefulIngestor
 
@@ -91,20 +97,36 @@ class _MarkedGraph(_Graph):
     `events` records each mark and clear in order, and `unmarked_writes`
     every other graph write made while no marker was down. `timeline` adds
     each `ensure_constraints` call and each run of graph writes, so their
-    order against the marker can be read off.
+    order against the marker can be read off. The marker carries the owner
+    token of whoever put it down last, as the real one does: the run-scoped
+    clear lifts it whoever that was, the owner-checked one only for them.
     """
 
     def __init__(self) -> None:
         super().__init__()
         self.marker_down = False
+        self.marker_owner: PropertyValue = None
         self.events: list[str] = []
         self.unmarked_writes: list[str] = []
         self.timeline: list[str] = []
 
-    def _put_marker_down(self) -> None:
+    def _put_marker_down(self, params: PropertyDict | None) -> None:
         self.marker_down = True
+        self.marker_owner = (params or {}).get(cs.KEY_OWNER_TOKEN)
         self.events.append("mark")
         self.timeline.append("mark")
+
+    def put_foreign_marker(self, token: str) -> None:
+        """Another writer's mark: a sync that did not finish, or one running."""
+        self.marker_down = True
+        self.marker_owner = token
+        self.timeline.append(f"mark by {token}")
+
+    def _lift_marker(self) -> None:
+        self.marker_down = False
+        self.marker_owner = None
+        self.events.append("clear")
+        self.timeline.append("clear")
 
     def _wrote(self, what: str) -> None:
         if not self.marker_down:
@@ -122,17 +144,21 @@ class _MarkedGraph(_Graph):
             return [{cs.KEY_OWNER_TOKEN: "held"}] if self.marker_down else []
         rows = super().fetch_all(query, params)
         if query == cq.CYPHER_MARK_CLAIMED_PROJECT_INCOMPLETE and rows:
-            self._put_marker_down()
+            self._put_marker_down(params)
         return rows
 
     def execute_write(self, query: str, params: PropertyDict | None = None) -> None:
         if query == cq.CYPHER_MARK_CLI_SYNC_INCOMPLETE:
-            self._put_marker_down()
+            self._put_marker_down(params)
             return
         if query == cq.CYPHER_CLEAR_PROJECT_INCOMPLETE:
-            self.marker_down = False
-            self.events.append("clear")
-            self.timeline.append("clear")
+            self._lift_marker()
+            return
+        if query == cq.CYPHER_CLEAR_STOPPED_CLI_SYNC_MARKER:
+            # Compare-and-delete on the owner token.
+            token = (params or {}).get(cs.KEY_OWNER_TOKEN)
+            if self.marker_down and token == self.marker_owner:
+                self._lift_marker()
             return
         if query == cq.CYPHER_RELEASE_PROJECT_CLAIM:
             # Claim bookkeeping, not code: kept apart from the writes.
@@ -1302,6 +1328,226 @@ class TestIncompleteRunMarker:
         assert graph.marker_down is True
         assert _projects(graph) == [derive_project_name(shop)]
         watching.observer_cls.assert_not_called()
+
+
+_DEPENDENT = "from m import a\n\n\ndef b():\n    return a()\n"
+
+
+def _sync_from_another_thread(repo: Path, graph: _MarkedGraph) -> str:
+    """A `cgr start` of `repo` in another thread: it marks once it holds the lock."""
+    outcome: list[str] = []
+
+    def sync() -> None:
+        try:
+            with repo_sync_lock(repo, "shop__other"):
+                graph.put_foreign_marker("cgr-start")
+                outcome.append("marked")
+        except SyncInProgressError:
+            outcome.append("refused")
+
+    worker = threading.Thread(target=sync, daemon=True)
+    worker.start()
+    worker.join(60)
+    return outcome[0]
+
+
+class TestMarkerAgainstOtherWriters:
+    """Review of PR 3365: the watcher's marker beside other writers' (#2219).
+
+    It is the CLI sync's own marker, shared with `cgr start`. A re-ingest
+    took it off after letting the checkout lock go, and by run id alone, so
+    a sync that marked in between lost its warning (Greptile, CodeRabbit).
+    A scan that found one an earlier writer left ran incrementally and took
+    it off over the definitions that writer had deleted (Greptile).
+    """
+
+    @pytest.fixture
+    def graph(self) -> _MarkedGraph:
+        return _MarkedGraph()
+
+    @pytest.fixture
+    def forces(self, monkeypatch: pytest.MonkeyPatch) -> list[bool]:
+        """The `force` of every full run, in order; each still runs."""
+        seen: list[bool] = []
+        original = GraphUpdater.run
+
+        def record(self: GraphUpdater, force: bool = False) -> None:
+            seen.append(force)
+            original(self, force=force)
+
+        monkeypatch.setattr(GraphUpdater, "run", record)
+        return seen
+
+    def _after_each_reingest(
+        self, monkeypatch: pytest.MonkeyPatch, then: Callable[[], None]
+    ) -> None:
+        original = GraphUpdater.reingest
+
+        def reingest_then(
+            self: GraphUpdater,
+            paths: Sequence[Path | str],
+            deleted: Sequence[Path | str] = (),
+            before_write: Callable[[], None] | None = None,
+        ) -> ReingestReport:
+            report = original(self, paths, deleted, before_write)
+            then()
+            return report
+
+        monkeypatch.setattr(GraphUpdater, "reingest", reingest_then)
+
+    def test_a_sync_of_the_checkout_waits_until_the_reingest_cleared_its_marker(
+        self,
+        shop: Path,
+        graph: _MarkedGraph,
+        watching: _Watch,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The moment the re-ingest returns, a `cgr start` of the checkout
+        # tries to start: the watcher still holds the lock until its marker
+        # is off, so that sync is refused instead of marking in between.
+        seen: list[str] = []
+        self._after_each_reingest(
+            monkeypatch, lambda: seen.append(_sync_from_another_thread(shop, graph))
+        )
+        watching.while_watching = lambda handler: _edit(handler, shop / "m.py")
+
+        result = _watch("--repo-path", str(shop), "--no-start-stack", "-d", "0")
+
+        assert result.exit_code == 0, result.output
+        assert seen == ["refused"]
+        assert graph.marker_down is False
+
+    def test_a_marker_another_writer_put_down_meanwhile_is_left_to_it(
+        self,
+        shop: Path,
+        graph: _MarkedGraph,
+        watching: _Watch,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # A writer the checkout lock does not hold back (a sync of another
+        # checkout under this project name) marks during the re-ingest: the
+        # watcher takes off only the marker it put down itself.
+        self._after_each_reingest(
+            monkeypatch, lambda: graph.put_foreign_marker("other-checkout")
+        )
+        watching.while_watching = lambda handler: _edit(handler, shop / "m.py")
+
+        result = _watch("--repo-path", str(shop), "--no-start-stack", "-d", "0")
+
+        assert result.exit_code == 0, result.output
+        assert graph.marker_down is True
+        assert graph.marker_owner == "other-checkout"
+
+    def test_a_full_run_leaves_a_marker_another_writer_put_down_meanwhile(
+        self,
+        shop: Path,
+        graph: _MarkedGraph,
+        watching: _Watch,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        original = GraphUpdater.run
+
+        def run_then_another_writer_marks(
+            self: GraphUpdater, force: bool = False
+        ) -> None:
+            original(self, force=force)
+            graph.put_foreign_marker("other-checkout")
+
+        monkeypatch.setattr(GraphUpdater, "run", run_then_another_writer_marks)
+
+        result = _watch("--repo-path", str(shop), "--no-start-stack")
+
+        assert result.exit_code == 0, result.output
+        assert graph.marker_down is True
+        assert graph.marker_owner == "other-checkout"
+
+    def test_the_watchers_own_marker_still_comes_off(
+        self, shop: Path, graph: _MarkedGraph, watching: _Watch
+    ) -> None:
+        # Negative: the owner check lifts every marker the watcher wrote.
+        watching.while_watching = lambda handler: _edit(handler, shop / "m.py")
+
+        result = _watch("--repo-path", str(shop), "--no-start-stack", "-d", "0")
+
+        assert result.exit_code == 0, result.output
+        assert graph.events == ["mark", "clear", "mark", "clear"]
+        assert graph.marker_down is False
+
+    def test_a_scan_that_finds_an_earlier_writers_marker_rebuilds_then_clears(
+        self,
+        shop: Path,
+        graph: _MarkedGraph,
+        watching: _Watch,
+        forces: list[bool],
+    ) -> None:
+        (shop / "n.py").write_text(_DEPENDENT, encoding="utf-8")
+        first = _watch("--repo-path", str(shop), "--no-start-stack")
+        assert first.exit_code == 0, first.output
+        project = derive_project_name(shop)
+        dependent = f"{project}.n.b"
+        assert dependent in _functions(graph)
+        # A watcher killed part-way through a re-ingest of m.py: it had
+        # deleted the unchanged dependent's definitions, whose saved hash
+        # still matches the file, and left its marker down.
+        graph._detach_delete({(cs.NodeLabel.FUNCTION.value, dependent)})
+        graph.put_foreign_marker("dead-watcher")
+        graph.timeline.clear()
+        watching.slept = False
+
+        result = _watch("--repo-path", str(shop), "--no-start-stack")
+
+        assert result.exit_code == 0, result.output
+        assert dependent in _functions(graph)
+        assert forces == [False, True]
+        assert graph.timeline[-1] == "clear"
+        assert graph.marker_down is False
+
+    def test_a_start_with_no_earlier_marker_stays_incremental(
+        self,
+        shop: Path,
+        graph: _MarkedGraph,
+        watching: _Watch,
+        forces: list[bool],
+    ) -> None:
+        # Negative: only an unfinished writer's marker forces a rebuild.
+        first = _watch("--repo-path", str(shop), "--no-start-stack")
+        assert first.exit_code == 0, first.output
+        watching.slept = False
+
+        result = _watch("--repo-path", str(shop), "--no-start-stack")
+
+        assert result.exit_code == 0, result.output
+        assert forces == [False, False]
+        assert graph.marker_down is False
+
+    @pytest.mark.parametrize(
+        ("earlier_marker", "expected"),
+        [(True, [False, True]), (False, [False, False])],
+        ids=["unfinished-writer", "none"],
+    )
+    def test_a_resync_under_new_ignore_rules_rebuilds_only_over_an_earlier_marker(
+        self,
+        shop: Path,
+        graph: _MarkedGraph,
+        watching: _Watch,
+        forces: list[bool],
+        earlier_marker: bool,
+        expected: list[bool],
+    ) -> None:
+        def rules_change(handler: CodeChangeEventHandler) -> None:
+            if earlier_marker:
+                graph.put_foreign_marker("dead-sync")
+            rules = shop / ".cgrignore"
+            rules.write_text("generated/\n", encoding="utf-8")
+            handler.dispatch(FileModifiedEvent(str(rules)))
+
+        watching.while_watching = rules_change
+
+        result = _watch("--repo-path", str(shop), "--no-start-stack", "-d", "0")
+
+        assert result.exit_code == 0, result.output
+        assert forces == expected
+        assert graph.marker_down is False
 
 
 class TestConnectionAndStack:
