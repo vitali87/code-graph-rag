@@ -145,6 +145,186 @@ FIELD_SUPERCLASS = "superclass"
 FIELD_SUPERCLASSES = "superclasses"
 FIELD_INTERFACES = "interfaces"
 
+# How the rename cross-check reads a name token (issue #2564). Each grammar
+# spells a binding its own way, so node types are matched by marker; a token
+# none of them recognises counts as a use, which refuses rather than misses.
+FIELD_PATTERN = "pattern"
+FIELD_DEFAULT = "default"
+# Fields whose content is evaluated, never bound: `x=helper`, `y: helper`.
+RENAME_VALUE_FIELDS = frozenset({FIELD_VALUE, FIELD_RIGHT, FIELD_DEFAULT, FIELD_TYPE})
+# Node types that only group the names one binding introduces: `a, helper = ...`.
+RENAME_WRAPPER_SUFFIXES = ("_pattern", "pattern_list", "expression_list")
+# A definition or declaration naming the token: `def helper`, `let helper`.
+RENAME_DEFINITION_SUFFIXES = (
+    "definition",
+    "declaration",
+    "declarator",
+    "_item",
+    "signature",
+    "_spec",
+)
+RENAME_DEFINITION_FIELDS = frozenset(
+    {FIELD_NAME, FIELD_PATTERN, FIELD_DECLARATOR, FIELD_PROPERTY}
+)
+# An assignment or loop target: `helper = 3`, `for helper in xs`.
+RENAME_REBINDING_MARKERS = ("assignment", "for", "declaration", "range")
+RENAME_REBINDING_FIELDS = frozenset({FIELD_LEFT, FIELD_PATTERN})
+# The assignment among them: a JS name it targets is not declared by it.
+RENAME_ASSIGNMENT_MARKER = "assignment"
+# Where a JS `const`, `let`, class, function name or catch binding holds:
+# the block around it. A `var` holds in its whole function.
+RENAME_JS_BLOCKS = frozenset(
+    {
+        "statement_block",
+        "program",
+        "for_statement",
+        "for_in_statement",
+        "catch_clause",
+        "switch_body",
+    }
+)
+RENAME_JS_FUNCTION_SCOPED = "variable_declaration"
+RENAME_JS_CLASS_BODY = "class_body"
+RENAME_PARAMETER_MARKER = "parameter"
+RENAME_AS_TARGET = "as_pattern_target"
+# The JS/TS imports that bind a name the importer chooses, with no `alias`
+# field to say so: the default import (`import mul from`), a namespace
+# import (`import * as mul from`) and TypeScript's `import mul =
+# require(...)` and `import mul = a.b`. Their first named child is a local
+# of the file, as an alias is, not the exported symbol's own name.
+RENAME_JS_IMPORT_BINDINGS = frozenset(
+    {"import_clause", "namespace_import", "import_require_clause", "import_alias"}
+)
+# A name that labels an argument or a key instead of naming a value.
+RENAME_KEYWORD_ARGUMENT_MARKER = "keyword_argument"
+RENAME_LABEL_TYPES = frozenset({"label", "name_colon"})
+RENAME_PAIR = "pair"
+RENAME_INITIALIZER_MARKER = "initializer"
+# What opens a scope a local binding shadows; a class body does not, since a
+# method's bare names never resolve to its class's attributes in Python.
+RENAME_SCOPE_MARKERS = (
+    "func",
+    "lambda",
+    "method",
+    "closure",
+    "comprehension",
+    "generator_expression",
+)
+RENAME_CLASS_MARKER = "class"
+RENAME_NOT_SCOPE_MARKERS = ("call", "invocation", "type", "signature")
+RENAME_MEMBER_ACCESS = (".", "->")
+# `->` reaches a member only in these languages; elsewhere it marks a return
+# type (`def make() -> Widget`, `fn new() -> Parse`) or a lambda's body.
+RENAME_ARROW_ACCESS = "->"
+RENAME_ARROW_MEMBER_LANGUAGES = frozenset(
+    {
+        SupportedLanguage.C,
+        SupportedLanguage.CPP,
+        SupportedLanguage.PHP,
+        SupportedLanguage.CSHARP,
+    }
+)
+# A node whose body holds methods, so `self`, `this` and a bare call inside
+# it reach the methods of the class its header names (it carries `body`).
+RENAME_TYPE_SCOPE_MARKERS = (
+    "class",
+    "impl",
+    "trait",
+    "interface",
+    "struct",
+    "enum",
+    "record",
+    "mixin",
+    "extension",
+)
+RENAME_IMPORT_MARKER = "import"
+# The statement that brings a name in from another module, by marker:
+# `import` and `from ... import` (Python, JS/TS, Java, Go, Scala, Dart),
+# `use` (Rust, PHP) and `using` (C#, C++).
+RENAME_IMPORT_STATEMENTS = (
+    "import",
+    "use_declaration",
+    "using_directive",
+    "using_declaration",
+)
+# What a path into the project may start with in place of a package name:
+# `use crate::Parse`, `use super::Parse`.
+RENAME_RUST_CRATE = "crate"
+RENAME_RUST_SELF = "self"
+RENAME_RUST_SUPER = "super"
+RENAME_PROJECT_ROOT_WORDS = frozenset(
+    {RENAME_RUST_CRATE, RENAME_RUST_SELF, RENAME_RUST_SUPER}
+)
+# The files that root a Rust crate: `crate::` starts in their directory.
+RENAME_RUST_CRATE_ROOTS = ("lib.rs", "main.rs")
+# `mod parse;` declares the child module `parse` of the file's own module.
+RENAME_RUST_MOD_ITEM = "mod_item"
+# A file that is its directory's module rather than one of its own:
+# `pkg/__init__.py` is `pkg`, `src/cmd/mod.rs` is `cmd`, `lib/index.js` is
+# `lib`, and `src/lib.rs` the crate root.
+RENAME_PACKAGE_FILES: dict[SupportedLanguage, frozenset[str]] = {
+    SupportedLanguage.PYTHON: frozenset({"__init__"}),
+    SupportedLanguage.RUST: frozenset({"mod", "lib", "main"}),
+    **dict.fromkeys(JS_TS_LANGUAGES, frozenset({"index"})),
+}
+# Words of an import statement that never name a module or a binding.
+RENAME_IMPORT_KEYWORDS = frozenset(
+    {
+        "import",
+        "from",
+        "use",
+        "as",
+        "static",
+        "pub",
+        "package",
+        "type",
+        "typeof",
+        "using",
+        "namespace",
+        "require",
+        "export",
+        "default",
+        "extern",
+        "in",
+        "*",
+    }
+)
+RENAME_IMPORT_ALIAS = "as"
+RENAME_IMPORT_ALL = "*"
+# Where a bare name reaches a function of another file only through an
+# import: a bare `sorted(xs)` there that imports no project `sorted` is the
+# builtin. Go, Java, C#, Scala and their like see a same-package function
+# with no import, Dart imports a library whole, and a Lua global is shared
+# by every file, so there a bare name is held to the plan as before.
+# What makes a JS/TS file a module: without either it is a classic script,
+# and its top-level names are globals every other script reaches bare.
+RENAME_JS_MODULE_STATEMENTS = frozenset({"import_statement", "export_statement"})
+RENAME_IMPORT_REQUIRED_LANGUAGES = frozenset(
+    {SupportedLanguage.PYTHON, SupportedLanguage.RUST, *JS_TS_LANGUAGES}
+)
+# How far above a binding its declaration's type and value may sit:
+# `Parse* p = ...` puts `p` three levels under the declaration.
+RENAME_DECLARATION_DEPTH = 3
+# Characters around a declared type that do not change which class it
+# names: `: Parse`, `*Parse`, `'Parse'`, `Parse?`.
+RENAME_TYPE_DECORATION = " \t\r\n:&*?'\""
+# What separates a qualified name's segments: `a::Parse`, `a.Parse`, `A\Parse`.
+RENAME_TYPE_SEPARATORS = ("::", ".", "\\")
+# Expressions that hand on their operand's value: `Parse::new(frame)?`.
+RENAME_TRANSPARENT_EXPRESSIONS = frozenset(
+    {"try_expression", "await_expression", "await", "parenthesized_expression"}
+)
+# An expression that builds an object: `Parse(x)`, `new Parse()`,
+# `Parse { .. }`, and `Parse::new(x)` by convention.
+RENAME_CONSTRUCTION_MARKERS = (
+    "call",
+    "new_expression",
+    "creation_expression",
+    "struct_expression",
+)
+RENAME_CONSTRUCTOR_SUFFIXES = ("::new", ".new")
+RENAME_PHP_RECEIVERS = frozenset({"$this", "self", "static", "parent"})
+
 QUERY_FUNCTIONS = "functions"
 QUERY_CLASSES = "classes"
 QUERY_CALLS = "calls"
