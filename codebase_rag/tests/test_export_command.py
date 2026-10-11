@@ -230,7 +230,9 @@ def test_the_help_lists_the_scope_and_hides_the_deprecated_options() -> None:
     help_text = click.unstyle(result.output)
 
     assert result.exit_code == 0
-    assert "--project-name" in help_text
+    assert "--project" in help_text
+    # The spelling before issue #2415 still works, out of sight.
+    assert "--project-name" not in help_text
     assert "--workspace" in help_text
     assert "--batch-size" not in help_text
     assert "--no-json" not in help_text
