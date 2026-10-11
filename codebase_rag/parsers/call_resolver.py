@@ -650,6 +650,10 @@ class CallResolver:
         # just to clear an empty dict.
         if (csharp := self.type_inference._csharp_type_inference) is not None:
             csharp._call_memo.clear()
+        # The Java class headers (issue #2470) were read off the trees the
+        # last pass saw; a re-parsed superclass must be walked again.
+        if (java := self.type_inference._java_type_inference) is not None:
+            java.reset_resolution_memos()
 
     def resolve_function_call(
         self,

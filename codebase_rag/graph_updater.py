@@ -114,6 +114,7 @@ from .services import (
     QueryProtocol,
 )
 from .services.resource_cleanup import prune_unanchored_resources
+from .sync_lock import holds_sync_lock
 from .trace.carry import CapturedTraceEdge, capture_trace_edges, carry_trace_edges
 from .types_defs import (
     CppDefinitionSpan,
@@ -2558,19 +2559,41 @@ class GraphUpdater:
             self._state_dir = prepare_state_dir(self.repo_path)
         return self._state_dir
 
+    def _require_repo_dir(self) -> None:
+        """Raise `FileNotFoundError` unless `self.repo_path` is a directory.
+
+        `run` checks this before `holds_sync_lock` takes the lock, so a
+        missing root is reported as missing, and no state directory is made
+        for it under CGR_HOME (issues #1651, #2441).
+        """
+        if not self.repo_path.is_dir():
+            raise FileNotFoundError(ls.REPO_PATH_MISSING.format(path=self.repo_path))
+
+    @holds_sync_lock(require=_require_repo_dir)
     def run(self, force: bool = False) -> None:
         """Ingest the repository; ``force`` rebuilds instead of updating incrementally.
 
         Raises `FileNotFoundError` when `self.repo_path` -- the target
-        directory, or the parent of a single-file target -- is not a
+        directory, or the project root of a single-file target -- is not a
         directory. The constructor recognises a single-file target only
         while the file exists, so a deleted or mistyped path fell through as
         a directory run rooted at a non-directory: the walk yielded nothing
         and the run reported success having indexed nothing (issue #1651).
         Raising here rather than in the constructor keeps construction cheap
         and side-effect free for callers that never run. A single-file
-        target deleted AFTER construction passes this check (its parent
-        exists) and is a separate decision (#1737).
+        target deleted AFTER construction passes this check (its root
+        exists) and is a separate decision (#1737). `holds_sync_lock` runs
+        the check (`_require_repo_dir`) before it opens the lock, so the
+        missing path is what the caller is told about.
+
+        Raises `SyncInProgressError`, before anything is written, while
+        another writer holds the checkout's sync lock, which
+        `holds_sync_lock` takes around the whole run (issue #2441),
+        `UnsafeSyncLockError` when that lock file is a symbolic link, and
+        `SyncLockUnavailableError` when it is there but cannot be opened
+        even read-only. The lock lives in the checkout's state directory;
+        when there is none and CGR_HOME cannot be written to create it, the
+        run goes ahead without it, after a warning.
 
         `committed` turns True once the run has nothing left that could leave
         the graph partial: at the commit point, or on the in-sync fast path.
@@ -2580,8 +2603,6 @@ class GraphUpdater:
         # First, so an interrupt anywhere below reads this run's answer, not
         # a reused updater's previous one.
         self.committed = False
-        if not self.repo_path.is_dir():
-            raise FileNotFoundError(ls.REPO_PATH_MISSING.format(path=self.repo_path))
         self._clear_python_inference_caches()
         # Reset per-run parse tracking so a reused updater does not reprocess
         # a previous run's files in Pass 3.
@@ -2792,7 +2813,9 @@ class GraphUpdater:
         self._emit_csharp_query_calls()
         self._write_unresolved_references()
 
-        self.factory.definition_processor.process_all_method_overrides()
+        self.factory.definition_processor.process_all_method_overrides(
+            self.known_module_paths()
+        )
 
         # Deferred endpoint emission: every module is parsed now, so router
         # mount prefixes (possibly cross-module) can resolve (issue #877).
@@ -3946,6 +3969,8 @@ class GraphUpdater:
         label = row.get(cs.KEY_LABEL)
         if not isinstance(qn, str) or not isinstance(label, str):
             return False
+        if self._is_reread_cpp_definition(row):
+            return False
         try:
             node_type = NodeType(label)
         except ValueError:
@@ -3990,6 +4015,13 @@ class GraphUpdater:
         # value that only its object reaches (issue #2435).
         if row.get(cs.KEY_IS_OBJECT_MEMBER):
             self.function_registry.mark_object_member(qn)
+        # Restore a C++ member's overload signature for unchanged headers, or
+        # a re-parsed out-of-class definition cannot tell which overload it
+        # defines and lands every one on the plain-named node (issue #2455).
+        if isinstance(signature := row.get(cs.KEY_SIGNATURE), str):
+            self.function_registry.restore_overload(
+                qn, signature, bool(row.get(cs.KEY_DECLARED_IN_CLASS))
+            )
         # Restore the class-body aliases of an unchanged method (`run =
         # _plain`), or a re-parsed file's `obj.run()` binds to nothing
         # (issue #2620).
@@ -4077,6 +4109,22 @@ class GraphUpdater:
                 dp.go_interfaces[qn] = GoInterfaceDecl(
                     tuple(_stored_strings(embeds)), package, path
                 )
+
+    def _is_reread_cpp_definition(self, row: ResultRow) -> bool:
+        """A C++ member known only from a definition this run re-parses.
+
+        Its node hangs off a class in an unchanged header, so the graph still
+        holds it, but its definition is being read again and will register
+        whatever it is now. Read back as well, it would be the name a changed
+        or newly added overload is measured against, and a clean index has
+        no such stale entry (issue #2455). A member its class body declared
+        stays: that declaration is not re-read.
+        """
+        return (
+            isinstance(row.get(cs.KEY_SIGNATURE), str)
+            and not row.get(cs.KEY_DECLARED_IN_CLASS)
+            and row.get(cs.KEY_PATH) in self._reparsed_file_keys
+        )
 
     def _rehydrate_rust_return_types(self, rows: list[ResultRow]) -> None:
         # Pass 2 records a Rust fn's return type only while it parses the
@@ -8612,7 +8660,9 @@ class GraphUpdater:
         import_processor.flush_deferred_import_edges(known_module_paths)
         self._emit_csharp_query_calls()
         self._write_unresolved_references()
-        self.factory.definition_processor.process_all_method_overrides()
+        self.factory.definition_processor.process_all_method_overrides(
+            self.known_module_paths()
+        )
         # Endpoints and route registrations, scoped to the re-parsed modules:
         # the project-wide passes would load every route-capable module's
         # AST, which on a fresh updater means re-parsing most of the repo.
@@ -8720,6 +8770,7 @@ class GraphUpdater:
             if key.startswith(prefix + "/")
         ]
 
+    @holds_sync_lock(wait=True)
     def reingest(
         self,
         paths: Iterable[Path | str],
@@ -8757,6 +8808,10 @@ class GraphUpdater:
         describing what is on disk (issue #1799). Paths the project's ignore
         rules exclude are reported as ``skipped`` and left out of the graph,
         as the walk would leave them.
+
+        Waits while another writer holds the checkout's sync lock, then
+        applies the change to the graph that sync finished; the lock is
+        taken by `holds_sync_lock` (issue #2441).
         """
         started = time.perf_counter()
         # A scoped re-ingest is never a full build, whatever the previous

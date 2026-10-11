@@ -170,7 +170,7 @@ name.
 
 ```bash
 # Remove one project without touching the others
-cgr delete-project --name user-service__a1b2c3d4
+cgr delete-project --project user-service__a1b2c3d4
 ```
 
 ![cgr delete-project removing user-service from the graph and its vectors, while order-service's fetch_user still resolves](../assets/demos/multi-project-delete.gif)
