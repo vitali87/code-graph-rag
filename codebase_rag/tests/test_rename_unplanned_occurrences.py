@@ -3511,3 +3511,198 @@ def test_a_use_through_a_namespace_named_like_the_function_still_counts(
     assert [(s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned] == [
         ("src/app.ts", 4, 13, "unplanned")
     ]
+
+
+# --- a C# class whose qualified name carries a marker (#2579) ---------------
+
+# `PB<T>` beside `PB` is ``PB`1`` in the graph, but code spells it `PB`.
+CS_TWINS = (
+    "namespace Acme;\n"
+    "public class PB\n{\n    public void Run() { }\n}\n"
+    "public class PB<T>\n{\n    public void Run() { }\n}\n"
+)
+CS_TWINS_USE = (
+    "namespace Acme;\n"
+    "public static class Use\n{\n"
+    "    public static void Go()\n    {\n"
+    "        PB<int> p = new PB<int>();\n"
+    "        p.Run();\n"
+    "        PB q = new PB();\n"
+    "        q.Run();\n"
+    "    }\n}\n"
+)
+CS_PLAIN_USE = (
+    "namespace Acme;\n"
+    "public static class Use\n{\n"
+    "    public static void Go()\n    {\n"
+    "        PB q = new PB();\n"
+    "        q.Run();\n"
+    "    }\n}\n"
+)
+CS_TWIN_FILES = {"src/Acme/Policy.cs": CS_TWINS, "src/Acme/Use.cs": CS_TWINS_USE}
+CS_GENERIC_RUN = f"{PROJECT}.src.Acme.Policy.PB`1.Run"
+CS_PLAIN_RUN = f"{PROJECT}.src.Acme.Policy.PB.Run"
+
+
+@pytest.mark.parametrize("dry_run", [False, True], ids=["apply", "dry-run"])
+def test_a_missed_call_on_a_csharp_generic_twin_refuses_the_rename(
+    tmp_path: Path, dry_run: bool
+) -> None:
+    # `Use.cs` names `PB`, so either call may be the generic's `Run`: the
+    # graph has no site for them, and the rename must not go ahead past them.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, _updater = _indexed(root, CS_TWIN_FILES)
+    before = _tree(root)
+
+    graph = _missing(store, "src/Acme/Use.cs")
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            graph,
+            PROJECT,
+            CS_GENERIC_RUN,
+            "Exec",
+            dry_run=dry_run,
+        )
+
+    assert [
+        (s.kind, s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned
+    ] == [
+        ("call", "src/Acme/Use.cs", 7, 10, "receiver_unknown"),
+        ("call", "src/Acme/Use.cs", 9, 10, "receiver_unknown"),
+    ]
+    assert _tree(root) == before
+
+
+def test_a_missed_call_on_a_duplicate_csharp_class_refuses_the_rename(
+    tmp_path: Path,
+) -> None:
+    # The `#else` branch's `Box` is `Box@8` in the graph.
+    boxes = (
+        "namespace Acme;\n"
+        "#if NET6\n"
+        "public class Box\n{\n    public void Get() { }\n}\n"
+        "#else\n"
+        "public class Box\n{\n    public void Get() { }\n}\n"
+        "#endif\n"
+    )
+    use = (
+        "namespace Acme;\n"
+        "public static class Use\n{\n"
+        "    public static void Go()\n    {\n"
+        "        var b = new Box();\n"
+        "        b.Get();\n"
+        "    }\n}\n"
+    )
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, _updater = _indexed(
+        root, {"src/Acme/Boxes.cs": boxes, "src/Acme/Use.cs": use}
+    )
+    before = _tree(root)
+
+    graph = _missing(store, "src/Acme/Use.cs")
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            graph,
+            PROJECT,
+            f"{PROJECT}.src.Acme.Boxes.Box@8.Get",
+            "Fetch",
+            dry_run=True,
+        )
+
+    assert [
+        (s.kind, s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned
+    ] == [("call", "src/Acme/Use.cs", 7, 10, "receiver_unknown")]
+    assert _tree(root) == before
+
+
+def test_the_generic_twins_rename_never_rewrites_the_plain_twins_call(
+    tmp_path: Path,
+) -> None:
+    # `PB q` is the non-generic `PB`, whose own `Run` this call is: even
+    # with the graph missing it, `allow_heuristic` must not rename it.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, updater = _indexed(
+        root, {"src/Acme/Policy.cs": CS_TWINS, "src/Acme/Use.cs": CS_PLAIN_USE}
+    )
+
+    try:
+        report = rename(
+            root,
+            _missing(store, "src/Acme/Use.cs"),
+            PROJECT,
+            CS_GENERIC_RUN,
+            "Exec",
+            allow_heuristic=True,
+            reingest=updater.reingest,
+        )
+        unplanned = list(report.unplanned)
+    except RenameRefused as refused:
+        unplanned = refused.unplanned
+
+    assert "unplanned" not in {s.resolution for s in unplanned}
+    assert (root / "src/Acme/Use.cs").read_text() == CS_PLAIN_USE
+
+
+def test_the_plain_twins_rename_never_claims_the_generic_twins_call(
+    tmp_path: Path,
+) -> None:
+    # `PB<int> p` may be the generic `PB`: its call is held for review, never
+    # rewritten; `PB q`'s is the target's own.
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, updater = _indexed(root, CS_TWIN_FILES)
+    before = _tree(root)
+
+    graph = _missing(store, "src/Acme/Use.cs")
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            graph,
+            PROJECT,
+            CS_PLAIN_RUN,
+            "Exec",
+            allow_heuristic=True,
+            reingest=updater.reingest,
+        )
+
+    assert [
+        (s.kind, s.path, s.line, s.col, s.resolution) for s in refused.value.unplanned
+    ] == [
+        ("call", "src/Acme/Use.cs", 7, 10, "receiver_unknown"),
+        ("call", "src/Acme/Use.cs", 9, 10, "unplanned"),
+    ]
+    assert _tree(root) == before
+
+
+def test_a_complete_graph_renames_the_generic_twins_method_alone(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / PROJECT
+    root.mkdir()
+    store, updater = _indexed(root, CS_TWIN_FILES)
+
+    report = rename(
+        root,
+        _query(store),
+        PROJECT,
+        CS_GENERIC_RUN,
+        "Exec",
+        reingest=updater.reingest,
+    )
+
+    assert report.applied, report.message
+    assert report.unplanned == ()
+    assert (root / "src/Acme/Use.cs").read_text() == CS_TWINS_USE.replace(
+        "p.Run();", "p.Exec();"
+    )
+    assert (root / "src/Acme/Policy.cs").read_text() == (
+        CS_TWINS.replace(
+            "public class PB<T>\n{\n    public void Run()",
+            "public class PB<T>\n{\n    public void Exec()",
+        )
+    )

@@ -213,27 +213,41 @@ def _csharp_partial_parts(fetch_all: QueryFn, project: str, qn: str) -> list[str
         or get_language_for_extension(Path(path).suffix) != cs.SupportedLanguage.CSHARP
     ):
         return []
-    key = csharp_partial_key_from_graph(qn, path, project)
     owns = graph_query._owner_check(fetch_all, project)
+    rows = fetch_all(
+        cs.CYPHER_SAME_NAMED_CSHARP_TYPES,
+        {cs.KEY_PROJECT_PREFIX: f"{project}{cs.SEPARATOR_DOT}", cs.KEY_NAME: name},
+    )
+    # `Box` and `Box<T>` are two types (issue #2579): the key spells the
+    # arity, so a partial twin of another arity is not one of the parts.
+    arity = next(
+        (_generic_arity(row) for row in rows if row.get(cs.KEY_QUALIFIED_NAME) == qn),
+        0,
+    )
+    key = csharp_partial_key_from_graph(qn, path, project, arity)
     parts = {
         part
-        for row in fetch_all(
-            cs.CYPHER_SAME_NAMED_CSHARP_TYPES,
-            {cs.KEY_PROJECT_PREFIX: f"{project}{cs.SEPARATOR_DOT}", cs.KEY_NAME: name},
-        )
+        for row in rows
         if isinstance(part := row.get(cs.KEY_QUALIFIED_NAME), str)
         and isinstance(part_path := row.get(cs.KEY_PATH), str)
         and isinstance(modifiers := row.get(cs.KEY_MODIFIERS), list)
         and cs.TS_CSHARP_MODIFIER_PARTIAL in modifiers
         and row.get(cs.KEY_LABEL) == label
         and owns(part)
-        and csharp_partial_key_from_graph(part, part_path, project) == key
+        and csharp_partial_key_from_graph(part, part_path, project, _generic_arity(row))
+        == key
     }
     # `qn` is among them only when it is declared `partial` itself; a type
     # that is not has no other parts, whatever shares its name.
     if key is None or qn not in parts:
         return []
     return sorted(parts - {qn})
+
+
+def _generic_arity(row: ResultRow) -> int:
+    """A C# type row's stored generic arity; 0 for a non-generic type."""
+    arity = row.get(cs.KEY_GENERIC_ARITY)
+    return arity if isinstance(arity, int) else 0
 
 
 def _name_token(
