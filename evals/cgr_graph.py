@@ -1505,6 +1505,9 @@ class _StatefulIngestor:
                         cs.KEY_DECLARED_IN_CLASS: bool(
                             props.get(cs.KEY_DECLARED_IN_CLASS)
                         ),
+                        cs.KEY_IS_EXPORTED: bool(props[cs.KEY_IS_EXPORTED])
+                        if cs.KEY_IS_EXPORTED in props
+                        else None,
                     }
                     defs.append(row)
                 return defs
