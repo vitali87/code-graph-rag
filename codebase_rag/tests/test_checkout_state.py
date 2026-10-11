@@ -15,6 +15,7 @@ keeps the hash cache: the first sync after it is still "already in sync".
 
 from __future__ import annotations
 
+import base64
 import errno
 import json
 import os
@@ -24,23 +25,33 @@ import sys
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import IO
 from unittest.mock import MagicMock
 
 import pytest
 from loguru import logger
 
+from codebase_rag import checkout_state
 from codebase_rag import constants as cs
 from codebase_rag import logs as ls
-from codebase_rag.checkout_state import prepare_state_dir, state_dir, state_file
+from codebase_rag.checkout_state import (
+    _lock_file,
+    _unlock_file,
+    prepare_state_dir,
+    state_dir,
+    state_file,
+)
 from codebase_rag.cli import _delete_hash_cache
 from codebase_rag.config import settings
 from codebase_rag.editing.transaction import (
     EditTransaction,
+    StagedTree,
+    TransactionConflict,
     TransactionOutcome,
-    _lock_file,
-    _unlock_file,
     load_history,
+    undo_last,
 )
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -307,6 +318,8 @@ def test_an_upgrade_keeps_the_edit_history(repo: Path) -> None:
 
 
 _MOVED = sorted(cs.CGR_STATE_FILENAMES - cs.CGR_STATE_LOCK_FILENAMES)
+# The history is added entry by entry rather than moved as bytes.
+_MOVED_AS_IS = sorted(set(_MOVED) - {cs.EDIT_HISTORY_FILENAME})
 
 
 @pytest.mark.parametrize("name", _MOVED)
@@ -320,7 +333,7 @@ def test_a_sync_moves_every_state_file_out_of_the_tree(
     assert _state_in_tree(repo) == []
 
 
-@pytest.mark.parametrize("name", _MOVED)
+@pytest.mark.parametrize("name", _MOVED_AS_IS)
 def test_a_moved_state_file_keeps_its_bytes_and_mtime(repo: Path, name: str) -> None:
     left = repo / name
     left.write_bytes(b'{"kept": true}')
@@ -610,22 +623,20 @@ def test_a_failed_exclusive_copy_keeps_the_state_in_the_tree(
     assert any(w.startswith(failed) for w in warnings), warnings
 
 
-_PUBLISHED_HISTORY = b'{"entries": ["published by an edit"]}'
+_PUBLISHED = b'{"pkg/util.py": "published by a sync"}'
 
 
-def test_a_failed_exclusive_copy_never_deletes_history_an_edit_published(
+def test_a_failed_exclusive_copy_never_deletes_state_another_process_published(
     repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # A sync moves the history while an edit, which holds the edit lock the
-    # sync does not take, publishes its own under the same name with
-    # `os.replace`. The copy then fails: its cleanup must remove only the
-    # file it created, never the history the edit just wrote (Greptile, PR
+    # State published under the same name with `os.replace` while the move
+    # copies it. The copy then fails: its cleanup must remove only the file
+    # it created, never the one another process just wrote (Greptile, PR
     # #2557). The publish lands once the copy has closed its file, the one
     # moment Windows lets another process replace it too.
-    left = repo / cs.EDIT_HISTORY_FILENAME
-    left.write_bytes(b'{"entries": ["from an older cgr"]}')
+    left = _left_in_tree(repo)
     _no_hard_links(monkeypatch)
-    target = state_dir(repo) / cs.EDIT_HISTORY_FILENAME
+    target = state_dir(repo) / cs.HASH_CACHE_FILENAME
 
     real_copystat = shutil.copystat
 
@@ -634,8 +645,8 @@ def test_a_failed_exclusive_copy_never_deletes_history_an_edit_published(
             # `copy2` stamping the temp copy beside the target.
             real_copystat(source, destination, **kwargs)
             return
-        fresh = target.with_name(f"{target.name}.edit")
-        fresh.write_bytes(_PUBLISHED_HISTORY)
+        fresh = target.with_name(f"{target.name}.sync")
+        fresh.write_bytes(_PUBLISHED)
         os.replace(fresh, target)
         raise OSError(errno.EIO, "Input/output error")
 
@@ -645,10 +656,10 @@ def test_a_failed_exclusive_copy_never_deletes_history_an_edit_published(
 
     prepare_state_dir(repo)
 
-    assert target.read_bytes() == _PUBLISHED_HISTORY
+    assert target.read_bytes() == _PUBLISHED
     # The tree's copy is kept, as after any failed move; the next run finds
-    # the published history in place and drops it then.
-    assert left.read_bytes() == b'{"entries": ["from an older cgr"]}'
+    # the published state in place and drops it then.
+    assert left.read_bytes() == b'{"kept": true}'
     assert sorted(p.name for p in target.parent.iterdir()) == [target.name]
 
 
@@ -771,13 +782,13 @@ def test_an_older_cgr_finishing_its_edit_keeps_its_history_entry(repo: Path) -> 
     # its entry in the tree's history before releasing the lock, and the
     # history moves only after that, so neither entry is lost.
     history = repo / cs.EDIT_HISTORY_FILENAME
-    history.write_text(json.dumps([{cs.EDIT_KEY_ID: "before-upgrade"}]))
+    history.write_text(json.dumps([_a_recorded_entry("before-upgrade")]))
 
     with _an_older_cgr_holds_the_tree_lock(repo):
         worker, outcome = _commit_in_background(repo, "def helper():\n    return 2\n")
         assert _waits(worker), "the commit ran while an older cgr held the lock"
         entries = json.loads(history.read_text()) if history.is_file() else []
-        history.write_text(json.dumps([*entries, {cs.EDIT_KEY_ID: "older-cgr"}]))
+        history.write_text(json.dumps([*entries, _a_recorded_entry("older-cgr")]))
 
     assert _finishes(worker)
     assert [entry[cs.EDIT_KEY_ID] for entry in load_history(repo)] == [
@@ -831,6 +842,695 @@ def test_a_live_edit_lock_still_holds_off_a_second_editor(repo: Path) -> None:
     assert _finishes(worker)
     assert outcome[0].applied
     assert _state_in_tree(repo) == []
+
+
+# --- an older cgr still editing after the upgrade (Greptile, #2490, #2550) ----
+
+_UTIL_BY_AN_OLDER_CGR = "def helper():\n    return 7\n"
+
+
+def _b64(data: bytes) -> str:
+    return base64.b64encode(data).decode("ascii")
+
+
+def _replace_in_tree(path: Path, data: bytes) -> None:
+    # An older cgr's `_write_file`: a temp sibling, then `os.replace`.
+    temp = path.with_name(f"{path.name}{cs.TMP_EXTENSION}")
+    temp.write_bytes(data)
+    os.replace(temp, path)
+
+
+class _OlderCgrEdit:
+    """One edit by a cgr from before #2557, made while it holds the tree lock.
+
+    `load` reads the history at the checkout root, `apply` writes the file
+    and appends this edit's entry to the history it loaded, as that cgr's
+    commit and `record_transaction` do.
+    """
+
+    def __init__(self, repo: Path, rel: str, text: str, tx_id: str) -> None:
+        self.repo = repo
+        self.rel = rel
+        self.text = text
+        self.tx_id = tx_id
+        self.entries: list[dict] = []
+
+    def load(self) -> None:
+        history = self.repo / cs.EDIT_HISTORY_FILENAME
+        self.entries = json.loads(history.read_text()) if history.is_file() else []
+
+    def apply(self) -> None:
+        target = self.repo / self.rel
+        before = target.read_bytes()
+        after = self.text.encode()
+        _replace_in_tree(target, after)
+        entry = {
+            cs.EDIT_KEY_ID: self.tx_id,
+            cs.EDIT_KEY_AT: datetime.now(UTC).isoformat(timespec="seconds"),
+            cs.EDIT_KEY_FILES: [
+                {
+                    cs.KEY_PATH: self.rel,
+                    cs.EDIT_KEY_BEFORE: _b64(before),
+                    cs.EDIT_KEY_AFTER: _b64(after),
+                    cs.EDIT_KEY_MODE: None,
+                }
+            ],
+            cs.EDIT_KEY_VERIFICATION: {cs.EDIT_KEY_OK: True, cs.EDIT_KEY_MESSAGE: ""},
+        }
+        _replace_in_tree(
+            self.repo / cs.EDIT_HISTORY_FILENAME,
+            json.dumps([*self.entries, entry]).encode(),
+        )
+
+
+def _an_older_cgr_edits(repo: Path, rel: str, text: str, tx_id: str) -> None:
+    edit = _OlderCgrEdit(repo, rel, text, tx_id)
+    with _an_older_cgr_holds_the_tree_lock(repo):
+        edit.load()
+        edit.apply()
+
+
+def _ids(repo: Path) -> list[str]:
+    return [str(entry.get(cs.EDIT_KEY_ID)) for entry in load_history(repo)]
+
+
+def test_an_edit_an_older_cgr_records_after_the_history_moved_can_be_undone(
+    repo: Path,
+) -> None:
+    # The upgraded cgr has moved the history; an older cgr still running
+    # (an MCP server started before the upgrade) then edits and starts a new
+    # history at the root. The next sync dropped it as a stale copy, and
+    # `cgr edits undo` reversed the upgraded cgr's edit instead.
+    tx = EditTransaction(repo)
+    tx.stage("pkg/core.py", "def run():\n    return 0\n")
+    assert tx.commit().applied
+    _an_older_cgr_edits(repo, "pkg/util.py", _UTIL_BY_AN_OLDER_CGR, "older-cgr")
+
+    prepare_state_dir(repo)
+
+    assert _ids(repo) == [tx.transaction_id, "older-cgr"]
+
+
+def test_undo_reverses_the_edit_an_older_cgr_made_last(repo: Path) -> None:
+    tx = EditTransaction(repo)
+    tx.stage("pkg/core.py", "def run():\n    return 0\n")
+    assert tx.commit().applied
+    _an_older_cgr_edits(repo, "pkg/util.py", _UTIL_BY_AN_OLDER_CGR, "older-cgr")
+
+    undone = undo_last(repo)
+
+    assert [o.transaction_id for o in undone] == ["older-cgr"]
+    assert (repo / "pkg" / "util.py").read_text() == SOURCES["pkg/util.py"]
+
+
+def test_a_sync_while_an_older_cgr_edits_keeps_that_edits_history_entry(
+    repo: Path,
+) -> None:
+    # Greptile's interleaving: the older cgr holds its lock and has read the
+    # history when a sync moves it; it then writes its entry into a history
+    # at the root, which the next sync dropped.
+    _an_older_cgr_edits(repo, "pkg/core.py", "def run():\n    return 0\n", "earlier")
+    edit = _OlderCgrEdit(repo, "pkg/util.py", _UTIL_BY_AN_OLDER_CGR, "older-cgr")
+    with _an_older_cgr_holds_the_tree_lock(repo):
+        edit.load()
+        prepare_state_dir(repo)
+        edit.apply()
+
+    prepare_state_dir(repo)
+
+    assert _ids(repo) == ["earlier", "older-cgr"]
+
+
+def test_an_older_cgr_that_starts_editing_while_a_commit_verifies_is_not_overwritten(
+    repo: Path,
+) -> None:
+    # No tree lock yet: the older cgr creates it, and edits the same file,
+    # while the upgraded cgr's verifier runs. The commit then wrote over that
+    # edit and recorded a `before` the file no longer had.
+    tx = EditTransaction(repo)
+    tx.stage("pkg/util.py", "def helper():\n    return 2\n")
+
+    def verify(tree: StagedTree) -> bool:
+        _an_older_cgr_edits(repo, "pkg/util.py", _UTIL_BY_AN_OLDER_CGR, "older-cgr")
+        return True
+
+    with pytest.raises(TransactionConflict):
+        tx.commit(verify)
+    assert (repo / "pkg" / "util.py").read_text() == _UTIL_BY_AN_OLDER_CGR
+
+
+def test_a_commit_waits_for_an_older_cgr_that_locked_the_tree_while_it_verified(
+    repo: Path,
+) -> None:
+    # The older cgr still holds the lock it created when the verifier
+    # returns: the commit writes only once it is released.
+    verifying = threading.Event()
+    locked = threading.Event()
+
+    def verify(tree: StagedTree) -> bool:
+        verifying.set()
+        return locked.wait(timeout=60)
+
+    outcome: list[TransactionOutcome] = []
+
+    def commit() -> None:
+        tx = EditTransaction(repo)
+        tx.stage("pkg/util.py", "def helper():\n    return 2\n")
+        outcome.append(tx.commit(verify))
+
+    worker = threading.Thread(target=commit, daemon=True)
+    worker.start()
+    assert verifying.wait(timeout=60)
+    with _an_older_cgr_holds_the_tree_lock(repo):
+        locked.set()
+        assert _waits(worker), "the commit wrote while an older cgr held the lock"
+        assert (repo / "pkg" / "util.py").read_text() == SOURCES["pkg/util.py"]
+
+    assert _finishes(worker)
+    assert outcome[0].applied
+
+
+def test_a_verified_commit_with_no_older_cgr_creates_no_lock_in_the_tree(
+    repo: Path,
+) -> None:
+    # Negative: looking for an older cgr's lock after verifying opens one
+    # only if it is there; with none, the tree gets none.
+    tx = EditTransaction(repo)
+    tx.stage("pkg/util.py", "def helper():\n    return 2\n")
+
+    assert tx.commit(lambda tree: True).applied
+    assert _state_in_tree(repo) == []
+
+
+def _an_upgraded_edit(repo: Path) -> str:
+    tx = EditTransaction(repo)
+    tx.stage("pkg/core.py", "def run():\n    return 0\n")
+    assert tx.commit().applied
+    return tx.transaction_id
+
+
+def test_a_tree_history_with_a_list_id_neither_fails_the_sync_nor_is_added(
+    repo: Path,
+) -> None:
+    # The history is data on disk: an id no cgr writes (unhashable here)
+    # marks a copy that is not an older cgr's history, which is dropped as
+    # a stale copy is rather than raising out of the sync (Codex, PR #3344).
+    kept = _an_upgraded_edit(repo)
+    (repo / cs.EDIT_HISTORY_FILENAME).write_text(
+        json.dumps([{cs.EDIT_KEY_ID: ["not", "an", "id"]}])
+    )
+
+    prepare_state_dir(repo)
+
+    assert _ids(repo) == [kept]
+    assert _state_in_tree(repo) == []
+
+
+def test_a_cgr_home_history_with_a_dict_id_neither_fails_the_sync_nor_is_rewritten(
+    repo: Path,
+) -> None:
+    # A malformed history under CGR_HOME is never rewritten, and the older
+    # cgr's history it cannot take stays in the tree rather than going.
+    _an_upgraded_edit(repo)
+    history = state_dir(repo) / cs.EDIT_HISTORY_FILENAME
+    malformed = json.dumps([{cs.EDIT_KEY_ID: {"not": "an id"}}]).encode()
+    history.write_bytes(malformed)
+    _an_older_cgr_edits(repo, "pkg/util.py", _UTIL_BY_AN_OLDER_CGR, "older-cgr")
+    left = (repo / cs.EDIT_HISTORY_FILENAME).read_bytes()
+
+    prepare_state_dir(repo)
+
+    assert history.read_bytes() == malformed
+    assert (repo / cs.EDIT_HISTORY_FILENAME).read_bytes() == left
+
+
+def test_a_deeply_nested_tree_history_does_not_fail_the_sync(repo: Path) -> None:
+    kept = _an_upgraded_edit(repo)
+    depth = 100_000
+    (repo / cs.EDIT_HISTORY_FILENAME).write_text("[" * depth + "]" * depth)
+
+    prepare_state_dir(repo)
+
+    assert _ids(repo) == [kept]
+
+
+def test_a_well_formed_older_history_is_added_entry_for_entry(repo: Path) -> None:
+    # Negative: with string ids on both sides, the merge keeps every entry
+    # of both copies as it was, the older cgr's last.
+    _an_upgraded_edit(repo)
+    kept = json.loads((state_dir(repo) / cs.EDIT_HISTORY_FILENAME).read_text())
+    _an_older_cgr_edits(repo, "pkg/util.py", _UTIL_BY_AN_OLDER_CGR, "older-cgr")
+    recorded = json.loads((repo / cs.EDIT_HISTORY_FILENAME).read_text())
+
+    prepare_state_dir(repo)
+
+    assert load_history(repo) == [*kept, *recorded]
+
+
+# Decodes, but the encoder that writes the history recurses deeper than it.
+_NESTED = 1200
+
+
+def _nested() -> list:
+    value: list = []
+    for _ in range(_NESTED):
+        value = [value]
+    return value
+
+
+def test_a_tree_history_nested_too_deep_to_write_does_not_fail_the_sync(
+    repo: Path,
+) -> None:
+    # Greptile, PR #3344: an entry nested deep enough still decodes, and
+    # then failed the sync when the merged history was written.
+    kept = _an_upgraded_edit(repo)
+    _an_older_cgr_edits(repo, "pkg/util.py", _UTIL_BY_AN_OLDER_CGR, "older-cgr")
+    left = repo / cs.EDIT_HISTORY_FILENAME
+    entries = json.loads(left.read_text())
+    entries[0][cs.EDIT_KEY_VERIFICATION] = _nested()
+    left.write_text(json.dumps(entries))
+
+    prepare_state_dir(repo)
+
+    assert _ids(repo) == [kept]
+
+
+def test_a_cgr_home_history_nested_too_deep_to_write_is_never_rewritten(
+    repo: Path,
+) -> None:
+    _an_upgraded_edit(repo)
+    history = state_dir(repo) / cs.EDIT_HISTORY_FILENAME
+    entries = json.loads(history.read_text())
+    entries[0][cs.EDIT_KEY_VERIFICATION] = _nested()
+    malformed = json.dumps(entries).encode()
+    history.write_bytes(malformed)
+    _an_older_cgr_edits(repo, "pkg/util.py", _UTIL_BY_AN_OLDER_CGR, "older-cgr")
+
+    prepare_state_dir(repo)
+
+    assert history.read_bytes() == malformed
+    assert (repo / cs.EDIT_HISTORY_FILENAME).is_file()
+
+
+def _history_entry(tx_id: str, files: list) -> dict:
+    return {cs.EDIT_KEY_ID: tx_id, cs.EDIT_KEY_FILES: files}
+
+
+def _a_recorded_entry(tx_id: str) -> dict:
+    """An entry as an older cgr recorded it, for a file in the checkout."""
+    record = {
+        cs.KEY_PATH: "pkg/__init__.py",
+        cs.EDIT_KEY_BEFORE: _b64(b""),
+        cs.EDIT_KEY_AFTER: _b64(f"# {tx_id}\n".encode()),
+        cs.EDIT_KEY_MODE: None,
+    }
+    return _history_entry(tx_id, [record])
+
+
+def test_an_older_history_entry_with_a_malformed_file_record_is_not_added(
+    repo: Path,
+) -> None:
+    # CodeRabbit, PR #3344: undo reads every record of the newest entry, so
+    # a record it cannot read would stop every earlier edit's undo.
+    kept = _an_upgraded_edit(repo)
+    (repo / cs.EDIT_HISTORY_FILENAME).write_text(
+        json.dumps([_history_entry("bad", ["not-an-object"])])
+    )
+
+    prepare_state_dir(repo)
+
+    assert _ids(repo) == [kept]
+
+
+def test_an_older_history_entry_naming_a_path_outside_the_checkout_is_not_added(
+    repo: Path,
+) -> None:
+    kept = _an_upgraded_edit(repo)
+    record = {
+        cs.KEY_PATH: "../outside.py",
+        cs.EDIT_KEY_BEFORE: None,
+        cs.EDIT_KEY_AFTER: _b64(b"x = 1\n"),
+    }
+    (repo / cs.EDIT_HISTORY_FILENAME).write_text(
+        json.dumps([_history_entry("outside", [record])])
+    )
+
+    prepare_state_dir(repo)
+
+    assert _ids(repo) == [kept]
+
+
+def test_an_edit_an_older_cgr_appends_to_a_history_git_put_back_is_added(
+    repo: Path,
+) -> None:
+    # CodeRabbit, PR #3344: git puts back the history [A] that moved (a
+    # commit tracked it), and an older cgr appends its edit B to it. A is
+    # already under CGR_HOME; B is not, and was the only record of its edit.
+    kept = _an_upgraded_edit(repo)
+    restored = (state_dir(repo) / cs.EDIT_HISTORY_FILENAME).read_bytes()
+    (repo / cs.EDIT_HISTORY_FILENAME).write_bytes(restored)
+    _an_older_cgr_edits(repo, "pkg/util.py", _UTIL_BY_AN_OLDER_CGR, "older-cgr")
+
+    prepare_state_dir(repo)
+
+    assert _ids(repo) == [kept, "older-cgr"]
+
+
+def test_an_older_cgrs_edit_after_newer_entries_is_undone_first(repo: Path) -> None:
+    # [A, X] under CGR_HOME and [A, B] in the tree: B came after X, so it
+    # goes last, and undo reverses it before X.
+    _an_upgraded_edit(repo)
+    restored = (state_dir(repo) / cs.EDIT_HISTORY_FILENAME).read_bytes()
+    tx = EditTransaction(repo)
+    tx.stage("pkg/__init__.py", "VERSION = 2\n")
+    assert tx.commit().applied
+    (repo / cs.EDIT_HISTORY_FILENAME).write_bytes(restored)
+    _an_older_cgr_edits(repo, "pkg/util.py", _UTIL_BY_AN_OLDER_CGR, "older-cgr")
+
+    prepare_state_dir(repo)
+
+    undone = [o.transaction_id for o in undo_last(repo, 2)]
+    assert undone == ["older-cgr", tx.transaction_id]
+
+
+@contextmanager
+def _tree_history_cannot_be_removed(repo: Path) -> Iterator[None]:
+    """Removing the tree's history fails (a Windows sharing violation, say)."""
+    left = repo / cs.EDIT_HISTORY_FILENAME
+    real_unlink = Path.unlink
+
+    def unlink(path: Path, missing_ok: bool = False) -> None:
+        if path == left:
+            raise PermissionError(errno.EACCES, "in use")
+        real_unlink(path, missing_ok=missing_ok)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(Path, "unlink", unlink)
+        yield
+
+
+def test_an_older_cgrs_edit_appended_to_a_history_left_behind_is_added(
+    repo: Path,
+) -> None:
+    # Greptile, PR #3344: the history was added but could not be removed,
+    # and an older cgr then appended its next edit to that copy.
+    kept = _an_upgraded_edit(repo)
+    _an_older_cgr_edits(repo, "pkg/util.py", _UTIL_BY_AN_OLDER_CGR, "first")
+    with _tree_history_cannot_be_removed(repo):
+        prepare_state_dir(repo)
+    _an_older_cgr_edits(repo, "pkg/__init__.py", "VERSION = 2\n", "second")
+
+    prepare_state_dir(repo)
+
+    assert _ids(repo) == [kept, "first", "second"]
+
+
+def test_an_undone_edit_in_a_history_left_behind_does_not_come_back(
+    repo: Path,
+) -> None:
+    kept = _an_upgraded_edit(repo)
+    _an_older_cgr_edits(repo, "pkg/util.py", _UTIL_BY_AN_OLDER_CGR, "undone")
+    with _tree_history_cannot_be_removed(repo):
+        prepare_state_dir(repo)
+        undo_last(repo)
+    _an_older_cgr_edits(repo, "pkg/__init__.py", "VERSION = 2\n", "later")
+
+    prepare_state_dir(repo)
+
+    assert _ids(repo) == [kept, "later"]
+
+
+def test_an_edit_waits_for_an_older_cgrs_history_that_could_not_be_added(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Greptile, PR #3344: the older cgr's entry could not be added, and an
+    # edit committed anyway. Added later, the older entry went after the
+    # newer one, and undo reversed the wrong edit.
+    kept = _an_upgraded_edit(repo)
+    _an_older_cgr_edits(repo, "pkg/util.py", _UTIL_BY_AN_OLDER_CGR, "older-cgr")
+    real_write = checkout_state.write_history
+    failures = [OSError(errno.ENOSPC, "No space left on device")]
+
+    def write_once_failing(repo_path: Path, entries: list[dict]) -> None:
+        if failures:
+            raise failures.pop()
+        real_write(repo_path, entries)
+
+    monkeypatch.setattr(checkout_state, "write_history", write_once_failing)
+    tx = EditTransaction(repo)
+    tx.stage("pkg/__init__.py", "VERSION = 2\n")
+
+    with pytest.raises(OSError):
+        tx.commit()
+    assert (repo / "pkg" / "__init__.py").read_text() == ""
+    assert (repo / cs.EDIT_HISTORY_FILENAME).is_file()
+
+    retry = EditTransaction(repo)
+    retry.stage("pkg/__init__.py", "VERSION = 2\n")
+    assert retry.commit().applied
+    assert _ids(repo) == [kept, "older-cgr", retry.transaction_id]
+
+
+def _commit_util(repo: Path, text: str) -> str:
+    tx = EditTransaction(repo)
+    tx.stage("pkg/util.py", f"def helper():\n    {text}\n")
+    assert tx.commit().applied
+    return tx.transaction_id
+
+
+def test_an_entry_aged_out_of_the_history_is_not_added_back_from_the_tree(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # CodeRabbit, PR #3344: the oldest entry dropped past the limit was not
+    # settled, so a copy of the history in the tree that still held it put
+    # it back as the newest entry.
+    monkeypatch.setattr(cs, "EDIT_HISTORY_LIMIT", 2)
+    aged = _commit_util(repo, "return 2")
+    copy = (state_dir(repo) / cs.EDIT_HISTORY_FILENAME).read_bytes()
+    _commit_util(repo, "return 3")
+    _commit_util(repo, "return 4")
+    (repo / cs.EDIT_HISTORY_FILENAME).write_bytes(copy)
+
+    prepare_state_dir(repo)
+
+    assert aged not in _ids(repo)
+
+
+def test_an_entry_aged_out_while_adding_an_older_cgrs_is_not_added_back(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cs, "EDIT_HISTORY_LIMIT", 2)
+    aged = _commit_util(repo, "return 2")
+    copy = (state_dir(repo) / cs.EDIT_HISTORY_FILENAME).read_bytes()
+    _an_upgraded_edit(repo)
+    _an_older_cgr_edits(repo, "pkg/__init__.py", "VERSION = 2\n", "older-cgr")
+    prepare_state_dir(repo)
+    (repo / cs.EDIT_HISTORY_FILENAME).write_bytes(copy)
+
+    prepare_state_dir(repo)
+
+    assert aged not in _ids(repo)
+
+
+def test_entries_within_the_history_limit_are_neither_dropped_nor_settled(
+    repo: Path,
+) -> None:
+    # Negative: below the limit, nothing leaves the history and no id is
+    # recorded as settled.
+    ids = [_commit_util(repo, "return 2"), _commit_util(repo, "return 3")]
+
+    assert _ids(repo) == ids
+    assert not (state_dir(repo) / cs.EDIT_HISTORY_LEDGER_FILENAME).exists()
+
+
+def _tree_lock_cannot_be_opened(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    lock = repo / cs.EDIT_LOCK_FILENAME
+    lock.touch()
+    real_open = Path.open
+
+    def refusing(path: Path, *args: str, **kwargs: str) -> IO:
+        if path == lock:
+            raise PermissionError(errno.EACCES, "Permission denied")
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", refusing)
+
+
+def test_an_edit_stops_when_an_older_cgrs_lock_cannot_be_opened(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # CodeRabbit, PR #3344: a tree lock that is there but could not be
+    # opened was taken for no lock at all, so the edit ran beside an older
+    # cgr that may hold it.
+    _tree_lock_cannot_be_opened(repo, monkeypatch)
+    tx = EditTransaction(repo)
+    tx.stage("pkg/util.py", "def helper():\n    return 2\n")
+
+    with pytest.raises(OSError, match=cs.EDIT_LOCK_FILENAME):
+        tx.commit()
+    assert (repo / "pkg" / "util.py").read_text() == SOURCES["pkg/util.py"]
+    assert load_history(repo) == []
+
+
+def test_an_undo_stops_when_an_older_cgrs_lock_cannot_be_opened(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    edited = _commit_util(repo, "return 2")
+    _tree_lock_cannot_be_opened(repo, monkeypatch)
+
+    with pytest.raises(OSError, match=cs.EDIT_LOCK_FILENAME):
+        undo_last(repo)
+    assert _ids(repo) == [edited]
+
+
+def test_a_tree_lock_gone_before_it_is_opened_counts_as_none(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Negative: only a lock that is there stops an edit. One removed between
+    # the check and the open is no lock, as is none at all.
+    lock = repo / cs.EDIT_LOCK_FILENAME
+    lock.touch()
+    real_open = Path.open
+
+    def removed_first(path: Path, *args: str, **kwargs: str) -> IO:
+        if path == lock:
+            lock.unlink()
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", removed_first)
+    tx = EditTransaction(repo)
+    tx.stage("pkg/util.py", "def helper():\n    return 2\n")
+
+    assert tx.commit().applied
+
+
+def test_migrating_a_history_already_added_adds_nothing(repo: Path) -> None:
+    # Negative: the same copy put back again (by git, say) adds no entry
+    # twice.
+    _an_upgraded_edit(repo)
+    _an_older_cgr_edits(repo, "pkg/util.py", _UTIL_BY_AN_OLDER_CGR, "older-cgr")
+    copy = (repo / cs.EDIT_HISTORY_FILENAME).read_bytes()
+    prepare_state_dir(repo)
+    added = load_history(repo)
+    (repo / cs.EDIT_HISTORY_FILENAME).write_bytes(copy)
+
+    prepare_state_dir(repo)
+
+    assert load_history(repo) == added
+    assert _state_in_tree(repo) == [cs.EDIT_LOCK_FILENAME]
+
+
+def test_a_history_git_puts_back_does_not_bring_back_an_undone_edit(
+    repo: Path,
+) -> None:
+    # Negative: a history committed by accident and restored by `git` shares
+    # its entries with the one under CGR_HOME; it is a stale copy, dropped as
+    # before, not a record of new edits.
+    for text in ("return 2", "return 3"):
+        tx = EditTransaction(repo)
+        tx.stage("pkg/util.py", f"def helper():\n    {text}\n")
+        assert tx.commit().applied
+    committed = state_dir(repo) / cs.EDIT_HISTORY_FILENAME
+    restored = committed.read_bytes()
+    kept = _ids(repo)[:1]
+    undo_last(repo)
+    (repo / cs.EDIT_HISTORY_FILENAME).write_bytes(restored)
+
+    prepare_state_dir(repo)
+
+    assert _ids(repo) == kept
+    assert _state_in_tree(repo) == []
+
+
+def test_a_sync_never_waits_for_an_edit_in_progress(repo: Path) -> None:
+    # Negative: the history is moved only with the edit lock, but a sync
+    # that finds it taken goes on without moving it rather than waiting.
+    tx = EditTransaction(repo)
+    tx.stage("pkg/core.py", "def run():\n    return 0\n")
+    assert tx.commit().applied
+    _an_older_cgr_edits(repo, "pkg/util.py", _UTIL_BY_AN_OLDER_CGR, "older-cgr")
+    lock = state_dir(repo) / cs.EDIT_LOCK_FILENAME
+    with lock.open("ab") as handle:
+        _lock_file(handle)
+        try:
+            sync = threading.Thread(target=prepare_state_dir, args=(repo,))
+            sync.start()
+            assert _finishes(sync)
+            assert (repo / cs.EDIT_HISTORY_FILENAME).is_file()
+        finally:
+            _unlock_file(handle)
+
+    prepare_state_dir(repo)
+
+    assert _ids(repo) == [tx.transaction_id, "older-cgr"]
+
+
+def test_adding_an_older_cgrs_history_creates_nothing_in_the_tree(
+    repo: Path,
+) -> None:
+    # Negative: only the lock the older cgr created stays in the tree.
+    tx = EditTransaction(repo)
+    tx.stage("pkg/core.py", "def run():\n    return 0\n")
+    assert tx.commit().applied
+    _an_older_cgr_edits(repo, "pkg/util.py", _UTIL_BY_AN_OLDER_CGR, "older-cgr")
+
+    prepare_state_dir(repo)
+    undo_last(repo)
+
+    assert _state_in_tree(repo) == [cs.EDIT_LOCK_FILENAME]
+
+
+def test_an_older_cgrs_history_that_cannot_be_added_stays_in_the_tree(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Negative: CGR_HOME refuses the write. The sync goes on, and the tree's
+    # history, the only record of the older cgr's edit, is kept for the next.
+    tx = EditTransaction(repo)
+    tx.stage("pkg/core.py", "def run():\n    return 0\n")
+    assert tx.commit().applied
+    _an_older_cgr_edits(repo, "pkg/util.py", _UTIL_BY_AN_OLDER_CGR, "older-cgr")
+    left = (repo / cs.EDIT_HISTORY_FILENAME).read_bytes()
+    target = state_dir(repo) / cs.EDIT_HISTORY_FILENAME
+    _replace_fails_for_target(target, monkeypatch)
+
+    warnings = _warnings_during(lambda: prepare_state_dir(repo))
+
+    assert (repo / cs.EDIT_HISTORY_FILENAME).read_bytes() == left
+    pending = ls.CHECKOUT_STATE_HISTORY_PENDING.split("{", 1)[0]
+    assert any(w.startswith(pending) for w in warnings), warnings
+
+
+def _replace_fails_for_target(target: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    real_replace = os.replace
+
+    def replace(src: str | Path, dst: str | Path) -> None:
+        if Path(dst) == target:
+            raise OSError(errno.ENOSPC, "No space left on device")
+        real_replace(src, dst)
+
+    monkeypatch.setattr("codebase_rag.checkout_state.os.replace", replace)
+
+
+def test_an_unwritable_cgr_home_leaves_an_older_cgrs_history_in_the_tree(
+    repo: Path,
+    tmp_path: Path,
+    mock_ingestor: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Negative: no state directory, so the history stays where it is and
+    # the sync still runs.
+    _an_older_cgr_edits(repo, "pkg/util.py", _UTIL_BY_AN_OLDER_CGR, "older-cgr")
+    left = (repo / cs.EDIT_HISTORY_FILENAME).read_bytes()
+    blocked = tmp_path / "home-is-a-file"
+    blocked.write_text("")
+    monkeypatch.setattr(settings, "CGR_HOME", blocked)
+
+    _sync(repo, mock_ingestor)
+
+    assert (repo / cs.EDIT_HISTORY_FILENAME).read_bytes() == left
+    assert _state_in_tree(repo) == sorted(
+        [cs.EDIT_HISTORY_FILENAME, cs.EDIT_LOCK_FILENAME]
+    )
 
 
 # --- negative: what stays as it was -------------------------------------------
