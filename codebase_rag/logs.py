@@ -246,6 +246,22 @@ EMBEDDING_RECONCILE_OK = (
 )
 EMBEDDING_RECONCILE_MISSING = "Vector store reconciliation: {missing} of {expected} embeddings missing (IDs: {sample_ids})"
 EMBEDDING_RECONCILE_FAILED = "Vector store reconciliation check failed: {error}"
+EMBEDDING_STALE_REMOVED = (
+    "Removed {count} stale embeddings of project '{project}' (functions/methods "
+    "deleted or re-created since they were stored)"
+)
+EMBEDDING_STALE_FAILED = (
+    "Failed to remove stale embeddings for project '{project}': {error}"
+)
+EMBEDDING_STALE_SKIPPED = (
+    "Skipped removing stale embeddings for project '{project}': the project "
+    "registry could not be read, so a nested project's vectors cannot be told "
+    "from this one's; the next sync removes them"
+)
+VECTOR_STORE_REKEYED = (
+    "Removed {count} {backend} vectors of project '{project}' that were keyed "
+    "by Memgraph node id; its vectors are keyed by symbol now"
+)
 VECTOR_STORE_BACKEND_UNAVAILABLE = (
     "Vector store backend '{backend}' dependencies are not available"
 )
@@ -351,6 +367,10 @@ LANG_LIST_AST_GREP_UNREADABLE = (
 )
 
 # Ignore pattern logs
+TRACKED_SOURCE_DIRS_KEPT = (
+    "Indexing git-tracked source under default-excluded directory names: {dirs} "
+    "(add them to .cgrignore to skip them)"
+)
 CGRIGNORE_LOADED = (
     "Loaded {exclude_count} exclude and {unignore_count} unignore patterns from {path}"
 )
@@ -441,6 +461,14 @@ WATCHER_REBUILDING_AFTER_FAILURE = (
 WATCHER_EXPANSION_FAILED = (
     "Could not list the files a directory event covers: {error}. Re-indexing "
     "the whole repository instead."
+)
+WATCHER_IGNORE_RULES_CHANGED = (
+    "Ignore rules changed (.cgrignore, .gitignore or the files git tracks); "
+    "re-syncing the graph under the new rules."
+)
+WATCHER_IGNORE_RULES_SYNC_FAILED = (
+    "Re-sync under the new ignore rules FAILED: {error}. The next change "
+    "triggers a full re-index first."
 )
 INITIAL_SCAN = "Performing initial full codebase scan..."
 INITIAL_SCAN_DONE = "Initial scan complete. Starting real-time watcher."

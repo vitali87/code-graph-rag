@@ -407,9 +407,26 @@ class QueryJsonOutput(TypedDict):
 class EmbeddingQueryResult(TypedDict):
     node_id: int
     qualified_name: str
+    label: NodeLabel
     start_line: int | None
     end_line: int | None
     path: str | None
+
+
+class EmbeddingSymbol(NamedTuple):
+    """The function or method an embedding belongs to, by what a re-parse keeps.
+
+    The label is part of it because the graph's identity constraints are per
+    label: a Function and a Method may share a qualified name and still be
+    two nodes, each with an embedding of its own.
+    """
+
+    label: NodeLabel
+    qualified_name: str
+
+
+# One embedding to store: the node it answers for, its vector, its symbol.
+type EmbeddingPoint = tuple[int, list[float], EmbeddingSymbol]
 
 
 class SemanticSearchResult(TypedDict):
@@ -1077,9 +1094,11 @@ class DeferredInherit(NamedTuple):
     still point at a module that only RE-EXPORTS the parent, where the
     name-anchored guess is what finds the declaring one.
 
-    `written_ref` is a C# base as written (`NotificationHandler`1`): the
-    parse-time qn cannot say which name was written, and C# binds that
-    name by scope (namespace, enclosing namespaces, usings), issue #2534.
+    `written_ref` is a C# base as written, with its type-argument count in
+    CLR style (`NotificationHandler`1`): the parse-time qn cannot say which
+    name was written, and C# binds that name by scope (namespace, enclosing
+    namespaces, usings), issue #2534; `PB` and `PB<T>` are two types, so the
+    written arity picks between them (issue #2579).
     """
 
     rel_type: RelationshipType
@@ -1363,7 +1382,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.CLASS,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, non_method_members: list[string]?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, generic_arity: int?, non_method_members: list[string]?}",
     ),
     NodeSchema(
         NodeLabel.FUNCTION,
@@ -1375,7 +1394,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.INTERFACE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, generic_arity: int?}",
     ),
     NodeSchema(
         NodeLabel.ENUM,

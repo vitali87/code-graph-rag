@@ -840,6 +840,11 @@ KEY_MODIFIERS = "modifiers"
 # name because the qn leaves out a namespace the module's directory already
 # spells (issue #1629).
 KEY_NAMESPACE = "namespace"
+# How many type parameters a C# type declares, stored only when it is
+# generic. C# overloads a type name by arity (`PB`, `PB<T>`), so a reference
+# binds by it, and an incremental run reads it back for the types of files it
+# does not re-parse (issue #2579).
+KEY_GENERIC_ARITY = "generic_arity"
 # Depth of a document heading, 1-6 (issue #1426). Kept distinct from the
 # nesting a Section's CONTAINS_SECTION edges describe: skipped levels mean a
 # level-3 heading can be the direct child of a level-1 one.
@@ -853,6 +858,11 @@ KEY_OVERRIDES_EXTERNAL = "overrides_external"
 
 CYPHER_DEFAULT_LIMIT = 50
 
+# The labels the embeddings query matches; a row of any other is malformed.
+EMBEDDED_NODE_LABELS: frozenset[NodeLabel] = frozenset(
+    {NodeLabel.FUNCTION, NodeLabel.METHOD}
+)
+
 _CYPHER_EMBEDDING_DIRECT = """
 MATCH (m:Module)-[:DEFINES]->(n)
 WHERE (n:Function OR n:Method)
@@ -865,7 +875,7 @@ WHERE m.qualified_name STARTS WITH ($project_name + '.')
 """
 
 _CYPHER_EMBEDDING_COLUMNS = """RETURN id(n) AS node_id,
-       n.qualified_name AS qualified_name,
+       n.qualified_name AS qualified_name, head(labels(n)) AS label,
        n.start_line AS start_line, n.end_line AS end_line,
        m.path AS path
 """
@@ -890,6 +900,22 @@ CYPHER_QUERY_PROJECT_NODE_IDS = (
 
 PAYLOAD_NODE_ID = "node_id"
 PAYLOAD_QUALIFIED_NAME = "qualified_name"
+# The project a Qdrant point belongs to. Points written before issue #2447
+# have none and are keyed by Memgraph's internal node id instead.
+PAYLOAD_PROJECT = "project"
+# The UUIDv5 namespace a Qdrant point id is derived in, from the project, the
+# symbol's label and its qualified name. Changing it re-keys every stored point.
+EMBEDDING_POINT_ID_NAMESPACE = "4c6a2f1e-8d3b-5e7a-9f10-2b6c8d4e0a17"
+# A project's Milvus rows are the qualified names in [name + ".", name + "/"):
+# "/" is the character after ".", so the range holds exactly the names under
+# the prefix. LIKE would read the `_` of many project names as a wildcard.
+QN_PREFIX_RANGE_END = "/"
+MILVUS_PREFIX_RANGE_EXPR = "{field} >= {low} and {field} < {high}"
+MILVUS_STALE_ROWS_EXPR = "({scope}) and not ({field} in {ids})"
+MILVUS_EXCLUDE_EXPR = "({scope}) and not ({excluded})"
+MILVUS_IDS_EXPR = "{field} in {ids}"
+# Milvus answers a delete with the deleted keys or with this count.
+MILVUS_DELETE_COUNT_KEY = "delete_count"
 
 CYPHER_DELETE_MODULE = (
     # Scoped to the project: two projects in the shared graph can hold the
@@ -1126,6 +1152,7 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.return_type AS return_type, n.param_types AS param_types, "
     "n.namespace AS namespace, n.is_object_member AS is_object_member, "
     "n.signature AS signature, n.declared_in_class AS declared_in_class, "
+    "n.generic_arity AS generic_arity, "
     "n.is_exported AS is_exported, "
     "n.extension_receiver AS extension_receiver, "
     "n.extension_namespace AS extension_namespace, "
@@ -1337,9 +1364,10 @@ CYPHER_ALL_CSHARP_TYPE_LOCATIONS = (
 CSHARP_PARTIAL_TYPE_LABELS: frozenset[NodeLabel] = frozenset(
     {NodeLabel.CLASS, NodeLabel.INTERFACE}
 )
-# A project's types of those labels under one name, with their modifiers: a
-# rename reads which of them are the parts of one `partial` type by the key
-# parsing groups them under (`csharp_partial_key_from_graph`).
+# A project's types of those labels under one name, with their modifiers and
+# generic arity: a rename reads which of them are the parts of one `partial`
+# type by the key parsing groups them under (`csharp_partial_key_from_graph`),
+# which spells the arity (issue #2579).
 _CSHARP_PARTIAL_LABELS = "|".join(
     sorted(label.value for label in CSHARP_PARTIAL_TYPE_LABELS)
 )
@@ -1347,7 +1375,7 @@ CYPHER_SAME_NAMED_CSHARP_TYPES = (
     f"MATCH (n:{_CSHARP_PARTIAL_LABELS}) "
     "WHERE n.name = $name AND n.qualified_name STARTS WITH $project_prefix "
     "RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, "
-    "n.path AS path, n.modifiers AS modifiers"
+    "n.path AS path, n.modifiers AS modifiers, n.generic_arity AS generic_arity"
 )
 
 # Col-keyed location rehydration fetches (issue #1240). Both guard for
