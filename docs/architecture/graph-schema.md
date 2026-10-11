@@ -379,7 +379,7 @@ Methods of classes defined inside function bodies are captured only when `CGR_CA
 
 ## Qualified Name Uniqueness
 
-`qualified_name` uniquely identifies each `Function`, `Method`, and `Class` node. When the same qualified name is defined more than once in a module, every definition is kept as a distinct node. This happens with the `if has_x(): ... else: ...` import-fallback idiom, `typing.overload`, and `try/except ImportError` fallbacks.
+`qualified_name` uniquely identifies each `Function`, `Method`, and `Class` node. When the same qualified name is defined more than once in a module, every definition is kept as a distinct node. This happens with the `if has_x(): ... else: ...` import-fallback idiom, a `Protocol`'s `typing.overload` stubs (which have no implementation), and `try/except ImportError` fallbacks. Overload declarations that have an implementation are not definitions of their own: Python's `@typing.overload` stubs and TypeScript's overload signatures fold into the implementation, which keeps the plain name, and a TypeScript set without one (`declare function` in a `.d.ts`) is a single node at its first signature.
 
 The first definition keeps the plain dotted qualified name; each later definition is suffixed with `@<start_line>` (for example `pkg.module.store_embedding@161`) so both survive instead of one overwriting the other. The `name` property stays the plain name on every variant. Source order decides across labels too: a Python `class Tool` followed by a same-named `def Tool` in an `if` block (a docs or `TYPE_CHECKING` shim) keeps `m.Tool` for the class, and the `def` becomes `m.Tool@<line>`.
 

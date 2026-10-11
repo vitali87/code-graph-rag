@@ -43,6 +43,7 @@ from ..function_registry import TYPE_SPACE_KINDS
 from ..graph_updater import ReingestAborted
 from ..language_spec import csharp_partial_key_from_graph, get_language_for_extension
 from ..parser_loader import load_parsers
+from ..parsers.js_ts.overloads import overload_signatures
 from ..parsers.py.overloads import overload_stub_names
 from ..types_defs import PropertyParams, ResultRow
 from ..utils.path_utils import (
@@ -506,14 +507,15 @@ def _last_identifier(
 
 
 def _overload_stub_sites(definition: RenameSite, patcher: Patcher) -> list[RenameSite]:
-    """The name tokens of the `@overload` stubs a Python definition owns.
+    """The name tokens of the overload declarations a definition owns.
 
-    The graph folds the stubs into their implementation (issue #2590), so no
-    node names them; renaming only the implementation would strand them
-    under the old name with no implementation to describe.
+    The graph folds Python's `@overload` stubs (issue #2590) and TypeScript's
+    overload signatures (issue #2457) into their implementation, so no node
+    names them; renaming only the implementation would strand them under the
+    old name, which for TypeScript is a type error (TS2389).
     """
     language = get_language_for_extension(Path(definition.path).suffix)
-    if language != cs.SupportedLanguage.PYTHON:
+    if language != cs.SupportedLanguage.PYTHON and language not in _TS_LANGUAGES:
         return []
     parsers, _queries = load_parsers()
     parser = parsers.get(language)
@@ -523,11 +525,21 @@ def _overload_stub_sites(definition: RenameSite, patcher: Patcher) -> list[Renam
     point = (definition.line - 1, definition.col)
     token = root.descendant_for_point_range(point, point)
     function = token.parent if token is not None else None
-    if function is None or function.type != cs.TS_PY_FUNCTION_DEFINITION:
+    if function is None:
+        return []
+    if language in _TS_LANGUAGES:
+        names = [
+            name
+            for signature in overload_signatures(function)
+            if (name := signature.child_by_field_name(cs.FIELD_NAME)) is not None
+        ]
+    elif function.type == cs.TS_PY_FUNCTION_DEFINITION:
+        names = overload_stub_names(function, root)
+    else:
         return []
     return [
         definition._replace(line=name.start_point[0] + 1, col=name.start_point[1])
-        for name in overload_stub_names(function, root)
+        for name in names
     ]
 
 
