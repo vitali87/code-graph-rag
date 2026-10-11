@@ -271,7 +271,7 @@ class FunctionIngestMixin:
     _deferred_parent_links: list[DeferredParentLink]
     method_return_types: dict[str, str]
     go_function_return_types: dict[str, str]
-    go_method_arity: dict[str, int]
+    go_methods: dict[str, go_interfaces.GoMethodSpec]
     cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]]
     function_locations: FunctionLocations
     cpp_definition_spans: dict[str, list[CppDefinitionSpan]]
@@ -1295,8 +1295,13 @@ class FunctionIngestMixin:
                         container_qn=container_qn,
                     ),
                 )
-                self.go_method_arity[method_qn] = go_interfaces.parameter_count(
-                    entry.method_node
+                self.go_methods[method_qn] = go_interfaces.GoMethodSpec(
+                    go_interfaces.parameter_count(entry.method_node),
+                    go_utils.file_package_key(
+                        entry.file_path,
+                        self.repo_path,
+                        self.go_package_names.get(entry.module_qn),
+                    ),
                 )
             # Record the method's return type so a chained call `c.Root().Run()`
             # resolves `Run` on the type `Root()` returns.

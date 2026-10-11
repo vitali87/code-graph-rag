@@ -288,7 +288,15 @@ func Run(s Speaker) {
 
 
 def _impl_facts(implements: list[GoImplements]) -> GoSemanticFacts:
-    return GoSemanticFacts(call_sites={}, external_sites=set(), implements=implements)
+    # As the tool reports a run that analysed the root module: its pairs are
+    # then the whole answer there, and no name-and-arity match stands in for
+    # one it dropped (issue #2483).
+    return GoSemanticFacts(
+        call_sites={},
+        external_sites=set(),
+        implements=implements,
+        analysed_modules=(".",),
+    )
 
 
 def test_implements_fact_emits_edge_to_the_pass2_type_nodes(

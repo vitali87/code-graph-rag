@@ -150,9 +150,10 @@ def test_a_call_through_the_interface_reaches_every_implementation(
     }
     # The static callee is the interface method; the receiver is typed.
     assert calls.get(f"{shapes}.Shape.Area") == cs.EdgeResolution.EXACT, calls
-    # Either implementation can run, so each is one candidate of several.
-    assert calls.get(f"{shapes}.Square.Area") == cs.EdgeResolution.OVERLOAD, calls
-    assert calls.get(f"{shapes}.Circle.Area") == cs.EdgeResolution.OVERLOAD, calls
+    # Either implementation can run; each is tied to Shape by a name-and-arity
+    # match, so its edge is as much a guess as that match.
+    assert calls.get(f"{shapes}.Square.Area") == cs.EdgeResolution.HEURISTIC, calls
+    assert calls.get(f"{shapes}.Circle.Area") == cs.EdgeResolution.HEURISTIC, calls
 
 
 def test_a_call_through_an_interface_parameter_reaches_every_implementation(
@@ -514,7 +515,10 @@ def _gotypes(
         for name in implementers
     ]
     facts = GoSemanticFacts(
-        call_sites=call_sites, external_sites=set(), implements=implements
+        call_sites=call_sites,
+        external_sites=set(),
+        implements=implements,
+        analysed_modules=(".",),
     )
     monkeypatch.setattr(go_fe, "go_frontend_available", lambda: True)
     monkeypatch.setattr(go_fe, "run_go_frontend", lambda repo_path, ignored_dirs: facts)
@@ -832,4 +836,648 @@ def test_the_real_go_types_facts_reach_every_implementation(
         f"{pkg}.Shape.Area": cs.EdgeResolution.EXACT,
         f"{pkg}.Square.Area": cs.EdgeResolution.OVERLOAD,
         f"{pkg}.Circle.Area": cs.EdgeResolution.OVERLOAD,
+    }
+
+
+# --- unexported methods keep their package (PR #3360 review) ---------------
+
+STORE = """package store
+
+type Store interface {
+\tget(key string) string
+}
+
+type mem struct{}
+
+func (m mem) get(key string) string { return key }
+
+func Lookup(s Store) string { return s.get("k") }
+"""
+
+API = """package api
+
+import "example.com/unexp/store"
+
+type Named interface {
+\tstore.Store
+\tName() string
+}
+"""
+
+STORE_NAMED = """package store
+
+type named struct{}
+
+func (n named) get(key string) string { return key }
+func (n named) Name() string          { return "named" }
+"""
+
+OTHER = """package other
+
+type Fake struct{}
+
+func (f Fake) get(key string) string { return key }
+func (f Fake) Name() string          { return "fake" }
+"""
+
+
+@pytest.fixture
+def unexported(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> str:
+    files = {
+        "store/store.go": STORE,
+        "store/named.go": STORE_NAMED,
+        "api/api.go": API,
+        "other/other.go": OTHER,
+    }
+    return _index(
+        temp_repo / "unexp", files, mock_ingestor, monkeypatch, "example.com/unexp"
+    )
+
+
+def test_an_unexported_method_is_satisfied_only_inside_its_package(
+    unexported: str, mock_ingestor: MagicMock
+) -> None:
+    # `get` in package other is not store's `get`: Go qualifies an
+    # unexported name with its package, so Fake is no Store.
+    store = f"{unexported}.store.store.Store"
+    assert _implementers(mock_ingestor, store) == {
+        f"{unexported}.store.store.mem",
+        f"{unexported}.store.named.named",
+    }
+    overrides = _edges(mock_ingestor, cs.RelationshipType.OVERRIDES)
+    assert (f"{unexported}.store.store.mem.get", f"{store}.get") in overrides
+    assert not any(
+        source.startswith(f"{unexported}.other.") for source, _target in overrides
+    ), overrides
+    calls = {
+        callee
+        for caller, callee in _edges(mock_ingestor, cs.RelationshipType.CALLS)
+        if caller == f"{unexported}.store.store.Lookup"
+    }
+    assert f"{unexported}.other.other.Fake.get" not in calls, calls
+    assert f"{unexported}.store.store.mem.get" in calls, calls
+
+
+def test_an_embedded_unexported_method_keeps_the_embedded_interfaces_package(
+    unexported: str, mock_ingestor: MagicMock
+) -> None:
+    # api.Named gets store's unexported `get` through the embedded Store, so
+    # only a type of package store can have it, even though Named is in api.
+    assert _implementers(mock_ingestor, f"{unexported}.api.api.Named") == {
+        f"{unexported}.store.named.named"
+    }
+
+
+# --- embedded interfaces of one name from two packages ----------------------
+
+CONTRACT_ONE = """package one
+
+type Contract interface {
+\tFirst() int
+}
+"""
+
+CONTRACT_TWO = """package two
+
+type Contract interface {
+\tSecond() int
+}
+"""
+
+BOTH = """package outer
+
+import (
+\ta "example.com/both/one"
+\tb "example.com/both/two"
+)
+
+type Both interface {
+\ta.Contract
+\tb.Contract
+}
+"""
+
+PARTS = """package impl
+
+type Full struct{}
+
+func (f Full) First() int  { return 1 }
+func (f Full) Second() int { return 2 }
+
+type Half struct{}
+
+func (h Half) First() int { return 1 }
+"""
+
+
+def test_two_embedded_interfaces_of_one_name_stay_apart_after_an_incremental_run(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Read back on an incremental run, `a.Contract` and `b.Contract` must
+    # stay two bases: collapsed onto one, Both would ask for First alone and
+    # Half would implement it.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    root = temp_repo / "both"
+    files = {
+        "one/one.go": CONTRACT_ONE,
+        "two/two.go": CONTRACT_TWO,
+        "outer/outer.go": BOTH,
+        "impl/impl.go": PARTS,
+    }
+    root.mkdir()
+    (root / "go.mod").write_text("module example.com/both\n\ngo 1.22\n")
+    for rel, text in files.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text, encoding="utf-8")
+    store = _StatefulIngestor()
+    _incremental_index(store, root, force=True)
+    clean = _incremental_implements(store)
+    both = "proj.outer.outer.Both"
+    assert {impl for impl, iface, _ in clean if iface == both} == {
+        "proj.impl.impl.Full"
+    }
+
+    path = root / "impl/impl.go"
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
+    path.write_text(path.read_text(encoding="utf-8") + "// touched\n")
+    os.utime(path, (cache_mtime + 1, cache_mtime + 1))
+    _incremental_index(store, root, force=False)
+
+    assert _incremental_implements(store) == clean
+
+
+# --- whose pairs are the compiler's ------------------------------------------
+
+SINK = """package sink
+
+type Sink interface {
+\tPut(v int)
+}
+
+type Box struct{}
+
+func (b Box) Put(v string) {}
+"""
+
+
+def _gotypes_facts(monkeypatch: pytest.MonkeyPatch, facts: GoSemanticFacts) -> None:
+    from codebase_rag.parsers.frontends import go as go_fe
+
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
+    monkeypatch.setattr(go_fe, "go_frontend_available", lambda: True)
+    monkeypatch.setattr(go_fe, "run_go_frontend", lambda repo_path, ignored_dirs: facts)
+
+
+def test_a_go_types_run_that_proves_no_pair_adds_no_name_match(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Put(string) is not Put(int). The parameter count matches, so the
+    # name-and-arity fallback would link them; go/types analysed the module
+    # and proved no pair, which is the answer, not a missing one.
+    root = temp_repo / "gosink"
+    root.mkdir()
+    (root / "go.mod").write_text("module gosink\n\ngo 1.22\n", encoding="utf-8")
+    (root / "sink.go").write_text(SINK, encoding="utf-8")
+    _gotypes_facts(
+        monkeypatch,
+        GoSemanticFacts(
+            call_sites={}, external_sites=set(), implements=[], analysed_modules=(".",)
+        ),
+    )
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="go")
+    assert _edges(mock_ingestor, cs.RelationshipType.IMPLEMENTS) == {}
+
+
+def test_without_go_types_the_same_arity_is_still_matched(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The fallback's known limit, kept visible: only names and parameter
+    # counts are compared, so the edge is labelled heuristic.
+    project = _index(
+        temp_repo / "gosink", {"sink.go": SINK}, mock_ingestor, monkeypatch
+    )
+    implements = _edges(mock_ingestor, cs.RelationshipType.IMPLEMENTS)
+    edge = (f"{project}.sink.Box", f"{project}.sink.Sink")
+    assert implements[edge][cs.KEY_RESOLUTION] == cs.EdgeResolution.HEURISTIC
+
+
+LEGACY = """package legacy
+
+type Shape interface {
+\tArea() float64
+}
+
+type Tile struct{}
+
+func (t Tile) Area() float64 { return 1 }
+"""
+
+
+def test_a_degraded_module_keeps_the_fallback_and_an_analysed_one_does_not(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # go/types analysed the root module and proved Square alone; its run in
+    # the nested `legacy` module failed. Circle gets no edge to the root's
+    # Shape, while Tile is matched by name as if go/types were off.
+    root = temp_repo / "gomods"
+    root.mkdir()
+    (root / "go.mod").write_text("module gomods\n\ngo 1.22\n", encoding="utf-8")
+    (root / "shapes.go").write_text(SHAPES, encoding="utf-8")
+    (root / "legacy").mkdir()
+    (root / "legacy" / "go.mod").write_text("module legacy\n\ngo 1.22\n")
+    (root / "legacy" / "legacy.go").write_text(LEGACY, encoding="utf-8")
+    shape_line, shape_col = _position(SHAPES, "Shape interface")
+    square_line, square_col = _position(SHAPES, "Square struct")
+    _gotypes_facts(
+        monkeypatch,
+        GoSemanticFacts(
+            call_sites={},
+            external_sites=set(),
+            implements=[
+                GoImplements(
+                    "shapes.go",
+                    square_line,
+                    square_col,
+                    "shapes.go",
+                    shape_line,
+                    shape_col,
+                )
+            ],
+            degraded_modules=("legacy",),
+            analysed_modules=(".",),
+        ),
+    )
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="go")
+    implements = {
+        pair: props.get(cs.KEY_RESOLUTION)
+        for pair, props in _edges(mock_ingestor, cs.RelationshipType.IMPLEMENTS).items()
+    }
+    root_shape, legacy_shape = "gomods.shapes.Shape", "gomods.legacy.legacy.Shape"
+    # Inside the analysed module the compiler's pair is the only one.
+    assert {impl for impl, iface in implements if iface == root_shape} == {
+        "gomods.shapes.Square",
+        "gomods.legacy.legacy.Tile",
+    }
+    assert implements[("gomods.shapes.Square", root_shape)] is None
+    assert ("gomods.shapes.Circle", root_shape) not in implements
+    # Inside the degraded one, and across the two, which no single go/types
+    # run sees, names and arities decide.
+    assert implements[("gomods.legacy.legacy.Tile", legacy_shape)] == (
+        cs.EdgeResolution.HEURISTIC
+    )
+    assert implements[("gomods.legacy.legacy.Tile", root_shape)] == (
+        cs.EdgeResolution.HEURISTIC
+    )
+    assert implements[("gomods.shapes.Circle", legacy_shape)] == (
+        cs.EdgeResolution.HEURISTIC
+    )
+
+
+def test_the_real_go_types_run_proving_no_pair_adds_none(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The same through the bundled tool, which reports the module analysed
+    # with no pair. Skipped where it cannot build.
+    from codebase_rag.parsers.go_frontend import go_frontend_available, run_go_frontend
+
+    if shutil.which("go") is None or not go_frontend_available():
+        pytest.skip("go toolchain not available")
+    root = temp_repo / "gosink"
+    root.mkdir()
+    (root / "go.mod").write_text("module gosink\n\ngo 1.22\n", encoding="utf-8")
+    (root / "sink.go").write_text(SINK, encoding="utf-8")
+    if run_go_frontend(root).analysed_modules != (".",):
+        pytest.skip("gotypes frontend could not build in this environment")
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="go")
+    assert _edges(mock_ingestor, cs.RelationshipType.IMPLEMENTS) == {}
+
+
+# --- guesses stay guesses (PR #3360 review) ---------------------------------
+
+GUESSED_GETTER = """package app
+
+type Getter interface {
+\tGet() int
+}
+
+type Name struct{}
+
+func (n Name) Get() string { return "name" }
+"""
+
+
+def test_a_guessed_override_is_renamed_only_on_opt_in(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Get() string does not implement Get() int; only the names and counts
+    # matched, so the OVERRIDES edge is a guess and renaming Name.Get must
+    # not rewrite Getter.Get without the opt-in, call sites or none.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    _write(temp_repo, "go.mod", "module goguessed\n\ngo 1.22\n")
+    _write(temp_repo, "app.go", GUESSED_GETTER)
+    graph = _rename_index(temp_repo, mock_ingestor)
+    pkg = f"{graph.project}.app"
+    overrides = _edges(mock_ingestor, cs.RelationshipType.OVERRIDES)
+    assert overrides[(f"{pkg}.Name.Get", f"{pkg}.Getter.Get")] == {
+        cs.KEY_RESOLUTION: cs.EdgeResolution.HEURISTIC
+    }
+    with pytest.raises(RenameRefused):
+        rename(temp_repo, graph.fetch_all, graph.project, f"{pkg}.Name.Get", "Fetch")
+    assert (temp_repo / "app.go").read_text(encoding="utf-8") == GUESSED_GETTER
+
+    report = rename(
+        temp_repo,
+        graph.fetch_all,
+        graph.project,
+        f"{pkg}.Name.Get",
+        "Fetch",
+        allow_heuristic=True,
+    )
+    assert report.applied, report.message
+    text = (temp_repo / "app.go").read_text(encoding="utf-8")
+    assert "\tFetch() int" in text and "func (n Name) Fetch() string" in text
+
+
+PROVEN_GETTER = """package app
+
+type Getter interface {
+\tGet() int
+}
+
+type Count struct{}
+
+func (c Count) Get() int { return 1 }
+
+func Read(g Getter) int { return g.Get() }
+"""
+
+
+def test_a_proven_override_and_sole_target_rename_without_opt_in(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    getter_line, getter_col = _position(PROVEN_GETTER, "Getter interface")
+    count_line, count_col = _position(PROVEN_GETTER, "Count struct")
+    _gotypes_facts(
+        monkeypatch,
+        GoSemanticFacts(
+            call_sites={},
+            external_sites=set(),
+            implements=[
+                GoImplements(
+                    "app.go", count_line, count_col, "app.go", getter_line, getter_col
+                )
+            ],
+            analysed_modules=(".",),
+        ),
+    )
+    _write(temp_repo, "go.mod", "module goproven\n\ngo 1.22\n")
+    _write(temp_repo, "app.go", PROVEN_GETTER)
+    graph = _rename_index(temp_repo, mock_ingestor)
+    pkg = f"{graph.project}.app"
+    overrides = _edges(mock_ingestor, cs.RelationshipType.OVERRIDES)
+    assert overrides[(f"{pkg}.Count.Get", f"{pkg}.Getter.Get")] == {}
+    calls = {
+        callee: props[cs.KEY_RESOLUTION]
+        for (caller, callee), props in _edges(
+            mock_ingestor, cs.RelationshipType.CALLS
+        ).items()
+        if caller == f"{pkg}.Read"
+    }
+    # The compiler proved the sole implementer, so its edge is as exact as
+    # the call's own.
+    assert calls == {
+        f"{pkg}.Getter.Get": cs.EdgeResolution.EXACT,
+        f"{pkg}.Count.Get": cs.EdgeResolution.EXACT,
+    }
+
+    report = rename(
+        temp_repo, graph.fetch_all, graph.project, f"{pkg}.Count.Get", "Fetch"
+    )
+
+    assert report.applied, report.message
+    text = (temp_repo / "app.go").read_text(encoding="utf-8")
+    for renamed in ("\tFetch() int", "func (c Count) Fetch() int", "g.Fetch()"):
+        assert renamed in text, text
+
+
+def test_a_sole_guessed_dispatch_target_is_labelled_heuristic(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = GUESSED_GETTER + "\nfunc Read(g Getter) int { return g.Get() }\n"
+    project = _index(
+        temp_repo / "gosole", {"app.go": source}, mock_ingestor, monkeypatch
+    )
+    pkg = f"{project}.app"
+    calls = {
+        callee: props[cs.KEY_RESOLUTION]
+        for (caller, callee), props in _edges(
+            mock_ingestor, cs.RelationshipType.CALLS
+        ).items()
+        if caller == f"{pkg}.Read"
+    }
+    assert calls == {
+        f"{pkg}.Getter.Get": cs.EdgeResolution.EXACT,
+        f"{pkg}.Name.Get": cs.EdgeResolution.HEURISTIC,
+    }
+
+
+# --- a reused updater forgets what no longer holds ---------------------------
+
+RECONCILED_SHAPE = """package shapes
+
+type Shape interface {
+\tArea() float64
+}
+
+func Total(shapes []Shape) float64 {
+\tt := 0.0
+\tfor _, s := range shapes {
+\t\tt += s.Area()
+\t}
+\treturn t
+}
+"""
+
+RECONCILED_IMPL = """package shapes
+
+type Square struct{}
+
+func (s Square) Area() float64 { return 1 }
+
+type Circle struct{}
+
+func (c Circle) Area() float64      { return 2 }
+func (c Circle) Perimeter() float64 { return 3 }
+"""
+
+
+def _interface_edges(store: _StatefulIngestor) -> set[tuple[str, ...]]:
+    kinds = {
+        cs.RelationshipType.IMPLEMENTS.value,
+        cs.RelationshipType.OVERRIDES.value,
+        cs.RelationshipType.CALLS.value,
+    }
+    return {
+        (str(key[1]), str(key[2]), str(key[4]), str(props.get(cs.KEY_RESOLUTION)))
+        for key, props in store.edge_props.items()
+        if key[2] in kinds
+    }
+
+
+def _reconciled_repo(root: Path) -> Path:
+    root.mkdir()
+    (root / "go.mod").write_text("module proj\n\ngo 1.22\n", encoding="utf-8")
+    (root / "shape.go").write_text(RECONCILED_SHAPE, encoding="utf-8")
+    (root / "impl.go").write_text(RECONCILED_IMPL, encoding="utf-8")
+    return root
+
+
+def _require_perimeter(root: Path) -> None:
+    # Shape gains a method Square lacks: Square is no longer a Shape.
+    path = root / "shape.go"
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "\tArea() float64\n", "\tArea() float64\n\tPerimeter() float64\n"
+        ),
+        encoding="utf-8",
+    )
+    os.utime(path, (cache_mtime + 1, cache_mtime + 1))
+
+
+def _go_updater(store: _StatefulIngestor, root: Path) -> GraphUpdater:
+    parsers, queries = load_parsers()
+    if cs.SupportedLanguage.GO not in parsers:
+        pytest.skip("go parser not available")
+    return GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name="proj",
+    )
+
+
+@pytest.mark.parametrize("how", ["incremental", "reingest"])
+def test_a_reused_updater_drops_an_implementer_that_no_longer_matches(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch, how: str
+) -> None:
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    root = _reconciled_repo(temp_repo / "reused")
+    store = _StatefulIngestor()
+    updater = _go_updater(store, root)
+    updater.run(force=True)
+    _require_perimeter(root)
+    if how == "incremental":
+        updater.run(force=False)
+    else:
+        updater.reingest(["shape.go"])
+
+    clean_root = _reconciled_repo(temp_repo / "clean")
+    (clean_root / "shape.go").write_text(
+        (root / "shape.go").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    clean = _StatefulIngestor()
+    _go_updater(clean, clean_root).run(force=True)
+
+    assert _interface_edges(store) == _interface_edges(clean)
+    assert not any("Square" in edge[0] for edge in _interface_edges(store)), sorted(
+        _interface_edges(store)
+    )
+
+
+# --- a range's container is the declaration in scope -------------------------
+
+SCOPED = """package shapes
+
+type Shape interface {
+\tArea() float64
+}
+
+type Square struct{}
+
+func (s Square) Area() float64 { return 1 }
+
+type Other struct{}
+
+func (o Other) Area(scale int) float64 { return float64(scale) }
+
+func Blocked(xs []Shape, ok bool) float64 {
+\tif ok {
+\t\tvar xs []Other
+\t\t_ = xs
+\t}
+\tt := 0.0
+\tfor _, s := range xs {
+\t\tt += s.Area()
+\t}
+\treturn t
+}
+
+func Nested(xs []Shape) float64 {
+\tf := func() {
+\t\tvar xs []Other
+\t\t_ = xs
+\t}
+\tf()
+\tt := 0.0
+\tfor _, s := range xs {
+\t\tt += s.Area()
+\t}
+\treturn t
+}
+
+func Inner(xs []Shape) float64 {
+\tt := 0.0
+\tif len(xs) > 0 {
+\t\tvar xs []Other
+\t\tfor _, o := range xs {
+\t\t\tt += o.Area(2)
+\t\t}
+\t}
+\treturn t
+}
+"""
+
+
+@pytest.fixture
+def scoped(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> str:
+    project = _index(
+        temp_repo / "goscoped", {"shapes.go": SCOPED}, mock_ingestor, monkeypatch
+    )
+    return f"{project}.shapes"
+
+
+def _area_calls(mock_ingestor: MagicMock, caller: str) -> dict[str, str]:
+    return {
+        callee: props[cs.KEY_RESOLUTION]
+        for (source, callee), props in _edges(
+            mock_ingestor, cs.RelationshipType.CALLS
+        ).items()
+        if source == caller and callee.endswith(".Area")
+    }
+
+
+@pytest.mark.parametrize("caller", ["Blocked", "Nested"])
+def test_a_shadow_out_of_scope_does_not_retype_the_range(
+    scoped: str, mock_ingestor: MagicMock, caller: str
+) -> None:
+    # The inner `var xs []Other` has ended (its block, or the closure it is
+    # declared in) where the loop ranges over the parameter.
+    assert _area_calls(mock_ingestor, f"{scoped}.{caller}") == {
+        f"{scoped}.Shape.Area": cs.EdgeResolution.EXACT,
+        f"{scoped}.Square.Area": cs.EdgeResolution.HEURISTIC,
+    }
+
+
+def test_a_shadow_in_scope_does_retype_the_range(
+    scoped: str, mock_ingestor: MagicMock
+) -> None:
+    assert _area_calls(mock_ingestor, f"{scoped}.Inner") == {
+        f"{scoped}.Other.Area": cs.EdgeResolution.EXACT
     }

@@ -280,6 +280,7 @@ class CallResolver:
         "class_inheritance",
         "type_aliases",
         "interface_implementers",
+        "guessed_implementations",
         "_interface_impl_cache",
         "_simple_resolution_cache",
         "last_resolution",
@@ -316,6 +317,7 @@ class CallResolver:
         rust_function_modules: dict[str, str] | None = None,
         declared_module_qns: set[str] | None = None,
         go_package_names: Mapping[str, str] | None = None,
+        guessed_implementations: set[tuple[str, str]] | None = None,
     ) -> None:
         self.function_registry = function_registry
         self.import_processor = import_processor
@@ -349,6 +351,12 @@ class CallResolver:
         # concrete implementer's method (call-graph accuracy; single-impl only).
         self.interface_implementers = (
             interface_implementers if interface_implementers is not None else {}
+        )
+        # The (interface, implementer) pairs above matched by method name and
+        # arity alone (shared ref, Go #2483): what dispatch through them
+        # reaches is a guess.
+        self.guessed_implementations = (
+            guessed_implementations if guessed_implementations is not None else set()
         )
         self._interface_impl_cache: dict[str, str] | None = None
         # C++ typedef/using alias -> underlying bare type, consulted when a
@@ -1728,19 +1736,22 @@ class CallResolver:
             return {result}
         return set()
 
-    def interface_dispatch_targets(self, callee_qn: str) -> set[tuple[str, str]]:
+    def interface_dispatch_targets(self, callee_qn: str) -> dict[tuple[str, str], bool]:
         # A Go call through an interface runs whichever implementation the
         # value holds, and the types implement it implicitly, so a sole
         # implementer is no likelier than one of many: every implementer's
-        # method is a target (issue #2483).
+        # method is a target (issue #2483). Each maps to whether only a guess
+        # ties it to the interface (a pair matched by name and arity), which
+        # its edge then says rather than borrowing the call's own label.
         class_qn, sep, method_name = callee_qn.rpartition(cs.SEPARATOR_DOT)
         if not sep or self.function_registry.get(class_qn) != NodeType.INTERFACE:
-            return set()
-        return {
-            result
-            for implementer in self.interface_implementers.get(class_qn, ())
-            if (result := self._try_resolve_method(implementer, method_name))
-        }
+            return {}
+        targets: dict[tuple[str, str], bool] = {}
+        for implementer in self.interface_implementers.get(class_qn, ()):
+            if result := self._try_resolve_method(implementer, method_name):
+                guessed = (class_qn, implementer) in self.guessed_implementations
+                targets[result] = targets.get(result, True) and guessed
+        return targets
 
     def _redirect_protocol_method(
         self, result: tuple[str, str] | None

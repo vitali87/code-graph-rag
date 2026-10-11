@@ -88,6 +88,11 @@ class SemanticFacts:
     # IMPLEMENTS edges for a structurally-typed language with no syntactic base
     # list (Go #1179); languages with a base list use `base_kinds` instead.
     implements_pairs: list[ImplementsPair] = field(default_factory=list)
+    # Repo-relative module roots (`.` for the repository's own) the compiler
+    # analysed in full. A pair it did not report within one of them does not
+    # hold (Go #2483); a root missing here was never analysed, or its run
+    # failed. Not counted by `is_empty`: a run can analyse and find nothing.
+    analysed_roots: tuple[str, ...] = ()
     # Per invocation argument, the locals/parameters the compiler proves
     # reach it (C# Roslyn today, issue #1187). The flow walk unions their
     # taint with its own syntactic evaluation, so an expression shape the

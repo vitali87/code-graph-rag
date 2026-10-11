@@ -44,6 +44,7 @@ from .frontends.protocol import ImplementsPair, ResolvedCallSite
 from .function_ingest import FunctionIngestMixin
 from .go import utils as go_utils
 from .go.interface_ingest import GoInterfaceMixin
+from .go.interfaces import GoInterfaceDecl, GoMethodSpec
 from .handlers import get_handler
 from .java_generated import generator_hint
 from .js_ts.ingest import JsTsIngestMixin
@@ -266,12 +267,20 @@ class DefinitionProcessor(
         # token, so the frontend's pair positions join here directly (no alias).
         self.go_type_locations: dict[tuple[str, int, int], tuple[str, str]] = {}
         # Go interfaces as method sets (issue #2483): each Go method's
-        # parameter count, each interface's embedded types as written, and the
-        # interfaces this run parsed, from which implicit satisfaction is
-        # computed once every type is registered.
-        self.go_method_arity: dict[str, int] = {}
-        self.go_interface_embeds: dict[str, list[str]] = {}
+        # parameter count and package, each interface's embedded types as
+        # written, and the interfaces this run parsed, from which implicit
+        # satisfaction is computed once every type is registered.
+        self.go_methods: dict[str, GoMethodSpec] = {}
+        self.go_interfaces: dict[str, GoInterfaceDecl] = {}
         self.go_interfaces_parsed: dict[str, str] = {}
+        # The Go pairs in interface_implementers by source, replaced each
+        # pass: go/types proofs, and name-and-arity matches (whose edges are
+        # labelled heuristic, and which the resolver reads to say so).
+        self.go_proven_pairs: set[tuple[str, str]] = set()
+        self.go_guessed_pairs: set[tuple[str, str]] = set()
+        # The module roots the go/types frontend analysed in this run (`.`
+        # for the repository's own): their pairs are the compiler's alone.
+        self.go_analysed_roots: set[str] = set()
         # (rel_file, type_start_line) -> class qn for every ingested C# type,
         # the reverse of the Roslyn fact keys, so partial declaration groups
         # join back to the Pass-2 Class nodes.

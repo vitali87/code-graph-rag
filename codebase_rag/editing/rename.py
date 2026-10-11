@@ -60,7 +60,7 @@ from .occurrences import (
     find_occurrences,
 )
 from .patcher import Patcher, PatcherError, byte_to_line_col, line_col_to_byte
-from .sites import AMBIGUOUS, call_node_at, calls_starting_at, hierarchy
+from .sites import AMBIGUOUS, call_node_at, calls_starting_at, hierarchy, only_guessed
 from .transaction import (
     EditTransaction,
     StagedTree,
@@ -791,9 +791,12 @@ class Renamer:
             raise RenameRefused(
                 cs.RENAME_NO_DEFINITION_TOKEN.format(qn=qn, path=path), [], []
             )
-        return RenameSite(
-            "definition", path, token[0], token[1], qn, cs.EdgeResolution.EXACT
+        resolution = (
+            cs.EdgeResolution.HEURISTIC
+            if only_guessed(self.fetch_all, self.project, qn)
+            else cs.EdgeResolution.EXACT
         )
+        return RenameSite("definition", path, token[0], token[1], qn, resolution)
 
     def _add_type_edge_sites(
         self,

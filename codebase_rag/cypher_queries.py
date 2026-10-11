@@ -1261,7 +1261,7 @@ RETURN labels(impl)[0] AS label, impl.qualified_name AS qualified_name,
 CYPHER_GRAPH_OVERRIDES = """MATCH (a)-[r:OVERRIDES]-(b)
 WHERE b.qualified_name = $qn AND a.qualified_name STARTS WITH $project_prefix
 RETURN labels(a)[0] AS label, a.qualified_name AS qualified_name, a.path AS path,
-       type(r) AS rel_type"""
+       type(r) AS rel_type, r.resolution AS resolution"""
 # One hop of the `depth` walks (issue #2624): the neighbours of a whole
 # frontier at once, each row naming the frontier node it hangs off as
 # `through`. OVERRIDES is read one direction per query so a walk that went

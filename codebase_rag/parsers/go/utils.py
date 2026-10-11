@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Collection
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from tree_sitter import Node
 
 from ... import constants as cs
 from ...types_defs import FunctionRegistryTrieProtocol, NodeType
+from ...utils.path_utils import cached_relative_path
 from ..utils import safe_decode_text
 
 # What a Go type name can declare: a struct (Class), a named or alias type,
@@ -50,6 +51,45 @@ def file_package_qn(
     if parts is None:
         return module_qn.rpartition(cs.SEPARATOR_DOT)[0]
     return cs.SEPARATOR_DOT.join((project_name, *parts))
+
+
+def package_key(rel_path: str, clause: str | None) -> str:
+    """`dir:clause` for the Go file at repo-relative `rel_path`: a package is
+    its directory and `package` clause together, so `p` and its external
+    test package `p_test` in one directory stay apart."""
+    directory = PurePosixPath(rel_path).parent.as_posix()
+    return f"{directory}{cs.CHAR_COLON}{clause or ''}"
+
+
+def file_package_key(
+    file_path: Path | None, repo_path: Path, clause: str | None
+) -> str:
+    rel_path = (
+        cached_relative_path(file_path, repo_path).as_posix() if file_path else ""
+    )
+    return package_key(rel_path, clause)
+
+
+def package_key_dir(key: str) -> str:
+    return key.rpartition(cs.CHAR_COLON)[0]
+
+
+def module_root(
+    repo_path: Path, rel_dir: str, roots: dict[str, str | None]
+) -> str | None:
+    """The repo-relative directory of the nearest `go.mod` at or above
+    `rel_dir` (`.` for the repository root), memoised in `roots`, or None
+    outside any module."""
+    if rel_dir in roots:
+        return roots[rel_dir]
+    current = PurePosixPath(rel_dir)
+    found: str | None = None
+    for candidate in (current, *current.parents):
+        if (repo_path / candidate / cs.DEP_FILE_GOMOD).is_file():
+            found = candidate.as_posix()
+            break
+    roots[rel_dir] = found
+    return found
 
 
 def shares_package_clause(requester: str | None, other: str | None) -> bool:
@@ -131,16 +171,43 @@ def local_binding_scopes(func_node: Node) -> GoLocalScopes:
     local starts at the end of its declaration (`helper := helper()` reads
     the outer `helper`) and ends with the innermost block around it, an
     `if`/`for`/`switch` header's own implicit block included."""
-    scopes: dict[str, list[tuple[int, int]]] = {}
+    return {
+        name: tuple(span for span, _declaration in bindings)
+        for name, bindings in local_bindings(func_node).items()
+    }
+
+
+# A name a function binds for itself -> each declaration of it with the byte
+# span it is in scope over.
+GoLocalBindings = dict[str, list[tuple[tuple[int, int], Node]]]
+
+
+def local_bindings(func_node: Node) -> GoLocalBindings:
+    """`local_binding_scopes` with the declaring node of each span: a
+    parameter or variadic parameter declaration, a `var` or `const` spec, or
+    a statement binding a `left` list."""
+    bindings: GoLocalBindings = {}
     stack = [func_node]
     while stack:
         node = stack.pop()
         names = _bound_names(node)
         if names and (span := _binding_span(node)) is not None:
             for name in names:
-                scopes.setdefault(name, []).append(span)
+                bindings.setdefault(name, []).append((span, node))
         stack.extend(node.named_children)
-    return {name: tuple(spans) for name, spans in scopes.items()}
+    return bindings
+
+
+def declaration_at(bindings: GoLocalBindings, name: str, point: int) -> Node | None:
+    """The declaration local `name` refers to at byte `point`: of those in
+    scope there, the innermost, whose scope starts last since Go's scopes
+    nest. None when no local of that name is in scope."""
+    in_scope = [
+        (span[0], declaration)
+        for span, declaration in bindings.get(name, ())
+        if span[0] <= point < span[1]
+    ]
+    return max(in_scope, key=lambda entry: entry[0])[1] if in_scope else None
 
 
 def bound_at(scopes: GoLocalScopes, name: str, point: int) -> bool:

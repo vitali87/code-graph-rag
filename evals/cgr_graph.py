@@ -730,6 +730,8 @@ class _StatefulIngestor:
     # A reference read also names the parameter a callback is invoked
     # through (issue #2459).
     _GRAPH_REFERENCE_KEYS = (*_GRAPH_SITE_KEYS, cs.KEY_VIA_PARAM)
+    # A Go override matched by name and arity says so (issue #2483).
+    _GRAPH_OVERRIDE_KEYS = (cs.KEY_RESOLUTION,)
     _GRAPH_IMPORT_KEYS = (
         cs.KEY_LINE,
         cs.KEY_COL,
@@ -1051,12 +1053,20 @@ class _StatefulIngestor:
                     if edge[2] == overrides and self._in_project(
                         (edge[0], edge[1]), prefix
                     ):
-                        rows.append(self._graph_edge_row(edge, (), (edge[0], edge[1])))
+                        rows.append(
+                            self._graph_edge_row(
+                                edge, self._GRAPH_OVERRIDE_KEYS, (edge[0], edge[1])
+                            )
+                        )
                 for edge in self._out.get(target, ()):
                     if edge[2] == overrides and self._in_project(
                         (edge[3], edge[4]), prefix
                     ):
-                        rows.append(self._graph_edge_row(edge, (), (edge[3], edge[4])))
+                        rows.append(
+                            self._graph_edge_row(
+                                edge, self._GRAPH_OVERRIDE_KEYS, (edge[3], edge[4])
+                            )
+                        )
         elif query == cq.CYPHER_GRAPH_IMPORTERS:
             for target in targets:
                 for edge in self._in.get(target, ()):

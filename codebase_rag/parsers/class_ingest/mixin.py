@@ -39,7 +39,7 @@ from ..dart.type_inference import DartTypeInferenceEngine
 from ..enum_variants import emit_declared_variants, is_python_enum
 from ..field_nodes import PendingFieldType, emit_declared_fields
 from ..go import GoTypeInferenceEngine
-from ..go import interfaces as go_interfaces
+from ..go import interfaces as go_ifaces
 from ..java import utils as java_utils
 from ..js_ts import utils as js_ts_utils
 from ..parameter_nodes import PendingParameterType, csharp_call_shape
@@ -379,6 +379,7 @@ class ClassIngestMixin:
     class_field_element_types: dict[str, dict[str, str]]
     method_return_types: dict[str, str]
     interface_implementers: dict[str, set[str]]
+    go_interfaces: dict[str, go_ifaces.GoInterfaceDecl]
     function_locations: dict[FunctionSpanKey, FunctionLocation]
     cpp_definition_spans: dict[str, list[CppDefinitionSpan]]
     _deferred_forward_decls: list[_DeferredForwardDecl]
@@ -1675,7 +1676,7 @@ class ClassIngestMixin:
         elif language == cs.SupportedLanguage.GO and node_type == NodeType.INTERFACE:
             # Stored so an incremental run that does not re-parse the
             # interface still knows what its method set is built from.
-            class_props.update(go_interfaces.embeds_props(class_node))
+            class_props.update(go_ifaces.embeds_props(class_node))
 
     def _record_declared_type_members(
         self,
@@ -2707,11 +2708,19 @@ class ClassIngestMixin:
         )
 
     def process_all_method_overrides(self) -> None:
+        # A Go interface's implementers got their OVERRIDES from
+        # link_go_interfaces, one per interface satisfied and labelled with
+        # the pair's confidence; the walk here would add an unlabelled copy.
+        implementers = {
+            interface_qn: implementer_qns
+            for interface_qn, implementer_qns in self.interface_implementers.items()
+            if interface_qn not in self.go_interfaces
+        }
         mo.process_all_method_overrides(
             self.function_registry,
             self.class_inheritance,
             self.ingestor,
-            self.interface_implementers,
+            implementers,
             self.csharp_methods,
             self.csharp_override_methods,
             self.rust_impl_method_traits,

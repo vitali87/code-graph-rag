@@ -10,6 +10,7 @@ from ..csharp_frontend import CallSiteKey
 from ..frontends.protocol import ResolvedCallSite
 from ..semantic_call_join import call_site_key, declared_location
 from ..utils import safe_decode_text
+from . import utils as go_utils
 from .utils import type_identifier_text
 
 # Sentinel returned when the go/types frontend resolved a call OUTSIDE the module
@@ -65,35 +66,17 @@ def _range_slots(type_node: Node) -> _RangeSlots | None:
     return None
 
 
-def _declared_containers(caller_node: Node, body: Node) -> dict[str, _RangeSlots]:
-    """The parameters and `var`s declared with a container type, by name.
-    A variadic `xs ...Shape` is a slice of Shape inside the function."""
-    containers: dict[str, _RangeSlots] = {}
-    params = caller_node.child_by_field_name(cs.FIELD_PARAMETERS)
-    declarations = [*(params.named_children if params else ()), *_var_specs(body)]
-    for decl in declarations:
-        type_node = decl.child_by_field_name(cs.FIELD_TYPE)
-        if type_node is None:
-            continue
-        if decl.type == cs.TS_GO_VARIADIC_PARAMETER_DECLARATION:
-            slots = (None, _element_name(type_node))
-        else:
-            slots = _range_slots(type_node)
-        for name in decl.children_by_field_name(cs.FIELD_NAME):
-            if slots is not None and (text := safe_decode_text(name)):
-                containers[text] = slots
-    return containers
-
-
-def _var_specs(body: Node) -> list[Node]:
-    specs: list[Node] = []
-    stack = [body]
-    while stack:
-        node = stack.pop()
-        if node.type == cs.TS_GO_VAR_SPEC:
-            specs.append(node)
-        stack.extend(node.named_children)
-    return specs
+def _declared_slots(declaration: Node) -> _RangeSlots | None:
+    # A variadic `xs ...Shape` is a slice of Shape inside the function; any
+    # other binding (`xs := load()`, a range variable) has no written type.
+    type_node = declaration.child_by_field_name(cs.FIELD_TYPE)
+    if type_node is None:
+        return None
+    if declaration.type == cs.TS_GO_VARIADIC_PARAMETER_DECLARATION:
+        return None, _element_name(type_node)
+    if declaration.type in (cs.TS_GO_PARAMETER_DECLARATION, cs.TS_GO_VAR_SPEC):
+        return _range_slots(type_node)
+    return None
 
 
 def _range_clauses(body: Node) -> list[Node]:
@@ -111,16 +94,20 @@ def _collect_range_bindings(
     caller_node: Node, body: Node, var_types: dict[str, str]
 ) -> None:
     """`for _, s := range shapes` with `shapes []Shape`: `s` is a Shape, so
-    `s.Area()` binds through Shape (issue #2483). A name the function types
-    another way keeps that type."""
+    `s.Area()` binds through Shape (issue #2483). `shapes` is the declaration
+    in scope at the loop, not another of that name in a block that has ended
+    or a closure. A name the function types another way keeps that type."""
     clauses = _range_clauses(body)
-    containers = _declared_containers(caller_node, body) if clauses else {}
+    bindings = go_utils.local_bindings(caller_node) if clauses else {}
     for clause in clauses:
         ranged = clause.child_by_field_name(cs.FIELD_RIGHT)
         left = clause.child_by_field_name(cs.FIELD_LEFT)
         if ranged is None or left is None or ranged.type != cs.TS_IDENTIFIER:
             continue
-        slots = containers.get(safe_decode_text(ranged) or "")
+        declaration = go_utils.declaration_at(
+            bindings, safe_decode_text(ranged) or "", ranged.start_byte
+        )
+        slots = _declared_slots(declaration) if declaration is not None else None
         if slots is not None:
             _bind_range_names(left, slots, var_types)
 

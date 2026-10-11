@@ -11,6 +11,7 @@ from __future__ import annotations
 from tree_sitter import Node
 
 from .. import constants as cs
+from .. import cypher_queries as cq
 from .. import graph_query
 from ..graph_query import QueryFn
 
@@ -37,6 +38,27 @@ def hierarchy(fetch_all: QueryFn, project: str, qn: str) -> list[str]:
                 seen.append(other)
                 frontier.append(other)
     return seen
+
+
+def only_guessed(fetch_all: QueryFn, project: str, qn: str) -> bool:
+    """Whether every OVERRIDES edge tying `qn` to a hierarchy is a guess, as
+    for a Go method matched to an interface's by name and arity alone (issue
+    #2483). Renamed with that hierarchy, its declaration is rewritten on a
+    guess, which takes the same opt-in as a guessed call site, call sites or
+    none."""
+    owns = graph_query._owner_check(fetch_all, project)
+    rows = fetch_all(
+        cq.CYPHER_GRAPH_OVERRIDES,
+        {cs.KEY_PROJECT_PREFIX: f"{project}{cs.SEPARATOR_DOT}", cs.KEY_QN: qn},
+    )
+    resolutions = [
+        row.get(cs.KEY_RESOLUTION)
+        for row in rows
+        if owns(str(row.get(cs.KEY_QUALIFIED_NAME) or ""))
+    ]
+    return bool(resolutions) and all(
+        resolution in AMBIGUOUS for resolution in resolutions
+    )
 
 
 def call_node_at(

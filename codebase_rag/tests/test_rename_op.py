@@ -146,7 +146,7 @@ class RecordedGraph:
             ]
         if query == cq.CYPHER_GRAPH_OVERRIDES:
             out = []
-            for src, rel, dst, _props in self.edges:
+            for src, rel, dst, props in self.edges:
                 if rel != "OVERRIDES":
                     continue
                 for a, b in ((src, dst), (dst, src)):
@@ -157,6 +157,7 @@ class RecordedGraph:
                                 cs.KEY_QUALIFIED_NAME: a,
                                 cs.KEY_PATH: self.nodes[a].get(cs.KEY_PATH),
                                 cs.KEY_REL_TYPE: rel,
+                                cs.KEY_RESOLUTION: props.get(cs.KEY_RESOLUTION),
                             }
                         )
             return out

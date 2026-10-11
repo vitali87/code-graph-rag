@@ -27,6 +27,7 @@ from ...types_defs import (
     FunctionRegistryTrieProtocol,
     NodeType,
     PendingTypeFact,
+    PropertyDict,
     SimpleNameLookup,
 )
 from ...utils import qn_markers
@@ -62,15 +63,20 @@ class GoInterfaceMixin:
     function_locations: FunctionLocations
     pending_type_facts: list[PendingTypeFact]
     pending_parameter_types: list[PendingParameterType]
+    go_package_names: dict[str, str]
     # Go method qn (receiver methods and interface method specs) -> its
-    # parameter count, from the parse or from `param_types` read back.
-    go_method_arity: dict[str, int]
-    # Go interface qn -> the types it embeds, as written.
-    go_interface_embeds: dict[str, list[str]]
+    # parameter count and package, from the parse or read back.
+    go_methods: dict[str, go_ifaces.GoMethodSpec]
+    # Go interface qn -> the types it embeds, as written, and its package.
+    go_interfaces: dict[str, go_ifaces.GoInterfaceDecl]
     # The interfaces this run parsed -> their module: only those resolve
     # their embedded names and write the INHERITS edges, since an unchanged
     # interface's edges are still in the graph and were read back.
     go_interfaces_parsed: dict[str, str]
+    # The (interface, implementer) pairs in `interface_implementers` that
+    # go/types proved, and those matched here by name and arity only.
+    go_proven_pairs: set[tuple[str, str]]
+    go_guessed_pairs: set[tuple[str, str]]
 
     @abstractmethod
     def _get_docstring(
@@ -90,7 +96,12 @@ class GoInterfaceMixin:
         interface = go_ifaces.interface_type(type_spec)
         if interface is None:
             return
-        self.go_interface_embeds[interface_qn] = go_ifaces.embedded_types(interface)
+        package = go_utils.file_package_key(
+            file_path, self.repo_path, self.go_package_names.get(module_qn)
+        )
+        self.go_interfaces[interface_qn] = go_ifaces.GoInterfaceDecl(
+            tuple(go_ifaces.embedded_types(interface)), package
+        )
         self.go_interfaces_parsed[interface_qn] = module_qn
         for method in go_ifaces.interface_methods(interface):
             method_qn = ingest_method(
@@ -109,7 +120,9 @@ class GoInterfaceMixin:
                 parameter_type_sink=self.pending_parameter_types,
             )
             if method_qn is not None:
-                self.go_method_arity[method_qn] = go_ifaces.parameter_count(method)
+                self.go_methods[method_qn] = go_ifaces.GoMethodSpec(
+                    go_ifaces.parameter_count(method), package
+                )
                 self._register_interface_method_location(
                     module_qn, method, method_qn, interface_qn
                 )
@@ -130,20 +143,21 @@ class GoInterfaceMixin:
             container_qn=interface_qn,
         )
 
-    def link_go_interfaces(self, structural: bool) -> int:
+    def link_go_interfaces(self, analysed_roots: frozenset[str]) -> int:
         """Embedding, implicit satisfaction and the overrides it implies.
 
-        `structural` is False when the go/types frontend already proved
-        which types implement which interfaces; its pairs are then the only
-        ones, and this adds just their OVERRIDES edges. Returns the number
-        of IMPLEMENTS edges written here.
+        `analysed_roots` are the module roots (`.` for the repository's own)
+        the go/types frontend analysed. A type and an interface of one such
+        module are paired by the compiler alone: a pair it did not prove does
+        not hold, whatever the names say. Every other pair, in a module it
+        never ran on or whose run failed, is matched by name and arity.
+        Returns the number of IMPLEMENTS edges written here.
         """
         embeds = self._resolve_go_embeds()
-        method_sets = self._go_method_sets()
-        if structural:
-            linked = self._link_implicit_implementations(embeds, method_sets)
-        else:
-            linked = 0
+        method_sets, packages = self._go_method_sets()
+        linked = self._link_implicit_implementations(
+            embeds, method_sets, packages, analysed_roots
+        )
         self._link_go_overrides(method_sets)
         if linked:
             logger.info(ls.GO_IMPLICIT_IMPLEMENTS_LINKED.format(count=linked))
@@ -153,6 +167,8 @@ class GoInterfaceMixin:
         self,
         embeds: dict[str, tuple[str, ...] | None],
         method_sets: dict[str, go_ifaces.GoMethodSet],
+        packages: dict[str, str],
+        analysed_roots: frozenset[str],
     ) -> int:
         interfaces = go_ifaces.full_method_sets(method_sets, embeds)
         types = {
@@ -160,7 +176,22 @@ class GoInterfaceMixin:
             for qn, methods in method_sets.items()
             if self.function_registry.get(qn) in _GO_IMPLEMENTER_TYPES
         }
-        pairs = go_ifaces.implicit_implementations(interfaces, types)
+        roots: dict[str, str | None] = {}
+
+        def compiler_owned(type_qn: str, interface_qn: str) -> bool:
+            if not analysed_roots:
+                return False
+            type_root = self._go_module_root(packages.get(type_qn), roots)
+            interface_root = self._go_module_root(
+                self.go_interfaces[interface_qn].package, roots
+            )
+            return type_root == interface_root and type_root in analysed_roots
+
+        pairs = [
+            pair
+            for pair in go_ifaces.implicit_implementations(interfaces, types)
+            if not compiler_owned(*pair)
+        ]
         for type_qn, interface_qn in pairs:
             create_implements_relationship(
                 str(self.function_registry[type_qn]),
@@ -169,21 +200,56 @@ class GoInterfaceMixin:
                 self.ingestor,
                 resolution=cs.EdgeResolution.HEURISTIC,
             )
-            self.interface_implementers.setdefault(interface_qn, set()).add(type_qn)
+        self.replace_go_implementers(
+            self.go_guessed_pairs,
+            [(interface_qn, type_qn) for type_qn, interface_qn in pairs],
+        )
         return len(pairs)
 
-    def _go_method_sets(self) -> dict[str, go_ifaces.GoMethodSet]:
+    def replace_go_implementers(
+        self, previous: set[tuple[str, str]], current: list[tuple[str, str]]
+    ) -> None:
+        """Swap one source's Go (interface, implementer) pairs in
+        `interface_implementers` for this pass's. The map only ever gained
+        entries, so an updater reused across an edit (the watcher, a second
+        sync) kept a type the edit had taken out of an interface, with its
+        OVERRIDES and dispatch edges, where a clean index has none."""
+        for interface_qn, implementer_qn in previous:
+            self.interface_implementers.get(interface_qn, set()).discard(implementer_qn)
+        previous.clear()
+        for interface_qn, implementer_qn in current:
+            self.interface_implementers.setdefault(interface_qn, set()).add(
+                implementer_qn
+            )
+            previous.add((interface_qn, implementer_qn))
+
+    def _go_module_root(
+        self, package: str | None, roots: dict[str, str | None]
+    ) -> str | None:
+        if package is None:
+            return None
+        return go_utils.module_root(
+            self.repo_path, go_utils.package_key_dir(package), roots
+        )
+
+    def _go_method_sets(
+        self,
+    ) -> tuple[dict[str, go_ifaces.GoMethodSet], dict[str, str]]:
+        """Each method owner's method set, and the package declaring it: a
+        method is declared in its receiver type's package."""
         method_sets: dict[str, go_ifaces.GoMethodSet] = {}
+        packages: dict[str, str] = {}
         registry = self.function_registry
-        for method_qn, count in self.go_method_arity.items():
+        for method_qn, spec in self.go_methods.items():
             if registry.get(method_qn) != NodeType.METHOD:
                 continue
             owner, _, name = method_qn.rpartition(cs.SEPARATOR_DOT)
-            if registry.get(owner) in _GO_METHOD_OWNER_TYPES:
-                method_sets.setdefault(owner, {})[qn_markers.strip_dup_marker(name)] = (
-                    count
-                )
-        return method_sets
+            if registry.get(owner) not in _GO_METHOD_OWNER_TYPES:
+                continue
+            key = go_ifaces.method_key(qn_markers.strip_dup_marker(name), spec.package)
+            method_sets.setdefault(owner, {})[key] = spec.arity
+            packages[owner] = spec.package
+        return method_sets, packages
 
     def _link_go_overrides(self, method_sets: dict[str, go_ifaces.GoMethodSet]) -> None:
         # The generic override walk links a method to the FIRST interface
@@ -191,49 +257,86 @@ class GoInterfaceMixin:
         # interface its type satisfies, so each one gets its own edge.
         for interface_qn, implementers in sorted(self.interface_implementers.items()):
             declared = method_sets.get(interface_qn)
-            if not declared or interface_qn not in self.go_interface_embeds:
+            if not declared or interface_qn not in self.go_interfaces:
                 continue
             for type_qn in sorted(implementers):
-                for name in sorted(declared.keys() & method_sets.get(type_qn, {})):
+                guessed = (interface_qn, type_qn) in self.go_guessed_pairs
+                for _package, name in sorted(
+                    declared.keys() & method_sets.get(type_qn, {})
+                ):
                     self._emit_go_override(
                         f"{type_qn}{cs.SEPARATOR_DOT}{name}",
                         f"{interface_qn}{cs.SEPARATOR_DOT}{name}",
+                        guessed,
                     )
 
-    def _emit_go_override(self, method_qn: str, interface_method_qn: str) -> None:
+    def _emit_go_override(
+        self, method_qn: str, interface_method_qn: str, guessed: bool
+    ) -> None:
         registry = self.function_registry
         if (
             registry.get(method_qn) != NodeType.METHOD
             or registry.get(interface_method_qn) != NodeType.METHOD
         ):
             return
+        # A pair matched by name and arity alone carries that on the edge,
+        # as its IMPLEMENTS does: rename follows OVERRIDES, and must not
+        # rewrite an interface method a guess tied to the target unasked.
+        properties: PropertyDict = (
+            {cs.KEY_RESOLUTION: cs.EdgeResolution.HEURISTIC} if guessed else {}
+        )
         self.ingestor.ensure_relationship_batch(
             (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, method_qn),
             cs.RelationshipType.OVERRIDES,
             (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, interface_method_qn),
+            properties,
         )
 
     def _resolve_go_embeds(self) -> dict[str, tuple[str, ...] | None]:
         """Each Go interface's embedded interfaces as qns (or a predeclared
         name), None when one does not resolve to an interface."""
         resolved: dict[str, tuple[str, ...] | None] = {}
-        for interface_qn, written in self.go_interface_embeds.items():
+        for interface_qn, decl in self.go_interfaces.items():
             if self.function_registry.get(interface_qn) != NodeType.INTERFACE:
                 continue
             module_qn = self.go_interfaces_parsed.get(interface_qn)
-            resolve = (
-                self._parsed_embed_resolver(module_qn)
-                if module_qn is not None
-                else self._stored_embed_resolver(interface_qn)
-            )
-            bases = [base for text in written if (base := resolve(text)) is not None]
-            if module_qn is not None:
-                self._record_go_embedding(interface_qn, bases)
             resolved[interface_qn] = (
-                tuple(bases) if len(bases) == len(written) else None
+                self._stored_embeds(interface_qn, decl.embeds)
+                if module_qn is None
+                else self._parsed_embeds(interface_qn, module_qn, decl.embeds)
             )
         self.go_interfaces_parsed.clear()
         return resolved
+
+    def _parsed_embeds(
+        self, interface_qn: str, module_qn: str, written: tuple[str, ...]
+    ) -> tuple[str, ...] | None:
+        resolve = self._parsed_embed_resolver(module_qn)
+        bases = [base for text in written if (base := resolve(text)) is not None]
+        self._record_go_embedding(interface_qn, bases)
+        return tuple(bases) if len(bases) == len(written) else None
+
+    def _stored_embeds(
+        self, interface_qn: str, written: tuple[str, ...]
+    ) -> tuple[str, ...] | None:
+        # An unchanged interface's embeds were resolved when it was parsed and
+        # are its INHERITS edges now, read back into class_inheritance in
+        # `base_index` order, the order they were written in. Matching them
+        # by position keeps `a.Contract` and `b.Contract` two bases; by name
+        # alone both would find the first. A count or name that disagrees
+        # means an embed did not resolve then, so the method set is unknown.
+        stored = iter(self.class_inheritance.get(interface_qn, []))
+        bases: list[str] = []
+        for text in written:
+            if text in cs.GO_BUILTIN_INTERFACE_METHODS:
+                bases.append(text)
+                continue
+            base = next(stored, None)
+            name = text.rpartition(cs.SEPARATOR_DOT)[2]
+            if base is None or base.rpartition(cs.SEPARATOR_DOT)[2] != name:
+                return None
+            bases.append(base)
+        return None if next(stored, None) is not None else tuple(bases)
 
     def _parsed_embed_resolver(self, module_qn: str) -> Callable[[str], str | None]:
         def resolve(text: str) -> str | None:
@@ -244,27 +347,6 @@ class GoInterfaceMixin:
                 candidate = self._resolve_go_container_qn(module_qn, text)
                 return self._interface_or_none(candidate)
             return self._imported_interface(module_qn, qualifier, name)
-
-        return resolve
-
-    def _stored_embed_resolver(self, interface_qn: str) -> Callable[[str], str | None]:
-        # An unchanged interface's embeds were resolved when it was parsed and
-        # are its INHERITS edges now, read back into class_inheritance; one
-        # that resolved then has a base of its name.
-        bases = self.class_inheritance.get(interface_qn, [])
-
-        def resolve(text: str) -> str | None:
-            if text in cs.GO_BUILTIN_INTERFACE_METHODS:
-                return text
-            name = text.rpartition(cs.SEPARATOR_DOT)[2]
-            return next(
-                (
-                    base
-                    for base in bases
-                    if base.rpartition(cs.SEPARATOR_DOT)[2] == name
-                ),
-                None,
-            )
 
         return resolve
 

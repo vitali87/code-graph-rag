@@ -11,6 +11,7 @@ result types, so what this finds is a heuristic, not a proof.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import NamedTuple
 
 from tree_sitter import Node
 
@@ -19,8 +20,33 @@ from ...types_defs import PropertyDict
 from ..type_facts import extract_type_facts
 from ..utils import safe_decode_text
 
-# Method name -> parameter count.
-GoMethodSet = dict[str, int]
+# A method's identity in a method set: (package, name). Go qualifies an
+# unexported name with the package declaring it, so `get` of package store
+# and `get` of package other are two methods and neither satisfies the
+# other's interface; an exported name's package is "" and plays no part.
+GoMethodKey = tuple[str, str]
+# Method identity -> parameter count.
+GoMethodSet = dict[GoMethodKey, int]
+
+
+class GoMethodSpec(NamedTuple):
+    """A Go method's parameter count and the package declaring it, as
+    `package_key` spells it."""
+
+    arity: int
+    package: str
+
+
+class GoInterfaceDecl(NamedTuple):
+    """The types a Go interface embeds, as written, and its package."""
+
+    embeds: tuple[str, ...]
+    package: str
+
+
+def method_key(name: str, package: str) -> GoMethodKey:
+    # Go exports a name that starts with an upper-case letter.
+    return ("", name) if name[:1].isupper() else (package, name)
 
 
 def interface_type(type_spec: Node) -> Node | None:
@@ -97,7 +123,10 @@ def _method_set(
         if base in inner_seen:
             continue
         if base in cs.GO_BUILTIN_INTERFACE_METHODS:
-            methods.update(cs.GO_BUILTIN_INTERFACE_METHODS[base])
+            methods.update(
+                (method_key(name, ""), count)
+                for name, count in cs.GO_BUILTIN_INTERFACE_METHODS[base]
+            )
             continue
         inherited = _method_set(base, own, embeds, inner_seen)
         if inherited is None:
@@ -119,10 +148,10 @@ def implicit_implementations(
     empty interface (`interface{}`, `any`) is satisfied by every type, which
     says nothing about any of them, so it gets no edge, as with go/types.
     """
-    by_method: dict[str, list[str]] = {}
+    by_method: dict[GoMethodKey, list[str]] = {}
     for type_qn, methods in types.items():
-        for name in methods:
-            by_method.setdefault(name, []).append(type_qn)
+        for key in methods:
+            by_method.setdefault(key, []).append(type_qn)
     pairs: list[tuple[str, str]] = []
     for interface, required in sorted(interfaces.items()):
         if not required:
@@ -138,4 +167,4 @@ def implicit_implementations(
 
 
 def _covers(methods: GoMethodSet, required: GoMethodSet) -> bool:
-    return all(methods.get(name) == count for name, count in required.items())
+    return all(methods.get(key) == count for key, count in required.items())

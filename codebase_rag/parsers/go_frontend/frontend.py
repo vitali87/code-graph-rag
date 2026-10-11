@@ -85,6 +85,10 @@ class GoSemanticFacts(NamedTuple):
     # across every run that omitted it -- the aliasing `_empty_facts` exists to
     # avoid. An empty tuple is immutable and safe to share.
     degraded_modules: tuple[str, ...] = ()
+    # Module anchors whose tool run SUCCEEDED, spelled as `degraded_modules`
+    # is. Within one, the implements pairs above are the whole answer, even
+    # an empty one; the name-and-arity fallback keeps to the rest (#2483).
+    analysed_modules: tuple[str, ...] = ()
 
 
 def _empty_facts() -> GoSemanticFacts:
@@ -546,6 +550,7 @@ def run_go_frontend(
         return _empty_facts()
     merged = _empty_facts()
     degraded: list[str] = []
+    analysed: list[str] = []
     for anchor in anchors:
         prefix = "" if anchor == repo_path else anchor.relative_to(repo_path).as_posix()
         raw = _run_tool_once(binary, anchor, ignored_dirs)
@@ -557,8 +562,11 @@ def run_go_frontend(
             degraded.append(prefix or ".")
             logger.warning(ls.GO_FRONTEND_ANCHOR_DEGRADED.format(anchor=anchor))
             continue
+        analysed.append(prefix or ".")
         facts = _prefix_facts(raw, prefix)
         merged.call_sites.update(facts.call_sites)
         merged.external_sites.update(facts.external_sites)
         merged.implements.extend(facts.implements)
-    return merged._replace(degraded_modules=tuple(degraded))
+    return merged._replace(
+        degraded_modules=tuple(degraded), analysed_modules=tuple(analysed)
+    )

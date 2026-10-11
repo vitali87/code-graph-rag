@@ -87,6 +87,8 @@ from .parsers.frontends import (
 )
 from .parsers.frontends.protocol import QueryCall
 from .parsers.go import read_package_clause
+from .parsers.go import utils as go_utils
+from .parsers.go.interfaces import GoInterfaceDecl, GoMethodSpec
 from .parsers.go_frontend import find_go_module
 from .parsers.java_generated import (
     discover_generated_source_roots,
@@ -1904,12 +1906,14 @@ class GraphUpdater:
         dp.go_call_sites.clear()
         dp.go_external_sites.clear()
         dp.go_implements.clear()
+        dp.go_analysed_roots.clear()
 
     def _apply_go_semantic_facts(self, facts: SemanticFacts) -> None:
         dp = self.factory.definition_processor
         dp.go_call_sites.update(facts.resolved_call_sites)
         dp.go_external_sites.update(facts.external_sites)
         dp.go_implements.extend(facts.implements_pairs)
+        dp.go_analysed_roots.update(facts.analysed_roots)
 
     def _join_go_implements(self) -> None:
         # go/types proved each implementer->interface pair structurally; both
@@ -1918,11 +1922,11 @@ class GraphUpdater:
         # IMPLEMENTS edge and record the implementer so a call through the
         # interface with a SOLE implementer also edges to the concrete method
         # (resolver.interface_sole_impl_targets, no extra wiring). A miss on
-        # either end drops the pair rather than risk a dangling edge.
+        # either end drops the pair rather than risk a dangling edge. The
+        # pairs replace the previous pass's, so a reused updater forgets one
+        # the compiler no longer proves.
         dp = self.factory.definition_processor
-        if not dp.go_implements:
-            return
-        emitted = 0
+        proven: list[tuple[str, str]] = []
         for pair in dp.go_implements:
             impl = dp.go_type_locations.get(
                 (pair.impl_file, pair.impl_line, pair.impl_col)
@@ -1942,20 +1946,18 @@ class GraphUpdater:
                 cs.RelationshipType.IMPLEMENTS,
                 (iface_label, cs.KEY_QUALIFIED_NAME, iface_qn),
             )
-            dp.interface_implementers.setdefault(iface_qn, set()).add(impl_qn)
-            emitted += 1
-        if emitted:
-            logger.info(ls.GO_FRONTEND_IMPLEMENTS_JOINED.format(count=emitted))
+            proven.append((iface_qn, impl_qn))
+        dp.replace_go_implementers(dp.go_proven_pairs, proven)
+        if proven:
+            logger.info(ls.GO_FRONTEND_IMPLEMENTS_JOINED.format(count=len(proven)))
 
     def _link_go_interfaces(self) -> None:
-        # With go/types facts loaded the compiler already proved which types
-        # implement which interfaces (_join_go_implements); comparing method
-        # names and arities on top would only add the pairs it ruled out.
+        # Where go/types analysed a module it already proved which of its
+        # types implement which of its interfaces (_join_go_implements), even
+        # when it proved none; names and arities decide only elsewhere. Keyed
+        # on the modules it analysed, not on whether it returned any facts.
         dp = self.factory.definition_processor
-        go_types_ran = bool(
-            dp.go_implements or dp.go_call_sites or dp.go_external_sites
-        )
-        dp.link_go_interfaces(structural=not go_types_ran)
+        dp.link_go_interfaces(frozenset(dp.go_analysed_roots))
 
     def _join_csharp_partials(self) -> None:
         # Replace the directory-keyed syntactic partial grouping with the
@@ -3841,15 +3843,21 @@ class GraphUpdater:
                 _stored_language(row.get(cs.KEY_PATH)) != cs.SupportedLanguage.GO
             ):
                 continue
+            path = str(row.get(cs.KEY_PATH))
+            package = go_utils.package_key(
+                path, dp.go_package_names.get(self._recorded_module_qn(path))
+            )
             label = row.get(cs.KEY_LABEL)
             if label == cs.NodeLabel.METHOD and isinstance(
                 param_types := row.get(cs.KEY_PARAM_TYPES), list
             ):
-                dp.go_method_arity[qn] = len(param_types)
+                dp.go_methods[qn] = GoMethodSpec(len(param_types), package)
             elif label == cs.NodeLabel.INTERFACE and isinstance(
                 embeds := row.get(cs.KEY_EMBEDS), list
             ):
-                dp.go_interface_embeds[qn] = _stored_strings(embeds)
+                dp.go_interfaces[qn] = GoInterfaceDecl(
+                    tuple(_stored_strings(embeds)), package
+                )
 
     def _rehydrate_rust_return_types(self, rows: list[ResultRow]) -> None:
         # Pass 2 records a Rust fn's return type only while it parses the

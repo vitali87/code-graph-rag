@@ -1857,6 +1857,7 @@ class CallProcessor:
         rehydrated_definition_paths: dict[str, str] | None = None,
         rust_function_modules: dict[str, str] | None = None,
         declared_module_qns: set[str] | None = None,
+        guessed_implementations: set[tuple[str, str]] | None = None,
     ) -> None:
         self.ingestor = ingestor
         # The tree-sitter node whose span every edge emitted right now records
@@ -1921,6 +1922,7 @@ class CallProcessor:
             rust_function_modules=rust_function_modules,
             declared_module_qns=declared_module_qns,
             go_package_names=self._go_package_names,
+            guessed_implementations=guessed_implementations,
         )
         # Inter-procedural callable-parameter flow: ordered params per function and
         # the per-call-site argument bindings, resolved to a fixpoint in finalize.
@@ -7305,17 +7307,17 @@ class CallProcessor:
             return
         registry = self._resolver.function_registry
         edges = [
-            (target_type, variant)
-            for target_type, target_qn in sorted(
-                self._resolver.interface_dispatch_targets(callee_qn)
+            (target_type, variant, guessed)
+            for (target_type, target_qn), guessed in sorted(
+                self._resolver.interface_dispatch_targets(callee_qn).items()
             )
             for variant in registry.variants(target_qn)
         ]
         prev_resolution = self._resolution
-        if len(edges) > 1:
-            self._resolution = cs.EdgeResolution.OVERLOAD
+        proven = cs.EdgeResolution.OVERLOAD if len(edges) > 1 else prev_resolution
         try:
-            for target_type, target_qn in edges:
+            for target_type, target_qn, guessed in edges:
+                self._resolution = cs.EdgeResolution.HEURISTIC if guessed else proven
                 ctx.ensure_rel(
                     ctx.caller_spec,
                     cs.RelationshipType.CALLS,
