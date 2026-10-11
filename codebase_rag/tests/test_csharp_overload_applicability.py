@@ -1004,6 +1004,19 @@ OVERRIDE_CASES: dict[str, _OverrideCase] = {
         ("D.Put(List<U.Widget>)", "Base.Put(List<T>)"),
         True,
     ),
+    # Greptile review of PR 2814: the same with the bare parameter, `Put(T)`
+    # beside `Put(Widget)`, so no generic argument separates them.
+    "override-scope-bare": _OverrideCase(
+        _SCOPED_LIB + "public class Base<T> { public virtual void Put(T x) { } "
+        "public virtual void Put(Widget x) { } }",
+        _SCOPED_USE.format(
+            body="public class D : Base<U.Widget> "
+            "{ public override void Put(U.Widget x) { } }",
+            run="",
+        ),
+        ("D.Put(U.Widget)", "Base.Put(T)"),
+        True,
+    ),
     # Negative: a base whose only `Put` takes L.Widgets is not what an
     # override taking U.Widgets overrides, by any fallback.
     "override-scope-neg": _OverrideCase(
