@@ -4597,9 +4597,7 @@ class GraphUpdater:
         Empty on a full build (every file re-parses anyway) and while a
         capture group outside the ones the fingerprint models is enabled.
         """
-        if self._is_full_build or not self.capture.enabled_rels <= (
-            cs.INTERFACE_SKIP_RELS
-        ):
+        if self._is_full_build or (self.capture.enabled_rels - cs.INTERFACE_SKIP_RELS):
             return {}
         fresh = {
             key: fingerprint
