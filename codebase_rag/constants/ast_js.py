@@ -3,8 +3,10 @@
 from .ast_nodes import (
     TS_CALL_EXPRESSION,
     TS_IDENTIFIER,
+    TS_INTERFACE_DECLARATION,
     TS_MEMBER_EXPRESSION,
     TS_NEW_EXPRESSION,
+    TS_TYPE_ALIAS_DECLARATION,
 )
 
 # Locals query patterns for JS/TS
@@ -55,6 +57,15 @@ JS_TS_PARENT_REF_TYPES = (TS_IDENTIFIER, TS_MEMBER_EXPRESSION)
 # The `*` of `export * from './m'`. The JavaScript and TypeScript grammars
 # spell it as an anonymous token, not Java's named `asterisk` node.
 TS_JS_STAR = "*"
+# TypeScript's CommonJS export (`export = value`) is an export_statement whose
+# token after `export` is `=`.
+TS_EXPORT_ASSIGNMENT_TOKEN = "="
+# A type-only export (`export type { T }`, `export interface I`) is erased at
+# runtime, so it says nothing about the module's value exports.
+TS_TYPE_ONLY_TOKEN = "type"
+TS_TYPE_ONLY_EXPORT_DECLARATIONS = frozenset(
+    {TS_INTERFACE_DECLARATION, TS_TYPE_ALIAS_DECLARATION}
+)
 # JSX element nodes that carry a component name (javascript and tsx grammars
 # share these); the closing element repeats the name and must not double-emit.
 TS_JSX_SELF_CLOSING_ELEMENT = "jsx_self_closing_element"
@@ -116,6 +127,7 @@ TS_JS_UPDATE_EXPRESSION = "update_expression"
 TS_JS_FIELD_ARGUMENT = "argument"
 TS_FIELD_PATTERN = "pattern"
 TS_FIELD_PARAMETER = "parameter"
+TS_FIELD_INITIALIZER = "initializer"
 TS_MODULE = "module"
 TS_CLASS_BODY = "class_body"
 
@@ -157,6 +169,22 @@ JS_SYMBOL_GLOBAL = "Symbol"
 JS_PROTOTYPE_KEYWORD = "prototype"
 JS_OBJECT_NAME = "Object"
 JS_CREATE_METHOD = "create"
+# `Object.assign(module.exports, { Svc })` publishes the keys it copies.
+JS_OBJECT_ASSIGN_METHOD = "assign"
+# The other `Object` calls the CommonJS export reader models.
+JS_OBJECT_FREEZE_METHOD = "freeze"
+JS_OBJECT_DEFINE_PROPERTY_METHOD = "defineProperty"
+# What the CommonJS export reader (`js_ts.commonjs_exports`) must recognise
+# to keep a module's exports knowable: a read of `exports` through `typeof`
+# or an equality test, and the constructs that hide a write from it.
+TS_JS_UNARY_EXPRESSION = "unary_expression"
+TS_JS_THIS = "this"
+TS_JS_ASYNC_KEYWORD = "async"
+JS_TYPEOF_OPERATOR = "typeof"
+JS_DELETE_OPERATOR = "delete"
+JS_EQUALITY_OPERATORS = frozenset({"===", "!==", "==", "!="})
+JS_ARGUMENTS_NAME = "arguments"
+JS_EVAL_NAME = "eval"
 
 # JS/TS ingest query capture names
 CAPTURE_CHILD_CLASS = "child_class"
