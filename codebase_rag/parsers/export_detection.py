@@ -30,6 +30,39 @@ _JS_TS_INVOKABLE_FUNCTION_TYPES = frozenset(
     {cs.TS_FUNCTION_EXPRESSION, cs.TS_ARROW_FUNCTION}
 )
 _JS_INVOKE_METHODS = frozenset({cs.JS_METHOD_CALL, cs.JS_METHOD_APPLY})
+# What can rebind a name between a CommonJS publication and the module scope.
+_JS_TS_SCOPE_TYPES = frozenset(
+    {
+        cs.TS_FUNCTION_EXPRESSION,
+        cs.TS_ARROW_FUNCTION,
+        cs.TS_STATEMENT_BLOCK,
+        cs.TS_JS_CATCH_CLAUSE,
+        cs.TS_JS_FOR_STATEMENT,
+        cs.TS_JS_FOR_IN_STATEMENT,
+    }
+)
+# The fields under which each node binds names in the scope that holds it.
+_JS_TS_BINDING_FIELDS: dict[str, tuple[str, ...]] = {
+    cs.TS_VARIABLE_DECLARATOR: (cs.FIELD_NAME,),
+    cs.TS_FUNCTION_DECLARATION: (cs.FIELD_NAME,),
+    cs.TS_GENERATOR_FUNCTION_DECLARATION: (cs.FIELD_NAME,),
+    cs.TS_CLASS_DECLARATION: (cs.FIELD_NAME,),
+    cs.TS_FUNCTION_EXPRESSION: (cs.FIELD_NAME, cs.FIELD_PARAMETERS),
+    cs.TS_ARROW_FUNCTION: (cs.FIELD_PARAMETER, cs.FIELD_PARAMETERS),
+    cs.TS_JS_CATCH_CLAUSE: (cs.FIELD_PARAMETER,),
+    cs.TS_JS_FOR_IN_STATEMENT: (cs.FIELD_LEFT,),
+}
+# A nested declaration whose name binds in the enclosing scope.
+_JS_TS_NAMED_DECLARATION_TYPES = frozenset(
+    {cs.TS_FUNCTION_DECLARATION, cs.TS_GENERATOR_FUNCTION_DECLARATION}
+)
+_JS_TS_BINDING_NAME_TYPES = frozenset(
+    {cs.TS_IDENTIFIER, cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN}
+)
+# A value naming a binding: `y` in `exports.X = y`, `{ A }` shorthand.
+_JS_TS_PUBLISHED_NAME_TYPES = frozenset(
+    {cs.TS_IDENTIFIER, cs.TS_SHORTHAND_PROPERTY_IDENTIFIER}
+)
 _JS_MODULE_KEYWORD_BYTES = cs.JS_MODULE_KEYWORD.encode()
 _JS_EXPORTS_KEYWORD_BYTES = cs.JS_EXPORTS_KEYWORD.encode()
 # Declarations that bind the module-level name an export statement refers to.
@@ -340,7 +373,7 @@ def is_commonjs_module(root: Node) -> bool:
     `module.exports`: an ES module's `module` is not its export object, and
     following its bindings could pass on a private import. A module with
     neither exports nothing, so it is not CommonJS either. A publication
-    counts only when it runs at load (`_commonjs_publications`): the text
+    counts only when it runs at load (`_CommonjsReader`): the text
     `module.exports` in a string, a comment, a read or a deferred function
     body does not.
     """
@@ -351,7 +384,8 @@ def is_commonjs_module(root: Node) -> bool:
         for statement in root.children
     ):
         return False
-    return next(_commonjs_publications(root), None) is not None
+    reader = _CommonjsReader(root)
+    return any(map(reader.publishes, reader.events()))
 
 
 def _is_export_assignment(statement: Node) -> bool:
@@ -394,30 +428,136 @@ def commonjs_export_bindings(root: Node) -> dict[str, str]:
     bindings A, x and y; `exports.X = y`, `module.exports.X = y` and
     `exports["X"] = y` publish X as y; `Object.assign(module.exports, {...})`
     publishes the keys it copies; TypeScript's `export = { ... }` reads as
-    `module.exports = { ... }`. A value that is no bare binding (`= lib`,
-    `= require('./x')`, `= class {}`, a spread, a computed key) records
-    nothing: a missing edge, never a wrong one.
+    `module.exports = { ... }`. A value that is no bare module binding
+    (`= lib`, `= require('./x')`, `= class {}`, a spread, a computed key, a
+    name an inner scope binds) records nothing: a missing edge, never a wrong
+    one. The publications replay in load order (`_LoadedExports`), so a
+    replaced `module.exports` keeps none of what the old object held.
     """
-    published: dict[str, str] = {}
-    for publication in _commonjs_publications(root):
-        published.update(_publication_bindings(publication))
-    return published
+    reader = _CommonjsReader(root)
+    loaded = _LoadedExports(reader)
+    for event in reader.events():
+        loaded.apply(event)
+    return loaded.bindings
 
 
-def _commonjs_publications(root: Node) -> Iterator[Node]:
-    # Every CommonJS publication that runs while the module loads, in source
-    # order so a later one wins: an assignment to `module.exports`,
-    # `exports.X` or `exports["X"]` or an `Object.assign` onto them, wherever
-    # it sits in an expression (`Object.freeze(module.exports = {...})`, a
-    # top-level `if`) or in a function called on the spot (Greptile, PR
-    # #3355), and TypeScript's `export =`. A function only defined runs
-    # later, if ever, so its body is not walked.
-    for statement in root.children:
-        if statement.type == cs.TS_EXPORT_STATEMENT:
-            if _is_export_assignment(statement):
-                yield statement
-        elif _JS_EXPORTS_KEYWORD_BYTES in (statement.text or b""):
-            yield from filter(_is_commonjs_publication, _load_time_nodes(statement))
+class _CommonjsReader:
+    """The CommonJS export events of one module, as they run while it loads.
+
+    An event is an assignment chain to `module.exports`, `exports.X`,
+    `exports["X"]` or `exports` itself, an `Object.assign` onto the exports,
+    or TypeScript's `export =`, wherever it sits in an expression
+    (`Object.freeze(module.exports = {...})`, parentheses, a top-level `if`)
+    or in a function called on the spot (Greptile, PR #3355). A function only
+    defined runs later, if ever, so its body is not walked. A name a scope
+    between the event and the module binds is that scope's own
+    (`(function (Svc) { exports.Public = Svc })(Other)`): it names no module
+    binding, and a rebound `exports` or `module` publishes nothing (Greptile,
+    PR #3355).
+    """
+
+    __slots__ = ("_root", "_declared")
+
+    def __init__(self, root: Node) -> None:
+        self._root = root
+        self._declared: dict[tuple[int, int, str], frozenset[str]] = {}
+
+    def events(self) -> Iterator[Node]:
+        for statement in self._root.children:
+            if statement.type == cs.TS_EXPORT_STATEMENT:
+                if _is_export_assignment(statement):
+                    yield statement
+            elif _JS_EXPORTS_KEYWORD_BYTES in (statement.text or b""):
+                yield from filter(self._is_event, _load_time_nodes(statement))
+
+    def publishes(self, event: Node) -> bool:
+        # Re-pointing `exports` alone (`exports = {}`) publishes nothing.
+        if event.type == cs.TS_JS_ASSIGNMENT_EXPRESSION:
+            return not all(map(_is_bare_exports, self.chain(event)[0]))
+        return True
+
+    def chain(self, head: Node) -> tuple[list[Node], Node | None]:
+        # The exports targets `a = b = value` assigns, outermost first, and the
+        # value they all receive, looked through parentheses.
+        targets: list[Node] = []
+        node: Node | None = head
+        while node is not None and node.type == cs.TS_JS_ASSIGNMENT_EXPRESSION:
+            target = _unwrapped(node.child_by_field_name(cs.FIELD_LEFT))
+            if target is not None and self._is_exports_target(target):
+                targets.append(target)
+            node = _unwrapped(node.child_by_field_name(cs.FIELD_RIGHT))
+        return targets, node
+
+    def object_assign(self, call: Node) -> tuple[Node, list[Node]] | None:
+        # `Object.assign(module.exports, ...)` or `Object.assign(exports, ...)`:
+        # the exports object and the objects copied onto it, else None.
+        callee = call.child_by_field_name(cs.FIELD_FUNCTION)
+        arguments = call.child_by_field_name(cs.FIELD_ARGUMENTS)
+        if callee is None or arguments is None or callee.text != _JS_OBJECT_ASSIGN:
+            return None
+        copied = arguments.named_children
+        target = _unwrapped(copied[0]) if copied else None
+        if target is None or not _is_exports_object(target):
+            return None
+        return (target, copied[1:]) if self._is_exports_target(target) else None
+
+    def object_bindings(self, value: Node | None) -> dict[str, str | None]:
+        # The names an object literal publishes, each with the module binding
+        # it names, or None for a value that names none (`{ run() {} }` and
+        # spreads and computed keys name no published name at all).
+        value = _unwrapped(value)
+        if value is None or value.type != cs.TS_OBJECT:
+            return {}
+        published: dict[str, str | None] = {}
+        for child in value.named_children:
+            if child.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER:
+                key, binding = safe_decode_text(child), self.binding(child)
+            elif child.type == cs.TS_PAIR:
+                key = _property_key(child.child_by_field_name(cs.FIELD_KEY))
+                binding = self.binding(child.child_by_field_name(cs.FIELD_VALUE))
+            else:
+                continue
+            if key:
+                published[key] = binding
+        return published
+
+    def binding(self, value: Node | None) -> str | None:
+        # The module binding a published value names: a bare name no scope on
+        # the way to the module rebinds.
+        value = _unwrapped(value)
+        if (
+            value is None
+            or value.type not in _JS_TS_PUBLISHED_NAME_TYPES
+            or self._is_shadowed(value)
+        ):
+            return None
+        return safe_decode_text(value)
+
+    def _is_event(self, node: Node) -> bool:
+        if node.type == cs.TS_JS_ASSIGNMENT_EXPRESSION:
+            return _is_chain_head(node) and bool(self.chain(node)[0])
+        return (
+            node.type == cs.TS_CALL_EXPRESSION and self.object_assign(node) is not None
+        )
+
+    def _is_exports_target(self, target: Node) -> bool:
+        base = _exports_base(target)
+        return base is not None and not self._is_shadowed(base)
+
+    def _is_shadowed(self, identifier: Node) -> bool:
+        name = safe_decode_text(identifier)
+        scope = identifier.parent
+        while scope is not None and scope != self._root:
+            if scope.type in _JS_TS_SCOPE_TYPES and name in self._names_bound_by(scope):
+                return True
+            scope = scope.parent
+        return False
+
+    def _names_bound_by(self, scope: Node) -> frozenset[str]:
+        key = (scope.start_byte, scope.end_byte, scope.type)
+        if (names := self._declared.get(key)) is None:
+            names = self._declared[key] = frozenset(_declared_names(scope))
+        return names
 
 
 def _load_time_nodes(statement: Node) -> Iterator[Node]:
@@ -453,76 +593,171 @@ def _is_invoked_on_the_spot(function: Node) -> bool:
     )
 
 
-def _is_commonjs_publication(node: Node) -> bool:
-    if node.type == cs.TS_JS_ASSIGNMENT_EXPRESSION:
-        return _is_commonjs_export_target(node.child_by_field_name(cs.FIELD_LEFT))
-    return (
-        node.type == cs.TS_CALL_EXPRESSION and _object_assign_sources(node) is not None
+def _declared_names(scope: Node) -> Iterator[str]:
+    # Every name `scope` binds: a function's own name and parameters, and
+    # each declaration in it, `var` hoisted from nested blocks included; a
+    # nested function's body is its own scope. Over-approximate (a default
+    # value's names count too): an extra name costs a missing edge only.
+    pending = [scope]
+    while pending:
+        node = pending.pop()
+        if node != scope and node.type in _JS_TS_FUNCTION_SCOPE_TYPES:
+            if node.type in _JS_TS_NAMED_DECLARATION_TYPES:
+                yield from _identifiers(node.child_by_field_name(cs.FIELD_NAME))
+            continue
+        for field in _JS_TS_BINDING_FIELDS.get(node.type, ()):
+            yield from _identifiers(node.child_by_field_name(field))
+        pending.extend(node.named_children)
+
+
+def _identifiers(node: Node | None) -> Iterator[str]:
+    # A TypeScript class names itself with a type identifier; inside a
+    # pattern only value identifiers bind, so a parameter's type does not.
+    if node is not None and node.type == cs.TS_TYPE_IDENTIFIER:
+        if text := safe_decode_text(node):
+            yield text
+        return
+    pending = [node] if node is not None else []
+    while pending:
+        current = pending.pop()
+        if current.type in _JS_TS_BINDING_NAME_TYPES and (
+            text := safe_decode_text(current)
+        ):
+            yield text
+        pending.extend(current.named_children)
+
+
+def _is_chain_head(assignment: Node) -> bool:
+    # `a = b = value` is one event, read from its outermost assignment.
+    value, holder = _outermost_value(assignment)
+    return not (
+        holder is not None
+        and holder.type == cs.TS_JS_ASSIGNMENT_EXPRESSION
+        and holder.child_by_field_name(cs.FIELD_RIGHT) == value
     )
 
 
-def _object_assign_sources(call: Node) -> list[Node] | None:
-    # The objects `Object.assign(module.exports, ...)` or
-    # `Object.assign(exports, ...)` copies onto the exports, else None.
-    callee = call.child_by_field_name(cs.FIELD_FUNCTION)
-    arguments = call.child_by_field_name(cs.FIELD_ARGUMENTS)
-    if callee is None or arguments is None or callee.text != _JS_OBJECT_ASSIGN:
+def _unwrapped(node: Node | None) -> Node | None:
+    while (
+        node is not None
+        and node.type in _JS_TS_VALUE_WRAPPER_TYPES
+        and node.named_children
+    ):
+        node = node.named_children[0]
+    return node
+
+
+def _is_bare_exports(node: Node | None) -> bool:
+    return (
+        node is not None
+        and node.type == cs.TS_IDENTIFIER
+        and node.text == _JS_EXPORTS_KEYWORD_BYTES
+    )
+
+
+def _exports_base(target: Node) -> Node | None:
+    # The `exports` or `module` identifier an exports target starts from:
+    # `exports`, `module.exports`, `exports.X`, `module.exports.X` or
+    # `exports["X"]`, parentheses looked through; else None.
+    if _is_bare_exports(target):
+        return target
+    if _is_module_exports(target):
+        return target.child_by_field_name(cs.FIELD_OBJECT)
+    if _commonjs_export_name(target) is None:
         return None
-    copied = arguments.named_children
-    if not copied or not _is_exports_object(copied[0]):
-        return None
-    return copied[1:]
+    owner = _unwrapped(target.child_by_field_name(cs.FIELD_OBJECT))
+    return _exports_base(owner) if owner is not None else None
 
 
-def _publication_bindings(publication: Node) -> dict[str, str]:
-    if publication.type == cs.TS_EXPORT_STATEMENT:
-        value = publication.named_children[0] if publication.named_children else None
-        return _object_bindings(value)
-    if publication.type == cs.TS_CALL_EXPRESSION:
-        bindings: dict[str, str] = {}
-        for source in _object_assign_sources(publication) or []:
-            bindings.update(_object_bindings(source))
-        return bindings
-    return _assignment_bindings(publication)
+class _LoadedExports:
+    """What `module.exports` holds as the module loads, event by event.
 
+    Replacing `module.exports` discards the names the old object held, and
+    `exports` still points at that old object unless the same assignment
+    re-points it (`exports = module.exports = app`), so a later
+    `exports.X = ...` publishes nothing while `module.exports.X = ...` and
+    `Object.assign(module.exports, ...)` add to the new one (CodeRabbit, PR
+    #3355). An opaque replacement (`= require('./x')`) leaves no name, and an
+    opaque value drops the name it overwrites.
+    """
 
-def _assignment_bindings(assignment: Node) -> dict[str, str]:
-    target = assignment.child_by_field_name(cs.FIELD_LEFT)
-    value = assignment.child_by_field_name(cs.FIELD_RIGHT)
-    if target is not None and _is_module_exports(target):
-        return _object_bindings(value)
-    name = _commonjs_export_name(target)
-    binding = _bare_binding(value)
-    return {name: binding} if name and binding else {}
+    __slots__ = ("bindings", "_exports_live", "_reader")
+
+    def __init__(self, reader: _CommonjsReader) -> None:
+        self.bindings: dict[str, str] = {}
+        # Whether `exports` still names the object `module.exports` holds.
+        self._exports_live = True
+        self._reader = reader
+
+    def apply(self, event: Node) -> None:
+        if event.type == cs.TS_EXPORT_STATEMENT:
+            self._replace(event.named_children[0] if event.named_children else None)
+            self._exports_live = False
+        elif event.type == cs.TS_CALL_EXPRESSION:
+            self._copy(event)
+        else:
+            self._assign(event)
+
+    def _replace(self, value: Node | None) -> None:
+        self.bindings = {}
+        self._publish_all(self._reader.object_bindings(value))
+
+    def _copy(self, call: Node) -> None:
+        assigned = self._reader.object_assign(call)
+        if assigned is None or not self._reaches_module_exports(assigned[0]):
+            return
+        for source in assigned[1]:
+            self._publish_all(self._reader.object_bindings(source))
+
+    def _assign(self, head: Node) -> None:
+        targets, value = self._reader.chain(head)
+        replaces = any(map(_is_module_exports, targets))
+        repoints = any(map(_is_bare_exports, targets))
+        if replaces:
+            self._replace(value)
+        if replaces or repoints:
+            # `exports = module.exports = app` keeps `exports` on the new
+            # object; `exports = {}` alone detaches it.
+            self._exports_live = replaces and repoints
+            return
+        binding = self._reader.binding(value)
+        for target in targets:
+            name = _commonjs_export_name(target)
+            owner = _unwrapped(target.child_by_field_name(cs.FIELD_OBJECT))
+            if name is not None and self._reaches_module_exports(owner):
+                self._publish(name, binding)
+
+    def _publish_all(self, published: dict[str, str | None]) -> None:
+        for name, binding in published.items():
+            self._publish(name, binding)
+
+    def _publish(self, name: str, binding: str | None) -> None:
+        if binding:
+            self.bindings[name] = binding
+        else:
+            # An opaque value replaces what the name held before.
+            self.bindings.pop(name, None)
+
+    def _reaches_module_exports(self, obj: Node | None) -> bool:
+        # `module.exports` always does; `exports` while it still names it.
+        return obj is not None and (
+            _is_module_exports(obj) or (self._exports_live and _is_bare_exports(obj))
+        )
 
 
 def _commonjs_export_name(target: Node | None) -> str | None:
     # The X of `exports.X`, `module.exports.X` or `exports["X"]`.
     if target is None or not _is_exports_object(
-        target.child_by_field_name(cs.FIELD_OBJECT)
+        _unwrapped(target.child_by_field_name(cs.FIELD_OBJECT))
     ):
         return None
     if target.type == cs.TS_MEMBER_EXPRESSION:
         return safe_decode_text(target.child_by_field_name(cs.FIELD_PROPERTY))
-    return _string_content(target.child_by_field_name(cs.TS_FIELD_INDEX))
-
-
-def _object_bindings(value: Node | None) -> dict[str, str]:
-    # `{ A }` and `{ B: x }` / `{ 'B': x }` publish a binding under a name; a
-    # spread, a computed key or a method names none.
-    if value is None or value.type != cs.TS_OBJECT:
-        return {}
-    bindings: dict[str, str] = {}
-    for child in value.named_children:
-        if child.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER:
-            if name := safe_decode_text(child):
-                bindings[name] = name
-        elif child.type == cs.TS_PAIR:
-            key = _property_key(child.child_by_field_name(cs.FIELD_KEY))
-            binding = _bare_binding(child.child_by_field_name(cs.FIELD_VALUE))
-            if key and binding:
-                bindings[key] = binding
-    return bindings
+    if target.type == cs.TS_SUBSCRIPT_EXPRESSION:
+        return _string_content(
+            _unwrapped(target.child_by_field_name(cs.TS_FIELD_INDEX))
+        )
+    return None
 
 
 def _property_key(key: Node | None) -> str | None:
@@ -538,12 +773,6 @@ def _string_content(node: Node | None) -> str | None:
         (c for c in node.named_children if c.type == cs.TS_STRING_FRAGMENT), None
     )
     return safe_decode_text(fragment)
-
-
-def _bare_binding(value: Node | None) -> str | None:
-    if value is not None and value.type == cs.TS_IDENTIFIER:
-        return safe_decode_text(value)
-    return None
 
 
 def _has_commonjs_export(statement: Node) -> bool:
