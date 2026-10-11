@@ -238,6 +238,8 @@ CPP_LITERAL_ARGUMENT_TYPES = frozenset(
 # A raw literal's line break or tab, written as its escape, keeps the name on
 # one line.
 CPP_LITERAL_LINE_ESCAPES = {"\n": "\\n", "\r": "\\r", "\t": "\\t"}
+CPP_LITERAL_BACKSLASH = "\\"
+CPP_LITERAL_ESCAPED_BACKSLASH = "\\\\"
 TS_CPP_STRING_CONTENT = "string_content"
 TS_CPP_COMPOUND_STATEMENT = "compound_statement"
 # `if (int x = 1)` / `switch (int q = f())`: the condition declaration nests

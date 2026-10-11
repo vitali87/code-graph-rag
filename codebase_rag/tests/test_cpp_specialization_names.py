@@ -364,3 +364,21 @@ def test_spacing_around_a_string_literal_argument_is_still_normalised(
     )
 
     assert 'Box<"a b">' in set(_class_names(mock_ingestor).values())
+
+
+def test_a_raw_line_break_and_a_raw_backslash_n_stay_two_names(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The escape is lossless: a raw literal spelling backslash-n is a
+    # different argument from one holding a real line break.
+    _index(
+        temp_repo,
+        "template <auto S> struct Box {};\n"
+        'template <> struct Box<R"(a\\nb)"> {};\n'
+        'template <> struct Box<R"(a\nb)"> {};\n',
+        mock_ingestor,
+    )
+
+    names = set(_class_names(mock_ingestor).values())
+
+    assert {'Box<R"(a\\\\nb)">', 'Box<R"(a\\nb)">'} <= names

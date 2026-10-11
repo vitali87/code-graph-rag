@@ -72,7 +72,13 @@ def _token_text(token: Node) -> str:
     raw = safe_decode_text(token) or ""
     if token.type in cs.CPP_LITERAL_ARGUMENT_TYPES:
         # Its spaces are part of the argument's value; only a line break or
-        # tab is escaped, to keep the name on one line.
+        # tab is escaped, to keep the name on one line. A raw literal's own
+        # backslashes are escaped first, so `R"(a\nb)"` and a raw literal
+        # holding a real line break stay two names.
+        if token.type == cs.TS_CPP_RAW_STRING_LITERAL:
+            raw = raw.replace(
+                cs.CPP_LITERAL_BACKSLASH, cs.CPP_LITERAL_ESCAPED_BACKSLASH
+            )
         return raw.translate(_LITERAL_LINE_ESCAPES)
     return cs.CHAR_SPACE.join(raw.split())
 
