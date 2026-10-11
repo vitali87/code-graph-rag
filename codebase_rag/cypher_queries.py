@@ -84,6 +84,13 @@ CYPHER_LIST_PROJECTS = (
 CYPHER_PROJECT_ROOT_PATH = (
     "MATCH (p:Project {name: $project_name}) RETURN p.root_path AS root_path"
 )
+# What the project's last sync captured (issue #2521), with the root the
+# re-index hint names.
+CYPHER_PROJECT_CAPTURE = (
+    "MATCH (p:Project {name: $project_name}) "
+    "RETURN p.captured_relationships AS captured_relationships, "
+    "p.root_path AS root_path"
+)
 # A sync's claim on a project name (issue #2411): one statement, so two syncs
 # of the same unowned name cannot both read "no owner" before either writes.
 # The first claim records its root; every later one, this repository's own

@@ -1300,9 +1300,12 @@ _GLOSS_NODE_PROPS = (
 )
 
 NODE_SCHEMAS: tuple[NodeSchema, ...] = (
+    # `captured_relationships` is written by every sync from issue #2521 on;
+    # a graph synced before that has none, which reads as "capture unknown".
     NodeSchema(
         NodeLabel.PROJECT,
-        "{name: string, root_path: string?, last_synced_at: string?}",
+        "{name: string, root_path: string?, captured_relationships: list[string]?, "
+        "last_synced_at: string?}",
     ),
     NodeSchema(
         NodeLabel.PACKAGE,
