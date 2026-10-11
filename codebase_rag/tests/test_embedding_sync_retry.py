@@ -17,6 +17,7 @@ under new node ids, a deleted function does not come back at all.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 from collections.abc import Callable, Generator, Iterator, Mapping
@@ -599,6 +600,99 @@ class TestEachProjectOwesItsOwn:
         assert _in_sync(repo, graph) is True
         _sync(repo, graph, {7: _OTHER_KEEP}, project=_OTHER)
         assert _pending(repo) == set()
+
+
+@contextmanager
+def _no_room_for(repo: Path, project: str) -> Iterator[list[Path]]:
+    """Fail the write of `project`'s marker as a full disk does, while its
+    removal and every other file still go through. Yields the refused paths."""
+    target = gu._embeddings_marker(state_file(repo, ""), project)
+    real_write = Path.write_text
+    refused: list[Path] = []
+
+    def write_text(self: Path, data: str, *args: str, **kwargs: str) -> int:
+        if self == target:
+            refused.append(self)
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return real_write(self, data, *args, **kwargs)
+
+    with patch.object(Path, "write_text", write_text):
+        yield refused
+
+
+class TestSplittingTheSharedMarker:
+    """The shared marker goes only once every debt it holds has a file."""
+
+    def _other_owes_through_the_shared_marker(self, repo: Path, graph: _Graph) -> None:
+        # other's pass failed, recorded the way an earlier build did: in the
+        # shared list. svc synced first, so other's stamp is the last one
+        # and other's next unchanged sync is eligible for the fast path.
+        _sync(repo, graph, {1: _KEEP})
+        with _store_down():
+            _sync(repo, graph, {7: _OTHER_KEEP}, project=_OTHER)
+        assert _pending(repo) == {_OTHER}
+        gu._embeddings_marker(state_file(repo, ""), _OTHER).unlink()
+        _shared_marker(repo).write_text(json.dumps([_OTHER]), encoding="utf-8")
+
+    def test_a_failed_write_keeps_the_shared_marker_and_the_retry(
+        self, repo: Path, graph: _Graph
+    ) -> None:
+        self._other_owes_through_the_shared_marker(repo, graph)
+
+        # A single-file run of svc leaves other's stamp and cache alone.
+        with _no_room_for(repo, _OTHER) as refused:
+            _sync(repo / _MODULE, graph, {1: _KEEP})
+        assert refused
+
+        assert _shared_marker(repo).exists()
+        retry = _sync(repo, graph, {7: _OTHER_KEEP}, project=_OTHER)
+        assert retry.skipped_because_in_sync is False
+        assert (_OTHER_KEEP, 7) in _points()
+
+    def test_a_failed_write_of_this_runs_own_debt_keeps_the_shared_marker(
+        self, repo: Path, graph: _Graph
+    ) -> None:
+        # svc's own debt, listed in the shared marker, is lost just the same
+        # if the marker goes and svc's own file could not be written.
+        _sync(repo, graph, {7: _OTHER_KEEP}, project=_OTHER)
+        _sync(repo, graph, {1: _KEEP})
+        _shared_marker(repo).write_text(json.dumps([_PROJECT]), encoding="utf-8")
+
+        (repo / _MODULE).write_text(_SOURCE_KEEP_EDITED)
+        with _store_down(), _no_room_for(repo, _PROJECT) as refused:
+            _sync(repo / _MODULE, graph, {2: _KEEP})
+        assert refused
+
+        assert _shared_marker(repo).exists()
+        assert _sync(repo, graph, {2: _KEEP}).skipped_because_in_sync is False
+        assert (_KEEP, 2) in _points()
+
+    def test_the_next_sync_completes_a_split_a_failed_write_cut_short(
+        self, repo: Path, graph: _Graph
+    ) -> None:
+        # Negative: once the write goes through, the split finishes and the
+        # shared marker goes, as when every write succeeds the first time.
+        self._other_owes_through_the_shared_marker(repo, graph)
+        with _no_room_for(repo, _OTHER):
+            _sync(repo / _MODULE, graph, {1: _KEEP})
+
+        _sync(repo / _MODULE, graph, {1: _KEEP})
+
+        assert not _shared_marker(repo).exists()
+        assert _pending(repo) == {_OTHER}
+        retry = _sync(repo, graph, {7: _OTHER_KEEP}, project=_OTHER)
+        assert retry.skipped_because_in_sync is False
+        assert _pending(repo) == set()
+
+    def test_a_split_whose_writes_all_succeed_removes_the_shared_marker(
+        self, repo: Path, graph: _Graph
+    ) -> None:
+        self._other_owes_through_the_shared_marker(repo, graph)
+
+        _sync(repo / _MODULE, graph, {1: _KEEP})
+
+        assert not _shared_marker(repo).exists()
+        assert _pending(repo) == {_OTHER}
 
 
 def _write_legacy(points: Mapping[int, str]) -> None:

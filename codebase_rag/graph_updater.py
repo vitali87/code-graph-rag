@@ -882,7 +882,8 @@ def _embeddings_marker(state_dir: Path, project_name: str) -> Path:
     return state_dir / cs.EMBEDDINGS_PENDING_PROJECT_TEMPLATE.format(digest=digest)
 
 
-def _save_embeddings_owed(marker: Path, project_name: str, owed: bool) -> None:
+def _save_embeddings_owed(marker: Path, project_name: str, owed: bool) -> bool:
+    """Create or remove `project_name`'s marker; say whether that went through."""
     try:
         if owed:
             # The name is for whoever lists the state directory; the file's
@@ -894,6 +895,8 @@ def _save_embeddings_owed(marker: Path, project_name: str, owed: bool) -> None:
         # Best effort, like the other markers: a read-only state directory
         # must not lose the run to a marker it could not write.
         logger.debug(ls.EMBEDDINGS_PENDING_NOT_UPDATED)
+        return False
+    return True
 
 
 def _load_shared_embeddings_owed(marker: Path) -> frozenset[str] | None:
@@ -9238,19 +9241,23 @@ class GraphUpdater:
         """
         if pending:
             logger.warning(ls.EMBEDDINGS_PENDING.format(project=self.project_name))
-        self._split_shared_embeddings_marker()
-        _save_embeddings_owed(
+        recorded = _save_embeddings_owed(
             _embeddings_marker(self.state_dir, self.project_name),
             self.project_name,
             pending,
         )
+        self._split_shared_embeddings_marker(recorded)
 
-    def _split_shared_embeddings_marker(self) -> None:
+    def _split_shared_embeddings_marker(self, recorded: bool) -> None:
         """Hand each project a shared marker names a marker of its own.
 
         Only created, never removed, for the others: a project that syncs
         at the same time and settles its debt in between owes one more pass
-        at worst. This run's own debt is what its pass decides.
+        at worst. This run's own debt is what its pass decided, `recorded`
+        whether its marker took that. The shared marker goes only once every
+        debt it holds is in a file of its own: a write that failed (a full
+        disk refuses a new file but not a removal) leaves it for the next
+        sync to split again (review of PR #3358).
         """
         shared = self.state_dir / cs.EMBEDDINGS_PENDING_FILENAME
         owed = _load_shared_embeddings_owed(shared)
@@ -9262,10 +9269,14 @@ class GraphUpdater:
             owed = frozenset(
                 _load_project_stamps(self.state_dir / cs.EXCLUSION_STATE_FILENAME)
             )
-        for project in sorted(owed - {self.project_name}):
+        written = [
             _save_embeddings_owed(
                 _embeddings_marker(self.state_dir, project), project, True
             )
+            for project in sorted(owed - {self.project_name})
+        ]
+        if not (recorded and all(written)):
+            return
         try:
             shared.unlink(missing_ok=True)
         except OSError:
