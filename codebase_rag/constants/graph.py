@@ -26,6 +26,12 @@ KEY_ROOT_PATH = "root_path"
 KEY_ROOT_PATHS = "root_paths"
 KEY_QUALIFIED_NAME = "qualified_name"
 KEY_IS_PROPERTY = "is_property"
+# The other member names a Python class body binds a method to
+# (`run = _plain`), so a call through the alias reaches it (issue #2620).
+KEY_MEMBER_ALIASES = "member_aliases"
+# The member names a Python class body binds to a value that is no method
+# (`run = None`), which hide a base class's `run` (issue #2620).
+KEY_NON_METHOD_MEMBERS = "non_method_members"
 # A JS/TS function that is an object literal's property value, reached only
 # through its object (issue #2435).
 KEY_IS_OBJECT_MEMBER = "is_object_member"
@@ -77,6 +83,23 @@ KEY_UNLOCATABLE = "unlocatable"
 # Rename report fields (issue #1532).
 KEY_SITES = "sites"
 KEY_AMBIGUOUS = "ambiguous"
+# Occurrences of the old name in code that no graph site accounts for (#2564).
+KEY_UNPLANNED = "unplanned"
+
+
+class RenameTargetKind(StrEnum):
+    """Which occurrences of a renamed name the cross-check holds against the
+    plan (#2564): a function's bare uses and those through its module, a
+    method's uses through its class, its own object or a variable of its
+    class (and, uncertain, other calls in files naming the class or
+    importing from its module), a type's every occurrence but another
+    module's that an import names."""
+
+    FUNCTION = "function"
+    METHOD = "method"
+    TYPE = "type"
+
+
 # Change-signature report fields (issue #1533); `verdict` is shared
 # with rename.
 KEY_UNMAPPED = "unmapped"
@@ -210,6 +233,15 @@ KEY_WRITING = "writing"
 # keyed only by project let the second run's clear delete the first run's
 # marker (issue #1709).
 KEY_RUN_ID = "run_id"
+# Who wrote the CLI sync's incomplete-run marker (PR #2532 review): the host
+# (machine and pid namespace) and pid of its process, and a token unique to
+# that one sync, so `delete-project` clears it only once that sync provably
+# stopped, and only if no newer sync has re-marked it since.
+KEY_OWNER_HOST = "owner_host"
+KEY_OWNER_PID = "owner_pid"
+KEY_OWNER_TOKEN = "owner_token"
+# When a sync of the project last completed, on its Project node (#2444).
+KEY_LAST_SYNCED_AT = "last_synced_at"
 # ast-grep finding node properties (issue #413)
 KEY_MESSAGE = "message"
 KEY_SNIPPET = "snippet"
@@ -1077,6 +1109,8 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.is_property AS is_property, n.is_macro AS is_macro, "
     "n.is_body_scoped_name AS is_body_scoped_name, n.path AS path, "
     "n.start_line AS start_line, n.end_line AS end_line, "
+    "n.member_aliases AS member_aliases, "
+    "n.non_method_members AS non_method_members, "
     "n.modifiers AS modifiers, n.decorators AS decorators, "
     "n.return_type AS return_type, n.param_types AS param_types, "
     "n.namespace AS namespace, n.is_object_member AS is_object_member, "

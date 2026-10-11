@@ -4,7 +4,7 @@
 # property/object-member/abstract markers, callable params.
 
 import sys
-from collections.abc import Callable, ItemsView, KeysView
+from collections.abc import Callable, ItemsView, Iterable, KeysView
 
 from . import constants as cs
 from .types_defs import (
@@ -32,6 +32,11 @@ class FunctionRegistryTrie:
         "_declared_overloads",
         "_properties",
         "_property_names",
+        "_member_aliases",
+        "_aliases_by_target",
+        "_alias_holders",
+        "_non_method_members",
+        "_non_method_holders",
         "_object_members",
         "_abstracts",
         "_body_scoped_names",
@@ -55,6 +60,20 @@ class FunctionRegistryTrie:
         self._declared_overloads: set[QualifiedName] = set()
         self._properties: set[QualifiedName] = set()
         self._property_names: set[str] = set()
+        # `Class.run` -> the methods a class body bound `run` to (issue
+        # #2620); the alias is no node, so it never enters the trie.
+        self._member_aliases: dict[QualifiedName, list[QualifiedName]] = {}
+        self._aliases_by_target: dict[QualifiedName, set[QualifiedName]] = {}
+        # Member name -> the classes whose body aliases it, so only a lookup
+        # of an aliased name pays for the exact (C3) MRO walk.
+        self._alias_holders: dict[str, set[QualifiedName]] = {}
+        # Class -> the member names its body binds to something other than a
+        # method (`run = None`); attribute lookup stops there instead of
+        # reaching a base's `run`.
+        self._non_method_members: dict[QualifiedName, frozenset[str]] = {}
+        # Member name -> the classes binding it that way, so a lookup only
+        # pays for an exact MRO walk when some class hides the name.
+        self._non_method_holders: dict[str, set[QualifiedName]] = {}
         self._object_members: set[QualifiedName] = set()
         self._abstracts: set[QualifiedName] = set()
         self._body_scoped_names: set[QualifiedName] = set()
@@ -334,6 +353,8 @@ class FunctionRegistryTrie:
         self._callable_params.pop(qualified_name, None)
 
         self._invalidate_ending_with_cache(simple_name)
+        self._drop_member_alias_target(qualified_name)
+        self.set_non_method_members(qualified_name, ())
 
         if self._simple_name_lookup is not None:
             if simple_name in self._simple_name_lookup:
@@ -459,3 +480,59 @@ class FunctionRegistryTrie:
     def find_with_prefix(self, prefix: str) -> list[tuple[QualifiedName, NodeType]]:
         node = self._navigate_to_prefix(prefix)
         return [] if node is None else self._collect_from_subtree(node)
+
+    def add_member_alias(
+        self, alias_qn: QualifiedName, target_qn: QualifiedName
+    ) -> None:
+        targets = self._member_aliases.setdefault(alias_qn, [])
+        if target_qn not in targets:
+            targets.append(target_qn)
+        self._aliases_by_target.setdefault(target_qn, set()).add(alias_qn)
+        class_qn, _, member = alias_qn.rpartition(cs.SEPARATOR_DOT)
+        self._alias_holders.setdefault(member, set()).add(class_qn)
+
+    def member_alias_targets(
+        self, alias_qn: QualifiedName
+    ) -> tuple[QualifiedName, ...]:
+        return tuple(self._member_aliases.get(alias_qn, ()))
+
+    def set_non_method_members(
+        self, class_qn: QualifiedName, names: Iterable[str]
+    ) -> None:
+        for name in self._non_method_members.pop(class_qn, ()):
+            holders = self._non_method_holders.get(name)
+            if holders is not None:
+                holders.discard(class_qn)
+                if not holders:
+                    del self._non_method_holders[name]
+        if members := frozenset(names):
+            self._non_method_members[class_qn] = members
+            for name in members:
+                self._non_method_holders.setdefault(name, set()).add(class_qn)
+
+    def binds_non_method(self, class_qn: QualifiedName, member: str) -> bool:
+        return member in self._non_method_members.get(class_qn, ())
+
+    def non_method_holders(self, member: str) -> frozenset[QualifiedName]:
+        return frozenset(self._non_method_holders.get(member, ()))
+
+    def alias_holders(self, member: str) -> frozenset[QualifiedName]:
+        return frozenset(self._alias_holders.get(member, ()))
+
+    def _drop_member_alias_target(self, target_qn: QualifiedName) -> None:
+        # A re-parsed file registers its aliases again with its methods, so a
+        # removed method takes its alias entries with it.
+        for alias_qn in self._aliases_by_target.pop(target_qn, ()):
+            targets = self._member_aliases.get(alias_qn, [])
+            if target_qn in targets:
+                targets.remove(target_qn)
+            if not targets:
+                self._member_aliases.pop(alias_qn, None)
+                self._drop_alias_holder(alias_qn)
+
+    def _drop_alias_holder(self, alias_qn: QualifiedName) -> None:
+        class_qn, _, member = alias_qn.rpartition(cs.SEPARATOR_DOT)
+        if (holders := self._alias_holders.get(member)) is not None:
+            holders.discard(class_qn)
+            if not holders:
+                del self._alias_holders[member]

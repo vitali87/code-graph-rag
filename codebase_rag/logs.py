@@ -114,6 +114,14 @@ GO_FRONTEND_IMPLEMENTS_JOINED = (
 GO_FRONTEND_BUILD_FAILED = (
     "Go frontend tool failed to build; using tree-sitter.\nstderr: {stderr}"
 )
+GO_FRONTEND_TOOLCHAIN_TOO_OLD = (
+    "go/types frontend needs Go >= {required} (found {found}); using tree-sitter for Go"
+)
+GO_FRONTEND_BUILD_FAILED_EARLIER = (
+    "Go frontend tool failed to build with {version} on an earlier sync; using "
+    "tree-sitter. It is retried in {minutes} min, or sooner when Go or the "
+    "helper changes or {marker} is deleted"
+)
 GO_FRONTEND_PARSE_FAILED = (
     "Go frontend produced no parseable JSON; using tree-sitter.\n"
     "stdout: {stdout}\nstderr: {stderr}"
@@ -1102,8 +1110,22 @@ CLI_SYNC_MARKER_NOT_CLEARED = (
     "The sync of {project} finished, but its incomplete-run marker could not "
     "be cleared: {error}. The graph is complete; the next sync clears it."
 )
-CLI_SYNC_MARKERS_UNREADABLE = (
-    "Could not read incomplete-run markers for cgr status: {error}"
+CLI_DELETE_MARKER_NOT_CLEARED = (
+    "Project {project} was deleted, but its incomplete-run marker could not be "
+    "cleared: {error}. cgr status may list it as interrupted until it is synced "
+    "again."
+)
+CLI_DELETE_SYNC_MARKER_KEPT = (
+    "Project {project} was deleted, but a cgr sync of it may still be running, "
+    "so its incomplete-run marker was kept: cgr status lists it as interrupted "
+    "until a sync of it completes."
+)
+CLI_SYNC_STATE_UNREADABLE = (
+    "Could not read the graph's projects and sync markers for cgr status: {error}"
+)
+SYNC_TIME_NOT_RECORDED = (
+    "The sync of {project} completed, but its sync time could not be recorded "
+    "in the graph: {error}. The next sync records it."
 )
 MCP_SERVER_SHUTDOWN = "[GraphCode MCP] Shutting down server..."
 MCP_HTTP_SERVER_STARTING = "[GraphCode MCP] Starting HTTP server on {host}:{port}..."
