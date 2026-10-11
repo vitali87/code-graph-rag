@@ -391,12 +391,37 @@ def _java_main_source(name: str, signature: str) -> str:
     )
 
 
+# A class declaring both overloads: the launcher starts `main(String[])`,
+# whether either is static (JEP 512), so `main()` is ordinary code.
+_JAVA_OVERLOADED_MAINS = {
+    "BothMains": ("public void main(String[] args)", "public void main()"),
+    "StaticAndInstance": (
+        "public static void main(String[] args)",
+        "public void main()",
+    ),
+}
+
+
+def _overloaded_mains_source(name: str, with_args: str, without_args: str) -> str:
+    return (
+        f"package j;\n\npublic class {name} {{\n"
+        f"    {with_args} {{ helper(); }}\n\n"
+        f"    {without_args} {{ other(); }}\n\n"
+        "    private static int helper() { return 0; }\n\n"
+        "    private static int other() { return 0; }\n}\n"
+    )
+
+
 @pytest.fixture(scope="module")
 def java_graph(tmp_path_factory: pytest.TempPathFactory) -> _Graph:
     files = {
         f"j/{name}.java": _java_main_source(name, signature)
         for name, signature in _JAVA_MAINS.items()
     }
+    files.update(
+        (f"j/{name}.java", _overloaded_mains_source(name, *mains))
+        for name, mains in _JAVA_OVERLOADED_MAINS.items()
+    )
     return _parse(tmp_path_factory, files, (cs.SupportedLanguage.JAVA,))
 
 
@@ -544,6 +569,33 @@ class TestJavaMainFromItsDeclaration:
         assert (_java_main_qn(java_graph, name) in dead) == (
             name == "PackagePrivate"
         ), sorted(dead)
+
+    @pytest.mark.parametrize("name", list(_JAVA_OVERLOADED_MAINS))
+    def test_the_launcher_prefers_the_string_array_main(
+        self, java_graph: _Graph, name: str
+    ) -> None:
+        nodes, _ = java_graph
+        with_args = f"proj.j.{name}.{name}.main(String[])"
+        without_args = f"proj.j.{name}.{name}.main()"
+
+        dead = _dead(java_graph, _config(public_roots=False))
+
+        assert with_args not in dead, sorted(dead)
+        assert f"proj.j.{name}.{name}.helper()" not in dead, sorted(dead)
+        assert without_args in dead, sorted(dead)
+        assert f"proj.j.{name}.{name}.other()" in dead, sorted(dead)
+        method = cs.NodeLabel.METHOD.value
+        assert nodes[(method, with_args)].get(cs.KEY_IS_PROGRAM_MAIN) is True
+        assert nodes[(method, without_args)].get(cs.KEY_IS_PROGRAM_MAIN) is not True
+
+    @pytest.mark.parametrize("name", list(_JAVA_OVERLOADED_MAINS))
+    def test_both_overloads_stay_public_roots_in_library_mode(
+        self, java_graph: _Graph, name: str
+    ) -> None:
+        dead = _dead(java_graph, _config())
+
+        assert f"proj.j.{name}.{name}.main(String[])" not in dead
+        assert f"proj.j.{name}.{name}.main()" not in dead
 
 
 class TestProgramMainMark:

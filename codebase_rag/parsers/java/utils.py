@@ -356,22 +356,53 @@ def _extract_method_parameters(method_node: ASTNode) -> list[str]:
 
 
 def is_main_declaration(method_node: ASTNode) -> bool:
-    """Whether the JVM launcher accepts this declaration as `main`.
+    """Whether the JVM launcher starts this declaration as `main`.
 
     It must return void, have an implementation and take nothing or one
     String array, whether the array is written on the type, on the name or
     as varargs. The recorded parameter types cannot decide this: `String
     args[]` and a scalar `String arg` both record `String` (issue #2527).
+    A `main()` is started only when its class declares no `main(String[])`:
+    the launcher prefers that one, static or not (JEP 512). A
+    `main(String[])` the class inherits is not visible here.
     """
+    arity = _launchable_main_arity(method_node)
+    if arity is None:
+        return False
+    return arity == 1 or not _declares_main_with_args(method_node)
+
+
+def _launchable_main_arity(method_node: ASTNode) -> int | None:
+    # 0 or 1 for a `main` the launcher could start, None for anything else.
     return_type = method_node.child_by_field_name(cs.TS_FIELD_TYPE)
-    return (
+    if not (
         method_node.type == cs.TS_METHOD_DECLARATION
         and safe_decode_text(method_node.child_by_field_name(cs.TS_FIELD_NAME))
         == cs.JAVA_MAIN_METHOD_NAME
         and return_type is not None
         and return_type.type == cs.TS_VOID_TYPE
         and _has_implementation(method_node)
-        and _takes_main_args(method_node)
+    ):
+        return None
+    params_node = method_node.child_by_field_name(cs.TS_FIELD_PARAMETERS)
+    params = (
+        [
+            child
+            for child in params_node.children
+            if child.type in (cs.TS_FORMAL_PARAMETER, cs.TS_SPREAD_PARAMETER)
+        ]
+        if params_node is not None
+        else []
+    )
+    if not params:
+        return 0
+    return 1 if len(params) == 1 and _is_string_array_param(params[0]) else None
+
+
+def _declares_main_with_args(method_node: ASTNode) -> bool:
+    body = method_node.parent
+    return body is not None and any(
+        _launchable_main_arity(sibling) == 1 for sibling in body.children
     )
 
 
@@ -387,20 +418,6 @@ def _has_implementation(method_node: ASTNode) -> bool:
     return modifiers is not None and any(
         child.type == cs.TS_JAVA_NATIVE for child in modifiers.children
     )
-
-
-def _takes_main_args(method_node: ASTNode) -> bool:
-    params_node = method_node.child_by_field_name(cs.TS_FIELD_PARAMETERS)
-    params = (
-        [
-            child
-            for child in params_node.children
-            if child.type in (cs.TS_FORMAL_PARAMETER, cs.TS_SPREAD_PARAMETER)
-        ]
-        if params_node is not None
-        else []
-    )
-    return not params or (len(params) == 1 and _is_string_array_param(params[0]))
 
 
 def _is_string_array_param(param: ASTNode) -> bool:
