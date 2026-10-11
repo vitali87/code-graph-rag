@@ -1968,19 +1968,41 @@ INVARIANT_CASES: dict[str, _Case] = {
         _use("Ext.Feed<Employee> f = null; new C().M(new Box<Circle>(), f);"),
         frozenset({"C.M(object, object)"}),
     ),
-    "candidate-mixed-neg": _Case(
+    # The ground-truth harness for PR 2814, with `Ext.Feed` completed as a
+    # class, an `out` and an `in` interface: a candidate bound is exact, a
+    # lower or an upper one, so a type it neither is nor converts to nor
+    # from conflicts under each, and C# binds `M(object, object)`.
+    "candidate-mixed-conflict": _Case(
         "namespace L; public class Box<X> { } public class Person { } "
         "public class Employee : Person { } public class Circle { }\n"
         "public class C { public void M<T>(Box<T> a, Ext.Feed<T> b) where T : Person { } "
         "public void M(object a, object b) { } }",
         _use("Ext.Feed<Circle> f = null; new C().M(new Box<Employee>(), f);"),
-        frozenset({"C.M(Box<T>, Ext.Feed<T>)"}),
+        frozenset({"C.M(object, object)"}),
     ),
-    "candidate-conflict-neg": _Case(
+    "candidate-conflict": _Case(
         "namespace L; public class Box<X> { }\n"
         "public class C { public void M<T>(Box<T> a, Ext.Feed<T> b) { } "
         "public void M(object a, object b) { } }",
         _use("Ext.Feed<string> f = null; new C().M(new Box<int>(), f);"),
+        frozenset({"C.M(object, object)"}),
+    ),
+    # Negatives: one the exact type converts to holds as a lower bound and
+    # breaks as an exact one, so both stay; the exact type itself holds
+    # under each.
+    "candidate-convertible-neg": _Case(
+        "namespace L; public class Box<X> { } public class Person { } "
+        "public class Employee : Person { }\n"
+        "public class C { public void M<T>(Box<T> a, Ext.Feed<T> b) { } "
+        "public void M(object a, object b) { } }",
+        _use("Ext.Feed<Employee> f = null; new C().M(new Box<Person>(), f);"),
+        frozenset({"C.M(Box<T>, Ext.Feed<T>)", "C.M(object, object)"}),
+    ),
+    "candidate-same-neg": _Case(
+        "namespace L; public class Box<X> { } public class Person { }\n"
+        "public class C { public void M<T>(Box<T> a, Ext.Feed<T> b) { } "
+        "public void M(object a, object b) { } }",
+        _use("Ext.Feed<Person> f = null; new C().M(new Box<Person>(), f);"),
         frozenset({"C.M(Box<T>, Ext.Feed<T>)"}),
     ),
     # Greptile review of PR 2814: candidates are compared by the conversions

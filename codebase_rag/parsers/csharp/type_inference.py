@@ -2562,13 +2562,9 @@ class CSharpTypeInferenceEngine:
         # one alone, when it has one), those every bound allows remain, and
         # it is fixed to the one every other remaining one converts to.
         # (whether none can remain, the type fixed when that is known) An
-        # exact type is the only one it can be fixed to, so a candidate
-        # bound, which proves nothing, does not keep it from that one.
-        if exact is not None:
-            candidates = [exact]
-            bounds = [b for b in bounds if b[0] is not Bound.CANDIDATE]
-        else:
-            candidates = _distinct([t for _, t in bounds])
+        # exact type is the only one it can be fixed to; a candidate bound
+        # keeps it from that one only when it allows it as no kind of bound.
+        candidates = [exact] if exact is not None else _distinct([t for _, t in bounds])
         verdicts = [
             (c, _all_hold({self._allows(b, c) for b in bounds})) for c in candidates
         ]
@@ -2580,15 +2576,26 @@ class CSharpTypeInferenceEngine:
     def _allows(self, bound: tuple[Bound, str], candidate: str) -> bool | None:
         # Whether a type parameter bounded so may be `candidate`: its exact
         # type, a type its lower bound converts to, or one that converts to
-        # its upper bound. A candidate bound allows its own type, and of any
+        # its upper bound. A candidate bound, of a kind not known, allows its
+        # own type, no type it allows as no kind (one it neither is nor
+        # converts to nor from: PR 2814's ground-truth harness), and of any
         # other it is not known.
         kind, type_text = bound
         if kind in (Bound.EXACT, Bound.CANDIDATE):
             same = type_text == candidate or same_type(type_text, candidate)
-            return same if kind is Bound.EXACT or same else None
+            if kind is Bound.EXACT or same:
+                return same
+            return self._candidate_allows(type_text, candidate)
         if kind is Bound.LOWER:
             return self._implicitly_converts(type_text, candidate)
         return self._implicitly_converts(candidate, type_text)
+
+    def _candidate_allows(self, bound: str, candidate: str) -> bool | None:
+        # A candidate bound of another type: False when it allows `candidate`
+        # neither as a lower bound nor as an upper one (nor, so, as exact).
+        lower = self._implicitly_converts(bound, candidate)
+        upper = self._implicitly_converts(candidate, bound)
+        return False if lower is False and upper is False else None
 
     def _widest(self, remaining: Sequence[str]) -> str | None:
         # The one type every other of `remaining` converts to, if known.
