@@ -737,6 +737,110 @@ class TestANullableReferenceAnnotationIsNoPartOfAType:
         ) not in overrides
 
 
+CALL_RESULT_CS = """\
+namespace Fl;
+using System.Threading.Tasks;
+public class Input { public void Run() { } }
+public class Output { public void Run() { } }
+public class Wrapper { public Wrapper(Input i) { } }
+public static class Factory {
+    public static Output Make(Input i) => new Output();
+    public static dynamic Any(Input i) => null;
+    public static Task<Output> MakeAsync(Input i) => null;
+}
+public class Maker { public Output Make(Input i) => new Output(); }
+public class Builder { public Builder With(int x) => this; public void Build() { } }
+public class U {
+    public void M(Input i) { }
+    public void M(Output o) { }
+    public void M(Wrapper w) { }
+}
+public class Use {
+    public void Static() { var u = new U(); var x = Factory.Make(new Input()); u.M(x); }
+    public void Instance() {
+        var u = new U(); var m = new Maker(); var x = m.Make(new Input()); u.M(x);
+    }
+    public void Typed() { var u = new U(); Output x = Factory.Make(new Input()); u.M(x); }
+    public void Plain() { var u = new U(); var x = new Input(); u.M(x); }
+    public void Wrap() { var u = new U(); var x = new Wrapper(new Input()); u.M(x); }
+    public void Cast(object o) { var u = new U(); var x = (Output)o; u.M(x); }
+    public void As(object o) { var u = new U(); var x = o as Output; u.M(x); }
+    public void Cond(bool b) {
+        var u = new U(); var x = b ? Factory.Make(new Input()) : null; u.M(x);
+    }
+    public void Coalesce(Output p) {
+        var u = new U(); var x = p ?? Factory.Make(new Input()); u.M(x);
+    }
+    public void Unknown() { var u = new U(); var x = Factory.Any(new Input()); u.M(x); }
+    public async Task Await() {
+        var u = new U(); var x = await Factory.MakeAsync(new Input()); u.M(x);
+    }
+    public void Receiver() { var x = Factory.Make(new Input()); x.Run(); }
+    public void Fluent() { var b = new Builder().With(1); b.Build(); }
+}
+"""
+
+
+class TestAVarLocalIsOfItsInitializersOwnType:
+    # Greptile review of PR 2814: `var x = Factory.Make(new Input())` holds
+    # what `Make` returns, never the Input among its arguments; only the
+    # initializer's own expression types the local: a construction, a cast
+    # or an `as` by what it spells, a call by its method's declared return
+    # type, and anything else not at all.
+    def test_a_call_types_the_local_by_its_result(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(CALL_RESULT_CS, temp_repo, mock_ingestor)
+        assert ("Fl.U.M(Output)", _EXACT) in calls["Static"], calls
+        assert ("Fl.U.M(Input)", _EXACT) not in calls["Static"], calls
+        assert ("Fl.U.M(Output)", _EXACT) in calls["Instance"], calls
+        assert ("Fl.U.M(Input)", _EXACT) not in calls["Instance"], calls
+
+    def test_a_call_types_a_receiver_by_its_result(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(CALL_RESULT_CS, temp_repo, mock_ingestor)
+        assert ("Fl.Output.Run", _EXACT) in calls["Receiver"], calls
+        assert ("Fl.Input.Run", _EXACT) not in calls["Receiver"], calls
+        # Negative: a fluent call returning its own type keeps its receiver.
+        assert ("Fl.Builder.Build", _EXACT) in calls["Fluent"], calls
+
+    def test_a_construction_cast_or_as_spells_the_type(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(CALL_RESULT_CS, temp_repo, mock_ingestor)
+        assert ("Fl.U.M(Wrapper)", _EXACT) in calls["Wrap"], calls
+        assert {c for c in calls["Cast(object)"] if c[0].startswith("Fl.U.")} == {
+            ("Fl.U.M(Output)", _EXACT)
+        }, calls
+        assert {c for c in calls["As(object)"] if c[0].startswith("Fl.U.")} == {
+            ("Fl.U.M(Output)", _EXACT)
+        }, calls
+
+    def test_an_initializer_of_no_known_type_binds_no_overload_exactly(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # A conditional, a coalescing, an `await` and a call of an unknown
+        # result type leave the local's type unknown, so the call fans out.
+        calls = _resolved_calls(CALL_RESULT_CS, temp_repo, mock_ingestor)
+        for caller in ("Cond(bool)", "Coalesce(Output)", "Unknown", "Await"):
+            ranked = {c for c in calls[caller] if c[0].startswith("Fl.U.")}
+            assert ranked, (caller, calls)
+            assert all(r != _EXACT for _c, r in ranked), (caller, calls)
+
+    def test_a_plain_construction_and_a_typed_local_are_unchanged(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Negatives: Greptile's control and a plain construction.
+        calls = _resolved_calls(CALL_RESULT_CS, temp_repo, mock_ingestor)
+        assert {c for c in calls["Typed"] if c[0].startswith("Fl.U.")} == {
+            ("Fl.U.M(Output)", _EXACT)
+        }, calls
+        assert {c for c in calls["Plain"] if c[0].startswith("Fl.U.")} == {
+            ("Fl.U.M(Input)", _EXACT)
+        }, calls
+
+
 CONSTRAINT_CS = """\
 namespace K;
 public interface IThing { }

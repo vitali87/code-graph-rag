@@ -126,6 +126,7 @@ TS_CSHARP_BASE_LIST = "base_list"
 # or a `predefined_type` (an enum's underlying integral type -> not a base).
 TS_CSHARP_GENERIC_NAME = "generic_name"
 TS_CSHARP_CAST_EXPRESSION = "cast_expression"
+TS_CSHARP_AS_EXPRESSION = "as_expression"
 TS_CSHARP_POSTFIX_UNARY_EXPRESSION = "postfix_unary_expression"
 TS_CSHARP_IMPLICIT_PARAMETER = "implicit_parameter"
 TS_CSHARP_FIELD_TYPE_PARAMETERS = "type_parameters"

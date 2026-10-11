@@ -408,6 +408,36 @@ def _takes(origin: _Origin, keyword: str) -> bool | None:
     return predefined_converts(origin.type, keyword)
 
 
+def _initializer(declarator: Node) -> Node | None:
+    # The expression a variable declarator initializes its variable with:
+    # its last part, bare or in an `equals_value_clause` by grammar version.
+    parts = declarator.named_children
+    if len(parts) < 2:
+        return None
+    value = parts[-1]
+    if value.type == cs.TS_CSHARP_EQUALS_VALUE_CLAUSE:
+        return value.named_children[0] if value.named_children else None
+    return value
+
+
+def _spelled_type(value: Node) -> str | None:
+    # The type an expression spells as its own: a construction's, a cast's
+    # or an `as`'s. Any other expression's type is its result's, which only
+    # resolving it tells, so a construction among a call's arguments is never
+    # the type of the call (`var x = Factory.Make(new Input())` is no
+    # Input; Greptile review of PR 2814).
+    while value.type == cs.TS_PARENTHESIZED_EXPRESSION and value.named_children:
+        value = value.named_children[0]
+    if value.type in (
+        cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION,
+        cs.TS_CSHARP_CAST_EXPRESSION,
+    ):
+        return safe_decode_text(value.child_by_field_name(cs.FIELD_TYPE))
+    if value.type == cs.TS_CSHARP_AS_EXPRESSION:
+        return safe_decode_text(value.child_by_field_name(cs.FIELD_RIGHT))
+    return None
+
+
 def _const_constant(statement: Node, decl: Node, declarator: Node) -> _Constant | None:
     # The constant a `const` local of a predefined type is: `const int k =
     # 5` is an int of 5, one with a value not read an int of value unknown.
@@ -734,6 +764,7 @@ class CSharpTypeInferenceEngine:
         "_rel_to_module",
         "_call_memo",
         "_overload_families",
+        "_typing_initializers",
     )
 
     def __init__(
@@ -782,6 +813,10 @@ class CSharpTypeInferenceEngine:
         # to one; `caller_qn` is included because the same node resolves
         # differently per enclosing method (`this`, locals, imports).
         self._call_memo: dict[tuple[str, str | None, int, int], _MemoEntry] = {}
+        # The spans of the `var` initializers being typed by their call's
+        # result right now: a local named in its own initializer (invalid
+        # C#, but parsed) must not resolve that call again.
+        self._typing_initializers: set[tuple[int, int]] = set()
         # The same-arity overloads a member call could not choose between
         # beyond the one it returned, under the memo's key, so the call pass
         # can fan the call out to them (issue #2619). Kept beside the memo
@@ -990,20 +1025,17 @@ class CSharpTypeInferenceEngine:
         else:
             types[var_name] = var_type
 
-    def _infer_initializer_type(self, declarator: Node) -> str | None:
-        # `var x = new T(...)` -> T (the object_creation `type` field). Other
-        # initializers (method calls, literals) are left untyped; chained
-        # return-type inference is Roslyn-follow-up territory. The initializer
-        # may be a direct child of the declarator or wrapped in an
-        # equals_value_clause by grammar version, so search the declarator's
-        # own subtree (a lambda body is a separate scope, but an initializer
-        # expression is small and self-contained).
-        for node in self._descendants_of_type(
-            declarator, cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION
-        ):
-            if type_text := safe_decode_text(node.child_by_field_name(cs.FIELD_TYPE)):
-                return annotate_type_ref(type_text)
-        return None
+    @staticmethod
+    def _infer_initializer_type(declarator: Node) -> str | None:
+        # `var x = new T(...)` -> T, and `(T)e` or `e as T` -> T: the type the
+        # initializer spells for itself. Any other initializer, a call above
+        # all, is left untyped here, never typed by a construction among its
+        # arguments (`var x = Factory.Make(new Input())` is no Input; Greptile
+        # review of PR 2814); `_local_result_type` types a call's result
+        # where the call resolves.
+        initializer = _initializer(declarator)
+        spelled = _spelled_type(initializer) if initializer is not None else None
+        return annotate_type_ref(spelled) if spelled else None
 
     def _field_type(self, class_qn: str, field_name: str) -> str | None:
         # The declared type of `field_name` on class_qn or any base class,
@@ -1897,7 +1929,73 @@ class CSharpTypeInferenceEngine:
         if receiver.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
             return self._this_field_receiver_type(receiver, caller_qn)
         if receiver.type == cs.TS_CSHARP_IDENTIFIER:
-            return self._identifier_receiver_type(receiver, local_var_types, caller_qn)
+            return self._local_result_type(
+                receiver, local_var_types, module_qn, caller_qn
+            ) or self._identifier_receiver_type(receiver, local_var_types, caller_qn)
+        return None
+
+    def _local_result_type(
+        self,
+        identifier: Node,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        caller_qn: str | None,
+    ) -> str | None:
+        # A `var` local initialized by a call, which the variable map leaves
+        # untyped: the type the method it calls is declared to return, where
+        # the call resolves (Greptile review of PR 2814). None otherwise.
+        return self._call_result(
+            self._invocation_return_type_name,
+            identifier,
+            local_var_types,
+            (module_qn, caller_qn),
+        )
+
+    def _call_result[T](
+        self,
+        typed: Callable[[Node, dict[str, str], str, str | None], T | None],
+        identifier: Node,
+        local_var_types: dict[str, str],
+        context: tuple[str, str | None],
+    ) -> T | None:
+        # `typed` of the call a `var` local `identifier` reads is initialized
+        # with, once at a time: a local named in its own initializer (invalid
+        # C#, but parsed) does not resolve that call again.
+        name = safe_decode_text(identifier)
+        if not name or name in local_var_types:
+            return None
+        initializer = self._var_initializer(identifier, name)
+        if (
+            initializer is None
+            or initializer.type != cs.TS_CSHARP_INVOCATION_EXPRESSION
+        ):
+            return None
+        span = (initializer.start_byte, initializer.end_byte)
+        if span in self._typing_initializers:
+            return None
+        self._typing_initializers.add(span)
+        try:
+            return typed(initializer, local_var_types, *context)
+        finally:
+            self._typing_initializers.discard(span)
+
+    def _var_initializer(self, identifier: Node, name: str) -> Node | None:
+        # The initializer of the `var` local `name` an identifier reads,
+        # searched outward as `_written_receiver_type` searches; None when
+        # the name is a parameter or a typed local, or no block declares it.
+        current = identifier.parent
+        while current is not None and current.type != cs.TS_CSHARP_DECLARATION_LIST:
+            if current.type == cs.TS_CSHARP_BLOCK and (
+                found := self._block_declaration(current, name)
+            ):
+                _statement, decl, declarator = found
+                implicit = decl.child_by_field_name(cs.FIELD_TYPE)
+                if implicit is None or implicit.type != cs.TS_CSHARP_IMPLICIT_TYPE:
+                    return None
+                return _initializer(declarator)
+            if self._parameter_type(current, name):
+                return None
+            current = current.parent
         return None
 
     def _annotated_type_field(self, receiver: Node) -> str | None:
@@ -2236,6 +2334,15 @@ class CSharpTypeInferenceEngine:
         type_name = local_var_types.get(name)
         if type_name is not None:
             return self._type_name_to_qn(type_name, module_qn)
+        # A `var` local a call initializes is of the type the call returns,
+        # as a chained call's receiver is (Greptile review of PR 2814).
+        if result := self._call_result(
+            self._invocation_receiver_qn,
+            receiver,
+            local_var_types,
+            (module_qn, caller_qn),
+        ):
+            return result
         # A `foreach (var x in ...)` binding is a LOCAL whose type comes
         # from the sequence and is not inferred, so it never reaches
         # `local_var_types`. Falling through to the static branch below
@@ -3112,20 +3219,15 @@ class CSharpTypeInferenceEngine:
                 return declarator
         return None
 
-    def _declarator_written_type(self, decl: Node, declarator: Node) -> str | None:
+    @staticmethod
+    def _declarator_written_type(decl: Node, declarator: Node) -> str | None:
         # The declaration's own type, or, for a `var` local, the type its
-        # construction spells.
+        # initializer spells for itself.
         type_node = decl.child_by_field_name(cs.FIELD_TYPE)
         if type_node is not None and type_node.type != cs.TS_CSHARP_IMPLICIT_TYPE:
             return safe_decode_text(type_node)
-        created = self._descendants_of_type(
-            declarator, cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION
-        )
-        return (
-            safe_decode_text(created[0].child_by_field_name(cs.FIELD_TYPE))
-            if created
-            else None
-        )
+        initializer = _initializer(declarator)
+        return _spelled_type(initializer) if initializer is not None else None
 
     @staticmethod
     def _parameter_type(scope: Node, name: str) -> str | None:
@@ -4329,16 +4431,6 @@ class CSharpTypeInferenceEngine:
         return None
 
     # --- ast helpers ------------------------------------------------------
-
-    def _descendants_of_type(self, node: Node, node_type: str) -> list[Node]:
-        found: list[Node] = []
-        stack = list(node.children)
-        while stack:
-            current = stack.pop()
-            if current.type == node_type:
-                found.append(current)
-            stack.extend(current.children)
-        return found
 
     def _local_variable_declarations(self, scope_node: Node) -> list[Node]:
         # Every variable_declaration lexically in this method's own scope,
