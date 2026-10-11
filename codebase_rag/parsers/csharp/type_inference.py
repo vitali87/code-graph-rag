@@ -24,7 +24,7 @@ from ..csharp_frontend import CallSiteKey
 from ..frontends.protocol import ResolvedCallSite
 from ..import_processor import ImportProcessor
 from ..semantic_call_join import call_site_key, declared_location
-from ..utils import safe_decode_text
+from ..utils import direct_methods_by_name, safe_decode_text
 from .arity import CSharpArityIndex
 from .arity import spellings as arity_spellings
 from .name_lookup import (
@@ -766,6 +766,7 @@ class CSharpTypeInferenceEngine:
         "_overload_families",
         "_typing_initializers",
         "_methods_by_name",
+        "_explicit_by_member",
     )
 
     def __init__(
@@ -827,6 +828,10 @@ class CSharpTypeInferenceEngine:
         # class qn -> method name -> the methods the class itself declares
         # under that name, in registry order; see `_direct_same_name_methods`.
         self._methods_by_name: dict[str, dict[str, tuple[str, ...]]] = {}
+        # class qn -> member name -> the explicit interface implementations
+        # the class declares of it (`IRun#Go(int)` under `Go`), off the same
+        # index; see `explicit_methods`.
+        self._explicit_by_member: dict[str, dict[str, tuple[str, ...]]] = {}
         self.import_processor = import_processor
         self.function_registry = function_registry
         self.repo_path = repo_path
@@ -4490,31 +4495,43 @@ class CSharpTypeInferenceEngine:
     def reset_member_index(self) -> None:
         # Read off the registry, so it expires when a re-parse changes that.
         self._methods_by_name.clear()
+        self._explicit_by_member.clear()
 
     def _direct_same_name_methods(self, class_qn: str, method_name: str) -> list[str]:
         # Every bare call asked this, and answering it enumerated every member
         # of the class through the registry trie before filtering on the
         # name, so a class's calls cost O(calls x members) (issue #2453). The
         # class is enumerated once per pass and grouped by name instead.
+        return list(self.declared_methods(class_qn).get(method_name, ()))
+
+    def declared_methods(self, class_qn: str) -> Mapping[str, tuple[str, ...]]:
+        """The methods `class_qn` itself declares, by name, indexed once per
+        pass (issue #2453); an explicit interface implementation is under
+        its `IRun#Go` name."""
         by_name = self._methods_by_name.get(class_qn)
         if by_name is None:
-            by_name = self._methods_by_name[class_qn] = self._index_methods(class_qn)
-        return list(by_name.get(method_name, ()))
+            by_name = self._methods_by_name[class_qn] = direct_methods_by_name(
+                class_qn, self.function_registry
+            )
+        return by_name
 
-    def _index_methods(self, class_qn: str) -> dict[str, tuple[str, ...]]:
-        prefix = f"{class_qn}{cs.SEPARATOR_DOT}"
-        grouped: dict[str, list[str]] = {}
-        for qn, node_type in self.function_registry.find_with_prefix(class_qn):
-            if node_type != NodeType.METHOD or not qn.startswith(prefix):
-                continue
-            leaf = qn[len(prefix) :]
-            base = leaf.split(cs.CHAR_PAREN_OPEN, 1)[0]
-            # Directly on this class only (a nested class's method has an extra
-            # dot in its name portion).
-            if cs.SEPARATOR_DOT in base:
-                continue
-            grouped.setdefault(base, []).append(qn)
-        return {name: tuple(qns) for name, qns in grouped.items()}
+    def explicit_methods(self, class_qn: str, member: str) -> tuple[str, ...]:
+        """The explicit interface implementations `class_qn` declares of a
+        member named `member` (`IRun#Go(int)` for `Go`), every interface's,
+        grouped once per pass so a call asks for its member alone."""
+        by_member = self._explicit_by_member.get(class_qn)
+        if by_member is None:
+            grouped: dict[str, list[str]] = {}
+            for name, qns in self.declared_methods(class_qn).items():
+                interface, separator, leaf = name.rpartition(
+                    cs.CSHARP_EXPLICIT_IMPL_SEPARATOR
+                )
+                if separator and interface:
+                    grouped.setdefault(leaf, []).extend(qns)
+            by_member = self._explicit_by_member[class_qn] = {
+                leaf: tuple(qns) for leaf, qns in grouped.items()
+            }
+        return by_member.get(member, ())
 
     def _find_method_by_arity(
         self, class_qn: str, method_name: str, arg_count: int, seen: set[str]

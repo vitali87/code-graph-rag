@@ -1820,7 +1820,9 @@ class CallResolver:
         # so the spelling's argument never reaches it.
         found = [
             (node_type, qn)
-            for qn, node_type, written, member in self._explicit_members(impl_qn)
+            for qn, node_type, written, member in self._explicit_members(
+                impl_qn, method_name
+            )
             if spells_interface(written, interface_qn, spelled_in, types)
             and spells_member(
                 member,
@@ -1856,15 +1858,19 @@ class CallResolver:
         )
         return TypeScopes(given, wanted) if given and wanted else None
 
-    def _explicit_members(self, impl_qn: str) -> Iterator[tuple[str, str, str, str]]:
+    def _explicit_members(
+        self, impl_qn: str, method_name: str
+    ) -> Iterator[tuple[str, str, str, str]]:
         # (qn, label, interface as written, member) for each explicit
-        # interface implementation declared directly on `impl_qn`.
+        # interface implementation `impl_qn` declares of `method_name`'s
+        # member, read off the class's method index rather than its every
+        # member per call (issue #2453).
         prefix = f"{impl_qn}{cs.SEPARATOR_DOT}"
-        for qn, node_type in self.function_registry.find_with_prefix(impl_qn):
-            if not qn.startswith(prefix):
-                continue
+        engine = self.type_inference.csharp_type_inference
+        member = method_name.split(cs.CHAR_PAREN_OPEN, 1)[0]
+        for qn in engine.explicit_methods(impl_qn, member):
             if explicit := csharp_utils.split_explicit_member(qn[len(prefix) :]):
-                yield qn, node_type, explicit[0], explicit[1]
+                yield qn, NodeType.METHOD, explicit[0], explicit[1]
 
     def _csharp_declared_type_parameters(self, method_qn: str) -> tuple[str, ...]:
         # `M<T, U>` -> ("T", "U"): the type parameters a C# method declares.

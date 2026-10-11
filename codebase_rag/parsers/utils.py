@@ -34,6 +34,27 @@ if TYPE_CHECKING:
     from ..types_defs import FunctionRegistryTrieProtocol
 
 
+def direct_methods_by_name(
+    class_qn: str, function_registry: FunctionRegistryTrieProtocol
+) -> dict[str, tuple[str, ...]]:
+    """The methods `class_qn` itself declares, by name, in registry order.
+
+    Read off the registry once and asked by name after: finding one name's
+    methods by enumerating every member of the class on each ask made a
+    class's lookups cost O(asks x members) (issue #2453). A nested type's
+    method, whose name holds a dot, is not the class's own.
+    """
+    prefix = f"{class_qn}{cs.SEPARATOR_DOT}"
+    grouped: dict[str, list[str]] = {}
+    for qn, node_type in function_registry.find_with_prefix(class_qn):
+        if node_type != NodeType.METHOD or not qn.startswith(prefix):
+            continue
+        base = qn[len(prefix) :].split(cs.CHAR_PAREN_OPEN, 1)[0]
+        if cs.SEPARATOR_DOT not in base:
+            grouped.setdefault(base, []).append(qn)
+    return {name: tuple(qns) for name, qns in grouped.items()}
+
+
 def _member_name_start_point(node: Node) -> tuple[int, int]:
     """(line, column) of the definition's NAME token, falling back to the
     node start (issue #1240: the persisted coordinates let incremental runs
