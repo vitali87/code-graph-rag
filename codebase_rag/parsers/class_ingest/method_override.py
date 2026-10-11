@@ -13,6 +13,7 @@ from ...types_defs import CSharpCallShape, CSharpGenericShape, NodeType
 from ...utils import qn_markers
 from ..csharp import utils as csharp_utils
 from ..csharp.overloads import (
+    DeclaredTypes,
     Scope,
     TypeScopes,
     bindings_for_base,
@@ -387,16 +388,11 @@ def _emit_explicit_impl_override(
     # spelling, which its class's declaration wrote.
     given = _scope(scope_of, class_qn, _own_type_parameters(call_shapes, method_qn))
     spelled_in = _scope(scope_of, class_qn)
+    types = DeclaredTypes(namespaced, generic_arity)
     for ancestor in ancestors:
         if function_registry.get(ancestor) != NodeType.INTERFACE:
             continue
-        path = namespaced.get(ancestor) or qn_markers.natural_qn(ancestor)
-        if not spells_interface(
-            interface,
-            (ancestor, path, generic_arity.get(ancestor, 0)),
-            spelled_in,
-            namespaced,
-        ):
+        if not spells_interface(interface, ancestor, spelled_in, types):
             continue
         parent_method_qn = _parent_method_qn(
             ancestor,

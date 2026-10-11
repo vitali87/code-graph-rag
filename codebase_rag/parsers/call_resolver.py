@@ -17,6 +17,7 @@ from ..utils import qn_markers
 from .cpp import utils as cpp_utils
 from .csharp import utils as csharp_utils
 from .csharp.overloads import (
+    DeclaredTypes,
     Scope,
     TypeScopes,
     spells_interface,
@@ -1780,10 +1781,9 @@ class CallResolver:
         if self._module_language(impl_qn) != cs.SupportedLanguage.CSHARP:
             return None
         inference = self.type_inference
-        path = inference.csharp_class_namespaced.get(
-            interface_qn
-        ) or qn_markers.natural_qn(interface_qn)
-        arity = inference.csharp_class_generic_arity.get(interface_qn, 0)
+        types = DeclaredTypes(
+            inference.csharp_class_namespaced, inference.csharp_class_generic_arity
+        )
         shape = inference.csharp_generic_shapes.get(interface_qn)
         declared = self._csharp_declared_type_parameters(
             f"{interface_qn}{cs.SEPARATOR_DOT}{method_name}"
@@ -1799,12 +1799,7 @@ class CallResolver:
         found = [
             (node_type, qn)
             for qn, node_type, written, member in self._explicit_members(impl_qn)
-            if spells_interface(
-                written,
-                (interface_qn, path, arity),
-                spelled_in,
-                inference.csharp_class_namespaced,
-            )
+            if spells_interface(written, interface_qn, spelled_in, types)
             and spells_member(
                 member,
                 method_name,

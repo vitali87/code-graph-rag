@@ -2325,11 +2325,12 @@ class CSharpTypeInferenceEngine:
             if self.function_registry.get(mapped) in _TYPE_DECLS:
                 return mapped
             # A type alias (`using W = Zeta.Widget;`) maps to a WRITTEN path,
-            # not a qn: resolve it as one (issue #2002).
+            # not a qn: resolve it as one (issue #2002). An alias takes no
+            # type arguments, so the arity is its target's: `using R =
+            # N.IRun<int>;` names `IRun<T>`, not a plain `IRun` beside it
+            # (PR 2814 review).
             if mapped != simple and (
-                aliased := self._qualified_type_name_to_qn(
-                    mapped, module_qn, generic_arity
-                )
+                aliased := self._qualified_type_name_to_qn(mapped, module_qn)
             ):
                 return aliased
         candidates = [

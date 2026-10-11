@@ -348,6 +348,137 @@ class TestAnAliasedInterfaceKeepsItsExplicitBody:
         assert ("Mixed.IRun#Go(int)", "Lib.N.IRun.Go(int)") not in overrides
 
 
+GENERIC_TWIN_CS = """\
+namespace N;
+public interface IRun { void Go(int x); }
+public interface IRun<T> { void Go(T x); }
+public interface IWalk { void Go(int x); }
+public interface IWalk<T> { void Go(T x); }
+public interface IStop { void Go(int x); }
+public interface IStop<T> { void Go(T x); }
+public class Both : IRun, IRun<int> { void IRun.Go(int x) { } void IRun<int>.Go(int x) { } }
+public class Gen : IWalk<int> { void IWalk<int>.Go(int x) { } }
+public class Plain : IStop { void IStop.Go(int x) { } }
+public class Use {
+    public void One(IRun r) { r.Go(1); }
+    public void Two(IRun<int> r) { r.Go(1); }
+    public void Gw(IWalk<int> w) { w.Go(1); }
+    public void Pw(IWalk w) { w.Go(1); }
+    public void Ps(IStop s) { s.Go(1); }
+    public void Gs(IStop<int> s) { s.Go(1); }
+}
+"""
+
+GENERIC_TWIN_LIB_CS = """\
+namespace N;
+public interface IRun<T> { void Go(T x); }
+"""
+
+GENERIC_TWIN_USE_CS = """\
+namespace N;
+public interface IRun { void Go(int x); }
+public class Both : IRun, IRun<int> { void IRun.Go(int x) { } void IRun<int>.Go(int x) { } }
+"""
+
+
+GENERIC_ALIAS_CS = """\
+using RunInt = N.IRun<int>;
+using RunPlain = N.IRun;
+namespace N;
+public interface IRun { void Go(int x); }
+public interface IRun<T> { void Go(T x); }
+public class Al : RunInt, RunPlain { void RunInt.Go(int x) { } void RunPlain.Go(int x) { } }
+public class Use {
+    public void Plain(IRun r) { r.Go(1); }
+    public void Closed(IRun<int> r) { r.Go(1); }
+}
+"""
+
+
+class TestAGenericInterfaceIsNotItsNonGenericNamesake:
+    # Greptile review of PR 2814: `N.IRun` and `N.IRun<T>` share a
+    # namespace-qualified path but are two interfaces; an explicit
+    # implementation's spelling names one of them by its generic arity too.
+    def test_each_body_links_to_its_own_interface(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        _calls(GENERIC_TWIN_CS, temp_repo, mock_ingestor)
+        overrides = {
+            (str(c.args[0][2]).split("applic.F.N.", 1)[1], str(c.args[2][2]))
+            for c in get_relationships(mock_ingestor, cs.RelationshipType.OVERRIDES)
+        }
+        linked = {
+            (body, parent.split("applic.F.N.", 1)[1]) for body, parent in overrides
+        }
+        assert linked == {
+            ("Both.IRun#Go(int)", "IRun.Go(int)"),
+            ("Both.IRun<int>#Go(int)", "IRun@3.Go(T)"),
+            ("Gen.IWalk<int>#Go(int)", "IWalk@5.Go(T)"),
+            ("Plain.IStop#Go(int)", "IStop.Go(int)"),
+        }, linked
+
+    def test_the_generic_declaration_does_not_take_the_plain_body(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # The generic interface first in qn order, as Greptile found it.
+        _index_pair(temp_repo, mock_ingestor, GENERIC_TWIN_LIB_CS, GENERIC_TWIN_USE_CS)
+        overrides = {
+            (_leaf_pair(str(c.args[0][2])), str(c.args[2][2]).split("applic.", 1)[1])
+            for c in get_relationships(mock_ingestor, cs.RelationshipType.OVERRIDES)
+        }
+        assert overrides == {
+            ("Both.IRun#Go(int)", "Use.N.IRun.Go(int)"),
+            ("Both.IRun<int>#Go(int)", "Lib.N.IRun.Go(T)"),
+        }, overrides
+
+    def test_a_call_through_each_runs_its_own_body(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _calls(GENERIC_TWIN_CS, temp_repo, mock_ingestor)
+        assert calls["One(IRun)"] == {"N.IRun.Go(int)", "N.Both.IRun#Go(int)"}, calls
+        assert calls["Two(IRun<int>)"] == {
+            "N.IRun@3.Go(T)",
+            "N.Both.IRun<int>#Go(int)",
+        }, calls
+
+    def test_one_implemented_alone_lends_the_other_no_body(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Negatives: generic-only and non-generic-only implementers run
+        # their body for their own interface, and the namesake none implements
+        # runs nothing first-party beside its declaration.
+        calls = _calls(GENERIC_TWIN_CS, temp_repo, mock_ingestor)
+        assert calls["Gw(IWalk<int>)"] == {
+            "N.IWalk@5.Go(T)",
+            "N.Gen.IWalk<int>#Go(int)",
+        }, calls
+        assert calls["Pw(IWalk)"] == {"N.IWalk.Go(int)"}, calls
+        assert calls["Ps(IStop)"] == {"N.IStop.Go(int)", "N.Plain.IStop#Go(int)"}, calls
+        assert calls["Gs(IStop<int>)"] == {"N.IStop@7.Go(T)"}, calls
+
+    def test_an_alias_names_its_targets_arity(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # An alias writes no type arguments: `RunInt` is `IRun<int>` and
+        # `RunPlain` is `IRun`, each its own target's interface.
+        calls = _calls(GENERIC_ALIAS_CS, temp_repo, mock_ingestor)
+        overrides = {
+            (str(c.args[0][2]), str(c.args[2][2]))
+            for c in get_relationships(mock_ingestor, cs.RelationshipType.OVERRIDES)
+        }
+        linked = {
+            (body.split("applic.F.N.", 1)[1], parent.split("applic.F.N.", 1)[1])
+            for body, parent in overrides
+        }
+        assert linked == {
+            ("Al.RunInt#Go(int)", "IRun@5.Go(T)"),
+            ("Al.RunPlain#Go(int)", "IRun.Go(int)"),
+        }, linked
+        assert calls["Plain(IRun)"] == {"N.IRun.Go(int)", "N.Al.RunPlain#Go(int)"}
+        # Negative: the plain interface's body is no closing's.
+        assert "N.Al.RunPlain#Go(int)" not in calls["Closed(IRun<int>)"], calls
+
+
 CONSTRAINT_CS = """\
 namespace K;
 public interface IThing { }

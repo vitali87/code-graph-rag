@@ -269,27 +269,43 @@ def written_bindings(
 type OwnParameters = tuple[Sequence[str] | None, Sequence[str] | None]
 
 
+class DeclaredTypes(NamedTuple):
+    """Each first-party type's namespace-qualified path (`N.IRun`, one
+    partial's parts sharing it) and its generic arity, unrecorded meaning 0:
+    together they are its identity in C#, where `N.IRun` and `N.IRun<T>` are
+    two types under one path (Greptile review of PR 2814)."""
+
+    namespaced: Mapping[str, str]
+    arity: Mapping[str, int]
+
+    def path(self, qn: str) -> str:
+        return self.namespaced.get(qn) or qn_markers.natural_qn(qn)
+
+
 def spells_interface(
-    written: str,
-    interface: tuple[str, str, int],
-    scope: Scope | None,
-    namespaced: Mapping[str, str],
+    written: str, interface_qn: str, scope: Scope | None, declared: DeclaredTypes
 ) -> bool:
     """Whether an explicit implementation's spelling of its interface
-    (`IRun`, `N.IRun`, `IRun<T>`, an alias `Run`) names the interface whose
-    (qn, namespace-qualified path, generic arity) is `interface`. Resolved
-    in the implementing file (`scope`), its usings and `using` aliases among
-    what it follows, it must be that very interface, so `Run` under `using
-    Run = N.IRun;` is N.IRun and a same-named interface of another namespace
-    is not (Greptile review of PR 2814); `namespaced` gives the qualified
-    path a resolved type is spelled with, one partial's parts sharing it. A
-    spelling the file does not resolve, an external interface's, must spell
-    its path (`names_interface`)."""
-    _, path, arity = interface
+    (`IRun`, `N.IRun`, `IRun<T>`, an alias `Run`) names `interface_qn`.
+    Resolved in the implementing file (`scope`), its usings and `using`
+    aliases among what it follows, it must be that very interface, its path
+    and its generic arity both, so `Run` under `using Run = N.IRun;` is
+    N.IRun, a same-named interface of another namespace is not, and neither
+    is `N.IRun<T>` beside it (Greptile review of PR 2814). A spelling the
+    file does not resolve, an external interface's, must spell its path
+    (`names_interface`)."""
+    path, arity = declared.path(interface_qn), declared.arity.get(interface_qn, 0)
     resolved = resolved_qn(canonical_type(written, scope))
     if resolved is None:
         return names_interface(written, path, arity)
-    return (namespaced.get(resolved) or qn_markers.natural_qn(resolved)) == path
+    # The arity is the resolved type's own, so an alias, which writes no
+    # type arguments, has its target's; one the spelling writes must agree.
+    written_arity = generic_arity_of_type_text(written)
+    return (
+        declared.path(resolved) == path
+        and declared.arity.get(resolved, 0) == arity
+        and written_arity in (0, arity)
+    )
 
 
 def spells_member(
