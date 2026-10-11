@@ -13,7 +13,7 @@ A label marked opt-in belongs to a [capture group](#capture-groups) that a defau
 <!-- SECTION:node_schemas -->
 | Label | Properties |
 |-----|----------|
-| Project | `{name: string, root_path: string?}` |
+| Project | `{name: string, root_path: string?, last_synced_at: string?}` |
 | Package | `{qualified_name: string, name: string, path: string, absolute_path: string}` |
 | Folder | `{path: string, name: string, absolute_path: string}` |
 | File | `{path: string, name: string, extension: string?, absolute_path: string}` |
