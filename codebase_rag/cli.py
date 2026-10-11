@@ -1696,6 +1696,65 @@ def index(
 
 
 @app.command(
+    name=ch.CLICommandName.WATCH,
+    help=ch.CMD_WATCH,
+    short_help=ch.CMD_WATCH,
+    epilog=ch.EXAMPLES_WATCH,
+    rich_help_panel=ch.PANEL_GRAPH,
+)
+def watch_command(
+    repo_path: str | None = typer.Option(
+        None, "--repo-path", help=ch.HELP_REPO_PATH_WATCH
+    ),
+    project_name: str | None = typer.Option(
+        None,
+        "--project-name",
+        help=ch.HELP_PROJECT_NAME_WATCH,
+        callback=_storable_project_name,
+    ),
+    debounce: float = typer.Option(
+        cs.DEFAULT_DEBOUNCE_SECONDS, "--debounce", "-d", min=0, help=ch.HELP_DEBOUNCE
+    ),
+    max_wait: float = typer.Option(
+        cs.DEFAULT_MAX_WAIT_SECONDS, "--max-wait", "-m", min=0, help=ch.HELP_MAX_WAIT
+    ),
+    batch_size: int | None = typer.Option(
+        None,
+        "--batch-size",
+        min=1,
+        help=ch.HELP_BATCH_SIZE,
+    ),
+    no_start_stack: bool = typer.Option(
+        False,
+        "--no-start-stack",
+        help=ch.HELP_NO_START_STACK,
+    ),
+) -> None:
+    # The checkout, project name, stack and batch size are resolved exactly as
+    # `cgr start` resolves them, so the watcher updates the project that
+    # command syncs and queries (issues #2432, #2433).
+    resolved_repo = _resolve_and_validate_repo(repo_path)
+    if not no_start_stack:
+        _maybe_start_stack()
+    # Deferred like the sync's own imports: the watcher pulls in the parsers
+    # and the graph updater, which `cgr --help` should not pay for.
+    from .watch import effective_max_wait, start_watcher
+
+    try:
+        start_watcher(
+            resolved_repo,
+            project_name=_start_project_name(project_name, resolved_repo),
+            project_named=project_name is not None,
+            batch_size=settings.resolve_batch_size(batch_size),
+            debounce_seconds=debounce,
+            max_wait_seconds=effective_max_wait(debounce, max_wait),
+        )
+    except (GraphUnavailableError, SyncLockError) as refused:
+        app_context.console.print(style(str(refused), cs.Color.RED))
+        raise typer.Exit(1) from None
+
+
+@app.command(
     name="verify-index",
     help=ch.CMD_VERIFY_INDEX,
     short_help=ch.CMD_VERIFY_INDEX,

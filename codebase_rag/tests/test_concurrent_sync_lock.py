@@ -858,7 +858,7 @@ def test_cgr_index_says_why_it_stopped(repo: Path, tmp_path: Path) -> None:
 def test_the_watcher_starts_after_the_running_sync_finishes(
     repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    from realtime_updater import _initial_scan
+    from codebase_rag.watch import _initial_scan
 
     updater = _updater(repo, mock_ingestor)
     with _held_elsewhere(repo, "click") as holder:
@@ -893,7 +893,7 @@ class _RulesChanged:
 
 
 def _rules_change_handler(repo: Path, updater: GraphUpdater, *, owed: bool):
-    from realtime_updater import CodeChangeEventHandler
+    from codebase_rag.watch import CodeChangeEventHandler
 
     handler = CodeChangeEventHandler(
         updater, debounce_seconds=0, ignore_rules=_RulesChanged(repo, updater)

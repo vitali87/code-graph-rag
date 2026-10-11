@@ -59,7 +59,9 @@ def test_the_scan_finds_the_known_sinks() -> None:
     found = {
         source.name for source in _production_sources() if _logger_add_calls(source)
     }
-    assert {"cli.py", "main.py", "server.py", "realtime_updater.py"} <= found
+    # `cgr watch` logs through the CLI's sink; the contributor script that
+    # once added its own (`realtime_updater.py`) now only runs that command.
+    assert {"cli.py", "main.py", "server.py"} <= found
 
 
 def test_every_production_sink_disables_diagnose() -> None:

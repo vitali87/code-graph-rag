@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 from watchdog.events import FileCreatedEvent
 
-import realtime_updater
+from codebase_rag import watch
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import get_relationships
@@ -50,7 +50,7 @@ def test_watch_created_rust_file_emits_calls_in_the_same_cycle(
     )
     updater.run()
 
-    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler = watch.CodeChangeEventHandler(updater, debounce_seconds=0)
 
     fresh = project / "src" / "fresh.rs"
     fresh.write_text(
@@ -94,7 +94,7 @@ def test_watch_updates_run_under_the_update_lock(
     )
     updater.run()
 
-    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler = watch.CodeChangeEventHandler(updater, debounce_seconds=0)
 
     held: list[bool] = []
     original = updater._process_function_calls

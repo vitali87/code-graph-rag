@@ -472,8 +472,7 @@ WATCHER_IGNORE_RULES_SYNC_FAILED = (
 )
 INITIAL_SCAN = "Performing initial full codebase scan..."
 INITIAL_SCAN_DONE = "Initial scan complete. Starting real-time watcher."
-WATCHING = "Watching for changes in: {path}"
-LOGGER_CONFIGURED = "Logger configured for Real-Time Updater."
+WATCHING = "Watching for changes in: {path} (project {project})"
 
 # Build logs
 BUILD_BINARY = "Building binary: {name}"

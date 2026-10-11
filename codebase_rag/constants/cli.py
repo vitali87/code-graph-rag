@@ -44,6 +44,7 @@ CLI_ERR_OUTPUT_REQUIRES_UPDATE = (
     "Error: --output/-o option requires --update-graph to be specified."
 )
 CLI_OPT_CLEAN = "--clean"
+CLI_OPT_REPO_PATH = "--repo-path"
 CLI_OPT_OUTPUT = "--output"
 CLI_OPT_INTERACTIVE_SETUP = "--interactive-setup"
 CLI_ERR_WORKSPACE_UPDATE_OPTION = (

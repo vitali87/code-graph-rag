@@ -33,6 +33,7 @@ Every top-level command, from the CLI's own help registry:
 | `cgr optimize` | Run a language-focused code optimisation session |
 | `cgr mcp-server` | Serve cgr tools over stdio or HTTP |
 | `cgr index` | Write an offline protobuf index for a repository |
+| `cgr watch` | Keep a repository's graph in sync while you edit it |
 | `cgr export` | Export the shared graph, or chosen projects, to JSON |
 | `cgr graph-loader` | Summarise an exported graph JSON file |
 | `cgr stats` | Show graph node and relationship counts |
@@ -102,6 +103,33 @@ projects cannot be listed, it stops unless `--yes` is given.
 `cgr export --project-name` scopes it: what the project owns, the
 relationships that start there, the nodes they reach and the links between
 the resources it holds.
+
+### `cgr watch`
+
+Keep a repository's graph in sync while you edit it. The watcher first syncs
+the repository as `cgr start --update-graph` does, then re-ingests each file
+you save, with the files that depend on it, until you stop it with Ctrl+C.
+See [Real-Time Updates](realtime-updates.md).
+
+```bash
+cgr watch --repo-path /path/to/repo [OPTIONS]
+```
+
+<!-- SECTION:cli_options_watch -->
+| Option | Description |
+|------|-----------|
+| `--repo-path` | Repository to watch. Defaults to the current directory. |
+| `--project-name` | Project name to store in the graph. Defaults to the name `cgr start --repo-path` gives the same repository, so both update one project; if you passed `cgr start --project-name`, pass the same name here. |
+| `--debounce`, `-d` | Seconds to wait after a file's last change before updating the graph, so a burst of saves becomes one update. 0 applies every change at once. [default: 5; x>=0] |
+| `--max-wait`, `-m` | Longest a file that keeps changing waits before the graph is updated anyway. Raised to --debounce when lower. [default: 30; x>=0] |
+| `--batch-size` | Flush to Memgraph after this many buffered nodes or relationships. [x>=1] |
+| `--no-start-stack` | Do not start the shared stack automatically. |
+<!-- /SECTION:cli_options_watch -->
+
+The repository, the project name and the stack are resolved as `cgr start`
+resolves them, so both commands update one project. The Memgraph connection
+comes from `MEMGRAPH_HOST` and `MEMGRAPH_PORT` (the environment or `.env`),
+as for every `cgr` command.
 
 ### `cgr export`
 

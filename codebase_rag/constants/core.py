@@ -115,13 +115,6 @@ CONTENT_EVENT_TYPES = frozenset(
 )
 
 
-REALTIME_LOGGER_FORMAT = (
-    "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
-    "<level>{level: <8}</level> | "
-    "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
-    "<level>{message}</level>"
-)
-
 WATCHER_SLEEP_INTERVAL = 1
 LOG_LEVEL_INFO = "INFO"
 LOG_LEVEL_ERROR = "ERROR"
@@ -135,7 +128,7 @@ ENV_PYTHON_DOTENV_DISABLED = "PYTHON_DOTENV_DISABLED"
 PYTHON_DOTENV_DISABLED_VALUES = frozenset({"1", "true", "t", "yes", "y"})
 LOGURU_DEFAULT_HANDLER_ID = 0
 
-# Debounce settings for realtime watcher
+# Debounce settings for the real-time watcher (`cgr watch`)
 DEFAULT_DEBOUNCE_SECONDS = 5
 DEFAULT_MAX_WAIT_SECONDS = 30
 

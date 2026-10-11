@@ -4,7 +4,7 @@ description: "Keep your Code-Graph-RAG knowledge graph synchronised with code ch
 
 # Real-Time Graph Updates
 
-For active development, keep your knowledge graph automatically synchronised with code changes using the real-time updater.
+For active development, keep your knowledge graph automatically synchronised with code changes using `cgr watch`.
 
 ## What It Does
 
@@ -15,43 +15,70 @@ For active development, keep your knowledge graph automatically synchronised wit
 
 ## Usage
 
-Run the real-time updater in a separate terminal:
+Run the watcher in a separate terminal:
 
 ```bash
-python realtime_updater.py /path/to/your/repo
+cgr watch --repo-path /path/to/your/repo
 ```
+
+`cgr watch` comes with every install of `code-graph-rag` (`uv tool install`,
+`pipx`, `pip`); it needs no clone of this repository. Without `--repo-path` it
+watches the current directory. It first syncs the repository the way
+`cgr start --update-graph` does, then applies each change as you save, until
+you stop it with Ctrl+C.
 
 ![The real-time updater watching pallets/itsdangerous in one tmux pane while the other appends a function and cgr graph resolve finds it after the re-ingest](../assets/demos/realtime-updates.gif)
 
 *Terminal 2 edits `encoding.py`; the watcher re-ingests it (and its dependents) and the new function is in the graph.*
 
-Or using the Makefile:
+From a clone of this repository, the Makefile target and the contributor
+script run the same command:
 
 ```bash
 make watch REPO_PATH=/path/to/your/repo
+python realtime_updater.py /path/to/your/repo
 ```
 
 ### With Custom Memgraph Settings
 
+`cgr watch` connects the way every `cgr` command does: `MEMGRAPH_HOST` and
+`MEMGRAPH_PORT` (and `MEMGRAPH_USERNAME` / `MEMGRAPH_PASSWORD`) from the
+environment or `.env`. There are no separate `--host` / `--port` flags.
+
 ```bash
-python realtime_updater.py /path/to/your/repo \
-  --host localhost --port 7687 --batch-size 1000
+MEMGRAPH_HOST=localhost MEMGRAPH_PORT=7687 cgr watch --repo-path /path/to/your/repo --batch-size 1000
 ```
 
 ```bash
 make watch REPO_PATH=/path/to/your/repo HOST=localhost PORT=7687 BATCH_SIZE=1000
 ```
 
-## Multi-Terminal Workflow
+Like `cgr start`, it starts the shared stack when it is not running; pass
+`--no-start-stack` when you run Memgraph yourself.
 
-The watcher names the project exactly as `cgr start --repo-path` does for the
-same directory (the directory name plus a hash of its resolved path), so its
-live updates land in the project `cgr start` and the other `cgr` commands read.
-If you name the project with `--project-name`, pass the same name to both.
+### Debouncing
+
+An editor's save is a burst of filesystem events, and a busy file changes
+again before the graph has caught up. The watcher waits until a file has been
+quiet for `--debounce` seconds (5 by default) and applies the burst as one
+update. A file that keeps changing is still applied after `--max-wait` seconds
+(30 by default). `--debounce 0` applies every change at once.
 
 ```bash
-# Terminal 1: Start the real-time updater
-python realtime_updater.py ~/my-project
+cgr watch --repo-path /path/to/your/repo --debounce 2 --max-wait 10
+```
+
+## Multi-Terminal Workflow
+
+`cgr watch` resolves the repository and names the project exactly as
+`cgr start` does for the same options (the directory name plus a hash of its
+resolved path), so its live updates land in the project `cgr start` and the
+other `cgr` commands read. If you name the project with `--project-name`,
+pass the same name to both.
+
+```bash
+# Terminal 1: keep the graph in sync
+cgr watch --repo-path ~/my-project
 
 # Terminal 2: Run the AI assistant
 cgr start --repo-path ~/my-project
@@ -60,7 +87,7 @@ cgr start --repo-path ~/my-project
 ### One sync of a checkout at a time
 
 Every writer of a checkout (`cgr start --update-graph`, `cgr index`, the MCP
-server's index and update tools, the watcher, `cgr check` and the MCP
+server's index and update tools, `cgr watch`, `cgr check` and the MCP
 `reingest`) takes the checkout's sync lock, `.cgr-sync-lock`, in the
 checkout's directory under `CGR_HOME` beside its other sync state (see
 [cgr's own state](../advanced/ignore-patterns.md#cgrs-own-state)); nothing is
@@ -71,9 +98,11 @@ interleave their deletes and re-creates and leave the graph incomplete, so:
   anything and names the running one:
   `Another sync of /path/to/repo is running (pid 4242, project 'repo__a4231746') ...`.
   Run it again when that sync has finished.
-- The watcher's first scan and every scoped reingest (a watched change, an MCP
-  edit's reingest, `cgr check`) wait for the running sync instead, then apply
-  their change to the graph it finished.
+- The first scan of `cgr watch` and every scoped reingest (a watched change,
+  an MCP edit's reingest, `cgr check`) wait for the running sync instead, then
+  apply their change to the graph it finished. While `cgr watch` applies a
+  change, a `cgr start --update-graph` of the same checkout is refused the
+  same way, naming the watcher's project.
 
 The lock is an OS file lock, so a sync that crashes or is killed releases it
 with its process; there is never a stale lock to delete. Like the rest of the
@@ -101,15 +130,20 @@ file readable and writable for every user who syncs the checkout. A
 A write Memgraph rejects as a conflicting transaction is retried a few times
 with a short, growing wait before it is reported.
 
-## CLI Arguments
+## Options
 
-| Argument | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `repo_path` | Yes | | Path to repository to watch |
-| `--host` | No | `localhost` | Memgraph host |
-| `--port` | No | `7687` | Memgraph port |
-| `--batch-size` | No | | Number of buffered nodes/relationships before flushing to Memgraph |
-| `--project-name` | No | Same as `cgr start --repo-path` | Project name to store in the graph; give the one you gave `cgr start --project-name` |
+<!-- SECTION:cli_options_watch -->
+| Option | Description |
+|------|-----------|
+| `--repo-path` | Repository to watch. Defaults to the current directory. |
+| `--project-name` | Project name to store in the graph. Defaults to the name `cgr start --repo-path` gives the same repository, so both update one project; if you passed `cgr start --project-name`, pass the same name here. |
+| `--debounce`, `-d` | Seconds to wait after a file's last change before updating the graph, so a burst of saves becomes one update. 0 applies every change at once. [default: 5; x>=0] |
+| `--max-wait`, `-m` | Longest a file that keeps changing waits before the graph is updated anyway. Raised to --debounce when lower. [default: 30; x>=0] |
+| `--batch-size` | Flush to Memgraph after this many buffered nodes or relationships. [x>=1] |
+| `--no-start-stack` | Do not start the shared stack automatically. |
+<!-- /SECTION:cli_options_watch -->
+
+The same table is in the [CLI reference](cli-reference.md#cgr-watch).
 
 ## Performance Note
 
