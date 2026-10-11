@@ -295,6 +295,20 @@ _LOAD_TIME_PUBLICATIONS = {
     "parenthesised-assign-source": (
         f"{_REQUIRE_SVC}Object.assign(module.exports, ({{ Svc }}))\n"
     ),
+    # Evaluation order (Greptile, PR #3355): the replacement inside the value
+    # runs first, then the outer one publishes `Svc`.
+    "replacement-inside-the-value": (
+        f"{_REQUIRE_SVC}module.exports = {{ Svc, side: (module.exports = {{}}) }}\n"
+    ),
+    # `exports` and `module.exports` are references to objects (Greptile, PR
+    # #3355): re-pointing either at the other's object reattaches them.
+    "exports-reattached": (
+        f"{_REQUIRE_SVC}module.exports = {{}}\nexports = module.exports\n"
+        "exports.Svc = Svc\n"
+    ),
+    "module-exports-set-to-exports": (
+        f"{_REQUIRE_SVC}exports.Svc = Svc\nmodule.exports = exports\n"
+    ),
 }
 
 
@@ -351,6 +365,16 @@ _SHADOWING_BARRELS = {
     "shadowed-exports": (
         f"{_REQUIRE_SVC};(function (exports) {{ exports.Public = Svc }})({{}})\n"
     ),
+    # `var` and a sloppy function declaration leave their block for the
+    # function.
+    "iife-var-in-a-nested-block": (
+        f"{_REQUIRE_SVC};(function () {{ if (1) {{ var Svc = 0 }} "
+        "exports.Public = Svc })()\n"
+    ),
+    "iife-function-in-a-nested-block": (
+        f"{_REQUIRE_SVC};(function () {{ {{ function Svc() {{}} }} "
+        "exports.Public = Svc })()\n"
+    ),
 }
 
 _UNSHADOWED_BARRELS = {
@@ -360,6 +384,16 @@ _UNSHADOWED_BARRELS = {
         f"{_REQUIRE_SVC};(function (other) {{ const local = other; "
         "exports.Public = Svc })(1)\n"
     ),
+    # A block's `let`, `const` and `class` stay in that block (Greptile, PR
+    # #3355): only a scope that encloses the publication shadows.
+    "closed-block-const": (
+        f"{_REQUIRE_SVC};(() => {{ {{ const Svc = 0; }} exports.Public = Svc; }})();\n"
+    ),
+    "closed-block-class": (
+        f"{_REQUIRE_SVC};(() => {{ if (1) {{ class Svc {{}} }} "
+        "exports.Public = Svc })()\n"
+    ),
+    "closed-module-block": f"{_REQUIRE_SVC}{{ let Svc = 0 }}\nexports.Public = Svc\n",
 }
 
 
@@ -761,6 +795,25 @@ def test_a_module_is_commonjs_only_by_what_it_exports(
         ("(function (module) { module.exports = { P } })({})\n", {}),
         ("(function () { exports.P = S })()\n", {"P": "S"}),
         ("(function () { function f(S) {} exports.P = S })()\n", {"P": "S"}),
+        # A closed block keeps its own names; `var` and a sloppy function
+        # declaration reach the function.
+        ("(() => { { const S = 0 } exports.P = S })()\n", {"P": "S"}),
+        ("(() => { if (1) { class S {} } exports.P = S })()\n", {"P": "S"}),
+        ("(() => { for (let S of xs) {} exports.P = S })()\n", {"P": "S"}),
+        ("{ const S = 0 }\nexports.P = S\n", {"P": "S"}),
+        ("(function () { if (1) { var S = 0 } exports.P = S })()\n", {}),
+        ("(function () { { function S() {} } exports.P = S })()\n", {}),
+        ("(function () { for (var S of xs) {} exports.P = S })()\n", {}),
+        # Evaluation order: a target is fixed before its value runs, and an
+        # assignment inside the value runs before the one holding it.
+        ("module.exports = { A, side: (module.exports = {}) }\n", {"A": "A"}),
+        ("module.exports.A = (module.exports = {}, a)\n", {}),
+        # Two references to objects.
+        ("module.exports = {}\nexports = module.exports\nexports.A = a\n", {"A": "a"}),
+        ("exports.A = a\nmodule.exports = exports\n", {"A": "a"}),
+        ("exports = { A }\nmodule.exports = exports\n", {"A": "A"}),
+        ("exports = {}\nexports.A = a\nmodule.exports = exports\n", {"A": "a"}),
+        ("exports.self = exports\n", {}),
         ("module.exports = { ...require('./a'), A }\n", {"A": "A"}),
         # Opaque: no binding per published name.
         ("module.exports = lib\n", {}),
