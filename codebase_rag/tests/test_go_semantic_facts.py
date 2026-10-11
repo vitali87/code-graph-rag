@@ -169,6 +169,8 @@ def test_frontend_off_clears_stale_go_facts(
     )
     dp.go_external_sites.add(("stale.go", 3, 0, "Ext"))
     dp.go_implements.append(ImplementsPair("stale.go", 4, 0, "stale.go", 5, 0))
+    dp.go_analysed_roots.add(".")
+    dp.go_checked_files.add("stale.go")
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
 
     updater._run_go_frontend()
@@ -176,6 +178,8 @@ def test_frontend_off_clears_stale_go_facts(
     assert dp.go_call_sites == {}
     assert dp.go_external_sites == set()
     assert dp.go_implements == []
+    assert dp.go_analysed_roots == set()
+    assert dp.go_checked_files == set()
 
 
 def test_auto_without_toolchain_matches_frontend_off(
@@ -296,6 +300,7 @@ def _impl_facts(implements: list[GoImplements]) -> GoSemanticFacts:
         external_sites=set(),
         implements=implements,
         analysed_modules=(".",),
+        checked_files=frozenset({"sample.go"}),
     )
 
 

@@ -30,18 +30,21 @@ GoMethodSet = dict[GoMethodKey, int]
 
 
 class GoMethodSpec(NamedTuple):
-    """A Go method's parameter count and the package declaring it, as
-    `package_key` spells it."""
+    """A Go method's parameter count, the package declaring it, as
+    `package_key` spells it, and its repo-relative file."""
 
     arity: int
     package: str
+    file: str
 
 
 class GoInterfaceDecl(NamedTuple):
-    """The types a Go interface embeds, as written, and its package."""
+    """The types a Go interface embeds, as written, its package and its
+    repo-relative file."""
 
     embeds: tuple[str, ...]
     package: str
+    file: str
 
 
 def method_key(name: str, package: str) -> GoMethodKey:

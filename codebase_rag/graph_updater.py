@@ -1907,6 +1907,7 @@ class GraphUpdater:
         dp.go_external_sites.clear()
         dp.go_implements.clear()
         dp.go_analysed_roots.clear()
+        dp.go_checked_files.clear()
 
     def _apply_go_semantic_facts(self, facts: SemanticFacts) -> None:
         dp = self.factory.definition_processor
@@ -1914,6 +1915,7 @@ class GraphUpdater:
         dp.go_external_sites.update(facts.external_sites)
         dp.go_implements.extend(facts.implements_pairs)
         dp.go_analysed_roots.update(facts.analysed_roots)
+        dp.go_checked_files.update(facts.checked_files)
 
     def _join_go_implements(self) -> None:
         # go/types proved each implementer->interface pair structurally; both
@@ -1957,7 +1959,9 @@ class GraphUpdater:
         # when it proved none; names and arities decide only elsewhere. Keyed
         # on the modules it analysed, not on whether it returned any facts.
         dp = self.factory.definition_processor
-        dp.link_go_interfaces(frozenset(dp.go_analysed_roots))
+        dp.link_go_interfaces(
+            frozenset(dp.go_analysed_roots), frozenset(dp.go_checked_files)
+        )
 
     def _join_csharp_partials(self) -> None:
         # Replace the directory-keyed syntactic partial grouping with the
@@ -3851,12 +3855,12 @@ class GraphUpdater:
             if label == cs.NodeLabel.METHOD and isinstance(
                 param_types := row.get(cs.KEY_PARAM_TYPES), list
             ):
-                dp.go_methods[qn] = GoMethodSpec(len(param_types), package)
+                dp.go_methods[qn] = GoMethodSpec(len(param_types), package, path)
             elif label == cs.NodeLabel.INTERFACE and isinstance(
                 embeds := row.get(cs.KEY_EMBEDS), list
             ):
                 dp.go_interfaces[qn] = GoInterfaceDecl(
-                    tuple(_stored_strings(embeds)), package
+                    tuple(_stored_strings(embeds)), package, path
                 )
 
     def _rehydrate_rust_return_types(self, rows: list[ResultRow]) -> None:

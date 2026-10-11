@@ -85,6 +85,11 @@ type payload struct {
 	Calls      []callFact       `json:"calls"`
 	Externals  []externalFact   `json:"externals"`
 	Implements []implementsFact `json:"implements"`
+	// Checked lists the files of every package that type-checked cleanly:
+	// the only files the facts above speak for. A file the build leaves out
+	// (another GOOS's, a build tag's, cgo's) or one in an ill-typed package
+	// was never seen, so a pair missing from Implements says nothing there.
+	Checked []string `json:"checked"`
 }
 
 // typeEntry is a first-party named type gathered for the implements pass: the
@@ -123,11 +128,12 @@ type collector struct {
 	seenTypes map[string]bool
 	// Test binary (`p.test`) -> the types its variants declare.
 	variants map[string]*variantTypes
+	checked  map[string]bool
 }
 
 func main() {
 	if len(os.Args) < 2 {
-		emit(payload{Calls: []callFact{}, Externals: []externalFact{}})
+		emit(payload{Calls: []callFact{}, Externals: []externalFact{}, Checked: []string{}})
 		return
 	}
 	root, err := filepath.Abs(os.Args[1])
@@ -168,12 +174,23 @@ func main() {
 		seenFiles: map[string]bool{},
 		seenTypes: map[string]bool{},
 		variants:  map[string]*variantTypes{},
+		checked:   map[string]bool{},
 	}
 	for _, pkg := range pkgs {
 		col.collectPackage(pkg)
 	}
 	col.collectImplements()
+	col.out.Checked = sortedKeys(col.checked)
 	emit(*col.out)
+}
+
+func sortedKeys(set map[string]bool) []string {
+	keys := make([]string, 0, len(set))
+	for key := range set {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func (c *collector) collectPackage(pkg *packages.Package) {
@@ -185,6 +202,9 @@ func (c *collector) collectPackage(pkg *packages.Package) {
 	}
 	fset := pkg.Fset
 	for _, file := range pkg.Syntax {
+		if rel, _, _, ok := c.position(fset, file.Pos()); ok {
+			c.checked[rel] = true
+		}
 		name := fset.File(file.Pos()).Name()
 		if c.seenFiles[name] {
 			continue

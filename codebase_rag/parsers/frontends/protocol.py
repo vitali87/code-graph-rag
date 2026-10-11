@@ -93,6 +93,10 @@ class SemanticFacts:
     # hold (Go #2483); a root missing here was never analysed, or its run
     # failed. Not counted by `is_empty`: a run can analyse and find nothing.
     analysed_roots: tuple[str, ...] = ()
+    # The repo-relative files those analyses type-checked: a build reads only
+    # the files its GOOS and tags select, so a pair resting on any other file
+    # was never compared, and the fallback keeps it (PR #3360 review).
+    checked_files: frozenset[str] = frozenset()
     # Per invocation argument, the locals/parameters the compiler proves
     # reach it (C# Roslyn today, issue #1187). The flow walk unions their
     # taint with its own syntactic evaluation, so an expression shape the

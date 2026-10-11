@@ -281,6 +281,9 @@ class DefinitionProcessor(
         # The module roots the go/types frontend analysed in this run (`.`
         # for the repository's own): their pairs are the compiler's alone.
         self.go_analysed_roots: set[str] = set()
+        # The repo-relative files those runs type-checked: a pair resting on
+        # a file the build left out was never compared by the compiler.
+        self.go_checked_files: set[str] = set()
         # (rel_file, type_start_line) -> class qn for every ingested C# type,
         # the reverse of the Roslyn fact keys, so partial declaration groups
         # join back to the Pass-2 Class nodes.

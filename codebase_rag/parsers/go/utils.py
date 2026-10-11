@@ -61,13 +61,9 @@ def package_key(rel_path: str, clause: str | None) -> str:
     return f"{directory}{cs.CHAR_COLON}{clause or ''}"
 
 
-def file_package_key(
-    file_path: Path | None, repo_path: Path, clause: str | None
-) -> str:
-    rel_path = (
-        cached_relative_path(file_path, repo_path).as_posix() if file_path else ""
-    )
-    return package_key(rel_path, clause)
+def rel_file(file_path: Path | None, repo_path: Path) -> str:
+    # Spelled as a node's `path` and the go/types facts' files are.
+    return cached_relative_path(file_path, repo_path).as_posix() if file_path else ""
 
 
 def package_key_dir(key: str) -> str:
@@ -347,16 +343,20 @@ def _return_type_identifier(type_node: Node) -> str | None:
     if type_node.type == cs.TS_TYPE_IDENTIFIER and type_node.text:
         return safe_decode_text(type_node)
     if type_node.type == cs.TS_GO_QUALIFIED_TYPE:
-        package = type_node.child_by_field_name(cs.FIELD_GO_PACKAGE)
-        name = type_node.child_by_field_name(cs.FIELD_NAME)
-        if package is None or name is None:
-            return None
-        return f"{safe_decode_text(package)}{cs.SEPARATOR_DOT}{safe_decode_text(name)}"
+        return _qualified_type_text(type_node)
     if type_node.type in (cs.TS_GO_POINTER_TYPE, cs.TS_GENERIC_TYPE):
         for child in type_node.children:
             if name := _return_type_identifier(child):
                 return name
     return None
+
+
+def _qualified_type_text(type_node: Node) -> str | None:
+    package = type_node.child_by_field_name(cs.FIELD_GO_PACKAGE)
+    name = type_node.child_by_field_name(cs.FIELD_NAME)
+    if package is None or name is None:
+        return None
+    return f"{safe_decode_text(package)}{cs.SEPARATOR_DOT}{safe_decode_text(name)}"
 
 
 def type_identifier_text(type_node: Node) -> str | None:
@@ -365,6 +365,22 @@ def type_identifier_text(type_node: Node) -> str | None:
     # Unwrap pointer (*T) and generic (T[P]) receivers to the base name.
     for child in type_node.children:
         if name := type_identifier_text(child):
+            return name
+    return None
+
+
+def written_type_text(type_node: Node) -> str | None:
+    """`type_identifier_text` that keeps a package qualifier: `geo.Shape`
+    for `[]*geo.Shape`'s element, `Shape` for this package's. The bare name
+    of another package's type names whatever the reading package calls by
+    that name, so the reader resolves the qualifier through its imports
+    instead (issue #2483)."""
+    if type_node.type == cs.TS_GO_QUALIFIED_TYPE:
+        return _qualified_type_text(type_node)
+    if type_node.type == cs.TS_TYPE_IDENTIFIER and type_node.text:
+        return safe_decode_text(type_node)
+    for child in type_node.children:
+        if name := written_type_text(child):
             return name
     return None
 

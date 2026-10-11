@@ -12,7 +12,7 @@ from ..frontends.protocol import ResolvedCallSite
 from ..semantic_call_join import call_site_key, declared_location
 from ..utils import safe_decode_text
 from . import utils as go_utils
-from .utils import type_identifier_text
+from .utils import type_identifier_text, written_type_text
 
 # Sentinel returned when the go/types frontend resolved a call OUTSIDE the module
 # (stdlib, deps): the resolver suppresses the name-trie fallback there rather than
@@ -45,10 +45,12 @@ _RangeSlots = tuple[str | None, str | None]
 
 
 def _element_name(type_node: Node | None) -> str | None:
-    # A nested container (`[][]Shape`) yields a container, not a Shape.
+    # A nested container (`[][]Shape`) yields a container, not a Shape. Another
+    # package's type keeps its qualifier (`geo.Shape`), for the reader to
+    # resolve through its imports.
     if type_node is None or type_node.type in cs.TS_GO_CONTAINER_TYPES:
         return None
-    return type_identifier_text(type_node)
+    return written_type_text(type_node)
 
 
 def _range_slots(type_node: Node) -> _RangeSlots | None:
@@ -109,7 +111,10 @@ def range_span_bindings(
     A local of that name declared inside the loop (`s := Other{}`, a closure
     parameter `s`) owns `s` from its declaration on, so the loop's binding
     skips its scope, and the local gets a binding of its own type where one
-    can be read (`value_type` types a `:=` value)."""
+    can be read (`value_type` types a `:=` value).
+
+    Another package's type keeps its qualifier (`geo.Shape`): only the
+    reading file's imports say which package that is."""
     body = caller_node.child_by_field_name(cs.FIELD_BODY)
     clauses = (
         [clause for clause in _range_clauses(body) if _declares(clause)] if body else []
@@ -187,7 +192,7 @@ def _declared_type(
     # a parameter or `var`, or what a `:=` value is built as.
     if declaration.type in (cs.TS_GO_PARAMETER_DECLARATION, cs.TS_GO_VAR_SPEC):
         type_node = declaration.child_by_field_name(cs.FIELD_TYPE)
-        return type_identifier_text(type_node) if type_node is not None else None
+        return written_type_text(type_node) if type_node is not None else None
     if declaration.type != cs.TS_GO_SHORT_VAR_DECLARATION:
         return None
     left = declaration.child_by_field_name(cs.FIELD_LEFT)
@@ -232,7 +237,9 @@ class GoTypeInferenceEngine:
     # call (`d.method()`) to the method node on the type. Bare names only: the
     # resolver turns a name into a class qn via the same _resolve_class_name path the
     # definition pass uses, so pointer/generic wrappers are stripped here down to the
-    # underlying type identifier.
+    # underlying type identifier. Another package's type keeps its qualifier
+    # (`geo.Shape`), which TypeInferenceEngine resolves through the file's imports
+    # (issue #2483).
     #
     # The go/types semantic frontend (issue #1179) adds an exact-callee join on top:
     # the shared go_call_sites / go_external_sites facts (populated after
@@ -388,7 +395,7 @@ class GoTypeInferenceEngine:
             if param.type != cs.TS_GO_PARAMETER_DECLARATION:
                 continue
             type_node = param.child_by_field_name(cs.FIELD_TYPE)
-            if type_node is None or not (type_name := type_identifier_text(type_node)):
+            if type_node is None or not (type_name := written_type_text(type_node)):
                 continue
             for child in param.children:
                 if child.type == cs.TS_IDENTIFIER and (name := safe_decode_text(child)):
@@ -409,7 +416,7 @@ class GoTypeInferenceEngine:
             if spec.type != cs.TS_GO_VAR_SPEC:
                 continue
             type_node = spec.child_by_field_name(cs.FIELD_TYPE)
-            if type_node is None or not (type_name := type_identifier_text(type_node)):
+            if type_node is None or not (type_name := written_type_text(type_node)):
                 continue
             for child in spec.children:
                 if child.type == cs.TS_IDENTIFIER and (name := safe_decode_text(child)):
@@ -492,7 +499,7 @@ class GoTypeInferenceEngine:
     def infer_value_type(self, value: Node) -> str | None:
         if value.type == cs.TS_GO_COMPOSITE_LITERAL:
             type_node = value.child_by_field_name(cs.FIELD_TYPE)
-            return type_identifier_text(type_node) if type_node else None
+            return written_type_text(type_node) if type_node else None
         if value.type == cs.TS_GO_UNARY_EXPRESSION:
             # `&T{}` wraps the composite literal in its operand.
             operand = value.child_by_field_name(cs.FIELD_OPERAND)
@@ -500,7 +507,7 @@ class GoTypeInferenceEngine:
         if value.type == cs.TS_GO_TYPE_ASSERTION_EXPRESSION:
             # `x := y.(T)` / `y.(*T)` (gin's `c := pool.Get().(*Context)`): the
             # asserted type is x's type, so a later field-hop / method call on x
-            # resolves. type_identifier_text unwraps the `*T` pointer.
+            # resolves. written_type_text unwraps the `*T` pointer.
             type_node = value.child_by_field_name(cs.FIELD_TYPE)
-            return type_identifier_text(type_node) if type_node else None
+            return written_type_text(type_node) if type_node else None
         return None

@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -519,6 +520,7 @@ def _gotypes(
         external_sites=set(),
         implements=implements,
         analysed_modules=(".",),
+        checked_files=frozenset({"shapes.go"}),
     )
     monkeypatch.setattr(go_fe, "go_frontend_available", lambda: True)
     monkeypatch.setattr(go_fe, "run_go_frontend", lambda repo_path, ignored_dirs: facts)
@@ -1043,7 +1045,11 @@ def test_a_go_types_run_that_proves_no_pair_adds_no_name_match(
     _gotypes_facts(
         monkeypatch,
         GoSemanticFacts(
-            call_sites={}, external_sites=set(), implements=[], analysed_modules=(".",)
+            call_sites={},
+            external_sites=set(),
+            implements=[],
+            analysed_modules=(".",),
+            checked_files=frozenset({"sink.go"}),
         ),
     )
     create_and_run_updater(root, mock_ingestor, skip_if_missing="go")
@@ -1107,6 +1113,7 @@ def test_a_degraded_module_keeps_the_fallback_and_an_analysed_one_does_not(
             ],
             degraded_modules=("legacy",),
             analysed_modules=(".",),
+            checked_files=frozenset({"shapes.go"}),
         ),
     )
     create_and_run_updater(root, mock_ingestor, skip_if_missing="go")
@@ -1231,6 +1238,7 @@ def test_a_proven_override_and_sole_target_rename_without_opt_in(
                 )
             ],
             analysed_modules=(".",),
+            checked_files=frozenset({"app.go"}),
         ),
     )
     _write(temp_repo, "go.mod", "module goproven\n\ngo 1.22\n")
@@ -1518,6 +1526,7 @@ def test_a_pair_that_changes_source_stays_an_implementer(
                 )
             ],
             analysed_modules=(".",),
+            checked_files=frozenset({"app.go"}),
         ),
     }
     second = "analysed" if first == "degraded" else "degraded"
@@ -1778,3 +1787,356 @@ def test_the_range_variable_keeps_the_calls_it_owns(
     loop_shadows: tuple[str, MagicMock], caller: str, needle: str, expected: dict
 ) -> None:
     assert _calls_at(loop_shadows, caller, needle) == expected
+
+
+# --- a range element of another package is that package's type ---------------
+
+QUALIFIED_GEO = """package geo
+
+type Shape interface {
+\tArea() float64
+}
+
+type Square struct{}
+
+func (s Square) Area() float64 { return 1 }
+"""
+
+# The local Shape also asks for Name, so only Local implements it, while
+# Local, geo's Square and the local Square all implement geo's Shape.
+QUALIFIED_APP = """package app
+
+import (
+\t"example.com/qual/geo"
+\t"github.com/elsewhere/ext"
+)
+
+type Shape interface {
+\tArea() float64
+\tName() string
+}
+
+type Local struct{}
+
+func (l Local) Area() float64 { return 2 }
+func (l Local) Name() string  { return "local" }
+
+type Square struct{}
+
+func (s Square) Area() float64 { return 3 }
+
+func Slice(xs []geo.Shape) float64 {
+\tt := 0.0
+\tfor _, s := range xs {
+\t\tt += s.Area()
+\t}
+\treturn t
+}
+
+func Map(xs map[string]geo.Shape) float64 {
+\tt := 0.0
+\tfor _, s := range xs {
+\t\tt += s.Area()
+\t}
+\treturn t
+}
+
+func Pointers(xs []*geo.Square) float64 {
+\tt := 0.0
+\tfor _, s := range xs {
+\t\tt += s.Area()
+\t}
+\treturn t
+}
+
+func Own(xs []Shape) float64 {
+\tt := 0.0
+\tfor _, s := range xs {
+\t\tt += s.Area()
+\t}
+\treturn t
+}
+
+func External(xs []ext.Shape) float64 {
+\tt := 0.0
+\tfor _, s := range xs {
+\t\tt += s.Area()
+\t}
+\treturn t
+}
+
+func Param(s geo.Shape) float64 {
+\treturn s.Area()
+}
+
+func Var() float64 {
+\tvar s geo.Shape
+\treturn s.Area()
+}
+"""
+
+QUALIFIED_OTHER = """package other
+
+import "example.com/qual/geo"
+
+func Slice(xs []geo.Shape) float64 {
+\tt := 0.0
+\tfor _, s := range xs {
+\t\tt += s.Area()
+\t}
+\treturn t
+}
+"""
+
+_GEO_DISPATCH = {
+    "geo.geo.Shape.Area": "exact",
+    "geo.geo.Square.Area": "heuristic",
+    "app.app.Local.Area": "heuristic",
+    "app.app.Square.Area": "heuristic",
+}
+
+
+@pytest.fixture
+def qualified(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> tuple[str, MagicMock]:
+    files = {
+        "geo/geo.go": QUALIFIED_GEO,
+        "app/app.go": QUALIFIED_APP,
+        "other/other.go": QUALIFIED_OTHER,
+    }
+    root = temp_repo / "qual"
+    return _index(root, files, mock_ingestor, monkeypatch, "example.com/qual"), (
+        mock_ingestor
+    )
+
+
+def _area_calls_of(qualified: tuple[str, MagicMock], caller: str) -> dict[str, str]:
+    project, mock_ingestor = qualified
+    return {
+        callee.removeprefix(f"{project}."): str(resolution)
+        for callee, resolution in _area_calls(
+            mock_ingestor, f"{project}.{caller}"
+        ).items()
+    }
+
+
+@pytest.mark.parametrize(
+    ("caller", "expected"),
+    [
+        ("app.app.Slice", _GEO_DISPATCH),
+        ("app.app.Map", _GEO_DISPATCH),
+        ("app.app.Pointers", {"geo.geo.Square.Area": "exact"}),
+        ("other.other.Slice", _GEO_DISPATCH),
+    ],
+    ids=["slice", "map-value", "pointer-element", "no-local-collision"],
+)
+def test_a_qualified_range_element_is_the_imported_packages_type(
+    qualified: tuple[str, MagicMock], caller: str, expected: dict
+) -> None:
+    # `geo.Shape` is geo's, whatever the ranging file calls its own Shape.
+    assert _area_calls_of(qualified, caller) == expected
+
+
+@pytest.mark.parametrize("caller", ["app.app.Param", "app.app.Var"])
+def test_a_qualified_parameter_or_var_is_the_imported_packages_type(
+    qualified: tuple[str, MagicMock], caller: str
+) -> None:
+    # The flat type map read `geo.Shape` as the bare `Shape` too, which the
+    # interface's own method node now turns into an exact edge and a fan-out.
+    assert _area_calls_of(qualified, caller) == _GEO_DISPATCH
+
+
+def test_an_unqualified_range_element_is_the_own_packages_type(
+    qualified: tuple[str, MagicMock],
+) -> None:
+    assert _area_calls_of(qualified, "app.app.Own") == {
+        "app.app.Shape.Area": "exact",
+        "app.app.Local.Area": "heuristic",
+    }
+
+
+def test_an_unresolved_qualified_range_element_binds_nothing(
+    qualified: tuple[str, MagicMock],
+) -> None:
+    # `ext` is not indexed: its Shape is no type here, and the bare name
+    # must not stand in for it.
+    calls = _area_calls_of(qualified, "app.app.External")
+    assert "app.app.Shape.Area" not in calls
+    assert cs.EdgeResolution.EXACT not in calls.values()
+
+
+# --- a file go/types skipped keeps the fallback (PR #3360 review) -------------
+
+# Built for another OS than the one indexing, so go/packages leaves these
+# files out of the build it type-checks while tree-sitter indexes them all.
+_OTHER_OS = "plan9" if sys.platform == "win32" else "windows"
+
+BUILT = """package shapes
+
+type Shape interface {
+\tArea() float64
+}
+
+type Square struct{}
+
+func (s Square) Area() float64 { return 1 }
+
+type Wrong struct{}
+
+func (w Wrong) Area() int { return 0 }
+
+type Mixed struct{}
+
+func Total(xs []Shape) float64 {
+\tt := 0.0
+\tfor _, s := range xs {
+\t\tt += s.Area()
+\t}
+\treturn t
+}
+"""
+
+SKIPPED = {
+    # Constrained by its file name alone.
+    f"tile_{_OTHER_OS}.go": """package shapes
+
+type Tile struct{}
+
+func (t Tile) Area() float64 { return 2 }
+""",
+    # Constrained by its build tag alone.
+    "tagged.go": f"""//go:build {_OTHER_OS}
+
+package shapes
+
+type Tagged struct{{}}
+
+func (t Tagged) Area() float64 {{ return 3 }}
+""",
+    # A type the build sees whose method only the other OS's build declares.
+    f"mixed_{_OTHER_OS}.go": """package shapes
+
+func (m Mixed) Area() float64 { return 4 }
+""",
+}
+
+
+def _skipped_files_repo(root: Path) -> None:
+    root.mkdir()
+    (root / "go.mod").write_text("module goskip\n\ngo 1.22\n", encoding="utf-8")
+    (root / "shapes.go").write_text(BUILT, encoding="utf-8")
+    for name, text in SKIPPED.items():
+        (root / name).write_text(text, encoding="utf-8")
+
+
+def _below_file(qn: str) -> str:
+    # `goskip.tile_windows.Tile.Area` -> `Tile.Area`: past project and file.
+    return qn.split(".", 2)[-1]
+
+
+def _resolutions(
+    mock_ingestor: MagicMock, rel: cs.RelationshipType
+) -> dict[tuple[str, str], str | None]:
+    return {
+        (_below_file(source), _below_file(target)): props.get(cs.KEY_RESOLUTION)
+        for (source, target), props in _edges(mock_ingestor, rel).items()
+    }
+
+
+def _real_gotypes_or_skip(root: Path) -> None:
+    from codebase_rag.parsers.go_frontend import go_frontend_available, run_go_frontend
+
+    if shutil.which("go") is None or not go_frontend_available():
+        pytest.skip("go toolchain not available")
+    facts = run_go_frontend(root)
+    if facts.analysed_modules != (".",):
+        pytest.skip("gotypes frontend could not build in this environment")
+    # The build for this OS reads shapes.go alone.
+    assert facts.checked_files == {"shapes.go"}
+
+
+def _recorded_gotypes(monkeypatch: pytest.MonkeyPatch) -> None:
+    # What the bundled tool reports for the repository on a build that leaves
+    # the other OS's files out: it type-checked shapes.go alone and proved
+    # Square, while Wrong's Area() int is no Area() float64.
+    _gotypes_facts(
+        monkeypatch,
+        GoSemanticFacts(
+            call_sites={},
+            external_sites=set(),
+            implements=[
+                GoImplements(
+                    "shapes.go",
+                    *_position(BUILT, "Square struct"),
+                    "shapes.go",
+                    *_position(BUILT, "Shape interface"),
+                )
+            ],
+            analysed_modules=(".",),
+            checked_files=frozenset({"shapes.go"}),
+        ),
+    )
+
+
+@pytest.mark.parametrize("facts", ["real", "recorded"])
+def test_a_type_in_a_file_go_types_skipped_keeps_the_name_match(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    facts: str,
+) -> None:
+    root = temp_repo / "goskip"
+    _skipped_files_repo(root)
+    if facts == "real":
+        _real_gotypes_or_skip(root)
+        monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
+    else:
+        _recorded_gotypes(monkeypatch)
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="go")
+    implements = _resolutions(mock_ingestor, cs.RelationshipType.IMPLEMENTS)
+    # The compiler's own answer where it type-checked both sides: Square is
+    # proven, and Wrong gets no name match.
+    assert implements == {
+        ("Square", "Shape"): None,
+        ("Tile", "Shape"): cs.EdgeResolution.HEURISTIC,
+        ("Tagged", "Shape"): cs.EdgeResolution.HEURISTIC,
+        ("Mixed", "Shape"): cs.EdgeResolution.HEURISTIC,
+    }
+    overrides = _resolutions(mock_ingestor, cs.RelationshipType.OVERRIDES)
+    assert overrides[("Square.Area", "Shape.Area")] is None
+    assert ("Wrong.Area", "Shape.Area") not in overrides
+    for name in ("Tile", "Tagged", "Mixed"):
+        assert overrides[(f"{name}.Area", "Shape.Area")] == cs.EdgeResolution.HEURISTIC
+    calls = {
+        target: resolution
+        for (source, target), resolution in _resolutions(
+            mock_ingestor, cs.RelationshipType.CALLS
+        ).items()
+        if source == "Total"
+    }
+    assert calls == {
+        "Shape.Area": cs.EdgeResolution.EXACT,
+        "Square.Area": cs.EdgeResolution.OVERLOAD,
+        "Tile.Area": cs.EdgeResolution.HEURISTIC,
+        "Tagged.Area": cs.EdgeResolution.HEURISTIC,
+        "Mixed.Area": cs.EdgeResolution.HEURISTIC,
+    }
+
+
+def test_without_go_types_every_file_is_matched_by_name(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The tree-sitter path reads no build constraint: every same-named,
+    # same-arity method is a match, Wrong's included.
+    _index(
+        temp_repo / "goskip",
+        {"shapes.go": BUILT, **SKIPPED},
+        mock_ingestor,
+        monkeypatch,
+    )
+    implements = _resolutions(mock_ingestor, cs.RelationshipType.IMPLEMENTS)
+    assert implements == {
+        (name, "Shape"): cs.EdgeResolution.HEURISTIC
+        for name in ("Square", "Wrong", "Tile", "Tagged", "Mixed")
+    }

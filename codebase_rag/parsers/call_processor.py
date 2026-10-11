@@ -3732,9 +3732,7 @@ class CallProcessor:
         if language == cs.SupportedLanguage.GO:
             # A `for k, v := range xs` variable is the loop's own, so it holds
             # the element type inside the loop and nowhere else (issue #2483).
-            return type_inference.go_type_inference.collect_range_span_bindings(
-                caller_node
-            )
+            return type_inference.collect_go_span_bindings(caller_node, module_qn)
         return []
 
     def _overlay_span_binding(

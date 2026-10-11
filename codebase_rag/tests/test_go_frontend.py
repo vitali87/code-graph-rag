@@ -90,23 +90,33 @@ def test_parse_payload_reads_call_and_external_sections() -> None:
                     "iname": "Greeter",
                 }
             ],
+            "checked": ["a.go", "b.go"],
         }
     )
     facts = _parse_payload(payload)
+    assert facts is not None
     assert facts.call_sites[("a.go", 5, 8, "Handle")] == GoCallSite(
         "Handle", "b.go", 3, 4
     )
     assert facts.external_sites == {("a.go", 11, 8, "Println")}
     assert facts.implements == [GoImplements("a.go", 9, 5, "b.go", 5, 5)]
+    assert facts.checked_files == {"a.go", "b.go"}
 
 
 def test_parse_payload_without_sections_yields_empty_facts() -> None:
     # An older tool build (stale cached binary) may emit no section; all three
     # families must default to empty instead of raising.
     facts = _parse_payload(json.dumps({}))
+    assert facts is not None
     assert facts.call_sites == {}
     assert facts.external_sites == set()
     assert facts.implements == []
+    # No file listed is no file type-checked: every pair keeps the fallback.
+    assert facts.checked_files == frozenset()
+
+
+def test_parse_payload_with_a_malformed_checked_file_signals_failure() -> None:
+    assert _parse_payload(json.dumps({"checked": ["a.go", 7]})) is None
 
 
 def test_parse_payload_non_json_signals_failure() -> None:
@@ -146,6 +156,7 @@ def test_adapter_maps_go_facts_to_semantic_facts() -> None:
         call_sites={("a.go", 5, 8, "Handle"): GoCallSite("Handle", "b.go", 3, 4)},
         external_sites={("a.go", 11, 8, "Println")},
         implements=[GoImplements("a.go", 9, 5, "b.go", 5, 5)],
+        checked_files=frozenset({"a.go", "b.go"}),
     )
     adapted = _adapt_go_semantic_facts(facts)
     assert isinstance(adapted, SemanticFacts)
@@ -155,6 +166,7 @@ def test_adapter_maps_go_facts_to_semantic_facts() -> None:
     assert adapted.external_sites == {("a.go", 11, 8, "Println")}
     # GoImplements maps 1:1 onto the generic implements_pairs family.
     assert adapted.implements_pairs == [ImplementsPair("a.go", 9, 5, "b.go", 5, 5)]
+    assert adapted.checked_files == {"a.go", "b.go"}
     # The Go frontend leaves the C#-specific families empty.
     assert adapted.base_kinds == {}
     assert adapted.partial_groups == []
@@ -297,6 +309,7 @@ def test_nested_modules_each_get_a_tool_run_with_reanchored_paths(
                     }
                 ],
                 "externals": [],
+                "checked": ["main.go", "lib.go"],
             },
             "sub/tool": {
                 "calls": [
@@ -323,6 +336,7 @@ def test_nested_modules_each_get_a_tool_run_with_reanchored_paths(
                         "icol": 5,
                     }
                 ],
+                "checked": ["cmd.go", "iface.go"],
             },
         },
     )
@@ -341,6 +355,12 @@ def test_nested_modules_each_get_a_tool_run_with_reanchored_paths(
     assert facts.implements == [
         GoImplements("sub/tool/cmd.go", 12, 5, "sub/tool/iface.go", 4, 5)
     ]
+    assert facts.checked_files == {
+        "main.go",
+        "lib.go",
+        "sub/tool/cmd.go",
+        "sub/tool/iface.go",
+    }
 
 
 def test_ignored_directories_never_get_a_tool_run(

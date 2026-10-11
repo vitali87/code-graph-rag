@@ -89,6 +89,12 @@ class GoSemanticFacts(NamedTuple):
     # is. Within one, the implements pairs above are the whole answer, even
     # an empty one; the name-and-arity fallback keeps to the rest (#2483).
     analysed_modules: tuple[str, ...] = ()
+    # The repo-relative files those runs type-checked. A run sees only the
+    # files the current build selects, so a file for another GOOS or build
+    # tag, or one of a package that failed to type-check, was never compared:
+    # the pairs above are the answer only where every file a pair rests on
+    # is here (PR #3360 review).
+    checked_files: frozenset[str] = frozenset()
 
 
 def _empty_facts() -> GoSemanticFacts:
@@ -437,6 +443,9 @@ def _parse_payload(stdout: str, stderr: str = "") -> GoSemanticFacts | None:
                 )
                 for pair in payload.get("implements", [])
             ],
+            checked_files=frozenset(
+                _checked_file(path) for path in payload.get("checked", [])
+            ),
         )
     except (KeyError, TypeError, ValueError, AttributeError):
         # A malformed fact entry (missing key, non-int position, non-object
@@ -462,6 +471,12 @@ def _module_anchors(repo_path: Path) -> list[Path]:
     # silently miss every nested module's local calls (issue #1227).
     anchors = {anchor for _, _, anchor in discover_go_module_paths(repo_path)}
     return sorted(anchors)
+
+
+def _checked_file(path: object) -> str:
+    if not isinstance(path, str):
+        raise TypeError(path)
+    return path
 
 
 def _prefix_facts(facts: GoSemanticFacts, prefix: str) -> GoSemanticFacts:
@@ -493,6 +508,7 @@ def _prefix_facts(facts: GoSemanticFacts, prefix: str) -> GoSemanticFacts:
             )
             for pair in facts.implements
         ],
+        checked_files=frozenset(_rel(path) for path in facts.checked_files),
     )
 
 
@@ -551,6 +567,7 @@ def run_go_frontend(
     merged = _empty_facts()
     degraded: list[str] = []
     analysed: list[str] = []
+    checked: set[str] = set()
     for anchor in anchors:
         prefix = "" if anchor == repo_path else anchor.relative_to(repo_path).as_posix()
         raw = _run_tool_once(binary, anchor, ignored_dirs)
@@ -567,6 +584,9 @@ def run_go_frontend(
         merged.call_sites.update(facts.call_sites)
         merged.external_sites.update(facts.external_sites)
         merged.implements.extend(facts.implements)
+        checked.update(facts.checked_files)
     return merged._replace(
-        degraded_modules=tuple(degraded), analysed_modules=tuple(analysed)
+        degraded_modules=tuple(degraded),
+        analysed_modules=tuple(analysed),
+        checked_files=frozenset(checked),
     )

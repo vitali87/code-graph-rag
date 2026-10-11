@@ -400,6 +400,8 @@ class TypeInferenceEngine:
         local = self._build_local_variable_type_map(
             caller_node, module_qn, language, class_context
         )
+        if language == cs.SupportedLanguage.GO:
+            self._resolve_go_qualified_locals(module_qn, local)
         # When the caller is a method, overlay its class's member-field types as a
         # base so a bare `field_.method()` receiver resolves; a same-named parameter
         # or local shadows a field, so the local map wins on conflict.
@@ -431,6 +433,44 @@ class TypeInferenceEngine:
         elif language == cs.SupportedLanguage.DART:
             self._enrich_dart_call_locals(caller_node, local)
         return local
+
+    def collect_go_span_bindings(
+        self, caller_node: ASTNode, module_qn: str
+    ) -> list[tuple[int, int, str, str]]:
+        """Go range variables and the locals shadowing them (issue #2483),
+        each typed as the resolver reads it in `module_qn`. A qualified
+        `geo.Shape` is the type of the package this file imports as `geo`;
+        one naming no indexed type (an external package's) is dropped, as
+        the Rust closure bindings are: its bare name would bind whatever this
+        package calls Shape, and the call keeps what it got before."""
+        return [
+            (start, end, name, resolved)
+            for start, end, name, type_name in (
+                self.go_type_inference.collect_range_span_bindings(caller_node)
+            )
+            if (resolved := self._go_written_type(type_name, module_qn))
+        ]
+
+    def _resolve_go_qualified_locals(
+        self, module_qn: str, var_types: dict[str, str]
+    ) -> None:
+        # A local declared with another package's type (`s geo.Shape`) is that
+        # package's type, not whatever this package calls Shape (issue #2483).
+        # One this index cannot place (an external package's) keeps the bare
+        # name the walker gave it before.
+        for name, type_name in var_types.items():
+            if cs.SEPARATOR_DOT in type_name:
+                var_types[name] = (
+                    self._go_written_type(type_name, module_qn)
+                    or type_name.rpartition(cs.SEPARATOR_DOT)[2]
+                )
+
+    def _go_written_type(self, type_name: str, module_qn: str) -> str | None:
+        qualifier, _, name = type_name.rpartition(cs.SEPARATOR_DOT)
+        if not qualifier:
+            return type_name
+        package_qn = self._go_imported_package(qualifier, module_qn)
+        return self._go_type_in_package(package_qn, name) if package_qn else None
 
     def collect_rust_span_bindings(
         self, caller_node: ASTNode, module_qn: str, class_context: str | None
@@ -797,9 +837,7 @@ class TypeInferenceEngine:
         # bare, it resolved against the caller's package (an external
         # `_test` package has no Mux) and `r.Get` fell to the name trie
         # (#2571). A return type naming yet another package stays untyped.
-        package_qn = (self.import_processor.import_mapping.get(module_qn) or {}).get(
-            qualifier
-        )
+        package_qn = self._go_imported_package(qualifier, module_qn)
         if not package_qn:
             return None
         return_type = self._go_package_fn_return_type(
@@ -807,11 +845,21 @@ class TypeInferenceEngine:
         )
         if not return_type or cs.SEPARATOR_DOT in return_type:
             return None
-        # A type of the package is one whose file sits in its directory and
-        # is no external test file, the same test its functions pass.
+        return self._go_type_in_package(package_qn, return_type)
+
+    def _go_imported_package(self, qualifier: str, module_qn: str) -> str | None:
+        # The package Go file `module_qn` imports as `qualifier`.
+        return (self.import_processor.import_mapping.get(module_qn) or {}).get(
+            qualifier
+        )
+
+    def _go_type_in_package(self, package_qn: str, name: str) -> str | None:
+        # The one type `name` of the package an import binds `package_qn`
+        # names: a type whose file sits in its directory and is no external
+        # test file, the same test its functions pass.
         declared = go_utils.package_level_definitions(
             self.function_registry,
-            return_type,
+            name,
             go_utils.TYPE_DECLARATION_TYPES,
             lambda qn: self._go_imported_file(
                 qn.rpartition(cs.SEPARATOR_DOT)[0], package_qn

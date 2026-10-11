@@ -13,8 +13,9 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from loguru import logger
 from tree_sitter import Node
@@ -48,6 +49,54 @@ if TYPE_CHECKING:
 # (Class) or any other defined type (Type, as `type HandlerFunc func()`).
 _GO_IMPLEMENTER_TYPES = frozenset({NodeType.CLASS, NodeType.TYPE})
 _GO_METHOD_OWNER_TYPES = _GO_IMPLEMENTER_TYPES | {NodeType.INTERFACE}
+
+
+class _GoMethodOwners(NamedTuple):
+    """Each method owner's method set, the package declaring it (a method is
+    declared in its receiver type's package), and the files declaring each
+    of its methods."""
+
+    method_sets: dict[str, go_ifaces.GoMethodSet]
+    packages: dict[str, str]
+    files: dict[str, dict[go_ifaces.GoMethodKey, set[str]]]
+
+
+@dataclass
+class _GoCompilerView:
+    """What the go/types runs read: the module roots they analysed and the
+    files of them they type-checked. A run reads only the files its build
+    selects (its GOOS, its tags, no cgo) in packages that type-check, so its
+    pairs answer for a type and an interface only where it read the
+    interface and a declaration of every method the interface asks for."""
+
+    repo_path: Path
+    analysed_roots: frozenset[str]
+    checked_files: frozenset[str]
+    roots: dict[str, str | None] = field(default_factory=dict)
+
+    def owns(
+        self,
+        type_package: str | None,
+        interface: go_ifaces.GoInterfaceDecl,
+        method_files: list[set[str]],
+    ) -> bool:
+        if interface.file not in self.checked_files or not all(
+            self.checked_files.intersection(files) for files in method_files
+        ):
+            return False
+        type_root = self._root(type_package)
+        return (
+            type_root is not None
+            and type_root == self._root(interface.package)
+            and type_root in self.analysed_roots
+        )
+
+    def _root(self, package: str | None) -> str | None:
+        if package is None:
+            return None
+        return go_utils.module_root(
+            self.repo_path, go_utils.package_key_dir(package), self.roots
+        )
 
 
 class GoInterfaceMixin:
@@ -96,11 +145,10 @@ class GoInterfaceMixin:
         interface = go_ifaces.interface_type(type_spec)
         if interface is None:
             return
-        package = go_utils.file_package_key(
-            file_path, self.repo_path, self.go_package_names.get(module_qn)
-        )
+        rel_file = go_utils.rel_file(file_path, self.repo_path)
+        package = go_utils.package_key(rel_file, self.go_package_names.get(module_qn))
         self.go_interfaces[interface_qn] = go_ifaces.GoInterfaceDecl(
-            tuple(go_ifaces.embedded_types(interface)), package
+            tuple(go_ifaces.embedded_types(interface)), package, rel_file
         )
         self.go_interfaces_parsed[interface_qn] = module_qn
         for method in go_ifaces.interface_methods(interface):
@@ -121,7 +169,7 @@ class GoInterfaceMixin:
             )
             if method_qn is not None:
                 self.go_methods[method_qn] = go_ifaces.GoMethodSpec(
-                    go_ifaces.parameter_count(method), package
+                    go_ifaces.parameter_count(method), package, rel_file
                 )
                 self._register_interface_method_location(
                     module_qn, method, method_qn, interface_qn
@@ -143,22 +191,28 @@ class GoInterfaceMixin:
             container_qn=interface_qn,
         )
 
-    def link_go_interfaces(self, analysed_roots: frozenset[str]) -> int:
+    def link_go_interfaces(
+        self, analysed_roots: frozenset[str], checked_files: frozenset[str]
+    ) -> int:
         """Embedding, implicit satisfaction and the overrides it implies.
 
         `analysed_roots` are the module roots (`.` for the repository's own)
-        the go/types frontend analysed. A type and an interface of one such
-        module are paired by the compiler alone: a pair it did not prove does
-        not hold, whatever the names say. Every other pair, in a module it
-        never ran on or whose run failed, is matched by name and arity.
-        Returns the number of IMPLEMENTS edges written here.
+        the go/types frontend analysed, and `checked_files` the files of them
+        it type-checked. A type and an interface of one such module whose
+        declarations it read are paired by the compiler alone: a pair it did
+        not prove does not hold, whatever the names say. Every other pair, in
+        a module it never ran on or whose run failed, or resting on a file
+        its build left out, is matched by name and arity. Returns the number
+        of IMPLEMENTS edges written here.
         """
         embeds = self._resolve_go_embeds()
-        method_sets, packages = self._go_method_sets()
+        owners = self._go_method_sets()
         linked = self._link_implicit_implementations(
-            embeds, method_sets, packages, analysed_roots
+            embeds,
+            owners,
+            _GoCompilerView(self.repo_path, analysed_roots, checked_files),
         )
-        self._link_go_overrides(method_sets)
+        self._link_go_overrides(owners.method_sets)
         if linked:
             logger.info(ls.GO_IMPLICIT_IMPLEMENTS_LINKED.format(count=linked))
         return linked
@@ -166,26 +220,23 @@ class GoInterfaceMixin:
     def _link_implicit_implementations(
         self,
         embeds: dict[str, tuple[str, ...] | None],
-        method_sets: dict[str, go_ifaces.GoMethodSet],
-        packages: dict[str, str],
-        analysed_roots: frozenset[str],
+        owners: _GoMethodOwners,
+        compiler: _GoCompilerView,
     ) -> int:
-        interfaces = go_ifaces.full_method_sets(method_sets, embeds)
+        interfaces = go_ifaces.full_method_sets(owners.method_sets, embeds)
         types = {
             qn: methods
-            for qn, methods in method_sets.items()
+            for qn, methods in owners.method_sets.items()
             if self.function_registry.get(qn) in _GO_IMPLEMENTER_TYPES
         }
-        roots: dict[str, str | None] = {}
 
         def compiler_owned(type_qn: str, interface_qn: str) -> bool:
-            if not analysed_roots:
-                return False
-            type_root = self._go_module_root(packages.get(type_qn), roots)
-            interface_root = self._go_module_root(
-                self.go_interfaces[interface_qn].package, roots
+            declared = owners.files.get(type_qn, {})
+            return compiler.owns(
+                owners.packages.get(type_qn),
+                self.go_interfaces[interface_qn],
+                [declared.get(key, set()) for key in interfaces[interface_qn] or {}],
             )
-            return type_root == interface_root and type_root in analysed_roots
 
         pairs = [
             pair
@@ -229,22 +280,8 @@ class GoInterfaceMixin:
             )
             previous.add((interface_qn, implementer_qn))
 
-    def _go_module_root(
-        self, package: str | None, roots: dict[str, str | None]
-    ) -> str | None:
-        if package is None:
-            return None
-        return go_utils.module_root(
-            self.repo_path, go_utils.package_key_dir(package), roots
-        )
-
-    def _go_method_sets(
-        self,
-    ) -> tuple[dict[str, go_ifaces.GoMethodSet], dict[str, str]]:
-        """Each method owner's method set, and the package declaring it: a
-        method is declared in its receiver type's package."""
-        method_sets: dict[str, go_ifaces.GoMethodSet] = {}
-        packages: dict[str, str] = {}
+    def _go_method_sets(self) -> _GoMethodOwners:
+        owners = _GoMethodOwners({}, {}, {})
         registry = self.function_registry
         for method_qn, spec in self.go_methods.items():
             if registry.get(method_qn) != NodeType.METHOD:
@@ -253,9 +290,10 @@ class GoInterfaceMixin:
             if registry.get(owner) not in _GO_METHOD_OWNER_TYPES:
                 continue
             key = go_ifaces.method_key(qn_markers.strip_dup_marker(name), spec.package)
-            method_sets.setdefault(owner, {})[key] = spec.arity
-            packages[owner] = spec.package
-        return method_sets, packages
+            owners.method_sets.setdefault(owner, {})[key] = spec.arity
+            owners.packages[owner] = spec.package
+            owners.files.setdefault(owner, {}).setdefault(key, set()).add(spec.file)
+        return owners
 
     def _link_go_overrides(self, method_sets: dict[str, go_ifaces.GoMethodSet]) -> None:
         # The generic override walk links a method to the FIRST interface

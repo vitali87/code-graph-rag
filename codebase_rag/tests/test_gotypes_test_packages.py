@@ -354,6 +354,7 @@ def test_a_package_without_tests_is_unchanged(tmp_path: Path) -> None:
                 "iname": "Speaker",
             }
         ],
+        "checked": ["speak.go"],
     }
 
 

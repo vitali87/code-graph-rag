@@ -1295,13 +1295,13 @@ class FunctionIngestMixin:
                         container_qn=container_qn,
                     ),
                 )
+                rel_file = go_utils.rel_file(entry.file_path, self.repo_path)
                 self.go_methods[method_qn] = go_interfaces.GoMethodSpec(
                     go_interfaces.parameter_count(entry.method_node),
-                    go_utils.file_package_key(
-                        entry.file_path,
-                        self.repo_path,
-                        self.go_package_names.get(entry.module_qn),
+                    go_utils.package_key(
+                        rel_file, self.go_package_names.get(entry.module_qn)
                     ),
+                    rel_file,
                 )
             # Record the method's return type so a chained call `c.Root().Run()`
             # resolves `Run` on the type `Root()` returns.
