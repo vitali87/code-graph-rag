@@ -1325,7 +1325,7 @@ class Renamer:
         ]
         if not leftover:
             return [], ()
-        foreign = self._foreign_paths(hierarchy)
+        foreign = self._foreign_paths(hierarchy, label)
         chosen = (
             self._chosen_paths(hierarchy, old_name)
             if language in cs.JS_TS_LANGUAGES and kind is not cs.RenameTargetKind.METHOD
@@ -1391,16 +1391,18 @@ class Renamer:
             paths.update(aliased - by_name)
         return paths
 
-    def _foreign_paths(self, hierarchy: list[str]) -> set[str]:
+    def _foreign_paths(self, hierarchy: list[str], label: str | None) -> set[str]:
         """Files whose sites the graph gives to a project whose name extends
         this one: the plan leaves them alone (#1989), so its cross-check
-        does too."""
+        does too. The reads are scoped to the target's label as the plan's
+        are, since a TS type and a value share one name (issue #2520)."""
         owns = graph_query._owner_check(self.fetch_all, self.project)
         paths: set[str] = set()
         for member in hierarchy:
             params = {
                 cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
                 cs.KEY_QN: member,
+                cs.KEY_LABEL: label,
             }
             for query in (
                 cq.CYPHER_GRAPH_CALLERS,
