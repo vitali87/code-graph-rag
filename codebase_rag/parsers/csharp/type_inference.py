@@ -735,11 +735,16 @@ class CSharpTypeInferenceEngine:
         if not arity_hit:
             return None
         # Same-arity overloads are told apart by argument type; the first
-        # arity match stands when no argument can decide (issue #2619).
-        arity_hit = (
-            self._pick_member_overload(member_call, receiver_class_qn, compatible=False)
-            or arity_hit
+        # arity match stands when the ranking scored none (issue #2619). One
+        # that scored them all inapplicable (`Log(string)` for `x.Log(1)`)
+        # leaves the call to the defaulted and extension tiers, as C# does
+        # (CodeRabbit, PR 2814); an argument nothing types never proves that.
+        ranked = self._rank_member_overloads(
+            member_call, receiver_class_qn, compatible=False
         )
+        if ranked is not None and not ranked:
+            return None
+        arity_hit = self._pick_ranked(member_call, ranked or []) or arity_hit
         # A delegate-typed PROPERTY registers as a METHOD node with a bare
         # (arity-0) qn, so a 0-arg invoke slips through the ARITY path too:
         # `entry.Callback()` is Delegate.Invoke, not a call to the property.
@@ -1982,7 +1987,13 @@ class CSharpTypeInferenceEngine:
         Overloads its arguments fit equally well are kept for the call pass,
         which fans the call out to all of them.
         """
-        ranked = self._rank_member_overloads(call, class_qn, compatible)
+        return self._pick_ranked(
+            call, self._rank_member_overloads(call, class_qn, compatible) or []
+        )
+
+    def _pick_ranked(self, call: _MemberCall, ranked: list[str]) -> str | None:
+        # The best of `ranked`; the rest, fitting as well, are kept for the
+        # call pass to fan out over.
         if len(ranked) > 1:
             self._overload_families[
                 self._call_key(call.node, call.module_qn, call.caller_qn)
@@ -1991,7 +2002,7 @@ class CSharpTypeInferenceEngine:
 
     def _rank_member_overloads(
         self, call: _MemberCall, class_qn: str, compatible: bool
-    ) -> list[str]:
+    ) -> list[str] | None:
         """The overloads a member call fits best, best first.
 
         Only exact-arity overloads compete unless `compatible`, which admits
@@ -2002,8 +2013,8 @@ class CSharpTypeInferenceEngine:
         Each type is seen with the type arguments its subclasses pass it, so
         `Validator<T>.Validate(T)` takes a Person on a `PersonValidator :
         Inline<Person>`, and the receiver's own with the ones its written
-        type passes (`new Handler<Person>()`). Empty when no overload is
-        applicable.
+        type passes (`new Handler<Person>()`). Empty when every overload
+        scored is provably inapplicable; None when none was scored at all.
         """
         arguments: list[ArgumentType | None] | None = None
         for declaring, bindings, open_names in self._typed_hierarchy(
@@ -2035,7 +2046,7 @@ class CSharpTypeInferenceEngine:
             # A method scored in both its forms is one candidate.
             if best := list(dict.fromkeys(best_candidates(scored))):
                 return best
-        return []
+        return None if arguments is None else []
 
     def _overload_fits(
         self,

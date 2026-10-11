@@ -829,6 +829,27 @@ INVARIANT_CASES: dict[str, _Case] = {
         "public void Run() { new C().M(f); } }\n",
         frozenset({"C.M(Box<int>)", "C.M(object)"}),
     ),
+    # An exact-arity overload the ranking proves inapplicable gives way to
+    # the later tiers (CodeRabbit, PR 2814): a defaulted overload, then an
+    # extension method. An argument nothing types still takes it.
+    "arity-to-defaulted": _Case(
+        "namespace L; public class C { public void Log(string s) { } "
+        "public void Log(int a, int level = 0) { } }",
+        _use("new C().Log(1);"),
+        frozenset({"C.Log(int, int)"}),
+    ),
+    "arity-to-extension": _Case(
+        "namespace L; public class C { public void Foo(int x) { } }\n"
+        "public static class CExt { public static void Foo(this C c, string s) { } }",
+        _use('new C().Foo("x");'),
+        frozenset({"CExt.Foo(C, string)"}),
+    ),
+    "arity-untyped-neg": _Case(
+        "namespace L; public class C { public void Log(string s) { } "
+        "public void Log(int a, int level = 0) { } }",
+        _use("new C().Log(Make.Thing());"),
+        frozenset({"C.Log(string)"}),
+    ),
     # Scoring: the argument converts to the parameter through its bases.
     "base-alias": _Case(
         "namespace L; public class Base<X> { } public class Derived : Base<System.Int32> { }\n"
