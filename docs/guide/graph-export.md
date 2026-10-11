@@ -17,7 +17,7 @@ cgr start --repo-path /path/to/repo --update-graph -o my_graph.json
 ![cgr start --repo-path requests --update-graph -o my_graph.json syncing psf/requests and exporting only its project](../assets/demos/graph-export-start.gif)
 
 The file holds only that repository's project, scoped the way
-`cgr export --project-name` scopes it (below), even when the shared graph
+`cgr export --project` scopes it (below), even when the shared graph
 holds other projects.
 
 **Export the whole shared graph (every indexed project):**
@@ -31,8 +31,8 @@ cgr export -o my_graph.json
 **Export one project, several, or a workspace:**
 
 ```bash
-cgr export -o my_project.json --project-name my-project
-cgr export -o two.json -n api -n web
+cgr export -o my_project.json --project my-project
+cgr export -o two.json -p api -p web
 cgr export -o shop.json --workspace shop
 ```
 
