@@ -61,7 +61,7 @@ from .occurrences import (
     find_occurrences,
 )
 from .patcher import Patcher, PatcherError, byte_to_line_col, line_col_to_byte
-from .sites import AMBIGUOUS, call_node_at, calls_starting_at, hierarchy, only_guessed
+from .sites import AMBIGUOUS, Hierarchy, call_node_at, calls_starting_at, hierarchy
 from .transaction import (
     EditTransaction,
     StagedTree,
@@ -176,12 +176,15 @@ class RenameReport(NamedTuple):
 # --- site collection -----------------------------------------------------------
 
 
-def _hierarchy(fetch_all: QueryFn, project: str, qn: str) -> list[str]:
+def _hierarchy(fetch_all: QueryFn, project: str, qn: str) -> Hierarchy:
     """`qn`, every other part of the C# partial type `qn` is a part of, and
-    every method `qn` overrides or is overridden by, transitively."""
-    seen: list[str] = [qn, *_csharp_partial_parts(fetch_all, project, qn)]
-    seen += [m for m in hierarchy(fetch_all, project, qn) if m not in seen]
-    return seen
+    every method `qn` overrides or is overridden by, transitively, with the
+    members only a guessed OVERRIDES edge reaches."""
+    parts = _csharp_partial_parts(fetch_all, project, qn)
+    found = hierarchy(fetch_all, project, qn)
+    seen: list[str] = [qn, *parts]
+    seen += [m for m in found.members if m not in seen]
+    return Hierarchy(seen, found.guessed - set(parts))
 
 
 def _longer_project_prefixes(fetch_all: QueryFn, project_name: str) -> tuple[str, ...]:
@@ -585,6 +588,9 @@ class Renamer:
         # How the caller spells the opt-in the heuristic refusal tells the
         # user to pass: a CLI flag is not an MCP parameter (issue #2886).
         self.heuristic_opt_in = heuristic_opt_in
+        # The members of the hierarchy being planned that only a guessed
+        # OVERRIDES edge reaches: their declarations are guessed sites.
+        self._guessed_members: frozenset[str] = frozenset()
 
     def _module_of(self, qn: str) -> tuple[str, str | None]:
         # The defining module's qn and path, from the definition's own path:
@@ -819,7 +825,7 @@ class Renamer:
             )
         resolution = (
             cs.EdgeResolution.HEURISTIC
-            if only_guessed(self.fetch_all, self.project, qn)
+            if qn in self._guessed_members
             else cs.EdgeResolution.EXACT
         )
         return RenameSite("definition", path, token[0], token[1], qn, resolution)
@@ -1227,7 +1233,9 @@ class Renamer:
         """Collect everything a rename touches; refuse on ambiguity."""
         if not re.fullmatch(r"[A-Za-z_]\w*", new_name):
             raise RenameRefused(cs.RENAME_BAD_NAME.format(name=new_name), [], [])
-        members = _hierarchy(self.fetch_all, self.project, qn)
+        found = _hierarchy(self.fetch_all, self.project, qn)
+        members = found.members
+        self._guessed_members = found.guessed
         sites: list[RenameSite] = []
         unlocatable: list[str] = []
         old_name: str | None = None

@@ -23,14 +23,23 @@ from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
 from codebase_rag.checkout_state import state_file
 from codebase_rag.editing.rename import RenameRefused, rename
+from codebase_rag.graph_query import QueryFn
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.go_frontend import GoCallSite, GoImplements, GoSemanticFacts
 from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
+from codebase_rag.tests.test_rename_op import RecordedGraph, _write
 from codebase_rag.tests.test_rename_op import _index as _rename_index
-from codebase_rag.tests.test_rename_op import _write
 from codebase_rag.utils import qn_markers
 from evals.cgr_graph import _StatefulIngestor
+
+
+def _query(graph: RecordedGraph) -> QueryFn:
+    # The recording graph spelled as the query function a rename takes.
+    return lambda query, params: graph.fetch_all(
+        query, dict(params) if params is not None else None
+    )
+
 
 SHAPES = """package shapes
 
@@ -623,9 +632,13 @@ func (c *Cube) Volume() float64 { return c.S * c.S * c.S }
 
 def _incremental_implements(
     store: _StatefulIngestor,
-) -> set[tuple[str, str, str | None]]:
+) -> set[tuple[str, str, str]]:
     return {
-        (str(key[1]), str(key[4]), store.edge_props.get(key, {}).get(cs.KEY_RESOLUTION))
+        (
+            str(key[1]),
+            str(key[4]),
+            str(store.edge_props.get(key, {}).get(cs.KEY_RESOLUTION)),
+        )
         for key in store.keyed_edges
         if key[2] == cs.RelationshipType.IMPLEMENTS.value
     }
@@ -713,12 +726,12 @@ def test_renaming_one_implementation_renames_the_interface_method_set(
     with pytest.raises(RenameRefused):
         # `s.Area()` reaches each implementation as one candidate of several;
         # rewriting a shared call site is the opt-in it is for a Protocol.
-        rename(temp_repo, graph.fetch_all, graph.project, f"{pkg}.Square.Area", "Size")
+        rename(temp_repo, _query(graph), graph.project, f"{pkg}.Square.Area", "Size")
     assert (temp_repo / "shapes.go").read_text(encoding="utf-8") == RENAMED
 
     report = rename(
         temp_repo,
-        graph.fetch_all,
+        _query(graph),
         graph.project,
         f"{pkg}.Square.Area",
         "Size",
@@ -1201,12 +1214,12 @@ def test_a_guessed_override_is_renamed_only_on_opt_in(
         cs.KEY_RESOLUTION: cs.EdgeResolution.HEURISTIC
     }
     with pytest.raises(RenameRefused):
-        rename(temp_repo, graph.fetch_all, graph.project, f"{pkg}.Name.Get", "Fetch")
+        rename(temp_repo, _query(graph), graph.project, f"{pkg}.Name.Get", "Fetch")
     assert (temp_repo / "app.go").read_text(encoding="utf-8") == GUESSED_GETTER
 
     report = rename(
         temp_repo,
-        graph.fetch_all,
+        _query(graph),
         graph.project,
         f"{pkg}.Name.Get",
         "Fetch",
@@ -1271,7 +1284,7 @@ def test_a_proven_override_and_sole_target_rename_without_opt_in(
     }
 
     report = rename(
-        temp_repo, graph.fetch_all, graph.project, f"{pkg}.Count.Get", "Fetch"
+        temp_repo, _query(graph), graph.project, f"{pkg}.Count.Get", "Fetch"
     )
 
     assert report.applied, report.message
@@ -2449,7 +2462,7 @@ def test_renaming_the_interface_method_renames_every_build_variant(
     graph = _rename_index(temp_repo, mock_ingestor)
     report = rename(
         temp_repo,
-        graph.fetch_all,
+        _query(graph),
         graph.project,
         f"{graph.project}.shape.Shape.Area",
         "Measure",
@@ -2880,7 +2893,7 @@ def test_renaming_through_another_spelling_keeps_the_build(
     graph = _rename_index(temp_repo, mock_ingestor)
     report = rename(
         temp_repo,
-        graph.fetch_all,
+        _query(graph),
         graph.project,
         f"{graph.project}.{target}",
         renamed,
@@ -3058,3 +3071,237 @@ def test_a_sync_reparsing_only_the_caller_keeps_every_dispatch_target(
         ("proj.app.app.Total", "CALLS", "proj.shapes.square.Square.Area", label),
         ("proj.app.app.Total", "CALLS", "proj.shapes.circle.Circle.Area", label),
     }
+
+
+# --- a local nothing can type hides the outer one (CodeRabbit, PR #3360) ------
+
+UNTYPED_SHADOWS = """package shapes
+
+import "example.com/ext"
+
+type Shape interface {
+\tArea() float64
+}
+
+type Square struct{}
+
+func (s Square) Area() float64 { return 1 }
+
+type Other struct{}
+
+func (o Other) Area() float64 { return 2 }
+
+type Things []Shape
+
+func FromCall(x Other, xs []Shape) float64 {
+\tt := 0.0
+\tfor _, x := range xs {
+\t\tx := (func() Shape { return x })()
+\t\tt += x.Area()
+\t}
+\treturn t + 3*x.Area()
+}
+
+func NamedSlice(x Other, xs Things) float64 {
+\tt := 0.0
+\tfor _, x := range xs {
+\t\tt += 4 * x.Area()
+\t}
+\treturn t
+}
+
+func External(x Other, xs []ext.Shape) float64 {
+\tt := 0.0
+\tfor _, x := range xs {
+\t\tt += 5 * x.Area()
+\t}
+\treturn t
+}
+"""
+
+
+def _untyped_calls(
+    mock_ingestor: MagicMock, project: str, caller: str, needle: str
+) -> dict[str, str]:
+    line, _ = _position(UNTYPED_SHADOWS, needle)
+    pkg = f"{project}.shapes"
+    return {
+        callee.removeprefix(f"{pkg}."): str(resolution)
+        for callee, resolution in _calls_by_line(mock_ingestor, f"{pkg}.{caller}")
+        .get(line, {})
+        .items()
+    }
+
+
+@pytest.mark.parametrize(
+    ("caller", "needle"),
+    [
+        ("FromCall", "t += x.Area()"),
+        ("NamedSlice", "t += 4 * x.Area()"),
+        ("External", "t += 5 * x.Area()"),
+    ],
+    ids=["untyped-shadow", "unknown-element", "unresolved-element"],
+)
+def test_a_local_nothing_can_type_hides_the_outer_one(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    caller: str,
+    needle: str,
+) -> None:
+    # Inside the loop `x` is no longer the Other parameter. What it is
+    # cannot be read here, so no call through it is pinned to Other.Area.
+    project = _index(
+        temp_repo / "gountyped",
+        {"shapes.go": UNTYPED_SHADOWS},
+        mock_ingestor,
+        monkeypatch,
+    )
+    calls = _untyped_calls(mock_ingestor, project, caller, needle)
+    assert calls.get("Other.Area") != "exact", calls
+
+
+def test_the_outer_local_keeps_its_type_past_the_loop(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _index(
+        temp_repo / "gountyped",
+        {"shapes.go": UNTYPED_SHADOWS},
+        mock_ingestor,
+        monkeypatch,
+    )
+    assert _untyped_calls(
+        mock_ingestor, project, "FromCall", "return t + 3*x.Area()"
+    ) == {"Other.Area": "exact"}
+
+
+# --- a rename reaching a definition through a guess asks first (CodeRabbit) ---
+
+MODULE_A = """package moda
+
+type I1 interface {
+\tM() int
+}
+
+type T1 struct{}
+
+func (T1) M() int { return 1 }
+
+var _ I1 = T1{}
+"""
+
+MODULE_B = """package modb
+
+type I2 interface {
+\tM() int
+}
+
+type T2 struct{}
+
+func (T2) M() int { return 2 }
+
+var _ I2 = T2{}
+"""
+
+
+def _two_modules(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # go/types proves each module's own pair; the pairs across the two, which
+    # no single run compares, are matched by name.
+    _write(root, "go.mod", "module moda\n\ngo 1.22\n")
+    _write(root, "a.go", MODULE_A)
+    _write(root, "modb/go.mod", "module modb\n\ngo 1.22\n")
+    _write(root, "modb/b.go", MODULE_B)
+    _gotypes_facts(
+        monkeypatch,
+        GoSemanticFacts(
+            call_sites={},
+            external_sites=set(),
+            implements=[
+                GoImplements(
+                    "a.go",
+                    *_position(MODULE_A, "T1 struct"),
+                    "a.go",
+                    *_position(MODULE_A, "I1 interface"),
+                ),
+                GoImplements(
+                    "modb/b.go",
+                    *_position(MODULE_B, "T2 struct"),
+                    "modb/b.go",
+                    *_position(MODULE_B, "I2 interface"),
+                ),
+            ],
+            analysed_modules=(".", "modb"),
+            checked_files=frozenset({"a.go", "modb/b.go"}),
+        ),
+    )
+
+
+def test_a_hierarchy_reached_through_a_guess_needs_the_opt_in(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Every method has a proven edge in its own module, so no definition's
+    # edges are all guesses; I2.M and T2.M are still reached from I1.M only
+    # through the guessed T2.M -> I1.M and T1.M -> I2.M.
+    _two_modules(temp_repo, monkeypatch)
+    graph = _rename_index(temp_repo, mock_ingestor)
+    target = f"{graph.project}.a.I1.M"
+    with pytest.raises(RenameRefused):
+        rename(temp_repo, _query(graph), graph.project, target, "N")
+    assert (temp_repo / "a.go").read_text(encoding="utf-8") == MODULE_A
+    assert (temp_repo / "modb" / "b.go").read_text(encoding="utf-8") == MODULE_B
+
+    report = rename(
+        temp_repo,
+        _query(graph),
+        graph.project,
+        target,
+        "N",
+        allow_heuristic=True,
+    )
+    assert report.applied, report.message
+    for rel in ("a.go", "modb/b.go"):
+        text = (temp_repo / rel).read_text(encoding="utf-8")
+        assert "\tN() int" in text and ") N() int" in text, text
+    if (go := shutil.which("go")) is not None:
+        for module in (temp_repo, temp_repo / "modb"):
+            built = subprocess.run(
+                [go, "build", "./..."],
+                cwd=module,
+                capture_output=True,
+                text=True,
+                encoding=cs.ENCODING_UTF8,
+                check=False,
+            )
+            assert built.returncode == 0, built.stderr
+
+
+def test_a_proven_hierarchy_renames_without_the_opt_in(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # One module, its pair proven: nothing is reached through a guess.
+    _write(temp_repo, "go.mod", "module moda\n\ngo 1.22\n")
+    _write(temp_repo, "a.go", MODULE_A)
+    _gotypes_facts(
+        monkeypatch,
+        GoSemanticFacts(
+            call_sites={},
+            external_sites=set(),
+            implements=[
+                GoImplements(
+                    "a.go",
+                    *_position(MODULE_A, "T1 struct"),
+                    "a.go",
+                    *_position(MODULE_A, "I1 interface"),
+                )
+            ],
+            analysed_modules=(".",),
+            checked_files=frozenset({"a.go"}),
+        ),
+    )
+    graph = _rename_index(temp_repo, mock_ingestor)
+    report = rename(
+        temp_repo, _query(graph), graph.project, f"{graph.project}.a.I1.M", "N"
+    )
+    assert report.applied, report.message
+    text = (temp_repo / "a.go").read_text(encoding="utf-8")
+    assert "\tN() int" in text and "func (T1) N() int" in text

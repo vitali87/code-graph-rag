@@ -8,6 +8,9 @@ which call a `(line, col)` names.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import NamedTuple
+
 from tree_sitter import Node
 
 from .. import constants as cs
@@ -26,39 +29,60 @@ AMBIGUOUS = frozenset(
 )
 
 
-def hierarchy(fetch_all: QueryFn, project: str, qn: str) -> list[str]:
-    """`qn` plus every method it overrides or is overridden by, transitively."""
+class Hierarchy(NamedTuple):
+    """A method's override hierarchy: `qn` first, then every method it
+    overrides or is overridden by, transitively. `guessed` holds the members
+    no chain of OVERRIDES edges free of guesses reaches from `qn`, as for a
+    Go method matched to an interface's by name alone (issue #2483): their
+    declarations are rewritten on a guess, which takes the same opt-in as a
+    guessed call site."""
+
+    members: list[str]
+    guessed: frozenset[str]
+
+
+def hierarchy(fetch_all: QueryFn, project: str, qn: str) -> Hierarchy:
+    # Each edge keeps its own confidence. Asking per member whether all of
+    # its edges were guesses missed two hierarchies a guess joins: every
+    # member had a proven edge of its own, and each was renamed unasked.
+    owns = graph_query._owner_check(fetch_all, project)
+    edges: dict[str, list[tuple[str, bool]]] = {}
     seen: list[str] = [qn]
     frontier = [qn]
     while frontier:
         current = frontier.pop()
-        for row in graph_query.overrides(fetch_all, project, current):
-            other = row["qualified_name"]
+        edges[current] = _override_edges(fetch_all, project, current, owns)
+        for other, _guessed in edges[current]:
             if other not in seen:
                 seen.append(other)
                 frontier.append(other)
-    return seen
+    return Hierarchy(seen, frozenset(seen) - _proven_reach(qn, edges))
 
 
-def only_guessed(fetch_all: QueryFn, project: str, qn: str) -> bool:
-    """Whether every OVERRIDES edge tying `qn` to a hierarchy is a guess, as
-    for a Go method matched to an interface's by name and arity alone (issue
-    #2483). Renamed with that hierarchy, its declaration is rewritten on a
-    guess, which takes the same opt-in as a guessed call site, call sites or
-    none."""
-    owns = graph_query._owner_check(fetch_all, project)
+def _override_edges(
+    fetch_all: QueryFn, project: str, qn: str, owns: Callable[[str], bool]
+) -> list[tuple[str, bool]]:
+    # (method, whether a guess ties it to `qn`) for each OVERRIDES edge.
     rows = fetch_all(
         cq.CYPHER_GRAPH_OVERRIDES,
         {cs.KEY_PROJECT_PREFIX: f"{project}{cs.SEPARATOR_DOT}", cs.KEY_QN: qn},
     )
-    resolutions = [
-        row.get(cs.KEY_RESOLUTION)
+    return sorted(
+        (other, row.get(cs.KEY_RESOLUTION) in AMBIGUOUS)
         for row in rows
-        if owns(str(row.get(cs.KEY_QUALIFIED_NAME) or ""))
-    ]
-    return bool(resolutions) and all(
-        resolution in AMBIGUOUS for resolution in resolutions
+        if owns(other := str(row.get(cs.KEY_QUALIFIED_NAME) or ""))
     )
+
+
+def _proven_reach(qn: str, edges: dict[str, list[tuple[str, bool]]]) -> set[str]:
+    reached = {qn}
+    frontier = [qn]
+    while frontier:
+        for other, guessed in edges.get(frontier.pop(), []):
+            if not guessed and other not in reached:
+                reached.add(other)
+                frontier.append(other)
+    return reached
 
 
 def call_node_at(

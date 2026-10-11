@@ -435,21 +435,50 @@ class TypeInferenceEngine:
         return local
 
     def collect_go_span_bindings(
-        self, caller_node: ASTNode, module_qn: str
+        self,
+        caller_node: ASTNode,
+        module_qn: str,
+        var_types: dict[str, str] | None = None,
     ) -> list[tuple[int, int, str, str]]:
         """Go range variables and the locals shadowing them (issue #2483),
-        each typed as the resolver reads it in `module_qn`. A qualified
-        `geo.Shape` is the type of the package this file imports as `geo`;
-        one naming no indexed type (an external package's) is dropped, as
-        the Rust closure bindings are: its bare name would bind whatever this
-        package calls Shape, and the call keeps what it got before."""
-        return [
-            (start, end, name, resolved)
-            for start, end, name, type_name in (
-                self.go_type_inference.collect_range_span_bindings(caller_node)
+        each typed as the resolver reads it in `module_qn`. A local bound to
+        a call (`s := makeOther()`) takes the call's return type, as the flat
+        map's does. A qualified `geo.Shape` is the type of the package this
+        file imports as `geo`. One naming no indexed type (an external
+        package's), or no type at all, stays a binding, untyped: its bare
+        name would bind whatever this package calls Shape, and dropping it
+        would let an outer declaration of the name answer for it."""
+        engine = self.go_type_inference
+
+        def value_type(value: ASTNode) -> str | None:
+            if (typed := engine.infer_value_type(value)) is not None:
+                return typed
+            segments = (
+                engine.callee_segments(value)
+                if value.type == cs.TS_GO_CALL_EXPRESSION
+                else None
             )
-            if (resolved := self._go_written_type(type_name, module_qn))
+            return (
+                self._infer_go_call_return_type(segments, module_qn, var_types or {})
+                if segments
+                else None
+            )
+
+        return [
+            (start, end, name, self._go_span_type(type_name, module_qn))
+            for start, end, name, type_name in engine.collect_range_span_bindings(
+                caller_node, value_type
+            )
         ]
+
+    def _go_span_type(self, type_name: str, module_qn: str) -> str:
+        # A qn a call's return type resolved to already is one; a written type
+        # resolves through this file's imports.
+        if not type_name:
+            return cs.GO_UNTYPED_BINDING
+        if type_name in self.function_registry:
+            return type_name
+        return self._go_written_type(type_name, module_qn) or cs.GO_UNTYPED_BINDING
 
     def _resolve_go_qualified_locals(
         self, module_qn: str, var_types: dict[str, str]

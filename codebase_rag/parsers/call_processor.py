@@ -3979,7 +3979,9 @@ class CallProcessor:
         if language == cs.SupportedLanguage.GO:
             # A `for k, v := range xs` variable is the loop's own, so it holds
             # the element type inside the loop and nowhere else (issue #2483).
-            return type_inference.collect_go_span_bindings(caller_node, module_qn)
+            return type_inference.collect_go_span_bindings(
+                caller_node, module_qn, local_var_types
+            )
         return []
 
     def _overlay_span_binding(
@@ -4005,6 +4007,14 @@ class CallProcessor:
                     best = (span, bound_type)
         if best is None or local_var_types.get(base) == best[1]:
             return local_var_types
+        if best[1] == cs.GO_UNTYPED_BINDING:
+            # A Go local nothing can type: the name is untyped here, not the
+            # type an outer declaration of it has (issue #2483).
+            return {
+                name: type_name
+                for name, type_name in local_var_types.items()
+                if name != base
+            }
         return {**local_var_types, base: best[1]}
 
     def _cpp_operator_callee(

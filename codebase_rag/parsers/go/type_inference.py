@@ -111,7 +111,9 @@ def range_span_bindings(
     A local of that name declared inside the loop (`s := Other{}`, a closure
     parameter `s`) owns `s` from its declaration on, so the loop's binding
     skips its scope, and the local gets a binding of its own type where one
-    can be read (`value_type` types a `:=` value).
+    can be read (`value_type` types a `:=` value). A loop variable or local
+    whose type cannot be read is bound as untyped (`GO_UNTYPED_BINDING`), so
+    an outer `s` of another type never answers for it.
 
     Another package's type keeps its qualifier (`geo.Shape`): only the
     reading file's imports say which package that is."""
@@ -123,9 +125,9 @@ def range_span_bindings(
     spans: list[_SpanBinding] = []
     for clause in clauses:
         left = clause.child_by_field_name(cs.FIELD_LEFT)
-        slots = _ranged_slots(clause, bindings)
-        if left is None or slots is None or clause.parent is None:
+        if left is None or clause.parent is None:
             continue
+        slots = _ranged_slots(clause, bindings) or (None, None)
         scope = (clause.end_byte, clause.parent.end_byte)
         for name, type_name in _bound_types(left, slots):
             shadows = _shadows(bindings.get(name, []), clause, scope)
@@ -179,9 +181,13 @@ def _shadow_bindings(
     value_type: Callable[[Node], str | None],
 ) -> list[_SpanBinding]:
     return [
-        (span[0], span[1], name, type_name)
+        (
+            span[0],
+            span[1],
+            name,
+            _declared_type(declaration, name, value_type) or cs.GO_UNTYPED_BINDING,
+        )
         for span, declaration in shadows
-        if (type_name := _declared_type(declaration, name, value_type))
     ]
 
 
@@ -222,12 +228,13 @@ def _ranged_slots(
 
 
 def _bound_types(left: Node, slots: _RangeSlots) -> list[tuple[str, str]]:
+    # Every name the clause declares, `_` aside, typed where its slot is.
     return [
-        (name, type_name)
+        (name, type_name or cs.GO_UNTYPED_BINDING)
         for bound, type_name in zip(left.named_children, slots, strict=False)
         if bound.type == cs.TS_IDENTIFIER
         and (name := safe_decode_text(bound))
-        and type_name
+        and name != cs.GO_BLANK_IDENTIFIER
     ]
 
 
@@ -343,9 +350,11 @@ class GoTypeInferenceEngine:
         return var_types
 
     def collect_range_span_bindings(
-        self, caller_node: Node
+        self,
+        caller_node: Node,
+        value_type: Callable[[Node], str | None] | None = None,
     ) -> list[tuple[int, int, str, str]]:
-        return range_span_bindings(caller_node, self.infer_value_type)
+        return range_span_bindings(caller_node, value_type or self.infer_value_type)
 
     def build_field_type_map(self, class_node: Node) -> dict[str, str]:
         # Map a Go struct's field names to their bare type names (a `type_spec`:
