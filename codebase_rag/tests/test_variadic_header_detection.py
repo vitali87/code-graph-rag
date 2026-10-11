@@ -26,7 +26,7 @@ from codebase_rag.structural_delta import (
     Definition,
     _absorbs_extra_positionals,
     _header_absorbs_extra_positionals,
-    _parameter_list_end_row,
+    _header_end_row,
 )
 
 
@@ -184,6 +184,9 @@ def test_a_multiline_header_is_not_cut_at_a_paren_in_a_default(
         ('def f(\n    a=")",\n    *rest,\n):', 4),
         ("def f(\n    a=1,  # )\n    *rest,\n):", 4),
         ('    def m(\n        self, a="(",\n    ):', 3),
+        # The header ends at its colon, past a return annotation's lines.
+        ("def f(a, *rest) -> tuple[\n    int, ...\n]:", 3),
+        ("def f(a: int, cb=lambda x: x) -> dict[str, int]:", 1),
     ],
 )
 def test_the_header_cut_follows_the_brackets(header: str, end_row: int | None) -> None:
@@ -202,7 +205,7 @@ def test_the_header_cut_follows_the_brackets(header: str, end_row: int | None) -
     exists to avoid. A raw bracket count then had the same fault for
     `a=")"` and for a `)` in a comment (bot review).
     """
-    assert _parameter_list_end_row(header.splitlines()) == end_row
+    assert _header_end_row(header.splitlines()) == end_row
 
 
 def test_a_paren_in_a_string_default_does_not_cut_the_header(
@@ -218,6 +221,32 @@ def test_a_paren_in_a_string_default_does_not_cut_the_header(
         path="m.py",
         start_line=1,
         end_line=5,
+        positional_params=("a",),
+        fingerprint="",
+        fingerprint_nodes=0,
+        branches=frozenset(),
+    )
+
+    assert _absorbs_extra_positionals(definition, tmp_path) is True
+
+
+def test_a_multiline_return_annotation_is_read_to_the_colon(tmp_path: Path) -> None:
+    """Cutting at the `)` that closes the parameter list left
+
+        def helper(a, *rest) -> tuple[
+
+    which does not parse, so `helper(1, 2)` was reported as passing too
+    many arguments and a correct change_signature rolled back.
+    """
+    source = "def helper(a, *rest) -> tuple[\n    int, ...\n]:\n    return (a, *rest)\n"
+    (tmp_path / "m.py").write_text(source, encoding="utf-8")
+    definition = Definition(
+        label="Function",
+        qualified_name="m.helper",
+        name="helper",
+        path="m.py",
+        start_line=1,
+        end_line=4,
         positional_params=("a",),
         fingerprint="",
         fingerprint_nodes=0,

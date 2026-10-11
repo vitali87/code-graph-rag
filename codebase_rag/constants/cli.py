@@ -949,6 +949,15 @@ MOVE_WILDCARD_IMPORTER = (
     "{importers} import(s) everything from {path} with *, and would no "
     "longer get {name} from it; pass keep_alias to keep {path} exporting it"
 )
+MOVE_STAR_PROVIDED = (
+    "{names} reaches the moved definition only through {imports} in {path}; "
+    "the move cannot tell which module binds it, so import it by name first"
+)
+MOVE_FUTURE_ANNOTATIONS = (
+    "{lazy} has `from __future__ import annotations` and {eager} does not, "
+    "so the move would turn the annotations of {changed} into strings; give "
+    "both modules the same setting first"
+)
 MOVE_RELATIVE_IMPORT_ESCAPES = (
     "{statement} in {qn} climbs above the top-level package of {path}, so "
     "the move cannot respell it for the destination"

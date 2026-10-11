@@ -810,3 +810,108 @@ def test_the_contract_counts_a_wildcard_importer_of_a_vacated_module(
     assert (root / "pkg/util.py").read_text() == util
     probe = _python(root, "from pkg.api import helper; print(helper(1))")
     assert probe.stdout.strip() == "2", probe.stderr
+
+
+# --- a name only a wildcard import binds ------------------------------------------
+
+
+def test_a_name_only_a_wildcard_import_binds_refuses_the_move(
+    temp_repo: Path,
+) -> None:
+    """`from pkg.cfg import *` is recorded with no alias, so `_needed_imports`
+    skipped it, and the old module neither defines nor assigns RATE for
+    `_needed_from_old` to import back: the moved helper read an unbound RATE
+    and raised NameError on its first call, after a passing contract."""
+    util = (
+        "from pkg.cfg import *  # noqa: F403\n\n\n"
+        "def helper(a):\n    return a * RATE  # noqa: F405\n" + OTHER
+    )
+    fixture = {**FIXTURE, "pkg/util.py": util, "pkg/cfg.py": "RATE = 3\n"}
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    with pytest.raises(MoveRefused, match=r"RATE.*from pkg\.cfg import \*"):
+        _move(root, store, updater)
+    assert (root / "pkg/util.py").read_text() == util
+    assert not (root / "pkg/core.py").exists()
+    probe = _python(root, "from pkg.util import helper; print(helper(7))")
+    assert probe.returncode == 0, probe.stderr
+    assert probe.stdout.strip() == "21"
+
+
+def test_a_wildcard_import_the_moved_code_does_not_read_from_does_not_refuse(
+    temp_repo: Path,
+) -> None:
+    """A name the old module binds itself, or a builtin, cannot have come
+    from the star."""
+    util = (
+        "from pkg.cfg import *  # noqa: F403\n\nSEP = '-'\n\n\n"
+        "def helper(a):\n    return SEP.join(str(x) for x in sorted(a))\n" + OTHER
+    )
+    fixture = {**FIXTURE, "pkg/util.py": util, "pkg/cfg.py": "RATE = 3\n"}
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    report = _move(root, store, updater)
+    assert report.applied, report.message
+    probe = _python(root, "from pkg.core import helper; print(helper([2, 1]))")
+    assert probe.returncode == 0, probe.stderr
+    assert probe.stdout.strip() == "1-2"
+
+
+# --- `from __future__ import annotations` governs the whole module ----------------
+
+LAZY = "from __future__ import annotations\n\n\n"
+
+
+@pytest.mark.parametrize(
+    ("util", "core", "probe"),
+    [
+        pytest.param(
+            LAZY + "def helper(a):\n    return a + 1\n" + OTHER,
+            "def existing(x: int):\n    return existing.__annotations__['x'] is int\n",
+            "from pkg.core import existing; print(existing(1))",
+            id="destination-annotations",
+        ),
+        pytest.param(
+            "def helper(a: int):\n    return helper.__annotations__['a'] is int\n"
+            + OTHER,
+            LAZY + "def existing():\n    return True\n",
+            "from pkg.util import helper; print(helper(1))",
+            id="moved-annotations",
+        ),
+    ],
+)
+def test_a_future_import_that_would_stringify_annotations_refuses_the_move(
+    temp_repo: Path, util: str, core: str, probe: str
+) -> None:
+    """The source's `from __future__ import annotations` was added at the
+    head of an existing destination, turning the annotations already there
+    into strings: `existing(1)` answered False after a passing move. A
+    destination that has it does the same to the moved definition's own."""
+    fixture = {**FIXTURE, "pkg/util.py": util, "pkg/core.py": core}
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    with pytest.raises(MoveRefused, match="from __future__ import annotations"):
+        _move(root, store, updater)
+    assert (root / "pkg/core.py").read_text() == core
+    assert (root / "pkg/util.py").read_text() == util
+    result = _python(root, probe)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "True"
+
+
+def test_a_lazy_destination_takes_a_definition_without_annotations(
+    temp_repo: Path,
+) -> None:
+    """Only an annotation can change: the fixture's unannotated helper
+    moves into a destination that has the future import."""
+    core = LAZY + "def existing(x: int) -> int:\n    return x\n"
+    fixture = {**FIXTURE, "pkg/core.py": core}
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    report = _move(root, store, updater)
+    assert report.applied, report.message
+    probe = _python(
+        root, "from pkg.core import existing, helper; print(helper(['a']), existing(1))"
+    )
+    assert probe.returncode == 0, probe.stderr
+    assert probe.stdout.strip() == "a 1"

@@ -18,6 +18,7 @@ importer's statement (issue #1522), so the whole move is one transaction:
 from __future__ import annotations
 
 import ast
+import builtins
 import re
 import symtable
 from collections.abc import Callable
@@ -118,6 +119,9 @@ _PY_SCOPES = (
     ast.GeneratorExp,
 )
 _PY_STAR = "*"
+_PY_STAR_IMPORT = "from {module} import *"
+_PY_BUILTINS = frozenset(dir(builtins))
+_PY_DUNDER = "__"
 _PY_ALL = "__all__"
 _PY_PRIVATE = "_"
 _MODULE_SCOPE = "module"
@@ -463,6 +467,60 @@ def _star_exports(source: bytes, name: str) -> bool:
     return not isinstance(listed, list | tuple) or name in listed
 
 
+def _star_provided(source: bytes, moved: str) -> tuple[list[str], list[str]]:
+    """(names, imports): what the Python `moved` reads that only a wildcard
+    import in `source` can bind, and those wildcard imports.
+
+    `from pkg.cfg import *` binds no name the graph records, so neither
+    `_needed_imports` nor `_needed_from_old` carried a RATE the moved code
+    read through it, and the moved code raised NameError on its first call.
+    A name the module binds itself, a builtin, or a module attribute
+    (`__file__`) cannot have come from the star.
+    """
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return [], []
+    imports = sorted(
+        _PY_STAR_IMPORT.format(module="." * node.level + (node.module or ""))
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        and any(alias.name == _PY_STAR for alias in node.names)
+    )
+    reads = _global_references(moved)
+    if not imports or not reads:
+        return [], imports
+    bound: set[str] = set()
+    for statement in tree.body:
+        bound |= _py_bound(statement)
+    names = sorted(
+        n
+        for n in reads - bound
+        if n not in _PY_BUILTINS
+        and not (n.startswith(_PY_DUNDER) and n.endswith(_PY_DUNDER))
+    )
+    return names, imports
+
+
+def _annotated(source: str | bytes) -> bool:
+    """Whether the Python `source` holds an annotation that `from __future__
+    import annotations` turns into a string: a parameter's, a return's or a
+    variable's. Unparseable input answers True, the side that refuses."""
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return True
+    return any(
+        (isinstance(node, ast.arg) and node.annotation is not None)
+        or (
+            isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+            and node.returns is not None
+        )
+        or isinstance(node, ast.AnnAssign)
+        for node in ast.walk(tree)
+    )
+
+
 def _identifiers(node: Node) -> set[str]:
     found: set[str] = set()
     stack = [node]
@@ -751,6 +809,7 @@ class Mover:
         {cs.SupportedLanguage.PYTHON, cs.SupportedLanguage.JS, cs.SupportedLanguage.TS}
     )
     _FUTURE = "__future__"
+    _FUTURE_ANNOTATIONS = "annotations"
     _FUTURE_IMPORT = "from __future__ import {features}\n"
     # Refusals that have no home in constants/cli.py yet.
     _UNSUPPORTED = "move does not support {language} ({path})"
@@ -860,6 +919,9 @@ class Mover:
         self._refuse_js_imports(top, from_old, old_bindings, old_path, language)
         if existing is not None:
             assert target_root is not None
+            self._refuse_annotation_drift(
+                source, existing, cut.text, name, old_path, new_path, language
+            )
             self._refuse_collisions(
                 existing,
                 target_root,
@@ -1044,7 +1106,8 @@ class Mover:
         """The old module's names the moved text can import, each with
         whether it is exported, and the TYPE_CHECKING imports it carries
         under a guard instead; refused when the move would split a module
-        variable or need a name some path leaves unbound."""
+        variable, or need a name some path leaves unbound or only a
+        wildcard import binds."""
         bindings = cls._bindings(root)
         if language != cs.SupportedLanguage.PYTHON:
             return bindings, {}
@@ -1065,6 +1128,15 @@ class Mover:
                     names=cs.SEPARATOR_COMMA_SPACE.join(split), path=old_path
                 )
             )
+        starred, stars = _star_provided(source, moved)
+        if starred:
+            raise MoveRefused(
+                cs.MOVE_STAR_PROVIDED.format(
+                    names=cs.SEPARATOR_COMMA_SPACE.join(starred),
+                    imports=cs.SEPARATOR_COMMA_SPACE.join(stars),
+                    path=old_path,
+                )
+            )
         typed = _type_checking_imports(source, old_path, new_path)
         guarded = {n: typed[n] for n in unbound if n in typed}
         unbound = [n for n in unbound if n not in guarded]
@@ -1075,6 +1147,45 @@ class Mover:
                 )
             )
         return {**dict.fromkeys(carried, False), **bindings}, guarded
+
+    @classmethod
+    def _refuse_annotation_drift(
+        cls,
+        source: bytes,
+        existing: bytes,
+        moved: str,
+        name: str,
+        old_path: str,
+        new_path: str,
+        language: cs.SupportedLanguage | None,
+    ) -> None:
+        """Refuse when the paste would change how annotations already
+        written are evaluated.
+
+        `from __future__ import annotations` governs a whole module, so
+        enabling it at the head of an existing destination turned the
+        annotations already there into strings
+        (`existing.__annotations__['x'] is int` stopped holding), and a
+        destination that has it does the same to the moved definition's.
+        The side without it is safe when it holds no annotation, and the
+        destination then takes the source's setting.
+        """
+        if language != cs.SupportedLanguage.PYTHON:
+            return
+        lazy = cls._FUTURE_ANNOTATIONS in cls._future_features(source)
+        if lazy == (cls._FUTURE_ANNOTATIONS in cls._future_features(existing)):
+            return
+        lazy_path, eager_path, affected, changed = (
+            (old_path, new_path, existing, new_path)
+            if lazy
+            else (new_path, old_path, moved.encode(cs.ENCODING_UTF8), name)
+        )
+        if _annotated(affected):
+            raise MoveRefused(
+                cs.MOVE_FUTURE_ANNOTATIONS.format(
+                    lazy=lazy_path, eager=eager_path, changed=changed
+                )
+            )
 
     @classmethod
     def _refuse_js_imports(
@@ -1165,7 +1276,8 @@ class Mover:
         futures: list[str],
     ) -> None:
         """Append `paste` to an existing destination, and enable the
-        `futures` it lacks at its head."""
+        `futures` it lacks at its head (`_refuse_annotation_drift` has made
+        sure no annotation already there changes)."""
         sep = (
             ""
             if not existing.strip()
