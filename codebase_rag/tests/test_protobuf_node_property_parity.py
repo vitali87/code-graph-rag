@@ -92,6 +92,12 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     # method (PR 2814 review), are what overload ranking reads, read back only
     # by an incremental run's rehydration; absent reads as a non-generic
     # declaration, as every run did before them, until the file is next parsed.
+    # `decorated_start_line` (issue #2428) degrades like `positional_params`:
+    # a graph round-tripped through protobuf answers `definition` with the
+    # span below the decorators, exactly as a graph indexed before the
+    # property existed does; the Class, Function and Method `decorators`
+    # lists still travel. Exporting it needs a proto field plus regenerated
+    # bindings (protoc).
     # `non_method_members` (issue #2620) lets an incremental run re-register
     # the names an unchanged class body binds to a value (`run = None`), which
     # hide a base class's `run`. A graph round-tripped through protobuf loses
@@ -104,6 +110,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "absolute_path",
             "base_types",
             "generic_bases",
+            "decorated_start_line",
             "modifiers",
             "non_method_members",
             "path",
@@ -138,6 +145,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
         {
             "absolute_path",
             "anchor_hash",
+            "decorated_start_line",
             "is_body_scoped_name",
             "is_macro",
             "modifiers",
@@ -163,6 +171,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
         {
             "absolute_path",
             "anchor_hash",
+            "decorated_start_line",
             "extension_namespace",
             "extension_receiver",
             "extension_receiver_arity",
@@ -185,6 +194,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
         {
             "anchor_hash",
             "base_types",
+            "decorated_start_line",
             "decorators",
             "docstring",
             "end_line",
@@ -200,6 +210,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     "Enum": frozenset(
         {
             "anchor_hash",
+            "decorated_start_line",
             "decorators",
             "docstring",
             "end_line",
@@ -213,6 +224,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
         {
             "anchor_hash",
             "absolute_path",
+            "decorated_start_line",
             "decorators",
             "docstring",
             "end_line",
@@ -227,6 +239,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
         {
             "anchor_hash",
             "absolute_path",
+            "decorated_start_line",
             "decorators",
             "docstring",
             "end_line",

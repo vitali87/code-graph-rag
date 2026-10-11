@@ -119,7 +119,7 @@ HELP_EDITS_DIFF = "Print each transaction's unified diff."
 CMD_GRAPH = "Deterministic graph queries (resolve, definition, callers, callees, implementors, overrides, importers, tests-reaching) as JSON, no LLM."
 CMD_GRAPH_GROUP = CMD_GRAPH
 CMD_GRAPH_RESOLVE = "Resolve a name, dotted suffix, or path:line to qualified names."
-CMD_GRAPH_DEFINITION = "File, span, docstring and source of one definition."
+CMD_GRAPH_DEFINITION = "File, span, decorators, docstring and source of one definition."
 CMD_GRAPH_CALLERS = "Call sites that invoke a qualified name, one row per site."
 CMD_GRAPH_CALLEES = "Call sites inside a qualified name, one row per site."
 CMD_GRAPH_IMPLEMENTORS = (
@@ -470,9 +470,12 @@ HELP_LANGUAGE_LIST_VERBOSE = (
 )
 
 HELP_PROJECT_NAME = (
-    "Project name to store in the graph. Defaults to the directory name plus a "
-    "hash of its absolute path (e.g. myrepo__1a2b3c4d), so two checkouts never "
-    "share one; cgr status lists the names already stored. A chosen name has no "
+    "Project name to store in the graph. Defaults to the directory name plus an "
+    "8-hex hash of its absolute path (e.g. myrepo__1a2b3c4d), so two checkouts on "
+    "one machine get different names barring a rare hash collision; machines that "
+    "sync into one graph should each pass their own name, since the same path "
+    "hashes alike on every machine. cgr status lists the names already stored. A "
+    "chosen name has no "
     "hash: syncing a repository under a name another repository already indexes "
     "needs --yes and replaces that project."
 )

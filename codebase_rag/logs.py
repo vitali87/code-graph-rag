@@ -1445,3 +1445,20 @@ CHECKOUT_STATE_ADOPTED = (
 )
 CHECKOUT_STATE_ADOPT_FAILED = "Could not move {legacy} to {target}: {error}"
 CHECKOUT_STATE_LEGACY_LEFT = "Could not remove {legacy} from the working tree: {error}"
+CHECKOUT_STATE_HISTORY_MERGED = (
+    "Added {count} edit history entries an older cgr recorded in {legacy} to {target}"
+)
+CHECKOUT_STATE_HISTORY_PENDING = (
+    "Cannot add the edits an older cgr recorded in {legacy} to {target} "
+    "({reason}). Edits of this checkout wait for them, so that undo keeps "
+    "their order: fix the cause, or remove {legacy} if those edits need no undo."
+)
+CHECKOUT_STATE_HISTORY_NOT_CGRS = "{target} is not an edit history cgr wrote"
+CHECKOUT_STATE_TREE_LOCK_UNAVAILABLE = (
+    "Cannot take the edit lock an older cgr left at {path} ({error}). Edits of "
+    "this checkout wait for it, so as never to run beside that cgr: fix the "
+    "cause, or remove {path} once no older cgr runs against the checkout."
+)
+CHECKOUT_STATE_HISTORY_DROPPED = (
+    "Removed {legacy} from the working tree: it is not an edit history cgr wrote"
+)
