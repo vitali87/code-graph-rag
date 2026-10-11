@@ -754,6 +754,32 @@ class TestAnApplicableInstanceMethodBeatsAnExtension:
         assert calls["Extended"] == {"Ex.CExt.Bar(C, int)"}, calls
 
 
+NULLABLE_STRUCT_CS = """\
+namespace Ns;
+public struct Widget { }
+public class C {
+    public void M(Widget w) { }
+    public void M(Widget? w) { }
+}
+public class Use { public void Run() { var c = new C(); c.M(new Widget()); } }
+"""
+
+
+class TestANullableStructIsItsOwnParameterType:
+    # Known gap, not this PR's ranking: a method's name is built as its file
+    # is parsed, before any other file says `Widget` is a struct, so its `?`
+    # is dropped as a reference type's annotation is and `M(Widget?)` is a
+    # twin of `M(Widget)`. Ranking keeps a `?` wherever the name keeps it.
+    @pytest.mark.xfail(
+        strict=True, reason="a struct's kind is not known when its users' names are"
+    )
+    def test_a_struct_binds_its_identity_not_its_nullable(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _calls(NULLABLE_STRUCT_CS, temp_repo, mock_ingestor)
+        assert calls["Run"] == {"Ns.C.M(Widget)"}, calls
+
+
 # Every place overload ranking compares, resolves or walks types, against
 # each of three invariants (PR 2814 review): (a) a predefined type is its
 # alias (`int` is `System.Int32`), (b) an argument's type resolves in the
@@ -872,6 +898,80 @@ INVARIANT_CASES: dict[str, _Case] = {
         "public class Box<T> { public void M(T x) { } public void M(Widget w) { } }",
         _use("new Box<Widget>().M(new Widget());", "public class Widget { }\n"),
         frozenset({"Box.M(T)"}),
+    ),
+    # Greptile review of PR 2814: resolving a type's name keeps its shape,
+    # so an array, a nullable value, a rank or a tuple is not its element.
+    "shape-array-scalar": _Case(
+        "namespace L; public class Widget { }\n"
+        "public class C { public void M(Widget w) { } public void M(Widget[] ws) { } }",
+        _use("new C().M(new Widget());"),
+        frozenset({"C.M(Widget)"}),
+    ),
+    "shape-array-scalar-object": _Case(
+        "namespace L; public class Widget { }\n"
+        f"public class C {{ public void M(Widget[] ws) {{ }} {_PAIR} }}",
+        _use("new C().M(new Widget());"),
+        frozenset({"C.M(object)"}),
+    ),
+    "shape-array-array": _Case(
+        "namespace L; public class Widget { }\n"
+        "public class C { public void M(Widget w) { } public void M(Widget[] ws) { } }",
+        _use("Widget[] ws = new Widget[1]; new C().M(ws);"),
+        frozenset({"C.M(Widget[])"}),
+    ),
+    "shape-array-covariant": _Case(
+        "namespace L; public class Widget { } public class Gadget : Widget { }\n"
+        f"public class C {{ public void M(Widget[] ws) {{ }} {_PAIR} }}",
+        _use("Gadget[] gs = new Gadget[1]; new C().M(gs);"),
+        frozenset({"C.M(Widget[])"}),
+    ),
+    # A nullable value is its own type: `T?` wraps a value, and a value
+    # converts to it but not back.
+    "shape-nullable-value": _Case(
+        "namespace L; public class Widget { }\n"
+        "public class C { public void M((Widget, int) t) { } "
+        "public void M((Widget, int)? t) { } }",
+        _use("(Widget, int) t = (new Widget(), 1); new C().M(t);"),
+        frozenset({"C.M((Widget, int))"}),
+    ),
+    "shape-nullable-value-local": _Case(
+        "namespace L; public class Widget { }\n"
+        "public class C { public void M((Widget, int) t) { } "
+        "public void M((Widget, int)? t) { } }",
+        _use("(Widget, int)? t = null; new C().M(t);"),
+        frozenset({"C.M((Widget, int)?)"}),
+    ),
+    "shape-rank": _Case(
+        "namespace L; public class Widget { }\n"
+        "public class C { public void M(Widget[,] g) { } public void M(Widget[] ws) { } }",
+        _use("Widget[] ws = new Widget[1]; new C().M(ws);"),
+        frozenset({"C.M(Widget[])"}),
+    ),
+    "shape-rank-2d": _Case(
+        "namespace L; public class Widget { }\n"
+        "public class C { public void M(Widget[,] g) { } public void M(Widget[] ws) { } }",
+        _use("Widget[,] g = new Widget[1, 1]; new C().M(g);"),
+        frozenset({"C.M(Widget[,])"}),
+    ),
+    "shape-jagged": _Case(
+        "namespace L; public class Widget { }\n"
+        "public class C { public void M(Widget[][] j) { } public void M(Widget[] ws) { } }",
+        _use("Widget[][] j = new Widget[1][]; new C().M(j);"),
+        frozenset({"C.M(Widget[][])"}),
+    ),
+    "shape-tuple": _Case(
+        "namespace L; public class Widget { }\n"
+        "public class C { public void M((Widget, int) t) { } "
+        "public void M((Widget, string) t) { } }",
+        _use("(Widget, int) t = (new Widget(), 1); new C().M(t);"),
+        frozenset({"C.M((Widget, int))"}),
+    ),
+    # Negative: a `params` tail still takes one element, expanded.
+    "shape-params-neg": _Case(
+        "namespace L; public class Widget { }\n"
+        f"public class C {{ public void M(params Widget[] ws) {{ }} {_PAIR} }}",
+        _use("new C().M(new Widget());"),
+        frozenset({"C.M(Widget[])"}),
     ),
     # Scoring: the argument converts to the parameter through its bases.
     "base-alias": _Case(
@@ -1169,6 +1269,44 @@ OVERRIDE_CASES: dict[str, _OverrideCase] = {
         True,
         (),
         "Zeta/Lib.cs",
+    ),
+    # Greptile review of PR 2814: an override keeps its parameter's shape, so
+    # `Put(Widget[])` is `Put(T[])` with T := Widget, never `Put(T)`.
+    "override-array": _OverrideCase(
+        "namespace L; public class Widget { }\n"
+        "public class Base<T> { public virtual void Put(T x) { } "
+        "public virtual void Put(T[] xs) { } }\n"
+        "public class D : Base<Widget> { public override void Put(Widget[] xs) { } }",
+        _use(""),
+        ("D.Put(Widget[])", "Base.Put(T[])"),
+        True,
+    ),
+    "override-array-neg": _OverrideCase(
+        "namespace L; public class Widget { }\n"
+        "public class Base<T> { public virtual void Put(T x) { } "
+        "public virtual void Put(T[] xs) { } }\n"
+        "public class D : Base<Widget> { public override void Put(Widget[] xs) { } }",
+        _use(""),
+        ("D.Put(Widget[])", "Base.Put(T)"),
+        False,
+    ),
+    # Negative: an overload taking the array hides no `Put(Widget)`.
+    "override-array-overload-neg": _OverrideCase(
+        "namespace L; public class Widget { }\n"
+        "public class Base { public virtual void Put(Widget x) { } }\n"
+        "public class D : Base { public void Put(Widget[] xs) { } }",
+        _use(""),
+        ("D.Put(Widget[])", "Base.Put(Widget)"),
+        False,
+    ),
+    "override-tuple-neg": _OverrideCase(
+        "namespace L; public class Widget { }\n"
+        "public class Base<T> { public virtual void Put((T, int) x) { } "
+        "public virtual void Put((T, string) x) { } }\n"
+        "public class D : Base<Widget> { public override void Put((Widget, string) x) { } }",
+        _use(""),
+        ("D.Put((Widget, string))", "Base.Put((T, int))"),
+        False,
     ),
     # Negative: a cross-namespace type that is really another stays apart.
     "override-global-neg": _OverrideCase(

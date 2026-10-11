@@ -555,8 +555,13 @@ CSHARP_SYSTEM_PREFIX = "System."
 # dot, so a resolved name is never taken for a written one and resolved
 # again, and no simple-name pattern matches inside it.
 CSHARP_RESOLVED_PREFIX = "."
-# Array ranks and nullable marks trailing a type: `List<T>[]?`, `int[,]`.
-CSHARP_TYPE_SUFFIX_PATTERN = r"(?:\[[,\s]*\]|\?)+$"
+# The shape built on a type after its name: array ranks (`[]`, `[,]`,
+# jagged `[][]`), nullable `?` and pointer `*` marks: `List<T>[]?`, `int*`.
+CSHARP_TYPE_SUFFIX_PATTERN = r"(?:\s*(?:\[[,\s]*\]|\?|\*))+$"
+# Parameter modifiers a type's text may lead with: `ref Widget`.
+CSHARP_TYPE_MODIFIER_PATTERN = r"^(?:(?:scoped|ref|readonly|out|in|params)\s+)+"
+# A tuple element's name after its type: `(Widget w, int n)`.
+CSHARP_TUPLE_ELEMENT_NAME_PATTERN = r"\s+@?[A-Za-z_]\w*$"
 # What nests inside a signature's parameter list: generics, tuples, arrays.
 CSHARP_SIGNATURE_OPENERS = "<(["
 CSHARP_SIGNATURE_CLOSERS = ">)]"

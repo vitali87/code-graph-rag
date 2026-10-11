@@ -31,6 +31,8 @@ from .utils import (
 
 _TYPE_IDENTIFIER = re.compile(cs.CSHARP_TYPE_IDENTIFIER_PATTERN)
 _TYPE_SUFFIX = re.compile(cs.CSHARP_TYPE_SUFFIX_PATTERN)
+_TYPE_MODIFIER = re.compile(cs.CSHARP_TYPE_MODIFIER_PATTERN)
+_TUPLE_ELEMENT_NAME = re.compile(cs.CSHARP_TUPLE_ELEMENT_NAME_PATTERN)
 
 
 class ArgumentType(NamedTuple):
@@ -245,68 +247,115 @@ def member_verdict(
     )
 
 
-def canonical_type(written: str, scope: Scope | None) -> str:
+def canonical_type(written: str, scope: Scope | None, arity: int | None = None) -> str:
     """`written` with each first-party type it names spelled as its qn behind
     a leading dot, resolved once, in `scope`, the file that wrote it:
-    `List<Widget>` -> `List<.proj.A.Widget>`, and so are `global::A.Widget`,
-    `A.Widget` and an alias of it. A type parameter in scope, a name the file
-    does not resolve (external, predefined) and a name already resolved keep
-    their spelling. Without a scope nothing is resolved."""
+    `List<Widget>[]` -> `List<.proj.A.Widget>[]`, and so are `global::A.Widget`,
+    `A.Widget` and an alias of it. Only names are resolved: the shape built
+    on them (modifiers, array ranks, nullable and pointer marks, a tuple's
+    elements, type arguments) is kept as written, each part canonical in
+    turn (PR 2814 review). A type parameter in scope, a name the file does
+    not resolve (external, predefined) and a name already resolved keep
+    their spelling. `arity` stands for type arguments the text leaves out
+    (`Box` of `Box<int>`). Without a scope nothing is resolved."""
     if scope is None:
         return written.strip()
-    core, suffix = _split_type_suffix(written.strip())
+    modifiers = _TYPE_MODIFIER.match(written.strip())
+    lead = modifiers.group(0) if modifiers else ""
+    core, suffix = type_shape(written.strip().removeprefix(lead))
+    return f"{lead}{_canonical_core(core, scope, arity)}{suffix}"
+
+
+def _canonical_core(core: str, scope: Scope, arity: int | None) -> str:
+    # A type with no shape after it: a tuple, or a name and its arguments.
     if core.startswith(cs.CSHARP_RESOLVED_PREFIX) or core in scope.type_parameters:
-        return f"{core}{suffix}"
-    if core.startswith(cs.CHAR_PAREN_OPEN):
+        return core
+    if is_tuple(core):
         elements = cs.SEPARATOR_COMMA_SPACE.join(
-            canonical_type(e, scope) for e in parameter_types(core)
+            canonical_type(e, scope) for e in _tuple_elements(core)
         )
-        return f"{cs.CHAR_PAREN_OPEN}{elements}{cs.CHAR_PAREN_CLOSE}{suffix}"
+        return f"{cs.CHAR_PAREN_OPEN}{elements}{cs.CHAR_PAREN_CLOSE}"
     arguments = type_arguments(core)
     name = strip_generic_arguments(core)
-    qn = scope.resolve(name, len(arguments))
+    qn = scope.resolve(name, len(arguments) if arity is None else arity)
     head = f"{cs.CSHARP_RESOLVED_PREFIX}{qn}" if qn else name
-    if arguments:
-        inner = cs.SEPARATOR_COMMA_SPACE.join(
-            canonical_type(a, scope) for a in arguments
-        )
-        head = f"{head}{cs.CHAR_ANGLE_OPEN}{inner}{cs.CHAR_ANGLE_CLOSE}"
-    return f"{head}{suffix}"
+    if not arguments:
+        return head
+    inner = cs.SEPARATOR_COMMA_SPACE.join(canonical_type(a, scope) for a in arguments)
+    return f"{head}{cs.CHAR_ANGLE_OPEN}{inner}{cs.CHAR_ANGLE_CLOSE}"
 
 
 def resolved_qn(canonical: str) -> str | None:
-    """The qn a `canonical_type` spelling resolved its outer type to, or None
-    when it kept a written spelling."""
-    core = strip_generic_arguments(_split_type_suffix(canonical.strip())[0])
-    if not core.startswith(cs.CSHARP_RESOLVED_PREFIX):
+    """The qn of the first-party type a `canonical_type` spelling IS, or
+    None when it kept a written spelling or builds a shape on the type: an
+    array, nullable or pointer of `Widget` is not `Widget` (PR 2814 review)."""
+    core, suffix = type_shape(canonical)
+    if suffix or not core.startswith(cs.CSHARP_RESOLVED_PREFIX):
         return None
-    return core.removeprefix(cs.CSHARP_RESOLVED_PREFIX)
+    return strip_generic_arguments(core).removeprefix(cs.CSHARP_RESOLVED_PREFIX)
 
 
-def _split_type_suffix(written: str) -> tuple[str, str]:
-    # `List<T>[]?` -> ("List<T>", "[]?"): the array ranks and nullable
-    # marks after a type, which stay as they are written.
-    match = _TYPE_SUFFIX.search(written)
+def type_shape(written: str) -> tuple[str, str]:
+    """`List<T>[ ]?` -> ("List<T>", "[]?"): a type and the shape built on it
+    after its name (array ranks, nullable and pointer marks), spaced alike
+    for every spelling, so two shapes compare as text."""
+    text = written.strip()
+    match = _TYPE_SUFFIX.search(text)
     if match is None:
-        return written, ""
-    return written[: match.start()], match.group(0)
+        return text, ""
+    return text[: match.start()].rstrip(), "".join(match.group(0).split())
+
+
+def is_tuple(core: str) -> bool:
+    """Whether a type with no shape after it is a tuple: `(Widget, int)`."""
+    return core.startswith(cs.CHAR_PAREN_OPEN)
+
+
+def _tuple_elements(core: str) -> list[str]:
+    # `(Widget w, int)` -> ["Widget", "int"]: element names are no part of
+    # the tuple's type.
+    return [_TUPLE_ELEMENT_NAME.sub("", e) for e in parameter_types(core)]
+
+
+def _array_shape(suffix: str) -> str:
+    # A shape less its nullable marks, which a signature may leave out.
+    return suffix.replace(cs.CSHARP_NULLABLE_SUFFIX, "")
 
 
 def _proven_apart(given: str, wanted: str) -> bool:
     # Whether two canonical types name, at some matching position, two
-    # different resolved first-party types.
-    given_core = _split_type_suffix(given)[0]
-    wanted_core = _split_type_suffix(wanted)[0]
+    # different resolved first-party types, or one in two array shapes.
+    (given_core, given_suffix), (wanted_core, wanted_suffix) = (
+        type_shape(given),
+        type_shape(wanted),
+    )
+    if is_tuple(given_core) and is_tuple(wanted_core):
+        given_elements, wanted_elements = (
+            _tuple_elements(given_core),
+            _tuple_elements(wanted_core),
+        )
+        return (
+            len(given_elements) != len(wanted_elements)
+            or _array_shape(given_suffix) != _array_shape(wanted_suffix)
+            or _any_apart(given_elements, wanted_elements)
+        )
     given_qn, wanted_qn = resolved_qn(given_core), resolved_qn(wanted_core)
-    if given_qn is not None and wanted_qn is not None and given_qn != wanted_qn:
-        return True
+    if given_qn is not None and wanted_qn is not None:
+        if given_qn != wanted_qn:
+            return True
+        if _array_shape(given_suffix) != _array_shape(wanted_suffix):
+            return True
     given_arguments, wanted_arguments = (
         type_arguments(given_core),
         type_arguments(wanted_core),
     )
-    return len(given_arguments) == len(wanted_arguments) and any(
-        _proven_apart(g, w)
-        for g, w in zip(given_arguments, wanted_arguments, strict=True)
+    return _any_apart(given_arguments, wanted_arguments)
+
+
+def _any_apart(given: Sequence[str], wanted: Sequence[str]) -> bool:
+    # Position by position, whether any pair of as many types is proven apart.
+    return len(given) == len(wanted) and any(
+        _proven_apart(g, w) for g, w in zip(given, wanted, strict=True)
     )
 
 
@@ -336,7 +385,10 @@ def parameter_types(signature: str) -> list[str]:
 
 def type_arguments(type_text: str) -> tuple[str, ...]:
     """The top-level type arguments of a type's last segment:
-    `Map<K, List<V>>` -> ("K", "List<V>"), `Ctx` -> ()."""
+    `Map<K, List<V>>` -> ("K", "List<V>"), `Ctx` -> (); a tuple's
+    elements are no type arguments."""
+    if is_tuple(type_text.strip()):
+        return ()
     leaf = leaf_type_segment(type_text)
     open_idx = leaf.find(cs.CHAR_ANGLE_OPEN)
     if open_idx < 0:
@@ -399,9 +451,11 @@ def written_type(argument: ArgumentType) -> str:
     name = argument.name or ""
     if not argument.arguments:
         return name
+    core, suffix = type_shape(name)
     return (
-        f"{name}{cs.CHAR_ANGLE_OPEN}"
+        f"{core}{cs.CHAR_ANGLE_OPEN}"
         f"{cs.SEPARATOR_COMMA_SPACE.join(argument.arguments)}{cs.CHAR_ANGLE_CLOSE}"
+        f"{suffix}"
     )
 
 
@@ -409,15 +463,36 @@ def same_type_name(given: str, wanted: str, given_arity: int | None = None) -> b
     """Whether two written types name one class, arguments aside: the same
     simple name, alias-blind (`Int32`, `int`), with as many type arguments
     (`given_arity` when `given` does not spell them), and no qualification
-    that sets them apart (`A.Widget`, `B.Widget`)."""
-    name = _framework_name(_simple_name(given))
-    if name != _framework_name(_simple_name(wanted)):
+    that sets them apart (`A.Widget`, `B.Widget`), in one shape: `Widget[]`
+    is not `Widget`, nor `(Widget, int)` `(Widget, string)` (PR 2814 review)."""
+    (given_core, given_suffix), (wanted_core, wanted_suffix) = (
+        type_shape(given),
+        type_shape(wanted),
+    )
+    if given_suffix != wanted_suffix:
         return False
-    arity = generic_arity_of_type_text(given) if given_arity is None else given_arity
-    if arity != generic_arity_of_type_text(wanted):
+    if is_tuple(given_core) or is_tuple(wanted_core):
+        return _same_tuple(given_core, wanted_core)
+    name = _framework_name(_simple_name(given_core))
+    if name != _framework_name(_simple_name(wanted_core)):
+        return False
+    arity = (
+        generic_arity_of_type_text(given_core) if given_arity is None else given_arity
+    )
+    if arity != generic_arity_of_type_text(wanted_core):
         return False
     predefined = name in cs.CSHARP_PREDEFINED_TYPE_NAMES.values()
-    return predefined or not _qualified_apart(given, wanted)
+    return predefined or not _qualified_apart(given_core, wanted_core)
+
+
+def _same_tuple(given: str, wanted: str) -> bool:
+    # Two tuples are one type when each element is, names aside.
+    if not (is_tuple(given) and is_tuple(wanted)):
+        return False
+    given_elements, wanted_elements = _tuple_elements(given), _tuple_elements(wanted)
+    return len(given_elements) == len(wanted_elements) and all(
+        same_type(g, w) for g, w in zip(given_elements, wanted_elements, strict=True)
+    )
 
 
 def _type_path(type_text: str) -> list[str]:

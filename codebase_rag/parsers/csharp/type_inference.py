@@ -34,6 +34,7 @@ from .overloads import (
     bindings_for_base,
     canonical_type,
     fit,
+    is_tuple,
     mentioned_names,
     parameter_types,
     plain_type_name,
@@ -41,6 +42,7 @@ from .overloads import (
     same_type_name,
     substitute,
     type_arguments,
+    type_shape,
     unshadowed,
     written_type,
 )
@@ -222,31 +224,36 @@ def _canonical_argument(
     argument: ArgumentType | None, scope: Scope
 ) -> ArgumentType | None:
     # An argument's type, resolved once in the caller's file: its name with
-    # its arity, and each type argument the syntax spells.
+    # its arity, its shape kept (`Widget[]`, a tuple's elements), and each
+    # type argument the syntax spells.
     if argument is None or argument.name is None:
         return argument
-    name = argument.name
-    if name not in scope.type_parameters and (
-        qn := scope.resolve(name, argument.arity)
-    ):
-        name = f"{cs.CSHARP_RESOLVED_PREFIX}{qn}"
     arguments = (
         tuple(canonical_type(a, scope) for a in argument.arguments)
         if argument.arguments is not None
         else None
     )
-    return ArgumentType(argument.literal, name, argument.arity, arguments)
+    return ArgumentType(
+        argument.literal,
+        canonical_type(argument.name, scope, argument.arity),
+        argument.arity,
+        arguments,
+    )
 
 
 def _written_argument(raw: str) -> ArgumentType:
     # An argument typed by a type the source writes: its name, arity and
-    # type arguments, canonically spelled.
+    # type arguments, canonically spelled, with the shape built on it after
+    # its arguments (`Box<int>[]` is `Box[]` of int); a tuple as it is.
     written = signature_type_name(raw)
+    core, suffix = type_shape(written)
+    if is_tuple(core):
+        return ArgumentType(None, written, 0, ())
     return ArgumentType(
         None,
-        strip_generic_arguments(written),
-        generic_arity_of_type_text(written),
-        type_arguments(written),
+        f"{strip_generic_arguments(core)}{suffix}",
+        generic_arity_of_type_text(core),
+        type_arguments(core),
     )
 
 
@@ -2400,13 +2407,20 @@ class CSharpTypeInferenceEngine:
         return ArgumentType(None, name, arity, None)
 
     def _first_party_type(self, canonical: str) -> str | None:
-        # The first-party type a resolved spelling names (`canonical_type`),
-        # or None for a spelling no file resolved.
+        # The first-party type a resolved spelling IS (`canonical_type`), or
+        # None for a spelling no file resolved or a shape built on the type.
         qn = resolved_qn(canonical)
         return (
             qn
             if qn is not None and self.function_registry.get(qn) in _TYPE_DECLS
             else None
+        )
+
+    def _wraps_nullable(self, given: tuple[str, str], wanted: tuple[str, str]) -> bool:
+        # `Widget` to `Widget?`: the implicit nullable conversion of a value.
+        nullable = f"{type_shape(given[0])[1]}{cs.CSHARP_NULLABLE_SUFFIX}"
+        return type_shape(wanted[0])[1] == nullable and self._same_class(
+            given[1], wanted[1]
         )
 
     def _judgeable(self, given_qn: str, wanted_qn: str) -> bool:
@@ -2425,10 +2439,17 @@ class CSharpTypeInferenceEngine:
     ) -> bool | None:
         # Whether the argument's type IS the parameter's: one class, each
         # side resolved in its own file (or, unresolved, spelled alike up to
-        # aliases), closed with the same type arguments. None when they are
-        # not known on the argument's side.
-        given_qn = self._first_party_type(argument.name or "")
-        wanted_qn = self._first_party_type(parameter)
+        # aliases), in one shape (`Widget[]` is no `Widget`), closed with the
+        # same type arguments. None when they are not known on the argument's
+        # side.
+        (given_core, given_shape), (wanted_core, wanted_shape) = (
+            type_shape(argument.name or ""),
+            type_shape(parameter),
+        )
+        if given_shape != wanted_shape:
+            return False
+        given_qn = self._first_party_type(given_core)
+        wanted_qn = self._first_party_type(wanted_core)
         if given_qn is not None and wanted_qn is not None:
             if not self._same_class(given_qn, wanted_qn):
                 return False
@@ -2444,18 +2465,22 @@ class CSharpTypeInferenceEngine:
     ) -> bool | None:
         # Whether the argument converts implicitly to the parameter: up its
         # class hierarchy, or through a declared `implicit operator`, closed
-        # as the parameter is either way. Known only between first-party
-        # classes; anything else is not told.
-        given_qn = self._first_party_type(argument.name or "")
-        wanted_qn = self._first_party_type(parameter)
+        # as the parameter is either way, or a value wrapped as nullable.
+        # Known only between first-party classes, each in any shape; anything
+        # else is not told.
+        given_text = written_type(argument)
+        given_qn = self._first_party_type(type_shape(given_text)[0])
+        wanted_qn = self._first_party_type(type_shape(parameter)[0])
         if (
             given_qn is None
             or wanted_qn is None
             or not self._judgeable(given_qn, wanted_qn)
         ):
             return None
-        given = (written_type(argument), given_qn)
+        given = (given_text, given_qn)
         wanted = (parameter, wanted_qn)
+        if self._wraps_nullable(given, wanted):
+            return True
         derived = self._class_conversion(given, wanted, open_names)
         if derived:
             return True
@@ -2474,8 +2499,11 @@ class CSharpTypeInferenceEngine:
         # the wanted class is the given one or a base of it, and the given
         # type closes it as the wanted one is (`Derived : Base<int>` is no
         # `Base<string>`; PR 2814 review). None when that closing is not
-        # known.
+        # known. No such conversion changes a shape: a `Widget` is no
+        # `Widget[]`, and arrays convert only by their elements (covariance).
         wanted_text, wanted_qn = wanted
+        if type_shape(given[0])[1] != type_shape(wanted_text)[1]:
+            return False
         if wanted_qn not in self._class_ancestry(given[1]):
             return False
         expected = type_arguments(wanted_text)
@@ -2525,8 +2553,8 @@ class CSharpTypeInferenceEngine:
         # its target, with the declaring type's own parameters bound from the
         # argument, converts to the parameter.
         source, target = operator
-        source_qn = self._first_party_type(source)
-        target_qn = self._first_party_type(target)
+        source_qn = self._first_party_type(type_shape(source)[0])
+        target_qn = self._first_party_type(type_shape(target)[0])
         if source_qn is None or target_qn is None:
             return False
         shape = self.csharp_generic_shapes.get(declaring)
