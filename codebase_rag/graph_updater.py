@@ -88,7 +88,7 @@ from .parsers.frontends import (
 from .parsers.frontends.protocol import QueryCall
 from .parsers.go import read_package_clause
 from .parsers.go import utils as go_utils
-from .parsers.go.interfaces import GoInterfaceDecl, GoMethodSpec
+from .parsers.go.interfaces import GoInterfaceDecl, GoMethodSpec, GoSignature
 from .parsers.go_frontend import find_go_module
 from .parsers.java_generated import (
     discover_generated_source_roots,
@@ -1446,6 +1446,36 @@ def _carried_pair_rows(
         elif rel == cs.RelationshipType.OVERRIDES.value and _is_rust_method_edge(row):
             overrides.append({cs.KEY_FROM_QN: source, cs.KEY_TO_QN: target})
     return implements, overrides
+
+
+def _go_package_dirs(keys: Iterable[str]) -> set[str]:
+    return {
+        PurePosixPath(key).parent.as_posix() for key in keys if key.endswith(cs.EXT_GO)
+    }
+
+
+def _go_package_siblings(
+    keys: Iterable[str], eligible_by_key: Mapping[str, Path]
+) -> list[str]:
+    """The walked Go files beside a Go file the sync re-parses or deletes.
+
+    A Go method hangs off its receiver type, which another file of the
+    package may declare, so re-parsing the type's file deleted the methods
+    of every file beside it that the sync did not re-parse, and re-parsing a
+    method's file alone could not find its type and filed the method under
+    a second name beside the stale one. Package files re-parse together,
+    and the type's methods, a build's declarations of one among them, come
+    back as a clean index has them (issue #2483).
+    """
+    keys = set(keys)
+    dirs = _go_package_dirs(keys)
+    return sorted(
+        key
+        for key in eligible_by_key
+        if key not in keys
+        and key.endswith(cs.EXT_GO)
+        and PurePosixPath(key).parent.as_posix() in dirs
+    )
 
 
 def _relinked_go_edge(row: ResultRow) -> bool:
@@ -4007,9 +4037,9 @@ class GraphUpdater:
     def _rehydrate_go_method_sets(self, rows: list[ResultRow]) -> None:
         # An unchanged Go file's methods and interfaces still count toward
         # implicit satisfaction (issue #2483): a re-parsed type implements an
-        # interface it does not touch. The parameter count is what the parse
-        # records, `param_types`'s length, and the embedded types are the
-        # interface's own `embeds`. An interface stored without that list
+        # interface it does not touch. The signature is what the parse
+        # records, `param_types` and `return_type`, and the embedded types are
+        # the interface's own `embeds`. An interface stored without that list
         # (an older or imported graph) has a method set nobody recorded, so it
         # is left out rather than read as embedding nothing.
         dp = self.factory.definition_processor
@@ -4027,7 +4057,15 @@ class GraphUpdater:
             if label == cs.NodeLabel.METHOD and isinstance(
                 param_types := row.get(cs.KEY_PARAM_TYPES), list
             ):
-                dp.go_methods[qn] = GoMethodSpec(len(param_types), package, path)
+                result = row.get(cs.KEY_RETURN_TYPE)
+                dp.go_methods[qn] = GoMethodSpec(
+                    GoSignature(
+                        tuple(_stored_strings(param_types)),
+                        result if isinstance(result, str) else "",
+                    ),
+                    package,
+                    path,
+                )
             elif label == cs.NodeLabel.INTERFACE and isinstance(
                 embeds := row.get(cs.KEY_EMBEDS), list
             ):
@@ -4635,13 +4673,12 @@ class GraphUpdater:
         if restored:
             logger.info(ls.FUNCTION_LOCATIONS_REHYDRATED.format(count=restored))
 
-    @staticmethod
     def _restore_function_rows(
-        rows: list[ResultRow], locations: FunctionLocations
+        self, rows: list[ResultRow], locations: FunctionLocations
     ) -> int:
         restored = 0
         for row in rows:
-            module_qn = row.get(cs.KEY_MODULE_QN)
+            module_qn = self._declaring_module_qn(row)
             qn = row.get(cs.KEY_QUALIFIED_NAME)
             label = row.get(cs.KEY_LABEL)
             container = row.get(cs.KEY_CONTAINER_QN)
@@ -4673,6 +4710,17 @@ class GraphUpdater:
                     locations[key] = record
                     restored += 1
         return restored
+
+    def _declaring_module_qn(self, row: ResultRow) -> object:
+        # Pass 2 keys a definition by the file declaring it. A Go method in
+        # another file than its receiver type hangs off the type's Module, so
+        # the row's module named the wrong file: two files' methods at one
+        # line and column collided on one key, and the one left out was
+        # owned by no file and outlived its file's re-parse (issue #2483).
+        path = row.get(cs.KEY_PATH)
+        if isinstance(path, str) and path.endswith(cs.EXT_GO):
+            return self._recorded_module_qn(path)
+        return row.get(cs.KEY_MODULE_QN)
 
     def _affected_caller_keys(self, reindexed_keys: list[str]) -> list[str]:
         """Relative paths of files whose code depends on a re-indexed file.
@@ -6639,6 +6687,13 @@ class GraphUpdater:
             scan,
             reindexed_keys,
         )
+        reindexed_keys = self._queue_affected_callers(
+            _go_package_siblings({*present, *deleted_before_parse}, eligible_by_key),
+            present,
+            eligible_by_key,
+            scan,
+            reindexed_keys,
+        )
         # Pass 2 order decides which same-stem file claims the bare module
         # qn; a clean build processes files in walk order, so the re-parse
         # set follows it too instead of the order the dependents were found.
@@ -8044,6 +8099,29 @@ class GraphUpdater:
 
         return flipped, self._flip_sibling_files(flipped, present, gone)
 
+    def _reingest_go_package_files(self, keys: set[str]) -> dict[str, Path]:
+        """On-disk Go files beside one this call re-parses, for the re-parse.
+
+        `run()` takes the same files (`_go_package_siblings`), for the same
+        reason.
+        """
+        files: dict[str, Path] = {}
+        for rel in _go_package_dirs(keys):
+            directory = self.repo_path / rel if rel != "." else self.repo_path
+            if not directory.is_dir():
+                continue
+            for candidate in sorted(directory.glob(f"*{cs.EXT_GO}")):
+                key = cached_relative_path(candidate, self.repo_path).as_posix()
+                if (
+                    key in keys
+                    or not candidate.is_file()
+                    or path_utils.is_symlink_entry(candidate)
+                    or self._reingest_ignored(candidate)
+                ):
+                    continue
+                files[key] = candidate
+        return files
+
     def _flip_sibling_files(
         self, flipped: set[str], present: dict[str, Path], gone: dict[str, Path]
     ) -> dict[str, Path]:
@@ -8741,6 +8819,11 @@ class GraphUpdater:
                 {**present, **survivors},
                 gone,
                 created={key for key in present if key not in hashes},
+            )
+            affected.update(
+                self._reingest_go_package_files(
+                    {*present, *gone, *survivors, *affected}
+                )
             )
             all_keys = sorted({*present, *gone, *survivors, *affected})
             captured = self._capture_inbound_edges(all_keys)

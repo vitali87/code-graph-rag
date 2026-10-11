@@ -29,6 +29,7 @@ from codebase_rag.parsers.go_frontend import GoCallSite, GoImplements, GoSemanti
 from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
 from codebase_rag.tests.test_rename_op import _index as _rename_index
 from codebase_rag.tests.test_rename_op import _write
+from codebase_rag.utils import qn_markers
 from evals.cgr_graph import _StatefulIngestor
 
 SHAPES = """package shapes
@@ -1012,7 +1013,11 @@ def test_two_embedded_interfaces_of_one_name_stay_apart_after_an_incremental_run
 
 # --- whose pairs are the compiler's ------------------------------------------
 
+# Put(Celsius) is not Put(int), which the fallback cannot see: Celsius is a
+# name of the package's, and as far as names go it may be `= int`.
 SINK = """package sink
+
+type Celsius float64
 
 type Sink interface {
 \tPut(v int)
@@ -1020,7 +1025,7 @@ type Sink interface {
 
 type Box struct{}
 
-func (b Box) Put(v string) {}
+func (b Box) Put(v Celsius) {}
 """
 
 
@@ -1035,9 +1040,9 @@ def _gotypes_facts(monkeypatch: pytest.MonkeyPatch, facts: GoSemanticFacts) -> N
 def test_a_go_types_run_that_proves_no_pair_adds_no_name_match(
     temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Put(string) is not Put(int). The parameter count matches, so the
-    # name-and-arity fallback would link them; go/types analysed the module
-    # and proved no pair, which is the answer, not a missing one.
+    # Put(Celsius) is not Put(int). The fallback cannot tell, so it would
+    # link them; go/types analysed the module and proved no pair, which is
+    # the answer, not a missing one.
     root = temp_repo / "gosink"
     root.mkdir()
     (root / "go.mod").write_text("module gosink\n\ngo 1.22\n", encoding="utf-8")
@@ -1059,8 +1064,9 @@ def test_a_go_types_run_that_proves_no_pair_adds_no_name_match(
 def test_without_go_types_the_same_arity_is_still_matched(
     temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The fallback's known limit, kept visible: only names and parameter
-    # counts are compared, so the edge is labelled heuristic.
+    # The fallback's known limit, kept visible: a type of the package's own
+    # may be an alias of a predeclared one, so it matches whatever it meets
+    # and the edge is labelled heuristic.
     project = _index(
         temp_repo / "gosink", {"sink.go": SINK}, mock_ingestor, monkeypatch
     )
@@ -1166,22 +1172,24 @@ def test_the_real_go_types_run_proving_no_pair_adds_none(
 
 GUESSED_GETTER = """package app
 
+type Label string
+
 type Getter interface {
 \tGet() int
 }
 
 type Name struct{}
 
-func (n Name) Get() string { return "name" }
+func (n Name) Get() Label { return "name" }
 """
 
 
 def test_a_guessed_override_is_renamed_only_on_opt_in(
     temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Get() string does not implement Get() int; only the names and counts
-    # matched, so the OVERRIDES edge is a guess and renaming Name.Get must
-    # not rewrite Getter.Get without the opt-in, call sites or none.
+    # Get() Label does not implement Get() int; the fallback cannot tell, so
+    # the OVERRIDES edge is a guess and renaming Name.Get must not rewrite
+    # Getter.Get without the opt-in, call sites or none.
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
     _write(temp_repo, "go.mod", "module goguessed\n\ngo 1.22\n")
     _write(temp_repo, "app.go", GUESSED_GETTER)
@@ -1205,7 +1213,7 @@ def test_a_guessed_override_is_renamed_only_on_opt_in(
     )
     assert report.applied, report.message
     text = (temp_repo / "app.go").read_text(encoding="utf-8")
-    assert "\tFetch() int" in text and "func (n Name) Fetch() string" in text
+    assert "\tFetch() int" in text and "func (n Name) Fetch() Label" in text
 
 
 PROVEN_GETTER = """package app
@@ -1469,12 +1477,13 @@ def scoped(
 
 
 def _area_calls(mock_ingestor: MagicMock, caller: str) -> dict[str, str]:
+    # `T.Area@3` is a second declaration of `T.Area`, as a build variant.
     return {
         callee: props[cs.KEY_RESOLUTION]
         for (source, callee), props in _edges(
             mock_ingestor, cs.RelationshipType.CALLS
         ).items()
-        if source == caller and callee.endswith(".Area")
+        if source == caller and qn_markers.natural_qn(callee).endswith(".Area")
     }
 
 
@@ -1982,9 +1991,11 @@ type Square struct{}
 
 func (s Square) Area() float64 { return 1 }
 
+type Celsius float64
+
 type Wrong struct{}
 
-func (w Wrong) Area() int { return 0 }
+func (w Wrong) Area() Celsius { return 0 }
 
 type Mixed struct{}
 
@@ -2045,6 +2056,11 @@ def _resolutions(
 
 
 def _real_gotypes_or_skip(root: Path) -> None:
+    # The build for this OS reads shapes.go alone.
+    _real_gotypes_files_or_skip(root, {"shapes.go"})
+
+
+def _real_gotypes_files_or_skip(root: Path, checked: set[str]) -> None:
     from codebase_rag.parsers.go_frontend import go_frontend_available, run_go_frontend
 
     if shutil.which("go") is None or not go_frontend_available():
@@ -2052,14 +2068,13 @@ def _real_gotypes_or_skip(root: Path) -> None:
     facts = run_go_frontend(root)
     if facts.analysed_modules != (".",):
         pytest.skip("gotypes frontend could not build in this environment")
-    # The build for this OS reads shapes.go alone.
-    assert facts.checked_files == {"shapes.go"}
+    assert facts.checked_files == checked
 
 
 def _recorded_gotypes(monkeypatch: pytest.MonkeyPatch) -> None:
     # What the bundled tool reports for the repository on a build that leaves
     # the other OS's files out: it type-checked shapes.go alone and proved
-    # Square, while Wrong's Area() int is no Area() float64.
+    # Square, while Wrong's Area() Celsius is no Area() float64.
     _gotypes_facts(
         monkeypatch,
         GoSemanticFacts(
@@ -2127,8 +2142,8 @@ def test_a_type_in_a_file_go_types_skipped_keeps_the_name_match(
 def test_without_go_types_every_file_is_matched_by_name(
     temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The tree-sitter path reads no build constraint: every same-named,
-    # same-arity method is a match, Wrong's included.
+    # The tree-sitter path reads no build constraint: every method that may
+    # be Area() float64 is a match, Wrong's Area() Celsius included.
     _index(
         temp_repo / "goskip",
         {"shapes.go": BUILT, **SKIPPED},
@@ -2261,4 +2276,354 @@ def test_go_pairs_read_back_stay_out_of_the_generic_override_walk(
     )
     assert dp._override_walk_implementers() == {
         "proj.Strategy.Strategy": {"proj.Upper.Upper"}
+    }
+
+
+# --- a method each build declares again (PR #3360 review) ---------------------
+
+VARIANT_SHAPE = """package shapes
+
+type Shape interface {
+\tArea() float64
+}
+
+type T struct{}
+
+type U struct{}
+
+type W struct{}
+
+type Celsius float64
+
+type Square struct{}
+
+func (s Square) Area() float64 { return 3 }
+
+func Total(xs []Shape) float64 {
+\tt := 0.0
+\tfor _, s := range xs {
+\t\tt += s.Area()
+\t}
+\treturn t
+}
+
+var _ Shape = T{}
+var _ Shape = Square{}
+"""
+
+# Two mutually exclusive builds, each declaring T.Area and T.Size again; U's
+# Area is a Shape's only on Windows, where it returns a float64. W's is too,
+# but only go/types can tell: Celsius may be any type as far as names go.
+VARIANT_FILES = {
+    "shape.go": VARIANT_SHAPE,
+    "t_windows.go": """package shapes
+
+func (t T) Area() float64 { return 1 }
+
+func (t T) Size() float64 { return 1 }
+
+func (u U) Area() float64 { return 1 }
+
+func (w W) Area() float64 { return 1 }
+""",
+    "t_other.go": """//go:build !windows
+
+package shapes
+
+func (t T) Area() float64 { return 2 }
+
+func (t T) Size() float64 { return 2 }
+
+func (u U) Area() int { return 2 }
+
+func (w W) Area() Celsius { return 2 }
+""",
+}
+
+
+def _method_files(mock_ingestor: MagicMock) -> dict[str, str]:
+    # Method qn -> the file declaring it, which names a variant (`T.Area` or
+    # `T.Area@3`) whichever file the index happened to read first.
+    return {
+        str(c.args[1][cs.KEY_QUALIFIED_NAME]): str(c.args[1].get(cs.KEY_PATH))
+        for c in mock_ingestor.ensure_node_batch.call_args_list
+        if c.args[0] == cs.NodeLabel.METHOD and cs.KEY_QUALIFIED_NAME in c.args[1]
+    }
+
+
+def _declared_in(files: dict[str, str], prefix: str, path: str) -> str:
+    (qn,) = [
+        qn
+        for qn, declared in files.items()
+        if declared == path and qn.split("@")[0] == prefix
+    ]
+    return qn
+
+
+@pytest.fixture
+def variants(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> tuple[str, dict[str, str]]:
+    project = _index(temp_repo / "govar", VARIANT_FILES, mock_ingestor, monkeypatch)
+    pkg = f"{project}.shape"
+    files = _method_files(mock_ingestor)
+    return pkg, {
+        "T.Area/windows": _declared_in(files, f"{pkg}.T.Area", "t_windows.go"),
+        "T.Area/other": _declared_in(files, f"{pkg}.T.Area", "t_other.go"),
+        "U.Area/windows": _declared_in(files, f"{pkg}.U.Area", "t_windows.go"),
+        "U.Area/other": _declared_in(files, f"{pkg}.U.Area", "t_other.go"),
+        "W.Area/windows": _declared_in(files, f"{pkg}.W.Area", "t_windows.go"),
+        "W.Area/other": _declared_in(files, f"{pkg}.W.Area", "t_other.go"),
+        "Square.Area": f"{pkg}.Square.Area",
+    }
+
+
+def test_every_build_variant_of_a_method_overrides_the_interface_method(
+    variants: tuple[str, dict[str, str]], mock_ingestor: MagicMock
+) -> None:
+    pkg, qns = variants
+    overriding = {
+        method
+        for method, base in _edges(mock_ingestor, cs.RelationshipType.OVERRIDES)
+        if base == f"{pkg}.Shape.Area"
+    }
+    # U's Area() int is no Area() float64, and Size is another method.
+    assert overriding == {
+        qns["T.Area/windows"],
+        qns["T.Area/other"],
+        qns["U.Area/windows"],
+        qns["W.Area/windows"],
+        qns["W.Area/other"],
+        qns["Square.Area"],
+    }
+    implements = _edges(mock_ingestor, cs.RelationshipType.IMPLEMENTS)
+    assert {impl for impl, iface in implements if iface == f"{pkg}.Shape"} == {
+        f"{pkg}.T",
+        f"{pkg}.U",
+        f"{pkg}.W",
+        f"{pkg}.Square",
+    }
+
+
+def test_a_call_through_the_interface_reaches_every_build_variant(
+    variants: tuple[str, dict[str, str]], mock_ingestor: MagicMock
+) -> None:
+    pkg, qns = variants
+    calls = _area_calls(mock_ingestor, f"{pkg}.Total")
+    assert calls == {
+        f"{pkg}.Shape.Area": cs.EdgeResolution.EXACT,
+        qns["T.Area/windows"]: cs.EdgeResolution.HEURISTIC,
+        qns["T.Area/other"]: cs.EdgeResolution.HEURISTIC,
+        qns["U.Area/windows"]: cs.EdgeResolution.HEURISTIC,
+        qns["W.Area/windows"]: cs.EdgeResolution.HEURISTIC,
+        qns["W.Area/other"]: cs.EdgeResolution.HEURISTIC,
+        qns["Square.Area"]: cs.EdgeResolution.HEURISTIC,
+    }
+
+
+def _go_build(root: Path, goos: str) -> subprocess.CompletedProcess[str]:
+    go = shutil.which("go")
+    assert go is not None
+    return subprocess.run(
+        [go, "build", "./..."],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "GOOS": goos, "GOARCH": "amd64", "CGO_ENABLED": "0"},
+    )
+
+
+def test_renaming_the_interface_method_renames_every_build_variant(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Renaming Shape.Area rewrote one of T's two Area declarations: the build
+    # holding the other no longer compiled (`T does not implement Shape`)
+    # while the rename reported success.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    _write(temp_repo, "go.mod", "module govar\n\ngo 1.22\n")
+    for rel, text in VARIANT_FILES.items():
+        _write(temp_repo, rel, text)
+    graph = _rename_index(temp_repo, mock_ingestor)
+    report = rename(
+        temp_repo,
+        graph.fetch_all,
+        graph.project,
+        f"{graph.project}.shape.Shape.Area",
+        "Measure",
+        allow_heuristic=True,
+    )
+    assert report.applied, report.message
+    windows = (temp_repo / "t_windows.go").read_text(encoding="utf-8")
+    other = (temp_repo / "t_other.go").read_text(encoding="utf-8")
+    assert "func (t T) Measure() float64" in windows
+    assert "func (t T) Measure() float64" in other
+    assert "func (u U) Measure() float64" in windows
+    assert "func (w W) Measure() float64" in windows
+    assert "func (w W) Measure() Celsius" in other
+    # Not U's Area() int, nor either Size.
+    assert "func (u U) Area() int" in other
+    assert "func (t T) Size() float64" in windows
+    assert "func (t T) Size() float64" in other
+    if shutil.which("go") is not None:
+        for goos in ("linux", "windows"):
+            built = _go_build(temp_repo, goos)
+            assert built.returncode == 0, (goos, built.stderr)
+
+
+def test_a_single_declaration_overrides_once(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _index(
+        temp_repo / "gosingle", {"shapes.go": SHAPES}, mock_ingestor, monkeypatch
+    )
+    pkg = f"{project}.shapes"
+    overriding = sorted(
+        method
+        for method, base in _edges(mock_ingestor, cs.RelationshipType.OVERRIDES)
+        if base == f"{pkg}.Shape.Area"
+    )
+    assert overriding == [f"{pkg}.Circle.Area", f"{pkg}.Square.Area"]
+
+
+@pytest.mark.parametrize(
+    "sync", ["fresh", "reused", "reingest-fresh", "reingest-reused"]
+)
+@pytest.mark.parametrize("touched", ["t_windows.go", "t_other.go", "shape.go"])
+def test_a_sync_reparsing_one_build_file_matches_a_clean_index(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch, touched: str, sync: str
+) -> None:
+    # T's methods hang off T in shape.go while two other files declare them.
+    # A sync that re-parsed shape.go, the dependent of either, deleted the
+    # methods of the file it did not re-parse; one that re-parsed a method's
+    # file alone filed its methods under a second name.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+
+    def repo(root: Path) -> Path:
+        root.mkdir()
+        (root / "go.mod").write_text("module proj\n\ngo 1.22\n", encoding="utf-8")
+        for rel, text in VARIANT_FILES.items():
+            (root / rel).write_text(text, encoding="utf-8")
+        return root
+
+    root = repo(temp_repo / "synced")
+    store = _StatefulIngestor()
+    first = _go_updater(store, root)
+    first.run(force=True)
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
+    path = root / touched
+    path.write_text(path.read_text(encoding="utf-8") + "// synced\n")
+    os.utime(path, (cache_mtime + 1, cache_mtime + 1))
+    updater = first if sync.endswith("reused") else _go_updater(store, root)
+    if sync.startswith("reingest"):
+        updater.reingest([touched])
+    else:
+        updater.run(force=False)
+
+    clean_root = repo(temp_repo / "clean")
+    (clean_root / touched).write_text(
+        path.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    clean = _StatefulIngestor()
+    _go_updater(clean, clean_root).run(force=True)
+    assert _interface_edges(store) == _interface_edges(clean)
+
+
+def _recorded_variant_gotypes(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The bundled tool's answer on Linux: it read shape.go and t_other.go,
+    # and proved Square and T (Area() float64 there), never U (Area() int).
+    shape_at = _position(VARIANT_SHAPE, "Shape interface")
+    _gotypes_facts(
+        monkeypatch,
+        GoSemanticFacts(
+            call_sites={},
+            external_sites=set(),
+            implements=[
+                GoImplements(
+                    "shape.go",
+                    *_position(VARIANT_SHAPE, f"{name} struct"),
+                    "shape.go",
+                    *shape_at,
+                )
+                for name in ("T", "Square")
+            ],
+            analysed_modules=(".",),
+            checked_files=frozenset({"shape.go", "t_other.go"}),
+        ),
+    )
+
+
+@pytest.mark.parametrize("facts", ["real", "recorded"])
+def test_go_types_leaves_a_build_it_did_not_read_to_the_name_match(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    facts: str,
+) -> None:
+    # go/types read the Linux build only and proved T there: T implements
+    # Shape for certain, and its Linux Area overrides Shape.Area, while its
+    # Windows Area is matched by name. U's Windows Area, the only Area U has
+    # that is a Shape's, keeps U matched by name, and so does W's: go/types
+    # read W's Linux Area() Celsius and proved nothing, which says nothing
+    # of the Windows build.
+    root = temp_repo / "govar"
+    root.mkdir()
+    (root / "go.mod").write_text("module govar\n\ngo 1.22\n", encoding="utf-8")
+    for rel, text in VARIANT_FILES.items():
+        (root / rel).write_text(text, encoding="utf-8")
+    if facts == "real":
+        if sys.platform == "win32":
+            pytest.skip("the Windows build reads the other files")
+        _real_gotypes_files_or_skip(root, {"shape.go", "t_other.go"})
+        monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
+    else:
+        _recorded_variant_gotypes(monkeypatch)
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="go")
+    pkg = "govar.shape"
+    implements = {
+        impl: props.get(cs.KEY_RESOLUTION)
+        for (impl, iface), props in _edges(
+            mock_ingestor, cs.RelationshipType.IMPLEMENTS
+        ).items()
+        if iface == f"{pkg}.Shape"
+    }
+    assert implements == {
+        f"{pkg}.Square": None,
+        f"{pkg}.T": None,
+        f"{pkg}.U": cs.EdgeResolution.HEURISTIC,
+        f"{pkg}.W": cs.EdgeResolution.HEURISTIC,
+    }
+    files = _method_files(mock_ingestor)
+    t_windows = _declared_in(files, f"{pkg}.T.Area", "t_windows.go")
+    t_other = _declared_in(files, f"{pkg}.T.Area", "t_other.go")
+    u_windows = _declared_in(files, f"{pkg}.U.Area", "t_windows.go")
+    w_both = {
+        _declared_in(files, f"{pkg}.W.Area", path): "heuristic"
+        for path in ("t_windows.go", "t_other.go")
+    }
+    overrides = {
+        method: props.get(cs.KEY_RESOLUTION)
+        for (method, base), props in _edges(
+            mock_ingestor, cs.RelationshipType.OVERRIDES
+        ).items()
+        if base == f"{pkg}.Shape.Area"
+    }
+    assert overrides == {
+        f"{pkg}.Square.Area": None,
+        t_other: None,
+        t_windows: "heuristic",
+        u_windows: "heuristic",
+        **w_both,
+    }
+    calls = {
+        callee: str(resolution)
+        for callee, resolution in _area_calls(mock_ingestor, f"{pkg}.Total").items()
+    }
+    assert calls == {
+        f"{pkg}.Shape.Area": "exact",
+        f"{pkg}.Square.Area": "overload",
+        t_other: "overload",
+        t_windows: "heuristic",
+        u_windows: "heuristic",
+        **w_both,
     }

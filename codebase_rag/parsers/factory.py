@@ -226,5 +226,7 @@ class ProcessorFactory:
                     self.definition_processor.rehydrated_interface_implementers
                 ),
                 guessed_implementations=self.definition_processor.go_guessed_pairs,
+                go_methods=self.definition_processor.go_methods,
+                go_checked_files=self.definition_processor.go_checked_files,
             )
         return self._call_processor

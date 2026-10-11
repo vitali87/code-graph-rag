@@ -15,7 +15,9 @@ from ..language_spec import get_language_for_extension
 from ..types_defs import CppOperatorSignature, FunctionRegistryTrieProtocol, NodeType
 from ..utils import qn_markers
 from .cpp import utils as cpp_utils
+from .go import interfaces as go_ifaces
 from .go import utils as go_utils
+from .go.interfaces import GoMethodSpec
 from .import_processor import ImportProcessor
 from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
@@ -282,6 +284,8 @@ class CallResolver:
         "interface_implementers",
         "rehydrated_interface_implementers",
         "guessed_implementations",
+        "go_methods",
+        "go_checked_files",
         "_interface_impl_cache",
         "_simple_resolution_cache",
         "last_resolution",
@@ -320,6 +324,8 @@ class CallResolver:
         rehydrated_interface_implementers: dict[str, set[str]] | None = None,
         go_package_names: Mapping[str, str] | None = None,
         guessed_implementations: set[tuple[str, str]] | None = None,
+        go_methods: Mapping[str, GoMethodSpec] | None = None,
+        go_checked_files: set[str] | None = None,
     ) -> None:
         self.function_registry = function_registry
         self.import_processor = import_processor
@@ -367,6 +373,14 @@ class CallResolver:
         # reaches is a guess.
         self.guessed_implementations = (
             guessed_implementations if guessed_implementations is not None else set()
+        )
+        # Each Go method's signature (shared ref, #2483), which tells the
+        # build variants of an implementation that can be one apart.
+        self.go_methods = go_methods if go_methods is not None else {}
+        # The files the go/types frontend type-checked (shared ref): a pair it
+        # proved holds for the build they make up, not for another's files.
+        self.go_checked_files = (
+            go_checked_files if go_checked_files is not None else set()
         )
         self._interface_impl_cache: dict[str, str] | None = None
         # C++ typedef/using alias -> underlying bare type, consulted when a
@@ -1772,6 +1786,25 @@ class CallResolver:
                 guessed = (class_qn, implementer) in self.guessed_implementations
                 targets[result] = targets.get(result, True) and guessed
         return targets
+
+    def go_declaration_satisfies(
+        self, method_qn: str, interface_method_qn: str
+    ) -> bool:
+        # A build that declares the method again declares its own copy
+        # (`T.M@5`), and one whose signature cannot be the interface
+        # method's never runs for a call through the interface: in that
+        # build the type is no implementer.
+        have = self.go_methods.get(method_qn)
+        want = self.go_methods.get(interface_method_qn)
+        return (
+            have is None
+            or want is None
+            or go_ifaces.compatible(have.signature, want.signature)
+        )
+
+    def go_declaration_read(self, method_qn: str) -> bool:
+        spec = self.go_methods.get(method_qn)
+        return spec is None or spec.file in self.go_checked_files
 
     def _redirect_protocol_method(
         self, result: tuple[str, str] | None

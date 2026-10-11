@@ -1297,7 +1297,7 @@ class FunctionIngestMixin:
                 )
                 rel_file = go_utils.rel_file(entry.file_path, self.repo_path)
                 self.go_methods[method_qn] = go_interfaces.GoMethodSpec(
-                    go_interfaces.parameter_count(entry.method_node),
+                    go_interfaces.signature(entry.method_node),
                     go_utils.package_key(
                         rel_file, self.go_package_names.get(entry.module_qn)
                     ),

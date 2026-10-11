@@ -1417,6 +1417,8 @@ CYPHER_ALL_FUNCTION_LOCATIONS = (
     "f.start_col AS start_col, f.name_start_line AS name_start_line, "
     "f.name_start_col AS name_start_col"
 )
+# `path` is the method's own file: a Go method can sit in another file than
+# its receiver type, whose Module is the one DEFINES reaches (issue #2483).
 CYPHER_ALL_METHOD_LOCATIONS = (
     "MATCH (m:Module)-[:DEFINES]->(c)-[:DEFINES_METHOD]->(f:Method) "
     "WHERE m.qualified_name STARTS WITH $project_prefix "
@@ -1424,7 +1426,7 @@ CYPHER_ALL_METHOD_LOCATIONS = (
     "c.qualified_name AS container_qn, "
     "m.qualified_name AS module_qn, f.start_line AS start_line, "
     "f.start_col AS start_col, f.name_start_line AS name_start_line, "
-    "f.name_start_col AS name_start_col"
+    "f.name_start_col AS name_start_col, f.path AS path"
 )
 KEY_CHILD_QN = "child_qn"
 KEY_BASE_QN = "base_qn"

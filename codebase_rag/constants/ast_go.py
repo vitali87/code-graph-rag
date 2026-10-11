@@ -122,12 +122,42 @@ TS_GO_TYPE_PARAMETER_DECLARATION = "type_parameter_declaration"
 FIELD_GO_TYPE_ARGUMENTS = "type_arguments"
 TS_GO_TYPE_ELEM = "type_elem"
 # The predeclared interfaces an interface can embed and the methods they add
-# (issue #2483): `any` adds none, `error` adds `Error()`. Any other embedded
-# name must resolve to a first-party interface for the method set to be known.
-GO_BUILTIN_INTERFACE_METHODS: dict[str, tuple[tuple[str, int], ...]] = {
+# (issue #2483), as (name, parameter types, result): `any` adds none, `error`
+# adds `Error() string`. Any other embedded name must resolve to a
+# first-party interface for the method set to be known.
+GO_BUILTIN_INTERFACE_METHODS: dict[
+    str, tuple[tuple[str, tuple[str, ...], str], ...]
+] = {
     "any": (),
-    "error": (("Error", 0),),
+    "error": (("Error", (), "string"),),
 }
+# The predeclared types: a name of one is that type in every package, so a
+# method spelling another one in the same place has another signature. The
+# aliases among them name the type they stand for.
+GO_PREDECLARED_TYPES = frozenset(
+    {
+        "any",
+        "bool",
+        "complex64",
+        "complex128",
+        "error",
+        "float32",
+        "float64",
+        "int",
+        "int8",
+        "int16",
+        "int32",
+        "int64",
+        "string",
+        "uint",
+        "uint8",
+        "uint16",
+        "uint32",
+        "uint64",
+        "uintptr",
+    }
+)
+GO_PREDECLARED_ALIASES = {"byte": "uint8", "rune": "int32"}
 # Statements that bind the identifiers in their `left` list (`a, b := ...`,
 # `for k, v := range m`, a select arm's `case v := <-ch`), the declarations
 # whose specs bind names, and a `for` clause's `initializer` (`for i := ...`):

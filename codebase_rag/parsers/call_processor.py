@@ -54,6 +54,7 @@ from .field_nodes import declared_fields
 from .flow_access import FlowProcessor
 from .go import type_inference as go_ti
 from .go import utils as go_utils
+from .go.interfaces import GoMethodSpec
 from .import_processor import ImportProcessor
 from .io_access import IOAccessProcessor
 from .java import type_inference as java_ti
@@ -1859,6 +1860,8 @@ class CallProcessor:
         declared_module_qns: set[str] | None = None,
         rehydrated_interface_implementers: dict[str, set[str]] | None = None,
         guessed_implementations: set[tuple[str, str]] | None = None,
+        go_methods: Mapping[str, GoMethodSpec] | None = None,
+        go_checked_files: set[str] | None = None,
     ) -> None:
         self.ingestor = ingestor
         # The tree-sitter node whose span every edge emitted right now records
@@ -1925,6 +1928,8 @@ class CallProcessor:
             rehydrated_interface_implementers=rehydrated_interface_implementers,
             go_package_names=self._go_package_names,
             guessed_implementations=guessed_implementations,
+            go_methods=go_methods,
+            go_checked_files=go_checked_files,
         )
         # Inter-procedural callable-parameter flow: ordered params per function and
         # the per-call-site argument bindings, resolved to a fixpoint in finalize.
@@ -7397,12 +7402,20 @@ class CallProcessor:
         if self._resolution == cs.EdgeResolution.HEURISTIC:
             return
         registry = self._resolver.function_registry
+        # Each declaration a build makes again is a target of its own, and
+        # one go/types did not read is matched by name even for a pair it
+        # proved for the build it read.
         edges = [
-            (target_type, variant, guessed)
+            (
+                target_type,
+                variant,
+                guessed or not self._resolver.go_declaration_read(variant),
+            )
             for (target_type, target_qn), guessed in sorted(
                 self._resolver.interface_dispatch_targets(callee_qn).items()
             )
             for variant in registry.variants(target_qn)
+            if self._resolver.go_declaration_satisfies(variant, callee_qn)
         ]
         prev_resolution = self._resolution
         proven = cs.EdgeResolution.OVERLOAD if len(edges) > 1 else prev_resolution

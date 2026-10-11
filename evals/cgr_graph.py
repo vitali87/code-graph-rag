@@ -1974,6 +1974,7 @@ class _StatefulIngestor:
                 }
                 if container_qn is not None:
                     row[cs.KEY_CONTAINER_QN] = _text(container_qn)
+                    row[cs.KEY_PATH] = _text(props.get(cs.KEY_PATH))
                 rows.append(row)
         return rows
 

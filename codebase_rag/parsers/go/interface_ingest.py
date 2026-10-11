@@ -53,12 +53,24 @@ _GO_METHOD_OWNER_TYPES = _GO_IMPLEMENTER_TYPES | {NodeType.INTERFACE}
 
 class _GoMethodOwners(NamedTuple):
     """Each method owner's method set, the package declaring it (a method is
-    declared in its receiver type's package), and the files declaring each
-    of its methods."""
+    declared in its receiver type's package), and every declaration of each
+    of its methods: one per build that declares it again (`T.M` in
+    `t_windows.go`, `T.M@5` in `t_linux.go`)."""
 
     method_sets: dict[str, go_ifaces.GoMethodSet]
     packages: dict[str, str]
-    files: dict[str, dict[go_ifaces.GoMethodKey, set[str]]]
+    declarations: dict[str, dict[go_ifaces.GoMethodKey, list[go_ifaces.GoMethodSpec]]]
+
+
+def _satisfying_files(
+    declarations: list[go_ifaces.GoMethodSpec],
+    wanted: tuple[go_ifaces.GoSignature, ...],
+) -> set[str]:
+    return {
+        spec.file
+        for spec in declarations
+        if go_ifaces.satisfies((spec.signature,), wanted)
+    }
 
 
 @dataclass
@@ -67,7 +79,9 @@ class _GoCompilerView:
     files of them they type-checked. A run reads only the files its build
     selects (its GOOS, its tags, no cgo) in packages that type-check, so its
     pairs answer for a type and an interface only where it read the
-    interface and a declaration of every method the interface asks for."""
+    interface and every declaration that may satisfy a method the interface
+    asks for. A method each build declares again was read in one build
+    only, and another build's may satisfy the interface where it did not."""
 
     repo_path: Path
     analysed_roots: frozenset[str]
@@ -81,7 +95,7 @@ class _GoCompilerView:
         method_files: list[set[str]],
     ) -> bool:
         if interface.file not in self.checked_files or not all(
-            self.checked_files.intersection(files) for files in method_files
+            files and files <= self.checked_files for files in method_files
         ):
             return False
         type_root = self._root(type_package)
@@ -169,7 +183,7 @@ class GoInterfaceMixin:
             )
             if method_qn is not None:
                 self.go_methods[method_qn] = go_ifaces.GoMethodSpec(
-                    go_ifaces.parameter_count(method), package, rel_file
+                    go_ifaces.signature(method), package, rel_file
                 )
                 self._register_interface_method_location(
                     module_qn, method, method_qn, interface_qn
@@ -207,12 +221,9 @@ class GoInterfaceMixin:
         """
         embeds = self._resolve_go_embeds()
         owners = self._go_method_sets()
-        linked = self._link_implicit_implementations(
-            embeds,
-            owners,
-            _GoCompilerView(self.repo_path, analysed_roots, checked_files),
-        )
-        self._link_go_overrides(owners.method_sets)
+        compiler = _GoCompilerView(self.repo_path, analysed_roots, checked_files)
+        linked = self._link_implicit_implementations(embeds, owners, compiler)
+        self._link_go_overrides(owners.method_sets, checked_files)
         if linked:
             logger.info(ls.GO_IMPLICIT_IMPLEMENTS_LINKED.format(count=linked))
         return linked
@@ -231,17 +242,26 @@ class GoInterfaceMixin:
         }
 
         def compiler_owned(type_qn: str, interface_qn: str) -> bool:
-            declared = owners.files.get(type_qn, {})
+            declared = owners.declarations.get(type_qn, {})
+            required = interfaces[interface_qn] or {}
             return compiler.owns(
                 owners.packages.get(type_qn),
                 self.go_interfaces[interface_qn],
-                [declared.get(key, set()) for key in interfaces[interface_qn] or {}],
+                [
+                    _satisfying_files(declared.get(key, []), wanted)
+                    for key, wanted in required.items()
+                ],
             )
 
+        # The pairs go/types proved (joined before this) are not guessed
+        # again, whatever other build declares a method again.
         pairs = [
-            pair
-            for pair in go_ifaces.implicit_implementations(interfaces, types)
-            if not compiler_owned(*pair)
+            (type_qn, interface_qn)
+            for type_qn, interface_qn in go_ifaces.implicit_implementations(
+                interfaces, types
+            )
+            if (interface_qn, type_qn) not in self.go_proven_pairs
+            and not compiler_owned(type_qn, interface_qn)
         ]
         for type_qn, interface_qn in pairs:
             create_implements_relationship(
@@ -290,12 +310,17 @@ class GoInterfaceMixin:
             if registry.get(owner) not in _GO_METHOD_OWNER_TYPES:
                 continue
             key = go_ifaces.method_key(qn_markers.strip_dup_marker(name), spec.package)
-            owners.method_sets.setdefault(owner, {})[key] = spec.arity
+            method_set = owners.method_sets.setdefault(owner, {})
+            method_set[key] = (*method_set.get(key, ()), spec.signature)
             owners.packages[owner] = spec.package
-            owners.files.setdefault(owner, {}).setdefault(key, set()).add(spec.file)
+            owners.declarations.setdefault(owner, {}).setdefault(key, []).append(spec)
         return owners
 
-    def _link_go_overrides(self, method_sets: dict[str, go_ifaces.GoMethodSet]) -> None:
+    def _link_go_overrides(
+        self,
+        method_sets: dict[str, go_ifaces.GoMethodSet],
+        checked_files: frozenset[str],
+    ) -> None:
         # The generic override walk links a method to the FIRST interface
         # declaring its name, as Java resolves it. A Go method satisfies every
         # interface its type satisfies, so each one gets its own edge.
@@ -305,14 +330,34 @@ class GoInterfaceMixin:
                 continue
             for type_qn in sorted(implementers):
                 guessed = (interface_qn, type_qn) in self.go_guessed_pairs
-                for _package, name in sorted(
-                    declared.keys() & method_sets.get(type_qn, {})
-                ):
-                    self._emit_go_override(
-                        f"{type_qn}{cs.SEPARATOR_DOT}{name}",
-                        f"{interface_qn}{cs.SEPARATOR_DOT}{name}",
-                        guessed,
+                for key in sorted(declared.keys() & method_sets.get(type_qn, {})):
+                    self._override_declarations(
+                        f"{type_qn}{cs.SEPARATOR_DOT}{key[1]}",
+                        f"{interface_qn}{cs.SEPARATOR_DOT}{key[1]}",
+                        declared[key],
+                        frozenset() if guessed else checked_files,
                     )
+
+    def _override_declarations(
+        self,
+        method_qn: str,
+        interface_method_qn: str,
+        wanted: tuple[go_ifaces.GoSignature, ...],
+        proven_in: frozenset[str],
+    ) -> None:
+        # Each build that declares the method again holds a declaration of
+        # its own (`T.M`, `T.M@5`), and renaming the interface method must
+        # rewrite every one, or the build that holds a missed one no longer
+        # compiles. A declaration whose signature cannot be the interface
+        # method's implements it in no build. `proven_in` holds the files of
+        # the build go/types proved the pair for; a declaration elsewhere is
+        # matched by name, as a guessed pair's all are.
+        for variant in self.function_registry.variants(method_qn):
+            spec = self.go_methods.get(variant)
+            if spec is not None and go_ifaces.satisfies((spec.signature,), wanted):
+                self._emit_go_override(
+                    variant, interface_method_qn, spec.file not in proven_in
+                )
 
     def _emit_go_override(
         self, method_qn: str, interface_method_qn: str, guessed: bool
