@@ -1325,3 +1325,62 @@ def test_the_callers_of_a_method_defined_into_a_reindexed_module_are_reparsed(
     assert "pkg/use.go" in updater._reparsed_file_keys
     clean = _clean(root)
     assert _snapshot(store) == clean, _diff(_snapshot(store), clean)
+
+
+# `make()` hands back a bound method, and which class's method is read off
+# the local it was taken from (the returned-callable reader resolves
+# `r.run` through the body's own `r = A()`). A caller binding and invoking
+# it, `x = make(); x(on_done)`, calls `A.run` and hands it `on_done`; it
+# calls nothing else in `app.py`, so only the fingerprint can send it to a
+# re-parse when `r` starts holding a `B`. When `run` only stores the
+# callback, no flow edge starts in `app.py`, and the fingerprint alone
+# decides.
+RETURNED_METHOD_APP = (
+    "class A:\n    def run(self, cb):\n        cb()\n\n\n"
+    "class B:\n    def run(self, cb):\n        cb()\n\n\n"
+    "def on_done():\n    return 1\n\n\n"
+    "def make():\n    r = A()\n    return r.run\n"
+)
+RETURNED_METHOD: dict[str, str] = {
+    "app.py": RETURNED_METHOD_APP,
+    "user.py": (
+        "from app import make, on_done\n\n\ndef go():\n    x = make()\n    x(on_done)\n"
+    ),
+}
+RETURNED_METHOD_NOT_INVOKING: dict[str, str] = {
+    **RETURNED_METHOD,
+    "app.py": RETURNED_METHOD_APP.replace("        cb()\n", "        return cb\n"),
+}
+RETURNED_FROM_B = _replace("    r = A()\n", "    r = B()\n")
+RETURNED_METHOD_CASES = [RETURNED_METHOD, RETURNED_METHOD_NOT_INVOKING]
+RETURNED_METHOD_IDS = ["callback-invoked", "callback-not-invoked"]
+
+
+@pytest.mark.parametrize("files", RETURNED_METHOD_CASES, ids=RETURNED_METHOD_IDS)
+def test_a_returned_method_read_through_a_local_rebinds_its_callers(
+    temp_repo: Path, files: dict[str, str]
+) -> None:
+    root = temp_repo / PROJECT
+    reparsed, synced = _sync(root, files, {"app.py": RETURNED_FROM_B(files["app.py"])})
+
+    assert "user.py" in reparsed
+    clean = _clean(root)
+    assert "proj.app.B.run" in _calls(clean, "proj.user.go")
+    assert synced == clean, _diff(synced, clean)
+
+
+@pytest.mark.parametrize("files", RETURNED_METHOD_CASES, ids=RETURNED_METHOD_IDS)
+def test_a_scoped_reingest_of_a_returned_method_read_through_a_local(
+    temp_repo: Path, files: dict[str, str]
+) -> None:
+    root = temp_repo / PROJECT
+    _materialise(root, files)
+    store = _StatefulIngestor()
+    _updater(store, root).run(force=True)
+    (root / "app.py").write_text(RETURNED_FROM_B(files["app.py"]), encoding="utf-8")
+
+    report = _updater(store, root).reingest(["app.py"])
+
+    assert "user.py" in report.affected
+    clean = _clean(root)
+    assert _snapshot(store) == clean, _diff(_snapshot(store), clean)

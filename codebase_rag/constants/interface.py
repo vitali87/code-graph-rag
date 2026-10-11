@@ -13,7 +13,6 @@ from .ast_java import (
 )
 from .ast_js import (
     FIELD_FUNCTION,
-    TS_CAST_WRAPPER_TYPES,
     TS_CLASS_BODY,
     TS_JS_ASSIGNMENT_EXPRESSION,
     TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION,
@@ -21,16 +20,13 @@ from .ast_js import (
     TS_JS_FOR_IN_STATEMENT,
     TS_JS_WITH_STATEMENT,
     TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN,
-    TS_SUBSCRIPT_EXPRESSION,
 )
 from .ast_nodes import (
     FIELD_CONSTRUCTOR,
     FIELD_LEFT,
     FIELD_NAME,
-    FIELD_OBJECT,
     FIELD_PARAMETER,
     FIELD_PARAMETERS,
-    FIELD_VALUE,
     JS_TS_FUNCTION_NODES,
     TS_CALL_EXPRESSION,
     TS_CLASS_DECLARATION,
@@ -38,7 +34,6 @@ from .ast_nodes import (
     TS_IDENTIFIER,
     TS_MEMBER_EXPRESSION,
     TS_NEW_EXPRESSION,
-    TS_PARENTHESIZED_EXPRESSION,
     TS_STATEMENT_BLOCK,
     TS_VARIABLE_DECLARATOR,
 )
@@ -56,13 +51,14 @@ from .ast_python import (
     TS_PY_IMPORT_FROM_STATEMENT,
     TS_PY_IMPORT_STATEMENT,
     TS_PY_NONLOCAL_STATEMENT,
+    TS_PY_RETURN_STATEMENT,
     TS_PY_SUBSCRIPT,
     TS_PY_YIELD,
 )
 
 # Hashed first, so a change to the algorithm never compares equal to a
 # fingerprint an older algorithm stored.
-INTERFACE_FINGERPRINT_VERSION = "interface-fingerprint/2"
+INTERFACE_FINGERPRINT_VERSION = "interface-fingerprint/3"
 
 # Tokens the walk feeds the hash besides node types and leaf text. Each is a
 # single byte no grammar uses as a node type, so they cannot be confused
@@ -164,19 +160,9 @@ INTERFACE_FP_NAME_ARGUMENTS = frozenset(
 )
 # The field holding what a call calls (`new X()` holds its constructor).
 INTERFACE_FP_CALLEE_FIELDS = (FIELD_FUNCTION, FIELD_CONSTRUCTOR)
-# The child a name's leftmost name sits under, per expression type: the
-# receiver of a member, the callee of a call, the indexed value.
-INTERFACE_FP_HEAD_FIELDS: dict[str, str] = {
-    TS_PY_ATTRIBUTE: FIELD_OBJECT,
-    TS_MEMBER_EXPRESSION: FIELD_OBJECT,
-    TS_PY_CALL: FIELD_FUNCTION,
-    TS_CALL_EXPRESSION: FIELD_FUNCTION,
-    TS_NEW_EXPRESSION: FIELD_CONSTRUCTOR,
-    TS_PY_SUBSCRIPT: FIELD_VALUE,
-    TS_SUBSCRIPT_EXPRESSION: FIELD_OBJECT,
-}
-# Wrappers a name is read through unchanged.
-INTERFACE_FP_TRANSPARENT = TS_CAST_WRAPPER_TYPES | {TS_PARENTHESIZED_EXPRESSION}
+# The returns whose value a reader resolves: what a returned call calls, or
+# a returned member (a returned name already keeps its body whole).
+INTERFACE_FP_PY_RETURNS = frozenset({TS_PY_RETURN_STATEMENT})
 # The scope a Python call's arguments are resolved in: a lambda's calls are
 # its enclosing def's.
 INTERFACE_FP_PY_CALLER_SCOPE = TS_PY_FUNCTION_DEFINITION

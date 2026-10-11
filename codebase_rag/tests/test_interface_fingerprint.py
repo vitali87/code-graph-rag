@@ -81,6 +81,18 @@ TS_BINDS = """export function setup(): void {
 """
 
 
+# What a body returns, read by return-type inference and the
+# returned-callable reader: off no local, a construction of one (the
+# constructor alone is read), and off a parameter (typed by the signature).
+PY_RETURNS_DIRECT = 'def make():\n    print("direct")\n    return A().run\n'
+PY_RETURNS_BUILT = "def make():\n    data = load()\n    return Response(data)\n"
+PY_RETURNS_PARAM = 'def make(r: A):\n    print("x")\n    return r.run\n'
+PY_RETURNS_LOCAL = "def make():\n    r = A()\n    return r.run\n"
+TS_RETURNS_LOCAL = (
+    "export function make() {\n  const r = new A();\n  return r.run;\n}\n"
+)
+
+
 def _fingerprint(language: cs.SupportedLanguage, source: str) -> str | None:
     _parsers, queries = load_parsers()
     parser = queries[language][cs.KEY_PARSER]
@@ -125,6 +137,9 @@ def _same(language: cs.SupportedLanguage, before: str, after: str) -> bool:
         (PY, PY_BINDS, PY_BINDS.replace("    total =", "    # note\n    total =")),
         (TS, TS_BINDS, TS_BINDS.replace("'ready'", "'set up'")),
         (TS, TS_BINDS, TS_BINDS.replace("const label = 'x'", "let label = 'y'")),
+        (PY, PY_RETURNS_DIRECT, PY_RETURNS_DIRECT.replace('"direct"', '"made"')),
+        (PY, PY_RETURNS_BUILT, PY_RETURNS_BUILT.replace("load()", "fetch()")),
+        (PY, PY_RETURNS_PARAM, PY_RETURNS_PARAM.replace('"x"', '"y"')),
     ],
     ids=[
         "py-trailing-comment",
@@ -145,6 +160,9 @@ def _same(language: cs.SupportedLanguage, before: str, after: str) -> bool:
         "py-binding-body-comment-outside-arguments",
         "ts-binding-body-log-string",
         "ts-binding-body-local-argument-value",
+        "py-returned-method-off-no-local",
+        "py-returned-construction-of-a-local",
+        "py-returned-method-of-a-parameter",
     ],
 )
 def test_an_edit_no_caller_reads_keeps_the_fingerprint(
@@ -432,6 +450,38 @@ CHANGED: list[tuple[str, cs.SupportedLanguage, str, str]] = [
         "  const host = { [kImpl]: impl };\n}\n",
         "export function install(): void {\n  const impl = new Other();\n"
         "  const host = { [kImpl]: impl };\n}\n",
+    ),
+    # A returned or called member of a local is typed by the local's
+    # binding, which the body alone holds.
+    (
+        "py-returned-method-of-a-local",
+        PY,
+        PY_RETURNS_LOCAL,
+        PY_RETURNS_LOCAL.replace("A()", "B()"),
+    ),
+    (
+        "py-returned-call-on-a-local",
+        PY,
+        PY_RETURNS_LOCAL.replace("r.run", "r.build()"),
+        PY_RETURNS_LOCAL.replace("r.run", "r.build()").replace("A()", "B()"),
+    ),
+    (
+        "py-callee-indexed-by-a-local",
+        PY,
+        "def go():\n    k = 'x'\n    handlers[k].run(a)\n",
+        "def go():\n    k = 'y'\n    handlers[k].run(a)\n",
+    ),
+    (
+        "ts-returned-method-of-a-local",
+        TS,
+        TS_RETURNS_LOCAL,
+        TS_RETURNS_LOCAL.replace("new A()", "new B()"),
+    ),
+    (
+        "ts-returned-bound-method-of-a-local",
+        TS,
+        TS_RETURNS_LOCAL.replace("r.run;", "r.run.bind(r);"),
+        TS_RETURNS_LOCAL.replace("r.run;", "r.run.bind(r);").replace("A()", "B()"),
     ),
 ]
 
