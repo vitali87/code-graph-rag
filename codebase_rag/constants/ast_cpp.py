@@ -2,7 +2,12 @@
 
 from enum import StrEnum
 
-from .ast_nodes import TS_ENUM_SPECIFIER, TS_STRUCT_SPECIFIER, TS_UNION_SPECIFIER
+from .ast_nodes import (
+    TS_ENUM_SPECIFIER,
+    TS_STRUCT_SPECIFIER,
+    TS_TEMPLATE_ARGUMENT_LIST,
+    TS_UNION_SPECIFIER,
+)
 
 
 class CppNodeType(StrEnum):
@@ -163,6 +168,16 @@ C_FORWARD_DECLARING_NODE_TYPES = frozenset(
     {CppNodeType.DECLARATION, CppNodeType.FIELD_DECLARATION}
 )
 
+# A `.` inside a specialization's template arguments (`decltype(x.data())`,
+# a pack expansion `Ts...`) is not a qualified-name separator, yet every
+# consumer splits qns on `.` (issue #2434). It is written as U+2024 ONE DOT
+# LEADER, the glyph `sql_names` uses for a dot inside a quoted identifier, so
+# the name still reads as a dot. A C++ identifier cannot contain it.
+CPP_TEMPLATE_ARG_DOT = "\u2024"
+# How a U+2024 already inside a literal argument is written, so the two
+# never collide (review of PR 3356).
+CPP_TEMPLATE_ARG_DOT_ESCAPE = "\\u2024"
+
 CPP_FALLBACK_OPERATOR = "operator_unknown"
 CPP_FALLBACK_DESTRUCTOR = "~destructor"
 CPP_OPERATOR_TEXT_PREFIX = "operator"
@@ -276,6 +291,45 @@ FIELD_MACRO = "macro"
 # `compound_statement` is the block scope; `declaration` holds init_declarator
 # locals whose bound name is nested under the `declarator` field.
 TS_CPP_STRING_LITERAL = "string_literal"
+TS_CPP_RAW_STRING_LITERAL = "raw_string_literal"
+TS_CPP_CHAR_LITERAL = "char_literal"
+# A literal template argument (a C++20 fixed string, a character) is one value
+# whose spaces belong to it: `Box<"a b">` and `Box<"a  b">` are two
+# specializations, so a name renders the literal whole (review of PR 3356).
+CPP_LITERAL_ARGUMENT_TYPES = frozenset(
+    {TS_CPP_STRING_LITERAL, TS_CPP_RAW_STRING_LITERAL, TS_CPP_CHAR_LITERAL}
+)
+# A raw literal's line break or tab, written as its escape, keeps the name on
+# one line.
+CPP_LITERAL_LINE_ESCAPES = {"\n": "\\n", "\r": "\\r", "\t": "\\t"}
+CPP_LITERAL_BACKSLASH = "\\"
+# A CRLF source line ending, which translation phase 1 reads as one new-line.
+CPP_SOURCE_CRLF = "\r\n"
+CPP_SOURCE_NEWLINE = "\n"
+CPP_LITERAL_ESCAPED_BACKSLASH = "\\\\"
+# Every C++ punctuator longer than one character (digraphs and C++26's
+# reflection `^^` included) and the two comment openers. Where the end of one
+# token and the start of the next spell one of these, or begin one, writing
+# them together lexes differently (maximal munch): `a + ++b` would read
+# `a+++b`, which is `a++ + b`. A specialization's rendered name keeps a space
+# there (review of PR 3356).
+CPP_MULTI_CHAR_PUNCTUATORS = frozenset(
+    "<: :> <% %> %: %:%: ... :: .* -> ->* ++ -- += -= *= /= %= ^= &= |= "
+    "== != <= >= <=> && || << >> <<= >>= ## ^^ /* //".split()
+)
+# Only a template list's own `<` and `>` are exempt: two closers written
+# together (`A<B<C>>`) still close two lists, and an opener before a leading
+# `::` (`A<::T>`) is not the digraph `<:` ([temp.names], [lex.pptoken]).
+CPP_TEMPLATE_LIST_TYPES = frozenset(
+    {TS_TEMPLATE_ARGUMENT_LIST, TS_CPP_TEMPLATE_PARAMETER_LIST}
+)
+CPP_TEMPLATE_LIST_DELIMITERS = frozenset({"<", ">"})
+# A number ending in an exponent letter (`0x1E`, or `1_E` whose suffix is a
+# token of its own) runs on into a following sign as one preprocessing
+# number: `0x1E+1`. A string's suffix matches too, and only gains a space.
+CPP_PP_NUMBER_TOKEN_TYPES = frozenset({"number_literal", "literal_suffix"})
+CPP_PP_NUMBER_EXPONENTS = frozenset("eEpP")
+CPP_PP_NUMBER_SIGNS = frozenset("+-")
 TS_CPP_STRING_CONTENT = "string_content"
 TS_CPP_COMPOUND_STATEMENT = "compound_statement"
 # `if (int x = 1)` / `switch (int q = f())`: the condition declaration nests

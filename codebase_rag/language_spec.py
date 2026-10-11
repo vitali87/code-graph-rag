@@ -215,7 +215,11 @@ def _cpp_get_name(node: Node) -> str | None:
     if node.type in cs.CPP_NAME_NODE_TYPES:
         name_node = node.child_by_field_name(cs.FIELD_NAME)
         if name_node and name_node.text:
-            return decode_node_text(name_node.text)
+            # A specialization's `Box<T, int>` is rendered from its tokens,
+            # so it stays one line and free of `.` (issue #2434).
+            from .parsers.cpp import utils as cpp_utils
+
+            return cpp_utils.type_name_text(name_node)
     elif node.type == cs.TS_CPP_FUNCTION_DEFINITION:
         declarator = node.child_by_field_name(cs.FIELD_DECLARATOR)
         if declarator and declarator.type == cs.TS_CPP_FUNCTION_DECLARATOR:
