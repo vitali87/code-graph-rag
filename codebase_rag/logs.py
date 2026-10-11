@@ -114,6 +114,14 @@ GO_FRONTEND_IMPLEMENTS_JOINED = (
 GO_FRONTEND_BUILD_FAILED = (
     "Go frontend tool failed to build; using tree-sitter.\nstderr: {stderr}"
 )
+GO_FRONTEND_TOOLCHAIN_TOO_OLD = (
+    "go/types frontend needs Go >= {required} (found {found}); using tree-sitter for Go"
+)
+GO_FRONTEND_BUILD_FAILED_EARLIER = (
+    "Go frontend tool failed to build with {version} on an earlier sync; using "
+    "tree-sitter. It is retried in {minutes} min, or sooner when Go or the "
+    "helper changes or {marker} is deleted"
+)
 GO_FRONTEND_PARSE_FAILED = (
     "Go frontend produced no parseable JSON; using tree-sitter.\n"
     "stdout: {stdout}\nstderr: {stderr}"
@@ -738,6 +746,7 @@ CALL_SAME_MODULE = "Same-module resolution: {call_name} -> {qn}"
 CALL_LUA_TABLE_MEMBER = "Lua table-member resolution: {call_name} -> {qn}"
 CALL_TRIE_FALLBACK = "Trie-based fallback resolution: {call_name} -> {qn}"
 CALL_PACKAGE_MEMBER = "Package-member resolved call: {member} -> {qn}"
+CALL_GO_SAME_PACKAGE = "Go same-package resolution: {call_name} -> {qn}"
 CALL_UNRESOLVED = "Could not resolve call: {call_name}"
 CALL_RUST_OWNER_UNRESOLVED = (
     "No method of the type a Rust call names matches: {call_name}"
