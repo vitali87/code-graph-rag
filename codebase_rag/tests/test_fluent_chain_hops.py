@@ -696,10 +696,31 @@ export function makeA(x: any): A { return new A(); }
 
 export async function makeAsync() { return new A(); }
 export const makeArrowAsync = async () => new A();
+
+export class P { finish(): number { return 1; } }
+export class Q { done(): number { return 2; } }
+
+// A static and an instance method may share a name; each has its own
+// overload set. D declares the static one first, E the instance one.
+export class D {
+  static make(s: string): P;
+  static make(n: number): P;
+  static make(x: any): P { return new P(); }
+  make(s: string): Q;
+  make(x: any): Q { return new Q(); }
+}
+
+export class E {
+  build(s: string): Q;
+  build(x: any): Q { return new Q(); }
+  static build(s: string): P;
+  static build(n: number): Q;
+  static build(x: any): any { return new P(); }
+}
 """
 
 _TS_OVERLOAD_USE = """\
-import { C, make, makeA, makeAsync, makeArrowAsync } from './over';
+import { C, D, E, make, makeA, makeAsync, makeArrowAsync } from './over';
 
 export function pickUnion(): number { return new C().pick(1).finish(); }
 export function pickWide(): number { return new C().wide(1).finish(); }
@@ -712,6 +733,11 @@ export function asyncThis(): number { return new C().plainAsync().done(); }
 export function asyncNew(): number { return new C().buildAsync().finish(); }
 export function asyncFn(): number { return makeAsync().finish(); }
 export function asyncArrow(): number { return makeArrowAsync().finish(); }
+export function staticAgree(): number { return D.make("x").finish(); }
+export function instanceBesideStatic(): number { return new D().make("x").done(); }
+export function instanceFirst(): number { return new E().build("x").done(); }
+export function staticDisagreeP(): number { return E.build("x").finish(); }
+export function staticDisagreeQ(): number { return E.build("x").done(); }
 """
 
 
@@ -753,6 +779,35 @@ def test_ts_overloads_that_agree_still_chain(
     ts_overload_edges: dict[tuple[str, str], str | None], fn: str, expected: str
 ) -> None:
     assert _over_use(ts_overload_edges, fn).get(expected) == _EXACT
+
+
+@pytest.mark.parametrize(
+    ("fn", "expected"),
+    [
+        ("staticAgree", "tsover.over.P.finish"),
+        ("instanceBesideStatic", "tsover.over.Q.done"),
+        ("instanceFirst", "tsover.over.Q.done"),
+    ],
+)
+def test_ts_static_and_instance_overloads_are_separate_sets(
+    ts_overload_edges: dict[tuple[str, str], str | None], fn: str, expected: str
+) -> None:
+    # `D.make` reaches the static set, `new D().make` the instance one; mixed
+    # into one set they disagreed and typed nothing, or the static body typed
+    # an instance call.
+    callees = _over_use(ts_overload_edges, fn)
+    assert callees.get(expected) == _EXACT
+    assert {c for c in callees if c.endswith((".finish", ".done"))} == {expected}
+
+
+@pytest.mark.parametrize("fn", ["staticDisagreeP", "staticDisagreeQ"])
+def test_ts_static_overloads_that_disagree_type_no_hop(
+    ts_overload_edges: dict[tuple[str, str], str | None], fn: str
+) -> None:
+    # E's static set says P for a string and Q for a number; the instance set
+    # beside it agreeing on Q does not decide the static call.
+    callees = _over_use(ts_overload_edges, fn)
+    assert not {c for c in callees if c.endswith((".finish", ".done"))}
 
 
 @pytest.mark.parametrize("fn", ["asyncThis", "asyncNew", "asyncFn", "asyncArrow"])

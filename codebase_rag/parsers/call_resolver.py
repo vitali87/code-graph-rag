@@ -389,7 +389,7 @@ class CallResolver:
         self._php_cased_index: _PhpCasedIndex | None = None
         # {JS/TS callable qn: the class a call to it returns}, read off its
         # declaration on first use (issue #2468).
-        self._js_return_class_cache: dict[str, str | None] = {}
+        self._js_return_class_cache: dict[tuple[str, bool], str | None] = {}
         # {definition qn: recorded file path} for definitions an incremental
         # run rehydrated from the graph instead of re-parsing (shared ref).
         self.rehydrated_definition_paths = (
@@ -5850,18 +5850,25 @@ class CallResolver:
         return current_type
 
     def _hop_return_type(
-        self, callable_qn: str, language: cs.SupportedLanguage | None
+        self,
+        callable_qn: str,
+        language: cs.SupportedLanguage | None,
+        static: bool = False,
     ) -> str | None:
         # The type a call to `callable_qn` hands the next hop. Most languages
         # record it as they ingest; a JS/TS return is read off the callee's
-        # declaration on demand (issue #2468).
+        # declaration on demand (issue #2468). A hop's receiver is an
+        # instance, so it reaches the instance member unless told otherwise.
         recorded = self.type_inference.method_return_types.get(callable_qn)
         if recorded is None and language in cs.JS_TS_LANGUAGES:
-            return self._js_return_class(callable_qn)
+            return self._js_return_class(callable_qn, static)
         return recorded
 
     def _callee_return_type(
-        self, callee_qn: str, language: cs.SupportedLanguage | None
+        self,
+        callee_qn: str,
+        language: cs.SupportedLanguage | None,
+        static: bool = False,
     ) -> str | None:
         # Read right after the callee resolved. A JS/TS callee bound only by
         # name is a guess, and typing the rest of the chain from its return
@@ -5871,15 +5878,16 @@ class CallResolver:
             and self.last_resolution != cs.EdgeResolution.EXACT
         ):
             return None
-        return self._hop_return_type(callee_qn, language)
+        return self._hop_return_type(callee_qn, language, static)
 
-    def _js_return_class(self, callable_qn: str) -> str | None:
+    def _js_return_class(self, callable_qn: str, static: bool) -> str | None:
         # Only a class registered under the qn the declaring module resolved
         # counts: a name that module could not place is not looked up again
         # from the caller, where a same-named class may answer.
-        if callable_qn in self._js_return_class_cache:
-            return self._js_return_class_cache[callable_qn]
-        returned = self.type_inference.js_callable_return_type(callable_qn)
+        key = (callable_qn, static)
+        if key in self._js_return_class_cache:
+            return self._js_return_class_cache[key]
+        returned = self.type_inference.js_callable_return_type(callable_qn, static)
         class_qn = (
             self._follow_reexports(returned)
             if returned and cs.SEPARATOR_DOT in returned
@@ -5889,7 +5897,7 @@ class CallResolver:
             NodeType.CLASS
         ):
             class_qn = None
-        self._js_return_class_cache[callable_qn] = class_qn
+        self._js_return_class_cache[key] = class_qn
         return class_qn
 
     def _fold_js_call_hop(
@@ -5924,7 +5932,15 @@ class CallResolver:
             language,
             call_point,
         )
-        returned = self._callee_return_type(resolved[1], language) if resolved else None
+        if resolved is None:
+            return None
+        # `D.make()` names the class, so it reaches D's static `make`; any
+        # other base (`this`, a value) reaches the instance one.
+        static = (
+            self._chain_class_qn(base, module_qn)
+            == resolved[1].rsplit(cs.SEPARATOR_DOT, 1)[0]
+        )
+        returned = self._callee_return_type(resolved[1], language, static)
         return (returned, parts[1:]) if returned else None
 
     def _dart_member_return_type(

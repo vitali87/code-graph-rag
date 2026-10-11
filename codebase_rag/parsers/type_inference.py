@@ -723,7 +723,7 @@ class TypeInferenceEngine:
         # INSTANTIATES on a call that now reaches a static factory (#2012).
         self.dart_constructor_qns.difference_update(qns)
 
-    def js_callable_return_type(self, callable_qn: str) -> str | None:
+    def js_callable_return_type(self, callable_qn: str, static: bool) -> str | None:
         """The class a JS/TS method or function returns, read in its own file.
 
         Unlike the languages that record a hop's return in
@@ -731,7 +731,8 @@ class TypeInferenceEngine:
         (imports included) to say which class a return names (issue #2468).
         A method of a top-level class sits two segments below its module and
         a module-level function one; anything nested deeper finds no module
-        and stays untyped.
+        and stays untyped. `static` picks a class's static member over an
+        instance one of the same name.
         """
         match self.function_registry.get(callable_qn):
             case NodeType.METHOD:
@@ -749,7 +750,7 @@ class TypeInferenceEngine:
             return None
         root, language = entry
         return self.js_type_inference.callable_return_type(
-            root, names, callable_qn, module_qn, language
+            root, names, callable_qn, module_qn, language, static
         )
 
     def _go_free_fn_return_type(self, name: str, module_qn: str) -> str | None:
