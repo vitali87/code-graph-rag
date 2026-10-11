@@ -63,9 +63,8 @@ CLI_ERR_START_EMPTY_WORKSPACE = (
 )
 CLI_ERR_SYNC_HOME_OR_ROOT = (
     "Error: refusing to index {path}: it is your home directory or the "
-    "filesystem root, so every file under it would enter the graph and sync "
-    "state would be written there. Pass --repo-path <repository>, or --yes "
-    "to index it anyway."
+    "filesystem root, so every file under it would enter the graph. Pass "
+    "--repo-path <repository>, or --yes to index it anyway."
 )
 CLI_ERR_INVALID_SETTING = "Error: {problem}"
 # click's own exit status for a bad parameter value.

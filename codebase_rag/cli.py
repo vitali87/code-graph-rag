@@ -1053,7 +1053,7 @@ def _is_home_or_root(repo: Path) -> bool:
     """Whether a sync of `repo` would crawl a whole home directory or disk.
 
     `--repo-path` defaults to the current directory, so a sync started from
-    `$HOME` indexed every file under it and wrote sync state there (#2418).
+    `$HOME` indexed every file under it (#2418).
     """
     resolved = repo.resolve()
     return resolved == Path.home().resolve() or resolved == resolved.parent
