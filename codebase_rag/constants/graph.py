@@ -867,6 +867,11 @@ KEY_MODIFIERS = "modifiers"
 # name because the qn leaves out a namespace the module's directory already
 # spells (issue #1629).
 KEY_NAMESPACE = "namespace"
+# How many type parameters a C# type declares, stored only when it is
+# generic. C# overloads a type name by arity (`PB`, `PB<T>`), so a reference
+# binds by it, and an incremental run reads it back for the types of files it
+# does not re-parse (issue #2579).
+KEY_GENERIC_ARITY = "generic_arity"
 # Depth of a document heading, 1-6 (issue #1426). Kept distinct from the
 # nesting a Section's CONTAINS_SECTION edges describe: skipped levels mean a
 # level-3 heading can be the direct child of a level-1 one.
@@ -1173,6 +1178,7 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.modifiers AS modifiers, n.decorators AS decorators, "
     "n.return_type AS return_type, n.param_types AS param_types, "
     "n.namespace AS namespace, n.is_object_member AS is_object_member, "
+    "n.generic_arity AS generic_arity, "
     "n.is_exported AS is_exported, "
     "n.extension_receiver AS extension_receiver, "
     "n.extension_namespace AS extension_namespace, "
@@ -1413,9 +1419,10 @@ CYPHER_ALL_CSHARP_TYPE_LOCATIONS = (
 CSHARP_PARTIAL_TYPE_LABELS: frozenset[NodeLabel] = frozenset(
     {NodeLabel.CLASS, NodeLabel.INTERFACE}
 )
-# A project's types of those labels under one name, with their modifiers: a
-# rename reads which of them are the parts of one `partial` type by the key
-# parsing groups them under (`csharp_partial_key_from_graph`).
+# A project's types of those labels under one name, with their modifiers and
+# generic arity: a rename reads which of them are the parts of one `partial`
+# type by the key parsing groups them under (`csharp_partial_key_from_graph`),
+# which spells the arity (issue #2579).
 _CSHARP_PARTIAL_LABELS = "|".join(
     sorted(label.value for label in CSHARP_PARTIAL_TYPE_LABELS)
 )
@@ -1423,7 +1430,7 @@ CYPHER_SAME_NAMED_CSHARP_TYPES = (
     f"MATCH (n:{_CSHARP_PARTIAL_LABELS}) "
     "WHERE n.name = $name AND n.qualified_name STARTS WITH $project_prefix "
     "RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, "
-    "n.path AS path, n.modifiers AS modifiers"
+    "n.path AS path, n.modifiers AS modifiers, n.generic_arity AS generic_arity"
 )
 
 # Col-keyed location rehydration fetches (issue #1240). Both guard for

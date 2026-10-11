@@ -298,8 +298,9 @@ def test_a_sync_leaves_the_type_edges_a_clean_index_draws(
 
 def test_two_non_partial_twins_stay_two_types_after_a_sync(temp_repo: Path) -> None:
     # `Box` and `Box<T>` share a directory, a namespace and a name but are
-    # two types, so a clean index draws no edge for a bare `Box`. A sync
-    # that reads them back from the graph must not merge them into one.
+    # two types, and the written arity tells them apart (#2579): a clean
+    # index binds a bare `Box` to the non-generic one only. A sync that
+    # reads them back from the graph must not merge them into one.
     box = {
         "Box.cs": "namespace Shop {\n  public class Box { }\n}\n",
         "Box.Generic.cs": "namespace Shop {\n  public class Box<T> { }\n}\n",
@@ -315,7 +316,8 @@ def test_two_non_partial_twins_stay_two_types_after_a_sync(temp_repo: Path) -> N
     )
 
     assert synced == clean
-    assert not any(".Use.Plain(" in src for src, _rel, _dst in synced), synced
+    named = {dst for src, _rel, dst in synced if ".Use.Plain(" in src}
+    assert named == {f"{PROJECT}.Box.Shop.Box"}, synced
 
 
 def test_a_non_partial_class_still_gets_its_edge(
@@ -558,3 +560,51 @@ def test_renaming_a_python_class_never_asks_for_partial_parts(
 
     assert report.applied, report.message
     assert cs.CYPHER_SAME_NAMED_CSHARP_TYPES not in asked
+
+
+BOX_SIZE = "namespace Shop {\n  public partial class Box { public int Size() { return 1; } }\n}\n"
+BOX_LID = "namespace Shop {\n  public partial class Box { public int Lid() { return 2; } }\n}\n"
+GENERIC_BOX_GET = (
+    "namespace Shop {\n"
+    "  public partial class Box<T> { public T Get() { return default(T); } }\n"
+    "}\n"
+)
+GENERIC_BOX_LID = "namespace Shop {\n  public partial class Box<T> { public int Lid() { return 3; } }\n}\n"
+PLAIN_BOX_FILES = {"Box.cs": BOX_SIZE, "Box.Lid.cs": BOX_LID}
+GENERIC_BOX_FILES = {
+    "Box.Generic.cs": GENERIC_BOX_GET,
+    "Box.Generic.Lid.cs": GENERIC_BOX_LID,
+}
+PLAIN_BOX_PARTS = {f"{PROJECT}.Box.Shop.Box", f"{PROJECT}.Box.Lid.Shop.Box"}
+GENERIC_BOX_PARTS = {
+    f"{PROJECT}.Box.Generic.Shop.Box",
+    f"{PROJECT}.Box.Generic.Lid.Shop.Box",
+}
+
+
+@pytest.mark.parametrize(
+    ("target", "parts", "untouched"),
+    [
+        (f"{PROJECT}.Box.Lid.Shop.Box", PLAIN_BOX_PARTS, GENERIC_BOX_FILES),
+        (f"{PROJECT}.Box.Generic.Lid.Shop.Box", GENERIC_BOX_PARTS, PLAIN_BOX_FILES),
+    ],
+    ids=["plain", "generic"],
+)
+def test_a_partial_twin_of_another_arity_is_left_alone(
+    temp_repo: Path, target: str, parts: set[str], untouched: dict[str, str]
+) -> None:
+    # `partial class Box` and `partial class Box<T>` share a name, a
+    # namespace and a directory, and both are partial, but their generic
+    # arities make them two types (#2579): parsing groups each one's parts
+    # apart, and renaming either renames its own parts only.
+    root = temp_repo / PROJECT
+    store, updater = _indexed(root, {**PLAIN_BOX_FILES, **GENERIC_BOX_FILES})
+
+    report = rename(
+        root, store.fetch_all, PROJECT, target, "Crate", reingest=updater.reingest
+    )
+
+    assert report.applied, report.message
+    assert set(report.hierarchy) == parts
+    sources = _cs_sources(root)
+    assert {rel: sources[rel] for rel in untouched} == untouched
