@@ -127,6 +127,7 @@ TS_JS_UPDATE_EXPRESSION = "update_expression"
 TS_JS_FIELD_ARGUMENT = "argument"
 TS_FIELD_PATTERN = "pattern"
 TS_FIELD_PARAMETER = "parameter"
+TS_FIELD_INITIALIZER = "initializer"
 TS_MODULE = "module"
 TS_CLASS_BODY = "class_body"
 

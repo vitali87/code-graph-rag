@@ -4413,8 +4413,14 @@ class ImportProcessor:
         """
         if not is_commonjs_module(root_node):
             return
+        # A published import leads straight to what it imports: a nested
+        # declaration of the same name registers under the module's qn too
+        # (`{ class Svc {} }` inside an IIFE), and must not stand in for it.
+        imports = self.import_mapping.get(module_qn, {})
         published = {
-            name: JsExport(f"{module_qn}{cs.SEPARATOR_DOT}{binding}", local=True)
+            name: JsExport(imports[binding], local=False)
+            if binding in imports
+            else JsExport(f"{module_qn}{cs.SEPARATOR_DOT}{binding}", local=True)
             for name, binding in commonjs_export_bindings(root_node).items()
         }
         if published:
