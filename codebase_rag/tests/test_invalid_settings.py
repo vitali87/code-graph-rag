@@ -22,6 +22,7 @@ from pydantic_settings import EnvSettingsSource
 from typer.testing import CliRunner
 
 from codebase_rag import cli, config
+from codebase_rag import constants as cs
 
 # The `cgr` entry point is `codebase_rag.cli:app`.
 _CLI = "from codebase_rag.cli import app; app()"
@@ -705,7 +706,7 @@ class TestWhatStaysTheSame:
             result = CliRunner().invoke(cli.app, ["delete-project", "--name", " "])
 
         assert result.exit_code == 1, result.output
-        assert "--name is required" in result.output
+        assert cs.CLI_ERR_PROJECT_NAME_REQUIRED in result.output
 
     def test_cgr_help_still_works_while_a_setting_is_invalid(self) -> None:
         errors = ("Invalid value for MEMGRAPH_PORT in ./.env: 'x' is not valid.",)
