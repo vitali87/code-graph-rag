@@ -126,6 +126,8 @@ FIELD_RECEIVER = "receiver"
 FIELD_TYPE = "type"
 # The wrapped function/class inside a Python decorated_definition node.
 FIELD_DEFINITION = "definition"
+# The declaration a JS/TS `export_statement` wraps (`export const X = ...`).
+FIELD_DECLARATION = "declaration"
 FIELD_RESULT = "result"
 # Rust impl `trait`/`type` fields and a trait's supertrait `bounds`.
 FIELD_TRAIT = "trait"
