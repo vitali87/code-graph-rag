@@ -76,6 +76,21 @@ if TYPE_CHECKING:
     from ..factory import ASTCacheProtocol
 
 _TYPE_DECLS = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
+# The declarations whose body holds members, and the nodes a walk for one
+# descends through: namespaces, bodies, and types for the types they nest.
+_BODY_OWNERS = frozenset(
+    {
+        cs.TS_CSHARP_CLASS_DECLARATION,
+        cs.TS_CSHARP_STRUCT_DECLARATION,
+        cs.TS_CSHARP_RECORD_DECLARATION,
+        cs.TS_CSHARP_INTERFACE_DECLARATION,
+    }
+)
+_BODY_HOLDERS = _BODY_OWNERS | {
+    cs.TS_CSHARP_NAMESPACE_DECLARATION,
+    cs.TS_CSHARP_FILE_SCOPED_NAMESPACE_DECLARATION,
+    cs.TS_CSHARP_DECLARATION_LIST,
+}
 
 # Sentinel: the call's target is provably EXTERNAL (a BCL/base member, a
 # static call on an unregistered type). The dispatcher must emit nothing
@@ -415,6 +430,42 @@ def _built_in_meets(given: str, bound: str, first_party_bound: bool) -> bool | N
         built_in = predefined_keyword(core) is not None or is_tuple(core)
         return False if built_in or suffix else None
     return True if keyword and predefined_implements(keyword, bound) else None
+
+
+def _property_argument(declaration: Node, name: str) -> ArgumentType | None:
+    # What a property declaration passes for `name`, when it declares it: a
+    # variable of its written type.
+    if safe_decode_text(declaration.child_by_field_name(cs.FIELD_NAME)) != name:
+        return None
+    written = safe_decode_text(declaration.child_by_field_name(cs.FIELD_TYPE))
+    return _written_argument(written) if written else None
+
+
+def _enclosing_body(node: Node) -> Node | None:
+    # The body of the type a node is written in.
+    current = node.parent
+    while current is not None and current.type != cs.TS_CSHARP_DECLARATION_LIST:
+        current = current.parent
+    return current
+
+
+def _file_type_body(node: Node, name: str) -> Node | None:
+    # The body of the one type named `name` the node's file declares, None
+    # when it declares none or several.
+    root = node
+    while root.parent is not None:
+        root = root.parent
+    bodies: list[Node] = []
+    pending = [root]
+    while pending and len(bodies) < 2:
+        current = pending.pop()
+        if current.type in _BODY_OWNERS and (
+            safe_decode_text(current.child_by_field_name(cs.FIELD_NAME)) == name
+        ):
+            if (body := current.child_by_field_name(cs.FIELD_BODY)) is not None:
+                bodies.append(body)
+        pending.extend(c for c in current.named_children if c.type in _BODY_HOLDERS)
+    return bodies[0] if len(bodies) == 1 else None
 
 
 def _exact(bound: Inferred) -> dict[str, str]:
@@ -2995,6 +3046,8 @@ class CSharpTypeInferenceEngine:
             if constant is not None:
                 return ArgumentType(constant.type, None, 0, None, constant.value)
             return _written_argument(declared)
+        if (member := self._file_member_argument(value)) is not None:
+            return member
         annotated = self._receiver_type_name(
             value, local_var_types, module_qn, caller_qn
         )
@@ -3006,6 +3059,69 @@ class CSharpTypeInferenceEngine:
         if not arity and (keyword := predefined_keyword(name)) is not None:
             return ArgumentType(keyword, None, 0, None)
         return ArgumentType(None, name, arity, None)
+
+    def _file_member_argument(self, value: Node) -> ArgumentType | None:
+        # A field or property the caller's own file declares, read off its
+        # declaration, which is parsed whenever the call is (PR 2814 review):
+        # a `const` field passes its constant, any other member is a variable
+        # of its written type, type arguments included. None for one this
+        # file does not declare, which stays as its annotation tells.
+        found = self._member_body(value)
+        if found is None:
+            return None
+        body, name = found
+        for member in body.named_children:
+            if member.type == cs.TS_CSHARP_PROPERTY_DECLARATION:
+                passed = _property_argument(member, name)
+            elif member.type == cs.TS_CSHARP_FIELD_DECLARATION:
+                passed = self._field_argument(member, name)
+            else:
+                continue
+            if passed is not None:
+                return passed
+        return None
+
+    def _field_argument(self, field: Node, name: str) -> ArgumentType | None:
+        # What a field declaration passes for `name`, when it declares it.
+        decl = next(
+            (
+                c
+                for c in field.named_children
+                if c.type == cs.TS_CSHARP_VARIABLE_DECLARATION
+            ),
+            None,
+        )
+        declarator = self._declarator_named(decl, name) if decl is not None else None
+        if decl is None or declarator is None:
+            return None
+        constant = _const_constant(field, decl, declarator)
+        if constant is not None:
+            return ArgumentType(constant.type, None, 0, None, constant.value)
+        written = self._declarator_written_type(decl, declarator)
+        return _written_argument(written) if written else None
+
+    def _member_body(self, value: Node) -> tuple[Node, str] | None:
+        # The type body a member access reads its member from, with the
+        # member's name: the enclosing type's for a bare name or `this.x`,
+        # the one type of that name the file declares for `K.x`.
+        if value.type == cs.TS_CSHARP_IDENTIFIER:
+            body, name = _enclosing_body(value), safe_decode_text(value)
+        elif value.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
+            owner = value.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
+            body = self._owner_body(owner) if owner is not None else None
+            name = safe_decode_text(value.child_by_field_name(cs.FIELD_NAME))
+        else:
+            return None
+        return (body, name) if body is not None and name else None
+
+    def _owner_body(self, owner: Node) -> Node | None:
+        # The body of the type a member access's owner is: `this`'s, or the
+        # file's one type of the name, when no local or parameter has it.
+        if owner.type == cs.TS_CSHARP_THIS:
+            return _enclosing_body(owner)
+        if owner.type != cs.TS_CSHARP_IDENTIFIER or self._written_receiver_type(owner):
+            return None
+        return _file_type_body(owner, safe_decode_text(owner) or "")
 
     def _local_constant(self, identifier: Node) -> _Constant | None:
         # The constant a `const` local an identifier names is, found as

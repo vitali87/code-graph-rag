@@ -1154,11 +1154,13 @@ class TestAConstantConvertsToANarrowerTypeOnlyWhenItFits:
         calls = _calls(CONSTANT_CS, temp_repo, mock_ingestor)
         assert calls[caller] == {expected}, calls
 
-    def test_a_constant_of_unknown_value_never_binds_the_narrow_type_alone(
+    def test_a_constant_field_of_the_callers_file_passes_its_value(
         self, temp_repo: Path, mock_ingestor: MagicMock
     ) -> None:
+        # The ground-truth harness for PR 2814: `K.Big` is 300, read off its
+        # declaration in the caller's file, and no byte.
         calls = _calls(CONSTANT_CS, temp_repo, mock_ingestor)
-        assert "Lc.C.M(long)" in calls["ConstantField"], calls
+        assert calls["ConstantField"] == {"Lc.C.M(long)"}, calls
 
 
 OPERATOR_LITERAL_CS = """\
@@ -1411,13 +1413,23 @@ INVARIANT_CASES: dict[str, _Case] = {
         _use("Box<int> b = new Box<int>(); new C().M(b);"),
         frozenset({"C.M(Box<int>)"}),
     ),
-    # A closing nothing spells (a field's) is not known: no overload is
-    # guessed, both stay candidates.
-    "score-generic-unknown": _Case(
+    # The ground-truth harness for PR 2814: a field the caller's own file
+    # declares is read off its declaration, parsed whenever the call is, so
+    # its closing is known: a Box<string> is no Box<int>.
+    "score-generic-field": _Case(
         "namespace L; public class Box<X> { }\n"
         f"public class C {{ public void M(Box<int> b) {{ }} {_PAIR} }}",
         "using L;\nnamespace U;\npublic class Use { private Box<string> f; "
         "public void Run() { new C().M(f); } }\n",
+        frozenset({"C.M(object)"}),
+    ),
+    # A closing nothing the caller's file spells (another file's field) is
+    # not known: no overload is guessed, both stay candidates.
+    "score-generic-unknown": _Case(
+        "namespace L; public class Box<X> { }\n"
+        "public class Holder { public static Box<string> F; }\n"
+        f"public class C {{ public void M(Box<int> b) {{ }} {_PAIR} }}",
+        _use("new C().M(Holder.F);"),
         frozenset({"C.M(Box<int>)", "C.M(object)"}),
     ),
     # An exact-arity overload the ranking proves inapplicable gives way to
@@ -2350,6 +2362,26 @@ INVARIANT_CASES: dict[str, _Case] = {
         "public class C { public void M(byte b) { } public void M(long l) { } }",
         _use("new C().M(K.Five);"),
         frozenset({"C.M(byte)", "C.M(long)"}),
+    ),
+    # The ground-truth harness for PR 2814: a field or property the
+    # caller's own file declares is read off its declaration: a `const` one
+    # passes its constant, any other is a variable of its type.
+    "typed-field-constant-same-file": _Case(
+        "namespace L; public class C { public void M(byte b) { } public void M(long l) { } }",
+        _use("new C().M(K.Five);", "public class K { public const int Five = 5; }\n"),
+        frozenset({"C.M(byte)"}),
+    ),
+    "typed-field-variable": _Case(
+        "namespace L; public class C { public void M(byte b) { } public void M(long l) { } }",
+        "using L;\nnamespace U;\npublic class Use { private int f = 5; "
+        "public void Run() { new C().M(f); } }\n",
+        frozenset({"C.M(long)"}),
+    ),
+    "typed-property-variable": _Case(
+        "namespace L; public class C { public void M(byte b) { } public void M(long l) { } }",
+        "using L;\nnamespace U;\npublic class Use { public int P { get; set; } "
+        "public void Run() { new C().M(this.P); } }\n",
+        frozenset({"C.M(long)"}),
     ),
     "typed-operator-widened": _Case(
         "namespace L; public class Tgt { public static implicit operator Tgt(int i) => null; }\n"
