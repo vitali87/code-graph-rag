@@ -15,6 +15,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
@@ -99,7 +100,7 @@ def _clean_snapshot(
 
 
 def _touch(path: Path, repo: Path) -> None:
-    future = (repo / cs.HASH_CACHE_FILENAME).stat().st_mtime + 10
+    future = state_file(repo, cs.HASH_CACHE_FILENAME).stat().st_mtime + 10
     os.utime(path, (future, future))
     os.utime(path.parent, (future, future))
 
