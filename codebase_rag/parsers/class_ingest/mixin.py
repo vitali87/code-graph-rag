@@ -48,6 +48,7 @@ from ..py.class_aliases import scan_class_body_aliases
 from ..rs import RustTypeInferenceEngine
 from ..rs import utils as rs_utils
 from ..utils import (
+    decorated_start_props,
     extract_modifiers_and_decorators,
     function_span_key,
     ingest_method,
@@ -1407,6 +1408,7 @@ class ClassIngestMixin:
         # (STALE/EXACT), movable by hash, and re-validatable by the quote
         # move, which refuses a hash-less candidate (issue #1808).
         class_props.update(anchor_hash_props(class_node, decorators))
+        class_props.update(decorated_start_props(class_node))
         if language == cs.SupportedLanguage.CSHARP:
             self._record_csharp_namespace(class_node, class_qn, class_props)
         # Stored on the node so an incremental run that does not re-parse
