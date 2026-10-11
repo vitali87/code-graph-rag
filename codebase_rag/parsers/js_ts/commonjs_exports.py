@@ -391,15 +391,13 @@ class _Module:
             node.text == _MODULE
             and parent is not None
             and parent.type == cs.TS_MEMBER_EXPRESSION
+            and parent.child_by_field_name(cs.FIELD_OBJECT) == node
         ):
-            if parent.child_by_field_name(cs.FIELD_OBJECT) == node:
-                property_ = parent.child_by_field_name(cs.FIELD_PROPERTY)
-                # `module.id` and the like read nothing exports can change.
-                return (
-                    parent
-                    if property_ is not None and property_.text == _EXPORTS
-                    else None
-                )
+            property_ = parent.child_by_field_name(cs.FIELD_PROPERTY)
+            # `module.id` and the like read nothing exports can change.
+            return (
+                parent if property_ is not None and property_.text == _EXPORTS else None
+            )
         return node
 
     def _hides_writes(self) -> bool:
