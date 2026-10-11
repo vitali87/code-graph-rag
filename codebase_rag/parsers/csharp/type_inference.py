@@ -1975,9 +1975,103 @@ class CSharpTypeInferenceEngine:
             return None
         self._typing_initializers.add(span)
         try:
+            if not self._one_result(initializer, local_var_types, *context):
+                return None
             return typed(initializer, local_var_types, *context)
         finally:
             self._typing_initializers.discard(span)
+
+    def _one_result(
+        self,
+        call: Node,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        caller_qn: str | None,
+    ) -> bool:
+        # Whether a call returns one type: it binds one method, or every
+        # overload its arguments leave open returns the same type. Where two
+        # open ones return two types, either may run (Greptile review of PR
+        # 2814), so the call's result is of no known type.
+        inner = self.resolve_csharp_method_call(
+            call, local_var_types, module_qn, caller_qn
+        )
+        if inner is None:
+            return False
+        family = self.csharp_member_overload_family(call, module_qn, caller_qn)
+        returns = {
+            self.csharp_method_return_types.get(qn) for qn in (inner[1], *family)
+        }
+        return len(returns) == 1
+
+    def _result_qn(
+        self,
+        call: Node,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        caller_qn: str | None,
+    ) -> str | None:
+        # The first-party type a call returns, its declared return type
+        # resolved where its method is declared (Greptile review of PR 2814):
+        # `L.Factory.Make()` returns L's `Output` whatever the caller's file
+        # calls `Output`. Read in the caller's file, as a chained call reads
+        # it, only when the method's file is not known.
+        found = self._declared_result(call, local_var_types, module_qn, caller_qn)
+        if found is None:
+            return None
+        canonical, scoped = found
+        if scoped:
+            return self._first_party_type(canonical)
+        rtype, rarity = split_type_ref(canonical)
+        return self._type_name_to_qn(rtype, module_qn, rarity)
+
+    def _declared_result(
+        self,
+        call: Node,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        caller_qn: str | None,
+    ) -> tuple[str, bool] | None:
+        # A call's declared return type, resolved where its method is
+        # declared (`canonical_type`) and True; or, that file not known, as
+        # the return type is recorded (`Box`1`) and False. None when the call
+        # resolves to no method of a recorded return type.
+        inner = self.resolve_csharp_method_call(
+            call, local_var_types, module_qn, caller_qn
+        )
+        entry = self.csharp_method_return_types.get(inner[1]) if inner else None
+        if inner is None or entry is None:
+            return None
+        rtype, rarity = entry
+        owner, _member = qn_markers.owner_and_member(inner[1])
+        scope = self.scope_of(owner, self._method_type_parameters(inner[1]))
+        if scope is None:
+            return (f"{rtype}`{rarity}" if rarity else rtype), False
+        return canonical_type(rtype, scope, rarity), True
+
+    def _result_argument(
+        self,
+        call: Node,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        caller_qn: str | None,
+    ) -> ArgumentType | _Unread | None:
+        # What a call-initialized local passes: its call's first-party result
+        # type, resolved where the method is declared. `_UNREAD` for a name
+        # its own file leaves unresolved that the caller's file would read as
+        # one of its types; None for any other, which is read by name.
+        found = self._declared_result(call, local_var_types, module_qn, caller_qn)
+        if found is None or not found[1]:
+            return None
+        canonical = found[0]
+        if (qn := self._first_party_type(canonical)) is not None:
+            return ArgumentType(
+                None, canonical, self.csharp_class_generic_arity.get(qn, 0), None
+            )
+        core = type_shape(canonical)[0]
+        arity = generic_arity_of_type_text(core)
+        if self._resolve_in(module_qn, strip_generic_arguments(core), arity):
+            return _UNREAD
+        return None
 
     def _var_initializer(self, identifier: Node, name: str) -> Node | None:
         # The initializer of the `var` local `name` an identifier reads,
@@ -2337,7 +2431,7 @@ class CSharpTypeInferenceEngine:
         # A `var` local a call initializes is of the type the call returns,
         # as a chained call's receiver is (Greptile review of PR 2814).
         if result := self._call_result(
-            self._invocation_receiver_qn,
+            self._result_qn,
             receiver,
             local_var_types,
             (module_qn, caller_qn),
@@ -3377,6 +3471,11 @@ class CSharpTypeInferenceEngine:
             return None
         if member is not None:
             return member
+        result = self._call_result(
+            self._result_argument, value, local_var_types, (module_qn, caller_qn)
+        )
+        if result is not None:
+            return None if isinstance(result, _Unread) else result
         annotated = self._receiver_type_name(
             value, local_var_types, module_qn, caller_qn
         )

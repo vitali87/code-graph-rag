@@ -841,6 +841,139 @@ class TestAVarLocalIsOfItsInitializersOwnType:
         }, calls
 
 
+RESULT_FAMILY_CS = """\
+namespace Fa;
+public class Left { public void Run() { } }
+public class Right { public void Run() { } }
+public class Same { public void Run() { } }
+public static class Factory {
+    public static Left Make(int i) => null;
+    public static Right Make(string s) => null;
+    public static Same Both(int i) => null;
+    public static Same Both(string s) => null;
+}
+public class C {
+    public void M(Left l) { }
+    public void M(Right r) { }
+    public void M(Same s) { }
+}
+public class Use {
+    public void Arg() { var c = new C(); var x = Factory.Make(Ext.Get()); c.M(x); }
+    public void Recv() { var x = Factory.Make(Ext.Get()); x.Run(); }
+    public void SameArg() { var c = new C(); var x = Factory.Both(Ext.Get()); c.M(x); }
+    public void SameRecv() { var x = Factory.Both(Ext.Get()); x.Run(); }
+    public void Single() { var c = new C(); var x = Factory.Make(1); c.M(x); }
+    public void SingleRecv() { var x = Factory.Make(""); x.Run(); }
+}
+"""
+
+RESULT_SCOPE_FILES = {
+    "L.cs": """\
+namespace L;
+public class Output { public void Run() { } }
+public static class Factory { public static Output Make() => null; }
+""",
+    "A.cs": "namespace A;\npublic class Output { public void Run() { } }\n",
+    "B.cs": "namespace B;\npublic class Output { public void Run() { } }\n",
+    "AB.cs": """\
+using A;
+using B;
+namespace AB;
+public static class Twin { public static Output Make() => null; }
+""",
+    "Use.cs": """\
+using A;
+namespace U2;
+public class C { public void M(L.Output o) { } public void M(A.Output o) { } }
+public class Use {
+    public void Cross() { var c = new C(); var x = L.Factory.Make(); c.M(x); }
+    public void CrossRecv() { var x = L.Factory.Make(); x.Run(); }
+    public void Typed() { L.Output x = L.Factory.Make(); x.Run(); }
+    public void Ambiguous() { var x = AB.Twin.Make(); x.Run(); }
+    public void AmbiguousArg() { var c = new C(); var x = AB.Twin.Make(); c.M(x); }
+}
+""",
+}
+
+
+def _resolved_file_calls(
+    files: dict[str, str], temp_repo: Path, mock_ingestor: MagicMock
+) -> dict[str, set[tuple[str, str]]]:
+    # `_resolved_calls` over several files: callees past their file's module.
+    root = temp_repo / PROJECT
+    root.mkdir()
+    for rel, text in files.items():
+        (root / rel).write_text(text, encoding="utf-8")
+    create_and_run_updater(root, mock_ingestor, skip_if_missing=SKIP)
+    found: dict[str, set[tuple[str, str]]] = {}
+    for c in get_relationships(mock_ingestor, cs.RelationshipType.CALLS):
+        caller, callee = str(c.args[0][2]), str(c.args[2][2])
+        if ".U2.Use." in caller:
+            resolution = c.kwargs.get("properties", {}).get(cs.KEY_RESOLUTION)
+            found.setdefault(caller.rsplit(".Use.", 1)[1], set()).add(
+                (callee.split(".", 2)[2], str(resolution))
+            )
+    return found
+
+
+def _ranked(calls: dict[str, set[tuple[str, str]]], caller: str, owner: str) -> set:
+    # A caller's edges into one class's methods.
+    return {c for c in calls[caller] if c[0].startswith(owner)}
+
+
+class TestACallResultTypesALocalOnlyWhenItIsOne:
+    # Greptile review of PR 2814: a call whose arguments leave two overloads
+    # open may return either's type, so the local it initializes is of no
+    # known type unless every one of them returns the same type.
+    def test_an_open_overload_leaves_an_argument_untyped(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(RESULT_FAMILY_CS, temp_repo, mock_ingestor)
+        ranked = _ranked(calls, "Arg", "Fa.C.")
+        assert {"Fa.C.M(Left)", "Fa.C.M(Right)"} <= {c for c, _r in ranked}, calls
+        assert all(r != _EXACT for _c, r in ranked), calls
+
+    def test_an_open_overload_leaves_a_receiver_untyped(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(RESULT_FAMILY_CS, temp_repo, mock_ingestor)
+        assert ("Fa.Left.Run", _EXACT) not in calls["Recv"], calls
+        assert ("Fa.Right.Run", _EXACT) not in calls["Recv"], calls
+
+    def test_overloads_of_one_return_type_still_type_the_local(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Negatives: the open overloads agree on Same, and arguments that
+        # pick one overload type the local by it.
+        calls = _resolved_calls(RESULT_FAMILY_CS, temp_repo, mock_ingestor)
+        assert _ranked(calls, "SameArg", "Fa.C.") == {("Fa.C.M(Same)", _EXACT)}
+        assert ("Fa.Same.Run", _EXACT) in calls["SameRecv"], calls
+        assert _ranked(calls, "Single", "Fa.C.") == {("Fa.C.M(Left)", _EXACT)}
+        assert ("Fa.Right.Run", _EXACT) in calls["SingleRecv"], calls
+
+
+class TestACallResultIsTypedWhereItsMethodIsDeclared:
+    # Greptile review of PR 2814: `Make` returns the `Output` its own
+    # namespace sees, not one the caller's file would name so.
+    def test_a_bare_return_type_resolves_in_its_declaring_namespace(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_file_calls(RESULT_SCOPE_FILES, temp_repo, mock_ingestor)
+        assert ("L.Output.Run", _EXACT) in calls["CrossRecv"], calls
+        assert _ranked(calls, "Cross", "U2.C.") == {("U2.C.M(L.Output)", _EXACT)}
+        # Negative: the explicitly typed control.
+        assert ("L.Output.Run", _EXACT) in calls["Typed"], calls
+
+    def test_an_ambiguous_return_type_stays_unresolved(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Negative: two `using`s each name an Output where `Twin` is
+        # declared, so its result is neither, whatever the caller sees.
+        calls = _resolved_file_calls(RESULT_SCOPE_FILES, temp_repo, mock_ingestor)
+        assert not {c for c in calls["Ambiguous"] if c[0].endswith(".Run")}, calls
+        assert all(r != _EXACT for _c, r in _ranked(calls, "AmbiguousArg", "U2.C."))
+
+
 CONSTRAINT_CS = """\
 namespace K;
 public interface IThing { }
