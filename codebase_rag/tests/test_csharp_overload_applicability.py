@@ -1058,6 +1058,56 @@ class TestCandidatesAreComparedWithTheirTypeArgumentsFixed:
         assert calls["Run"] == {"Sb.C.M(IBox<Person>, IBox<Person>)"}, calls
 
 
+CONSTANT_CS = """\
+namespace Lc;
+public class C { public void M(byte b) { } public void M(long l) { } }
+public class S { public void M(sbyte b) { } public void M(long l) { } }
+public class U { public void M(uint u) { } public void M(long l) { } }
+public class K { public const int Big = 300; }
+public class Use {
+    public void Large() { var c = new C(); c.M(300); }
+    public void Fits() { new C().M(255); }
+    public void Over() { new C().M(256); }
+    public void Hex() { new C().M(0x100); }
+    public void Suffixed() { new C().M(300L); }
+    public void NegativeUnsigned() { new U().M(-1); }
+    public void NegativeSigned() { new S().M(-1); }
+    public void ConstantField() { new C().M(K.Big); }
+}
+"""
+
+
+class TestAConstantConvertsToANarrowerTypeOnlyWhenItFits:
+    # Greptile review of PR 2814: an int constant converts implicitly to a
+    # narrower integral type only when its value fits; 300 is no byte.
+    @pytest.mark.parametrize(
+        ("caller", "expected"),
+        [
+            ("Large", "Lc.C.M(long)"),
+            # Negative: 255 fits a byte, the better target.
+            ("Fits", "Lc.C.M(byte)"),
+            ("Over", "Lc.C.M(long)"),
+            ("Hex", "Lc.C.M(long)"),
+            # A long constant never converts to a byte.
+            ("Suffixed", "Lc.C.M(long)"),
+            ("NegativeUnsigned", "Lc.U.M(long)"),
+            # Negative: -1 fits an sbyte.
+            ("NegativeSigned", "Lc.S.M(sbyte)"),
+        ],
+    )
+    def test_each_literal_binds_what_its_value_fits(
+        self, caller: str, expected: str, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _calls(CONSTANT_CS, temp_repo, mock_ingestor)
+        assert calls[caller] == {expected}, calls
+
+    def test_a_constant_of_unknown_value_never_binds_the_narrow_type_alone(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _calls(CONSTANT_CS, temp_repo, mock_ingestor)
+        assert "Lc.C.M(long)" in calls["ConstantField"], calls
+
+
 VARIANCE_LIB_CS = """\
 namespace App;
 public interface IBox<out X> { }
@@ -1908,6 +1958,147 @@ INVARIANT_CASES: dict[str, _Case] = {
         "public void M(int a, object b) { } }",
         _use("Ext.Feed<string> f = null; new C().M(1, f);"),
         frozenset({"C.M(T, Ext.Feed<U>)"}),
+    ),
+    # Greptile review of PR 2814: a literal is typed by its suffix and value
+    # as C# types it, and converts to a narrower type only as a constant
+    # that fits; a better conversion target then decides, signed before
+    # unsigned where neither converts to the other.
+    "literal-separator": _Case(
+        "namespace L; public class C { public void M(byte b) { } "
+        "public void M(long l) { } }",
+        _use("new C().M(0x1_00);"),
+        frozenset({"C.M(long)"}),
+    ),
+    "literal-uint-suffix": _Case(
+        "namespace L; public class C { public void M(byte b) { } "
+        "public void M(long l) { } }",
+        _use("new C().M(300u);"),
+        frozenset({"C.M(long)"}),
+    ),
+    "literal-ulong-suffix": _Case(
+        "namespace L; public class C { public void M(byte b) { } "
+        "public void M(decimal d) { } }",
+        _use("new C().M(300UL);"),
+        frozenset({"C.M(decimal)"}),
+    ),
+    "literal-typed-by-value": _Case(
+        "namespace L; public class C { public void M(int i) { } "
+        "public void M(long l) { } }",
+        _use("new C().M(3000000000);"),
+        frozenset({"C.M(long)"}),
+    ),
+    "literal-min-int": _Case(
+        "namespace L; public class C { public void M(int i) { } "
+        "public void M(long l) { } }",
+        _use("new C().M(-2147483648);"),
+        frozenset({"C.M(int)"}),
+    ),
+    "literal-negative-uint": _Case(
+        "namespace L; public class C { public void M(uint u) { } "
+        "public void M(long l) { } }",
+        _use("new C().M(-1u);"),
+        frozenset({"C.M(long)"}),
+    ),
+    "literal-long-to-ulong": _Case(
+        f"namespace L; public class C {{ public void M(ulong u) {{ }} {_PAIR} }}",
+        _use("new C().M(5L);"),
+        frozenset({"C.M(ulong)"}),
+    ),
+    "literal-negative-long-to-ulong": _Case(
+        f"namespace L; public class C {{ public void M(ulong u) {{ }} {_PAIR} }}",
+        _use("new C().M(-5L);"),
+        frozenset({"C.M(object)"}),
+    ),
+    "literal-char": _Case(
+        f"namespace L; public class C {{ public void M(ushort u) {{ }} {_PAIR} }}",
+        _use("new C().M('a');"),
+        frozenset({"C.M(ushort)"}),
+    ),
+    "literal-char-no-constant-neg": _Case(
+        "namespace L; public class C { public void M(byte b) { } "
+        "public void M(int i) { } }",
+        _use("new C().M('a');"),
+        frozenset({"C.M(int)"}),
+    ),
+    "literal-int-to-char-neg": _Case(
+        "namespace L; public class C { public void M(char c) { } "
+        "public void M(long l) { } }",
+        _use("new C().M(97);"),
+        frozenset({"C.M(long)"}),
+    ),
+    "literal-nullable-range": _Case(
+        "namespace L; public class C { public void M(byte? b) { } "
+        "public void M(long l) { } }",
+        _use("new C().M(300);"),
+        frozenset({"C.M(long)"}),
+    ),
+    "literal-real-float-neg": _Case(
+        "namespace L; public class C { public void M(float f) { } "
+        "public void M(double d) { } }",
+        _use("new C().M(1.5);"),
+        frozenset({"C.M(double)"}),
+    ),
+    "literal-real-decimal-neg": _Case(
+        "namespace L; public class C { public void M(double d) { } "
+        "public void M(decimal m) { } }",
+        _use("new C().M(1.5m);"),
+        frozenset({"C.M(decimal)"}),
+    ),
+    "literal-negative-real": _Case(
+        "namespace L; public class C { public void M(float f) { } "
+        "public void M(double d) { } }",
+        _use("new C().M(-1.5f);"),
+        frozenset({"C.M(float)"}),
+    ),
+    "literal-bool-neg": _Case(
+        "namespace L; public class C { public void M(bool b) { } "
+        "public void M(int i) { } }",
+        _use("new C().M(true);"),
+        frozenset({"C.M(bool)"}),
+    ),
+    "literal-unfolded-neg": _Case(
+        "namespace L; public class C { public void M(byte b) { } "
+        "public void M(long l) { } }",
+        _use("new C().M(100 + 200);"),
+        frozenset({"C.M(byte)", "C.M(long)"}),
+    ),
+    # An integral constant zero converts to any enum, and nothing else an
+    # enum takes from a literal: it declares no conversion operator.
+    "literal-zero-enum": _Case(
+        "namespace L; public enum Color { Red }\n"
+        f"public class C {{ public void M(Color c) {{ }} {_PAIR} }}",
+        _use("new C().M(0);"),
+        frozenset({"C.M(Color)"}),
+    ),
+    "literal-nonzero-enum-neg": _Case(
+        "namespace L; public enum Color { Red }\n"
+        "public class C { public void M(Color c) { } public void M(long l) { } }",
+        _use("new C().M(1);"),
+        frozenset({"C.M(long)"}),
+    ),
+    "literal-signed-target": _Case(
+        "namespace L; public class C { public void M(sbyte s) { } "
+        "public void M(byte b) { } }",
+        _use("new C().M(5);"),
+        frozenset({"C.M(sbyte)"}),
+    ),
+    "literal-signed-long-target": _Case(
+        "namespace L; public class C { public void M(long l) { } "
+        "public void M(ulong u) { } }",
+        _use("new C().M(5);"),
+        frozenset({"C.M(long)"}),
+    ),
+    "literal-short-range": _Case(
+        "namespace L; public class C { public void M(short s) { } "
+        "public void M(ushort u) { } }",
+        _use("new C().M(40000);"),
+        frozenset({"C.M(ushort)"}),
+    ),
+    "literal-unsigned-target-neg": _Case(
+        "namespace L; public class C { public void M(uint u) { } "
+        "public void M(long l) { } }",
+        _use("new C().M(5);"),
+        frozenset({"C.M(uint)"}),
     ),
     "across-receiver-neg": _Case(
         "namespace L; public class G<X> { public void M(X a, X b) { } "

@@ -36,14 +36,15 @@ _TUPLE_ELEMENT_NAME = re.compile(cs.CSHARP_TUPLE_ELEMENT_NAME_PATTERN)
 
 
 class ArgumentType(NamedTuple):
-    """What the syntax says about one argument: a literal's C# type, or a
-    type's written name, its arity and, where the source spells them
-    (`new Ctx<Person>()`), its type arguments."""
+    """What the syntax says about one argument: a literal's C# type and,
+    for an integral one, its value, or a type's written name, its arity and,
+    where the source spells them (`new Ctx<Person>()`), its type arguments."""
 
     literal: str | None
     name: str | None
     arity: int
     arguments: tuple[str, ...] | None
+    value: int | None = None
 
 
 class Fit(IntEnum):
@@ -140,6 +141,11 @@ class TypeJudge(Protocol):
         self, argument: ArgumentType, parameter: str, open_names: Collection[str]
     ) -> bool | None:
         """Whether the argument's type converts implicitly to the parameter's."""
+        ...
+
+    def is_enum(self, parameter: str) -> bool:
+        """Whether the parameter's type, or the value its nullable wraps, is
+        a first-party enum."""
         ...
 
 
@@ -483,20 +489,67 @@ def _simple_name(type_text: str) -> str:
     return strip_generic_arguments(leaf_type_segment(type_text))
 
 
-def literal_fit(parameter: str, literal: str) -> Fit | None:
-    """How a literal of C# type `literal` binds `parameter`, None when it
-    cannot. Only a predefined type, or its nullable, is judged, by the
-    keyword it names (`predefined_keyword`), so `System.Int32` is an int's
-    identity and a first-party `Int32` is not judged at all."""
+def literal_fit(
+    parameter: str, literal: str, value: int | None = None, enum: bool = False
+) -> Fit | None:
+    """How a literal of C# type `literal` (and, for an integral one, of
+    `value`) binds `parameter`, None when it cannot. A predefined type, or
+    its nullable, is judged by the keyword it names (`predefined_keyword`),
+    so `System.Int32` is an int's identity and a first-party `Int32` is not
+    judged that way; an `enum` parameter as C# converts a constant to one.
+    A narrowing constant conversion whose value is not known is not judged,
+    so it never wins alone."""
     core, suffix = type_shape(parameter)
-    keyword = predefined_keyword(core)
-    # An array or pointer of one (`int[]`) is not.
-    if keyword is None or suffix.removesuffix(cs.CSHARP_NULLABLE_SUFFIX):
+    # An array or pointer (`int[]`) is not judged.
+    if suffix.removesuffix(cs.CSHARP_NULLABLE_SUFFIX):
         return Fit.OTHER
-    if keyword not in cs.CSHARP_LITERAL_ACCEPTS[literal]:
+    keyword = predefined_keyword(core)
+    if keyword is None:
+        return _enum_literal_fit(literal, value) if enum else Fit.OTHER
+    converts = constant_converts(literal, value, keyword)
+    if converts is None:
+        return Fit.OTHER
+    if not converts:
         return None
     # `int?` takes an int through a nullable conversion, which `int` beats.
     return Fit.EXACT if keyword == literal and not suffix else Fit.CONVERTIBLE
+
+
+def _enum_literal_fit(literal: str, value: int | None) -> Fit | None:
+    # An integral constant zero converts to any enum (C#'s implicit
+    # enumeration conversion), and no other literal does: an enum declares
+    # no conversion operator. A value not known is not judged.
+    if literal not in cs.CSHARP_INTEGRAL_MAX:
+        return None
+    if value is None:
+        return Fit.OTHER
+    return Fit.CONVERTIBLE if value == 0 else None
+
+
+def constant_converts(literal: str, value: int | None, keyword: str) -> bool | None:
+    """Whether a constant of predefined type `literal` and, when integral
+    and known, `value` converts implicitly to the predefined type `keyword`:
+    by identity, to `object`, by an implicit numeric conversion, or by an
+    implicit constant conversion its value fits (`300` is no byte, `-1` no
+    uint; PR 2814 review). None when only a value not known could tell."""
+    if keyword in (literal, cs.CSHARP_OBJECT_KEYWORD):
+        return True
+    if keyword in cs.CSHARP_IMPLICIT_NUMERIC_CONVERSIONS.get(literal, ()):
+        return True
+    fits = cs.CSHARP_CONSTANT_CONVERSIONS.get((literal, keyword))
+    if fits is None:
+        return False
+    return None if value is None else fits[0] <= value <= fits[1]
+
+
+def signed_preference(first: str, second: str) -> int:
+    """C#'s better conversion target between two integral types neither
+    converts to: +1 when `first` is the signed one of such a pair (`sbyte`
+    beside `byte`, `int` beside `uint`), -1 when `second` is, else 0."""
+    pair = (predefined_keyword(first) or "", predefined_keyword(second) or "")
+    if pair in cs.CSHARP_SIGNED_OVER_UNSIGNED:
+        return 1
+    return -1 if pair[::-1] in cs.CSHARP_SIGNED_OVER_UNSIGNED else 0
 
 
 def arguments_match(
@@ -861,7 +914,9 @@ def fit(
     if parameter in open_names:
         return Fit.OPEN
     if argument.literal is not None:
-        return literal_fit(parameter, argument.literal)
+        return literal_fit(
+            parameter, argument.literal, argument.value, judge.is_enum(parameter)
+        )
     if argument.name is None:
         return Fit.UNKNOWN
     identical = judge.identical(argument, parameter, open_names)

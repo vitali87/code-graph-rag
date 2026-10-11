@@ -420,88 +420,26 @@ CSHARP_LITERAL_ARG_TYPES: dict[str, str] = {
     "raw_string_literal": "string",
     "interpolated_string_expression": "string",
 }
-# The predefined types each literal type converts to implicitly, by keyword:
-# a parameter is looked up by the keyword of the type it names, however
-# spelled (`Int32`, `System.Int32`). One naming no predefined type (a user
-# type, a generic parameter) is not judged.
-CSHARP_LITERAL_ACCEPTS: dict[str, frozenset[str]] = {
-    # A constant int converts to every integral type it fits, so the
-    # narrower integral types are accepted too.
-    "int": frozenset(
-        {
-            "int",
-            "long",
-            "short",
-            "ushort",
-            "uint",
-            "ulong",
-            "byte",
-            "sbyte",
-            "nint",
-            "nuint",
-            "float",
-            "double",
-            "decimal",
-            "object",
-        }
-    ),
-    "long": frozenset(
-        {
-            "long",
-            "float",
-            "double",
-            "decimal",
-            "object",
-        }
-    ),
-    "uint": frozenset(
-        {
-            "uint",
-            "long",
-            "ulong",
-            "float",
-            "double",
-            "decimal",
-            "object",
-        }
-    ),
-    "ulong": frozenset(
-        {
-            "ulong",
-            "float",
-            "double",
-            "decimal",
-            "object",
-        }
-    ),
-    "float": frozenset({"float", "double", "object"}),
-    "decimal": frozenset({"decimal", "object"}),
-    "double": frozenset({"double", "object"}),
-    "bool": frozenset({"bool", "object"}),
-    "char": frozenset(
-        {
-            "char",
-            "int",
-            "long",
-            "float",
-            "double",
-            "decimal",
-            "object",
-        }
-    ),
-    "string": frozenset({"string", "object"}),
-}
-# A numeric literal's type comes from its suffix (`1L` is long, `1.0m` is
-# decimal), so the two numeric node types are typed from their text; an
-# unsuffixed integer too large for int is left unjudged (CodeRabbit, PR #2036).
+# A numeric literal's type comes from its suffix and value (`1L` is long,
+# `1.0m` decimal, `3000000000` uint), so the two numeric node types are typed
+# from their text (CodeRabbit, PR #2036; PR 2814 review).
 TS_CSHARP_INTEGER_LITERAL = "integer_literal"
 TS_CSHARP_REAL_LITERAL = "real_literal"
-CSHARP_INTEGER_SUFFIX_TYPES: dict[str, str] = {
-    "": "int",
-    "l": "long",
-    "u": "uint",
-    "ul": "ulong",
-    "lu": "ulong",
+# The types an integer literal may have by its suffix, the first its value
+# fits taken: `300` is an int, `3000000000` a uint, `300u` a uint, `300L` a
+# long, `300UL` a ulong (C# spec, integer literals).
+CSHARP_INTEGER_SUFFIX_CANDIDATES: dict[str, tuple[str, ...]] = {
+    "": ("int", "uint", "long", "ulong"),
+    "u": ("uint", "ulong"),
+    "l": ("long", "ulong"),
+    "ul": ("ulong",),
+    "lu": ("ulong",),
+}
+CSHARP_INTEGRAL_MAX: dict[str, int] = {
+    "int": 2**31 - 1,
+    "uint": 2**32 - 1,
+    "long": 2**63 - 1,
+    "ulong": 2**64 - 1,
 }
 CSHARP_INTEGER_SUFFIX_CHARS = "ul"
 CSHARP_REAL_SUFFIX_TYPES: dict[str, str] = {
@@ -513,7 +451,45 @@ CSHARP_REAL_SUFFIX_TYPES: dict[str, str] = {
 CSHARP_DIGIT_SEPARATOR = "_"
 CSHARP_INTEGER_BASE_PREFIXES: dict[str, int] = {"0x": 16, "0b": 2}
 CSHARP_DECIMAL_BASE = 10
-CSHARP_INT_MAX = 2**31 - 1
+# A unary minus or plus written on a literal (`-1`) folds into the constant.
+TS_CSHARP_PREFIX_UNARY_EXPRESSION = "prefix_unary_expression"
+CSHARP_UNARY_MINUS = "-"
+CSHARP_UNARY_PLUS = "+"
+# The two unsuffixed decimal literals a minus makes the least int and long:
+# `-2147483648` is an int, though `2147483648` alone is a uint.
+CSHARP_NEGATED_MINIMUM_TYPES: dict[int, str] = {2**31: "int", 2**63: "long"}
+# A negated literal's type, by the type of the literal: a uint is widened to
+# a long first; a ulong has no negation (C# spec, unary minus operator).
+CSHARP_NEGATED_TYPES: dict[str, str] = {"int": "int", "uint": "long", "long": "long"}
+# The implicit constant expression conversions (C# spec): an int constant
+# to a narrower integral type, and a long constant to ulong, each only for
+# a value in the target's range: `M(300)` cannot bind `M(byte)`.
+CSHARP_CONSTANT_CONVERSIONS: dict[tuple[str, str], tuple[int, int]] = {
+    ("int", "sbyte"): (-(2**7), 2**7 - 1),
+    ("int", "byte"): (0, 2**8 - 1),
+    ("int", "short"): (-(2**15), 2**15 - 1),
+    ("int", "ushort"): (0, 2**16 - 1),
+    ("int", "uint"): (0, 2**32 - 1),
+    ("int", "ulong"): (0, 2**64 - 1),
+    ("int", "nuint"): (0, 2**32 - 1),
+    ("long", "ulong"): (0, 2**64 - 1),
+}
+# C#'s better conversion target between two integral types neither converts
+# to: the signed one, so `M(5)` binds `M(sbyte)` over `M(byte)`.
+CSHARP_SIGNED_OVER_UNSIGNED: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("sbyte", "byte"),
+        ("sbyte", "ushort"),
+        ("sbyte", "uint"),
+        ("sbyte", "ulong"),
+        ("short", "ushort"),
+        ("short", "uint"),
+        ("short", "ulong"),
+        ("int", "uint"),
+        ("int", "ulong"),
+        ("long", "ulong"),
+    }
+)
 CSHARP_SYSTEM_PREFIX = "System."
 # What a type name resolved in the file that wrote it is spelled as: its qn
 # behind a leading dot (`.proj.A.Widget`). No source spelling starts with a

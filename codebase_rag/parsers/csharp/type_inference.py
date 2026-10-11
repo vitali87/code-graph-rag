@@ -52,6 +52,7 @@ from .overloads import (
     resolved_qn,
     same_type,
     same_type_name,
+    signed_preference,
     substitute,
     type_arguments,
     type_shape,
@@ -134,17 +135,21 @@ def _accepts_arg_count(
     return bool(types) and types[-1].endswith(cs.CSHARP_ARRAY_SUFFIX)
 
 
-def _numeric_literal_type(node_type: str, text: str) -> str | None:
-    """The C# type of a numeric literal, from its suffix and value, or None
-    when it cannot be told (an unsuffixed integer too large for int)."""
+class _Constant(NamedTuple):
+    """A literal argument as C# types it: its predefined type and, for an
+    integral one, its value (`-1` is an int of -1, `300u` a uint of 300)."""
+
+    type: str
+    value: int | None = None
+
+
+def _integer_constant(text: str) -> _Constant | None:
+    # An integer literal's type and value: of the types its suffix allows,
+    # the first the value fits (`3000000000` is a uint, `300L` a long). None
+    # for one no type holds, or a spelling not read.
     body = text.lower().replace(cs.CSHARP_DIGIT_SEPARATOR, "")
-    if node_type == cs.TS_CSHARP_REAL_LITERAL:
-        suffix = body[-1:] if body[-1:] in cs.CSHARP_REAL_SUFFIX_TYPES else ""
-        return cs.CSHARP_REAL_SUFFIX_TYPES[suffix]
     digits = body.rstrip(cs.CSHARP_INTEGER_SUFFIX_CHARS)
-    suffix_type = cs.CSHARP_INTEGER_SUFFIX_TYPES.get(body[len(digits) :])
-    if suffix_type != cs.CSHARP_INTEGER_SUFFIX_TYPES[""]:
-        return suffix_type
+    candidates = cs.CSHARP_INTEGER_SUFFIX_CANDIDATES.get(body[len(digits) :], ())
     prefix, base = next(
         (
             (prefix, base)
@@ -157,16 +162,73 @@ def _numeric_literal_type(node_type: str, text: str) -> str | None:
         value = int(digits.removeprefix(prefix), base)
     except ValueError:
         return None
-    return suffix_type if value <= cs.CSHARP_INT_MAX else None
+    kind = next((k for k in candidates if value <= cs.CSHARP_INTEGRAL_MAX[k]), None)
+    return _Constant(kind, value) if kind is not None else None
 
 
-def _literals_fit(leaf: str, literal_types: list[str | None]) -> bool:
+def _real_constant(text: str) -> _Constant:
+    # A real literal's type, by its suffix: `1.5f` float, `1.5m` decimal,
+    # else double.
+    body = text.lower()
+    suffix = body[-1:] if body[-1:] in cs.CSHARP_REAL_SUFFIX_TYPES else ""
+    return _Constant(cs.CSHARP_REAL_SUFFIX_TYPES[suffix])
+
+
+def _negated(constant: _Constant, written: str) -> _Constant | None:
+    # A literal under a unary minus: an int stays an int, a uint becomes a
+    # long, a long stays a long and a ulong has none, except the unsuffixed
+    # decimal `2147483648` and `9223372036854775808`, which a minus makes the
+    # least int and long. A real literal keeps its type.
+    if constant.value is None:
+        return constant
+    if written.isdigit() and constant.value in cs.CSHARP_NEGATED_MINIMUM_TYPES:
+        return _Constant(
+            cs.CSHARP_NEGATED_MINIMUM_TYPES[constant.value], -constant.value
+        )
+    kind = cs.CSHARP_NEGATED_TYPES.get(constant.type)
+    return _Constant(kind, -constant.value) if kind is not None else None
+
+
+def _literal_constant(value: Node) -> _Constant | None:
+    # The constant a literal argument is, a unary minus or plus on one
+    # folded in; None for any other expression, whose value is not read.
+    if value.type == cs.TS_CSHARP_PREFIX_UNARY_EXPRESSION:
+        return _signed_constant(value)
+    text = safe_decode_text(value) or ""
+    if value.type == cs.TS_CSHARP_INTEGER_LITERAL:
+        return _integer_constant(text)
+    if value.type == cs.TS_CSHARP_REAL_LITERAL:
+        return _real_constant(text)
+    literal = cs.CSHARP_LITERAL_ARG_TYPES.get(value.type)
+    return _Constant(literal) if literal is not None else None
+
+
+def _signed_constant(value: Node) -> _Constant | None:
+    # `-1`, `+1`, `-1.5`: a sign written on a numeric literal.
+    sign = value.children[0].type if value.children else ""
+    operand = value.named_children[0] if value.named_children else None
+    if operand is None or operand.type not in (
+        cs.TS_CSHARP_INTEGER_LITERAL,
+        cs.TS_CSHARP_REAL_LITERAL,
+    ):
+        return None
+    constant = _literal_constant(operand)
+    if constant is None or sign == cs.CSHARP_UNARY_PLUS:
+        return constant
+    if sign != cs.CSHARP_UNARY_MINUS:
+        return None
+    written = (safe_decode_text(operand) or "").replace(cs.CSHARP_DIGIT_SEPARATOR, "")
+    return _negated(constant, written)
+
+
+def _literals_fit(leaf: str, literals: list[_Constant | None]) -> bool:
     # Could each literal argument bind its parameter? A parameter that names
     # no predefined type (`literal_fit`), and a non-literal argument, are
     # not judged; a `params` tail beyond the declared count is not either.
     return all(
-        literal is None or literal_fit(param_type, literal) is not None
-        for param_type, literal in zip(_param_types(leaf), literal_types, strict=False)
+        literal is None
+        or literal_fit(param_type, literal.type, literal.value) is not None
+        for param_type, literal in zip(_param_types(leaf), literals, strict=False)
     )
 
 
@@ -332,15 +394,17 @@ class _ScopedJudge:
     """The `TypeJudge` ranking one candidate: its arguments resolve in the
     caller's file and its parameters in the file declaring the candidate."""
 
-    __slots__ = ("_converts", "_identical")
+    __slots__ = ("_converts", "_identical", "_is_enum")
 
     def __init__(
         self,
         identical: Callable[[ArgumentType, str, Collection[str]], bool | None],
         converts: Callable[[ArgumentType, str, Collection[str]], bool | None],
+        is_enum: Callable[[str], bool],
     ) -> None:
         self._identical = identical
         self._converts = converts
+        self._is_enum = is_enum
 
     def identical(
         self, argument: ArgumentType, parameter: str, open_names: Collection[str]
@@ -351,6 +415,9 @@ class _ScopedJudge:
         self, argument: ArgumentType, parameter: str, open_names: Collection[str]
     ) -> bool | None:
         return self._converts(argument, parameter, open_names)
+
+    def is_enum(self, parameter: str) -> bool:
+        return self._is_enum(parameter)
 
 
 class _MemberCall(NamedTuple):
@@ -1184,7 +1251,7 @@ class CSharpTypeInferenceEngine:
         name: str,
         arg_count: int,
         generic_call: bool,
-        literal_types: list[str | None],
+        literal_types: list[_Constant | None],
     ) -> list[list[str]]:
         # Exact arity first, as C# prefers the unexpanded form; only when no
         # imported type has one may a defaulted or `params` overload bind.
@@ -1243,24 +1310,18 @@ class CSharpTypeInferenceEngine:
         head, paren, params = qn.partition(cs.CHAR_PAREN_OPEN)
         return f"{head.rsplit(cs.SEPARATOR_DOT, 1)[-1]}{paren}{params}"
 
-    def _literal_argument_types(self, call_node: Node) -> list[str | None]:
-        # The C# type of each argument that is a bare literal, else None.
+    def _literal_argument_types(self, call_node: Node) -> list[_Constant | None]:
+        # The constant each argument that is a bare literal is, else None.
         arg_list = call_node.child_by_field_name(cs.FIELD_ARGUMENTS)
         if arg_list is None:
             return []
-        out: list[str | None] = []
+        out: list[_Constant | None] = []
         for arg in arg_list.children:
             if arg.type != cs.TS_CSHARP_ARGUMENT:
                 continue
             value = arg.named_children[-1] if arg.named_children else None
-            out.append(None if value is None else self._literal_type(value))
+            out.append(None if value is None else _literal_constant(value))
         return out
-
-    @staticmethod
-    def _literal_type(value: Node) -> str | None:
-        if value.type in (cs.TS_CSHARP_INTEGER_LITERAL, cs.TS_CSHARP_REAL_LITERAL):
-            return _numeric_literal_type(value.type, safe_decode_text(value) or "")
-        return cs.CSHARP_LITERAL_ARG_TYPES.get(value.type)
 
     def _static_import_scope(
         self, module_qn: str, caller_qn: str | None
@@ -2292,11 +2353,14 @@ class CSharpTypeInferenceEngine:
         # C#'s better conversion target between two parameter types an
         # argument converts to: the one that converts to the other where the
         # other does not convert back. +1, -1, or 0 when that is not known.
+        # Between two integral types neither converts to, the signed one.
         forward = self._implicitly_converts(first, second)
         backward = self._implicitly_converts(second, first)
         if forward is True and backward is False:
             return 1
-        return -1 if backward is True and forward is False else 0
+        if backward is True and forward is False:
+            return -1
+        return signed_preference(first, second) if forward is backward is False else 0
 
     def _recording_judge(self, found: list[Inferred]) -> _ScopedJudge:
         # A judge for one argument, whose matches add the bounds they
@@ -2306,6 +2370,7 @@ class CSharpTypeInferenceEngine:
         return _ScopedJudge(
             partial(self._identical, inferred=inferred),
             partial(self._converts, inferred=inferred),
+            self._names_enum,
         )
 
     def _fixed_types(
@@ -2339,7 +2404,7 @@ class CSharpTypeInferenceEngine:
         # `Box<string>` for `Box<T>`) may not hold once T is int, and C#
         # compares the conversions to these types, so `M<T>(T)` with T := int
         # ties `M(int)`, which then wins as the non-generic method.
-        judge = _ScopedJudge(self._identical, self._converts)
+        judge = _ScopedJudge(self._identical, self._converts, self._names_enum)
         still_open = open_names - fixed.keys()
         return [
             fit(substitute(parameter, fixed), argument, still_open, judge)
@@ -2708,8 +2773,8 @@ class CSharpTypeInferenceEngine:
         value = argument.named_children[-1] if argument.named_children else None
         if value is None:
             return None
-        if (literal := self._literal_type(value)) is not None:
-            return ArgumentType(literal, None, 0, None)
+        if (constant := _literal_constant(value)) is not None:
+            return ArgumentType(constant.type, None, 0, None, constant.value)
         if value.type in (
             cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION,
             cs.TS_CSHARP_CAST_EXPRESSION,
@@ -2731,6 +2796,12 @@ class CSharpTypeInferenceEngine:
             return None
         name, arity = split_type_ref(annotated)
         return ArgumentType(None, name, arity, None)
+
+    def _names_enum(self, parameter: str) -> bool:
+        # Whether a resolved parameter type, or the value its nullable
+        # wraps, is a first-party enum.
+        qn = self._first_party_type(type_shape(parameter)[0])
+        return qn is not None and self.function_registry.get(qn) == NodeType.ENUM
 
     def _first_party_type(self, canonical: str) -> str | None:
         # The first-party type a resolved spelling IS (`canonical_type`), or
