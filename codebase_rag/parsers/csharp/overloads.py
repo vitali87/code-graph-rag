@@ -287,23 +287,42 @@ def bindings_for_base(
     base_shape = shapes.get(base_qn)
     if shape is None or base_shape is None or not base_shape.parameters:
         return {}
-    leaf = qn_markers.strip_dup_marker(base_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
-    name = split_type_ref(leaf)[0]
-    arity = generic_arity.get(base_qn, 0)
-    written = next(
-        (b for b in shape.bases if b.name == name and len(b.arguments) == arity),
-        None,
-    )
-    if written is None:
+    arguments = _written_base_arguments(shape, base_qn, generic_arity, scope)
+    if arguments is None:
         return {}
     unbound = set(shape.parameters) - bindings.keys()
     return {
         parameter: declared_type(argument, scope, bindings)
-        for parameter, argument in zip(
-            base_shape.parameters, written.arguments, strict=False
-        )
+        for parameter, argument in zip(base_shape.parameters, arguments, strict=False)
         if not mentioned_names(argument) & unbound
     }
+
+
+def _written_base_arguments(
+    shape: CSharpGenericShape,
+    base_qn: str,
+    generic_arity: Mapping[str, int],
+    scope: Scope | None,
+) -> tuple[str, ...] | None:
+    # The type arguments the base list writes for `base_qn`: the written base
+    # that resolves to it in the class's file, so `A.IBase<Person>` and
+    # `B.IBase<Shape>` each bind their own (Greptile review of PR 2814). A
+    # base the file does not resolve is told by its name only when no other
+    # base of that name and arity is written; None when none is known.
+    arity = generic_arity.get(base_qn, 0)
+    written = [t for t in shape.base_types if generic_arity_of_type_text(t) == arity]
+    if scope is not None:
+        for text in written:
+            if resolved_qn(canonical_type(text, scope)) == base_qn:
+                return type_arguments(text)
+    leaf = qn_markers.strip_dup_marker(base_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+    name = split_type_ref(qn_markers.strip_arity_marker(leaf))[0]
+    named = [
+        b
+        for b in shape.bases
+        if b.name.rsplit(cs.SEPARATOR_DOT, 1)[-1] == name and len(b.arguments) == arity
+    ]
+    return named[0].arguments if len(named) == 1 else None
 
 
 def written_bindings(
@@ -596,22 +615,33 @@ def _proven_apart(given: str, wanted: str) -> bool:
             _tuple_elements(given_core),
             _tuple_elements(wanted_core),
         )
+        # A tuple is a value type: its `?` is `Nullable<>`, another type.
         return (
             len(given_elements) != len(wanted_elements)
-            or _array_shape(given_suffix) != _array_shape(wanted_suffix)
+            or given_suffix != wanted_suffix
             or _any_apart(given_elements, wanted_elements)
         )
     given_qn, wanted_qn = _known_type(given_core), _known_type(wanted_core)
     if given_qn is not None and wanted_qn is not None:
         if given_qn != wanted_qn:
             return True
-        if _array_shape(given_suffix) != _array_shape(wanted_suffix):
+        if _shape_of(given_suffix, given_qn) != _shape_of(wanted_suffix, wanted_qn):
             return True
     given_arguments, wanted_arguments = (
         type_arguments(given_core),
         type_arguments(wanted_core),
     )
     return _any_apart(given_arguments, wanted_arguments)
+
+
+def _shape_of(suffix: str, known: str) -> str:
+    # The shape two types are told apart by: a predefined value type's `?`
+    # is `Nullable<>`, another type, where any other type's may be no more
+    # than an annotation a signature leaves out.
+    value = predefined_keyword(known) is not None and known not in (
+        cs.CSHARP_REFERENCE_KEYWORDS
+    )
+    return suffix if value else _array_shape(suffix)
 
 
 def _any_apart(given: Sequence[str], wanted: Sequence[str]) -> bool:
@@ -690,9 +720,11 @@ def literal_fit(
     A narrowing constant conversion of a constant whose value is not known
     is UNDECIDED, so it never wins or loses alone."""
     core, suffix = type_shape(parameter)
-    # An array or pointer (`int[]`) is not judged.
+    # No literal converts to an array or a pointer (`int[]`): neither type
+    # can declare a conversion from a predefined one (Greptile review of PR
+    # 2814), and a null literal, which does, is no typed literal here.
     if suffix.removesuffix(cs.CSHARP_NULLABLE_SUFFIX):
-        return Fit.OTHER
+        return None
     keyword = predefined_keyword(core)
     if keyword is None:
         return _enum_literal_fit(literal, value) if enum else Fit.OTHER
@@ -1234,11 +1266,30 @@ def _better_conversion(
         return None
     if Fit.UNKNOWN in (p_fit, q_fit):
         return 0 if p_type == q_type or same_type(p_type, q_type) else None
+    if Fit.OTHER in (p_fit, q_fit):
+        return _uncertain_conversion(p_fit, q_fit, p_type, q_type)
     if p_fit != q_fit:
         return 1 if (p_fit or 0) > (q_fit or 0) else -1
     if p_fit is Fit.CONVERTIBLE and target_order is not None:
         return target_order(p_type, q_type)
     return 0
+
+
+def _uncertain_conversion(
+    p_fit: Fit | None, q_fit: Fit | None, p_type: str, q_type: str
+) -> int | None:
+    # A conversion not known to exist (OTHER) is compared only where it
+    # cannot matter, both parameters being one type, or with an identity to
+    # a type it is proven not to be, which C# prefers to any other
+    # conversion. Against anything else, which is better is not known, so
+    # neither candidate is dropped for it (Greptile review of PR 2814).
+    if p_type == q_type or same_type(p_type, q_type):
+        return 0
+    if p_fit is Fit.EXACT and _proven_apart(p_type, q_type):
+        return 1
+    if q_fit is Fit.EXACT and _proven_apart(q_type, p_type):
+        return -1
+    return None
 
 
 def _equivalent(given: Sequence[str], wanted: Sequence[str]) -> bool:

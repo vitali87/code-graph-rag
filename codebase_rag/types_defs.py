@@ -508,6 +508,11 @@ class CSharpCallShape(NamedTuple):
     # (type parameter, type it is constrained to), one per type written in
     # a `where` clause: `where T : Person` -> (("T", "Person"),).
     constraints: tuple[tuple[str, str], ...] = ()
+    # The parameters' names, in declared order, which a named argument binds
+    # by (`M(y: 1)`); empty when not known.
+    names: tuple[str, ...] = ()
+    # The return type as written (`Widget[]`, `List<Widget>`), "" for none.
+    returns: str = ""
 
 
 class JavaStaticImport(NamedTuple):

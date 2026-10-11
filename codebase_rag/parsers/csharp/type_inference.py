@@ -252,7 +252,11 @@ def _literals_fit(leaf: str, literals: list[_Constant | None]) -> bool:
     # not judged; a `params` tail beyond the declared count is not either.
     return all(
         literal is None
-        or literal_fit(param_type, literal.type, literal.value) is not None
+        # An array may be a `params` tail, whose elements a literal binds.
+        or literal_fit(
+            param_type.removesuffix(cs.CSHARP_ARRAY_SUFFIX), literal.type, literal.value
+        )
+        is not None
         for param_type, literal in zip(_param_types(leaf), literals, strict=False)
     )
 
@@ -406,6 +410,64 @@ def _takes(origin: _Origin, keyword: str) -> bool | None:
     if origin.constant:
         return constant_converts(origin.type, origin.value, keyword)
     return predefined_converts(origin.type, keyword)
+
+
+def _takes_any_value(parameter: str) -> bool:
+    # Whether a parameter is `object` or `dynamic`, with no shape on it.
+    core, shape = type_shape(parameter)
+    return not shape and (
+        predefined_keyword(core) == cs.CSHARP_OBJECT_KEYWORD
+        or core == cs.CSHARP_DYNAMIC_KEYWORD
+    )
+
+
+def _argument_names(call_node: Node) -> tuple[str | None, ...]:
+    # Each argument's name (`M(y: 1)`), None for a positional one.
+    arg_list = call_node.child_by_field_name(cs.FIELD_ARGUMENTS)
+    if arg_list is None:
+        return ()
+    return tuple(
+        safe_decode_text(argument.child_by_field_name(cs.FIELD_NAME))
+        if argument.child_by_field_name(cs.FIELD_NAME) is not None
+        else None
+        for argument in arg_list.children
+        if argument.type == cs.TS_CSHARP_ARGUMENT
+    )
+
+
+# A named call no assignment of its arguments to the method's parameters
+# takes (`_named_order`).
+_NO_ORDER: tuple[int, ...] = (-1,)
+
+
+def _named_order(
+    shape: CSharpCallShape | None,
+    types: Sequence[str],
+    names: Sequence[str | None],
+) -> Sequence[int] | None:
+    # The parameter each argument binds, by its position or its name: C#
+    # binds a positional argument to the parameter at its position and a
+    # named one to the parameter of its name. `_NO_ORDER` when a name is not
+    # a parameter's, a parameter is bound twice or a required one is left
+    # out; None when the parameters' names are not known, or an argument
+    # falls past them (a `params` tail).
+    if shape is None or len(shape.names) != len(types):
+        return None
+    order: list[int] = []
+    for position, name in enumerate(names):
+        index = position if name is None else _index_of(shape.names, name)
+        if index >= len(types):
+            return None
+        if index < 0 or index in order:
+            return _NO_ORDER
+        order.append(index)
+    if any(index not in order for index in range(shape.required)):
+        return _NO_ORDER
+    return order
+
+
+def _index_of(names: Sequence[str], name: str) -> int:
+    return names.index(name) if name in names else -1
 
 
 def _initializer(declarator: Node) -> Node | None:
@@ -2007,9 +2069,7 @@ class CSharpTypeInferenceEngine:
         if inner is None:
             return False
         family = self.csharp_member_overload_family(call, module_qn, caller_qn)
-        returns = {
-            self.csharp_method_return_types.get(qn) for qn in (inner[1], *family)
-        }
+        returns = {self._declared_return(qn) for qn in (inner[1], *family)}
         return len(returns) == 1
 
     def _result_qn(
@@ -2047,12 +2107,23 @@ class CSharpTypeInferenceEngine:
         inner = self.resolve_csharp_method_call(
             call, local_var_types, module_qn, caller_qn
         )
-        entry = self.csharp_method_return_types.get(inner[1]) if inner else None
-        if inner is None or entry is None:
+        return self._declared_return(inner[1]) if inner else None
+
+    def _declared_return(self, method_qn: str) -> tuple[str, bool] | None:
+        # A method's return type as written, its shape and type arguments in
+        # (`Widget[]`, `List<Widget>`), resolved where it is declared and
+        # True; or, that file not known, as recorded (`Box`1`) and False.
+        # None for a method of no return type known.
+        shape = self.csharp_call_shapes.get(method_qn)
+        written = signature_type_name(shape.returns) if shape and shape.returns else ""
+        owner, _member = qn_markers.owner_and_member(method_qn)
+        scope = self.scope_of(owner, self._method_type_parameters(method_qn))
+        if scope is not None and written:
+            return canonical_type(written, scope), True
+        entry = self.csharp_method_return_types.get(method_qn)
+        if entry is None:
             return None
         rtype, rarity = entry
-        owner, _member = qn_markers.owner_and_member(inner[1])
-        scope = self.scope_of(owner, self._method_type_parameters(inner[1]))
         if scope is None:
             return (f"{rtype}`{rarity}" if rarity else rtype), False
         return canonical_type(rtype, scope, rarity), True
@@ -2072,15 +2143,15 @@ class CSharpTypeInferenceEngine:
         if found is None or not found[1]:
             return None
         canonical = found[0]
-        if (qn := self._first_party_type(canonical)) is not None:
-            return ArgumentType(
-                None, canonical, self.csharp_class_generic_arity.get(qn, 0), None
-            )
-        core = type_shape(canonical)[0]
-        arity = generic_arity_of_type_text(core)
-        if self._resolve_in(module_qn, strip_generic_arguments(core), arity):
+        # A name the method's own file leaves unresolved (external, or not
+        # one type there) must not be read as the caller's file reads it.
+        if any(
+            predefined_keyword(name) is None
+            and self._type_name_to_qn(name, module_qn) is not None
+            for name in mentioned_names(canonical)
+        ):
             return _UNREAD
-        return None
+        return _written_argument(canonical)
 
     def _var_initializer(self, identifier: Node, name: str) -> Node | None:
         # The initializer of the `var` local `name` an identifier reads,
@@ -2711,7 +2782,10 @@ class CSharpTypeInferenceEngine:
                     )
                 ]
             if best := self._best_overloads(
-                qns, arguments, (bindings, open_names, spelled)
+                qns,
+                arguments,
+                (bindings, open_names, spelled),
+                _argument_names(call.node),
             ):
                 return best
         return None if arguments is None else []
@@ -2721,16 +2795,59 @@ class CSharpTypeInferenceEngine:
         qns: Sequence[str],
         arguments: list[ArgumentType | None],
         receiver: tuple[Mapping[str, str], frozenset[str], tuple[str, ...]],
+        names: tuple[str | None, ...] = (),
     ) -> list[str]:
         # The overloads of one declaring type no other one is better than,
         # each scored in every form C# may call it in; a method scored in
-        # both its forms is one candidate.
+        # both its forms is one candidate. A call naming its arguments is
+        # scored by where each name puts it.
         scored = [
-            self._score_overload(qn, form, arguments, receiver)
+            scored
             for qn in qns
-            for form in self._call_parameter_forms(qn, len(arguments))
+            for scored in (
+                self._named_scores(qn, arguments, receiver, names)
+                if any(names)
+                else [
+                    self._score_overload(qn, form, arguments, receiver)
+                    for form in self._call_parameter_forms(qn, len(arguments))
+                ]
+            )
         ]
         return list(dict.fromkeys(best_candidates(scored, self._better_target)))
+
+    def _named_scores(
+        self,
+        method_qn: str,
+        arguments: list[ArgumentType | None],
+        receiver: tuple[Mapping[str, str], frozenset[str], tuple[str, ...]],
+        names: tuple[str | None, ...],
+    ) -> list[Scored]:
+        # A call naming some arguments, scored with each argument on the
+        # parameter its position or its name binds (Greptile review of PR
+        # 2814). A name the method does not declare, a parameter bound twice
+        # and a required one left out each rule it out; a method whose names
+        # are not known is scored on its positional arguments alone and
+        # compared with nothing.
+        types = _param_types(method_qn)
+        order = _named_order(self.csharp_call_shapes.get(method_qn), types, names)
+        if order is _NO_ORDER:
+            return [Scored(method_qn, [None] * len(arguments), [""] * len(arguments))]
+        if order is None:
+            unnamed = [
+                a if n is None else None for a, n in zip(arguments, names, strict=True)
+            ]
+            form = self._call_parameter_forms(method_qn, len(arguments))[0]
+            scored = self._score_overload(method_qn, form, unnamed, receiver)
+            return [scored._replace(settled=False)]
+        return [
+            self._score_overload(
+                method_qn,
+                ([types[i] for i in order], False),
+                arguments,
+                receiver,
+                order,
+            )
+        ]
 
     def _candidate_methods(
         self, declaring: str, call: _MemberCall, compatible: bool, spelled: int
@@ -2756,6 +2873,7 @@ class CSharpTypeInferenceEngine:
         form: tuple[list[str], bool],
         arguments: list[ArgumentType | None],
         receiver: tuple[Mapping[str, str], frozenset[str], tuple[str, ...]],
+        order: Sequence[int] | None = None,
     ) -> Scored:
         # How each argument binds its parameter of `method_qn` in one form
         # (its parameters, whether expanded), given the type arguments the
@@ -2773,13 +2891,15 @@ class CSharpTypeInferenceEngine:
             for parameter in parameters
         ]
         inferred = self._inferred_fits(method_qn, seen, arguments, reading)
+        declared = [canonical_type(p, reading.scope) for p in _param_types(method_qn)]
         return Scored(
             method_qn,
             inferred.fits,
             [substitute(parameter, inferred.fixed) for parameter in seen],
             bool(reading.own),
             expanded,
-            [canonical_type(p, reading.scope) for p in _param_types(method_qn)],
+            # A call naming its arguments compares them in its own order.
+            [declared[i] for i in order] if order is not None else declared,
             reading.scope.type_parameters if reading.scope else reading.own,
             inferred.settled,
         )
@@ -3153,8 +3273,10 @@ class CSharpTypeInferenceEngine:
             return given[1] == bound[1]
         if kind != NodeType.INTERFACE:
             return None
-        if bound[1] not in self._ancestor_closure(given[1])[0]:
-            return False
+        reached, unindexed = self._ancestor_closure(given[1])
+        if bound[1] not in reached:
+            # An unindexed base may implement it (Greptile review of PR 2814).
+            return None if unindexed else False
         return None if type_arguments(bound[0]) else True
 
     def _meets_external(self, bound: str, given_qn: str) -> bool | None:
@@ -3423,10 +3545,8 @@ class CSharpTypeInferenceEngine:
         if arg_list is None:
             return []
         arguments = [c for c in arg_list.children if c.type == cs.TS_CSHARP_ARGUMENT]
-        # A named argument may stand at any position, so with one present no
-        # argument is matched to a parameter by where it is written.
-        if any(a.child_by_field_name(cs.FIELD_NAME) is not None for a in arguments):
-            return [None] * len(arguments)
+        # A named argument is matched to its parameter by its name, per
+        # candidate (`_named_order`), not here.
         return [
             self._argument_type(a, local_var_types, module_qn, caller_qn)
             for a in arguments
@@ -3609,12 +3729,26 @@ class CSharpTypeInferenceEngine:
             else None
         )
 
-    def _wraps_nullable(self, given: tuple[str, str], wanted: tuple[str, str]) -> bool:
-        # `Widget` to `Widget?`: the implicit nullable conversion of a value.
+    def _wraps_nullable(
+        self,
+        given: tuple[str, str],
+        wanted: tuple[str, str],
+        arguments: tuple[str, ...] | None,
+        open_names: Collection[str],
+    ) -> bool | None:
+        # `Widget` to `Widget?`: the implicit nullable conversion of a value,
+        # of one closing to the same closing: `G<int>` wraps into no
+        # `G<string>?` (Greptile review of PR 2814). None when the value's
+        # type arguments are not known.
         nullable = f"{type_shape(given[0])[1]}{cs.CSHARP_NULLABLE_SUFFIX}"
-        return type_shape(wanted[0])[1] == nullable and self._same_class(
+        if type_shape(wanted[0])[1] != nullable or not self._same_class(
             given[1], wanted[1]
-        )
+        ):
+            return False
+        expected = type_arguments(type_shape(wanted[0])[0])
+        if not expected:
+            return True
+        return arguments_match(arguments, expected, open_names)
 
     def _judgeable(self, given_qn: str, wanted_qn: str) -> bool:
         # Whether the hierarchy can settle a conversion between the two: the
@@ -3752,6 +3886,10 @@ class CSharpTypeInferenceEngine:
         if (origin := _predefined_origin(argument)) is not None:
             return self._from_predefined(origin, parameter)
         given_text = written_type(argument)
+        if _takes_any_value(parameter) and "*" not in type_shape(given_text)[1]:
+            # Every type converts to `object` (boxing a value), and to
+            # `dynamic`: a known conversion, ranked as any other.
+            return True
         varies = self._variance_converts(given_text, parameter, open_names)
         if varies is not None:
             return varies
@@ -3767,8 +3905,9 @@ class CSharpTypeInferenceEngine:
             return None
         given = (given_text, given_qn)
         wanted = (parameter, wanted_qn)
-        if self._wraps_nullable(given, wanted):
-            return True
+        wraps = self._wraps_nullable(given, wanted, argument.arguments, open_names)
+        if wraps is not False:
+            return wraps
         derived = self._class_conversion(given, wanted, open_names, inferred)
         if derived:
             return True
@@ -3891,8 +4030,11 @@ class CSharpTypeInferenceEngine:
         wanted_text, wanted_qn = wanted
         if type_shape(given[0])[1] != type_shape(wanted_text)[1]:
             return False
-        if wanted_qn not in self._class_ancestry(given[1]):
-            return False
+        ancestry = self._class_ancestry(given[1])
+        if wanted_qn not in ancestry:
+            # A base the index does not hold may derive from it (Greptile
+            # review of PR 2814): only a whole first-party ancestry says no.
+            return False if self._all_indexed(ancestry) else None
         expected = type_arguments(wanted_text)
         if not expected:
             return True
@@ -3909,12 +4051,13 @@ class CSharpTypeInferenceEngine:
         # A user-defined implicit conversion is declared on its source or its
         # target type, or a base of either, and its written types resolve in
         # its declaring file. True when one applies, None when one might.
+        ancestry = self._class_ancestry(given[1]) | self._class_ancestry(wanted[1])
         return self._any_operator(
-            self._class_ancestry(given[1]) | self._class_ancestry(wanted[1]),
+            ancestry,
             lambda operator, declaring: self._operator_applies(
                 operator, declaring, given, (wanted, open_names)
             ),
-            False,
+            False if self._all_indexed(ancestry) else None,
         )
 
     def _any_operator(
@@ -3983,13 +4126,12 @@ class CSharpTypeInferenceEngine:
         ):
             return None
         ancestry = self._class_ancestry(given[1])
-        known = all(self.function_registry.get(q) in _TYPE_DECLS for q in ancestry)
         return self._any_operator(
             ancestry,
             lambda operator, declaring: self._operator_to_predefined(
                 given, operator, declaring, keyword
             ),
-            False if known else None,
+            False if self._all_indexed(ancestry) else None,
         )
 
     def _operator_to_predefined(
@@ -4202,6 +4344,12 @@ class CSharpTypeInferenceEngine:
         # standing for every part.
         qn = self._type_name_to_qn(name, module_qn, arity)
         return min(self._partial_roots(qn)) if qn is not None else None
+
+    def _all_indexed(self, ancestry: Collection[str]) -> bool:
+        # Whether every type of an ancestry is one the index declares: one it
+        # only names (an external base, one excluded from indexing) may hold
+        # what the walk is looking for.
+        return all(self.function_registry.get(qn) in _TYPE_DECLS for qn in ancestry)
 
     def _class_ancestry(self, class_qn: str) -> set[str]:
         seen: set[str] = set()

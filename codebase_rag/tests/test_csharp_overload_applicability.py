@@ -655,6 +655,7 @@ def _resolved_calls(
 
 
 _EXACT = str(cs.EdgeResolution.EXACT)
+_OVERLOAD = str(cs.EdgeResolution.OVERLOAD)
 
 
 class TestANullableReferenceAnnotationIsNoPartOfAType:
@@ -908,7 +909,7 @@ def _resolved_file_calls(
     found: dict[str, set[tuple[str, str]]] = {}
     for c in get_relationships(mock_ingestor, cs.RelationshipType.CALLS):
         caller, callee = str(c.args[0][2]), str(c.args[2][2])
-        if ".U2.Use." in caller:
+        if caller.split("(", 1)[0].rsplit(".", 2)[-2] == "Use":
             resolution = c.kwargs.get("properties", {}).get(cs.KEY_RESOLUTION)
             found.setdefault(caller.rsplit(".Use.", 1)[1], set()).add(
                 (callee.split(".", 2)[2], str(resolution))
@@ -972,6 +973,160 @@ class TestACallResultIsTypedWhereItsMethodIsDeclared:
         calls = _resolved_file_calls(RESULT_SCOPE_FILES, temp_repo, mock_ingestor)
         assert not {c for c in calls["Ambiguous"] if c[0].endswith(".Run")}, calls
         assert all(r != _EXACT for _c, r in _ranked(calls, "AmbiguousArg", "U2.C."))
+
+
+NAMED_ARGUMENT_CS = """\
+namespace Na;
+public class C<T> { public void M(T x) { } public void M(int y) { } }
+public class D { public void M(int a, int b = 0) { } public void M(int a, string c) { } }
+public class Use {
+    public void ByX() { new C<int>().M(x: 1); }
+    public void ByY() { new C<int>().M(y: 1); }
+    public void Positional() { new C<int>().M(1); }
+    public void Trailing() { new D().M(1, c: "s"); }
+    public void Skipped() { new D().M(b: 2, a: 1); }
+}
+"""
+
+RETURN_SHAPE_FILES = {
+    "L.cs": """\
+#nullable enable
+namespace L;
+using System.Collections.Generic;
+public class Widget { }
+public static class Factory {
+    public static Widget[] Many() => null;
+    public static Widget? Maybe() => null;
+    public static List<Widget> All() => null;
+}
+""",
+    "Use.cs": """\
+#nullable enable
+namespace U;
+using System.Collections.Generic;
+public class Widget { }
+public class C {
+    public void A(L.Widget[] a) { }
+    public void A(U.Widget[] a) { }
+    public void N(L.Widget n) { }
+    public void N(U.Widget n) { }
+    public void G(List<L.Widget> g) { }
+    public void G(List<U.Widget> g) { }
+}
+public class Use {
+    public void Arr() { var c = new C(); var x = L.Factory.Many(); c.A(x); }
+    public void Null() { var c = new C(); var x = L.Factory.Maybe(); c.N(x); }
+    public void Gen() { var c = new C(); var x = L.Factory.All(); c.G(x); }
+}
+""",
+}
+
+UNINDEXED_BASE_CS = """\
+namespace Ma;
+public interface IThing { }
+public class Circle : External.Shape { }
+public class Square : IThing { }
+public class Plain { }
+public class C { public void M<T>(T x) where T : IThing { } public void M(object o) { } }
+public class Use {
+    public void Unindexed() { new C().M(new Circle()); }
+    public void Known() { new C().M(new Square()); }
+    public void Never() { new C().M(new Plain()); }
+}
+"""
+
+TWIN_BASE_FILES = {
+    "A.cs": "namespace A;\npublic interface IBase<T> { void Go(T x); }\n",
+    "B.cs": "namespace B;\npublic interface IBase<T> { void Go(T x); }\n",
+    "K.cs": """\
+namespace K;
+public class Person { }
+public class Shape { }
+public interface ICombined : A.IBase<Person>, B.IBase<Shape> { }
+public class Use {
+    public void ToShape(ICombined c) { c.Go(new Shape()); }
+    public void ToPerson(ICombined c) { c.Go(new Person()); }
+}
+""",
+}
+
+RULED_OUT_CS = """\
+namespace Ro;
+public class C { public void M(int a, int b) { } public void M(string a, Ext b) { } }
+public class Use { public void Run() { new C().M(1, 2); } }
+"""
+
+NULLABLE_ARGUMENTS_CS = """\
+namespace Nv;
+public struct G<X> { }
+public class C<T> { public void M(T x) { } public void M(object o) { } }
+public class Use {
+    public void Other() { new C<G<string>?>().M(new G<int>()); }
+    public void Same() { new C<G<string>?>().M(new G<string>()); }
+}
+"""
+
+
+class TestAnExactEdgeIsOneTheIndexProves:
+    # Greptile review of PR 2814, round 16: an overload is dropped only for a
+    # reason the index is certain of (a named parameter it lacks, an arity it
+    # cannot take, two fully known types with no conversion, a candidate
+    # provably better), and a call binds exactly only when one candidate is
+    # left that way; any other doubt leaves the call fanned out to every
+    # candidate not ruled out.
+    def test_a_named_argument_binds_the_parameter_of_its_name(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(NAMED_ARGUMENT_CS, temp_repo, mock_ingestor)
+        assert calls["ByX"] == {("Na.C.M(T)", _EXACT)}, calls
+        assert calls["ByY"] == {("Na.C.M(int)", _EXACT)}, calls
+        assert calls["Trailing"] == {("Na.D.M(int, string)", _EXACT)}, calls
+        assert calls["Skipped"] == {("Na.D.M(int, int)", _EXACT)}, calls
+        # Negative: positionally, the more specific `M(int)` wins.
+        assert calls["Positional"] == {("Na.C.M(int)", _EXACT)}, calls
+
+    def test_a_call_result_keeps_the_shape_of_its_type(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_file_calls(RETURN_SHAPE_FILES, temp_repo, mock_ingestor)
+        assert _ranked(calls, "Arr", "U.C.") == {("U.C.A(L.Widget[])", _EXACT)}
+        assert _ranked(calls, "Null", "U.C.") == {("U.C.N(L.Widget)", _EXACT)}
+        assert _ranked(calls, "Gen", "U.C.") == {("U.C.G(List<L.Widget>)", _EXACT)}
+
+    def test_an_unindexed_base_leaves_a_constraint_undecided(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(UNINDEXED_BASE_CS, temp_repo, mock_ingestor)
+        assert calls["Unindexed"] == {
+            ("Ma.C.M(T)", _OVERLOAD),
+            ("Ma.C.M(object)", _OVERLOAD),
+        }, calls
+        # Negatives: a known ancestry meets the bound, or provably breaks it.
+        assert calls["Known"] == {("Ma.C.M(T)", _EXACT)}, calls
+        assert calls["Never"] == {("Ma.C.M(object)", _EXACT)}, calls
+
+    def test_each_base_binds_its_own_type_arguments(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_file_calls(TWIN_BASE_FILES, temp_repo, mock_ingestor)
+        assert calls["ToShape(ICombined)"] == {("B.IBase.Go(T)", _EXACT)}, calls
+        assert calls["ToPerson(ICombined)"] == {("A.IBase.Go(T)", _EXACT)}, calls
+
+    def test_doubt_in_a_ruled_out_candidate_leaves_the_edge_exact(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Negative: `M(string, Ext)` is unsure for its second argument, but
+        # its first already rules it out.
+        calls = _resolved_calls(RULED_OUT_CS, temp_repo, mock_ingestor)
+        assert calls["Run"] == {("Ro.C.M(int, int)", _EXACT)}, calls
+
+    def test_a_nullable_compares_its_type_arguments(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(NULLABLE_ARGUMENTS_CS, temp_repo, mock_ingestor)
+        assert calls["Other"] == {("Nv.C.M(object)", _EXACT)}, calls
+        # Negative: the same closing wraps into its nullable.
+        assert calls["Same"] == {("Nv.C.M(T)", _EXACT)}, calls
 
 
 CONSTRAINT_CS = """\

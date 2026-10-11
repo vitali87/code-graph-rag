@@ -121,6 +121,20 @@ def method_call_shape(row: ResultRow) -> CSharpCallShape | None:
         is_static=cs.TS_CSHARP_MODIFIER_STATIC in _strings(row.get(cs.KEY_MODIFIERS)),
         type_parameters=tuple(_strings(row.get(cs.KEY_TYPE_PARAMETERS))),
         constraints=constraints,
+        names=tuple(_declared_name(entry) for entry in entries),
+        returns=returns
+        if isinstance(returns := row.get(cs.KEY_RETURN_TYPE), str)
+        else "",
+    )
+
+
+def _declared_name(entry: str) -> str:
+    # A stored parameter entry's name: `b?` -> b, `...rest` -> rest,
+    # `this self` -> self.
+    return (
+        entry.removeprefix(cs.POSITIONAL_RECEIVER_THIS_PREFIX)
+        .removeprefix(cs.POSITIONAL_REST_PREFIX)
+        .removesuffix(cs.POSITIONAL_OPTIONAL_SUFFIX)
     )
 
 

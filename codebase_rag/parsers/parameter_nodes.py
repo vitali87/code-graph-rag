@@ -473,7 +473,18 @@ def csharp_call_shape(func_node: Node) -> CSharpCallShape:
             func_node.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE_PARAMETERS)
         ),
         constraints=type_parameter_constraints(func_node),
+        names=tuple(p.name for p in params),
+        returns=_csharp_return_text(func_node),
     )
+
+
+def _csharp_return_text(func_node: Node) -> str:
+    # The return type a C# method declares, as written; "" for none (a
+    # constructor, an operator's implicit one).
+    returns = func_node.child_by_field_name(cs.TS_CSHARP_FIELD_RETURNS)
+    if returns is None:
+        returns = func_node.child_by_field_name(cs.FIELD_TYPE)
+    return (safe_decode_text(returns) or "") if returns is not None else ""
 
 
 # --- Lua ---------------------------------------------------------------------
