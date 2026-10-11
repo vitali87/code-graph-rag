@@ -212,6 +212,9 @@ class ProcessorFactory:
                 class_inheritance=self.definition_processor.class_inheritance,
                 type_aliases=self.definition_processor.type_aliases,
                 interface_implementers=self.definition_processor.interface_implementers,
+                restored_csharp_implements=(
+                    self.definition_processor.restored_csharp_implements
+                ),
                 capture=self.capture,
                 module_qn_to_file_path=self.module_qn_to_file_path,
                 cpp_out_of_class_methods=self.definition_processor.cpp_out_of_class_methods,

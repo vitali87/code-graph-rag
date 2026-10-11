@@ -165,6 +165,35 @@ class TestTheDoubleAnswersWithRealRows:
         # The Python class in the same index must be absent.
         assert not any("Widget" in str(qn) for qn in qns), qns
 
+    def test_csharp_implements_carry_the_implementer_and_its_path(
+        self, tmp_path: Path
+    ) -> None:
+        """The query carries `AND child.path ENDS WITH '.cs'` and returns the
+        implementer's path, which the rehydration skips re-parsed files by."""
+        root = tmp_path / "proj"
+        root.mkdir()
+        parsers, _ = load_parsers()
+        if cs.SupportedLanguage.CSHARP not in parsers:
+            pytest.skip("c_sharp parser not available")
+        store = _indexed(
+            root,
+            {
+                "Shapes.cs": "namespace Demo;\npublic interface IShape { }\n"
+                "public class Circle : IShape { }\n",
+                "app.ts": "interface IShape { }\nclass Square implements IShape { }\n",
+            },
+        )
+
+        rows = store.fetch_all(cs.CYPHER_ALL_CSHARP_IMPLEMENTS, PREFIX)
+
+        assert rows == [
+            {
+                cs.KEY_CHILD_QN: "proj.Shapes.Demo.Circle",
+                cs.KEY_BASE_QN: "proj.Shapes.Demo.IShape",
+                cs.KEY_PATH: "Shapes.cs",
+            }
+        ], rows
+
     def test_go_type_locations_include_the_struct(self, tmp_path: Path) -> None:
         root = tmp_path / "proj"
         root.mkdir()

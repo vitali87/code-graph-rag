@@ -1353,6 +1353,21 @@ CYPHER_ALL_INHERITS = (
     "r.base_index AS base_index "
     "ORDER BY child_qn, base_index"
 )
+# C# implementers for incremental runs: an interface-typed call also edges
+# to the body of the interface's SOLE implementer, so the resolver must count
+# every implementer a fresh index counts. Pass 2 records an `implements` only
+# for RE-PARSED files, and CYPHER_ALL_INHERITS brings back only a base list's
+# INHERITS (an aliased interface the `I` guess reads as a class); this brings
+# back the IMPLEMENTS of C# types in files the run leaves alone, with each
+# implementer's path so a re-parsed file's rows are skipped (PR 2814 review).
+CYPHER_ALL_CSHARP_IMPLEMENTS = (
+    "MATCH (child)-[:IMPLEMENTS]->(iface) "
+    "WHERE child.qualified_name STARTS WITH $project_prefix "
+    "AND child.path ENDS WITH '.cs' AND iface.qualified_name IS NOT NULL "
+    "RETURN child.qualified_name AS child_qn, iface.qualified_name AS base_qn, "
+    "child.path AS path "
+    "ORDER BY child_qn, base_qn"
+)
 
 # C# type declaration locations for incremental runs: _join_csharp_partials
 # resolves each Roslyn partial-declaration location against csharp_type_locations,

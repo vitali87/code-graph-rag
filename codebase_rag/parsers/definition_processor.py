@@ -137,6 +137,13 @@ class DefinitionProcessor(
         # resolver can redirect an interface-typed call `I.m` to the concrete
         # `Impl.m` when I has exactly one first-party implementer (unambiguous).
         self.interface_implementers: dict[str, set[str]] = {}
+        # {C# class_qn: [interface_qns]} read back from the IMPLEMENTS edges of
+        # types in files an incremental run did not re-parse, so the sole
+        # implementer is chosen among every implementer, as a fresh index
+        # chooses it (PR 2814 review). Only the resolver reads it: the
+        # override pass links what this run parsed. A class leaves it when
+        # its file is re-parsed or removed.
+        self.restored_csharp_implements: dict[str, list[str]] = {}
         # {class_qn: {field_name: bare_type_name}} for C++ member fields, so a
         # member call `field_.method()` in a (possibly out-of-line, cross-file)
         # method resolves via the field's declared type. Populated at class

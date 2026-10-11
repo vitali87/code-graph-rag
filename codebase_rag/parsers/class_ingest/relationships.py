@@ -199,7 +199,12 @@ def _link_implemented_interfaces(
             create_implements_relationship(node_type, class_qn, interface_qn, ingestor)
         # Record implementers so the resolver can dispatch an interface-typed
         # call to the concrete method when the interface has exactly one impl.
-        if interface_implementers is not None:
+        # A deferred C# base records the interface it resolves to instead:
+        # this parse-time guess drops the arity, so `: IRun<int>` named the
+        # plain `IRun` beside it an implementer too (PR 2814 review).
+        if interface_implementers is not None and not (
+            defer_inherits is not None and language == cs.SupportedLanguage.CSHARP
+        ):
             interface_implementers.setdefault(interface_qn, set()).add(class_qn)
 
 

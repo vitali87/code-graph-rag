@@ -1393,6 +1393,7 @@ def _drop_class_keyed_entry(
 ) -> None:
     """Drop one removed class's rows from the class-keyed maps."""
     processor.class_inheritance.pop(qn, None)
+    processor.restored_csharp_implements.pop(qn, None)
     processor.class_field_types.pop(qn, None)
     processor.csharp_generic_shapes.pop(qn, None)
     processor.csharp_implicit_conversions.pop(qn, None)
@@ -3713,6 +3714,7 @@ class GraphUpdater:
             return
         self._rehydrate_module_qns(module_rows)
         self._rehydrate_class_inheritance_from_graph()
+        self._rehydrate_csharp_implements_from_graph()
         self._requeue_parameter_types(project_params)
         self._requeue_field_types(project_params)
 
@@ -4295,6 +4297,42 @@ class GraphUpdater:
             rows, class_inheritance
         ).items():
             class_inheritance[child] = bases
+
+    def _rehydrate_csharp_implements_from_graph(self) -> None:
+        # Incremental runs record a C# type's `implements` only when they
+        # re-parse its file, so an interface-typed call in an edited caller
+        # counted the implementers the run happened to parse, plus those its
+        # rehydrated INHERITS name, and chose a "sole" body a fresh index
+        # never chooses (PR 2814 review). Read back the IMPLEMENTS of the
+        # types in every other C# file. A re-parsed file's rows are skipped
+        # by path: its fresh parse already recorded what it implements now.
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        restored = self.factory.definition_processor.restored_csharp_implements
+        restored.clear()
+        try:
+            rows = self._owned_rows(
+                self.ingestor.fetch_all(
+                    cs.CYPHER_ALL_CSHARP_IMPLEMENTS,
+                    {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+                ),
+                cs.KEY_CHILD_QN,
+            )
+        except Exception:
+            if not self._is_full_build:
+                raise
+            logger.warning(ls.REHYDRATE_QUERY_FAILED)
+            return
+        for row in rows:
+            child = row.get(cs.KEY_CHILD_QN)
+            interface = row.get(cs.KEY_BASE_QN)
+            path = row.get(cs.KEY_PATH)
+            if (
+                isinstance(child, str)
+                and isinstance(interface, str)
+                and path not in self._reparsed_file_keys
+            ):
+                restored.setdefault(child, []).append(interface)
 
     @staticmethod
     def _rehydrated_bases_by_child(

@@ -1252,6 +1252,27 @@ class _StatefulIngestor:
     def flush_all(self) -> None:
         return None
 
+    def _csharp_implements_rows(self, params: PropertyDict | None) -> list[ResultRow]:
+        # CYPHER_ALL_CSHARP_IMPLEMENTS: a project C# type's IMPLEMENTS, with
+        # the implementer's path, ordered as the query orders them.
+        prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
+        rows: list[ResultRow] = []
+        for edge in self.keyed_edges:
+            from_label, from_val, rel_type, _to_label, to_val, _site = edge
+            child, base = _str(from_val), _str(to_val)
+            path = _str(self.nodes.get((from_label, from_val), {}).get(cs.KEY_PATH))
+            if (
+                rel_type == cs.RelationshipType.IMPLEMENTS.value
+                and child.startswith(prefix)
+                and path.endswith(cs.EXT_CS)
+                and base
+            ):
+                rows.append(
+                    {cs.KEY_CHILD_QN: child, cs.KEY_BASE_QN: base, cs.KEY_PATH: path}
+                )
+        rows.sort(key=lambda row: (str(row[cs.KEY_CHILD_QN]), str(row[cs.KEY_BASE_QN])))
+        return rows
+
     def fetch_all(
         self, query: str, params: PropertyDict | None = None
     ) -> list[ResultRow]:
@@ -1616,6 +1637,8 @@ class _StatefulIngestor:
                     )
                 inherits.sort(key=lambda item: (item[0], item[1]))
                 return [row for _child, _index, row in inherits]
+            case cs.CYPHER_ALL_CSHARP_IMPLEMENTS:
+                return self._csharp_implements_rows(params)
             case cs.CYPHER_ALL_MODULE_QNS:
                 prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
                 module_rows: list[ResultRow] = []

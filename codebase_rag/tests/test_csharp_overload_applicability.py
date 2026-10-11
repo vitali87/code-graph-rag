@@ -479,6 +479,86 @@ class TestAGenericInterfaceIsNotItsNonGenericNamesake:
         assert "N.Al.RunPlain#Go(int)" not in calls["Closed(IRun<int>)"], calls
 
 
+IMPLEMENTERS_LIB_CS = """\
+using Run = N.IRun;
+namespace N;
+public interface IRun { void Go(int x); }
+public class Plain : IRun { public void Go(int x) { } }
+public class Aliased : Run { public void Go(int x) { } }
+"""
+
+IMPLEMENTERS_USE_CS = """\
+using N;
+namespace U;
+public class Use { public void Call(IRun r) { r.Go(1); } }
+"""
+
+SPLIT_IMPLEMENTERS_LIB_CS = """\
+namespace N;
+public interface IRun { void Go(int x); }
+public class Plain : IRun { public void Go(int x) { } }
+"""
+
+SPLIT_IMPLEMENTERS_USE_CS = """\
+using N;
+namespace U;
+public class Other : IRun { public void Go(int x) { } }
+public class Use { public void Call(IRun r) { r.Go(1); } }
+"""
+
+SOLE_IMPLEMENTER_LIB_CS = """\
+namespace N;
+public interface IRun { void Go(int x); }
+public interface IRun<T> { void Go(T x); }
+public class Plain : IRun { public void Go(int x) { } }
+public class Gen : IRun<int> { public void Go(int x) { } }
+"""
+
+SOLE_IMPLEMENTER_USE_CS = """\
+using N;
+namespace U;
+public class Use { public void Call(IRun r) { r.Go(1); } }
+"""
+
+
+class TestAnEditedCallerCountsEveryImplementer:
+    # Greptile review of PR 2814: a caller-only re-index sees the interface's
+    # implementers in unchanged files as a fresh index does, those its edges
+    # name through IMPLEMENTS as well as those a base list wrote through an
+    # alias, so a sole body is chosen from all of them or not at all.
+    def test_an_aliased_and_a_plain_implementer_add_no_body(
+        self, temp_repo: Path
+    ) -> None:
+        fresh, edited = _two_file_calls(
+            temp_repo, IMPLEMENTERS_LIB_CS, IMPLEMENTERS_USE_CS
+        )
+        assert fresh == {("Call(IRun)", "IRun", "Go(int)")}, fresh
+        assert edited == fresh
+
+    def test_an_implementer_in_the_edited_file_is_not_the_only_one(
+        self, temp_repo: Path
+    ) -> None:
+        fresh, edited = _two_file_calls(
+            temp_repo, SPLIT_IMPLEMENTERS_LIB_CS, SPLIT_IMPLEMENTERS_USE_CS
+        )
+        assert fresh == {("Call(IRun)", "IRun", "Go(int)")}, fresh
+        assert edited == fresh
+
+    def test_a_sole_implementer_in_an_unchanged_file_keeps_its_body(
+        self, temp_repo: Path
+    ) -> None:
+        # Negative: one implementer is one wherever it is, and the generic
+        # namesake's implementer is not the plain interface's.
+        fresh, edited = _two_file_calls(
+            temp_repo, SOLE_IMPLEMENTER_LIB_CS, SOLE_IMPLEMENTER_USE_CS
+        )
+        assert fresh == {
+            ("Call(IRun)", "IRun", "Go(int)"),
+            ("Call(IRun)", "Plain", "Go(int)"),
+        }, fresh
+        assert edited == fresh
+
+
 CONSTRAINT_CS = """\
 namespace K;
 public interface IThing { }
@@ -643,9 +723,8 @@ class TestAnIncrementalRunRanksOverloadsAsAFreshIndexDoes:
         # Only `Use.cs` is re-parsed: the class and interface generic shapes,
         # the method type parameters and their constraints, and the
         # conversion operator of the unchanged `Lib.cs` come back from the
-        # graph. (Two validators, so no sole-implementer body is added: an
-        # incremental run does not restore C# interface implementers, which
-        # predates this ranking.)
+        # graph. (Two validators, so neither run adds a sole-implementer
+        # body; TestAnEditedCallerCountsEveryImplementer covers one.)
         root, store = indexed
         fresh = _run_calls(store)
         cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
