@@ -42,11 +42,15 @@ def shares_package_clause(requester: str | None, other: str | None) -> bool:
     return requester is None or other is None or other == requester
 
 
-def importable_clause(clause: str | None) -> bool:
-    """Whether a file under `package clause` belongs to the package an import
-    of its directory names: never the external test package `p_test`, which
-    only `go test` builds beside `p` and nothing can import."""
-    return clause is None or not clause.endswith(cs.GO_TEST_FILE_SUFFIX)
+def is_external_test(clause: str | None, in_test_file: bool) -> bool:
+    """Whether a file is in its directory's external test package, the
+    `p_test` that only `go test` builds beside `p` and nothing can import: a
+    `_test.go` file under a `_test` clause. The clause alone does not decide:
+    a non-test file under `package library_test` is an ordinary, importable
+    package (#2616 review)."""
+    return (
+        in_test_file and clause is not None and clause.endswith(cs.GO_TEST_FILE_SUFFIX)
+    )
 
 
 # Statements whose `left` (or a type switch's `alias`) list declares names:

@@ -185,9 +185,12 @@ class TypeInferenceEngine:
         # external proofs (issue #1183), populated after construction.
         self.python_call_sites = _shared(python_call_sites, dict)
         self.python_external_sites = _shared(python_external_sites, set)
-        # (directory package, name) -> {file's `package` clause, None when
-        # unrecorded: the return types its functions of that name declare}.
-        self._go_free_fn_index: dict[tuple[str, str], dict[str | None, set[str]]] = {}
+        # (directory package, name) -> {(file's `package` clause, None when
+        # unrecorded; whether the file is the external test package): the
+        # return types its functions of that name declare}.
+        self._go_free_fn_index: dict[
+            tuple[str, str], dict[tuple[str | None, bool], set[str]]
+        ] = {}
         self._go_free_fn_index_size = -1
         # Shared reference (as with class_field_types): C# partial-class part
         # groups, populated during ingestion and read by the C# resolver to
@@ -736,7 +739,7 @@ class TypeInferenceEngine:
         return self._go_package_fn_return_type(
             self._go_file_package(module_qn),
             name,
-            lambda other: go_utils.shares_package_clause(clause, other),
+            lambda other, _external: go_utils.shares_package_clause(clause, other),
         )
 
     def _go_file_package(self, module_qn: str) -> str:
@@ -756,7 +759,10 @@ class TypeInferenceEngine:
         return cs.SEPARATOR_DOT.join((self.project_name, *parts))
 
     def _go_package_fn_return_type(
-        self, package_qn: str, name: str, admits: Callable[[str | None], bool]
+        self,
+        package_qn: str,
+        name: str,
+        admits: Callable[[str | None, bool], bool],
     ) -> str | None:
         # The one return type the package's functions named `name` declare, or
         # None when they disagree: build-tag variants (`router_linux.go`,
@@ -764,7 +770,8 @@ class TypeInferenceEngine:
         # the call's in every build. The directory alone is not the package:
         # `p_test`'s `NewRouter` beside `p`'s is another package's function,
         # no variant of it, so the index keeps each file's `package` clause
-        # and `admits` picks the clauses of the asking package (#2616 review).
+        # and whether it is that external test package, and `admits` picks
+        # the asking package's files by them (#2616 review).
         if len(self.go_function_return_types) != self._go_free_fn_index_size:
             self._go_free_fn_index = {}
             for qn, return_type in self.go_function_return_types.items():
@@ -773,16 +780,18 @@ class TypeInferenceEngine:
                     by_clause = self._go_free_fn_index.setdefault(
                         (package, fn_name), {}
                     )
-                    by_clause.setdefault(
-                        self.go_package_names.get(module_qn), set()
-                    ).add(return_type)
+                    scope = (
+                        self.go_package_names.get(module_qn),
+                        self._go_external_test(module_qn),
+                    )
+                    by_clause.setdefault(scope, set()).add(return_type)
             self._go_free_fn_index_size = len(self.go_function_return_types)
         returns = {
             return_type
-            for clause, types in self._go_free_fn_index.get(
+            for (clause, external), types in self._go_free_fn_index.get(
                 (package_qn, name), {}
             ).items()
-            if admits(clause)
+            if admits(clause, external)
             for return_type in types
         }
         return next(iter(returns)) if len(returns) == 1 else None
@@ -802,12 +811,12 @@ class TypeInferenceEngine:
         if not package_qn:
             return None
         return_type = self._go_package_fn_return_type(
-            package_qn, name, go_utils.importable_clause
+            package_qn, name, lambda _clause, external: not external
         )
         if not return_type or cs.SEPARATOR_DOT in return_type:
             return None
-        # A type of the package is one whose file sits in its directory under
-        # a clause an import can name, the same test its functions pass.
+        # A type of the package is one whose file sits in its directory and
+        # is no external test file, the same test its functions pass.
         declared = go_utils.package_level_definitions(
             self.function_registry,
             return_type,
@@ -820,10 +829,22 @@ class TypeInferenceEngine:
 
     def _go_imported_file(self, module_qn: str, package_qn: str) -> bool:
         # Whether Go file `module_qn` is a file of the package an import
-        # binding `package_qn` names: in its directory, and not under the
+        # binding `package_qn` names: in its directory, and not in the
         # external test package `p_test` that `go test` builds beside it.
-        return self._go_file_package(module_qn) == package_qn and (
-            go_utils.importable_clause(self.go_package_names.get(module_qn))
+        return self._go_file_package(module_qn) == package_qn and not (
+            self._go_external_test(module_qn)
+        )
+
+    def _go_external_test(self, module_qn: str) -> bool:
+        # Whether Go file `module_qn` is in its directory's external test
+        # package, judged by its `_test.go` file name and `_test` clause
+        # together. A module with no recorded file (an unchanged file on an
+        # incremental run) is judged by its qn's last segment, the stem.
+        path = self.module_qn_to_file_path.get(module_qn)
+        stem = path.stem if path else module_qn.rpartition(cs.SEPARATOR_DOT)[2]
+        return go_utils.is_external_test(
+            self.go_package_names.get(module_qn),
+            stem.endswith(cs.GO_TEST_FILE_SUFFIX),
         )
 
     def _enrich_rust_call_locals(

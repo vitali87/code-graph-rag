@@ -1165,3 +1165,83 @@ def test_a_qualified_constructor_ignores_the_external_test_packages_type(
     assert cs.EdgeResolution.EXACT not in calls.get(
         (caller, "proj.web.mux_ext_test.Mux.Get"), set()
     )
+
+
+# --- #2616 review: the external test package is a `_test.go` file under a
+# `_test` clause. A non-test file under `package library_test` is an
+# ordinary package, and an import of its directory names it. ---
+
+_LIBRARY = (
+    "package library_test\n"
+    "\n"
+    "type Mux struct{}\n"
+    "\n"
+    "func New() *Mux { return &Mux{} }\n"
+    "\n"
+    "func (m *Mux) Get(p string) {}\n"
+)
+# The import is aliased: unaliased, it would bind the clause's name.
+_LIBRARY_CONSUMER = (
+    "package app\n"
+    "\n"
+    'import lib "example.com/proj/lib"\n'
+    "\n"
+    "func Run() {\n"
+    "\tr := lib.New()\n"
+    '\tr.Get("/x")\n'
+    "}\n"
+)
+
+
+def test_a_production_package_named_like_a_test_package_types_its_importers_local(
+    temp_repo: Path,
+) -> None:
+    # `aaa.Mux.Get` is the decoy the name trie would reach for an untyped `r`.
+    calls = _calls(
+        temp_repo / "proj",
+        {
+            "go.mod": GO_MOD,
+            "lib/lib.go": _LIBRARY,
+            "app/app.go": _LIBRARY_CONSUMER,
+            "aaa/mux.go": OTHER_PACKAGE,
+        },
+    )
+
+    assert calls[("proj.app.app.Run", "proj.lib.lib.New")] == _EXACT
+    assert calls[("proj.app.app.Run", "proj.lib.lib.Mux.Get")] == _EXACT
+    assert ("proj.app.app.Run", "proj.aaa.mux.Mux.Get") not in calls
+
+
+def test_the_external_test_package_of_a_test_named_package_stays_out_of_its_imports(
+    temp_repo: Path,
+) -> None:
+    # Negative: `library_test_test` in a `_test.go` file is that package's
+    # external test package, so its own `New` and `Mux` never stand for the
+    # imported `library_test`'s, nor share with `library_test`'s own files.
+    calls = _calls(
+        temp_repo / "proj",
+        {
+            "go.mod": GO_MOD,
+            "lib/lib.go": _LIBRARY,
+            "lib/lib_ext_test.go": (
+                "package library_test_test\n"
+                "\n"
+                "type Mux struct{}\n"
+                "\n"
+                "func (m *Mux) Get(p string) {}\n"
+                "\n"
+                "type fakeMux struct{}\n"
+                "\n"
+                "func New() *fakeMux { return &fakeMux{} }\n"
+            ),
+            "lib/use.go": (
+                'package library_test\n\nfunc Use() {\n\tr := New()\n\tr.Get("/u")\n}\n'
+            ),
+            "app/app.go": _LIBRARY_CONSUMER,
+        },
+    )
+
+    assert calls[("proj.app.app.Run", "proj.lib.lib.Mux.Get")] == _EXACT
+    assert ("proj.app.app.Run", "proj.lib.lib_ext_test.Mux.Get") not in calls
+    assert calls[("proj.lib.use.Use", "proj.lib.lib.Mux.Get")] == _EXACT
+    assert ("proj.lib.use.Use", "proj.lib.lib_ext_test.Mux.Get") not in calls
