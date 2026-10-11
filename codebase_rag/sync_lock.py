@@ -7,25 +7,38 @@ TransientError; the other finished "successfully" over a graph missing a
 third of its modules, then published a hash cache that made every later sync
 report "already in sync", so the loss was permanent until `--clean`.
 
-The lock is an OS advisory lock on `.cgr-sync-lock` beside the checkout's
-other state files, the same kind the edit transactions take: the kernel
-releases it however its holder dies, so a crashed sync never leaves a stale
-lock to clear. Keyed by checkout rather than by project because the state
-files it protects (the hash cache above all) are per checkout, and only the
-holder can publish them, so no run publishes a cache while another writer
-was changing the graph under it.
+The lock is an OS advisory lock on `.cgr-sync-lock` in the checkout's state
+directory under CGR_HOME, beside the hash cache and the edit lock (issue
+#2427), and the same kind the edit transactions take: the kernel releases it
+however its holder dies, so a crashed sync never leaves a stale lock to
+clear. Keyed by checkout rather than by project because the state files it
+protects (the hash cache above all) are per checkout, and only the holder
+can publish them, so no run publishes a cache while another writer was
+changing the graph under it. Like the rest of that state it is per user:
+users with separate CGR_HOMEs sync one checkout under separate locks.
+
+Nothing is written into the tree, and a `.cgr-sync-lock` found there is
+never opened, moved or removed: it is in `CGR_STATE_LOCK_FILENAMES`, so the
+state move a sync makes under the lock leaves it where it is instead of
+carrying a held lock file away from the path the next writer opens.
+
+A lock file that cannot be created because CGR_HOME cannot be written does
+not stop the sync, which runs without incremental state in that case rather
+than failing (issue #2427): it runs without the lock too, after a warning
+that concurrent syncs of the checkout are not excluded. Such a run cannot
+publish a hash cache either, since that lives in the same directory.
 
 Re-entrant per thread: the CLI and the MCP tools take it before they put
 the `:IncompleteRun` marker down, then call `GraphUpdater.run`, which takes
 it again. Another thread of the same process is refused like another process
 is, since two MCP registries in one server hold separate ingestor locks.
 
-The lock file sits in a checkout that may come from anyone, so it is never
-opened through a symbolic link: a planted `.cgr-sync-lock -> ~/.bashrc`
-would otherwise have its target truncated and overwritten with the holder's
-name. Such a link refuses the sync instead of falling back to an unguarded
-one, and so does a lock file this user cannot open: a shared checkout's
-second user would otherwise sync beside the first (review of PR 2512).
+The lock file is never opened through a symbolic link: a link planted at
+its path would otherwise have its target truncated and overwritten with the
+holder's name. Such a link refuses the sync instead of falling back to an
+unguarded one, and so does a lock file that exists but this user cannot
+open, as in a CGR_HOME several users share: the second user would otherwise
+sync beside the first (review of PR 2512).
 """
 
 from __future__ import annotations
@@ -47,6 +60,7 @@ from loguru import logger
 from . import constants as cs
 from . import exceptions as ex
 from . import logs as ls
+from .checkout_state import prepare_state_dir
 
 if sys.platform == cs.PLATFORM_WINDOWS:  # pragma: no cover - platform
     import msvcrt
@@ -92,7 +106,8 @@ class _Syncs(Protocol):
 class _Hold:
     thread: int
     depth: int
-    fd: int
+    # None while the sync runs without the lock file (CGR_HOME unwritable).
+    fd: int | None
 
 
 _HELD: dict[str, _Hold] = {}
@@ -103,6 +118,13 @@ _HELD_GUARD = threading.Lock()
 # write. Windows has no such flag; there the `is_symlink` check stands alone.
 _NO_FOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _BINARY = getattr(os, "O_BINARY", 0)
+
+# What creating the lock file fails with when its directory cannot be
+# written or does not exist: CGR_HOME is read-only or not a directory, so
+# the state directory could not be made (issue #2427).
+_UNWRITABLE = frozenset(
+    {errno.EACCES, errno.EPERM, errno.EROFS, errno.ENOENT, errno.ENOTDIR}
+)
 
 
 def _try_lock(fd: int) -> bool:
@@ -165,6 +187,19 @@ def _holder(lock_path: Path) -> str:
         return ex.SYNC_HOLDER_UNKNOWN
 
 
+def _cannot_create(lock_path: Path, error: OSError) -> bool:
+    """True when `error` says CGR_HOME cannot be written, so no lock can be.
+
+    A read-only filesystem says so whether or not an earlier sync left the
+    file there. Any other refusal of a lock file that is there means it is
+    another user's, or not a file: that still refuses the sync, since its
+    holder may be running.
+    """
+    if error.errno == errno.EROFS:
+        return True
+    return error.errno in _UNWRITABLE and not os.path.lexists(lock_path)
+
+
 def _refuse_link(lock_path: Path) -> UnsafeSyncLockError:
     return UnsafeSyncLockError(ex.SYNC_LOCK_IS_LINK.format(path=lock_path))
 
@@ -175,7 +210,7 @@ def _unavailable(lock_path: Path, error: OSError) -> SyncLockUnavailableError:
     )
 
 
-def _try_acquire(key: str, lock_path: Path, project_name: str) -> bool:
+def _try_acquire(key: str, repo_path: Path, lock_path: Path, project_name: str) -> bool:
     with _HELD_GUARD:
         if key in _HELD:
             return False
@@ -190,6 +225,16 @@ def _try_acquire(key: str, lock_path: Path, project_name: str) -> bool:
             # synced around: it is the planted file this guards against.
             if lock_path.is_symlink():
                 raise _refuse_link(lock_path) from exc
+            if _cannot_create(lock_path, exc):
+                # CGR_HOME cannot be written, which never fails a sync
+                # (issue #2427): run without the lock and say what that
+                # risks. Still recorded as held, so the run re-enters it
+                # and this process's other threads are still refused.
+                logger.warning(
+                    ls.SYNC_LOCK_UNGUARDED, path=lock_path, error=exc, repo=repo_path
+                )
+                _HELD[key] = _Hold(threading.get_ident(), 1, None)
+                return True
             # Refused too: without the lock this run cannot tell whether
             # another one is syncing the checkout.
             raise _unavailable(lock_path, exc) from exc
@@ -215,6 +260,8 @@ def _release(key: str) -> None:
         if hold.depth:
             return
         del _HELD[key]
+    if hold.fd is None:
+        return
     try:
         _unlock(hold.fd)
     finally:
@@ -241,15 +288,23 @@ def repo_sync_lock(
     reingest after an edit, `cgr check`) queues behind a running sync and
     applies its change to the finished graph instead of dropping it.
 
+    The lock file is `.cgr-sync-lock` in the checkout's state directory
+    under CGR_HOME. When it cannot be created because CGR_HOME cannot be
+    written, the block runs without it after a `SYNC_LOCK_UNGUARDED`
+    warning, as the rest of the sync runs without its state then.
+
     Raises `UnsafeSyncLockError`, waiting or not, when the lock path is a
-    symbolic link, and `SyncLockUnavailableError` when the lock file cannot
-    be opened or the lock call fails for any reason but another holder.
+    symbolic link, and `SyncLockUnavailableError` when a lock file that is
+    there cannot be opened or the lock call fails for any reason but
+    another holder.
     """
     key = str(repo_path.resolve())
     if not _reenter(key):
-        lock_path = repo_path / cs.SYNC_LOCK_FILENAME
+        # Created, not adopted: the sync moves what an older cgr left in the
+        # tree once it holds the lock, as the edit lock does (issue #2427).
+        lock_path = prepare_state_dir(repo_path, adopt=False) / cs.SYNC_LOCK_FILENAME
         announced = False
-        while not _try_acquire(key, lock_path, project_name):
+        while not _try_acquire(key, repo_path, lock_path, project_name):
             holder = _holder(lock_path)
             if not wait:
                 raise SyncInProgressError(
@@ -275,10 +330,10 @@ def holds_sync_lock[S: _Syncs, **P, R](
     `GraphUpdater.run` is pinned over the AST of `run`
     (`test_graph_updater_phase_order.py`).
 
-    `require`, when given, runs before the lock is opened and raises when
+    `require`, when given, runs before the lock is taken and raises when
     there is no checkout to sync: `GraphUpdater.run`'s missing-root check
-    (issue #1651) must name the missing path, not the lock's failure to
-    create its file inside it.
+    (issue #1651) names the missing path before a state directory is made
+    for a checkout that is not there.
     """
 
     def decorate(

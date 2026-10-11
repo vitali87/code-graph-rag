@@ -26,10 +26,14 @@ from unittest.mock import MagicMock, patch
 
 import click
 import pytest
+from loguru import logger
 from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
+from codebase_rag import logs as ls
+from codebase_rag.checkout_state import state_dir
 from codebase_rag.cli import app
+from codebase_rag.config import settings
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.parser_loader import load_parsers
@@ -55,6 +59,22 @@ with repo_sync_lock(Path(sys.argv[1]), sys.argv[2]):
     sys.stdin.readline()
 """
 
+# The same holder, but it first resolves the checkout's state directory
+# under the lock, as `GraphUpdater.run` does: that moves what an older cgr
+# left in the tree into the directory (issue #2427).
+_HOLDER_AFTER_STATE_MOVE = """
+import os
+import sys
+from pathlib import Path
+from codebase_rag.checkout_state import prepare_state_dir
+from codebase_rag.sync_lock import repo_sync_lock
+repo = Path(sys.argv[1])
+with repo_sync_lock(repo, sys.argv[2]):
+    prepare_state_dir(repo)
+    print("held", os.getpid(), flush=True)
+    sys.stdin.readline()
+"""
+
 
 @dataclass
 class _Holder:
@@ -66,14 +86,20 @@ class _Holder:
 
 
 @contextmanager
-def _held_elsewhere(repo: Path, project: str) -> Iterator[_Holder]:
+def _held_elsewhere(
+    repo: Path, project: str, script: str = _HOLDER
+) -> Iterator[_Holder]:
+    # The holder reads this test's CGR_HOME, where the lock and the rest of
+    # the checkout's state live, as a second terminal of the same user would.
+    env = {**os.environ, "CGR_HOME": str(settings.CGR_HOME)}
     holder = subprocess.Popen(
-        [sys.executable, "-c", _HOLDER, str(repo), project],
+        [sys.executable, "-c", script, str(repo), project],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
         encoding=cs.ENCODING_UTF8,
+        env=env,
     )
     assert holder.stdout is not None
     assert holder.stdin is not None
@@ -119,6 +145,12 @@ def repo(tmp_path: Path) -> Path:
     return root
 
 
+def _lock_path(repo: Path) -> Path:
+    # Where every writer of `repo` takes its lock: the checkout's state
+    # directory under CGR_HOME, never the tree (issue #2427).
+    return state_dir(repo) / cs.SYNC_LOCK_FILENAME
+
+
 def _updater(repo: Path, ingestor: MagicMock, project: str = "click") -> GraphUpdater:
     parsers, queries = load_parsers()
     return GraphUpdater(
@@ -145,7 +177,35 @@ def test_a_second_run_is_refused_naming_the_running_sync(
     # Refused before the Project write, the first thing a run sends.
     mock_ingestor.ensure_node_batch.assert_not_called()
     mock_ingestor.execute_write.assert_not_called()
-    assert not (repo / cs.HASH_CACHE_FILENAME).exists()
+    # Only the holder publishes the checkout's hash cache.
+    assert not (state_dir(repo) / cs.HASH_CACHE_FILENAME).exists()
+
+
+def test_a_second_writer_is_refused_after_the_holder_moved_the_tree_state(
+    repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Merging #2557 into PR 2512: the lock sat in the tree under a name the
+    # state move migrates, so the holder's own move carried the held lock
+    # file out of the tree, and a second writer created a fresh one there
+    # and synced beside it. An older cgr's tree state is put down first so
+    # the move has something to carry.
+    (repo / cs.HASH_CACHE_FILENAME).write_text("{}")
+    (repo / cs.SYNC_LOCK_FILENAME).write_text("")
+    updater = _updater(repo, mock_ingestor)
+    with _held_elsewhere(
+        repo, "click__a4231746", script=_HOLDER_AFTER_STATE_MOVE
+    ) as holder:
+        assert (state_dir(repo) / cs.HASH_CACHE_FILENAME).is_file(), (
+            "fixture guard: the holder did not move the tree's state"
+        )
+        with pytest.raises(SyncInProgressError) as refused:
+            updater.run()
+
+    assert str(holder.pid) in str(refused.value)
+    mock_ingestor.ensure_node_batch.assert_not_called()
+    mock_ingestor.execute_write.assert_not_called()
+    # The lock name an older cgr left in the tree is never moved or removed.
+    assert (repo / cs.SYNC_LOCK_FILENAME).is_file()
 
 
 def test_another_thread_of_the_same_process_is_refused_too(
@@ -316,10 +376,10 @@ def test_another_checkout_is_not_blocked(
 def test_a_single_file_run_takes_its_projects_lock(
     repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # The lock sits at the project root the constructor derives for the
-    # file, where a whole-project sync of it locks: not `<file>/`, which
-    # cannot be opened, nor the file's own directory, which would let the
-    # two runs overlap.
+    # The lock is the one of the project root the constructor derives for
+    # the file, which a whole-project sync of it takes: not the state of
+    # `<file>` or of the file's own directory, which would let the two runs
+    # overlap.
     package = repo / "pkg"
     package.mkdir()
     target = package / "mod.py"
@@ -334,7 +394,8 @@ def test_a_single_file_run_takes_its_projects_lock(
             single.run()
 
     mock_ingestor.ensure_node_batch.assert_not_called()
-    assert not (package / cs.SYNC_LOCK_FILENAME).exists()
+    assert not _lock_path(package).exists()
+    assert not _lock_path(target).exists()
 
 
 def test_the_holder_reenters_its_own_lock(repo: Path, mock_ingestor: MagicMock) -> None:
@@ -347,15 +408,17 @@ def test_the_holder_reenters_its_own_lock(repo: Path, mock_ingestor: MagicMock) 
 
 
 @contextmanager
-def _lock_open_denied(repo: Path) -> Iterator[Path]:
-    # The lock file another user created 0644, as this user finds it in a
-    # shared checkout.
-    lock_path = repo / cs.SYNC_LOCK_FILENAME
+def _lock_open_denied(repo: Path, code: int = errno.EACCES) -> Iterator[Path]:
+    # The lock file is there and opening it fails with `code`: EACCES for
+    # one another user created 0644 in a CGR_HOME they share.
+    lock_path = _lock_path(repo)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.write_bytes(b"")
     real_open = os.open
 
     def open_(path: str | os.PathLike[str], flags: int, *args: int) -> int:
         if Path(path) == lock_path:
-            raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), str(path))
+            raise OSError(code, os.strerror(code), str(path))
         return real_open(path, flags, *args)
 
     with patch("codebase_rag.sync_lock.os.open", side_effect=open_):
@@ -367,7 +430,8 @@ def test_a_lock_this_user_cannot_open_refuses_the_sync(
 ) -> None:
     # Greptile review of PR 2512: a lock that could not be opened was
     # synced around, so a second user of a shared checkout ran unguarded
-    # beside the sync that held it.
+    # beside the sync that held it. A lock file that is there is never
+    # taken for a CGR_HOME that cannot be written.
     with _lock_open_denied(repo) as lock_path:
         updater = _updater(repo, mock_ingestor)
         with pytest.raises(SyncLockError) as refused:
@@ -380,10 +444,28 @@ def test_a_lock_this_user_cannot_open_refuses_the_sync(
     mock_ingestor.execute_write.assert_not_called()
 
 
+def test_a_read_only_cgr_home_runs_the_sync_with_a_lock_file_there(
+    repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Read-only is CGR_HOME that cannot be written, whether or not an
+    # earlier sync left the lock file there: the sync runs (issue #2427).
+    logged: list[str] = []
+    sink = logger.add(logged.append, level="WARNING", format="{message}")
+    try:
+        with _lock_open_denied(repo, errno.EROFS):
+            _updater(repo, mock_ingestor).run()
+    finally:
+        logger.remove(sink)
+
+    mock_ingestor.ensure_node_batch.assert_called()
+    prefix = ls.SYNC_LOCK_UNGUARDED.split("{", 1)[0]
+    assert any(m.startswith(prefix) for m in logged), logged
+
+
 def test_a_lock_path_that_is_not_a_file_refuses_the_sync(
     repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    (repo / cs.SYNC_LOCK_FILENAME).mkdir()
+    _lock_path(repo).mkdir(parents=True)
     updater = _updater(repo, mock_ingestor)
 
     with pytest.raises(SyncLockError):
@@ -436,7 +518,7 @@ def test_a_failed_lock_call_is_not_taken_for_another_sync(
             updater.run()
 
     message = str(refused.value)
-    assert str(repo / cs.SYNC_LOCK_FILENAME) in message
+    assert str(_lock_path(repo)) in message
     assert os.strerror(errno.ENOLCK) in message
     assert calls.tried, "fixture guard: the lock call was never made"
     assert set(calls.tried) <= set(calls.closed), "the lock file was left open"
@@ -545,10 +627,12 @@ def test_a_clean_holds_the_lock_until_its_cleanup_is_done(
 def test_the_lock_file_is_not_indexed_and_keeps_the_sync_in_sync(
     repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # Negative: the file the lock creates in the checkout is neither a
-    # source file nor a change the next sync has to re-walk.
+    # Negative: the lock file is created in the state directory, not the
+    # checkout, so it is neither a source file nor a change the next sync
+    # has to re-walk.
     _updater(repo, mock_ingestor).run()
-    assert (repo / cs.SYNC_LOCK_FILENAME).exists()
+    assert _lock_path(repo).is_file()
+    assert not (repo / cs.SYNC_LOCK_FILENAME).exists()
     files = [
         str(c.args[1])
         for c in mock_ingestor.ensure_node_batch.call_args_list
@@ -563,6 +647,86 @@ def test_the_lock_file_is_not_indexed_and_keeps_the_sync_in_sync(
     assert second.skipped_because_in_sync is True
 
 
+def test_a_lock_name_left_in_the_tree_is_left_alone_and_not_indexed(
+    repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A `.cgr-sync-lock` in the tree, from a build that kept the lock there,
+    # is never opened, moved into the state directory, removed or indexed.
+    legacy = repo / cs.SYNC_LOCK_FILENAME
+    legacy.write_text("4242\nclick\n")
+
+    _updater(repo, mock_ingestor).run()
+
+    assert legacy.read_text() == "4242\nclick\n"
+    files = [
+        str(c.args[1])
+        for c in mock_ingestor.ensure_node_batch.call_args_list
+        if c.args[0] == cs.NodeLabel.FILE
+    ]
+    assert any("core.py" in props for props in files)
+    assert not any(cs.SYNC_LOCK_FILENAME in props for props in files)
+    mock_ingestor.reset_mock()
+    second = _updater(repo, mock_ingestor)
+    second.run()
+    assert second.skipped_because_in_sync is True
+
+
+class TestUnwritableCgrHome:
+    """CGR_HOME cannot be written, so the lock file cannot be created.
+
+    That never fails a sync (issue #2427): it runs without the lock, after a
+    warning that concurrent syncs of the checkout are not excluded.
+    """
+
+    @pytest.fixture(autouse=True)
+    def blocked(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        home = tmp_path / "home-is-a-file"
+        home.write_text("")
+        monkeypatch.setattr(settings, "CGR_HOME", home)
+        return home
+
+    @pytest.fixture
+    def logged(self) -> Iterator[list[str]]:
+        messages: list[str] = []
+        sink = logger.add(messages.append, level="WARNING", format="{message}")
+        try:
+            yield messages
+        finally:
+            logger.remove(sink)
+
+    def test_the_sync_runs_and_warns_once_that_it_is_unguarded(
+        self, repo: Path, logged: list[str], mock_ingestor: MagicMock
+    ) -> None:
+        # The CLI takes the lock and `run` takes it again: one warning.
+        with repo_sync_lock(repo, "click"):
+            _updater(repo, mock_ingestor).run()
+
+        mock_ingestor.ensure_node_batch.assert_called()
+        prefix = ls.SYNC_LOCK_UNGUARDED.split("{", 1)[0]
+        unguarded = [m for m in logged if m.startswith(prefix)]
+        assert len(unguarded) == 1, logged
+        assert "concurrent syncs of this checkout are not excluded" in unguarded[0]
+        assert str(repo) in unguarded[0]
+        assert not (repo / cs.SYNC_LOCK_FILENAME).exists()
+
+    def test_another_thread_of_the_process_is_still_refused(
+        self, repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        with _held_by_another_thread(repo, "click"):
+            with pytest.raises(SyncInProgressError):
+                _updater(repo, mock_ingestor).run()
+
+        mock_ingestor.ensure_node_batch.assert_not_called()
+
+    def test_it_is_released_when_the_sync_ends(self, repo: Path) -> None:
+        # Negative: a run without the lock file does not leave the checkout
+        # held for this process's next writer.
+        with repo_sync_lock(repo, "click"):
+            assert _competing_sync(repo) == "refused"
+
+        assert _competing_sync(repo) == "acquired"
+
+
 def test_a_waiting_lock_is_taken_once_the_holder_finishes(repo: Path) -> None:
     # Negative for `wait=True`: it waits, it does not refuse.
     with _held_elsewhere(repo, "click") as holder:
@@ -573,7 +737,7 @@ def test_a_waiting_lock_is_taken_once_the_holder_finishes(repo: Path) -> None:
             assert holder.process.wait(timeout=10) == 0
         timer.join()
 
-    assert os.path.exists(repo / cs.SYNC_LOCK_FILENAME)
+    assert os.path.exists(_lock_path(repo))
 
 
 def test_cgr_index_says_why_it_stopped(repo: Path, tmp_path: Path) -> None:
@@ -611,12 +775,13 @@ def test_the_watcher_starts_after_the_running_sync_finishes(
 
 
 class TestPlantedLockLink:
-    """A checkout can ship `.cgr-sync-lock` as a symlink to a file outside it.
+    """A symbolic link at the lock's path is never followed.
 
-    The holder truncates and rewrites the lock file, so following the link
+    The holder truncates and rewrites the lock file, so following a link
     would overwrite its target with a pid and a project name. The sync is
     refused instead, before anything is written, and the target is never
-    opened.
+    opened. A link a checkout ships under the lock's name in its tree is not
+    the lock at all, so it is never opened either.
     """
 
     @pytest.fixture
@@ -626,27 +791,44 @@ class TestPlantedLockLink:
         target.write_bytes(b"do not touch\n")
         return target
 
-    def test_a_run_refuses_and_leaves_the_target_untouched(
+    @pytest.fixture
+    def lock_path(self, repo: Path) -> Path:
+        path = _lock_path(repo)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def test_a_link_the_checkout_ships_is_never_opened(
         self, repo: Path, outside: Path, mock_ingestor: MagicMock
     ) -> None:
         (repo / cs.SYNC_LOCK_FILENAME).symlink_to(outside)
+
+        _updater(repo, mock_ingestor).run()
+
+        assert outside.read_bytes() == b"do not touch\n"
+        assert (repo / cs.SYNC_LOCK_FILENAME).is_symlink()
+        mock_ingestor.ensure_node_batch.assert_called()
+
+    def test_a_run_refuses_and_leaves_the_target_untouched(
+        self, repo: Path, outside: Path, lock_path: Path, mock_ingestor: MagicMock
+    ) -> None:
+        lock_path.symlink_to(outside)
         updater = _updater(repo, mock_ingestor)
 
         with pytest.raises(UnsafeSyncLockError) as refused:
             updater.run()
 
         assert outside.read_bytes() == b"do not touch\n"
-        assert str(repo / cs.SYNC_LOCK_FILENAME) in str(refused.value)
+        assert str(lock_path) in str(refused.value)
         mock_ingestor.ensure_node_batch.assert_not_called()
         mock_ingestor.execute_write.assert_not_called()
 
-    def test_a_dangling_link_creates_nothing_outside_the_checkout(
-        self, repo: Path, outside: Path, mock_ingestor: MagicMock
+    def test_a_dangling_link_creates_nothing_where_it_points(
+        self, repo: Path, outside: Path, lock_path: Path, mock_ingestor: MagicMock
     ) -> None:
         # Opening with O_CREAT through a dangling link would create its
         # target, wherever it points.
         target = outside.with_name("planted.txt")
-        (repo / cs.SYNC_LOCK_FILENAME).symlink_to(target)
+        lock_path.symlink_to(target)
         updater = _updater(repo, mock_ingestor)
 
         with pytest.raises(UnsafeSyncLockError):
@@ -659,11 +841,10 @@ class TestPlantedLockLink:
         reason="Windows has no O_NOFOLLOW; the is_symlink check stands alone there",
     )
     def test_a_link_planted_after_the_check_is_still_not_followed(
-        self, repo: Path, outside: Path
+        self, repo: Path, outside: Path, lock_path: Path
     ) -> None:
         # The link lands between the `is_symlink` check and the open: the
         # open itself must refuse it.
-        lock_path = repo / cs.SYNC_LOCK_FILENAME
         lock_path.symlink_to(outside)
         real_is_symlink = Path.is_symlink
         checks: list[Path] = []
@@ -681,9 +862,9 @@ class TestPlantedLockLink:
         assert outside.read_bytes() == b"do not touch\n"
 
     def test_a_waiting_reingest_refuses_instead_of_waiting(
-        self, repo: Path, outside: Path, mock_ingestor: MagicMock
+        self, repo: Path, outside: Path, lock_path: Path, mock_ingestor: MagicMock
     ) -> None:
-        (repo / cs.SYNC_LOCK_FILENAME).symlink_to(outside)
+        lock_path.symlink_to(outside)
         updater = _updater(repo, mock_ingestor)
         changed = [repo / "core.py"]
 
@@ -694,9 +875,9 @@ class TestPlantedLockLink:
         mock_ingestor.ensure_node_batch.assert_not_called()
 
     def test_the_cli_says_why_it_stopped(
-        self, repo: Path, outside: Path, cli_sync: MagicMock
+        self, repo: Path, outside: Path, lock_path: Path, cli_sync: MagicMock
     ) -> None:
-        (repo / cs.SYNC_LOCK_FILENAME).symlink_to(outside)
+        lock_path.symlink_to(outside)
 
         result = runner.invoke(
             app,

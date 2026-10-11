@@ -1417,6 +1417,11 @@ JAVA_FRONTEND_FACTS = (
 
 # Sync lock (issue #2441)
 SYNC_LOCK_WAITING = "Waiting for the running sync of {repo} ({holder}) to finish"
+SYNC_LOCK_UNGUARDED = (
+    "Cannot create the sync lock {path} ({error}); this sync of {repo} runs "
+    "without it, so concurrent syncs of this checkout are not excluded. Point "
+    "CGR_HOME at a writable directory to keep the lock."
+)
 
 # Checkout state kept under CGR_HOME (issue #2427)
 CHECKOUT_STATE_DIR_UNAVAILABLE = (

@@ -2221,9 +2221,9 @@ class GraphUpdater:
     def _require_repo_dir(self) -> None:
         """Raise `FileNotFoundError` unless `self.repo_path` is a directory.
 
-        `run` checks this before `holds_sync_lock` opens the lock file in
-        that directory, so a missing root is reported as missing rather
-        than as a lock that cannot be opened (issues #1651, #2441).
+        `run` checks this before `holds_sync_lock` takes the lock, so a
+        missing root is reported as missing, and no state directory is made
+        for it under CGR_HOME (issues #1651, #2441).
         """
         if not self.repo_path.is_dir():
             raise FileNotFoundError(ls.REPO_PATH_MISSING.format(path=self.repo_path))
@@ -2249,7 +2249,9 @@ class GraphUpdater:
         another writer holds the checkout's sync lock, which
         `holds_sync_lock` takes around the whole run (issue #2441),
         `UnsafeSyncLockError` when that lock file is a symbolic link, and
-        `SyncLockUnavailableError` when it cannot be opened.
+        `SyncLockUnavailableError` when it is there but cannot be opened. The
+        lock lives in the checkout's state directory; when CGR_HOME cannot be
+        written the run goes ahead without it, after a warning.
 
         `committed` turns True once the run has nothing left that could leave
         the graph partial: at the commit point, or on the in-sync fast path.

@@ -100,11 +100,17 @@ def _as_an_older_cgr_left_it(repo: Path) -> dict[str, bytes]:
 
     `os.replace` keeps each file's mtime, as the in-sync check requires of
     a hash cache an older cgr wrote. Wherever the sync put the files, they
-    end in the tree, so this is the pre-upgrade layout either way.
+    end in the tree, so this is the pre-upgrade layout either way. The sync
+    lock is dropped instead: no cgr that kept its state in the tree took
+    one (issue #2441).
     """
     directory = state_dir(repo)
     for name in cs.CGR_STATE_FILENAMES:
-        if (directory / name).is_file():
+        if not (directory / name).is_file():
+            continue
+        if name == cs.SYNC_LOCK_FILENAME:
+            (directory / name).unlink()
+        else:
             os.replace(directory / name, repo / name)
     if directory.is_dir():
         directory.rmdir()

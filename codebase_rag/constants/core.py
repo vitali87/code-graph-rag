@@ -254,7 +254,8 @@ EXCLUSION_STATE_PROJECTS_KEY = "projects"
 # Recorded edit transactions for `cgr edits show|undo` (issue #1528).
 EDIT_HISTORY_FILENAME = ".cgr-edit-history.json"
 EDIT_LOCK_FILENAME = ".cgr-edit-lock"
-# Held by the one writer syncing the checkout (issue #2441).
+# Held by the one writer syncing the checkout (issue #2441), in the
+# checkout's state directory under CGR_HOME like the edit lock (issue #2427).
 SYNC_LOCK_FILENAME = ".cgr-sync-lock"
 # How often a scoped reingest re-checks a lock a running sync holds.
 SYNC_LOCK_POLL_SECONDS = 0.2
@@ -293,9 +294,13 @@ CGR_STATE_FILENAMES: frozenset[str] = frozenset(
 # The state files that are locks. One an older cgr left in the tree is never
 # moved, copied or removed: another process may hold it, or be about to open
 # it by that path, so replacing it would let two holders run at once.
-# Instead it stays, and is taken along with the lock under CGR_HOME for as
-# long as it is there (issue #2427).
-CGR_STATE_LOCK_FILENAMES: frozenset[str] = frozenset({EDIT_LOCK_FILENAME})
+# Instead it stays. The edit lock's tree copy is taken along with the lock
+# under CGR_HOME for as long as it is there (issue #2427); no released cgr
+# took a sync lock in the tree, so a sync takes only the one under CGR_HOME
+# and leaves a tree copy alone (issue #2441).
+CGR_STATE_LOCK_FILENAMES: frozenset[str] = frozenset(
+    {EDIT_LOCK_FILENAME, SYNC_LOCK_FILENAME}
+)
 CGR_STATE_DIRNAME = "state"
 # Edit transactions (issue #1528).
 EDIT_HISTORY_LIMIT = 50
