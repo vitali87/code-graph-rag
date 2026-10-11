@@ -200,6 +200,15 @@ def _member_name(member: ASTNode) -> str | None:
     return safe_decode_text(key) if key is not None else None
 
 
+def _single_non_nullish_member(union: ASTNode) -> ASTNode | None:
+    members = [
+        child
+        for child in union.named_children
+        if (safe_decode_text(child) or "") not in cs.TS_NULLISH_TYPE_TEXTS
+    ]
+    return members[0] if len(members) == 1 else None
+
+
 def _exported_declaration(node: ASTNode) -> ASTNode:
     if node.type == cs.TS_EXPORT_STATEMENT and (
         declaration := node.child_by_field_name(cs.FIELD_DECLARATION)
@@ -670,19 +679,70 @@ class JsTypeInferenceEngine:
         self, annotation: ASTNode, this_value: str | None, module_qn: str
     ) -> str | None:
         declared = next(iter(annotation.named_children), None)
-        if declared is None:
-            return None
+        return (
+            self._chain_type_of(declared, this_value, module_qn)
+            if declared is not None
+            else None
+        )
+
+    def _chain_type_of(
+        self, declared: ASTNode, this_value: str | None, module_qn: str
+    ) -> str | None:
         if declared.type == cs.TS_THIS_TYPE:
             # The `this` type names an instance; TS allows it in no static.
             return this_value if this_value == cs.JS_RECEIVER_INSTANCE else None
-        if declared.type == cs.TS_GENERIC_TYPE:
-            # `Builder<T>` is a Builder; an array-shaped generic is a
-            # container, and `Promise<T>` names no first-party class.
-            name = safe_decode_text(declared.child_by_field_name(cs.FIELD_NAME))
-            if not name or name in cs.TS_ARRAY_GENERIC_NAMES:
-                return None
+        if declared.type == cs.TS_UNION_TYPE:
+            # `Product | undefined` names its one class.
+            member = _single_non_nullish_member(declared)
+            return (
+                self._chain_type_of(member, this_value, module_qn)
+                if member is not None
+                else None
+            )
+        name_node = (
+            declared.child_by_field_name(cs.FIELD_NAME)
+            if declared.type == cs.TS_GENERIC_TYPE
+            else declared
+        )
+        if name_node is None or name_node.type != cs.TS_TYPE_IDENTIFIER:
+            return self._type_from_type_node(declared, module_qn)
+        # `Builder<T>` is a Builder; an array-shaped generic is a container,
+        # and `Promise<T>` names no first-party class.
+        name = safe_decode_text(name_node)
+        if not name or name in cs.TS_ARRAY_GENERIC_NAMES:
+            return None
+        return self._scoped_class(name_node, name, module_qn)
+
+    def _scoped_class(self, site: ASTNode, name: str, module_qn: str) -> str | None:
+        """The class `name` read at `site` is, innermost scope first: a class
+        declared in an enclosing function, method or namespace (by its own
+        qn), else the module's own or an imported one. A nearer binding that
+        is no class, or one a qn cannot name, answers nothing rather than
+        letting the module-level class of that name stand in."""
+        declaration = ut.enclosing_declaration(site, name)
+        if declaration is None:
             return self._resolve_js_class_name(name, module_qn)
-        return self._type_from_type_node(declared, module_qn)
+        path = ut.class_qn_path(declaration)
+        return cs.SEPARATOR_DOT.join([module_qn, *path]) if path else None
+
+    def _constructed_class(
+        self, value: ASTNode, module_qn: str, language: cs.SupportedLanguage
+    ) -> str | None:
+        constructor = value.child_by_field_name(cs.FIELD_CONSTRUCTOR)
+        name = (
+            safe_decode_text(constructor)
+            if constructor is not None and constructor.type == cs.TS_IDENTIFIER
+            else None
+        )
+        if constructor is None or not name:
+            return self._infer_js_variable_type_from_value(value, module_qn, language)
+        # A parameter or other local value of that name, which the block walk
+        # does not see, is not the class either.
+        if ut.enclosing_declaration(
+            constructor, name
+        ) is None and self._js_bound_by_enclosing_callable(value, name, language):
+            return None
+        return self._scoped_class(constructor, name, module_qn)
 
     def _evident_return_class(
         self,
@@ -697,7 +757,7 @@ class JsTypeInferenceEngine:
         if all(value.type == cs.TS_THIS for value in values if value is not None):
             return this_value
         constructed = {
-            self._infer_js_variable_type_from_value(value, module_qn, language)
+            self._constructed_class(value, module_qn, language)
             if value.type == cs.TS_NEW_EXPRESSION
             else None
             for value in values

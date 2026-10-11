@@ -1527,3 +1527,126 @@ def test_namespace_class_hop_reads_the_class_in_its_namespace(
     callees = _callees(_calls(mock_ingestor), "nsproj.ns.N.useInside")
     assert callees.get("nsproj.ns.Right.finish") == _EXACT
     assert "nsproj.ns.Wrong.finish" not in callees
+
+
+# ---------------------------------------------------------------------------
+# A nested class's return names the class its own scopes see: a local or
+# namespace `Product` shadows the module-level one, for an annotation and
+# for a `return new Product()` alike
+# ---------------------------------------------------------------------------
+
+_SCOPED_TS = """\
+export class Product { finish() { return 0; } }
+export class Shared { finish() { return 2; } }
+export function f() {
+  class Product { finish() { return 1; } }
+  class Builder {
+    make(): Product { return new Product(); }
+    use() { return this.make().finish(); }
+    makeShared(): Shared { return new Shared(); }
+    useShared() { return this.makeShared().finish(); }
+  }
+  class Inferred {
+    make() { return new Product(); }
+    use() { return this.make().finish(); }
+    makeShared() { return new Shared(); }
+    useShared() { return this.makeShared().finish(); }
+  }
+  return [new Builder(), new Inferred()];
+}
+export class Generic<Product> {
+  make(): Product { return this.make(); }
+  use() { return this.make().finish(); }
+}
+"""
+
+_SCOPED_JS = """\
+export class Product { finish() { return 0; } }
+export class Shared { finish() { return 2; } }
+export function f() {
+  class Product { finish() { return 1; } }
+  class Inferred {
+    make() { return new Product(); }
+    use() { return this.make().finish(); }
+    makeShared() { return new Shared(); }
+    useShared() { return this.makeShared().finish(); }
+  }
+  return new Inferred();
+}
+"""
+
+_SCOPED_NS = """\
+export class Product { finish() { return 0; } }
+export namespace N {
+  export class Product { finish() { return 1; } }
+  export class Builder {
+    make(): Product { return new Product(); }
+    use() { return this.make().finish(); }
+  }
+  export class Inferred {
+    make() { return new Product(); }
+    use() { return this.make().finish(); }
+  }
+}
+"""
+
+
+@pytest.fixture
+def scoped_edges(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> dict[tuple[str, str], str | None]:
+    root = temp_repo / "scp"
+    _write(
+        root,
+        {"fn.ts": _SCOPED_TS, "fn_js.js": _SCOPED_JS, "ns.ts": _SCOPED_NS},
+    )
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="typescript")
+    return _calls(mock_ingestor)
+
+
+@pytest.mark.parametrize(
+    ("caller", "expected", "module_level"),
+    [
+        ("scp.fn.f.Builder.use", "scp.fn.f.Product.finish", "scp.fn.Product.finish"),
+        ("scp.fn.f.Inferred.use", "scp.fn.f.Product.finish", "scp.fn.Product.finish"),
+        (
+            "scp.fn_js.f.Inferred.use",
+            "scp.fn_js.f.Product.finish",
+            "scp.fn_js.Product.finish",
+        ),
+        ("scp.ns.N.Builder.use", "scp.ns.N.Product.finish", "scp.ns.Product.finish"),
+        ("scp.ns.N.Inferred.use", "scp.ns.N.Product.finish", "scp.ns.Product.finish"),
+    ],
+)
+def test_nested_return_names_the_class_its_scope_sees(
+    scoped_edges: dict[tuple[str, str], str | None],
+    caller: str,
+    expected: str,
+    module_level: str,
+) -> None:
+    # The local or namespace `Product` runs, never the module-level one.
+    callees = _callees(scoped_edges, caller)
+    assert module_level not in callees
+    assert callees.get(expected) == _EXACT
+
+
+@pytest.mark.parametrize(
+    ("caller", "expected"),
+    [
+        ("scp.fn.f.Builder.useShared", "scp.fn.Shared.finish"),
+        ("scp.fn.f.Inferred.useShared", "scp.fn.Shared.finish"),
+        ("scp.fn_js.f.Inferred.useShared", "scp.fn_js.Shared.finish"),
+    ],
+)
+def test_nested_return_of_an_unshadowed_module_class_still_binds_it(
+    scoped_edges: dict[tuple[str, str], str | None], caller: str, expected: str
+) -> None:
+    assert _callees(scoped_edges, caller).get(expected) == _EXACT
+
+
+def test_type_parameter_named_like_a_class_types_no_hop(
+    scoped_edges: dict[tuple[str, str], str | None],
+) -> None:
+    # `Generic<Product>`'s `Product` is its type parameter, not the class.
+    callees = _callees(scoped_edges, "scp.fn.Generic.use")
+    assert not {c for c in callees if c.endswith(".finish")}

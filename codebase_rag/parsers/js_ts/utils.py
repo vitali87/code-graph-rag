@@ -231,12 +231,79 @@ def find_class_body_at(root_node: Node, path: list[str]) -> Node | None:
     return scope
 
 
-def _scope_member(scope: Node, name: str, wanted: frozenset[str]) -> Node | None:
+# A block also declares names through `const` / `let` / `var` statements.
+_BINDING_WRAPPERS = _DECLARATION_WRAPPERS | {
+    cs.TS_LEXICAL_DECLARATION,
+    cs.TS_VARIABLE_DECLARATION,
+}
+# What binds a name a type annotation or a `new` reads.
+_NAME_BINDINGS = _CLASS_DECLARATIONS | {
+    cs.TS_FUNCTION_DECLARATION,
+    cs.TS_GENERATOR_FUNCTION_DECLARATION,
+    cs.TS_VARIABLE_DECLARATOR,
+    cs.TS_INTERFACE_DECLARATION,
+    cs.TS_TYPE_ALIAS_DECLARATION,
+    cs.TS_ENUM_DECLARATION,
+    cs.TS_INTERNAL_MODULE,
+}
+# Nodes a declaration's qn path passes through without a segment of its own.
+_PATH_TRANSPARENT = _DECLARATION_WRAPPERS | {cs.TS_STATEMENT_BLOCK, cs.TS_CLASS_BODY}
+
+
+def enclosing_declaration(site: Node, name: str) -> Node | None:
+    """What `name`, read at `site`, binds to below module level: the
+    nearest enclosing block's own declaration of it (a function's, a
+    method's or a namespace's), or a type parameter of an enclosing class,
+    function or method. ``None`` when only the module, an import, or
+    nothing declares it."""
+    node = site.parent
+    while node is not None and node.type != cs.TS_PROGRAM:
+        if node.type == cs.TS_STATEMENT_BLOCK and (
+            found := _scope_member(node, name, _NAME_BINDINGS, _BINDING_WRAPPERS)
+        ):
+            return found
+        type_params = node.child_by_field_name(cs.TS_FIELD_TYPE_PARAMETERS)
+        if type_params is not None and (
+            param := next(
+                (p for p in type_params.named_children if _declared_name(p) == name),
+                None,
+            )
+        ):
+            return param
+        node = node.parent
+    return None
+
+
+def class_qn_path(declaration: Node) -> list[str] | None:
+    """A class declaration's qn segments below its module, the inverse of
+    `find_class_body_at`; ``None`` for anything but a class, or when a scope
+    holding it has no name a qn can carry (an arrow, an `if` block)."""
+    if declaration.type not in _CLASS_DECLARATIONS:
+        return None
+    path: list[str] = []
+    node: Node | None = declaration
+    while node is not None and node.type != cs.TS_PROGRAM:
+        if node.type in _CLASS_PATH_HOLDERS:
+            if not (segment := _declared_name(node)):
+                return None
+            path.append(segment)
+        elif node.type not in _PATH_TRANSPARENT:
+            return None
+        node = node.parent
+    return path[::-1]
+
+
+def _scope_member(
+    scope: Node,
+    name: str,
+    wanted: frozenset[str],
+    wrappers: frozenset[str] = _DECLARATION_WRAPPERS,
+) -> Node | None:
     # The first declaration of `name` among the scope's own statements.
     stack = list(reversed(scope.named_children))
     while stack:
         node = stack.pop()
-        if node.type in _DECLARATION_WRAPPERS:
+        if node.type in wrappers:
             stack.extend(reversed(node.named_children))
         elif node.type in wanted and _declared_name(node) == name:
             return node
