@@ -832,6 +832,11 @@ KEY_MODIFIERS = "modifiers"
 # name because the qn leaves out a namespace the module's directory already
 # spells (issue #1629).
 KEY_NAMESPACE = "namespace"
+# How many type parameters a C# type declares, stored only when it is
+# generic. C# overloads a type name by arity (`PB`, `PB<T>`), so a reference
+# binds by it, and an incremental run reads it back for the types of files it
+# does not re-parse (issue #2579).
+KEY_GENERIC_ARITY = "generic_arity"
 # Depth of a document heading, 1-6 (issue #1426). Kept distinct from the
 # nesting a Section's CONTAINS_SECTION edges describe: skipped levels mean a
 # level-3 heading can be the direct child of a level-1 one.
@@ -1138,6 +1143,7 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.modifiers AS modifiers, n.decorators AS decorators, "
     "n.return_type AS return_type, n.param_types AS param_types, "
     "n.namespace AS namespace, n.is_object_member AS is_object_member, "
+    "n.generic_arity AS generic_arity, "
     "n.is_exported AS is_exported, "
     "n.extension_receiver AS extension_receiver, "
     "n.extension_namespace AS extension_namespace, "
@@ -1329,6 +1335,33 @@ CYPHER_ALL_INHERITS = (
     "r.base_index AS base_index "
     "ORDER BY child_qn, base_index"
 )
+# Implementer -> interface/trait pairs for incremental runs (issue #2403):
+# parsing records them only for the files it reads, and the sole-implementer
+# dispatch and the override walk need every implementer.
+CYPHER_ALL_IMPLEMENTS = (
+    "MATCH (child)-[:IMPLEMENTS]->(base) "
+    "WHERE child.qualified_name IS NOT NULL AND base.qualified_name IS NOT NULL "
+    "AND child.qualified_name STARTS WITH $project_prefix "
+    "RETURN child.qualified_name AS child_qn, base.qualified_name AS base_qn"
+)
+# OVERRIDES out of Rust methods: a trait impl for a type with no node (a
+# primitive, a foreign type) writes no IMPLEMENTS edge, so its methods'
+# OVERRIDES edges are the only record of the pair (issue #2403).
+CYPHER_ALL_RUST_OVERRIDES = (
+    "MATCH (method:Method)-[:OVERRIDES]->(base:Method) "
+    "WHERE method.qualified_name STARTS WITH $project_prefix "
+    "AND method.path ENDS WITH '.rs' "
+    "RETURN method.qualified_name AS from_qn, base.qualified_name AS to_qn"
+)
+# Rust traits that declare a method without a default body (no body, so no
+# fingerprint): every impl of one defines that method and leaves an OVERRIDES
+# edge. An impl of any other trait may define nothing and leave no trace.
+CYPHER_RUST_TRAITS_WITH_REQUIRED_METHODS = (
+    "MATCH (trait:Interface)-[:DEFINES_METHOD]->(method:Method) "
+    "WHERE trait.qualified_name STARTS WITH $project_prefix "
+    "AND trait.path ENDS WITH '.rs' AND method.ast_fingerprint IS NULL "
+    "RETURN DISTINCT trait.qualified_name AS qualified_name"
+)
 
 # C# type declaration locations for incremental runs: _join_csharp_partials
 # resolves each Roslyn partial-declaration location against csharp_type_locations,
@@ -1349,9 +1382,10 @@ CYPHER_ALL_CSHARP_TYPE_LOCATIONS = (
 CSHARP_PARTIAL_TYPE_LABELS: frozenset[NodeLabel] = frozenset(
     {NodeLabel.CLASS, NodeLabel.INTERFACE}
 )
-# A project's types of those labels under one name, with their modifiers: a
-# rename reads which of them are the parts of one `partial` type by the key
-# parsing groups them under (`csharp_partial_key_from_graph`).
+# A project's types of those labels under one name, with their modifiers and
+# generic arity: a rename reads which of them are the parts of one `partial`
+# type by the key parsing groups them under (`csharp_partial_key_from_graph`),
+# which spells the arity (issue #2579).
 _CSHARP_PARTIAL_LABELS = "|".join(
     sorted(label.value for label in CSHARP_PARTIAL_TYPE_LABELS)
 )
@@ -1359,7 +1393,7 @@ CYPHER_SAME_NAMED_CSHARP_TYPES = (
     f"MATCH (n:{_CSHARP_PARTIAL_LABELS}) "
     "WHERE n.name = $name AND n.qualified_name STARTS WITH $project_prefix "
     "RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, "
-    "n.path AS path, n.modifiers AS modifiers"
+    "n.path AS path, n.modifiers AS modifiers, n.generic_arity AS generic_arity"
 )
 
 # Col-keyed location rehydration fetches (issue #1240). Both guard for
