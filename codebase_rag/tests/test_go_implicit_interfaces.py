@@ -2627,3 +2627,338 @@ def test_go_types_leaves_a_build_it_did_not_read_to_the_name_match(
         u_windows: "heuristic",
         **w_both,
     }
+
+
+# --- the signature check never rejects what may be the same (PR #3360) --------
+
+SIG_RESULTS = """package results
+
+type Pair interface {
+\tBoth() (int, error)
+\tNothing()
+\tTwo() (int, int)
+\tArgs(a int, b string) error
+\tGroup(a int, b int)
+\tMany(prefix string, xs ...int)
+}
+
+type Boths interface {
+\tBoth() (
+\t\tint,
+\t\terror,
+\t)
+}
+
+type Impl struct{}
+
+func (Impl) Both() (
+\tint,
+\terror,
+) {
+\treturn 0, nil
+}
+
+func (Impl) Nothing() () {}
+
+func (Impl) Two() (x, y int) { return 0, 0 }
+
+func (Impl) Args(
+\ta int,
+\tb string,
+) error {
+\treturn nil
+}
+
+func (Impl) Group(a, b int) {}
+
+func (Impl) Many(
+\tprefix string,
+\txs ...int,
+) {
+}
+
+type Wrong struct{}
+
+func (Wrong) Both() (float64, error) { return 0, nil }
+
+func Use(p Pair) error {
+\tp.Nothing()
+\t_, err := p.Both()
+\treturn err
+}
+
+var _ Pair = Impl{}
+"""
+
+# `int` is string in this package: Name(int) int is Name(string) string.
+SIG_ALIAS = """package alias
+
+type int = string
+
+type Namer interface {
+\tName(s string) string
+}
+
+type Impl struct{}
+
+func (Impl) Name(s int) int { return s }
+
+func Call(n Namer) string { return n.Name("x") }
+
+var _ Namer = Impl{}
+"""
+
+# `uint8` is a defined type here, so only go/types can tell Size() uint8 from
+# Size() int; the name match may not rule it out.
+SIG_DEFINED = """package defined
+
+type uint8 int
+
+type Sizer interface {
+\tSize() int
+}
+
+type T struct{}
+
+func (T) Size() uint8 { return 0 }
+"""
+
+# Implements results.Boths from another package, so a sync re-parsing this
+# file alone matches it against Boths read back from the graph.
+SIG_OTHER = """package other
+
+type Both2 struct{}
+
+func (Both2) Both() (int, error) { return 0, nil }
+"""
+
+SIG_FILES = {
+    "results/results.go": SIG_RESULTS,
+    "alias/alias.go": SIG_ALIAS,
+    "defined/defined.go": SIG_DEFINED,
+    "other/other.go": SIG_OTHER,
+}
+
+
+def _sig_repo(root: Path) -> None:
+    (root / "go.mod").write_text("module gosig\n\ngo 1.22\n", encoding="utf-8")
+    for rel, text in SIG_FILES.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+
+def _sig_frontend(monkeypatch: pytest.MonkeyPatch, frontend: str, root: Path) -> None:
+    if frontend == "gotypes":
+        from codebase_rag.parsers.go_frontend import (
+            go_frontend_available,
+            run_go_frontend,
+        )
+
+        if shutil.which("go") is None or not go_frontend_available():
+            pytest.skip("go toolchain not available")
+        if run_go_frontend(root).analysed_modules != (".",):
+            pytest.skip("gotypes frontend could not build in this environment")
+        monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
+    else:
+        monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+
+
+def _sig_index(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    frontend: str,
+) -> str:
+    root = temp_repo / "gosig"
+    root.mkdir()
+    _sig_repo(root)
+    _sig_frontend(monkeypatch, frontend, root)
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="go")
+    return "gosig"
+
+
+def _labels(mock_ingestor: MagicMock, rel: cs.RelationshipType) -> dict:
+    return {
+        pair: props.get(cs.KEY_RESOLUTION)
+        for pair, props in _edges(mock_ingestor, rel).items()
+    }
+
+
+@pytest.mark.parametrize("frontend", ["treesitter", "gotypes"])
+def test_a_valid_result_or_parameter_list_keeps_its_links(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    frontend: str,
+) -> None:
+    # `(int, error,)` over two lines, `()`, `(x, y int)`, `(a int, b
+    # string,)`, `(a, b int)` and `(prefix string, xs ...int,)` are the
+    # interface's signatures written another way.
+    project = _sig_index(temp_repo, mock_ingestor, monkeypatch, frontend)
+    pkg = f"{project}.results.results"
+    label = cs.EdgeResolution.HEURISTIC if frontend == "treesitter" else None
+    implements = _labels(mock_ingestor, cs.RelationshipType.IMPLEMENTS)
+    assert implements[(f"{pkg}.Impl", f"{pkg}.Pair")] == label
+    assert implements[(f"{pkg}.Impl", f"{pkg}.Boths")] == label
+    overrides = _labels(mock_ingestor, cs.RelationshipType.OVERRIDES)
+    for method in ("Both", "Nothing", "Two", "Args", "Group", "Many"):
+        assert overrides[(f"{pkg}.Impl.{method}", f"{pkg}.Pair.{method}")] == label
+    calls = {
+        callee
+        for caller, callee in _edges(mock_ingestor, cs.RelationshipType.CALLS)
+        if caller == f"{pkg}.Use"
+    }
+    assert {f"{pkg}.Impl.Nothing", f"{pkg}.Impl.Both"} <= calls
+    # Negative: (float64, error) is no (int, error), built-in types both.
+    assert (f"{pkg}.Wrong", f"{pkg}.Boths") not in implements
+    assert (f"{pkg}.Wrong.Both", f"{pkg}.Boths.Both") not in overrides
+    assert f"{pkg}.Wrong.Both" not in calls
+
+
+@pytest.mark.parametrize("frontend", ["treesitter", "gotypes"])
+def test_a_name_its_package_declares_is_no_builtin(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    frontend: str,
+) -> None:
+    project = _sig_index(temp_repo, mock_ingestor, monkeypatch, frontend)
+    alias, defined = f"{project}.alias.alias", f"{project}.defined.defined"
+    label = cs.EdgeResolution.HEURISTIC if frontend == "treesitter" else None
+    implements = _labels(mock_ingestor, cs.RelationshipType.IMPLEMENTS)
+    overrides = _labels(mock_ingestor, cs.RelationshipType.OVERRIDES)
+    assert implements[(f"{alias}.Impl", f"{alias}.Namer")] == label
+    assert overrides[(f"{alias}.Impl.Name", f"{alias}.Namer.Name")] == label
+    calls = {
+        callee
+        for caller, callee in _edges(mock_ingestor, cs.RelationshipType.CALLS)
+        if caller == f"{alias}.Call"
+    }
+    assert f"{alias}.Impl.Name" in calls
+    # A defined `uint8` may be anything to the name match; go/types knows
+    # Size() uint8 is no Size() int.
+    pair = (f"{defined}.T", f"{defined}.Sizer")
+    if frontend == "treesitter":
+        assert implements[pair] == cs.EdgeResolution.HEURISTIC
+    else:
+        assert pair not in implements
+
+
+@pytest.mark.parametrize("frontend", ["treesitter", "gotypes"])
+@pytest.mark.parametrize(
+    ("target", "renamed", "expected"),
+    [
+        (
+            "results.results.Pair.Both",
+            "BothX",
+            ("results/results.go", "func (Impl) BothX() ("),
+        ),
+        (
+            "alias.alias.Namer.Name",
+            "Title",
+            ("alias/alias.go", "func (Impl) Title(s int) int"),
+        ),
+    ],
+    ids=["trailing-comma", "alias"],
+)
+def test_renaming_through_another_spelling_keeps_the_build(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    frontend: str,
+    target: str,
+    renamed: str,
+    expected: tuple[str, str],
+) -> None:
+    # Without the implementation in the hierarchy the rename rewrote the
+    # interface alone and `var _ Pair = Impl{}` stopped compiling.
+    _sig_repo(temp_repo)
+    _sig_frontend(monkeypatch, frontend, temp_repo)
+    graph = _rename_index(temp_repo, mock_ingestor)
+    report = rename(
+        temp_repo,
+        graph.fetch_all,
+        graph.project,
+        f"{graph.project}.{target}",
+        renamed,
+        allow_heuristic=True,
+    )
+    assert report.applied, report.message
+    rel, needle = expected
+    assert needle in (temp_repo / rel).read_text(encoding="utf-8")
+    if shutil.which("go") is not None:
+        built = _go_build(temp_repo, "linux")
+        assert built.returncode == 0, built.stderr
+
+
+def test_a_go_types_proof_is_never_vetoed_by_the_signature_check(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Recorded facts proving U on the build that reads U's Area() int: the
+    # compiler's word stands over the name match's, so U's Linux Area keeps
+    # its OVERRIDES and dispatch edges, unlabelled.
+    shape_at = _position(VARIANT_SHAPE, "Shape interface")
+    _gotypes_facts(
+        monkeypatch,
+        GoSemanticFacts(
+            call_sites={},
+            external_sites=set(),
+            implements=[
+                GoImplements(
+                    "shape.go",
+                    *_position(VARIANT_SHAPE, "U struct"),
+                    "shape.go",
+                    *shape_at,
+                )
+            ],
+            analysed_modules=(".",),
+            checked_files=frozenset({"shape.go", "t_other.go"}),
+        ),
+    )
+    root = temp_repo / "govar"
+    root.mkdir()
+    (root / "go.mod").write_text("module govar\n\ngo 1.22\n", encoding="utf-8")
+    for rel, text in VARIANT_FILES.items():
+        (root / rel).write_text(text, encoding="utf-8")
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="go")
+    pkg = "govar.shape"
+    u_other = _declared_in(_method_files(mock_ingestor), f"{pkg}.U.Area", "t_other.go")
+    overrides = _labels(mock_ingestor, cs.RelationshipType.OVERRIDES)
+    assert overrides[(u_other, f"{pkg}.Shape.Area")] is None
+    assert u_other in _area_calls(mock_ingestor, f"{pkg}.Total")
+
+
+@pytest.mark.parametrize("sync", ["fresh", "reused"])
+def test_a_sync_reads_a_stored_result_list_as_its_parse_did(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch, sync: str
+) -> None:
+    # Re-parsing only other/ reads results/ back from the graph, where
+    # Boths.Both's `return_type` holds `(\n\t\tint,\n\t\terror,\n\t)` as
+    # written: read as two results, Both2 implements it as a clean index says.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    root = temp_repo / "synced"
+    root.mkdir()
+    _sig_repo(root)
+    store = _StatefulIngestor()
+    first = _go_updater(store, root)
+    first.run(force=True)
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
+    path = root / "other" / "other.go"
+    path.write_text(path.read_text(encoding="utf-8") + "// synced\n")
+    os.utime(path, (cache_mtime + 1, cache_mtime + 1))
+    (first if sync == "reused" else _go_updater(store, root)).run(force=False)
+
+    clean_root = temp_repo / "clean"
+    clean_root.mkdir()
+    _sig_repo(clean_root)
+    (clean_root / "other" / "other.go").write_text(path.read_text(encoding="utf-8"))
+    clean = _StatefulIngestor()
+    _go_updater(clean, clean_root).run(force=True)
+    assert _interface_edges(store) == _interface_edges(clean)
+    assert (
+        "proj.other.other.Both2",
+        "IMPLEMENTS",
+        "proj.results.results.Boths",
+        "heuristic",
+    ) in _interface_edges(store)

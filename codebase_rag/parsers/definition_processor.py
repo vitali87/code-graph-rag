@@ -293,6 +293,10 @@ class DefinitionProcessor(
         # The repo-relative files those runs type-checked: a pair resting on
         # a file the build left out was never compared by the compiler.
         self.go_checked_files: set[str] = set()
+        # Directory -> the predeclared type names (`int`, `error`) a Go package
+        # there declares itself, refilled by each link (shared with the call
+        # resolver): there the name is the package's own type.
+        self.go_builtin_shadows: dict[str, frozenset[str]] = {}
         # (rel_file, type_start_line) -> class qn for every ingested C# type,
         # the reverse of the Roslyn fact keys, so partial declaration groups
         # join back to the Pass-2 Class nodes.

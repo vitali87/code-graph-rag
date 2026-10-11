@@ -14,7 +14,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, NamedTuple
 
 from loguru import logger
@@ -140,6 +140,8 @@ class GoInterfaceMixin:
     # go/types proved, and those matched here by name and arity only.
     go_proven_pairs: set[tuple[str, str]]
     go_guessed_pairs: set[tuple[str, str]]
+    go_builtin_shadows: dict[str, frozenset[str]]
+    rehydrated_definition_paths: dict[str, str]
 
     @abstractmethod
     def _get_docstring(
@@ -220,6 +222,7 @@ class GoInterfaceMixin:
         of IMPLEMENTS edges written here.
         """
         embeds = self._resolve_go_embeds()
+        self._record_go_builtin_shadows()
         owners = self._go_method_sets()
         compiler = _GoCompilerView(self.repo_path, analysed_roots, checked_files)
         linked = self._link_implicit_implementations(embeds, owners, compiler)
@@ -300,15 +303,46 @@ class GoInterfaceMixin:
             )
             previous.add((interface_qn, implementer_qn))
 
+    def _record_go_builtin_shadows(self) -> None:
+        # Go lets a package declare a predeclared name for itself (`type int
+        # = string`, a defined `type uint8 int`), and its files then mean the
+        # package's type by it. Any package-level declaration of the name
+        # counts, and a package is its directory, so the name is unknown in
+        # every file there.
+        shadows: dict[str, set[str]] = {}
+        for name in (*cs.GO_PREDECLARED_TYPES, *cs.GO_PREDECLARED_ALIASES):
+            for qn in self.function_registry.find_ending_with(name):
+                if (path := self._go_declaring_file(qn)) is not None:
+                    directory = PurePosixPath(path).parent.as_posix()
+                    shadows.setdefault(directory, set()).add(name)
+        # In place: the call resolver holds the map.
+        self.go_builtin_shadows.clear()
+        self.go_builtin_shadows.update(
+            {directory: frozenset(names) for directory, names in shadows.items()}
+        )
+
+    def _go_declaring_file(self, qn: str) -> str | None:
+        # The Go file declaring package-level `qn`, read back or parsed.
+        path = self.rehydrated_definition_paths.get(qn)
+        if path is None:
+            module_path = self.module_qn_to_file_path.get(
+                qn.rpartition(cs.SEPARATOR_DOT)[0]
+            )
+            path = go_utils.rel_file(module_path, self.repo_path) or None
+        return path if path is not None and path.endswith(cs.EXT_GO) else None
+
     def _go_method_sets(self) -> _GoMethodOwners:
         owners = _GoMethodOwners({}, {}, {})
         registry = self.function_registry
-        for method_qn, spec in self.go_methods.items():
+        for method_qn, declared in self.go_methods.items():
             if registry.get(method_qn) != NodeType.METHOD:
                 continue
             owner, _, name = method_qn.rpartition(cs.SEPARATOR_DOT)
             if registry.get(owner) not in _GO_METHOD_OWNER_TYPES:
                 continue
+            spec = declared._replace(
+                signature=go_ifaces.in_package(declared, self.go_builtin_shadows)
+            )
             key = go_ifaces.method_key(qn_markers.strip_dup_marker(name), spec.package)
             method_set = owners.method_sets.setdefault(owner, {})
             method_set[key] = (*method_set.get(key, ()), spec.signature)
@@ -335,7 +369,7 @@ class GoInterfaceMixin:
                         f"{type_qn}{cs.SEPARATOR_DOT}{key[1]}",
                         f"{interface_qn}{cs.SEPARATOR_DOT}{key[1]}",
                         declared[key],
-                        frozenset() if guessed else checked_files,
+                        None if guessed else checked_files,
                     )
 
     def _override_declarations(
@@ -343,21 +377,27 @@ class GoInterfaceMixin:
         method_qn: str,
         interface_method_qn: str,
         wanted: tuple[go_ifaces.GoSignature, ...],
-        proven_in: frozenset[str],
+        proven_in: frozenset[str] | None,
     ) -> None:
         # Each build that declares the method again holds a declaration of
         # its own (`T.M`, `T.M@5`), and renaming the interface method must
         # rewrite every one, or the build that holds a missed one no longer
-        # compiles. A declaration whose signature cannot be the interface
-        # method's implements it in no build. `proven_in` holds the files of
-        # the build go/types proved the pair for; a declaration elsewhere is
-        # matched by name, as a guessed pair's all are.
+        # compiles. `proven_in` holds the files of the build go/types proved
+        # the pair for (None for a guessed pair): a declaration there is the
+        # compiler's word, whatever the names say. Any other is matched by
+        # name, and one whose signature differs for certain implements the
+        # interface in no build.
         for variant in self.function_registry.variants(method_qn):
             spec = self.go_methods.get(variant)
-            if spec is not None and go_ifaces.satisfies((spec.signature,), wanted):
-                self._emit_go_override(
-                    variant, interface_method_qn, spec.file not in proven_in
+            proven = proven_in is not None and (spec is None or spec.file in proven_in)
+            if (
+                proven
+                or spec is None
+                or go_ifaces.satisfies(
+                    (go_ifaces.in_package(spec, self.go_builtin_shadows),), wanted
                 )
+            ):
+                self._emit_go_override(variant, interface_method_qn, not proven)
 
     def _emit_go_override(
         self, method_qn: str, interface_method_qn: str, guessed: bool

@@ -286,6 +286,7 @@ class CallResolver:
         "guessed_implementations",
         "go_methods",
         "go_checked_files",
+        "go_builtin_shadows",
         "_interface_impl_cache",
         "_simple_resolution_cache",
         "last_resolution",
@@ -326,6 +327,7 @@ class CallResolver:
         guessed_implementations: set[tuple[str, str]] | None = None,
         go_methods: Mapping[str, GoMethodSpec] | None = None,
         go_checked_files: set[str] | None = None,
+        go_builtin_shadows: Mapping[str, frozenset[str]] | None = None,
     ) -> None:
         self.function_registry = function_registry
         self.import_processor = import_processor
@@ -381,6 +383,11 @@ class CallResolver:
         # proved holds for the build they make up, not for another's files.
         self.go_checked_files = (
             go_checked_files if go_checked_files is not None else set()
+        )
+        # Directory -> the predeclared names its Go package declares itself
+        # (shared ref): there `int` may be any type.
+        self.go_builtin_shadows = (
+            go_builtin_shadows if go_builtin_shadows is not None else {}
         )
         self._interface_impl_cache: dict[str, str] | None = None
         # C++ typedef/using alias -> underlying bare type, consulted when a
@@ -1799,7 +1806,10 @@ class CallResolver:
         return (
             have is None
             or want is None
-            or go_ifaces.compatible(have.signature, want.signature)
+            or go_ifaces.compatible(
+                go_ifaces.in_package(have, self.go_builtin_shadows),
+                go_ifaces.in_package(want, self.go_builtin_shadows),
+            )
         )
 
     def go_declaration_read(self, method_qn: str) -> bool:

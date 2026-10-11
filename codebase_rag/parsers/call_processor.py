@@ -1862,6 +1862,7 @@ class CallProcessor:
         guessed_implementations: set[tuple[str, str]] | None = None,
         go_methods: Mapping[str, GoMethodSpec] | None = None,
         go_checked_files: set[str] | None = None,
+        go_builtin_shadows: Mapping[str, frozenset[str]] | None = None,
     ) -> None:
         self.ingestor = ingestor
         # The tree-sitter node whose span every edge emitted right now records
@@ -1930,6 +1931,7 @@ class CallProcessor:
             guessed_implementations=guessed_implementations,
             go_methods=go_methods,
             go_checked_files=go_checked_files,
+            go_builtin_shadows=go_builtin_shadows,
         )
         # Inter-procedural callable-parameter flow: ordered params per function and
         # the per-call-site argument bindings, resolved to a fixpoint in finalize.
@@ -7401,22 +7403,7 @@ class CallProcessor:
         # the receiver, so it is not fanned out (the #2931 rule).
         if self._resolution == cs.EdgeResolution.HEURISTIC:
             return
-        registry = self._resolver.function_registry
-        # Each declaration a build makes again is a target of its own, and
-        # one go/types did not read is matched by name even for a pair it
-        # proved for the build it read.
-        edges = [
-            (
-                target_type,
-                variant,
-                guessed or not self._resolver.go_declaration_read(variant),
-            )
-            for (target_type, target_qn), guessed in sorted(
-                self._resolver.interface_dispatch_targets(callee_qn).items()
-            )
-            for variant in registry.variants(target_qn)
-            if self._resolver.go_declaration_satisfies(variant, callee_qn)
-        ]
+        edges = self._go_dispatch_edges(callee_qn)
         prev_resolution = self._resolution
         proven = cs.EdgeResolution.OVERLOAD if len(edges) > 1 else prev_resolution
         try:
@@ -7429,6 +7416,23 @@ class CallProcessor:
                 )
         finally:
             self._resolution = prev_resolution
+
+    def _go_dispatch_edges(self, callee_qn: str) -> list[tuple[str, str, bool]]:
+        # (label, method, guessed) per implementation. Each declaration a build
+        # makes again is a target of its own. One go/types read for a pair it
+        # proved is the compiler's, whatever the names say; any other is
+        # matched by name, and one whose signature differs for certain runs
+        # in no build where its type is an implementer.
+        resolver = self._resolver
+        edges: list[tuple[str, str, bool]] = []
+        for (target_type, target_qn), guessed in sorted(
+            resolver.interface_dispatch_targets(callee_qn).items()
+        ):
+            for variant in resolver.function_registry.variants(target_qn):
+                proven = not guessed and resolver.go_declaration_read(variant)
+                if proven or resolver.go_declaration_satisfies(variant, callee_qn):
+                    edges.append((target_type, variant, not proven))
+        return edges
 
     def _emit_js_member_twins(self, ctx: _CallScanContext, callee_qn: str) -> None:
         # A JS member call that bound one twin of a double-registered

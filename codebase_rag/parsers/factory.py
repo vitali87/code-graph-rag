@@ -228,5 +228,6 @@ class ProcessorFactory:
                 guessed_implementations=self.definition_processor.go_guessed_pairs,
                 go_methods=self.definition_processor.go_methods,
                 go_checked_files=self.definition_processor.go_checked_files,
+                go_builtin_shadows=self.definition_processor.go_builtin_shadows,
             )
         return self._call_processor

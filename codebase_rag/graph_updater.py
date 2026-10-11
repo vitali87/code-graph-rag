@@ -86,6 +86,7 @@ from .parsers.frontends import (
     SemanticFacts,
 )
 from .parsers.frontends.protocol import QueryCall
+from .parsers.go import interfaces as go_ifaces
 from .parsers.go import read_package_clause
 from .parsers.go import utils as go_utils
 from .parsers.go.interfaces import GoInterfaceDecl, GoMethodSpec, GoSignature
@@ -4038,7 +4039,8 @@ class GraphUpdater:
         # An unchanged Go file's methods and interfaces still count toward
         # implicit satisfaction (issue #2483): a re-parsed type implements an
         # interface it does not touch. The signature is what the parse
-        # records, `param_types` and `return_type`, and the embedded types are
+        # records, `param_types` and `return_type` (its result list parsed
+        # again, as the file's parse read it), and the embedded types are
         # the interface's own `embeds`. An interface stored without that list
         # (an older or imported graph) has a method set nobody recorded, so it
         # is left out rather than read as embedding nothing.
@@ -4061,7 +4063,10 @@ class GraphUpdater:
                 dp.go_methods[qn] = GoMethodSpec(
                     GoSignature(
                         tuple(_stored_strings(param_types)),
-                        result if isinstance(result, str) else "",
+                        go_ifaces.stored_result_types(
+                            result if isinstance(result, str) else "",
+                            self.parsers.get(cs.SupportedLanguage.GO),
+                        ),
                     ),
                     package,
                     path,
