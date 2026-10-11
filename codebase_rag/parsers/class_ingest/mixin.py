@@ -1996,16 +1996,12 @@ class ClassIngestMixin:
         )
         if method_nodes is None:
             return
+        method_nodes = self._without_overload_stubs(method_nodes, module_qn)
 
         external_override_names, annotated_override_sink = (
             self._method_override_context(class_qn, language)
         )
         scope = _MethodScope(class_node, class_qn, language, file_path, module_qn)
-        overload_stubs = (
-            self.python_overload_stubs.get(module_qn, frozenset())
-            if module_qn is not None
-            else frozenset()
-        )
         # Gated on language: Dart spells its ordinary members `method_signature`.
         seen_signatures: set[str] | None = (
             set() if language in cs.JS_TS_LANGUAGES else None
@@ -2013,10 +2009,6 @@ class ClassIngestMixin:
 
         for method_node in method_nodes:
             if _skip_method(method_node, class_node, body_node, lang_config):
-                continue
-            # The implementation after an `@overload` stub owns the method's
-            # name; the stub is no method of its own (issue #2590).
-            if method_node.start_byte in overload_stubs:
                 continue
             if seen_signatures is not None and js_ts_utils.repeats_member_signature(
                 method_node, seen_signatures
@@ -2051,6 +2043,16 @@ class ClassIngestMixin:
                 self._record_ingested_method(scope, method_node, ingested_qn)
             if language == cs.SupportedLanguage.CPP:
                 self._record_cpp_method_return_type(method_node, class_qn)
+
+    def _without_overload_stubs(
+        self, method_nodes: list[Node], module_qn: str | None
+    ) -> list[Node]:
+        # The implementation after an `@overload` stub owns the method's
+        # name; the stub is no method of its own (issue #2590).
+        stubs = self.python_overload_stubs.get(module_qn or "")
+        if not stubs:
+            return method_nodes
+        return [node for node in method_nodes if node.start_byte not in stubs]
 
     def _method_override_context(
         self, class_qn: str, language: cs.SupportedLanguage
