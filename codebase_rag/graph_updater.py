@@ -10,7 +10,7 @@ import stat
 import sys
 import time
 from collections import defaultdict
-from collections.abc import Callable, Collection, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -100,6 +100,7 @@ from .parsers.java_lombok import (
 )
 from .parsers.notebook import NotebookSkipped, is_notebook_path, read_notebook
 from .parsers.parameter_nodes import PendingParameterType
+from .parsers.rs import utils as rs_utils
 from .parsers.structure_processor import StructureProcessor
 from .parsers.utils import mark_js_ts_module_private, sorted_captures
 from .path_filters import matches_test_path
@@ -113,7 +114,9 @@ from .services.resource_cleanup import prune_unanchored_resources
 from .trace.carry import CapturedTraceEdge, capture_trace_edges, carry_trace_edges
 from .types_defs import (
     CppDefinitionSpan,
+    EmbeddingPoint,
     EmbeddingQueryResult,
+    EmbeddingSymbol,
     FunctionLocation,
     FunctionLocations,
     FunctionSpanKey,
@@ -247,13 +250,16 @@ _ERROR_CANT_RESOLVE_FILENAME = 1921
 
 
 def _flush_embedding_batch(
-    pending: list[tuple[int, str, str]],
-    expected_ids: set[int],
+    pending: list[tuple[int, EmbeddingSymbol, str]],
+    expected: dict[int, EmbeddingSymbol],
+    stored_ids: set[int],
     embed_code_batch: Callable[[list[str]], list[list[float]]],
-    store_embedding_batch: Callable[[list[tuple[int, list[float], str]]], int],
+    store_embedding_batch: Callable[[list[EmbeddingPoint]], int],
 ) -> int:
     # Embeds and stores the pending batch, then empties it in place so the
-    # caller keeps appending to the same list.
+    # caller keeps appending to the same list. `stored_ids` gains the nodes
+    # whose points the store confirmed, which `expected` cannot vouch for: it
+    # is filled before the store is asked.
     if not pending:
         return 0
     snippets = [item[2] for item in pending]
@@ -267,14 +273,33 @@ def _flush_embedding_batch(
         )
         pending.clear()
         return 0
-    points: list[tuple[int, list[float], str]] = [
-        (node_id, emb, qname) for (node_id, qname, _), emb in zip(pending, embeddings)
+    points: list[EmbeddingPoint] = [
+        (node_id, emb, symbol) for (node_id, symbol, _), emb in zip(pending, embeddings)
     ]
-    for node_id, _qname, _src in pending:
-        expected_ids.add(node_id)
+    for node_id, symbol, _src in pending:
+        expected[node_id] = symbol
     stored = store_embedding_batch(points)
+    if stored:
+        stored_ids.update(node_id for node_id, _emb, _symbol in points)
     pending.clear()
     return stored
+
+
+def _embedded_label(label: ResultValue | None) -> cs.NodeLabel | None:
+    if isinstance(label, str) and label in cs.EMBEDDED_NODE_LABELS:
+        return cs.NodeLabel(label)
+    return None
+
+
+def _embedding_symbol(parsed: EmbeddingQueryResult) -> EmbeddingSymbol:
+    return EmbeddingSymbol(parsed[cs.KEY_LABEL], parsed[cs.KEY_QUALIFIED_NAME])
+
+
+def _under_any_project(qualified_name: object, projects: Sequence[str]) -> bool:
+    return isinstance(qualified_name, str) and any(
+        qualified_name.startswith(f"{project}{cs.SEPARATOR_DOT}")
+        for project in projects
+    )
 
 
 def _log_embedding_progress(embedded_count: int, total: int) -> None:
@@ -990,9 +1015,66 @@ def _natural_qn(qualified_name: str) -> str:
     return qn_markers.natural_qn(qualified_name)
 
 
+def _walk_position(rel_path: str) -> tuple[tuple[str, ...], str]:
+    """Where `walk_eligible_files` yields a file, which is the order a clean
+    build parses in: a directory's files by name, then its subdirectories'."""
+    path = PurePosixPath(rel_path)
+    return path.parent.parts, path.name
+
+
+def _registration_order(
+    row: ResultRow,
+) -> tuple[tuple[tuple[str, ...], str], tuple[int, int]]:
+    """Where a definition row's qn fell among its same-named twins.
+
+    A clean build registers files in walk order, and within a file the first
+    twin it meets takes the natural qn and each later one an `@line` (then
+    `@line_col`) marker in document order. The marker alone cannot order
+    twins from two files: an inline `mod b` and the file `b.rs` both declare
+    into `a.b` (#2805 review).
+    """
+    qn = row.get(cs.KEY_QUALIFIED_NAME)
+    path = row.get(cs.KEY_PATH)
+    position = qn_markers.marker_position(qn) if isinstance(qn, str) else None
+    return _walk_position(path if isinstance(path, str) else ""), position or (0, -1)
+
+
 _GLOSS_RELS = frozenset(
     {cs.RelationshipType.ANNOTATES.value, cs.RelationshipType.MENTIONS.value}
 )
+
+
+def _module_holding(name: str, module_paths: Mapping[str, Path]) -> str | None:
+    """The file module `name` lives in: its longest dotted prefix that is one.
+
+    The name itself counts, since an import can name a whole module.
+    """
+    parts = name.split(cs.SEPARATOR_DOT)
+    for end in range(len(parts), 0, -1):
+        prefix = cs.SEPARATOR_DOT.join(parts[:end])
+        if prefix in module_paths:
+            return prefix
+    return None
+
+
+def _file_module_holding(name: str, module_paths: Mapping[str, Path]) -> str | None:
+    """`_module_holding`, widened from an inline `mod` to its file's module.
+
+    An incremental run seeds an inline `mod`'s node, which carries its file's
+    path, as a module of its own. Its imports are its file's to restore, and
+    restored under the `mod`'s qn they keyed one scope too deep (#2805
+    review). The file's module is the shortest dotted prefix on that path.
+    """
+    holder = _module_holding(name, module_paths)
+    if holder is None:
+        return None
+    path = module_paths[holder]
+    parts = holder.split(cs.SEPARATOR_DOT)
+    for end in range(1, len(parts)):
+        prefix = cs.SEPARATOR_DOT.join(parts[:end])
+        if module_paths.get(prefix) == path:
+            return prefix
+    return holder
 
 
 def _project_root_for_single_file(target: Path) -> Path:
@@ -2112,6 +2194,10 @@ class GraphUpdater:
         if rehydrate:
             self._rehydrate_registry_from_graph()
 
+        # After rehydration, which tells a re-export from a definition, and
+        # before every stage below that resolves through the import maps.
+        self._restore_reached_import_state()
+
         # After rehydration: an incremental run re-parses the `.cpp` holding
         # an out-of-class method while its class stays in an unchanged
         # header, and the class is only known once the registry is read back
@@ -2218,6 +2304,113 @@ class GraphUpdater:
         if typed:
             logger.info(ls.TYPE_EDGES_EMITTED, count=typed)
         return known_module_paths
+
+    def _restore_reached_import_state(self) -> None:
+        """Parse the imports of the unchanged modules re-parsed files reach.
+
+        An incremental run parses only the changed files, yet resolving them
+        follows re-exports through the import maps of the modules they import
+        from: `from pkg import Client` names `pkg.Client`, which only
+        `pkg/__init__.py`'s map turns into `pkg._client.Client`. A clean index
+        holds every map; without them the receiver lost its type and the call
+        bound by name to whatever else carries it (issue #2559).
+
+        What is read is the import closure of the re-parsed files: each module
+        an import names is restored and then walked in turn. A reached
+        definition carries the walk on too, since resolving its own
+        annotations (`def make() -> Client` in an unchanged module) reads its
+        module's map, and that can lead to yet another re-export. A module no
+        re-parsed file reaches is never opened, and a module whose imports
+        this updater already holds is not parsed again.
+        """
+        mapping = self.factory.import_processor.import_mapping
+        module_paths = self.factory.definition_processor.module_qn_to_file_path
+        if all(module_qn in mapping for module_qn in module_paths):
+            # A full build or a reused updater: every map is already held.
+            return
+        restored = self._restore_import_closure(module_paths)
+        if restored:
+            logger.info(ls.IMPORT_STATE_RESTORED, count=restored)
+
+    def _restore_import_closure(self, module_paths: Mapping[str, Path]) -> int:
+        """Walk out from every held map, restoring each unheld module reached.
+
+        Returns how many modules had their imports restored.
+        """
+        import_processor = self.factory.import_processor
+        mapping = import_processor.import_mapping
+        # Read once: each restored map is re-pointed before the walk reads it.
+        siblings = import_processor.stem_sibling_modules(module_paths)
+        # The walk is a closure, so the order scopes are taken in is moot.
+        pending = list(mapping)
+        walked = set(pending)
+        restored = 0
+        while pending:
+            scope = pending.pop()
+            # A copy, not a live view: restoring a Rust module commits its
+            # inline-`mod` uses under their scope keys until its parse is
+            # retracted, and `mod b {}` in `a.rs` keys on the same qn as a
+            # cfg-twin `a/b.rs`, so `scope`'s own dict can change mid-loop.
+            # Its inline `mod`s' uses join it: they stay held back until the
+            # arbitration after this walk, and an import through one
+            # (`use crate::api::inner::Widget`) leads on from there.
+            targets = [
+                *mapping.get(scope, {}).values(),
+                *import_processor.rust_mod_scope_targets(scope),
+            ]
+            for target in targets:
+                holder = _file_module_holding(target, module_paths)
+                if holder is None or holder in walked:
+                    continue
+                walked.add(holder)
+                if holder not in mapping:
+                    if not self._restore_module_imports(holder, module_paths[holder]):
+                        continue
+                    restored += 1
+                    # A restored map names a shared stem as written
+                    # (`proj.shim.Widget`), while the module carries its
+                    # suffix (`proj.shim.py`, issue #2586). The re-parsed
+                    # maps were re-pointed before this walk; a restored one
+                    # must be too before its targets are looked up, or the
+                    # suffixed module is never found and never restored.
+                    import_processor.point_module_imports_at_own_language_siblings(
+                        holder, module_paths, siblings
+                    )
+                pending.append(holder)
+        return restored
+
+    def _restore_module_imports(self, module_qn: str, path: Path) -> bool:
+        """Parse one unchanged module's imports; False when Pass 2 would not."""
+        spec = get_language_spec(path.suffix)
+        if spec is None or not isinstance(spec.language, cs.SupportedLanguage):
+            return False
+        language = spec.language
+        language_queries = self.queries.get(language)
+        if (
+            language not in self.parsers
+            or language_queries is None
+            or not language_queries.get(cs.QUERY_IMPORTS)
+        ):
+            return False
+        try:
+            rel = path.relative_to(self.repo_path).as_posix()
+        except ValueError:
+            return False
+        if rel in self._cpp_frontend_covered:
+            # The libclang frontend emitted this file, so Pass 2 parses none
+            # of its imports either.
+            return False
+        entry = self.ast_cache.load(path)
+        if entry is None:
+            return False
+        self.factory.import_processor.restore_unparsed_imports(
+            entry[0],
+            module_qn,
+            language,
+            self.queries,
+            self.factory.definition_processor.function_locations,
+        )
+        return True
 
     @property
     def state_dir(self) -> Path:
@@ -3446,7 +3639,6 @@ class GraphUpdater:
         # Read afresh each run: a module may have gained or lost its suffix
         # since the last one, and the requeues below all consult this.
         self._module_qns_by_path = None
-        added = 0
         project_params = {cs.KEY_PROJECT_PREFIX: self.project_name + "."}
         try:
             rows = self._owned_rows(
@@ -3462,11 +3654,15 @@ class GraphUpdater:
                 raise
             logger.warning(ls.REHYDRATE_QUERY_FAILED)
             return
+        restored: list[ResultRow] = []
         for row in rows:
             if self._rehydrate_definition_row(row):
-                added += 1
-        if added:
-            logger.info(ls.REGISTRY_REHYDRATED, count=added)
+                restored.append(row)
+        if restored:
+            logger.info(ls.REGISTRY_REHYDRATED, count=len(restored))
+        # After the loop: whether a method's owner is a trait needs the whole
+        # registry, and its rows arrive in no particular order.
+        self._rehydrate_rust_return_types(restored)
         # Module qns from unchanged files: deferred import verification and
         # C++20 module-impl resolution must count them as real targets, or
         # an incremental run would drop edges a clean index emits.
@@ -3607,6 +3803,74 @@ class GraphUpdater:
         if isinstance(path := row.get(cs.KEY_PATH), str):
             self._rehydrate_definition_path(node_type, qn, path, row)
         return True
+
+    def _rehydrate_rust_return_types(self, rows: list[ResultRow]) -> None:
+        # Pass 2 records a Rust fn's return type only while it parses the
+        # file, and a chained or call-bound receiver (`Get::new(k).m()`,
+        # `let b = Builder::new(); b.m()`) types from that record. Without it
+        # an unchanged file's fn types nothing, and the method falls to a
+        # name-only match a clean index never makes (issue #2559).
+        records = [
+            (_registration_order(row), record)
+            for row in rows
+            if (record := self._rust_return_type_record(row)) is not None
+        ]
+        records.sort(key=lambda ordered: ordered[0])
+        if not records:
+            return
+        # Read only now: the parser view loads a grammar on first access, and
+        # a project with no Rust must not pay for one.
+        parser = self.parsers.get(cs.SupportedLanguage.RUST)
+        if parser is None:
+            return
+        reduced: dict[tuple[str, str | None], str | None] = {}
+        restored: dict[str, str] = {}
+        # Methods of two trait impls on one type share a key (`S.run` and
+        # `S.run@13`), and parsing writes each one's type over the last in
+        # registration order. The rows come in no fixed order, so they are
+        # replayed in that order and the last typed one stands (#2805 review).
+        for _position, (key, annotation, impl_target) in records:
+            if (annotation, impl_target) not in reduced:
+                reduced[(annotation, impl_target)] = (
+                    rs_utils.return_type_name_from_annotation(
+                        parser, annotation, impl_target
+                    )
+                )
+            if name := reduced[(annotation, impl_target)]:
+                restored[key] = name
+        return_types = self.factory.definition_processor.method_return_types
+        for key, name in restored.items():
+            # A re-parsed file's own record is current; keep it.
+            return_types.setdefault(key, name)
+
+    def _rust_return_type_record(
+        self, row: ResultRow
+    ) -> tuple[str, str, str | None] | None:
+        """(record key, return annotation, impl target) for a Rust fn row."""
+        qn = row.get(cs.KEY_QUALIFIED_NAME)
+        label = row.get(cs.KEY_LABEL)
+        path = row.get(cs.KEY_PATH)
+        annotation = row.get(cs.KEY_RETURN_TYPE)
+        if not (
+            isinstance(qn, str)
+            and isinstance(path, str)
+            and isinstance(annotation, str)
+            and annotation
+            and path.endswith(cs.EXT_RS)
+        ):
+            return None
+        if label == cs.NodeLabel.FUNCTION.value:
+            # A free fn has no impl, so its `Self` names nothing.
+            return qn, annotation, None
+        if label != cs.NodeLabel.METHOD.value:
+            return None
+        # Pass 2 keys an impl method by its impl target and name, which the
+        # natural qn spells, and records none for a trait's own methods.
+        natural = _natural_qn(qn)
+        owner = natural.rpartition(cs.SEPARATOR_DOT)[0]
+        if self.function_registry.get(owner) == NodeType.INTERFACE:
+            return None
+        return natural, annotation, owner.rpartition(cs.SEPARATOR_DOT)[2]
 
     def _rehydrate_definition_path(
         self, node_type: NodeType, qn: str, path: str, row: ResultRow
@@ -8285,7 +8549,7 @@ class GraphUpdater:
         reparse = dict(
             sorted(
                 {**present, **survivors, **affected}.items(),
-                key=lambda item: (Path(item[0]).parent.parts, Path(item[0]).name),
+                key=lambda item: _walk_position(item[0]),
             )
         )
         self._reingest_delete(reparse, gone, hashes)
@@ -8851,9 +9115,11 @@ class GraphUpdater:
             return container_abs == repo_abs or container_abs.startswith(repo_abs + "/")
         return False
 
-    def _embedding_candidate(self, row: ResultRow) -> tuple[int, str, str] | None:
-        # (node id, qualified name, source) for one query row; None when the
-        # row does not parse or its source cannot be read back from disk.
+    def _embedding_candidate(
+        self, row: ResultRow
+    ) -> tuple[int, EmbeddingSymbol, str] | None:
+        # (node id, symbol, source) for one query row; None when the row does
+        # not parse or its source cannot be read back from disk.
         parsed = self._parse_embedding_result(row)
         if parsed is None:
             return None
@@ -8871,7 +9137,7 @@ class GraphUpdater:
         if not source_code:
             logger.debug(ls.NO_SOURCE_FOR, name=qualified_name)
             return None
-        return parsed[cs.KEY_NODE_ID], qualified_name, source_code
+        return parsed[cs.KEY_NODE_ID], _embedding_symbol(parsed), source_code
 
     def _generate_semantic_embeddings(self) -> None:
         if self.skip_embeddings:
@@ -8890,30 +9156,50 @@ class GraphUpdater:
             from .embedder import embed_code_batch, get_embedding_cache
             from .vector_store import (
                 close_qdrant_client,
+                delete_stale_embeddings,
                 store_embedding_batch,
                 verify_stored_ids,
             )
 
             logger.info(ls.PASS_5_EMBEDDINGS)
 
-            results = self.ingestor.fetch_all(
-                cs.CYPHER_QUERY_EMBEDDINGS, {"project_name": self.project_name}
-            )
+            # The query is prefix-scoped, and `svc.` also selects a nested
+            # `svc.v2` project's functions, which that project embeds itself.
+            nested = self._nested_project_names()
+            results = [
+                row
+                for row in self.ingestor.fetch_all(
+                    cs.CYPHER_QUERY_EMBEDDINGS, {"project_name": self.project_name}
+                )
+                if not _under_any_project(row.get(cs.KEY_QUALIFIED_NAME), nested)
+            ]
+            current = self._current_symbols(results)
+            stored_ids: set[int] = set()
 
             if not results:
                 logger.info(ls.NO_FUNCTIONS_FOR_EMBEDDING)
+                # The project's last function may just have gone; its point
+                # must go with it.
+                self._delete_stale_embeddings(
+                    current, stored_ids, delete_stale_embeddings
+                )
+                close_qdrant_client()
                 return
 
             logger.info(ls.GENERATING_EMBEDDINGS, count=len(results))
 
             embedded_count = 0
-            expected_ids: set[int] = set()
-            pending: list[tuple[int, str, str]] = []
+            expected: dict[int, EmbeddingSymbol] = {}
+            pending: list[tuple[int, EmbeddingSymbol, str]] = []
             flush_at = settings.QDRANT_BATCH_SIZE
+            project_name = self.project_name
+
+            def store(points: list[EmbeddingPoint]) -> int:
+                return store_embedding_batch(project_name, points)
 
             def flush() -> int:
                 return _flush_embedding_batch(
-                    pending, expected_ids, embed_code_batch, store_embedding_batch
+                    pending, expected, stored_ids, embed_code_batch, store
                 )
 
             for row in results:
@@ -8929,7 +9215,9 @@ class GraphUpdater:
 
             logger.info(ls.EMBEDDINGS_COMPLETE, count=embedded_count)
 
-            self._reconcile_embeddings(expected_ids, verify_stored_ids)
+            # Before the check, so it reads the store as the sync leaves it.
+            self._delete_stale_embeddings(current, stored_ids, delete_stale_embeddings)
+            self._reconcile_embeddings(expected, verify_stored_ids)
 
             get_embedding_cache().save()
             close_qdrant_client()
@@ -8938,6 +9226,52 @@ class GraphUpdater:
             self._stop_interrupted_embeddings()
         except Exception as e:
             logger.warning(ls.EMBEDDING_GENERATION_FAILED, error=e)
+
+    def _current_symbols(self, rows: list[ResultRow]) -> dict[int, EmbeddingSymbol]:
+        """Every function and method the graph holds for the project now,
+        by node id, whether or not its source can be read to embed it."""
+        current: dict[int, EmbeddingSymbol] = {}
+        for row in rows:
+            parsed = self._parse_embedding_result(row)
+            if parsed is not None:
+                current[parsed[cs.KEY_NODE_ID]] = _embedding_symbol(parsed)
+        return current
+
+    def _delete_stale_embeddings(
+        self,
+        current: Mapping[int, EmbeddingSymbol],
+        stored_ids: Collection[int],
+        delete_fn: Callable[
+            [str, Mapping[int, EmbeddingSymbol], Collection[int], Sequence[str]], int
+        ],
+    ) -> None:
+        """Drop the project's vectors of symbols `current` no longer holds.
+
+        A re-parse re-creates a file's nodes, and a deleted function leaves
+        nothing to overwrite its vector, so without this the store kept a
+        vector per edit and every deleted function's (issue #2447). A vector
+        keyed the old way goes only once `stored_ids` says its replacement is
+        in, and a nested project's vectors are its own sync's business.
+        With the registry unread a nested project's vectors pass as this
+        one's, so nothing goes until a sync that reads it.
+        """
+        nested = self._nested_project_names()
+        if self._registry_unread:
+            logger.warning(ls.EMBEDDING_STALE_SKIPPED.format(project=self.project_name))
+            return
+        try:
+            removed = delete_fn(self.project_name, current, stored_ids, nested)
+        except Exception as e:
+            logger.warning(
+                ls.EMBEDDING_STALE_FAILED.format(project=self.project_name, error=e)
+            )
+            return
+        if removed:
+            logger.info(
+                ls.EMBEDDING_STALE_REMOVED.format(
+                    count=removed, project=self.project_name
+                )
+            )
 
     def _stop_interrupted_embeddings(self) -> None:
         """Hold a Ctrl+C in the embeddings pass until `run` has committed.
@@ -8959,25 +9293,25 @@ class GraphUpdater:
 
     def _reconcile_embeddings(
         self,
-        expected_ids: set[int],
-        verify_fn: Callable[[set[int]], set[int]],
+        expected: Mapping[int, EmbeddingSymbol],
+        verify_fn: Callable[[str, Mapping[int, EmbeddingSymbol]], set[int]],
     ) -> None:
-        if not expected_ids:
+        if not expected:
             return
         try:
-            stored_ids = verify_fn(expected_ids)
-            missing = expected_ids - stored_ids
+            stored_ids = verify_fn(self.project_name, expected)
+            missing = set(expected) - stored_ids
             if missing:
                 sample = sorted(missing)[:10]
                 logger.warning(
                     ls.EMBEDDING_RECONCILE_MISSING.format(
                         missing=len(missing),
-                        expected=len(expected_ids),
+                        expected=len(expected),
                         sample_ids=sample,
                     )
                 )
             else:
-                logger.info(ls.EMBEDDING_RECONCILE_OK.format(count=len(expected_ids)))
+                logger.info(ls.EMBEDDING_RECONCILE_OK.format(count=len(expected)))
         except Exception as e:
             logger.warning(ls.EMBEDDING_RECONCILE_FAILED.format(error=e))
 
@@ -9015,8 +9349,15 @@ class GraphUpdater:
     def _parse_embedding_result(self, row: ResultRow) -> EmbeddingQueryResult | None:
         node_id = row.get(cs.KEY_NODE_ID)
         qualified_name = row.get(cs.KEY_QUALIFIED_NAME)
+        # Part of the symbol's identity: a Function and a Method may share a
+        # qualified name, so a row without its label cannot be keyed.
+        label = _embedded_label(row.get(cs.KEY_LABEL))
 
-        if not isinstance(node_id, int) or not isinstance(qualified_name, str):
+        if (
+            not isinstance(node_id, int)
+            or not isinstance(qualified_name, str)
+            or label is None
+        ):
             return None
 
         start_line = row.get(cs.KEY_START_LINE)
@@ -9026,6 +9367,7 @@ class GraphUpdater:
         return EmbeddingQueryResult(
             node_id=node_id,
             qualified_name=qualified_name,
+            label=label,
             start_line=start_line if isinstance(start_line, int) else None,
             end_line=end_line if isinstance(end_line, int) else None,
             path=file_path if isinstance(file_path, str) else None,
