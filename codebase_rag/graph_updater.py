@@ -4706,11 +4706,14 @@ class GraphUpdater:
         exactly as it does now, so it keeps its edges, as an unchanged file
         that is no dependent at all does. `waiters` are the files this run
         re-parses because a file it adds, or a definition it gains, is what
-        they were waiting for.
+        they were waiting for. They are targets too: unchanged on disk, but
+        what they resolve against is not, so what their callers see through
+        them can move (`make()` returning what a new `build()` builds).
         """
+        targets = sorted({*target_keys, *waiters})
         if not stable:
-            return self._affected_caller_keys(target_keys)
-        required, settled = self._settle_stable(target_keys, stable, waiters)
+            return self._affected_caller_keys(targets)
+        required, settled = self._settle_stable(targets, stable, waiters)
         candidates = set(self._affected_caller_keys(sorted(settled))) - required
         reparsed = self._callers_holding_unrestorable_edges(settled, candidates)
         if kept := len(candidates) - len(reparsed):
@@ -6736,11 +6739,21 @@ class GraphUpdater:
             *self._unresolved_importer_keys(added_keys),
             *self._unresolved_reference_waiters(added_entries, modified_entries),
         }
+        # A foreign definer's definitions are rebuilt with the module it
+        # defines into, so their callers are its dependents as a re-indexed
+        # file's are.
         reindexed_keys = self._queue_affected_callers(
             sorted(
                 {
                     *self._dependent_keys(
-                        sorted({*reindexed_keys, *deleted_before_parse, *siblings}),
+                        sorted(
+                            {
+                                *reindexed_keys,
+                                *deleted_before_parse,
+                                *siblings,
+                                *foreign_definers,
+                            }
+                        ),
                         stable,
                         waiters,
                     ),

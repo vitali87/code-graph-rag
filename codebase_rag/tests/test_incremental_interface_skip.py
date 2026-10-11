@@ -1228,3 +1228,100 @@ def test_a_changed_symbol_installation_reparses_the_symbol_callers(
     clean = _clean(root)
     assert "proj.src.app.Other.work" in _calls(clean, "proj.src.user.use")
     assert synced == clean, _diff(synced, clean)
+
+
+# A file this run re-parses only because an added file (or a gained
+# definition) resolves what it was waiting on is unchanged on disk, but
+# what it resolves against is not: `make()` in `wrapper.py` returns what
+# the new `factory.py` builds, so `make().method()` in `user.py` gains an
+# edge. Its callers are its dependents like any re-parsed file's.
+WAITING: dict[str, str] = {
+    **{rel: text for rel, text in CHAIN.items() if rel != "factory.py"},
+    "other_user.py": (
+        "from other import alone\n\n\ndef use_alone():\n    return alone()\n"
+    ),
+}
+
+
+def test_a_file_woken_by_an_added_file_reparses_its_callers(
+    temp_repo: Path,
+) -> None:
+    root = temp_repo / PROJECT
+    reparsed, synced = _sync(root, WAITING, {"factory.py": CHAIN["factory.py"]})
+
+    assert "user.py" in reparsed
+    clean = _clean(root)
+    assert "proj.models.A.method" in _calls(clean, "proj.user.use")
+    assert synced == clean, _diff(synced, clean)
+
+
+def test_a_scoped_reingest_creating_a_waited_on_file_reparses_the_waiters_callers(
+    temp_repo: Path,
+) -> None:
+    root = temp_repo / PROJECT
+    _materialise(root, WAITING)
+    store = _StatefulIngestor()
+    _updater(store, root).run(force=True)
+    (root / "factory.py").write_text(CHAIN["factory.py"], encoding="utf-8")
+
+    report = _updater(store, root).reingest(["factory.py"])
+
+    assert "user.py" in report.affected
+    clean = _clean(root)
+    assert _snapshot(store) == clean, _diff(_snapshot(store), clean)
+
+
+def test_a_woken_file_leaves_the_callers_of_an_unrelated_stable_file_alone(
+    temp_repo: Path,
+) -> None:
+    root = temp_repo / PROJECT
+    reparsed, synced = _sync(
+        root,
+        WAITING,
+        {"factory.py": CHAIN["factory.py"], "other.py": _comment(CHAIN["other.py"])},
+    )
+
+    assert reparsed == {"factory.py", "other.py", "wrapper.py", "user.py"}
+    clean = _clean(root)
+    assert synced == clean, _diff(synced, clean)
+
+
+# A Go method keys under the module declaring its receiver type, so a sync
+# re-indexing that module re-parses the file defining the method too (issue
+# #1660). That file's definitions are rebuilt like any re-parsed file's, so
+# the callers of them are its dependents as well.
+GO_RECEIVER: dict[str, str] = {
+    "go.mod": "module example.com/proj\n\ngo 1.21\n",
+    "pkg/types.go": "package pkg\n\ntype T struct{}\n",
+    "pkg/methods.go": "package pkg\n\nfunc (t T) M() int {\n\treturn 1\n}\n",
+    "pkg/use.go": "package pkg\n\nfunc Use() int {\n\tvar t T\n\treturn t.M()\n}\n",
+}
+
+
+@pytest.mark.parametrize(
+    ("edits", "removed"),
+    [
+        ({"pkg/types.go": GO_RECEIVER["pkg/types.go"] + "// note\n"}, None),
+        ({"pkg/kinds.go": GO_RECEIVER["pkg/types.go"]}, "pkg/types.go"),
+    ],
+    ids=["receiver-module-edited", "receiver-module-renamed"],
+)
+def test_the_callers_of_a_method_defined_into_a_reindexed_module_are_reparsed(
+    temp_repo: Path, edits: dict[str, str], removed: str | None
+) -> None:
+    """Through a reused updater: only it remembers which file defined into
+    the module (a fresh one finds no such file, as before this change)."""
+    root = temp_repo / PROJECT
+    _materialise(root, GO_RECEIVER)
+    store = _StatefulIngestor()
+    updater = _updater(store, root)
+    updater.run(force=True)
+    _edit_after_cache(root, edits)
+    if removed is not None:
+        (root / removed).unlink()
+
+    updater.run()
+
+    assert "pkg/use.go" in updater._reparsed_file_keys
+    clean = _clean(root)
+    assert _snapshot(store) == clean, _diff(_snapshot(store), clean)
