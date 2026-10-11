@@ -532,6 +532,10 @@ MG_CYPHER_QUERY = "    Query: {query}"
 MG_CYPHER_PARAMS = "    Params: {params}"
 MG_BATCH_ERROR = "!!! Batch Cypher Error: {error}"
 MG_BATCH_PARAMS_TRUNCATED = "    Params (first 10 of {count}): {params}..."
+MG_TRANSIENT_RETRY = (
+    "Memgraph reported a conflicting transaction; retrying in {delay:.1f}s "
+    "(attempt {attempt} of {attempts}): {error}"
+)
 MG_CLEANING_DB = "--- Cleaning database... ---"
 MG_DB_CLEANED = "--- Database cleaned. ---"
 MG_LIST_PROJECTS_FAILED = (
@@ -1483,6 +1487,14 @@ JAVA_FRONTEND_UNAVAILABLE = (
 )
 JAVA_FRONTEND_FACTS = (
     "javac facts: {calls} resolved call sites, {externals} external sites"
+)
+
+# Sync lock (issue #2441)
+SYNC_LOCK_WAITING = "Waiting for the running sync of {repo} ({holder}) to finish"
+SYNC_LOCK_UNGUARDED = (
+    "Cannot create the sync lock {path} ({error}); this sync of {repo} runs "
+    "without it, so concurrent syncs of this checkout are not excluded. Point "
+    "CGR_HOME at a writable directory to keep the lock."
 )
 
 # Checkout state kept under CGR_HOME (issue #2427)

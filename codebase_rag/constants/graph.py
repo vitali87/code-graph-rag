@@ -269,6 +269,11 @@ KEY_AST_FINGERPRINT_NODES = "ast_fingerprint_nodes"
 KEY_AST_BRANCH_FINGERPRINTS = "ast_branch_fingerprints"
 
 ERR_SUBSTR_ALREADY_EXISTS = "already exists"
+# A statement Memgraph rejects as a transient conflict (another transaction
+# holds what it writes) is sent again after a doubling wait: 0.2 s, 0.4 s,
+# 0.8 s, 1.6 s, then the error stands (issue #2441).
+MG_TRANSIENT_RETRY_ATTEMPTS = 5
+MG_TRANSIENT_RETRY_BASE_DELAY_S = 0.2
 ERR_SUBSTR_CONSTRAINT = "constraint"
 
 PROTOBUF_INDEX_FILE = "index.bin"
@@ -1398,6 +1403,33 @@ CYPHER_ALL_INHERITS = (
     "RETURN child.qualified_name AS child_qn, base.qualified_name AS base_qn, "
     "r.base_index AS base_index "
     "ORDER BY child_qn, base_index"
+)
+# Implementer -> interface/trait pairs for incremental runs (issue #2403):
+# parsing records them only for the files it reads, and the sole-implementer
+# dispatch and the override walk need every implementer.
+CYPHER_ALL_IMPLEMENTS = (
+    "MATCH (child)-[:IMPLEMENTS]->(base) "
+    "WHERE child.qualified_name IS NOT NULL AND base.qualified_name IS NOT NULL "
+    "AND child.qualified_name STARTS WITH $project_prefix "
+    "RETURN child.qualified_name AS child_qn, base.qualified_name AS base_qn"
+)
+# OVERRIDES out of Rust methods: a trait impl for a type with no node (a
+# primitive, a foreign type) writes no IMPLEMENTS edge, so its methods'
+# OVERRIDES edges are the only record of the pair (issue #2403).
+CYPHER_ALL_RUST_OVERRIDES = (
+    "MATCH (method:Method)-[:OVERRIDES]->(base:Method) "
+    "WHERE method.qualified_name STARTS WITH $project_prefix "
+    "AND method.path ENDS WITH '.rs' "
+    "RETURN method.qualified_name AS from_qn, base.qualified_name AS to_qn"
+)
+# Rust traits that declare a method without a default body (no body, so no
+# fingerprint): every impl of one defines that method and leaves an OVERRIDES
+# edge. An impl of any other trait may define nothing and leave no trace.
+CYPHER_RUST_TRAITS_WITH_REQUIRED_METHODS = (
+    "MATCH (trait:Interface)-[:DEFINES_METHOD]->(method:Method) "
+    "WHERE trait.qualified_name STARTS WITH $project_prefix "
+    "AND trait.path ENDS WITH '.rs' AND method.ast_fingerprint IS NULL "
+    "RETURN DISTINCT trait.qualified_name AS qualified_name"
 )
 
 # C# type declaration locations for incremental runs: _join_csharp_partials
