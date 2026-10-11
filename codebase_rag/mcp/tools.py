@@ -563,9 +563,13 @@ class MCPToolsRegistry:
             ),
             cs.MCPToolName.IMPORTERS: self._graph_tool(
                 cs.MCPToolName.IMPORTERS,
-                {cs.MCPParamName.MODULE_QN: td.MCP_PARAM_MODULE_QN},
+                {
+                    cs.MCPParamName.MODULE_QN: td.MCP_PARAM_MODULE_QN,
+                    cs.MCPParamName.THROUGH_REEXPORTS: td.MCP_PARAM_THROUGH_REEXPORTS,
+                },
                 [cs.MCPParamName.MODULE_QN],
                 self.importers,
+                boolean_params={cs.MCPParamName.THROUGH_REEXPORTS},
             ),
             cs.MCPToolName.TESTS_REACHING: self._graph_tool(
                 cs.MCPToolName.TESTS_REACHING,
@@ -2623,13 +2627,13 @@ class MCPToolsRegistry:
         required: list[str],
         handler: MCPHandlerType,
         integer_params: set[str] | None = None,
+        boolean_params: set[str] | None = None,
     ) -> ToolMetadata:
+        kinds = dict.fromkeys(integer_params or (), cs.MCPSchemaType.INTEGER)
+        kinds |= dict.fromkeys(boolean_params or (), cs.MCPSchemaType.BOOLEAN)
         properties = {
             key: MCPInputSchemaProperty(
-                type=cs.MCPSchemaType.INTEGER
-                if integer_params and key in integer_params
-                else cs.MCPSchemaType.STRING,
-                description=description,
+                type=kinds.get(key, cs.MCPSchemaType.STRING), description=description
             )
             for key, description in params.items()
         }
@@ -2726,27 +2730,51 @@ class MCPToolsRegistry:
                 cs.DICT_KEY_ERROR: cs.MCP_GRAPH_QUERY_ERROR.format(tool=tool, error=e)
             }
 
-    @staticmethod
-    def _unknown_project_error(project: str, known: list[str]) -> str:
+    def _nameable(self, projects: Collection[str]) -> list[str]:
+        """The `projects` a refusal may name: under a workspace, only the
+        ones it serves; without one, all of them.
+
+        The graph is shared, and a workspace project that is not indexed
+        passes the allow-list and is refused as unknown, so its "did you
+        mean" and its fallback list were drawn from every indexed project and
+        named ones outside the workspace (CodeRabbit, PR #2562; CWE-200).
+        """
+        if self.workspace is None:
+            return list(projects)
+        served = set(self.workspace.project_names())
+        return [name for name in projects if name in served]
+
+    def _unknown_project_error(self, project: str, known: list[str]) -> str:
         # The close matches when there are any; a shared graph lists dozens
         # of `<dir>__<hash>` names, and the one meant is the one to name.
+        known = self._nameable(known)
         close = graph_query.close_project_names(project, known)
         if close:
             return cs.MCP_UNKNOWN_PROJECT_NAMED.format(
                 project=project
             ) + graph_query.did_you_mean(close)
-        return cs.MCP_UNKNOWN_PROJECT.format(
-            project=project, known=cs.SEPARATOR_COMMA_SPACE.join(known)
+        listed = cs.SEPARATOR_COMMA_SPACE.join(known)
+        if self.workspace is None:
+            return cs.MCP_UNKNOWN_PROJECT.format(project=project, known=listed)
+        # Labelled as the workspace's, so a short list does not read as the
+        # whole graph, and an empty one is said rather than left blank.
+        if not known:
+            return cs.MCP_UNKNOWN_WORKSPACE_PROJECT_NONE_INDEXED.format(
+                project=project, workspace=self.workspace.name
+            )
+        return cs.MCP_UNKNOWN_WORKSPACE_PROJECT.format(
+            project=project, workspace=self.workspace.name, known=listed
         )
 
     def _root_not_indexed_error(self, project_name: str, known: list[str]) -> str:
         root = Path(self.project_root)
         # A repository indexed under a name of its own is the likeliest
-        # meaning, then names spelled close to the derived one.
-        rooted = graph_query.projects_rooted_at(
-            self.ingestor.list_project_roots(), root
+        # meaning, then names spelled close to the derived one; both only
+        # among the projects this server may name.
+        rooted = self._nameable(
+            graph_query.projects_rooted_at(self.ingestor.list_project_roots(), root)
         )
-        close = graph_query.close_project_names(project_name, known)
+        close = graph_query.close_project_names(project_name, self._nameable(known))
         return cs.MCP_ROOT_NOT_INDEXED.format(
             path=root.resolve()
         ) + graph_query.did_you_mean(list(dict.fromkeys([*rooted, *close])))
@@ -2945,14 +2973,22 @@ class MCPToolsRegistry:
         )
 
     async def importers(
-        self, module_qualified_name: str, project: str | None = None
+        self,
+        module_qualified_name: str,
+        project: str | None = None,
+        through_reexports: bool = False,
     ) -> object:
+        # A single `return await` keeps the handler a pure delegation to the
+        # locked `_graph_query`, so the read is serialised against a rebuild
+        # (issue #1471) whichever query the flag picks.
         return await self._graph_query(
             cs.MCPToolName.IMPORTERS,
             project,
-            lambda name: graph_query.importers(
-                self.ingestor.fetch_all, name, module_qualified_name
-            ),
+            lambda name: (
+                graph_query.importers_through_reexports
+                if through_reexports
+                else graph_query.importers
+            )(self.ingestor.fetch_all, name, module_qualified_name),
             target=module_qualified_name,
         )
 
@@ -3314,6 +3350,7 @@ class MCPToolsRegistry:
                 cs.DICT_KEY_ERROR: str(refused),
                 cs.KEY_AMBIGUOUS: sites_for(refused.ambiguous),
                 cs.KEY_UNLOCATABLE: list(refused.unlocatable),
+                cs.KEY_UNPLANNED: sites_for(refused.unplanned),
             }
         payload_marker_error: str | None = None
         if getattr(report, "graph_incomplete", False):
@@ -3333,6 +3370,7 @@ class MCPToolsRegistry:
         payload = dict(report._asdict())
         payload[cs.KEY_SITES] = sites_for(report.sites)
         payload[cs.KEY_AMBIGUOUS] = sites_for(report.ambiguous)
+        payload[cs.KEY_UNPLANNED] = sites_for(report.unplanned)
         payload["verdict"] = report.verdict._asdict() if report.verdict else None
         if payload_marker_error is not None:
             # The graph is partial AND the record of it could not be written.

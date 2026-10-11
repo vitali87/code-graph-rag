@@ -120,6 +120,7 @@ class MCPParamName(StrEnum):
     MENTIONS = "mentions"
     AUTHOR = "author"
     MODULE_QN = "module_qualified_name"
+    THROUGH_REEXPORTS = "through_reexports"
     NEW_NAME = "new_name"
     ALLOW_HEURISTIC = "allow_heuristic"
     BUDGET_TOKENS = "budget_tokens"
@@ -206,6 +207,15 @@ MCP_UNKNOWN_PROJECT = "Unknown project {project!r}. Indexed projects: {known}"
 # With a close match the full list is noise: a shared graph holds dozens of
 # `<dir>__<hash>` names, and the one meant is the one to name (issue #2461).
 MCP_UNKNOWN_PROJECT_NAMED = "Unknown project {project!r}."
+# Under a workspace the list is the workspace's own indexed projects: the
+# graph is shared, and a project outside the workspace is not this server's
+# to name (CodeRabbit, PR #2562).
+MCP_UNKNOWN_WORKSPACE_PROJECT = (
+    "Unknown project {project!r}. Indexed projects of workspace {workspace!r}: {known}"
+)
+MCP_UNKNOWN_WORKSPACE_PROJECT_NONE_INDEXED = (
+    "Unknown project {project!r}. No project of workspace {workspace!r} is indexed."
+)
 MCP_ROOT_NOT_INDEXED = (
     "No project is indexed for this server's root {path}; run "
     "index_repository or update_repository first, or pass `project`."

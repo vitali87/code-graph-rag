@@ -45,7 +45,7 @@ Every top-level command, from the CLI's own help registry:
 | `cgr edits` | Show or undo recorded edit transactions (multi-file edits applied through cgr). |
 | `cgr graph` | Deterministic graph queries (resolve, definition, callers, callees, implementors, overrides, importers, tests-reaching) as JSON, no LLM. |
 | `cgr check` | Report the structural delta of the working tree against a git ref: dangling callers and importers, arity findings, new duplicates, new import cycles, tests reaching the edited symbols. |
-| `cgr rename` | Rename a definition everywhere the graph references it (definition, call and reference sites, imports, overrides, __all__); refuses on guessed sites. |
+| `cgr rename` | Rename a definition everywhere the graph references it (definition, call and reference sites, imports, overrides, __all__); refuses on guessed sites and on occurrences the graph has no site for. |
 | `cgr context` | Print a graph-ranked context slice for a symbol, location or task within a token budget: source, caller lines, callee signatures, types, tests, docs. |
 | `cgr workspace` | Manage named groups of repositories |
 | `cgr stop` | Stop the shared stack (alias for cgr daemon down) |
@@ -81,7 +81,7 @@ cgr start --repo-path /path/to/repo [OPTIONS]
 | `--no-confirm` | Skip edit confirmation prompts. |
 | `--no-instructions` | Do not load ~/.cgr.md or &lt;repo>/.cgr.md into the session prompt. |
 | `--batch-size` | Flush to Memgraph after this many buffered nodes or relationships. [x>=1] |
-| `--project-name` | Project name to store in the graph. Defaults to the directory name plus a hash of its absolute path (e.g. myrepo__1a2b3c4d), so two checkouts never share one; cgr status lists the names already stored. A chosen name has no hash: syncing a repository under a name another repository already indexes needs --yes and replaces that project. |
+| `--project-name` | Project name to store in the graph. Defaults to the directory name plus an 8-hex hash of its absolute path (e.g. myrepo__1a2b3c4d), so two checkouts on one machine get different names barring a rare hash collision; machines that sync into one graph should each pass their own name, since the same path hashes alike on every machine. cgr status lists the names already stored. A chosen name has no hash: syncing a repository under a name another repository already indexes needs --yes and replaces that project. |
 | `--exclude` | Exclude paths matching PATTERN from indexing. Repeat the option to add patterns. |
 | `--capture` | Capture GROUP on top of the defaults (structure, calls, types, imports). Opt-in groups: io, findings, glosses, parameters, fields, enum_variants, constants. +NAME adds and -NAME drops a GROUP or a relationship type such as OVERRIDES; all or none replaces the selection, so none first captures only what follows (none,structure). Repeatable or comma-separated; later values override CGR_CAPTURE. An unknown group or type is an error. |
 | `--interactive-setup` | Choose which detected directories remain included. |

@@ -12,6 +12,7 @@ import time
 from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import NamedTuple, cast
 
@@ -84,6 +85,7 @@ from .parsers.frontends import (
     SemanticFacts,
 )
 from .parsers.frontends.protocol import QueryCall
+from .parsers.go import read_package_clause
 from .parsers.go_frontend import find_go_module
 from .parsers.java_generated import (
     discover_generated_source_roots,
@@ -1538,6 +1540,8 @@ class GraphUpdater:
         # Module qns read back from the graph on incremental runs; deferred
         # import verification counts them as real internal targets.
         self._rehydrated_module_qns: set[str] = set()
+        # Go files whose `package` clause a rehydration already read back.
+        self._go_clauses_read: set[str] = set()
         # Registered project names, read once per run (issue #1970).
         self._registered_projects: list[str] | None = None
         # Whether that read failed: the list then holds this project alone,
@@ -2235,6 +2239,9 @@ class GraphUpdater:
         # pass below: it re-resolves module-anchored trait guesses through
         # them.
         self.factory.import_processor.finalise_rust_mod_scope_uses(known_module_paths)
+        # Same for Scala: a package import resolves only once every module
+        # declaring a package is known, rehydrated ones included (#2450).
+        self.factory.import_processor.resolve_scala_project_imports(known_module_paths)
 
         # Same reasoning for every other language: parents resolve against
         # the full registry (including rehydrated definitions), and an
@@ -2666,6 +2673,35 @@ class GraphUpdater:
             raise ex.EmbeddingsInterrupted
         self._retire_legacy_dotted_project()
 
+    def _record_sync_time(self) -> None:
+        """Stamp the Project with when this sync completed (issue #2444).
+
+        Every whole-project sync commits in `_commit_run_state` or
+        `_finish_in_sync_run`, the CLI's, MCP's and the watcher's alike, and
+        stamps there, so `cgr status` reads the time from the graph it
+        reports on instead of a log that outlived deleted projects and mixed
+        in other graphs'. Part of the commit, so a Ctrl+C that lands after it
+        still finds the sync recorded (#2442). A single-file run brings one
+        file up to date, not the project, and a write-only sink has no graph
+        to stamp. Best effort: the sync is complete and durable by now.
+        """
+        if self._single_file is not None or not isinstance(
+            self.ingestor, QueryProtocol
+        ):
+            return
+        try:
+            self.ingestor.execute_write(
+                cq.CYPHER_RECORD_PROJECT_SYNC,
+                {
+                    cs.KEY_PROJECT_NAME: self.project_name,
+                    cs.KEY_LAST_SYNCED_AT: datetime.now(UTC).isoformat(),
+                },
+            )
+        except Exception as exc:
+            logger.warning(
+                ls.SYNC_TIME_NOT_RECORDED.format(project=self.project_name, error=exc)
+            )
+
     def _clear_python_inference_caches(self) -> None:
         py_engine = self.factory.type_inference._python_type_inference
         if py_engine is not None:
@@ -2686,6 +2722,7 @@ class GraphUpdater:
         self.ingestor.flush_all()
         if self._single_file is None and not self._graph_state_unknown:
             self._stamp_exclusion_state(only_if_changed=True)
+        self._record_sync_time()
         # Nothing to save on this path, and nothing left half-written.
         self.committed = True
 
@@ -2804,6 +2841,7 @@ class GraphUpdater:
                 logger.warning(ls.EXCLUSION_STATE_NOT_RECORDED)
             else:
                 self._stamp_exclusion_state()
+        self._record_sync_time()
         # Last, so an interrupt anywhere above still reads as a partial run.
         self.committed = True
 
@@ -3470,6 +3508,7 @@ class GraphUpdater:
         # INSTANTIATES into any unchanged file (issue #532, outbound half).
         if not isinstance(self.ingestor, QueryProtocol):
             return
+        self._go_clauses_read.clear()
         # Read afresh each run: a module may have gained or lost its suffix
         # since the last one, and the requeues below all consult this.
         self._module_qns_by_path = None
@@ -3587,6 +3626,21 @@ class GraphUpdater:
         # value that only its object reaches (issue #2435).
         if row.get(cs.KEY_IS_OBJECT_MEMBER):
             self.function_registry.mark_object_member(qn)
+        # Restore the class-body aliases of an unchanged method (`run =
+        # _plain`), or a re-parsed file's `obj.run()` binds to nothing
+        # (issue #2620).
+        if isinstance(aliases := row.get(cs.KEY_MEMBER_ALIASES), list):
+            owner_qn = qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            for alias in aliases:
+                self.function_registry.add_member_alias(
+                    f"{owner_qn}{cs.SEPARATOR_DOT}{alias}", qn
+                )
+        # And the values an unchanged class body binds (`run = None`), or a
+        # re-parsed file's `Sub().run()` reaches the base's `run` they hide.
+        if isinstance(names := row.get(cs.KEY_NON_METHOD_MEMBERS), list):
+            self.function_registry.set_non_method_members(
+                qn, [name for name in names if isinstance(name, str)]
+            )
         # Restore the macro-namespace set for unchanged files: the Rust
         # macro/fn gate consults it, so a re-parsed file's invocation of a
         # macro defined elsewhere would otherwise drop.
@@ -3716,6 +3770,25 @@ class GraphUpdater:
             self._rehydrated_cpp_spans.setdefault(path, []).append(
                 CppDefinitionSpan(start, end, node_type.value, qn)
             )
+        if path.endswith(cs.EXT_GO):
+            self._rehydrate_go_package_clause(path)
+
+    def _rehydrate_go_package_clause(self, path: str) -> None:
+        # Only parsing records a Go file's `package` clause, and Go package
+        # scope is (directory, clause): without it an unchanged
+        # `//go:build ignore` generator's `package main` beside `package p`
+        # competed, on an incremental run, with the function a re-parsed
+        # caller's bare call names (#2616 review). The file is unchanged
+        # since the graph recorded it, so its clause is read back from disk.
+        if path in self._go_clauses_read:
+            return
+        self._go_clauses_read.add(path)
+        clauses = self.factory.definition_processor.go_package_names
+        module_qn = self._recorded_module_qn(path)
+        if module_qn not in clauses and (
+            clause := read_package_clause(self.repo_path / path)
+        ):
+            clauses[module_qn] = clause
 
     def _rehydrate_csharp_declared_form(
         self, qn: str, path: str, row: ResultRow
