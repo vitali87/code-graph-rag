@@ -128,6 +128,17 @@ def substitute(type_text: str, bindings: Mapping[str, str]) -> str:
     )
 
 
+def declared_type(
+    written: str, scope: Scope | None, bindings: Mapping[str, str]
+) -> str:
+    """A type a member's declaration writes, as a use through a closed
+    receiver sees it: resolved once in `scope`, the declaring file, and
+    `bindings` (each resolved where it was written) substituted after. Its
+    parameters and its `where` bounds are read alike, so on a `C<Person>`
+    `where T : U` is `where T : Person` (PR 2814 review)."""
+    return substitute(canonical_type(written, scope), bindings)
+
+
 def unshadowed(
     bindings: Mapping[str, str], declared: Collection[str]
 ) -> dict[str, str]:
@@ -167,7 +178,7 @@ def bindings_for_base(
         return {}
     unbound = set(shape.parameters) - bindings.keys()
     return {
-        parameter: substitute(canonical_type(argument, scope), bindings)
+        parameter: declared_type(argument, scope, bindings)
         for parameter, argument in zip(
             base_shape.parameters, written.arguments, strict=False
         )
@@ -235,7 +246,7 @@ def member_verdict(
     given_scope, wanted_scope = scopes if scopes is not None else (None, None)
     given = [canonical_type(p, given_scope) for p in given]
     wanted = [
-        substitute(canonical_type(p, wanted_scope), bindings)
+        declared_type(p, wanted_scope, bindings)
         for p in parameter_types(f"{wanted_name}{paren}{wanted_params}")
     ]
     if all(same_type(g, w) for g, w in zip(given, wanted, strict=True)):

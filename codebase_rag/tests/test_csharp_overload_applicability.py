@@ -812,6 +812,40 @@ class TestAnOpenTypeArgumentKeepsTheStructureAroundIt:
         assert calls["Possible"] == {"Ne.C.M(Box<List<T>>)"}, calls
 
 
+RECEIVER_BOUND_CS = """\
+namespace Rb;
+public class Shape { }
+public class Circle : Shape { }
+public class Person { }
+public class C<U> {
+    public void M<T>(T t) where T : U { }
+    public void M(Shape s) { }
+}
+public class Use {
+    public void Breaks() { new C<Person>().M(new Circle()); }
+    public void Meets() { new C<Shape>().M(new Circle()); }
+}
+"""
+
+
+class TestAReceiversTypeArgumentsCloseAConstraintsBound:
+    # Greptile review of PR 2814: on a `C<Person>`, `where T : U` is
+    # `where T : Person`, which a Circle breaks.
+    def test_a_bound_the_receiver_closes_drops_the_generic(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _calls(RECEIVER_BOUND_CS, temp_repo, mock_ingestor)
+        assert calls["Breaks"] == {"Rb.C.M(Shape)"}, calls
+
+    def test_a_bound_the_argument_meets_keeps_the_generic_best(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Negative: on a `C<Shape>` a Circle meets the bound, and T := Circle
+        # is an identity, better than converting it to Shape.
+        calls = _calls(RECEIVER_BOUND_CS, temp_repo, mock_ingestor)
+        assert calls["Meets"] == {"Rb.C.M(T)"}, calls
+
+
 # Every place overload ranking compares, resolves or walks types, against
 # each of three invariants (PR 2814 review): (a) a predefined type is its
 # alias (`int` is `System.Int32`), (b) an argument's type resolves in the
@@ -1184,6 +1218,40 @@ INVARIANT_CASES: dict[str, _Case] = {
         "public void M(object o, object p) { } }",
         _use("new C().M(new Lists(), 1);"),
         frozenset({"C.M(T, V)"}),
+    ),
+    # Greptile review of PR 2814: a `where` bound is seen through the
+    # receiver as its parameters are: closed by its written type arguments,
+    # by a base list, each resolved where written, and open when unknown.
+    "bound-receiver-base": _Case(
+        "namespace L; public class Shape { } public class Circle : Shape { }\n"
+        "public class Person { }\n"
+        "public class C<V> { public void M<T>(T t) where T : V { } "
+        "public void M(Shape s) { } }\n"
+        "public class PersonC : C<Person> { }",
+        _use("new PersonC().M(new Circle());"),
+        frozenset({"C.M(Shape)"}),
+    ),
+    "bound-receiver-scope": _Case(
+        "namespace L; public class Shape { } public class Circle : Shape { }\n"
+        "public class C<V> { public void M<T>(T t) where T : V { } "
+        "public void M(Shape s) { } }",
+        _use("new C<Shape>().M(new Circle());", "public class Shape { }\n"),
+        frozenset({"C.M(Shape)"}),
+    ),
+    "bound-receiver-scope-neg": _Case(
+        "namespace L; public class Shape { } public class Circle : Shape { }\n"
+        "public class C<V> { public void M<T>(T t) where T : V { } "
+        "public void M(Shape s) { } }",
+        _use("new C<L.Shape>().M(new Circle());", "public class Shape { }\n"),
+        frozenset({"C.M(T)"}),
+    ),
+    "bound-receiver-open-neg": _Case(
+        "namespace L; public class Base<X> { } public class D : Base<int> { }\n"
+        "public class G<X> { public void M<T>(T t) where T : Base<X> { } "
+        f"{_PAIR} }}",
+        "using L;\nnamespace U;\npublic class Use { private G<int> f; "
+        "public void Run() { f.M(new D()); } }\n",
+        frozenset({"G.M(T)"}),
     ),
 }
 

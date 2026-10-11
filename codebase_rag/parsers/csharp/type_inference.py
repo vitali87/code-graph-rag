@@ -33,6 +33,7 @@ from .overloads import (
     best_candidates,
     bindings_for_base,
     canonical_type,
+    declared_type,
     fit,
     is_tuple,
     mentioned_names,
@@ -2098,26 +2099,22 @@ class CSharpTypeInferenceEngine:
         # class's of the same name (`Handler<T>.Handle<T>(T)`), so the
         # binding the receiver gives the class's never reaches it; inference
         # leaves it open, unless the argument breaks its `where` clause. The
-        # parameter's and the bound's types resolve in the method's file,
-        # before the bindings (resolved where they were written) go in.
+        # parameters and the bounds are both read through the receiver
+        # (`declared_type`), and what it leaves unbound is open in either.
         bindings, open_names = receiver
         own = self._method_type_parameters(method_qn)
         visible = unshadowed(bindings, own)
         scope = self.scope_of(_member_type(method_qn), own)
+        unbound = open_names | own
         bounds = {
-            name: [canonical_type(bound, scope) for bound in written]
+            name: [declared_type(bound, scope, visible) for bound in written]
             for name, written in self._constraint_bounds(method_qn).items()
         }
         judge = _ScopedJudge(self._identical, self._converts)
         return [
             None
-            if self._breaks_constraint(bounds.get(parameter, ()), argument, own)
-            else fit(
-                substitute(canonical_type(parameter, scope), visible),
-                argument,
-                open_names | own,
-                judge,
-            )
+            if self._breaks_constraint(bounds.get(parameter, ()), argument, unbound)
+            else fit(declared_type(parameter, scope, visible), argument, unbound, judge)
             for parameter, argument in zip(parameters, arguments, strict=True)
         ]
 
@@ -2133,7 +2130,7 @@ class CSharpTypeInferenceEngine:
         self,
         bounds: Sequence[str],
         argument: ArgumentType | None,
-        own: Collection[str],
+        open_names: Collection[str],
     ) -> bool:
         # Inferred from an argument that does not derive from a class its
         # `where` clause names, closed as the bound is, a type parameter
@@ -2141,8 +2138,10 @@ class CSharpTypeInferenceEngine:
         # (`M<T>(T) where T : Person` takes no Circle; PR 2814 review). A
         # user-defined conversion never satisfies a constraint, and an
         # interface or external bound cannot be judged. Both come resolved,
-        # the argument in the caller's file, the bound in the method's; a
-        # bound naming the method's `own` type parameters is open there.
+        # the argument in the caller's file, the bound in the method's and
+        # closed by the receiver; a bound naming a type parameter still
+        # open (the method's own, or one the receiver leaves unbound) is
+        # open there.
         if not bounds or argument is None or argument.name is None:
             return False
         given_qn = self._first_party_type(argument.name)
@@ -2153,7 +2152,7 @@ class CSharpTypeInferenceEngine:
             if bound_qn is None or not self._judgeable(given_qn, bound_qn):
                 continue
             given = (written_type(argument), given_qn)
-            if self._class_conversion(given, (bound, bound_qn), own) is False:
+            if self._class_conversion(given, (bound, bound_qn), open_names) is False:
                 return True
         return False
 
