@@ -11,7 +11,7 @@ import time
 from collections.abc import Callable, Coroutine, Iterator
 from contextlib import contextmanager
 from fnmatch import fnmatch
-from functools import partial
+from functools import partial, wraps
 from importlib.metadata import version as get_version
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, NoReturn
@@ -530,14 +530,22 @@ def _console_on_stderr() -> Iterator[None]:
         app_context.console = console
 
 
-def _keep_stdout_for_the_answer(ctx: typer.Context, ask_agent: str | None) -> None:
+def _keep_stdout_for_the_answer[**P](command: Callable[P, None]) -> Callable[P, None]:
     # `-a` prints its answer, and only that, on stdout, which `main_single_query`
     # keeps clean of its logs for a script to read: the command's warnings,
     # its sync's progress (Greptile review of PR 2507) and the query's result
     # tables go to stderr, from the first check until the command ends
-    # (CodeRabbit review of PR 2507).
-    if ask_agent:
-        ctx.with_resource(_console_on_stderr())
+    # (CodeRabbit review of PR 2507). A decorator rather than a `typer.Context`
+    # parameter, which `start` has too many of already (Sonar S107).
+    @wraps(command)
+    def run(*args: P.args, **kwargs: P.kwargs) -> None:
+        if not kwargs.get("ask_agent"):
+            command(*args, **kwargs)
+            return
+        with _console_on_stderr():
+            command(*args, **kwargs)
+
+    return run
 
 
 def _run_single_query(
@@ -1244,8 +1252,8 @@ def _cleanup_project_embeddings(ingestor: MemgraphIngestor, project_name: str) -
     epilog=ch.EXAMPLES_START,
     rich_help_panel=ch.PANEL_USE,
 )
+@_keep_stdout_for_the_answer
 def start(
-    ctx: typer.Context,
     repo_path: str | None = typer.Option(
         None, "--repo-path", help=ch.HELP_REPO_PATH_RETRIEVAL
     ),
@@ -1356,7 +1364,6 @@ def start(
         help=ch.HELP_WORKSPACE,
     ),
 ) -> None:
-    _keep_stdout_for_the_answer(ctx, ask_agent)
     app_context.session.confirm_edits = not no_confirm
     app_context.session.load_cgr_instructions = not no_instructions
 
