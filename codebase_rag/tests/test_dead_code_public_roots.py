@@ -357,11 +357,26 @@ _JAVA_MAINS: dict[str, str] = {
     "InterfaceMain": "public void main(String[] args);",
     # A concrete static main in an abstract class launches as usual.
     "AbstractStatic": "public static void main(String[] args)",
+    # A private main is no candidate.
+    "PrivateMain": "private static void main(String[] args)",
+    # An instance main runs on an object the launcher builds with a
+    # non-private zero-argument constructor; the implicit default counts.
+    "ProtectedInstance": "protected void main()",
+    "ArgsOnlyConstructor": "public void main(String[] args)",
+    "PrivateConstructor": "public void main()",
+    "AbstractInstance": "public void main(String[] args)",
+    "InterfaceDefault": "default void main()",
 }
 _JAVA_TYPE_HEADERS = {
     "AbstractMain": "public abstract class",
     "AbstractStatic": "public abstract class",
+    "AbstractInstance": "public abstract class",
     "InterfaceMain": "public interface",
+    "InterfaceDefault": "public interface",
+}
+_JAVA_EXTRA_MEMBERS = {
+    "ArgsOnlyConstructor": "ArgsOnlyConstructor(int x) {}",
+    "PrivateConstructor": "private PrivateConstructor() {}",
 }
 _JAVA_ENTRY_CLASSES = (
     "CStyle",
@@ -373,10 +388,14 @@ _JAVA_ENTRY_CLASSES = (
     "Annotated",
     "Instance",
     "AbstractStatic",
+    "ProtectedInstance",
+    # The launcher starts a package-private main too.
+    "PackagePrivate",
 )
-# The launcher accepts a package-private `main` too, so the parser records
-# it; only the root needs the export.
-_JAVA_MAIN_DECLARATIONS = (*_JAVA_ENTRY_CLASSES, "PackagePrivate")
+_JAVA_MAIN_DECLARATIONS = _JAVA_ENTRY_CLASSES
+# Not exported, so library mode does not root them: the exported rule reads
+# a Java member written without `public` or `protected` as not public.
+_JAVA_NOT_EXPORTED = ("PackagePrivate", "PrivateMain", "InterfaceDefault")
 
 
 def _java_main_source(name: str, signature: str) -> str:
@@ -385,26 +404,49 @@ def _java_main_source(name: str, signature: str) -> str:
     else:
         body = "{ return helper(); }" if " int " in signature else "{ helper(); }"
     header = _JAVA_TYPE_HEADERS.get(name, "public class")
+    extra = _JAVA_EXTRA_MEMBERS.get(name)
+    members = f"    {extra}\n\n" if extra else ""
     return (
-        f"package j;\n\n{header} {name} {{\n    {signature} {body}\n\n"
+        f"package j;\n\n{header} {name} {{\n{members}    {signature} {body}\n\n"
         "    private static int helper() { return 0; }\n}\n"
     )
 
 
-# A class declaring both overloads: the launcher starts `main(String[])`,
-# whether either is static (JEP 512), so `main()` is ordinary code.
-_JAVA_OVERLOADED_MAINS = {
-    "BothMains": ("public void main(String[] args)", "public void main()"),
+# A class declaring both overloads: the launcher picks a non-private
+# `main(String[])`, static or not (JEP 512), and keeps it even when it cannot
+# run it. Each entry: the two mains, an extra member, and which one runs.
+_JAVA_OVERLOADED_MAINS: dict[str, tuple[str, str, str, str | None]] = {
+    "BothMains": ("public void main(String[] args)", "public void main()", "", "args"),
     "StaticAndInstance": (
         "public static void main(String[] args)",
         "public void main()",
+        "",
+        "args",
+    ),
+    # A private `main(String[])` is no candidate, so `main()` runs.
+    "PrivateArgs": (
+        "private void main(String[] args)",
+        "public void main()",
+        "",
+        "noargs",
+    ),
+    # The chosen instance `main(String[])` has no object to run on, so the
+    # launch fails rather than fall back to `main()`.
+    "UnlaunchableArgs": (
+        "public void main(String[] args)",
+        "public static void main()",
+        "UnlaunchableArgs(int x) {}",
+        None,
     ),
 }
 
 
-def _overloaded_mains_source(name: str, with_args: str, without_args: str) -> str:
+def _overloaded_mains_source(
+    name: str, with_args: str, without_args: str, extra: str
+) -> str:
+    members = f"    {extra}\n\n" if extra else ""
     return (
-        f"package j;\n\npublic class {name} {{\n"
+        f"package j;\n\npublic class {name} {{\n{members}"
         f"    {with_args} {{ helper(); }}\n\n"
         f"    {without_args} {{ other(); }}\n\n"
         "    private static int helper() { return 0; }\n\n"
@@ -419,8 +461,8 @@ def java_graph(tmp_path_factory: pytest.TempPathFactory) -> _Graph:
         for name, signature in _JAVA_MAINS.items()
     }
     files.update(
-        (f"j/{name}.java", _overloaded_mains_source(name, *mains))
-        for name, mains in _JAVA_OVERLOADED_MAINS.items()
+        (f"j/{name}.java", _overloaded_mains_source(name, *spec[:3]))
+        for name, spec in _JAVA_OVERLOADED_MAINS.items()
     )
     return _parse(tmp_path_factory, files, (cs.SupportedLanguage.JAVA,))
 
@@ -564,38 +606,45 @@ class TestJavaMainFromItsDeclaration:
     def test_library_mode_is_unchanged(self, java_graph: _Graph, name: str) -> None:
         dead = _dead(java_graph, _config())
 
-        # Every public main roots as public code; only the package-private
-        # one is reported, as on main.
+        # Every public main roots as public code; the package-private and
+        # private ones are reported, as on main.
         assert (_java_main_qn(java_graph, name) in dead) == (
-            name == "PackagePrivate"
+            name in _JAVA_NOT_EXPORTED
         ), sorted(dead)
 
     @pytest.mark.parametrize("name", list(_JAVA_OVERLOADED_MAINS))
-    def test_the_launcher_prefers_the_string_array_main(
-        self, java_graph: _Graph, name: str
+    @pytest.mark.parametrize(
+        ("kind", "signature", "helper"),
+        [("args", "main(String[])", "helper()"), ("noargs", "main()", "other()")],
+    )
+    def test_only_the_main_the_launcher_runs_roots(
+        self, java_graph: _Graph, name: str, kind: str, signature: str, helper: str
     ) -> None:
         nodes, _ = java_graph
-        with_args = f"proj.j.{name}.{name}.main(String[])"
-        without_args = f"proj.j.{name}.{name}.main()"
+        qn = f"proj.j.{name}.{name}.{signature}"
+        runs = _JAVA_OVERLOADED_MAINS[name][3] == kind
 
         dead = _dead(java_graph, _config(public_roots=False))
 
-        assert with_args not in dead, sorted(dead)
-        assert f"proj.j.{name}.{name}.helper()" not in dead, sorted(dead)
-        assert without_args in dead, sorted(dead)
-        assert f"proj.j.{name}.{name}.other()" in dead, sorted(dead)
-        method = cs.NodeLabel.METHOD.value
-        assert nodes[(method, with_args)].get(cs.KEY_IS_PROGRAM_MAIN) is True
-        assert nodes[(method, without_args)].get(cs.KEY_IS_PROGRAM_MAIN) is not True
+        assert (qn not in dead) == runs, sorted(dead)
+        assert (f"proj.j.{name}.{name}.{helper}" not in dead) == runs, sorted(dead)
+        props = nodes[(cs.NodeLabel.METHOD.value, qn)]
+        assert (props.get(cs.KEY_IS_PROGRAM_MAIN) is True) == runs, props
 
     @pytest.mark.parametrize("name", list(_JAVA_OVERLOADED_MAINS))
-    def test_both_overloads_stay_public_roots_in_library_mode(
+    def test_overloads_root_as_public_code_in_library_mode(
         self, java_graph: _Graph, name: str
     ) -> None:
+        with_args, without_args = _JAVA_OVERLOADED_MAINS[name][:2]
         dead = _dead(java_graph, _config())
 
-        assert f"proj.j.{name}.{name}.main(String[])" not in dead
-        assert f"proj.j.{name}.{name}.main()" not in dead
+        for signature, written in (
+            ("main(String[])", with_args),
+            ("main()", without_args),
+        ):
+            exported = not written.startswith("private")
+            qn = f"proj.j.{name}.{name}.{signature}"
+            assert (qn not in dead) == exported, sorted(dead)
 
 
 class TestProgramMainMark:

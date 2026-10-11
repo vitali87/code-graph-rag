@@ -358,65 +358,105 @@ def _extract_method_parameters(method_node: ASTNode) -> list[str]:
 def is_main_declaration(method_node: ASTNode) -> bool:
     """Whether the JVM launcher starts this declaration as `main`.
 
-    It must return void, have an implementation and take nothing or one
-    String array, whether the array is written on the type, on the name or
-    as varargs. The recorded parameter types cannot decide this: `String
-    args[]` and a scalar `String arg` both record `String` (issue #2527).
-    A `main()` is started only when its class declares no `main(String[])`:
-    the launcher prefers that one, static or not (JEP 512). A
-    `main(String[])` the class inherits is not visible here.
+    The launch protocol of JLS 12.1.4, as Java 25 runs it (JEP 512), applied
+    to what one class body shows (issue #2527):
+
+    - A candidate is a non-private `main` that returns void, has an
+      implementation, and takes nothing or one String array. The array may
+      be written on the type, on the name or as varargs; the recorded
+      parameter types cannot tell `String args[]` from a scalar `String arg`.
+    - A `main(String[])` candidate is chosen over a `main()` one, static or
+      not, and stays chosen even when it cannot run.
+    - The chosen method runs if it is static. An instance one also needs a
+      class the launcher can instantiate: concrete, with a non-private
+      zero-argument constructor (the implicit default counts).
+
+    A `main` the class inherits is not visible here.
     """
-    arity = _launchable_main_arity(method_node)
-    if arity is None:
+    arity = _main_candidate_arity(method_node)
+    body = method_node.parent
+    if arity is None or body is None:
         return False
-    return arity == 1 or not _declares_main_with_args(method_node)
+    if arity == 0 and any(_main_candidate_arity(sib) == 1 for sib in body.children):
+        return False
+    return cs.JAVA_MODIFIER_STATIC in _modifier_types(
+        method_node
+    ) or _launcher_can_instantiate(body)
 
 
-def _launchable_main_arity(method_node: ASTNode) -> int | None:
-    # 0 or 1 for a `main` the launcher could start, None for anything else.
-    return_type = method_node.child_by_field_name(cs.TS_FIELD_TYPE)
+def _main_candidate_arity(node: ASTNode) -> int | None:
+    # 0 or 1 for a `main` the launcher may choose, None for anything else.
+    return_type = node.child_by_field_name(cs.TS_FIELD_TYPE)
     if not (
-        method_node.type == cs.TS_METHOD_DECLARATION
-        and safe_decode_text(method_node.child_by_field_name(cs.TS_FIELD_NAME))
+        node.type == cs.TS_METHOD_DECLARATION
+        and safe_decode_text(node.child_by_field_name(cs.TS_FIELD_NAME))
         == cs.JAVA_MAIN_METHOD_NAME
         and return_type is not None
         and return_type.type == cs.TS_VOID_TYPE
-        and _has_implementation(method_node)
+        and cs.JAVA_MODIFIER_PRIVATE not in _modifier_types(node)
+        and _has_implementation(node)
     ):
         return None
-    params_node = method_node.child_by_field_name(cs.TS_FIELD_PARAMETERS)
-    params = (
-        [
-            child
-            for child in params_node.children
-            if child.type in (cs.TS_FORMAL_PARAMETER, cs.TS_SPREAD_PARAMETER)
-        ]
-        if params_node is not None
-        else []
-    )
+    params = _formal_params(node)
     if not params:
         return 0
     return 1 if len(params) == 1 and _is_string_array_param(params[0]) else None
 
 
-def _declares_main_with_args(method_node: ASTNode) -> bool:
-    body = method_node.parent
-    return body is not None and any(
-        _launchable_main_arity(sibling) == 1 for sibling in body.children
+def _formal_params(node: ASTNode) -> list[ASTNode]:
+    params_node = node.child_by_field_name(cs.TS_FIELD_PARAMETERS)
+    if params_node is None:
+        return []
+    return [
+        child
+        for child in params_node.children
+        if child.type in (cs.TS_FORMAL_PARAMETER, cs.TS_SPREAD_PARAMETER)
+    ]
+
+
+def _modifier_types(node: ASTNode) -> frozenset[str]:
+    # The keywords and annotations written before a declaration.
+    modifiers = next(
+        (child for child in node.children if child.type == cs.TS_MODIFIERS), None
     )
+    if modifiers is None:
+        return frozenset()
+    return frozenset(child.type for child in modifiers.children)
 
 
 def _has_implementation(method_node: ASTNode) -> bool:
     # An abstract `main`, or an interface's without `static`, has no body for
     # the launcher to run; a native one is implemented outside Java.
-    if method_node.child_by_field_name(cs.TS_FIELD_BODY) is not None:
+    return method_node.child_by_field_name(
+        cs.TS_FIELD_BODY
+    ) is not None or cs.TS_JAVA_NATIVE in _modifier_types(method_node)
+
+
+def _launcher_can_instantiate(body: ASTNode) -> bool:
+    # An instance `main` runs on an object the launcher builds with a
+    # non-private zero-argument constructor. An interface, an enum or an
+    # anonymous class has none it can call, and nor does an abstract class.
+    declaration = body.parent
+    if declaration is None or declaration.type not in (
+        cs.TS_CLASS_DECLARATION,
+        cs.TS_RECORD_DECLARATION,
+    ):
+        return False
+    if cs.JAVA_MODIFIER_ABSTRACT in _modifier_types(declaration):
+        return False
+    constructors = [
+        child for child in body.children if child.type == cs.TS_CONSTRUCTOR_DECLARATION
+    ]
+    if declaration.type == cs.TS_RECORD_DECLARATION and not _formal_params(declaration):
+        # A record without components has a public zero-argument canonical
+        # constructor whatever else it declares.
         return True
-    modifiers = next(
-        (child for child in method_node.children if child.type == cs.TS_MODIFIERS),
-        None,
-    )
-    return modifiers is not None and any(
-        child.type == cs.TS_JAVA_NATIVE for child in modifiers.children
+    if not constructors and declaration.type == cs.TS_CLASS_DECLARATION:
+        return True
+    return any(
+        not _formal_params(constructor)
+        and cs.JAVA_MODIFIER_PRIVATE not in _modifier_types(constructor)
+        for constructor in constructors
     )
 
 

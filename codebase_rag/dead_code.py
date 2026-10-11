@@ -760,7 +760,9 @@ def _is_root(
             is_well_known_symbol_member(qn)
             and str(props.get(cs.KEY_PATH, "")).endswith(cs.JS_TS_ALL_EXTENSIONS)
         ),
-        lambda: _is_public_main_root(bare_leaf, is_method, path, props),
+        lambda: _is_program_main_root(
+            bare_leaf, is_method, path, props, config.public_roots
+        ),
         lambda: _is_named_entry_point(qn, config),
         lambda: _is_rooted_test_symbol(
             props, qn, path, config, rust_test_modules, rust_test_spans
@@ -795,24 +797,27 @@ def _in_structural_tier(path: str) -> bool:
     return path.endswith(tuple(structural_tier_extensions()))
 
 
-def _is_public_main_root(
-    name: str, is_method: bool, path: str, props: PropertyDict
+def _is_program_main_root(
+    name: str, is_method: bool, path: str, props: PropertyDict, public_roots: bool
 ) -> bool:
     # A launcher calls `main` with no call site the graph sees: a console
     # script calls a module-level Python function, while `dart run` and the
-    # JVM start a `main` the parser judged from its declaration
+    # JVM start the `main` the parser judged from its declaration
     # (KEY_IS_PROGRAM_MAIN). Only the exported rule rooted them, so without
     # public roots an application's whole call tree read as dead (issue
-    # #2527). Requiring the export keeps the rule inside what library mode
-    # already roots; a Python `main` nested in a function is not exported.
-    # The C, C++, C#, Go and Rust entries have their own rules.
-    if name != cs.PROGRAM_MAIN_NAME or props.get(cs.KEY_IS_EXPORTED) is not True:
+    # #2527). A Python `main` nested in a function is not exported. The
+    # C, C++, C#, Go and Rust entries have their own rules.
+    if name != cs.PROGRAM_MAIN_NAME:
         return False
+    exported = props.get(cs.KEY_IS_EXPORTED) is True
     if path.endswith(cs.EXT_PY):
-        return not is_method
-    return path.endswith((cs.EXT_DART, cs.EXT_JAVA)) and (
-        props.get(cs.KEY_IS_PROGRAM_MAIN) is True
-    )
+        return exported and not is_method
+    if not path.endswith((cs.EXT_DART, cs.EXT_JAVA)):
+        return False
+    # The launcher starts a package-private Java `main` too, so without public
+    # roots the judged mark alone decides. With them, the rule roots only
+    # what the exported rule already does, so library mode stays as it was.
+    return props.get(cs.KEY_IS_PROGRAM_MAIN) is True and (exported or not public_roots)
 
 
 @dataclass

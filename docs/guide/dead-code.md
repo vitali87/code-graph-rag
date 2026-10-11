@@ -107,14 +107,15 @@ cgr dead-code --no-public-roots
 Without public roots, the roots are:
 
 - **Program entry points.** A module-level `main` in Python (a console
-  script's target) and a top-level one in Dart (not a local function named
-  `main`), a public Java method `void main()` or `void main(String[] args)`
-  with a body (the array may also be written `String args[]` or
-  `String... args`; a class declaring both is started through
-  `main(String[] args)`, so its `main()` is ordinary code), plus the rules
-  every mode applies: `main` in C, C++, Go
-  and Rust, and a `static Main` in C#. Module-level code also counts, such as an
-  `if __name__ == "__main__":` block, so whatever it calls is reachable.
+  script's target), a top-level one in Dart (not a local function named
+  `main`), and the Java `main` the JVM launcher would start. That is a
+  non-private `void main(String[] args)` (also written `String args[]` or
+  `String... args`), or, when the class declares none, a non-private
+  `void main()`. An instance `main` also needs a concrete class with a
+  non-private zero-argument constructor. The rules every mode applies count
+  too: `main` in C, C++, Go and Rust, and a `static Main` in C#. Module-level
+  code also counts, such as an `if __name__ == "__main__":` block, so
+  whatever it calls is reachable.
 - **Tests**, unless `--no-include-tests`.
 - **Decorated handlers**: routes, tasks, CLI commands and any `--decorator-root`.
 - **Runtime hooks**: dunder and lifecycle methods, and the overrides a
