@@ -412,8 +412,8 @@ class TestAGenericInterfaceIsNotItsNonGenericNamesake:
         }
         assert linked == {
             ("Both.IRun#Go(int)", "IRun.Go(int)"),
-            ("Both.IRun<int>#Go(int)", "IRun@3.Go(T)"),
-            ("Gen.IWalk<int>#Go(int)", "IWalk@5.Go(T)"),
+            ("Both.IRun<int>#Go(int)", "IRun`1.Go(T)"),
+            ("Gen.IWalk<int>#Go(int)", "IWalk`1.Go(T)"),
             ("Plain.IStop#Go(int)", "IStop.Go(int)"),
         }, linked
 
@@ -437,7 +437,7 @@ class TestAGenericInterfaceIsNotItsNonGenericNamesake:
         calls = _calls(GENERIC_TWIN_CS, temp_repo, mock_ingestor)
         assert calls["One(IRun)"] == {"N.IRun.Go(int)", "N.Both.IRun#Go(int)"}, calls
         assert calls["Two(IRun<int>)"] == {
-            "N.IRun@3.Go(T)",
+            "N.IRun`1.Go(T)",
             "N.Both.IRun<int>#Go(int)",
         }, calls
 
@@ -449,12 +449,12 @@ class TestAGenericInterfaceIsNotItsNonGenericNamesake:
         # runs nothing first-party beside its declaration.
         calls = _calls(GENERIC_TWIN_CS, temp_repo, mock_ingestor)
         assert calls["Gw(IWalk<int>)"] == {
-            "N.IWalk@5.Go(T)",
+            "N.IWalk`1.Go(T)",
             "N.Gen.IWalk<int>#Go(int)",
         }, calls
         assert calls["Pw(IWalk)"] == {"N.IWalk.Go(int)"}, calls
         assert calls["Ps(IStop)"] == {"N.IStop.Go(int)", "N.Plain.IStop#Go(int)"}, calls
-        assert calls["Gs(IStop<int>)"] == {"N.IStop@7.Go(T)"}, calls
+        assert calls["Gs(IStop<int>)"] == {"N.IStop`1.Go(T)"}, calls
 
     def test_an_alias_names_its_targets_arity(
         self, temp_repo: Path, mock_ingestor: MagicMock
@@ -471,7 +471,7 @@ class TestAGenericInterfaceIsNotItsNonGenericNamesake:
             for body, parent in overrides
         }
         assert linked == {
-            ("Al.RunInt#Go(int)", "IRun@5.Go(T)"),
+            ("Al.RunInt#Go(int)", "IRun`1.Go(T)"),
             ("Al.RunPlain#Go(int)", "IRun.Go(int)"),
         }, linked
         assert calls["Plain(IRun)"] == {"N.IRun.Go(int)", "N.Al.RunPlain#Go(int)"}

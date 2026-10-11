@@ -1070,9 +1070,11 @@ class DeferredInherit(NamedTuple):
     still point at a module that only RE-EXPORTS the parent, where the
     name-anchored guess is what finds the declaring one.
 
-    `written_ref` is a C# base as written (`NotificationHandler`1`): the
-    parse-time qn cannot say which name was written, and C# binds that
-    name by scope (namespace, enclosing namespaces, usings), issue #2534.
+    `written_ref` is a C# base as written, with its type-argument count in
+    CLR style (`NotificationHandler`1`): the parse-time qn cannot say which
+    name was written, and C# binds that name by scope (namespace, enclosing
+    namespaces, usings), issue #2534; `PB` and `PB<T>` are two types, so the
+    written arity picks between them (issue #2579).
     """
 
     rel_type: RelationshipType
@@ -1382,7 +1384,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.CLASS,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, non_method_members: list[string]?, type_parameters: list[string]?, generic_bases: list[string]?, value_type: boolean?, base_types: list[string]?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, generic_arity: int?, non_method_members: list[string]?, type_parameters: list[string]?, generic_bases: list[string]?, value_type: boolean?, base_types: list[string]?}",
     ),
     NodeSchema(
         NodeLabel.FUNCTION,
@@ -1394,7 +1396,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.INTERFACE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, type_parameters: list[string]?, type_parameter_variances: list[string]?, generic_bases: list[string]?, base_types: list[string]?}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, generic_arity: int?, type_parameters: list[string]?, type_parameter_variances: list[string]?, generic_bases: list[string]?, base_types: list[string]?}",
     ),
     NodeSchema(
         NodeLabel.ENUM,

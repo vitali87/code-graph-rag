@@ -490,6 +490,7 @@ class DefinitionProcessor(
             self.function_registry,
             self.import_processor.import_mapping,
             self.project_name,
+            self.csharp_class_generic_arity,
         )
         resolver.join_partial_groups(self.csharp_partial_groups)
         emitted = emit_type_edges(self.pending_type_facts, resolver, self.ingestor)
