@@ -111,6 +111,10 @@ GO_FRONTEND_FACTS = (
 GO_FRONTEND_IMPLEMENTS_JOINED = (
     "Go go/types frontend: {count} IMPLEMENTS edge(s) joined to Pass-2 type nodes"
 )
+GO_IMPLICIT_IMPLEMENTS_LINKED = (
+    "Go: {count} type(s) implement an interface by method name and arity "
+    "(IMPLEMENTS, heuristic)"
+)
 GO_FRONTEND_BUILD_FAILED = (
     "Go frontend tool failed to build; using tree-sitter.\nstderr: {stderr}"
 )

@@ -35,6 +35,7 @@ from .ast_fingerprint import fingerprint_props
 from .cpp import utils as cpp_utils
 from .dart import dart_definition_end_point, dart_return_type_name
 from .endpoints import emit_endpoints, queue_endpoints
+from .go import interfaces as go_interfaces
 from .go import utils as go_utils
 from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
@@ -270,6 +271,7 @@ class FunctionIngestMixin:
     _deferred_parent_links: list[DeferredParentLink]
     method_return_types: dict[str, str]
     go_function_return_types: dict[str, str]
+    go_method_arity: dict[str, int]
     cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]]
     function_locations: FunctionLocations
     cpp_definition_spans: dict[str, list[CppDefinitionSpan]]
@@ -1292,6 +1294,9 @@ class FunctionIngestMixin:
                         qualified_name=method_qn,
                         container_qn=container_qn,
                     ),
+                )
+                self.go_method_arity[method_qn] = go_interfaces.parameter_count(
+                    entry.method_node
                 )
             # Record the method's return type so a chained call `c.Root().Run()`
             # resolves `Run` on the type `Root()` returns.

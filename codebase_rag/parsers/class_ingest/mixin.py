@@ -39,6 +39,7 @@ from ..dart.type_inference import DartTypeInferenceEngine
 from ..enum_variants import emit_declared_variants, is_python_enum
 from ..field_nodes import PendingFieldType, emit_declared_fields
 from ..go import GoTypeInferenceEngine
+from ..go import interfaces as go_interfaces
 from ..java import utils as java_utils
 from ..js_ts import utils as js_ts_utils
 from ..parameter_nodes import PendingParameterType, csharp_call_shape
@@ -427,6 +428,15 @@ class ClassIngestMixin:
 
     @abstractmethod
     def _extract_decorators(self, node: ASTNode) -> list[str]: ...
+
+    @abstractmethod
+    def _ingest_go_interface_methods(
+        self,
+        type_spec: Node,
+        interface_qn: str,
+        module_qn: str,
+        file_path: Path | None,
+    ) -> None: ...
 
     @abstractmethod
     def _emit_or_defer_defines(
@@ -1452,8 +1462,9 @@ class ClassIngestMixin:
                 file_path, self.repo_path
             ).as_posix()
             class_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
-        if language == cs.SupportedLanguage.PHP:
-            self._record_php_namespace(class_node, class_props)
+        self._record_language_type_props(
+            class_node, class_qn, node_type, language, class_props
+        )
         # A container's hash covers its whole subtree, the same reading as a
         # function's: a note on a class is about the class as declared, and
         # a member edit is a change under it. It makes a class note gradable
@@ -1461,8 +1472,6 @@ class ClassIngestMixin:
         # move, which refuses a hash-less candidate (issue #1808).
         class_props.update(anchor_hash_props(class_node, decorators))
         class_props.update(decorated_start_props(class_node))
-        if language == cs.SupportedLanguage.CSHARP:
-            self._record_csharp_namespace(class_node, class_qn, class_props)
         # Stored on the node so an incremental run that does not re-parse
         # this file can register them again.
         if non_method_members := _python_non_method_members(class_node, language):
@@ -1553,32 +1562,13 @@ class ClassIngestMixin:
             defer_inherits=self._deferred_inherits,
             csharp_base_kinds=csharp_base_kinds,
         )
-        # The variants ride with their enum the way fields ride with their
-        # owner (issue #1807). After the relationships, because a Python enum
-        # is a Class that only its resolved bases identify (issue #2583).
-        if node_type == NodeType.ENUM or (
-            language == cs.SupportedLanguage.PYTHON
-            and is_python_enum(self.class_inheritance.get(class_qn, ()))
-        ):
-            emit_declared_variants(
-                self.ingestor,
-                cs.NodeLabel(node_type.value),
-                class_qn,
-                member_node,
-                language,
-                class_props,
-                self.import_processor.import_mapping.get(module_qn),
+        self._record_declared_type_members(
+            member_node, class_qn, module_qn, node_type, language, class_props
+        )
+        if language == cs.SupportedLanguage.GO and node_type == NodeType.INTERFACE:
+            self._ingest_go_interface_methods(
+                class_node, class_qn, module_qn, file_path
             )
-        if language == cs.SupportedLanguage.DART and (
-            type_args := pe.extract_dart_extends_type_args(
-                member_node, module_qn, partial(self._resolve_to_qn, language=language)
-            )
-        ):
-            self.dart_extends_type_args[class_qn] = type_args
-        if language == cs.SupportedLanguage.DART and (
-            on_type := dart_utils.dart_extension_on_type(member_node)
-        ):
-            self.dart_extension_on_types[class_qn] = on_type
         self._record_class_field_types(
             class_node,
             member_node,
@@ -1669,6 +1659,63 @@ class ClassIngestMixin:
                     func_node_starts,
                 )
             )
+
+    def _record_language_type_props(
+        self,
+        class_node: Node,
+        class_qn: str,
+        node_type: NodeType,
+        language: cs.SupportedLanguage,
+        class_props: PropertyDict,
+    ) -> None:
+        if language == cs.SupportedLanguage.PHP:
+            self._record_php_namespace(class_node, class_props)
+        elif language == cs.SupportedLanguage.CSHARP:
+            self._record_csharp_namespace(class_node, class_qn, class_props)
+        elif language == cs.SupportedLanguage.GO and node_type == NodeType.INTERFACE:
+            # Stored so an incremental run that does not re-parse the
+            # interface still knows what its method set is built from.
+            class_props.update(go_interfaces.embeds_props(class_node))
+
+    def _record_declared_type_members(
+        self,
+        member_node: Node,
+        class_qn: str,
+        module_qn: str,
+        node_type: NodeType,
+        language: cs.SupportedLanguage,
+        class_props: PropertyDict,
+    ) -> None:
+        # The variants ride with their enum the way fields ride with their
+        # owner (issue #1807). After the relationships, because a Python enum
+        # is a Class that only its resolved bases identify (issue #2583).
+        if node_type == NodeType.ENUM or (
+            language == cs.SupportedLanguage.PYTHON
+            and is_python_enum(self.class_inheritance.get(class_qn, ()))
+        ):
+            emit_declared_variants(
+                self.ingestor,
+                cs.NodeLabel(node_type.value),
+                class_qn,
+                member_node,
+                language,
+                class_props,
+                self.import_processor.import_mapping.get(module_qn),
+            )
+        if language == cs.SupportedLanguage.DART:
+            self._record_dart_heritage(member_node, class_qn, module_qn)
+
+    def _record_dart_heritage(
+        self, member_node: Node, class_qn: str, module_qn: str
+    ) -> None:
+        if type_args := pe.extract_dart_extends_type_args(
+            member_node,
+            module_qn,
+            partial(self._resolve_to_qn, language=cs.SupportedLanguage.DART),
+        ):
+            self.dart_extends_type_args[class_qn] = type_args
+        if on_type := dart_utils.dart_extension_on_type(member_node):
+            self.dart_extension_on_types[class_qn] = on_type
 
     def _record_php_namespace(
         self, class_node: Node, class_props: PropertyDict

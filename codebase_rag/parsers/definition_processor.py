@@ -43,6 +43,7 @@ from .field_nodes import PendingFieldType
 from .frontends.protocol import ImplementsPair, ResolvedCallSite
 from .function_ingest import FunctionIngestMixin
 from .go import utils as go_utils
+from .go.interface_ingest import GoInterfaceMixin
 from .handlers import get_handler
 from .java_generated import generator_hint
 from .js_ts.ingest import JsTsIngestMixin
@@ -62,6 +63,9 @@ from .io_access import FLOW_REGISTERED_LANGUAGES
 
 class DefinitionProcessor(
     FunctionIngestMixin,
+    # Before ClassIngestMixin, whose abstract stub for the Go interface
+    # ingest would otherwise shadow the implementation.
+    GoInterfaceMixin,
     ClassIngestMixin,
     JsTsIngestMixin,
 ):
@@ -261,6 +265,13 @@ class DefinitionProcessor(
         # for every ingested Go type. Go's type_spec start_point IS the name
         # token, so the frontend's pair positions join here directly (no alias).
         self.go_type_locations: dict[tuple[str, int, int], tuple[str, str]] = {}
+        # Go interfaces as method sets (issue #2483): each Go method's
+        # parameter count, each interface's embedded types as written, and the
+        # interfaces this run parsed, from which implicit satisfaction is
+        # computed once every type is registered.
+        self.go_method_arity: dict[str, int] = {}
+        self.go_interface_embeds: dict[str, list[str]] = {}
+        self.go_interfaces_parsed: dict[str, str] = {}
         # (rel_file, type_start_line) -> class qn for every ingested C# type,
         # the reverse of the Roslyn fact keys, so partial declaration groups
         # join back to the Pass-2 Class nodes.

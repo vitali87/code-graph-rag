@@ -7237,7 +7237,12 @@ class CallProcessor:
         ):
             self._emit_go_build_variant_siblings(ctx, callee_qn)
 
-        if callee_type == cs.NodeLabel.METHOD:
+        if (
+            callee_type == cs.NodeLabel.METHOD
+            and ctx.language == cs.SupportedLanguage.GO
+        ):
+            self._emit_go_interface_dispatch(ctx, callee_qn)
+        elif callee_type == cs.NodeLabel.METHOD:
             self._emit_interface_sole_impls(ctx, callee_qn)
 
         if (
@@ -7288,6 +7293,36 @@ class CallProcessor:
                     cs.RelationshipType.CALLS,
                     (impl_type, cs.KEY_QUALIFIED_NAME, variant),
                 )
+
+    def _emit_go_interface_dispatch(
+        self, ctx: _CallScanContext, callee_qn: str
+    ) -> None:
+        # The interface method is the static callee and keeps its edge; each
+        # implementation is one candidate of the value's dynamic type. A
+        # callee the name-only fallback merely guessed says nothing about
+        # the receiver, so it is not fanned out (the #2931 rule).
+        if self._resolution == cs.EdgeResolution.HEURISTIC:
+            return
+        registry = self._resolver.function_registry
+        edges = [
+            (target_type, variant)
+            for target_type, target_qn in sorted(
+                self._resolver.interface_dispatch_targets(callee_qn)
+            )
+            for variant in registry.variants(target_qn)
+        ]
+        prev_resolution = self._resolution
+        if len(edges) > 1:
+            self._resolution = cs.EdgeResolution.OVERLOAD
+        try:
+            for target_type, target_qn in edges:
+                ctx.ensure_rel(
+                    ctx.caller_spec,
+                    cs.RelationshipType.CALLS,
+                    (target_type, cs.KEY_QUALIFIED_NAME, target_qn),
+                )
+        finally:
+            self._resolution = prev_resolution
 
     def _emit_js_member_twins(self, ctx: _CallScanContext, callee_qn: str) -> None:
         # A JS member call that bound one twin of a double-registered

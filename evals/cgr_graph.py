@@ -283,6 +283,11 @@ def _text(value: PropertyValue) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _texts(value: PropertyValue | None) -> list[ResultScalar] | None:
+    # A stored list property as the store returns it; absent reads as null.
+    return [_text(item) for item in value] if isinstance(value, list) else None
+
+
 def _shadowed_by_longer_owner(
     qualified_name: str, longer_project_prefixes: set[str]
 ) -> bool:
@@ -1520,6 +1525,7 @@ class _StatefulIngestor:
                         cs.KEY_IS_EXPORTED: bool(props[cs.KEY_IS_EXPORTED])
                         if cs.KEY_IS_EXPORTED in props
                         else None,
+                        cs.KEY_EMBEDS: _texts(props.get(cs.KEY_EMBEDS)),
                     }
                     defs.append(row)
                 return defs

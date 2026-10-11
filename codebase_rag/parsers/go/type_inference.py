@@ -36,6 +36,104 @@ def _selector_segments(selector: Node) -> list[str] | None:
     return segments
 
 
+# A range over a container binds up to two names: (index, element) for a
+# slice or array, (key, value) for a map, (element,) for a channel. A slot
+# the walker cannot type, an index for one, is None.
+_RangeSlots = tuple[str | None, str | None]
+
+
+def _element_name(type_node: Node | None) -> str | None:
+    # A nested container (`[][]Shape`) yields a container, not a Shape.
+    if type_node is None or type_node.type in cs.TS_GO_CONTAINER_TYPES:
+        return None
+    return type_identifier_text(type_node)
+
+
+def _range_slots(type_node: Node) -> _RangeSlots | None:
+    match type_node.type:
+        case cs.TS_GO_SLICE_TYPE | cs.TS_GO_ARRAY_TYPE:
+            return None, _element_name(
+                type_node.child_by_field_name(cs.FIELD_GO_ELEMENT)
+            )
+        case cs.TS_GO_MAP_TYPE:
+            return (
+                _element_name(type_node.child_by_field_name(cs.FIELD_KEY)),
+                _element_name(type_node.child_by_field_name(cs.FIELD_VALUE)),
+            )
+        case cs.TS_GO_CHANNEL_TYPE:
+            return _element_name(type_node.child_by_field_name(cs.FIELD_VALUE)), None
+    return None
+
+
+def _declared_containers(caller_node: Node, body: Node) -> dict[str, _RangeSlots]:
+    """The parameters and `var`s declared with a container type, by name.
+    A variadic `xs ...Shape` is a slice of Shape inside the function."""
+    containers: dict[str, _RangeSlots] = {}
+    params = caller_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    declarations = [*(params.named_children if params else ()), *_var_specs(body)]
+    for decl in declarations:
+        type_node = decl.child_by_field_name(cs.FIELD_TYPE)
+        if type_node is None:
+            continue
+        if decl.type == cs.TS_GO_VARIADIC_PARAMETER_DECLARATION:
+            slots = (None, _element_name(type_node))
+        else:
+            slots = _range_slots(type_node)
+        for name in decl.children_by_field_name(cs.FIELD_NAME):
+            if slots is not None and (text := safe_decode_text(name)):
+                containers[text] = slots
+    return containers
+
+
+def _var_specs(body: Node) -> list[Node]:
+    specs: list[Node] = []
+    stack = [body]
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_GO_VAR_SPEC:
+            specs.append(node)
+        stack.extend(node.named_children)
+    return specs
+
+
+def _range_clauses(body: Node) -> list[Node]:
+    clauses: list[Node] = []
+    stack = [body]
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_GO_RANGE_CLAUSE:
+            clauses.append(node)
+        stack.extend(node.named_children)
+    return clauses
+
+
+def _collect_range_bindings(
+    caller_node: Node, body: Node, var_types: dict[str, str]
+) -> None:
+    """`for _, s := range shapes` with `shapes []Shape`: `s` is a Shape, so
+    `s.Area()` binds through Shape (issue #2483). A name the function types
+    another way keeps that type."""
+    clauses = _range_clauses(body)
+    containers = _declared_containers(caller_node, body) if clauses else {}
+    for clause in clauses:
+        ranged = clause.child_by_field_name(cs.FIELD_RIGHT)
+        left = clause.child_by_field_name(cs.FIELD_LEFT)
+        if ranged is None or left is None or ranged.type != cs.TS_IDENTIFIER:
+            continue
+        slots = containers.get(safe_decode_text(ranged) or "")
+        if slots is not None:
+            _bind_range_names(left, slots, var_types)
+
+
+def _bind_range_names(
+    left: Node, slots: _RangeSlots, var_types: dict[str, str]
+) -> None:
+    for bound, type_name in zip(left.named_children, slots, strict=False):
+        name = safe_decode_text(bound) if bound.type == cs.TS_IDENTIFIER else None
+        if name and type_name:
+            var_types.setdefault(name, type_name)
+
+
 class GoTypeInferenceEngine:
     # Maps local variable / parameter / receiver names to their bare Go type name
     # within a function or method body, so the resolver can bind a receiver-dispatch
@@ -143,6 +241,7 @@ class GoTypeInferenceEngine:
         self._collect_parameters(caller_node, var_types)
         if body := caller_node.child_by_field_name(cs.FIELD_BODY):
             self._collect_body_declarations(body, var_types)
+            _collect_range_bindings(caller_node, body, var_types)
         return var_types
 
     def build_field_type_map(self, class_node: Node) -> dict[str, str]:

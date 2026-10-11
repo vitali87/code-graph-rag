@@ -182,12 +182,18 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "start_col",
         }
     ),
+    # `embeds` (issue #2483) is read back only by an incremental run's
+    # registry rehydration, to know an unchanged Go interface's method set
+    # whole. A graph round-tripped through protobuf loses it, and an absent
+    # list reads as unknown, so the interface gains no implementer by name
+    # until its file is parsed again; exporting it needs protoc (#1490).
     "Interface": frozenset(
         {
             "anchor_hash",
             "decorated_start_line",
             "decorators",
             "docstring",
+            "embeds",
             "end_line",
             "is_exported",
             "modifiers",

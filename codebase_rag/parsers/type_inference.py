@@ -743,20 +743,12 @@ class TypeInferenceEngine:
         )
 
     def _go_file_package(self, module_qn: str) -> str:
-        # The package of Go file module `module_qn`, spelled the way the import
-        # map spells one (`project.dir.sub`): its file's directory, whatever
-        # dots the file's stem holds. `types.gen.go` is filed as
-        # `pkg.types.gen` but is a file of `pkg` (#2616 review). A module with
-        # no recorded file (a mock harness, or an unchanged file on an
-        # incremental run) falls back to the qn above it.
-        path = self.module_qn_to_file_path.get(module_qn)
-        try:
-            parts = path.parent.relative_to(self.repo_path).parts if path else None
-        except ValueError:
-            parts = None
-        if parts is None:
-            return module_qn.rpartition(cs.SEPARATOR_DOT)[0]
-        return cs.SEPARATOR_DOT.join((self.project_name, *parts))
+        return go_utils.file_package_qn(
+            module_qn,
+            self.module_qn_to_file_path.get(module_qn),
+            self.repo_path,
+            self.project_name,
+        )
 
     def _go_package_fn_return_type(
         self,

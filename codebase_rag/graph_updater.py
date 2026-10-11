@@ -1947,6 +1947,16 @@ class GraphUpdater:
         if emitted:
             logger.info(ls.GO_FRONTEND_IMPLEMENTS_JOINED.format(count=emitted))
 
+    def _link_go_interfaces(self) -> None:
+        # With go/types facts loaded the compiler already proved which types
+        # implement which interfaces (_join_go_implements); comparing method
+        # names and arities on top would only add the pairs it ruled out.
+        dp = self.factory.definition_processor
+        go_types_ran = bool(
+            dp.go_implements or dp.go_call_sites or dp.go_external_sites
+        )
+        dp.link_go_interfaces(structural=not go_types_ran)
+
     def _join_csharp_partials(self) -> None:
         # Replace the directory-keyed syntactic partial grouping with the
         # Roslyn symbol-identity groups wherever Roslyn saw the type: parts
@@ -2291,6 +2301,10 @@ class GraphUpdater:
                 "Resolved {} deferred inheritance/implements parents",
                 generic_inherits,
             )
+
+        # Every Go type and method is registered by now, rehydrated ones
+        # included, so method sets are complete (issue #2483).
+        self._link_go_interfaces()
 
         module_impls = (
             self.factory.definition_processor.resolve_deferred_cpp_module_impls()
@@ -3670,6 +3684,7 @@ class GraphUpdater:
         # After the loop: whether a method's owner is a trait needs the whole
         # registry, and its rows arrive in no particular order.
         self._rehydrate_rust_return_types(restored)
+        self._rehydrate_go_method_sets(restored)
         # Module qns from unchanged files: deferred import verification and
         # C++20 module-impl resolution must count them as real targets, or
         # an incremental run would drop edges a clean index emits.
@@ -3810,6 +3825,31 @@ class GraphUpdater:
         if isinstance(path := row.get(cs.KEY_PATH), str):
             self._rehydrate_definition_path(node_type, qn, path, row)
         return True
+
+    def _rehydrate_go_method_sets(self, rows: list[ResultRow]) -> None:
+        # An unchanged Go file's methods and interfaces still count toward
+        # implicit satisfaction (issue #2483): a re-parsed type implements an
+        # interface it does not touch. The parameter count is what the parse
+        # records, `param_types`'s length, and the embedded types are the
+        # interface's own `embeds`. An interface stored without that list
+        # (an older or imported graph) has a method set nobody recorded, so it
+        # is left out rather than read as embedding nothing.
+        dp = self.factory.definition_processor
+        for row in rows:
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            if not isinstance(qn, str) or (
+                _stored_language(row.get(cs.KEY_PATH)) != cs.SupportedLanguage.GO
+            ):
+                continue
+            label = row.get(cs.KEY_LABEL)
+            if label == cs.NodeLabel.METHOD and isinstance(
+                param_types := row.get(cs.KEY_PARAM_TYPES), list
+            ):
+                dp.go_method_arity[qn] = len(param_types)
+            elif label == cs.NodeLabel.INTERFACE and isinstance(
+                embeds := row.get(cs.KEY_EMBEDS), list
+            ):
+                dp.go_interface_embeds[qn] = _stored_strings(embeds)
 
     def _rehydrate_rust_return_types(self, rows: list[ResultRow]) -> None:
         # Pass 2 records a Rust fn's return type only while it parses the

@@ -36,6 +36,9 @@ KEY_MEMBER_ALIASES = "member_aliases"
 # The member names a Python class body binds to a value that is no method
 # (`run = None`), which hide a base class's `run` (issue #2620).
 KEY_NON_METHOD_MEMBERS = "non_method_members"
+# The types a Go interface embeds, as written (`Reader`, `io.Writer`): its
+# method set includes theirs, so satisfying it needs them too (issue #2483).
+KEY_EMBEDS = "embeds"
 # A JS/TS function that is an object literal's property value, reached only
 # through its object (issue #2435).
 KEY_IS_OBJECT_MEMBER = "is_object_member"
@@ -1141,7 +1144,8 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.is_exported AS is_exported, "
     "n.extension_receiver AS extension_receiver, "
     "n.extension_namespace AS extension_namespace, "
-    "n.extension_receiver_arity AS extension_receiver_arity"
+    "n.extension_receiver_arity AS extension_receiver_arity, "
+    "n.embeds AS embeds"
 )
 
 # Module-level qns (plus C++20 module interfaces) for incremental runs:

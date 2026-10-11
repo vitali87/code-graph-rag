@@ -67,7 +67,9 @@ class GoSemanticFacts(NamedTuple):
     # not fabricate a first-party edge there.
     external_sites: set[CallSiteKey]
     # First-party concrete-type -> first-party interface pairs the compiler
-    # proved; the only source of Go IMPLEMENTS edges (no syntactic base list).
+    # proved. With them loaded they are the only Go IMPLEMENTS edges; without
+    # them, the tree-sitter path matches method names and arities instead
+    # (issue #2483), since there is no syntactic base list to read.
     implements: list[GoImplements]
     # Module anchors whose tool run FAILED (timeout, crash, unparseable
     # output). A failed anchor drops only its own module to the heuristics,

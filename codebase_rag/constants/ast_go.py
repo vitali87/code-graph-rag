@@ -103,6 +103,14 @@ TS_GO_CONTAINER_TYPES: frozenset[str] = frozenset(
     {"slice_type", "array_type", "map_type", "channel_type", "function_type"}
 )
 FIELD_OPERAND = "operand"
+# What `for k, v := range xs` binds depends on the container `xs` is declared
+# as: a slice or array yields (index, element), a map (key, value), a channel
+# its element alone. `element` names the element type of the first two.
+TS_GO_SLICE_TYPE = "slice_type"
+TS_GO_ARRAY_TYPE = "array_type"
+TS_GO_MAP_TYPE = "map_type"
+TS_GO_CHANNEL_TYPE = "channel_type"
+FIELD_GO_ELEMENT = "element"
 # A generic declaration's `[T any]` list (`type_parameter_declaration`s naming
 # the parameters) and a generic receiver's `Box[T]` arguments (`type_elem`s):
 # the names a result type can spell without naming any declared type.
@@ -110,6 +118,13 @@ FIELD_GO_TYPE_PARAMETERS = "type_parameters"
 TS_GO_TYPE_PARAMETER_DECLARATION = "type_parameter_declaration"
 FIELD_GO_TYPE_ARGUMENTS = "type_arguments"
 TS_GO_TYPE_ELEM = "type_elem"
+# The predeclared interfaces an interface can embed and the methods they add
+# (issue #2483): `any` adds none, `error` adds `Error()`. Any other embedded
+# name must resolve to a first-party interface for the method set to be known.
+GO_BUILTIN_INTERFACE_METHODS: dict[str, tuple[tuple[str, int], ...]] = {
+    "any": (),
+    "error": (("Error", 0),),
+}
 # Statements that bind the identifiers in their `left` list (`a, b := ...`,
 # `for k, v := range m`, a select arm's `case v := <-ch`), the declarations
 # whose specs bind names, and a `for` clause's `initializer` (`for i := ...`):

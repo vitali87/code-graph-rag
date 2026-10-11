@@ -1728,6 +1728,20 @@ class CallResolver:
             return {result}
         return set()
 
+    def interface_dispatch_targets(self, callee_qn: str) -> set[tuple[str, str]]:
+        # A Go call through an interface runs whichever implementation the
+        # value holds, and the types implement it implicitly, so a sole
+        # implementer is no likelier than one of many: every implementer's
+        # method is a target (issue #2483).
+        class_qn, sep, method_name = callee_qn.rpartition(cs.SEPARATOR_DOT)
+        if not sep or self.function_registry.get(class_qn) != NodeType.INTERFACE:
+            return set()
+        return {
+            result
+            for implementer in self.interface_implementers.get(class_qn, ())
+            if (result := self._try_resolve_method(implementer, method_name))
+        }
+
     def _redirect_protocol_method(
         self, result: tuple[str, str] | None
     ) -> tuple[str, str] | None:

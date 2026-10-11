@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Collection
+from pathlib import Path
 
 from tree_sitter import Node
 
@@ -31,6 +32,24 @@ def package_level_definitions(
         for qn in registry.find_ending_with(name)
         if registry.get(qn) in labels and in_package(qn)
     ]
+
+
+def file_package_qn(
+    module_qn: str, path: Path | None, repo_path: Path, project_name: str
+) -> str:
+    """The package of Go file module `module_qn`, spelled the way the import
+    map spells one (`project.dir.sub`): its file's directory, whatever dots
+    the file's stem holds. `types.gen.go` is filed as `pkg.types.gen` but is
+    a file of `pkg` (#2616 review). A module with no recorded file (a mock
+    harness, or an unchanged file on an incremental run) falls back to the
+    qn above it."""
+    try:
+        parts = path.parent.relative_to(repo_path).parts if path else None
+    except ValueError:
+        parts = None
+    if parts is None:
+        return module_qn.rpartition(cs.SEPARATOR_DOT)[0]
+    return cs.SEPARATOR_DOT.join((project_name, *parts))
 
 
 def shares_package_clause(requester: str | None, other: str | None) -> bool:
