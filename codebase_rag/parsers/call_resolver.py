@@ -2044,14 +2044,30 @@ class CallResolver:
         ):
             block_target = strong
         if first != call_name:
-            return True, self._try_resolve_qualified_call(
-                call_name,
-                {first: block_target},
-                module_qn,
-                call.local_var_types,
-                call.language,
-            )
+            return True, self._resolve_rust_block_path(call, first, block_target)
         return True, self._follow_rust_scope_target(block_target)
+
+    def _resolve_rust_block_path(
+        self, call: _CallSite, first: str, block_target: str
+    ) -> tuple[str, str] | None:
+        # `T::assoc()` under the block's `use crate::beta::T`. The qualified
+        # probe reads `T`'s own members alone, so a block written away from
+        # `T`'s definition, or a trait default `T` inherits, is found the
+        # way a scoped `use` finds it (PR #2791 review).
+        result = self._try_resolve_qualified_call(
+            call.call_name,
+            {first: block_target},
+            call.module_qn,
+            call.local_var_types,
+            call.language,
+        )
+        item = call.call_name.partition(cs.SEPARATOR_DOUBLE_COLON)[2]
+        if result is not None or cs.SEPARATOR_DOUBLE_COLON in item:
+            return result
+        bound = self._rust_scoped_use_type(block_target, call.module_qn, call.module_qn)
+        if bound is None:
+            return None
+        return self._rust_bound_type_method(bound, item, first, call)
 
     def _resolve_caller_scope(
         self, call: _CallSite
@@ -2218,14 +2234,37 @@ class CallResolver:
         bound = self._rust_scoped_type(type_name, call.module_qn, call.caller_qn)
         if bound is None:
             return False, None
-        if bound not in self.function_registry:
-            return True, None
-        # The path names this type. When the graph holds no such method on it
-        # (a derive or a macro generated it), no other type's same-named
-        # item is the target: the bare-name guess would bind the shadowed
-        # type's own, the closest by import distance (PR #2791 review).
-        return True, self._try_method_on_class(
-            bound, item, cs.SEPARATOR_DOT, call.call_name, type_name, type_name
+        return True, self._rust_bound_type_method(bound, item, type_name, call)
+
+    def _rust_bound_type_method(
+        self, bound: str, item: str, type_name: str, call: _CallSite
+    ) -> tuple[str, str] | None:
+        """The method `item` of the one type a caller's scoped `use` binds.
+
+        The type's own or inherited method first. Failing that, what the
+        named-owner and external-path stages find for a type the file
+        binds: a block written away from the type's definition, registered
+        under `<its module>.<Type>`, or a trait default the type does not
+        override; for an external `bound`, which holds no methods in the
+        graph, only the crate's own impl on it can. A block counts only when
+        its own written self path names `bound`: the path names this type,
+        so no other type's same-named item is the target, the shadowed one
+        the bare-name guess would bind included (PR #2791 review). None
+        when the graph holds no such method (a derive or a macro made it).
+        """
+        if bound == cs.RUST_UNRESOLVABLE_QN:
+            return None
+        if bound in self.function_registry:
+            if own := self._try_method_on_class(
+                bound, item, cs.SEPARATOR_DOT, call.call_name, type_name, type_name
+            ):
+                return own
+            owners, name = frozenset({bound}), bound.rpartition(cs.SEPARATOR_DOT)[2]
+        else:
+            owners = frozenset()
+            name = bound.rpartition(cs.SEPARATOR_DOUBLE_COLON)[2]
+        return self._rust_owned_method(
+            item, call, owners, frozenset({name}), self_type=bound
         )
 
     def _resolve_rust_prefixed_or_local(
@@ -2567,6 +2606,7 @@ class CallResolver:
         call: _CallSite,
         owners: frozenset[str],
         names: frozenset[str],
+        self_type: str | None = None,
     ) -> tuple[str, str] | None:
         """The method `item` of the Rust type a call names, or None.
 
@@ -2575,6 +2615,8 @@ class CallResolver:
         registers under an unregistered owner qn of that name), or a trait
         either of those implements, for its default method. Free functions
         never count: a path through a type or a method call names neither.
+        With `self_type`, such a block counts only when its written self
+        path names that type, which makes its method that type's own.
         """
         candidates = [
             qn
@@ -2584,27 +2626,33 @@ class CallResolver:
                 call.call_point,
             )
             if self.function_registry[qn] == cs.NodeLabel.METHOD.value
-            and self._rust_method_owner_matches(qn, owners, names)
+            and self._rust_method_owner_matches(qn, owners, names, self_type)
         ]
         if not candidates:
             logger.debug(ls.CALL_RUST_OWNER_UNRESOLVED, call_name=call.call_name)
             return None
         best = self._best_trie_candidate(candidates, call.module_qn)
+        owner = best.rpartition(cs.SEPARATOR_DOT)[0]
         self.last_resolution = (
             cs.EdgeResolution.EXACT
-            if best.rpartition(cs.SEPARATOR_DOT)[0] in owners
+            if owner in owners
+            or (self_type is not None and owner not in self.function_registry)
             else cs.EdgeResolution.HEURISTIC
         )
         return self.function_registry[best], best
 
     def _rust_method_owner_matches(
-        self, method_qn: str, owners: frozenset[str], names: frozenset[str]
+        self,
+        method_qn: str,
+        owners: frozenset[str],
+        names: frozenset[str],
+        self_type: str | None = None,
     ) -> bool:
         owner = method_qn.rpartition(cs.SEPARATOR_DOT)[0]
-        if self._rust_owner_is(owner, owners, names, method_qn):
+        if self._rust_owner_is(owner, owners, names, method_qn, self_type):
             return True
         return self.function_registry.get(owner) == NodeType.INTERFACE and any(
-            self._rust_owner_is(implementer, owners, names)
+            self._rust_owner_is(implementer, owners, names, self_type=self_type)
             for implementer in self.interface_implementers.get(owner, ())
         )
 
@@ -2614,15 +2662,56 @@ class CallResolver:
         owners: frozenset[str],
         names: frozenset[str],
         method_qn: str | None = None,
+        self_type: str | None = None,
     ) -> bool:
-        return owner in owners or (
-            owner not in self.function_registry
-            and owner.rpartition(cs.SEPARATOR_DOT)[2] in names
-            # With no first-party owner the names are external or primitive
-            # types, and the impl block must be on that type, not on the
-            # crate's own type of the same name.
-            and (bool(owners) or self._rust_impl_on_external_type(owner, method_qn))
+        if owner in owners:
+            return True
+        if (
+            owner in self.function_registry
+            or owner.rpartition(cs.SEPARATOR_DOT)[2] not in names
+        ):
+            return False
+        if self_type is not None:
+            return self._rust_impl_names_type(owner, method_qn, self_type)
+        # With no first-party owner the names are external or primitive
+        # types, and the impl block must be on that type, not on the
+        # crate's own type of the same name.
+        return bool(owners) or self._rust_impl_on_external_type(owner, method_qn)
+
+    def _rust_impl_names_type(
+        self, owner: str, method_qn: str | None, type_qn: str
+    ) -> bool:
+        """Whether the impl block registered under `owner` is on `type_qn`.
+
+        Its self type as written, read in the block's own module the way
+        rustc reads it: `impl Builder` under `use crate::model::Builder;`
+        and `impl crate::model::Builder` both name the model's type, while
+        the same name bound to another type there names that one. A block
+        not parsed this run (an unchanged file on an incremental run) has
+        no recorded path, and its bare type name stands in for one.
+        """
+        impl_module, _sep, name = owner.rpartition(cs.SEPARATOR_DOT)
+        paths = self.import_processor.rust_impl_self_paths
+        written = (
+            (paths.get(method_qn) if method_qn else None) or paths.get(owner) or {name}
         )
+        return any(
+            self._rust_written_type(path, impl_module) == type_qn for path in written
+        )
+
+    def _rust_written_type(self, path: str, module_qn: str) -> str | None:
+        # The type a path written in `module_qn` names: a first-party type's
+        # qn, or the raw path of an external one. A bare name binds the
+        # module's own type or its `use` or glob import, never a type found
+        # by searching for the name.
+        if cs.SEPARATOR_DOUBLE_COLON in path:
+            if self._rust_path_is_external(path, module_qn):
+                return path
+            return self._rust_module_path_type(path, module_qn)
+        target = self.import_processor.import_mapping.get(module_qn, {}).get(path)
+        if target is not None:
+            return self._rust_scoped_use_type(target, module_qn, module_qn)
+        return self._rust_scope_type(f"{module_qn}{cs.SEPARATOR_DOT}{path}")
 
     def _rust_impl_on_external_type(
         self, owner: str, method_qn: str | None = None

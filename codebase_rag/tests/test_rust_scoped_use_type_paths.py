@@ -710,3 +710,281 @@ def test_relative_path_through_an_external_alias_binds_no_first_party_type(
     edges = _index(temp_repo, mock_ingestor, "rs_inline_ext_alias", files)
     callees = _callees(edges, "rs_inline_ext_alias.src.lib.ext.external")
     assert not {c for c in callees if c.endswith(".Builder.build")}, edges
+
+
+# --- a scoped type's methods written away from its definition -----------------
+
+
+def _crate(project: str, files: dict[str, str], deps: str = "") -> dict[str, str]:
+    manifest = f'[package]\nname = "{project}"\nversion = "0.1.0"\n'
+    if deps:
+        manifest += f"\n[dependencies]\n{deps}"
+    return {"Cargo.toml": manifest, **files}
+
+
+def _tests_mod(uses: str, body: str) -> str:
+    return (
+        f"\n#[cfg(test)]\nmod tests {{\n{uses}\n"
+        f"    #[test]\n    fn t() {{\n{body}    }}\n}}\n"
+    )
+
+
+def test_scoped_use_reaches_an_impl_block_in_another_module(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `impl Builder` sits in `builder_impl`, away from the struct, so its
+    # `new` registers under `builder_impl.Builder`, not the struct's qn. The
+    # test module's `use` names the struct, and the impl block's own path
+    # names it too (PR #2791 review).
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_use_impl_away",
+        _crate(
+            "rs_use_impl_away",
+            {
+                "src/lib.rs": "pub mod builder_impl;\npub mod model;\n"
+                + _tests_mod(
+                    "    use crate::model::Builder;\n",
+                    "        let _b = Builder::new();\n        Builder::reset();\n",
+                ),
+                "src/model.rs": "pub struct Builder {\n    pub n: u32,\n}\n",
+                "src/builder_impl.rs": (
+                    "use crate::model::Builder;\n\n"
+                    "impl Builder {\n"
+                    "    pub fn new() -> Builder {\n        Builder { n: 1 }\n    }\n"
+                    "}\n\n"
+                    "impl crate::model::Builder {\n    pub fn reset() {}\n}\n"
+                ),
+            },
+        ),
+    )
+    caller = "rs_use_impl_away.src.lib.tests.t"
+    impl = "rs_use_impl_away.src.builder_impl.Builder"
+    assert edges.get((caller, f"{impl}.new")) == {"exact"}, edges
+    assert edges.get((caller, f"{impl}.reset")) == {"exact"}, edges
+    assert _callees(edges, caller) == {f"{impl}.new", f"{impl}.reset"}, edges
+
+
+def test_scoped_use_reaches_a_trait_default_method(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `Builder` does not override `describe`, so the call runs the trait's
+    # default body, registered under the trait (PR #2791 review).
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_use_trait_default",
+        _crate(
+            "rs_use_trait_default",
+            {
+                "src/lib.rs": "pub mod model;\n"
+                + _tests_mod(
+                    "    use crate::model::Builder;\n    use crate::model::Describe;\n",
+                    "        let _n = Builder::describe();\n",
+                ),
+                "src/model.rs": (
+                    "pub struct Builder;\n\n"
+                    "pub trait Describe {\n"
+                    "    fn describe() -> u32 {\n        7\n    }\n"
+                    "}\n\n"
+                    "impl Describe for Builder {}\n"
+                ),
+            },
+        ),
+    )
+    caller = "rs_use_trait_default.src.lib.tests.t"
+    target = "rs_use_trait_default.src.model.Describe.describe"
+    assert _callees(edges, caller) == {target}, edges
+
+
+def test_scoped_use_of_external_type_reaches_a_first_party_impl_on_it(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The registry crate's `Parser` is not in the graph, but the crate's own
+    # `impl Make for regex_syntax::Parser` is, and the call runs it
+    # (PR #2791 review).
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_use_ext_impl",
+        _crate(
+            "rs_use_ext_impl",
+            {
+                "src/lib.rs": "pub mod ext;\n"
+                + _tests_mod(
+                    "    use crate::ext::Make;\n    use regex_syntax::Parser;\n",
+                    "        let _p = Parser::make();\n",
+                ),
+                "src/ext.rs": (
+                    "pub trait Make {\n    fn make() -> Self;\n}\n\n"
+                    "impl Make for regex_syntax::Parser {\n"
+                    "    fn make() -> Self {\n"
+                    "        regex_syntax::Parser::new()\n"
+                    "    }\n"
+                    "}\n"
+                ),
+            },
+            deps='regex-syntax = "0.8"\n',
+        ),
+    )
+    caller = "rs_use_ext_impl.src.lib.tests.t"
+    assert "rs_use_ext_impl.src.ext.Parser.make" in _callees(edges, caller), edges
+
+
+def test_scoped_use_ignores_impls_away_on_the_shadowed_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # alpha's own `Builder` gains `reset` and the `Describe` default from
+    # blocks in another module, which register under `ext.Builder` by name
+    # alone. The test module's `use` names beta's `Builder`, so neither is
+    # the target: only a block whose written self type names beta's counts.
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_use_shadow_away",
+        {
+            **_WORKSPACE,
+            "crates/alpha/src/lib.rs": "pub mod ext;\n\n"
+            + _ALPHA_LIB_RS
+            + _tests_mod(
+                "    use crate::ext::Describe;\n    use my_beta::Builder;\n",
+                "        let _r = Builder::reset();\n"
+                "        let _d = Builder::describe();\n",
+            ),
+            "crates/alpha/src/ext.rs": (
+                "use crate::Builder;\n\n"
+                "pub trait Describe {\n"
+                "    fn describe() -> u32 {\n        7\n    }\n"
+                "}\n\n"
+                "impl Builder {\n    pub fn reset() -> u32 {\n        0\n    }\n}\n\n"
+                "impl Describe for Builder {}\n"
+            ),
+        },
+    )
+    callees = _callees(edges, "rs_use_shadow_away.crates.alpha.src.lib.tests.t")
+    assert not {c for c in callees if c.endswith((".reset", ".describe"))}, edges
+
+
+def test_local_type_shadowing_an_import_ignores_the_import_impl_away(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `mod inner` defines its own `Builder`, which shadows the file's
+    # imported one there; `make` exists only in a block on the imported
+    # type, written in another module.
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_local_shadow_away",
+        _crate(
+            "rs_local_shadow_away",
+            {
+                "src/lib.rs": (
+                    "pub mod model;\npub mod model_impl;\n\n"
+                    "use crate::model::Builder;\n\n"
+                    "pub fn outer() {\n    Builder::make();\n}\n\n"
+                    "pub mod inner {\n"
+                    "    pub struct Builder;\n\n"
+                    "    pub fn shadowed() {\n        Builder::make();\n    }\n"
+                    "}\n"
+                ),
+                "src/model.rs": "pub struct Builder;\n",
+                "src/model_impl.rs": (
+                    "use crate::model::Builder;\n\n"
+                    "impl Builder {\n    pub fn make() {}\n}\n"
+                ),
+            },
+        ),
+    )
+    lib = "rs_local_shadow_away.src.lib"
+    target = "rs_local_shadow_away.src.model_impl.Builder.make"
+    assert target in _callees(edges, f"{lib}.outer"), edges
+    assert not _callees(edges, f"{lib}.inner.shadowed"), edges
+
+
+def test_scoped_use_of_external_type_ignores_an_impl_on_a_same_named_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The crate's own `Parser` gets `Make` from a block in another module;
+    # the test module's `Parser` is the registry crate's, which has none.
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_use_ext_shadow",
+        _crate(
+            "rs_use_ext_shadow",
+            {
+                "src/lib.rs": "pub mod ext;\n\npub struct Parser;\n"
+                + _tests_mod(
+                    "    use crate::ext::Make;\n    use regex_syntax::Parser;\n",
+                    "        let _p = Parser::make();\n",
+                ),
+                "src/ext.rs": (
+                    "use crate::Parser;\n\n"
+                    "pub trait Make {\n    fn make() -> Self;\n}\n\n"
+                    "impl Make for Parser {\n"
+                    "    fn make() -> Self {\n        Parser\n    }\n"
+                    "}\n"
+                ),
+            },
+            deps='regex-syntax = "0.8"\n',
+        ),
+    )
+    callees = _callees(edges, "rs_use_ext_shadow.src.lib.tests.t")
+    assert not {c for c in callees if c.endswith(".make")}, edges
+
+
+def test_block_scoped_use_reaches_only_its_type_impl_away(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A `use` in a const initializer block binds `Builder` for that block,
+    # whose `Builder::zero()` the scope decides the same way: the model's
+    # block in `builder_impl` answers, the crate's own `Builder`'s block in
+    # `ext` never does, for `one`'s model type or `two`'s.
+    edges = _index(
+        temp_repo,
+        mock_ingestor,
+        "rs_block_impl_away",
+        _crate(
+            "rs_block_impl_away",
+            {
+                "src/lib.rs": (
+                    "pub mod builder_impl;\npub mod ext;\npub mod model;\n\n"
+                    "pub struct Builder;\n\n"
+                    "pub fn one() -> u32 {\n"
+                    "    const Y: u32 = {\n"
+                    "        use crate::model::Builder;\n"
+                    "        Builder::zero()\n"
+                    "    };\n"
+                    "    Y\n"
+                    "}\n\n"
+                    "pub fn two() -> u32 {\n"
+                    "    const Z: u32 = {\n"
+                    "        use crate::model::Builder;\n"
+                    "        Builder::one()\n"
+                    "    };\n"
+                    "    Z\n"
+                    "}\n"
+                ),
+                "src/model.rs": "pub struct Builder;\n",
+                "src/builder_impl.rs": (
+                    "use crate::model::Builder;\n\n"
+                    "impl Builder {\n"
+                    "    pub const fn zero() -> u32 {\n        0\n    }\n"
+                    "}\n"
+                ),
+                "src/ext.rs": (
+                    "use crate::Builder;\n\n"
+                    "impl Builder {\n"
+                    "    pub const fn zero() -> u32 {\n        1\n    }\n"
+                    "    pub const fn one() -> u32 {\n        1\n    }\n"
+                    "}\n"
+                ),
+            },
+        ),
+    )
+    lib = "rs_block_impl_away.src.lib"
+    target = "rs_block_impl_away.src.builder_impl.Builder.zero"
+    assert edges.get((f"{lib}.one", target)) == {"exact"}, edges
+    assert _callees(edges, f"{lib}.one") == {target}, edges
+    assert not _callees(edges, f"{lib}.two"), edges
