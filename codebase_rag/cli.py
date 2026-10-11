@@ -2804,6 +2804,22 @@ def _print_root_rule(console: Console, public_roots: bool) -> None:
     )
 
 
+def _save_dead_code_table(
+    output: Path,
+    table: Table,
+    notice: str,
+    public_roots: bool,
+    has_candidates: bool,
+) -> None:
+    with output.open("w", encoding=cs.ENCODING_UTF8) as fh:
+        file_console = Console(file=fh)
+        _print_report_table(file_console, table)
+        if not has_candidates:
+            _print_root_rule(file_console, public_roots)
+        if notice:
+            file_console.print(notice)
+
+
 def _emit_dead_code(
     candidates: list[DeadCodeRow],
     output_format: cs.DeadCodeFormat,
@@ -2836,13 +2852,7 @@ def _emit_dead_code(
     )
     table = _build_dead_code_table(candidates, project_name)
     if output is not None:
-        with output.open("w", encoding=cs.ENCODING_UTF8) as fh:
-            file_console = Console(file=fh)
-            _print_report_table(file_console, table)
-            if not candidates:
-                _print_root_rule(file_console, public_roots)
-            if notice:
-                file_console.print(notice)
+        _save_dead_code_table(output, table, notice, public_roots, bool(candidates))
         app_context.console.print(
             style(
                 cs.CLI_DEADCODE_WRITTEN.format(count=len(candidates), path=output),
