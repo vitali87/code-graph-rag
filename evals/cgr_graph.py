@@ -1501,6 +1501,9 @@ class _StatefulIngestor:
                             props.get(cs.KEY_IS_OBJECT_MEMBER)
                         ),
                         cs.KEY_GENERIC_ARITY: _int(props.get(cs.KEY_GENERIC_ARITY)),
+                        cs.KEY_IS_EXPORTED: bool(props[cs.KEY_IS_EXPORTED])
+                        if cs.KEY_IS_EXPORTED in props
+                        else None,
                     }
                     defs.append(row)
                 return defs

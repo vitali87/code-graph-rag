@@ -19,6 +19,7 @@ from ...types_defs import (
 )
 from ..utils import (
     get_cached_query,
+    mark_js_ts_module_private,
     module_function_props,
     safe_decode_text,
     safe_decode_with_fallback,
@@ -667,6 +668,12 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         logger.debug(log_message, function_name=function_name, function_qn=function_qn)
         self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, function_props)
         self.function_registry[function_qn] = NodeType.FUNCTION
+        mark_js_ts_module_private(
+            self.function_registry,
+            function_qn,
+            function_props.get(cs.KEY_IS_EXPORTED) is not False,
+            language,
+        )
         self.simple_name_lookup[function_name].add(function_qn)
         self._claim_function_span(
             module_qn, function_node, cs.NodeLabel.FUNCTION.value, function_qn
