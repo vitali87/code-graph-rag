@@ -23,8 +23,11 @@ from codebase_rag import constants as cs
 from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.parsers.export_detection import is_commonjs_module
-from codebase_rag.parsers.js_ts.reexports import follow_js_reexports
+from codebase_rag.parsers.export_detection import (
+    commonjs_export_bindings,
+    is_commonjs_module,
+)
+from codebase_rag.parsers.js_ts.reexports import JsExport, follow_js_reexports
 from codebase_rag.parsers.utils import follow_reexports
 from codebase_rag.types_defs import NodeType, PropertyDict, PropertyValue
 
@@ -257,8 +260,8 @@ def test_a_receiver_typed_by_an_exported_name_still_binds_exactly(
     assert _exact_calls(edges, "user.use") == {"router.Svc.go"}, edges
 
 
-# A CommonJS module records no export table, so its bindings still stand in
-# for its exports: the walk keeps following a barrel's `require`.
+# A CommonJS barrel's `module.exports = { Svc }` is its export table: the
+# walk follows the published name to the binding the barrel `require`s.
 COMMONJS_FILES = {
     "svc.js": "class Svc { go() { return 1 } }\nmodule.exports = { Svc }\n",
     "barrel.js": "const { Svc } = require('./svc')\nmodule.exports = { Svc }\n",
@@ -272,10 +275,155 @@ COMMONJS_FILES = {
 }
 
 
-def test_a_commonjs_barrel_is_still_followed(tmp_path: Path) -> None:
-    edges = _index(tmp_path, COMMONJS_FILES)
+_REQUIRE_SVC = "const { Svc } = require('./svc')\n"
+
+# A publication runs at load wherever it sits in an expression, or in a
+# function called on the spot (Greptile, PR #3355).
+_LOAD_TIME_PUBLICATIONS = {
+    "statement": f"{_REQUIRE_SVC}module.exports = {{ Svc }}\n",
+    "frozen": f"{_REQUIRE_SVC}Object.freeze(module.exports = {{ Svc }})\n",
+    "object-assign": f"{_REQUIRE_SVC}Object.assign(module.exports, {{ Svc }})\n",
+    "iife": f"{_REQUIRE_SVC};(function () {{ module.exports = {{ Svc }} }})()\n",
+    "arrow-iife": f"{_REQUIRE_SVC};(() => {{ exports.Svc = Svc }})()\n",
+    "iife-called-with-this": (
+        f"{_REQUIRE_SVC};(function () {{ exports.Svc = Svc }}).call(this)\n"
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    "barrel",
+    list(_LOAD_TIME_PUBLICATIONS.values()),
+    ids=list(_LOAD_TIME_PUBLICATIONS),
+)
+def test_a_commonjs_barrel_is_still_followed(tmp_path: Path, barrel: str) -> None:
+    edges = _index(tmp_path, {**COMMONJS_FILES, "barrel.js": barrel})
     assert _heritage(edges, "user.Sub") == {(_INHERITS, _CLASS, "svc.Svc")}, edges
     assert _exact_calls(edges, "user.use") == {"svc.Svc.go"}, edges
+
+
+# A function defined but not called on the spot publishes nothing at load.
+_DEFERRED_PUBLICATIONS = {
+    "callback": f"{_REQUIRE_SVC}setTimeout(() => {{ module.exports = {{ Svc }} }})\n",
+    "uncalled-function": (
+        f"{_REQUIRE_SVC}function later() {{ module.exports = {{ Svc }} }}\n"
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    "barrel",
+    list(_DEFERRED_PUBLICATIONS.values()),
+    ids=list(_DEFERRED_PUBLICATIONS),
+)
+def test_a_deferred_commonjs_assignment_publishes_nothing(
+    tmp_path: Path, barrel: str
+) -> None:
+    edges = _index(tmp_path, {**COMMONJS_FILES, "barrel.js": barrel})
+    assert _heritage(edges, "user.Sub") == {(_INHERITS, _EXTERNAL, "r.Svc")}, edges
+    assert "svc.Svc.go" not in _exact_calls(edges, "user.use"), edges
+
+
+# A CommonJS barrel passes on only what it publishes (CodeRabbit, PR #3355):
+# `Hidden` is required for the barrel's own use and never assigned to its
+# exports, so `r.Hidden` names nothing first-party.
+CJS_LIB_JS = (
+    "class Public { go() { return 1 } }\n"
+    "class Hidden { go() { return 2 } }\n"
+    "module.exports = { Public, Hidden }\n"
+)
+
+CJS_PUBLIC_HIDDEN_USER_JS = (
+    "const r = require('./barrel')\n"
+    "const { Public, Hidden } = require('./barrel')\n"
+    "class P extends r.Public { run() { return this.go() } }\n"
+    "class H extends r.Hidden { run() { return this.go() } }\n"
+    "function usePublic() { const p = new Public(); return p.go() }\n"
+    "function useHidden() { const h = new Hidden(); return h.go() }\n"
+    "module.exports = { P, H, usePublic, useHidden }\n"
+)
+
+_REQUIRE_LIB = "const { Public, Hidden } = require('./lib')\n"
+
+_PUBLISHING_BARRELS = {
+    "object-literal": (
+        "barrel.js",
+        f"{_REQUIRE_LIB}const check = (x) => x instanceof Hidden\n"
+        "module.exports = { Public, check }\n",
+    ),
+    "renamed-binding-under-a-string-key": (
+        "barrel.js",
+        "const { Public: Shown, Hidden } = require('./lib')\n"
+        "module.exports = { 'Public': Shown }\n",
+    ),
+    "exports-member": ("barrel.js", f"{_REQUIRE_LIB}exports.Public = Public\n"),
+    "module-exports-member": (
+        "barrel.js",
+        f"{_REQUIRE_LIB}module.exports.Public = Public\n",
+    ),
+    "exports-string-key": ("barrel.js", f"{_REQUIRE_LIB}exports['Public'] = Public\n"),
+    "frozen": (
+        "barrel.js",
+        f"{_REQUIRE_LIB}Object.freeze(module.exports = {{ Public }})\n",
+    ),
+    "object-assign": (
+        "barrel.js",
+        f"{_REQUIRE_LIB}Object.assign(module.exports, {{ Public }})\n",
+    ),
+    "inside-a-top-level-if": (
+        "barrel.js",
+        f"{_REQUIRE_LIB}if (Public) {{ module.exports = {{ Public }} }}\n",
+    ),
+    "export-assignment": (
+        "barrel.ts",
+        "import { Public, Hidden } from './lib'\nexport = { Public }\n",
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    "barrel", list(_PUBLISHING_BARRELS.values()), ids=list(_PUBLISHING_BARRELS)
+)
+def test_a_commonjs_barrel_passes_on_only_the_names_it_publishes(
+    tmp_path: Path, barrel: tuple[str, str]
+) -> None:
+    name, body = barrel
+    edges = _index(
+        tmp_path,
+        {"lib.js": CJS_LIB_JS, name: body, "user.js": CJS_PUBLIC_HIDDEN_USER_JS},
+    )
+    assert _heritage(edges, "user.P") == {(_INHERITS, _CLASS, "lib.Public")}, edges
+    assert _exact_calls(edges, "user.usePublic") == {"lib.Public.go"}, edges
+    assert _heritage(edges, "user.H") == {(_INHERITS, _EXTERNAL, "r.Hidden")}, edges
+    assert "lib.Hidden.go" not in _exact_calls(edges, "user.useHidden"), edges
+
+
+# A whole value assigned to the exports names no binding per member: a
+# missing edge, never one to a binding the barrel keeps to itself. None of
+# these resolved before either.
+_OPAQUE_BARRELS = {
+    "require-of-a-module": "module.exports = require('./lib')\n",
+    "spread-of-a-require": "module.exports = { ...require('./lib') }\n",
+    "module-alias": "const lib = require('./lib')\nmodule.exports = lib\n",
+}
+
+
+@pytest.mark.parametrize(
+    "barrel", list(_OPAQUE_BARRELS.values()), ids=list(_OPAQUE_BARRELS)
+)
+def test_an_opaque_commonjs_publication_passes_on_nothing(
+    tmp_path: Path, barrel: str
+) -> None:
+    edges = _index(
+        tmp_path,
+        {
+            "lib.js": CJS_LIB_JS,
+            "barrel.js": barrel,
+            "user.js": CJS_PUBLIC_HIDDEN_USER_JS,
+        },
+    )
+    assert _heritage(edges, "user.P") == {(_INHERITS, _EXTERNAL, "r.Public")}, edges
+    assert _heritage(edges, "user.H") == {(_INHERITS, _EXTERNAL, "r.Hidden")}, edges
 
 
 # What a module's import statements say is not what it exports (Greptile, PR
@@ -386,6 +534,18 @@ def test_a_barrel_without_commonjs_exports_passes_on_only_its_es_exports(
         ("exports['Svc'] = Svc\n", True),
         ("const S = (module.exports = { Svc })\n", True),
         ("if (ok) { module.exports = { Svc } }\n", True),
+        ("Object.freeze(module.exports = { Svc })\n", True),
+        ("Object.assign(module.exports, { Svc })\n", True),
+        ("Object.assign(exports, { Svc })\n", True),
+        ("(0, module.exports = { Svc })\n", True),
+        ("ok ? (module.exports = { Svc }) : null\n", True),
+        ("(function () { module.exports = { Svc } })()\n", True),
+        ("(() => { exports.Svc = Svc })()\n", True),
+        ("!function () { module.exports = {} }()\n", True),
+        ("(function () { exports.Svc = Svc }).call(this)\n", True),
+        ("setTimeout(() => { module.exports = { Svc } })\n", False),
+        ("const later = function () { module.exports = {} }\n", False),
+        ("Object.assign({}, module.exports)\n", False),
         ("console.log('module.exports')\n", False),
         ("// module.exports = { Svc }\n", False),
         ("/* exports.Svc = Svc */\n", False),
@@ -418,6 +578,51 @@ def test_a_module_is_commonjs_only_by_what_it_exports(
 ) -> None:
     parser = load_parsers()[0][cs.SupportedLanguage.TS]
     assert is_commonjs_module(parser.parse(source.encode()).root_node) is commonjs
+
+
+@pytest.mark.parametrize(
+    ("source", "published"),
+    [
+        (
+            "module.exports = { A, B: x, 'C': y }\n",
+            {"A": "A", "B": "x", "C": "y"},
+        ),
+        ("exports.X = y\n", {"X": "y"}),
+        ("module.exports.X = y\n", {"X": "y"}),
+        ("exports['X'] = y\n", {"X": "y"}),
+        ("module.exports['X'] = y\n", {"X": "y"}),
+        ("if (ok) { exports.X = y }\n", {"X": "y"}),
+        ("export = { A, B: x }\n", {"A": "A", "B": "x"}),
+        ("Object.freeze(module.exports = { A })\n", {"A": "A"}),
+        (
+            "Object.assign(module.exports, { A, B: x }, { C })\n",
+            {"A": "A", "B": "x", "C": "C"},
+        ),
+        ("Object.assign(exports, require('./x'))\n", {}),
+        ("(function () { exports.X = y })()\n", {"X": "y"}),
+        ("setTimeout(() => { exports.X = y })\n", {}),
+        ("module.exports = { ...require('./a'), A }\n", {"A": "A"}),
+        # Opaque: no binding per published name.
+        ("module.exports = lib\n", {}),
+        ("module.exports = require('./x')\n", {}),
+        ("module.exports = class Svc {}\n", {}),
+        ("module.exports = { [key]: v }\n", {}),
+        ("module.exports = { run() {} }\n", {}),
+        ("exports.X = require('./x').X\n", {}),
+        ("exports.X = function () {}\n", {}),
+        ("export = lib\n", {}),
+        # Not a load-time publication.
+        ("function later() { exports.X = y }\n", {}),
+        ("console.log('exports.X = y')\n", {}),
+        ("const m = module.exports.X\n", {}),
+    ],
+)
+def test_a_commonjs_module_publishes_only_load_time_named_bindings(
+    source: str, published: dict[str, str]
+) -> None:
+    parser = load_parsers()[0][cs.SupportedLanguage.TS]
+    root = parser.parse(source.encode()).root_node
+    assert commonjs_export_bindings(root) == published
 
 
 # --- a module reached by two star paths is walked on each ------------------
@@ -606,13 +811,13 @@ def _js_follow(
     qn: str,
     imports: dict[str, dict[str, str]],
     registry: FunctionRegistryTrie,
-    commonjs: frozenset[str] = frozenset(),
+    exports: dict[str, dict[str, JsExport]] | None = None,
 ) -> str:
     modules = set(imports) | {
         qn.rpartition(cs.SEPARATOR_DOT)[0] for qn, _kind in registry.items()
     }
     paths = {module: Path(f"{module}.ts") for module in modules}
-    return follow_js_reexports(qn, imports, {}, commonjs, paths, registry)
+    return follow_js_reexports(qn, imports, exports or {}, paths, registry)
 
 
 class TestFollowJsReexportsStarPaths:
@@ -631,13 +836,15 @@ class TestFollowJsReexportsStarPaths:
         registry = _registry("p.impl.Base")
         assert _js_follow("p.index.Base", imports, registry) == "p.index.Base"
 
-    def test_a_commonjs_module_s_bindings_stand_in_for_its_exports(self) -> None:
-        # `module.exports = { Base }` is not parsed into the export table.
-        imports = {"p.index": {"Base": "p.impl.Base"}}
-        registry = _registry("p.impl.Base")
+    def test_a_published_name_leads_to_the_binding_it_names(self) -> None:
+        # `module.exports = { Base: Impl }` records `Base` as the binding
+        # `Impl`; the barrel's other binding is not an export.
+        imports = {"p.index": {"Impl": "p.impl.Base", "Other": "p.impl.Other"}}
+        registry = _registry("p.impl.Base", "p.impl.Other")
+        exports = {"p.index": {"Base": JsExport("p.index.Impl", local=True)}}
+        assert _js_follow("p.index.Base", imports, registry, exports) == "p.impl.Base"
         assert (
-            _js_follow("p.index.Base", imports, registry, frozenset({"p.index"}))
-            == "p.impl.Base"
+            _js_follow("p.index.Other", imports, registry, exports) == "p.index.Other"
         )
 
     def test_a_private_declaration_in_a_star_source_is_not_passed_on(self) -> None:
