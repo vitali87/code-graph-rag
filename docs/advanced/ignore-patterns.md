@@ -47,7 +47,8 @@ establish it and logs why.
 ## cgr's own state
 
 A sync keeps what it needs to stay incremental (the hash cache, directory
-mtimes, the exclusion stamp, the parser fingerprint and pending-work markers),
+mtimes, the exclusion stamp, the parser fingerprint and pending-work markers)
+and its [sync lock](../guide/realtime-updates.md#one-sync-of-a-checkout-at-a-time),
 and `cgr rename` / `cgr edits` keep their undo history and lock, in one
 directory per checkout under `CGR_HOME` (default `~/.cgr`):
 

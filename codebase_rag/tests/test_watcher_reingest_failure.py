@@ -43,6 +43,8 @@ class _Event:
 def updater() -> MagicMock:
     mock = MagicMock()
     mock.repo_path = Path("/repo")
+    # A full run takes the checkout's sync lock under the project's name.
+    mock.project_name = "repo"
     # A real updater always carries both sets, as None when unconfigured.
     mock.exclude_paths = None
     mock.unignore_paths = None
