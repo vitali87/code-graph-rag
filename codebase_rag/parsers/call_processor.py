@@ -1857,6 +1857,7 @@ class CallProcessor:
         rehydrated_definition_paths: dict[str, str] | None = None,
         rust_function_modules: dict[str, str] | None = None,
         declared_module_qns: set[str] | None = None,
+        rehydrated_interface_implementers: dict[str, set[str]] | None = None,
         guessed_implementations: set[tuple[str, str]] | None = None,
     ) -> None:
         self.ingestor = ingestor
@@ -1921,6 +1922,7 @@ class CallProcessor:
             rehydrated_definition_paths=rehydrated_definition_paths,
             rust_function_modules=rust_function_modules,
             declared_module_qns=declared_module_qns,
+            rehydrated_interface_implementers=rehydrated_interface_implementers,
             go_package_names=self._go_package_names,
             guessed_implementations=guessed_implementations,
         )

@@ -222,6 +222,9 @@ class ProcessorFactory:
                 ),
                 rust_function_modules=(self.definition_processor.rust_function_modules),
                 declared_module_qns=self.definition_processor.declared_module_qns,
+                rehydrated_interface_implementers=(
+                    self.definition_processor.rehydrated_interface_implementers
+                ),
                 guessed_implementations=self.definition_processor.go_guessed_pairs,
             )
         return self._call_processor
