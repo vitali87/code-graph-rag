@@ -446,32 +446,36 @@ def generic_shape(type_node: Node) -> CSharpGenericShape | None:
         base for entry in entries if (base := _generic_base(entry)) is not None
     )
     # An enum's base list writes its underlying type, which is no base.
-    written = (
-        ()
-        if type_node.type == cs.TS_CSHARP_ENUM_DECLARATION
-        else tuple(text for entry in entries if (text := _written_base(entry)))
-    ) + _implicit_bases(type_node, parameters)
+    written = [
+        text
+        for entry in entries
+        if type_node.type != cs.TS_CSHARP_ENUM_DECLARATION
+        and (text := _written_base(entry))
+    ]
+    if (implicit := _implicit_base(type_node, parameters)) is not None:
+        written.append(implicit)
     value_type = is_value_type_declaration(type_node)
     if not (parameters or bases or value_type or written):
         return None
-    return CSharpGenericShape(tuple(parameters), bases, variances, value_type, written)
+    return CSharpGenericShape(
+        tuple(parameters), bases, variances, value_type, tuple(written)
+    )
 
 
-def _implicit_bases(type_node: Node, parameters: list[str]) -> tuple[str, ...]:
-    # A record's `IEquatable<>` of itself, which no base list writes.
+def _implicit_base(type_node: Node, parameters: list[str]) -> str | None:
+    # A record's `IEquatable<>` of itself, which no base list writes; None
+    # for any other type.
     if type_node.type != cs.TS_CSHARP_RECORD_DECLARATION:
-        return ()
+        return None
     name = safe_decode_text(type_node.child_by_field_name(cs.FIELD_NAME))
     if not name:
-        return ()
+        return None
     own = (
         f"{cs.CHAR_ANGLE_OPEN}{cs.SEPARATOR_COMMA_SPACE.join(parameters)}{cs.CHAR_ANGLE_CLOSE}"
         if parameters
         else ""
     )
-    return (
-        f"{cs.CSHARP_RECORD_EQUATABLE}{cs.CHAR_ANGLE_OPEN}{name}{own}{cs.CHAR_ANGLE_CLOSE}",
-    )
+    return f"{cs.CSHARP_RECORD_EQUATABLE}{cs.CHAR_ANGLE_OPEN}{name}{own}{cs.CHAR_ANGLE_CLOSE}"
 
 
 def _written_base(entry: Node) -> str | None:
