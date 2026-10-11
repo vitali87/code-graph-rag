@@ -131,7 +131,8 @@ CMD_GRAPH_OVERRIDES = (
     "Direct overrides only, unless --depth is above 1."
 )
 CMD_GRAPH_IMPORTERS = (
-    "Modules importing a module, with each import statement's location."
+    "Modules importing a module, with each import statement's location. "
+    "Direct importers only, unless --through-reexports."
 )
 CMD_GRAPH_TESTS_REACHING = (
     "Tests from which a qualified name is reachable, with distance."
@@ -147,6 +148,11 @@ HELP_GRAPH_REPO_PATH = (
     "Repository root the project name derives from and source is read from."
 )
 HELP_GRAPH_DEPTH = "How many hops to follow (1 to 5)."
+HELP_GRAPH_THROUGH_REEXPORTS = (
+    "Also list the modules that reach it through a re-export (a package "
+    "__init__.py, a Rust pub use, an index.ts barrel), each row with the "
+    "`via` import statements it came through."
+)
 CMD_CHECK = (
     "Report the structural delta of the working tree against a git ref: "
     "dangling callers and importers, arity findings, new duplicates, new "
