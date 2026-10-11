@@ -20,6 +20,7 @@ import pytest
 
 import codec.schema_pb2 as pb
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.config import settings
 from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.graph_updater import GraphUpdater
@@ -1140,7 +1141,7 @@ def _incremental_and_clean(
     _updater(store, root).run(force=True)
 
     path = root / edited
-    cache_mtime = (root / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
     path.write_text(text, encoding="utf-8")
     # Past the hash cache's mtime, so a coarse clock cannot skip the file.
     os.utime(path, (cache_mtime + 1, cache_mtime + 1))
