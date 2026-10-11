@@ -1642,3 +1642,139 @@ def test_a_range_assignment_keeps_the_variables_declared_type(
         f"{pkg}.Shape.Area": cs.EdgeResolution.EXACT,
         f"{pkg}.Square.Area": cs.EdgeResolution.HEURISTIC,
     }
+
+
+# --- a local that shadows the range variable owns its calls ------------------
+
+LOOP_SHADOWS = """package shapes
+
+type Shape interface {
+\tArea() float64
+}
+
+type Square struct{}
+
+func (s Square) Area() float64 { return 1 }
+
+type Other struct{}
+
+func (o Other) Area(scale int) float64 { return float64(scale) }
+
+func InLoop(shapes []Shape) float64 {
+\tt := 0.0
+\tfor _, s := range shapes {
+\t\ts := Other{}
+\t\tt += s.Area(2)
+\t}
+\treturn t
+}
+
+func InBlock(shapes []Shape, ok bool) float64 {
+\tt := 0.0
+\tfor _, s := range shapes {
+\t\tif ok {
+\t\t\ts := Other{}
+\t\t\tt += s.Area(3)
+\t\t}
+\t}
+\treturn t
+}
+
+func makeOther() Other { return Other{} }
+
+func FromCall(shapes []Shape) float64 {
+\tt := 0.0
+\tfor _, s := range shapes {
+\t\ts := makeOther()
+\t\tt += s.Area(6)
+\t}
+\treturn t
+}
+
+func After(shapes []Shape) float64 {
+\tt := 0.0
+\tfor _, s := range shapes {
+\t\tt += s.Area()
+\t\ts := Other{}
+\t\t_ = s
+\t}
+\treturn t
+}
+
+func Closure(shapes []Shape) float64 {
+\tt := 0.0
+\tfor _, s := range shapes {
+\t\tf := func(s Other) float64 { return s.Area(4) }
+\t\tt += f(Other{}) + s.Area()
+\t}
+\treturn t
+}
+
+func Outside(shapes []Shape) float64 {
+\ts := Other{}
+\tt := 0.0
+\tfor _, s := range shapes {
+\t\tt += 2 * s.Area()
+\t}
+\treturn t + s.Area(5)
+}
+"""
+
+_SHAPE_DISPATCH = {"Shape.Area": "exact", "Square.Area": "heuristic"}
+_OTHER = {"Other.Area": "exact"}
+
+
+@pytest.fixture
+def loop_shadows(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> tuple[str, MagicMock]:
+    project = _index(
+        temp_repo / "goshadow", {"shapes.go": LOOP_SHADOWS}, mock_ingestor, monkeypatch
+    )
+    return f"{project}.shapes", mock_ingestor
+
+
+def _calls_at(
+    loop_shadows: tuple[str, MagicMock], caller: str, needle: str
+) -> dict[str, str]:
+    pkg, mock_ingestor = loop_shadows
+    line, _ = _position(LOOP_SHADOWS, needle)
+    calls = _calls_by_line(mock_ingestor, f"{pkg}.{caller}").get(line, {})
+    return {
+        callee.removeprefix(f"{pkg}."): str(resolution)
+        for callee, resolution in calls.items()
+    }
+
+
+@pytest.mark.parametrize(
+    ("caller", "needle", "expected"),
+    [
+        ("InLoop", "t += s.Area(2)", _OTHER),
+        ("InBlock", "t += s.Area(3)", _OTHER),
+        ("Closure", "return s.Area(4)", _OTHER),
+        ("FromCall", "t += s.Area(6)", _OTHER),
+    ],
+    ids=["in-loop", "in-block", "closure-parameter", "from-a-call"],
+)
+def test_a_local_shadowing_the_range_variable_owns_its_calls(
+    loop_shadows: tuple[str, MagicMock], caller: str, needle: str, expected: dict
+) -> None:
+    # The inner `s` is an Other from its declaration on; the loop's Shape
+    # `s` must not be laid over it.
+    assert _calls_at(loop_shadows, caller, needle) == expected
+
+
+@pytest.mark.parametrize(
+    ("caller", "needle", "expected"),
+    [
+        ("After", "t += s.Area()", _SHAPE_DISPATCH),
+        ("Closure", "t += f(Other{}) + s.Area()", _SHAPE_DISPATCH),
+        ("Outside", "t += 2 * s.Area()", _SHAPE_DISPATCH),
+        ("Outside", "return t + s.Area(5)", _OTHER),
+    ],
+    ids=["before-a-later-shadow", "beside-a-closure", "in-loop", "after-loop"],
+)
+def test_the_range_variable_keeps_the_calls_it_owns(
+    loop_shadows: tuple[str, MagicMock], caller: str, needle: str, expected: dict
+) -> None:
+    assert _calls_at(loop_shadows, caller, needle) == expected

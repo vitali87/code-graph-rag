@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 from tree_sitter import Node
@@ -90,29 +91,113 @@ def _range_clauses(body: Node) -> list[Node]:
     return clauses
 
 
-def range_span_bindings(caller_node: Node) -> list[tuple[int, int, str, str]]:
+# A span-scoped binding the call processor lays over the flat type map:
+# (start byte, end byte, name, type).
+_SpanBinding = tuple[int, int, str, str]
+
+
+def range_span_bindings(
+    caller_node: Node, value_type: Callable[[Node], str | None]
+) -> list[_SpanBinding]:
     """`for _, s := range shapes` with `shapes []Shape` declares a Shape `s`
-    for the loop (issue #2483): (start, end, name, type) for each such
-    variable, its span the loop after the range clause, so a call inside
-    binds through Shape while the name keeps its own type outside. `shapes`
-    is the declaration in scope at the loop, not another of that name in a
-    block that has ended or a closure. `for _, s = range shapes` declares
-    nothing: `s` keeps the type it was declared with."""
+    for the loop (issue #2483): a binding over the loop after the range
+    clause, so a call inside binds through Shape while the name keeps its own
+    type outside. `shapes` is the declaration in scope at the loop, not
+    another of that name in a block that has ended or a closure. `for _, s =
+    range shapes` declares nothing: `s` keeps the type it was declared with.
+
+    A local of that name declared inside the loop (`s := Other{}`, a closure
+    parameter `s`) owns `s` from its declaration on, so the loop's binding
+    skips its scope, and the local gets a binding of its own type where one
+    can be read (`value_type` types a `:=` value)."""
     body = caller_node.child_by_field_name(cs.FIELD_BODY)
     clauses = (
         [clause for clause in _range_clauses(body) if _declares(clause)] if body else []
     )
     bindings = go_utils.local_bindings(caller_node) if clauses else {}
-    spans: list[tuple[int, int, str, str]] = []
+    spans: list[_SpanBinding] = []
     for clause in clauses:
         left = clause.child_by_field_name(cs.FIELD_LEFT)
         slots = _ranged_slots(clause, bindings)
-        if left is not None and slots is not None and clause.parent is not None:
-            spans.extend(
-                (clause.end_byte, clause.parent.end_byte, name, type_name)
-                for name, type_name in _bound_types(left, slots)
-            )
+        if left is None or slots is None or clause.parent is None:
+            continue
+        scope = (clause.end_byte, clause.parent.end_byte)
+        for name, type_name in _bound_types(left, slots):
+            shadows = _shadows(bindings.get(name, []), clause, scope)
+            spans.extend(_loop_bindings(scope, shadows, name, type_name))
+            spans.extend(_shadow_bindings(shadows, name, value_type))
     return spans
+
+
+def _loop_bindings(
+    scope: tuple[int, int],
+    shadows: list[tuple[tuple[int, int], Node]],
+    name: str,
+    type_name: str,
+) -> list[_SpanBinding]:
+    holes = [span for span, _declaration in shadows]
+    return [(start, end, name, type_name) for start, end in _without(scope, holes)]
+
+
+def _shadows(
+    declarations: list[tuple[tuple[int, int], Node]],
+    clause: Node,
+    scope: tuple[int, int],
+) -> list[tuple[tuple[int, int], Node]]:
+    # Go's scopes nest, so a declaration that starts inside the loop ends
+    # inside it too.
+    return [
+        (span, declaration)
+        for span, declaration in declarations
+        if declaration.id != clause.id and scope[0] <= span[0] < scope[1]
+    ]
+
+
+def _without(
+    scope: tuple[int, int], holes: list[tuple[int, int]]
+) -> list[tuple[int, int]]:
+    """`scope` less every hole in it, as the spans that remain."""
+    remaining: list[tuple[int, int]] = []
+    start = scope[0]
+    for hole_start, hole_end in sorted(holes):
+        if hole_start > start:
+            remaining.append((start, hole_start))
+        start = max(start, hole_end)
+    if start < scope[1]:
+        remaining.append((start, scope[1]))
+    return remaining
+
+
+def _shadow_bindings(
+    shadows: list[tuple[tuple[int, int], Node]],
+    name: str,
+    value_type: Callable[[Node], str | None],
+) -> list[_SpanBinding]:
+    return [
+        (span[0], span[1], name, type_name)
+        for span, declaration in shadows
+        if (type_name := _declared_type(declaration, name, value_type))
+    ]
+
+
+def _declared_type(
+    declaration: Node, name: str, value_type: Callable[[Node], str | None]
+) -> str | None:
+    # The type the flat map would give the declaration: the written type of
+    # a parameter or `var`, or what a `:=` value is built as.
+    if declaration.type in (cs.TS_GO_PARAMETER_DECLARATION, cs.TS_GO_VAR_SPEC):
+        type_node = declaration.child_by_field_name(cs.FIELD_TYPE)
+        return type_identifier_text(type_node) if type_node is not None else None
+    if declaration.type != cs.TS_GO_SHORT_VAR_DECLARATION:
+        return None
+    left = declaration.child_by_field_name(cs.FIELD_LEFT)
+    right = declaration.child_by_field_name(cs.FIELD_RIGHT)
+    if left is None or right is None:
+        return None
+    names = [safe_decode_text(child) for child in left.named_children]
+    values = right.named_children
+    index = names.index(name) if name in names else len(values)
+    return value_type(values[index]) if index < len(values) else None
 
 
 def _declares(clause: Node) -> bool:
@@ -253,7 +338,7 @@ class GoTypeInferenceEngine:
     def collect_range_span_bindings(
         self, caller_node: Node
     ) -> list[tuple[int, int, str, str]]:
-        return range_span_bindings(caller_node)
+        return range_span_bindings(caller_node, self.infer_value_type)
 
     def build_field_type_map(self, class_node: Node) -> dict[str, str]:
         # Map a Go struct's field names to their bare type names (a `type_spec`:
