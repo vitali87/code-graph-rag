@@ -746,6 +746,7 @@ def test_renaming_one_implementation_renames_the_interface_method_set(
             cwd=temp_repo,
             capture_output=True,
             text=True,
+            encoding=cs.ENCODING_UTF8,
             check=False,
         )
         assert built.returncode == 0, built.stderr
@@ -2429,6 +2430,7 @@ def _go_build(root: Path, goos: str) -> subprocess.CompletedProcess[str]:
         cwd=root,
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         check=False,
         env={**os.environ, "GOOS": goos, "GOARCH": "amd64", "CGO_ENABLED": "0"},
     )
