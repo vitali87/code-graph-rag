@@ -825,13 +825,13 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
     processor._scala_block_imports = {}
     processor.java_static_imports = {}
     processor.js_export_bindings = {}
-    # A file rewritten from ES module to CommonJS must not keep the ES flag,
-    # or the re-export walk would stop following what it binds.
-    processor.js_es_modules = {"m"}
+    # A file rewritten from CommonJS to an ES module must not keep the
+    # CommonJS flag, or the re-export walk would follow its private imports.
+    processor.js_commonjs_modules = {"m"}
 
     processor._clear_module_import_state("m")
 
-    assert "m" not in processor.js_es_modules
+    assert "m" not in processor.js_commonjs_modules
     assert processor.dart_prefix_shadows.get("m") is None
     assert processor.dart_import_aliases.get("m") is None
     assert processor.dart_exposed_libraries.get("m") is None

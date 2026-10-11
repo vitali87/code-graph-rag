@@ -23,6 +23,7 @@ from codebase_rag import constants as cs
 from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.export_detection import is_commonjs_module
 from codebase_rag.parsers.js_ts.reexports import follow_js_reexports
 from codebase_rag.parsers.utils import follow_reexports
 from codebase_rag.types_defs import NodeType, PropertyDict, PropertyValue
@@ -277,6 +278,112 @@ def test_a_commonjs_barrel_is_still_followed(tmp_path: Path) -> None:
     assert _exact_calls(edges, "user.use") == {"svc.Svc.go"}, edges
 
 
+# What a module's import statements say is not what it exports (Greptile, PR
+# #3355): a TypeScript barrel that `import type`s, imports a value, or exports
+# only types, and publishes through `module.exports` or `export =`, is still a
+# CommonJS barrel whose bindings are its exports.
+TS_COMMONJS_USER_TS = """\
+import * as r from './barrel'
+import { Svc } from './barrel'
+export class Sub extends r.Svc { run(): number { return this.go() } }
+export function use(): number { const s = new Svc(); return s.go() }
+"""
+
+_TS_COMMONJS_BARRELS = {
+    "type-only-import": (
+        "import type { T } from './types'\n"
+        "const { Svc } = require('./svc')\nmodule.exports = { Svc }\n"
+    ),
+    "value-import": (
+        "import { helper } from './helper'\nconst { Svc } = require('./svc')\n"
+        "helper()\nmodule.exports = { Svc }\n"
+    ),
+    "type-only-export": (
+        "export interface Opts { x: number }\n"
+        "const { Svc } = require('./svc')\nmodule.exports = { Svc }\n"
+    ),
+    "export-assignment": "import { Svc } from './svc'\nexport = { Svc }\n",
+}
+
+
+def _ts_barrel_files(barrel: str) -> dict[str, str]:
+    return {
+        "svc.ts": "export class Svc { go(): number { return 1 } }\n",
+        "types.ts": "export interface T { x: number }\n",
+        "helper.ts": "export function helper(): number { return 2 }\n",
+        "barrel.ts": barrel,
+        "user.ts": TS_COMMONJS_USER_TS,
+    }
+
+
+@pytest.mark.parametrize(
+    "barrel", list(_TS_COMMONJS_BARRELS.values()), ids=list(_TS_COMMONJS_BARRELS)
+)
+def test_a_typescript_commonjs_barrel_is_followed(tmp_path: Path, barrel: str) -> None:
+    edges = _index(tmp_path, _ts_barrel_files(barrel))
+    assert _heritage(edges, "user.Sub") == {(_INHERITS, _CLASS, "svc.Svc")}, edges
+    assert _exact_calls(edges, "user.use") == {"svc.Svc.go"}, edges
+    assert _exact_calls(edges, "user.Sub.run") == {"svc.Svc.go"}, edges
+
+
+_EXPORT_TABLE_BARRELS = {
+    # An ES export makes the export table the module's whole API, a
+    # type-only import beside it notwithstanding.
+    "es-export-beside-a-type-only-import": (
+        "import type { T } from './types'\nimport { Svc } from './svc'\n"
+        "export function make(t: T): Svc { return new Svc() }\n"
+    ),
+    # Both systems: under ES module semantics `module` is not the export
+    # object, and following the bindings could pass on a private import.
+    "es-export-beside-module-exports": (
+        "export const version = 1\nconst { Svc } = require('./svc')\n"
+        "module.exports = { Svc }\n"
+    ),
+    # Neither: the module exports nothing, so nothing it binds is a member.
+    "import-only": "import { Svc } from './svc'\nnew Svc().go()\n",
+    "require-only": "const { Svc } = require('./svc')\nnew Svc().go()\n",
+}
+
+
+@pytest.mark.parametrize(
+    "barrel", list(_EXPORT_TABLE_BARRELS.values()), ids=list(_EXPORT_TABLE_BARRELS)
+)
+def test_a_barrel_without_commonjs_exports_passes_on_only_its_es_exports(
+    tmp_path: Path, barrel: str
+) -> None:
+    edges = _index(tmp_path, _ts_barrel_files(barrel))
+    assert _heritage(edges, "user.Sub") == {(_INHERITS, _EXTERNAL, "r.Svc")}, edges
+    assert "svc.Svc.go" not in _exact_calls(edges, "user.use"), edges
+
+
+@pytest.mark.parametrize(
+    ("source", "commonjs"),
+    [
+        ("module.exports = { Svc }\n", True),
+        ("exports.Svc = Svc\n", True),
+        ("if (ok) { module.exports = { Svc } }\n", True),
+        ("export = { Svc }\n", True),
+        ("import type { T } from './t'\nmodule.exports = {}\n", True),
+        ("import { T } from './t'\nmodule.exports = { T }\n", True),
+        ("export interface I { x: number }\nmodule.exports = {}\n", True),
+        ("export type A = number\nmodule.exports = {}\n", True),
+        ("export type { T } from './t'\nmodule.exports = {}\n", True),
+        ("export const v = 1\nmodule.exports = {}\n", False),
+        ("export default 1\nmodule.exports = {}\n", False),
+        ("export * from './a'\nmodule.exports = {}\n", False),
+        ("export { Svc }\nmodule.exports = {}\n", False),
+        ("import { Svc } from './svc'\n", False),
+        ("const { Svc } = require('./svc')\n", False),
+        ("export class Svc {}\n", False),
+    ],
+)
+def test_a_module_is_commonjs_only_by_what_it_exports(
+    source: str, commonjs: bool
+) -> None:
+    parser = load_parsers()[0][cs.SupportedLanguage.TS]
+    assert is_commonjs_module(parser.parse(source.encode()).root_node) is commonjs
+
+
 # --- a module reached by two star paths is walked on each ------------------
 
 BASE_TS = "export class Base { go(): number { return 1 } }\n"
@@ -469,7 +576,7 @@ def _js_follow(
         qn.rpartition(cs.SEPARATOR_DOT)[0] for qn, _kind in registry.items()
     }
     paths = {module: Path(f"{module}.ts") for module in modules}
-    return follow_js_reexports(qn, imports, {}, modules - commonjs, paths, registry)
+    return follow_js_reexports(qn, imports, {}, commonjs, paths, registry)
 
 
 class TestFollowJsReexportsStarPaths:
