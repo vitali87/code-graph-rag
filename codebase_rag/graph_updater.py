@@ -2249,9 +2249,10 @@ class GraphUpdater:
         another writer holds the checkout's sync lock, which
         `holds_sync_lock` takes around the whole run (issue #2441),
         `UnsafeSyncLockError` when that lock file is a symbolic link, and
-        `SyncLockUnavailableError` when it is there but cannot be opened. The
-        lock lives in the checkout's state directory; when CGR_HOME cannot be
-        written the run goes ahead without it, after a warning.
+        `SyncLockUnavailableError` when it is there but cannot be opened
+        even read-only. The lock lives in the checkout's state directory;
+        when there is none and CGR_HOME cannot be written to create it, the
+        run goes ahead without it, after a warning.
 
         `committed` turns True once the run has nothing left that could leave
         the graph partial: at the commit point, or on the in-sync fast path.

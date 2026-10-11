@@ -409,8 +409,8 @@ def test_the_holder_reenters_its_own_lock(repo: Path, mock_ingestor: MagicMock) 
 
 @contextmanager
 def _lock_open_denied(repo: Path, code: int = errno.EACCES) -> Iterator[Path]:
-    # The lock file is there and opening it fails with `code`: EACCES for
-    # one another user created 0644 in a CGR_HOME they share.
+    # The lock file is there and every open of it, read-only included,
+    # fails with `code`.
     lock_path = _lock_path(repo)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock_path.write_bytes(b"")
@@ -425,41 +425,143 @@ def _lock_open_denied(repo: Path, code: int = errno.EACCES) -> Iterator[Path]:
         yield lock_path
 
 
+@pytest.mark.parametrize(
+    "code", [errno.EACCES, errno.EROFS], ids=["not-readable", "read-only-fs"]
+)
 def test_a_lock_this_user_cannot_open_refuses_the_sync(
-    repo: Path, mock_ingestor: MagicMock
+    repo: Path, mock_ingestor: MagicMock, code: int
 ) -> None:
     # Greptile review of PR 2512: a lock that could not be opened was
     # synced around, so a second user of a shared checkout ran unguarded
-    # beside the sync that held it. A lock file that is there is never
-    # taken for a CGR_HOME that cannot be written.
-    with _lock_open_denied(repo) as lock_path:
+    # beside the sync that held it. A lock file that is there, and cannot
+    # be opened even read-only, is never taken for a CGR_HOME that cannot
+    # be written.
+    with _lock_open_denied(repo, code) as lock_path:
         updater = _updater(repo, mock_ingestor)
         with pytest.raises(SyncLockError) as refused:
             updater.run()
 
     message = str(refused.value)
     assert str(lock_path) in message
-    assert os.strerror(errno.EACCES) in message
+    assert os.strerror(code) in message
     mock_ingestor.ensure_node_batch.assert_not_called()
     mock_ingestor.execute_write.assert_not_called()
 
 
-def test_a_read_only_cgr_home_runs_the_sync_with_a_lock_file_there(
-    repo: Path, mock_ingestor: MagicMock
+@contextmanager
+def _read_write_open_fails(repo: Path, code: int) -> Iterator[Path]:
+    # Opening the lock file for writing fails with `code`: EROFS on a
+    # read-only CGR_HOME, EACCES for a file another user created 0644 in a
+    # CGR_HOME they share. Opening it read-only still works.
+    lock_path = _lock_path(repo)
+    real_open = os.open
+
+    def open_(path: str | os.PathLike[str], flags: int, *args: int) -> int:
+        if Path(path) == lock_path and flags & (os.O_RDWR | os.O_WRONLY):
+            raise OSError(code, os.strerror(code), str(path))
+        return real_open(path, flags, *args)
+
+    with patch("codebase_rag.sync_lock.os.open", side_effect=open_):
+        yield lock_path
+
+
+# Tries the lock once in a separate interpreter and says what happened.
+_CONTENDER = """
+import sys
+from pathlib import Path
+from codebase_rag.sync_lock import SyncInProgressError, repo_sync_lock
+try:
+    with repo_sync_lock(Path(sys.argv[1]), "contender"):
+        print("acquired", flush=True)
+except SyncInProgressError:
+    print("refused", flush=True)
+"""
+
+
+def _contend_elsewhere(repo: Path) -> str:
+    done = subprocess.run(
+        [sys.executable, "-c", _CONTENDER, str(repo)],
+        capture_output=True,
+        text=True,
+        encoding=cs.ENCODING_UTF8,
+        env={**os.environ, "CGR_HOME": str(settings.CGR_HOME)},
+        timeout=60,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
+    return done.stdout.split()[-1]
+
+
+_READ_ONLY_CODES = pytest.mark.parametrize(
+    "code", [errno.EROFS, errno.EACCES], ids=["read-only-fs", "not-writable"]
+)
+
+
+@_READ_ONLY_CODES
+def test_a_lock_file_this_user_can_only_read_still_excludes_a_running_sync(
+    repo: Path, mock_ingestor: MagicMock, code: int
 ) -> None:
-    # Read-only is CGR_HOME that cannot be written, whether or not an
-    # earlier sync left the lock file there: the sync runs (issue #2427).
+    # Greptile review of PR 2512: a lock file that was there but would not
+    # open read-write (EROFS) was taken for a CGR_HOME that cannot be
+    # written, so this sync ran without the lock beside the one holding it.
+    updater = _updater(repo, mock_ingestor)
+    with (
+        _held_elsewhere(repo, "click__a4231746") as holder,
+        _read_write_open_fails(repo, code),
+    ):
+        with pytest.raises(SyncInProgressError) as refused:
+            updater.run()
+
+    assert str(holder.pid) in str(refused.value)
+    mock_ingestor.ensure_node_batch.assert_not_called()
+    mock_ingestor.execute_write.assert_not_called()
+
+
+@_READ_ONLY_CODES
+def test_a_lock_file_this_user_can_only_read_is_held_through_a_read_only_handle(
+    repo: Path, mock_ingestor: MagicMock, code: int
+) -> None:
+    # A read-only CGR_HOME an earlier sync left its lock file in: no one
+    # holds it, so the sync runs, and it holds the lock while it does.
+    lock_path = _lock_path(repo)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.write_bytes(b"")
     logged: list[str] = []
     sink = logger.add(logged.append, level="WARNING", format="{message}")
     try:
-        with _lock_open_denied(repo, errno.EROFS):
+        with _read_write_open_fails(repo, code), repo_sync_lock(repo, "click"):
+            during = _contend_elsewhere(repo)
+            _updater(repo, mock_ingestor).run()
+    finally:
+        logger.remove(sink)
+
+    assert during == "refused"
+    mock_ingestor.ensure_node_batch.assert_called()
+    prefix = ls.SYNC_LOCK_UNGUARDED.split("{", 1)[0]
+    assert not any(m.startswith(prefix) for m in logged), logged
+    # Negative: released when the sync ends.
+    assert _contend_elsewhere(repo) == "acquired"
+
+
+def test_a_read_only_cgr_home_without_a_lock_file_runs_unguarded_and_warns_once(
+    repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # No lock file to open and none can be created: the one case that runs
+    # without the lock (issue #2427).
+    logged: list[str] = []
+    sink = logger.add(logged.append, level="WARNING", format="{message}")
+    try:
+        with _read_write_open_fails(repo, errno.EROFS) as lock_path:
             _updater(repo, mock_ingestor).run()
     finally:
         logger.remove(sink)
 
     mock_ingestor.ensure_node_batch.assert_called()
     prefix = ls.SYNC_LOCK_UNGUARDED.split("{", 1)[0]
-    assert any(m.startswith(prefix) for m in logged), logged
+    unguarded = [m for m in logged if m.startswith(prefix)]
+    assert len(unguarded) == 1, logged
+    assert str(lock_path) in unguarded[0]
+    assert not lock_path.exists()
 
 
 def test_a_lock_path_that_is_not_a_file_refuses_the_sync(

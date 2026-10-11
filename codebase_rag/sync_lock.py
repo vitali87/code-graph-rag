@@ -22,11 +22,15 @@ never opened, moved or removed: it is in `CGR_STATE_LOCK_FILENAMES`, so the
 state move a sync makes under the lock leaves it where it is instead of
 carrying a held lock file away from the path the next writer opens.
 
-A lock file that cannot be created because CGR_HOME cannot be written does
-not stop the sync, which runs without incremental state in that case rather
-than failing (issue #2427): it runs without the lock too, after a warning
-that concurrent syncs of the checkout are not excluded. Such a run cannot
-publish a hash cache either, since that lives in the same directory.
+A lock file that is there but will not open read-write, on a read-only
+CGR_HOME or as another user's file in a CGR_HOME they share, is locked
+through a read-only handle: the lock call needs no write access, so it
+still excludes. Only a lock file that is not there and cannot be created,
+because CGR_HOME cannot be written, lets a sync run without the lock: such
+a sync runs without incremental state rather than failing (issue #2427), so
+it runs without the lock too, after a warning that concurrent syncs of the
+checkout are not excluded. It cannot publish a hash cache either, since
+that lives in the same directory.
 
 Re-entrant per thread: the CLI and the MCP tools take it before they put
 the `:IncompleteRun` marker down, then call `GraphUpdater.run`, which takes
@@ -36,8 +40,8 @@ is, since two MCP registries in one server hold separate ingestor locks.
 The lock file is never opened through a symbolic link: a link planted at
 its path would otherwise have its target truncated and overwritten with the
 holder's name. Such a link refuses the sync instead of falling back to an
-unguarded one, and so does a lock file that exists but this user cannot
-open, as in a CGR_HOME several users share: the second user would otherwise
+unguarded one, and so does a lock file that is there but this user cannot
+open even read-only: the second user of a shared CGR_HOME would otherwise
 sync beside the first (review of PR 2512).
 """
 
@@ -125,6 +129,12 @@ _BINARY = getattr(os, "O_BINARY", 0)
 _UNWRITABLE = frozenset(
     {errno.EACCES, errno.EPERM, errno.EROFS, errno.ENOENT, errno.ENOTDIR}
 )
+# What a read-write open of a lock file that is there fails with while this
+# user may still read it: a read-only CGR_HOME (EROFS), or a file another
+# user created 0644 in a CGR_HOME they share (EACCES, EPERM). The lock call
+# needs no write access (flock(2); Windows' LockFile takes a handle opened
+# for reading), so such a file is locked through a read-only handle.
+_READ_ONLY_OPEN = frozenset({errno.EROFS, errno.EACCES, errno.EPERM})
 
 
 def _try_lock(fd: int) -> bool:
@@ -188,15 +198,12 @@ def _holder(lock_path: Path) -> str:
 
 
 def _cannot_create(lock_path: Path, error: OSError) -> bool:
-    """True when `error` says CGR_HOME cannot be written, so no lock can be.
+    """True when there is no lock file and `error` says none can be created.
 
-    A read-only filesystem says so whether or not an earlier sync left the
-    file there. Any other refusal of a lock file that is there means it is
-    another user's, or not a file: that still refuses the sync, since its
-    holder may be running.
+    That is CGR_HOME that cannot be written, the one case a sync runs
+    without the lock. A lock file that is there is never synced around,
+    whatever its open fails with: another sync may hold it.
     """
-    if error.errno == errno.EROFS:
-        return True
     return error.errno in _UNWRITABLE and not os.path.lexists(lock_path)
 
 
@@ -210,34 +217,56 @@ def _unavailable(lock_path: Path, error: OSError) -> SyncLockUnavailableError:
     )
 
 
+def _open_lock(lock_path: Path) -> int | OSError:
+    """A descriptor on the lock file, or why there is none and can be none.
+
+    The error comes back only when the file is not there and cannot be
+    created (`_cannot_create`). Raises `UnsafeSyncLockError` for a link and
+    `SyncLockUnavailableError` for a lock file that is there but will not
+    open even read-only: without the lock this run cannot tell whether
+    another one is syncing the checkout.
+    """
+    try:
+        return os.open(lock_path, os.O_RDWR | os.O_CREAT | _BINARY | _NO_FOLLOW, 0o644)
+    except OSError as exc:
+        # A link that appeared after the caller's check is refused, never
+        # synced around: it is the planted file this guards against.
+        if lock_path.is_symlink():
+            raise _refuse_link(lock_path) from exc
+        if _cannot_create(lock_path, exc):
+            return exc
+        if exc.errno not in _READ_ONLY_OPEN:
+            raise _unavailable(lock_path, exc) from exc
+    # Greptile review of PR 2512: a lock file that would not open read-write
+    # on a read-only CGR_HOME was taken for one with no lock, so the sync ran
+    # beside the one holding it. Locked read-only it still excludes; the
+    # holder's name is not recorded then, so a refusal may name an earlier
+    # holder.
+    try:
+        return os.open(lock_path, os.O_RDONLY | _BINARY | _NO_FOLLOW)
+    except OSError as exc:
+        if lock_path.is_symlink():
+            raise _refuse_link(lock_path) from exc
+        raise _unavailable(lock_path, exc) from exc
+
+
 def _try_acquire(key: str, repo_path: Path, lock_path: Path, project_name: str) -> bool:
     with _HELD_GUARD:
         if key in _HELD:
             return False
         if lock_path.is_symlink():
             raise _refuse_link(lock_path)
-        try:
-            fd = os.open(
-                lock_path, os.O_RDWR | os.O_CREAT | _BINARY | _NO_FOLLOW, 0o644
+        fd = _open_lock(lock_path)
+        if isinstance(fd, OSError):
+            # CGR_HOME cannot be written, which never fails a sync (issue
+            # #2427): run without the lock and say what that risks. Still
+            # recorded as held, so the run re-enters it and this process's
+            # other threads are still refused.
+            logger.warning(
+                ls.SYNC_LOCK_UNGUARDED, path=lock_path, error=fd, repo=repo_path
             )
-        except OSError as exc:
-            # A link that appeared after the check above is refused, never
-            # synced around: it is the planted file this guards against.
-            if lock_path.is_symlink():
-                raise _refuse_link(lock_path) from exc
-            if _cannot_create(lock_path, exc):
-                # CGR_HOME cannot be written, which never fails a sync
-                # (issue #2427): run without the lock and say what that
-                # risks. Still recorded as held, so the run re-enters it
-                # and this process's other threads are still refused.
-                logger.warning(
-                    ls.SYNC_LOCK_UNGUARDED, path=lock_path, error=exc, repo=repo_path
-                )
-                _HELD[key] = _Hold(threading.get_ident(), 1, None)
-                return True
-            # Refused too: without the lock this run cannot tell whether
-            # another one is syncing the checkout.
-            raise _unavailable(lock_path, exc) from exc
+            _HELD[key] = _Hold(threading.get_ident(), 1, None)
+            return True
         try:
             locked = _try_lock(fd)
         except OSError as exc:
@@ -289,14 +318,15 @@ def repo_sync_lock(
     applies its change to the finished graph instead of dropping it.
 
     The lock file is `.cgr-sync-lock` in the checkout's state directory
-    under CGR_HOME. When it cannot be created because CGR_HOME cannot be
+    under CGR_HOME; one this user can only read is locked read-only. When
+    there is none and none can be created because CGR_HOME cannot be
     written, the block runs without it after a `SYNC_LOCK_UNGUARDED`
     warning, as the rest of the sync runs without its state then.
 
     Raises `UnsafeSyncLockError`, waiting or not, when the lock path is a
     symbolic link, and `SyncLockUnavailableError` when a lock file that is
-    there cannot be opened or the lock call fails for any reason but
-    another holder.
+    there cannot be opened even read-only or the lock call fails for any
+    reason but another holder.
     """
     key = str(repo_path.resolve())
     if not _reenter(key):

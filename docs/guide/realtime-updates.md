@@ -81,19 +81,22 @@ state under `CGR_HOME`, it is per user: syncs run by users with separate
 `CGR_HOME` directories do not exclude each other, so give users who sync one
 checkout into one graph a shared `CGR_HOME`, or sync it from one account.
 
-When `CGR_HOME` cannot be written, the sync still runs, as it does without
-its incremental state, but without the lock: it logs a warning that
-concurrent syncs of the checkout are not excluded. Point `CGR_HOME` at a
-writable directory to keep the lock.
+A lock file the current user can read but not write, on a read-only
+`CGR_HOME` or one another user of a shared `CGR_HOME` created, is locked
+through a read-only handle, so it still keeps a second sync out. The holder's
+name is not recorded then, so a refused sync may name an earlier one. When
+there is no lock file and `CGR_HOME` cannot be written to create one, the
+sync still runs, as it does without its incremental state, but without the
+lock: it logs a warning that concurrent syncs of the checkout are not
+excluded. Point `CGR_HOME` at a writable directory to keep the lock.
 
 The lock file is never opened through a symbolic link: a link at its path is
 refused with a message naming it, since writing the holder's name through the
 link would overwrite whatever file it points at. A lock file the current user
-cannot open, such as one another user of a shared `CGR_HOME` created, is
-refused too, with the reason: without the lock a sync cannot tell whether
-another one is running. Make the file readable and writable for every user
-who syncs the checkout. A `.cgr-sync-lock` in the repository itself is not
-the lock and is left alone.
+cannot open at all, not even to read it, is refused too, with the reason:
+without the lock a sync cannot tell whether another one is running. Make the
+file readable and writable for every user who syncs the checkout. A
+`.cgr-sync-lock` in the repository itself is not the lock and is left alone.
 
 A write Memgraph rejects as a conflicting transaction is retried a few times
 with a short, growing wait before it is reported.
