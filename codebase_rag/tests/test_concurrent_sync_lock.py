@@ -877,6 +877,74 @@ def test_the_watcher_starts_after_the_running_sync_finishes(
     mock_ingestor.ensure_node_batch.assert_called()
 
 
+class _RulesChanged:
+    """Ignore rules that report a change and build the given updater."""
+
+    def __init__(self, repo: Path, updater: GraphUpdater) -> None:
+        self.repo_path = repo
+        self.inputs = frozenset({repo / ".git" / "index"})
+        self._updater = updater
+
+    def reload(self) -> bool:
+        return True
+
+    def build_updater(self) -> GraphUpdater:
+        return self._updater
+
+
+def _rules_change_handler(repo: Path, updater: GraphUpdater, *, owed: bool):
+    from realtime_updater import CodeChangeEventHandler
+
+    handler = CodeChangeEventHandler(
+        updater, debounce_seconds=0, ignore_rules=_RulesChanged(repo, updater)
+    )
+    handler._needs_full_rebuild = owed
+    return handler
+
+
+@pytest.mark.parametrize("owed", [False, True], ids=["incremental", "owed-rebuild"])
+def test_a_rules_change_waits_for_the_running_sync(
+    repo: Path, mock_ingestor: MagicMock, owed: bool
+) -> None:
+    # The watcher's full run on changed ignore rules queues behind a running
+    # sync, as its scoped reingests do. Refused instead, it was left owed
+    # until some unrelated edit happened to arrive (review of PR 2512).
+    from watchdog.events import FileModifiedEvent
+
+    handler = _rules_change_handler(repo, _updater(repo, mock_ingestor), owed=owed)
+    index_changed = FileModifiedEvent(str(repo / ".git" / "index"))
+    with _held_elsewhere(repo, "click") as holder:
+        worker = threading.Thread(
+            target=handler.dispatch, args=(index_changed,), daemon=True
+        )
+        worker.start()
+        time.sleep(0.5)
+        assert worker.is_alive()
+        mock_ingestor.ensure_node_batch.assert_not_called()
+        assert holder.process.stdin is not None
+        holder.process.stdin.close()
+        holder.process.wait(timeout=10)
+    worker.join(30)
+
+    assert not worker.is_alive()
+    mock_ingestor.ensure_node_batch.assert_called()
+    assert not handler._needs_full_rebuild
+
+
+def test_a_rules_change_with_no_running_sync_does_not_wait(
+    repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: with the lock free the run happens at once, on this thread.
+    from watchdog.events import FileModifiedEvent
+
+    handler = _rules_change_handler(repo, _updater(repo, mock_ingestor), owed=False)
+
+    handler.dispatch(FileModifiedEvent(str(repo / ".git" / "index")))
+
+    mock_ingestor.ensure_node_batch.assert_called()
+    assert not handler._needs_full_rebuild
+
+
 class TestPlantedLockLink:
     """A symbolic link at the lock's path is never followed.
 
@@ -974,6 +1042,22 @@ class TestPlantedLockLink:
         with pytest.raises(UnsafeSyncLockError):
             updater.reingest(changed)
 
+        assert outside.read_bytes() == b"do not touch\n"
+        mock_ingestor.ensure_node_batch.assert_not_called()
+
+    def test_a_waiting_rules_change_refuses_instead_of_waiting(
+        self, repo: Path, outside: Path, lock_path: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Waiting never means following a planted link: the refusal stays
+        # inside the watchdog callback and the rebuild stays owed.
+        from watchdog.events import FileModifiedEvent
+
+        lock_path.symlink_to(outside)
+        handler = _rules_change_handler(repo, _updater(repo, mock_ingestor), owed=False)
+
+        handler.dispatch(FileModifiedEvent(str(repo / ".git" / "index")))
+
+        assert handler._needs_full_rebuild
         assert outside.read_bytes() == b"do not touch\n"
         mock_ingestor.ensure_node_batch.assert_not_called()
 

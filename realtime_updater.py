@@ -187,12 +187,25 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         """
         logger.warning(logs.WATCHER_REBUILDING_AFTER_FAILURE)
         try:
-            self.updater.run(force=True)
+            self._full_run(force=True)
         except Exception as exc:  # noqa: BLE001
             logger.error(logs.WATCHER_REBUILD_FAILED.format(error=exc))
             return False
         self._needs_full_rebuild = False
         return True
+
+    def _full_run(self, force: bool = False) -> None:
+        """Run the updater over the whole checkout, queued behind a running sync.
+
+        `run` alone refuses while another writer holds the checkout's sync
+        lock, and nothing retries it when that sync ends: a rules change or
+        an owed rebuild would wait for some unrelated edit (review of PR
+        2512). It waits instead, as the watcher's initial scan and its scoped
+        reingests do; `run` then re-enters the lock this thread holds.
+        """
+        updater = self.updater
+        with repo_sync_lock(updater.repo_path, updater.project_name, wait=True):
+            updater.run(force=force)
 
     def _is_relevant(self, path_str: str) -> bool:
         # The same predicate as the repository walk, not a restatement of it:
@@ -320,7 +333,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
                 self._rebuild_after_failure()
                 return
             try:
-                self.updater.run()
+                self._full_run()
             except Exception as exc:  # noqa: BLE001
                 # Must not escape the watchdog callback; the next change
                 # re-indexes everything first, as after a failed re-ingest.
