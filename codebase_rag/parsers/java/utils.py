@@ -355,6 +355,68 @@ def _extract_method_parameters(method_node: ASTNode) -> list[str]:
     return parameters
 
 
+def is_main_declaration(method_node: ASTNode) -> bool:
+    """Whether the JVM launcher accepts this declaration as `main`.
+
+    It must return void and take nothing or one String array, whether the
+    array is written on the type, on the name or as varargs. The recorded
+    parameter types cannot decide this: `String args[]` and a scalar
+    `String arg` both record `String` (issue #2527).
+    """
+    if method_node.type != cs.TS_METHOD_DECLARATION:
+        return False
+    name = safe_decode_text(method_node.child_by_field_name(cs.TS_FIELD_NAME))
+    return_type = method_node.child_by_field_name(cs.TS_FIELD_TYPE)
+    if name != cs.JAVA_MAIN_METHOD_NAME or return_type is None:
+        return False
+    if return_type.type != cs.TS_VOID_TYPE:
+        return False
+    params_node = method_node.child_by_field_name(cs.TS_FIELD_PARAMETERS)
+    params = (
+        [
+            child
+            for child in params_node.children
+            if child.type in (cs.TS_FORMAL_PARAMETER, cs.TS_SPREAD_PARAMETER)
+        ]
+        if params_node is not None
+        else []
+    )
+    return not params or (len(params) == 1 and _is_string_array_param(params[0]))
+
+
+def _is_string_array_param(param: ASTNode) -> bool:
+    if param.type == cs.TS_SPREAD_PARAMETER:
+        element = spread_element_type_node(param)
+        return element is not None and _is_main_element_type(element)
+    param_type = param.child_by_field_name(cs.TS_FIELD_TYPE)
+    dimensions = _dimension_count(
+        param.child_by_field_name(cs.TS_JAVA_FIELD_DIMENSIONS)
+    )
+    if param_type is not None and param_type.type == cs.TS_JAVA_ARRAY_TYPE:
+        dimensions += _dimension_count(
+            param_type.child_by_field_name(cs.TS_JAVA_FIELD_DIMENSIONS)
+        )
+        param_type = param_type.child_by_field_name(cs.TS_JAVA_FIELD_ELEMENT)
+    return (
+        dimensions == 1 and param_type is not None and _is_main_element_type(param_type)
+    )
+
+
+def _dimension_count(dimensions: ASTNode | None) -> int:
+    # Each `[` opens one dimension; annotations may sit between them
+    # (`String @NonNull [] a`).
+    if dimensions is None:
+        return 0
+    return sum(
+        1 for child in dimensions.children if child.type == cs.TS_JAVA_DIMENSION_OPEN
+    )
+
+
+def _is_main_element_type(type_node: ASTNode) -> bool:
+    text = "".join((safe_decode_text(type_node) or "").split())
+    return text in cs.JAVA_MAIN_PARAM_ELEMENT_TYPES
+
+
 def extract_method_info(method_node: ASTNode) -> JavaMethodInfo:
     if method_node.type not in cs.JAVA_METHOD_NODE_TYPES:
         return JavaMethodInfo(

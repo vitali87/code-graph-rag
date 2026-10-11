@@ -252,6 +252,14 @@ JAVA_MAIN_METHOD_NAME = "main"
 JAVA_MAIN_PARAM_ARRAY = "String[]"
 JAVA_MAIN_PARAM_VARARGS = "String..."
 JAVA_MAIN_PARAM_TYPE = "String"
+# The JVM launcher starts a `void main` taking nothing or one String array
+# (issue #2527). The array is read from the syntax: brackets on the type
+# (`String[] a`, `String [] a`) or on the name (`String a[]`), or varargs.
+JAVA_MAIN_PARAM_ELEMENT_TYPES = frozenset({JAVA_MAIN_PARAM_TYPE, "java.lang.String"})
+TS_JAVA_ARRAY_TYPE = "array_type"
+TS_JAVA_FIELD_DIMENSIONS = "dimensions"
+TS_JAVA_FIELD_ELEMENT = "element"
+TS_JAVA_DIMENSION_OPEN = "["
 
 # Java path parsing constants
 JAVA_PATH_JAVA = "java"

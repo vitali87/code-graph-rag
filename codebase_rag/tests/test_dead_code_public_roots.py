@@ -270,19 +270,20 @@ _LIVE_IN_BOTH_MODES = (
 )
 
 
-@pytest.fixture(scope="module")
-def graph(
+def _parse(
     tmp_path_factory: pytest.TempPathFactory,
+    files: dict[str, str],
+    languages: tuple[cs.SupportedLanguage, ...],
 ) -> _Graph:
-    # Parsed once for the module, so this runs before the per-test autouse
+    # Parsed once per module, so this runs before the per-test autouse
     # fixtures: it must skip a missing grammar, keep off the developer's
     # vector store and pin the C# frontend itself.
     parsers, queries = load_parsers()
-    missing = [str(lang) for lang in _LANGUAGES if lang not in parsers]
+    missing = [str(lang) for lang in languages if lang not in parsers]
     if missing:
         pytest.skip(f"{', '.join(missing)} parser not available")
     root = tmp_path_factory.mktemp("public_roots") / _PROJECT
-    for relative, source in _FIXTURE.items():
+    for relative, source in files.items():
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(source, encoding="utf-8")
@@ -302,6 +303,71 @@ def graph(
             skip_embeddings=True,
         ).run(force=True)
     return ingestor.nodes, list(ingestor.rels)
+
+
+@pytest.fixture(scope="module")
+def graph(tmp_path_factory: pytest.TempPathFactory) -> _Graph:
+    return _parse(tmp_path_factory, _FIXTURE, _LANGUAGES)
+
+
+# One class per file: `main(String args[])` and `main(String arg)` record the
+# same parameter type, `String`, and so the same qualified name.
+_JAVA_MAINS: dict[str, str] = {
+    "CStyle": "public static void main(String args[])",
+    "Spaced": "public static void main(String [] args)",
+    "Varargs": "public static void main(String... args)",
+    "SpacedVarargs": "public static void main(final String ... args)",
+    "Qualified": "public static void main(java.lang.String[] a)",
+    "QualifiedCStyle": "public static void main(java.lang.String args[])",
+    "Annotated": "public static void main(String @NonNull [] a)",
+    "Instance": "public void main()",
+    "Scalar": "public static void main(String arg)",
+    "IntMain": "public static int main(String[] a)",
+    "TwoDims": "public static void main(String[][] a)",
+    "CStyleTwoDims": "public static void main(String[] args[])",
+    "ArrayVarargs": "public static void main(String[]... a)",
+    "Objects": "public static void main(Object[] a)",
+    "TwoParams": "public static void main(String[] a, String b)",
+    "PackagePrivate": "static void main(String[] args)",
+}
+_JAVA_ENTRY_CLASSES = (
+    "CStyle",
+    "Spaced",
+    "Varargs",
+    "SpacedVarargs",
+    "Qualified",
+    "QualifiedCStyle",
+    "Annotated",
+    "Instance",
+)
+# The launcher accepts a package-private `main` too, so the parser records
+# it; only the root needs the export.
+_JAVA_MAIN_DECLARATIONS = (*_JAVA_ENTRY_CLASSES, "PackagePrivate")
+
+
+def _java_main_source(name: str, signature: str) -> str:
+    body = "{ return helper(); }" if " int " in signature else "{ helper(); }"
+    return (
+        f"package j;\n\npublic class {name} {{\n    {signature} {body}\n\n"
+        "    private static int helper() { return 0; }\n}\n"
+    )
+
+
+@pytest.fixture(scope="module")
+def java_graph(tmp_path_factory: pytest.TempPathFactory) -> _Graph:
+    files = {
+        f"j/{name}.java": _java_main_source(name, signature)
+        for name, signature in _JAVA_MAINS.items()
+    }
+    return _parse(tmp_path_factory, files, (cs.SupportedLanguage.JAVA,))
+
+
+def _java_main_qn(graph: _Graph, name: str) -> str:
+    nodes, _ = graph
+    prefix = f"proj.j.{name}.{name}.main("
+    matches = [str(uid) for _, uid in nodes if str(uid).startswith(prefix)]
+    assert len(matches) == 1, (name, matches)
+    return matches[0]
 
 
 def _config(
@@ -386,6 +452,52 @@ class TestApplicationMode:
         dead = _dead(graph, _config(public_roots=False))
 
         assert qn in dead, sorted(dead)
+
+
+class TestJavaMainFromItsDeclaration:
+    # The JVM starts a `void main` taking nothing or one String array,
+    # however the array is spelled; the recorded parameter types cannot
+    # tell `String args[]` from a scalar `String arg`, so the declaration
+    # decides.
+    @pytest.mark.parametrize("name", _JAVA_ENTRY_CLASSES)
+    def test_an_entry_signature_roots_its_call_tree(
+        self, java_graph: _Graph, name: str
+    ) -> None:
+        dead = _dead(java_graph, _config(public_roots=False))
+
+        assert _java_main_qn(java_graph, name) not in dead, sorted(dead)
+        assert f"proj.j.{name}.{name}.helper()" not in dead, sorted(dead)
+
+    @pytest.mark.parametrize(
+        "name", [name for name in _JAVA_MAINS if name not in _JAVA_ENTRY_CLASSES]
+    )
+    def test_any_other_main_is_reported(self, java_graph: _Graph, name: str) -> None:
+        dead = _dead(java_graph, _config(public_roots=False))
+
+        assert _java_main_qn(java_graph, name) in dead, sorted(dead)
+        assert f"proj.j.{name}.{name}.helper()" in dead, sorted(dead)
+
+    @pytest.mark.parametrize("name", list(_JAVA_MAINS))
+    def test_the_declaration_is_recorded_on_the_node(
+        self, java_graph: _Graph, name: str
+    ) -> None:
+        nodes, _ = java_graph
+        qn = _java_main_qn(java_graph, name)
+        props = nodes[(cs.NodeLabel.METHOD.value, qn)]
+
+        assert (props.get(cs.KEY_IS_JAVA_MAIN) is True) == (
+            name in _JAVA_MAIN_DECLARATIONS
+        ), props
+
+    @pytest.mark.parametrize("name", list(_JAVA_MAINS))
+    def test_library_mode_is_unchanged(self, java_graph: _Graph, name: str) -> None:
+        dead = _dead(java_graph, _config())
+
+        # Every public main roots as public code; only the package-private
+        # one is reported, as on main.
+        assert (_java_main_qn(java_graph, name) in dead) == (
+            name == "PackagePrivate"
+        ), sorted(dead)
 
 
 class TestRootsThatStayInApplicationMode:
@@ -582,6 +694,54 @@ class TestCommand:
 
         assert code == 0, output
         assert json.loads(output) == []
+
+    @pytest.mark.parametrize(
+        ("args", "rule", "other"),
+        [
+            pytest.param(
+                (),
+                cs.CLI_DEADCODE_RULE_PUBLIC_ROOTS,
+                cs.CLI_DEADCODE_RULE_NO_PUBLIC_ROOTS,
+                id="public-roots",
+            ),
+            pytest.param(
+                ("--no-public-roots", "-e", "app.truly_unused"),
+                cs.CLI_DEADCODE_RULE_NO_PUBLIC_ROOTS,
+                cs.CLI_DEADCODE_RULE_PUBLIC_ROOTS,
+                id="no-public-roots",
+            ),
+        ],
+    )
+    def test_saved_clean_report_names_its_rule(
+        self, tmp_path: Path, args: tuple[str, ...], rule: str, other: str
+    ) -> None:
+        report = tmp_path / "report.txt"
+
+        code, output = _invoke(_PUBLIC_ONLY, *args, "-o", str(report))
+
+        saved = _plain(report.read_text(encoding="utf-8"))
+        assert code == 0, output
+        assert rule in saved
+        assert other not in saved
+        assert rule in _plain(output)
+
+    def test_saved_report_with_candidates_names_no_rule(self, tmp_path: Path) -> None:
+        report = tmp_path / "report.txt"
+
+        code, output = _invoke(_PUBLIC_ONLY, "--no-public-roots", "-o", str(report))
+
+        saved = _plain(report.read_text(encoding="utf-8"))
+        assert code == 0, output
+        assert "proj.app.truly_unused" in saved
+        assert cs.CLI_DEADCODE_RULE_NO_PUBLIC_ROOTS not in saved
+
+    def test_saved_clean_json_report_stays_a_list(self, tmp_path: Path) -> None:
+        report = tmp_path / "report.json"
+
+        code, output = _invoke(_PUBLIC_ONLY, "--format", "json", "-o", str(report))
+
+        assert code == 0, output
+        assert json.loads(report.read_text(encoding="utf-8")) == []
 
     def test_saved_report_is_unchanged(self, tmp_path: Path) -> None:
         report = tmp_path / "report.json"

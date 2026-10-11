@@ -1729,6 +1729,12 @@ def ingest_method(
         from .csharp import utils as csharp_utils
 
         method_props.update(csharp_utils.extension_method_props(method_node))
+    if language == cs.SupportedLanguage.JAVA:
+        # Local import: the Java helpers import this module.
+        from .java import utils as java_utils
+
+        if java_utils.is_main_declaration(method_node):
+            method_props[cs.KEY_IS_JAVA_MAIN] = True
     method_path = method_props.get(cs.KEY_PATH)
     queue_type_facts(
         type_fact_sink,

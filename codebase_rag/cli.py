@@ -2790,6 +2790,20 @@ def _build_dead_code_table(candidates: list[DeadCodeRow], project_name: str) -> 
     return table
 
 
+def _print_root_rule(console: Console, public_roots: bool) -> None:
+    # A clean report says which root rule produced it, on screen and in a
+    # saved copy alike: with public roots on, it can just mean every function
+    # is public (issue #2527).
+    console.print(
+        cs.CLI_DEADCODE_RULE_PUBLIC_ROOTS
+        if public_roots
+        else cs.CLI_DEADCODE_RULE_NO_PUBLIC_ROOTS,
+        markup=False,
+        highlight=False,
+        soft_wrap=True,
+    )
+
+
 def _emit_dead_code(
     candidates: list[DeadCodeRow],
     output_format: cs.DeadCodeFormat,
@@ -2825,6 +2839,8 @@ def _emit_dead_code(
         with output.open("w", encoding=cs.ENCODING_UTF8) as fh:
             file_console = Console(file=fh)
             _print_report_table(file_console, table)
+            if not candidates:
+                _print_root_rule(file_console, public_roots)
             if notice:
                 file_console.print(notice)
         app_context.console.print(
@@ -2833,21 +2849,15 @@ def _emit_dead_code(
                 cs.Color.GREEN,
             )
         )
+        if not candidates:
+            _print_root_rule(app_context.console, public_roots)
         if notice:
             app_context.console.print(style(notice, cs.Color.YELLOW))
         return
 
     if not candidates:
         app_context.console.print(style(cs.CLI_DEADCODE_NONE, cs.Color.GREEN))
-        # A clean report says which root rule produced it: with public roots
-        # on, it can just mean every function is public (issue #2527).
-        app_context.console.print(
-            cs.CLI_DEADCODE_RULE_PUBLIC_ROOTS
-            if public_roots
-            else cs.CLI_DEADCODE_RULE_NO_PUBLIC_ROOTS,
-            markup=False,
-            highlight=False,
-        )
+        _print_root_rule(app_context.console, public_roots)
     else:
         _print_report_table(app_context.console, table)
         app_context.console.print(

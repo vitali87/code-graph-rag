@@ -785,6 +785,11 @@ KEY_DECORATORS = "decorators"
 # languages the extractor does not read (the positional_params rule).
 KEY_RETURN_TYPE = "return_type"
 KEY_PARAM_TYPES = "param_types"
+# A Java method whose declaration the JVM launcher accepts as `main`: named
+# main, returning void, taking nothing or one String array however the array
+# is spelled. `param_types` cannot say it, since `String args[]` and a scalar
+# `String arg` both record `String` (issue #2527). Set only when true.
+KEY_IS_JAVA_MAIN = "is_java_main"
 # A C# extension method's index entry (`static string Describe(this Box b)`):
 # the receiver type a `b.Describe()` call binds against, the declaring
 # namespace, and the receiver's written generic arity (`this Builder<T>` ->
