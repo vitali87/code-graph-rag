@@ -303,6 +303,12 @@ _TS_COMMONJS_BARRELS = {
         "const { Svc } = require('./svc')\nmodule.exports = { Svc }\n"
     ),
     "export-assignment": "import { Svc } from './svc'\nexport = { Svc }\n",
+    # Every specifier `type`: erased like `export type { T }` (CodeRabbit,
+    # PR #3355).
+    "inline-type-only-export": (
+        "import type { T } from './types'\nexport { type T }\n"
+        "const { Svc } = require('./svc')\nmodule.exports = { Svc }\n"
+    ),
 }
 
 
@@ -342,6 +348,22 @@ _EXPORT_TABLE_BARRELS = {
     # Neither: the module exports nothing, so nothing it binds is a member.
     "import-only": "import { Svc } from './svc'\nnew Svc().go()\n",
     "require-only": "const { Svc } = require('./svc')\nnew Svc().go()\n",
+    # One value specifier makes the clause a value export.
+    "inline-type-beside-a-value-specifier": (
+        "import { T } from './types'\nconst { Svc } = require('./svc')\n"
+        "const U = 1\nexport { type T, U }\nmodule.exports = { Svc }\n"
+    ),
+    # Only an assignment that runs at load publishes; the text `module.exports`
+    # in a string (Greptile, PR #3355), a comment or a function body does not.
+    "module-exports-in-a-string": (
+        "import { Svc } from './svc'\nconsole.log('module.exports')\n"
+    ),
+    "module-exports-in-a-comment": (
+        "import { Svc } from './svc'\n// module.exports = { Svc }\n"
+    ),
+    "module-exports-in-a-function-body": (
+        "import { Svc } from './svc'\nfunction later() { module.exports = { Svc } }\n"
+    ),
 }
 
 
@@ -361,13 +383,27 @@ def test_a_barrel_without_commonjs_exports_passes_on_only_its_es_exports(
     [
         ("module.exports = { Svc }\n", True),
         ("exports.Svc = Svc\n", True),
+        ("exports['Svc'] = Svc\n", True),
+        ("const S = (module.exports = { Svc })\n", True),
         ("if (ok) { module.exports = { Svc } }\n", True),
+        ("console.log('module.exports')\n", False),
+        ("// module.exports = { Svc }\n", False),
+        ("/* exports.Svc = Svc */\n", False),
+        ("function later() { module.exports = {} }\n", False),
+        ("const later = () => { exports.Svc = Svc }\n", False),
+        ("const m = module.exports\n", False),
+        ("console.log(module.exports)\n", False),
         ("export = { Svc }\n", True),
         ("import type { T } from './t'\nmodule.exports = {}\n", True),
         ("import { T } from './t'\nmodule.exports = { T }\n", True),
         ("export interface I { x: number }\nmodule.exports = {}\n", True),
         ("export type A = number\nmodule.exports = {}\n", True),
         ("export type { T } from './t'\nmodule.exports = {}\n", True),
+        ("export { type T }\nmodule.exports = {}\n", True),
+        ("export { type T } from './t'\nmodule.exports = {}\n", True),
+        # `export {}` names no value either.
+        ("export {}\nmodule.exports = {}\n", True),
+        ("export { type T, U }\nmodule.exports = {}\n", False),
         ("export const v = 1\nmodule.exports = {}\n", False),
         ("export default 1\nmodule.exports = {}\n", False),
         ("export * from './a'\nmodule.exports = {}\n", False),
