@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from functools import cache, partial
+from functools import cache, lru_cache, partial
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -95,29 +96,53 @@ def _find_function_declaration(root: ASTNode, name: str) -> ASTNode | None:
     top-level one) cannot be attributed to a call site, so more than one
     match yields nothing rather than a possibly wrong binding.
     """
-    matches: list[ASTNode] = []
+    matches = _function_declarations(root).get(name, ())
+    return matches[0] if len(matches) == 1 else None
+
+
+@lru_cache(maxsize=1)
+def _function_declarations(root: ASTNode) -> Mapping[str, tuple[ASTNode, ...]]:
+    """Every free function of one tree by name, in document order.
+
+    Each `for (x of f())` looked `f` up by walking the whole module tree, and
+    the loop is typed once per enclosing function, so a file of N such loops
+    cost O(N^2): 830 s for 2,000 functions (issue #2453). The walk now runs
+    once per tree. One slot, because every lookup names the tree of the file
+    being processed; keyed on the root node, which tree-sitter compares by
+    tree, so a re-parsed file builds its own.
+    """
+    found: dict[str, list[ASTNode]] = {}
     stack: list[ASTNode] = [root]
     while stack:
         current = stack.pop()
-        if current.type in (
-            cs.TS_FUNCTION_DECLARATION,
-            cs.TS_GENERATOR_FUNCTION_DECLARATION,
-        ):
-            name_node = current.child_by_field_name("name")
-            if name_node is not None and safe_decode_text(name_node) == name:
-                matches.append(current)
-        elif current.type == cs.TS_VARIABLE_DECLARATOR:
-            name_node = current.child_by_field_name("name")
-            value_node = current.child_by_field_name("value")
-            if (
-                name_node is not None
-                and value_node is not None
-                and value_node.type == cs.TS_ARROW_FUNCTION
-                and safe_decode_text(name_node) == name
-            ):
-                matches.append(value_node)
+        if declared := _declared_function(current):
+            name, function = declared
+            found.setdefault(name, []).append(function)
         stack.extend(reversed(current.children))
-    return matches[0] if len(matches) == 1 else None
+    return MappingProxyType({name: tuple(nodes) for name, nodes in found.items()})
+
+
+def _declared_function(node: ASTNode) -> tuple[str, ASTNode] | None:
+    """The name and callable `node` declares as a free function, if any."""
+    if node.type in (
+        cs.TS_FUNCTION_DECLARATION,
+        cs.TS_GENERATOR_FUNCTION_DECLARATION,
+    ):
+        name_node = node.child_by_field_name(cs.FIELD_NAME)
+        name = safe_decode_text(name_node) if name_node is not None else None
+        return (name, node) if name else None
+    if node.type != cs.TS_VARIABLE_DECLARATOR:
+        return None
+    name_node = node.child_by_field_name(cs.FIELD_NAME)
+    value_node = node.child_by_field_name(cs.FIELD_VALUE)
+    if (
+        name_node is None
+        or value_node is None
+        or value_node.type != cs.TS_ARROW_FUNCTION
+    ):
+        return None
+    name = safe_decode_text(name_node)
+    return (name, value_node) if name else None
 
 
 def _js_await_call(arguments: ASTNode) -> ASTNode | None:
