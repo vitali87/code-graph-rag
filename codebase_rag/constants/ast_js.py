@@ -168,6 +168,8 @@ JS_SYMBOL_GLOBAL = "Symbol"
 JS_PROTOTYPE_KEYWORD = "prototype"
 JS_OBJECT_NAME = "Object"
 JS_CREATE_METHOD = "create"
+# `Object.assign(module.exports, { Svc })` publishes the keys it copies.
+JS_OBJECT_ASSIGN_METHOD = "assign"
 
 # JS/TS ingest query capture names
 CAPTURE_CHILD_CLASS = "child_class"

@@ -21,6 +21,15 @@ _JS_MODULE_EXPORTS = (
     cs.JS_MODULE_KEYWORD + cs.SEPARATOR_DOT + cs.JS_EXPORTS_KEYWORD
 ).encode()
 _JS_EXPORTS_MEMBER = (cs.JS_EXPORTS_KEYWORD + cs.SEPARATOR_DOT).encode()
+_JS_OBJECT_ASSIGN = (
+    cs.JS_OBJECT_NAME + cs.SEPARATOR_DOT + cs.JS_OBJECT_ASSIGN_METHOD
+).encode()
+# A function expression invoked where it is written, directly or through
+# `.call` / `.apply`, runs its body at once.
+_JS_TS_INVOKABLE_FUNCTION_TYPES = frozenset(
+    {cs.TS_FUNCTION_EXPRESSION, cs.TS_ARROW_FUNCTION}
+)
+_JS_INVOKE_METHODS = frozenset({cs.JS_METHOD_CALL, cs.JS_METHOD_APPLY})
 _JS_MODULE_KEYWORD_BYTES = cs.JS_MODULE_KEYWORD.encode()
 _JS_EXPORTS_KEYWORD_BYTES = cs.JS_EXPORTS_KEYWORD.encode()
 # Declarations that bind the module-level name an export statement refers to.
@@ -323,32 +332,26 @@ def _is_module_construct(statement: Node) -> bool:
 def is_commonjs_module(root: Node) -> bool:
     """Whether a JS/TS module publishes its values through CommonJS alone.
 
-    Only then do the names it binds stand in for its exports: its
-    `module.exports = { Svc }` is not parsed into an export table. What it
+    Only then is what `module.exports` publishes its export table. What it
     imports says nothing about what it exports, so an `import type` or a
     value import beside `module.exports` leaves it CommonJS (Greptile, PR
     #3355), as does a type-only export, which is erased at runtime. Any value
-    export statement makes the export table the module's whole API, even
-    beside `module.exports`: an ES module's `module` is not its export
-    object, and following its bindings could pass on a private import. A
-    module with neither exports nothing, so it is not CommonJS either.
-
-    Only an assignment that runs at module load publishes (`_has_commonjs_export`):
-    the text `module.exports` in a string, a comment, a read or a function body
-    does not, and counting it let a private import through (Greptile, PR #3355).
+    export statement makes its ES exports the module's whole API, even beside
+    `module.exports`: an ES module's `module` is not its export object, and
+    following its bindings could pass on a private import. A module with
+    neither exports nothing, so it is not CommonJS either. A publication
+    counts only when it runs at load (`_commonjs_publications`): the text
+    `module.exports` in a string, a comment, a read or a deferred function
+    body does not.
     """
-    commonjs = False
-    for statement in root.children:
-        if statement.type == cs.TS_EXPORT_STATEMENT:
-            if _is_export_assignment(statement):
-                commonjs = True
-            elif not _is_type_only_export(statement):
-                return False
-        elif _JS_EXPORTS_KEYWORD_BYTES in (
-            statement.text or b""
-        ) and _has_commonjs_export(statement):
-            commonjs = True
-    return commonjs
+    if any(
+        statement.type == cs.TS_EXPORT_STATEMENT
+        and not _is_export_assignment(statement)
+        and not _is_type_only_export(statement)
+        for statement in root.children
+    ):
+        return False
+    return next(_commonjs_publications(root), None) is not None
 
 
 def _is_export_assignment(statement: Node) -> bool:
@@ -379,6 +382,168 @@ def _is_type_only_export(statement: Node) -> bool:
 
 def _is_type_only_specifier(specifier: Node) -> bool:
     return any(child.type == cs.TS_TYPE_ONLY_TOKEN for child in specifier.children)
+
+
+def commonjs_export_bindings(root: Node) -> dict[str, str]:
+    """Each name a CommonJS module publishes at load, with the binding it names.
+
+    The re-export walk follows a published name and nothing else: a binding
+    the module keeps to itself (`const { Hidden } = require('./lib')` beside
+    `module.exports = { Public }`) is not an export (CodeRabbit, PR #3355).
+    `module.exports = { A, B: x, 'C': y }` publishes A, B and C as the
+    bindings A, x and y; `exports.X = y`, `module.exports.X = y` and
+    `exports["X"] = y` publish X as y; `Object.assign(module.exports, {...})`
+    publishes the keys it copies; TypeScript's `export = { ... }` reads as
+    `module.exports = { ... }`. A value that is no bare binding (`= lib`,
+    `= require('./x')`, `= class {}`, a spread, a computed key) records
+    nothing: a missing edge, never a wrong one.
+    """
+    published: dict[str, str] = {}
+    for publication in _commonjs_publications(root):
+        published.update(_publication_bindings(publication))
+    return published
+
+
+def _commonjs_publications(root: Node) -> Iterator[Node]:
+    # Every CommonJS publication that runs while the module loads, in source
+    # order so a later one wins: an assignment to `module.exports`,
+    # `exports.X` or `exports["X"]` or an `Object.assign` onto them, wherever
+    # it sits in an expression (`Object.freeze(module.exports = {...})`, a
+    # top-level `if`) or in a function called on the spot (Greptile, PR
+    # #3355), and TypeScript's `export =`. A function only defined runs
+    # later, if ever, so its body is not walked.
+    for statement in root.children:
+        if statement.type == cs.TS_EXPORT_STATEMENT:
+            if _is_export_assignment(statement):
+                yield statement
+        elif _JS_EXPORTS_KEYWORD_BYTES in (statement.text or b""):
+            yield from filter(_is_commonjs_publication, _load_time_nodes(statement))
+
+
+def _load_time_nodes(statement: Node) -> Iterator[Node]:
+    pending = [statement]
+    while pending:
+        node = pending.pop()
+        if node.type in _JS_TS_FUNCTION_SCOPE_TYPES and not _is_invoked_on_the_spot(
+            node
+        ):
+            continue
+        yield node
+        pending.extend(reversed(node.named_children))
+
+
+def _is_invoked_on_the_spot(function: Node) -> bool:
+    # `(function () {...})()`, `(() => {...})()`, `!function () {...}()` and
+    # `(function () {...}).call(this)` run their body while the module loads.
+    if function.type not in _JS_TS_INVOKABLE_FUNCTION_TYPES:
+        return False
+    callee, holder = _outermost_value(function)
+    if (
+        holder is not None
+        and holder.type == cs.TS_MEMBER_EXPRESSION
+        and holder.child_by_field_name(cs.FIELD_OBJECT) == callee
+        and safe_decode_text(holder.child_by_field_name(cs.FIELD_PROPERTY))
+        in _JS_INVOKE_METHODS
+    ):
+        callee, holder = holder, holder.parent
+    return (
+        holder is not None
+        and holder.type == cs.TS_CALL_EXPRESSION
+        and holder.child_by_field_name(cs.FIELD_FUNCTION) == callee
+    )
+
+
+def _is_commonjs_publication(node: Node) -> bool:
+    if node.type == cs.TS_JS_ASSIGNMENT_EXPRESSION:
+        return _is_commonjs_export_target(node.child_by_field_name(cs.FIELD_LEFT))
+    return (
+        node.type == cs.TS_CALL_EXPRESSION and _object_assign_sources(node) is not None
+    )
+
+
+def _object_assign_sources(call: Node) -> list[Node] | None:
+    # The objects `Object.assign(module.exports, ...)` or
+    # `Object.assign(exports, ...)` copies onto the exports, else None.
+    callee = call.child_by_field_name(cs.FIELD_FUNCTION)
+    arguments = call.child_by_field_name(cs.FIELD_ARGUMENTS)
+    if callee is None or arguments is None or callee.text != _JS_OBJECT_ASSIGN:
+        return None
+    copied = arguments.named_children
+    if not copied or not _is_exports_object(copied[0]):
+        return None
+    return copied[1:]
+
+
+def _publication_bindings(publication: Node) -> dict[str, str]:
+    if publication.type == cs.TS_EXPORT_STATEMENT:
+        value = publication.named_children[0] if publication.named_children else None
+        return _object_bindings(value)
+    if publication.type == cs.TS_CALL_EXPRESSION:
+        bindings: dict[str, str] = {}
+        for source in _object_assign_sources(publication) or []:
+            bindings.update(_object_bindings(source))
+        return bindings
+    return _assignment_bindings(publication)
+
+
+def _assignment_bindings(assignment: Node) -> dict[str, str]:
+    target = assignment.child_by_field_name(cs.FIELD_LEFT)
+    value = assignment.child_by_field_name(cs.FIELD_RIGHT)
+    if target is not None and _is_module_exports(target):
+        return _object_bindings(value)
+    name = _commonjs_export_name(target)
+    binding = _bare_binding(value)
+    return {name: binding} if name and binding else {}
+
+
+def _commonjs_export_name(target: Node | None) -> str | None:
+    # The X of `exports.X`, `module.exports.X` or `exports["X"]`.
+    if target is None or not _is_exports_object(
+        target.child_by_field_name(cs.FIELD_OBJECT)
+    ):
+        return None
+    if target.type == cs.TS_MEMBER_EXPRESSION:
+        return safe_decode_text(target.child_by_field_name(cs.FIELD_PROPERTY))
+    return _string_content(target.child_by_field_name(cs.TS_FIELD_INDEX))
+
+
+def _object_bindings(value: Node | None) -> dict[str, str]:
+    # `{ A }` and `{ B: x }` / `{ 'B': x }` publish a binding under a name; a
+    # spread, a computed key or a method names none.
+    if value is None or value.type != cs.TS_OBJECT:
+        return {}
+    bindings: dict[str, str] = {}
+    for child in value.named_children:
+        if child.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER:
+            if name := safe_decode_text(child):
+                bindings[name] = name
+        elif child.type == cs.TS_PAIR:
+            key = _property_key(child.child_by_field_name(cs.FIELD_KEY))
+            binding = _bare_binding(child.child_by_field_name(cs.FIELD_VALUE))
+            if key and binding:
+                bindings[key] = binding
+    return bindings
+
+
+def _property_key(key: Node | None) -> str | None:
+    if key is not None and key.type == cs.TS_PROPERTY_IDENTIFIER:
+        return safe_decode_text(key)
+    return _string_content(key)
+
+
+def _string_content(node: Node | None) -> str | None:
+    if node is None or node.type != cs.TS_STRING:
+        return None
+    fragment = next(
+        (c for c in node.named_children if c.type == cs.TS_STRING_FRAGMENT), None
+    )
+    return safe_decode_text(fragment)
+
+
+def _bare_binding(value: Node | None) -> str | None:
+    if value is not None and value.type == cs.TS_IDENTIFIER:
+        return safe_decode_text(value)
+    return None
 
 
 def _has_commonjs_export(statement: Node) -> bool:

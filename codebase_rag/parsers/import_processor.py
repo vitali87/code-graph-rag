@@ -56,7 +56,7 @@ from .dart import (
     dart_local_name,
     dart_resolve_import,
 )
-from .export_detection import is_commonjs_module
+from .export_detection import commonjs_export_bindings, is_commonjs_module
 from .go import discover_go_module_paths, resolve_go_import_path
 from .js_ts.module_paths import (
     discover_js_workspace_packages,
@@ -994,7 +994,6 @@ class ImportProcessor:
         "unresolved_specifiers",
         "unresolved_references",
         "js_export_bindings",
-        "js_commonjs_modules",
         "_import_sites",
         "_import_site_owners",
         "_import_site_writers",
@@ -1125,17 +1124,13 @@ class ImportProcessor:
         # file against it to find the modules that waited (issue #1568).
         self.unresolved_references: dict[str, set[str]] = {}
         # JS/TS module qn -> {exported name: what it names}, from every
-        # `export { ... }` (with or without a `from`) and `export default`.
+        # `export { ... }` (with or without a `from`) and `export default`,
+        # and from what a CommonJS module publishes (`module.exports = {...}`).
         # An importer's map holds `<module>.strip`, which names nothing
         # registered; the call resolver follows it through this table, and
         # only through it, since a module's own imports are not its exports
         # (issue #2464).
         self.js_export_bindings: dict[str, dict[str, JsExport]] = {}
-        # JS/TS modules that publish their values through CommonJS alone
-        # (`export_detection.is_commonjs_module`). Their `module.exports` is
-        # not parsed into the table above, so the walk falls back to what such
-        # a module binds; for every other module the table is the whole API.
-        self.js_commonjs_modules: set[str] = set()
         # Per scope qn: the site props of each bound import name (#1522),
         # attached to the IMPORTS edge when the deferred edge flushes.
         self._import_sites: dict[str, dict[str, PropertyDict]] = {}
@@ -1548,7 +1543,6 @@ class ImportProcessor:
         }
         # Re-derived from the export statements the re-parse finds.
         self.js_export_bindings.pop(module_qn, None)
-        self.js_commonjs_modules.discard(module_qn)
         # The Dart prefix maps share the same invariant. Both are written
         # only when the file HAS prefixed imports, so removing the last one
         # left the previous parse's entries in place: a stale alias kept
@@ -4393,8 +4387,6 @@ class ImportProcessor:
     def _parse_js_ts_imports(
         self, captures: dict, module_qn: str, root_node: Node
     ) -> None:
-        if is_commonjs_module(root_node):
-            self.js_commonjs_modules.add(module_qn)
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type == cs.TS_IMPORT_STATEMENT:
                 self._parse_js_import_statement(import_node, module_qn)
@@ -4408,6 +4400,25 @@ class ImportProcessor:
             elif import_node.type == cs.TS_EXPORT_STATEMENT:
                 self._parse_js_reexport(import_node, module_qn)
                 self._record_js_export_bindings(import_node, module_qn)
+        self._record_commonjs_export_bindings(root_node, module_qn)
+
+    def _record_commonjs_export_bindings(self, root_node: Node, module_qn: str) -> None:
+        """Record what a CommonJS module publishes as its export table.
+
+        `module.exports = { Svc }` is such a module's whole API, as its export
+        statements are an ES module's, so the re-export walk follows only the
+        names it publishes, never a binding it keeps to itself (CodeRabbit,
+        PR #3355). A module with a value ES export keeps that table alone
+        (`is_commonjs_module`).
+        """
+        if not is_commonjs_module(root_node):
+            return
+        published = {
+            name: JsExport(f"{module_qn}{cs.SEPARATOR_DOT}{binding}", local=True)
+            for name, binding in commonjs_export_bindings(root_node).items()
+        }
+        if published:
+            self.js_export_bindings.setdefault(module_qn, {}).update(published)
 
     def _ts_alias_module_qn(self, import_path: str) -> str | None:
         # Resolve a tsconfig `paths` alias (`@/util` -> `src/util`) to the
@@ -4858,7 +4869,6 @@ class ImportProcessor:
             qn,
             self.import_mapping,
             self.js_export_bindings,
-            self.js_commonjs_modules,
             module_paths,
             function_registry,
         )

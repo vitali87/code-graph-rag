@@ -10,7 +10,7 @@ followed: a barrel may import `foo` for its own use and export another `foo`.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping
+from collections.abc import Mapping
 from pathlib import Path
 from typing import NamedTuple
 
@@ -31,7 +31,6 @@ def follow_js_reexports(
     qn: str,
     import_mapping: Mapping[str, Mapping[str, str]],
     exports: Mapping[str, Mapping[str, JsExport]],
-    commonjs_modules: Collection[str],
     module_paths: Mapping[str, Path],
     function_registry: FunctionRegistryTrieProtocol,
 ) -> str:
@@ -45,7 +44,7 @@ def follow_js_reexports(
     if qn in function_registry:
         return qn
     return _ReexportWalk(
-        import_mapping, exports, commonjs_modules, module_paths, function_registry
+        import_mapping, exports, module_paths, function_registry
     ).follow(qn)[0]
 
 
@@ -87,7 +86,6 @@ class _ReexportWalk:
     __slots__ = (
         "_imports",
         "_exports",
-        "_commonjs_modules",
         "_modules",
         "_registry",
         "_path",
@@ -98,13 +96,11 @@ class _ReexportWalk:
         self,
         import_mapping: Mapping[str, Mapping[str, str]],
         exports: Mapping[str, Mapping[str, JsExport]],
-        commonjs_modules: Collection[str],
         module_paths: Mapping[str, Path],
         function_registry: FunctionRegistryTrieProtocol,
     ) -> None:
         self._imports = import_mapping
         self._exports = exports
-        self._commonjs_modules = commonjs_modules
         self._modules = module_paths
         self._registry = function_registry
         self._path: set[_Step] = set()
@@ -148,11 +144,6 @@ class _ReexportWalk:
             return None, False
         if (export := self._exports.get(barrel, {}).get(name)) is not None:
             return _Step(export.target, export.local), False
-        if barrel in self._commonjs_modules:
-            # A CommonJS module records no export table (`module.exports =
-            # { Svc }` is not parsed into one), so the names it binds stand in
-            # for the names it exports.
-            return self._binding(f"{barrel}{cs.SEPARATOR_DOT}{name}"), False
         # `export *` passes on every name a source exports except `default`.
         if name == cs.TS_EXPORT_DEFAULT:
             return None, False
