@@ -780,3 +780,145 @@ def test_an_opt_in_capture_group_keeps_reparsing_every_caller(
     assert reparsed == {PY_TARGET, *PY_CALLERS}
     clean = _clean(root, capture)
     assert synced == clean, _diff(synced, clean)
+
+
+# A file whose own source keeps its fingerprint can still change what its
+# callers see when something it depends on changes in the same sync: `make()`
+# returns whatever `build()` returns, so `factory.py` returning a `B` makes
+# `make().method()` in `user.py` bind `B.method` -- through `wrapper.py`,
+# which only gained a comment. Its callers are not callers of `factory.py`,
+# so nothing but the stable file's own dependency can send them to a re-parse.
+CHAIN: dict[str, str] = {
+    "models.py": (
+        "class A:\n    def method(self) -> int:\n        return 1\n\n\n"
+        "class B:\n    def method(self) -> int:\n        return 2\n"
+    ),
+    "factory.py": "from models import A, B\n\n\ndef build():\n    return A()\n",
+    "wrapper.py": "from factory import build\n\n\ndef make():\n    return build()\n",
+    "user.py": "from wrapper import make\n\n\ndef use():\n    return make().method()\n",
+    "other.py": "def alone():\n    return 3\n",
+}
+CHAIN_TWO_LEVELS: dict[str, str] = {
+    **CHAIN,
+    "wrapper2.py": "from wrapper import make\n\n\ndef make2():\n    return make()\n",
+    "user2.py": (
+        "from wrapper2 import make2\n\n\ndef use2():\n    return make2().method()\n"
+    ),
+}
+FACTORY_RETURNS_B = _replace("return A()", "return B()")
+
+
+def _comment(source: str) -> str:
+    return source + "# note\n"
+
+
+def test_a_stable_file_whose_dependency_changed_in_the_same_sync_reparses_its_callers(
+    temp_repo: Path,
+) -> None:
+    root = temp_repo / PROJECT
+    reparsed, synced = _sync(
+        root,
+        CHAIN,
+        {
+            "factory.py": FACTORY_RETURNS_B(CHAIN["factory.py"]),
+            "wrapper.py": _comment(CHAIN["wrapper.py"]),
+        },
+    )
+
+    assert "user.py" in reparsed
+    clean = _clean(root)
+    assert "proj.models.B.method" in _calls(clean, "proj.user.use")
+    assert synced == clean, _diff(synced, clean)
+
+
+def test_the_change_reaches_callers_through_a_chain_of_stable_files(
+    temp_repo: Path,
+) -> None:
+    root = temp_repo / PROJECT
+    reparsed, synced = _sync(
+        root,
+        CHAIN_TWO_LEVELS,
+        {
+            "factory.py": FACTORY_RETURNS_B(CHAIN_TWO_LEVELS["factory.py"]),
+            "wrapper.py": _comment(CHAIN_TWO_LEVELS["wrapper.py"]),
+            "wrapper2.py": _comment(CHAIN_TWO_LEVELS["wrapper2.py"]),
+        },
+    )
+
+    assert {"user.py", "user2.py"} <= reparsed
+    clean = _clean(root)
+    assert "proj.models.B.method" in _calls(clean, "proj.user2.use2")
+    assert synced == clean, _diff(synced, clean)
+
+
+def test_a_scoped_reingest_of_a_stable_file_and_its_changed_dependency(
+    temp_repo: Path,
+) -> None:
+    """The watcher's path, handed both files of the edit at once. Through a
+    fresh updater: a warm one keeps return types cached (issue #2927)."""
+    root = temp_repo / PROJECT
+    _materialise(root, CHAIN)
+    store = _StatefulIngestor()
+    _updater(store, root).run(force=True)
+    (root / "factory.py").write_text(
+        FACTORY_RETURNS_B(CHAIN["factory.py"]), encoding="utf-8"
+    )
+    (root / "wrapper.py").write_text(_comment(CHAIN["wrapper.py"]), encoding="utf-8")
+
+    report = _updater(store, root).reingest(["factory.py", "wrapper.py"])
+
+    assert "user.py" in report.affected
+    clean = _clean(root)
+    assert _snapshot(store) == clean, _diff(_snapshot(store), clean)
+
+
+def test_a_stable_file_waiting_on_a_file_the_same_sync_adds_reparses_its_callers(
+    temp_repo: Path,
+) -> None:
+    """`wrapper.py` imported a `factory` that did not exist yet, so `make()`
+    returned nothing known; the run that adds it gives `make()` a type, and
+    the caller's `make().method()` an edge."""
+    root = temp_repo / PROJECT
+    reparsed, synced = _sync(
+        root,
+        {rel: text for rel, text in CHAIN.items() if rel != "factory.py"},
+        {
+            "factory.py": CHAIN["factory.py"],
+            "wrapper.py": _comment(CHAIN["wrapper.py"]),
+        },
+    )
+
+    assert "user.py" in reparsed
+    clean = _clean(root)
+    assert "proj.models.A.method" in _calls(clean, "proj.user.use")
+    assert synced == clean, _diff(synced, clean)
+
+
+@pytest.mark.parametrize(
+    ("edits", "reparsed_only"),
+    [
+        (
+            {"factory.py": _comment, "wrapper.py": _comment},
+            {"factory.py", "wrapper.py"},
+        ),
+        (
+            {
+                "wrapper.py": _comment,
+                "other.py": _replace("def alone(", "def alone2("),
+            },
+            {"wrapper.py", "other.py"},
+        ),
+    ],
+    ids=["both-files-stable", "unrelated-interface-change"],
+)
+def test_stable_files_keep_their_callers_when_nothing_they_depend_on_moved(
+    temp_repo: Path, edits: dict[str, Edit], reparsed_only: set[str]
+) -> None:
+    root = temp_repo / PROJECT
+    reparsed, synced = _sync(
+        root, CHAIN, {rel: edit(CHAIN[rel]) for rel, edit in edits.items()}
+    )
+
+    assert reparsed == reparsed_only
+    clean = _clean(root)
+    assert synced == clean, _diff(synced, clean)

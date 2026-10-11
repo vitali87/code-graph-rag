@@ -4510,7 +4510,10 @@ class GraphUpdater:
         )
 
     def _dependent_keys(
-        self, target_keys: list[str], stable: Mapping[str, str]
+        self,
+        target_keys: list[str],
+        stable: Mapping[str, str],
+        waiters: Collection[str] = (),
     ) -> list[str]:
         """The dependents of `target_keys` the run must re-parse (issue #2531).
 
@@ -4518,20 +4521,45 @@ class GraphUpdater:
         file to module qn) that depends on nothing else re-indexed and holds
         only edges the inbound capture restores by name: it would bind
         exactly as it does now, so it keeps its edges, as an unchanged file
-        that is no dependent at all does.
+        that is no dependent at all does. `waiters` are the files this run
+        re-parses because a file it adds, or a definition it gains, is what
+        they were waiting for.
         """
         if not stable:
             return self._affected_caller_keys(target_keys)
-        required = set(
-            self._affected_caller_keys(
-                [key for key in target_keys if key not in stable]
-            )
-        )
-        candidates = set(self._affected_caller_keys(sorted(stable))) - required
-        reparsed = self._callers_holding_unrestorable_edges(stable, candidates)
+        required, settled = self._settle_stable(target_keys, stable, waiters)
+        candidates = set(self._affected_caller_keys(sorted(settled))) - required
+        reparsed = self._callers_holding_unrestorable_edges(settled, candidates)
         if kept := len(candidates) - len(reparsed):
             logger.info(ls.INCREMENTAL_INTERFACE_KEPT, count=kept)
         return sorted(required | reparsed)
+
+    def _settle_stable(
+        self,
+        target_keys: list[str],
+        stable: Mapping[str, str],
+        waiters: Collection[str],
+    ) -> tuple[set[str], dict[str, str]]:
+        """The dependents the unstable targets force, and what is left of
+        `stable` once every stable file among them counts as unstable too.
+
+        A stable file's own source keeps its fingerprint, but what its callers
+        see through it can still move: `make()` returns whatever `build()`
+        returns, so a `build()` changed in the same run changes
+        `make().method()` in every caller of `make`, none of which calls
+        `build`. A stable file re-parsed because of another file of the run
+        (a dependent of an unstable target, a waiter) is therefore unstable
+        for its own callers, and so on down the chain until nothing moves.
+        """
+        settled = dict(stable)
+        required = set(waiters)
+        frontier = [key for key in target_keys if key not in settled]
+        while frontier or required & settled.keys():
+            required.update(self._affected_caller_keys(frontier))
+            frontier = sorted(required & settled.keys())
+            for key in frontier:
+                del settled[key]
+        return required, settled
 
     def _callers_holding_unrestorable_edges(
         self, stable: Mapping[str, str], candidates: set[str]
@@ -6517,19 +6545,21 @@ class GraphUpdater:
         stable = self._interface_stable_modules(
             _interface_sources(scan.changed_entries, {*deleted_before_parse, *siblings})
         )
+        waiters = {
+            *self._unresolved_importer_keys(added_keys),
+            *self._unresolved_reference_waiters(added_entries, modified_entries),
+        }
         reindexed_keys = self._queue_affected_callers(
             sorted(
                 {
                     *self._dependent_keys(
                         sorted({*reindexed_keys, *deleted_before_parse, *siblings}),
                         stable,
+                        waiters,
                     ),
                     *siblings,
                     *foreign_definers,
-                    *self._unresolved_importer_keys(added_keys),
-                    *self._unresolved_reference_waiters(
-                        added_entries, modified_entries
-                    ),
+                    *waiters,
                 }
             ),
             present,
@@ -8252,8 +8282,7 @@ class GraphUpdater:
         # Inbound edges find dependents of files that already existed; the
         # unresolved-import lookup finds importers of files this call CREATED,
         # which by construction have no inbound edges yet (issue #1682).
-        for caller_key in (
-            *self._dependent_keys(keys, stable or {}),
+        waiters = {
             *self._unresolved_importer_keys(sorted(present)),
             # Created files offer everything; modified files offer only the
             # definitions they gained (bot review on PR #1979).
@@ -8269,6 +8298,10 @@ class GraphUpdater:
                     if created is None or key not in created
                 ],
             ),
+        }
+        for caller_key in (
+            *self._dependent_keys(keys, stable or {}, waiters),
+            *waiters,
         ):
             caller_path = self.repo_path / caller_key
             if (
