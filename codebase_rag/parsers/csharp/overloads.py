@@ -106,6 +106,11 @@ class _Inference(NamedTuple):
 type Resolver = Callable[[str, int], str | None]
 
 
+# A resolved type (`canonical_type`) -> whether it is a reference type, None
+# when that is not known.
+type ReferenceKind = Callable[[str], bool | None]
+
+
 class Scope(NamedTuple):
     """One file's view of the type names written in a declaration there:
     `resolve` finds the first-party type a name names in that file, and
@@ -115,13 +120,68 @@ class Scope(NamedTuple):
 
     resolve: Resolver
     type_parameters: frozenset[str] = frozenset()
+    # Whether a resolved type is a reference type, None when not known: a
+    # `?` on one only annotates it (`unannotated`).
+    reference: ReferenceKind | None = None
 
 
 def with_type_parameters(scope: Scope | None, names: Collection[str]) -> Scope | None:
     """`scope` with a member's own type parameters in scope too."""
     if scope is None or not names:
         return scope
-    return Scope(scope.resolve, scope.type_parameters | frozenset(names))
+    return scope._replace(type_parameters=scope.type_parameters | frozenset(names))
+
+
+def unannotated(
+    type_text: str, reference: ReferenceKind | None, lenient: bool = False
+) -> tuple[str, bool]:
+    """`type_text` without the `?` marks that only annotate a reference
+    type, at every depth, and whether every `?` was told apart: C# reads no
+    identity in a nullable annotation, so `Box<string?>`, `string?[]` and
+    `(Widget?, int)` are `Box<string>`, `string[]` and `(Widget, int)`
+    (Greptile review of PR 2814). A `?` on a value type stays, `int?` being
+    `Nullable<int>`, and so does one on a type `reference` does not know the
+    kind of (an unconstrained type parameter, an external type), which makes
+    the answer uncertain; `lenient` drops that one too."""
+    out: list[str] = []
+    certain = True
+    for index, char in enumerate(type_text):
+        if char == cs.CHAR_QUESTION_MARK:
+            annotation = _annotates_reference(type_text[:index], reference)
+            certain = certain and annotation is not None
+            if annotation or (annotation is None and lenient):
+                continue
+        out.append(char)
+    return "".join(out), certain
+
+
+def _annotates_reference(before: str, reference: ReferenceKind | None) -> bool | None:
+    # Whether the `?` after `before` marks a reference type: an array does,
+    # a tuple does not, and a named type as `reference` tells.
+    annotated = _last_type(before)
+    if annotated.endswith(cs.CSHARP_ARRAY_RANK_CLOSE):
+        return True
+    if annotated.endswith(cs.CHAR_PAREN_CLOSE):
+        return False
+    if annotated == cs.CSHARP_DYNAMIC_KEYWORD:
+        return True
+    return reference(annotated) if reference is not None else None
+
+
+def _last_type(before: str) -> str:
+    # The type `before` ends with: back to the `<`, `(` or `,` it follows.
+    depth = 0
+    for index in range(len(before) - 1, -1, -1):
+        char = before[index]
+        if char in cs.CSHARP_SIGNATURE_CLOSERS:
+            depth += 1
+        elif char in cs.CSHARP_SIGNATURE_OPENERS and depth:
+            depth -= 1
+        elif char in cs.CSHARP_SIGNATURE_OPENERS or (
+            char == cs.CHAR_COMMA and not depth
+        ):
+            return before[index + 1 :].strip()
+    return before.strip()
 
 
 class TypeScopes(NamedTuple):
@@ -361,10 +421,13 @@ def member_verdict(
     if given_own is None or wanted_own is None:
         return False
     given_scope, wanted_scope = scopes if scopes is not None else (None, None)
-    given = _by_position([canonical_type(p, given_scope) for p in given], given_own)
+    given = _by_position(
+        [_unannotated_in(canonical_type(p, given_scope), given_scope) for p in given],
+        given_own,
+    )
     wanted = _by_position(
         [
-            declared_type(p, wanted_scope, bindings)
+            _unannotated_in(declared_type(p, wanted_scope, bindings), wanted_scope)
             for p in parameter_types(f"{wanted_name}{paren}{wanted_params}")
         ],
         wanted_own,
@@ -379,6 +442,13 @@ def member_verdict(
         )
         else None
     )
+
+
+def _unannotated_in(canonical: str, scope: Scope | None) -> str:
+    # A parameter type less the nullable annotations on the reference types
+    # its file declares or the framework does: `Go(Box<string?>)` declares
+    # the member `Go(Box<string>)` does (Greptile review of PR 2814).
+    return unannotated(canonical, scope.reference if scope is not None else None)[0]
 
 
 def _matched_own(

@@ -559,6 +559,184 @@ class TestAnEditedCallerCountsEveryImplementer:
         assert edited == fresh
 
 
+ANNOTATED_CS = """\
+#nullable enable
+namespace Nl;
+public class Widget { }
+public struct Point { }
+public class Box<T> { }
+public class C { public void M(Box<string> b) { } public void M(object o) { } }
+public class D { public void M(string s) { } public void M(object o) { } }
+public class W { public void M(Box<Widget> b) { } public void M(object o) { } }
+public class A { public void M(string[] a) { } public void M(object o) { } }
+public class T2 { public void M((string, int) t) { } public void M(object o) { } }
+public class H { public void M(Box<string?> b) { } public void M(object o) { } }
+public class E { public void M(int i) { } public void M(object o) { } }
+public class G { public void M(Box<int> b) { } public void M(object o) { } }
+public class P { public void M(Box<Point> b) { } public void M(object o) { } }
+public class X { public void M(Box<Ext> b) { } public void M(object o) { } }
+public class Use {
+    public void Nested(Box<string?> b) { new C().M(b); }
+    public void Top(string? s) { new D().M(s); }
+    public void Class(Box<Widget?> b) { new W().M(b); }
+    public void Element(string?[] a) { new A().M(a); }
+    public void Tuple((string?, int) t) { new T2().M(t); }
+    public void Declared(Box<string> b) { new H().M(b); }
+    public void Value(int? i) { new E().M(i); }
+    public void NestedValue(Box<int?> b) { new G().M(b); }
+    public void NestedStruct(Box<Point?> b) { new P().M(b); }
+    public void External(Box<Ext?> b) { new X().M(b); }
+}
+"""
+
+ANNOTATED_GENERIC_CS = """\
+#nullable enable
+namespace Ng;
+public class Box<T> { }
+public class K<T> { public void M(Box<T> b) { } public void M(object o) { } }
+public class Use<T> {
+    public void Open(Box<T?> b) { new K<T>().M(b); }
+    public void Closed(Box<T> b) { new K<T>().M(b); }
+}
+"""
+
+ANNOTATED_IMPL_CS = """\
+#nullable enable
+namespace Ni;
+using System.Collections.Generic;
+public class Box<T> { }
+public interface IRun { void Go(Box<string> b); void Arr(string[] a); }
+public class Runner : IRun {
+    void IRun.Go(Box<string?> b) { }
+    void IRun.Arr(string?[] a) { }
+}
+public interface IPick { void Go(Box<string> b); void Go(Box<int> b); }
+public class Picker : IPick {
+    void IPick.Go(Box<string?> b) { }
+    void IPick.Go(Box<int> b) { }
+}
+public abstract class Base {
+    public abstract void Go(Box<string> b);
+    public abstract void Go(Box<int> b);
+}
+public class Derived : Base {
+    public override void Go(Box<string?> b) { }
+    public override void Go(Box<int> b) { }
+}
+public interface IPut<T> { void Put(Box<T> b); void Put(Box<int> b); }
+public class Putter : IPut<string> {
+    void IPut<string>.Put(Box<string?> b) { }
+    void IPut<string>.Put(Box<int> b) { }
+}
+public interface IMany<T> { void Many(List<T> xs); }
+public class Many : IMany<string?> { void IMany<string?>.Many(List<string?> xs) { } }
+public class Use {
+    public void Call(IRun r) { r.Go(new Box<string>()); r.Arr(new string[0]); }
+    public void Put(IPut<string> p) { p.Put(new Box<string>()); }
+    public void All(IMany<string> m) { m.Many(new List<string>()); }
+}
+"""
+
+
+def _resolved_calls(
+    source: str, temp_repo: Path, mock_ingestor: MagicMock
+) -> dict[str, set[tuple[str, str]]]:
+    # Each `Use` method's (callee, resolution) pairs, by the caller's leaf.
+    _calls(source, temp_repo, mock_ingestor)
+    found: dict[str, set[tuple[str, str]]] = {}
+    for c in get_relationships(mock_ingestor, cs.RelationshipType.CALLS):
+        caller, callee = str(c.args[0][2]), str(c.args[2][2])
+        if ".Use." in caller:
+            resolution = c.kwargs.get("properties", {}).get(cs.KEY_RESOLUTION)
+            found.setdefault(caller.split(".Use.", 1)[1], set()).add(
+                (callee.split(f"{PROJECT}.F.", 1)[1], str(resolution))
+            )
+    return found
+
+
+_EXACT = str(cs.EdgeResolution.EXACT)
+
+
+class TestANullableReferenceAnnotationIsNoPartOfAType:
+    # Greptile review of PR 2814: `string?` on a reference type only
+    # annotates it, so `Box<string?>` IS `Box<string>`, at any depth; on a
+    # value type it is `Nullable<V>`, another type; and where neither is
+    # known, the call binds no overload exactly.
+    def test_a_nested_annotation_binds_the_unannotated_overload(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(ANNOTATED_CS, temp_repo, mock_ingestor)
+        assert calls["Nested(Box<string?>)"] == {("Nl.C.M(Box<string>)", _EXACT)}
+        assert calls["Class(Box<Widget?>)"] == {("Nl.W.M(Box<Widget>)", _EXACT)}
+        assert calls["Element(string?[])"] == {("Nl.A.M(string[])", _EXACT)}
+        assert calls["Tuple((string?, int))"] == {("Nl.T2.M((string, int))", _EXACT)}
+        # The parameter's annotation is no part of it either.
+        assert calls["Declared(Box<string>)"] == {("Nl.H.M(Box<string?>)", _EXACT)}
+
+    def test_a_top_level_annotation_binds_the_unannotated_overload(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(ANNOTATED_CS, temp_repo, mock_ingestor)
+        assert calls["Top(string)"] == {("Nl.D.M(string)", _EXACT)}
+
+    def test_a_nullable_value_is_another_type(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Negatives: `int?` is `Nullable<int>`, which converts to no `int`,
+        # and `Box<int?>` or `Box<Point?>` is no `Box<int>` or `Box<Point>`.
+        calls = _resolved_calls(ANNOTATED_CS, temp_repo, mock_ingestor)
+        assert ("Nl.E.M(int)", _EXACT) not in calls["Value(int?)"], calls
+        assert calls["NestedValue(Box<int?>)"] == {("Nl.G.M(object)", _EXACT)}
+        assert calls["NestedStruct(Box<Point?>)"] == {("Nl.P.M(object)", _EXACT)}
+
+    def test_an_unknown_kind_binds_nothing_exactly(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Negatives: an external type's or an unconstrained type
+        # parameter's `?` may be either, so neither overload is exact.
+        calls = _resolved_calls(ANNOTATED_CS, temp_repo, mock_ingestor)
+        assert all(r != _EXACT for _c, r in calls["External(Box<Ext?>)"]), calls
+
+    def test_an_unconstrained_type_parameter_binds_nothing_exactly(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(ANNOTATED_GENERIC_CS, temp_repo, mock_ingestor)
+        assert all(r != _EXACT for _c, r in calls["Open(Box<T?>)"]), calls
+        # Negative: unannotated, it is the one type.
+        assert calls["Closed(Box<T>)"] == {("Ng.K.M(Box<T>)", _EXACT)}, calls
+
+    def test_an_annotated_implementation_still_links(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(ANNOTATED_IMPL_CS, temp_repo, mock_ingestor)
+        targets = {callee for callee, _r in calls["Call(IRun)"]}
+        assert "Ni.Runner.IRun#Go(Box<string?>)" in targets, calls
+        assert "Ni.Runner.IRun#Arr(string?[])" in targets, calls
+        # A closing's annotated argument too, beside an overload it is not.
+        assert ("Ni.Putter.IPut<string>#Put(Box<string?>)", _EXACT) in calls[
+            "Put(IPut<string>)"
+        ], calls
+        assert ("Ni.Many.IMany<string?>#Many(List<string?>)", _EXACT) in calls[
+            "All(IMany<string>)"
+        ], calls
+        overrides = {
+            (_leaf_pair(str(c.args[0][2])), _leaf_pair(str(c.args[2][2])))
+            for c in get_relationships(mock_ingestor, cs.RelationshipType.OVERRIDES)
+        }
+        assert ("Picker.IPick#Go(Box<string?>)", "IPick.Go(Box<string>)") in overrides
+        assert ("Derived.Go(Box<string?>)", "Base.Go(Box<string>)") in overrides
+        assert ("Putter.IPut<string>#Put(Box<string?>)", "IPut.Put(Box<T>)") in (
+            overrides
+        )
+        # Negatives: neither links to the other overload.
+        assert ("Picker.IPick#Go(Box<string?>)", "IPick.Go(Box<int>)") not in overrides
+        assert ("Derived.Go(Box<string?>)", "Base.Go(Box<int>)") not in overrides
+        assert (
+            "Putter.IPut<string>#Put(Box<string?>)",
+            "IPut.Put(Box<int>)",
+        ) not in overrides
+
+
 CONSTRAINT_CS = """\
 namespace K;
 public interface IThing { }

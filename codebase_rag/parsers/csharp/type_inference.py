@@ -69,6 +69,7 @@ from .overloads import (
     substitute,
     type_arguments,
     type_shape,
+    unannotated,
     unshadowed,
     written_type,
 )
@@ -3423,6 +3424,71 @@ class CSharpTypeInferenceEngine:
         open_names: Collection[str],
         inferred: Inferred | None = None,
     ) -> bool | None:
+        return self._annotation_blind(
+            self._identical_as_written, (argument, parameter), open_names, inferred
+        )
+
+    def _converts(
+        self,
+        argument: ArgumentType,
+        parameter: str,
+        open_names: Collection[str],
+        inferred: Inferred | None = None,
+    ) -> bool | None:
+        return self._annotation_blind(
+            self._converts_as_written, (argument, parameter), open_names, inferred
+        )
+
+    def _annotation_blind(
+        self,
+        judged: Callable[
+            [ArgumentType, str, Collection[str], Inferred | None], bool | None
+        ],
+        pair: tuple[ArgumentType, str],
+        open_names: Collection[str],
+        inferred: Inferred | None,
+    ) -> bool | None:
+        # `judged` of the argument and the parameter less their nullable
+        # reference annotations, which no type's identity holds (Greptile
+        # review of PR 2814). Where a `?` marks a type of no known kind, a
+        # `False` it alone may cause is not known.
+        (argument, parameter), certain = self._unannotated(pair, lenient=False)
+        verdict = judged(argument, parameter, open_names, inferred)
+        if verdict is not False or certain:
+            return verdict
+        (argument, parameter), _ = self._unannotated(pair, lenient=True)
+        lenient = judged(argument, parameter, open_names, None)
+        return None if lenient is not False else False
+
+    def _unannotated(
+        self, pair: tuple[ArgumentType, str], lenient: bool
+    ) -> tuple[tuple[ArgumentType, str], bool]:
+        # An argument and a parameter without their reference annotations,
+        # and whether every `?` either holds was told apart.
+        argument, parameter = pair
+        texts = [argument.name or "", *(argument.arguments or ()), parameter]
+        erased = [unannotated(text, self._is_reference, lenient) for text in texts]
+        name, *arguments, wanted = (text for text, _certain in erased)
+        return (
+            (
+                argument._replace(
+                    name=name if argument.name is not None else None,
+                    arguments=(
+                        tuple(arguments) if argument.arguments is not None else None
+                    ),
+                ),
+                wanted,
+            ),
+            all(certain for _text, certain in erased),
+        )
+
+    def _identical_as_written(
+        self,
+        argument: ArgumentType,
+        parameter: str,
+        open_names: Collection[str],
+        inferred: Inferred | None = None,
+    ) -> bool | None:
         # Whether the argument's type IS the parameter's: one class, each
         # side resolved in its own file (or, unresolved, spelled alike up to
         # aliases), in one shape (`Widget[]` is no `Widget`), closed with the
@@ -3457,7 +3523,7 @@ class CSharpTypeInferenceEngine:
             (wanted_core, TypeKinds(self._variances, self._is_reference)),
         )
 
-    def _converts(
+    def _converts_as_written(
         self,
         argument: ArgumentType,
         parameter: str,
@@ -3898,6 +3964,7 @@ class CSharpTypeInferenceEngine:
         return Scope(
             partial(self._resolve_in, module_qn),
             self._type_parameters_in_scope(type_qn) | frozenset(member_parameters),
+            self._is_reference,
         )
 
     def _type_parameters_in_scope(self, type_qn: str) -> frozenset[str]:
@@ -3916,7 +3983,9 @@ class CSharpTypeInferenceEngine:
         in_scope = self._method_type_parameters(call.caller_qn or "")
         if (class_qn := self._containing_class_qn(call.caller_qn)) is not None:
             in_scope |= self._type_parameters_in_scope(class_qn)
-        return Scope(partial(self._resolve_in, call.module_qn), in_scope)
+        return Scope(
+            partial(self._resolve_in, call.module_qn), in_scope, self._is_reference
+        )
 
     def _resolve_in(self, module_qn: str, name: str, arity: int) -> str | None:
         # The first-party type `name` names in `module_qn`, one partial part
