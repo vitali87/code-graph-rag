@@ -58,6 +58,7 @@ class CppNodeType(StrEnum):
     ALIAS_DECLARATION = "alias_declaration"
     TYPE_DESCRIPTOR = "type_descriptor"
     REF_QUALIFIER = "ref_qualifier"
+    FRIEND_DECLARATION = "friend_declaration"
 
 
 CPP_MODULE_PATH_MARKERS = frozenset({"interfaces", "modules"})

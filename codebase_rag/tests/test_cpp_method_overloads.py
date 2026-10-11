@@ -1244,6 +1244,76 @@ def test_incremental_definition_only_overload_matches_a_clean_index(
     assert incremental[:2] == clean[:2]
 
 
+# Each overload's local type hangs off the node its definition lands on
+# (#2631 with #2455), named from the definition's file alone: after the
+# declaring line when the class body is in that file (`own.cpp`, whose
+# definitions are swapped), after the definition's own line when it is in a
+# header. Re-reading a file must name them as a clean index does.
+LOC_H = """class Loc {
+public:
+  int r(int a);
+  int r(double a);
+};
+"""
+LOC_CPP = """#include "loc.h"
+int Loc::r(int a) { struct L { int k() { return 1; } } l; return l.k() + a; }
+int Loc::r(double a) { struct L { int k() { return 2; } } l; return l.k(); }
+"""
+OWN_CPP = """class Own {
+public:
+  int r(int a);
+  int r(double a);
+};
+int Own::r(int a) { struct L { int k() { return 1; } } l; return l.k() + a; }
+int Own::r(double a) { struct L { int k() { return 2; } } l; return l.k(); }
+"""
+
+
+def _swap_last_two_lines(text: str) -> str:
+    *head, first, second = text.splitlines(keepends=True)
+    return "".join([*head, second, first])
+
+
+LOCAL_TYPE_EDITS = {
+    "loc.h": LOC_H + "// touched\n",
+    "loc.cpp": LOC_CPP + "// touched\n",
+    "own.cpp": _swap_last_two_lines(OWN_CPP),
+}
+
+
+@pytest.mark.parametrize("edited", sorted(LOCAL_TYPE_EDITS))
+@pytest.mark.parametrize("mode", ["run", "reingest"])
+def test_incremental_local_types_of_overloads_match_a_clean_index(
+    temp_repo: Path, edited: str, mode: str
+) -> None:
+    incremental, clean = _incremental_and_clean(
+        temp_repo,
+        {"loc.h": LOC_H, "loc.cpp": LOC_CPP, "own.cpp": OWN_CPP},
+        edited,
+        LOCAL_TYPE_EDITS[edited],
+        mode,
+    )
+    own = f"{PROJECT}.own.Own.r"
+    local_types = {
+        qn
+        for label, qn in clean[0]
+        if label == cs.NodeLabel.CLASS.value and qn.endswith(".L")
+    }
+    assert {f"{own}.L", f"{own}@4.L"} <= local_types
+    assert len(local_types) == 4, local_types
+    defines = cs.RelationshipType.DEFINES.value
+    method = cs.NodeLabel.METHOD.value
+    for overload in (own, f"{own}@4"):
+        assert (
+            method,
+            overload,
+            defines,
+            cs.NodeLabel.CLASS.value,
+            f"{overload}.L",
+        ) in clean[1]
+    assert incremental[:2] == clean[:2]
+
+
 def test_the_overload_properties_survive_a_protobuf_export(
     temp_repo: Path, tmp_path: Path
 ) -> None:
