@@ -44,6 +44,7 @@ from .frontends.protocol import ImplementsPair, ResolvedCallSite
 from .function_ingest import FunctionIngestMixin
 from .go import utils as go_utils
 from .handlers import get_handler
+from .interface_fingerprint import interface_fingerprint
 from .java_generated import generator_hint
 from .js_ts.ingest import JsTsIngestMixin
 from .module_docstring import extract_module_docstring
@@ -670,6 +671,8 @@ class DefinitionProcessor(
         }
         if docstring := self._get_module_docstring(root_node, language):
             module_props[cs.KEY_DOCSTRING] = docstring
+        if fingerprint := interface_fingerprint(root_node, language):
+            module_props[cs.KEY_INTERFACE_FINGERPRINT] = fingerprint
         if self.generated_source_prefixes and (
             hint := generator_hint(relative_path_str, self.generated_source_prefixes)
         ):

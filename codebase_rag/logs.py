@@ -1209,6 +1209,18 @@ INCREMENTAL_CHANGED = "Re-indexing {count} changed files"
 INCREMENTAL_AFFECTED_CALLERS = (
     "Re-parsing {count} dependent caller file(s) of re-indexed targets"
 )
+INCREMENTAL_INTERFACE_KEPT = (
+    "Kept the edges of {count} dependent caller file(s): nothing they resolve "
+    "against changed"
+)
+INTERFACE_FINGERPRINTS_UNREAD = (
+    "Could not read the stored interface fingerprints; every dependent caller "
+    "is re-parsed."
+)
+INTERFACE_BOUNDARY_UNREAD = (
+    "Could not read the edges between re-indexed files and their callers; "
+    "every dependent caller is re-parsed."
+)
 INCREMENTAL_DELETED = "Removed state for {count} deleted files"
 DEPENDENCIES_RESYNC = (
     "A dependency manifest changed; rebuilding the external dependencies of "

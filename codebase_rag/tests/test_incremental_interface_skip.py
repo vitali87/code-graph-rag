@@ -1,0 +1,782 @@
+# A sync re-parsed every file that depends on an edited one, so a comment
+# added to a central file cost a re-parse of all its callers (issue #2531:
+# 112 files and ~65 s for one line in gson's Gson.java, 418 files for
+# django's query.py). When nothing a caller resolves against changed, the
+# callers keep their edges instead. The graph must still equal a clean
+# index of the edited tree, so every edit here is checked against one, and
+# the edits that DO change what callers see must still re-parse them.
+from __future__ import annotations
+
+import os
+from collections.abc import Callable
+from pathlib import Path
+
+import pytest
+
+from codebase_rag import constants as cs
+from codebase_rag.capture import CaptureSelection, resolve_capture
+from codebase_rag.checkout_state import state_file
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
+from codebase_rag.types_defs import PropertyValue, ResultRow
+from evals.cgr_graph import _StatefulIngestor
+
+PROJECT = "proj"
+
+PY_CORE = """class Base:
+    def run(self) -> int:
+        return 1
+
+
+class Widget(Base):
+    def size(self) -> int:
+        return 2
+
+
+class Gadget(Base):
+    def size(self) -> int:
+        return 3
+
+    def spin(self) -> int:
+        return 4
+
+
+def make() -> Widget:
+    return Widget()
+
+
+def build():
+    return Widget()
+
+
+def helper(x: int) -> int:
+    y = x + 1
+    return y + 1
+
+
+def log_event(name):
+    message = "event " + name
+    print(message)
+
+
+__all__ = ["Base", "Widget", "Gadget", "make", "build", "helper", "log_event"]
+"""
+
+PYTHON: dict[str, str] = {
+    "pkg/__init__.py": "",
+    "pkg/core.py": PY_CORE,
+    "pkg/a.py": (
+        "from pkg.core import helper, log_event\n\n\n"
+        "def use_a():\n"
+        '    log_event("a")\n'
+        "    return helper(1)\n"
+    ),
+    "pkg/b.py": (
+        "from pkg.core import build, make\n\n\n"
+        "def use_make():\n"
+        "    return make().size()\n\n\n"
+        "def use_run():\n"
+        "    return make().run()\n\n\n"
+        "def use_build():\n"
+        "    return build().size()\n"
+    ),
+    "pkg/c.py": (
+        "from pkg.core import Base\n\n\n"
+        "class Impl(Base):\n"
+        "    def run(self) -> int:\n"
+        "        return 3\n"
+    ),
+    "pkg/star.py": (
+        "from pkg.core import *\n\n\ndef use_star():\n    return helper(2)\n"
+    ),
+    "main.py": ("from pkg.a import use_a\n\n\ndef main():\n    return use_a()\n"),
+}
+PY_TARGET = "pkg/core.py"
+PY_CALLERS = {"pkg/a.py", "pkg/b.py", "pkg/c.py", "pkg/star.py"}
+
+JAVA_FACTORY = """package com.acme;
+
+public class Factory {
+    public static Shape make() {
+        return new Circle();
+    }
+
+    public static int twice(int x) {
+        int y = x * 2;
+        return y;
+    }
+
+    public static void log(String message) {
+        System.out.println(message);
+    }
+}
+"""
+
+JAVA: dict[str, str] = {
+    "src/com/acme/Shape.java": (
+        "package com.acme;\n\npublic class Shape {\n"
+        "    public int area() { return 0; }\n"
+        "    public int perimeter() { return 1; }\n}\n"
+    ),
+    "src/com/acme/Circle.java": (
+        "package com.acme;\n\npublic class Circle extends Shape {\n"
+        "    public int area() { return 3; }\n}\n"
+    ),
+    "src/com/acme/Square.java": (
+        "package com.acme;\n\npublic class Square {\n"
+        "    public int area() { return 4; }\n"
+        "    public int perimeter() { return 5; }\n}\n"
+    ),
+    "src/com/acme/Factory.java": JAVA_FACTORY,
+    "src/com/acme/App.java": (
+        "package com.acme;\n\npublic class App {\n"
+        "    public int run() {\n"
+        '        Factory.log("run");\n'
+        "        return Factory.make().area() + Factory.twice(2);\n"
+        "    }\n}\n"
+    ),
+    "src/com/acme/Report.java": (
+        "package com.acme;\n\npublic class Report {\n"
+        "    public int total() { return Factory.twice(3); }\n}\n"
+    ),
+    "src/com/acme/Wheel.java": (
+        "package com.acme;\n\npublic class Wheel extends Circle {\n"
+        "    public int perimeter() { return 6; }\n}\n"
+    ),
+}
+JAVA_TARGET = "src/com/acme/Factory.java"
+JAVA_CALLERS = {"src/com/acme/App.java", "src/com/acme/Report.java"}
+
+TS_UTIL = """export function helper(x: number): number {
+  const y = x + 1;
+  return y;
+}
+
+export function logEvent(name: string): void {
+  const message = "event " + name;
+  console.log(message);
+}
+"""
+
+TYPESCRIPT: dict[str, str] = {
+    "src/util.ts": TS_UTIL,
+    "src/app.ts": (
+        "import { helper, logEvent } from './util';\n\n"
+        "export function run(): number {\n"
+        "  logEvent('run');\n"
+        "  return helper(1);\n}\n"
+    ),
+    "src/other.ts": (
+        "import { helper } from './util';\n\n"
+        "export function twice(): number {\n  return helper(2) * 2;\n}\n"
+    ),
+}
+TS_TARGET = "src/util.ts"
+TS_CALLERS = {"src/app.ts", "src/other.ts"}
+
+Snapshot = tuple[frozenset[tuple[str, ...]], frozenset[tuple[str, ...]]]
+Edit = Callable[[str], str]
+
+
+def _freeze(value: PropertyValue) -> str:
+    if isinstance(value, list | tuple):
+        return repr(sorted(str(item) for item in value))
+    return repr(value)
+
+
+def _snapshot(store: _StatefulIngestor) -> Snapshot:
+    """Every node with its properties and every edge with its site and
+    properties (the CALLS `resolution` label among them), so a kept edge
+    that a clean index would have bound differently cannot hide."""
+    nodes = frozenset(
+        (str(label), str(uid))
+        + tuple(
+            sorted(
+                f"{key}={_freeze(value)}"
+                for key, value in (props or {}).items()
+                if key != cs.KEY_LAST_SYNCED_AT
+            )
+        )
+        for (label, uid), props in store.nodes.items()
+    )
+    edges = frozenset(
+        (str(fl), str(fv), str(rel), str(tl), str(tv), repr(site))
+        + tuple(sorted(f"{k}={_freeze(v)}" for k, v in store.props_for(e).items()))
+        for e in store.keyed_edges
+        for (fl, fv, rel, tl, tv, site) in [e]
+    )
+    return nodes, edges
+
+
+def _diff(actual: Snapshot, expected: Snapshot) -> str:
+    lines = []
+    for kind, got, want in (
+        ("node", actual[0], expected[0]),
+        ("edge", actual[1], expected[1]),
+    ):
+        lines.extend(f"extra {kind}: {item}" for item in sorted(got - want))
+        lines.extend(f"missing {kind}: {item}" for item in sorted(want - got))
+    return "\n".join(lines)
+
+
+def _updater(
+    store: _StatefulIngestor, root: Path, capture: CaptureSelection | None = None
+) -> GraphUpdater:
+    parsers, queries = load_parsers()
+    return GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name=PROJECT,
+        capture=capture,
+    )
+
+
+def _materialise(root: Path, files: dict[str, str]) -> None:
+    for rel, text in files.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+
+def _edit_after_cache(root: Path, edits: dict[str, str]) -> None:
+    # The incremental pass trusts an mtime at or below the hash cache's, so
+    # the edited files are dated past it, as a later save would be.
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
+    for rel, text in edits.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        for touched in (path, path.parent):
+            os.utime(touched, (cache_mtime + 1, cache_mtime + 1))
+
+
+def _clean(root: Path, capture: CaptureSelection | None = None) -> Snapshot:
+    store = _StatefulIngestor()
+    _updater(store, root, capture).run(force=True)
+    return _snapshot(store)
+
+
+def _sync(
+    root: Path,
+    files: dict[str, str],
+    edits: dict[str, str],
+    capture: CaptureSelection | None = None,
+) -> tuple[set[str], Snapshot]:
+    """Index `files`, apply `edits`, and sync the way the CLI does (a new
+    updater over the populated graph): the files re-parsed, and the graph."""
+    _materialise(root, files)
+    store = _StatefulIngestor()
+    _updater(store, root, capture).run(force=True)
+    _edit_after_cache(root, edits)
+    updater = _updater(store, root, capture)
+    updater.run()
+    return set(updater._reparsed_file_keys), _snapshot(store)
+
+
+def _append(text: str) -> Edit:
+    return lambda source: source + text
+
+
+def _replace(old: str, new: str) -> Edit:
+    def apply(source: str) -> str:
+        assert old in source, f"fixture lost {old!r}"
+        return source.replace(old, new, 1)
+
+    return apply
+
+
+def _calls(snapshot: Snapshot, caller: str) -> set[str]:
+    return {
+        edge[4]
+        for edge in snapshot[1]
+        if edge[1] == caller and edge[2] == cs.RelationshipType.CALLS.value
+    }
+
+
+# Edits that leave everything a caller resolves against as it was: only the
+# edited file is re-parsed.
+UNSEEN_EDITS: list[tuple[str, dict[str, str], str, Edit, set[str]]] = [
+    ("py-trailing-comment", PYTHON, PY_TARGET, _append("# trailing note\n"), set()),
+    (
+        "py-comment-above-every-definition",
+        PYTHON,
+        PY_TARGET,
+        lambda source: "# header\n# second line\n" + source,
+        set(),
+    ),
+    (
+        "py-procedure-body",
+        PYTHON,
+        PY_TARGET,
+        _replace(
+            '    message = "event " + name\n    print(message)\n',
+            '    message = f"event: {name}"\n    if message:\n'
+            "        print(message, flush=True)\n",
+        ),
+        set(),
+    ),
+    (
+        "py-body-of-a-function-returning-arithmetic",
+        PYTHON,
+        PY_TARGET,
+        _replace(
+            "    y = x + 1\n    return y + 1\n",
+            '    """Add two."""\n    y = x * 2\n    total = y - x\n    return total + 2 - x\n',
+        ),
+        set(),
+    ),
+    ("java-trailing-comment", JAVA, JAVA_TARGET, _append("// trailing note\n"), set()),
+    (
+        "java-comment-above-every-definition",
+        JAVA,
+        JAVA_TARGET,
+        lambda source: "/* header\n   two lines */\n" + source,
+        set(),
+    ),
+    (
+        "java-method-body",
+        JAVA,
+        JAVA_TARGET,
+        _replace(
+            "        int y = x * 2;\n        return y;\n",
+            "        int y = x << 1;\n        // doubled\n        y += 0;\n"
+            "        return y;\n",
+        ),
+        set(),
+    ),
+    (
+        "ts-trailing-comment",
+        TYPESCRIPT,
+        TS_TARGET,
+        _append("// trailing note\n"),
+        set(),
+    ),
+    (
+        "ts-procedure-body",
+        TYPESCRIPT,
+        TS_TARGET,
+        _replace(
+            '  const message = "event " + name;\n  console.log(message);\n',
+            "  const message = `event: ${name}`;\n  if (message) {\n"
+            "    console.log(message);\n  }\n",
+        ),
+        set(),
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("files", "target", "edit", "callers"),
+    [case[1:] for case in UNSEEN_EDITS],
+    ids=[case[0] for case in UNSEEN_EDITS],
+)
+def test_an_edit_callers_cannot_see_reparses_only_the_edited_file(
+    temp_repo: Path,
+    files: dict[str, str],
+    target: str,
+    edit: Edit,
+    callers: set[str],
+) -> None:
+    root = temp_repo / PROJECT
+    reparsed, synced = _sync(root, files, {target: edit(files[target])})
+
+    assert reparsed == {target, *callers}
+    clean = _clean(root)
+    assert synced == clean, _diff(synced, clean)
+
+
+@pytest.mark.parametrize("fresh_updater", [False, True], ids=["warm", "fresh"])
+def test_a_scoped_reingest_of_a_comment_edit_reports_no_dependents(
+    temp_repo: Path, fresh_updater: bool
+) -> None:
+    """The watcher's and the MCP tool's path: `reingest` names what it
+    re-parsed beside the edited file, and a comment touches nothing."""
+    root = temp_repo / PROJECT
+    _materialise(root, PYTHON)
+    store = _StatefulIngestor()
+    updater = _updater(store, root)
+    updater.run(force=True)
+    (root / PY_TARGET).write_text(PY_CORE + "# trailing note\n", encoding="utf-8")
+    if fresh_updater:
+        updater = _updater(store, root)
+
+    report = updater.reingest([PY_TARGET])
+
+    assert report.reparsed == (PY_TARGET,)
+    assert report.affected == ()
+    clean = _clean(root)
+    assert _snapshot(store) == clean, _diff(_snapshot(store), clean)
+
+
+PY_MAKE_GADGET = _replace(
+    "def make() -> Widget:\n    return Widget()",
+    "def make() -> Gadget:\n    return Gadget()",
+)
+
+
+# A warm updater keeps Python return-type inference cached across reingest
+# calls, so a changed return type re-binds only through a fresh one until
+# issue #2927 is fixed; that case runs fresh alone.
+@pytest.mark.parametrize(
+    ("fresh_updater", "edit"),
+    [
+        (False, _replace("def helper(", "def helper2(")),
+        (True, _replace("def helper(", "def helper2(")),
+        (True, PY_MAKE_GADGET),
+    ],
+    ids=[
+        "renamed-function-warm",
+        "renamed-function-fresh",
+        "changed-return-type-fresh",
+    ],
+)
+def test_a_scoped_reingest_of_an_interface_change_reparses_the_callers(
+    temp_repo: Path, fresh_updater: bool, edit: Edit
+) -> None:
+    root = temp_repo / PROJECT
+    _materialise(root, PYTHON)
+    store = _StatefulIngestor()
+    updater = _updater(store, root)
+    updater.run(force=True)
+    (root / PY_TARGET).write_text(edit(PY_CORE), encoding="utf-8")
+    if fresh_updater:
+        updater = _updater(store, root)
+
+    report = updater.reingest([PY_TARGET])
+
+    assert set(report.affected) == PY_CALLERS
+    clean = _clean(root)
+    assert _snapshot(store) == clean, _diff(_snapshot(store), clean)
+
+
+def test_a_save_during_a_reingest_is_judged_before_its_callers_keep_edges(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The scoped re-ingest judges the interface on the bytes it then parses.
+    A save landing between the two (here: `make` starts returning a Gadget)
+    is parsed by the next event instead, and that event sees the change: had
+    the first call parsed it under a verdict reached on the older bytes, the
+    stored fingerprint would already match it and `b.py` would keep binding
+    `Widget.size` for good."""
+    root = temp_repo / PROJECT
+    _materialise(root, PYTHON)
+    store = _StatefulIngestor()
+    updater = _updater(store, root)
+    updater.run(force=True)
+    target = root / PY_TARGET
+    target.write_text(PY_CORE + "# trailing note\n", encoding="utf-8")
+    capture = updater._capture_inbound_edges
+
+    def save_then_capture(keys: list[str]) -> list[ResultRow]:
+        target.write_text(PY_MAKE_GADGET(PY_CORE), encoding="utf-8")
+        return capture(keys)
+
+    monkeypatch.setattr(updater, "_capture_inbound_edges", save_then_capture)
+    assert updater.reingest([PY_TARGET]).affected == ()
+
+    # The next event, through a fresh updater (see issue #2927 above).
+    report = _updater(store, root).reingest([PY_TARGET])
+
+    assert "pkg/b.py" in report.affected
+    clean = _clean(root)
+    assert "proj.pkg.core.Gadget.size" in _calls(clean, "proj.pkg.b.use_make")
+    assert _snapshot(store) == clean, _diff(_snapshot(store), clean)
+
+
+PY_REEXPORT_HELPER = "def helper(x: int) -> int:\n    y = x + 1\n    return y + 1\n"
+
+# Edits that change what callers resolve against: every caller re-parses, as
+# before, and the graph still equals a clean index.
+SEEN_EDITS: list[tuple[str, dict[str, str], str, dict[str, Edit], str | None]] = [
+    (
+        "py-renamed-function",
+        PYTHON,
+        PY_TARGET,
+        {PY_TARGET: _replace("def helper(", "def helper2(")},
+        None,
+    ),
+    (
+        "py-changed-parameter-list",
+        PYTHON,
+        PY_TARGET,
+        {PY_TARGET: _replace("def helper(x: int)", "def helper(x: int, z: int = 0)")},
+        None,
+    ),
+    (
+        "py-changed-annotation",
+        PYTHON,
+        PY_TARGET,
+        {PY_TARGET: _replace("def helper(x: int)", "def helper(x: str)")},
+        None,
+    ),
+    (
+        "py-changed-return-annotation-of-a-chained-call",
+        PYTHON,
+        PY_TARGET,
+        {PY_TARGET: PY_MAKE_GADGET},
+        "proj.pkg.core.Gadget.size",
+    ),
+    (
+        "py-changed-inferred-return-of-a-chained-call",
+        PYTHON,
+        PY_TARGET,
+        {
+            PY_TARGET: _replace(
+                "def build():\n    return Widget()", "def build():\n    return Gadget()"
+            )
+        },
+        "proj.pkg.core.Gadget.size",
+    ),
+    (
+        "py-added-method",
+        PYTHON,
+        PY_TARGET,
+        {
+            PY_TARGET: _replace(
+                "    def size(self) -> int:\n        return 2\n",
+                "    def size(self) -> int:\n        return 2\n\n"
+                "    def run(self) -> int:\n        return 5\n",
+            )
+        },
+        "proj.pkg.core.Widget.run",
+    ),
+    (
+        "py-removed-method",
+        PYTHON,
+        PY_TARGET,
+        {
+            PY_TARGET: _replace(
+                "class Widget(Base):\n    def size(self) -> int:\n        return 2\n",
+                "class Widget(Base):\n    pass\n",
+            )
+        },
+        None,
+    ),
+    (
+        "py-changed-base-class",
+        PYTHON,
+        PY_TARGET,
+        {PY_TARGET: _replace("class Widget(Base):", "class Widget(Gadget):")},
+        "proj.pkg.core.Gadget.size",
+    ),
+    (
+        "py-changed-all",
+        PYTHON,
+        PY_TARGET,
+        {PY_TARGET: _replace('"make", "build", "helper",', '"make", "build",')},
+        None,
+    ),
+    (
+        "py-moved-definition",
+        PYTHON,
+        PY_TARGET,
+        {
+            PY_TARGET: lambda source: (
+                "from pkg.helpers import helper\n\n\n"
+                + source.replace(PY_REEXPORT_HELPER, "")
+            ),
+            "pkg/helpers.py": lambda _source: PY_REEXPORT_HELPER,
+        },
+        "proj.pkg.helpers.helper",
+    ),
+    (
+        "py-new-same-named-definition",
+        PYTHON,
+        PY_TARGET,
+        {
+            PY_TARGET: _append(
+                "\n\nif __debug__:\n\n    def helper(x: int) -> int:\n"
+                "        return x\n"
+            )
+        },
+        None,
+    ),
+    (
+        "py-new-overload",
+        PYTHON,
+        PY_TARGET,
+        {
+            PY_TARGET: lambda source: (
+                "from typing import overload\n\n\n"
+                + source.replace(
+                    "def helper(x: int) -> int:\n",
+                    "@overload\ndef helper(x: int) -> int: ...\n\n\n"
+                    "@overload\ndef helper(x: str) -> str: ...\n\n\n"
+                    "def helper(x: int) -> int:\n",
+                )
+            )
+        },
+        None,
+    ),
+    (
+        "java-renamed-method",
+        JAVA,
+        JAVA_TARGET,
+        {JAVA_TARGET: lambda source: source.replace("twice(", "doubled(")},
+        None,
+    ),
+    (
+        "java-changed-parameter-list",
+        JAVA,
+        JAVA_TARGET,
+        {JAVA_TARGET: _replace("twice(int x)", "twice(int x, int z)")},
+        None,
+    ),
+    (
+        "java-changed-return-type-of-a-chained-call",
+        JAVA,
+        JAVA_TARGET,
+        {
+            JAVA_TARGET: _replace(
+                "public static Shape make()", "public static Square make()"
+            )
+        },
+        "proj.src.com.acme.Square.Square.area()",
+    ),
+    (
+        "java-added-method",
+        JAVA,
+        JAVA_TARGET,
+        {
+            JAVA_TARGET: _replace(
+                "    public static void log(",
+                "    public static int area() { return 9; }\n\n    public static void log(",
+            )
+        },
+        None,
+    ),
+    (
+        "java-removed-method",
+        JAVA,
+        JAVA_TARGET,
+        {
+            JAVA_TARGET: _replace(
+                "    public static void log(String message) {\n"
+                "        System.out.println(message);\n    }\n",
+                "",
+            )
+        },
+        None,
+    ),
+    (
+        "java-new-same-named-overload",
+        JAVA,
+        JAVA_TARGET,
+        {
+            JAVA_TARGET: _replace(
+                "    public static void log(",
+                "    public static long twice(long x) { return x; }\n\n"
+                "    public static void log(",
+            )
+        },
+        None,
+    ),
+    (
+        "java-changed-base-class",
+        JAVA,
+        "src/com/acme/Circle.java",
+        {"src/com/acme/Circle.java": _replace("extends Shape", "extends Square")},
+        "proj.src.com.acme.Square.Square.perimeter()",
+    ),
+    (
+        "ts-renamed-export",
+        TYPESCRIPT,
+        TS_TARGET,
+        {
+            TS_TARGET: lambda source: source.replace(
+                "function helper(", "function helper2("
+            )
+        },
+        None,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("files", "target", "edits", "new_callee"),
+    [case[1:] for case in SEEN_EDITS],
+    ids=[case[0] for case in SEEN_EDITS],
+)
+def test_an_edit_callers_can_see_still_reparses_them(
+    temp_repo: Path,
+    files: dict[str, str],
+    target: str,
+    edits: dict[str, Edit],
+    new_callee: str | None,
+) -> None:
+    root = temp_repo / PROJECT
+    reparsed, synced = _sync(
+        root, files, {rel: edit(files.get(rel, "")) for rel, edit in edits.items()}
+    )
+
+    dependents = reparsed - set(edits)
+    assert dependents, "the callers of an interface change must re-parse"
+    clean = _clean(root)
+    assert synced == clean, _diff(synced, clean)
+    if new_callee is not None:
+        # The caller binds what the edit made it bind, not what it held.
+        assert any(edge[4] == new_callee for edge in clean[1])
+
+
+def test_a_python_twin_named_by_its_line_reparses_its_callers(
+    temp_repo: Path,
+) -> None:
+    """`f@12` is minted from a position: a comment above it renames it, so a
+    caller bound to it cannot keep its edge by name."""
+    files = {
+        "twins.py": (
+            "import sys\n\nif sys.platform == 'win32':\n\n"
+            "    def pick():\n        return 1\n\nelse:\n\n"
+            "    def pick():\n        return 2\n"
+        ),
+        "user.py": "from twins import pick\n\n\ndef use():\n    return pick()\n",
+    }
+    root = temp_repo / PROJECT
+    reparsed, synced = _sync(
+        root, files, {"twins.py": "# header\n" + files["twins.py"]}
+    )
+
+    assert "user.py" in reparsed
+    clean = _clean(root)
+    assert synced == clean, _diff(synced, clean)
+
+
+def test_a_caller_that_passes_a_callable_in_is_reparsed(temp_repo: Path) -> None:
+    """`run(on_done)` gives `run` a CALLS edge to `on_done`, written from the
+    caller's parse. A sync that re-parsed only `runner.py` would lose it, so
+    the caller is re-parsed even though nothing it resolves against moved."""
+    files = {
+        "runner.py": "def run(callback):\n    callback()\n",
+        "user.py": (
+            "from runner import run\n\n\ndef on_done():\n    return 1\n\n\n"
+            "def go():\n    run(on_done)\n"
+        ),
+    }
+    root = temp_repo / PROJECT
+    reparsed, synced = _sync(root, files, {"runner.py": files["runner.py"] + "# c\n"})
+
+    assert "user.py" in reparsed
+    clean = _clean(root)
+    assert "proj.user.on_done" in _calls(clean, "proj.runner.run")
+    assert synced == clean, _diff(synced, clean)
+
+
+def test_an_opt_in_capture_group_keeps_reparsing_every_caller(
+    temp_repo: Path,
+) -> None:
+    """Parameters, fields, data flow and the other opt-in groups bring
+    cross-file readers the fingerprint does not model."""
+    capture = resolve_capture([cs.CaptureGroup.PARAMETERS.value])
+    root = temp_repo / PROJECT
+    reparsed, synced = _sync(
+        root,
+        PYTHON,
+        {PY_TARGET: PY_CORE + "# trailing note\n"},
+        capture=capture,
+    )
+
+    assert reparsed == {PY_TARGET, *PY_CALLERS}
+    clean = _clean(root, capture)
+    assert synced == clean, _diff(synced, clean)

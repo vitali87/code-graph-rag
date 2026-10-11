@@ -32,6 +32,7 @@ from .config import settings
 from .function_registry import FunctionRegistryTrie
 from .gloss_anchor import ParsedSource, parse_source
 from .gloss_repair import repair_unanchored
+from .interface_skip import callers_to_reparse, stable_interface_modules
 from .language_spec import (
     LANGUAGE_FQN_SPECS,
     csharp_namespaced_from_graph,
@@ -88,6 +89,7 @@ from .parsers.frontends import (
 from .parsers.frontends.protocol import QueryCall
 from .parsers.go import read_package_clause
 from .parsers.go_frontend import find_go_module
+from .parsers.interface_fingerprint import INTERFACE_LANGUAGES, interface_fingerprint
 from .parsers.java_generated import (
     discover_generated_source_roots,
     generated_prefixes_for,
@@ -1201,6 +1203,38 @@ def _read_bytes(path: Path) -> bytes:
         return b""
 
 
+def _read_source(path: Path) -> bytes | None:
+    try:
+        return path.read_bytes()
+    except OSError:
+        return None
+
+
+def _interface_sources(
+    changed_entries: list[tuple[Path, str, bool, bytes]], excluded: Collection[str]
+) -> list[tuple[Path, str, bytes]]:
+    """The re-indexed files whose interface may have held, with the bytes the
+    parse will read: a file added by the run has no stored interface, and a
+    flux-stem or package-flip sibling's module qn itself may move."""
+    return [
+        (path, key, data)
+        for path, key, is_new, data in changed_entries
+        if not is_new and key not in excluded
+    ]
+
+
+def _semantic_frontend_languages() -> frozenset[cs.SupportedLanguage]:
+    # A semantic frontend binds calls with its own model of the callee (Jedi
+    # infers from bodies the fingerprint leaves out), so its languages'
+    # callers re-parse as before.
+    languages: set[cs.SupportedLanguage] = set()
+    if settings.PYTHON_FRONTEND != cs.PythonFrontend.HEURISTIC:
+        languages.add(cs.SupportedLanguage.PYTHON)
+    if settings.JAVA_FRONTEND != cs.JavaFrontend.HEURISTIC:
+        languages.add(cs.SupportedLanguage.JAVA)
+    return frozenset(languages)
+
+
 def _direct_children(keys: Iterable[str], prefix: str) -> set[str]:
     children: set[str] = set()
     for key in keys:
@@ -1524,6 +1558,9 @@ class GraphUpdater:
         # Files (re)parsed by Pass 2 this run: the only files whose
         # definition spans exist for hybrid macro-call attribution.
         self._reparsed_file_keys: set[str] = set()
+        # The bytes a scoped re-ingest judged a file's interface on, which its
+        # re-parse then reads instead of the disk (issue #2531).
+        self._reingest_pinned_sources: dict[str, bytes] = {}
         # The trace-derived CALLS edges `run()` read before deleting the
         # re-parsed subtrees, re-applied once Pass 3 has rebuilt the static
         # edges (issue #2429), and the files the run deleted, whose edges must
@@ -4472,6 +4509,104 @@ class GraphUpdater:
             | self._linking_document_keys(reindexed_keys)
         )
 
+    def _dependent_keys(
+        self, target_keys: list[str], stable: Mapping[str, str]
+    ) -> list[str]:
+        """The dependents of `target_keys` the run must re-parse (issue #2531).
+
+        All of them, except a caller of a file whose interface held (`stable`,
+        file to module qn) that depends on nothing else re-indexed and holds
+        only edges the inbound capture restores by name: it would bind
+        exactly as it does now, so it keeps its edges, as an unchanged file
+        that is no dependent at all does.
+        """
+        if not stable:
+            return self._affected_caller_keys(target_keys)
+        required = set(
+            self._affected_caller_keys(
+                [key for key in target_keys if key not in stable]
+            )
+        )
+        candidates = set(self._affected_caller_keys(sorted(stable))) - required
+        reparsed = self._callers_holding_unrestorable_edges(stable, candidates)
+        if kept := len(candidates) - len(reparsed):
+            logger.info(ls.INCREMENTAL_INTERFACE_KEPT, count=kept)
+        return sorted(required | reparsed)
+
+    def _callers_holding_unrestorable_edges(
+        self, stable: Mapping[str, str], candidates: set[str]
+    ) -> set[str]:
+        """The `candidates` that must re-parse anyway; all of them when the
+        edges between them and the stable files cannot be read."""
+        if not candidates or not isinstance(self.ingestor, QueryProtocol):
+            return candidates
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_INTERFACE_BOUNDARY_EDGES,
+                {
+                    cs.CYPHER_PARAM_PATHS: sorted(stable),
+                    cs.CYPHER_PARAM_CALLERS: sorted(candidates),
+                },
+            )
+        except Exception:
+            logger.warning(ls.INTERFACE_BOUNDARY_UNREAD)
+            return candidates
+        return callers_to_reparse(rows, candidates, stable)
+
+    def _interface_stable_modules(
+        self, sources: Iterable[tuple[Path, str, bytes]]
+    ) -> dict[str, str]:
+        """{file key: module qn} of the re-indexed `sources` whose new bytes
+        keep the interface fingerprint the graph stored for them.
+
+        Empty on a full build (every file re-parses anyway) and while a
+        capture group outside the ones the fingerprint models is enabled.
+        """
+        if self._is_full_build or not self.capture.enabled_rels <= (
+            cs.INTERFACE_SKIP_RELS
+        ):
+            return {}
+        fresh = {
+            key: fingerprint
+            for path, key, data in sources
+            if (fingerprint := self._source_interface_fingerprint(path, data))
+        }
+        if not fresh or not isinstance(self.ingestor, QueryProtocol):
+            return {}
+        prefix = self.project_name + cs.SEPARATOR_DOT
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_INTERFACE_FINGERPRINTS,
+                {
+                    cs.CYPHER_PARAM_PATHS: sorted(fresh),
+                    cs.KEY_PROJECT_PREFIX: prefix,
+                    cs.KEY_PROJECT_NAME: self.project_name,
+                },
+            )
+        except Exception:
+            logger.warning(ls.INTERFACE_FINGERPRINTS_UNREAD)
+            return {}
+        longer_projects = [
+            name for name in self._registered_project_names() if name.startswith(prefix)
+        ]
+        return stable_interface_modules(rows, fresh, longer_projects)
+
+    def _source_interface_fingerprint(self, path: Path, data: bytes) -> str | None:
+        """The interface fingerprint of `data` parsed as the run will parse
+        it, or None when its language has none."""
+        language = self._tree_sitter_language(path)
+        if (
+            language not in INTERFACE_LANGUAGES
+            or language in _semantic_frontend_languages()
+            or (language_queries := self.queries.get(language)) is None
+            or (parser := language_queries.get(cs.KEY_PARSER)) is None
+        ):
+            return None
+        tree = parse_with_preproc_recovery(
+            parser, grammar_bytes(data, language, path), language
+        )
+        return interface_fingerprint(tree.root_node, language)
+
     def _linking_document_keys(self, reindexed_keys: list[str]) -> set[str]:
         """Documents whose links end in a re-indexed or deleted file.
 
@@ -6379,11 +6514,15 @@ class GraphUpdater:
             scan.changed_entries, is_full_build
         )
         added_keys = [key for key, _b in added_entries]
+        stable = self._interface_stable_modules(
+            _interface_sources(scan.changed_entries, {*deleted_before_parse, *siblings})
+        )
         reindexed_keys = self._queue_affected_callers(
             sorted(
                 {
-                    *self._affected_caller_keys(
-                        sorted({*reindexed_keys, *deleted_before_parse, *siblings})
+                    *self._dependent_keys(
+                        sorted({*reindexed_keys, *deleted_before_parse, *siblings}),
+                        stable,
                     ),
                     *siblings,
                     *foreign_definers,
@@ -8104,6 +8243,7 @@ class GraphUpdater:
         present: dict[str, Path],
         gone: dict[str, Path],
         created: set[str] | None = None,
+        stable: Mapping[str, str] | None = None,
     ) -> dict[str, Path]:
         # Files whose bindings the change can move (one level, from the
         # graph's own edges) plus any file whose delombok overlay changed.
@@ -8113,7 +8253,7 @@ class GraphUpdater:
         # unresolved-import lookup finds importers of files this call CREATED,
         # which by construction have no inbound edges yet (issue #1682).
         for caller_key in (
-            *self._affected_caller_keys(keys),
+            *self._dependent_keys(keys, stable or {}),
             *self._unresolved_importer_keys(sorted(present)),
             # Created files offer everything; modified files offer only the
             # definitions they gained (bot review on PR #1979).
@@ -8145,6 +8285,43 @@ class GraphUpdater:
             ):
                 affected[key] = self.repo_path / key
         return affected
+
+    def _reingest_interface_stable(
+        self,
+        present: dict[str, Path],
+        hashes: FileHashCache,
+        flux_stems: set[str],
+        flipped_dirs: set[str],
+    ) -> dict[str, str]:
+        """`_interface_stable_modules` for a scoped re-ingest.
+
+        A created file, a file on a stem in flux and a file under a directory
+        whose package-ness flipped are left out, as the batch path leaves out
+        its added files and siblings. The bytes judged are the bytes the
+        re-parse reads: a save landing in between would otherwise be parsed,
+        and its fingerprint stored, without its callers ever being judged
+        against it.
+        """
+        judged = {
+            key: data
+            for key, path in sorted(present.items())
+            if key in hashes
+            and not _flux_stems_of(key) & flux_stems
+            and Path(key).parent.as_posix() not in flipped_dirs
+            and (data := _read_source(path)) is not None
+        }
+        stable = self._interface_stable_modules(
+            (present[key], key, self._delombok_overlay.get(key, data))
+            for key, data in judged.items()
+        )
+        self._reingest_pinned_sources = {key: judged[key] for key in stable}
+        return stable
+
+    def _reingest_source(self, key: str, path: Path) -> bytes:
+        """The bytes to re-parse `key` from: those its interface was judged
+        on, when it was."""
+        pinned = self._reingest_pinned_sources.pop(key, None)
+        return path.read_bytes() if pinned is None else pinned
 
     def _reingest_delete(
         self, reparse: dict[str, Path], gone: dict[str, Path], hashes: FileHashCache
@@ -8233,7 +8410,7 @@ class GraphUpdater:
             # between the parse and a second read would otherwise be
             # recorded in the cache as already indexed.
             try:
-                parsed[key] = path.read_bytes()
+                parsed[key] = self._reingest_source(key, path)
             except OSError as exc:
                 # The file was classified from disk and has since become
                 # unreadable -- deleted, or replaced by a directory, between
@@ -8435,6 +8612,7 @@ class GraphUpdater:
         # THIS call's answer, not the last one's.
         self.reingest_mutated = False
         self.reingest_scope = ()
+        self._reingest_pinned_sources = {}
         self.ast_grep_tier.reset_unparsed()
         present, gone, skipped = self._reingest_split(paths, deleted)
         if skipped:
@@ -8486,6 +8664,9 @@ class GraphUpdater:
                 {**present, **survivors},
                 gone,
                 created={key for key in present if key not in hashes},
+                stable=self._reingest_interface_stable(
+                    present, hashes, flux_stems, flipped_dirs
+                ),
             )
             all_keys = sorted({*present, *gone, *survivors, *affected})
             captured = self._capture_inbound_edges(all_keys)
