@@ -1422,3 +1422,6 @@ CHECKOUT_STATE_ADOPTED = (
 )
 CHECKOUT_STATE_ADOPT_FAILED = "Could not move {legacy} to {target}: {error}"
 CHECKOUT_STATE_LEGACY_LEFT = "Could not remove {legacy} from the working tree: {error}"
+CHECKOUT_STATE_HISTORY_MERGED = (
+    "Added {count} edit history entries an older cgr recorded in {legacy} to {target}"
+)

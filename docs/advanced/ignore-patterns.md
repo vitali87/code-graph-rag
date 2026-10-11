@@ -76,7 +76,10 @@ The one exception is the edit lock, `.cgr-edit-lock`: an older cgr still
 running (an MCP server started before the upgrade, say) keeps taking it at
 the repository root, so it is left there, and edits take it as well as their
 own lock for as long as it exists. Delete it once no older cgr runs against
-the checkout.
+the checkout. Such an older cgr also goes on recording its edits in a new
+`.cgr-edit-history.json` at the root; the next sync or edit adds those
+entries to the history in the state directory rather than dropping them, so
+`cgr edits undo` still reverses them.
 
 ![cgr stats on pallets/flask, then a .cgrignore excluding tests and examples, a cgr start --update-graph sync, and cgr stats showing the smaller graph](../assets/demos/ignore-patterns.gif)
 

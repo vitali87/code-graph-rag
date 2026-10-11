@@ -22,7 +22,15 @@ upgrade keeps its hash cache (and the mtime the in-sync check compares
 files against) and its edit history, and a name added to the set is kept
 out of the tree and migrated the same way. A lock is the exception
 (`CGR_STATE_LOCK_FILENAMES`): it stays in the tree, where an older cgr
-still running takes it, and an edit takes it as well as its own.
+still running takes it, and an edit takes it as well as its own
+(`EditLock`).
+
+The edit history is the other exception. An older cgr still running goes
+on recording its edits there, starting a new history once the old one has
+moved. That history is moved, or its entries are added to the one under
+CGR_HOME, only while both edit locks are held, and whenever they are next
+held, so an entry it records later is never dropped (Greptile, PRs #2490
+and #2550).
 
 A move never replaces a file already in the directory. Another process
 may publish the checkout's current state there at any moment, and the
@@ -36,11 +44,16 @@ copy, which state written in place would otherwise change too.
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import shutil
 import stat
+import sys
 import tempfile
+import threading
 from pathlib import Path
+from types import TracebackType
+from typing import IO
 
 from loguru import logger
 
@@ -71,8 +84,7 @@ def prepare_state_dir(repo_path: Path, *, adopt: bool = True) -> Path:
     writes fail the way they failed on a read-only tree, so the sync runs
     without incremental state instead of stopping.
 
-    `adopt=False` only creates it, for the edit lock: the history an older
-    cgr may still be appending to is moved once that lock is held.
+    `adopt=False` only creates it, for the edit lock.
     """
     directory = state_dir(repo_path)
     try:
@@ -84,7 +96,11 @@ def prepare_state_dir(repo_path: Path, *, adopt: bool = True) -> Path:
         return directory
     adopted = [
         name
-        for name in sorted(cs.CGR_STATE_FILENAMES - cs.CGR_STATE_LOCK_FILENAMES)
+        for name in sorted(
+            cs.CGR_STATE_FILENAMES
+            - cs.CGR_STATE_LOCK_FILENAMES
+            - {cs.EDIT_HISTORY_FILENAME}
+        )
         if _adopt(repo_path / name, directory / name)
     ]
     if adopted:
@@ -94,6 +110,8 @@ def prepare_state_dir(repo_path: Path, *, adopt: bool = True) -> Path:
             path=directory,
             names=", ".join(adopted),
         )
+    if _is_regular(repo_path / cs.EDIT_HISTORY_FILENAME):
+        _adopt_history_unless_editing(repo_path)
     return directory
 
 
@@ -108,14 +126,7 @@ def _adopt(legacy: Path, target: Path) -> bool:
     Returns whether it became `target`. A `target` that exists, or appears
     while the move runs, is kept and `legacy` dropped.
     """
-    try:
-        found = legacy.lstat()
-    except OSError:
-        return False
-    # Only a regular file is cgr's own. A link under a state file's name,
-    # say in a cloned repository, would point cgr's later writes wherever
-    # it leads, so it is neither followed nor moved.
-    if not stat.S_ISREG(found.st_mode):
+    if not _is_regular(legacy):
         return False
     try:
         placed = not target.exists() and _place(legacy, target)
@@ -133,6 +144,16 @@ def _adopt(legacy: Path, target: Path) -> bool:
     # taking it would roll the state back; either way it goes.
     _discard(legacy)
     return placed
+
+
+def _is_regular(legacy: Path) -> bool:
+    # Only a regular file is cgr's own. A link under a state file's name,
+    # say in a cloned repository, would point cgr's later writes wherever
+    # it leads, so it is neither followed nor moved.
+    try:
+        return stat.S_ISREG(legacy.lstat().st_mode)
+    except OSError:
+        return False
 
 
 def _place(legacy: Path, target: Path) -> bool:
@@ -226,3 +247,249 @@ def _discard(legacy: Path) -> None:
         legacy.unlink(missing_ok=True)
     except OSError as error:
         logger.debug(ls.CHECKOUT_STATE_LEGACY_LEFT, legacy=legacy, error=error)
+
+
+# --- the edit history an older cgr records in the tree ------------------------
+
+
+def _adopt_history_unless_editing(repo_path: Path) -> None:
+    """Move in the tree's edit history if no one is editing the checkout.
+
+    Never waits: a sync must not stall behind an edit's verifier, and a
+    verifier that reaches the state itself would wait on its own lock. An
+    edit in progress, this cgr's or an older one's, leaves the history for
+    whoever next takes the edit lock.
+    """
+    try:
+        with EditLock(repo_path) as lock:
+            lock.acquire(wait=False)
+    except OSError as error:
+        logger.warning(
+            ls.CHECKOUT_STATE_ADOPT_FAILED,
+            legacy=repo_path / cs.EDIT_HISTORY_FILENAME,
+            target=state_dir(repo_path) / cs.EDIT_HISTORY_FILENAME,
+            error=error,
+        )
+
+
+def _adopt_history(repo_path: Path, directory: Path) -> None:
+    """Move the tree's edit history into `directory`, with the edit lock held.
+
+    An older cgr that edits after the history moved records its entries in
+    a new history at the root, so a history found there while the one
+    under CGR_HOME exists is added to it rather than dropped.
+
+    Only a history that shares no entry with the one under CGR_HOME is
+    added. The older cgr started its history afresh once the old one
+    moved, so one that shares an entry is an older copy, such as one `git`
+    put back from a commit that tracked it: it is dropped as any stale
+    copy is, since adding it would bring back the edits undone since.
+    """
+    legacy = repo_path / cs.EDIT_HISTORY_FILENAME
+    target = directory / cs.EDIT_HISTORY_FILENAME
+    if not _is_regular(legacy):
+        return
+    if not target.exists():
+        if _adopt(legacy, target):
+            logger.info(
+                ls.CHECKOUT_STATE_ADOPTED,
+                repo=repo_path,
+                path=directory,
+                names=cs.EDIT_HISTORY_FILENAME,
+            )
+        return
+    try:
+        recorded = _history_entries(legacy)
+        kept = _history_entries(target)
+        known = {entry.get(cs.EDIT_KEY_ID) for entry in kept}
+        if recorded and known.isdisjoint(
+            entry.get(cs.EDIT_KEY_ID) for entry in recorded
+        ):
+            _write_history(target, [*kept, *recorded])
+            logger.info(
+                ls.CHECKOUT_STATE_HISTORY_MERGED,
+                count=len(recorded),
+                legacy=legacy,
+                target=target,
+            )
+    except OSError as error:
+        # The tree's copy may hold the only record of an older cgr's edits.
+        logger.warning(
+            ls.CHECKOUT_STATE_ADOPT_FAILED, legacy=legacy, target=target, error=error
+        )
+        return
+    _discard(legacy)
+
+
+def _history_entries(path: Path) -> list[dict]:
+    """The entries of the edit history at `path`; none if it is not one.
+
+    Raises OSError when it cannot be read, so a history that may still
+    hold entries is never taken for an empty one.
+    """
+    try:
+        data = json.loads(path.read_text(encoding=cs.ENCODING_UTF8))
+    except ValueError:
+        return []
+    if not isinstance(data, list) or not all(isinstance(e, dict) for e in data):
+        return []
+    return data
+
+
+def _write_history(target: Path, entries: list[dict]) -> None:
+    handle, name = tempfile.mkstemp(
+        dir=target.parent, prefix=f"{target.name}.", suffix=cs.TMP_EXTENSION
+    )
+    temp = Path(name)
+    try:
+        with os.fdopen(handle, "wb") as out:
+            out.write(
+                json.dumps(entries[-cs.EDIT_HISTORY_LIMIT :], indent=2).encode(
+                    cs.ENCODING_UTF8
+                )
+            )
+        os.replace(temp, target)
+    finally:
+        with contextlib.suppress(OSError):
+            temp.unlink(missing_ok=True)
+
+
+# --- the edit lock ------------------------------------------------------------
+
+_THREAD_LOCKS: dict[str, threading.Lock] = {}
+_THREAD_LOCKS_GUARD = threading.Lock()
+
+
+def _thread_lock(directory: Path) -> threading.Lock:
+    key = str(directory)
+    with _THREAD_LOCKS_GUARD:
+        return _THREAD_LOCKS.setdefault(key, threading.Lock())
+
+
+def _lock_file(handle: IO[bytes]) -> None:
+    if sys.platform == cs.PLATFORM_WINDOWS:  # pragma: no cover - platform
+        import msvcrt
+
+        msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+
+
+def _try_lock_file(handle: IO[bytes]) -> bool:
+    """Lock `handle` only if no one holds it; returns whether it did."""
+    if sys.platform == cs.PLATFORM_WINDOWS:  # pragma: no cover - platform
+        import msvcrt
+
+        try:
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError:
+            return False
+        return True
+    import fcntl
+
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return False
+    return True
+
+
+def _unlock_file(handle: IO[bytes]) -> None:
+    if sys.platform == cs.PLATFORM_WINDOWS:  # pragma: no cover - platform
+        import msvcrt
+
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _open_tree_lock(repo_path: Path) -> IO[bytes] | None:
+    """The lock an older cgr takes at the checkout root, if one is there.
+
+    Opened for reading, never created: a tree no older cgr edited gets no
+    lock file. Only a regular file is cgr's; a link or a FIFO by that name
+    is neither followed nor opened.
+    """
+    path = repo_path / cs.EDIT_LOCK_FILENAME
+    if not _is_regular(path):
+        return None
+    try:
+        return path.open("rb")
+    except OSError:
+        return None
+
+
+class EditLock:
+    """The lock every edit of the checkout at `repo_path` holds.
+
+    Two transactions committing into one tree must serialise their
+    read-verify-write windows, and `cgr edits undo` may run in another
+    process than the agent's server: the lock is an OS advisory lock on
+    `.cgr-edit-lock` in the state directory, held across the baseline
+    check, the verifier, the writes and the history update. A thread lock
+    per checkout sits in front of it so threads of one process queue rather
+    than contend for the file.
+
+    An older cgr locks `.cgr-edit-lock` at the checkout root instead, and
+    one still running (an agent's server started before the upgrade) goes
+    on doing so. That file is never created, moved or removed, since
+    another process may hold it or be about to open it by that path; while
+    it is there it is taken too, after ours, so old and new editors of one
+    tree exclude each other. Each time both are taken, the history that
+    older cgr records at the root is moved in (`_adopt_history`).
+    """
+
+    def __init__(self, repo_path: Path) -> None:
+        self._repo_path = repo_path
+        self._directory = state_dir(repo_path)
+        self._held = contextlib.ExitStack()
+
+    def __enter__(self) -> EditLock:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        self._held.close()
+
+    def acquire(self, *, wait: bool = True) -> bool:
+        """Take the lock; with `wait=False` only if no one holds any part.
+
+        Returns whether it is held. What was taken is released on exit
+        either way.
+        """
+        thread_lock = _thread_lock(self._directory)
+        if not thread_lock.acquire(blocking=wait):
+            return False
+        self._held.callback(thread_lock.release)
+        lock_path = prepare_state_dir(self._repo_path, adopt=False) / (
+            cs.EDIT_LOCK_FILENAME
+        )
+        own = self._held.enter_context(lock_path.open("ab"))
+        if not (self._take(own, wait=wait) and self._take_tree_lock(wait=wait)):
+            return False
+        _adopt_history(self._repo_path, self._directory)
+        return True
+
+    def _take_tree_lock(self, *, wait: bool) -> bool:
+        """Take the older cgr's lock if it is there; False if it is busy."""
+        handle = _open_tree_lock(self._repo_path)
+        if handle is None:
+            return True
+        self._held.enter_context(handle)
+        return self._take(handle, wait=wait)
+
+    def _take(self, handle: IO[bytes], *, wait: bool) -> bool:
+        if wait:
+            _lock_file(handle)
+        elif not _try_lock_file(handle):
+            return False
+        self._held.callback(_unlock_file, handle)
+        return True

@@ -66,7 +66,9 @@ Every applied transaction is appended to `.cgr-edit-history.json` in the
 checkout's state directory under `CGR_HOME`, outside the working tree (see
 [cgr's own state](../advanced/ignore-patterns.md#cgrs-own-state)): the id,
 timestamp, each file's before/after bytes and the verification outcome.
-The file keeps the last 50 transactions.
+The file keeps the last 50 transactions. An older cgr still running records
+its edits in a history at the checkout root instead; the next sync or edit
+adds those entries to this one, so `cgr edits undo` reverses them too.
 
 ```bash
 cgr edits show            # newest first; --diff prints each patch set
