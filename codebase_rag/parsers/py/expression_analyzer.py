@@ -36,6 +36,10 @@ _MAX_INLINE_EXPRESSION_CHARS = 512
 # caller's language; only a Python module's chain is typed by Python's rules.
 _PY_MODULE_SUFFIXES = frozenset((*cs.PY_EXTENSIONS, cs.EXT_IPYNB))
 _HOP_SEPARATOR = f"{cs.CHAR_PAREN_CLOSE}{cs.SEPARATOR_DOT}"
+# A `yield` inside these belongs to another callable.
+_OWN_SCOPE_BOUNDARIES = frozenset(
+    {cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA, cs.TS_PY_CLASS_DEFINITION}
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -401,7 +405,7 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
             fn_node = self._find_function_ast_node(fn_qn)
         result = (
             self._analyze_method_return_statements(fn_node, fn_qn, fn_module_qn)
-            if fn_node
+            if fn_node and not _is_coroutine_function(fn_node)
             else None
         )
         if result and cs.SEPARATOR_DOT not in result:
@@ -576,7 +580,7 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         method_node = self._find_method_ast_node(method_qn)
         result = (
             self._analyze_method_return_statements(method_node, method_qn)
-            if method_node
+            if method_node and not _is_coroutine_function(method_node)
             else None
         )
         self._method_return_type_cache[method_qn] = result
@@ -594,6 +598,8 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
                     method_call, module_qn, local_var_types
                 )
             ) and (method_node := self._find_method_ast_node(method_qn)):
+                if _is_coroutine_function(method_node):
+                    return None
                 return self._analyze_method_return_statements(method_node, method_qn)
             return None
         except Exception as e:
@@ -746,6 +752,23 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         return resolve_class_name(
             class_name, module_qn, self.import_processor, self.function_registry
         )
+
+
+def _is_coroutine_function(definition: Node) -> bool:
+    """An `async def` that never yields: a call to it hands back a coroutine,
+    not the value its annotation or its returns name (issue #2468). An async
+    generator's annotation (`AsyncIterator[X]`) already names what a call
+    gives, so it keeps it."""
+    if not any(child.type == cs.TS_PY_ASYNC for child in definition.children):
+        return False
+    stack = list(definition.children)
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_PY_YIELD:
+            return False
+        if node.type not in _OWN_SCOPE_BOUNDARIES:
+            stack.extend(node.children)
+    return True
 
 
 def _called_callee(text: str) -> str | None:

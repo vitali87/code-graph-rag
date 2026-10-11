@@ -648,3 +648,249 @@ def test_py_generated_chain_past_the_cap_does_not_recurse_per_hop(
     ):
         create_and_run_updater(root, mock_ingestor)
     assert not overflows
+
+
+# ---------------------------------------------------------------------------
+# TypeScript overloads: a caller sees the overload signatures, never the
+# implementation's own, so the hop types only when every signature agrees
+# ---------------------------------------------------------------------------
+
+_TS_OVERLOADS = """\
+export class A { finish(): number { return 1; } }
+export class B extends A { finish(): number { return 2; } }
+
+export class C {
+  pick(s: string): A;
+  pick(n: number): B;
+  pick(x: any): A | B { return x ? new A() : new B(); }
+
+  wide(s: string): A;
+  wide(n: number): B;
+  wide(x: any): A { return x ? new A() : new B(); }
+
+  body(s: string): A;
+  body(n: number): B;
+  body(x: any) { return new A(); }
+
+  same(s: string): this;
+  same(n: number): this;
+  same(x: any): this { return this; }
+
+  both(s: string): A;
+  both(n: number): A;
+  both(x: any): A { return new A(); }
+
+  done(): number { return 0; }
+
+  async plainAsync() { return this; }
+  async buildAsync() { return new A(); }
+}
+
+export function make(s: string): A;
+export function make(n: number): B;
+export function make(x: any): A { return x ? new A() : new B(); }
+
+export function makeA(s: string): A;
+export function makeA(n: number): A;
+export function makeA(x: any): A { return new A(); }
+
+export async function makeAsync() { return new A(); }
+export const makeArrowAsync = async () => new A();
+"""
+
+_TS_OVERLOAD_USE = """\
+import { C, make, makeA, makeAsync, makeArrowAsync } from './over';
+
+export function pickUnion(): number { return new C().pick(1).finish(); }
+export function pickWide(): number { return new C().wide(1).finish(); }
+export function pickBody(): number { return new C().body(1).finish(); }
+export function fnOverload(): number { return make(1).finish(); }
+export function sameThis(): number { return new C().same(1).done(); }
+export function sameClass(): number { return new C().both(1).finish(); }
+export function fnSameClass(): number { return makeA(1).finish(); }
+export function asyncThis(): number { return new C().plainAsync().done(); }
+export function asyncNew(): number { return new C().buildAsync().finish(); }
+export function asyncFn(): number { return makeAsync().finish(); }
+export function asyncArrow(): number { return makeArrowAsync().finish(); }
+"""
+
+
+@pytest.fixture
+def ts_overload_edges(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> dict[tuple[str, str], str | None]:
+    root = temp_repo / "tsover"
+    _write(root, {"over.ts": _TS_OVERLOADS, "use_over.ts": _TS_OVERLOAD_USE})
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="typescript")
+    return _calls(mock_ingestor)
+
+
+def _over_use(
+    edges: dict[tuple[str, str], str | None], fn: str
+) -> dict[str, str | None]:
+    return _callees(edges, f"tsover.use_over.{fn}")
+
+
+@pytest.mark.parametrize("fn", ["pickUnion", "pickWide", "pickBody", "fnOverload"])
+def test_ts_overloads_that_disagree_type_no_hop(
+    ts_overload_edges: dict[tuple[str, str], str | None], fn: str
+) -> None:
+    # `pick(1)` is a B by its second signature; the implementation's `A`
+    # (or `A | B`, or a body building an A) is not what the caller gets.
+    callees = _over_use(ts_overload_edges, fn)
+    assert not {c for c in callees if c.endswith(".finish")}
+
+
+@pytest.mark.parametrize(
+    ("fn", "expected"),
+    [
+        ("sameThis", "tsover.over.C.done"),
+        ("sameClass", "tsover.over.A.finish"),
+        ("fnSameClass", "tsover.over.A.finish"),
+    ],
+)
+def test_ts_overloads_that_agree_still_chain(
+    ts_overload_edges: dict[tuple[str, str], str | None], fn: str, expected: str
+) -> None:
+    assert _over_use(ts_overload_edges, fn).get(expected) == _EXACT
+
+
+@pytest.mark.parametrize("fn", ["asyncThis", "asyncNew", "asyncFn", "asyncArrow"])
+def test_ts_async_callable_types_no_hop(
+    ts_overload_edges: dict[tuple[str, str], str | None], fn: str
+) -> None:
+    # An async call hands back a Promise, whatever its body returns.
+    callees = _over_use(ts_overload_edges, fn)
+    assert not {c for c in callees if c.endswith((".done", ".finish"))}
+
+
+# ---------------------------------------------------------------------------
+# Python coroutines: an unawaited call to an `async def` is a coroutine, so
+# its declared return types no hop
+# ---------------------------------------------------------------------------
+
+_PY_ASYNC = """\
+from typing import AsyncIterator
+
+
+class Box:
+    async def step(self) -> "Box":
+        return self
+
+    async def stream(self) -> AsyncIterator["Box"]:
+        yield self
+
+    def step_sync(self) -> "Box":
+        return self
+
+    async def items(self):
+        yield self
+
+    @classmethod
+    async def acreate(cls) -> "Box":
+        return cls()
+
+    def with_(self, n) -> "Box":
+        return self
+
+    def close(self):
+        return 0
+
+
+async def make_box() -> Box:
+    return Box()
+
+
+def coroutine_hop():
+    return Box().step().close()
+
+
+def coroutine_mid_chain():
+    return Box().with_(1).step().close()
+
+
+def async_generator_hop():
+    return Box().items().close()
+
+
+def annotated_async_generator_hop():
+    return Box().stream().close()
+
+
+async def async_for_over_generator():
+    async for box in Box().with_(1).stream():
+        box.close()
+
+
+def async_classmethod_base():
+    return Box.acreate().with_(1).close()
+
+
+def async_factory_base():
+    return make_box().with_(1).close()
+
+
+def sync_hop():
+    return Box().step_sync().close()
+
+
+async def awaited_hop():
+    return (await Box().step()).close()
+"""
+
+
+@pytest.fixture
+def py_async_edges(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> dict[tuple[str, str], str | None]:
+    root = temp_repo / "pyaio"
+    _write(root, {"app/__init__.py": "", "app/aio.py": _PY_ASYNC})
+    create_and_run_updater(root, mock_ingestor)
+    return _calls(mock_ingestor)
+
+
+@pytest.mark.parametrize(
+    "fn",
+    [
+        "coroutine_hop",
+        "coroutine_mid_chain",
+        "async_generator_hop",
+        "annotated_async_generator_hop",
+        "async_classmethod_base",
+        "async_factory_base",
+    ],
+)
+def test_py_coroutine_call_types_no_hop(
+    py_async_edges: dict[tuple[str, str], str | None], fn: str
+) -> None:
+    # Python runs the coroutine's (or async generator's) own `close`, not
+    # Box.close.
+    callees = _callees(py_async_edges, f"pyaio.app.aio.{fn}")
+    assert "pyaio.app.aio.Box.close" not in callees
+
+
+def test_py_sync_twin_of_a_coroutine_still_chains(
+    py_async_edges: dict[tuple[str, str], str | None],
+) -> None:
+    callees = _callees(py_async_edges, "pyaio.app.aio.sync_hop")
+    assert callees.get("pyaio.app.aio.Box.step_sync") == _EXACT
+    assert callees.get("pyaio.app.aio.Box.close") == _EXACT
+
+
+def test_py_awaited_coroutine_hop_stays_unbound(
+    py_async_edges: dict[tuple[str, str], str | None],
+) -> None:
+    # `(await x.step()).close()` is left as main leaves it: the text path
+    # does not see through `await`, and no guess replaces it.
+    callees = _callees(py_async_edges, "pyaio.app.aio.awaited_hop")
+    assert callees.get("pyaio.app.aio.Box.step") == _EXACT
+    assert "pyaio.app.aio.Box.close" not in callees
+
+
+def test_py_async_generator_still_types_its_async_for_target(
+    py_async_edges: dict[tuple[str, str], str | None],
+) -> None:
+    # An async generator's call is the iterator its annotation names, so the
+    # loop target keeps the element type the coroutine rule must not erase.
+    callees = _callees(py_async_edges, "pyaio.app.aio.async_for_over_generator")
+    assert callees.get("pyaio.app.aio.Box.close") == _EXACT

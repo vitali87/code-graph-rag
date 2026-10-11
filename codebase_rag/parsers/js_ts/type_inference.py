@@ -55,6 +55,12 @@ _JS_MODULE_STATEMENTS = frozenset({cs.TS_IMPORT_STATEMENT, cs.TS_EXPORT_STATEMEN
 # and nested declarations introduce, with the byte spans where they bind it.
 _JsBindingIndex = dict[str, list[tuple[int, int]]]
 
+# The signature node an overload of each implementation kind is written as.
+_OVERLOAD_SIGNATURE_TYPES = {
+    cs.TS_METHOD_DEFINITION: cs.TS_METHOD_SIGNATURE,
+    cs.TS_FUNCTION_DECLARATION: cs.TS_FUNCTION_SIGNATURE,
+}
+
 # Declarations of a name: (scope start_byte, scope end_byte, `new` value node
 # when the declarator's own initialiser constructs, else None). Assignments:
 # (site byte, `new` value node).
@@ -141,6 +147,32 @@ def _own_return_values(callable_node: ASTNode) -> list[ASTNode | None]:
 def _unparenthesized(node: ASTNode | None) -> ASTNode | None:
     while node is not None and node.type == cs.TS_PARENTHESIZED_EXPRESSION:
         node = next(iter(node.named_children), None)
+    return node
+
+
+def _overload_signatures(callable_node: ASTNode) -> list[ASTNode]:
+    """The overload signatures written for this implementation beside it:
+    in its class body, or in its module or block (each may be exported)."""
+    signature_type = _OVERLOAD_SIGNATURE_TYPES.get(callable_node.type)
+    name = safe_decode_text(callable_node.child_by_field_name(cs.FIELD_NAME))
+    scope = callable_node.parent
+    if scope is not None and scope.type == cs.TS_EXPORT_STATEMENT:
+        scope = scope.parent
+    if signature_type is None or not name or scope is None:
+        return []
+    return [
+        member
+        for child in scope.named_children
+        if (member := _exported_declaration(child)).type == signature_type
+        and safe_decode_text(member.child_by_field_name(cs.FIELD_NAME)) == name
+    ]
+
+
+def _exported_declaration(node: ASTNode) -> ASTNode:
+    if node.type == cs.TS_EXPORT_STATEMENT and (
+        declaration := node.child_by_field_name(cs.FIELD_DECLARATION)
+    ):
+        return declaration
     return node
 
 
@@ -538,6 +570,16 @@ class JsTypeInferenceEngine:
         ):
             return None
         own_class = _instance_class_of(callable_node, callable_qn)
+        if signatures := _overload_signatures(callable_node):
+            # A caller sees only the overloads, never the implementation's
+            # own signature; `pick(1)` may be a B where the body builds an A.
+            declared = {
+                self._declared_chain_type(annotation, own_class, module_qn)
+                if (annotation := sig.child_by_field_name(cs.FIELD_RETURN_TYPE))
+                else None
+                for sig in signatures
+            }
+            return declared.pop() if len(declared) == 1 else None
         annotation = callable_node.child_by_field_name(cs.FIELD_RETURN_TYPE)
         if annotation is not None:
             return self._declared_chain_type(annotation, own_class, module_qn)
