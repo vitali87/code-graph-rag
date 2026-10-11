@@ -62,6 +62,25 @@ export function logEvent(name: string): void {
 """
 
 
+# A body that hands functions to other files through call arguments: a
+# constructor field (read by the callable-field pre-pass) and a forwarded
+# callback (read by the callable-flow pass).
+PY_BINDS = """def setup():
+    label = "x"
+    spec = Spec(handler=a, retries=3)
+    total = 1 + 2
+    relay(a, label)
+    print("ready", total, spec)
+"""
+
+TS_BINDS = """export function setup(): void {
+  const label = 'x';
+  relay(a, label);
+  console.log('ready', label);
+}
+"""
+
+
 def _fingerprint(language: cs.SupportedLanguage, source: str) -> str | None:
     _parsers, queries = load_parsers()
     parser = queries[language][cs.KEY_PARSER]
@@ -91,7 +110,21 @@ def _same(language: cs.SupportedLanguage, before: str, after: str) -> bool:
         (JAVA, JAVA_BASE, JAVA_BASE.replace("int y = x * 2;", "int y = x << 1; y++;")),
         (JAVA, JAVA_BASE, JAVA_BASE.replace("return y;", "/* doubled */ return y;")),
         (TS, TS_BASE, TS_BASE + "// trailing\n"),
-        (TS, TS_BASE, TS_BASE.replace("console.log(message);", "if (message) {}")),
+        (
+            TS,
+            TS_BASE,
+            TS_BASE.replace(
+                "console.log(message);",
+                "if (message) {\n    console.log(message);\n  }",
+            ),
+        ),
+        (PY, PY_BINDS, PY_BINDS.replace('"ready"', '"set up"')),
+        (PY, PY_BINDS, PY_BINDS.replace("total = 1 + 2", "total = 2 * 3 - 1")),
+        (PY, PY_BINDS, PY_BINDS.replace("retries=3", "retries=4")),
+        (PY, PY_BINDS, PY_BINDS.replace('label = "x"', 'label = "y"')),
+        (PY, PY_BINDS, PY_BINDS.replace("    total =", "    # note\n    total =")),
+        (TS, TS_BINDS, TS_BINDS.replace("'ready'", "'set up'")),
+        (TS, TS_BINDS, TS_BINDS.replace("const label = 'x'", "let label = 'y'")),
     ],
     ids=[
         "py-trailing-comment",
@@ -105,6 +138,13 @@ def _same(language: cs.SupportedLanguage, before: str, after: str) -> bool:
         "java-block-comment-in-body",
         "ts-trailing-comment",
         "ts-procedure-body",
+        "py-binding-body-log-string",
+        "py-binding-body-local-arithmetic",
+        "py-binding-body-literal-argument",
+        "py-binding-body-local-argument-value",
+        "py-binding-body-comment-outside-arguments",
+        "ts-binding-body-log-string",
+        "ts-binding-body-local-argument-value",
     ],
 )
 def test_an_edit_no_caller_reads_keeps_the_fingerprint(
@@ -274,6 +314,124 @@ CHANGED: list[tuple[str, cs.SupportedLanguage, str, str]] = [
         TS,
         TS_BASE,
         TS_BASE.replace("console.log(message);", "require('./other');"),
+    ),
+    # A constructor argument binds the class's field for every caller of
+    # `spec.handler()`, and a forwarded callable binds the function that
+    # calls it: what the call names, by position or keyword, and the class
+    # or function it calls.
+    (
+        "py-constructor-keyword-argument",
+        PY,
+        PY_BINDS,
+        PY_BINDS.replace("handler=a", "handler=b"),
+    ),
+    (
+        "py-constructor-positional-argument",
+        PY,
+        PY_BINDS.replace("Spec(handler=a", "Spec(a"),
+        PY_BINDS.replace("Spec(handler=a", "Spec(b"),
+    ),
+    (
+        "py-argument-keyword",
+        PY,
+        PY_BINDS,
+        PY_BINDS.replace("handler=a", "callback=a"),
+    ),
+    ("py-constructed-class", PY, PY_BINDS, PY_BINDS.replace("Spec(", "Other(")),
+    (
+        "py-argument-position",
+        PY,
+        PY_BINDS,
+        PY_BINDS.replace("relay(a, label)", "relay(label, a)"),
+    ),
+    # The collector numbers arguments as the argument list holds them.
+    (
+        "py-comment-between-arguments",
+        PY,
+        PY_BINDS,
+        PY_BINDS.replace(
+            "relay(a, label)", "relay(\n        # first\n        a, label)"
+        ),
+    ),
+    (
+        "py-attribute-argument",
+        PY,
+        "class C:\n    def go(self):\n        relay(self.a)\n",
+        "class C:\n    def go(self):\n        relay(self.b)\n",
+    ),
+    # A local of the same name makes the argument the local's, which binds
+    # nothing; a closure's local does the same for a nested def.
+    (
+        "py-argument-shadowed-by-a-local",
+        PY,
+        PY_BINDS,
+        PY_BINDS.replace("    relay(a, label)", "    a = 1\n    relay(a, label)"),
+    ),
+    (
+        "py-argument-shadowed-by-an-enclosing-local",
+        PY,
+        "def outer():\n    def inner():\n        relay(a)\n",
+        "def outer():\n    a = 1\n\n    def inner():\n        relay(a)\n",
+    ),
+    # A receiver or an argument read through a local is typed by the body.
+    (
+        "py-local-receiver",
+        PY,
+        "def go():\n    r = Relay()\n    r.relay(a)\n",
+        "def go():\n    r = Quiet()\n    r.relay(a)\n",
+    ),
+    (
+        "py-attribute-of-a-local-argument",
+        PY,
+        "def go():\n    o = make()\n    relay(o.handle)\n",
+        "def go():\n    o = other()\n    relay(o.handle)\n",
+    ),
+    ("ts-argument", TS, TS_BINDS, TS_BINDS.replace("relay(a,", "relay(b,")),
+    (
+        "ts-bound-argument",
+        TS,
+        TS_BINDS.replace("relay(a,", "relay(a.bind(null),"),
+        TS_BINDS.replace("relay(a,", "relay(b.bind(null),"),
+    ),
+    (
+        "ts-cast-argument",
+        TS,
+        TS_BINDS.replace("relay(a,", "relay(a as any,"),
+        TS_BINDS.replace("relay(a,", "relay(b as any,"),
+    ),
+    (
+        "ts-constructor-argument",
+        TS,
+        TS_BINDS.replace("relay(a, label)", "new Spec(a)"),
+        TS_BINDS.replace("relay(a, label)", "new Spec(b)"),
+    ),
+    (
+        "ts-removed-call",
+        TS,
+        TS_BASE,
+        TS_BASE.replace("console.log(message);", "if (message) {}"),
+    ),
+    (
+        "ts-local-receiver",
+        TS,
+        "export function go(): void {\n  const r = new Relay();\n  r.relay(a);\n}\n",
+        "export function go(): void {\n  const r = new Quiet();\n  r.relay(a);\n}\n",
+    ),
+    # A symbol-keyed installation types `recv[kImpl]` everywhere, through
+    # whatever the body declared its value as.
+    (
+        "ts-symbol-installation",
+        TS,
+        "export function install(): void {\n  const host = { [kImpl]: new Impl() };\n}\n",
+        "export function install(): void {\n  const host = { [kImpl]: new Other() };\n}\n",
+    ),
+    (
+        "ts-symbol-installation-through-a-local",
+        TS,
+        "export function install(): void {\n  const impl = new Impl();\n"
+        "  const host = { [kImpl]: impl };\n}\n",
+        "export function install(): void {\n  const impl = new Other();\n"
+        "  const host = { [kImpl]: impl };\n}\n",
     ),
 ]
 

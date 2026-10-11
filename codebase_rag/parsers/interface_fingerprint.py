@@ -18,16 +18,27 @@ parts of function bodies that cgr's cross-file readers look into:
   `obj.x` for every caller), a `global`, an import, a generator;
 - a call of one of the function's own parameters, which sends every callable
   a caller passes in through the callable-flow pass;
-- in JS/TS, any assignment (prototype and `module.exports` members) and any
-  value return (return-type inference again).
+- a call that names something as an argument, which hands that function on
+  to other files: a constructor stores it in a field that `spec.handler()`
+  invokes in any file (Python's callable-field pre-pass), a function
+  forwards it to one that calls it (the callable-flow pass). What the call
+  calls, each such argument with its keyword or its position (counted as
+  those readers count, a comment between arguments included), and whether
+  the name is the body's own local are kept; a call reaching its callee or
+  such an argument through a name the body binds (`r = Relay();
+  r.relay(a)`) is typed by the body, which is then hashed whole;
+- in JS/TS, any assignment (prototype and `module.exports` members), any
+  value return (return-type inference again), and a symbol-keyed
+  installation (`{ [kX]: value }`), which types `recv[kX]` in every file
+  through whatever the body declared its value as.
 
-A function body holding none of these is replaced by what it defines and, in
-Python, by the shape of what it returns. Everything else in the body, and
-every comment anywhere, is left out. A body holding any of them is hashed
-whole. Positions are never hashed, so code that only moves keeps its
-fingerprint; a qualified name minted from a position (`f@12`,
-`anonymous_3_4`) is the caller's to distrust, since only the graph knows
-which names those are.
+A function body holding none of the whole-body readers is replaced by what
+it defines, its calls' named arguments and, in Python, the shape of what it
+returns. Everything else in the body, and every comment anywhere, is left
+out. A body holding any of them is hashed whole. Positions are never hashed,
+so code that only moves keeps its fingerprint; a qualified name minted from
+a position (`f@12`, `anonymous_3_4`) is the caller's to distrust, since only
+the graph knows which names those are.
 
 A language without rules here has no fingerprint, and its callers are always
 re-parsed, as before.
@@ -46,6 +57,7 @@ from tree_sitter import Node
 
 from .. import constants as cs
 from ..language_spec import LANGUAGE_SPECS
+from .py.ast_analyzer import local_names, names_bound_within
 from .utils import callable_parameter_indices, safe_decode_text
 
 
@@ -55,6 +67,8 @@ class _Rules(NamedTuple):
     definitions: frozenset[str]
     blockers: frozenset[str]
     kept_names: frozenset[str]
+    # Calls whose named arguments a cross-file binding reads.
+    calls: frozenset[str]
 
 
 def _definitions(
@@ -73,6 +87,7 @@ def _js_rules(language: cs.SupportedLanguage) -> _Rules:
         definitions=_definitions(language),
         blockers=cs.INTERFACE_FP_JS_BLOCKERS,
         kept_names=cs.INTERFACE_FP_JS_KEPT_FUNCTIONS,
+        calls=cs.INTERFACE_FP_JS_CALLS,
     )
 
 
@@ -83,6 +98,7 @@ _RULES: dict[cs.SupportedLanguage, _Rules] = {
         definitions=_definitions(cs.SupportedLanguage.PYTHON),
         blockers=cs.INTERFACE_FP_PY_BLOCKERS,
         kept_names=frozenset(),
+        calls=cs.INTERFACE_FP_PY_CALLS,
     ),
     cs.SupportedLanguage.JAVA: _Rules(
         functions=cs.INTERFACE_FP_JAVA_FUNCTIONS,
@@ -92,6 +108,7 @@ _RULES: dict[cs.SupportedLanguage, _Rules] = {
         ),
         blockers=frozenset(),
         kept_names=frozenset(),
+        calls=frozenset(),
     ),
     cs.SupportedLanguage.JS: _js_rules(cs.SupportedLanguage.JS),
     cs.SupportedLanguage.TS: _js_rules(cs.SupportedLanguage.TS),
@@ -193,12 +210,135 @@ def _body_is_read(body: Node, rules: _Rules, language: cs.SupportedLanguage) -> 
     # collects a nested function's returns with the enclosing function's,
     # and reads the ENCLOSING body's locals when one returns a name.
     stack = list(body.children)
+    calls: list[Node] = []
     while stack:
         node = stack.pop()
         if node.type in rules.blockers or _is_read(node, language):
             return True
+        if node.type in rules.calls:
+            calls.append(node)
         stack.extend(node.children)
+    return _binds_through_a_local(body, calls, language)
+
+
+def _binds_through_a_local(
+    body: Node, calls: list[Node], language: cs.SupportedLanguage
+) -> bool:
+    """Whether a call naming an argument reaches its callee, or a member of
+    such an argument, through a name `body` binds: `r = Relay()` types
+    `r.relay(a)`, and so decides which function `a` is handed to."""
+    bound: frozenset[str] | None = None
+    for call in calls:
+        arguments = _named_arguments(call)
+        if not arguments:
+            continue
+        heads = {_head(_callee(call))} | {
+            _head(value) for _key, value in arguments if value.type != cs.TS_IDENTIFIER
+        }
+        if bound is None:
+            bound = _names_bound_within(body, language)
+        if not bound.isdisjoint(heads):
+            return True
     return False
+
+
+def _names_bound_within(body: Node, language: cs.SupportedLanguage) -> frozenset[str]:
+    if language == cs.SupportedLanguage.PYTHON:
+        return names_bound_within(body)
+    names: set[str] = set()
+    stack = [body]
+    while stack:
+        node = stack.pop()
+        for field in cs.INTERFACE_FP_JS_BINDER_FIELDS.get(node.type, ()):
+            if (target := node.child_by_field_name(field)) is not None:
+                names.update(_js_bound_names(target))
+        stack.extend(node.children)
+    return frozenset(names)
+
+
+def _js_bound_names(target: Node) -> set[str]:
+    # Every name inside a binding pattern; a default value or a type that
+    # names something only makes the set larger, which keeps more bodies.
+    names: set[str] = set()
+    stack = [target]
+    while stack:
+        node = stack.pop()
+        if node.type in cs.INTERFACE_FP_JS_BOUND_NAMES and (
+            name := safe_decode_text(node)
+        ):
+            names.add(name)
+        stack.extend(node.children)
+    return names
+
+
+def _callee(call: Node) -> Node | None:
+    return next(
+        (
+            callee
+            for field in cs.INTERFACE_FP_CALLEE_FIELDS
+            if (callee := call.child_by_field_name(field)) is not None
+        ),
+        None,
+    )
+
+
+def _head(node: Node | None) -> str | None:
+    """The leftmost name of an expression: `r` of `r.relay`, `make` of
+    `make().relay`."""
+    while node is not None and node.type != cs.TS_IDENTIFIER:
+        if node.type in cs.INTERFACE_FP_TRANSPARENT:
+            node = node.named_child(0)
+            continue
+        field = cs.INTERFACE_FP_HEAD_FIELDS.get(node.type)
+        node = node.child_by_field_name(field) if field is not None else None
+    return safe_decode_text(node) if node is not None else None
+
+
+def _named_arguments(call: Node) -> list[tuple[str, Node]]:
+    """(position or keyword, value) of each argument of `call` that names
+    something, numbered as `_split_call_arguments` numbers them: every
+    non-keyword child of the argument list counts, a comment included."""
+    arguments = call.child_by_field_name(cs.FIELD_ARGUMENTS)
+    if arguments is None:
+        return []
+    named: list[tuple[str, Node]] = []
+    position = 0
+    for child in arguments.named_children:
+        if child.type == cs.TS_PY_KEYWORD_ARGUMENT:
+            key = safe_decode_text(child.child_by_field_name(cs.FIELD_NAME))
+            value = child.child_by_field_name(cs.FIELD_VALUE)
+        else:
+            key, value = str(position), child
+            position += 1
+        if key is not None and value is not None:
+            value = _unwrapped_reference(value)
+            if value.type in cs.INTERFACE_FP_NAME_ARGUMENTS:
+                named.append((key, value))
+    return named
+
+
+def _unwrapped_reference(node: Node) -> Node:
+    # The callable-flow pass reads `a` through `a as any` and through
+    # `a.bind(this)` (or `.call` / `.apply`), to a fixpoint.
+    while True:
+        while node.type in cs.TS_CAST_WRAPPER_TYPES and node.named_child_count:
+            node = node.named_children[0]
+        bound = _bound_function(node)
+        if bound is None:
+            return node
+        node = bound
+
+
+def _bound_function(node: Node) -> Node | None:
+    if node.type != cs.TS_CALL_EXPRESSION:
+        return None
+    member = node.child_by_field_name(cs.FIELD_FUNCTION)
+    if member is None or member.type != cs.TS_MEMBER_EXPRESSION:
+        return None
+    method = safe_decode_text(member.child_by_field_name(cs.FIELD_PROPERTY))
+    if method not in cs.JS_FUNCTION_PROTOTYPE_METHODS:
+        return None
+    return member.child_by_field_name(cs.FIELD_OBJECT)
 
 
 def _is_read(node: Node, language: cs.SupportedLanguage) -> bool:
@@ -231,16 +371,30 @@ def _python_is_read(node: Node) -> bool:
 
 
 def _js_is_read(node: Node) -> bool:
-    if node.type == cs.TS_RETURN_STATEMENT:
-        return _returned_value(node) is not None
-    if node.type == cs.TS_CALL_EXPRESSION:
-        callee = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
-        return (
-            callee is not None
-            and callee.type == cs.TS_IDENTIFIER
-            and safe_decode_text(callee) == cs.JS_REQUIRE_KEYWORD
-        )
-    return False
+    match node.type:
+        case cs.TS_RETURN_STATEMENT:
+            return _returned_value(node) is not None
+        case cs.TS_CALL_EXPRESSION:
+            callee = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+            return (
+                callee is not None
+                and callee.type == cs.TS_IDENTIFIER
+                and safe_decode_text(callee) == cs.JS_REQUIRE_KEYWORD
+            )
+        case cs.TS_PAIR:
+            return _installs_under_a_symbol(node)
+        case _:
+            return False
+
+
+def _installs_under_a_symbol(pair: Node) -> bool:
+    # `{ [kX]: value }`: the symbol pre-pass records the class of `value`,
+    # chased through the body's declarations, under the symbol `kX`.
+    key = pair.child_by_field_name(cs.FIELD_KEY)
+    if key is None or key.type != cs.TS_JS_COMPUTED_PROPERTY_NAME:
+        return False
+    index = next((c for c in key.named_children if not _is_comment(c)), None)
+    return index is not None and index.type == cs.TS_IDENTIFIER
 
 
 def _holds_member(target: Node) -> bool:
@@ -273,7 +427,57 @@ def _projection(
             items.append(statement)
         elif language == cs.SupportedLanguage.PYTHON:
             items.extend(_python_returns(statement))
+    items.extend(_call_bindings(body, rules, language))
     return items
+
+
+def _call_bindings(
+    body: Node, rules: _Rules, language: cs.SupportedLanguage
+) -> list[bytes]:
+    """Each call in `body` that names an argument: what it calls, and each
+    such argument's position or keyword and text. A bare name the caller
+    binds itself is the local's, never the function it shadows, so whether
+    it is one is kept too (Python; a JS local the flow pass reads through
+    is a nested definition, kept whole)."""
+    items: list[bytes] = []
+    scopes: dict[int, frozenset[str]] = {}
+    stack = list(reversed(body.children))
+    while stack:
+        node = stack.pop()
+        stack.extend(reversed(node.children))
+        if node.type not in rules.calls or not (arguments := _named_arguments(node)):
+            continue
+        callee = _callee(node)
+        items.append(_token(cs.INTERFACE_FP_CALL, _text(callee) or node.type.encode()))
+        own = _caller_locals(node, language, scopes)
+        for key, value in arguments:
+            items.append(_token(cs.INTERFACE_FP_ARGUMENT, key.encode()))
+            items.append(_token(cs.INTERFACE_FP_ARGUMENT, _text(value)))
+            if value.type == cs.TS_IDENTIFIER and safe_decode_text(value) in own:
+                items.append(cs.INTERFACE_FP_LOCAL)
+    return items
+
+
+def _text(node: Node | None) -> bytes:
+    return (node.text or b"") if node is not None else b""
+
+
+def _caller_locals(
+    call: Node, language: cs.SupportedLanguage, scopes: dict[int, frozenset[str]]
+) -> frozenset[str]:
+    # The names the resolver reads as the calling def's own. A body-level
+    # import is a blocker, so an elided body has none for the import map to
+    # tell from a shadow, and an empty map answers as the module's would.
+    if language != cs.SupportedLanguage.PYTHON:
+        return frozenset()
+    scope = call.parent
+    while scope is not None and scope.type != cs.INTERFACE_FP_PY_CALLER_SCOPE:
+        scope = scope.parent
+    if scope is None:
+        return frozenset()
+    if scope.id not in scopes:
+        scopes[scope.id] = local_names(scope, {})
+    return scopes[scope.id]
 
 
 def _holds_definition(statement: Node, rules: _Rules) -> bool:

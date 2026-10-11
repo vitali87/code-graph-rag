@@ -922,3 +922,309 @@ def test_stable_files_keep_their_callers_when_nothing_they_depend_on_moved(
     assert reparsed == reparsed_only
     clean = _clean(root)
     assert synced == clean, _diff(synced, clean)
+
+
+# A body hands a function on to OTHER files through the arguments of a call
+# it makes: a constructor stores it in a field that `spec.handler()` invokes
+# elsewhere (the callable-field pre-pass), or a function forwards it to one
+# that calls it (the callable-flow pass). The caller of the field and the
+# function that calls the callback call nothing that moved in the edited
+# file, so the edited file's fingerprint is all that can send them to a
+# re-parse; a clean index binds them to the new argument.
+FIELD_SPEC = (
+    "class Spec:\n"
+    "    def __init__(self, handler, retries=0):\n"
+    "        self.handler = handler\n"
+    "        self.retries = retries\n\n\n"
+    "def a():\n    return 1\n\n\n"
+    "def b():\n    return 2\n\n\n"
+    "def setup():\n"
+    "    spec = Spec(handler=a, retries=3)\n"
+    "    total = 1 + 2\n"
+    '    print("ready", total, spec)\n'
+)
+FIELD_CALLS: dict[str, str] = {
+    "spec.py": FIELD_SPEC,
+    "user.py": (
+        "from spec import Spec\n\n\ndef run(spec: Spec):\n    return spec.handler()\n"
+    ),
+}
+FIELD_CALLS_POSITIONAL: dict[str, str] = {
+    **FIELD_CALLS,
+    "spec.py": FIELD_SPEC.replace("Spec(handler=a,", "Spec(a,"),
+}
+FIELD_TARGET = "spec.py"
+FIELD_CALLER = "user.py"
+FIELD_HANDLER_B = _replace("handler=a", "handler=b")
+
+
+@pytest.mark.parametrize(
+    ("files", "edit"),
+    [
+        (FIELD_CALLS, FIELD_HANDLER_B),
+        (FIELD_CALLS_POSITIONAL, _replace("Spec(a,", "Spec(b,")),
+    ],
+    ids=["keyword", "positional"],
+)
+def test_a_changed_constructor_argument_rebinds_the_fields_callers(
+    temp_repo: Path, files: dict[str, str], edit: Edit
+) -> None:
+    root = temp_repo / PROJECT
+    reparsed, synced = _sync(root, files, {FIELD_TARGET: edit(files[FIELD_TARGET])})
+
+    assert FIELD_CALLER in reparsed
+    clean = _clean(root)
+    assert "proj.spec.b" in _calls(clean, "proj.user.run")
+    assert synced == clean, _diff(synced, clean)
+
+
+def test_a_scoped_reingest_of_a_changed_constructor_argument_reparses_the_fields_callers(
+    temp_repo: Path,
+) -> None:
+    """The watcher's path. Through a fresh updater, as a changed binding
+    needs (issue #2927 above)."""
+    root = temp_repo / PROJECT
+    _materialise(root, FIELD_CALLS)
+    store = _StatefulIngestor()
+    _updater(store, root).run(force=True)
+    (root / FIELD_TARGET).write_text(FIELD_HANDLER_B(FIELD_SPEC), encoding="utf-8")
+
+    report = _updater(store, root).reingest([FIELD_TARGET])
+
+    assert FIELD_CALLER in report.affected
+    clean = _clean(root)
+    assert _snapshot(store) == clean, _diff(_snapshot(store), clean)
+
+
+# The same body edited where no argument naming a callable moves: a log
+# string, local arithmetic, a literal argument (a literal names no function,
+# so no binding reads it).
+FIELD_UNSEEN_EDITS: list[tuple[str, Edit]] = [
+    ("log-string", _replace('"ready"', '"set up"')),
+    ("local-arithmetic", _replace("total = 1 + 2", "total = 2 * 3 - 1")),
+    ("literal-argument", _replace("retries=3", "retries=4")),
+]
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [case[1] for case in FIELD_UNSEEN_EDITS],
+    ids=[case[0] for case in FIELD_UNSEEN_EDITS],
+)
+def test_an_edit_that_moves_no_named_argument_keeps_the_fields_callers(
+    temp_repo: Path, edit: Edit
+) -> None:
+    root = temp_repo / PROJECT
+    reparsed, synced = _sync(root, FIELD_CALLS, {FIELD_TARGET: edit(FIELD_SPEC)})
+
+    assert reparsed == {FIELD_TARGET}
+    clean = _clean(root)
+    assert synced == clean, _diff(synced, clean)
+
+
+def test_a_scoped_reingest_that_moves_no_named_argument_reports_no_dependents(
+    temp_repo: Path,
+) -> None:
+    root = temp_repo / PROJECT
+    _materialise(root, FIELD_CALLS)
+    store = _StatefulIngestor()
+    _updater(store, root).run(force=True)
+    (root / FIELD_TARGET).write_text(
+        _replace('"ready"', '"set up"')(FIELD_SPEC), encoding="utf-8"
+    )
+
+    report = _updater(store, root).reingest([FIELD_TARGET])
+
+    assert report.affected == ()
+    clean = _clean(root)
+    assert _snapshot(store) == clean, _diff(_snapshot(store), clean)
+
+
+# `go` hands `a` to `relay`, which hands it on to `run`, which calls it: the
+# flow edge `run -> a` is written from `app`'s parse, and `runner`, which
+# holds it, calls nothing in `app`. A sync re-parsing `runner` still cannot
+# give it the edge to what `go` passes now (that takes `relay`'s parse as
+# well, and `relay` depends on nothing that changed), so these edits are
+# held to the graph the same sync writes with every dependent re-parsed:
+# keeping `runner`'s edges would keep `run -> a` on top of that.
+PY_RUNNER = "def run(callback):\n    callback()\n"
+
+
+def _none_stable(_updater: GraphUpdater, _sources: object) -> dict[str, str]:
+    """`_interface_stable_modules` judging no interface stable: every
+    dependent re-parses, as before issue #2531."""
+    return {}
+
+
+PY_RELAY = (
+    "from runner import run\n\n\n"
+    "def relay(cb):\n    run(cb)\n\n\n"
+    "class Relay:\n    def relay(self, cb):\n        run(cb)\n\n\n"
+    "class Quiet:\n    def relay(self, cb):\n        return 0\n"
+)
+PY_APP = (
+    "from relay import Quiet, Relay, relay\n\n\n"
+    "def a():\n    return 1\n\n\n"
+    "def b():\n    return 2\n\n\n"
+    "def go():\n    relay(a)\n\n\n"
+    "def go_typed():\n    r = Relay()\n    r.relay(b)\n"
+)
+PY_FLOW: dict[str, str] = {
+    "runner.py": PY_RUNNER,
+    "relay.py": PY_RELAY,
+    "app.py": PY_APP,
+}
+TS_RUNNER = "export function run(callback: () => number): void {\n  callback();\n}\n"
+TS_RELAY = (
+    "import { run } from './runner';\n\n"
+    "export function relay(cb: () => number): void {\n  run(cb);\n}\n\n"
+    "export class Relay {\n  relay(cb: () => number): void {\n    run(cb);\n  }\n}\n\n"
+    "export class Quiet {\n  relay(cb: () => number): void {\n"
+    "    console.log(cb);\n  }\n}\n"
+)
+TS_APP = (
+    "import { relay, Relay, Quiet } from './relay';\n\n"
+    "export function a(): number {\n  return 1;\n}\n\n"
+    "export function b(): number {\n  return 2;\n}\n\n"
+    "export function go(): void {\n  relay(a);\n}\n\n"
+    "export function goTyped(): void {\n  const r = new Relay();\n  r.relay(b);\n}\n"
+)
+TS_FLOW: dict[str, str] = {
+    "src/runner.ts": TS_RUNNER,
+    "src/relay.ts": TS_RELAY,
+    "src/app.ts": TS_APP,
+}
+
+FLOW_EDITS: list[tuple[str, dict[str, str], str, Edit, str]] = [
+    ("py-argument", PY_FLOW, "app.py", _replace("relay(a)", "relay(b)"), "runner.py"),
+    (
+        "py-argument-shadowed-by-a-local",
+        PY_FLOW,
+        "app.py",
+        _replace("    relay(a)\n", "    a = 1\n    relay(a)\n"),
+        "runner.py",
+    ),
+    (
+        "py-receiver-type",
+        PY_FLOW,
+        "app.py",
+        _replace("r = Relay()", "r = Quiet()"),
+        "runner.py",
+    ),
+    (
+        "ts-argument",
+        TS_FLOW,
+        "src/app.ts",
+        _replace("relay(a)", "relay(b)"),
+        "src/runner.ts",
+    ),
+    (
+        "ts-bound-argument",
+        {**TS_FLOW, "src/app.ts": TS_APP.replace("relay(a)", "relay(a.bind(null))")},
+        "src/app.ts",
+        _replace("relay(a.bind(null))", "relay(b.bind(null))"),
+        "src/runner.ts",
+    ),
+    (
+        "ts-receiver-type",
+        TS_FLOW,
+        "src/app.ts",
+        _replace("new Relay()", "new Quiet()"),
+        "src/runner.ts",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("files", "target", "edit", "holder"),
+    [case[1:] for case in FLOW_EDITS],
+    ids=[case[0] for case in FLOW_EDITS],
+)
+def test_a_changed_forwarded_callable_reparses_the_function_that_calls_it(
+    temp_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    files: dict[str, str],
+    target: str,
+    edit: Edit,
+    holder: str,
+) -> None:
+    root = temp_repo / PROJECT
+    edits = {target: edit(files[target])}
+    with monkeypatch.context() as unskipped:
+        unskipped.setattr(GraphUpdater, "_interface_stable_modules", _none_stable)
+        _all_reparsed, every_dependent = _sync(root, files, edits)
+
+    reparsed, synced = _sync(root, files, edits)
+
+    assert holder in reparsed
+    assert synced == every_dependent, _diff(synced, every_dependent)
+
+
+def test_an_edit_that_forwards_the_same_callables_keeps_their_callers(
+    temp_repo: Path,
+) -> None:
+    root = temp_repo / PROJECT
+    reparsed, synced = _sync(
+        root,
+        TS_FLOW,
+        {
+            "src/app.ts": _replace(
+                "  relay(a);\n", "  console.log('go');\n  relay(a);\n"
+            )(TS_APP)
+        },
+    )
+
+    assert reparsed == {"src/app.ts"}
+    clean = _clean(root)
+    assert synced == clean, _diff(synced, clean)
+
+
+# A symbol-keyed installation inside a body types `recv[kImpl]` for every
+# file (the JS symbol pre-pass), and its value is read through the body's
+# own declarations.
+TS_SYMBOL_APP = (
+    "export const kImpl = Symbol('impl');\n\n"
+    "export class Impl {\n  work(): number {\n    return 1;\n  }\n}\n\n"
+    "export class Other {\n  work(): number {\n    return 2;\n  }\n}\n\n"
+    "export function install(): void {\n"
+    "  const impl = new Impl();\n"
+    "  const host = { [kImpl]: impl };\n"
+    "  console.log(host);\n}\n"
+)
+TS_SYMBOLS: dict[str, str] = {
+    "src/app.ts": TS_SYMBOL_APP,
+    "src/user.ts": (
+        "import { kImpl } from './app';\n\n"
+        "export function use(recv: any): void {\n  recv[kImpl].work();\n}\n"
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        TS_SYMBOLS,
+        {
+            **TS_SYMBOLS,
+            "src/app.ts": TS_SYMBOL_APP.replace(
+                "  const impl = new Impl();\n  const host = { [kImpl]: impl };\n",
+                "  const host = { [kImpl]: new Impl() };\n",
+            ),
+        },
+    ],
+    ids=["through-a-local", "constructed-in-place"],
+)
+def test_a_changed_symbol_installation_reparses_the_symbol_callers(
+    temp_repo: Path, files: dict[str, str]
+) -> None:
+    root = temp_repo / PROJECT
+    reparsed, synced = _sync(
+        root,
+        files,
+        {"src/app.ts": _replace("new Impl()", "new Other()")(files["src/app.ts"])},
+    )
+
+    assert "src/user.ts" in reparsed
+    clean = _clean(root)
+    assert "proj.src.app.Other.work" in _calls(clean, "proj.src.user.use")
+    assert synced == clean, _diff(synced, clean)

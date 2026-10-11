@@ -12,15 +12,35 @@ from .ast_java import (
     TS_METHOD_DECLARATION,
 )
 from .ast_js import (
+    FIELD_FUNCTION,
+    TS_CAST_WRAPPER_TYPES,
     TS_CLASS_BODY,
     TS_JS_ASSIGNMENT_EXPRESSION,
     TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION,
+    TS_JS_CATCH_CLAUSE,
+    TS_JS_FOR_IN_STATEMENT,
     TS_JS_WITH_STATEMENT,
+    TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN,
+    TS_SUBSCRIPT_EXPRESSION,
 )
 from .ast_nodes import (
+    FIELD_CONSTRUCTOR,
+    FIELD_LEFT,
+    FIELD_NAME,
+    FIELD_OBJECT,
+    FIELD_PARAMETER,
+    FIELD_PARAMETERS,
+    FIELD_VALUE,
     JS_TS_FUNCTION_NODES,
+    TS_CALL_EXPRESSION,
+    TS_CLASS_DECLARATION,
     TS_EXPORT_STATEMENT,
+    TS_IDENTIFIER,
+    TS_MEMBER_EXPRESSION,
+    TS_NEW_EXPRESSION,
+    TS_PARENTHESIZED_EXPRESSION,
     TS_STATEMENT_BLOCK,
+    TS_VARIABLE_DECLARATOR,
 )
 from .ast_python import (
     TS_PY_AS_PATTERN_TARGET,
@@ -28,6 +48,7 @@ from .ast_python import (
     TS_PY_ATTRIBUTE,
     TS_PY_AUGMENTED_ASSIGNMENT,
     TS_PY_BLOCK,
+    TS_PY_CALL,
     TS_PY_DELETE_STATEMENT,
     TS_PY_FOR_STATEMENT,
     TS_PY_FUNCTION_DEFINITION,
@@ -41,7 +62,7 @@ from .ast_python import (
 
 # Hashed first, so a change to the algorithm never compares equal to a
 # fingerprint an older algorithm stored.
-INTERFACE_FINGERPRINT_VERSION = "interface-fingerprint/1"
+INTERFACE_FINGERPRINT_VERSION = "interface-fingerprint/2"
 
 # Tokens the walk feeds the hash besides node types and leaf text. Each is a
 # single byte no grammar uses as a node type, so they cannot be confused
@@ -52,6 +73,9 @@ INTERFACE_FP_LEAF = b"\x03"
 INTERFACE_FP_MISSING = b"\x04"
 INTERFACE_FP_ELIDED_BODY = b"\x05"
 INTERFACE_FP_RETURN = b"\x06"
+INTERFACE_FP_CALL = b"\x07"
+INTERFACE_FP_ARGUMENT = b"\x08"
+INTERFACE_FP_LOCAL = b"\x09"
 INTERFACE_FP_SEPARATOR = b"\x00"
 INTERFACE_FP_LENGTH_BYTES = 4
 INTERFACE_FP_BYTE_ORDER = "big"
@@ -126,3 +150,45 @@ INTERFACE_FP_PY_MEMBER_TARGETS = frozenset({TS_PY_ATTRIBUTE, TS_PY_SUBSCRIPT})
 # body always counts. A JS constructor is kept whole for the same reason.
 INTERFACE_FP_DUNDER = "__"
 INTERFACE_FP_JS_KEPT_FUNCTIONS = frozenset({"constructor"})
+
+# Calls whose arguments hand a function on to other files: a constructor
+# storing it in a field that `obj.handler()` invokes elsewhere (Python's
+# callable-field pre-pass), or a function forwarding it to one that calls it
+# (the callable-flow pass). Java has neither reader.
+INTERFACE_FP_PY_CALLS = frozenset({TS_PY_CALL})
+INTERFACE_FP_JS_CALLS = frozenset({TS_CALL_EXPRESSION, TS_NEW_EXPRESSION})
+# An argument those readers can resolve to a function: a name or a member
+# of one. A literal, a call or an operator names nothing they resolve.
+INTERFACE_FP_NAME_ARGUMENTS = frozenset(
+    {TS_IDENTIFIER, TS_PY_ATTRIBUTE, TS_MEMBER_EXPRESSION}
+)
+# The field holding what a call calls (`new X()` holds its constructor).
+INTERFACE_FP_CALLEE_FIELDS = (FIELD_FUNCTION, FIELD_CONSTRUCTOR)
+# The child a name's leftmost name sits under, per expression type: the
+# receiver of a member, the callee of a call, the indexed value.
+INTERFACE_FP_HEAD_FIELDS: dict[str, str] = {
+    TS_PY_ATTRIBUTE: FIELD_OBJECT,
+    TS_MEMBER_EXPRESSION: FIELD_OBJECT,
+    TS_PY_CALL: FIELD_FUNCTION,
+    TS_CALL_EXPRESSION: FIELD_FUNCTION,
+    TS_NEW_EXPRESSION: FIELD_CONSTRUCTOR,
+    TS_PY_SUBSCRIPT: FIELD_VALUE,
+    TS_SUBSCRIPT_EXPRESSION: FIELD_OBJECT,
+}
+# Wrappers a name is read through unchanged.
+INTERFACE_FP_TRANSPARENT = TS_CAST_WRAPPER_TYPES | {TS_PARENTHESIZED_EXPRESSION}
+# The scope a Python call's arguments are resolved in: a lambda's calls are
+# its enclosing def's.
+INTERFACE_FP_PY_CALLER_SCOPE = TS_PY_FUNCTION_DEFINITION
+# What a JS/TS body binds, by node type: the fields holding the bound names.
+_JS_FUNCTION_BINDS = (FIELD_NAME, FIELD_PARAMETERS, FIELD_PARAMETER)
+INTERFACE_FP_JS_BINDER_FIELDS: dict[str, tuple[str, ...]] = {
+    TS_VARIABLE_DECLARATOR: (FIELD_NAME,),
+    TS_JS_FOR_IN_STATEMENT: (FIELD_LEFT,),
+    TS_JS_CATCH_CLAUSE: (FIELD_PARAMETER,),
+    TS_CLASS_DECLARATION: (FIELD_NAME,),
+    **dict.fromkeys(JS_TS_FUNCTION_NODES, _JS_FUNCTION_BINDS),
+}
+INTERFACE_FP_JS_BOUND_NAMES = frozenset(
+    {TS_IDENTIFIER, TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN}
+)
