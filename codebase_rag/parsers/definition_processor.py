@@ -46,11 +46,16 @@ from .go import utils as go_utils
 from .handlers import get_handler
 from .java_generated import generator_hint
 from .js_ts.ingest import JsTsIngestMixin
+from .js_ts.overloads import folded_overload_signatures, implementation_signatures
 from .module_docstring import extract_module_docstring
 from .notebook import is_notebook_path
 from .parameter_nodes import PendingParameterType
 from .py.overloads import folded_overload_stubs
-from .utils import safe_decode_with_fallback, sorted_captures
+from .utils import (
+    get_function_captures,
+    safe_decode_with_fallback,
+    sorted_captures,
+)
 
 if TYPE_CHECKING:
     from ..services import IngestorProtocol
@@ -58,6 +63,22 @@ if TYPE_CHECKING:
     from .handlers import LanguageHandler
     from .import_processor import ImportProcessor
 from .io_access import FLOW_REGISTERED_LANGUAGES
+
+
+def _signature_docstring(node: ASTNode, language: cs.SupportedLanguage) -> str | None:
+    # A TypeScript overload set is documented on its signatures, the part a
+    # caller sees, and they fold into the implementation's node (issue
+    # #2457): with no doc of its own, the function keeps the first one.
+    if language not in (cs.SupportedLanguage.TS, cs.SupportedLanguage.TSX):
+        return None
+    return next(
+        (
+            doc
+            for signature in implementation_signatures(node)
+            if (doc := extract_definition_docstring(signature, language))
+        ),
+        None,
+    )
 
 
 class DefinitionProcessor(
@@ -128,10 +149,11 @@ class DefinitionProcessor(
         # constructor call resolves to its own method, so the call pass
         # needs this set to record the construction (issue #2012).
         self.dart_constructor_qns: set[str] = set()
-        # {python module qn: start bytes of its `@overload` stubs that an
-        # implementation follows}; both the function and the method pass skip
-        # them so the implementation owns the name (issue #2590).
-        self.python_overload_stubs: dict[str, frozenset[int]] = {}
+        # {module qn: start bytes of the overload declarations that fold into
+        # their implementation}: Python's `@overload` stubs (issue #2590) and
+        # TypeScript's overload signatures (issue #2457). Both the function and
+        # the method pass skip them so the implementation owns the name.
+        self.folded_overloads: dict[str, frozenset[int]] = {}
         # {interface_qn: [implementer_class_qns]} from IMPLEMENTS edges, so the
         # resolver can redirect an interface-typed call `I.m` to the concrete
         # `Impl.m` when I has exactly one first-party implementer (unambiguous).
@@ -613,8 +635,9 @@ class DefinitionProcessor(
                 CppTypeInferenceEngine().collect_type_aliases(
                     root_node, self.type_aliases, self._type_alias_conflicts
                 )
-            if language == cs.SupportedLanguage.PYTHON:
-                self.python_overload_stubs[module_qn] = folded_overload_stubs(root_node)
+            self._fold_overloads(
+                root_node, module_qn, language, queries, combined_captures
+            )
             self._ingest_inline_modules(
                 root_node,
                 module_qn,
@@ -726,6 +749,27 @@ class DefinitionProcessor(
             cs.RelationshipType.CONTAINS_MODULE,
             (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
         )
+
+    def _fold_overloads(
+        self,
+        root_node: ASTNode,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        combined_captures: dict[str, list] | None,
+    ) -> None:
+        match language:
+            case cs.SupportedLanguage.PYTHON:
+                self.folded_overloads[module_qn] = folded_overload_stubs(root_node)
+            case cs.SupportedLanguage.TS | cs.SupportedLanguage.TSX:
+                # The signatures are function captures, so the passes that
+                # register them read the same nodes this folds.
+                if combined_captures is None:
+                    found = get_function_captures(root_node, language, queries)
+                    combined_captures = found.captures if found else {}
+                self.folded_overloads[module_qn] = folded_overload_signatures(
+                    combined_captures.get(cs.CAPTURE_FUNCTION, ())
+                )
 
     def _file_combined_captures(
         self,
@@ -881,7 +925,9 @@ class DefinitionProcessor(
         with nothing failing.
         """
         if language != cs.SupportedLanguage.PYTHON:
-            return extract_definition_docstring(node, language)
+            return extract_definition_docstring(node, language) or _signature_docstring(
+                node, language
+            )
         if node.type == cs.TS_PY_MODULE:
             # A module node has no `body` field: its statements are direct
             # children, one level shallower than a class or function body.

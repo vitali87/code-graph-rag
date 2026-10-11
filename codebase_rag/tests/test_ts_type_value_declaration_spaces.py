@@ -566,18 +566,20 @@ def test_redeclared_function_still_takes_a_line_variant(
     }
 
 
-def test_overload_signatures_still_fan_out_as_overload(
+def test_overload_signatures_fold_into_the_implementation(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
+    # Signatures are one function with their implementation (issue #2457),
+    # not same-space duplicates, so the call no longer fans out over them.
     _write(temp_repo, {"shape.ts": OVERLOADED_FUNCTION_TS, "use.ts": USE_F_TS})
     run_updater(temp_repo, mock_ingestor)
 
     project = temp_repo.name
     run_qn = f"{project}.src.use.run"
-    assert len(_calls_from(mock_ingestor, run_qn)) == 3
-    assert _resolutions_from(mock_ingestor, run_qn) == {
-        cs.EdgeResolution.OVERLOAD.value
+    assert _calls_from(mock_ingestor, run_qn) == {
+        (cs.NodeLabel.FUNCTION.value, f"{project}.src.shape.f")
     }
+    assert _resolutions_from(mock_ingestor, run_qn) == {cs.EdgeResolution.EXACT.value}
 
 
 def test_same_names_in_different_modules_are_unchanged(
