@@ -414,8 +414,9 @@ class TestAnInterruptedPassIsRetried:
         monkeypatch.setattr(vs.settings, "QDRANT_BATCH_SIZE", 1)
 
     def _interrupted(self, repo: Path, graph: _Graph) -> None:
+        embed = _interrupting_batch(2)
         with pytest.raises(ex.EmbeddingsInterrupted):
-            _sync(repo, graph, {1: _KEEP, 2: _DELETE}, embed=_interrupting_batch(2))
+            _sync(repo, graph, {1: _KEEP, 2: _DELETE}, embed=embed)
         assert _points() == [(_KEEP, 1)]
 
     def test_an_unchanged_sync_embeds_what_an_interrupt_left_out(

@@ -9269,13 +9269,14 @@ class GraphUpdater:
             owed = frozenset(
                 _load_project_stamps(self.state_dir / cs.EXCLUSION_STATE_FILENAME)
             )
-        written = [
-            _save_embeddings_owed(
+        failed = [
+            project
+            for project in sorted(owed - {self.project_name})
+            if not _save_embeddings_owed(
                 _embeddings_marker(self.state_dir, project), project, True
             )
-            for project in sorted(owed - {self.project_name})
         ]
-        if not (recorded and all(written)):
+        if failed or not recorded:
             return
         try:
             shared.unlink(missing_ok=True)
