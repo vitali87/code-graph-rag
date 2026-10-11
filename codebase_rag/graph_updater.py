@@ -3623,14 +3623,12 @@ class GraphUpdater:
         # `let b = Builder::new(); b.m()`) types from that record. Without it
         # an unchanged file's fn types nothing, and the method falls to a
         # name-only match a clean index never makes (issue #2559).
-        records = sorted(
-            (
-                (_registration_order(row), record)
-                for row in rows
-                if (record := self._rust_return_type_record(row)) is not None
-            ),
-            key=lambda ordered: ordered[0],
-        )
+        records = [
+            (_registration_order(row), record)
+            for row in rows
+            if (record := self._rust_return_type_record(row)) is not None
+        ]
+        records.sort(key=lambda ordered: ordered[0])
         if not records:
             return
         # Read only now: the parser view loads a grammar on first access, and
