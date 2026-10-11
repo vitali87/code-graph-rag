@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Callable, Collection, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from itertools import chain
 from typing import TYPE_CHECKING
 
@@ -408,6 +408,7 @@ def _emit_explicit_impl_override(
             ),
             call_shapes=call_shapes,
             scopes=_scopes(given, _scope(scope_of, ancestor)),
+            own=_own_parameters(call_shapes, method_qn),
         )
         if parent_method_qn is None:
             continue
@@ -518,7 +519,7 @@ def _find_override_by_substitution(
     parent_class: str,
     method_name: str,
     function_registry: FunctionRegistryTrieProtocol,
-    context: tuple[Mapping[str, str], TypeScopes | None],
+    context: tuple[Mapping[str, str], TypeScopes | None, Sequence[str] | None],
     call_shapes: Mapping[str, CSharpCallShape],
 ) -> tuple[str | None, bool]:
     # `Base<T>.Put(List<T>)` is `Put(List<int>)` on a `Derived : Base<int>`:
@@ -527,9 +528,10 @@ def _find_override_by_substitution(
     # arguments cannot tell `Put(List<T>)` from `Put(List<string>)`. A type
     # parameter the base method declares itself (`M<T>(T)`) shadows the
     # class's, so the subclass's binding never reaches it. With scopes,
-    # each side's types resolve in its own file (`member_verdict`).
+    # each side's types resolve in its own file, and its own type
+    # parameters match the candidate's by position (`member_verdict`).
     # (the one match, whether every same-named candidate provably differs)
-    bindings, scopes = context
+    bindings, scopes, given_own = context
     base_name = method_name.split(cs.CHAR_PAREN_OPEN, 1)[0]
     prefix = f"{parent_class}{cs.SEPARATOR_DOT}"
     matches: list[str] = []
@@ -551,7 +553,13 @@ def _find_override_by_substitution(
             if scopes is not None
             else None
         )
-        verdict = member_verdict(method_name, leaf, visible, candidate_scopes)
+        verdict = member_verdict(
+            method_name,
+            leaf,
+            visible,
+            candidate_scopes,
+            (given_own, _own_parameters(call_shapes, qn)),
+        )
         verdicts.append(verdict)
         if verdict:
             matches.append(qn)
@@ -587,21 +595,24 @@ def _parent_method_qn(
     bindings: Mapping[str, str] | None = None,
     call_shapes: Mapping[str, CSharpCallShape] | None = None,
     scopes: TypeScopes | None = None,
+    own: Sequence[str] | None = None,
 ) -> str | None:
     """The METHOD on `parent_class` an override of `method_name` would target.
 
     `bindings` are the type arguments the overriding class passes
     `parent_class`'s type parameters, for a C# override, `call_shapes`
     name the type parameters each C# method declares itself, and `scopes`
-    resolve each side's written types in its own file. A match those
-    scopes prove impossible is not made up by a fallback (PR 2814 review).
+    resolve each side's written types in its own file. `own` are the
+    overriding member's own type parameters, which match a candidate's by
+    position (None when not known). A match those scopes prove impossible
+    is not made up by a fallback (PR 2814 review).
     """
     if scopes is not None:
         scoped, proven = _find_override_by_substitution(
             parent_class,
             method_name,
             function_registry,
-            (bindings or {}, scopes),
+            (bindings or {}, scopes, own),
             call_shapes or {},
         )
         if scoped is not None or proven:
@@ -615,7 +626,7 @@ def _parent_method_qn(
                 parent_class,
                 method_name,
                 function_registry,
-                (bindings, None),
+                (bindings, None, own),
                 call_shapes or {},
             )[0]
             if bindings
@@ -698,6 +709,7 @@ def check_method_overrides(
                 bindings_of.get(current_class),
                 csharp_call_shapes,
                 _scopes(given, _scope(scope_of, current_class)),
+                _own_parameters(csharp_call_shapes, method_qn),
             )
             if current_class != class_qn
             else None
@@ -785,8 +797,16 @@ def _bind_fresh_ancestors(
 def _own_type_parameters(
     call_shapes: Mapping[str, CSharpCallShape] | None, method_qn: str
 ) -> tuple[str, ...]:
+    return _own_parameters(call_shapes, method_qn) or ()
+
+
+def _own_parameters(
+    call_shapes: Mapping[str, CSharpCallShape] | None, method_qn: str
+) -> tuple[str, ...] | None:
+    # A C# method's own type parameters, () for none; None when its shape
+    # is not known, which leaves them unmatched by position.
     shape = call_shapes.get(method_qn) if call_shapes else None
-    return shape.type_parameters if shape is not None else ()
+    return shape.type_parameters if shape is not None else None
 
 
 def _scope(

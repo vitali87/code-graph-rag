@@ -130,6 +130,10 @@ CSHARP_KEYWORD_CONSTRAINTS = frozenset(
 CSHARP_STRUCT_CONSTRAINT = "struct"
 CSHARP_CLASS_CONSTRAINT = "class"
 CSHARP_UNMANAGED_CONSTRAINT = "unmanaged"
+# A method's own type parameter named by its declaration position when two
+# members' signatures are compared, `!!0` for the first: no C# type is
+# spelled so (Greptile review of PR 2814).
+CSHARP_METHOD_TYPE_PARAMETER_MARK = "!!"
 CSHARP_KIND_CONSTRAINTS = frozenset(
     {CSHARP_STRUCT_CONSTRAINT, CSHARP_CLASS_CONSTRAINT, CSHARP_UNMANAGED_CONSTRAINT}
 )

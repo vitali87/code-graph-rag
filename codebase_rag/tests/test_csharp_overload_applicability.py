@@ -190,6 +190,59 @@ class TestAUserDefinedImplicitConversionApplies:
         assert calls["FromPlain"] == {"I.Demo.M(object)"}, calls
 
 
+GENERIC_EXPLICIT_CS = """\
+namespace Ge;
+using System;
+public interface IRen { void M<T>(T x); }
+public class Renamed : IRen { void IRen.M<U>(U x) { } public void M<T>(T x) { } }
+public interface IJ { void M<T>(T x); }
+public class Spelled : IJ { void IJ.M<T>(T x) { } public void M<T>(T x) { } }
+public interface IK { void M<T>(T x); }
+public class Alone : IK { void IK.M<U>(U x) { } }
+public interface IL { void M<T>(T x); void M<T>(T[] x); }
+public class Shaped : IL { void IL.M<U>(U x) { } void IL.M<U>(U[] x) { } }
+public interface IC { void M<T>(T x) where T : IComparable<T>; }
+public class Bounded : IC { void IC.M<U>(U x) { } }
+public class Use {
+    public void Rename(IRen i) { i.M(1); }
+    public void Spell(IJ i) { i.M(1); }
+    public void Lone(IK i) { i.M(1); }
+    public void Shape(IL i) { i.M(1); }
+    public void Bound(IC i) { i.M(1); }
+}
+"""
+
+
+class TestAnInterfaceCallRunsAnExplicitGenericBody:
+    # Greptile review of PR 2814: an explicit implementation renames the
+    # method's own type parameters at will, `I.M<U>(U)` for `I.M<T>(T)`;
+    # they match by declaration position, so an interface-typed call runs
+    # that body, as the CLR does, beside a public `M<T>(T)` or alone.
+    def test_a_renamed_type_parameter_still_names_the_explicit_body(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _calls(GENERIC_EXPLICIT_CS, temp_repo, mock_ingestor)
+        assert calls["Rename(IRen)"] == {"Ge.IRen.M(T)", "Ge.Renamed.IRen#M(U)"}, calls
+        assert calls["Lone(IK)"] == {"Ge.IK.M(T)", "Ge.Alone.IK#M(U)"}, calls
+
+    def test_the_same_spelling_still_names_it(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Negative: Greptile's control, both spelled `T`.
+        calls = _calls(GENERIC_EXPLICIT_CS, temp_repo, mock_ingestor)
+        assert calls["Spell(IJ)"] == {"Ge.IJ.M(T)", "Ge.Spelled.IJ#M(T)"}, calls
+
+    def test_a_different_shape_or_a_restated_bound_is_told_apart(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Negative: `M<U>(U[])` is no `M<T>(T)`; and a `where` clause, which
+        # an explicit implementation inherits, does not keep it from its
+        # interface member.
+        calls = _calls(GENERIC_EXPLICIT_CS, temp_repo, mock_ingestor)
+        assert calls["Shape(IL)"] == {"Ge.IL.M(T)", "Ge.Shaped.IL#M(U)"}, calls
+        assert calls["Bound(IC)"] == {"Ge.IC.M(T)", "Ge.Bounded.IC#M(U)"}, calls
+
+
 CONSTRAINT_CS = """\
 namespace K;
 public interface IThing { }
@@ -2772,6 +2825,23 @@ _SCOPED_USE = (
     "public class Widget {{ }}\n{body}\npublic class Use {{ {run} }}\n"
 )
 
+SWAPPED_LIB = (
+    "namespace L; public interface I { void M<A, B>(A a, B b); "
+    "void M<A, B>(B b, A a); }\n"
+    "public class Impl : I { void I.M<X, Y>(Y b, X a) { } "
+    "void I.M<X, Y>(X a, Y b) { } }"
+)
+RENAMED_SHAPE_LIB = (
+    "namespace L; public class Base { public virtual void M<T>(T x) { } "
+    "public virtual void M<T>(T[] x) { } }\n"
+    "public class D : Base { public override void M<U>(U[] x) { } }"
+)
+CLASS_T_LIB = (
+    "namespace L; public interface I<T> { void M(T x); void M<U>(U x); }\n"
+    "public class Impl : I<string> { void I<string>.M(string x) { } "
+    "void I<string>.M<T>(T x) { } }"
+)
+
 OVERRIDE_CASES: dict[str, _OverrideCase] = {
     "override-alias": _OverrideCase(
         "namespace L; using System.Collections.Generic;\n"
@@ -2827,6 +2897,35 @@ OVERRIDE_CASES: dict[str, _OverrideCase] = {
         "public class Use { }\n",
         ("D.M(U)", "Base.M(T)"),
         True,
+    ),
+    # Greptile review of PR 2814: a method's own type parameters match by
+    # declaration position, whatever each declaration names them:
+    # `M<X, Y>(Y, X)` is `M<A, B>(B, A)` and not `M<A, B>(A, B)`.
+    "override-renamed-swapped": _OverrideCase(
+        SWAPPED_LIB, _use(""), ("Impl.I#M(Y, X)", "I.M(B, A)"), True
+    ),
+    "override-renamed-swapped-neg": _OverrideCase(
+        SWAPPED_LIB, _use(""), ("Impl.I#M(Y, X)", "I.M(A, B)"), False
+    ),
+    "override-renamed-in-order": _OverrideCase(
+        SWAPPED_LIB, _use(""), ("Impl.I#M(X, Y)", "I.M(A, B)"), True
+    ),
+    "override-renamed-shape": _OverrideCase(
+        RENAMED_SHAPE_LIB, _use(""), ("D.M(U[])", "Base.M(T[])"), True
+    ),
+    "override-renamed-shape-neg": _OverrideCase(
+        RENAMED_SHAPE_LIB, _use(""), ("D.M(U[])", "Base.M(T)"), False
+    ),
+    # Negatives: a class's type parameter `T` is no method's own `T`, so the
+    # generic explicit member is not the non-generic one, and back.
+    "override-class-parameter-generic": _OverrideCase(
+        CLASS_T_LIB, _use(""), ("Impl.I<string>#M(T)", "I.M(U)"), True
+    ),
+    "override-class-parameter-generic-neg": _OverrideCase(
+        CLASS_T_LIB, _use(""), ("Impl.I<string>#M(T)", "I.M(T)"), False
+    ),
+    "override-class-parameter-plain": _OverrideCase(
+        CLASS_T_LIB, _use(""), ("Impl.I<string>#M(string)", "I.M(T)"), True
     ),
     # Greptile review of PR 2814: `Mid : Base<Widget>` binds L.Widget, in
     # Mid's file, whatever `Widget` the overriding file declares.

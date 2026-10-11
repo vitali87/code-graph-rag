@@ -1780,6 +1780,12 @@ class CallResolver:
                 method_name,
                 unshadowed(written_bindings(written, shape, spelled_in), declared),
                 self._explicit_scopes(engine, impl_qn, qn, wanted),
+                (
+                    self._csharp_own_parameters(qn),
+                    self._csharp_own_parameters(
+                        f"{interface_qn}{cs.SEPARATOR_DOT}{method_name}"
+                    ),
+                ),
             )
         ]
         # Two closings of one generic interface (`IRun<int>`, `IRun<string>`)
@@ -1815,8 +1821,13 @@ class CallResolver:
 
     def _csharp_declared_type_parameters(self, method_qn: str) -> tuple[str, ...]:
         # `M<T, U>` -> ("T", "U"): the type parameters a C# method declares.
+        return self._csharp_own_parameters(method_qn) or ()
+
+    def _csharp_own_parameters(self, method_qn: str) -> tuple[str, ...] | None:
+        # A C# method's own type parameters, () for none; None when its
+        # shape is not known, which leaves them unmatched by position.
         shape = self.type_inference.csharp_call_shapes.get(method_qn)
-        return shape.type_parameters if shape is not None else ()
+        return shape.type_parameters if shape is not None else None
 
     def _redirect_protocol_method(
         self, result: tuple[str, str] | None

@@ -263,11 +263,17 @@ def written_bindings(
     }
 
 
+# Each side's own type parameters, as (the member's, the interface or base
+# member's), each None when not known.
+type OwnParameters = tuple[Sequence[str] | None, Sequence[str] | None]
+
+
 def spells_member(
     member: str,
     interface_member: str,
     bindings: Mapping[str, str],
     scopes: TypeScopes | None = None,
+    own: OwnParameters | None = None,
 ) -> bool:
     """Whether `member` (`Validate(Person)`) is `interface_member`
     (`Validate(T)`) once `bindings` (T := Person) are substituted into the
@@ -275,9 +281,10 @@ def spells_member(
     `Go(System.Int32)` is `Go(int)` (PR 2814 review). Erasing the arguments
     cannot pair the two up beside a `Validate(string)`, nor can counting
     them (issue #2619). With `scopes`, each side's types resolve in its own
-    file first (see `member_verdict`). Explicit implementations and
+    file first, and with `own`, each side's own type parameters match by
+    their position (see `member_verdict`). Explicit implementations and
     overrides both use it."""
-    return member_verdict(member, interface_member, bindings, scopes) is True
+    return member_verdict(member, interface_member, bindings, scopes, own) is True
 
 
 def member_verdict(
@@ -285,6 +292,7 @@ def member_verdict(
     interface_member: str,
     bindings: Mapping[str, str],
     scopes: TypeScopes | None,
+    own: OwnParameters | None = None,
 ) -> bool | None:
     """`spells_member` with its reason: True on a match; False when the two
     provably differ, a parameter naming two different resolved types; None
@@ -296,24 +304,90 @@ def member_verdict(
     written. `bindings` come resolved already, each in the file whose base
     list wrote it, and are substituted after, so nothing is resolved twice
     or in another file. A name neither side resolves keeps its spelling.
+
+    With `own`, a method's own type parameters are one by declaration
+    position, whatever each side names them (Greptile review of PR 2814):
+    `M<U>(U)` is `M<T>(T)` and `M<X, Y>(Y, X)` is `M<A, B>(B, A)`, never
+    `M<A, B>(A, B)`. Two members declaring as many is a match condition,
+    and one's own type parameter is no other type, the other's class type
+    parameter `T` among them.
     """
     name = member.partition(cs.CHAR_PAREN_OPEN)[0]
     wanted_name, paren, wanted_params = interface_member.partition(cs.CHAR_PAREN_OPEN)
     given = parameter_types(member)
     if name != wanted_name or len(given) != len(parameter_types(interface_member)):
         return False
+    given_own, wanted_own = _matched_own(own)
+    if given_own is None or wanted_own is None:
+        return False
     given_scope, wanted_scope = scopes if scopes is not None else (None, None)
-    given = [canonical_type(p, given_scope) for p in given]
-    wanted = [
-        declared_type(p, wanted_scope, bindings)
-        for p in parameter_types(f"{wanted_name}{paren}{wanted_params}")
-    ]
+    given = _by_position([canonical_type(p, given_scope) for p in given], given_own)
+    wanted = _by_position(
+        [
+            declared_type(p, wanted_scope, bindings)
+            for p in parameter_types(f"{wanted_name}{paren}{wanted_params}")
+        ],
+        wanted_own,
+    )
     if all(same_type(g, w) for g, w in zip(given, wanted, strict=True)):
         return True
     return (
         False
-        if any(_proven_apart(g, w) for g, w in zip(given, wanted, strict=True))
+        if any(
+            _proven_apart(g, w) or _apart_by_position(g, w)
+            for g, w in zip(given, wanted, strict=True)
+        )
         else None
+    )
+
+
+def _matched_own(
+    own: OwnParameters | None,
+) -> tuple[Sequence[str] | None, Sequence[str] | None]:
+    # Each side's own type parameters to name by position: none when either
+    # side's are not known; (None, None) when both are and their counts
+    # differ, which no match survives.
+    given_own, wanted_own = own if own is not None else (None, None)
+    if given_own is None or wanted_own is None:
+        return (), ()
+    if len(given_own) != len(wanted_own):
+        return None, None
+    return given_own, wanted_own
+
+
+def _by_position(types: list[str], own: Sequence[str] | None) -> list[str]:
+    # Each of a method's own type parameters named by its declaration
+    # position (`!!0`), a name no source type spells.
+    if not own:
+        return types
+    renamed = {
+        name: f"{cs.CSHARP_METHOD_TYPE_PARAMETER_MARK}{index}"
+        for index, name in enumerate(own)
+    }
+    return [substitute(t, renamed) for t in types]
+
+
+def _apart_by_position(given: str, wanted: str) -> bool:
+    # Whether two types differ where one names a method's own type
+    # parameter by position: that is no other type, nor another position.
+    if given == wanted:
+        return False
+    (given_core, given_shape), (wanted_core, wanted_shape) = (
+        type_shape(given),
+        type_shape(wanted),
+    )
+    mark = cs.CSHARP_METHOD_TYPE_PARAMETER_MARK
+    if given_core.startswith(mark) or wanted_core.startswith(mark):
+        return not same_type(given, wanted)
+    given_arguments, wanted_arguments = (
+        type_arguments(given_core),
+        type_arguments(wanted_core),
+    )
+    if given_shape != wanted_shape or len(given_arguments) != len(wanted_arguments):
+        return False
+    return any(
+        _apart_by_position(g, w)
+        for g, w in zip(given_arguments, wanted_arguments, strict=True)
     )
 
 
