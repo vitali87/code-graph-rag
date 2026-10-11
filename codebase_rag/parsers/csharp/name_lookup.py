@@ -1,9 +1,10 @@
 """C#'s simple-name lookup, through what one file declares (PR 2814 review).
 
 `K.Value` reads `Value` off whatever `K` names where it is written: a local
-or parameter first, then a member of the enclosing type or of a base it
-inherits from, then a member of each type around that, and only then a type
-of each enclosing namespace (ECMA-334 §12.8.4). A field `Holder K` hides a
+or parameter first, then a type parameter or member of the enclosing type or
+of a base it inherits from, then of each type around that, and only then a
+type of each enclosing namespace (ECMA-334 §12.8.4). A member's declared
+type is looked up where the member is declared, not where it is read. A field `Holder K` hides a
 type `K` the file also declares. Read off the syntax of the caller's file,
 which is parsed whenever the call is: a base the file does not declare may
 declare the name too, so a lookup that passes one is not known.
@@ -19,7 +20,7 @@ from tree_sitter import Node
 from ... import constants as cs
 from ..utils import safe_decode_text
 from .overloads import type_shape
-from .utils import strip_generic_arguments
+from .utils import strip_generic_arguments, type_parameter_names
 
 # The declarations a type or namespace body holds that name a type.
 _NAMED_TYPES = frozenset(
@@ -88,6 +89,10 @@ def _lookup(
 ) -> Lookup | None:
     current = site.parent
     while current is not None:
+        if name in _type_parameters(current):
+            # A type parameter of the type or method holding the site hides
+            # every type of its name, and stands for one not known here.
+            return _UNKNOWN
         if current.type in _MEMBER_HOLDERS:
             found = _in_type(current, name, types_only, seen)
         elif current.type in _NAMESPACES:
@@ -98,6 +103,20 @@ def _lookup(
             return found
         current = current.parent
     return None
+
+
+def _type_parameters(node: Node) -> tuple[str, ...]:
+    # The type parameters a type or method declaration declares.
+    return type_parameter_names(
+        next(
+            (
+                c
+                for c in node.named_children
+                if c.type == cs.TS_CSHARP_TYPE_PARAMETER_LIST
+            ),
+            None,
+        )
+    )
 
 
 def member_of(type_node: Node, name: str) -> Lookup | None:

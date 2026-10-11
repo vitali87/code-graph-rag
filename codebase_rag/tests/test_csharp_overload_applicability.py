@@ -1445,6 +1445,12 @@ COLOR_USE = (
     "public class Use {{ public Color Color; public void Run() {{ {run} }} }}\n"
 )
 
+SCOPE_USE = (
+    "using L;\nnamespace U;\n"
+    "public class Owner {{ {owner} public class Holder {{ public string Value; }} }}\n"
+    "public class Use : Owner {{ {use} public class Holder {{ public int Value; }} "
+    "public void Run() {{ {run} }} }}\n"
+)
 INVARIANT_CASES: dict[str, _Case] = {
     # Scoring: the argument IS the parameter's type.
     "score-alias": _Case(
@@ -2564,6 +2570,53 @@ INVARIANT_CASES: dict[str, _Case] = {
         LIB_MS,
         COLOR_USE.format(run="new C().M(Color.Name);"),
         frozenset({"C.M(string)"}),
+    ),
+    # Greptile review of PR 2814: an inherited field's type is read where
+    # the field is declared, so `Owner`'s `Holder K` is `Owner.Holder` (a
+    # string `Value`) inside a `Use : Owner` declaring its own `Holder`.
+    "scope-inherited-field": _Case(
+        LIB_MS,
+        SCOPE_USE.format(owner="public Holder K;", use="", run="new C().M(K.Value);"),
+        frozenset({"C.M(string)"}),
+    ),
+    "scope-inherited-property": _Case(
+        LIB_MS,
+        SCOPE_USE.format(
+            owner="public Holder K { get; set; }", use="", run="new C().M(K.Value);"
+        ),
+        frozenset({"C.M(string)"}),
+    ),
+    "scope-this-inherited-field": _Case(
+        LIB_MS,
+        SCOPE_USE.format(
+            owner="public Holder K;", use="", run="new C().M(this.K.Value);"
+        ),
+        frozenset({"C.M(string)"}),
+    ),
+    # Negatives: a field `Use` declares itself reads `Use.Holder`.
+    "scope-own-field-neg": _Case(
+        LIB_MS,
+        SCOPE_USE.format(owner="", use="public Holder K;", run="new C().M(K.Value);"),
+        frozenset({"C.M(int)"}),
+    ),
+    "scope-own-field-both-neg": _Case(
+        LIB_MS,
+        SCOPE_USE.format(
+            owner="public Holder K;",
+            use="public new Holder K;",
+            run="new C().M(K.Value);",
+        ),
+        frozenset({"C.M(int)"}),
+    ),
+    # A generic base's field typed by its own type parameter is no type the
+    # file declares, even one named `T`: not known, both stay.
+    "scope-generic-base-field": _Case(
+        LIB_MS,
+        "using L;\nnamespace U;\npublic class T { public string Value; }\n"
+        "public class Holder { public int Value; }\n"
+        "public class Owner<T> { public T K; }\n"
+        "public class Use : Owner<Holder> { public void Run() { new C().M(K.Value); } }\n",
+        frozenset({"C.M(int)", "C.M(string)"}),
     ),
     # A base this file does not declare may declare a member `K`, which
     # would hide the type: not known, both stay.

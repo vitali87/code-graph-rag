@@ -560,15 +560,31 @@ def _owner_type(
     # The type a name `found` as a member access's owner is: the type it
     # found, or the type of a field or property it found, even one sharing
     # the member's name ("Color Color", whose static and instance readings
-    # both read that type's members). `_UNREAD` for a method or event of
-    # the name; None for a member whose type this file's lookup cannot name.
+    # both read that type's members), looked up where that member is
+    # declared: an inherited `Holder K` is its base's `Holder` (Greptile
+    # review of PR 2814). `_UNREAD` for a method or event of the name; None
+    # for a member whose type this file's lookup cannot name.
     if found is None or found.kind is not LookupKind.MEMBER or found.node is None:
         return found
     written = member_type(found.node, name)
     if not written:
         return _UNREAD
     type_name = simple_type_name(written)
-    return simple_name(owner, type_name, types_only=True) if type_name else None
+    return simple_name(found.node, type_name, types_only=True) if type_name else None
+
+
+def _reads_alike(member: Node, site: Node, name: str) -> bool:
+    # Whether every name the member `name`'s declared type spells finds the
+    # same declaration where the member is declared as at `site`, where its
+    # type is read (Greptile review of PR 2814).
+    # A predefined type's keyword names no declaration anywhere.
+    written = member_type(member, name)
+    return not written or all(
+        simple_name(member, spelled, types_only=True)
+        == simple_name(site, spelled, types_only=True)
+        for spelled in mentioned_names(written)
+        if spelled not in cs.CSHARP_PREDEFINED_TYPE_NAMES
+    )
 
 
 def _declares_value(member: Node, name: str) -> bool:
@@ -3239,12 +3255,16 @@ class CSharpTypeInferenceEngine:
         # a `const` field passes its constant, any other member is a variable
         # of its written type, type arguments included. Found as C#'s
         # simple-name lookup finds it (`name_lookup`); `_UNREAD` when what the
-        # name reads is not known there, None for one this file does not
-        # declare, which stays as its annotation tells.
+        # name reads is not known there, or its type names another type
+        # where the member is declared than where it is read (an inherited
+        # `Holder K` beside the reader's own `Holder`), None for one this
+        # file does not declare, which stays as its annotation tells.
         found = self._read_member(value)
         if found is None or isinstance(found, _Unread):
             return found
         member, name = found
+        if not _reads_alike(member, value, name):
+            return _UNREAD
         if member.type == cs.TS_CSHARP_PROPERTY_DECLARATION:
             return _property_argument(member, name)
         if member.type == cs.TS_CSHARP_FIELD_DECLARATION:
