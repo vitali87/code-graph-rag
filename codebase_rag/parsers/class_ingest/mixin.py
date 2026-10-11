@@ -2497,7 +2497,7 @@ class ClassIngestMixin:
         )
 
     def process_all_method_overrides(
-        self, csharp_type_scopes: mo.ScopesOf | None = None
+        self, csharp_type_scopes: mo.ScopeOf | None = None
     ) -> None:
         mo.process_all_method_overrides(
             self.function_registry,

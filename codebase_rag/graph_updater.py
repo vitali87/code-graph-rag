@@ -52,7 +52,7 @@ from .parsers.cpp_frontend import (
 )
 from .parsers.csharp import graph_facts as csharp_graph_facts
 from .parsers.csharp import utils as csharp_utils
-from .parsers.csharp.overloads import TypeScopes
+from .parsers.csharp.overloads import Scope
 from .parsers.csharp_frontend import find_csharp_project
 from .parsers.definition_processor import DefinitionProcessor
 from .parsers.document_tier import DocumentTier, broken_link_keys
@@ -3529,13 +3529,13 @@ class GraphUpdater:
             )
 
     def _csharp_type_scopes(
-        self, given_type: str, wanted_type: str
-    ) -> TypeScopes | None:
-        # Where an overriding C# type and the type it overrides resolve the
-        # types their members write (PR 2814 review); the engine is built
-        # only when a C# override asks.
-        return self.factory.type_inference.csharp_type_inference.type_scopes(
-            given_type, wanted_type
+        self, type_qn: str, member_parameters: Collection[str]
+    ) -> Scope | None:
+        # Where a C# declaration in `type_qn` resolves the type names it
+        # writes (PR 2814 review); the engine is built only when a C#
+        # override asks.
+        return self.factory.type_inference.csharp_type_inference.scope_of(
+            type_qn, member_parameters
         )
 
     def _rehydrate_csharp_ranking_facts(

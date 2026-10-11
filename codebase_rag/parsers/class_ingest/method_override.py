@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping
 from itertools import chain
 from typing import TYPE_CHECKING
 
@@ -13,10 +13,12 @@ from ...types_defs import CSharpCallShape, CSharpGenericShape, NodeType
 from ...utils import qn_markers
 from ..csharp import utils as csharp_utils
 from ..csharp.overloads import (
+    Scope,
     TypeScopes,
     bindings_for_base,
     member_verdict,
     unshadowed,
+    with_type_parameters,
     written_bindings,
 )
 
@@ -24,9 +26,9 @@ if TYPE_CHECKING:
     from ...services import IngestorProtocol
     from ...types_defs import FunctionRegistryTrieProtocol
 
-# (overriding type, overridden type) -> where each resolves the types its
-# members write, or None when that is not known.
-type ScopesOf = Callable[[str, str], TypeScopes | None]
+# (type qn, a member's own type parameters) -> where that declaration
+# resolves the type names it writes, or None when its file is not known.
+type ScopeOf = Callable[[str, Collection[str]], Scope | None]
 
 
 def process_all_method_overrides(
@@ -42,7 +44,7 @@ def process_all_method_overrides(
     csharp_generic_shapes: Mapping[str, CSharpGenericShape] | None = None,
     csharp_class_namespaced: Mapping[str, str] | None = None,
     csharp_call_shapes: Mapping[str, CSharpCallShape] | None = None,
-    csharp_type_scopes: ScopesOf | None = None,
+    csharp_type_scopes: ScopeOf | None = None,
 ) -> None:
     logger.info(logs.CLASS_PASS_4)
 
@@ -113,7 +115,7 @@ def _emit_csharp_explicit_override(
     ingestor: IngestorProtocol,
     generic_shapes: Mapping[str, CSharpGenericShape] | None = None,
     call_shapes: Mapping[str, CSharpCallShape] | None = None,
-    type_scopes: ScopesOf | None = None,
+    type_scopes: ScopeOf | None = None,
 ) -> bool:
     """Link a C# explicit interface implementation, if `method_qn` is one."""
     if not csharp_methods or method_qn not in csharp_methods:
@@ -371,7 +373,7 @@ def _emit_explicit_impl_override(
     namespaced: Mapping[str, str],
     ingestor: IngestorProtocol,
     generic_shapes: Mapping[str, CSharpGenericShape],
-    lookup: tuple[Mapping[str, CSharpCallShape], ScopesOf | None],
+    lookup: tuple[Mapping[str, CSharpCallShape], ScopeOf | None],
 ) -> None:
     """Link `IValidator#Validate(Ctx)` to `IValidator.Validate(Ctx)`.
 
@@ -383,7 +385,11 @@ def _emit_explicit_impl_override(
     that erasure and arity cannot tell it from.
     """
     class_qn, interface, member = explicit
-    call_shapes, type_scopes = lookup
+    call_shapes, scope_of = lookup
+    # The member's types resolve in its class's file; so does the interface
+    # spelling, which its class's declaration wrote.
+    given = _scope(scope_of, class_qn, _own_type_parameters(call_shapes, method_qn))
+    spelled_in = _scope(scope_of, class_qn)
     for ancestor in ancestors:
         if function_registry.get(ancestor) != NodeType.INTERFACE:
             continue
@@ -397,9 +403,11 @@ def _emit_explicit_impl_override(
             member,
             function_registry,
             erase_generics=True,
-            bindings=written_bindings(interface, generic_shapes.get(ancestor)),
+            bindings=written_bindings(
+                interface, generic_shapes.get(ancestor), spelled_in
+            ),
             call_shapes=call_shapes,
-            scopes=type_scopes(class_qn, ancestor) if type_scopes else None,
+            scopes=_scopes(given, _scope(scope_of, ancestor)),
         )
         if parent_method_qn is None:
             continue
@@ -532,11 +540,18 @@ def _find_override_by_substitution(
         leaf = qn[len(prefix) :]
         if leaf.partition(cs.CHAR_PAREN_OPEN)[0] != base_name:
             continue
-        shape = call_shapes.get(qn)
-        visible = unshadowed(
-            bindings, shape.type_parameters if shape is not None else ()
+        own = _own_type_parameters(call_shapes, qn)
+        visible = unshadowed(bindings, own)
+        # The candidate's own type parameters are in scope where it is
+        # declared, and name no type there.
+        candidate_scopes = (
+            TypeScopes(
+                scopes.given, with_type_parameters(scopes.wanted, own) or scopes.wanted
+            )
+            if scopes is not None
+            else None
         )
-        verdict = member_verdict(method_name, leaf, visible, scopes)
+        verdict = member_verdict(method_name, leaf, visible, candidate_scopes)
         verdicts.append(verdict)
         if verdict:
             matches.append(qn)
@@ -645,7 +660,7 @@ def check_method_overrides(
     csharp_generic_shapes: Mapping[str, CSharpGenericShape] | None = None,
     csharp_class_generic_arity: Mapping[str, int] | None = None,
     csharp_call_shapes: Mapping[str, CSharpCallShape] | None = None,
-    csharp_type_scopes: ScopesOf | None = None,
+    csharp_type_scopes: ScopeOf | None = None,
 ) -> None:
     implemented = implemented_interfaces or {}
     if class_qn not in class_inheritance and class_qn not in implemented:
@@ -665,7 +680,11 @@ def check_method_overrides(
     # in the overriding class's terms (`Derived : Base<int>` binds Base's T).
     bindings_of: dict[str, dict[str, str]] = {class_qn: {}}
     shapes = csharp_generic_shapes if is_csharp else None
-    scopes_of = csharp_type_scopes if is_csharp else None
+    scope_of = csharp_type_scopes if is_csharp else None
+    # The overriding member's types resolve in its own class's file.
+    given = _scope(
+        scope_of, class_qn, _own_type_parameters(csharp_call_shapes, method_qn)
+    )
 
     while queue:
         current_class = queue.popleft()
@@ -678,7 +697,7 @@ def check_method_overrides(
                 is_csharp,
                 bindings_of.get(current_class),
                 csharp_call_shapes,
-                scopes_of(class_qn, current_class) if scopes_of else None,
+                _scopes(given, _scope(scope_of, current_class)),
             )
             if current_class != class_qn
             else None
@@ -717,21 +736,30 @@ def check_method_overrides(
         visited.update(fresh)
         queue.extend(fresh)
         _bind_fresh_ancestors(
-            shapes, csharp_class_generic_arity, current_class, fresh, bindings_of
+            (shapes, csharp_class_generic_arity, scope_of),
+            current_class,
+            fresh,
+            bindings_of,
         )
 
 
 def _bind_fresh_ancestors(
-    shapes: Mapping[str, CSharpGenericShape] | None,
-    generic_arity: Mapping[str, int] | None,
+    facts: tuple[
+        Mapping[str, CSharpGenericShape] | None,
+        Mapping[str, int] | None,
+        ScopeOf | None,
+    ],
     current_class: str,
     fresh: list[str],
     bindings_of: dict[str, dict[str, str]],
 ) -> None:
     # Each newly queued C# ancestor's parameters, bound in the overriding
-    # class's terms through the class that reached it.
+    # class's terms through the class that reached it. Each hop's base-list
+    # arguments resolve in that hop's own file (PR 2814 review).
+    shapes, generic_arity, scope_of = facts
     if not shapes:
         return
+    scope = _scope(scope_of, current_class)
     for parent_class_qn in fresh:
         bindings_of[parent_class_qn] = bindings_for_base(
             shapes,
@@ -739,4 +767,24 @@ def _bind_fresh_ancestors(
             current_class,
             bindings_of.get(current_class, {}),
             parent_class_qn,
+            scope,
         )
+
+
+def _own_type_parameters(
+    call_shapes: Mapping[str, CSharpCallShape] | None, method_qn: str
+) -> tuple[str, ...]:
+    shape = call_shapes.get(method_qn) if call_shapes else None
+    return shape.type_parameters if shape is not None else ()
+
+
+def _scope(
+    scope_of: ScopeOf | None, type_qn: str, parameters: Collection[str] = ()
+) -> Scope | None:
+    # Where a declaration in `type_qn` resolves its types, when that is known.
+    return scope_of(type_qn, parameters) if scope_of else None
+
+
+def _scopes(given: Scope | None, wanted: Scope | None) -> TypeScopes | None:
+    # Both sides' files, or None when either is not known.
+    return TypeScopes(given, wanted) if given and wanted else None

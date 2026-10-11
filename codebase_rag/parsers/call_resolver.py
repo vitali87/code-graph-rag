@@ -4,7 +4,7 @@ import re
 from collections import defaultdict, deque
 from collections.abc import Collection, Iterator
 from pathlib import PurePath
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 from loguru import logger
 from tree_sitter import Node
@@ -16,7 +16,13 @@ from ..types_defs import CppOperatorSignature, FunctionRegistryTrieProtocol, Nod
 from ..utils import qn_markers
 from .cpp import utils as cpp_utils
 from .csharp import utils as csharp_utils
-from .csharp.overloads import spells_member, unshadowed, written_bindings
+from .csharp.overloads import (
+    Scope,
+    TypeScopes,
+    spells_member,
+    unshadowed,
+    written_bindings,
+)
 from .import_processor import ImportProcessor
 from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
@@ -29,6 +35,9 @@ from .rs import utils as rs_utils
 from .semantic_call_join import call_site_key, declared_location
 from .type_inference import TypeInferenceEngine
 from .utils import follow_reexports, safe_decode_text
+
+if TYPE_CHECKING:
+    from .csharp.type_inference import CSharpTypeInferenceEngine
 
 _SEPARATOR_PATTERN = re.compile(r"[.:]|::")
 # One initializer block's scope record, as held per module by
@@ -1538,9 +1547,12 @@ class CallResolver:
         declared = self._csharp_declared_type_parameters(
             f"{interface_qn}{cs.SEPARATOR_DOT}{method_name}"
         )
-        # Each side's types resolve in its own file, so an interface's bare
-        # `Widget` is never an implementer's other `Widget` (PR 2814 review).
-        scopes = inference.csharp_type_inference.type_scopes(impl_qn, interface_qn)
+        # Each side's types resolve once, in its own file, so an interface's
+        # bare `Widget` is never an implementer's other `Widget`, and the
+        # interface spelling binds in the implementer's file (PR 2814 review).
+        engine = inference.csharp_type_inference
+        spelled_in = engine.scope_of(impl_qn)
+        wanted = engine.scope_of(interface_qn, declared)
         # A type parameter the member declares itself is not the interface's,
         # so the spelling's argument never reaches it.
         found = [
@@ -1550,8 +1562,8 @@ class CallResolver:
             and spells_member(
                 member,
                 method_name,
-                unshadowed(written_bindings(written, shape), declared),
-                scopes,
+                unshadowed(written_bindings(written, shape, spelled_in), declared),
+                self._explicit_scopes(engine, impl_qn, qn, wanted),
             )
         ]
         # Two closings of one generic interface (`IRun<int>`, `IRun<string>`)
@@ -1560,6 +1572,20 @@ class CallResolver:
         # is guessed (PR 2814 review). A `#if` twin is the same body.
         bodies = {qn_markers.strip_dup_marker(qn) for _, qn in found}
         return found[0] if len(bodies) == 1 else None
+
+    def _explicit_scopes(
+        self,
+        engine: CSharpTypeInferenceEngine,
+        impl_qn: str,
+        member_qn: str,
+        wanted: Scope | None,
+    ) -> TypeScopes | None:
+        # The explicit member's file, its own type parameters in scope, and
+        # the interface member's.
+        given = engine.scope_of(
+            impl_qn, self._csharp_declared_type_parameters(member_qn)
+        )
+        return TypeScopes(given, wanted) if given and wanted else None
 
     def _explicit_members(self, impl_qn: str) -> Iterator[tuple[str, str, str, str]]:
         # (qn, label, interface as written, member) for each explicit

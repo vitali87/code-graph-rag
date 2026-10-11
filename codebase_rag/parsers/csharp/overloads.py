@@ -59,12 +59,30 @@ class Fit(IntEnum):
 type Resolver = Callable[[str, int], str | None]
 
 
+class Scope(NamedTuple):
+    """One file's view of the type names written in a declaration there:
+    `resolve` finds the first-party type a name names in that file, and
+    `type_parameters` are the names in scope at the declaration that are
+    type parameters (its own, its type's and every enclosing type's), which
+    name no type and stay as written (PR 2814 review)."""
+
+    resolve: Resolver
+    type_parameters: frozenset[str] = frozenset()
+
+
+def with_type_parameters(scope: Scope | None, names: Collection[str]) -> Scope | None:
+    """`scope` with a member's own type parameters in scope too."""
+    if scope is None or not names:
+        return scope
+    return Scope(scope.resolve, scope.type_parameters | frozenset(names))
+
+
 class TypeScopes(NamedTuple):
     """Where each side of a member comparison resolves the types it writes:
     the given member's file and the wanted member's (PR 2814 review)."""
 
-    given: Resolver
-    wanted: Resolver
+    given: Scope
+    wanted: Scope
 
 
 class TypeJudge(Protocol):
@@ -123,12 +141,15 @@ def bindings_for_base(
     class_qn: str,
     bindings: Mapping[str, str],
     base_qn: str,
+    scope: Scope | None = None,
 ) -> dict[str, str]:
     """What `class_qn`'s base list passes `base_qn`'s type parameters, in
     `class_qn`'s own bound terms: `Derived : Base<int>` gives Base's T
     `int`. An argument naming one of `class_qn`'s still unbound parameters
     binds nothing: `Inline<T> : Validator<T>` says Validator's T is
-    Inline's T, which only a subclass can close."""
+    Inline's T, which only a subclass can close. With `scope`, `class_qn`'s
+    file, each argument is resolved there before the deeper bindings are
+    substituted in, so a chain binds every hop in its own file."""
     shape = shapes.get(class_qn)
     base_shape = shapes.get(base_qn)
     if shape is None or base_shape is None or not base_shape.parameters:
@@ -144,7 +165,7 @@ def bindings_for_base(
         return {}
     unbound = set(shape.parameters) - bindings.keys()
     return {
-        parameter: substitute(argument, bindings)
+        parameter: substitute(canonical_type(argument, scope), bindings)
         for parameter, argument in zip(
             base_shape.parameters, written.arguments, strict=False
         )
@@ -152,17 +173,20 @@ def bindings_for_base(
     }
 
 
-def written_bindings(written: str, shape: CSharpGenericShape | None) -> dict[str, str]:
+def written_bindings(
+    written: str, shape: CSharpGenericShape | None, scope: Scope | None = None
+) -> dict[str, str]:
     """What an explicit implementation's spelling of its interface binds:
     `IMap<Ctx<Person>, int>` for `IMap<K, V>` is K := Ctx<Person> and
-    V := int. Nothing for a non-generic interface, or for a spelling whose
-    argument count is not the interface's."""
+    V := int, each resolved in `scope`, the implementing type's file.
+    Nothing for a non-generic interface, or for a spelling whose argument
+    count is not the interface's."""
     parameters = shape.parameters if shape is not None else ()
     arguments = type_arguments(written)
     if not parameters or len(arguments) != len(parameters):
         return {}
     return {
-        parameter: signature_type_name(argument)
+        parameter: canonical_type(signature_type_name(argument), scope)
         for parameter, argument in zip(parameters, arguments, strict=True)
     }
 
@@ -194,33 +218,24 @@ def member_verdict(
     provably differ, a parameter naming two different resolved types; None
     when they differ only in spelling, which may be one type.
 
-    With `scopes`, each first-party type is resolved in the file that wrote
-    it: the member's in its own, the interface member's in the interface's,
-    and a binding, written in the member's file's base list, in the member's
-    before it is substituted. So a base's bare `Widget` (A.Widget) is never
-    the override's `B.Widget`. A type neither side resolves keeps its
-    spelling, as it always did.
+    With `scopes`, every type name each side writes is resolved once, in the
+    file that wrote it (`canonical_type`): the member's in its own, the
+    interface member's in the interface's, its type parameters left as
+    written. `bindings` come resolved already, each in the file whose base
+    list wrote it, and are substituted after, so nothing is resolved twice
+    or in another file. A name neither side resolves keeps its spelling.
     """
     name = member.partition(cs.CHAR_PAREN_OPEN)[0]
     wanted_name, paren, wanted_params = interface_member.partition(cs.CHAR_PAREN_OPEN)
     given = parameter_types(member)
     if name != wanted_name or len(given) != len(parameter_types(interface_member)):
         return False
-    if scopes is None:
-        wanted = parameter_types(
-            f"{wanted_name}{paren}{substitute(wanted_params, bindings)}"
-        )
-    else:
-        bound = {
-            key: canonical_type(value, scopes.given) for key, value in bindings.items()
-        }
-        given = [canonical_type(p, scopes.given) for p in given]
-        wanted = [
-            canonical_type(p, scopes.wanted)
-            for p in parameter_types(
-                f"{wanted_name}{paren}{substitute(wanted_params, bound)}"
-            )
-        ]
+    given_scope, wanted_scope = scopes if scopes is not None else (None, None)
+    given = [canonical_type(p, given_scope) for p in given]
+    wanted = [
+        substitute(canonical_type(p, wanted_scope), bindings)
+        for p in parameter_types(f"{wanted_name}{paren}{wanted_params}")
+    ]
     if all(same_type(g, w) for g, w in zip(given, wanted, strict=True)):
         return True
     return (
@@ -230,25 +245,42 @@ def member_verdict(
     )
 
 
-def canonical_type(written: str, resolve: Resolver) -> str:
-    """`written` with each first-party type it names spelled as its qn
-    behind `global::`, as `resolve` finds it: `List<Widget>` ->
-    `List<global::proj.A.Widget>`. A type it does not resolve (external,
-    predefined, a type parameter) keeps its spelling, and one already
-    resolved is kept as it is."""
+def canonical_type(written: str, scope: Scope | None) -> str:
+    """`written` with each first-party type it names spelled as its qn behind
+    a leading dot, resolved once, in `scope`, the file that wrote it:
+    `List<Widget>` -> `List<.proj.A.Widget>`, and so are `global::A.Widget`,
+    `A.Widget` and an alias of it. A type parameter in scope, a name the file
+    does not resolve (external, predefined) and a name already resolved keep
+    their spelling. Without a scope nothing is resolved."""
+    if scope is None:
+        return written.strip()
     core, suffix = _split_type_suffix(written.strip())
-    if core.startswith(cs.CHAR_PAREN_OPEN) or core.startswith(cs.CSHARP_GLOBAL_PREFIX):
+    if core.startswith(cs.CSHARP_RESOLVED_PREFIX) or core in scope.type_parameters:
         return f"{core}{suffix}"
+    if core.startswith(cs.CHAR_PAREN_OPEN):
+        elements = cs.SEPARATOR_COMMA_SPACE.join(
+            canonical_type(e, scope) for e in parameter_types(core)
+        )
+        return f"{cs.CHAR_PAREN_OPEN}{elements}{cs.CHAR_PAREN_CLOSE}{suffix}"
     arguments = type_arguments(core)
     name = strip_generic_arguments(core)
-    qn = resolve(name, len(arguments))
-    head = f"{cs.CSHARP_GLOBAL_PREFIX}{qn}" if qn else name
+    qn = scope.resolve(name, len(arguments))
+    head = f"{cs.CSHARP_RESOLVED_PREFIX}{qn}" if qn else name
     if arguments:
         inner = cs.SEPARATOR_COMMA_SPACE.join(
-            canonical_type(a, resolve) for a in arguments
+            canonical_type(a, scope) for a in arguments
         )
         head = f"{head}{cs.CHAR_ANGLE_OPEN}{inner}{cs.CHAR_ANGLE_CLOSE}"
     return f"{head}{suffix}"
+
+
+def resolved_qn(canonical: str) -> str | None:
+    """The qn a `canonical_type` spelling resolved its outer type to, or None
+    when it kept a written spelling."""
+    core = strip_generic_arguments(_split_type_suffix(canonical.strip())[0])
+    if not core.startswith(cs.CSHARP_RESOLVED_PREFIX):
+        return None
+    return core.removeprefix(cs.CSHARP_RESOLVED_PREFIX)
 
 
 def _split_type_suffix(written: str) -> tuple[str, str]:
@@ -265,11 +297,8 @@ def _proven_apart(given: str, wanted: str) -> bool:
     # different resolved first-party types.
     given_core = _split_type_suffix(given)[0]
     wanted_core = _split_type_suffix(wanted)[0]
-    if (
-        given_core.startswith(cs.CSHARP_GLOBAL_PREFIX)
-        and wanted_core.startswith(cs.CSHARP_GLOBAL_PREFIX)
-        and strip_generic_arguments(given_core) != strip_generic_arguments(wanted_core)
-    ):
+    given_qn, wanted_qn = resolved_qn(given_core), resolved_qn(wanted_core)
+    if given_qn is not None and wanted_qn is not None and given_qn != wanted_qn:
         return True
     given_arguments, wanted_arguments = (
         type_arguments(given_core),

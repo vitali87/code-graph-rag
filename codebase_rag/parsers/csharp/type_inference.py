@@ -28,15 +28,16 @@ from ..utils import safe_decode_text
 from .overloads import (
     ArgumentType,
     Fit,
-    Resolver,
-    TypeScopes,
+    Scope,
     arguments_match,
     best_candidates,
     bindings_for_base,
+    canonical_type,
     fit,
     mentioned_names,
     parameter_types,
     plain_type_name,
+    resolved_qn,
     same_type_name,
     substitute,
     type_arguments,
@@ -210,6 +211,31 @@ def _extension_receiver_matches(
     if cand_qualified:
         return False
     return not ambiguous_unqualified
+
+
+def _member_type(member_qn: str) -> str:
+    # `proj.M.N.Widget.Put(List<N.Item>)` -> `proj.M.N.Widget`.
+    return member_qn.split(cs.CHAR_PAREN_OPEN, 1)[0].rpartition(cs.SEPARATOR_DOT)[0]
+
+
+def _canonical_argument(
+    argument: ArgumentType | None, scope: Scope
+) -> ArgumentType | None:
+    # An argument's type, resolved once in the caller's file: its name with
+    # its arity, and each type argument the syntax spells.
+    if argument is None or argument.name is None:
+        return argument
+    name = argument.name
+    if name not in scope.type_parameters and (
+        qn := scope.resolve(name, argument.arity)
+    ):
+        name = f"{cs.CSHARP_RESOLVED_PREFIX}{qn}"
+    arguments = (
+        tuple(canonical_type(a, scope) for a in argument.arguments)
+        if argument.arguments is not None
+        else None
+    )
+    return ArgumentType(argument.literal, name, argument.arity, arguments)
 
 
 def _written_argument(raw: str) -> ArgumentType:
@@ -2019,8 +2045,11 @@ class CSharpTypeInferenceEngine:
         scored is provably inapplicable; None when none was scored at all.
         """
         arguments: list[ArgumentType | None] | None = None
+        # Every type the call site writes (its arguments' and its receiver's
+        # type arguments) is resolved once, in the caller's file.
+        caller = self._caller_scope(call)
         for declaring, bindings, open_names in self._typed_hierarchy(
-            class_qn, self._receiver_bindings(call.receiver, class_qn)
+            class_qn, self._receiver_bindings(call.receiver, class_qn, caller)
         ):
             qns = self._applicable_methods(
                 declaring, call.method_name, call.arg_count, compatible
@@ -2028,18 +2057,17 @@ class CSharpTypeInferenceEngine:
             if not qns:
                 continue
             if arguments is None:
-                arguments = self._argument_types(
-                    call.node, call.local_var_types, call.module_qn, call.caller_qn
-                )
+                arguments = [
+                    _canonical_argument(argument, caller)
+                    for argument in self._argument_types(
+                        call.node, call.local_var_types, call.module_qn, call.caller_qn
+                    )
+                ]
             scored = [
                 (
                     qn,
                     self._overload_fits(
-                        qn,
-                        parameters,
-                        arguments,
-                        (bindings, open_names),
-                        call.module_qn,
+                        qn, parameters, arguments, (bindings, open_names)
                     ),
                 )
                 for qn in qns
@@ -2056,38 +2084,35 @@ class CSharpTypeInferenceEngine:
         parameters: list[str],
         arguments: list[ArgumentType | None],
         receiver: tuple[Mapping[str, str], frozenset[str]],
-        module_qn: str,
     ) -> list[Fit | None]:
         # How each argument binds its parameter of `method_qn`, given the
         # type arguments the receiver binds and the parameters it leaves
         # open. A type parameter the method declares itself shadows its
         # class's of the same name (`Handler<T>.Handle<T>(T)`), so the
         # binding the receiver gives the class's never reaches it; inference
-        # leaves it open, unless the argument breaks its `where` clause.
+        # leaves it open, unless the argument breaks its `where` clause. The
+        # parameter's and the bound's types resolve in the method's file,
+        # before the bindings (resolved where they were written) go in.
         bindings, open_names = receiver
         own = self._method_type_parameters(method_qn)
         visible = unshadowed(bindings, own)
-        bounds = self._constraint_bounds(method_qn)
-        # The argument's types resolve in the caller's file, the parameter's
-        # in the method's (PR 2814 review).
-        scopes = (module_qn, self._member_module(method_qn, module_qn))
-        judge = _ScopedJudge(
-            partial(self._identical, scopes=scopes),
-            partial(self._converts, scopes=scopes),
-        )
+        scope = self.scope_of(_member_type(method_qn), own)
+        bounds = {
+            name: [canonical_type(bound, scope) for bound in written]
+            for name, written in self._constraint_bounds(method_qn).items()
+        }
+        judge = _ScopedJudge(self._identical, self._converts)
         return [
             None
-            if self._breaks_constraint(bounds.get(parameter, ()), argument, scopes, own)
-            else fit(substitute(parameter, visible), argument, open_names | own, judge)
+            if self._breaks_constraint(bounds.get(parameter, ()), argument, own)
+            else fit(
+                substitute(canonical_type(parameter, scope), visible),
+                argument,
+                open_names | own,
+                judge,
+            )
             for parameter, argument in zip(parameters, arguments, strict=True)
         ]
-
-    def _member_module(self, member_qn: str, fallback: str) -> str:
-        # The module whose file declares a member: its type's.
-        type_qn = member_qn.split(cs.CHAR_PAREN_OPEN, 1)[0].rpartition(
-            cs.SEPARATOR_DOT
-        )[0]
-        return self._declaring_module(type_qn, fallback)
 
     def _constraint_bounds(self, method_qn: str) -> dict[str, list[str]]:
         # Each constrained type parameter of `method_qn`, with its types.
@@ -2101,7 +2126,6 @@ class CSharpTypeInferenceEngine:
         self,
         bounds: Sequence[str],
         argument: ArgumentType | None,
-        scopes: tuple[str, str],
         own: Collection[str],
     ) -> bool:
         # Inferred from an argument that does not derive from a class its
@@ -2109,17 +2133,16 @@ class CSharpTypeInferenceEngine:
         # fails its constraint, and C# drops the generic overload
         # (`M<T>(T) where T : Person` takes no Circle; PR 2814 review). A
         # user-defined conversion never satisfies a constraint, and an
-        # interface or external bound cannot be judged. The argument resolves
-        # in the caller's file, the bound in the method's (`scopes`); a bound
-        # naming the method's `own` type parameters is open there.
+        # interface or external bound cannot be judged. Both come resolved,
+        # the argument in the caller's file, the bound in the method's; a
+        # bound naming the method's `own` type parameters is open there.
         if not bounds or argument is None or argument.name is None:
             return False
-        caller_module, method_module = scopes
-        given_qn = self._type_name_to_qn(argument.name, caller_module, argument.arity)
+        given_qn = self._first_party_type(argument.name)
         if given_qn is None:
             return False
         for bound in bounds:
-            bound_qn = self._scoped_qn(bound, method_module)
+            bound_qn = self._first_party_type(bound)
             if bound_qn is None or not self._judgeable(given_qn, bound_qn):
                 continue
             given = (written_type(argument), given_qn)
@@ -2158,10 +2181,13 @@ class CSharpTypeInferenceEngine:
             types = types[:-1] + [element] * max(arg_count - len(types) + 1, 0)
         return (types + [""] * arg_count)[:arg_count]
 
-    def _receiver_bindings(self, receiver: Node, class_qn: str) -> dict[str, str]:
+    def _receiver_bindings(
+        self, receiver: Node, class_qn: str, caller: Scope | None
+    ) -> dict[str, str]:
         # The type arguments the receiver's written type passes its class's
-        # parameters: `new Handler<Person>()`, or `Handler<Person> h`. Empty
-        # when the syntax spells none, or not one per parameter.
+        # parameters: `new Handler<Person>()`, or `Handler<Person> h`, each
+        # resolved in the caller's file, which wrote it. Empty when the
+        # syntax spells none, or not one per parameter.
         shape = self.csharp_generic_shapes.get(class_qn)
         if shape is None or not shape.parameters:
             return {}
@@ -2171,7 +2197,10 @@ class CSharpTypeInferenceEngine:
         arguments = type_arguments(signature_type_name(written))
         if len(arguments) != len(shape.parameters):
             return {}
-        return dict(zip(shape.parameters, arguments, strict=True))
+        return {
+            parameter: canonical_type(argument, caller)
+            for parameter, argument in zip(shape.parameters, arguments, strict=True)
+        }
 
     def _written_receiver_type(self, receiver: Node) -> str | None:
         # The type a receiver is written with: a construction's own type, or
@@ -2281,6 +2310,7 @@ class CSharpTypeInferenceEngine:
                         current,
                         bindings,
                         base,
+                        self.scope_of(current),
                     ),
                 )
                 for base in reversed(self.class_inheritance.get(current, []))
@@ -2369,14 +2399,14 @@ class CSharpTypeInferenceEngine:
         name, arity = split_type_ref(annotated)
         return ArgumentType(None, name, arity, None)
 
-    def _scoped_qn(self, written: str, module_qn: str) -> str | None:
-        # A written type's first-party qn, resolved in the file that wrote it:
-        # the caller's for an argument, the declaring file's for a parameter,
-        # bound or operator type (PR 2814 review).
-        return self._type_name_to_qn(
-            strip_generic_arguments(written),
-            module_qn,
-            generic_arity_of_type_text(written),
+    def _first_party_type(self, canonical: str) -> str | None:
+        # The first-party type a resolved spelling names (`canonical_type`),
+        # or None for a spelling no file resolved.
+        qn = resolved_qn(canonical)
+        return (
+            qn
+            if qn is not None and self.function_registry.get(qn) in _TYPE_DECLS
+            else None
         )
 
     def _judgeable(self, given_qn: str, wanted_qn: str) -> bool:
@@ -2391,21 +2421,14 @@ class CSharpTypeInferenceEngine:
         return given_qn == wanted_qn or wanted_qn in self._partial_roots(given_qn)
 
     def _identical(
-        self,
-        argument: ArgumentType,
-        parameter: str,
-        open_names: Collection[str],
-        scopes: tuple[str, str],
+        self, argument: ArgumentType, parameter: str, open_names: Collection[str]
     ) -> bool | None:
         # Whether the argument's type IS the parameter's: one class, each
         # side resolved in its own file (or, unresolved, spelled alike up to
         # aliases), closed with the same type arguments. None when they are
         # not known on the argument's side.
-        caller_module, declaring_module = scopes
-        given_qn = self._type_name_to_qn(
-            argument.name or "", caller_module, argument.arity
-        )
-        wanted_qn = self._scoped_qn(parameter, declaring_module)
+        given_qn = self._first_party_type(argument.name or "")
+        wanted_qn = self._first_party_type(parameter)
         if given_qn is not None and wanted_qn is not None:
             if not self._same_class(given_qn, wanted_qn):
                 return False
@@ -2417,21 +2440,14 @@ class CSharpTypeInferenceEngine:
         return arguments_match(argument.arguments, wanted, open_names)
 
     def _converts(
-        self,
-        argument: ArgumentType,
-        parameter: str,
-        open_names: Collection[str],
-        scopes: tuple[str, str],
+        self, argument: ArgumentType, parameter: str, open_names: Collection[str]
     ) -> bool | None:
         # Whether the argument converts implicitly to the parameter: up its
         # class hierarchy, or through a declared `implicit operator`, closed
         # as the parameter is either way. Known only between first-party
         # classes; anything else is not told.
-        caller_module, declaring_module = scopes
-        given_qn = self._type_name_to_qn(
-            argument.name or "", caller_module, argument.arity
-        )
-        wanted_qn = self._scoped_qn(parameter, declaring_module)
+        given_qn = self._first_party_type(argument.name or "")
+        wanted_qn = self._first_party_type(parameter)
         if (
             given_qn is None
             or wanted_qn is None
@@ -2443,7 +2459,7 @@ class CSharpTypeInferenceEngine:
         derived = self._class_conversion(given, wanted, open_names)
         if derived:
             return True
-        implicit = self._converts_implicitly(given, wanted, open_names, caller_module)
+        implicit = self._converts_implicitly(given, wanted, open_names)
         if implicit:
             return True
         return None if None in (derived, implicit) else False
@@ -2474,7 +2490,6 @@ class CSharpTypeInferenceEngine:
         given: tuple[str, str],
         wanted: tuple[str, str],
         open_names: Collection[str],
-        module_qn: str,
     ) -> bool | None:
         # A user-defined implicit conversion is declared on its source or its
         # target type, or a base of either, and its written types resolve in
@@ -2482,10 +2497,14 @@ class CSharpTypeInferenceEngine:
         sources = self._class_ancestry(given[1])
         verdict: bool | None = False
         for declaring in sources | self._class_ancestry(wanted[1]):
-            scope = self._declaring_module(declaring, module_qn)
-            for operator in self.csharp_implicit_conversions.get(declaring, ()):
+            scope = self.scope_of(declaring)
+            for written in self.csharp_implicit_conversions.get(declaring, ()):
+                operator = (
+                    canonical_type(written[0], scope),
+                    canonical_type(written[1], scope),
+                )
                 applies = self._operator_applies(
-                    operator, (declaring, scope), given, (wanted, open_names)
+                    operator, declaring, given, (wanted, open_names)
                 )
                 if applies:
                     return True
@@ -2496,7 +2515,7 @@ class CSharpTypeInferenceEngine:
     def _operator_applies(
         self,
         operator: tuple[str, str],
-        declared: tuple[str, str],
+        declaring: str,
         given: tuple[str, str],
         wanted: tuple[tuple[str, str], Collection[str]],
     ) -> bool | None:
@@ -2506,9 +2525,8 @@ class CSharpTypeInferenceEngine:
         # its target, with the declaring type's own parameters bound from the
         # argument, converts to the parameter.
         source, target = operator
-        declaring, scope = declared
-        source_qn = self._scoped_qn(source, scope)
-        target_qn = self._scoped_qn(target, scope)
+        source_qn = self._first_party_type(source)
+        target_qn = self._first_party_type(target)
         if source_qn is None or target_qn is None:
             return False
         shape = self.csharp_generic_shapes.get(declaring)
@@ -2566,41 +2584,45 @@ class CSharpTypeInferenceEngine:
             return tuple(bound[p] for p in closed)
         return None
 
-    def type_scopes(self, given_type: str, wanted_type: str) -> TypeScopes | None:
-        """Where a member of `given_type` and one of `wanted_type` resolve the
-        types they write: each in its own declaring file (PR 2814 review).
-        None when either file is not recorded, which leaves the comparison
-        to spelling."""
-        given = self._type_resolver(given_type)
-        wanted = self._type_resolver(wanted_type)
-        if given is None or wanted is None:
-            return None
-        return TypeScopes(given, wanted)
-
-    def _type_resolver(self, type_qn: str) -> Resolver | None:
-        # Resolves a type written in `type_qn`'s declaration, in its file. Its
-        # own type parameters name no type there.
+    def scope_of(
+        self, type_qn: str, member_parameters: Collection[str] = ()
+    ) -> Scope | None:
+        """Where a declaration in `type_qn` (a member declaring
+        `member_parameters` itself, or the type's own base list) resolves the
+        type names it writes: the type's file, with every type parameter in
+        scope there left as written (PR 2814 review). None when that file is
+        not recorded, which leaves its spellings unresolved."""
         module_qn = self.csharp_class_owner_module.get(type_qn)
         if module_qn is None:
             return None
-        shape = self.csharp_generic_shapes.get(type_qn)
-        own = frozenset(shape.parameters) if shape is not None else frozenset()
-        return partial(self._resolve_in, module_qn, own)
+        return Scope(
+            partial(self._resolve_in, module_qn),
+            self._type_parameters_in_scope(type_qn) | frozenset(member_parameters),
+        )
 
-    def _resolve_in(
-        self, module_qn: str, own: frozenset[str], name: str, arity: int
-    ) -> str | None:
+    def _type_parameters_in_scope(self, type_qn: str) -> frozenset[str]:
+        # The type parameters of `type_qn` and of every type it is nested in.
+        names: set[str] = set()
+        current = type_qn
+        while self.function_registry.get(current) in _TYPE_DECLS:
+            if (shape := self.csharp_generic_shapes.get(current)) is not None:
+                names.update(shape.parameters)
+            current = current.rpartition(cs.SEPARATOR_DOT)[0]
+        return frozenset(names)
+
+    def _caller_scope(self, call: _MemberCall) -> Scope:
+        # Where a call site resolves the types it writes: the caller's file,
+        # with the caller's own type parameters and its type's in scope.
+        in_scope = self._method_type_parameters(call.caller_qn or "")
+        if (class_qn := self._containing_class_qn(call.caller_qn)) is not None:
+            in_scope |= self._type_parameters_in_scope(class_qn)
+        return Scope(partial(self._resolve_in, call.module_qn), in_scope)
+
+    def _resolve_in(self, module_qn: str, name: str, arity: int) -> str | None:
         # The first-party type `name` names in `module_qn`, one partial part
         # standing for every part.
-        if name in own:
-            return None
         qn = self._type_name_to_qn(name, module_qn, arity)
         return min(self._partial_roots(qn)) if qn is not None else None
-
-    def _declaring_module(self, type_qn: str, fallback: str) -> str:
-        # The module whose file declares `type_qn`, the scope its written
-        # types resolve in; `fallback` when it was never recorded.
-        return self.csharp_class_owner_module.get(type_qn, fallback)
 
     def _class_ancestry(self, class_qn: str) -> set[str]:
         seen: set[str] = set()

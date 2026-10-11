@@ -850,6 +850,29 @@ INVARIANT_CASES: dict[str, _Case] = {
         _use("new C().Log(Make.Thing());"),
         frozenset({"C.Log(string)"}),
     ),
+    # A method's own type parameter in a `where` clause names no type, even
+    # beside a class `U` in its file.
+    "score-method-type-parameters": _Case(
+        "namespace L; public class U { } public class Widget { }\n"
+        "public class C { public void M<T, V>(T x, V y) where T : V { } "
+        "public void M(object o, object p) { } }",
+        _use("new C().M(new Widget(), new Widget());"),
+        frozenset({"C.M(T, V)"}),
+    ),
+    "score-method-type-parameter-class": _Case(
+        "namespace L; public class U { } public class Widget { }\n"
+        "public class C { public void M<T, U>(T x, U y) where T : U { } "
+        "public void M(object o, object p) { } }",
+        _use("new C().M(new Widget(), new Widget());"),
+        frozenset({"C.M(T, U)"}),
+    ),
+    # A receiver's type argument is the caller's `Widget`.
+    "score-receiver-scope": _Case(
+        "namespace L; public class Widget { }\n"
+        "public class Box<T> { public void M(T x) { } public void M(Widget w) { } }",
+        _use("new Box<Widget>().M(new Widget());", "public class Widget { }\n"),
+        frozenset({"Box.M(T)"}),
+    ),
     # Scoring: the argument converts to the parameter through its bases.
     "base-alias": _Case(
         "namespace L; public class Base<X> { } public class Derived : Base<System.Int32> { }\n"
@@ -962,6 +985,10 @@ class _OverrideCase(NamedTuple):
     use: str
     pair: tuple[str, str]
     linked: bool
+    # Further files, by path under the project, for chains across files.
+    more: tuple[tuple[str, str], ...] = ()
+    # Where `lib` is written, when a directory must fold its namespace.
+    lib_path: str = "Lib.cs"
 
 
 _SCOPED_LIB = (
@@ -1016,6 +1043,144 @@ OVERRIDE_CASES: dict[str, _OverrideCase] = {
         ),
         ("D.Put(U.Widget)", "Base.Put(T)"),
         True,
+    ),
+    # Greptile review of PR 2814: a method's own type parameters name no
+    # type, even beside classes named `T` and `U` in either file.
+    "override-method-type-parameters": _OverrideCase(
+        "namespace L; public class T { }\n"
+        "public class Base { public virtual void M<T>(T x) { } }",
+        "using L;\nnamespace N;\npublic class U { }\n"
+        "public class D : Base { public override void M<U>(U x) { } }\n"
+        "public class Use { }\n",
+        ("D.M(U)", "Base.M(T)"),
+        True,
+    ),
+    # Greptile review of PR 2814: `Mid : Base<Widget>` binds L.Widget, in
+    # Mid's file, whatever `Widget` the overriding file declares.
+    "override-inherited-binding": _OverrideCase(
+        "namespace L; public class Widget { }\n"
+        "public class Base<T> { public virtual void Put(T x) { } }\n"
+        "public class Mid : Base<Widget> { }",
+        "using L;\nnamespace U;\npublic class Widget { }\n"
+        "public class D : Mid { public override void Put(L.Widget x) { } }\n"
+        "public class Use { }\n",
+        ("D.Put(L.Widget)", "Base.Put(T)"),
+        True,
+    ),
+    # Three hops across four files, each declaring its own `Widget`: X is
+    # bound in Mid2's file, so T is C.Widget all the way down.
+    "override-chain": _OverrideCase(
+        "namespace A; public class Widget { }\n"
+        "public class Base<T> { public virtual void Put(T x) { } }",
+        "using A; using B; using C;\nnamespace U;\npublic class Widget { }\n"
+        "public class D : Mid2 { public override void Put(C.Widget x) { } }\n"
+        "public class Use { }\n",
+        ("D.Put(C.Widget)", "Base.Put(T)"),
+        True,
+        (
+            (
+                "Mid.cs",
+                "using A;\nnamespace B;\npublic class Widget { }\n"
+                "public class Mid<X> : Base<X> { }",
+            ),
+            (
+                "Mid2.cs",
+                "using B;\nnamespace C;\npublic class Widget { }\n"
+                "public class Mid2 : Mid<Widget> { }",
+            ),
+        ),
+    ),
+    # Negative: the chain still proves another file's `Widget` apart.
+    "override-chain-neg": _OverrideCase(
+        "namespace A; public class Widget { }\n"
+        "public class Base<T> { public virtual void Put(T x) { } }",
+        "using A; using B; using C;\nnamespace U;\npublic class Widget { }\n"
+        "public class D : Mid2 { public override void Put(U.Widget x) { } }\n"
+        "public class Use { }\n",
+        ("D.Put(U.Widget)", "Base.Put(T)"),
+        False,
+        (
+            (
+                "Mid.cs",
+                "using A;\nnamespace B;\npublic class Widget { }\n"
+                "public class Mid<X> : Base<X> { }",
+            ),
+            (
+                "Mid2.cs",
+                "using B;\nnamespace C;\npublic class Widget { }\n"
+                "public class Mid2 : Mid<Widget> { }",
+            ),
+        ),
+    ),
+    # Greptile review of PR 2814: every spelling of one type is that type,
+    # resolved in the file that wrote it: `global::`, an alias, a partly
+    # qualified name. The library sits in `Zeta/`, which folds its namespace.
+    "override-global-given": _OverrideCase(
+        "namespace Zeta; public class Widget { }\n"
+        "public class Base { public virtual void Put(Widget x) { } }",
+        "using Zeta;\nnamespace U;\npublic class Widget { }\n"
+        "public class D : Base { public override void Put(global::Zeta.Widget x) { } }\n"
+        "public class Use { }\n",
+        ("D.Put(global::Zeta.Widget)", "Base.Put(Widget)"),
+        True,
+        (),
+        "Zeta/Lib.cs",
+    ),
+    "override-global-wanted": _OverrideCase(
+        "namespace Zeta; public class Widget { }\n"
+        "public class Base { public virtual void Put(global::Zeta.Widget x) { } }",
+        "using Zeta;\nnamespace U;\n"
+        "public class D : Base { public override void Put(Widget x) { } }\n"
+        "public class Use { }\n",
+        ("D.Put(Widget)", "Base.Put(global::Zeta.Widget)"),
+        True,
+        (),
+        "Zeta/Lib.cs",
+    ),
+    "override-partly-qualified": _OverrideCase(
+        "namespace Zeta; public class Widget { }\n"
+        "public class Base { public virtual void Put(Widget x) { } }",
+        "using Zeta;\nnamespace U;\npublic class Widget { }\n"
+        "public class D : Base { public override void Put(Zeta.Widget x) { } }\n"
+        "public class Use { }\n",
+        ("D.Put(Zeta.Widget)", "Base.Put(Widget)"),
+        True,
+        (),
+        "Zeta/Lib.cs",
+    ),
+    "override-using-alias": _OverrideCase(
+        "namespace Zeta; public class Widget { }\n"
+        "public class Base { public virtual void Put(Widget x) { } }",
+        "using Zeta; using W = Zeta.Widget;\nnamespace U;\npublic class Widget { }\n"
+        "public class D : Base { public override void Put(W x) { } }\n"
+        "public class Use { }\n",
+        ("D.Put(W)", "Base.Put(Widget)"),
+        True,
+        (),
+        "Zeta/Lib.cs",
+    ),
+    "override-alias-qualified": _OverrideCase(
+        "namespace Zeta; public class Widget { }\n"
+        "public class Base { public virtual void Put(Widget x) { } }",
+        "using Zeta; using Z = Zeta;\nnamespace U;\npublic class Widget { }\n"
+        "public class D : Base { public override void Put(Z::Widget x) { } }\n"
+        "public class Use { }\n",
+        ("D.Put(Z::Widget)", "Base.Put(Widget)"),
+        True,
+        (),
+        "Zeta/Lib.cs",
+    ),
+    # Negative: a cross-namespace type that is really another stays apart.
+    "override-global-neg": _OverrideCase(
+        "namespace Zeta; public class Widget { }\n"
+        "public class Base { public virtual void Put(Widget x) { } }",
+        "using Zeta;\nnamespace U;\npublic class Widget { }\n"
+        "public class D : Base { public override void Put(global::U.Widget x) { } }\n"
+        "public class Use { }\n",
+        ("D.Put(global::U.Widget)", "Base.Put(Widget)"),
+        False,
+        (),
+        "Zeta/Lib.cs",
     ),
     # Negative: a base whose only `Put` takes L.Widgets is not what an
     # override taking U.Widgets overrides, by any fallback.
@@ -1075,11 +1240,19 @@ def _leaf_pair(qn: str) -> str:
     return ".".join(head.rsplit(".", 2)[-2:]) + paren + params
 
 
-def _index_pair(temp_repo: Path, mock_ingestor: MagicMock, lib: str, use: str) -> None:
+def _index_pair(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    lib: str,
+    use: str,
+    more: tuple[tuple[str, str], ...] = (),
+    lib_path: str = "Lib.cs",
+) -> None:
     root = temp_repo / PROJECT
     root.mkdir()
-    (root / "Lib.cs").write_text(lib, encoding="utf-8")
-    (root / "Use.cs").write_text(use, encoding="utf-8")
+    for rel, text in ((lib_path, lib), ("Use.cs", use), *more):
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text, encoding="utf-8")
     create_and_run_updater(root, mock_ingestor, skip_if_missing=SKIP)
 
 
@@ -1101,8 +1274,8 @@ def test_each_comparison_path_keeps_each_invariant(
 def test_each_override_path_keeps_each_invariant(
     case: str, temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    lib, use, pair, linked = OVERRIDE_CASES[case]
-    _index_pair(temp_repo, mock_ingestor, lib, use)
+    lib, use, pair, linked, more, lib_path = OVERRIDE_CASES[case]
+    _index_pair(temp_repo, mock_ingestor, lib, use, more, lib_path)
     overrides = {
         (_leaf_pair(str(c.args[0][2])), _leaf_pair(str(c.args[2][2])))
         for c in get_relationships(mock_ingestor, cs.RelationshipType.OVERRIDES)
