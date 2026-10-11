@@ -48,8 +48,10 @@ class ArgumentType(NamedTuple):
 
 
 class Fit(IntEnum):
-    # Ordered as C#'s betterness rules rank conversions. UNKNOWN is the same
-    # for every candidate at that position, so it never tells two apart.
+    # Ordered as C#'s betterness rules rank conversions. UNKNOWN is an
+    # argument of a type not known: it ties two candidates whose parameter
+    # there is one type, and compares no others, since either may be the
+    # better conversion or not apply (PR 2814's ground-truth harness).
     # UNDECIDED is a narrowing constant conversion of a value that may be a
     # constant not read (a field): it applies or not by that value, so the
     # candidate neither beats another nor loses to one (PR 2814 review).
@@ -1041,10 +1043,13 @@ def _better_conversion(
 ) -> int | None:
     # Which of two conversions of one argument is better: the better fit,
     # or, between two known conversions, the better target. None when one
-    # is undecided, which compares with nothing.
+    # is undecided, which compares with nothing, or the argument's type is
+    # not known and the two parameter types differ.
     p_fit, q_fit, p_type, q_type = conversion
     if Fit.UNDECIDED in (p_fit, q_fit):
         return None
+    if Fit.UNKNOWN in (p_fit, q_fit):
+        return 0 if p_type == q_type or same_type(p_type, q_type) else None
     if p_fit != q_fit:
         return 1 if (p_fit or 0) > (q_fit or 0) else -1
     if p_fit is Fit.CONVERTIBLE and target_order is not None:

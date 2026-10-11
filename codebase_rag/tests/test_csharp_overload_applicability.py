@@ -1823,12 +1823,31 @@ INVARIANT_CASES: dict[str, _Case] = {
     # call's arguments, fixed as C# fixes it (an exact type each argument
     # passing it alone converts to, or that argument every other converts
     # to), and that type, not each argument, meets its `where` clause.
+    # The ground-truth harness for PR 2814, with `Make.Thing()` completed
+    # as each type it might return: what it passes decides which overload
+    # applies (C# binds `M(object, object)` for all but a Box<int>), so an
+    # argument of unknown type compares two candidates only where their
+    # parameters are one type, and here neither is better.
     "across-unknown-neg": _Case(
         "namespace L; public class Box<X> { }\n"
         "public class C { public void M<T>(Box<T> a, Box<T> b) { } "
         "public void M(object a, object b) { } }",
         _use("new C().M(new Box<int>(), Make.Thing());"),
-        frozenset({"C.M(Box<T>, Box<T>)"}),
+        frozenset({"C.M(Box<T>, Box<T>)", "C.M(object, object)"}),
+    ),
+    "unknown-argument-declared-first": _Case(
+        "namespace L; public class Box<X> { }\n"
+        "public class C { public void M(object a, object b) { } "
+        "public void M<T>(Box<T> a, Box<T> b) { } }",
+        _use("new C().M(new Box<int>(), Make.Thing());"),
+        frozenset({"C.M(Box<T>, Box<T>)", "C.M(object, object)"}),
+    ),
+    # Negative: where both take it as one type, the other argument decides.
+    "unknown-argument-same-type-neg": _Case(
+        "namespace L; public class C { public void M(object a, object b) { } "
+        "public void M(string a, object b) { } }",
+        _use('new C().M("s", Make.Thing());'),
+        frozenset({"C.M(string, object)"}),
     ),
     "across-direct-nested": _Case(
         "namespace L; public class Box<X> { }\n"
