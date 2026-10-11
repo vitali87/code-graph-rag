@@ -295,11 +295,6 @@ _LOAD_TIME_PUBLICATIONS = {
     "parenthesised-assign-source": (
         f"{_REQUIRE_SVC}Object.assign(module.exports, ({{ Svc }}))\n"
     ),
-    # Evaluation order (Greptile, PR #3355): the replacement inside the value
-    # runs first, then the outer one publishes `Svc`.
-    "replacement-inside-the-value": (
-        f"{_REQUIRE_SVC}module.exports = {{ Svc, side: (module.exports = {{}}) }}\n"
-    ),
     # `exports` and `module.exports` are references to objects (Greptile, PR
     # #3355): re-pointing either at the other's object reattaches them.
     "exports-reattached": (
@@ -323,11 +318,25 @@ def test_a_commonjs_barrel_is_still_followed(tmp_path: Path, barrel: str) -> Non
     assert _exact_calls(edges, "user.use") == {"svc.Svc.go"}, edges
 
 
-# A function defined but not called on the spot publishes nothing at load.
-_DEFERRED_PUBLICATIONS = {
+# A write outside the modelled subset leaves the module's exports unknown,
+# so it records nothing (Greptile, PR #3355): a function that runs later, if
+# ever, a write nested in a value, a condition, a `switch`, a computed key.
+_UNMODELLED_PUBLICATIONS = {
     "callback": f"{_REQUIRE_SVC}setTimeout(() => {{ module.exports = {{ Svc }} }})\n",
     "uncalled-function": (
         f"{_REQUIRE_SVC}function later() {{ module.exports = {{ Svc }} }}\n"
+    ),
+    "replacement-inside-the-value": (
+        f"{_REQUIRE_SVC}module.exports = {{ Svc, side: (module.exports = {{}}) }}\n"
+    ),
+    "inside-a-top-level-if": (
+        f"{_REQUIRE_SVC}if (Svc) {{ module.exports = {{ Svc }} }}\n"
+    ),
+    "inside-a-switch": (
+        f"{_REQUIRE_SVC}switch (1) {{ case 1: module.exports = {{ Svc }} }}\n"
+    ),
+    "computed-key-beside-it": (
+        f"{_REQUIRE_SVC}module.exports = {{ Svc }}\nmodule.exports[key] = 1\n"
     ),
 }
 
@@ -375,6 +384,24 @@ _SHADOWING_BARRELS = {
         f"{_REQUIRE_SVC};(function () {{ {{ function Svc() {{}} }} "
         "exports.Public = Svc })()\n"
     ),
+    # A `switch` body is one scope for all its cases (Greptile, PR #3355).
+    "switch-case-local": (
+        f"{_REQUIRE_SVC};(() => {{ switch (1) {{ case 1: "
+        "const Svc = class Other {}; exports.Public = Svc; } })();\n"
+    ),
+    # The target's own sub-expression replaces `module.exports` first, so
+    # `exports.Public` lands on the old object (Greptile, PR #3355).
+    "replacement-in-a-target-sub-expression": (
+        f"{_REQUIRE_SVC}const holder = {{}}\n"
+        "holder[(module.exports = {}, 'x')] = exports.Public = Svc;\n"
+    ),
+    # `Svc` is the barrel's own class; a nested `require` of the same name
+    # must not stand in for it (Greptile, PR #3355).
+    "nested-require-of-the-name": (
+        "class Svc { go() { return 2 } }\n"
+        "function later() { const { Svc } = require('./other') }\n"
+        "module.exports = { Public: Svc };\n"
+    ),
 }
 
 _UNSHADOWED_BARRELS = {
@@ -405,10 +432,15 @@ def test_a_name_a_scope_shadows_is_not_the_module_binding(
 ) -> None:
     edges = _index(
         tmp_path,
-        {**COMMONJS_FILES, "barrel.js": barrel, "user.js": SHADOW_USER_JS},
+        {
+            **COMMONJS_FILES,
+            "other.js": "class Svc { go() { return 3 } }\nmodule.exports = { Svc }\n",
+            "barrel.js": barrel,
+            "user.js": SHADOW_USER_JS,
+        },
     )
     assert _heritage(edges, "user.Sub") == {(_INHERITS, _EXTERNAL, "r.Public")}, edges
-    assert "svc.Svc.go" not in _exact_calls(edges, "user.use"), edges
+    assert not _exact_calls(edges, "user.use"), edges
 
 
 @pytest.mark.parametrize(
@@ -427,10 +459,10 @@ def test_a_module_binding_published_from_an_inner_scope_resolves(
 
 @pytest.mark.parametrize(
     "barrel",
-    list(_DEFERRED_PUBLICATIONS.values()),
-    ids=list(_DEFERRED_PUBLICATIONS),
+    list(_UNMODELLED_PUBLICATIONS.values()),
+    ids=list(_UNMODELLED_PUBLICATIONS),
 )
-def test_a_deferred_commonjs_assignment_publishes_nothing(
+def test_an_unmodelled_commonjs_publication_records_nothing(
     tmp_path: Path, barrel: str
 ) -> None:
     edges = _index(tmp_path, {**COMMONJS_FILES, "barrel.js": barrel})
@@ -504,10 +536,6 @@ _PUBLISHING_BARRELS = {
         "barrel.js",
         f"{_REQUIRE_LIB}exports = module.exports = function app() {{}}\n"
         "exports.Public = Public\n",
-    ),
-    "inside-a-top-level-if": (
-        "barrel.js",
-        f"{_REQUIRE_LIB}if (Public) {{ module.exports = {{ Public }} }}\n",
     ),
     "export-assignment": (
         "barrel.ts",
