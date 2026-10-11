@@ -10,7 +10,7 @@ import tempfile
 import time
 import uuid
 from collections.abc import Callable, Coroutine, Iterable, Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from fnmatch import fnmatch
 from functools import partial, wraps
 from importlib.metadata import version as get_version
@@ -72,6 +72,7 @@ from .stack import StackManager
 from .stack.cli import cli as daemon_cli
 from .stack.constants import StackState
 from .stack.manager import StackError
+from .sync_lock import SyncLockError, repo_sync_lock
 from .tools.health_checker import HealthChecker
 from .tools.language import cli as language_cli
 from .trace.cli import cli as trace_cli
@@ -477,13 +478,17 @@ def _clean_database_only(
     # `--clean` without `--update-graph`: wipe the graph, the vector store and
     # the hash cache, then stop.
     _import_vector_store()
-    with connect_memgraph(batch_size) as ingestor:
-        _confirm_destructive_clean(ingestor, project_name, assume_yes)
-        _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
-        ingestor.clean_database()
+    # Held until the embeddings and the hash cache are gone too: a sync let
+    # in after the wipe would publish both, and the clean would then delete
+    # them under that sync's new graph (review of PR 2512).
+    with _sync_lock_or_exit(repo_to_clean, project_name):
+        with connect_memgraph(batch_size) as ingestor:
+            _confirm_destructive_clean(ingestor, project_name, assume_yes)
+            _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
+            ingestor.clean_database()
 
-    clear_all_embeddings()
-    _delete_hash_cache(repo_to_clean)
+        clear_all_embeddings()
+        _delete_hash_cache(repo_to_clean)
     _info(style(cs.CLI_MSG_CLEAN_DONE, cs.Color.GREEN))
 
 
@@ -1050,6 +1055,24 @@ def _clear_sync_incomplete(ingestor: MemgraphIngestor, project_name: str) -> Non
         )
 
 
+@contextmanager
+def _sync_lock_or_exit(repo: Path, project_name: str) -> Iterator[None]:
+    """Hold the checkout's sync lock for the whole sync, or stop first (#2441).
+
+    Taken before the `--clean` wipe and the `:IncompleteRun` marker, so a
+    run refused here has changed nothing: the running sync keeps its graph
+    and its marker, and no marker is left behind for a run that never began.
+    """
+    held = ExitStack()
+    try:
+        held.enter_context(repo_sync_lock(repo, project_name))
+    except SyncLockError as refused:
+        app_context.console.print(style(str(refused), cs.Color.RED))
+        raise typer.Exit(1) from None
+    with held:
+        yield
+
+
 def _is_home_or_root(repo: Path) -> bool:
     """Whether a sync of `repo` would crawl a whole home directory or disk.
 
@@ -1197,6 +1220,7 @@ def _run_graph_sync(
 
     elapsed = time.monotonic()
     with (
+        _sync_lock_or_exit(repo, project_name),
         _project_claim(
             batch_size, project_name, repo, clean=clean, assume_yes=assume_yes
         ) as owned_roots,
@@ -1660,6 +1684,9 @@ def index(
         )
         _info(style(cs.CLI_MSG_INDEXING_DONE, cs.Color.GREEN))
 
+    except SyncLockError as refused:
+        app_context.console.print(style(str(refused), cs.Color.RED))
+        raise typer.Exit(1) from None
     except Exception as e:
         app_context.console.print(
             style(cs.CLI_ERR_INDEXING.format(error=e), cs.Color.RED)

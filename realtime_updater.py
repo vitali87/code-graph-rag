@@ -40,6 +40,7 @@ from codebase_rag.constants import (
 from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.sync_lock import repo_sync_lock
 from codebase_rag.types_defs import CgrignorePatterns
 from codebase_rag.utils.path_utils import (
     derive_project_name,
@@ -186,12 +187,25 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         """
         logger.warning(logs.WATCHER_REBUILDING_AFTER_FAILURE)
         try:
-            self.updater.run(force=True)
+            self._full_run(force=True)
         except Exception as exc:  # noqa: BLE001
             logger.error(logs.WATCHER_REBUILD_FAILED.format(error=exc))
             return False
         self._needs_full_rebuild = False
         return True
+
+    def _full_run(self, force: bool = False) -> None:
+        """Run the updater over the whole checkout, queued behind a running sync.
+
+        `run` alone refuses while another writer holds the checkout's sync
+        lock, and nothing retries it when that sync ends: a rules change or
+        an owed rebuild would wait for some unrelated edit (review of PR
+        2512). It waits instead, as the watcher's initial scan and its scoped
+        reingests do; `run` then re-enters the lock this thread holds.
+        """
+        updater = self.updater
+        with repo_sync_lock(updater.repo_path, updater.project_name, wait=True):
+            updater.run(force=force)
 
     def _is_relevant(self, path_str: str) -> bool:
         # The same predicate as the repository walk, not a restatement of it:
@@ -319,7 +333,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
                 self._rebuild_after_failure()
                 return
             try:
-                self.updater.run()
+                self._full_run()
             except Exception as exc:  # noqa: BLE001
                 # Must not escape the watchdog callback; the next change
                 # re-indexes everything first, as after a failed re-ingest.
@@ -600,6 +614,19 @@ def start_watcher(
         )
 
 
+def _initial_scan(updater: GraphUpdater) -> None:
+    """Build the context for real-time updates with a full scan.
+
+    A watcher started while a sync of the checkout is running waits for it
+    and then scans the graph it finished, as its later reingests do, rather
+    than refusing to start (issue #2441).
+    """
+    logger.info(logs.INITIAL_SCAN)
+    with repo_sync_lock(updater.repo_path, updater.project_name, wait=True):
+        updater.run()
+    logger.success(logs.INITIAL_SCAN_DONE)
+
+
 def _run_watcher_loop(
     ingestor,
     repo_path_obj,
@@ -616,11 +643,7 @@ def _run_watcher_loop(
         ),
     )
     updater = ignore_rules.build_updater()
-
-    # Initial full scan builds the context for real-time updates
-    logger.info(logs.INITIAL_SCAN)
-    updater.run()
-    logger.success(logs.INITIAL_SCAN_DONE)
+    _initial_scan(updater)
 
     event_handler = CodeChangeEventHandler(
         updater,

@@ -661,8 +661,11 @@ class _ChangedRules:
 
 
 def _updater_double(repo: Path) -> MagicMock:
-    # A real updater always carries both sets, as None when unconfigured.
-    return MagicMock(repo_path=repo, exclude_paths=None, unignore_paths=None)
+    # A real updater always carries both sets, as None when unconfigured,
+    # and a project name, under which a full run takes the sync lock.
+    return MagicMock(
+        repo_path=repo, project_name="defex", exclude_paths=None, unignore_paths=None
+    )
 
 
 def _rules_handler(
@@ -695,7 +698,7 @@ def test_a_rules_change_with_nothing_owed_stays_incremental(tmp_path: Path) -> N
 
     handler = _rules_handler(tmp_path, built, owed_rebuild=False)
 
-    built.run.assert_called_once_with()
+    built.run.assert_called_once_with(force=False)
     assert not handler._needs_full_rebuild
 
 
