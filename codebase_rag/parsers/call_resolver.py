@@ -27,7 +27,7 @@ from .py import resolve_class_name
 from .rs import utils as rs_utils
 from .semantic_call_join import call_site_key, declared_location
 from .type_inference import TypeInferenceEngine
-from .utils import follow_reexports, safe_decode_text
+from .utils import safe_decode_text
 
 _SEPARATOR_PATTERN = re.compile(r"[.:]|::")
 # One initializer block's scope record, as held per module by
@@ -585,8 +585,14 @@ class CallResolver:
         return non_none[0] if len(non_none) == 1 else var_type
 
     def _follow_reexports(self, class_qn: str) -> str:
-        followed = follow_reexports(
-            class_qn, self.import_processor.import_mapping, self.function_registry
+        if class_qn in self.function_registry:
+            return class_qn
+        # A JS/TS barrel passes on only what it exports: a type it imports
+        # for its own use must not type a receiver through it (#2560).
+        followed = self.import_processor.follow_module_reexports(
+            class_qn,
+            self.type_inference.module_qn_to_file_path,
+            self.function_registry,
         )
         if (
             followed in self.function_registry

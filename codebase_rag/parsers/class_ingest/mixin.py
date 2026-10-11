@@ -51,7 +51,6 @@ from ..rs import utils as rs_utils
 from ..utils import (
     decorated_start_props,
     extract_modifiers_and_decorators,
-    follow_reexports,
     function_span_key,
     ingest_method,
     mark_js_ts_module_private,
@@ -1162,24 +1161,29 @@ class ClassIngestMixin:
         # externalized under, which React dead-code rooting matches on.
         if entry.language not in cs.JS_TS_LANGUAGES:
             return None
-        import_mapping = self.import_processor.import_mapping
         candidate = pe.js_ts_namespace_member_qn(
-            raw_name, import_mapping.get(entry.module_qn, {})
+            raw_name, self.import_processor.import_mapping.get(entry.module_qn, {})
         )
-        if candidate is not None:
-            # `r` is often a barrel (`export { Router } from './router'`): the
-            # member is mapped on to its declaring module, not declared there.
-            candidate = follow_reexports(
-                candidate, import_mapping, self.function_registry
-            )
+        if candidate is None:
+            return None
+        # `r` is often a barrel (`export { Router } from './router'`): the
+        # member is what the barrel EXPORTS under that name, followed on to
+        # its declaring module. A name the barrel only imports for its own
+        # use is no member: tsc rejects `implements r.Router` then.
+        member = self.import_processor.follow_js_reexports(
+            candidate, self.module_qn_to_file_path, self.function_registry
+        )
         if (
-            candidate is None
-            or candidate == entry.child_qn
-            or self.function_registry.get(candidate)
+            member == entry.child_qn
+            or self.function_registry.get(member)
             not in bt.base_target_kinds(entry.language)
+            # The module's own declaration is a member only when exported.
+            or (
+                member == candidate and self.function_registry.is_module_private(member)
+            )
         ):
             return None
-        return candidate
+        return member
 
     def _resolve_self_edge_parent(
         self, entry: DeferredInherit

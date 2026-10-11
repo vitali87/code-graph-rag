@@ -54,66 +54,86 @@ def follow_reexports(
     # module (pkg.sym), not the real definition (pkg.mod.sym), so an unregistered
     # qn may be a re-export. Follow the module's import map one hop at a time
     # until a registered symbol is reached, guarding against cycles.
-    return _follow_reexports(qn, import_mapping, function_registry, set())
+    if qn in function_registry:
+        return qn
+    return _ImportMapWalk(import_mapping, function_registry).follow(qn)[0]
 
 
-def _follow_reexports(
-    qn: str,
-    import_mapping: dict[str, dict[str, str]],
-    function_registry: FunctionRegistryTrieProtocol,
-    seen: set[str],
-) -> str:
-    current = qn
-    while (
-        current
-        and current not in seen
-        and current not in function_registry
-        and cs.SEPARATOR_DOT in current
-    ):
-        seen.add(current)
+class _ImportMapWalk:
+    """One `follow_reexports` lookup.
+
+    A module two star paths reach is walked on each: the first path can end
+    ambiguous where the second does not, so marking the module visited for
+    the whole lookup lost the export the second path provides. Only a qn on
+    the current path stops a walk, which still ends every cycle; a qn settled
+    without meeting one is remembered, so a module shared by many paths is
+    still walked once.
+    """
+
+    __slots__ = ("_imports", "_registry", "_path", "_settled")
+
+    def __init__(
+        self,
+        import_mapping: Mapping[str, Mapping[str, str]],
+        function_registry: FunctionRegistryTrieProtocol,
+    ) -> None:
+        self._imports = import_mapping
+        self._registry = function_registry
+        self._path: set[str] = set()
+        self._settled: dict[str, str] = {}
+
+    def follow(self, qn: str) -> tuple[str, bool]:
+        # Where `qn` leads, and whether a cycle cut the walk short. A cut walk
+        # depends on the path that reached it, so it is never settled.
+        current = qn
+        entered: list[str] = []
+        cut = False
+        while current and current not in self._registry and cs.SEPARATOR_DOT in current:
+            if current in self._settled:
+                current = self._settled[current]
+                break
+            if current in self._path:
+                cut = True
+                break
+            self._path.add(current)
+            entered.append(current)
+            following, star_cut = self._step(current)
+            cut = cut or star_cut
+            if not following or following == current:
+                break
+            current = following
+        self._path.difference_update(entered)
+        if not cut:
+            self._settled.update(dict.fromkeys(entered, current))
+        return current, cut
+
+    def _step(self, current: str) -> tuple[str | None, bool]:
         module_qn, _, name = current.rpartition(cs.SEPARATOR_DOT)
-        following = import_mapping.get(module_qn, {}).get(name)
-        if not following:
-            following = _star_reexport_target(
-                module_qn, name, import_mapping, function_registry, seen
-            )
-        if not following or following == current:
-            break
-        current = following
-    return current
+        if following := self._imports.get(module_qn, {}).get(name):
+            return following, False
+        return self._star_target(module_qn, name)
 
-
-def _star_reexport_target(
-    module_qn: str,
-    name: str,
-    import_mapping: dict[str, dict[str, str]],
-    function_registry: FunctionRegistryTrieProtocol,
-    seen: set[str],
-) -> str | None:
-    # A star re-export (`export * from './router'`, `from .mod import *`)
-    # binds no name of its own, so a barrel's member is whichever star source
-    # exports it, possibly through further stars. Only a source that reaches
-    # a registered definition its module exports counts: a private one is
-    # never re-exported, so it neither stands in for the name nor makes an
-    # exported one ambiguous. Two exported ones are ambiguous (TypeScript
-    # exports neither), so nothing is guessed. `seen` is shared so a cycle of
-    # stars ends.
-    reached = {
-        target
-        for key, source in import_mapping.get(module_qn, {}).items()
-        if key.startswith(cs.GLOB_ALL)
-        and (
-            target := _follow_reexports(
-                f"{source}{cs.SEPARATOR_DOT}{name}",
-                import_mapping,
-                function_registry,
-                seen,
-            )
-        )
-        in function_registry
-        and not function_registry.is_module_private(target)
-    }
-    return reached.pop() if len(reached) == 1 else None
+    def _star_target(self, module_qn: str, name: str) -> tuple[str | None, bool]:
+        # A star re-export (`export * from './router'`, `from .mod import *`)
+        # binds no name of its own, so a barrel's member is whichever star
+        # source exports it, possibly through further stars. Only a source
+        # that reaches a registered definition its module exports counts: a
+        # private one is never re-exported, so it neither stands in for the
+        # name nor makes an exported one ambiguous. Two exported ones are
+        # ambiguous (TypeScript exports neither), so nothing is guessed; one
+        # reached along two paths is one binding, not two.
+        reached: set[str] = set()
+        cut = False
+        for key, source in self._imports.get(module_qn, {}).items():
+            if not key.startswith(cs.GLOB_ALL):
+                continue
+            target, branch_cut = self.follow(f"{source}{cs.SEPARATOR_DOT}{name}")
+            cut = cut or branch_cut
+            if target in self._registry and not self._registry.is_module_private(
+                target
+            ):
+                reached.add(target)
+        return (reached.pop() if len(reached) == 1 else None), cut
 
 
 def mark_js_ts_module_private(
