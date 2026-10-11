@@ -5443,6 +5443,16 @@ class CallProcessor:
             constructing=ctx.language in _NEW_CONSTRUCTS_LANGUAGES
             and call_node.type in _OBJECT_CREATION_NODE_TYPES,
         )
+        return self._judge_resolved_callee(ctx, call_node, call_name, callee_info)
+
+    def _judge_resolved_callee(
+        self,
+        ctx: _CallScanContext,
+        call_node: Node,
+        call_name: str,
+        callee_info: tuple[str, str] | None,
+    ) -> tuple[str, str] | None:
+        # What the name lookup found, checked against what the call site says.
         if ctx.is_csharp and call_node.type in _OBJECT_CREATION_NODE_TYPES:
             return self._csharp_construction_by_arity(call_node, call_name, callee_info)
         if ctx.is_js_ts and callee_info is not None:
