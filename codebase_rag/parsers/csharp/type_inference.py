@@ -27,20 +27,26 @@ from ..semantic_call_join import call_site_key, declared_location
 from ..utils import safe_decode_text
 from .overloads import (
     ArgumentType,
+    Bound,
     Fit,
+    Inferred,
     Scope,
+    TypeKinds,
     arguments_match,
     best_candidates,
     bindings_for_base,
     canonical_type,
     declared_type,
     fit,
+    framework_generic,
+    framework_reference,
     is_tuple,
     literal_fit,
     mentioned_names,
     merged_inferences,
     parameter_types,
     predefined_converts,
+    predefined_keyword,
     resolved_qn,
     same_type,
     same_type_name,
@@ -255,17 +261,6 @@ def _written_argument(raw: str) -> ArgumentType:
     )
 
 
-class _Inferred(NamedTuple):
-    """What inference took from a call's arguments for one candidate: each
-    argument's exact types (inside a type argument), the types passed for a
-    type parameter alone (its lower bounds), and the parameters the method
-    declares itself, the ones inference fixes."""
-
-    exact: list[dict[str, str]]
-    lower: dict[str, list[str]]
-    own: frozenset[str]
-
-
 def _passed_type(argument: ArgumentType | None) -> str | None:
     # The type an argument passes, when it is known whole: a literal's, or
     # a type's with its type arguments (none known for a generic is none).
@@ -282,14 +277,21 @@ def _lower_bounds(
     parameters: Sequence[str],
     arguments: Sequence[ArgumentType | None],
     open_names: Collection[str],
-) -> dict[str, list[str]]:
+) -> Inferred:
     # The type each argument passes a parameter that is a type parameter
-    # alone (`M<T>(T x)`), by that parameter.
-    lower: dict[str, list[str]] = {}
+    # alone (`M<T>(T x)`): a lower bound of that parameter.
+    lower: Inferred = {}
     for parameter, argument in zip(parameters, arguments, strict=True):
         if parameter in open_names and (passed := _passed_type(argument)):
-            lower.setdefault(parameter, []).append(passed)
+            lower.setdefault(parameter, []).append((Bound.LOWER, passed))
     return lower
+
+
+def _all_hold(verdicts: Collection[bool | None]) -> bool | None:
+    # False when one fails, else None when one is not known, else True.
+    if False in verdicts:
+        return False
+    return None if None in verdicts else True
 
 
 def _distinct(types: Sequence[str]) -> list[str]:
@@ -2156,47 +2158,49 @@ class CSharpTypeInferenceEngine:
         scope = self.scope_of(_member_type(method_qn), own)
         unbound = open_names | own
         seen = [declared_type(parameter, scope, visible) for parameter in parameters]
-        exact: list[dict[str, str]] = []
+        found: list[Inferred] = []
         fits = [
-            fit(parameter, argument, unbound, self._recording_judge(exact))
+            fit(parameter, argument, unbound, self._recording_judge(found))
             for parameter, argument in zip(seen, arguments, strict=True)
         ]
         bounds = {
             name: [declared_type(bound, scope, visible) for bound in written]
             for name, written in self._constraint_bounds(method_qn).items()
         }
-        lower = _lower_bounds(seen, arguments, unbound)
-        fixed = self._fixed_types(_Inferred(exact, lower, own))
+        merged = merged_inferences([*found, _lower_bounds(seen, arguments, unbound)])
+        fixed = self._fixed_types(merged, own) if merged is not None else None
         if (
-            fixed is None
-            or self._breaks_constraints(fixed, lower, bounds, unbound)
+            merged is None
+            or fixed is None
+            or self._breaks_constraints(fixed, merged, bounds, unbound)
             or not self._applies_once_fixed(seen, arguments, fixed, unbound)
         ):
             return [None] * len(fits)
         return fits
 
-    def _recording_judge(self, exact: list[dict[str, str]]) -> _ScopedJudge:
-        # A judge for one argument, whose matches add what they inferred
-        # exactly (inside a type argument) as that argument's entry.
-        inferred: dict[str, str] = {}
-        exact.append(inferred)
+    def _recording_judge(self, found: list[Inferred]) -> _ScopedJudge:
+        # A judge for one argument, whose matches add the bounds they
+        # inferred inside a type argument as that argument's entry.
+        inferred: Inferred = {}
+        found.append(inferred)
         return _ScopedJudge(
             partial(self._identical, inferred=inferred),
             partial(self._converts, inferred=inferred),
         )
 
-    def _fixed_types(self, inferred: _Inferred) -> dict[str, str] | None:
-        # The type fixed for each type parameter inference can fix, None
-        # when no single type fits every argument. A receiver's parameter is
-        # given, not inferred: only an exact type fixes it, so arguments
-        # passing it alone merely convert to it.
-        fixed = merged_inferences(inferred.exact)
-        if fixed is None:
-            return None
-        for name, lowers in inferred.lower.items():
-            if name not in fixed and name not in inferred.own:
+    def _fixed_types(
+        self, merged: Inferred, own: frozenset[str]
+    ) -> dict[str, str] | None:
+        # The type fixed for each type parameter its bounds fix, None when
+        # no type meets them. A receiver's parameter is given, not inferred:
+        # its bounds only constrain it, so only an exact one fixes it, which
+        # every other must then allow.
+        fixed: dict[str, str] = {}
+        for name, bounds in merged.items():
+            exact = next((t for kind, t in bounds if kind is Bound.EXACT), None)
+            if exact is None and name not in own:
                 continue
-            fails, fixed_type = self._fixing(lowers, fixed.get(name))
+            fails, fixed_type = self._fixing(bounds, exact)
             if fails:
                 return None
             if fixed_type is not None:
@@ -2222,23 +2226,49 @@ class CSharpTypeInferenceEngine:
             for parameter, argument in zip(parameters, arguments, strict=True)
         )
 
-    def _fixing(self, lowers: list[str], exact: str | None) -> tuple[bool, str | None]:
-        # C#'s fixing of one type parameter from what inference gathered:
-        # its exact type, or else one of its lower bounds (the types passed
-        # for it alone), to which every lower bound converts. (whether no
-        # candidate can be it, the type fixed when that is known)
-        undecided = False
-        for candidate in [exact] if exact is not None else _distinct(lowers):
-            verdicts = {self._implicitly_converts(lower, candidate) for lower in lowers}
-            if verdicts == {True}:
-                return False, candidate
-            undecided = undecided or False not in verdicts
-        return not undecided, None
+    def _fixing(
+        self, bounds: Sequence[tuple[Bound, str]], exact: str | None
+    ) -> tuple[bool, str | None]:
+        # C#'s fixing of one type parameter: of its bounds' types (its exact
+        # one alone, when it has one), those every bound allows remain, and
+        # it is fixed to the one every other remaining one converts to.
+        # (whether none can remain, the type fixed when that is known)
+        candidates = [exact] if exact is not None else _distinct([t for _, t in bounds])
+        verdicts = [
+            (c, _all_hold({self._allows(b, c) for b in bounds})) for c in candidates
+        ]
+        if any(verdict is None for _, verdict in verdicts):
+            return False, None
+        remaining = [candidate for candidate, verdict in verdicts if verdict]
+        return not remaining, self._widest(remaining)
+
+    def _allows(self, bound: tuple[Bound, str], candidate: str) -> bool | None:
+        # Whether a type parameter bounded so may be `candidate`: its exact
+        # type, a type its lower bound converts to, or one that converts to
+        # its upper bound.
+        kind, type_text = bound
+        if kind is Bound.EXACT:
+            return type_text == candidate or same_type(type_text, candidate)
+        if kind is Bound.LOWER:
+            return self._implicitly_converts(type_text, candidate)
+        return self._implicitly_converts(candidate, type_text)
+
+    def _widest(self, remaining: Sequence[str]) -> str | None:
+        # The one type every other of `remaining` converts to, if known.
+        return next(
+            (
+                v
+                for v in remaining
+                if all(self._implicitly_converts(o, v) is True for o in remaining)
+            ),
+            None,
+        )
 
     def _implicitly_converts(self, source: str, target: str) -> bool | None:
         # Whether a value of `source` converts implicitly to `target`, each
-        # a resolved type: one type, a predefined conversion, or one the two
-        # first-party classes declare. None when that is not known.
+        # a resolved type: one type, a predefined conversion, a variant
+        # interface's or delegate's, or one first-party classes declare.
+        # None when that is not known.
         if same_type(source, target):
             return True
         if type_shape(source)[1] or type_shape(target)[1]:
@@ -2246,24 +2276,26 @@ class CSharpTypeInferenceEngine:
         predefined = predefined_converts(source, target)
         if predefined is not None:
             return predefined
-        if self._first_party_type(source) and self._first_party_type(target):
-            return self._converts(_written_argument(source), target, ())
-        return None
+        return self._converts(_written_argument(source), target, ())
 
     def _breaks_constraints(
         self,
         fixed: Mapping[str, str],
-        lower: Mapping[str, list[str]],
+        merged: Inferred,
         bounds: Mapping[str, list[str]],
         open_names: frozenset[str],
     ) -> bool:
         # Whether a type parameter's fixed type breaks its `where` clause,
         # read with the other parameters' fixed types (`where T : U`), or,
-        # where none was fixed, a lower bound does: a type that derives from
-        # no bound has no base that does.
+        # where none was fixed, its exact or a lower bound does: a type that
+        # derives from no bound has no base that does.
         for name, written in bounds.items():
             closed = [substitute(bound, fixed) for bound in written]
-            given = [fixed[name]] if name in fixed else lower.get(name, [])
+            given = (
+                [fixed[name]]
+                if name in fixed
+                else [t for kind, t in merged.get(name, ()) if kind is not Bound.UPPER]
+            )
             if any(self._breaks_constraint(closed, g, open_names) for g in given):
                 return True
         return False
@@ -2584,7 +2616,7 @@ class CSharpTypeInferenceEngine:
         argument: ArgumentType,
         parameter: str,
         open_names: Collection[str],
-        inferred: dict[str, str] | None = None,
+        inferred: Inferred | None = None,
     ) -> bool | None:
         # Whether the argument's type IS the parameter's: one class, each
         # side resolved in its own file (or, unresolved, spelled alike up to
@@ -2607,22 +2639,33 @@ class CSharpTypeInferenceEngine:
         wanted = type_arguments(parameter)
         if not wanted:
             return True
-        return arguments_match(argument.arguments, wanted, open_names, inferred)
+        return arguments_match(
+            argument.arguments,
+            wanted,
+            open_names,
+            inferred,
+            (wanted_core, TypeKinds(self._variances, self._is_reference)),
+        )
 
     def _converts(
         self,
         argument: ArgumentType,
         parameter: str,
         open_names: Collection[str],
-        inferred: dict[str, str] | None = None,
+        inferred: Inferred | None = None,
     ) -> bool | None:
         # Whether the argument converts implicitly to the parameter: up its
         # class hierarchy, or through a declared `implicit operator`, closed
         # as the parameter is either way, or a value wrapped as nullable.
         # Known only between first-party classes, each in any shape; anything
-        # else is not told. Only a conversion up the hierarchy infers (into
-        # `inferred`): C# infers no type parameter through an operator.
+        # else is not told, but a variant interface's or delegate's
+        # conversion between two closings of it. Only a conversion up the
+        # hierarchy infers (into `inferred`): C# infers no type parameter
+        # through an operator.
         given_text = written_type(argument)
+        varies = self._variance_converts(given_text, parameter, open_names)
+        if varies is not None:
+            return varies
         given_qn = self._first_party_type(type_shape(given_text)[0])
         wanted_qn = self._first_party_type(type_shape(parameter)[0])
         if (
@@ -2643,12 +2686,110 @@ class CSharpTypeInferenceEngine:
             return True
         return None if None in (derived, implicit) else False
 
+    def _variances(self, core: str) -> tuple[str, ...] | None:
+        # Each type parameter's variance, "out", "in" or "", of the generic
+        # type `core` names: a first-party interface's as declared, a
+        # class's or struct's none, a framework type's from its table. None
+        # for a type of no known kind, an external one or a delegate, which
+        # the project does not register as a type.
+        qn = self._first_party_type(core)
+        if qn is None:
+            generic = framework_generic(core)
+            return generic[1] if generic is not None else None
+        shape = self.csharp_generic_shapes.get(qn)
+        if shape is not None and shape.variances:
+            return shape.variances
+        return ("",) * generic_arity_of_type_text(core)
+
+    def _is_reference(self, type_text: str) -> bool | None:
+        # Whether a resolved type is a reference type, None when not known:
+        # an array is, as are `object`, `string`, a first-party class or
+        # interface and the framework's reference types; a predefined value
+        # type, a tuple, an enum, a struct and a pointer are not, nor is a
+        # nullable value, while a `?` on a reference type changes nothing.
+        core, suffix = type_shape(type_text)
+        if cs.CSHARP_ARRAY_RANK_OPEN in suffix:
+            return True
+        if suffix.strip(cs.CSHARP_NULLABLE_SUFFIX):
+            return False
+        if is_tuple(core):
+            return False
+        if (keyword := predefined_keyword(core)) is not None:
+            return keyword in cs.CSHARP_REFERENCE_KEYWORDS
+        qn = self._first_party_type(core)
+        if qn is None:
+            return framework_reference(core)
+        shape = self.csharp_generic_shapes.get(qn)
+        value_type = shape is not None and shape.value_type
+        return not value_type and self.function_registry.get(qn) != NodeType.ENUM
+
+    def _variance_converts(
+        self, given: str, parameter: str, open_names: Collection[str]
+    ) -> bool | None:
+        # Whether one closing of a variant interface or delegate converts to
+        # another (`IBox<Employee>` to `IBox<Person>` for `IBox<out X>`), by
+        # each type argument as its parameter varies. None for two other
+        # types, or a parameter still naming an open type parameter.
+        (given_core, given_shape), (wanted_core, wanted_shape) = (
+            type_shape(given),
+            type_shape(parameter),
+        )
+        if (
+            given_shape
+            or wanted_shape
+            or mentioned_names(parameter) & set(open_names)
+            or not same_type_name(given_core, wanted_core)
+        ):
+            return None
+        variances = self._variances(wanted_core) or ()
+        given_arguments = type_arguments(given_core)
+        if not any(variances) or len(given_arguments) != len(variances):
+            return None
+        return _all_hold(
+            {
+                self._varies_to(variance, g, w)
+                for variance, g, w in zip(
+                    variances, given_arguments, type_arguments(wanted_core), strict=True
+                )
+            }
+        )
+
+    def _varies_to(self, variance: str, given: str, wanted: str) -> bool | None:
+        # Whether a type argument converts as its parameter varies: the same
+        # type, or, by an implicit reference conversion, one to the other
+        # (an `out`'s argument to the wanted one, an `in`'s back). A value
+        # type does not vary.
+        if same_type(given, wanted):
+            return True
+        if not variance:
+            return False
+        source, target = (
+            (given, wanted) if variance == cs.CSHARP_VARIANCE_OUT else (wanted, given)
+        )
+        reference = self._is_reference(source)
+        if reference is False:
+            return False
+        converts = self._reference_converts(source, target)
+        return converts if reference or converts is False else None
+
+    def _reference_converts(self, source: str, target: str) -> bool | None:
+        # An implicit reference conversion between two resolved reference
+        # types: to `object`, up a first-party class hierarchy, or between
+        # two closings of a variant type. None when it is not told.
+        if predefined_keyword(target) == cs.CSHARP_OBJECT_KEYWORD:
+            return True
+        source_qn = self._first_party_type(source)
+        target_qn = self._first_party_type(target)
+        if source_qn and target_qn and self._judgeable(source_qn, target_qn):
+            return self._class_conversion((source, source_qn), (target, target_qn), ())
+        return self._variance_converts(source, target, ())
+
     def _class_conversion(
         self,
         given: tuple[str, str],
         wanted: tuple[str, str],
         open_names: Collection[str],
-        inferred: dict[str, str] | None = None,
+        inferred: Inferred | None = None,
     ) -> bool | None:
         # A conversion up the class hierarchy, each side as (written, qn):
         # the wanted class is the given one or a base of it, and the given

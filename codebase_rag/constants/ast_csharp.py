@@ -556,8 +556,84 @@ CSHARP_PREDEFINED_TYPE_NAMES: dict[str, str] = {
 CSHARP_PREDEFINED_TYPE_KEYWORDS: dict[str, str] = {
     framework: keyword for keyword, framework in CSHARP_PREDEFINED_TYPE_NAMES.items()
 }
-# Every type converts to it implicitly.
+# Every type converts to it implicitly, and it to nothing else but `dynamic`.
 CSHARP_OBJECT_KEYWORD = "object"
+CSHARP_DYNAMIC_KEYWORD = "dynamic"
+# The predefined types that are reference types; every other is a value type.
+CSHARP_REFERENCE_KEYWORDS = frozenset({"object", "string"})
+# A type parameter's declared variance, the token before its name in a
+# `type_parameter`: `interface IBox<out T>`, `delegate void F<in T>(T x)`.
+CSHARP_VARIANCE_OUT = "out"
+CSHARP_VARIANCE_IN = "in"
+CSHARP_VARIANCES = frozenset({CSHARP_VARIANCE_OUT, CSHARP_VARIANCE_IN})
+# The keyword a `record struct` declaration carries after `record`.
+TS_CSHARP_STRUCT_KEYWORD = "struct"
+# The framework's common generic types, by simple name and type-argument
+# count: (namespace, whether it is a reference type, each type parameter's
+# variance). A spelling names one only bare or qualified by that namespace.
+# Classes and structs are invariant; the variant interfaces and delegates
+# are why it exists: an `IEnumerable<Employee>` is an `IEnumerable<Person>`.
+# A generic type in neither this table nor the project has no known kind.
+_GENERIC_COLLECTIONS = "System.Collections.Generic"
+_LINQ = "System.Linq"
+_SYSTEM = "System"
+_TASKS = "System.Threading.Tasks"
+CSHARP_FRAMEWORK_GENERICS: dict[tuple[str, int], tuple[str, bool, tuple[str, ...]]] = {
+    ("IEnumerable", 1): (_GENERIC_COLLECTIONS, True, (CSHARP_VARIANCE_OUT,)),
+    ("IEnumerator", 1): (_GENERIC_COLLECTIONS, True, (CSHARP_VARIANCE_OUT,)),
+    ("IReadOnlyCollection", 1): (_GENERIC_COLLECTIONS, True, (CSHARP_VARIANCE_OUT,)),
+    ("IReadOnlyList", 1): (_GENERIC_COLLECTIONS, True, (CSHARP_VARIANCE_OUT,)),
+    ("IAsyncEnumerable", 1): (_GENERIC_COLLECTIONS, True, (CSHARP_VARIANCE_OUT,)),
+    ("IAsyncEnumerator", 1): (_GENERIC_COLLECTIONS, True, (CSHARP_VARIANCE_OUT,)),
+    ("IComparer", 1): (_GENERIC_COLLECTIONS, True, (CSHARP_VARIANCE_IN,)),
+    ("IEqualityComparer", 1): (_GENERIC_COLLECTIONS, True, (CSHARP_VARIANCE_IN,)),
+    ("ICollection", 1): (_GENERIC_COLLECTIONS, True, ("",)),
+    ("IList", 1): (_GENERIC_COLLECTIONS, True, ("",)),
+    ("ISet", 1): (_GENERIC_COLLECTIONS, True, ("",)),
+    ("IReadOnlySet", 1): (_GENERIC_COLLECTIONS, True, ("",)),
+    ("IDictionary", 2): (_GENERIC_COLLECTIONS, True, ("", "")),
+    ("IReadOnlyDictionary", 2): (_GENERIC_COLLECTIONS, True, ("", "")),
+    ("List", 1): (_GENERIC_COLLECTIONS, True, ("",)),
+    ("HashSet", 1): (_GENERIC_COLLECTIONS, True, ("",)),
+    ("Queue", 1): (_GENERIC_COLLECTIONS, True, ("",)),
+    ("Stack", 1): (_GENERIC_COLLECTIONS, True, ("",)),
+    ("LinkedList", 1): (_GENERIC_COLLECTIONS, True, ("",)),
+    ("SortedSet", 1): (_GENERIC_COLLECTIONS, True, ("",)),
+    ("Dictionary", 2): (_GENERIC_COLLECTIONS, True, ("", "")),
+    ("SortedDictionary", 2): (_GENERIC_COLLECTIONS, True, ("", "")),
+    ("SortedList", 2): (_GENERIC_COLLECTIONS, True, ("", "")),
+    ("KeyValuePair", 2): (_GENERIC_COLLECTIONS, False, ("", "")),
+    ("IQueryable", 1): (_LINQ, True, (CSHARP_VARIANCE_OUT,)),
+    ("IOrderedQueryable", 1): (_LINQ, True, (CSHARP_VARIANCE_OUT,)),
+    ("IOrderedEnumerable", 1): (_LINQ, True, (CSHARP_VARIANCE_OUT,)),
+    ("IGrouping", 2): (_LINQ, True, (CSHARP_VARIANCE_OUT, CSHARP_VARIANCE_OUT)),
+    ("ILookup", 2): (_LINQ, True, ("", "")),
+    ("IObservable", 1): (_SYSTEM, True, (CSHARP_VARIANCE_OUT,)),
+    ("IObserver", 1): (_SYSTEM, True, (CSHARP_VARIANCE_IN,)),
+    ("IComparable", 1): (_SYSTEM, True, (CSHARP_VARIANCE_IN,)),
+    ("IProgress", 1): (_SYSTEM, True, (CSHARP_VARIANCE_IN,)),
+    ("IEquatable", 1): (_SYSTEM, True, ("",)),
+    ("Predicate", 1): (_SYSTEM, True, (CSHARP_VARIANCE_IN,)),
+    ("Comparison", 1): (_SYSTEM, True, (CSHARP_VARIANCE_IN,)),
+    ("Converter", 2): (_SYSTEM, True, (CSHARP_VARIANCE_IN, CSHARP_VARIANCE_OUT)),
+    ("Lazy", 1): (_SYSTEM, True, ("",)),
+    ("Nullable", 1): (_SYSTEM, False, ("",)),
+    ("Task", 1): (_TASKS, True, ("",)),
+    ("ValueTask", 1): (_TASKS, False, ("",)),
+    # `Func<in T1, ..., out TResult>` and `Action<in T1, ...>`, every arity.
+    **{
+        ("Func", count + 1): (
+            _SYSTEM,
+            True,
+            (CSHARP_VARIANCE_IN,) * count + (CSHARP_VARIANCE_OUT,),
+        )
+        for count in range(17)
+    },
+    **{
+        ("Action", count): (_SYSTEM, True, (CSHARP_VARIANCE_IN,) * count)
+        for count in range(1, 17)
+    },
+}
 # The implicit numeric conversions, by keyword: what each predefined type
 # converts to besides itself and `object`. Fixing a type parameter needs
 # them: `M<T>(T, Box<T>)` takes `(1, Box<long>)`, never `(1, Box<string>)`.

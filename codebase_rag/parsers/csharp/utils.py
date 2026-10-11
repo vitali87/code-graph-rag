@@ -384,25 +384,53 @@ def type_parameter_names(parameter_list: Node | None) -> tuple[str, ...]:
     )
 
 
+def type_parameter_variances(parameter_list: Node | None) -> tuple[str, ...]:
+    """The variance each parameter of a `type_parameter_list` declares, in
+    order: `<out T, in U, V>` -> ("out", "in", ""). () when none varies, as
+    a class's or a method's never do."""
+    if parameter_list is None:
+        return ()
+    variances = tuple(
+        next((c.type for c in param.children if c.type in cs.CSHARP_VARIANCES), "")
+        for param in parameter_list.named_children
+        if safe_decode_text(param.child_by_field_name(cs.FIELD_NAME))
+    )
+    return variances if any(variances) else ()
+
+
+def is_value_type_declaration(type_node: Node) -> bool:
+    """Whether a type declaration declares a value type: a struct, or a
+    `record struct`, which tree-sitter parses as a record."""
+    if type_node.type == cs.TS_CSHARP_STRUCT_DECLARATION:
+        return True
+    return type_node.type == cs.TS_CSHARP_RECORD_DECLARATION and any(
+        child.type == cs.TS_CSHARP_STRUCT_KEYWORD for child in type_node.children
+    )
+
+
 def generic_shape(type_node: Node) -> CSharpGenericShape | None:
     """`class PersonValidator : Inline<Person>` -> no parameters and the
     base `Inline<Person>`; `class Inline<T> : Validator<T>` -> `T` and
-    `Validator<T>`. None for a type that takes and passes no type argument,
-    which is most of them."""
+    `Validator<T>`; `interface IBox<out T>` -> `T`, covariant; a struct ->
+    a value type. None for a reference type that takes and passes no type
+    argument, which is most of them."""
     parameters: list[str] = []
+    variances: tuple[str, ...] = ()
     bases: list[CSharpGenericBase] = []
     for child in type_node.children:
         if child.type == cs.TS_CSHARP_TYPE_PARAMETER_LIST:
             parameters.extend(type_parameter_names(child))
+            variances = type_parameter_variances(child)
         elif child.type == cs.TS_CSHARP_BASE_LIST:
             bases.extend(
                 base
                 for entry in child.named_children
                 if (base := _generic_base(entry)) is not None
             )
-    if not (parameters or bases):
+    value_type = is_value_type_declaration(type_node)
+    if not (parameters or bases or value_type):
         return None
-    return CSharpGenericShape(tuple(parameters), tuple(bases))
+    return CSharpGenericShape(tuple(parameters), tuple(bases), variances, value_type)
 
 
 def is_explicit_member_qn(qn: str) -> bool:

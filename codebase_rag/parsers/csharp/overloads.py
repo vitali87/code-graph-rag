@@ -56,6 +56,40 @@ class Fit(IntEnum):
     EXACT = 4
 
 
+class Bound(IntEnum):
+    """How inference bounds a type parameter (C#'s exact, lower-bound and
+    upper-bound inferences): to one type exactly, from below (the type
+    converts to it), or from above (it converts to the type). A class's or
+    struct's type argument is inferred into exactly, an interface's or a
+    delegate's as its parameter varies (PR 2814 review)."""
+
+    EXACT = 0
+    LOWER = 1
+    UPPER = 2
+
+
+class TypeKinds(NamedTuple):
+    """What declarations tell inference of types: the variance of each
+    type parameter of the generic type a type names, "out", "in" or "" (None
+    when its kind is not known), and whether a type is a reference type
+    (None when that is not known)."""
+
+    variances: Callable[[str], tuple[str, ...] | None]
+    reference: Callable[[str], bool | None]
+
+
+# The bounds inference gave each open type parameter: (how, the type).
+type Inferred = dict[str, list[tuple[Bound, str]]]
+
+
+class _Inference(NamedTuple):
+    # One argument's inference: the names it infers, the bounds it found,
+    # and what declarations tell of types.
+    open_names: frozenset[str]
+    found: Inferred
+    kinds: TypeKinds | None
+
+
 # (written type name, its type-argument count) -> the first-party type qn it
 # names in one declaring file, None when it names none there.
 type Resolver = Callable[[str, int], str | None]
@@ -466,7 +500,8 @@ def arguments_match(
     given: Sequence[str] | None,
     wanted: Sequence[str],
     open_names: Collection[str],
-    inferred: dict[str, str] | None = None,
+    inferred: Inferred | None = None,
+    owner: tuple[str, TypeKinds] | None = None,
 ) -> bool | None:
     """Whether closed type arguments agree, position by position and alias-
     blind (`Box<System.Int32>` is `Box<int>`). An `open_names` parameter in
@@ -474,57 +509,136 @@ def arguments_match(
     the structure around it: `List<T>` takes `List<int>` but no `int`, and
     `Pair<T, T>` no `Pair<int, string>` (PR 2814 review). None when `given`
     is not known, or only a shape inference might absorb tells them apart.
-    On a match, what it inferred goes into `inferred`, for the call's other
-    arguments to agree with (`merged_inferences`)."""
+
+    On a match, the bounds it inferred go into `inferred`, for the call's
+    other arguments to agree with (`merged_inferences`). They are exact,
+    as a class's type arguments are, unless `owner` names the generic type
+    an argument passes them to, with what declarations tell of types: then
+    each is bounded as C# infers into that type (`Bound`)."""
     if given is None:
         return None
     if len(given) != len(wanted):
         return False
-    trial: dict[str, str] = {}
-    verdict = _infer_all(given, wanted, frozenset(open_names), trial)
+    kinds = owner[1] if owner is not None else None
+    state = _Inference(frozenset(open_names), {}, kinds)
+    contexts = (
+        _contexts(given, Bound.LOWER, owner[0], kinds)
+        if owner is not None
+        else [Bound.EXACT] * len(given)
+    )
+    verdict = _infer_all(given, wanted, state, contexts)
     if verdict and inferred is not None:
-        inferred.update(trial)
+        for name, bounds in state.found.items():
+            inferred.setdefault(name, []).extend(bounds)
     return verdict
 
 
-def merged_inferences(inferences: Sequence[Mapping[str, str]]) -> dict[str, str] | None:
-    """One exact type per type parameter across a call's arguments, each
-    argument's inferences given apart; None when two fix one parameter to
-    two types: `M<T>(Box<T>, Box<T>)` takes no `(Box<int>, Box<string>)`
-    (PR 2814 review)."""
-    merged: dict[str, str] = {}
+def merged_inferences(inferences: Sequence[Inferred]) -> Inferred | None:
+    """Every bound a call's arguments gave each type parameter; None when
+    two exact ones differ: `M<T>(Box<T>, Box<T>)` takes no `(Box<int>,
+    Box<string>)` (PR 2814 review). Lower and upper bounds are reconciled
+    when the parameter is fixed."""
+    merged: Inferred = {}
     for inferred in inferences:
-        for name, bound in inferred.items():
-            previous = merged.setdefault(name, bound)
-            if previous != bound and not same_type(previous, bound):
-                return None
-    return merged
+        for name, bounds in inferred.items():
+            merged.setdefault(name, []).extend(bounds)
+    return merged if all(map(_exact_agree, merged.values())) else None
+
+
+def _exact_agree(bounds: Sequence[tuple[Bound, str]]) -> bool:
+    # Whether the exact bounds among `bounds` are one type.
+    exact = [type_text for kind, type_text in bounds if kind is Bound.EXACT]
+    return all(t == exact[0] or same_type(t, exact[0]) for t in exact[1:])
+
+
+def framework_generic(core: str) -> tuple[bool, tuple[str, ...]] | None:
+    """(whether it is a reference type, each type parameter's variance) of
+    the framework generic type a type with no shape after it names
+    (`CSHARP_FRAMEWORK_GENERICS`); None for any other. Only a bare spelling
+    or one its namespace qualifies names it, never a resolved one."""
+    if core.startswith(cs.CSHARP_RESOLVED_PREFIX):
+        return None
+    path = strip_generic_arguments(core.rpartition(cs.SEPARATOR_DOUBLE_COLON)[2])
+    namespace, _, name = path.rpartition(cs.SEPARATOR_DOT)
+    entry = cs.CSHARP_FRAMEWORK_GENERICS.get((name, generic_arity_of_type_text(core)))
+    if entry is None or namespace not in ("", entry[0]):
+        return None
+    return entry[1], entry[2]
+
+
+def framework_reference(core: str) -> bool | None:
+    """Whether a framework type with no shape after it is a reference type,
+    as far as the tables tell: a known generic one's entry, or a known value
+    type (`DateTime`, `Guid`); None for any other."""
+    if (generic := framework_generic(core)) is not None:
+        return generic[0]
+    path = core.rpartition(cs.SEPARATOR_DOUBLE_COLON)[2]
+    if path.removeprefix(cs.CSHARP_SYSTEM_PREFIX) in cs.CSHARP_NULLABLE_VALUE_TYPES:
+        return False
+    return None
 
 
 def predefined_converts(source: str, target: str) -> bool | None:
     """Whether a value of one type converts implicitly to another, as far
-    as predefined types tell: every type converts to `object`, and one
+    as predefined types tell: every type converts to `object`, `object` to
+    nothing else but `dynamic` (no operator may convert from it), and one
     predefined type to another only by an implicit numeric conversion.
     None when either is another type, which only its declarations tell."""
     origin, destination = predefined_keyword(source), predefined_keyword(target)
     if destination == cs.CSHARP_OBJECT_KEYWORD:
         return True
+    if origin == cs.CSHARP_OBJECT_KEYWORD and destination is None:
+        return None if target.strip() == cs.CSHARP_DYNAMIC_KEYWORD else False
     if origin is None or destination is None:
         return None
     widened = cs.CSHARP_IMPLICIT_NUMERIC_CONVERSIONS.get(origin, frozenset())
     return origin == destination or destination in widened
 
 
+def _varied(context: Bound, variance: str, reference: bool | None) -> Bound | None:
+    """How a type argument bounds its parameter where its generic type is
+    inferred into from below or above: as the parameter varies (an `out`
+    keeps the direction, an `in` turns it), when the argument is a
+    reference type; exactly when it is a value type or the parameter does
+    not vary. None when whether it is a reference type is not known."""
+    if not variance or reference is False:
+        return Bound.EXACT
+    if reference is None:
+        return None
+    if variance == cs.CSHARP_VARIANCE_OUT:
+        return context
+    return Bound.UPPER if context is Bound.LOWER else Bound.LOWER
+
+
+def _contexts(
+    given: Sequence[str], context: Bound | None, owner: str, kinds: TypeKinds | None
+) -> list[Bound | None]:
+    # How each of the type arguments `given` passes the generic type `owner`
+    # bounds, inferred into in `context`. Inside an exact one every position
+    # is exact; a type of no known kind bounds nothing.
+    if context is Bound.EXACT:
+        return [Bound.EXACT] * len(given)
+    if context is None or kinds is None:
+        return [None] * len(given)
+    variances = kinds.variances(owner)
+    if variances is None or len(variances) != len(given):
+        return [None] * len(given)
+    return [
+        _varied(context, variance, kinds.reference(argument))
+        for variance, argument in zip(variances, given, strict=True)
+    ]
+
+
 def _infer_all(
     given: Sequence[str],
     wanted: Sequence[str],
-    open_names: frozenset[str],
-    inferred: dict[str, str],
+    state: _Inference,
+    contexts: Sequence[Bound | None],
 ) -> bool | None:
     # As many types, position by position, under one set of inferences.
     verdict: bool | None = True
-    for g, w in zip(given, wanted, strict=True):
-        found = _infer(g, w, open_names, inferred)
+    for g, w, context in zip(given, wanted, contexts, strict=True):
+        found = _infer(g, w, state, context)
         if found is False:
             return False
         if found is None:
@@ -533,52 +647,86 @@ def _infer_all(
 
 
 def _infer(
-    given: str, wanted: str, open_names: frozenset[str], inferred: dict[str, str]
+    given: str, wanted: str, state: _Inference, context: Bound | None
 ) -> bool | None:
-    # Whether a binding of `open_names`, agreeing with those `inferred` so
-    # far, makes `wanted` the type `given`. A wanted type with no open name
-    # is compared as it is; one with some is taken apart as far as it goes.
-    if not mentioned_names(wanted) & open_names:
+    # Whether a binding of the open names, agreeing with what this argument
+    # inferred exactly so far, makes `wanted` the type `given`. A wanted
+    # type with no open name is compared as it is; one with some is taken
+    # apart as far as it goes, its bounds recorded as `context` says.
+    if not mentioned_names(wanted) & state.open_names:
         return same_type(given, wanted)
     (given_core, given_suffix), (wanted_core, wanted_suffix) = (
         type_shape(given),
         type_shape(wanted),
     )
-    if wanted_core in open_names:
+    if wanted_core in state.open_names:
         return _infer_parameter(
-            wanted_core, (given_core, given_suffix), wanted_suffix, inferred
+            wanted_core, (given_core, given_suffix), wanted_suffix, (state, context)
         )
     if given_suffix != wanted_suffix:
         return False
     if is_tuple(wanted_core):
-        given_elements = _tuple_elements(given_core) if is_tuple(given_core) else []
-        wanted_elements = _tuple_elements(wanted_core)
-        if len(given_elements) != len(wanted_elements):
-            return False
-        return _infer_all(given_elements, wanted_elements, open_names, inferred)
+        return _infer_tuple(given_core, wanted_core, state, context)
     if not same_type_name(given_core, wanted_core):
         return False
+    arguments = type_arguments(given_core)
     return _infer_all(
-        type_arguments(given_core), type_arguments(wanted_core), open_names, inferred
+        arguments,
+        type_arguments(wanted_core),
+        state,
+        _contexts(arguments, context, wanted_core, state.kinds),
+    )
+
+
+def _infer_tuple(
+    given: str, wanted: str, state: _Inference, context: Bound | None
+) -> bool | None:
+    # A tuple is a struct, so its elements are inferred into exactly.
+    given_elements = _tuple_elements(given) if is_tuple(given) else []
+    wanted_elements = _tuple_elements(wanted)
+    if len(given_elements) != len(wanted_elements):
+        return False
+    element = None if context is None else Bound.EXACT
+    return _infer_all(
+        given_elements, wanted_elements, state, [element] * len(given_elements)
     )
 
 
 def _infer_parameter(
-    name: str, given: tuple[str, str], wanted_suffix: str, inferred: dict[str, str]
+    name: str,
+    given: tuple[str, str],
+    wanted_suffix: str,
+    at: tuple[_Inference, Bound | None],
 ) -> bool | None:
     # `name` is the given type, its shape and all (`T` of `int[]`), or the
     # given type's core when both build one shape on it (`T[]` of `int[]`),
-    # and the same type wherever it was inferred before. A shape the given
-    # type does not build on (`T[]` of `int`) is no fit; another one may be
-    # the parameter's own (`T[]` of `int?[]`), which is not told.
+    # and the same type wherever this argument fixed it exactly before. A
+    # shape the given type does not build on (`T[]` of `int`) is no fit;
+    # another one may be the parameter's own (`T[]` of `int?[]`), which is
+    # not told, nor how an element bounds outside an exact inference.
+    state, context = at
     core, suffix = given
     if not wanted_suffix:
         core = f"{core}{suffix}"
     elif suffix != wanted_suffix:
         rank = cs.CSHARP_ARRAY_RANK_OPEN
         return None if suffix.count(rank) >= wanted_suffix.count(rank) else False
-    previous = inferred.setdefault(name, core)
-    return previous == core or same_type(previous, core)
+    elif context is not Bound.EXACT:
+        context = None
+    return _bound(name, core, state, context)
+
+
+def _bound(name: str, type_text: str, state: _Inference, context: Bound | None) -> bool:
+    # Records `type_text` as a `context` bound of `name`: False when it is
+    # exact and another exact one this argument gave differs. A position of
+    # no known kind bounds nothing.
+    if context is None:
+        return True
+    bounds = state.found.setdefault(name, [])
+    if context is Bound.EXACT and not _exact_agree([*bounds, (context, type_text)]):
+        return False
+    bounds.append((context, type_text))
+    return True
 
 
 def written_type(argument: ArgumentType) -> str:

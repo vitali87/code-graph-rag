@@ -784,6 +784,11 @@ KEY_EXTENSION_RECEIVER_ARITY = "extension_receiver_arity"
 # (`Base<Circle>`), and an `implicit operator`'s [source, target] types.
 KEY_TYPE_CONSTRAINTS = "type_constraints"
 KEY_GENERIC_BASES = "generic_bases"
+# For inferring a method's type parameters (PR 2814 review): an interface's
+# parameters' variances, "out", "in" or "" each, stored only when one varies,
+# and `true` on a value type (a struct or a `record struct`).
+KEY_TYPE_PARAMETER_VARIANCES = "type_parameter_variances"
+KEY_VALUE_TYPE = "value_type"
 KEY_IMPLICIT_CONVERSION = "implicit_conversion"
 CSHARP_CONSTRAINT_SEPARATOR = ":"
 # Declared POSITIONAL parameter names of a Python function, receiver included,
@@ -1122,7 +1127,9 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.type_parameters AS type_parameters, "
     "n.type_constraints AS type_constraints, "
     "n.implicit_conversion AS implicit_conversion, "
-    "n.generic_bases AS generic_bases"
+    "n.generic_bases AS generic_bases, "
+    "n.type_parameter_variances AS type_parameter_variances, "
+    "n.value_type AS value_type"
 )
 
 # Module-level qns (plus C++20 module interfaces) for incremental runs:

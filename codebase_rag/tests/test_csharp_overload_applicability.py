@@ -378,6 +378,9 @@ public class Derived<U> : Base<string, U>, IBox<U> where U : Shape {
     public static implicit operator Shape(Derived<U> d) => null;
     public static explicit operator int(Derived<U> d) => 0;
 }
+public interface IFlow<in A, out B, C> { }
+public struct Money { }
+public readonly record struct Point(int X);
 """
 
 
@@ -416,6 +419,13 @@ def test_what_a_node_stores_rebuilds_what_the_parse_recorded(
         qn for qn, shape in processor.csharp_call_shapes.items() if shape.constraints
     }
     assert constrained == {f"{PROJECT}.Rt.Rt.Derived.S(T, W)"}, constrained
+    # A variant interface's variances and a value type are stored too.
+    shapes = processor.csharp_generic_shapes
+    assert shapes[f"{PROJECT}.Rt.Rt.IFlow"].variances == ("in", "out", "")
+    assert {qn for qn, shape in shapes.items() if shape.value_type} == {
+        f"{PROJECT}.Rt.Rt.Money",
+        f"{PROJECT}.Rt.Rt.Point",
+    }
 
 
 EXPLICIT_LIB_CS = """\
@@ -874,6 +884,154 @@ class TestAFirstPartyTypeIsNoPredefinedTypeOfItsName:
         # Negative: `System.Int32` is `int`.
         calls = _calls(CUSTOM_PREDEFINED_CS, temp_repo, mock_ingestor)
         assert calls["Framework"] == {"L.C.M(Box<int>)"}, calls
+
+
+VARIANCE_CS = """\
+namespace Va;
+using System.Collections.Generic;
+public interface IBox<out X> { }
+public interface IPlain<X> { }
+public interface ICmp<in X> { }
+public class Box<X> { }
+public class Person { }
+public class Employee : Person { }
+public class Circle { }
+public struct Money { }
+public class Cash { }
+public class C {
+    public void M<T>(IBox<T> a, IBox<T> b) { }
+    public void M(object a, object b) { }
+}
+public class P {
+    public void M<T>(IPlain<T> a, IPlain<T> b) { }
+    public void M(object a, object b) { }
+}
+public class K {
+    public void M<T>(ICmp<T> a, ICmp<T> b) { }
+    public void M(object a, object b) { }
+}
+public class B {
+    public void M<T>(Box<T> a, Box<T> b) { }
+    public void M(object a, object b) { }
+}
+public class E {
+    public void M<T>(IEnumerable<T> a, IEnumerable<T> b) { }
+    public void M(object a, object b) { }
+}
+public class Use {
+    public void Covariant() { IBox<Employee> e = null; IBox<Person> p = null; new C().M(e, p); }
+    public void Unrelated() { IBox<Circle> c = null; IBox<Person> p = null; new C().M(c, p); }
+    public void Values() { IBox<int> i = null; IBox<long> l = null; new C().M(i, l); }
+    public void Struct() { IBox<Money> m = null; IBox<object> o = null; new C().M(m, o); }
+    public void Reference() { IBox<Cash> m = null; IBox<object> o = null; new C().M(m, o); }
+    public void Invariant() { IPlain<Employee> e = null; IPlain<Person> p = null; new P().M(e, p); }
+    public void Contravariant() { ICmp<Person> p = null; ICmp<Employee> e = null; new K().M(p, e); }
+    public void Opposed() { ICmp<Circle> c = null; ICmp<Person> p = null; new K().M(c, p); }
+    public void Exact() { Box<Employee> e = null; Box<Person> p = null; new B().M(e, p); }
+    public void Framework() { IEnumerable<Employee> e = null; IEnumerable<Person> p = null; new E().M(e, p); }
+    public void Lists() { new E().M(new List<Employee>(), new List<Person>()); }
+}
+"""
+
+
+class TestAVariantTypeArgumentBoundsItsParameter:
+    # Greptile review of PR 2814: inference into an `out` position gives a
+    # lower bound and into an `in` position an upper one, for a reference
+    # type argument; only an invariant position, a class's or a value
+    # type's, is exact. Fixing then takes the type every bound allows.
+    def test_covariant_arguments_fix_their_common_base(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # T := Person: an IBox<Employee> is an IBox<Person>.
+        calls = _calls(VARIANCE_CS, temp_repo, mock_ingestor)
+        assert calls["Covariant"] == {"Va.C.M(IBox<T>, IBox<T>)"}, calls
+
+    def test_a_framework_covariant_interface_does_too(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _calls(VARIANCE_CS, temp_repo, mock_ingestor)
+        assert calls["Framework"] == {"Va.E.M(IEnumerable<T>, IEnumerable<T>)"}, calls
+
+    def test_contravariant_arguments_fix_their_common_derived_type(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # T := Employee: an ICmp<Person> is an ICmp<Employee>.
+        calls = _calls(VARIANCE_CS, temp_repo, mock_ingestor)
+        assert calls["Contravariant"] == {"Va.K.M(ICmp<T>, ICmp<T>)"}, calls
+
+    def test_a_reference_type_argument_varies_beside_object(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # T := object: a Cash is a reference type.
+        calls = _calls(VARIANCE_CS, temp_repo, mock_ingestor)
+        assert calls["Reference"] == {"Va.C.M(IBox<T>, IBox<T>)"}, calls
+
+    def test_a_list_passed_for_an_enumerable_keeps_the_generic(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # A framework class's interfaces are not known here, so nothing
+        # proves the generic inapplicable: it stays a candidate.
+        calls = _calls(VARIANCE_CS, temp_repo, mock_ingestor)
+        assert "Va.E.M(IEnumerable<T>, IEnumerable<T>)" in calls["Lists"], calls
+
+    @pytest.mark.parametrize(
+        ("caller", "expected"),
+        [
+            # Unrelated types have no common base among the bounds.
+            ("Unrelated", "Va.C.M(object, object)"),
+            # A value type argument is exact: int and long are two types.
+            ("Values", "Va.C.M(object, object)"),
+            # A struct is a value type, exact, and no object.
+            ("Struct", "Va.C.M(object, object)"),
+            # An invariant interface's argument is exact.
+            ("Invariant", "Va.P.M(object, object)"),
+            # No type is both a Circle and a Person.
+            ("Opposed", "Va.K.M(object, object)"),
+            # A class's type argument is exact.
+            ("Exact", "Va.B.M(object, object)"),
+        ],
+    )
+    def test_bounds_no_single_type_meets_bind_object(
+        self, caller: str, expected: str, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _calls(VARIANCE_CS, temp_repo, mock_ingestor)
+        assert calls[caller] == {expected}, calls
+
+
+VARIANCE_LIB_CS = """\
+namespace App;
+public interface IBox<out X> { }
+public struct Money { }
+public class Person { }
+public class Employee : Person { }
+public class C {
+    public void M<T>(IBox<T> a, IBox<T> b) { }
+    public void M(object a, object b) { }
+}
+"""
+
+VARIANCE_USE_CS = """\
+namespace App;
+public class Use {
+    public void Covariant() { IBox<Employee> e = null; IBox<Person> p = null; new C().M(e, p); }
+    public void Struct() { IBox<Money> m = null; IBox<object> o = null; new C().M(m, o); }
+}
+"""
+
+
+def test_an_edited_caller_reads_variance_and_value_types_back(
+    temp_repo: Path,
+) -> None:
+    # Only a parse of the declaring file records them, so an incremental
+    # run reads them off the unchanged file's nodes.
+    fresh, edited = _two_file_calls(temp_repo, VARIANCE_LIB_CS, VARIANCE_USE_CS)
+    assert {c for c in fresh if c[0] == "Covariant"} == {
+        ("Covariant", "C", "M(IBox<T>, IBox<T>)")
+    }
+    assert {c for c in fresh if c[0] == "Struct"} == {
+        ("Struct", "C", "M(object, object)")
+    }
+    assert edited == fresh
 
 
 INFERRED_ACROSS_CS = """\
@@ -1493,6 +1651,26 @@ INVARIANT_CASES: dict[str, _Case] = {
         "public void M(object a, object b) { } }",
         _use("new C().M(1, new Source());"),
         frozenset({"C.M(T, Box<T>)"}),
+    ),
+    # Greptile review of PR 2814: a generic type of no known kind may vary,
+    # so what is inferred into it never proves the generic inapplicable:
+    # an external one, or a first-party delegate, which is no registered type.
+    "variance-unknown-neg": _Case(
+        "namespace L; public class Person { } public class Employee : Person { }\n"
+        "public class C { public void M<T>(Ext.Feed<T> a, Ext.Feed<T> b) { } "
+        "public void M(object a, object b) { } }",
+        _use(
+            "Ext.Feed<Employee> e = null; Ext.Feed<Person> p = null; new C().M(e, p);"
+        ),
+        frozenset({"C.M(Ext.Feed<T>, Ext.Feed<T>)"}),
+    ),
+    "variance-delegate-neg": _Case(
+        "namespace L; public class Person { } public class Employee : Person { }\n"
+        "public delegate void Handler<in X>(X x);\n"
+        "public class C { public void M<T>(Handler<T> a, Handler<T> b) { } "
+        "public void M(object a, object b) { } }",
+        _use("Handler<Person> p = null; Handler<Employee> e = null; new C().M(p, e);"),
+        frozenset({"C.M(Handler<T>, Handler<T>)"}),
     ),
     "across-receiver-neg": _Case(
         "namespace L; public class G<X> { public void M(X a, X b) { } "

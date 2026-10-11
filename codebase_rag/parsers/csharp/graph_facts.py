@@ -28,13 +28,18 @@ from .utils import generic_shape, implicit_conversion, strip_generic_arguments
 
 
 def type_props(type_node: Node) -> PropertyDict:
-    # A generic type's parameters and the bases it passes type arguments to.
+    # A generic type's parameters, their variances, the bases it passes
+    # type arguments to, and whether it is a value type.
     shape = generic_shape(type_node)
     if shape is None:
         return {}
     props: PropertyDict = {}
     if shape.parameters:
         props[cs.KEY_TYPE_PARAMETERS] = list(shape.parameters)
+    if shape.variances:
+        props[cs.KEY_TYPE_PARAMETER_VARIANCES] = list(shape.variances)
+    if shape.value_type:
+        props[cs.KEY_VALUE_TYPE] = True
     if shape.bases:
         props[cs.KEY_GENERIC_BASES] = [
             f"{base.name}{cs.CHAR_ANGLE_OPEN}"
@@ -70,16 +75,18 @@ def _strings(value: object) -> list[str]:
 
 
 def type_shape(row: ResultRow) -> CSharpGenericShape | None:
-    """The generic shape `type_props` stored, or None for a type that takes
-    and passes no type argument."""
+    """The generic shape `type_props` stored, or None for a reference type
+    that takes and passes no type argument."""
     parameters = tuple(_strings(row.get(cs.KEY_TYPE_PARAMETERS)))
     bases = tuple(
         CSharpGenericBase(strip_generic_arguments(text), type_arguments(text))
         for text in _strings(row.get(cs.KEY_GENERIC_BASES))
     )
-    if not (parameters or bases):
+    value_type = row.get(cs.KEY_VALUE_TYPE) is True
+    if not (parameters or bases or value_type):
         return None
-    return CSharpGenericShape(parameters, bases)
+    variances = tuple(_strings(row.get(cs.KEY_TYPE_PARAMETER_VARIANCES)))
+    return CSharpGenericShape(parameters, bases, variances, value_type)
 
 
 def method_call_shape(row: ResultRow) -> CSharpCallShape | None:
