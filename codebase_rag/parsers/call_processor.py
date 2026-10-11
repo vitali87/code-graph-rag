@@ -1847,7 +1847,6 @@ class CallProcessor:
         class_inheritance: dict[str, list[str]],
         type_aliases: dict[str, str] | None = None,
         interface_implementers: dict[str, set[str]] | None = None,
-        restored_csharp_implements: dict[str, list[str]] | None = None,
         capture: CaptureSelection | None = None,
         module_qn_to_file_path: dict[str, Path] | None = None,
         cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]] | None = None,
@@ -1858,6 +1857,7 @@ class CallProcessor:
         rehydrated_definition_paths: dict[str, str] | None = None,
         rust_function_modules: dict[str, str] | None = None,
         declared_module_qns: set[str] | None = None,
+        rehydrated_interface_implementers: dict[str, set[str]] | None = None,
     ) -> None:
         self.ingestor = ingestor
         # The tree-sitter node whose span every edge emitted right now records
@@ -1918,10 +1918,10 @@ class CallProcessor:
             class_inheritance=class_inheritance,
             type_aliases=type_aliases,
             interface_implementers=interface_implementers,
-            restored_csharp_implements=restored_csharp_implements,
             rehydrated_definition_paths=rehydrated_definition_paths,
             rust_function_modules=rust_function_modules,
             declared_module_qns=declared_module_qns,
+            rehydrated_interface_implementers=rehydrated_interface_implementers,
             go_package_names=self._go_package_names,
         )
         # Inter-procedural callable-parameter flow: ordered params per function and

@@ -1359,20 +1359,32 @@ CYPHER_ALL_INHERITS = (
     "r.base_index AS base_index "
     "ORDER BY child_qn, base_index"
 )
-# C# implementers for incremental runs: an interface-typed call also edges
-# to the body of the interface's SOLE implementer, so the resolver must count
-# every implementer a fresh index counts. Pass 2 records an `implements` only
-# for RE-PARSED files, and CYPHER_ALL_INHERITS brings back only a base list's
-# INHERITS (an aliased interface the `I` guess reads as a class); this brings
-# back the IMPLEMENTS of C# types in files the run leaves alone, with each
-# implementer's path so a re-parsed file's rows are skipped (PR 2814 review).
-CYPHER_ALL_CSHARP_IMPLEMENTS = (
-    "MATCH (child)-[:IMPLEMENTS]->(iface) "
-    "WHERE child.qualified_name STARTS WITH $project_prefix "
-    "AND child.path ENDS WITH '.cs' AND iface.qualified_name IS NOT NULL "
-    "RETURN child.qualified_name AS child_qn, iface.qualified_name AS base_qn, "
-    "child.path AS path "
-    "ORDER BY child_qn, base_qn"
+# Implementer -> interface/trait pairs for incremental runs (issue #2403):
+# parsing records them only for the files it reads, and the sole-implementer
+# dispatch and the override walk need every implementer.
+CYPHER_ALL_IMPLEMENTS = (
+    "MATCH (child)-[:IMPLEMENTS]->(base) "
+    "WHERE child.qualified_name IS NOT NULL AND base.qualified_name IS NOT NULL "
+    "AND child.qualified_name STARTS WITH $project_prefix "
+    "RETURN child.qualified_name AS child_qn, base.qualified_name AS base_qn"
+)
+# OVERRIDES out of Rust methods: a trait impl for a type with no node (a
+# primitive, a foreign type) writes no IMPLEMENTS edge, so its methods'
+# OVERRIDES edges are the only record of the pair (issue #2403).
+CYPHER_ALL_RUST_OVERRIDES = (
+    "MATCH (method:Method)-[:OVERRIDES]->(base:Method) "
+    "WHERE method.qualified_name STARTS WITH $project_prefix "
+    "AND method.path ENDS WITH '.rs' "
+    "RETURN method.qualified_name AS from_qn, base.qualified_name AS to_qn"
+)
+# Rust traits that declare a method without a default body (no body, so no
+# fingerprint): every impl of one defines that method and leaves an OVERRIDES
+# edge. An impl of any other trait may define nothing and leave no trace.
+CYPHER_RUST_TRAITS_WITH_REQUIRED_METHODS = (
+    "MATCH (trait:Interface)-[:DEFINES_METHOD]->(method:Method) "
+    "WHERE trait.qualified_name STARTS WITH $project_prefix "
+    "AND trait.path ENDS WITH '.rs' AND method.ast_fingerprint IS NULL "
+    "RETURN DISTINCT trait.qualified_name AS qualified_name"
 )
 
 # C# type declaration locations for incremental runs: _join_csharp_partials

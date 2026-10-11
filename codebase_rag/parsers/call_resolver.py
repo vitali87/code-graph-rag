@@ -293,7 +293,7 @@ class CallResolver:
         "class_inheritance",
         "type_aliases",
         "interface_implementers",
-        "restored_csharp_implements",
+        "rehydrated_interface_implementers",
         "_interface_impl_cache",
         "_simple_resolution_cache",
         "last_resolution",
@@ -326,10 +326,10 @@ class CallResolver:
         class_inheritance: dict[str, list[str]],
         type_aliases: dict[str, str] | None = None,
         interface_implementers: dict[str, set[str]] | None = None,
-        restored_csharp_implements: dict[str, list[str]] | None = None,
         rehydrated_definition_paths: dict[str, str] | None = None,
         rust_function_modules: dict[str, str] | None = None,
         declared_module_qns: set[str] | None = None,
+        rehydrated_interface_implementers: dict[str, set[str]] | None = None,
         go_package_names: Mapping[str, str] | None = None,
     ) -> None:
         self.function_registry = function_registry
@@ -365,11 +365,13 @@ class CallResolver:
         self.interface_implementers = (
             interface_implementers if interface_implementers is not None else {}
         )
-        # {C# class_qn: [interface_qns]} an incremental run read back from the
-        # graph for files it did not re-parse (shared ref): with them the sole
-        # implementer is chosen among every one, as a fresh index chooses it.
-        self.restored_csharp_implements = (
-            restored_csharp_implements if restored_csharp_implements is not None else {}
+        # The pairs of implementers an incremental run did not re-parse, read
+        # back from the graph (shared ref). A sole implementer is one across
+        # both, or re-parsing only a caller loses its edge (issue #2403).
+        self.rehydrated_interface_implementers = (
+            rehydrated_interface_implementers
+            if rehydrated_interface_implementers is not None
+            else {}
         )
         self._interface_impl_cache: dict[str, str] | None = None
         # C++ typedef/using alias -> underlying bare type, consulted when a
@@ -1727,22 +1729,21 @@ class CallResolver:
         # >1 implementer is ambiguous -> not mapped -> the call stays on the
         # interface method alone (no precision risk, recall preserved).
         if self._interface_impl_cache is None:
-            implementers = {
-                interface_qn: set(classes)
-                for interface_qn, classes in self.interface_implementers.items()
-            }
-            # Every implementer counts, wherever the run found it: an
-            # `implements` it parsed, a C# base list naming an interface, and
-            # an IMPLEMENTS edge of a file it left alone (PR 2814 review).
+            implementers_of: dict[str, set[str]] = {}
+            for source in (
+                self.interface_implementers,
+                self.rehydrated_interface_implementers,
+            ):
+                for interface_qn, implementers in source.items():
+                    implementers_of.setdefault(interface_qn, set()).update(implementers)
+            # A C# base list naming an interface its `I` guess reads as a
+            # class, an alias among them, implements it too (PR 2814 review).
             for interface_qn, class_qn in self._csharp_inherited_interfaces():
-                implementers.setdefault(interface_qn, set()).add(class_qn)
-            for class_qn, interfaces in self.restored_csharp_implements.items():
-                for interface_qn in interfaces:
-                    implementers.setdefault(interface_qn, set()).add(class_qn)
+                implementers_of.setdefault(interface_qn, set()).add(class_qn)
             self._interface_impl_cache = {
-                interface_qn: next(iter(classes))
-                for interface_qn, classes in implementers.items()
-                if len(classes) == 1
+                interface_qn: next(iter(implementers))
+                for interface_qn, implementers in implementers_of.items()
+                if len(implementers) == 1
             }
         return self._interface_impl_cache
 
@@ -2794,9 +2795,17 @@ class CallResolver:
         owner = method_qn.rpartition(cs.SEPARATOR_DOT)[0]
         if self._rust_owner_is(owner, owners, names, method_qn, self_type):
             return True
-        return self.function_registry.get(owner) == NodeType.INTERFACE and any(
+        if self.function_registry.get(owner) != NodeType.INTERFACE:
+            return False
+        # The read-back pairs too: a run that re-parsed only the caller has
+        # `impl FloatErrors for u64` in them alone, and `u64::error_halfscale()`
+        # lost the trait method a clean index binds (issue #2403).
+        implementers = self.interface_implementers.get(
+            owner, set()
+        ) | self.rehydrated_interface_implementers.get(owner, set())
+        return any(
             self._rust_owner_is(implementer, owners, names, self_type=self_type)
-            for implementer in self.interface_implementers.get(owner, ())
+            for implementer in implementers
         )
 
     def _rust_owner_is(
