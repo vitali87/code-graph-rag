@@ -49,6 +49,7 @@ from .overloads import (
     merged_inferences,
     parameter_types,
     predefined_converts,
+    predefined_implements,
     predefined_keyword,
     resolved_qn,
     same_type,
@@ -401,6 +402,19 @@ def _const_constant(statement: Node, decl: Node, declarator: Node) -> _Constant 
     parts = declarator.named_children
     spelled = _literal_constant(parts[-1]) if len(parts) > 1 else None
     return _Constant(keyword, spelled.value if spelled is not None else None)
+
+
+def _built_in_meets(given: str, bound: str, first_party_bound: bool) -> bool | None:
+    # Whether a type no file declares meets a bound, None when that is not
+    # known: no predefined type, array, nullable or tuple derives from or
+    # implements a first-party type, and a predefined type implements the
+    # framework interfaces `predefined_implements` lists.
+    core, suffix = type_shape(given)
+    keyword = None if suffix else predefined_keyword(core)
+    if first_party_bound:
+        built_in = predefined_keyword(core) is not None or is_tuple(core)
+        return False if built_in or suffix else None
+    return True if keyword and predefined_implements(keyword, bound) else None
 
 
 def _exact(bound: Inferred) -> dict[str, str]:
@@ -2392,17 +2406,20 @@ class CSharpTypeInferenceEngine:
             self._fixed_types(merged, reading.own) if merged is not None else None
         )
         fixed = {**reading.spelled, **inferred} if inferred is not None else None
-        if (
-            merged is None
-            or fixed is None
-            or self._breaks_constraints(
-                fixed, merged, self._where_bounds(method_qn, reading), reading.unbound
-            )
-        ):
+        if merged is None or fixed is None:
+            return _Judged([None] * len(fits), {})
+        # A `where` clause the fixed types break drops the candidate; one not
+        # known to hold leaves it unsettled, as a type parameter of its own
+        # the arguments bound but did not fix does.
+        breaks = self._breaks_constraints(
+            fixed, merged, self._where_bounds(method_qn, reading), reading.unbound
+        )
+        if breaks:
             return _Judged([None] * len(fits), {})
         if fixed:
             fits = self._fits_once_fixed(parameters, arguments, fixed, reading.unbound)
-        return _Judged(fits, fixed, not (merged.keys() & reading.own) - fixed.keys())
+        unfixed = (merged.keys() & reading.own) - fixed.keys()
+        return _Judged(fits, fixed, breaks is False and not unfixed)
 
     @staticmethod
     def _uninferable(parameters: Sequence[str], reading: _Reading) -> bool:
@@ -2413,9 +2430,15 @@ class CSharpTypeInferenceEngine:
         return bool(reading.own - reading.spelled.keys() - named)
 
     def _where_bounds(self, method_qn: str, reading: _Reading) -> dict[str, list[str]]:
-        # Each constrained type parameter's bounds, read through the receiver.
+        # Each constrained type parameter's bounds, read through the receiver;
+        # a kind (`struct`, `class`) names no type and is kept as written.
         return {
-            name: [declared_type(b, reading.scope, reading.visible) for b in written]
+            name: [
+                b
+                if b in cs.CSHARP_KIND_CONSTRAINTS
+                else declared_type(b, reading.scope, reading.visible)
+                for b in written
+            ]
             for name, written in self._constraint_bounds(method_qn).items()
         }
 
@@ -2547,10 +2570,12 @@ class CSharpTypeInferenceEngine:
         merged: Inferred,
         bounds: Mapping[str, list[str]],
         open_names: frozenset[str],
-    ) -> bool:
+    ) -> bool | None:
         # Whether a type parameter's fixed type breaks its `where` clause,
         # read with the other parameters' fixed types (`where T : U`), or,
         # where none was fixed, what its bounds prove does (`_unfixed_breaks`).
+        # None when no clause is broken but one is not known to hold.
+        verdict: bool | None = False
         for name, written in bounds.items():
             closed = [substitute(bound, fixed) for bound in written]
             if name in fixed:
@@ -2559,7 +2584,9 @@ class CSharpTypeInferenceEngine:
                 breaks = self._unfixed_breaks(closed, merged.get(name, ()), open_names)
             if breaks:
                 return True
-        return False
+            if breaks is None:
+                verdict = None
+        return verdict
 
     def _unfixed_breaks(
         self,
@@ -2591,29 +2618,125 @@ class CSharpTypeInferenceEngine:
 
     def _breaks_constraint(
         self, bounds: Sequence[str], given: str, open_names: Collection[str]
-    ) -> bool:
-        # Fixed to a type that does not derive from a class its `where`
-        # clause names, closed as the bound is, a type parameter fails its
-        # constraint, and C# drops the generic overload (`M<T>(T) where T :
-        # Person` takes no Circle; PR 2814 review). A user-defined conversion
-        # never satisfies a constraint, and an interface or external bound
-        # cannot be judged. Both come resolved, the type in the caller's
-        # file, the bound in the method's and closed by the receiver; a
-        # bound naming a type parameter still open (the method's own, or one
-        # the receiver leaves unbound) is open there.
-        given_qn = self._first_party_type(given) if bounds else None
-        if given_qn is None:
-            return False
+    ) -> bool | None:
+        # Whether a type parameter fixed to `given` breaks a bound of its
+        # `where` clause, which drops the generic overload (`M<T>(T) where T
+        # : Person` takes no Circle; PR 2814 review). None when none is
+        # broken but one is not known to hold. Both come resolved, the type
+        # in the caller's file, the bound in the method's and closed by the
+        # receiver.
+        verdict: bool | None = False
         for bound in bounds:
-            bound_qn = self._first_party_type(bound)
-            if bound_qn is None or not self._judgeable(given_qn, bound_qn):
-                continue
-            if (
-                self._class_conversion((given, given_qn), (bound, bound_qn), open_names)
-                is False
-            ):
+            meets = self._meets(bound, given, frozenset(open_names))
+            if meets is False:
                 return True
-        return False
+            if meets is None:
+                verdict = None
+        return verdict
+
+    def _meets(self, bound: str, given: str, open_names: frozenset[str]) -> bool | None:
+        # Whether `given` meets one bound, None when that is not known. A
+        # kind is met by its kind of type. A type no file declares meets a
+        # bound as `_built_in_meets` tells. A first-party type
+        # meets a first-party bound by its bases, through the bases each
+        # writes (a user-defined conversion never meets one), and an
+        # external bound only through an external base, so not at all when
+        # every base it reaches is first-party (`_meets_external`). A bound
+        # naming a type parameter still open (the method's own, or one the
+        # receiver leaves unbound) is open there.
+        if bound in cs.CSHARP_KIND_CONSTRAINTS:
+            return self._meets_kind(bound, given)
+        bound_qn = self._first_party_type(bound)
+        given_qn = self._first_party_type(given)
+        if given_qn is None:
+            return _built_in_meets(given, bound, bound_qn is not None)
+        if bound_qn is not None:
+            return self._meets_first_party(
+                (given, given_qn), (bound, bound_qn), open_names
+            )
+        if mentioned_names(bound) & open_names:
+            return None
+        return self._meets_external(bound, given_qn)
+
+    def _meets_kind(self, kind: str, given: str) -> bool | None:
+        # `class` takes a reference type alone; `struct` a value type that is
+        # no nullable, `unmanaged` one whose every field is unmanaged too: a
+        # predefined value type's and an enum's are.
+        reference = self._is_reference(given)
+        if reference is None or kind == cs.CSHARP_CLASS_CONSTRAINT:
+            return reference
+        core, suffix = type_shape(given)
+        if reference or cs.CSHARP_NULLABLE_SUFFIX in suffix:
+            return False
+        if kind == cs.CSHARP_STRUCT_CONSTRAINT:
+            return True
+        return True if predefined_keyword(core) or self._names_enum(core) else None
+
+    def _meets_first_party(
+        self,
+        given: tuple[str, str],
+        bound: tuple[str, str],
+        open_names: frozenset[str],
+    ) -> bool | None:
+        # A first-party class bound by the class hierarchy, closed as the
+        # bound is; a first-party interface by every base the type reaches
+        # (a closing of a generic one is not judged).
+        kind = self.function_registry.get(bound[1])
+        if kind == NodeType.CLASS:
+            return self._class_conversion(given, bound, open_names)
+        if kind != NodeType.INTERFACE:
+            return None
+        if bound[1] not in self._ancestor_closure(given[1])[0]:
+            return False
+        return None if type_arguments(bound[0]) else True
+
+    def _meets_external(self, bound: str, given_qn: str) -> bool | None:
+        # An external bound: `System.Enum` is met by an enum alone; any other
+        # by a first-party type only through an external base, so not by one
+        # whose every base is first-party. An enum implements the framework's
+        # interfaces, and a record `IEquatable<>`, which no base list writes.
+        is_enum = self.function_registry.get(given_qn) == NodeType.ENUM
+        name = strip_generic_arguments(type_shape(bound)[0])
+        if name.rpartition(cs.SEPARATOR_DOT)[2] == cs.CSHARP_ENUM_BASE_TYPE:
+            return is_enum
+        if is_enum:
+            return None
+        return False if self._ancestor_closure(given_qn)[1] else None
+
+    def _ancestor_closure(self, type_qn: str) -> tuple[set[str], bool]:
+        # Every first-party type `type_qn` is, derives from or implements,
+        # through the bases each part of each writes, and whether every base
+        # on the way is first-party: one that is not may implement anything.
+        seen: set[str] = set()
+        complete = True
+        queue = deque(self._partial_roots(type_qn))
+        while queue:
+            current = queue.popleft()
+            if current in seen:
+                continue
+            seen.add(current)
+            for base in self._first_party_bases(current):
+                if base is None:
+                    complete = False
+                else:
+                    queue.extend(self._partial_roots(base))
+        return seen, complete
+
+    def _first_party_bases(self, type_qn: str) -> list[str | None]:
+        # The first-party type each base of `type_qn` is, resolved in its
+        # file, None for one that is not: those it writes (interfaces too)
+        # and those the inheritance pass linked.
+        shape = self.csharp_generic_shapes.get(type_qn)
+        scope = self.scope_of(type_qn)
+        written = [
+            self._first_party_type(canonical_type(base, scope))
+            for base in (shape.base_types if shape is not None else ())
+        ]
+        linked = [
+            base if self.function_registry.get(base) in _TYPE_DECLS else None
+            for base in self.class_inheritance.get(type_qn, ())
+        ]
+        return written + linked
 
     def _call_parameter_forms(
         self, method_qn: str, arg_count: int

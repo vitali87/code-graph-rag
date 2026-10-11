@@ -86,8 +86,8 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "broken_links",
         }
     ),
-    # `type_parameters` and `generic_bases` on a C# type, its interface's
-    # `type_parameter_variances`, a struct's `value_type`, and
+    # `type_parameters`, `generic_bases` and `base_types` on a C# type, its
+    # interface's `type_parameter_variances`, a struct's `value_type`, and
     # `type_parameters`, `type_constraints` and `implicit_conversion` on a C#
     # method (PR 2814 review), are what overload ranking reads, read back only
     # by an incremental run's rehydration; absent reads as a non-generic
@@ -102,6 +102,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
         {
             "anchor_hash",
             "absolute_path",
+            "base_types",
             "generic_bases",
             "modifiers",
             "non_method_members",
@@ -183,6 +184,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     "Interface": frozenset(
         {
             "anchor_hash",
+            "base_types",
             "decorators",
             "docstring",
             "end_line",

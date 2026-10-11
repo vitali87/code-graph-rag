@@ -29,7 +29,8 @@ from .utils import generic_shape, implicit_conversion, strip_generic_arguments
 
 def type_props(type_node: Node) -> PropertyDict:
     # A generic type's parameters, their variances, the bases it passes
-    # type arguments to, and whether it is a value type.
+    # type arguments to, whether it is a value type, and every base it
+    # writes.
     shape = generic_shape(type_node)
     if shape is None:
         return {}
@@ -46,6 +47,8 @@ def type_props(type_node: Node) -> PropertyDict:
             f"{cs.SEPARATOR_COMMA_SPACE.join(base.arguments)}{cs.CHAR_ANGLE_CLOSE}"
             for base in shape.bases
         ]
+    if shape.base_types:
+        props[cs.KEY_BASE_TYPES] = list(shape.base_types)
     return props
 
 
@@ -83,10 +86,11 @@ def type_shape(row: ResultRow) -> CSharpGenericShape | None:
         for text in _strings(row.get(cs.KEY_GENERIC_BASES))
     )
     value_type = row.get(cs.KEY_VALUE_TYPE) is True
-    if not (parameters or bases or value_type):
+    written = tuple(_strings(row.get(cs.KEY_BASE_TYPES)))
+    if not (parameters or bases or value_type or written):
         return None
     variances = tuple(_strings(row.get(cs.KEY_TYPE_PARAMETER_VARIANCES)))
-    return CSharpGenericShape(parameters, bases, variances, value_type)
+    return CSharpGenericShape(parameters, bases, variances, value_type, written)
 
 
 def method_call_shape(row: ResultRow) -> CSharpCallShape | None:

@@ -647,6 +647,26 @@ def framework_generic(core: str) -> tuple[bool, tuple[str, ...]] | None:
     return entry[1], entry[2]
 
 
+def predefined_implements(keyword: str, bound: str) -> bool:
+    """Whether the predefined type `keyword` is known to implement the
+    framework interface `bound`, closed as written: every one of
+    `CSHARP_SELF_INTERFACE_KEYWORDS` implements `IComparable` and
+    `IConvertible`, and `IComparable<>` and `IEquatable<>` of itself. False
+    says only that the tables do not tell."""
+    if keyword not in cs.CSHARP_SELF_INTERFACE_KEYWORDS:
+        return False
+    path = strip_generic_arguments(bound).rpartition(cs.SEPARATOR_DOUBLE_COLON)[2]
+    name = path.removeprefix(cs.CSHARP_SYSTEM_PREFIX)
+    arguments = type_arguments(bound)
+    if not arguments:
+        return name in cs.CSHARP_PREDEFINED_INTERFACES
+    return (
+        name in cs.CSHARP_PREDEFINED_SELF_INTERFACES
+        and len(arguments) == 1
+        and predefined_keyword(arguments[0]) == keyword
+    )
+
+
 def framework_reference(core: str) -> bool | None:
     """Whether a framework type with no shape after it is a reference type,
     as far as the tables tell: a known generic one's entry, or a known value

@@ -124,6 +124,21 @@ TS_CSHARP_CONSTRUCTOR_CONSTRAINT = "constructor_constraint"
 CSHARP_KEYWORD_CONSTRAINTS = frozenset(
     {"class", "struct", "notnull", "unmanaged", "default"}
 )
+# Of those, the ones a type's kind meets or breaks (PR 2814 review): a value
+# type alone meets `struct` and `unmanaged`, a reference type alone `class`
+# (`class?` too). Kept as the bound they write, `T:struct`.
+CSHARP_STRUCT_CONSTRAINT = "struct"
+CSHARP_CLASS_CONSTRAINT = "class"
+CSHARP_UNMANAGED_CONSTRAINT = "unmanaged"
+CSHARP_KIND_CONSTRAINTS = frozenset(
+    {CSHARP_STRUCT_CONSTRAINT, CSHARP_CLASS_CONSTRAINT, CSHARP_UNMANAGED_CONSTRAINT}
+)
+# `where T : System.Enum` is met by an enum alone.
+CSHARP_ENUM_BASE_TYPE = "Enum"
+# A record implements `IEquatable<>` of itself, which its base list does not
+# write; it is recorded among the bases it writes so its interfaces are not
+# taken as known.
+CSHARP_RECORD_EQUATABLE = "System.IEquatable"
 # The `base` receiver keyword parses as a bare "base" node in this
 # grammar version (not "base_expression").
 TS_CSHARP_BASE_EXPRESSION = "base"
@@ -540,6 +555,30 @@ CSHARP_OBJECT_KEYWORD = "object"
 CSHARP_DYNAMIC_KEYWORD = "dynamic"
 # The predefined types that are reference types; every other is a value type.
 CSHARP_REFERENCE_KEYWORDS = frozenset({"object", "string"})
+# The framework interfaces each of these predefined types implements, so a
+# `where` clause naming one is met (PR 2814 review): `IComparable` and
+# `IConvertible`, and `IComparable<>` and `IEquatable<>` of the type itself.
+# Only what they implement is listed; of any other, nothing is known.
+CSHARP_SELF_INTERFACE_KEYWORDS = frozenset(
+    {
+        "bool",
+        "byte",
+        "sbyte",
+        "char",
+        "decimal",
+        "double",
+        "float",
+        "int",
+        "uint",
+        "long",
+        "ulong",
+        "short",
+        "ushort",
+        "string",
+    }
+)
+CSHARP_PREDEFINED_INTERFACES = frozenset({"IComparable", "IConvertible"})
+CSHARP_PREDEFINED_SELF_INTERFACES = frozenset({"IComparable", "IEquatable"})
 # A type parameter's declared variance, the token before its name in a
 # `type_parameter`: `interface IBox<out T>`, `delegate void F<in T>(T x)`.
 CSHARP_VARIANCE_OUT = "out"

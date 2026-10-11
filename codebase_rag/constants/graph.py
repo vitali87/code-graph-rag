@@ -789,6 +789,9 @@ KEY_GENERIC_BASES = "generic_bases"
 # and `true` on a value type (a struct or a `record struct`).
 KEY_TYPE_PARAMETER_VARIANCES = "type_parameter_variances"
 KEY_VALUE_TYPE = "value_type"
+# For judging a `where` clause (PR 2814 review): every base a C# type's base
+# list writes, as written, so what it implements is known.
+KEY_BASE_TYPES = "base_types"
 KEY_IMPLICIT_CONVERSION = "implicit_conversion"
 CSHARP_CONSTRAINT_SEPARATOR = ":"
 # Declared POSITIONAL parameter names of a Python function, receiver included,
@@ -1129,7 +1132,7 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.implicit_conversion AS implicit_conversion, "
     "n.generic_bases AS generic_bases, "
     "n.type_parameter_variances AS type_parameter_variances, "
-    "n.value_type AS value_type"
+    "n.value_type AS value_type, n.base_types AS base_types"
 )
 
 # Module-level qns (plus C++20 module interfaces) for incremental runs:

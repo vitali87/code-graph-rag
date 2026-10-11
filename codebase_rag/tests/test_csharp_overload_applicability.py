@@ -195,6 +195,7 @@ namespace K;
 public interface IThing { }
 public class Shape { }
 public class Circle : Shape { }
+public class Square : Shape, IThing { }
 public class Person { }
 public class C {
     public void M<T>(T x) where T : Person { }
@@ -211,7 +212,8 @@ public class E {
 public class Use {
     public void Violates() { var c = new C(); c.M(new Circle()); }
     public void Satisfies() { var d = new D(); d.M(new Circle()); }
-    public void Unknown() { var e = new E(); e.M(new Circle()); }
+    public void Unimplemented() { var e = new E(); e.M(new Circle()); }
+    public void Implemented() { var e = new E(); e.M(new Square()); }
 }
 """
 
@@ -232,13 +234,21 @@ class TestAMethodsTypeParameterConstraintsBindItsArgument:
         calls = _calls(CONSTRAINT_CS, temp_repo, mock_ingestor)
         assert calls["Satisfies"] == {"K.D.M(T)"}, calls
 
-    def test_a_constraint_that_cannot_be_judged_changes_nothing(
+    def test_an_interface_the_argument_does_not_implement_drops_the_generic(
         self, temp_repo: Path, mock_ingestor: MagicMock
     ) -> None:
-        # Negative: an interface constraint is implemented outside the class
-        # hierarchy, so whether Circle meets it is not known.
+        # The ground-truth harness for PR 2814: Circle's bases are all
+        # first-party and none is IThing, so C# drops `M<T>` and binds
+        # `M(Shape)`, as the compiler does.
         calls = _calls(CONSTRAINT_CS, temp_repo, mock_ingestor)
-        assert calls["Unknown"] == {"K.E.M(T)"}, calls
+        assert calls["Unimplemented"] == {"K.E.M(Shape)"}, calls
+
+    def test_an_interface_the_argument_implements_keeps_the_generic(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Negative: a Square implements IThing, and T := Square is exact.
+        calls = _calls(CONSTRAINT_CS, temp_repo, mock_ingestor)
+        assert calls["Implemented"] == {"K.E.M(T)"}, calls
 
 
 INCREMENTAL_LIB_CS = """\
@@ -554,6 +564,49 @@ class TestAConstraintResolvesWhereTheMethodIsDeclared:
         assert {c for c in fresh if c[0] == "Broken"} == {
             ("Broken", "Picker", "M(Base)")
         }
+        assert edited == fresh
+
+
+IMPLEMENTS_LIB_CS = """\
+namespace L;
+public interface IThing { }
+public interface IMore : IThing { }
+public class Shape { }
+public class Circle : Shape { }
+public class Square : Shape, IMore { }
+public class E {
+    public void M<T>(T x) where T : IThing { }
+    public void M(Shape s) { }
+}
+"""
+
+IMPLEMENTS_USE_CS = """\
+using L;
+namespace U;
+public class Use {
+    public void Missing() { new E().M(new Circle()); }
+    public void Inherited() { new E().M(new Square()); }
+}
+"""
+
+
+class TestAnInterfaceConstraintReadsTheBasesEachTypeDeclares:
+    # The ground-truth harness for PR 2814: whether a first-party type
+    # implements an interface is read off the bases it and its bases write,
+    # which an incremental run reads back from the unchanged file's nodes.
+    def test_a_type_implementing_none_of_its_bases_loses_the_generic(
+        self, temp_repo: Path
+    ) -> None:
+        fresh, edited = _two_file_calls(temp_repo, IMPLEMENTS_LIB_CS, IMPLEMENTS_USE_CS)
+        assert {c for c in fresh if c[0] == "Missing"} == {("Missing", "E", "M(Shape)")}
+        assert edited == fresh
+
+    def test_an_interface_reached_through_another_keeps_the_generic(
+        self, temp_repo: Path
+    ) -> None:
+        # Negative: Square implements IMore, which extends IThing.
+        fresh, edited = _two_file_calls(temp_repo, IMPLEMENTS_LIB_CS, IMPLEMENTS_USE_CS)
+        assert {c for c in fresh if c[0] == "Inherited"} == {("Inherited", "E", "M(T)")}
         assert edited == fresh
 
 
@@ -2345,6 +2398,98 @@ INVARIANT_CASES: dict[str, _Case] = {
         f"public class C {{ public void M(Wrap<Base> w) {{ }} {_PAIR} }}",
         _use("new C().M(new Widget());"),
         frozenset({"C.M(object)"}),
+    ),
+    # The ground-truth harness for PR 2814: a `where` clause is judged for
+    # every kind of type, and only what is not known leaves the generic
+    # unsettled. No predefined type derives from or implements a
+    # first-party type; `struct` and `class` take a value or a reference
+    # type alone; a type with only first-party bases implements no external
+    # interface, while one with an external base may.
+    "constraint-predefined-class-bound": _Case(
+        "namespace L; public class Person { }\n"
+        "public class C { public void M<T>(T x) where T : Person { } "
+        "public void M(object o) { } }",
+        _use("new C().M(1);"),
+        frozenset({"C.M(object)"}),
+    ),
+    "constraint-predefined-interface-bound": _Case(
+        "namespace L; public interface IThing { }\n"
+        "public class C { public void M<T>(T x) where T : IThing { } "
+        "public void M(object o) { } }",
+        _use('new C().M("s");'),
+        frozenset({"C.M(object)"}),
+    ),
+    "constraint-predefined-comparable-neg": _Case(
+        "namespace L; public class C { "
+        "public void M<T>(T x) where T : System.IComparable<T> { } "
+        "public void M(object o) { } }",
+        _use("new C().M(1);"),
+        frozenset({"C.M(T)"}),
+    ),
+    "constraint-struct-reference": _Case(
+        "namespace L; public class Circle { }\n"
+        "public class C { public void M<T>(T x) where T : struct { } "
+        "public void M(object o) { } }",
+        _use("new C().M(new Circle());"),
+        frozenset({"C.M(object)"}),
+    ),
+    "constraint-struct-value-neg": _Case(
+        "namespace L; public struct Money { }\n"
+        "public class C { public void M<T>(T x) where T : struct { } "
+        "public void M(object o) { } }",
+        _use("new C().M(new Money());"),
+        frozenset({"C.M(T)"}),
+    ),
+    "constraint-struct-nullable": _Case(
+        "namespace L; public class C { public void M<T>(T x) where T : struct { } "
+        "public void M(object o) { } }",
+        _use("int? k = 1; new C().M(k);"),
+        frozenset({"C.M(object)"}),
+    ),
+    "constraint-unmanaged-reference": _Case(
+        "namespace L; public class C { public void M<T>(T x) where T : unmanaged { } "
+        "public void M(object o) { } }",
+        _use('new C().M("s");'),
+        frozenset({"C.M(object)"}),
+    ),
+    "constraint-unmanaged-value-neg": _Case(
+        "namespace L; public class C { public void M<T>(T x) where T : unmanaged { } "
+        "public void M(object o) { } }",
+        _use("new C().M(1.5);"),
+        frozenset({"C.M(T)"}),
+    ),
+    "constraint-class-value": _Case(
+        "namespace L; public class C { public void M<T>(T x) where T : class { } "
+        "public void M(object o) { } }",
+        _use("new C().M(1);"),
+        frozenset({"C.M(object)"}),
+    ),
+    "constraint-class-reference-neg": _Case(
+        "namespace L; public class C { public void M<T>(T x) where T : class { } "
+        "public void M(object o) { } }",
+        _use('new C().M("s");'),
+        frozenset({"C.M(T)"}),
+    ),
+    "constraint-external-interface": _Case(
+        "namespace L; public class Shape { } public class Circle : Shape { }\n"
+        "public class C { public void M<T>(T x) where T : System.IDisposable { } "
+        "public void M(object o) { } }",
+        _use("new C().M(new Circle());"),
+        frozenset({"C.M(object)"}),
+    ),
+    "constraint-external-base-neg": _Case(
+        "namespace L; public class Failure : System.Exception { }\n"
+        "public class C { public void M<T>(T x) where T : System.IDisposable { } "
+        "public void M(object o) { } }",
+        _use("new C().M(new Failure());"),
+        frozenset({"C.M(T)", "C.M(object)"}),
+    ),
+    "constraint-enum-bound-neg": _Case(
+        "namespace L; public enum Color { Red }\n"
+        "public class C { public void M<T>(T x) where T : System.Enum { } "
+        "public void M(object o) { } }",
+        _use("Color c = Color.Red; new C().M(c);"),
+        frozenset({"C.M(T)"}),
     ),
     "across-receiver-neg": _Case(
         "namespace L; public class G<X> { public void M(X a, X b) { } "

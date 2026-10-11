@@ -363,18 +363,32 @@ def type_parameter_constraints(declaration: Node) -> tuple[tuple[str, str], ...]
 
 
 def _constraint_types(clause: Node) -> list[str]:
-    # The types one `where` clause constrains its parameter to.
+    # The types one `where` clause constrains its parameter to, and the
+    # kind it constrains it to (`struct`, `class`, `unmanaged`).
     types: list[str] = []
     for constraint in clause.named_children:
         if constraint.type != cs.TS_CSHARP_TYPE_PARAMETER_CONSTRAINT:
             continue
         inner = next(iter(constraint.named_children), None)
-        if inner is None or inner.type == cs.TS_CSHARP_CONSTRUCTOR_CONSTRAINT:
+        if inner is None:
+            if kind := _kind_constraint(constraint):
+                types.append(kind)
+            continue
+        if inner.type == cs.TS_CSHARP_CONSTRUCTOR_CONSTRAINT:
             continue
         text = safe_decode_text(inner)
-        if text and text not in cs.CSHARP_KEYWORD_CONSTRAINTS:
+        if text in cs.CSHARP_KIND_CONSTRAINTS:
+            types.append(text)
+        elif text and text not in cs.CSHARP_KEYWORD_CONSTRAINTS:
             types.append(signature_type_name(text))
     return types
+
+
+def _kind_constraint(constraint: Node) -> str | None:
+    # The kind a keyword constraint writes: `class?` is `class`.
+    keyword = next(iter(constraint.children), None)
+    text = safe_decode_text(keyword) if keyword is not None else None
+    return text if text in cs.CSHARP_KIND_CONSTRAINTS else None
 
 
 def type_parameter_names(parameter_list: Node | None) -> tuple[str, ...]:
@@ -421,21 +435,52 @@ def generic_shape(type_node: Node) -> CSharpGenericShape | None:
     argument, which is most of them."""
     parameters: list[str] = []
     variances: tuple[str, ...] = ()
-    bases: list[CSharpGenericBase] = []
+    entries: list[Node] = []
     for child in type_node.children:
         if child.type == cs.TS_CSHARP_TYPE_PARAMETER_LIST:
             parameters.extend(type_parameter_names(child))
             variances = type_parameter_variances(child)
         elif child.type == cs.TS_CSHARP_BASE_LIST:
-            bases.extend(
-                base
-                for entry in child.named_children
-                if (base := _generic_base(entry)) is not None
-            )
+            entries.extend(child.named_children)
+    bases = tuple(
+        base for entry in entries if (base := _generic_base(entry)) is not None
+    )
+    # An enum's base list writes its underlying type, which is no base.
+    written = (
+        ()
+        if type_node.type == cs.TS_CSHARP_ENUM_DECLARATION
+        else tuple(text for entry in entries if (text := _written_base(entry)))
+    ) + _implicit_bases(type_node, parameters)
     value_type = is_value_type_declaration(type_node)
-    if not (parameters or bases or value_type):
+    if not (parameters or bases or value_type or written):
         return None
-    return CSharpGenericShape(tuple(parameters), tuple(bases), variances, value_type)
+    return CSharpGenericShape(tuple(parameters), bases, variances, value_type, written)
+
+
+def _implicit_bases(type_node: Node, parameters: list[str]) -> tuple[str, ...]:
+    # A record's `IEquatable<>` of itself, which no base list writes.
+    if type_node.type != cs.TS_CSHARP_RECORD_DECLARATION:
+        return ()
+    name = safe_decode_text(type_node.child_by_field_name(cs.FIELD_NAME))
+    if not name:
+        return ()
+    own = (
+        f"{cs.CHAR_ANGLE_OPEN}{cs.SEPARATOR_COMMA_SPACE.join(parameters)}{cs.CHAR_ANGLE_CLOSE}"
+        if parameters
+        else ""
+    )
+    return (
+        f"{cs.CSHARP_RECORD_EQUATABLE}{cs.CHAR_ANGLE_OPEN}{name}{own}{cs.CHAR_ANGLE_CLOSE}",
+    )
+
+
+def _written_base(entry: Node) -> str | None:
+    # A base list entry's type as written: a record's positional base
+    # (`Animal(Name)`) by its type alone.
+    if entry.type == cs.TS_CSHARP_PRIMARY_CONSTRUCTOR_BASE_TYPE:
+        entry = next(iter(entry.named_children), entry)
+    text = safe_decode_text(entry)
+    return signature_type_name(text) if text else None
 
 
 def is_explicit_member_qn(qn: str) -> bool:
