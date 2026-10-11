@@ -1059,6 +1059,42 @@ def test_a_member_from_a_graph_without_signatures_stays_one_node() -> None:
     assert registry.overload_signature("p.h.Sep.g") is None
 
 
+@pytest.mark.parametrize(
+    "order",
+    ["variant-then-overload", "overload-then-variant", "overload-alone"],
+)
+def test_overloads_read_back_in_any_order_list_once_in_line_order(order: str) -> None:
+    # The graph returns rows in no fixed order. Both read-backs rejoin a
+    # `@line` overload to its natural qn: `restore_variant` (#2403) for any
+    # variant and `restore_overload` for a C++ member's signature. Together
+    # or alone they must list each overload once, in the line order parsing
+    # the header gives, or `register_overload_qn` and the call fan-out read a
+    # bucket that depends on which files a sync re-parsed.
+    registry = FunctionRegistryTrie()
+    rows = (("p.h.C.f@9", "(long)"), ("p.h.C.f", "(int)"), ("p.h.C.f@4", "(double)"))
+    for qn, text in rows:
+        registry[qn] = NodeType.METHOD
+        if order == "variant-then-overload":
+            registry.restore_variant(qn)
+        registry.restore_overload(qn, text, True)
+        if order == "overload-then-variant":
+            registry.restore_variant(qn)
+
+    assert registry.variants("p.h.C.f") == ["p.h.C.f", "p.h.C.f@4", "p.h.C.f@9"]
+    # A re-parsed definition still finds its own overload through the bucket,
+    # and a signature no declaration has is not folded onto one of them.
+    assert (
+        registry.register_overload_qn("p.h.C.f", OverloadSignature("(double)", 1), 20)
+        == "p.h.C.f@4"
+    )
+    assert (
+        registry.register_overload_qn(
+            "p.h.C.f", OverloadSignature("(char)", 1), 21, declared_in_class=True
+        )
+        == "p.h.C.f@21"
+    )
+
+
 def test_a_definition_matching_no_declaration_is_not_guessed_onto_one() -> None:
     registry = FunctionRegistryTrie()
     for line, text, arity in ((3, "(int)", 1), (4, "(double)", 1), (5, "(int,int)", 2)):
@@ -1376,6 +1412,73 @@ def test_warm_reingest_of_a_definition_file_keeps_each_overload(
         f"{PROJECT}.sep.h.Sep.g": ("sep.cpp", 4, "(int)"),
         f"{PROJECT}.sep.h.Sep.g@4": ("sep.cpp", 3, "(double)"),
     }
+
+
+# --- a sync that re-parses only the caller (#2403's path) -------------------
+
+# The overloads live in files the sync does not touch, so both come back from
+# the graph: `restore_variant` and `restore_overload` each rejoin `Sep.g@4` to
+# `Sep.g`, and the caller must still fan out to each overload exactly once.
+SEP_DEFS_CPP = """#include "sep.h"
+int Sep::g(int a) { return a; }
+int Sep::g(double a) { return (int)a; }
+"""
+USE_CPP = """#include "sep.h"
+int use_sep() { Sep s; return s.g(1) + s.g(2.0); }
+"""
+
+
+def _resolved_calls(store: _StatefulIngestor) -> set[tuple[str, str, str]]:
+    return {
+        (
+            str(edge[1]),
+            str(edge[4]),
+            str(store.edge_props.get(edge, {}).get(cs.KEY_RESOLUTION)),
+        )
+        for edge in store.keyed_edges
+        if edge[2] == cs.RelationshipType.CALLS.value
+    }
+
+
+@pytest.mark.parametrize("mode", ["run", "reingest"])
+def test_reparsing_only_the_caller_keeps_one_edge_per_overload(
+    temp_repo: Path, mode: str
+) -> None:
+    root = _write(
+        temp_repo / PROJECT,
+        {"sep.h": SEP_H, "sep.cpp": SEP_DEFS_CPP, "use.cpp": USE_CPP},
+    )
+    store = _StatefulIngestor()
+    _updater(store, root).run(force=True)
+    clean_calls, clean = _resolved_calls(store), _state(store, root)
+    caller = f"{PROJECT}.use.use_sep"
+    plain, variant = f"{PROJECT}.sep.h.Sep.g", f"{PROJECT}.sep.h.Sep.g@4"
+    overload = cs.EdgeResolution.OVERLOAD.value
+    assert {edge for edge in clean_calls if edge[0] == caller} == {
+        (caller, plain, overload),
+        (caller, variant, overload),
+    }
+
+    path = root / "use.cpp"
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
+    path.write_text(USE_CPP + "// touched\n", encoding="utf-8")
+    os.utime(path, (cache_mtime + 1, cache_mtime + 1))
+    updater = _updater(store, root)
+    if mode == "run":
+        updater.run(force=False)
+    else:
+        updater.reingest([path])
+
+    assert _resolved_calls(store) == clean_calls
+    assert _state(store, root) == clean
+    registry = updater.function_registry
+    assert registry.variants(plain) == [plain, variant]
+    plain_signature = registry.overload_signature(plain)
+    variant_signature = registry.overload_signature(variant)
+    assert plain_signature is not None
+    assert plain_signature.text == "(int)"
+    assert variant_signature is not None
+    assert variant_signature.text == "(double)"
 
 
 # --- the issue's setup: a compile_commands.json, so libclang runs ----------

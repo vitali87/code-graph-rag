@@ -352,11 +352,9 @@ class FunctionRegistryTrie:
         # different overload defined beside it the same node.
         if declared_in_class:
             self._declared_overloads.add(qualified_name)
-        natural = qn_markers.natural_qn(qualified_name)
-        if natural != qualified_name:
-            bucket = self._duplicates.setdefault(natural, [natural])
-            if qualified_name not in bucket:
-                bucket.append(qualified_name)
+        # The `@line` overload rejoins its natural qn as any read-back variant
+        # does (#2403): once, and in line order whatever order rows arrive in.
+        self.restore_variant(qualified_name)
 
     def insert(self, qualified_name: QualifiedName, func_type: NodeType) -> None:
         qualified_name = sys.intern(qualified_name)
