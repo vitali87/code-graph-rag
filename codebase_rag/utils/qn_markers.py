@@ -89,3 +89,15 @@ def marker_position(name: str) -> tuple[int, int] | None:
         return None
     column = match.group(2)
     return int(match.group(1)), -1 if column is None else int(column)
+
+
+def owner_and_member(qualified_name: str) -> tuple[str, str]:
+    """A member qn's owner and its member leaf, split at the last dot
+    before its parameter list, whose qualified types hold dots too:
+    `N.IRun.Go(List<System.String>)` -> (`N.IRun`, `Go(List<System.String>)`).
+    ("", the qn) for one with no owner."""
+    head = qualified_name.split(cs.CHAR_PAREN_OPEN, 1)[0]
+    owner, separator, _ = head.rpartition(cs.SEPARATOR_DOT)
+    if not separator:
+        return "", qualified_name
+    return owner, qualified_name[len(owner) + 1 :]

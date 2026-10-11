@@ -243,6 +243,49 @@ class TestAnInterfaceCallRunsAnExplicitGenericBody:
         assert calls["Bound(IC)"] == {"Ge.IC.M(T)", "Ge.Bounded.IC#M(U)"}, calls
 
 
+QUALIFIED_PARAMETER_CS = """\
+namespace Qs;
+using System.Collections.Generic;
+public interface IRun { void Go(List<System.String> x); }
+public class Runner : IRun { void IRun.Go(List<System.String> x) { } }
+public interface IWalk { void Go(List<string> x); }
+public class Walker : IWalk { void IWalk.Go(List<string> x) { } }
+public interface IStop { void Halt(); }
+public class Stopper : IStop { void IStop.Halt() { } }
+public class Use {
+    public void Run(IRun r) { r.Go(new List<string>()); }
+    public void Walk(IWalk w) { w.Go(new List<string>()); }
+    public void Stop(IStop s) { s.Halt(); }
+}
+"""
+
+
+class TestAQualifiedParameterTypeKeepsTheExplicitBody:
+    # Greptile review of PR 2814: an interface member whose parameters spell
+    # a qualified type (`List<System.String>`) is split from its interface
+    # before its parameter list, whose dots are no member's, so the sole
+    # implementer's explicit body still runs for an interface-typed call.
+    def test_a_qualified_parameter_type_keeps_the_body(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _calls(QUALIFIED_PARAMETER_CS, temp_repo, mock_ingestor)
+        assert calls["Run(IRun)"] == {
+            "Qs.IRun.Go(List<System.String>)",
+            "Qs.Runner.IRun#Go(List<System.String>)",
+        }, calls
+
+    def test_an_unqualified_or_empty_parameter_list_still_does(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Negative: no dot in the parameters, or none at all.
+        calls = _calls(QUALIFIED_PARAMETER_CS, temp_repo, mock_ingestor)
+        assert calls["Walk(IWalk)"] == {
+            "Qs.IWalk.Go(List<string>)",
+            "Qs.Walker.IWalk#Go(List<string>)",
+        }, calls
+        assert calls["Stop(IStop)"] == {"Qs.IStop.Halt", "Qs.Stopper.IStop#Halt"}, calls
+
+
 CONSTRAINT_CS = """\
 namespace K;
 public interface IThing { }

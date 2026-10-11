@@ -325,11 +325,7 @@ def _emit_recorded_impl_override(
 def _csharp_class_and_leaf(method_qn: str) -> tuple[str, str]:
     # The class is cut before the parameter list, whose qualified types
     # hold dots too; ("", qn) for a qn with no class.
-    head = method_qn.split(cs.CHAR_PAREN_OPEN, 1)[0]
-    class_qn, separator, _ = head.rpartition(cs.SEPARATOR_DOT)
-    if not separator:
-        return "", method_qn
-    return class_qn, method_qn[len(class_qn) + 1 :]
+    return qn_markers.owner_and_member(method_qn)
 
 
 def _csharp_explicit_member(method_qn: str) -> tuple[str, str, str] | None:

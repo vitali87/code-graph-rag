@@ -1728,9 +1728,11 @@ class CallResolver:
         # it for an additional CALLS edge. REPLACING the interface edge instead
         # (the pre-#665-era redirect) orphaned the interface stub: OVERRIDES
         # expansion only walks interface -> impl, so the stub's declaration
-        # (gson's FieldNamingStrategy.translateName) reported dead.
-        class_qn, sep, method_name = callee_qn.rpartition(cs.SEPARATOR_DOT)
-        if not sep:
+        # (gson's FieldNamingStrategy.translateName) reported dead. The
+        # member is split off before its parameter list, whose qualified
+        # types (`Go(List<System.String>)`) hold dots too (PR 2814 review).
+        class_qn, method_name = qn_markers.owner_and_member(callee_qn)
+        if not class_qn:
             return set()
         impl_qn = self._interface_impl_map().get(class_qn)
         if impl_qn is None:
