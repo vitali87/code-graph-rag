@@ -1276,3 +1276,143 @@ def test_object_literal_this_return_types_no_hop(
 ) -> None:
     callees = _callees(class_value_edges, f"{module}.objectLiteral")
     assert f"{module}.C.instMethod" not in callees
+
+
+# ---------------------------------------------------------------------------
+# A class-name base types the chain only when that name is the class at the
+# call: declared in the module or imported, and not rebound by a parameter
+# or local. A same-named class elsewhere in the project never answers
+# ---------------------------------------------------------------------------
+
+_SCOPE_FILES = {
+    "prod": (
+        "export class Product { finish() { return 1; } }\n"
+        "export class Builder { static make() { return new Product(); } }\n"
+    ),
+    "imp": (
+        "import { Builder } from './prod';\n"
+        "export function importedBuilder() { return Builder.make().finish(); }\n"
+    ),
+    "local": (
+        "export class Item { finish() { return 2; } }\n"
+        "export class Builder { static make() { return new Item(); } }\n"
+        "export function sameModule() { return Builder.make().finish(); }\n"
+    ),
+    "scope": (
+        "export function paramBuilder(Builder) { return Builder.make().finish(); }\n"
+        "export function localBuilder(other) {\n"
+        "  const Builder = other;\n"
+        "  return Builder.make().finish();\n"
+        "}\n"
+        "export function unimported() { return Builder.make().finish(); }\n"
+    ),
+}
+
+
+@pytest.fixture(params=[".ts", ".js"])
+def scope_edges(
+    request: pytest.FixtureRequest, temp_repo: Path, mock_ingestor: MagicMock
+) -> dict[tuple[str, str], str | None]:
+    root = temp_repo / "bscope"
+    _write(root, {f"{name}{request.param}": src for name, src in _SCOPE_FILES.items()})
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="typescript")
+    return _calls(mock_ingestor)
+
+
+@pytest.mark.parametrize("fn", ["paramBuilder", "localBuilder", "unimported"])
+def test_class_name_base_not_bound_at_the_call_types_no_hop(
+    scope_edges: dict[tuple[str, str], str | None], fn: str
+) -> None:
+    # A parameter or local named `Builder`, or a name nothing here binds, is
+    # not prod's or local's Builder.
+    callees = _callees(scope_edges, f"bscope.scope.{fn}")
+    assert not {c for c in callees if c.endswith(".finish")}
+
+
+@pytest.mark.parametrize(
+    ("caller", "expected"),
+    [
+        ("bscope.imp.importedBuilder", "bscope.prod.Product.finish"),
+        ("bscope.local.sameModule", "bscope.local.Item.finish"),
+    ],
+)
+def test_visible_class_name_base_still_chains(
+    scope_edges: dict[tuple[str, str], str | None], caller: str, expected: str
+) -> None:
+    callees = _callees(scope_edges, caller)
+    assert callees.get(expected) == _EXACT
+    assert {c for c in callees if c.endswith(".finish")} == {expected}
+
+
+# ---------------------------------------------------------------------------
+# A static member a subclass declares itself, method or not, shadows the
+# parent's: the walk up `extends` stops at the first class declaring the name
+# ---------------------------------------------------------------------------
+
+_STATIC_SHADOW = """\
+export class X { other() { return 0; } }
+export function two() { return 2; }
+export function makeX() { return new X(); }
+
+export class C {
+  static self() { return this; }
+  static other() { return 1; }
+}
+
+export class D extends C { static other = OTHER_VALUE; }
+export class G extends C { static get other() { return () => 3; } }
+export class H extends C {}
+export class K extends C { static other() { return 4; } }
+export class S extends C { static self = SELF_VALUE; }
+
+export function viaField() { return D.self().other(); }
+export function viaAccessor() { return G.self().other(); }
+export function viaInherited() { return H.self().other(); }
+export function viaOwn() { return K.self().other(); }
+export function viaShadowedFirstHop() { return S.self().other(); }
+"""
+
+# Greptile's arrow-valued static field, in JS. The same field in TS leaves a
+# dangling REFERENCES edge on main already, which the graph audit rejects, so
+# the TS module shadows with a function-valued field instead.
+_STATIC_SHADOW_VALUES = {
+    ".js": {"OTHER_VALUE": "() => 2", "SELF_VALUE": "() => new X()"},
+    ".ts": {"OTHER_VALUE": "two", "SELF_VALUE": "makeX"},
+}
+
+
+@pytest.fixture(params=[".ts", ".js"])
+def shadow_edges(
+    request: pytest.FixtureRequest, temp_repo: Path, mock_ingestor: MagicMock
+) -> dict[tuple[str, str], str | None]:
+    root = temp_repo / "sshadow"
+    source = _STATIC_SHADOW
+    for placeholder, value in _STATIC_SHADOW_VALUES[request.param].items():
+        source = source.replace(placeholder, value)
+    _write(root, {f"sh{request.param}": source})
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="typescript")
+    return _calls(mock_ingestor)
+
+
+@pytest.mark.parametrize("fn", ["viaField", "viaAccessor", "viaShadowedFirstHop"])
+def test_subclass_static_field_or_accessor_shadows_the_parent_method(
+    shadow_edges: dict[tuple[str, str], str | None], fn: str
+) -> None:
+    # JavaScript calls the subclass's own `other` (a field, or what its getter
+    # returns), or its own `self` field; the parent's method never runs.
+    # An own member that is not a plain static method leaves the call unbound
+    # rather than picking the shadowed parent's.
+    callees = _callees(shadow_edges, f"sshadow.sh.{fn}")
+    assert not {c for c in callees if c.endswith(".other")}
+
+
+@pytest.mark.parametrize(
+    ("fn", "expected"),
+    [("viaInherited", "sshadow.sh.C.other"), ("viaOwn", "sshadow.sh.K.other")],
+)
+def test_subclass_static_lookup_binds_the_nearest_method(
+    shadow_edges: dict[tuple[str, str], str | None], fn: str, expected: str
+) -> None:
+    callees = _callees(shadow_edges, f"sshadow.sh.{fn}")
+    assert callees.get(expected) == _EXACT
+    assert {c for c in callees if c.endswith(".other")} == {expected}

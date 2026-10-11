@@ -196,6 +196,12 @@ def find_method_in_ast(
     return None
 
 
+def find_class_body(root_node: Node, class_name: str) -> Node | None:
+    """The body of the first class declared as `class_name`, in source order."""
+    declaration = _class_declaration_named(root_node, class_name)
+    return declaration.child_by_field_name(cs.FIELD_BODY) if declaration else None
+
+
 def _class_declaration_named(root_node: Node, class_name: str) -> Node | None:
     # The first `class_declaration` named `class_name`, in source order.
     stack: list[Node] = [root_node]

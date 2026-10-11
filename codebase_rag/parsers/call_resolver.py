@@ -5916,13 +5916,18 @@ class CallResolver:
 
     def _js_static_member(self, class_qn: str, method: str) -> tuple[str, int] | None:
         """`(member qn, line)` of the static `method` the class reaches: its
-        own, else the nearest ancestor's. Instance members of the name are a
-        different namespace and never answer."""
+        own, else the nearest ancestor's. The walk stops at the first class
+        declaring a static of that name, field or accessor included, which
+        hides every parent's; one with no method body answers nothing.
+        Instance members are a different namespace and never answer."""
         for owner in self._mro(class_qn):
-            if (
-                line := self.type_inference.js_static_method_line(owner, method)
-            ) is not None:
-                return f"{owner}{cs.SEPARATOR_DOT}{method}", line
+            declared, line = self.type_inference.js_static_member(owner, method)
+            if declared:
+                return (
+                    (f"{owner}{cs.SEPARATOR_DOT}{method}", line)
+                    if line is not None
+                    else None
+                )
         return None
 
     def _js_static_member_target(
@@ -6023,7 +6028,11 @@ class CallResolver:
         # inherits along its `extends` chain, and a `this` that `make`
         # returns is D. `this` / `super` stand for the enclosing class; any
         # other base is a value, reaching an instance member.
-        named = None if is_this else self._named_class(base, module_qn)
+        named = (
+            None
+            if is_this
+            else self._named_class(base, module_qn, language, call_point)
+        )
         callee_qn = self._first_hop_callee(
             base,
             method,
@@ -6054,8 +6063,30 @@ class CallResolver:
             return found[0] if found else None
         return self._exact_first_hop(base, method, call)
 
-    def _named_class(self, name: str, module_qn: str) -> str | None:
-        class_qn = self._chain_class_qn(name, module_qn)
+    def _named_class(
+        self,
+        name: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        call_point: int | None,
+    ) -> str | None:
+        # The class a base name is at the call: declared in this module or
+        # imported, and not rebound by a parameter or local around the call.
+        # A same-named class elsewhere in the project is never it.
+        root = self._cached_module_root(module_qn)
+        site = (
+            root.named_descendant_for_byte_range(call_point, call_point)
+            if root is not None and call_point is not None
+            else None
+        )
+        if site is None or safe_decode_text(site) != name:
+            return None
+        class_qn = self.type_inference.js_type_inference.visible_class(
+            site, name, module_qn, language
+        )
+        if class_qn is None:
+            return None
+        class_qn = self._follow_reexports(class_qn)
         return (
             class_qn if self.function_registry.get(class_qn) == NodeType.CLASS else None
         )

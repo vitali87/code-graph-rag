@@ -749,14 +749,15 @@ class TypeInferenceEngine:
             root, names, module_qn, language, static
         )
 
-    def js_static_method_line(self, class_qn: str, method_name: str) -> int | None:
-        """The line of a top-level JS/TS class's own static `method_name`."""
+    def js_static_member(
+        self, class_qn: str, member_name: str
+    ) -> tuple[bool, int | None]:
+        """Whether a top-level JS/TS class declares a static `member_name`,
+        and its method's line (see `JsTypeInferenceEngine.static_member`)."""
         module_qn, _, class_name = class_qn.rpartition(cs.SEPARATOR_DOT)
         if (entry := self._js_module_tree(module_qn)) is None:
-            return None
-        return self.js_type_inference.static_method_line(
-            entry[0], class_name, method_name
-        )
+            return False, None
+        return self.js_type_inference.static_member(entry[0], class_name, member_name)
 
     def _js_module_tree(
         self, module_qn: str

@@ -328,6 +328,7 @@ JS_RECEIVER_INSTANCE = "this"
 JS_CLASS_VALUE_PREFIX = "typeof "
 JS_RECEIVER_CLASS = f"{JS_CLASS_VALUE_PREFIX}{JS_RECEIVER_INSTANCE}"
 TS_CHAIN_OPAQUE_CALLABLE_KEYWORDS = frozenset({"async", "*", "get", "set"})
+TS_ACCESSOR_KEYWORDS = frozenset({"get", "set"})
 # A member call's receiver declaration, read to confirm or rule out a method
 # bound only by name (issue #2609).
 TS_PREDEFINED_TYPE = "predefined_type"

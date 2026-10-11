@@ -198,6 +198,14 @@ def _method_implementation(
     )
 
 
+def _member_name(member: ASTNode) -> str | None:
+    # A TS class field keeps its key in `name`, a JS one in `property`.
+    key = member.child_by_field_name(cs.FIELD_NAME) or member.child_by_field_name(
+        cs.FIELD_PROPERTY
+    )
+    return safe_decode_text(key) if key is not None else None
+
+
 def _exported_declaration(node: ASTNode) -> ASTNode:
     if node.type == cs.TS_EXPORT_STATEMENT and (
         declaration := node.child_by_field_name(cs.FIELD_DECLARATION)
@@ -568,12 +576,47 @@ class JsTypeInferenceEngine:
         return self._annotation_type(annotation, module_qn) if annotation else None
 
     @staticmethod
-    def static_method_line(
-        root: ASTNode, class_name: str, method_name: str
-    ) -> int | None:
-        """The line of the class's own static `method_name`, if it has one."""
-        node = _method_implementation(root, class_name, method_name, True)
-        return node.start_point[0] + 1 if node is not None else None
+    def static_member(
+        root: ASTNode, class_name: str, member_name: str
+    ) -> tuple[bool, int | None]:
+        """Whether the class declares a static `member_name` of its own, and
+        the line of its body when that member is a plain method.
+
+        Any own static of the name (a field, a getter or setter too) hides
+        a parent's, so a caller walking up `extends` stops at it; one with no
+        method body to read answers no line.
+        """
+        body = ut.find_class_body(root, class_name)
+        if body is None:
+            return False, None
+        declared = False
+        for member in body.named_children:
+            if not ut.is_static_member(member) or _member_name(member) != member_name:
+                continue
+            declared = True
+            if member.type == cs.TS_METHOD_SIGNATURE:
+                continue
+            if member.type == cs.TS_METHOD_DEFINITION and not any(
+                child.type in cs.TS_ACCESSOR_KEYWORDS for child in member.children
+            ):
+                return True, member.start_point[0] + 1
+            return True, None
+        return declared, None
+
+    def visible_class(
+        self,
+        site: ASTNode,
+        name: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+    ) -> str | None:
+        """The class `name` written at `site` refers to: the module's own or
+        an imported one, unless a parameter, local or nested declaration
+        around `site` rebinds it. Nothing outside the module's own scope is
+        searched, so a name it does not bind names no class."""
+        if self._js_bound_by_enclosing_callable(site, name, language):
+            return None
+        return self._resolve_js_class_name(name, module_qn)
 
     def callable_return_type(
         self,
