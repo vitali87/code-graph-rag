@@ -420,8 +420,10 @@ CSHARP_LITERAL_ARG_TYPES: dict[str, str] = {
     "raw_string_literal": "string",
     "interpolated_string_expression": "string",
 }
-# The parameter types each literal type converts to implicitly. A parameter
-# type outside every set (a user type, a generic parameter) is not judged.
+# The predefined types each literal type converts to implicitly, by keyword:
+# a parameter is looked up by the keyword of the type it names, however
+# spelled (`Int32`, `System.Int32`). One naming no predefined type (a user
+# type, a generic parameter) is not judged.
 CSHARP_LITERAL_ACCEPTS: dict[str, frozenset[str]] = {
     # A constant int converts to every integral type it fits, so the
     # narrower integral types are accepted too.
@@ -441,18 +443,6 @@ CSHARP_LITERAL_ACCEPTS: dict[str, frozenset[str]] = {
             "double",
             "decimal",
             "object",
-            "Int16",
-            "Int32",
-            "Int64",
-            "UInt16",
-            "UInt32",
-            "UInt64",
-            "Byte",
-            "SByte",
-            "Single",
-            "Double",
-            "Decimal",
-            "Object",
         }
     ),
     "long": frozenset(
@@ -462,11 +452,6 @@ CSHARP_LITERAL_ACCEPTS: dict[str, frozenset[str]] = {
             "double",
             "decimal",
             "object",
-            "Int64",
-            "Single",
-            "Double",
-            "Decimal",
-            "Object",
         }
     ),
     "uint": frozenset(
@@ -478,13 +463,6 @@ CSHARP_LITERAL_ACCEPTS: dict[str, frozenset[str]] = {
             "double",
             "decimal",
             "object",
-            "UInt32",
-            "Int64",
-            "UInt64",
-            "Single",
-            "Double",
-            "Decimal",
-            "Object",
         }
     ),
     "ulong": frozenset(
@@ -494,17 +472,12 @@ CSHARP_LITERAL_ACCEPTS: dict[str, frozenset[str]] = {
             "double",
             "decimal",
             "object",
-            "UInt64",
-            "Single",
-            "Double",
-            "Decimal",
-            "Object",
         }
     ),
-    "float": frozenset({"float", "double", "object", "Single", "Double", "Object"}),
-    "decimal": frozenset({"decimal", "object", "Decimal", "Object"}),
-    "double": frozenset({"double", "object", "Double", "Object"}),
-    "bool": frozenset({"bool", "object", "Boolean", "Object"}),
+    "float": frozenset({"float", "double", "object"}),
+    "decimal": frozenset({"decimal", "object"}),
+    "double": frozenset({"double", "object"}),
+    "bool": frozenset({"bool", "object"}),
     "char": frozenset(
         {
             "char",
@@ -514,16 +487,9 @@ CSHARP_LITERAL_ACCEPTS: dict[str, frozenset[str]] = {
             "double",
             "decimal",
             "object",
-            "Char",
-            "Int32",
-            "Int64",
-            "Single",
-            "Double",
-            "Decimal",
-            "Object",
         }
     ),
-    "string": frozenset({"string", "object", "String", "Object"}),
+    "string": frozenset({"string", "object"}),
 }
 # A numeric literal's type comes from its suffix (`1L` is long, `1.0m` is
 # decimal), so the two numeric node types are typed from their text; an
@@ -548,9 +514,6 @@ CSHARP_DIGIT_SEPARATOR = "_"
 CSHARP_INTEGER_BASE_PREFIXES: dict[str, int] = {"0x": 16, "0b": 2}
 CSHARP_DECIMAL_BASE = 10
 CSHARP_INT_MAX = 2**31 - 1
-CSHARP_JUDGED_PARAM_TYPES: frozenset[str] = frozenset().union(
-    *CSHARP_LITERAL_ACCEPTS.values()
-)
 CSHARP_SYSTEM_PREFIX = "System."
 # What a type name resolved in the file that wrote it is spelled as: its qn
 # behind a leading dot (`.proj.A.Widget`). No source spelling starts with a
@@ -588,6 +551,10 @@ CSHARP_PREDEFINED_TYPE_NAMES: dict[str, str] = {
     "ushort": "UInt16",
     "object": "Object",
     "string": "String",
+}
+# The keyword each of those framework types is spelled with: `Int32` -> `int`.
+CSHARP_PREDEFINED_TYPE_KEYWORDS: dict[str, str] = {
+    framework: keyword for keyword, framework in CSHARP_PREDEFINED_TYPE_NAMES.items()
 }
 # Value types a signature can tell from their nullable form: `F(int)` and
 # `F(int?)` are two overloads, since `int?` is `Nullable<int>`, where a `?`

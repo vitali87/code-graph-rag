@@ -36,9 +36,9 @@ from .overloads import (
     declared_type,
     fit,
     is_tuple,
+    literal_fit,
     mentioned_names,
     parameter_types,
-    plain_type_name,
     resolved_qn,
     same_type_name,
     substitute,
@@ -150,19 +150,13 @@ def _numeric_literal_type(node_type: str, text: str) -> str | None:
 
 
 def _literals_fit(leaf: str, literal_types: list[str | None]) -> bool:
-    # Could each literal argument bind its parameter? A parameter whose type
-    # the literal tables do not list, and a non-literal argument, are not
-    # judged; a `params` tail beyond the declared count is not either.
-    for param_type, literal in zip(_param_types(leaf), literal_types, strict=False):
-        if literal is None:
-            continue
-        param = plain_type_name(param_type)
-        if (
-            param in cs.CSHARP_JUDGED_PARAM_TYPES
-            and param not in cs.CSHARP_LITERAL_ACCEPTS[literal]
-        ):
-            return False
-    return True
+    # Could each literal argument bind its parameter? A parameter that names
+    # no predefined type (`literal_fit`), and a non-literal argument, are
+    # not judged; a `params` tail beyond the declared count is not either.
+    return all(
+        literal is None or literal_fit(param_type, literal) is not None
+        for param_type, literal in zip(_param_types(leaf), literal_types, strict=False)
+    )
 
 
 class _Sentinel:

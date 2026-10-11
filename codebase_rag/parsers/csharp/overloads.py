@@ -106,10 +106,20 @@ class TypeJudge(Protocol):
         ...
 
 
-def plain_type_name(type_name: str) -> str:
-    # `System.Int32?` -> `Int32`: the spelling the literal tables list.
-    name = type_name.strip().removesuffix(cs.CSHARP_NULLABLE_SUFFIX)
-    return name.removeprefix(cs.CSHARP_SYSTEM_PREFIX)
+def predefined_keyword(core: str) -> str | None:
+    """The keyword of the predefined type a type with no shape after it
+    names: `int` for `int`, `Int32`, `System.Int32` and `global::System.Int32`.
+    None for any other type, a first-party namesake among them: a name its
+    file resolved (`.proj.N.Int32`) or another namespace qualifies
+    (`N.Int32`) only shares the framework type's name (PR 2814 review)."""
+    if core.startswith(cs.CSHARP_RESOLVED_PREFIX) or cs.CHAR_ANGLE_OPEN in core:
+        return None
+    path = core.strip().rpartition(cs.SEPARATOR_DOUBLE_COLON)[2]
+    if path in cs.CSHARP_PREDEFINED_TYPE_NAMES:
+        return path
+    return cs.CSHARP_PREDEFINED_TYPE_KEYWORDS.get(
+        path.removeprefix(cs.CSHARP_SYSTEM_PREFIX)
+    )
 
 
 def mentioned_names(type_text: str) -> set[str]:
@@ -333,9 +343,17 @@ def _array_shape(suffix: str) -> str:
     return suffix.replace(cs.CSHARP_NULLABLE_SUFFIX, "")
 
 
+def _known_type(core: str) -> str | None:
+    # What a canonical type with no shape after it is known to name: a
+    # resolved first-party type's qn, or a predefined type's keyword, which
+    # no qn is. None for a spelling that may be either, or neither.
+    return resolved_qn(core) or predefined_keyword(core)
+
+
 def _proven_apart(given: str, wanted: str) -> bool:
     # Whether two canonical types name, at some matching position, two
-    # different resolved first-party types, or one in two array shapes.
+    # different known types (first-party or predefined: the project's
+    # `Int32` is no `int`, nor `string` one), or one in two array shapes.
     (given_core, given_suffix), (wanted_core, wanted_suffix) = (
         type_shape(given),
         type_shape(wanted),
@@ -350,7 +368,7 @@ def _proven_apart(given: str, wanted: str) -> bool:
             or _array_shape(given_suffix) != _array_shape(wanted_suffix)
             or _any_apart(given_elements, wanted_elements)
         )
-    given_qn, wanted_qn = resolved_qn(given_core), resolved_qn(wanted_core)
+    given_qn, wanted_qn = _known_type(given_core), _known_type(wanted_core)
     if given_qn is not None and wanted_qn is not None:
         if given_qn != wanted_qn:
             return True
@@ -428,15 +446,20 @@ def _simple_name(type_text: str) -> str:
     return strip_generic_arguments(leaf_type_segment(type_text))
 
 
-def _literal_fit(parameter: str, literal: str) -> Fit | None:
-    plain = plain_type_name(parameter)
-    if plain not in cs.CSHARP_JUDGED_PARAM_TYPES:
+def literal_fit(parameter: str, literal: str) -> Fit | None:
+    """How a literal of C# type `literal` binds `parameter`, None when it
+    cannot. Only a predefined type, or its nullable, is judged, by the
+    keyword it names (`predefined_keyword`), so `System.Int32` is an int's
+    identity and a first-party `Int32` is not judged at all."""
+    core, suffix = type_shape(parameter)
+    keyword = predefined_keyword(core)
+    # An array or pointer of one (`int[]`) is not.
+    if keyword is None or suffix.removesuffix(cs.CSHARP_NULLABLE_SUFFIX):
         return Fit.OTHER
-    if plain not in cs.CSHARP_LITERAL_ACCEPTS[literal]:
+    if keyword not in cs.CSHARP_LITERAL_ACCEPTS[literal]:
         return None
     # `int?` takes an int through a nullable conversion, which `int` beats.
-    nullable = parameter.strip().endswith(cs.CSHARP_NULLABLE_SUFFIX)
-    return Fit.EXACT if plain == literal and not nullable else Fit.CONVERTIBLE
+    return Fit.EXACT if keyword == literal and not suffix else Fit.CONVERTIBLE
 
 
 def arguments_match(
@@ -536,11 +559,13 @@ def written_type(argument: ArgumentType) -> str:
 
 
 def same_type_name(given: str, wanted: str, given_arity: int | None = None) -> bool:
-    """Whether two written types name one class, arguments aside: the same
-    simple name, alias-blind (`Int32`, `int`), with as many type arguments
-    (`given_arity` when `given` does not spell them), and no qualification
-    that sets them apart (`A.Widget`, `B.Widget`), in one shape: `Widget[]`
-    is not `Widget`, nor `(Widget, int)` `(Widget, string)` (PR 2814 review)."""
+    """Whether two written types name one class, arguments aside: one
+    predefined type however spelled (`int`, `System.Int32`), or the same
+    simple name with as many type arguments (`given_arity` when `given`
+    does not spell them) and no qualification that sets them apart
+    (`A.Widget`, `B.Widget`), in one shape: `Widget[]` is not `Widget`, nor
+    `(Widget, int)` `(Widget, string)`. A first-party `N.Int32` is not
+    `int` (PR 2814 review)."""
     (given_core, given_suffix), (wanted_core, wanted_suffix) = (
         type_shape(given),
         type_shape(wanted),
@@ -549,16 +574,19 @@ def same_type_name(given: str, wanted: str, given_arity: int | None = None) -> b
         return False
     if is_tuple(given_core) or is_tuple(wanted_core):
         return _same_tuple(given_core, wanted_core)
-    name = _framework_name(_simple_name(given_core))
-    if name != _framework_name(_simple_name(wanted_core)):
-        return False
     arity = (
         generic_arity_of_type_text(given_core) if given_arity is None else given_arity
     )
     if arity != generic_arity_of_type_text(wanted_core):
         return False
-    predefined = name in cs.CSHARP_PREDEFINED_TYPE_NAMES.values()
-    return predefined or not _qualified_apart(given_core, wanted_core)
+    if not arity:
+        # Where either names a predefined type, both must name that one.
+        keywords = {predefined_keyword(given_core), predefined_keyword(wanted_core)}
+        if keywords != {None}:
+            return len(keywords) == 1
+    if _simple_name(given_core) != _simple_name(wanted_core):
+        return False
+    return not _qualified_apart(given_core, wanted_core)
 
 
 def _same_tuple(given: str, wanted: str) -> bool:
@@ -587,16 +615,12 @@ def _qualified_apart(argument_name: str, parameter: str) -> bool:
     return longer[-len(shorter) :] != shorter
 
 
-def _framework_name(name: str) -> str:
-    # `int` and `Int32` are one type: the framework name stands for both.
-    return cs.CSHARP_PREDEFINED_TYPE_NAMES.get(name, name)
-
-
 def same_type(given: str, wanted: str) -> bool:
     """Whether two written types name one type: `Target<int>` twice,
     `Lib.Person` and `Person`, or `System.Int32` and `int` (PR 2814 review);
     never `Target<int>` and `Target<string>`, nor `A.Widget` and
-    `B.Widget`. The one alias-blind comparison every path uses."""
+    `B.Widget`, nor a first-party `N.Int32` and `int`. The one alias-blind
+    comparison every path uses."""
     if not same_type_name(given, wanted):
         return False
     return bool(arguments_match(type_arguments(given), type_arguments(wanted), ()))
@@ -620,7 +644,7 @@ def fit(
     if parameter in open_names:
         return Fit.OPEN
     if argument.literal is not None:
-        return _literal_fit(parameter, argument.literal)
+        return literal_fit(parameter, argument.literal)
     if argument.name is None:
         return Fit.UNKNOWN
     identical = judge.identical(argument, parameter, open_names)

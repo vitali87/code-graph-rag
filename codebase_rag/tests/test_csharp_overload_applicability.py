@@ -846,6 +846,36 @@ class TestAReceiversTypeArgumentsCloseAConstraintsBound:
         assert calls["Meets"] == {"Rb.C.M(T)"}, calls
 
 
+CUSTOM_PREDEFINED_CS = """\
+namespace N { public struct Int32 { } }
+namespace L {
+    public class Box<X> { }
+    public class C { public void M(object o) { } public void M(Box<int> b) { } }
+    public class Use {
+        public void Custom() { new C().M(new Box<N.Int32>()); }
+        public void Framework() { new C().M(new Box<System.Int32>()); }
+    }
+}
+"""
+
+
+class TestAFirstPartyTypeIsNoPredefinedTypeOfItsName:
+    # Greptile review of PR 2814: the project's `N.Int32` is not
+    # `System.Int32`, so it does not close `Box<int>`.
+    def test_a_first_party_namesake_is_another_type(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _calls(CUSTOM_PREDEFINED_CS, temp_repo, mock_ingestor)
+        assert calls["Custom"] == {"L.C.M(object)"}, calls
+
+    def test_the_framework_type_is_still_its_alias(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Negative: `System.Int32` is `int`.
+        calls = _calls(CUSTOM_PREDEFINED_CS, temp_repo, mock_ingestor)
+        assert calls["Framework"] == {"L.C.M(Box<int>)"}, calls
+
+
 # Every place overload ranking compares, resolves or walks types, against
 # each of three invariants (PR 2814 review): (a) a predefined type is its
 # alias (`int` is `System.Int32`), (b) an argument's type resolves in the
@@ -1253,6 +1283,61 @@ INVARIANT_CASES: dict[str, _Case] = {
         "public void Run() { f.M(new D()); } }\n",
         frozenset({"G.M(T)"}),
     ),
+    # Greptile review of PR 2814: an alias names the framework type only, so
+    # the project's own `Int32` is another type on every path.
+    "alias-custom-score": _Case(
+        "namespace L; public struct Int32 { } public class Box<X> { }\n"
+        f"public class C {{ public void M(Box<int> b) {{ }} {_PAIR} }}",
+        _use("new C().M(new Box<Int32>());"),
+        frozenset({"C.M(object)"}),
+    ),
+    "alias-custom-score-neg": _Case(
+        "namespace L; public struct Int32 { } public class Box<X> { }\n"
+        f"public class C {{ public void M(Box<System.Int32> b) {{ }} {_PAIR} }}",
+        _use("new C().M(new Box<int>());"),
+        frozenset({"C.M(Box<System.Int32>)"}),
+    ),
+    "alias-custom-base": _Case(
+        "namespace L; public struct Int32 { } public class Box<X> { }\n"
+        "public class D : Box<Int32> { }\n"
+        f"public class C {{ public void M(Box<int> b) {{ }} {_PAIR} }}",
+        _use("new C().M(new D());"),
+        frozenset({"C.M(object)"}),
+    ),
+    "alias-custom-bound": _Case(
+        "namespace L; public struct Int32 { } public class Box<X> { }\n"
+        "public class D : Box<Int32> { }\n"
+        f"public class C {{ public void M<T>(T x) where T : Box<int> {{ }} {_PAIR} }}",
+        _use("new C().M(new D());"),
+        frozenset({"C.M(object)"}),
+    ),
+    "alias-custom-operator": _Case(
+        "namespace L; public struct Int32 { } public class Target<X> { }\n"
+        "public class Source { public static implicit operator Target<Int32>(Source s) => null; }\n"
+        f"public class C {{ public void M(Target<int> t) {{ }} {_PAIR} }}",
+        _use("new C().M(new Source());"),
+        frozenset({"C.M(object)"}),
+    ),
+    "alias-custom-explicit": _Case(
+        "namespace L; public struct Int32 { }\n"
+        "public interface IRun<T> { void Go(T x); void Go(int x); }\n"
+        "public class Runner : IRun<Int32> { void IRun<Int32>.Go(Int32 x) { } "
+        "void IRun<Int32>.Go(int x) { } }",
+        "using L;\nnamespace U;\npublic class Use { public void Run(IRun<Int32> r) { r.Go(1); } }\n",
+        frozenset({"IRun.Go(int)", "Runner.IRun<Int32>#Go(int)"}),
+    ),
+    "alias-literal": _Case(
+        "namespace L; public class C { public void M(System.Int32 x) { } "
+        "public void M(long x) { } }",
+        _use("new C().M(1);"),
+        frozenset({"C.M(System.Int32)"}),
+    ),
+    "alias-literal-custom-neg": _Case(
+        "namespace L; public struct Int32 { }\n"
+        "public class C { public void M(Int32 x) { } public void M(long x) { } }",
+        _use("new C().M(1);"),
+        frozenset({"C.M(long)"}),
+    ),
 }
 
 
@@ -1530,6 +1615,52 @@ OVERRIDE_CASES: dict[str, _OverrideCase] = {
             run="",
         ),
         ("P.IPut<U#Widget>#Put(List<U.Widget>)", "IPut.Put(List<T>)"),
+        True,
+    ),
+    # Greptile review of PR 2814: the project's own `Int32` is no `int`, so
+    # an override taking `Box<Int32>` overrides `Put(Box<T>)` alone.
+    "override-custom-predefined": _OverrideCase(
+        "namespace L; public struct Int32 { } public class Box<X> { }\n"
+        "public class Base<T> { public virtual void Put(Box<int> x) { } "
+        "public virtual void Put(Box<T> x) { } }\n"
+        "public class D : Base<Int32> { public override void Put(Box<Int32> x) { } }",
+        _use(""),
+        ("D.Put(Box<Int32>)", "Base.Put(Box<T>)"),
+        True,
+    ),
+    "override-custom-predefined-neg": _OverrideCase(
+        "namespace L; public struct Int32 { } public class Box<X> { }\n"
+        "public class Base<T> { public virtual void Put(Box<int> x) { } "
+        "public virtual void Put(Box<T> x) { } }\n"
+        "public class D : Base<Int32> { public override void Put(Box<Int32> x) { } }",
+        _use(""),
+        ("D.Put(Box<Int32>)", "Base.Put(Box<int>)"),
+        False,
+    ),
+    # A predefined type is as known as a resolved one, so a parameter
+    # naming another (the project's `Int32`, or `string`) proves a public
+    # method apart from the interface member, which no fallback then pairs.
+    "override-custom-predefined-member-neg": _OverrideCase(
+        "namespace L; public struct Int32 { }\n"
+        "public interface IRun { void Go(int x); }\n"
+        "public class R : IRun { void IRun.Go(int x) { } public void Go(Int32 x) { } }",
+        _use(""),
+        ("R.Go(Int32)", "IRun.Go(int)"),
+        False,
+    ),
+    "override-other-predefined-member-neg": _OverrideCase(
+        "namespace L; public interface IRun { void Go(int x); }\n"
+        "public class R : IRun { void IRun.Go(int x) { } public void Go(string x) { } }",
+        _use(""),
+        ("R.Go(string)", "IRun.Go(int)"),
+        False,
+    ),
+    "override-predefined-member": _OverrideCase(
+        "namespace L; public struct Int32 { }\n"
+        "public interface IRun { void Go(int x); }\n"
+        "public class R : IRun { public void Go(System.Int32 x) { } public void Go(Int32 x) { } }",
+        _use(""),
+        ("R.Go(System.Int32)", "IRun.Go(int)"),
         True,
     ),
 }
