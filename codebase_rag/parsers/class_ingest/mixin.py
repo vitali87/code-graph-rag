@@ -31,6 +31,7 @@ from ...utils import qn_markers
 from ...utils.path_utils import cached_relative_path, cached_resolve_posix
 from ..anchor_hash import anchor_hash_props
 from ..cpp import CppTypeInferenceEngine
+from ..cpp import local_types as cpp_local_types
 from ..cpp import utils as cpp_utils
 from ..csharp import utils as csharp_utils
 from ..dart import utils as dart_utils
@@ -43,6 +44,7 @@ from ..js_ts import utils as js_ts_utils
 from ..parameter_nodes import PendingParameterType, csharp_call_shape
 from ..php import namespaces as php_namespaces
 from ..py import external_stdlib_base_method_names, resolve_class_name
+from ..py.class_aliases import scan_class_body_aliases
 from ..rs import RustTypeInferenceEngine
 from ..rs import utils as rs_utils
 from ..utils import (
@@ -300,6 +302,32 @@ def _signatured_method_qn(
     return None
 
 
+def _python_member_aliases(
+    body_node: Node, language: cs.SupportedLanguage
+) -> dict[int, tuple[str, ...]]:
+    # Method node id -> the other member names the class body binds it to
+    # (`run = _plain`, issue #2620), so the method registers under them too.
+    if language != cs.SupportedLanguage.PYTHON:
+        return {}
+    names: dict[int, list[str]] = {}
+    for alias, methods in scan_class_body_aliases(body_node).members.items():
+        for method in methods:
+            names.setdefault(method.id, []).append(alias)
+    return {method_id: tuple(aliases) for method_id, aliases in names.items()}
+
+
+def _python_non_method_members(
+    class_node: Node, language: cs.SupportedLanguage
+) -> list[str]:
+    # The names the class body binds to a value that is no method (`run =
+    # None`): they hide a base's `run` from attribute lookup (issue #2620).
+    if language != cs.SupportedLanguage.PYTHON:
+        return []
+    if (body := class_node.child_by_field_name(cs.FIELD_BODY)) is None:
+        return []
+    return sorted(scan_class_body_aliases(body).non_method)
+
+
 class _MethodScope(NamedTuple):
     # The per-class context every method of one class body is ingested under.
     class_node: Node
@@ -365,6 +393,7 @@ class ClassIngestMixin:
     pending_type_facts: list[PendingTypeFact]
     pending_parameter_types: list[PendingParameterType]
     pending_field_types: list[PendingFieldType]
+    python_overload_stubs: dict[str, frozenset[int]]
 
     def _namespace_qn(self, class_qn: str, module_qn: str) -> str:
         # Strip the module-file prefix so two nodes for the same C++ type in
@@ -1312,12 +1341,17 @@ class ClassIngestMixin:
             )
             return
 
-        identity = id_.resolve_class_identity(
-            class_node,
-            module_qn,
-            language,
-            lang_config,
-            file_path,
+        local_qn = self._cpp_local_type_qn(class_node, module_qn, language)
+        identity = (
+            self._cpp_local_type_identity(class_node, local_qn)
+            if local_qn is not None
+            else id_.resolve_class_identity(
+                class_node,
+                module_qn,
+                language,
+                lang_config,
+                file_path,
+            )
         )
         if not identity:
             return
@@ -1359,8 +1393,13 @@ class ClassIngestMixin:
         class_props.update(anchor_hash_props(class_node, decorators))
         if language == cs.SupportedLanguage.CSHARP:
             self._record_csharp_namespace(class_node, class_qn, class_props)
+        # Stored on the node so an incremental run that does not re-parse
+        # this file can register them again.
+        if non_method_members := _python_non_method_members(class_node, language):
+            class_props[cs.KEY_NON_METHOD_MEMBERS] = non_method_members
         self.ingestor.ensure_node_batch(node_type, class_props)
         self.function_registry[class_qn] = node_type
+        self.function_registry.set_non_method_members(class_qn, non_method_members)
         if class_name:
             self._index_class_simple_name(class_name, class_qn)
 
@@ -1371,8 +1410,12 @@ class ClassIngestMixin:
         # record for the sweep to attribute it by.
         self.class_owner_module[class_qn] = module_qn
 
-        parent_label, parent_qn, parent_span = self._determine_function_parent(
-            class_node, class_qn, module_qn, lang_config, language
+        parent_label, parent_qn, parent_span = (
+            self._cpp_local_type_parent(class_node, local_qn, module_qn)
+            if local_qn is not None
+            else self._determine_function_parent(
+                class_node, class_qn, module_qn, lang_config, language
+            )
         )
         self._emit_or_defer_defines(
             parent_label,
@@ -1482,6 +1525,46 @@ class ClassIngestMixin:
             func_node_starts=func_node_starts,
             module_qn=module_qn,
         )
+
+    def _cpp_local_type_qn(
+        self, class_node: Node, module_qn: str, language: cs.SupportedLanguage
+    ) -> str | None:
+        # A type written in a function body is that function's, not the
+        # module's: two functions' local `Checker`s must not collide, and an
+        # unnamed functor needs a name for its operator() to hang off
+        # (issue #2555).
+        if language != cs.SupportedLanguage.CPP:
+            return None
+        return cpp_local_types.local_type_qn(
+            class_node, module_qn, self.function_locations
+        )
+
+    @staticmethod
+    def _cpp_local_type_identity(
+        class_node: Node, local_qn: str
+    ) -> tuple[str, str, bool]:
+        return (
+            local_qn,
+            local_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1],
+            cpp_utils.is_exported(class_node),
+        )
+
+    def _cpp_local_type_parent(
+        self, class_node: Node, local_qn: str, module_qn: str
+    ) -> tuple[str, str, FunctionSpanKey | None]:
+        # A local type is defined by the callable it is written in, or by the
+        # local type it is nested in. The callable's span pins the parent
+        # node for the deferred link: an out-of-line method registers only
+        # once its class resolves after every file, and an overload's local
+        # type must bind to that overload, not a same-named twin.
+        owner_qn = local_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        parent = cpp_local_types.local_type_parent(class_node)
+        if parent is None or parent.type in cs.CPP_COMPOUND_TYPES:
+            return cs.NodeLabel.CLASS, owner_qn, None
+        span = function_span_key(module_qn, parent)
+        recorded = self.function_locations.get(span)
+        label = recorded.label if recorded is not None else cs.NodeLabel.METHOD
+        return label, owner_qn, span
 
     def _defer_forward_declaration(
         self,
@@ -1989,12 +2072,14 @@ class ClassIngestMixin:
             return
 
         lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
+        member_aliases = _python_member_aliases(body_node, language)
 
         method_nodes = _impl_body_method_nodes(
             body_node, lang_queries, sorted_func_nodes, func_node_starts
         )
         if method_nodes is None:
             return
+        method_nodes = self._without_overload_stubs(method_nodes, module_qn)
 
         external_override_names, annotated_override_sink = (
             self._method_override_context(class_qn, language)
@@ -2036,11 +2121,22 @@ class ClassIngestMixin:
                 pending_endpoints=self.pending_endpoints,
                 type_fact_sink=self.pending_type_facts,
                 parameter_type_sink=self.pending_parameter_types,
+                member_aliases=member_aliases.get(method_node.id, ()),
             )
             if ingested_qn is not None:
                 self._record_ingested_method(scope, method_node, ingested_qn)
             if language == cs.SupportedLanguage.CPP:
                 self._record_cpp_method_return_type(method_node, class_qn)
+
+    def _without_overload_stubs(
+        self, method_nodes: list[Node], module_qn: str | None
+    ) -> list[Node]:
+        # The implementation after an `@overload` stub owns the method's
+        # name; the stub is no method of its own (issue #2590).
+        stubs = self.python_overload_stubs.get(module_qn or "")
+        if not stubs:
+            return method_nodes
+        return [node for node in method_nodes if node.start_byte not in stubs]
 
     def _method_override_context(
         self, class_qn: str, language: cs.SupportedLanguage

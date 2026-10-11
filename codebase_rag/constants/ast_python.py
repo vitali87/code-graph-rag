@@ -94,11 +94,17 @@ TS_FIELD_OPERATORS = "operators"
 TS_PY_IF_STATEMENT = "if_statement"
 TS_PY_TRY_STATEMENT = "try_statement"
 TS_PY_GLOBAL_STATEMENT = "global_statement"
+# `del x` and `type X = ...`: both bind (or unbind) the name they hold.
+TS_PY_DELETE_STATEMENT = "delete_statement"
+TS_PY_TYPE_ALIAS_STATEMENT = "type_alias_statement"
 TS_PY_NONLOCAL_STATEMENT = "nonlocal_statement"
 # Match statement: arms are exclusive; an UNGUARDED `case _` (empty
 # case_pattern) always matches, removing the implicit no-match path.
 TS_PY_MATCH_STATEMENT = "match_statement"
 TS_PY_CASE_CLAUSE = "case_clause"
+# Every clause of a compound statement (elif/else/except/finally/case) ends
+# with this, so a class-body scan can reach the blocks under any of them.
+TS_PY_CLAUSE_SUFFIX = "_clause"
 TS_PY_CASE_PATTERN = "case_pattern"
 TS_PY_FIELD_GUARD = "guard"
 FIELD_SUBJECT = "subject"
@@ -120,6 +126,31 @@ TS_PY_ELIF_CLAUSE = "elif_clause"
 TS_PY_ELSE_CLAUSE = "else_clause"
 TS_PY_EXCEPT_CLAUSE = "except_clause"
 TS_PY_FINALLY_CLAUSE = "finally_clause"
+# Statements whose bodies hold further statements: the walk that finds every
+# block of a module descends through these and never into an expression.
+PY_STATEMENT_CONTAINERS = frozenset(
+    {
+        TS_PY_BLOCK,
+        TS_PY_IF_STATEMENT,
+        TS_PY_ELIF_CLAUSE,
+        TS_PY_ELSE_CLAUSE,
+        TS_PY_TRY_STATEMENT,
+        TS_PY_EXCEPT_CLAUSE,
+        TS_PY_FINALLY_CLAUSE,
+        TS_PY_WITH_STATEMENT,
+        TS_PY_FOR_STATEMENT,
+        TS_PY_WHILE_STATEMENT,
+        TS_PY_MATCH_STATEMENT,
+        TS_PY_CASE_CLAUSE,
+        TS_PY_FUNCTION_DEFINITION,
+        TS_PY_CLASS_DEFINITION,
+        TS_PY_DECORATED_DEFINITION,
+    }
+)
+# `typing.overload` and the modules exporting it: a stub it decorates is
+# folded into the implementation that follows (issue #2590).
+PY_OVERLOAD = "overload"
+PY_OVERLOAD_MODULES = frozenset({"typing", "typing_extensions"})
 TS_PY_CONDITIONAL_EXPRESSION = "conditional_expression"
 TS_PY_BOOLEAN_OPERATOR = "boolean_operator"
 TS_PY_BINARY_OPERATOR = "binary_operator"
@@ -295,6 +326,8 @@ PY_DUNDER_SETITEM = "__setitem__"
 PY_DUNDER_CONTAINS = "__contains__"
 PY_DUNDER_LEN = "__len__"
 PY_DUNDER_BOOL = "__bool__"
+# `obj(...)` on an instance runs `type(obj).__call__`.
+PY_DUNDER_CALL = "__call__"
 # Operands with these characters are not simple attribute/name chains (calls,
 # nested subscripts, whitespace), so the operator-dispatch synthesiser skips them.
 PY_OPERAND_REJECT_CHARS = "()[]{}\n\t "
