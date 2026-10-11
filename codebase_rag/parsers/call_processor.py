@@ -3681,6 +3681,12 @@ class CallProcessor:
             # Named as the definition pass names it, so its methods get a
             # class pass and the module pass leaves them alone (issue #2538).
             return anonymous_name
+        if language == cs.SupportedLanguage.CPP and (
+            name_node := class_node.child_by_field_name(cs.FIELD_NAME)
+        ):
+            # A specialization is spelled as the definition pass spells it,
+            # so a caller qn built from it names the same class (issue #2434).
+            return cpp_utils.type_name_text(name_node)
         return self._get_node_name(class_node)
 
     def _class_method_name(

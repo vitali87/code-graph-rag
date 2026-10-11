@@ -238,7 +238,7 @@ EMBEDDINGS_COMPLETE = "Successfully generated {count} semantic embeddings"
 EMBEDDING_GENERATION_FAILED = "Failed to generate semantic embeddings: {error}"
 EMBEDDINGS_INTERRUPTED = (
     "Semantic embedding generation interrupted; the graph is saved without the"
-    " remaining embeddings, which the next sync that finds a code change generates"
+    " remaining embeddings"
 )
 EMBEDDING_STORE_FAILED = "Failed to store embedding for {name}: {error}"
 EMBEDDING_STORE_RETRY = "Vector store upsert failed (attempt {attempt}/{max_attempts}), retrying in {delay:.1f}s: {error}"
@@ -262,6 +262,11 @@ EMBEDDING_STALE_SKIPPED = (
     "registry could not be read, so a nested project's vectors cannot be told "
     "from this one's; the next sync removes them"
 )
+EMBEDDINGS_PENDING = (
+    "Embeddings of project '{project}' are incomplete; the next sync retries "
+    "them even if no file changed"
+)
+EMBEDDINGS_PENDING_NOT_UPDATED = "Embeddings pending marker not updated"
 VECTOR_STORE_REKEYED = (
     "Removed {count} {backend} vectors of project '{project}' that were keyed "
     "by Memgraph node id; its vectors are keyed by symbol now"
