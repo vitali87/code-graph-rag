@@ -50,9 +50,7 @@ def type_name_text(name_node: Node) -> str | None:
     parts: list[str] = []
     previous: Node | None = None
     for token in _name_tokens(name_node):
-        # Only a string literal argument has whitespace inside one token;
-        # collapsing it keeps the name on one line.
-        text = cs.CHAR_SPACE.join((safe_decode_text(token) or "").split())
+        text = _token_text(token)
         if not text:
             continue
         if previous is not None and (
@@ -70,14 +68,27 @@ def type_name_text(name_node: Node) -> str | None:
     return name.replace(cs.SEPARATOR_DOT, cs.CPP_TEMPLATE_ARG_DOT) or None
 
 
+def _token_text(token: Node) -> str:
+    raw = safe_decode_text(token) or ""
+    if token.type in cs.CPP_LITERAL_ARGUMENT_TYPES:
+        # Its spaces are part of the argument's value; only a line break or
+        # tab is escaped, to keep the name on one line.
+        return raw.translate(_LITERAL_LINE_ESCAPES)
+    return cs.CHAR_SPACE.join(raw.split())
+
+
+_LITERAL_LINE_ESCAPES = str.maketrans(cs.CPP_LITERAL_LINE_ESCAPES)
+
+
 def _name_tokens(node: Node) -> Iterator[Node]:
-    # The leaves under `node` in source order, comments left out.
+    # The leaves under `node` in source order, comments left out; a literal
+    # argument is one token, kept whole.
     stack = [node]
     while stack:
         current = stack.pop()
         if current.type == cs.TS_COMMENT:
             continue
-        if current.child_count == 0:
+        if current.child_count == 0 or current.type in cs.CPP_LITERAL_ARGUMENT_TYPES:
             yield current
         else:
             stack.extend(reversed(current.children))

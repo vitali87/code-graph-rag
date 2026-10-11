@@ -227,6 +227,17 @@ FIELD_MACRO = "macro"
 # `compound_statement` is the block scope; `declaration` holds init_declarator
 # locals whose bound name is nested under the `declarator` field.
 TS_CPP_STRING_LITERAL = "string_literal"
+TS_CPP_RAW_STRING_LITERAL = "raw_string_literal"
+TS_CPP_CHAR_LITERAL = "char_literal"
+# A literal template argument (a C++20 fixed string, a character) is one value
+# whose spaces belong to it: `Box<"a b">` and `Box<"a  b">` are two
+# specializations, so a name renders the literal whole (review of PR 3356).
+CPP_LITERAL_ARGUMENT_TYPES = frozenset(
+    {TS_CPP_STRING_LITERAL, TS_CPP_RAW_STRING_LITERAL, TS_CPP_CHAR_LITERAL}
+)
+# A raw literal's line break or tab, written as its escape, keeps the name on
+# one line.
+CPP_LITERAL_LINE_ESCAPES = {"\n": "\\n", "\r": "\\r", "\t": "\\t"}
 TS_CPP_STRING_CONTENT = "string_content"
 TS_CPP_COMPOUND_STATEMENT = "compound_statement"
 # `if (int x = 1)` / `switch (int q = f())`: the condition declaration nests

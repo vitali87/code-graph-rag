@@ -310,3 +310,57 @@ def test_a_conventionally_written_specialization_keeps_its_existing_name(
     module = _index(temp_repo, source, mock_ingestor)
 
     assert _class_names(mock_ingestor).get(f"{module}.{spelling}") == spelling
+
+
+# --- string literal arguments keep their own spelling (review of PR 3356) --
+
+
+def test_whitespace_inside_a_string_literal_argument_keeps_specializations_apart(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A C++20 fixed-string argument's spaces are part of its value: `"a b"`
+    # and `"a  b"` are two specializations, and must not share one name.
+    module = _index(
+        temp_repo,
+        "template <auto S> struct Box {};\n"
+        'template <> struct Box<"a b"> {};\n'
+        'template <> struct Box<"a  b"> {};\n'
+        "template <> struct Box<' '> {};\n",
+        mock_ingestor,
+    )
+
+    names = set(_class_names(mock_ingestor).values())
+
+    assert {'Box<"a b">', 'Box<"a  b">', "Box<' '>"} <= names
+    assert f'{module}.Box<"a  b">' in _qns(mock_ingestor, cs.NodeLabel.CLASS)
+
+
+def test_a_raw_string_argument_stays_on_one_line(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A raw literal may hold a line break; it is written as an escape so the
+    # name stays one line without merging it with any other spelling.
+    _index(
+        temp_repo,
+        'template <auto S> struct Box {};\ntemplate <> struct Box<R"(x\ny)"> {};\n',
+        mock_ingestor,
+    )
+
+    names = set(_class_names(mock_ingestor).values())
+
+    assert 'Box<R"(x\\ny)">' in names
+    assert not any("\n" in name for name in names)
+
+
+def test_spacing_around_a_string_literal_argument_is_still_normalised(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: only the literal's own text is kept; the layout around it
+    # still renders the conventional way.
+    _index(
+        temp_repo,
+        'template <auto S> struct Box {};\ntemplate <> struct Box<\n  "a b"\n> {};\n',
+        mock_ingestor,
+    )
+
+    assert 'Box<"a b">' in set(_class_names(mock_ingestor).values())
