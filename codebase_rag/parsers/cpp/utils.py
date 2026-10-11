@@ -1,3 +1,5 @@
+from collections.abc import Iterator
+
 from tree_sitter import Node
 
 from ... import constants as cs
@@ -30,6 +32,59 @@ def build_qualified_name(node: Node, module_qn: str, name: str) -> str:
     if path_parts:
         return cs.SEPARATOR_DOT.join([module_qn, *path_parts, name])
     return cs.SEPARATOR_DOT.join([module_qn, name])
+
+
+def type_name_text(name_node: Node) -> str | None:
+    """The single-line name a class's `name` node spells (issue #2434).
+
+    A specialization is named by a `template_type` (`Box<T*, int>`) whose
+    raw text keeps the source's line breaks, indentation and comments, so a
+    reformat renamed the node. It is rendered from its tokens instead: one
+    space after each comma and between two words the source kept apart,
+    none elsewhere. A `.` in the arguments (`decltype(x.data())`, `Ts...`)
+    would read as a qualified-name separator, so it becomes
+    CPP_TEMPLATE_ARG_DOT. A plain identifier is its own text.
+    """
+    if name_node.child_count == 0:
+        return safe_decode_text(name_node)
+    parts: list[str] = []
+    previous: Node | None = None
+    for token in _name_tokens(name_node):
+        # Only a string literal argument has whitespace inside one token;
+        # collapsing it keeps the name on one line.
+        text = cs.CHAR_SPACE.join((safe_decode_text(token) or "").split())
+        if not text:
+            continue
+        if previous is not None and (
+            parts[-1] == cs.CHAR_COMMA
+            or (
+                token.start_byte > previous.end_byte
+                and _is_word_char(parts[-1][-1])
+                and _is_word_char(text[0])
+            )
+        ):
+            parts.append(cs.CHAR_SPACE)
+        parts.append(text)
+        previous = token
+    name = "".join(parts)
+    return name.replace(cs.SEPARATOR_DOT, cs.CPP_TEMPLATE_ARG_DOT) or None
+
+
+def _name_tokens(node: Node) -> Iterator[Node]:
+    # The leaves under `node` in source order, comments left out.
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if current.type == cs.TS_COMMENT:
+            continue
+        if current.child_count == 0:
+            yield current
+        else:
+            stack.extend(reversed(current.children))
+
+
+def _is_word_char(char: str) -> bool:
+    return char.isalnum() or char == cs.CHAR_UNDERSCORE
 
 
 def extract_namespace_path(node: Node) -> list[str]:

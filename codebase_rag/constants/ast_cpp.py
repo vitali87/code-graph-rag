@@ -107,6 +107,13 @@ C_FORWARD_DECLARING_NODE_TYPES = frozenset(
     {CppNodeType.DECLARATION, CppNodeType.FIELD_DECLARATION}
 )
 
+# A `.` inside a specialization's template arguments (`decltype(x.data())`,
+# a pack expansion `Ts...`) is not a qualified-name separator, yet every
+# consumer splits qns on `.` (issue #2434). It is written as U+2024 ONE DOT
+# LEADER, the glyph `sql_names` uses for a dot inside a quoted identifier, so
+# the name still reads as a dot. A C++ identifier cannot contain it.
+CPP_TEMPLATE_ARG_DOT = "\u2024"
+
 CPP_FALLBACK_OPERATOR = "operator_unknown"
 CPP_FALLBACK_DESTRUCTOR = "~destructor"
 CPP_OPERATOR_TEXT_PREFIX = "operator"
