@@ -4439,6 +4439,19 @@ class CallProcessor:
             self._resolver.python_local_names[caller_qn] = local
         else:
             self._resolver.python_local_names.pop(caller_qn, None)
+        self._record_python_name_typed_params(caller_node, caller_qn, module_qn)
+
+    def _record_python_name_typed_params(
+        self, caller_node: Node, caller_qn: str, module_qn: str
+    ) -> None:
+        # Parameters whose class only their name spells: a call through one
+        # is labelled heuristic (issue #2608).
+        python_inference = self._resolver.type_inference.python_type_inference
+        guessed = python_inference.name_typed_parameters(caller_node, module_qn)
+        if guessed:
+            self._resolver.python_name_typed_params[caller_qn] = frozenset(guessed)
+        else:
+            self._resolver.python_name_typed_params.pop(caller_qn, None)
 
     def _record_caller_flow_params(
         self,
@@ -6429,6 +6442,19 @@ class CallProcessor:
             # super().M() and Base.M() (not virtual dispatch). Skip self.attr.M()
             # (a call on a member, not on self).
             self._emit_python_self_dispatch(ctx, ctx.class_context, call_name)
+
+        if (
+            ctx.is_js_ts
+            and ctx.class_context
+            and call_name.startswith(cs.JS_THIS_CALL_PREFIX)
+            and self._resolver.function_registry.is_abstract(callee_qn)
+            and self._js_this_is_class_instance(call_node)
+        ):
+            # `this.m()` bound to an `abstract m()` declaration (issue #2524)
+            # runs a subclass override, never the declaration. Before the
+            # declaration had a node the call went unresolved and dispatched
+            # to those overrides; keep those edges beside the static one.
+            self._emit_js_this_dispatch(ctx, ctx.class_context, call_name)
 
         if ctx.is_flow_lang:
             # f(...) invoked through a parameter: the edge runs from the

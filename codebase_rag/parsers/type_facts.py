@@ -298,12 +298,38 @@ class TypeReferenceResolver:
         project_name: str,
     ) -> None:
         self._registry = function_registry
+        self._partial_groups: Mapping[str, list[str]] = {}
         self._imports = import_mapping
         self._prefix = f"{project_name}{cs.SEPARATOR_DOT}"
 
     def _is_type(self, qn: str) -> bool:
         node_type = self._registry.get(qn)
         return node_type is not None and str(node_type) in TYPE_NODE_TYPES
+
+    def join_partial_groups(self, partial_groups: Mapping[str, list[str]]) -> None:
+        """Count the parts of each C# partial type as one candidate.
+
+        Every file declaring a `partial` type registers its own node, so a
+        name matching the parts read as two equally near candidates and the
+        reference got no edge at all (issue #2469). `partial_groups` maps
+        each part to its group, as parsing builds them.
+        """
+        self._partial_groups = partial_groups
+
+    def _every_part(self, types: Mapping[str, None]) -> list[str]:
+        # A reference to a partial type names every part, not one chosen
+        # part. Which part comes first changes when a sync adds or drops one,
+        # and the edges an unchanged file already holds would keep naming the
+        # old choice beside the new one, a graph no clean index produces
+        # (review on #2829). Every part needs no such migration: a new part
+        # gains its edges from the requeued facts, a dropped one loses them
+        # with its node.
+        found: dict[str, None] = {}
+        for qn in types:
+            for part in sorted(self._partial_groups.get(qn) or (qn,)):
+                if part == qn or self._is_type(part):
+                    found.setdefault(part, None)
+        return list(found)
 
     def _scoped_candidates(self, name: str, module_qn: str) -> list[str]:
         head, _sep, rest = name.partition(cs.SEPARATOR_DOT)
@@ -324,9 +350,8 @@ class TypeReferenceResolver:
     def _nearest_unique(self, matches: list[str], module_qn: str) -> str | None:
         # 3. A unique project type with that name, preferring the nearest
         #    package; two equally near candidates stay unresolved rather
-        #    than guessed.
-        if len(matches) == 1:
-            return matches[0]
+        #    than guessed. The parts of a C# partial type are one candidate,
+        #    as near as its nearest part; `_every_part` then names them all.
         module_parts = module_qn.split(cs.SEPARATOR_DOT)
 
         def shared(qn: str) -> int:
@@ -337,8 +362,15 @@ class TypeReferenceResolver:
                 n += 1
             return n
 
-        ranked = sorted(matches, key=lambda qn: (-shared(qn), len(qn), qn))
-        if shared(ranked[0]) > shared(ranked[1]):
+        types: dict[str, list[str]] = {}
+        for qn in matches:
+            group = self._partial_groups.get(qn)
+            types.setdefault(min(group) if group else qn, []).append(qn)
+        nearness = {min(parts): max(map(shared, parts)) for parts in types.values()}
+        if len(nearness) == 1:
+            return next(iter(nearness))
+        ranked = sorted(nearness, key=lambda qn: (-nearness[qn], len(qn), qn))
+        if nearness[ranked[0]] > nearness[ranked[1]]:
             return ranked[0]
         return None
 
@@ -381,7 +413,7 @@ class TypeReferenceResolver:
             qn = self.resolve(name, module_qn)
             if qn is not None:
                 found.setdefault(qn, None)
-        return list(found)
+        return self._every_part(found)
 
     def label_for(self, qn: str) -> str:
         return str(self._registry[qn])
