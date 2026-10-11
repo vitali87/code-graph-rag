@@ -303,6 +303,10 @@ TS_GENERIC_TYPE = "generic_type"
 TS_UNION_TYPE = "union_type"
 TS_TYPE_IDENTIFIER = "type_identifier"
 TS_NESTED_TYPE_IDENTIFIER = "nested_type_identifier"
+# What a TS `implements` or interface `extends` entry may name (issue #2560):
+# a bare type, or a namespace member (`r.Plain`). A generic_type (`Router<T>`)
+# names one of these through its `name` field.
+TS_HERITAGE_TYPE_NAME_TYPES = (TS_TYPE_IDENTIFIER, TS_NESTED_TYPE_IDENTIFIER)
 TS_JS_OPERATOR_OF = "of"
 TS_NULLISH_TYPE_TEXTS = frozenset({"null", "undefined"})
 TS_ARRAY_GENERIC_NAMES = frozenset(
@@ -390,6 +394,9 @@ FIELD_KEY = "key"
 JS_REQUIRE_KEYWORD = "require"
 JS_EXPORTS_KEYWORD = "exports"
 JS_MODULE_KEYWORD = "module"
+# A `lexical_declaration`'s `kind`: only a `const` binding can never be
+# reassigned, which is what lets a request URL fold its value (issue #2521).
+JS_CONST_KEYWORD = "const"
 
 # JS/TS export type descriptions
 JS_EXPORT_TYPE_COMMONJS = "CommonJS Export"

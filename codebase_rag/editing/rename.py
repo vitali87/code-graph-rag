@@ -39,9 +39,11 @@ from tree_sitter import Node
 from .. import constants as cs
 from .. import cypher_queries as cq
 from .. import graph_query
+from ..function_registry import TYPE_SPACE_KINDS
 from ..graph_updater import ReingestAborted
 from ..language_spec import csharp_partial_key_from_graph, get_language_for_extension
 from ..parser_loader import load_parsers
+from ..parsers.py.overloads import overload_stub_names
 from ..types_defs import PropertyParams, ResultRow
 from ..utils.path_utils import (
     base_module_qn,
@@ -108,6 +110,11 @@ _ALL_ENTRY = cs.PY_DUNDER_ALL_ENTRY_PATTERN
 # defensive, not load-bearing -- do not read the suite's greenness as evidence
 # that it works.
 _MAX_IMPORT_LINES = 200
+
+# The labels of TypeScript's type-only declarations, which may share their
+# qualified name with a value (issue #2520).
+_TYPE_SPACE_LABELS = frozenset(str(kind) for kind in TYPE_SPACE_KINDS)
+_TS_LANGUAGES = frozenset({cs.SupportedLanguage.TS, cs.SupportedLanguage.TSX})
 
 
 class RenameSite(NamedTuple):
@@ -498,6 +505,32 @@ def _last_identifier(
     return byte_to_line_col(source, offset)
 
 
+def _overload_stub_sites(definition: RenameSite, patcher: Patcher) -> list[RenameSite]:
+    """The name tokens of the `@overload` stubs a Python definition owns.
+
+    The graph folds the stubs into their implementation (issue #2590), so no
+    node names them; renaming only the implementation would strand them
+    under the old name with no implementation to describe.
+    """
+    language = get_language_for_extension(Path(definition.path).suffix)
+    if language != cs.SupportedLanguage.PYTHON:
+        return []
+    parsers, _queries = load_parsers()
+    parser = parsers.get(language)
+    if parser is None:
+        return []
+    root = parser.parse(patcher.source(definition.path)).root_node
+    point = (definition.line - 1, definition.col)
+    token = root.descendant_for_point_range(point, point)
+    function = token.parent if token is not None else None
+    if function is None or function.type != cs.TS_PY_FUNCTION_DEFINITION:
+        return []
+    return [
+        definition._replace(line=name.start_point[0] + 1, col=name.start_point[1])
+        for name in overload_stub_names(function, root)
+    ]
+
+
 class Renamer:
     """Plan and apply one rename against a project's graph."""
 
@@ -550,12 +583,14 @@ class Renamer:
         sites: list[RenameSite] = [
             self._definition_site(qn, definition, path, old_name, patcher)
         ]
+        sites.extend(_overload_stub_sites(sites[0], patcher))
         # Calls, references and constructions.
         for row in graph_query.callers(self.fetch_all, self.project, qn):
             self._add_site(sites, unlocatable, "call", row, old_name, patcher)
         params = {
             cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
             cs.KEY_QN: qn,
+            cs.KEY_LABEL: definition["label"],
         }
         # Both reads below are prefix-scoped, and `foo.` selects `foo.bar`'s
         # rows too: a site in a project whose name extends this one must not
@@ -744,7 +779,10 @@ class Renamer:
                 [],
                 [],
             ) from error
-        start = definition["start_line"] or 1
+        # From the `def`/`class` line, not the decorated start: a decorator
+        # may spell the old name (`@register(fetch=1)`) and is not the
+        # definition's name token (issue #2428).
+        start = definition["name_line"] or definition["start_line"] or 1
         end = definition["end_line"] or start
         token = _name_token(
             source, get_language_for_extension(Path(path).suffix), start, end, old_name
@@ -1061,6 +1099,75 @@ class Renamer:
                     pending.append(row["module"])
         return out
 
+    def _refuse_twin_bound_imports(self, report: RenameReport) -> None:
+        """Refuse when an import the rename rewrites also binds a type.
+
+        A TS `type input` and `function input` share one name (issue #2520),
+        and `import { input }` binds both. Rewriting it to the function's new
+        name leaves the file's `input<number>` annotation unbound, while
+        keeping the old name beside it would need an import the rewriter
+        does not write; the rename refuses instead.
+        """
+        bound = [
+            site
+            for member in report.hierarchy
+            for site in self._twin_bound_imports(member, report.old_name)
+        ]
+        if bound:
+            raise RenameRefused(
+                cs.RENAME_TWIN_BOUND_IMPORT.format(
+                    qn=report.qualified_name,
+                    name=report.old_name,
+                    paths=", ".join(sorted({site.path for site in bound})),
+                ),
+                bound,
+                list(report.unlocatable),
+            )
+
+    def _twin_bound_imports(self, qn: str, old_name: str) -> list[RenameSite]:
+        """The imports of `qn` in TS files that also use its type-space twin."""
+        typed = [
+            RenameSite(
+                "import",
+                site.path,
+                site.line,
+                site.col,
+                module,
+                cs.EdgeResolution.EXACT,
+            )
+            for site, module in self._import_sites(qn, old_name)
+            if get_language_for_extension(Path(site.path).suffix) in _TS_LANGUAGES
+        ]
+        if not typed:
+            return []
+        label = graph_query.definition(self.fetch_all, self.project, qn, None)["label"]
+        if label is None or label in _TYPE_SPACE_LABELS:
+            return []
+        owns = graph_query._owner_check(self.fetch_all, self.project)
+        paths: set[str] = set()
+        for twin_label in _TYPE_SPACE_LABELS:
+            params = {
+                cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
+                cs.KEY_QN: qn,
+                cs.KEY_LABEL: twin_label,
+            }
+            for query in (cq.CYPHER_GRAPH_TYPE_EDGES, cq.CYPHER_GRAPH_REFERENCES):
+                paths.update(
+                    path
+                    for row in self.fetch_all(query, params)
+                    if owns(str(row.get(cs.KEY_QUALIFIED_NAME) or ""))
+                    and isinstance(path := row.get(cs.KEY_PATH), str)
+                )
+        # `implements X` names only the type side, and that edge is not one of
+        # the label-scoped reads above.
+        paths.update(
+            row["path"]
+            for row in graph_query.implementors(self.fetch_all, self.project, qn)
+            if row["relationship"] == cs.RelationshipType.IMPLEMENTS
+            and row["path"] is not None
+        )
+        return [site for site in typed if site.path in paths]
+
     def _doc_mentions(self, old_name: str) -> list[str]:
         pattern = re.compile(_IDENTIFIER_RE % re.escape(old_name))
         found: list[str] = []
@@ -1249,7 +1356,7 @@ class Renamer:
         ]
         if not leftover:
             return [], ()
-        foreign = self._foreign_paths(hierarchy)
+        foreign = self._foreign_paths(hierarchy, label)
         chosen = (
             self._chosen_paths(hierarchy, old_name)
             if language in cs.JS_TS_LANGUAGES and kind is not cs.RenameTargetKind.METHOD
@@ -1315,16 +1422,18 @@ class Renamer:
             paths.update(aliased - by_name)
         return paths
 
-    def _foreign_paths(self, hierarchy: list[str]) -> set[str]:
+    def _foreign_paths(self, hierarchy: list[str], label: str | None) -> set[str]:
         """Files whose sites the graph gives to a project whose name extends
         this one: the plan leaves them alone (#1989), so its cross-check
-        does too."""
+        does too. The reads are scoped to the target's label as the plan's
+        are, since a TS type and a value share one name (issue #2520)."""
         owns = graph_query._owner_check(self.fetch_all, self.project)
         paths: set[str] = set()
         for member in hierarchy:
             params = {
                 cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
                 cs.KEY_QN: member,
+                cs.KEY_LABEL: label,
             }
             for query in (
                 cq.CYPHER_GRAPH_CALLERS,
@@ -1410,6 +1519,8 @@ class Renamer:
     ) -> tuple[EditTransaction, dict[str, object], list[str]]:
         """Patch every site into a transaction; nothing touches the tree."""
         old_name = report.old_name
+        # Beside the import rewrite it guards, before anything is patched.
+        self._refuse_twin_bound_imports(report)
         patcher = Patcher(self.repo_root)
         done: set[tuple[str, int, int]] = set()
         for site in report.sites:

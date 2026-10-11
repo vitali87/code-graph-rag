@@ -172,6 +172,28 @@ _READS_THE_GRAPH = frozenset(
     }
 )
 
+# The relationships each cross-service tool needs for a non-empty answer:
+# every one its queries MATCH, not the ones they only count or optionally
+# join. All sit in the opt-in `io` group, so on a project synced without one
+# an empty answer means "never recorded", not "none" (issue #2521).
+_CAPTURE_READ_BY: dict[cs.MCPToolName, frozenset[cs.RelationshipType]] = {
+    cs.MCPToolName.ENDPOINTS: frozenset({cs.RelationshipType.EXPOSES}),
+    # A caller reaches the handler's EXPOSES through its own READS_FROM or
+    # WRITES_TO, by way of RESOLVES_TO for a URL: with any of them left out
+    # some callers could never have been recorded (bot review on PR #2596).
+    cs.MCPToolName.ENDPOINT_CALLERS: frozenset(
+        {
+            cs.RelationshipType.EXPOSES,
+            cs.RelationshipType.READS_FROM,
+            cs.RelationshipType.WRITES_TO,
+            cs.RelationshipType.RESOLVES_TO,
+        }
+    ),
+    cs.MCPToolName.REMOTE_DEPENDENCIES: frozenset(
+        {cs.RelationshipType.READS_FROM, cs.RelationshipType.WRITES_TO}
+    ),
+}
+
 
 async def _run_in_thread[**P, T](
     fn: Callable[P, T], /, *args: P.args, **kwargs: P.kwargs
@@ -2730,27 +2752,51 @@ class MCPToolsRegistry:
                 cs.DICT_KEY_ERROR: cs.MCP_GRAPH_QUERY_ERROR.format(tool=tool, error=e)
             }
 
-    @staticmethod
-    def _unknown_project_error(project: str, known: list[str]) -> str:
+    def _nameable(self, projects: Collection[str]) -> list[str]:
+        """The `projects` a refusal may name: under a workspace, only the
+        ones it serves; without one, all of them.
+
+        The graph is shared, and a workspace project that is not indexed
+        passes the allow-list and is refused as unknown, so its "did you
+        mean" and its fallback list were drawn from every indexed project and
+        named ones outside the workspace (CodeRabbit, PR #2562; CWE-200).
+        """
+        if self.workspace is None:
+            return list(projects)
+        served = set(self.workspace.project_names())
+        return [name for name in projects if name in served]
+
+    def _unknown_project_error(self, project: str, known: list[str]) -> str:
         # The close matches when there are any; a shared graph lists dozens
         # of `<dir>__<hash>` names, and the one meant is the one to name.
+        known = self._nameable(known)
         close = graph_query.close_project_names(project, known)
         if close:
             return cs.MCP_UNKNOWN_PROJECT_NAMED.format(
                 project=project
             ) + graph_query.did_you_mean(close)
-        return cs.MCP_UNKNOWN_PROJECT.format(
-            project=project, known=cs.SEPARATOR_COMMA_SPACE.join(known)
+        listed = cs.SEPARATOR_COMMA_SPACE.join(known)
+        if self.workspace is None:
+            return cs.MCP_UNKNOWN_PROJECT.format(project=project, known=listed)
+        # Labelled as the workspace's, so a short list does not read as the
+        # whole graph, and an empty one is said rather than left blank.
+        if not known:
+            return cs.MCP_UNKNOWN_WORKSPACE_PROJECT_NONE_INDEXED.format(
+                project=project, workspace=self.workspace.name
+            )
+        return cs.MCP_UNKNOWN_WORKSPACE_PROJECT.format(
+            project=project, workspace=self.workspace.name, known=listed
         )
 
     def _root_not_indexed_error(self, project_name: str, known: list[str]) -> str:
         root = Path(self.project_root)
         # A repository indexed under a name of its own is the likeliest
-        # meaning, then names spelled close to the derived one.
-        rooted = graph_query.projects_rooted_at(
-            self.ingestor.list_project_roots(), root
+        # meaning, then names spelled close to the derived one; both only
+        # among the projects this server may name.
+        rooted = self._nameable(
+            graph_query.projects_rooted_at(self.ingestor.list_project_roots(), root)
         )
-        close = graph_query.close_project_names(project_name, known)
+        close = graph_query.close_project_names(project_name, self._nameable(known))
         return cs.MCP_ROOT_NOT_INDEXED.format(
             path=root.resolve()
         ) + graph_query.did_you_mean(list(dict.fromkeys([*rooted, *close])))
@@ -2863,6 +2909,28 @@ class MCPToolsRegistry:
             self.ingestor.fetch_all, project_name, candidate
         )
 
+    def _uncaptured_refusal[T](
+        self, tool: cs.MCPToolName, project_name: str, rows: list[T]
+    ) -> list[T] | dict[str, str]:
+        # Only an EMPTY answer is questioned, so a project with rows pays no
+        # extra read, and a graph with no recorded capture keeps its `[]`.
+        if rows:
+            return rows
+        gap = graph_query.capture_gap(
+            self.ingestor.fetch_all, project_name, _CAPTURE_READ_BY[tool]
+        )
+        if gap is None:
+            return rows
+        return {
+            cs.DICT_KEY_ERROR: cs.MCP_CAPTURE_GROUP_MISSING.format(
+                tool=tool,
+                project=project_name,
+                groups=cs.CHAR_COMMA.join(gap["groups"]),
+                relationships=cs.SEPARATOR_COMMA_SPACE.join(gap["relationships"]),
+                root=gap["root_path"] or cs.MCP_DEFAULT_DIRECTORY,
+            )
+        }
+
     async def definition(
         self, qualified_name: str, project: str | None = None
     ) -> object:
@@ -2881,15 +2949,21 @@ class MCPToolsRegistry:
         return await self._graph_query(
             cs.MCPToolName.ENDPOINTS,
             project,
-            lambda name: graph_query.endpoints(self.ingestor.fetch_all, name),
+            lambda name: self._uncaptured_refusal(
+                cs.MCPToolName.ENDPOINTS,
+                name,
+                graph_query.endpoints(self.ingestor.fetch_all, name),
+            ),
         )
 
     async def endpoint_callers(self, target: str, project: str | None = None) -> object:
         return await self._graph_query(
             cs.MCPToolName.ENDPOINT_CALLERS,
             project,
-            lambda name: graph_query.endpoint_callers(
-                self.ingestor.fetch_all, name, target
+            lambda name: self._uncaptured_refusal(
+                cs.MCPToolName.ENDPOINT_CALLERS,
+                name,
+                graph_query.endpoint_callers(self.ingestor.fetch_all, name, target),
             ),
         )
 
@@ -2897,7 +2971,11 @@ class MCPToolsRegistry:
         return await self._graph_query(
             cs.MCPToolName.REMOTE_DEPENDENCIES,
             project,
-            lambda name: graph_query.remote_dependencies(self.ingestor.fetch_all, name),
+            lambda name: self._uncaptured_refusal(
+                cs.MCPToolName.REMOTE_DEPENDENCIES,
+                name,
+                graph_query.remote_dependencies(self.ingestor.fetch_all, name),
+            ),
         )
 
     async def callers(

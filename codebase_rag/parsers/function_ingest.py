@@ -49,11 +49,13 @@ from .rs import utils as rs_utils
 from .type_facts import extract_type_facts, queue_type_facts, type_facts_props
 from .utils import (
     callable_parameter_indices,
+    decorated_start_props,
     extract_modifiers_and_decorators,
     function_span_key,
     get_function_captures,
     ingest_method,
     is_method_node,
+    mark_js_ts_module_private,
     python_positional_parameter_names,
     record_cpp_definition_span,
     safe_decode_text,
@@ -287,6 +289,7 @@ class FunctionIngestMixin:
     csharp_generic_methods: set[str]
     csharp_call_shapes: dict[str, CSharpCallShape]
     csharp_method_return_types: dict[str, tuple[str, int]]
+    python_overload_stubs: dict[str, frozenset[int]]
 
     @abstractmethod
     def _get_docstring(
@@ -357,6 +360,10 @@ class FunctionIngestMixin:
                 )
             case cs.SupportedLanguage.GO:
                 return self._defer_go_receiver_method(func_node, module_qn)
+            case cs.SupportedLanguage.PYTHON:
+                return func_node.start_byte in self.python_overload_stubs.get(
+                    module_qn, frozenset()
+                )
             case _:
                 return False
 
@@ -1399,6 +1406,7 @@ class FunctionIngestMixin:
             resolution.qualified_name,
             func_node.start_point[0] + 1,
             func_node.start_point[1],
+            kind=NodeType.FUNCTION if language in cs.JS_TS_LANGUAGES else None,
         )
         if unique_qn != resolution.qualified_name:
             resolution = resolution._replace(qualified_name=unique_qn)
@@ -1452,6 +1460,12 @@ class FunctionIngestMixin:
         )
 
         self.function_registry[resolution.qualified_name] = NodeType.FUNCTION
+        mark_js_ts_module_private(
+            self.function_registry,
+            resolution.qualified_name,
+            resolution.is_exported,
+            language,
+        )
         # Keyed by the UNIQUE qn, since a collision rename above (issue #1017)
         # is the key Pass-3 will look this up by.
         rs_utils.record_effective_module(
@@ -1626,6 +1640,7 @@ class FunctionIngestMixin:
         props.update(type_facts_props(extract_type_facts(func_node, language)))
         props.update(fingerprint_props(func_node))
         props.update(anchor_hash_props(func_node, decorators))
+        props.update(decorated_start_props(func_node))
         return props
 
     def _create_function_relationships(

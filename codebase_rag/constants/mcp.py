@@ -175,6 +175,17 @@ MCP_QUERY_AFTER_FAILED_RUN = (
     "graph is incomplete; {tool} would answer from a partial graph. Run "
     "update_repository before reading it"
 )
+# An empty endpoint answer from a project whose last sync left out the
+# group the tool reads is not "none": nothing could have been recorded
+# (issue #2521). The capture is part of the parser fingerprint, so the
+# re-index re-parses the whole repository.
+MCP_CAPTURE_GROUP_MISSING = (
+    "{tool} has nothing to read for project {project!r}: its last sync did "
+    "not capture the `{groups}` group ({relationships}), so an empty list "
+    "here would not mean there are none. Re-index with `cgr start "
+    "--repo-path {root} --update-graph --capture {groups}`, or run "
+    "update_repository on a server started with CGR_CAPTURE={groups}."
+)
 REINGEST_OUTSIDE_REPO = "Path is outside the repository: {path}"
 REINGEST_IS_DIRECTORY = "Path is a directory, not a file: {path}"
 MCP_GRAPH_QUERY_ERROR = "Error running {tool}: {error}"
@@ -207,6 +218,15 @@ MCP_UNKNOWN_PROJECT = "Unknown project {project!r}. Indexed projects: {known}"
 # With a close match the full list is noise: a shared graph holds dozens of
 # `<dir>__<hash>` names, and the one meant is the one to name (issue #2461).
 MCP_UNKNOWN_PROJECT_NAMED = "Unknown project {project!r}."
+# Under a workspace the list is the workspace's own indexed projects: the
+# graph is shared, and a project outside the workspace is not this server's
+# to name (CodeRabbit, PR #2562).
+MCP_UNKNOWN_WORKSPACE_PROJECT = (
+    "Unknown project {project!r}. Indexed projects of workspace {workspace!r}: {known}"
+)
+MCP_UNKNOWN_WORKSPACE_PROJECT_NONE_INDEXED = (
+    "Unknown project {project!r}. No project of workspace {workspace!r} is indexed."
+)
 MCP_ROOT_NOT_INDEXED = (
     "No project is indexed for this server's root {path}; run "
     "index_repository or update_repository first, or pass `project`."

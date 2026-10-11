@@ -24,6 +24,10 @@ KEY_PARSER = "parser"
 KEY_NAME = "name"
 KEY_ROOT_PATH = "root_path"
 KEY_ROOT_PATHS = "root_paths"
+# The relationship types the project's last sync captured (issue #2521), in
+# the shape the index manifest records them: an empty endpoint answer from a
+# project that never captured `io` is "not recorded", not "none".
+KEY_CAPTURED_RELATIONSHIPS = "captured_relationships"
 KEY_QUALIFIED_NAME = "qualified_name"
 KEY_IS_PROPERTY = "is_property"
 # The other member names a Python class body binds a method to
@@ -63,6 +67,13 @@ KEY_VALUE = "value"
 CONSTANT_VALUE_MAX_CHARS = 200
 KEY_NAME_START_LINE = "name_start_line"
 KEY_NAME_START_COL = "name_start_col"
+# First line of the decorators or attributes written above a definition but
+# outside its own node (Python's `decorated_definition`, Rust attribute items,
+# TS method decorators, Dart metadata); set only when there are any. Kept
+# apart from `start_line`, which call attribution, rename and the incremental
+# deltas key on, and which a decorator's own call must stay outside of: it
+# runs at definition time in the enclosing scope (issue #2428).
+KEY_DECORATED_START_LINE = "decorated_start_line"
 KEY_END_LINE = "end_line"
 # Edge-site location properties (issue #1522). Every CALLS / REFERENCES /
 # INSTANTIATES edge records the span of the expression that produced it, and
@@ -1106,6 +1117,7 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.modifiers AS modifiers, n.decorators AS decorators, "
     "n.return_type AS return_type, n.param_types AS param_types, "
     "n.namespace AS namespace, n.is_object_member AS is_object_member, "
+    "n.is_exported AS is_exported, "
     "n.extension_receiver AS extension_receiver, "
     "n.extension_namespace AS extension_namespace, "
     "n.extension_receiver_arity AS extension_receiver_arity"

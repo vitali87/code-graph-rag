@@ -31,6 +31,7 @@ from ...utils import qn_markers
 from ...utils.path_utils import cached_relative_path, cached_resolve_posix
 from ..anchor_hash import anchor_hash_props
 from ..cpp import CppTypeInferenceEngine
+from ..cpp import local_types as cpp_local_types
 from ..cpp import utils as cpp_utils
 from ..csharp import utils as csharp_utils
 from ..dart import utils as dart_utils
@@ -47,9 +48,12 @@ from ..py.class_aliases import scan_class_body_aliases
 from ..rs import RustTypeInferenceEngine
 from ..rs import utils as rs_utils
 from ..utils import (
+    decorated_start_props,
     extract_modifiers_and_decorators,
+    follow_reexports,
     function_span_key,
     ingest_method,
+    mark_js_ts_module_private,
     module_qn_for_entity,
     record_cpp_definition_span,
     safe_decode_text,
@@ -395,6 +399,7 @@ class ClassIngestMixin:
     pending_type_facts: list[PendingTypeFact]
     pending_parameter_types: list[PendingParameterType]
     pending_field_types: list[PendingFieldType]
+    python_overload_stubs: dict[str, frozenset[int]]
 
     def _namespace_qn(self, class_qn: str, module_qn: str) -> str:
         # Strip the module-file prefix so two nodes for the same C++ type in
@@ -804,7 +809,7 @@ class ClassIngestMixin:
         # collected here or a registered interface's method is wrongly rooted.
         dart_implements: dict[str, list[str]] = {}
         for entry in deferred:
-            child_type = self.function_registry.get(entry.child_qn)
+            child_type = self._deferred_child_label(entry)
             if child_type is None:
                 continue
             scoped = self._resolve_csharp_scoped_base(entry)
@@ -828,12 +833,26 @@ class ClassIngestMixin:
                 scoped is None and entry.written_ref is not None and not resolved[1]
             )
             self._emit_resolved_inherit(
-                entry, str(child_type), resolved, is_dart, dart_implements, heuristic
+                entry, child_type, resolved, is_dart, dart_implements, heuristic
             )
             emitted += 1
         self._flag_dart_external_overrides(dart_implements)
         self._flag_rust_external_trait_overrides()
         return emitted
+
+    def _deferred_child_label(self, entry: DeferredInherit) -> str | None:
+        held = self.function_registry.get(entry.child_qn)
+        if held is None:
+            return None
+        # Where a TS type shares its name with a value (issue #2520) the
+        # registry holds the value's kind for both, so the label the child was
+        # declared with decides which of the two nodes the edge leaves.
+        if (
+            entry.child_label is not None
+            and self.function_registry.type_kind(entry.child_qn) != held
+        ):
+            return entry.child_label
+        return str(held)
 
     def _flag_rust_external_trait_overrides(self) -> None:
         # A method in an `impl <ExternalTrait> for Type` block is only ever
@@ -1070,6 +1089,22 @@ class ClassIngestMixin:
         # Only a type declaration is a base: a registered member of the same
         # name (a C# property, a method) is not, however it was reached.
         target_kinds = bt.base_target_kinds(entry.language)
+        if entry.language == cs.SupportedLanguage.SCALA and (
+            (
+                imported := self.import_processor.scala_base_qn(
+                    entry.module_qn,
+                    entry.child_qn,
+                    entry.parent_qn,
+                    entry.base_index,
+                )
+            )
+            is not None
+            and self.function_registry.get(imported) in target_kinds
+        ):
+            # Ahead of the registry check: parse time bound the base by name
+            # alone when only a package block imports it, and a sibling
+            # block's same-named class can be what that found.
+            return imported, False
         if self.function_registry.get(entry.parent_qn) in target_kinds:
             return entry.parent_qn, False
         if (followed := self._rust_reexport_target(entry)) is not None:
@@ -1096,6 +1131,8 @@ class ClassIngestMixin:
         # The module-anchored fallback shape carries the raw written name
         # as the remainder after the module qn.
         raw_name = entry.parent_qn[len(prefix) :]
+        if (bound := self._js_ts_namespace_member(raw_name, entry)) is not None:
+            return bound, False
         resolved = self._resolve_class_name(raw_name, entry.module_qn, entry.language)
         if (
             resolved is not None
@@ -1106,6 +1143,37 @@ class ClassIngestMixin:
         ):
             return resolved, False
         return self._externalize_written_base(raw_name, entry.language)
+
+    def _js_ts_namespace_member(
+        self, raw_name: str, entry: DeferredInherit
+    ) -> str | None:
+        # `implements r.Plain` or `extends r.Base` after `import * as r from
+        # './router'` (issue #2560): the head is an import binding, so the
+        # member is declared in the module it names, which outranks the name
+        # sweep below. Only a registered type answers. A head bound outside
+        # the project (`React` from a default import is `react.default`)
+        # registers nothing, so `React.Component` keeps the written name it is
+        # externalized under, which React dead-code rooting matches on.
+        if entry.language not in cs.JS_TS_LANGUAGES:
+            return None
+        import_mapping = self.import_processor.import_mapping
+        candidate = pe.js_ts_namespace_member_qn(
+            raw_name, import_mapping.get(entry.module_qn, {})
+        )
+        if candidate is not None:
+            # `r` is often a barrel (`export { Router } from './router'`): the
+            # member is mapped on to its declaring module, not declared there.
+            candidate = follow_reexports(
+                candidate, import_mapping, self.function_registry
+            )
+        if (
+            candidate is None
+            or candidate == entry.child_qn
+            or self.function_registry.get(candidate)
+            not in bt.base_target_kinds(entry.language)
+        ):
+            return None
+        return candidate
 
     def _resolve_self_edge_parent(
         self, entry: DeferredInherit
@@ -1342,22 +1410,30 @@ class ClassIngestMixin:
             )
             return
 
-        identity = id_.resolve_class_identity(
-            class_node,
-            module_qn,
-            language,
-            lang_config,
-            file_path,
+        local_qn = self._cpp_local_type_qn(class_node, module_qn, language)
+        identity = (
+            self._cpp_local_type_identity(class_node, local_qn)
+            if local_qn is not None
+            else id_.resolve_class_identity(
+                class_node,
+                module_qn,
+                language,
+                lang_config,
+                file_path,
+            )
         )
         if not identity:
             return
 
         class_qn, class_name, is_exported = identity
         class_start_line, class_start_col = _class_start_point(class_node, language)
-        class_qn = self.function_registry.register_unique_qn(
-            class_qn, class_start_line, class_start_col
-        )
         node_type = nt.determine_node_type(class_node, class_name, class_qn, language)
+        class_qn = self.function_registry.register_unique_qn(
+            class_qn,
+            class_start_line,
+            class_start_col,
+            kind=node_type if language in cs.JS_TS_LANGUAGES else None,
+        )
 
         modifiers, decorators = extract_modifiers_and_decorators(
             class_node, lang_queries
@@ -1387,6 +1463,7 @@ class ClassIngestMixin:
         # (STALE/EXACT), movable by hash, and re-validatable by the quote
         # move, which refuses a hash-less candidate (issue #1808).
         class_props.update(anchor_hash_props(class_node, decorators))
+        class_props.update(decorated_start_props(class_node))
         if language == cs.SupportedLanguage.CSHARP:
             self._record_csharp_namespace(class_node, class_qn, class_props)
         # Stored on the node so an incremental run that does not re-parse
@@ -1395,6 +1472,9 @@ class ClassIngestMixin:
             class_props[cs.KEY_NON_METHOD_MEMBERS] = non_method_members
         self.ingestor.ensure_node_batch(node_type, class_props)
         self.function_registry[class_qn] = node_type
+        mark_js_ts_module_private(
+            self.function_registry, class_qn, is_exported, language
+        )
         self.function_registry.set_non_method_members(class_qn, non_method_members)
         if class_name:
             self._index_class_simple_name(class_name, class_qn)
@@ -1406,8 +1486,12 @@ class ClassIngestMixin:
         # record for the sweep to attribute it by.
         self.class_owner_module[class_qn] = module_qn
 
-        parent_label, parent_qn, parent_span = self._determine_function_parent(
-            class_node, class_qn, module_qn, lang_config, language
+        parent_label, parent_qn, parent_span = (
+            self._cpp_local_type_parent(class_node, local_qn, module_qn)
+            if local_qn is not None
+            else self._determine_function_parent(
+                class_node, class_qn, module_qn, lang_config, language
+            )
         )
         self._emit_or_defer_defines(
             parent_label,
@@ -1516,7 +1600,48 @@ class ClassIngestMixin:
             sorted_func_nodes=sorted_func_nodes,
             func_node_starts=func_node_starts,
             module_qn=module_qn,
+            container_label=cs.NodeLabel(node_type.value),
         )
+
+    def _cpp_local_type_qn(
+        self, class_node: Node, module_qn: str, language: cs.SupportedLanguage
+    ) -> str | None:
+        # A type written in a function body is that function's, not the
+        # module's: two functions' local `Checker`s must not collide, and an
+        # unnamed functor needs a name for its operator() to hang off
+        # (issue #2555).
+        if language != cs.SupportedLanguage.CPP:
+            return None
+        return cpp_local_types.local_type_qn(
+            class_node, module_qn, self.function_locations
+        )
+
+    @staticmethod
+    def _cpp_local_type_identity(
+        class_node: Node, local_qn: str
+    ) -> tuple[str, str, bool]:
+        return (
+            local_qn,
+            local_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1],
+            cpp_utils.is_exported(class_node),
+        )
+
+    def _cpp_local_type_parent(
+        self, class_node: Node, local_qn: str, module_qn: str
+    ) -> tuple[str, str, FunctionSpanKey | None]:
+        # A local type is defined by the callable it is written in, or by the
+        # local type it is nested in. The callable's span pins the parent
+        # node for the deferred link: an out-of-line method registers only
+        # once its class resolves after every file, and an overload's local
+        # type must bind to that overload, not a same-named twin.
+        owner_qn = local_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        parent = cpp_local_types.local_type_parent(class_node)
+        if parent is None or parent.type in cs.CPP_COMPOUND_TYPES:
+            return cs.NodeLabel.CLASS, owner_qn, None
+        span = function_span_key(module_qn, parent)
+        recorded = self.function_locations.get(span)
+        label = recorded.label if recorded is not None else cs.NodeLabel.METHOD
+        return label, owner_qn, span
 
     def _defer_forward_declaration(
         self,
@@ -1769,7 +1894,7 @@ class ClassIngestMixin:
         # true interface, Class/Enum for a Dart type); external stays
         # EXTERNAL_MODULE.
         interface_label = external_label or rel.get_node_type_for_inheritance(
-            parent_qn, self.function_registry
+            parent_qn, self.function_registry, type_position=True
         )
         rel.create_implements_relationship(
             child_type,
@@ -2016,6 +2141,7 @@ class ClassIngestMixin:
         sorted_func_nodes: list[Node] | None = None,
         func_node_starts: list[int] | None = None,
         module_qn: str | None = None,
+        container_label: cs.NodeLabel = cs.NodeLabel.CLASS,
     ) -> None:
         body_node = class_node.child_by_field_name("body")
         if body_node is None and class_node.type == cs.TS_DART_MIXIN_DECLARATION:
@@ -2034,6 +2160,7 @@ class ClassIngestMixin:
         )
         if method_nodes is None:
             return
+        method_nodes = self._without_overload_stubs(method_nodes, module_qn)
 
         external_override_names, annotated_override_sink = (
             self._method_override_context(class_qn, language)
@@ -2059,7 +2186,9 @@ class ClassIngestMixin:
             ingested_qn = ingest_method(
                 method_node,
                 class_qn,
-                cs.NodeLabel.CLASS,
+                # The declared label, not just Class: a TS interface sharing
+                # its name with a value keeps its members (issue #2520).
+                container_label,
                 self.ingestor,
                 self.function_registry,
                 self.simple_name_lookup,
@@ -2081,6 +2210,16 @@ class ClassIngestMixin:
                 self._record_ingested_method(scope, method_node, ingested_qn)
             if language == cs.SupportedLanguage.CPP:
                 self._record_cpp_method_return_type(method_node, class_qn)
+
+    def _without_overload_stubs(
+        self, method_nodes: list[Node], module_qn: str | None
+    ) -> list[Node]:
+        # The implementation after an `@overload` stub owns the method's
+        # name; the stub is no method of its own (issue #2590).
+        stubs = self.python_overload_stubs.get(module_qn or "")
+        if not stubs:
+            return method_nodes
+        return [node for node in method_nodes if node.start_byte not in stubs]
 
     def _method_override_context(
         self, class_qn: str, language: cs.SupportedLanguage
