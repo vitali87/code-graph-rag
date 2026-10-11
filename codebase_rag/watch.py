@@ -49,6 +49,7 @@ from .constants import (
 from .graph_updater import GraphUpdater, ReingestAborted
 from .parser_loader import load_parsers
 from .services import IngestorProtocol, QueryProtocol
+from .services.graph_service import MemgraphIngestor
 from .sync_guard import (
     SyncRefusedError,
     clear_sync_incomplete,
@@ -143,7 +144,10 @@ class WriteMarker:
 
 
 def _marked_run(
-    updater: GraphUpdater, marker: WriteMarker | None, force: bool = False
+    updater: GraphUpdater,
+    marker: WriteMarker | None,
+    force: bool = False,
+    before_run: Callable[[], None] | None = None,
 ) -> None:
     """Run the updater over the whole checkout between `marker`'s mark and clear.
 
@@ -151,13 +155,18 @@ def _marked_run(
     a sync that held it first has taken its own off: they share one. It
     comes off once the run committed, as `cgr start` takes its own off: a
     Ctrl+C landing after the commit found the graph whole. Any other failure
-    leaves it down.
+    leaves it down. `before_run` runs between the mark and the run, where
+    `cgr start` ensures the graph's constraints.
     """
     if marker is None:
+        if before_run is not None:
+            before_run()
         updater.run(force=force)
         return
     marker.mark()
     try:
+        if before_run is not None:
+            before_run()
         updater.run(force=force)
     except KeyboardInterrupt:
         if updater.committed:
@@ -730,12 +739,14 @@ def start_watcher(
     one set of sync state (issue #2432). The connection is the CLI's: the
     MEMGRAPH_* settings, not flags of the watcher's own.
 
-    Before the scan the project is claimed for this checkout as `cgr start`
-    claims it, and the claim is held to on every write (#2411); each write
-    goes under the CLI sync's incomplete-run marker (#2219). Raises
-    `SyncRefusedError`, with nothing written, when the project is another
+    In `cgr start`'s order: the project is claimed for this checkout and
+    the claim is held to on every write (#2411), the scan's incomplete-run
+    marker goes down (#2219), the graph's constraints are ensured, and the
+    scan runs; every later write goes under the marker too. Raises
+    `SyncRefusedError`, before the scan writes, when the project is another
     repository's (unless `assume_yes`, as `cgr start --yes`), its owner
-    cannot be read, or the scan's marker cannot go down.
+    cannot be read, the marker cannot go down, or the constraints cannot be
+    ensured; the marker stays down in that last case.
     """
     parsers, queries = load_parsers()
     refused: SyncRefusedError | None = None
@@ -757,6 +768,7 @@ def start_watcher(
                     project_name,
                     project_named,
                     WriteMarker(ingestor, project_name, owner, owned_roots),
+                    partial(_ensure_constraints, ingestor, project_name),
                 )
         except SyncRefusedError as refusal:
             # Raised past the connection, which logs what leaves it as a
@@ -764,6 +776,24 @@ def start_watcher(
             refused = refusal
     if refused is not None:
         raise refused
+
+
+def _ensure_constraints(ingestor: MemgraphIngestor, project_name: str) -> None:
+    """Create the graph's constraints and indexes before the first scan writes.
+
+    As `cgr start` does before each sync (review of PR 3365): without them a
+    fresh or unmigrated graph lets parallel MERGE flushes create duplicate
+    nodes, and lookups run unindexed. Once per watcher: they outlive every
+    later write, and a `cgr start --clean` that wipes the graph ensures them
+    again in its own sync. Their migration can purge, so this runs with the
+    scan's marker down, and a failure leaves it there.
+    """
+    try:
+        ingestor.ensure_constraints()
+    except Exception as exc:
+        raise SyncRefusedError(
+            cs.CLI_ERR_GRAPH_CONSTRAINTS_FAILED.format(project=project_name, error=exc)
+        ) from exc
 
 
 def effective_max_wait(debounce_seconds: float, max_wait_seconds: float) -> float:
@@ -795,16 +825,21 @@ def script_args(argv: Sequence[str]) -> list[str]:
     return [ch.CLICommandName.WATCH.value, *args]
 
 
-def _initial_scan(updater: GraphUpdater, marker: WriteMarker | None = None) -> None:
+def _initial_scan(
+    updater: GraphUpdater,
+    marker: WriteMarker | None = None,
+    prepare_graph: Callable[[], None] | None = None,
+) -> None:
     """Build the context for real-time updates with a full scan.
 
     A watcher started while a sync of the checkout is running waits for it
     and then scans the graph it finished, as its later reingests do, rather
-    than refusing to start (issue #2441).
+    than refusing to start (issue #2441). `prepare_graph` runs under the
+    scan's marker before it writes, as `cgr start` ensures its constraints.
     """
     logger.info(logs.INITIAL_SCAN)
     with repo_sync_lock(updater.repo_path, updater.project_name, wait=True):
-        _marked_run(updater, marker)
+        _marked_run(updater, marker, before_run=prepare_graph)
     logger.success(logs.INITIAL_SCAN_DONE)
 
 
@@ -818,6 +853,7 @@ def _run_watcher_loop(
     project_name: str,
     project_named: bool,
     marker: WriteMarker | None = None,
+    prepare_graph: Callable[[], None] | None = None,
 ) -> None:
     ignore_rules = IgnoreRules(
         repo_path_obj,
@@ -832,7 +868,7 @@ def _run_watcher_loop(
         ),
     )
     updater = ignore_rules.build_updater()
-    _initial_scan(updater, marker)
+    _initial_scan(updater, marker, prepare_graph)
 
     event_handler = CodeChangeEventHandler(
         updater,

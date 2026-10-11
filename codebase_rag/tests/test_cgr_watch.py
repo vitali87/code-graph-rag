@@ -89,7 +89,9 @@ class _MarkedGraph(_Graph):
     """The in-memory graph, keeping the CLI sync's `:IncompleteRun` marker.
 
     `events` records each mark and clear in order, and `unmarked_writes`
-    every other graph write made while no marker was down.
+    every other graph write made while no marker was down. `timeline` adds
+    each `ensure_constraints` call and each run of graph writes, so their
+    order against the marker can be read off.
     """
 
     def __init__(self) -> None:
@@ -97,14 +99,21 @@ class _MarkedGraph(_Graph):
         self.marker_down = False
         self.events: list[str] = []
         self.unmarked_writes: list[str] = []
+        self.timeline: list[str] = []
 
     def _put_marker_down(self) -> None:
         self.marker_down = True
         self.events.append("mark")
+        self.timeline.append("mark")
 
     def _wrote(self, what: str) -> None:
         if not self.marker_down:
             self.unmarked_writes.append(what)
+        if self.timeline[-1:] != ["write"]:
+            self.timeline.append("write")
+
+    def ensure_constraints(self) -> None:
+        self.timeline.append("constraints")
 
     def fetch_all(
         self, query: str, params: PropertyDict | None = None
@@ -123,6 +132,12 @@ class _MarkedGraph(_Graph):
         if query == cq.CYPHER_CLEAR_PROJECT_INCOMPLETE:
             self.marker_down = False
             self.events.append("clear")
+            self.timeline.append("clear")
+            return
+        if query == cq.CYPHER_RELEASE_PROJECT_CLAIM:
+            # Claim bookkeeping, not code: kept apart from the writes.
+            self.timeline.append("release")
+            super().execute_write(query, params)
             return
         self._wrote(query)
         super().execute_write(query, params)
@@ -145,6 +160,14 @@ class _MarkedGraph(_Graph):
         # The release query keeps a claim whose writer put its marker down.
         if not self.marker_down:
             super()._release_project_claim(params)
+
+
+class _ConstraintsFail(_MarkedGraph):
+    """A graph whose constraint migration fails, as on a dropped connection."""
+
+    def ensure_constraints(self) -> None:
+        super().ensure_constraints()
+        raise ConnectionError("lost connection")
 
 
 class _OwnerUnreadable(_Graph):
@@ -1202,6 +1225,83 @@ class TestIncompleteRunMarker:
         assert graph.marker_down is False
         project = derive_project_name(shop)
         assert _functions(graph) == [f"{project}.m.a", f"{project}.m.b_added"]
+
+    def test_constraints_are_ensured_under_the_marker_before_the_first_write(
+        self, shop: Path, graph: _MarkedGraph, watching: _Watch
+    ) -> None:
+        # Review of PR 3365: the watcher scanned without them, so on a fresh
+        # or unmigrated graph parallel MERGE flushes could create duplicate
+        # nodes and lookups ran without their indexes. In `cgr start`'s
+        # order: the marker first, since their migration can purge.
+        result = _watch("--repo-path", str(shop), "--no-start-stack")
+
+        assert result.exit_code == 0, result.output
+        assert graph.timeline == ["mark", "constraints", "write", "clear"]
+        assert graph.unmarked_writes == []
+
+    def test_constraints_are_ensured_once_per_watcher_start(
+        self,
+        shop: Path,
+        graph: _MarkedGraph,
+        watching: _Watch,
+        scans: list[GraphUpdater],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Negative: an edit, an ignore-rules re-sync and a forced re-index
+        # after a failed re-ingest write into the graph whose constraints the
+        # start already ensured; none of them runs the migration again.
+        original = GraphUpdater._reingest_reparse
+        failures = [RuntimeError("store went away")]
+
+        def reparse_once_failing(
+            self: GraphUpdater, reparse: dict[str, Path], gone: dict[str, Path]
+        ) -> dict[str, bytes]:
+            if failures:
+                raise failures.pop()
+            return original(self, reparse, gone)
+
+        def edit_resync_and_rebuild(handler: CodeChangeEventHandler) -> None:
+            _edit(handler, shop / "m.py")
+            rules = shop / ".cgrignore"
+            rules.write_text("generated/\n", encoding="utf-8")
+            handler.dispatch(FileModifiedEvent(str(rules)))
+            monkeypatch.setattr(GraphUpdater, "_reingest_reparse", reparse_once_failing)
+            _edit(handler, shop / "m.py")
+            _edit(handler, shop / "m.py")
+
+        watching.while_watching = edit_resync_and_rebuild
+
+        result = _watch("--repo-path", str(shop), "--no-start-stack", "-d", "0")
+
+        assert result.exit_code == 0, result.output
+        # The scan, the re-sync and the forced re-index all ran.
+        assert len(scans) == 3
+        assert graph.timeline.count("constraints") == 1
+        assert graph.unmarked_writes == []
+
+    def test_a_constraint_failure_stops_the_watcher_with_its_marker_down(
+        self,
+        shop: Path,
+        watching: _Watch,
+        scans: list[GraphUpdater],
+    ) -> None:
+        graph = _ConstraintsFail()
+        watching.graph = graph
+
+        result = _watch("--repo-path", str(shop), "--no-start-stack")
+
+        assert result.exit_code == 1, result.output
+        # Reported as a message, not escaped as a crash.
+        assert isinstance(result.exception, SystemExit)
+        assert "lost connection" in _output(result)
+        assert "Traceback" not in result.output
+        assert scans == []
+        # The claim the watcher made is offered back, and kept: its marker
+        # says the project is unfinished.
+        assert graph.timeline == ["mark", "constraints", "release"]
+        assert graph.marker_down is True
+        assert _projects(graph) == [derive_project_name(shop)]
+        watching.observer_cls.assert_not_called()
 
 
 class TestConnectionAndStack:

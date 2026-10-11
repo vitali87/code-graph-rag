@@ -29,10 +29,11 @@ from .utils.process_owner import process_host
 
 
 class SyncRefusedError(RuntimeError):
-    """A write was refused before it began; the message names the fix.
+    """A sync stopped before its scan wrote anything; the message names the fix.
 
     Raised when the project is another repository's, when its owner cannot
-    be read, or when the incomplete-run marker cannot go down.
+    be read, when the incomplete-run marker cannot go down, or, for `cgr
+    watch`, when the graph's constraints cannot be ensured under it.
     """
 
 

@@ -193,6 +193,14 @@ CLI_ERR_SYNC_MARKER_FAILED = (
     "written, so an interrupted sync would leave a partial graph that looks "
     "complete. Check the graph connection and retry."
 )
+# `cgr watch` ensures the graph's constraints before its first scan, under the
+# marker, as `cgr start` does (review of PR 3365).
+CLI_ERR_GRAPH_CONSTRAINTS_FAILED = (
+    "Error: could not ensure the graph's constraints and indexes before "
+    "watching '{project}' ({error}). Nothing was scanned, and the project stays "
+    "marked as an unfinished sync until one finishes. Check the graph "
+    "connection and retry."
+)
 CLI_STATUS_SYNC_INCOMPLETE = (
     "sync interrupted or in progress -- re-run if no sync is active"
 )
