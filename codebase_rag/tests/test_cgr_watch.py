@@ -46,9 +46,11 @@ from watchdog.events import (
 
 from codebase_rag import cli_help as ch
 from codebase_rag import constants as cs
+from codebase_rag import cypher_queries as cq
 from codebase_rag.cli import app
 from codebase_rag.config import settings
 from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.types_defs import PropertyDict, PropertyValue, ResultRow
 from codebase_rag.utils.path_utils import derive_project_name
 from evals.cgr_graph import _StatefulIngestor
 
@@ -81,6 +83,94 @@ class _Graph(_StatefulIngestor):
 
     def ensure_constraints(self) -> None:
         return None
+
+
+class _MarkedGraph(_Graph):
+    """The in-memory graph, keeping the CLI sync's `:IncompleteRun` marker.
+
+    `events` records each mark and clear in order, and `unmarked_writes`
+    every other graph write made while no marker was down.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.marker_down = False
+        self.events: list[str] = []
+        self.unmarked_writes: list[str] = []
+
+    def _put_marker_down(self) -> None:
+        self.marker_down = True
+        self.events.append("mark")
+
+    def _wrote(self, what: str) -> None:
+        if not self.marker_down:
+            self.unmarked_writes.append(what)
+
+    def fetch_all(
+        self, query: str, params: PropertyDict | None = None
+    ) -> list[ResultRow]:
+        if query == cq.CYPHER_CLI_SYNC_MARKER_OWNER:
+            return [{cs.KEY_OWNER_TOKEN: "held"}] if self.marker_down else []
+        rows = super().fetch_all(query, params)
+        if query == cq.CYPHER_MARK_CLAIMED_PROJECT_INCOMPLETE and rows:
+            self._put_marker_down()
+        return rows
+
+    def execute_write(self, query: str, params: PropertyDict | None = None) -> None:
+        if query == cq.CYPHER_MARK_CLI_SYNC_INCOMPLETE:
+            self._put_marker_down()
+            return
+        if query == cq.CYPHER_CLEAR_PROJECT_INCOMPLETE:
+            self.marker_down = False
+            self.events.append("clear")
+            return
+        self._wrote(query)
+        super().execute_write(query, params)
+
+    def ensure_node_batch(self, label: str, properties: PropertyDict) -> None:
+        self._wrote(label)
+        super().ensure_node_batch(label, properties)
+
+    def ensure_relationship_batch(
+        self,
+        from_spec: tuple[str, str, PropertyValue],
+        rel_type: str,
+        to_spec: tuple[str, str, PropertyValue],
+        properties: PropertyDict | None = None,
+    ) -> None:
+        self._wrote(rel_type)
+        super().ensure_relationship_batch(from_spec, rel_type, to_spec, properties)
+
+    def _release_project_claim(self, params: PropertyDict) -> None:
+        # The release query keeps a claim whose writer put its marker down.
+        if not self.marker_down:
+            super()._release_project_claim(params)
+
+
+class _OwnerUnreadable(_Graph):
+    """A graph whose project claim cannot be read."""
+
+    def fetch_all(
+        self, query: str, params: PropertyDict | None = None
+    ) -> list[ResultRow]:
+        if query == cq.CYPHER_CLAIM_PROJECT_ROOT:
+            raise ConnectionError("lost connection")
+        return super().fetch_all(query, params)
+
+
+class _MarkerRefused(_Graph):
+    """A graph that refuses the claimed marker write while `refusing` is set."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.refusing = True
+
+    def fetch_all(
+        self, query: str, params: PropertyDict | None = None
+    ) -> list[ResultRow]:
+        if self.refusing and query == cq.CYPHER_MARK_CLAIMED_PROJECT_INCOMPLETE:
+            raise ConnectionError("store refused the write")
+        return super().fetch_all(query, params)
 
 
 class _QueuedTimer:
@@ -264,6 +354,37 @@ def _output(result: Result) -> str:
     return " ".join(click.unstyle(result.output).split())
 
 
+def _squashed(text: str) -> str:
+    # Without any whitespace, so a path the console wrapped still matches.
+    return "".join(click.unstyle(text).split())
+
+
+def _project_root(graph: _Graph, project: str) -> PropertyValue:
+    return graph.nodes[(cs.NodeLabel.PROJECT.value, project)][cs.KEY_ROOT_PATH]
+
+
+@pytest.fixture
+def billing(tmp_path: Path) -> Path:
+    """Another repository, indexed under the name a test then watches `shop` as."""
+    repo = (tmp_path / "orgA" / "billing").resolve()
+    repo.mkdir(parents=True)
+    (repo / "billing.py").write_text(
+        "def charge_card():\n    return 1\n", encoding="utf-8"
+    )
+    return repo
+
+
+@pytest.fixture
+def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    user_home = (tmp_path / "me").resolve()
+    user_home.mkdir()
+    (user_home / "m.py").write_text(_ORIGINAL, encoding="utf-8")
+    monkeypatch.setenv("HOME", str(user_home))
+    # Windows resolves Path.home() from USERPROFILE, not HOME.
+    monkeypatch.setenv("USERPROFILE", str(user_home))
+    return user_home
+
+
 class TestShippedWithThePackage:
     def test_the_watcher_is_a_module_of_the_package(self) -> None:
         from codebase_rag import watch
@@ -290,6 +411,7 @@ class TestShippedWithThePackage:
             "--max-wait",
             "--batch-size",
             "--no-start-stack",
+            "--yes",
         ):
             assert flag in text, flag
 
@@ -595,6 +717,491 @@ class TestRefusedLikeCgrStart:
 
         assert result.exit_code == 2
         assert "No such option" in _output(result)
+
+
+class TestHomeOrRootRefusedLikeCgrStart:
+    """Review of PR 3365: `cgr watch` refuses `$HOME` and `/` as `cgr start` does.
+
+    `--repo-path` defaults to the current directory, so `cgr watch` run from
+    `$HOME` scanned the whole home directory into the graph and put a
+    recursive watch on it (#2418).
+    """
+
+    @pytest.mark.parametrize("target", ["home", "root", "cwd"])
+    def test_a_home_directory_or_disk_root_is_refused_before_anything_starts(
+        self,
+        home: Path,
+        watching: _Watch,
+        scans: list[GraphUpdater],
+        monkeypatch: pytest.MonkeyPatch,
+        target: str,
+    ) -> None:
+        if target == "cwd":
+            # The finding's case: no --repo-path, run from the home directory.
+            monkeypatch.chdir(home)
+            args: tuple[str, ...] = ()
+        else:
+            repo = home if target == "home" else Path(home.anchor)
+            args = ("--repo-path", str(repo))
+
+        with patch("codebase_rag.cli._maybe_start_stack") as start_stack:
+            result = _watch(*args)
+
+        assert result.exit_code == 1, result.output
+        assert "--yes" in _output(result)
+        start_stack.assert_not_called()
+        assert watching.batch_sizes == []
+        assert scans == []
+        watching.observer_cls.assert_not_called()
+
+    @pytest.mark.parametrize("flag", ["--yes", "-y"])
+    def test_yes_watches_the_home_directory_anyway(
+        self, home: Path, watching: _Watch, scans: list[GraphUpdater], flag: str
+    ) -> None:
+        result = _watch("--repo-path", str(home), "--no-start-stack", flag)
+
+        assert result.exit_code == 0, result.output
+        [scan] = scans
+        assert scan.repo_path == home
+        watching.observer.start.assert_called_once()
+
+    def test_a_repository_inside_the_home_directory_is_watched(
+        self, home: Path, watching: _Watch, scans: list[GraphUpdater]
+    ) -> None:
+        # Negative: only the home directory itself is refused.
+        repo = home / "src" / "api"
+        repo.mkdir(parents=True)
+        (repo / "m.py").write_text(_ORIGINAL, encoding="utf-8")
+
+        result = _watch("--repo-path", str(repo), "--no-start-stack")
+
+        assert result.exit_code == 0, result.output
+        [scan] = scans
+        assert scan.repo_path == repo
+
+
+class TestProjectClaimedLikeCgrStart:
+    """Review of PR 3365: `cgr watch` claims its project as `cgr start` does.
+
+    The watcher wrote its checkout into a chosen project name another
+    repository already indexed, replacing that repository's root and
+    deleting its modules as stale (#2411).
+    """
+
+    def test_a_name_another_repository_indexes_is_refused_before_any_scan(
+        self,
+        shop: Path,
+        billing: Path,
+        graph: _Graph,
+        watching: _Watch,
+        scans: list[GraphUpdater],
+    ) -> None:
+        synced = _cgr_start(graph, billing, "--project-name", "api2")
+        assert synced.exit_code == 0, synced.output
+        scans.clear()
+
+        result = _watch(
+            "--repo-path", str(shop), "--project-name", "api2", "--no-start-stack"
+        )
+
+        assert result.exit_code == 1, result.output
+        assert str(billing) in _squashed(result.output)
+        assert "--yes" in _output(result)
+        assert "Traceback" not in result.output
+        assert scans == []
+        watching.observer_cls.assert_not_called()
+        assert _project_root(graph, "api2") == str(billing)
+        assert _functions(graph) == ["api2.billing.charge_card"]
+
+    @pytest.mark.parametrize("flag", ["--yes", "-y"])
+    def test_yes_takes_the_name_over_as_cgr_start_yes_does(
+        self, shop: Path, billing: Path, graph: _Graph, watching: _Watch, flag: str
+    ) -> None:
+        synced = _cgr_start(graph, billing, "--project-name", "api2")
+        assert synced.exit_code == 0, synced.output
+
+        result = _watch(
+            "--repo-path",
+            str(shop),
+            "--project-name",
+            "api2",
+            "--no-start-stack",
+            flag,
+        )
+
+        assert result.exit_code == 0, result.output
+        assert _project_root(graph, "api2") == str(shop)
+        assert _functions(graph) == ["api2.m.a"]
+
+    def test_a_name_this_repository_indexes_is_watched(
+        self, shop: Path, graph: _Graph, watching: _Watch, scans: list[GraphUpdater]
+    ) -> None:
+        # Negative: the repository that holds the name keeps watching it.
+        synced = _cgr_start(graph, shop, "--project-name", "api2")
+        assert synced.exit_code == 0, synced.output
+        watching.while_watching = lambda handler: _edit(handler, shop / "m.py")
+
+        result = _watch(
+            "--repo-path",
+            str(shop),
+            "--project-name",
+            "api2",
+            "--no-start-stack",
+            "-d",
+            "0",
+        )
+
+        assert result.exit_code == 0, result.output
+        assert len(scans) == 2
+        assert _project_root(graph, "api2") == str(shop)
+        assert _functions(graph) == ["api2.m.a", "api2.m.b_added"]
+
+    def test_a_name_nobody_indexes_is_claimed_for_this_repository(
+        self, shop: Path, billing: Path, graph: _Graph, watching: _Watch
+    ) -> None:
+        # Negative: the first writer of a name takes it, and keeps it from
+        # another repository that has no --yes.
+        watched = _watch(
+            "--repo-path", str(shop), "--project-name", "api2", "--no-start-stack"
+        )
+        assert watched.exit_code == 0, watched.output
+
+        refused = _cgr_start(graph, billing, "--project-name", "api2")
+
+        assert refused.exit_code == 1, refused.output
+        assert _project_root(graph, "api2") == str(shop)
+        assert _functions(graph) == ["api2.m.a"]
+
+    def test_an_owner_that_cannot_be_read_is_refused(
+        self, shop: Path, watching: _Watch, scans: list[GraphUpdater]
+    ) -> None:
+        # An unreadable owner is not an absent one (review of PR 2499).
+        watching.graph = _OwnerUnreadable()
+
+        result = _watch(
+            "--repo-path", str(shop), "--project-name", "api2", "--no-start-stack"
+        )
+
+        assert result.exit_code == 1, result.output
+        assert "lost connection" in _output(result)
+        assert "--yes" in _output(result)
+        assert scans == []
+
+    def test_yes_watches_when_the_owner_cannot_be_read(
+        self, shop: Path, watching: _Watch, scans: list[GraphUpdater]
+    ) -> None:
+        watching.graph = _OwnerUnreadable()
+
+        result = _watch(
+            "--repo-path",
+            str(shop),
+            "--project-name",
+            "api2",
+            "--no-start-stack",
+            "--yes",
+        )
+
+        assert result.exit_code == 0, result.output
+        [scan] = scans
+        assert scan.project_name == "api2"
+
+    def test_a_claim_the_watcher_made_is_given_back_when_it_fails_before_writing(
+        self, shop: Path, billing: Path, watching: _Watch, scans: list[GraphUpdater]
+    ) -> None:
+        # The marker is the scan's first write; failing it stops the watcher
+        # there, and the name it claimed must not refuse other repositories.
+        graph = _MarkerRefused()
+        watching.graph = graph
+
+        result = _watch(
+            "--repo-path", str(shop), "--project-name", "api2", "--no-start-stack"
+        )
+
+        assert result.exit_code == 1, result.output
+        assert "incomplete-run marker could not be written" in _output(result)
+        assert scans == []
+        assert _projects(graph) == []
+        graph.refusing = False
+        assert _cgr_start(graph, billing, "--project-name", "api2").exit_code == 0
+
+    def test_a_failing_watcher_keeps_a_project_it_did_not_create(
+        self, shop: Path, watching: _Watch
+    ) -> None:
+        # Negative: only a claim the failed watcher itself made is given back.
+        graph = _MarkerRefused()
+        graph.refusing = False
+        synced = _cgr_start(graph, shop, "--project-name", "api2")
+        assert synced.exit_code == 0, synced.output
+        graph.refusing = True
+        watching.graph = graph
+
+        result = _watch(
+            "--repo-path", str(shop), "--project-name", "api2", "--no-start-stack"
+        )
+
+        assert result.exit_code == 1, result.output
+        assert _project_root(graph, "api2") == str(shop)
+        assert _functions(graph) == ["api2.m.a"]
+
+    def test_a_claim_lost_while_watching_refuses_the_next_write(
+        self,
+        shop: Path,
+        billing: Path,
+        graph: _Graph,
+        watching: _Watch,
+        messages: list[str],
+    ) -> None:
+        # The claim is held to on every write, not only checked at start:
+        # another repository took the name over with --yes meanwhile.
+        seen: dict[str, object] = {}
+
+        def taken_over_then_saved(handler: CodeChangeEventHandler) -> None:
+            seen["taken"] = _cgr_start(
+                graph, billing, "--project-name", "api2", "--yes"
+            ).exit_code
+            _edit(handler, shop / "m.py")
+
+        watching.while_watching = taken_over_then_saved
+
+        result = _watch(
+            "--repo-path",
+            str(shop),
+            "--project-name",
+            "api2",
+            "--no-start-stack",
+            "-d",
+            "0",
+        )
+
+        assert result.exit_code == 0, result.output
+        assert seen["taken"] == 0
+        assert _project_root(graph, "api2") == str(billing)
+        assert _functions(graph) == ["api2.billing.charge_card"]
+        refusals = [m for m in messages if "Re-ingest refused" in m]
+        assert any(str(billing) in _squashed(m) for m in refusals), messages
+
+
+class TestIncompleteRunMarker:
+    """Review of PR 3365: every watcher write carries `cgr start`'s marker.
+
+    The initial scan and the full rebuilds wrote with no `:IncompleteRun`
+    marker, so a watcher stopped part-way left a partial graph that `cgr
+    status` and a later MCP process took for whole (#2219). A scoped
+    re-ingest carries it too, as the MCP `reingest` does (#1705).
+    """
+
+    @pytest.fixture
+    def graph(self) -> _MarkedGraph:
+        return _MarkedGraph()
+
+    def test_the_initial_scan_writes_only_while_its_marker_is_down(
+        self, shop: Path, graph: _MarkedGraph, watching: _Watch
+    ) -> None:
+        result = _watch("--repo-path", str(shop), "--no-start-stack")
+
+        assert result.exit_code == 0, result.output
+        assert graph.events == ["mark", "clear"]
+        assert graph.unmarked_writes == []
+        assert _functions(graph) == [f"{derive_project_name(shop)}.m.a"]
+
+    def test_an_edit_writes_only_while_its_marker_is_down(
+        self,
+        shop: Path,
+        graph: _MarkedGraph,
+        watching: _Watch,
+        scans: list[GraphUpdater],
+    ) -> None:
+        watching.while_watching = lambda handler: _edit(handler, shop / "m.py")
+
+        result = _watch("--repo-path", str(shop), "--no-start-stack", "-d", "0")
+
+        assert result.exit_code == 0, result.output
+        assert graph.events == ["mark", "clear", "mark", "clear"]
+        assert graph.unmarked_writes == []
+        # A scoped re-ingest, not a second full run.
+        assert len(scans) == 1
+        project = derive_project_name(shop)
+        assert _functions(graph) == [f"{project}.m.a", f"{project}.m.b_added"]
+
+    def test_a_resync_under_new_ignore_rules_writes_only_while_its_marker_is_down(
+        self,
+        shop: Path,
+        graph: _MarkedGraph,
+        watching: _Watch,
+        scans: list[GraphUpdater],
+    ) -> None:
+        seen: dict[str, object] = {}
+
+        def ignore_generated(handler: CodeChangeEventHandler) -> None:
+            rules = shop / ".cgrignore"
+            rules.write_text("generated/\n", encoding="utf-8")
+            handler.dispatch(FileModifiedEvent(str(rules)))
+            seen["full_runs"] = len(scans)
+
+        watching.while_watching = ignore_generated
+
+        result = _watch("--repo-path", str(shop), "--no-start-stack", "-d", "0")
+
+        assert result.exit_code == 0, result.output
+        # The scan, then the re-sync under the new rules.
+        assert seen["full_runs"] == 2
+        assert graph.events[:4] == ["mark", "clear", "mark", "clear"]
+        assert graph.marker_down is False
+        assert graph.unmarked_writes == []
+
+    def test_a_scan_that_fails_part_way_leaves_its_marker_down(
+        self,
+        shop: Path,
+        graph: _MarkedGraph,
+        watching: _Watch,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def dies_part_way(self: GraphUpdater, force: bool = False) -> None:
+            self.ingestor.ensure_node_batch(
+                cs.NodeLabel.PROJECT.value, {cs.KEY_NAME: self.project_name}
+            )
+            raise RuntimeError("store went away")
+
+        monkeypatch.setattr(GraphUpdater, "run", dies_part_way)
+
+        result = _watch("--repo-path", str(shop), "--no-start-stack")
+
+        assert result.exit_code != 0
+        assert graph.events == ["mark"]
+        assert graph.marker_down is True
+        watching.observer_cls.assert_not_called()
+
+    def test_an_interrupt_before_the_scan_committed_leaves_its_marker_down(
+        self,
+        shop: Path,
+        graph: _MarkedGraph,
+        watching: _Watch,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def interrupted(self: GraphUpdater, force: bool = False) -> None:
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(GraphUpdater, "run", interrupted)
+
+        result = _watch("--repo-path", str(shop), "--no-start-stack")
+
+        assert result.exit_code != 0
+        assert graph.marker_down is True
+
+    def test_an_interrupt_after_the_scan_committed_clears_its_marker(
+        self,
+        shop: Path,
+        graph: _MarkedGraph,
+        watching: _Watch,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Negative: a Ctrl+C that lands once the run committed found the graph
+        # whole, as `cgr start` treats it.
+        original = GraphUpdater.run
+
+        def committed_then_interrupted(self: GraphUpdater, force: bool = False) -> None:
+            original(self, force=force)
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(GraphUpdater, "run", committed_then_interrupted)
+
+        result = _watch("--repo-path", str(shop), "--no-start-stack")
+
+        assert result.exit_code != 0
+        assert graph.events == ["mark", "clear"]
+        assert graph.marker_down is False
+
+    def test_a_reingest_that_fails_part_way_keeps_its_marker_until_a_rebuild(
+        self,
+        shop: Path,
+        graph: _MarkedGraph,
+        watching: _Watch,
+        scans: list[GraphUpdater],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        original = GraphUpdater._reingest_reparse
+        failures = [RuntimeError("store went away")]
+        seen: dict[str, object] = {}
+
+        def reparse_once_failing(
+            self: GraphUpdater, reparse: dict[str, Path], gone: dict[str, Path]
+        ) -> dict[str, bytes]:
+            # After the re-ingest deleted the file's old subtree.
+            if failures:
+                raise failures.pop()
+            return original(self, reparse, gone)
+
+        monkeypatch.setattr(GraphUpdater, "_reingest_reparse", reparse_once_failing)
+
+        def save_twice(handler: CodeChangeEventHandler) -> None:
+            _edit(handler, shop / "m.py")
+            seen["events"] = list(graph.events)
+            seen["marker_down"] = graph.marker_down
+            _edit(handler, shop / "m.py")
+
+        watching.while_watching = save_twice
+
+        result = _watch("--repo-path", str(shop), "--no-start-stack", "-d", "0")
+
+        assert result.exit_code == 0, result.output
+        assert seen["events"] == ["mark", "clear", "mark"]
+        assert seen["marker_down"] is True
+        # The next change re-indexed the whole checkout under the marker,
+        # cleared it, then applied the change under its own.
+        assert graph.events[3:] == ["mark", "clear", "mark", "clear"]
+        assert graph.marker_down is False
+        assert len(scans) == 2
+        assert graph.unmarked_writes == []
+
+    def test_a_reingest_refused_before_writing_puts_no_marker_down(
+        self,
+        shop: Path,
+        graph: _MarkedGraph,
+        watching: _Watch,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Negative: a re-ingest whose read-only prologue fails changed
+        # nothing, so it leaves no marker behind.
+        def capture_fails(self: GraphUpdater, keys: list[str]) -> list[ResultRow]:
+            raise ConnectionError("graph read failed")
+
+        def save_once_reads_fail(handler: CodeChangeEventHandler) -> None:
+            # Only now: the scan reads the same edges.
+            monkeypatch.setattr(GraphUpdater, "_capture_inbound_edges", capture_fails)
+            _edit(handler, shop / "m.py")
+
+        watching.while_watching = save_once_reads_fail
+
+        result = _watch("--repo-path", str(shop), "--no-start-stack", "-d", "0")
+
+        assert result.exit_code == 0, result.output
+        assert graph.events == ["mark", "clear"]
+        assert graph.marker_down is False
+
+    def test_an_edit_after_an_unfinished_sync_rebuilds_the_whole_checkout(
+        self,
+        shop: Path,
+        graph: _MarkedGraph,
+        watching: _Watch,
+        scans: list[GraphUpdater],
+    ) -> None:
+        # A `cgr start` of the project stopped part-way while the watcher ran,
+        # leaving its marker down. A scoped re-ingest must not resolve against
+        # that graph, nor clear the marker over it; the whole checkout is
+        # re-indexed instead, which then clears it.
+        def unfinished_sync_then_saved(handler: CodeChangeEventHandler) -> None:
+            graph.marker_down = True
+            _edit(handler, shop / "m.py")
+
+        watching.while_watching = unfinished_sync_then_saved
+
+        result = _watch("--repo-path", str(shop), "--no-start-stack", "-d", "0")
+
+        assert result.exit_code == 0, result.output
+        assert len(scans) == 2
+        assert graph.marker_down is False
+        project = derive_project_name(shop)
+        assert _functions(graph) == [f"{project}.m.a", f"{project}.m.b_added"]
 
 
 class TestConnectionAndStack:

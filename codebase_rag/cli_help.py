@@ -455,6 +455,10 @@ HELP_ASSUME_YES = (
     "Answer yes to destructive confirmations, such as the one --clean asks before "
     "deleting other projects from the shared graph."
 )
+HELP_ASSUME_YES_WATCH = (
+    "Watch even a home directory or the filesystem root, and take over a "
+    "--project-name another repository already indexes, as cgr start --yes does."
+)
 HELP_OUTPUT_GRAPH = (
     "Write this repository's project graph to PATH as JSON. Requires "
     "--update-graph. Use cgr export for the whole shared graph."

@@ -8,14 +8,13 @@ import subprocess
 import sys
 import tempfile
 import time
-import uuid
 from collections.abc import Callable, Coroutine, Iterable, Iterator
 from contextlib import ExitStack, contextmanager
 from fnmatch import fnmatch
 from functools import partial, wraps
 from importlib.metadata import version as get_version
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn
 
 import click
 import typer
@@ -72,6 +71,13 @@ from .stack import StackManager
 from .stack.cli import cli as daemon_cli
 from .stack.constants import StackState
 from .stack.manager import StackError
+from .sync_guard import RUNNING_SYNC_TOKENS as _RUNNING_SYNC_TOKENS
+from .sync_guard import OwnerCheck as _OwnerCheck
+from .sync_guard import SyncRefusedError, mark_sync_incomplete, release_project_claim
+from .sync_guard import clear_sync_incomplete as _clear_sync_incomplete
+from .sync_guard import project_owner_refusal as _project_owner_refusal
+from .sync_guard import sync_marker_params as _sync_marker_params
+from .sync_guard import sync_owner as _sync_owner
 from .sync_lock import SyncLockError, repo_sync_lock
 from .tools.health_checker import HealthChecker
 from .tools.language import cli as language_cli
@@ -845,65 +851,6 @@ def _confirm_destructive_clean(
         raise typer.Exit(1)
 
 
-class _OwnerCheck(NamedTuple):
-    refusal: str | None
-    created: bool = False
-    # The roots the sync's marker write must still find on the Project, this
-    # repository's first; None when there is nothing to hold it to (no
-    # recorded root, or --yes taking the project over).
-    owned_roots: list[str] | None = None
-
-
-def _project_owner_refusal(
-    ingestor: MemgraphIngestor, project_name: str, repo: Path, assume_yes: bool
-) -> _OwnerCheck:
-    """Why a sync must not replace what another repository indexed (#2411),
-    and what its claim holds.
-
-    A derived name carries a hash of its path, so only a chosen one can
-    collide; the sync would delete the other repository's modules as stale
-    and leave that repository's hash cache describing code no longer there.
-    Refused rather than asked: the chat's own sync runs behind a status bar.
-
-    The check claims the name for this repository in the same statement
-    that reads its owner. A separate read let two syncs of a name nobody
-    held both see no owner and both go ahead, and the later one replaced
-    the first one's graph (review of PR 2499).
-    """
-    if not repo.is_dir():
-        return _OwnerCheck(None)
-    root = str(repo.resolve())
-    try:
-        rows = ingestor.fetch_all(
-            cq.CYPHER_CLAIM_PROJECT_ROOT,
-            {cs.KEY_PROJECT_NAME: project_name, cs.KEY_ROOT_PATH: root},
-        )
-    except Exception as exc:
-        logger.warning(ls.MG_PROJECT_ROOT_READ_FAILED.format(error=exc))
-        if assume_yes:
-            return _OwnerCheck(None)
-        return _OwnerCheck(
-            cs.CLI_ERR_PROJECT_OWNER_UNREADABLE.format(
-                project_name=project_name, error=exc
-            )
-        )
-    owner = rows[0].get(cs.KEY_ROOT_PATH) if rows else None
-    if not isinstance(owner, str) or not owner:
-        return _OwnerCheck(None)
-    if Path(owner).resolve() == repo.resolve():
-        # --yes would replace whoever holds it by then, so nothing to hold.
-        held = None if assume_yes else list(dict.fromkeys((root, owner)))
-        return _OwnerCheck(None, rows[0].get(cs.KEY_CREATED) is True, held)
-    if assume_yes:
-        logger.warning(
-            ls.PROJECT_OWNER_REPLACED.format(project_name=project_name, root=owner)
-        )
-        return _OwnerCheck(None)
-    return _OwnerCheck(
-        cs.CLI_ERR_PROJECT_OWNED_ELSEWHERE.format(project_name=project_name, root=owner)
-    )
-
-
 def _exit_if_project_owned_elsewhere(
     batch_size: int, project_name: str, repo: Path, *, clean: bool, assume_yes: bool
 ) -> _OwnerCheck:
@@ -924,14 +871,11 @@ def _exit_if_project_owned_elsewhere(
 
 
 def _release_project_claim(batch_size: int, project_name: str, repo: Path) -> None:
-    params: dict[str, PropertyValue] = {
-        cs.KEY_PROJECT_NAME: project_name,
-        cs.KEY_ROOT_PATH: str(repo.resolve()),
-    }
-    # Best effort: the sync's own failure is what is being reported.
+    # On its own connection, and best effort like the release itself: the
+    # sync's own failure is what is being reported.
     try:
         with connect_memgraph(batch_size) as ingestor:
-            ingestor.execute_write(cq.CYPHER_RELEASE_PROJECT_CLAIM, params)
+            release_project_claim(ingestor, project_name, repo)
     except Exception as exc:
         logger.warning(
             ls.PROJECT_CLAIM_RELEASE_FAILED.format(project_name=project_name, error=exc)
@@ -960,99 +904,22 @@ def _project_claim(
         raise
 
 
-def _sync_marker_params(project_name: str) -> dict[str, PropertyValue]:
-    return {cs.KEY_PROJECT_NAME: project_name, cs.KEY_RUN_ID: cs.CLI_SYNC_RUN_ID}
-
-
-# The CLI syncs THIS process is running, by the owner token on their marker.
-# A delete in the same process sees its own pid alive whether or not the sync
-# that wrote a marker has returned, so the pid cannot answer for these.
-_RUNNING_SYNC_TOKENS: set[str] = set()
-
-
-@contextmanager
-def _sync_owner() -> Iterator[dict[str, PropertyValue]]:
-    """Who this sync is, for its marker; registered as running while held."""
-    token = uuid.uuid4().hex
-    _RUNNING_SYNC_TOKENS.add(token)
-    try:
-        yield {
-            cs.KEY_OWNER_HOST: process_host(),
-            cs.KEY_OWNER_PID: os.getpid(),
-            cs.KEY_OWNER_TOKEN: token,
-        }
-    finally:
-        _RUNNING_SYNC_TOKENS.discard(token)
-
-
 def _mark_sync_incomplete(
     ingestor: MemgraphIngestor,
     project_name: str,
     owner: dict[str, PropertyValue],
     owned_roots: list[str] | None = None,
 ) -> None:
-    """Put the `:IncompleteRun` marker down before the sync writes (#2219).
+    """Put the `:IncompleteRun` marker down before the sync writes, or exit.
 
-    The same marker the MCP mutating paths write (#1679), so a later MCP
-    process refuses to hydrate from a graph an interrupted CLI sync left
-    partial. Failing to write it aborts the sync: nothing has changed yet,
-    and proceeding would make exactly that partial graph look complete.
-    It names its `owner`, so a delete can tell whether this sync still runs.
-
-    With `owned_roots`, the marker goes down only while the Project still
-    has one of them, checked in the same statement: the claim the ownership
-    check saw may have been released and taken since (review of PR 2499).
-    """
-    params = _sync_marker_params(project_name) | owner
-    params[cs.KEY_WRITING] = True
-    try:
-        if owned_roots is None:
-            ingestor.execute_write(cq.CYPHER_MARK_CLI_SYNC_INCOMPLETE, params)
-            return
-        params[cs.KEY_ROOT_PATH] = owned_roots[0]
-        params[cs.KEY_ROOT_PATHS] = owned_roots
-        marked = ingestor.fetch_all(cq.CYPHER_MARK_CLAIMED_PROJECT_INCOMPLETE, params)
-    except Exception as exc:
-        app_context.console.print(
-            style(
-                cs.CLI_ERR_SYNC_MARKER_FAILED.format(project=project_name),
-                cs.Color.RED,
-            )
-        )
-        raise typer.Exit(1) from exc
-    if not marked:
-        _exit_with_error(_claim_lost_refusal(ingestor, project_name))
-
-
-def _claim_lost_refusal(ingestor: MemgraphIngestor, project_name: str) -> str:
-    try:
-        rows = ingestor.fetch_all(
-            cq.CYPHER_PROJECT_ROOT_PATH, {cs.KEY_PROJECT_NAME: project_name}
-        )
-    except Exception as exc:
-        return cs.CLI_ERR_PROJECT_OWNER_UNREADABLE.format(
-            project_name=project_name, error=exc
-        )
-    owner = rows[0].get(cs.KEY_ROOT_PATH) if rows else None
-    return cs.CLI_ERR_PROJECT_OWNED_ELSEWHERE.format(
-        project_name=project_name, root=owner
-    )
-
-
-def _clear_sync_incomplete(ingestor: MemgraphIngestor, project_name: str) -> None:
-    """Take the marker off once the sync is recorded; never fails the sync.
-
-    The graph is whole by now, so a failed clear only leaves a stale marker
-    for the next sync of the project to clear (see `CLI_SYNC_RUN_ID`).
+    `mark_sync_incomplete` says why a refused marker stops the sync (#2219)
+    and what `owned_roots` holds it to (review of PR 2499).
     """
     try:
-        ingestor.execute_write(
-            cq.CYPHER_CLEAR_PROJECT_INCOMPLETE, _sync_marker_params(project_name)
-        )
-    except Exception as exc:
-        logger.warning(
-            ls.CLI_SYNC_MARKER_NOT_CLEARED.format(project=project_name, error=exc)
-        )
+        mark_sync_incomplete(ingestor, project_name, owner, owned_roots)
+    except SyncRefusedError as refused:
+        app_context.console.print(style(str(refused), cs.Color.RED))
+        raise typer.Exit(1) from refused
 
 
 @contextmanager
@@ -1729,11 +1596,20 @@ def watch_command(
         "--no-start-stack",
         help=ch.HELP_NO_START_STACK,
     ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help=ch.HELP_ASSUME_YES_WATCH,
+    ),
 ) -> None:
     # The checkout, project name, stack and batch size are resolved exactly as
     # `cgr start` resolves them, so the watcher updates the project that
     # command syncs and queries (issues #2432, #2433).
     resolved_repo = _resolve_and_validate_repo(repo_path)
+    # Refused as `cgr start` refuses it, before the stack starts: a scan of
+    # `$HOME` would index all of it and watch it recursively (#2418).
+    _exit_if_syncing_home_or_root(resolved_repo, yes)
     if not no_start_stack:
         _maybe_start_stack()
     # Deferred like the sync's own imports: the watcher pulls in the parsers
@@ -1748,8 +1624,9 @@ def watch_command(
             batch_size=settings.resolve_batch_size(batch_size),
             debounce_seconds=debounce,
             max_wait_seconds=effective_max_wait(debounce, max_wait),
+            assume_yes=yes,
         )
-    except (GraphUnavailableError, SyncLockError) as refused:
+    except (GraphUnavailableError, SyncLockError, SyncRefusedError) as refused:
         app_context.console.print(style(str(refused), cs.Color.RED))
         raise typer.Exit(1) from None
 

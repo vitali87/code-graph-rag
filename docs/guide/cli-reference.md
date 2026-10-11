@@ -124,10 +124,13 @@ cgr watch --repo-path /path/to/repo [OPTIONS]
 | `--max-wait`, `-m` | Longest a file that keeps changing waits before the graph is updated anyway. Raised to --debounce when lower. [default: 30; x>=0] |
 | `--batch-size` | Flush to Memgraph after this many buffered nodes or relationships. [x>=1] |
 | `--no-start-stack` | Do not start the shared stack automatically. |
+| `--yes`, `-y` | Watch even a home directory or the filesystem root, and take over a --project-name another repository already indexes, as cgr start --yes does. |
 <!-- /SECTION:cli_options_watch -->
 
 The repository, the project name and the stack are resolved as `cgr start`
-resolves them, so both commands update one project. The Memgraph connection
+resolves them, so both commands update one project. Like `cgr start`, it
+refuses a home directory, the filesystem root and a project name another
+repository indexes unless `--yes` is given. The Memgraph connection
 comes from `MEMGRAPH_HOST` and `MEMGRAPH_PORT` (the environment or `.env`),
 as for every `cgr` command.
 

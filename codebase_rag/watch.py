@@ -5,7 +5,9 @@ an installed cgr had no watcher at all. Shipped here, it syncs exactly as a
 manual sync does: the checkout and project name `cgr start` resolves, the
 CLI's Memgraph settings, and `GraphUpdater.run` / `reingest` under the
 checkout's sync lock, so the watcher and `cgr start --update-graph` never
-write one checkout at once (issue #2441).
+write one checkout at once (issue #2441). It claims the project and puts
+`cgr start`'s incomplete-run marker down around every write as that command
+does (issues #2411, #2219).
 """
 
 import os
@@ -46,9 +48,22 @@ from .constants import (
 )
 from .graph_updater import GraphUpdater, ReingestAborted
 from .parser_loader import load_parsers
-from .services import IngestorProtocol
+from .services import IngestorProtocol, QueryProtocol
+from .sync_guard import (
+    SyncRefusedError,
+    clear_sync_incomplete,
+    mark_sync_incomplete,
+    project_claim,
+    sync_marker_down,
+    sync_owner,
+)
 from .sync_lock import repo_sync_lock
-from .types_defs import CgrignorePatterns, LanguageQueries
+from .types_defs import (
+    CgrignorePatterns,
+    LanguageQueries,
+    PropertyValue,
+    ReingestReport,
+)
 from .utils.path_utils import (
     is_eligible_rel_file,
     is_symlink_entry,
@@ -76,6 +91,79 @@ class PendingTimer(Protocol):
 # invoking it during `start()` — doing so deadlocks the handler.
 TimerFactory = Callable[..., PendingTimer]
 UpdaterFactory = Callable[[CgrignorePatterns], GraphUpdater]
+
+
+class UnfinishedSyncError(RuntimeError):
+    """A CLI sync of the project stopped part-way, so its graph may be partial."""
+
+
+class WriteMarker:
+    """`cgr start`'s `:IncompleteRun` marker around each watcher write (#2219).
+
+    Down before the initial scan, a full re-index or a re-ingest's first
+    write, and off once that write succeeded, so a watcher stopped part-way
+    leaves a graph `cgr status` and the MCP server know to be partial. It is
+    the CLI sync's own marker, so `cgr start` clears what the watcher left
+    and the other way round. Every mark holds to the claim `cgr watch` took
+    on its project (#2411): once another repository has the name, the write
+    is refused instead of replacing that repository's graph.
+    """
+
+    def __init__(
+        self,
+        ingestor: QueryProtocol,
+        project_name: str,
+        owner: dict[str, PropertyValue],
+        owned_roots: list[str] | None,
+    ) -> None:
+        self._ingestor = ingestor
+        self._project_name = project_name
+        self._owner = owner
+        self._owned_roots = owned_roots
+
+    def mark(self) -> None:
+        mark_sync_incomplete(
+            self._ingestor, self._project_name, self._owner, self._owned_roots
+        )
+
+    def mark_scoped(self) -> None:
+        """Mark before a re-ingest writes, unless a sync left the graph partial.
+
+        A re-ingest resolves its files against the rest of the graph, and
+        clearing the shared marker after it would call whole a graph an
+        unfinished `cgr start` left partial. The MCP `reingest` refuses there
+        for the same reason (#1705); the watcher re-indexes instead.
+        """
+        if sync_marker_down(self._ingestor, self._project_name):
+            raise UnfinishedSyncError(self._project_name)
+        self.mark()
+
+    def clear(self) -> None:
+        clear_sync_incomplete(self._ingestor, self._project_name)
+
+
+def _marked_run(
+    updater: GraphUpdater, marker: WriteMarker | None, force: bool = False
+) -> None:
+    """Run the updater over the whole checkout between `marker`'s mark and clear.
+
+    The caller holds the checkout's sync lock, so the marker goes down after
+    a sync that held it first has taken its own off: they share one. It
+    comes off once the run committed, as `cgr start` takes its own off: a
+    Ctrl+C landing after the commit found the graph whole. Any other failure
+    leaves it down.
+    """
+    if marker is None:
+        updater.run(force=force)
+        return
+    marker.mark()
+    try:
+        updater.run(force=force)
+    except KeyboardInterrupt:
+        if updater.committed:
+            marker.clear()
+        raise
+    marker.clear()
 
 
 class IgnoreRules:
@@ -137,8 +225,12 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         max_wait_seconds: float = DEFAULT_MAX_WAIT_SECONDS,
         timer_factory: TimerFactory = threading.Timer,
         ignore_rules: IgnoreRules | None = None,
+        write_marker: WriteMarker | None = None,
     ):
         self.updater = updater
+        # The marker every write goes under (#2219); None writes unmarked, as
+        # a handler built on its own around an updater does.
+        self._marker = write_marker
         # Where the updater's ignore rules come from, so a change to them
         # re-syncs the graph under the new rules. None keeps the updater's
         # rules as given.
@@ -177,7 +269,9 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         else:
             logger.info(logs.WATCHER_ACTIVE)
 
-    def _rebuild_after_failure(self) -> bool:
+    def _rebuild_after_failure(
+        self, notice: str = logs.WATCHER_REBUILDING_AFTER_FAILURE
+    ) -> bool:
         """Re-index everything after a partial re-ingest. True when the graph is whole.
 
         `force=True` is required, not tidiness: an incremental run skips files
@@ -191,7 +285,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         watcher goes silently deaf -- the same failure this recovery exists to
         prevent, one level up. The flag stays set so the next change retries.
         """
-        logger.warning(logs.WATCHER_REBUILDING_AFTER_FAILURE)
+        logger.warning(notice)
         try:
             self._full_run(force=True)
         except Exception as exc:  # noqa: BLE001
@@ -211,7 +305,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         """
         updater = self.updater
         with repo_sync_lock(updater.repo_path, updater.project_name, wait=True):
-            updater.run(force=force)
+            _marked_run(updater, self._marker, force=force)
 
     def _is_relevant(self, path_str: str) -> bool:
         # The same predicate as the repository walk, not a restatement of it:
@@ -532,15 +626,15 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             # stays set and the next change tries again.
             return
         try:
-            if event.event_type == EventType.DELETED:
-                self.updater.reingest((), deleted=(path,))
-            else:
-                self.updater.reingest((path,))
+            self._reingest(path, deleted=event.event_type == EventType.DELETED)
         except (ValueError, ReingestAborted) as exc:
             # A refusal (a symlink resolving outside the repo, a directory where
             # a file was expected) is raised while the paths are split, and an
             # abort while the call was still READING the graph. Neither wrote
             # anything, so the updater is still valid and later events run.
+            if isinstance(exc.__cause__, UnfinishedSyncError):
+                self._rebuild_unfinished_sync()
+                return
             logger.warning(logs.WATCHER_REINGEST_REFUSED.format(path=path, error=exc))
             return
         except Exception as exc:  # noqa: BLE001
@@ -554,6 +648,37 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             self._needs_full_rebuild = True
             return
         logger.success(logs.GRAPH_UPDATED.format(name=path.name))
+
+    def _reingest(self, path: Path, *, deleted: bool) -> None:
+        """Re-ingest one path, under the marker when the watcher carries one.
+
+        Every mutating path marks, as the MCP `reingest` does (#1705). The
+        marker goes down from the re-ingest's `before_write`, where its
+        read-only prologue ends, so a refused or empty re-ingest leaves none,
+        and it comes off once the re-ingest returned. A failure after the
+        first write leaves it down until the full re-index owed then clears
+        it (issue #1681).
+        """
+        reingest: Callable[..., ReingestReport] = self.updater.reingest
+        if self._marker is not None:
+            reingest = partial(reingest, before_write=self._marker.mark_scoped)
+        if deleted:
+            reingest((), deleted=(path,))
+        else:
+            reingest((path,))
+        if self._marker is not None and self.updater.reingest_mutated:
+            self._marker.clear()
+
+    def _rebuild_unfinished_sync(self) -> None:
+        """Re-index the whole checkout over a graph an unfinished sync left.
+
+        The re-ingest stopped before writing; the full re-index covers its
+        change and, once whole, takes the unfinished sync's marker off.
+        """
+        self._needs_full_rebuild = True
+        self._rebuild_after_failure(
+            logs.WATCHER_SYNC_UNFINISHED.format(project=self.updater.project_name)
+        )
 
 
 def _coalesce(
@@ -596,6 +721,7 @@ def start_watcher(
     batch_size: int,
     debounce_seconds: float = DEFAULT_DEBOUNCE_SECONDS,
     max_wait_seconds: float = DEFAULT_MAX_WAIT_SECONDS,
+    assume_yes: bool = False,
 ) -> None:
     """Scan the checkout, then keep its graph in sync until Ctrl+C.
 
@@ -603,19 +729,41 @@ def start_watcher(
     same checkout and options, so both commands update one project and keep
     one set of sync state (issue #2432). The connection is the CLI's: the
     MEMGRAPH_* settings, not flags of the watcher's own.
+
+    Before the scan the project is claimed for this checkout as `cgr start`
+    claims it, and the claim is held to on every write (#2411); each write
+    goes under the CLI sync's incomplete-run marker (#2219). Raises
+    `SyncRefusedError`, with nothing written, when the project is another
+    repository's (unless `assume_yes`, as `cgr start --yes`), its owner
+    cannot be read, or the scan's marker cannot go down.
     """
     parsers, queries = load_parsers()
+    refused: SyncRefusedError | None = None
     with connect_memgraph(batch_size) as ingestor:
-        _run_watcher_loop(
-            ingestor,
-            repo_path,
-            parsers,
-            queries,
-            debounce_seconds,
-            max_wait_seconds,
-            project_name,
-            project_named,
-        )
+        try:
+            with (
+                project_claim(
+                    ingestor, project_name, repo_path, assume_yes=assume_yes
+                ) as owned_roots,
+                sync_owner() as owner,
+            ):
+                _run_watcher_loop(
+                    ingestor,
+                    repo_path,
+                    parsers,
+                    queries,
+                    debounce_seconds,
+                    max_wait_seconds,
+                    project_name,
+                    project_named,
+                    WriteMarker(ingestor, project_name, owner, owned_roots),
+                )
+        except SyncRefusedError as refusal:
+            # Raised past the connection, which logs what leaves it as a
+            # failure with a traceback; the CLI reports this one itself.
+            refused = refusal
+    if refused is not None:
+        raise refused
 
 
 def effective_max_wait(debounce_seconds: float, max_wait_seconds: float) -> float:
@@ -647,7 +795,7 @@ def script_args(argv: Sequence[str]) -> list[str]:
     return [ch.CLICommandName.WATCH.value, *args]
 
 
-def _initial_scan(updater: GraphUpdater) -> None:
+def _initial_scan(updater: GraphUpdater, marker: WriteMarker | None = None) -> None:
     """Build the context for real-time updates with a full scan.
 
     A watcher started while a sync of the checkout is running waits for it
@@ -656,7 +804,7 @@ def _initial_scan(updater: GraphUpdater) -> None:
     """
     logger.info(logs.INITIAL_SCAN)
     with repo_sync_lock(updater.repo_path, updater.project_name, wait=True):
-        updater.run()
+        _marked_run(updater, marker)
     logger.success(logs.INITIAL_SCAN_DONE)
 
 
@@ -669,6 +817,7 @@ def _run_watcher_loop(
     max_wait_seconds: float,
     project_name: str,
     project_named: bool,
+    marker: WriteMarker | None = None,
 ) -> None:
     ignore_rules = IgnoreRules(
         repo_path_obj,
@@ -683,13 +832,14 @@ def _run_watcher_loop(
         ),
     )
     updater = ignore_rules.build_updater()
-    _initial_scan(updater)
+    _initial_scan(updater, marker)
 
     event_handler = CodeChangeEventHandler(
         updater,
         debounce_seconds=debounce_seconds,
         max_wait_seconds=max_wait_seconds,
         ignore_rules=ignore_rules,
+        write_marker=marker,
     )
     observer = Observer()
     observer.schedule(event_handler, str(repo_path_obj), recursive=True)

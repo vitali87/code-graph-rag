@@ -84,6 +84,28 @@ cgr watch --repo-path ~/my-project
 cgr start --repo-path ~/my-project
 ```
 
+### Refused as `cgr start` refuses it
+
+- A home directory or the filesystem root. `--repo-path` defaults to the
+  current directory, so `cgr watch` run from `$HOME` would index every file
+  under it and watch them all. Pass `--repo-path <repository>`, or `--yes` to
+  watch it anyway.
+- A `--project-name` another repository already indexes, which the watcher
+  would replace. Choose another name, or pass `--yes` to take the project
+  over. The watcher claims the name for its repository before the first scan
+  and holds to that claim on every write: if another repository takes the
+  name over meanwhile (`cgr start --yes`), the watcher logs each later change
+  as refused instead of writing it.
+
+Every write the watcher makes (the first scan, a full re-index, each change
+it applies) goes under the incomplete-run marker `cgr start --update-graph`
+puts down, which comes off only once that write has finished. A watcher
+stopped part-way through a write therefore shows in `cgr status` as an
+unfinished sync, and the MCP server does not trust the partial graph, until
+the next sync of the project finishes. A change that arrives while another
+sync of the project has left its marker down re-indexes the whole repository
+instead of applying that change alone.
+
 ### One sync of a checkout at a time
 
 Every writer of a checkout (`cgr start --update-graph`, `cgr index`, the MCP
@@ -141,6 +163,7 @@ with a short, growing wait before it is reported.
 | `--max-wait`, `-m` | Longest a file that keeps changing waits before the graph is updated anyway. Raised to --debounce when lower. [default: 30; x>=0] |
 | `--batch-size` | Flush to Memgraph after this many buffered nodes or relationships. [x>=1] |
 | `--no-start-stack` | Do not start the shared stack automatically. |
+| `--yes`, `-y` | Watch even a home directory or the filesystem root, and take over a --project-name another repository already indexes, as cgr start --yes does. |
 <!-- /SECTION:cli_options_watch -->
 
 The same table is in the [CLI reference](cli-reference.md#cgr-watch).
