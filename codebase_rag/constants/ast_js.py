@@ -314,6 +314,23 @@ TS_ARRAY_GENERIC_NAMES = frozenset(
 )
 JS_LIST_TYPE_PREFIX = "list["
 JS_LIST_TYPE_FORMAT = "list[{element}]"
+# A fluent chain hop types from the callee's return (issue #2468). `: this`
+# names the receiver's own class. A callable carrying one of these keywords
+# does not hand the caller what its body returns: an `async` one gives a
+# Promise, a `*` generator an iterator, and an accessor is read or written as
+# a property, never called.
+TS_THIS_TYPE = "this_type"
+# What a `return this` (or `: this`) hands back before the receiver it is
+# called on is known: an instance of the receiver's class from an instance
+# method, the receiver class itself from a static one. A hop on the class
+# itself reaches only its static members.
+JS_RECEIVER_INSTANCE = "this"
+JS_CLASS_VALUE_PREFIX = "typeof "
+JS_RECEIVER_CLASS = f"{JS_CLASS_VALUE_PREFIX}{JS_RECEIVER_INSTANCE}"
+TS_CHAIN_OPAQUE_CALLABLE_KEYWORDS = frozenset({"async", "*", "get", "set"})
+TS_ACCESSOR_KEYWORDS = frozenset({"get", "set"})
+# `declare class C {}` / `declare module "x" {}`.
+TS_AMBIENT_DECLARATION = "ambient_declaration"
 # A member call's receiver declaration, read to confirm or rule out a method
 # bound only by name (issue #2609).
 TS_PREDEFINED_TYPE = "predefined_type"
