@@ -61,11 +61,14 @@ class Bound(IntEnum):
     upper-bound inferences): to one type exactly, from below (the type
     converts to it), or from above (it converts to the type). A class's or
     struct's type argument is inferred into exactly, an interface's or a
-    delegate's as its parameter varies (PR 2814 review)."""
+    delegate's as its parameter varies (PR 2814 review). CANDIDATE is one
+    of the three, not known which (a generic type of no known kind): its
+    type is still one the parameter may be fixed to, and nothing more."""
 
     EXACT = 0
     LOWER = 1
     UPPER = 2
+    CANDIDATE = 3
 
 
 class TypeKinds(NamedTuple):
@@ -526,7 +529,28 @@ def arguments_match(
         if owner is not None
         else [Bound.EXACT] * len(given)
     )
-    verdict = _infer_all(given, wanted, state, contexts)
+    return _committed(_infer_all(given, wanted, state, contexts), state, inferred)
+
+
+def infer_into(
+    given: str,
+    parameter: str,
+    open_names: Collection[str],
+    inferred: Inferred | None,
+    kinds: TypeKinds,
+) -> bool | None:
+    """Whether an argument of type `given` is `parameter` for some binding
+    of `open_names`, inferred from below as C# infers an argument into its
+    parameter: `int[]` is `T[]` with `int` bounding T (PR 2814 review). On a
+    match, its bounds go into `inferred`."""
+    state = _Inference(frozenset(open_names), {}, kinds)
+    return _committed(_infer(given, parameter, state, Bound.LOWER), state, inferred)
+
+
+def _committed(
+    verdict: bool | None, state: _Inference, inferred: Inferred | None
+) -> bool | None:
+    # `verdict`, with the bounds `state` found added to `inferred` on a match.
     if verdict and inferred is not None:
         for name, bounds in state.found.items():
             inferred.setdefault(name, []).extend(bounds)
@@ -595,34 +619,33 @@ def predefined_converts(source: str, target: str) -> bool | None:
     return origin == destination or destination in widened
 
 
-def _varied(context: Bound, variance: str, reference: bool | None) -> Bound | None:
+def _varied(context: Bound, variance: str, reference: bool | None) -> Bound:
     """How a type argument bounds its parameter where its generic type is
     inferred into from below or above: as the parameter varies (an `out`
     keeps the direction, an `in` turns it), when the argument is a
     reference type; exactly when it is a value type or the parameter does
-    not vary. None when whether it is a reference type is not known."""
+    not vary. A candidate when whether it is a reference type is not known."""
     if not variance or reference is False:
         return Bound.EXACT
     if reference is None:
-        return None
+        return Bound.CANDIDATE
     if variance == cs.CSHARP_VARIANCE_OUT:
         return context
     return Bound.UPPER if context is Bound.LOWER else Bound.LOWER
 
 
 def _contexts(
-    given: Sequence[str], context: Bound | None, owner: str, kinds: TypeKinds | None
-) -> list[Bound | None]:
+    given: Sequence[str], context: Bound, owner: str, kinds: TypeKinds | None
+) -> list[Bound]:
     # How each of the type arguments `given` passes the generic type `owner`
     # bounds, inferred into in `context`. Inside an exact one every position
-    # is exact; a type of no known kind bounds nothing.
-    if context is Bound.EXACT:
-        return [Bound.EXACT] * len(given)
-    if context is None or kinds is None:
-        return [None] * len(given)
-    variances = kinds.variances(owner)
-    if variances is None or len(variances) != len(given):
-        return [None] * len(given)
+    # is exact, inside a candidate one a candidate, and a type of no known
+    # kind makes each a candidate.
+    if context in (Bound.EXACT, Bound.CANDIDATE):
+        return [context] * len(given)
+    variances = kinds.variances(owner) if kinds is not None else None
+    if kinds is None or variances is None or len(variances) != len(given):
+        return [Bound.CANDIDATE] * len(given)
     return [
         _varied(context, variance, kinds.reference(argument))
         for variance, argument in zip(variances, given, strict=True)
@@ -633,7 +656,7 @@ def _infer_all(
     given: Sequence[str],
     wanted: Sequence[str],
     state: _Inference,
-    contexts: Sequence[Bound | None],
+    contexts: Sequence[Bound],
 ) -> bool | None:
     # As many types, position by position, under one set of inferences.
     verdict: bool | None = True
@@ -646,9 +669,7 @@ def _infer_all(
     return verdict
 
 
-def _infer(
-    given: str, wanted: str, state: _Inference, context: Bound | None
-) -> bool | None:
+def _infer(given: str, wanted: str, state: _Inference, context: Bound) -> bool | None:
     # Whether a binding of the open names, agreeing with what this argument
     # inferred exactly so far, makes `wanted` the type `given`. A wanted
     # type with no open name is compared as it is; one with some is taken
@@ -679,14 +700,14 @@ def _infer(
 
 
 def _infer_tuple(
-    given: str, wanted: str, state: _Inference, context: Bound | None
+    given: str, wanted: str, state: _Inference, context: Bound
 ) -> bool | None:
     # A tuple is a struct, so its elements are inferred into exactly.
     given_elements = _tuple_elements(given) if is_tuple(given) else []
     wanted_elements = _tuple_elements(wanted)
     if len(given_elements) != len(wanted_elements):
         return False
-    element = None if context is None else Bound.EXACT
+    element = Bound.CANDIDATE if context is Bound.CANDIDATE else Bound.EXACT
     return _infer_all(
         given_elements, wanted_elements, state, [element] * len(given_elements)
     )
@@ -696,14 +717,14 @@ def _infer_parameter(
     name: str,
     given: tuple[str, str],
     wanted_suffix: str,
-    at: tuple[_Inference, Bound | None],
+    at: tuple[_Inference, Bound],
 ) -> bool | None:
     # `name` is the given type, its shape and all (`T` of `int[]`), or the
     # given type's core when both build one shape on it (`T[]` of `int[]`),
     # and the same type wherever this argument fixed it exactly before. A
     # shape the given type does not build on (`T[]` of `int`) is no fit;
     # another one may be the parameter's own (`T[]` of `int?[]`), which is
-    # not told, nor how an element bounds outside an exact inference.
+    # not told.
     state, context = at
     core, suffix = given
     if not wanted_suffix:
@@ -711,17 +732,28 @@ def _infer_parameter(
     elif suffix != wanted_suffix:
         rank = cs.CSHARP_ARRAY_RANK_OPEN
         return None if suffix.count(rank) >= wanted_suffix.count(rank) else False
-    elif context is not Bound.EXACT:
-        context = None
+    else:
+        context = _element_bound(context, suffix, core, state.kinds)
     return _bound(name, core, state, context)
 
 
-def _bound(name: str, type_text: str, state: _Inference, context: Bound | None) -> bool:
+def _element_bound(
+    context: Bound, suffix: str, element: str, kinds: TypeKinds | None
+) -> Bound:
+    # How the element of a shape both sides build bounds its parameter: an
+    # array's as an `out` type argument does (a reference element varies,
+    # a value one is exact), a nullable value's exactly.
+    if context in (Bound.EXACT, Bound.CANDIDATE):
+        return context
+    if cs.CSHARP_ARRAY_RANK_OPEN not in suffix:
+        return Bound.EXACT
+    reference = kinds.reference(element) if kinds is not None else None
+    return _varied(context, cs.CSHARP_VARIANCE_OUT, reference)
+
+
+def _bound(name: str, type_text: str, state: _Inference, context: Bound) -> bool:
     # Records `type_text` as a `context` bound of `name`: False when it is
-    # exact and another exact one this argument gave differs. A position of
-    # no known kind bounds nothing.
-    if context is None:
-        return True
+    # exact and another exact one this argument gave differs.
     bounds = state.found.setdefault(name, [])
     if context is Bound.EXACT and not _exact_agree([*bounds, (context, type_text)]):
         return False
@@ -844,26 +876,141 @@ def fit(
     return Fit.CONVERTIBLE if related else None
 
 
-def _dominates(better: Sequence[Fit], worse: Sequence[Fit]) -> bool:
-    # Fits of different lengths scored different arguments, so neither can
-    # be said to beat the other.
-    if len(better) != len(worse):
+class Scored(NamedTuple):
+    """One candidate as C# weighs it against another (PR 2814 review): how
+    each argument binds, the parameter type it binds it to with every fixed
+    type argument in, and what breaks a tie between two candidates binding
+    the arguments to one parameter types: whether it is a generic method,
+    whether it takes them in its expanded form, and its declared parameter
+    types with the type parameters in scope where they are written. A
+    candidate whose own type parameter inference could not settle is not
+    `settled`: its fits hold for some type, not the one every argument must
+    agree on, so it neither beats another candidate nor loses to one."""
+
+    qn: str
+    fits: Sequence[Fit | None]
+    parameters: Sequence[str]
+    generic: bool = False
+    expanded: bool = False
+    declared: Sequence[str] = ()
+    type_parameters: frozenset[str] = frozenset()
+    settled: bool = True
+
+
+# (a parameter type, another) an argument converts to both -> +1 when the
+# first is C#'s better conversion target, -1 when the second is, 0 when
+# neither is known to be.
+type TargetOrder = Callable[[str, str], int]
+
+
+def best_candidates(
+    scored: Sequence[Scored], target_order: TargetOrder | None = None
+) -> list[str]:
+    """The applicable candidates no other applicable one is better than, as
+    C# finds a better function member, in their given order; empty when
+    none applies. `target_order` ranks two types two known conversions
+    reach; without it, such conversions tie."""
+    viable = [c for c in scored if None not in c.fits]
+    return [
+        c.qn
+        for c in viable
+        if not any(_better(o, c, target_order) for o in viable if o is not c)
+    ]
+
+
+def _better(p: Scored, q: Scored, target_order: TargetOrder | None) -> bool:
+    # Whether `p` is the better function member: better for some argument
+    # and worse for none, or, binding every argument to one type as `q`
+    # does, better by C#'s tie-breaks. Candidates scored on different
+    # arguments, or either unsettled, are never compared.
+    if not (p.settled and q.settled):
         return False
-    return all(b >= w for b, w in zip(better, worse, strict=True)) and any(
-        b > w for b, w in zip(better, worse, strict=True)
+    if len(p.fits) != len(q.fits) or len(p.parameters) != len(q.parameters):
+        return False
+    verdicts = {
+        _better_conversion(conversion, target_order)
+        for conversion in zip(p.fits, q.fits, p.parameters, q.parameters, strict=True)
+    }
+    if -1 in verdicts:
+        return False
+    if 1 in verdicts:
+        return True
+    return _equivalent(p.parameters, q.parameters) and _tie_break(p, q) > 0
+
+
+def _better_conversion(
+    conversion: tuple[Fit | None, Fit | None, str, str],
+    target_order: TargetOrder | None,
+) -> int:
+    # Which of two conversions of one argument is better: the better fit,
+    # or, between two known conversions, the better target.
+    p_fit, q_fit, p_type, q_type = conversion
+    if p_fit != q_fit:
+        return 1 if (p_fit or 0) > (q_fit or 0) else -1
+    if p_fit is Fit.CONVERTIBLE and target_order is not None:
+        return target_order(p_type, q_type)
+    return 0
+
+
+def _equivalent(given: Sequence[str], wanted: Sequence[str]) -> bool:
+    # Whether two parameter type lists are one type, position by position.
+    return all(g == w or same_type(g, w) for g, w in zip(given, wanted, strict=True))
+
+
+def _tie_break(p: Scored, q: Scored) -> int:
+    # C#'s tie-breaks, in order: a non-generic method beats a generic one, a
+    # normal form an expanded one, and more specific declared parameter
+    # types less specific ones. +1 for `p`, -1 for `q`, 0 for neither.
+    return (
+        int(q.generic) - int(p.generic)
+        or int(q.expanded) - int(p.expanded)
+        or _more_specific(
+            p.declared, q.declared, (p.type_parameters, q.type_parameters)
+        )
     )
 
 
-def best_candidates(scored: Sequence[tuple[str, Sequence[Fit | None]]]) -> list[str]:
-    """The applicable candidates no other applicable one beats on every
-    argument, in their given order; empty when none applies."""
-    viable = [
-        (qn, [f for f in fits if f is not None])
-        for qn, fits in scored
-        if all(f is not None for f in fits)
-    ]
-    return [
-        qn
-        for qn, fits in viable
-        if not any(_dominates(other, fits) for _, other in viable if other is not fits)
-    ]
+def _more_specific(
+    first: Sequence[str],
+    second: Sequence[str],
+    type_parameters: tuple[frozenset[str], frozenset[str]],
+) -> int:
+    # +1 when `first` is more specific, no type less specific and one more,
+    # -1 when `second` is, 0 when neither or their lengths differ.
+    if len(first) != len(second):
+        return 0
+    verdicts = {
+        _specificity(f, s, type_parameters) for f, s in zip(first, second, strict=True)
+    }
+    if 1 in verdicts and -1 not in verdicts:
+        return 1
+    if -1 in verdicts and 1 not in verdicts:
+        return -1
+    return 0
+
+
+def _specificity(
+    first: str, second: str, type_parameters: tuple[frozenset[str], frozenset[str]]
+) -> int:
+    # A type parameter is less specific than any other type; an array is
+    # as specific as its element, and a constructed type or a tuple more
+    # specific by its type arguments or elements (`_more_specific`).
+    first_open = first.strip() in type_parameters[0]
+    second_open = second.strip() in type_parameters[1]
+    if first_open or second_open:
+        return int(second_open) - int(first_open)
+    (first_core, first_suffix), (second_core, second_suffix) = (
+        type_shape(first),
+        type_shape(second),
+    )
+    if first_suffix != second_suffix:
+        return 0
+    if first_suffix:
+        return _specificity(first_core, second_core, type_parameters)
+    if is_tuple(first_core) and is_tuple(second_core):
+        parts = (_tuple_elements(first_core), _tuple_elements(second_core))
+    elif same_type_name(first_core, second_core):
+        parts = (list(type_arguments(first_core)), list(type_arguments(second_core)))
+    else:
+        return 0
+    return _more_specific(*parts, type_parameters)

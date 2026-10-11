@@ -633,6 +633,9 @@ CSHARP_FRAMEWORK_GENERICS: dict[tuple[str, int], tuple[str, bool, tuple[str, ...
         ("Action", count): (_SYSTEM, True, (CSHARP_VARIANCE_IN,) * count)
         for count in range(1, 17)
     },
+    # `Tuple<...>` is a class and `ValueTuple<...>` a struct, every arity.
+    **{("Tuple", count): (_SYSTEM, True, ("",) * count) for count in range(1, 9)},
+    **{("ValueTuple", count): (_SYSTEM, False, ("",) * count) for count in range(1, 9)},
 }
 # The implicit numeric conversions, by keyword: what each predefined type
 # converts to besides itself and `object`. Fixing a type parameter needs

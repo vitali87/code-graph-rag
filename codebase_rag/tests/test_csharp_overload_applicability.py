@@ -998,6 +998,66 @@ class TestAVariantTypeArgumentBoundsItsParameter:
         assert calls[caller] == {expected}, calls
 
 
+TUPLE_CONSTRAINT_CS = """\
+namespace Tu;
+public class Person { }
+public class Employee : Person { }
+public class Circle { }
+public class C {
+    public void M<T>(System.Tuple<T> t) where T : Person { }
+    public void M(object o) { }
+}
+public class Use {
+    public void Breaks() { System.Tuple<Circle> t = null; new C().M(t); }
+    public void Meets() { System.Tuple<Employee> t = null; new C().M(t); }
+}
+"""
+
+
+class TestATypeInferredIntoAnyGenericMeetsItsConstraint:
+    # Greptile review of PR 2814: whatever a position's variance, C# fixes
+    # T to one of its bounds' types, so a T inferred only as `Circle` breaks
+    # `where T : Person`.
+    def test_a_type_argument_breaking_the_constraint_binds_object(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _calls(TUPLE_CONSTRAINT_CS, temp_repo, mock_ingestor)
+        assert calls["Breaks"] == {"Tu.C.M(object)"}, calls
+
+    def test_a_type_argument_meeting_the_constraint_binds_the_generic(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Negative: an Employee is a Person.
+        calls = _calls(TUPLE_CONSTRAINT_CS, temp_repo, mock_ingestor)
+        assert calls["Meets"] == {"Tu.C.M(System.Tuple<T>)"}, calls
+
+
+SUBSTITUTED_CS = """\
+namespace Sb;
+public interface IBox<out X> { }
+public class Person { }
+public class Employee : Person { }
+public class C {
+    public void M<T>(IBox<T> a, IBox<T> b) { }
+    public void M(IBox<Person> a, IBox<Person> b) { }
+}
+public class Use {
+    public void Run() { IBox<Employee> e = null; IBox<Person> p = null; new C().M(e, p); }
+}
+"""
+
+
+class TestCandidatesAreComparedWithTheirTypeArgumentsFixed:
+    # Greptile review of PR 2814: with T := Person the generic's parameters
+    # are the other overload's, so the conversions tie and C# prefers the
+    # non-generic method.
+    def test_a_generic_whose_fixed_parameters_tie_loses_to_the_non_generic(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _calls(SUBSTITUTED_CS, temp_repo, mock_ingestor)
+        assert calls["Run"] == {"Sb.C.M(IBox<Person>, IBox<Person>)"}, calls
+
+
 VARIANCE_LIB_CS = """\
 namespace App;
 public interface IBox<out X> { }
@@ -1655,6 +1715,7 @@ INVARIANT_CASES: dict[str, _Case] = {
     # Greptile review of PR 2814: a generic type of no known kind may vary,
     # so what is inferred into it never proves the generic inapplicable:
     # an external one, or a first-party delegate, which is no registered type.
+    # Nor does it settle T, so the generic is kept beside what it may lose to.
     "variance-unknown-neg": _Case(
         "namespace L; public class Person { } public class Employee : Person { }\n"
         "public class C { public void M<T>(Ext.Feed<T> a, Ext.Feed<T> b) { } "
@@ -1662,7 +1723,7 @@ INVARIANT_CASES: dict[str, _Case] = {
         _use(
             "Ext.Feed<Employee> e = null; Ext.Feed<Person> p = null; new C().M(e, p);"
         ),
-        frozenset({"C.M(Ext.Feed<T>, Ext.Feed<T>)"}),
+        frozenset({"C.M(Ext.Feed<T>, Ext.Feed<T>)", "C.M(object, object)"}),
     ),
     "variance-delegate-neg": _Case(
         "namespace L; public class Person { } public class Employee : Person { }\n"
@@ -1670,7 +1731,183 @@ INVARIANT_CASES: dict[str, _Case] = {
         "public class C { public void M<T>(Handler<T> a, Handler<T> b) { } "
         "public void M(object a, object b) { } }",
         _use("Handler<Person> p = null; Handler<Employee> e = null; new C().M(p, e);"),
-        frozenset({"C.M(Handler<T>, Handler<T>)"}),
+        frozenset({"C.M(Handler<T>, Handler<T>)", "C.M(object, object)"}),
+    ),
+    # Greptile review of PR 2814: a bound of unknown direction still makes
+    # its type a candidate for T, which proves no conflict between
+    # arguments but must meet T's `where` clause when it is the only one.
+    "candidate-bound": _Case(
+        "namespace L; public class Person { } public class Circle { }\n"
+        "public class C { public void M<T>(Ext.Feed<T> f) where T : Person { } "
+        f"{_PAIR} }}",
+        _use("Ext.Feed<Circle> f = null; new C().M(f);"),
+        frozenset({"C.M(object)"}),
+    ),
+    "candidate-bound-neg": _Case(
+        "namespace L; public class Person { } public class Employee : Person { }\n"
+        "public class C { public void M<T>(Ext.Feed<T> f) where T : Person { } "
+        f"{_PAIR} }}",
+        _use("Ext.Feed<Employee> f = null; new C().M(f);"),
+        frozenset({"C.M(Ext.Feed<T>)"}),
+    ),
+    "candidate-mixed-exact": _Case(
+        "namespace L; public class Box<X> { } public class Person { } "
+        "public class Employee : Person { } public class Circle { }\n"
+        "public class C { public void M<T>(Box<T> a, Ext.Feed<T> b) where T : Person { } "
+        "public void M(object a, object b) { } }",
+        _use("Ext.Feed<Employee> f = null; new C().M(new Box<Circle>(), f);"),
+        frozenset({"C.M(object, object)"}),
+    ),
+    "candidate-mixed-neg": _Case(
+        "namespace L; public class Box<X> { } public class Person { } "
+        "public class Employee : Person { } public class Circle { }\n"
+        "public class C { public void M<T>(Box<T> a, Ext.Feed<T> b) where T : Person { } "
+        "public void M(object a, object b) { } }",
+        _use("Ext.Feed<Circle> f = null; new C().M(new Box<Employee>(), f);"),
+        frozenset({"C.M(Box<T>, Ext.Feed<T>)"}),
+    ),
+    "candidate-conflict-neg": _Case(
+        "namespace L; public class Box<X> { }\n"
+        "public class C { public void M<T>(Box<T> a, Ext.Feed<T> b) { } "
+        "public void M(object a, object b) { } }",
+        _use("Ext.Feed<string> f = null; new C().M(new Box<int>(), f);"),
+        frozenset({"C.M(Box<T>, Ext.Feed<T>)"}),
+    ),
+    # Greptile review of PR 2814: candidates are compared by the conversions
+    # to their parameter types with every fixed type argument in, then by
+    # C#'s tie-breaks: a non-generic method, a normal form, the more
+    # specific declared parameter types.
+    "rank-generic-wider-neg": _Case(
+        "namespace L; public class C { public void M<T>(T x) { } "
+        "public void M(long x) { } }",
+        _use("new C().M(1);"),
+        frozenset({"C.M(T)"}),
+    ),
+    "rank-generic-tie-neg": _Case(
+        "namespace L; public class C { public void M<T>(T x) { } "
+        "public void M(int x) { } }",
+        _use("new C().M(1);"),
+        frozenset({"C.M(int)"}),
+    ),
+    "rank-fixed-common-base": _Case(
+        "namespace L; public class Shape { } public class Circle : Shape { }\n"
+        "public class C { public void M<T>(T a, T b) { } "
+        "public void M(Shape a, Shape b) { } }",
+        _use("new C().M(new Circle(), new Shape());"),
+        frozenset({"C.M(Shape, Shape)"}),
+    ),
+    "rank-fixed-common-base-wider-neg": _Case(
+        "namespace L; public class Base { } public class Shape : Base { } "
+        "public class Circle : Shape { }\n"
+        "public class C { public void M<T>(T a, T b) { } "
+        "public void M(Base a, Base b) { } }",
+        _use("new C().M(new Circle(), new Shape());"),
+        frozenset({"C.M(T, T)"}),
+    ),
+    "rank-class-parameter": _Case(
+        "namespace L; public class Person { }\n"
+        "public class H<X> { public void M(X x) { } public void M(Person p) { } }",
+        _use("new H<Person>().M(new Person());"),
+        frozenset({"H.M(Person)"}),
+    ),
+    "rank-normal-form": _Case(
+        "namespace L; public class C { public void M(int x) { } "
+        "public void M(params int[] xs) { } }",
+        _use("new C().M(1);"),
+        frozenset({"C.M(int)"}),
+    ),
+    "rank-generic-specific": _Case(
+        "namespace L; public class C { public void M<T, U>(T a, U b) { } "
+        "public void M<T>(T a, string b) { } }",
+        _use('new C().M(1, "s");'),
+        frozenset({"C.M(T, string)"}),
+    ),
+    "rank-generic-ambiguous-neg": _Case(
+        "namespace L; public class C { public void M<T>(T a, int b) { } "
+        "public void M<T>(int a, T b) { } }",
+        _use("new C().M(1, 1);"),
+        frozenset({"C.M(T, int)", "C.M(int, T)"}),
+    ),
+    "rank-better-target": _Case(
+        "namespace L; public class Base { } public class Shape : Base { } "
+        "public class Circle : Shape { }\n"
+        "public class C { public void M(Shape s) { } public void M(Base b) { } }",
+        _use("new C().M(new Circle());"),
+        frozenset({"C.M(Shape)"}),
+    ),
+    "rank-better-numeric-target": _Case(
+        "namespace L; public class C { public void M(long x) { } "
+        "public void M(double x) { } }",
+        _use("new C().M(1);"),
+        frozenset({"C.M(long)"}),
+    ),
+    # One type its only bound names is the type C# fixes T to, whatever the
+    # bound's direction.
+    "candidate-fixed-tie": _Case(
+        "namespace L;\n"
+        "public class C { public void M<T>(Ext.Feed<T> f) { } "
+        "public void M(Ext.Feed<int> f) { } }",
+        _use("Ext.Feed<int> f = null; new C().M(f);"),
+        frozenset({"C.M(Ext.Feed<int>)"}),
+    ),
+    # An array parameter's element is inferred from the argument's, and
+    # `T[]` is more specific than `T`.
+    "rank-array-specific": _Case(
+        "namespace L; public class C { public void M<T>(T[] xs) { } "
+        "public void M<T>(T x) { } }",
+        _use("int[] a = null; new C().M(a);"),
+        frozenset({"C.M(T[])"}),
+    ),
+    "rank-array-generic": _Case(
+        f"namespace L; public class C {{ public void M<T>(T[] xs) {{ }} {_PAIR} }}",
+        _use("int[] a = null; new C().M(a);"),
+        frozenset({"C.M(T[])"}),
+    ),
+    # Type arguments the call spells fix the method's type parameters, and
+    # only a method declaring as many is a candidate.
+    "explicit-type-arguments": _Case(
+        "namespace L; public class C { public void M<T>(T x) { } "
+        "public void M(int x) { } }",
+        _use("new C().M<long>(1);"),
+        frozenset({"C.M(T)"}),
+    ),
+    "explicit-type-arguments-spelled": _Case(
+        f"namespace L; public class C {{ public void M<T>(int x) {{ }} {_PAIR} }}",
+        _use("new C().M<string>(1);"),
+        frozenset({"C.M(int)"}),
+    ),
+    # A type parameter no parameter names cannot be inferred, so a call
+    # that does not spell it cannot bind the method.
+    "uninferable-type-parameter": _Case(
+        f"namespace L; public class C {{ public void M<T>(int x) {{ }} {_PAIR} }}",
+        _use("new C().M(1);"),
+        frozenset({"C.M(object)"}),
+    ),
+    "explicit-type-arguments-neg": _Case(
+        "namespace L; public class C { public void M<T>(T x) { } "
+        "public void M(int x) { } }",
+        _use("new C().M(1);"),
+        frozenset({"C.M(int)"}),
+    ),
+    # A type parameter inference cannot settle makes no argument naming it
+    # an identity: which type it is decides whether this ties the other.
+    "rank-unsettled": _Case(
+        "namespace L; public class Person { } public class Employee : Person { }\n"
+        "public class C { public void M<T>(Ext.Feed<T> a, Ext.Feed<T> b) { } "
+        "public void M(Ext.Feed<Person> a, Ext.Feed<Person> b) { } }",
+        _use(
+            "Ext.Feed<Employee> e = null; Ext.Feed<Person> p = null; new C().M(e, p);"
+        ),
+        frozenset(
+            {"C.M(Ext.Feed<T>, Ext.Feed<T>)", "C.M(Ext.Feed<Person>, Ext.Feed<Person>)"}
+        ),
+    ),
+    "rank-partially-fixed": _Case(
+        "namespace L;\n"
+        "public class C { public void M<T, U>(T a, Ext.Feed<U> b) { } "
+        "public void M(int a, object b) { } }",
+        _use("Ext.Feed<string> f = null; new C().M(1, f);"),
+        frozenset({"C.M(T, Ext.Feed<U>)"}),
     ),
     "across-receiver-neg": _Case(
         "namespace L; public class G<X> { public void M(X a, X b) { } "

@@ -31,6 +31,7 @@ from .overloads import (
     Fit,
     Inferred,
     Scope,
+    Scored,
     TypeKinds,
     arguments_match,
     best_candidates,
@@ -40,6 +41,7 @@ from .overloads import (
     fit,
     framework_generic,
     framework_reference,
+    infer_into,
     is_tuple,
     literal_fit,
     mentioned_names,
@@ -303,6 +305,29 @@ def _distinct(types: Sequence[str]) -> list[str]:
     return out
 
 
+class _Judged(NamedTuple):
+    """What inference made of one candidate: each argument's fit, the type
+    fixed for each type parameter, and whether every type parameter of its
+    own that the arguments bound was fixed."""
+
+    fits: list[Fit | None]
+    fixed: dict[str, str]
+    settled: bool = True
+
+
+class _Reading(NamedTuple):
+    """How one candidate's declaration reads at a call: the file its types
+    resolve in, the bindings it sees (the receiver's and the call's), the
+    type parameters it declares itself, every type parameter still open,
+    and the type arguments the call spells for its own."""
+
+    scope: Scope | None
+    visible: Mapping[str, str]
+    own: frozenset[str]
+    unbound: frozenset[str]
+    spelled: Mapping[str, str]
+
+
 class _ScopedJudge:
     """The `TypeJudge` ranking one candidate: its arguments resolve in the
     caller's file and its parameters in the file declaring the candidate."""
@@ -338,6 +363,8 @@ class _MemberCall(NamedTuple):
     local_var_types: dict[str, str]
     module_qn: str
     caller_qn: str | None
+    # The type arguments the call spells (`c.M<long>(1)`), as written.
+    type_arguments: tuple[str, ...] = ()
 
 
 class CSharpTypeInferenceEngine:
@@ -742,7 +769,9 @@ class CSharpTypeInferenceEngine:
             return None
         # `Policy.Handle<TException>()`: a generic member's NAME field is a
         # generic_name; methods register generic-free, so strip the type
-        # arguments or the fluent entry point never matches.
+        # arguments or the fluent entry point never matches. They are kept
+        # for overload ranking, which they fix the type parameters for.
+        spelled = type_arguments(method_name)
         method_name = method_name.split(cs.CHAR_ANGLE_OPEN, 1)[0]
         arg_count = self._count_arguments(call_node)
 
@@ -764,6 +793,7 @@ class CSharpTypeInferenceEngine:
             local_var_types or {},
             module_qn,
             caller_qn,
+            spelled,
         )
         # Resolution order matters: an EXACT-ARITY instance method wins, then
         # one that takes the arguments through defaults or a `params` tail
@@ -2098,15 +2128,14 @@ class CSharpTypeInferenceEngine:
         scored is provably inapplicable; None when none was scored at all.
         """
         arguments: list[ArgumentType | None] | None = None
-        # Every type the call site writes (its arguments' and its receiver's
-        # type arguments) is resolved once, in the caller's file.
+        # Every type the call site writes (its arguments', its receiver's
+        # and its own type arguments) is resolved once, in the caller's file.
         caller = self._caller_scope(call)
+        spelled = tuple(canonical_type(a, caller) for a in call.type_arguments)
         for declaring, bindings, open_names in self._typed_hierarchy(
             class_qn, self._receiver_bindings(call.receiver, class_qn, caller)
         ):
-            qns = self._applicable_methods(
-                declaring, call.method_name, call.arg_count, compatible
-            )
+            qns = self._candidate_methods(declaring, call, compatible, len(spelled))
             if not qns:
                 continue
             if arguments is None:
@@ -2117,66 +2146,157 @@ class CSharpTypeInferenceEngine:
                     )
                 ]
             scored = [
-                (
-                    qn,
-                    self._overload_fits(
-                        qn, parameters, arguments, (bindings, open_names)
-                    ),
+                self._score_overload(
+                    qn, form, arguments, (bindings, open_names, spelled)
                 )
                 for qn in qns
-                for parameters in self._call_parameter_forms(qn, len(arguments))
+                for form in self._call_parameter_forms(qn, len(arguments))
             ]
             # A method scored in both its forms is one candidate.
-            if best := list(dict.fromkeys(best_candidates(scored))):
+            if best := list(
+                dict.fromkeys(best_candidates(scored, self._better_target))
+            ):
                 return best
         return None if arguments is None else []
 
-    def _overload_fits(
+    def _candidate_methods(
+        self, declaring: str, call: _MemberCall, compatible: bool, spelled: int
+    ) -> list[str]:
+        # The overloads of `declaring` the call can bind by its argument
+        # count, and, when it spells type arguments, only the methods that
+        # declare as many type parameters: `c.M<long>(1)` binds no `M(int)`.
+        qns = self._applicable_methods(
+            declaring, call.method_name, call.arg_count, compatible
+        )
+        if not spelled:
+            return qns
+        return [qn for qn in qns if len(self._declared_type_parameters(qn)) == spelled]
+
+    def _declared_type_parameters(self, method_qn: str) -> tuple[str, ...]:
+        # A generic method's own type parameters, in declared order.
+        shape = self.csharp_call_shapes.get(method_qn)
+        return shape.type_parameters if shape is not None else ()
+
+    def _score_overload(
+        self,
+        method_qn: str,
+        form: tuple[list[str], bool],
+        arguments: list[ArgumentType | None],
+        receiver: tuple[Mapping[str, str], frozenset[str], tuple[str, ...]],
+    ) -> Scored:
+        # How each argument binds its parameter of `method_qn` in one form
+        # (its parameters, whether expanded), given the type arguments the
+        # receiver binds, the parameters it leaves open and the type
+        # arguments the call spells, with what C# compares it by (`Scored`).
+        # A type parameter the method declares itself shadows its class's of
+        # the same name (`Handler<T>.Handle<T>(T)`), so the receiver's
+        # binding of the class's never reaches it. The parameters and the
+        # bounds are both read through the receiver and the call
+        # (`declared_type`), and what they leave unbound is open in either.
+        parameters, expanded = form
+        reading = self._reading(method_qn, receiver)
+        seen = [
+            declared_type(parameter, reading.scope, reading.visible)
+            for parameter in parameters
+        ]
+        inferred = self._inferred_fits(method_qn, seen, arguments, reading)
+        return Scored(
+            method_qn,
+            inferred.fits,
+            [substitute(parameter, inferred.fixed) for parameter in seen],
+            bool(reading.own),
+            expanded,
+            [canonical_type(p, reading.scope) for p in _param_types(method_qn)],
+            reading.scope.type_parameters if reading.scope else reading.own,
+            inferred.settled,
+        )
+
+    def _reading(
+        self,
+        method_qn: str,
+        receiver: tuple[Mapping[str, str], frozenset[str], tuple[str, ...]],
+    ) -> _Reading:
+        # How `method_qn`'s declaration reads through the receiver and the
+        # type arguments the call spells, which fix its own type parameters.
+        bindings, open_names, spelled = receiver
+        own = self._method_type_parameters(method_qn)
+        declared = self._declared_type_parameters(method_qn)
+        fixed = dict(zip(declared, spelled, strict=True)) if spelled else {}
+        return _Reading(
+            self.scope_of(_member_type(method_qn), own),
+            {**unshadowed(bindings, own), **fixed},
+            own,
+            (open_names | own) - fixed.keys(),
+            fixed,
+        )
+
+    def _inferred_fits(
         self,
         method_qn: str,
         parameters: list[str],
         arguments: list[ArgumentType | None],
-        receiver: tuple[Mapping[str, str], frozenset[str]],
-    ) -> list[Fit | None]:
-        # How each argument binds its parameter of `method_qn`, given the
-        # type arguments the receiver binds and the parameters it leaves
-        # open. A type parameter the method declares itself shadows its
-        # class's of the same name (`Handler<T>.Handle<T>(T)`), so the
-        # binding the receiver gives the class's never reaches it; inference
-        # leaves it open. The parameters and the bounds are both read
-        # through the receiver (`declared_type`), and what it leaves unbound
-        # is open in either. Each argument is scored on its own, then, as C#
-        # infers before it judges applicability, what inference took from
-        # all of them must fix one type per type parameter, that type must
-        # meet its `where` clause, and every argument must still bind its
-        # parameter with the fixed types in, or the candidate does not apply
-        # (PR 2814 review). Its fits stay those of the open parameters, so a
-        # type parameter still ranks below an identity.
-        bindings, open_names = receiver
-        own = self._method_type_parameters(method_qn)
-        visible = unshadowed(bindings, own)
-        scope = self.scope_of(_member_type(method_qn), own)
-        unbound = open_names | own
-        seen = [declared_type(parameter, scope, visible) for parameter in parameters]
+        reading: _Reading,
+    ) -> _Judged:
+        # Each argument is scored on its own, then, as C# infers before it
+        # judges applicability, what inference took from all of them must
+        # fix one type per type parameter, that type must meet its `where`
+        # clause, and every argument must still bind its parameter with the
+        # fixed types in, or the candidate does not apply. It is then ranked
+        # by those fits, against the parameter types C# compares (PR 2814
+        # review); a type parameter left unfixed stays open in them, and one
+        # of its own the arguments bound leaves it unsettled.
+        if self._uninferable(parameters, reading):
+            return _Judged([None] * len(arguments), {})
         found: list[Inferred] = []
         fits = [
-            fit(parameter, argument, unbound, self._recording_judge(found))
-            for parameter, argument in zip(seen, arguments, strict=True)
+            fit(parameter, argument, reading.unbound, self._recording_judge(found))
+            for parameter, argument in zip(parameters, arguments, strict=True)
         ]
-        bounds = {
-            name: [declared_type(bound, scope, visible) for bound in written]
-            for name, written in self._constraint_bounds(method_qn).items()
-        }
-        merged = merged_inferences([*found, _lower_bounds(seen, arguments, unbound)])
-        fixed = self._fixed_types(merged, own) if merged is not None else None
+        if None in fits:
+            return _Judged(fits, {})
+        merged = merged_inferences(
+            [*found, _lower_bounds(parameters, arguments, reading.unbound)]
+        )
+        inferred = (
+            self._fixed_types(merged, reading.own) if merged is not None else None
+        )
+        fixed = {**reading.spelled, **inferred} if inferred is not None else None
         if (
             merged is None
             or fixed is None
-            or self._breaks_constraints(fixed, merged, bounds, unbound)
-            or not self._applies_once_fixed(seen, arguments, fixed, unbound)
+            or self._breaks_constraints(
+                fixed, merged, self._where_bounds(method_qn, reading), reading.unbound
+            )
         ):
-            return [None] * len(fits)
-        return fits
+            return _Judged([None] * len(fits), {})
+        if fixed:
+            fits = self._fits_once_fixed(parameters, arguments, fixed, reading.unbound)
+        return _Judged(fits, fixed, not (merged.keys() & reading.own) - fixed.keys())
+
+    @staticmethod
+    def _uninferable(parameters: Sequence[str], reading: _Reading) -> bool:
+        # Whether a type parameter the method declares is one the call
+        # neither spells nor passes an argument for a parameter naming it,
+        # which C# cannot infer: `M<T>(int x)` takes no `M(1)`.
+        named = set().union(*(mentioned_names(p) for p in parameters))
+        return bool(reading.own - reading.spelled.keys() - named)
+
+    def _where_bounds(self, method_qn: str, reading: _Reading) -> dict[str, list[str]]:
+        # Each constrained type parameter's bounds, read through the receiver.
+        return {
+            name: [declared_type(b, reading.scope, reading.visible) for b in written]
+            for name, written in self._constraint_bounds(method_qn).items()
+        }
+
+    def _better_target(self, first: str, second: str) -> int:
+        # C#'s better conversion target between two parameter types an
+        # argument converts to: the one that converts to the other where the
+        # other does not convert back. +1, -1, or 0 when that is not known.
+        forward = self._implicitly_converts(first, second)
+        backward = self._implicitly_converts(second, first)
+        if forward is True and backward is False:
+            return 1
+        return -1 if backward is True and forward is False else 0
 
     def _recording_judge(self, found: list[Inferred]) -> _ScopedJudge:
         # A judge for one argument, whose matches add the bounds they
@@ -2207,24 +2327,24 @@ class CSharpTypeInferenceEngine:
                 fixed[name] = fixed_type
         return fixed
 
-    def _applies_once_fixed(
+    def _fits_once_fixed(
         self,
         parameters: Sequence[str],
         arguments: Sequence[ArgumentType | None],
         fixed: Mapping[str, str],
         open_names: frozenset[str],
-    ) -> bool:
-        # Whether every argument still binds its parameter with the fixed
-        # types in: a conversion judged with a type parameter open (an
-        # operator to `Box<string>` for `Box<T>`) may not hold once T is int.
-        if not fixed:
-            return True
+    ) -> list[Fit | None]:
+        # How every argument binds its parameter with the fixed types in: a
+        # conversion judged with a type parameter open (an operator to
+        # `Box<string>` for `Box<T>`) may not hold once T is int, and C#
+        # compares the conversions to these types, so `M<T>(T)` with T := int
+        # ties `M(int)`, which then wins as the non-generic method.
         judge = _ScopedJudge(self._identical, self._converts)
         still_open = open_names - fixed.keys()
-        return all(
-            fit(substitute(parameter, fixed), argument, still_open, judge) is not None
+        return [
+            fit(substitute(parameter, fixed), argument, still_open, judge)
             for parameter, argument in zip(parameters, arguments, strict=True)
-        )
+        ]
 
     def _fixing(
         self, bounds: Sequence[tuple[Bound, str]], exact: str | None
@@ -2232,8 +2352,14 @@ class CSharpTypeInferenceEngine:
         # C#'s fixing of one type parameter: of its bounds' types (its exact
         # one alone, when it has one), those every bound allows remain, and
         # it is fixed to the one every other remaining one converts to.
-        # (whether none can remain, the type fixed when that is known)
-        candidates = [exact] if exact is not None else _distinct([t for _, t in bounds])
+        # (whether none can remain, the type fixed when that is known) An
+        # exact type is the only one it can be fixed to, so a candidate
+        # bound, which proves nothing, does not keep it from that one.
+        if exact is not None:
+            candidates = [exact]
+            bounds = [b for b in bounds if b[0] is not Bound.CANDIDATE]
+        else:
+            candidates = _distinct([t for _, t in bounds])
         verdicts = [
             (c, _all_hold({self._allows(b, c) for b in bounds})) for c in candidates
         ]
@@ -2245,10 +2371,12 @@ class CSharpTypeInferenceEngine:
     def _allows(self, bound: tuple[Bound, str], candidate: str) -> bool | None:
         # Whether a type parameter bounded so may be `candidate`: its exact
         # type, a type its lower bound converts to, or one that converts to
-        # its upper bound.
+        # its upper bound. A candidate bound allows its own type, and of any
+        # other it is not known.
         kind, type_text = bound
-        if kind is Bound.EXACT:
-            return type_text == candidate or same_type(type_text, candidate)
+        if kind in (Bound.EXACT, Bound.CANDIDATE):
+            same = type_text == candidate or same_type(type_text, candidate)
+            return same if kind is Bound.EXACT or same else None
         if kind is Bound.LOWER:
             return self._implicitly_converts(type_text, candidate)
         return self._implicitly_converts(candidate, type_text)
@@ -2287,18 +2415,36 @@ class CSharpTypeInferenceEngine:
     ) -> bool:
         # Whether a type parameter's fixed type breaks its `where` clause,
         # read with the other parameters' fixed types (`where T : U`), or,
-        # where none was fixed, its exact or a lower bound does: a type that
-        # derives from no bound has no base that does.
+        # where none was fixed, what its bounds prove does (`_unfixed_breaks`).
         for name, written in bounds.items():
             closed = [substitute(bound, fixed) for bound in written]
-            given = (
-                [fixed[name]]
-                if name in fixed
-                else [t for kind, t in merged.get(name, ()) if kind is not Bound.UPPER]
-            )
-            if any(self._breaks_constraint(closed, g, open_names) for g in given):
+            if name in fixed:
+                breaks = self._breaks_constraint(closed, fixed[name], open_names)
+            else:
+                breaks = self._unfixed_breaks(closed, merged.get(name, ()), open_names)
+            if breaks:
                 return True
         return False
+
+    def _unfixed_breaks(
+        self,
+        closed: Sequence[str],
+        bounds: Sequence[tuple[Bound, str]],
+        open_names: frozenset[str],
+    ) -> bool:
+        # Whether a type parameter no type was fixed for breaks its `where`
+        # clause however it is fixed: its exact or a lower bound breaks it (a
+        # type that derives from no bound has no base that does), or every
+        # type its bounds name does, one of which C# fixes it to.
+        if any(
+            self._breaks_constraint(closed, t, open_names)
+            for kind, t in bounds
+            if kind in (Bound.EXACT, Bound.LOWER)
+        ):
+            return True
+        return bool(bounds) and all(
+            self._breaks_constraint(closed, t, open_names) for _, t in bounds
+        )
 
     def _constraint_bounds(self, method_qn: str) -> dict[str, list[str]]:
         # Each constrained type parameter of `method_qn`, with its types.
@@ -2334,18 +2480,21 @@ class CSharpTypeInferenceEngine:
                 return True
         return False
 
-    def _call_parameter_forms(self, method_qn: str, arg_count: int) -> list[list[str]]:
+    def _call_parameter_forms(
+        self, method_qn: str, arg_count: int
+    ) -> list[tuple[list[str], bool]]:
         # The parameters the arguments bind, in each form C# may call the
-        # method in. One argument for a `params T[]` tail is the array itself
-        # (normal form) or a single `T` (expanded form): `M(1)` binds
-        # `M(params int[])` as an int, better than boxing it to `M(object)`
-        # (PR 2814 review), where `M(arr)` passes the array.
+        # method in, and whether that form is the expanded one. One argument
+        # for a `params T[]` tail is the array itself (normal form) or a
+        # single `T` (expanded form): `M(1)` binds `M(params int[])` as an
+        # int, better than boxing it to `M(object)` (PR 2814 review), where
+        # `M(arr)` passes the array.
         types = _param_types(method_qn)
         expandable = bool(types) and self._is_variadic(method_qn, types)
         if not expandable or arg_count != len(types):
-            return [self._call_parameters(method_qn, arg_count)]
+            return [(self._call_parameters(method_qn, arg_count), expandable)]
         expanded = [*types[:-1], types[-1].removesuffix(cs.CSHARP_ARRAY_SUFFIX)]
-        return [types, expanded]
+        return [(types, False), (expanded, True)]
 
     def _is_variadic(self, method_qn: str, types: list[str]) -> bool:
         shape = self.csharp_call_shapes.get(method_qn)
@@ -2622,11 +2771,16 @@ class CSharpTypeInferenceEngine:
         # side resolved in its own file (or, unresolved, spelled alike up to
         # aliases), in one shape (`Widget[]` is no `Widget`), closed with the
         # same type arguments. None when they are not known on the argument's
-        # side. What a match infers goes into `inferred`.
+        # side. What a match infers goes into `inferred`. A parameter that is
+        # a type parameter in a shape (`T[]`) is the argument's type when its
+        # element is (`int[]`, T := int).
         (given_core, given_shape), (wanted_core, wanted_shape) = (
             type_shape(argument.name or ""),
             type_shape(parameter),
         )
+        if wanted_core in open_names and (passed := _passed_type(argument)):
+            kinds = TypeKinds(self._variances, self._is_reference)
+            return infer_into(passed, parameter, open_names, inferred, kinds)
         if given_shape != wanted_shape:
             return False
         given_qn = self._first_party_type(given_core)
