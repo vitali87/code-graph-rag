@@ -288,6 +288,13 @@ _LOAD_TIME_PUBLICATIONS = {
     "iife-called-with-this": (
         f"{_REQUIRE_SVC};(function () {{ exports.Svc = Svc }}).call(this)\n"
     ),
+    # Parentheses change nothing Node publishes (Greptile, PR #3355).
+    "parenthesised-assignment": f"{_REQUIRE_SVC};(module.exports = {{ Svc }})\n",
+    "parenthesised-object": f"{_REQUIRE_SVC}module.exports = ({{ Svc }})\n",
+    "parenthesised-target": f"{_REQUIRE_SVC};(module.exports) = {{ Svc }}\n",
+    "parenthesised-assign-source": (
+        f"{_REQUIRE_SVC}Object.assign(module.exports, ({{ Svc }}))\n"
+    ),
 }
 
 
@@ -309,6 +316,79 @@ _DEFERRED_PUBLICATIONS = {
         f"{_REQUIRE_SVC}function later() {{ module.exports = {{ Svc }} }}\n"
     ),
 }
+
+
+# A name a scope between the publication and the module binds is that
+# scope's own (Greptile, PR #3355): it is not the module's `require`d `Svc`.
+SHADOW_USER_JS = (
+    "const r = require('./barrel')\n"
+    "const { Public } = require('./barrel')\n"
+    "class Sub extends r.Public { run() { return this.go() } }\n"
+    "function use() { const p = new Public(); return p.go() }\n"
+    "module.exports = { Sub, use }\n"
+)
+
+_SHADOWING_BARRELS = {
+    "iife-parameter": (
+        f"{_REQUIRE_SVC};(function (Svc) {{ exports.Public = Svc }})"
+        "(class Other {})\n"
+    ),
+    "iife-local": (
+        f"{_REQUIRE_SVC};(function () {{ const Svc = class Other {{}}; "
+        "exports.Public = Svc })()\n"
+    ),
+    "iife-hoisted-var": (
+        f"{_REQUIRE_SVC};(function () {{ exports.Public = Svc; "
+        "var Svc = class Other {} })()\n"
+    ),
+    "block-const": (
+        f"{_REQUIRE_SVC}if (Svc) {{ const Svc = class Other {{}}; "
+        "exports.Public = Svc }\n"
+    ),
+    "catch-parameter": (
+        f"{_REQUIRE_SVC}try {{ throw 1 }} catch (Svc) {{ exports.Public = Svc }}\n"
+    ),
+    "shadowed-exports": (
+        f"{_REQUIRE_SVC};(function (exports) {{ exports.Public = Svc }})({{}})\n"
+    ),
+}
+
+_UNSHADOWED_BARRELS = {
+    "statement": f"{_REQUIRE_SVC}exports.Public = Svc\n",
+    "iife": f"{_REQUIRE_SVC};(function () {{ exports.Public = Svc }})()\n",
+    "iife-with-other-locals": (
+        f"{_REQUIRE_SVC};(function (other) {{ const local = other; "
+        "exports.Public = Svc })(1)\n"
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    "barrel", list(_SHADOWING_BARRELS.values()), ids=list(_SHADOWING_BARRELS)
+)
+def test_a_name_a_scope_shadows_is_not_the_module_binding(
+    tmp_path: Path, barrel: str
+) -> None:
+    edges = _index(
+        tmp_path,
+        {**COMMONJS_FILES, "barrel.js": barrel, "user.js": SHADOW_USER_JS},
+    )
+    assert _heritage(edges, "user.Sub") == {(_INHERITS, _EXTERNAL, "r.Public")}, edges
+    assert "svc.Svc.go" not in _exact_calls(edges, "user.use"), edges
+
+
+@pytest.mark.parametrize(
+    "barrel", list(_UNSHADOWED_BARRELS.values()), ids=list(_UNSHADOWED_BARRELS)
+)
+def test_a_module_binding_published_from_an_inner_scope_resolves(
+    tmp_path: Path, barrel: str
+) -> None:
+    edges = _index(
+        tmp_path,
+        {**COMMONJS_FILES, "barrel.js": barrel, "user.js": SHADOW_USER_JS},
+    )
+    assert _heritage(edges, "user.Sub") == {(_INHERITS, _CLASS, "svc.Svc")}, edges
+    assert _exact_calls(edges, "user.use") == {"svc.Svc.go"}, edges
 
 
 @pytest.mark.parametrize(
@@ -370,6 +450,27 @@ _PUBLISHING_BARRELS = {
         "barrel.js",
         f"{_REQUIRE_LIB}Object.assign(module.exports, {{ Public }})\n",
     ),
+    # Replacing `module.exports` discards what the old object held
+    # (CodeRabbit, PR #3355), and leaves `exports` on that old object.
+    "exports-member-before-a-replacement": (
+        "barrel.js",
+        f"{_REQUIRE_LIB}exports.Hidden = Hidden\nmodule.exports = {{ Public }}\n",
+    ),
+    "exports-member-after-a-replacement": (
+        "barrel.js",
+        f"{_REQUIRE_LIB}module.exports = {{ Public }}\nexports.Hidden = Hidden\n",
+    ),
+    # A second replacement discards the first (Greptile, PR #3355).
+    "replaced-twice": (
+        "barrel.js",
+        f"{_REQUIRE_LIB}module.exports = {{ Hidden }}\nmodule.exports = {{ Public }}\n",
+    ),
+    # `exports = module.exports = ...` keeps `exports` on the new object.
+    "re-aliased-exports": (
+        "barrel.js",
+        f"{_REQUIRE_LIB}exports = module.exports = function app() {{}}\n"
+        "exports.Public = Public\n",
+    ),
     "inside-a-top-level-if": (
         "barrel.js",
         f"{_REQUIRE_LIB}if (Public) {{ module.exports = {{ Public }} }}\n",
@@ -405,6 +506,11 @@ _OPAQUE_BARRELS = {
     "require-of-a-module": "module.exports = require('./lib')\n",
     "spread-of-a-require": "module.exports = { ...require('./lib') }\n",
     "module-alias": "const lib = require('./lib')\nmodule.exports = lib\n",
+    # An opaque replacement discards the names published before it.
+    "replaced-by-a-require": (
+        f"{_REQUIRE_LIB}exports.Public = Public\nexports.Hidden = Hidden\n"
+        "module.exports = require('./lib')\n"
+    ),
 }
 
 
@@ -546,6 +652,12 @@ def test_a_barrel_without_commonjs_exports_passes_on_only_its_es_exports(
         ("setTimeout(() => { module.exports = { Svc } })\n", False),
         ("const later = function () { module.exports = {} }\n", False),
         ("Object.assign({}, module.exports)\n", False),
+        ("(module.exports) = { Svc }\n", True),
+        ("(function (exports) { exports.Svc = Svc })({})\n", False),
+        ("(function (module) { module.exports = {} })({})\n", False),
+        # Re-pointing `exports` alone publishes nothing.
+        ("exports = { Svc }\n", False),
+        ("exports = module.exports = app\n", True),
         ("console.log('module.exports')\n", False),
         ("// module.exports = { Svc }\n", False),
         ("/* exports.Svc = Svc */\n", False),
@@ -601,6 +713,54 @@ def test_a_module_is_commonjs_only_by_what_it_exports(
         ("Object.assign(exports, require('./x'))\n", {}),
         ("(function () { exports.X = y })()\n", {"X": "y"}),
         ("setTimeout(() => { exports.X = y })\n", {}),
+        # Publication order: a replacement of `module.exports` discards the
+        # old object and leaves `exports` on it.
+        ("exports.Hidden = h\nmodule.exports = { A }\n", {"A": "A"}),
+        ("module.exports = { A }\nexports.X = x\n", {"A": "A"}),
+        ("module.exports = { A }\nmodule.exports.B = b\n", {"A": "A", "B": "b"}),
+        ("module.exports = {}\nObject.assign(module.exports, { A })\n", {"A": "A"}),
+        ("module.exports = {}\nObject.assign(exports, { A })\n", {}),
+        ("exports.A = a\nexports.B = b\n", {"A": "a", "B": "b"}),
+        ("exports.A = exports.B = a\n", {"A": "a", "B": "a"}),
+        ("exports.A = a\nmodule.exports = require('./x')\n", {}),
+        ("Object.freeze(module.exports = { A })\nexports.X = x\n", {"A": "A"}),
+        (
+            "(function () { exports.H = h; module.exports = { A } })()\n",
+            {"A": "A"},
+        ),
+        ("exports = module.exports = app\nexports.R = r\n", {"R": "r"}),
+        ("module.exports = exports = { A }\nexports.B = b\n", {"A": "A", "B": "b"}),
+        ("exports = {}\nexports.X = x\n", {}),
+        ("exports.X = x\nexports.X = function () {}\n", {}),
+        ("export = { A }\nexports.X = x\n", {"A": "A"}),
+        (
+            "module.exports = { Shown: a }\nmodule.exports = { Other: b }\n",
+            {"Other": "b"},
+        ),
+        ("exports.A = a\nObject.assign(module.exports, { A: lib.A })\n", {}),
+        # Parentheses on either side change nothing.
+        ("(module.exports = { A })\n", {"A": "A"}),
+        ("module.exports = ({ A })\n", {"A": "A"}),
+        ("(module.exports) = { A }\n", {"A": "A"}),
+        ("(exports.X) = y\n", {"X": "y"}),
+        ("exports.X = (y)\n", {"X": "y"}),
+        ("module.exports = { A: (a) }\n", {"A": "a"}),
+        ("Object.assign(module.exports, ({ A }))\n", {"A": "A"}),
+        # A name a scope on the way to the module binds is not the module's.
+        ("(function (S) { exports.P = S })(o)\n", {}),
+        ("(function ({ S }) { exports.P = S })(o)\n", {}),
+        ("(S => { exports.P = S })(o)\n", {}),
+        ("(function () { const S = 1; exports.P = S })()\n", {}),
+        ("(function () { exports.P = S; var S = 1 })()\n", {}),
+        ("(function () { module.exports = { S }; let S = 1 })()\n", {}),
+        ("(function S() { exports.P = S })()\n", {}),
+        ("if (ok) { class S {} exports.P = S }\n", {}),
+        ("try {} catch (S) { exports.P = S }\n", {}),
+        ("for (const S of xs) { exports.P = S }\n", {}),
+        ("(function (exports) { exports.P = p })({})\n", {}),
+        ("(function (module) { module.exports = { P } })({})\n", {}),
+        ("(function () { exports.P = S })()\n", {"P": "S"}),
+        ("(function () { function f(S) {} exports.P = S })()\n", {"P": "S"}),
         ("module.exports = { ...require('./a'), A }\n", {"A": "A"}),
         # Opaque: no binding per published name.
         ("module.exports = lib\n", {}),
