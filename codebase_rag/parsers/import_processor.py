@@ -1733,6 +1733,8 @@ class ImportProcessor:
         language: cs.SupportedLanguage,
         queries: Mapping[cs.SupportedLanguage, LanguageQueries],
         pre_captures: dict | None = None,
+        *,
+        defer_edges: bool = True,
     ) -> None:
         if language not in queries:
             return
@@ -1823,7 +1825,7 @@ class ImportProcessor:
                 module=module_qn,
             )
 
-            if self.ingestor:
+            if self.ingestor and defer_edges:
                 self._defer_module_import_edges(module_qn, language)
         except Exception as e:
             logger.warning(ls.IMP_PARSE_FAILED, module=module_qn, error=e)
@@ -2059,6 +2061,30 @@ class ImportProcessor:
         the bare calls of every re-parsed one (CodeRabbit, PR #2036).
         """
         self._recover_unparsed_csharp_namespaces(known_module_paths)
+
+    def restore_unparsed_imports(
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        function_locations: Mapping[FunctionSpanKey, FunctionLocation],
+    ) -> None:
+        """Rebuild the import state of a module this run did not parse.
+
+        A re-parsed file types `from pkg import Client` by following the
+        re-export through `pkg`'s own import map, and an incremental run
+        parses only CHANGED files, so an unchanged `pkg` had no map and the
+        receiver fell to a name-only guess (issue #2559). The module's IMPORTS
+        edges are still in the graph, so none are queued for the flush.
+        """
+        self.parse_imports(root_node, module_qn, language, queries, defer_edges=False)
+        if language == cs.SupportedLanguage.RUST:
+            # The tail a parsed Rust file gets from the definition pass: body
+            # `use`s key on their functions' registered qns, and inline-mod
+            # maps wait for the flush-time arbitration like every file's.
+            self.finalise_rust_function_scope_uses(module_qn, function_locations)
+            self.retract_rust_mod_scope_uses(module_qn)
 
     def _recover_unparsed_csharp_namespaces(
         self, known_module_paths: dict[str, str]
@@ -2513,22 +2539,32 @@ class ImportProcessor:
         siblings = self.stem_sibling_modules(module_paths)
         if not siblings:
             return
-        for importer, mapping in self.import_mapping.items():
-            importer_path = module_paths.get(importer)
-            language = (
-                get_language_for_extension(importer_path.suffix)
-                if importer_path is not None
-                else None
+        for importer in self.import_mapping:
+            self.point_module_imports_at_own_language_siblings(
+                importer, module_paths, siblings
             )
-            if language is None:
-                continue
-            family = language_family(language)
-            for local_name, full_name in mapping.items():
-                target = self._own_language_target(
-                    full_name, family, module_paths, siblings
-                )
-                if target != full_name:
-                    mapping[local_name] = target
+
+    def point_module_imports_at_own_language_siblings(
+        self,
+        importer: str,
+        module_paths: Mapping[str, Path],
+        siblings: StemSiblingModules,
+    ) -> None:
+        """`point_imports_at_own_language_siblings` for one importer's map."""
+        mapping = self.import_mapping.get(importer)
+        importer_path = module_paths.get(importer)
+        if not mapping or not siblings or importer_path is None:
+            return
+        language = get_language_for_extension(importer_path.suffix)
+        if language is None:
+            return
+        family = language_family(language)
+        for local_name, full_name in mapping.items():
+            target = self._own_language_target(
+                full_name, family, module_paths, siblings
+            )
+            if target != full_name:
+                mapping[local_name] = target
 
     def resolve_scala_project_imports(self, known_module_paths: dict[str, str]) -> None:
         """Point Scala imports of the project's own packages at its modules.
@@ -5751,6 +5787,22 @@ class ImportProcessor:
             self._rust_pending_fn_scope_uses.setdefault(module_qn, []).append(
                 (line, col, resolved_imports, True)
             )
+
+    def rust_mod_scope_targets(self, writer_qn: str) -> list[str]:
+        """What the inline `mod` uses of the file `writer_qn` name.
+
+        Read before `finalise_rust_mod_scope_uses` decides which of them
+        commit: until then a parsed or restored file's inline-scope maps are
+        held back, and a walk out from the file has to see them (#2805
+        review). This run's entries if it parsed the file, else the last
+        finalised ones.
+        """
+        entries = self._rust_pending_mod_scope_uses.get(writer_qn)
+        if entries is None:
+            entries = self._rust_mod_scope_registry.get(writer_qn, [])
+        return [
+            target for _key, _pure, imports in entries for target in imports.values()
+        ]
 
     def retract_rust_mod_scope_uses(self, module_qn: str) -> None:
         # Reverse replay so a key shadowing another file's entries (the
