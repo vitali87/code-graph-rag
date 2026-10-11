@@ -54,6 +54,7 @@ EXPECTED_SECTIONS: dict[str, frozenset[str]] = {
         }
     ),
     "docs/getting-started/installation.md": frozenset({"dependencies"}),
+    "docs/advanced/ignore-patterns.md": frozenset({"default_exclusions"}),
 }
 
 
