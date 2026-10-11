@@ -34,6 +34,7 @@ from ..cpp import CppTypeInferenceEngine
 from ..cpp import local_types as cpp_local_types
 from ..cpp import utils as cpp_utils
 from ..csharp import utils as csharp_utils
+from ..csharp.arity import CSharpArityIndex
 from ..dart import utils as dart_utils
 from ..dart.type_inference import DartTypeInferenceEngine
 from ..enum_variants import emit_declared_variants, is_python_enum
@@ -378,6 +379,9 @@ class ClassIngestMixin:
     class_field_element_types: dict[str, dict[str, str]]
     method_return_types: dict[str, str]
     interface_implementers: dict[str, set[str]]
+    rehydrated_interface_implementers: dict[str, set[str]]
+    rust_impl_owner_module: dict[str, str]
+    rehydrated_definition_paths: dict[str, str]
     function_locations: dict[FunctionSpanKey, FunctionLocation]
     cpp_definition_spans: dict[str, list[CppDefinitionSpan]]
     _deferred_forward_decls: list[_DeferredForwardDecl]
@@ -809,11 +813,16 @@ class ClassIngestMixin:
             child_type = self._deferred_child_label(entry)
             if child_type is None:
                 continue
+            # Scope first (issue #2534); a base no scope reaches falls to the
+            # name search, whose `PB`/`PB<T>` pick the written arity settles
+            # (issue #2579).
             scoped = self._resolve_csharp_scoped_base(entry)
             resolved = (
                 (scoped, False)
                 if scoped is not None
-                else self._resolve_deferred_parent_qn(entry)
+                else self._csharp_base_by_arity(
+                    entry, self._resolve_deferred_parent_qn(entry)
+                )
             )
             is_dart = entry.language == cs.SupportedLanguage.DART
             if resolved is None or resolved[1]:
@@ -1247,6 +1256,28 @@ class ClassIngestMixin:
             return package_matches.pop(), False
         return None
 
+    def _csharp_arity_index(self) -> CSharpArityIndex:
+        return CSharpArityIndex(
+            self.function_registry,
+            self.csharp_class_generic_arity,
+            self.csharp_class_namespaced,
+            self.csharp_namespaced_qns,
+            self.csharp_partial_groups,
+        )
+
+    def _csharp_base_by_arity(
+        self, entry: DeferredInherit, resolved: tuple[str, bool] | None
+    ) -> tuple[str, bool] | None:
+        # The name lookup finds `PB` or `PB<T>`, whichever it meets first; the
+        # base's written arity picks the one C# binds (issue #2579). Only a C#
+        # base carries a written ref.
+        if resolved is None or resolved[1] or entry.written_ref is None:
+            return resolved
+        arity = csharp_utils.split_type_ref(entry.written_ref)[1]
+        twin = self._csharp_arity_index().twin(resolved[0], arity)
+        # The child is never its own base, whichever twin the name found.
+        return (twin, False) if twin != entry.child_qn else resolved
+
     def _csharp_arity_sibling(self, entry: DeferredInherit) -> str | None:
         # Only C# overloads type names by generic arity, so only there can a
         # base that resolves to the declaring type itself legally name a
@@ -1257,23 +1288,15 @@ class ClassIngestMixin:
         if entry.language != cs.SupportedLanguage.CSHARP:
             return None
         type_decls = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
-        # Same-scope pair (issue #764): when both members share ONE file and
-        # scope, they collide on natural qn and the later one registers as a
-        # DUP_QN_MARKER variant. The variants bucket therefore holds exactly
-        # the same-scope declarations of this simple name; the unique other
-        # type declaration IS the written sibling, whichever of the pair the
-        # child happens to be. More than one other means a 3+ arity family;
-        # refuse rather than guess, matching every other ambiguity tier.
-        natural = qn_markers.natural_qn(entry.child_qn)
-        same_scope = [
-            qn
-            for qn in self.function_registry.variants(natural)
-            if qn != entry.child_qn and self.function_registry.get(qn) in type_decls
-        ]
-        if len(same_scope) == 1:
-            return same_scope[0]
-        if same_scope:
-            return None
+        # The written arity names the sibling (issue #764): a twin in the
+        # same file carries it in its qn (`Foo`1`, issue #2579), one in
+        # another file shares the child's declared form.
+        if entry.written_ref is not None:
+            arity = csharp_utils.split_type_ref(entry.written_ref)[1]
+            twin = self._csharp_arity_index().twin(entry.child_qn, arity)
+            if twin != entry.child_qn:
+                return twin
+        natural = qn_markers.strip_arity_marker(qn_markers.natural_qn(entry.child_qn))
         simple = natural.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         candidates = {
             qn
@@ -1463,6 +1486,7 @@ class ClassIngestMixin:
         class_props.update(decorated_start_props(class_node))
         if language == cs.SupportedLanguage.CSHARP:
             self._record_csharp_namespace(class_node, class_qn, class_props)
+            self._record_csharp_arity(class_node, class_name, class_props)
         # Stored on the node so an incremental run that does not re-parse
         # this file can register them again.
         if non_method_members := _python_non_method_members(class_node, language):
@@ -1691,6 +1715,20 @@ class ClassIngestMixin:
             self.csharp_class_namespaced[class_qn] = namespaced
             self.csharp_namespaced_qns.setdefault(namespaced, set()).add(class_qn)
 
+    def _record_csharp_arity(
+        self, class_node: Node, class_name: str, class_props: PropertyDict
+    ) -> None:
+        # A generic twin's qn spells its CLR arity (`PB`1`, issue #2579), but
+        # its name is still the one written. The simple-name index keeps the
+        # qn's spelling, as the registry does for a type read back from the
+        # graph, so a plain `PB` meets the non-generic twin only and a
+        # written arity reaches the other. The arity is stored as well: an
+        # incremental run knows a type in an unchanged file only from its
+        # node, and `new PB<int>()` must find the same twin either way.
+        class_props[cs.KEY_NAME] = qn_markers.strip_arity_marker(class_name)
+        if arity := csharp_utils.type_parameter_count(class_node):
+            class_props[cs.KEY_GENERIC_ARITY] = arity
+
     def _index_class_simple_name(self, class_name: str, class_qn: str) -> None:
         self.simple_name_lookup[class_name].add(class_qn)
         # An out-of-class nested definition (`class Outer::Inner {}`)
@@ -1805,17 +1843,14 @@ class ClassIngestMixin:
         if field_types:
             self.class_field_types[class_qn] = field_types
         # Declared type-parameter count: `Builder<TResult>` -> 1;
-        # unrecorded means 0, so only generics are stored. A class
-        # node's type_parameter_list carries NO field name (unlike a
-        # method's), so scan the children.
-        for child in member_node.children:
-            if child.type == cs.TS_CSHARP_TYPE_PARAMETER_LIST:
-                self.csharp_class_generic_arity[class_qn] = len(child.named_children)
-                # The declaring module, recorded because the class qn
-                # cannot yield it: a namespace pushes the qn under a
-                # sibling module's qn (#1769 review).
-                self.csharp_class_owner_module[class_qn] = module_qn
-                break
+        # unrecorded means 0, so only generics are stored.
+        arity = csharp_utils.type_parameter_count(member_node)
+        if arity:
+            self.csharp_class_generic_arity[class_qn] = arity
+            # The declaring module, recorded because the class qn
+            # cannot yield it: a namespace pushes the qn under a
+            # sibling module's qn (#1769 review).
+            self.csharp_class_owner_module[class_qn] = module_qn
         # A `partial` type is split across files into N path-distinct
         # nodes; group the parts into one shared list so a typed receiver
         # resolves members and bases from any part. The key is the
@@ -1832,10 +1867,10 @@ class ClassIngestMixin:
         # ambiguity that is not one partial group, the split lost the
         # `: N.Widget` edge (bot review on #1999).
         if cs.TS_CSHARP_MODIFIER_PARTIAL in modifiers:
-            self._group_csharp_partial(class_qn, module_qn, file_path)
+            self._group_csharp_partial(class_qn, module_qn, file_path, arity)
 
     def _group_csharp_partial(
-        self, class_qn: str, module_qn: str, file_path: Path | None
+        self, class_qn: str, module_qn: str, file_path: Path | None, arity: int
     ) -> None:
         directory = module_directory_qn(module_qn, file_path) or module_qn
         # A second same-name part in ONE file registers under a
@@ -1845,7 +1880,10 @@ class ClassIngestMixin:
         # The tail below the module, so only its END can carry the
         # marker a registration appended; a verbatim identifier
         # (`@event`) opens with the same character and is kept.
-        declared = qn_markers.strip_dup_marker(class_qn[len(module_qn) + 1 :])
+        # The arity is always spelled: `Box<T>` beside a `Box` is `Box`1`
+        # while its part in another file is plain `Box`, and each must join
+        # the other, never the non-generic twin (issue #2579).
+        declared = qn_markers.with_leaf_arity(class_qn[len(module_qn) + 1 :], arity)
         key = f"{directory}{cs.SEPARATOR_DOT}{declared}"
         group = self._csharp_partial_index.setdefault(key, [])
         group.append(class_qn)
@@ -1952,6 +1990,9 @@ class ClassIngestMixin:
         impl_method_qns: list[str] = []
         trait_unrepresentable = False
         if trait_name := rs_utils.extract_impl_trait(class_node):
+            # The file, not `owner_module_qn`: the prune matches the modules a
+            # removed file recorded, and an inline `mod` is not one of them.
+            self.rust_impl_owner_module[class_qn] = module_qn
             trait_unrepresentable = not self._defer_rust_impl_trait(
                 class_node, trait_name, class_qn, owner_module_qn, impl_method_qns
             )
@@ -2664,13 +2705,37 @@ class ClassIngestMixin:
             self.function_registry,
             self.class_inheritance,
             self.ingestor,
-            self.interface_implementers,
+            self._override_walk_implementers(),
             self.csharp_methods,
             self.csharp_override_methods,
             self.rust_impl_method_traits,
             self.rust_inherent_impl_methods,
         )
         self._resolve_java_anon_overrides()
+
+    def _override_walk_implementers(self) -> dict[str, set[str]]:
+        # The walk visits a class's superclasses and interfaces together and
+        # stops at the first that declares the method. With only the parsed
+        # pairs, an unchanged class that extends one type and implements
+        # another walked its superclasses alone and took an edge its own
+        # parse never chose (issue #2403), so the pairs read back join them.
+        # A Rust impl's do not: its edge follows the impl block
+        # (rust_impl_method_traits, rust_inherent_impl_methods), which only
+        # parsing records, and walking the trait instead would link an
+        # inherent method sharing the trait method's name. An unchanged impl
+        # keeps the edges its own parse wrote.
+        merged = {qn: set(impls) for qn, impls in self.interface_implementers.items()}
+        for iface, implementers in self.rehydrated_interface_implementers.items():
+            if walked := {qn for qn in implementers if self._walks_read_back(qn)}:
+                merged.setdefault(iface, set()).update(walked)
+        return merged
+
+    def _walks_read_back(self, implementer_qn: str) -> bool:
+        # Read back from a file other than Rust. No recorded path means this
+        # run parsed the class (its parsed pairs already cover it) or it is a
+        # Rust impl target with no node of its own.
+        path = self.rehydrated_definition_paths.get(implementer_qn)
+        return path is not None and not path.endswith(cs.EXT_RS)
 
     def _resolve_java_anon_overrides(self) -> None:
         # Emit OVERRIDES edges for Java anonymous-class methods recorded at ingestion

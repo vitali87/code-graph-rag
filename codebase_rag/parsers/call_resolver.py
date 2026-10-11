@@ -280,6 +280,7 @@ class CallResolver:
         "class_inheritance",
         "type_aliases",
         "interface_implementers",
+        "rehydrated_interface_implementers",
         "_interface_impl_cache",
         "_simple_resolution_cache",
         "last_resolution",
@@ -315,6 +316,7 @@ class CallResolver:
         rehydrated_definition_paths: dict[str, str] | None = None,
         rust_function_modules: dict[str, str] | None = None,
         declared_module_qns: set[str] | None = None,
+        rehydrated_interface_implementers: dict[str, set[str]] | None = None,
         go_package_names: Mapping[str, str] | None = None,
     ) -> None:
         self.function_registry = function_registry
@@ -349,6 +351,14 @@ class CallResolver:
         # concrete implementer's method (call-graph accuracy; single-impl only).
         self.interface_implementers = (
             interface_implementers if interface_implementers is not None else {}
+        )
+        # The pairs of implementers an incremental run did not re-parse, read
+        # back from the graph (shared ref). A sole implementer is one across
+        # both, or re-parsing only a caller loses its edge (issue #2403).
+        self.rehydrated_interface_implementers = (
+            rehydrated_interface_implementers
+            if rehydrated_interface_implementers is not None
+            else {}
         )
         self._interface_impl_cache: dict[str, str] | None = None
         # C++ typedef/using alias -> underlying bare type, consulted when a
@@ -1602,8 +1612,11 @@ class CallResolver:
         # class's constructor has an extra qn segment and is excluded).
         # A duplicate-suffixed class (`Box@8` for `class Box<T>` beside `class
         # Box`) declares its constructor under its natural name, so the
-        # marker is not part of the name to match (issue #2007).
-        simple = qn_markers.strip_dup_marker(class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+        # marker is not part of the name to match (issue #2007), and nor is a
+        # generic twin's CLR arity (`PB`1` declares `PB(...)`, issue #2579).
+        simple = qn_markers.strip_arity_marker(
+            qn_markers.strip_dup_marker(class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+        )
         targets: set[tuple[str, str]] = set()
         for qn, node_type in self.function_registry.find_with_prefix(class_qn):
             head = qn.split(cs.CHAR_PAREN_OPEN, 1)[0]
@@ -1703,9 +1716,16 @@ class CallResolver:
         # >1 implementer is ambiguous -> not mapped -> the call stays on the
         # interface method alone (no precision risk, recall preserved).
         if self._interface_impl_cache is None:
+            implementers_of: dict[str, set[str]] = {}
+            for source in (
+                self.interface_implementers,
+                self.rehydrated_interface_implementers,
+            ):
+                for interface_qn, implementers in source.items():
+                    implementers_of.setdefault(interface_qn, set()).update(implementers)
             self._interface_impl_cache = {
                 interface_qn: next(iter(implementers))
-                for interface_qn, implementers in self.interface_implementers.items()
+                for interface_qn, implementers in implementers_of.items()
                 if len(implementers) == 1
             }
         return self._interface_impl_cache
@@ -2651,9 +2671,17 @@ class CallResolver:
         owner = method_qn.rpartition(cs.SEPARATOR_DOT)[0]
         if self._rust_owner_is(owner, owners, names, method_qn, self_type):
             return True
-        return self.function_registry.get(owner) == NodeType.INTERFACE and any(
+        if self.function_registry.get(owner) != NodeType.INTERFACE:
+            return False
+        # The read-back pairs too: a run that re-parsed only the caller has
+        # `impl FloatErrors for u64` in them alone, and `u64::error_halfscale()`
+        # lost the trait method a clean index binds (issue #2403).
+        implementers = self.interface_implementers.get(
+            owner, set()
+        ) | self.rehydrated_interface_implementers.get(owner, set())
+        return any(
             self._rust_owner_is(implementer, owners, names, self_type=self_type)
-            for implementer in self.interface_implementers.get(owner, ())
+            for implementer in implementers
         )
 
     def _rust_owner_is(

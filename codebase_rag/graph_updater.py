@@ -1451,6 +1451,64 @@ def _drop_class_keyed_entry(
     owner_module.pop(qn, None)
 
 
+def _drop_implementers(
+    implementers_by_interface: dict[str, set[str]], removed: set[str]
+) -> None:
+    """Forget the parsed implementer pairs of classes a removed file declared."""
+    # A class that stopped implementing an interface kept its pair on a
+    # reused updater, and a call typed to the interface still reached its
+    # method as the sole implementer's (#2403 review). The re-parse records
+    # the pairs the class still has. In place: the call resolver holds the
+    # map by reference.
+    if not removed:
+        return
+    emptied = []
+    for interface_qn, implementers in implementers_by_interface.items():
+        implementers -= removed
+        if not implementers:
+            emptied.append(interface_qn)
+    for interface_qn in emptied:
+        del implementers_by_interface[interface_qn]
+
+
+def _pop_owned(owner_module: dict[str, str], module_qns: Collection[str]) -> set[str]:
+    """Remove and return the qns `owner_module` attributes to `module_qns`."""
+    owned = {qn for qn, module_qn in owner_module.items() if module_qn in module_qns}
+    for qn in owned:
+        del owner_module[qn]
+    return owned
+
+
+def _carried_pair_rows(
+    captured: Iterable[ResultRow],
+) -> tuple[list[ResultRow], list[ResultRow]]:
+    """Captured inbound IMPLEMENTS and Rust OVERRIDES edges, as read-back rows."""
+    # Spelled as CYPHER_ALL_IMPLEMENTS and CYPHER_ALL_RUST_OVERRIDES return
+    # them, so the read-back treats an edge it will restore like one it read.
+    implements: list[ResultRow] = []
+    overrides: list[ResultRow] = []
+    for row in captured:
+        rel = row.get(cs.KEY_REL)
+        source, target = row.get(cs.KEY_CALLER_QN), row.get(cs.KEY_TARGET_QN)
+        if rel == cs.RelationshipType.IMPLEMENTS.value:
+            implements.append({cs.KEY_CHILD_QN: source, cs.KEY_BASE_QN: target})
+        elif rel == cs.RelationshipType.OVERRIDES.value and _is_rust_method_edge(row):
+            overrides.append({cs.KEY_FROM_QN: source, cs.KEY_TO_QN: target})
+    return implements, overrides
+
+
+def _is_rust_method_edge(row: ResultRow) -> bool:
+    """A captured edge between two Methods out of a Rust file."""
+    method = cs.NodeLabel.METHOD.value
+    path = row.get(cs.KEY_CALLER_PATH)
+    return (
+        row.get(cs.KEY_CALLER_LABEL) == method
+        and row.get(cs.KEY_TARGET_LABEL) == method
+        and isinstance(path, str)
+        and path.endswith(cs.EXT_RS)
+    )
+
+
 def _advance_past_settled(progress: Progress, task: TaskID, scan: _FileScan) -> None:
     """Advance the bar past the files the hash pass settled without a parse."""
     if scan.skipped_count or scan.unreadable_count:
@@ -3736,8 +3794,99 @@ class GraphUpdater:
             return
         self._rehydrate_module_qns(module_rows)
         self._rehydrate_class_inheritance_from_graph()
+        self._rehydrate_interface_implementers(project_params)
         self._requeue_parameter_types(project_params)
         self._requeue_field_types(project_params)
+
+    def _rehydrate_interface_implementers(
+        self, project_params: PropertyParams, carried: Iterable[ResultRow] = ()
+    ) -> None:
+        # Parsing records implementer -> interface pairs only for the files it
+        # reads. A call typed to an interface with ONE implementer also reaches
+        # that implementer's method, so a run that re-parsed only the caller
+        # saw no implementer and dropped the edge a clean index emits: gson's
+        # getFieldNames into FieldNamingPolicy, serde_json's
+        # u64::error_halfscale() (issue #2403).
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        try:
+            implements = self._owned_rows(
+                self.ingestor.fetch_all(cs.CYPHER_ALL_IMPLEMENTS, project_params),
+                cs.KEY_CHILD_QN,
+            )
+            rust_overrides = self._owned_rows(
+                self.ingestor.fetch_all(cs.CYPHER_ALL_RUST_OVERRIDES, project_params),
+                cs.KEY_FROM_QN,
+            )
+            required = self._owned_rows(
+                self.ingestor.fetch_all(
+                    cs.CYPHER_RUST_TRAITS_WITH_REQUIRED_METHODS, project_params
+                ),
+                cs.KEY_QUALIFIED_NAME,
+            )
+        except Exception:
+            if not self._is_full_build:
+                raise
+            logger.warning(ls.REHYDRATE_QUERY_FAILED)
+            return
+        carried_implements, carried_overrides = _carried_pair_rows(carried)
+        implements += self._owned_rows(carried_implements, cs.KEY_CHILD_QN)
+        rust_overrides += self._owned_rows(carried_overrides, cs.KEY_FROM_QN)
+        pairs = [
+            (child, base)
+            for row in implements
+            if isinstance(child := row.get(cs.KEY_CHILD_QN), str)
+            and isinstance(base := row.get(cs.KEY_BASE_QN), str)
+        ]
+        pairs.extend(self._nodeless_rust_impls(rust_overrides))
+        closed = {
+            qn
+            for row in required
+            if isinstance(qn := row.get(cs.KEY_QUALIFIED_NAME), str)
+        }
+        # Rebuilt, not accumulated, and cleared only once the rows are in
+        # hand: the _rehydrate_module_qns posture.
+        rehydrated = self.factory.definition_processor.rehydrated_interface_implementers
+        rehydrated.clear()
+        for implementer, interface in pairs:
+            if not self._may_hide_rust_impls(interface, closed):
+                rehydrated.setdefault(interface, set()).add(implementer)
+
+    def _may_hide_rust_impls(self, interface_qn: str, closed: set[str]) -> bool:
+        # An impl of a Rust trait whose every method has a default body may
+        # define nothing, and one for a type with no node (`impl Visit for ()
+        # {}`) then leaves no trace in the graph: the pairs read back would
+        # count one implementer short and invent a sole-implementer edge a
+        # clean index does not emit. Such a trait, read back rather than
+        # parsed, keeps to its parsed pairs as before. A trait parsed this run
+        # has every implementer that left a trace re-parsed beside it.
+        dp = self.factory.definition_processor
+        path = dp.rehydrated_definition_paths.get(interface_qn)
+        return (
+            path is not None and path.endswith(cs.EXT_RS) and interface_qn not in closed
+        )
+
+    def _nodeless_rust_impls(
+        self, override_rows: list[ResultRow]
+    ) -> Iterable[tuple[str, str]]:
+        """(implementer, trait) for each Rust impl whose type has no node."""
+        # `impl FloatErrors for u64` has no node to hang an IMPLEMENTS edge
+        # on, so its methods' OVERRIDES name the pair. Only such a type: one
+        # with a node has its IMPLEMENTS edge, and a trait's default method
+        # overriding a supertrait's names no implementer at all.
+        for row in override_rows:
+            method = row.get(cs.KEY_FROM_QN)
+            base = row.get(cs.KEY_TO_QN)
+            if not isinstance(method, str) or not isinstance(base, str):
+                continue
+            implementer = method.rpartition(cs.SEPARATOR_DOT)[0]
+            trait = base.rpartition(cs.SEPARATOR_DOT)[0]
+            if (
+                implementer
+                and implementer not in self.function_registry
+                and self.function_registry.get(trait) == NodeType.INTERFACE
+            ):
+                yield implementer, trait
 
     def _rehydrate_module_qns(self, module_rows: list[ResultRow]) -> None:
         """Rebuild the module and interface qn sets from the graph's rows."""
@@ -3792,9 +3941,15 @@ class GraphUpdater:
         ):
             return False
         self.function_registry[qn] = node_type
+        # A `@line` variant rejoins its natural qn's duplicate list: a call
+        # into the name fans out to every same-named definition, and one read
+        # back as a plain entry left the incremental graph with a single edge
+        # where a clean index has one per definition (issue #2403).
+        self.function_registry.restore_variant(qn)
         # Parsing indexes a definition under its name as well as its qn's
-        # last segment, which for `ILog.Info(string)` is not `Info`; without
-        # it a re-parsed caller's name lookup misses the method (#3261).
+        # last segment, which for `ILog.Info(string)` is not `Info` and for
+        # the variant `Limb@6` is not `Limb`; without it a re-parsed caller's
+        # name lookup misses the definition (#3261, #2403).
         if isinstance(name := row.get(cs.KEY_NAME), str) and name:
             self.function_registry.index_name(qn, name)
         # Restore the property-name set for unchanged files: property-dispatch
@@ -4004,11 +4159,18 @@ class GraphUpdater:
             namespace if isinstance(namespace, str) else None,
         )
         processor = self.factory.definition_processor
+        # The arity a parse records, so `new PB<int>()` in a re-parsed file
+        # finds the generic twin in an unchanged one (issue #2579).
+        arity = row.get(cs.KEY_GENERIC_ARITY)
+        arity = arity if isinstance(arity, int) else 0
+        if arity:
+            processor.csharp_class_generic_arity[qn] = arity
+            processor.csharp_class_owner_module[qn] = self._recorded_module_qn(path)
         # Rejoin the partial group parsing would have given it,
         # under the same key, so a declared name spanning
         # unchanged parts stays one type; a lone type's group of
         # one reads exactly as no group (bot review).
-        if key := csharp_partial_key_from_graph(qn, path, self.project_name):
+        if key := csharp_partial_key_from_graph(qn, path, self.project_name, arity):
             group = processor._csharp_partial_index.setdefault(key, [])
             group.append(qn)
             processor.csharp_partial_groups[qn] = group
@@ -5666,7 +5828,8 @@ class GraphUpdater:
         self, module_qn_prefixes: set[str], file_path: Path
     ) -> None:
         """Drop a removed file's entries from `class_inheritance`,
-        `class_field_types` and the C# partial groups.
+        `class_field_types`, the C# partial groups and the parsed implementer
+        pairs.
 
         All three are keyed by a CLASS qn; the first two were never mentioned
         in `remove_file_from_state`, so a deleted file's rows outlived it on a
@@ -5714,8 +5877,10 @@ class GraphUpdater:
             for qn, path in processor.rehydrated_definition_paths.items()
             if path == relative_posix
         }
-        if not stale:
-            return
+        # A Rust impl target with no class node is attributed by its own
+        # record; it keys no class map, so it only leaves the pairs.
+        impl_targets = _pop_owned(processor.rust_impl_owner_module, module_qn_prefixes)
+        _drop_implementers(processor.interface_implementers, stale | impl_targets)
         # Mutated in place: TypeInference and the lazily built per-language
         # engines share these same dict objects by reference, so rebinding
         # any of them would leave those readers on the pre-prune state.
@@ -6357,6 +6522,9 @@ class GraphUpdater:
         baseline = self._hash_baseline(force, cache_path, dir_mtimes_path)
         old_hashes = baseline.old_hashes
         is_full_build = baseline.is_full_build
+        # Before the parse, which re-records every pair a full build holds.
+        if is_full_build:
+            self.factory.definition_processor.reset_interface_implementers()
 
         eligible_files = self._collect_eligible_files()
 
@@ -8313,8 +8481,22 @@ class GraphUpdater:
         # (C/C++ macros and includes, containment, forward declarations,
         # inheritance, Rust inline-mod arbitration): the deleted subtrees
         # held those relationships too. The registry is already live or was
-        # hydrated above, so no graph read-back here.
+        # hydrated above, so no registry read-back here.
         known_module_paths = self._resolve_deferred_definitions(rehydrate=False)
+        # A fresh updater read the implementer pairs back BEFORE the delete,
+        # so a class the edit stopped implementing still counted as the sole
+        # implementer and the re-parsed caller kept its edge (#2403 review).
+        # Read back again now that the re-parse registered the traits, as
+        # run() does. The inbound edges are not restored yet, and an
+        # unchanged impl of a re-parsed trait that no edge makes a dependent
+        # (`impl crate::Trait for u64`) is recorded only by its OVERRIDES
+        # edge, so the captured ones count as read. The parsed pairs stay:
+        # the re-parse records the deleted files' pairs, and the unchanged
+        # files' include impls the graph cannot show.
+        self._rehydrate_interface_implementers(
+            {cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT},
+            carried=captured,
+        )
         # The re-parsed files' own CALLS edges went with their Module
         # subtrees; a moved use must not serve last pass's cached answer.
         self.factory.call_processor.reset_resolution_caches()
