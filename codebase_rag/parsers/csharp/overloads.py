@@ -24,6 +24,7 @@ from ...utils import qn_markers
 from .utils import (
     generic_arity_of_type_text,
     leaf_type_segment,
+    names_interface,
     signature_type_name,
     split_type_ref,
     strip_generic_arguments,
@@ -266,6 +267,29 @@ def written_bindings(
 # Each side's own type parameters, as (the member's, the interface or base
 # member's), each None when not known.
 type OwnParameters = tuple[Sequence[str] | None, Sequence[str] | None]
+
+
+def spells_interface(
+    written: str,
+    interface: tuple[str, str, int],
+    scope: Scope | None,
+    namespaced: Mapping[str, str],
+) -> bool:
+    """Whether an explicit implementation's spelling of its interface
+    (`IRun`, `N.IRun`, `IRun<T>`, an alias `Run`) names the interface whose
+    (qn, namespace-qualified path, generic arity) is `interface`. Resolved
+    in the implementing file (`scope`), its usings and `using` aliases among
+    what it follows, it must be that very interface, so `Run` under `using
+    Run = N.IRun;` is N.IRun and a same-named interface of another namespace
+    is not (Greptile review of PR 2814); `namespaced` gives the qualified
+    path a resolved type is spelled with, one partial's parts sharing it. A
+    spelling the file does not resolve, an external interface's, must spell
+    its path (`names_interface`)."""
+    _, path, arity = interface
+    resolved = resolved_qn(canonical_type(written, scope))
+    if resolved is None:
+        return names_interface(written, path, arity)
+    return (namespaced.get(resolved) or qn_markers.natural_qn(resolved)) == path
 
 
 def spells_member(

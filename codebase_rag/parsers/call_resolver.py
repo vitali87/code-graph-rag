@@ -19,6 +19,7 @@ from .csharp import utils as csharp_utils
 from .csharp.overloads import (
     Scope,
     TypeScopes,
+    spells_interface,
     spells_member,
     unshadowed,
     written_bindings,
@@ -1714,12 +1715,34 @@ class CallResolver:
         # >1 implementer is ambiguous -> not mapped -> the call stays on the
         # interface method alone (no precision risk, recall preserved).
         if self._interface_impl_cache is None:
+            implementers = {
+                interface_qn: set(classes)
+                for interface_qn, classes in self.interface_implementers.items()
+            }
+            for interface_qn, class_qn in self._csharp_inherited_interfaces():
+                implementers.setdefault(interface_qn, set()).add(class_qn)
             self._interface_impl_cache = {
-                interface_qn: next(iter(implementers))
-                for interface_qn, implementers in self.interface_implementers.items()
-                if len(implementers) == 1
+                interface_qn: next(iter(classes))
+                for interface_qn, classes in implementers.items()
+                if len(classes) == 1
             }
         return self._interface_impl_cache
+
+    def _csharp_inherited_interfaces(self) -> Iterator[tuple[str, str]]:
+        # (interface, class) for each C# class whose base list names an
+        # interface its spelling hid, an alias (`using Run = N.IRun;`) or a
+        # name the `I` prefix guess reads as a class: the base resolves to a
+        # registered interface, so the class implements it, as C# reads it
+        # (PR 2814 review). An interface's own bases are no implementations.
+        registry = self.function_registry
+        for class_qn, bases in self.class_inheritance.items():
+            if registry.get(class_qn) == NodeType.INTERFACE:
+                continue
+            for base in bases:
+                if registry.get(base) == NodeType.INTERFACE and (
+                    self._module_language(class_qn) == cs.SupportedLanguage.CSHARP
+                ):
+                    yield base, class_qn
 
     def interface_sole_impl_targets(self, callee_qn: str) -> set[tuple[str, str]]:
         # A callee that IS an interface/trait method (the receiver was typed to
@@ -1776,7 +1799,12 @@ class CallResolver:
         found = [
             (node_type, qn)
             for qn, node_type, written, member in self._explicit_members(impl_qn)
-            if csharp_utils.names_interface(written, path, arity)
+            if spells_interface(
+                written,
+                (interface_qn, path, arity),
+                spelled_in,
+                inference.csharp_class_namespaced,
+            )
             and spells_member(
                 member,
                 method_name,

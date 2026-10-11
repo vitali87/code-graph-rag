@@ -286,6 +286,68 @@ class TestAQualifiedParameterTypeKeepsTheExplicitBody:
         assert calls["Stop(IStop)"] == {"Qs.IStop.Halt", "Qs.Stopper.IStop#Halt"}, calls
 
 
+ALIAS_LIB_CS = """\
+namespace N;
+public interface IRun { void Go(int x); }
+public interface IOther { void Go(int x); }
+public interface IWalk { void Go(int x); }
+"""
+
+ALIAS_USE_CS = """\
+using N;
+using Run = N.IRun;
+using Other = N.IOther;
+using Walk = N.IWalk;
+namespace U;
+public interface IRun { void Go(int x); }
+public class Aliased : Run { void Run.Go(int x) { } }
+public class Both : Run, Other { void Run.Go(int x) { } void Other.Go(int x) { } }
+public class Mixed : N.IRun, IRun { void N.IRun.Go(int x) { } void IRun.Go(int x) { } }
+public class Walker : Walk { void Walk.Go(int x) { } }
+public class Use {
+    public void Call(Walk w) { w.Go(1); }
+    public void Many(Run r) { r.Go(1); }
+}
+"""
+
+
+class TestAnAliasedInterfaceKeepsItsExplicitBody:
+    # Greptile review of PR 2814: `void Run.Go(int)` under `using Run =
+    # N.IRun;` implements N.IRun's member: the spelling is resolved in the
+    # implementing file, aliases included, before it is matched.
+    def test_an_alias_links_and_calls_the_body(self, temp_repo: Path) -> None:
+        # A base spelled through an alias is an interface its class
+        # implements once resolved, so `Walker` is IWalk's sole implementer.
+        fresh, edited = _two_file_calls(temp_repo, ALIAS_LIB_CS, ALIAS_USE_CS)
+        assert {c for c in fresh if c[0] == "Call(Walk)"} == {
+            ("Call(Walk)", "IWalk", "Go(int)"),
+            ("Call(Walk)", "Walker", "Walk#Go(int)"),
+        }
+        # Negative: N.IRun has three implementers, so no body is guessed.
+        assert {c for c in fresh if c[0] == "Many(Run)"} == {
+            ("Many(Run)", "IRun", "Go(int)")
+        }
+        assert edited == fresh
+
+    def test_each_spelling_links_its_own_interface(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        _index_pair(temp_repo, mock_ingestor, ALIAS_LIB_CS, ALIAS_USE_CS)
+        overrides = {
+            (_leaf_pair(str(c.args[0][2])), str(c.args[2][2]).split("applic.", 1)[1])
+            for c in get_relationships(mock_ingestor, cs.RelationshipType.OVERRIDES)
+        }
+        assert ("Aliased.Run#Go(int)", "Lib.N.IRun.Go(int)") in overrides, overrides
+        assert ("Both.Run#Go(int)", "Lib.N.IRun.Go(int)") in overrides, overrides
+        assert ("Both.Other#Go(int)", "Lib.N.IOther.Go(int)") in overrides, overrides
+        assert ("Mixed.N#IRun#Go(int)", "Lib.N.IRun.Go(int)") in overrides, overrides
+        assert ("Mixed.IRun#Go(int)", "Use.U.IRun.Go(int)") in overrides, overrides
+        # Negatives: an alias to another interface, and a same-named type of
+        # another namespace, link to no member of N.IRun.
+        assert ("Both.Other#Go(int)", "Lib.N.IRun.Go(int)") not in overrides
+        assert ("Mixed.IRun#Go(int)", "Lib.N.IRun.Go(int)") not in overrides
+
+
 CONSTRAINT_CS = """\
 namespace K;
 public interface IThing { }

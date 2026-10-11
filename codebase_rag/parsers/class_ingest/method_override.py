@@ -17,6 +17,7 @@ from ..csharp.overloads import (
     TypeScopes,
     bindings_for_base,
     member_verdict,
+    spells_interface,
     unshadowed,
     with_type_parameters,
     written_bindings,
@@ -390,8 +391,11 @@ def _emit_explicit_impl_override(
         if function_registry.get(ancestor) != NodeType.INTERFACE:
             continue
         path = namespaced.get(ancestor) or qn_markers.natural_qn(ancestor)
-        if not csharp_utils.names_interface(
-            interface, path, generic_arity.get(ancestor, 0)
+        if not spells_interface(
+            interface,
+            (ancestor, path, generic_arity.get(ancestor, 0)),
+            spelled_in,
+            namespaced,
         ):
             continue
         parent_method_qn = _parent_method_qn(
