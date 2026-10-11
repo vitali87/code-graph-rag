@@ -463,19 +463,56 @@ def literal_fit(parameter: str, literal: str) -> Fit | None:
 
 
 def arguments_match(
-    given: Sequence[str] | None, wanted: Sequence[str], open_names: Collection[str]
+    given: Sequence[str] | None,
+    wanted: Sequence[str],
+    open_names: Collection[str],
+    inferred: dict[str, str] | None = None,
 ) -> bool | None:
     """Whether closed type arguments agree, position by position and alias-
     blind (`Box<System.Int32>` is `Box<int>`). An `open_names` parameter in
     a wanted argument is inferred from the given one, never a wildcard for
     the structure around it: `List<T>` takes `List<int>` but no `int`, and
     `Pair<T, T>` no `Pair<int, string>` (PR 2814 review). None when `given`
-    is not known, or only a shape inference might absorb tells them apart."""
+    is not known, or only a shape inference might absorb tells them apart.
+    On a match, what it inferred goes into `inferred`, for the call's other
+    arguments to agree with (`merged_inferences`)."""
     if given is None:
         return None
     if len(given) != len(wanted):
         return False
-    return _infer_all(given, wanted, frozenset(open_names), {})
+    trial: dict[str, str] = {}
+    verdict = _infer_all(given, wanted, frozenset(open_names), trial)
+    if verdict and inferred is not None:
+        inferred.update(trial)
+    return verdict
+
+
+def merged_inferences(inferences: Sequence[Mapping[str, str]]) -> dict[str, str] | None:
+    """One exact type per type parameter across a call's arguments, each
+    argument's inferences given apart; None when two fix one parameter to
+    two types: `M<T>(Box<T>, Box<T>)` takes no `(Box<int>, Box<string>)`
+    (PR 2814 review)."""
+    merged: dict[str, str] = {}
+    for inferred in inferences:
+        for name, bound in inferred.items():
+            previous = merged.setdefault(name, bound)
+            if previous != bound and not same_type(previous, bound):
+                return None
+    return merged
+
+
+def predefined_converts(source: str, target: str) -> bool | None:
+    """Whether a value of one type converts implicitly to another, as far
+    as predefined types tell: every type converts to `object`, and one
+    predefined type to another only by an implicit numeric conversion.
+    None when either is another type, which only its declarations tell."""
+    origin, destination = predefined_keyword(source), predefined_keyword(target)
+    if destination == cs.CSHARP_OBJECT_KEYWORD:
+        return True
+    if origin is None or destination is None:
+        return None
+    widened = cs.CSHARP_IMPLICIT_NUMERIC_CONVERSIONS.get(origin, frozenset())
+    return origin == destination or destination in widened
 
 
 def _infer_all(

@@ -556,6 +556,54 @@ CSHARP_PREDEFINED_TYPE_NAMES: dict[str, str] = {
 CSHARP_PREDEFINED_TYPE_KEYWORDS: dict[str, str] = {
     framework: keyword for keyword, framework in CSHARP_PREDEFINED_TYPE_NAMES.items()
 }
+# Every type converts to it implicitly.
+CSHARP_OBJECT_KEYWORD = "object"
+# The implicit numeric conversions, by keyword: what each predefined type
+# converts to besides itself and `object`. Fixing a type parameter needs
+# them: `M<T>(T, Box<T>)` takes `(1, Box<long>)`, never `(1, Box<string>)`.
+CSHARP_IMPLICIT_NUMERIC_CONVERSIONS: dict[str, frozenset[str]] = {
+    "sbyte": frozenset({"short", "int", "long", "float", "double", "decimal", "nint"}),
+    "byte": frozenset(
+        {
+            "short",
+            "ushort",
+            "int",
+            "uint",
+            "long",
+            "ulong",
+            "float",
+            "double",
+            "decimal",
+            "nint",
+            "nuint",
+        }
+    ),
+    "short": frozenset({"int", "long", "float", "double", "decimal", "nint"}),
+    "ushort": frozenset(
+        {"int", "uint", "long", "ulong", "float", "double", "decimal", "nint", "nuint"}
+    ),
+    "int": frozenset({"long", "float", "double", "decimal", "nint"}),
+    "uint": frozenset({"long", "ulong", "float", "double", "decimal", "nuint"}),
+    "long": frozenset({"float", "double", "decimal"}),
+    "ulong": frozenset({"float", "double", "decimal"}),
+    "char": frozenset(
+        {
+            "ushort",
+            "int",
+            "uint",
+            "long",
+            "ulong",
+            "float",
+            "double",
+            "decimal",
+            "nint",
+            "nuint",
+        }
+    ),
+    "float": frozenset({"double"}),
+    "nint": frozenset({"long", "float", "double", "decimal"}),
+    "nuint": frozenset({"ulong", "float", "double", "decimal"}),
+}
 # Value types a signature can tell from their nullable form: `F(int)` and
 # `F(int?)` are two overloads, since `int?` is `Nullable<int>`, where a `?`
 # on a reference type is only an annotation. A first-party struct is not

@@ -876,6 +876,59 @@ class TestAFirstPartyTypeIsNoPredefinedTypeOfItsName:
         assert calls["Framework"] == {"L.C.M(Box<int>)"}, calls
 
 
+INFERRED_ACROSS_CS = """\
+namespace Gi;
+public class Box<X> { }
+public class Person { }
+public class Employee : Person { }
+public class Circle { }
+public class Pairs {
+    public void M<T>(Box<T> a, Box<T> b) { }
+    public void M(object a, object b) { }
+}
+public class Bounded {
+    public void M<T>(Box<T> b) where T : Person { }
+    public void M(object o) { }
+}
+public class Use {
+    public void Split() { new Pairs().M(new Box<int>(), new Box<string>()); }
+    public void Same() { new Pairs().M(new Box<int>(), new Box<int>()); }
+    public void Breaks() { new Bounded().M(new Box<Circle>()); }
+    public void Meets() { new Bounded().M(new Box<Employee>()); }
+}
+"""
+
+
+class TestATypeParameterIsInferredOnceForEveryArgument:
+    # Greptile review of PR 2814: no single T is both int and string, and
+    # the T inferred inside `Box<T>` must meet `where T : Person`.
+    def test_arguments_fixing_two_types_bind_object(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _calls(INFERRED_ACROSS_CS, temp_repo, mock_ingestor)
+        assert calls["Split"] == {"Gi.Pairs.M(object, object)"}, calls
+
+    def test_arguments_fixing_one_type_bind_the_generic(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Negative: T := int fits both.
+        calls = _calls(INFERRED_ACROSS_CS, temp_repo, mock_ingestor)
+        assert calls["Same"] == {"Gi.Pairs.M(Box<T>, Box<T>)"}, calls
+
+    def test_a_nested_inference_breaking_the_constraint_binds_object(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _calls(INFERRED_ACROSS_CS, temp_repo, mock_ingestor)
+        assert calls["Breaks"] == {"Gi.Bounded.M(object)"}, calls
+
+    def test_a_nested_inference_meeting_the_constraint_binds_the_generic(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Negative: an Employee is a Person.
+        calls = _calls(INFERRED_ACROSS_CS, temp_repo, mock_ingestor)
+        assert calls["Meets"] == {"Gi.Bounded.M(Box<T>)"}, calls
+
+
 # Every place overload ranking compares, resolves or walks types, against
 # each of three invariants (PR 2814 review): (a) a predefined type is its
 # alias (`int` is `System.Int32`), (b) an argument's type resolves in the
@@ -1337,6 +1390,116 @@ INVARIANT_CASES: dict[str, _Case] = {
         "public class C { public void M(Int32 x) { } public void M(long x) { } }",
         _use("new C().M(1);"),
         frozenset({"C.M(long)"}),
+    ),
+    # Greptile review of PR 2814: one type parameter is one type across a
+    # call's arguments, fixed as C# fixes it (an exact type each argument
+    # passing it alone converts to, or that argument every other converts
+    # to), and that type, not each argument, meets its `where` clause.
+    "across-unknown-neg": _Case(
+        "namespace L; public class Box<X> { }\n"
+        "public class C { public void M<T>(Box<T> a, Box<T> b) { } "
+        "public void M(object a, object b) { } }",
+        _use("new C().M(new Box<int>(), Make.Thing());"),
+        frozenset({"C.M(Box<T>, Box<T>)"}),
+    ),
+    "across-direct-nested": _Case(
+        "namespace L; public class Box<X> { }\n"
+        "public class C { public void M<T>(T a, Box<T> b) { } "
+        "public void M(object a, object b) { } }",
+        _use("new C().M(1, new Box<string>());"),
+        frozenset({"C.M(object, object)"}),
+    ),
+    "across-direct-nested-neg": _Case(
+        "namespace L; public class Box<X> { }\n"
+        "public class C { public void M<T>(T a, Box<T> b) { } "
+        "public void M(object a, object b) { } }",
+        _use("new C().M(1, new Box<int>());"),
+        frozenset({"C.M(T, Box<T>)"}),
+    ),
+    "across-direct-nested-widening-neg": _Case(
+        "namespace L; public class Box<X> { }\n"
+        "public class C { public void M<T>(T a, Box<T> b) { } "
+        "public void M(object a, object b) { } }",
+        _use("new C().M(1, new Box<long>());"),
+        frozenset({"C.M(T, Box<T>)"}),
+    ),
+    "across-direct-nested-class": _Case(
+        "namespace L; public class Box<X> { } public class Shape { } "
+        "public class Circle : Shape { } public class Person { }\n"
+        "public class C { public void M<T>(T a, Box<T> b) { } "
+        "public void M(object a, object b) { } }",
+        _use("new C().M(new Circle(), new Box<Person>());"),
+        frozenset({"C.M(object, object)"}),
+    ),
+    "across-direct-nested-class-neg": _Case(
+        "namespace L; public class Box<X> { } public class Shape { } "
+        "public class Circle : Shape { } public class Person { }\n"
+        "public class C { public void M<T>(T a, Box<T> b) { } "
+        "public void M(object a, object b) { } }",
+        _use("new C().M(new Circle(), new Box<Shape>());"),
+        frozenset({"C.M(T, Box<T>)"}),
+    ),
+    "across-direct": _Case(
+        "namespace L;\n"
+        "public class C { public void M<T>(T a, T b) { } "
+        "public void M(object a, object b) { } }",
+        _use('new C().M(1, "s");'),
+        frozenset({"C.M(object, object)"}),
+    ),
+    "across-direct-neg": _Case(
+        "namespace L; public class Shape { } public class Circle : Shape { }\n"
+        "public class C { public void M<T>(T a, T b) { } "
+        "public void M(object a, object b) { } }",
+        _use("new C().M(new Circle(), new Shape());"),
+        frozenset({"C.M(T, T)"}),
+    ),
+    "across-base": _Case(
+        "namespace L; public class Box<X> { } public class Ints : Box<int> { }\n"
+        "public class C { public void M<T>(Box<T> a, Box<T> b) { } "
+        "public void M(object a, object b) { } }",
+        _use("new C().M(new Ints(), new Box<string>());"),
+        frozenset({"C.M(object, object)"}),
+    ),
+    "across-bound-other-parameter": _Case(
+        "namespace L; public class Shape { } public class Circle : Shape { } "
+        "public class Person { }\n"
+        "public class C { public void M<T, U>(T t, U u) where T : U { } "
+        "public void M(object a, object b) { } }",
+        _use("new C().M(new Circle(), new Person());"),
+        frozenset({"C.M(object, object)"}),
+    ),
+    "across-bound-other-parameter-neg": _Case(
+        "namespace L; public class Shape { } public class Circle : Shape { } "
+        "public class Person { }\n"
+        "public class C { public void M<T, U>(T t, U u) where T : U { } "
+        "public void M(object a, object b) { } }",
+        _use("new C().M(new Circle(), new Shape());"),
+        frozenset({"C.M(T, U)"}),
+    ),
+    # Applicability is judged with the types fixed: an operator converting
+    # to another closing than the one inference fixed does not apply.
+    "across-operator": _Case(
+        "namespace L; public class Box<X> { }\n"
+        "public class Source { public static implicit operator Box<string>(Source s) => null; }\n"
+        "public class C { public void M<T>(T a, Box<T> b) { } "
+        "public void M(object a, object b) { } }",
+        _use("new C().M(1, new Source());"),
+        frozenset({"C.M(object, object)"}),
+    ),
+    "across-operator-neg": _Case(
+        "namespace L; public class Box<X> { }\n"
+        "public class Source { public static implicit operator Box<int>(Source s) => null; }\n"
+        "public class C { public void M<T>(T a, Box<T> b) { } "
+        "public void M(object a, object b) { } }",
+        _use("new C().M(1, new Source());"),
+        frozenset({"C.M(T, Box<T>)"}),
+    ),
+    "across-receiver-neg": _Case(
+        "namespace L; public class G<X> { public void M(X a, X b) { } "
+        "public void M(Box<X> a, Box<X> b) { } } public class Box<Y> { }",
+        "using L;\nnamespace U;\npublic class Use { private G<object> f; "
+        'public void Run() { f.M(1, "s"); } }\n',
+        frozenset({"G.M(X, X)"}),
     ),
 }
 

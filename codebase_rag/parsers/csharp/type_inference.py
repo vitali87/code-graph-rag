@@ -38,8 +38,11 @@ from .overloads import (
     is_tuple,
     literal_fit,
     mentioned_names,
+    merged_inferences,
     parameter_types,
+    predefined_converts,
     resolved_qn,
+    same_type,
     same_type_name,
     substitute,
     type_arguments,
@@ -250,6 +253,52 @@ def _written_argument(raw: str) -> ArgumentType:
         generic_arity_of_type_text(core),
         type_arguments(core),
     )
+
+
+class _Inferred(NamedTuple):
+    """What inference took from a call's arguments for one candidate: each
+    argument's exact types (inside a type argument), the types passed for a
+    type parameter alone (its lower bounds), and the parameters the method
+    declares itself, the ones inference fixes."""
+
+    exact: list[dict[str, str]]
+    lower: dict[str, list[str]]
+    own: frozenset[str]
+
+
+def _passed_type(argument: ArgumentType | None) -> str | None:
+    # The type an argument passes, when it is known whole: a literal's, or
+    # a type's with its type arguments (none known for a generic is none).
+    if argument is None:
+        return None
+    if argument.literal is not None:
+        return argument.literal
+    if argument.name is None or (argument.arity and argument.arguments is None):
+        return None
+    return written_type(argument)
+
+
+def _lower_bounds(
+    parameters: Sequence[str],
+    arguments: Sequence[ArgumentType | None],
+    open_names: Collection[str],
+) -> dict[str, list[str]]:
+    # The type each argument passes a parameter that is a type parameter
+    # alone (`M<T>(T x)`), by that parameter.
+    lower: dict[str, list[str]] = {}
+    for parameter, argument in zip(parameters, arguments, strict=True):
+        if parameter in open_names and (passed := _passed_type(argument)):
+            lower.setdefault(parameter, []).append(passed)
+    return lower
+
+
+def _distinct(types: Sequence[str]) -> list[str]:
+    # One of each type, however many ways it is spelled.
+    out: list[str] = []
+    for type_text in types:
+        if not any(same_type(type_text, seen) for seen in out):
+            out.append(type_text)
+    return out
 
 
 class _ScopedJudge:
@@ -2092,25 +2141,132 @@ class CSharpTypeInferenceEngine:
         # open. A type parameter the method declares itself shadows its
         # class's of the same name (`Handler<T>.Handle<T>(T)`), so the
         # binding the receiver gives the class's never reaches it; inference
-        # leaves it open, unless the argument breaks its `where` clause. The
-        # parameters and the bounds are both read through the receiver
-        # (`declared_type`), and what it leaves unbound is open in either.
+        # leaves it open. The parameters and the bounds are both read
+        # through the receiver (`declared_type`), and what it leaves unbound
+        # is open in either. Each argument is scored on its own, then, as C#
+        # infers before it judges applicability, what inference took from
+        # all of them must fix one type per type parameter, that type must
+        # meet its `where` clause, and every argument must still bind its
+        # parameter with the fixed types in, or the candidate does not apply
+        # (PR 2814 review). Its fits stay those of the open parameters, so a
+        # type parameter still ranks below an identity.
         bindings, open_names = receiver
         own = self._method_type_parameters(method_qn)
         visible = unshadowed(bindings, own)
         scope = self.scope_of(_member_type(method_qn), own)
         unbound = open_names | own
+        seen = [declared_type(parameter, scope, visible) for parameter in parameters]
+        exact: list[dict[str, str]] = []
+        fits = [
+            fit(parameter, argument, unbound, self._recording_judge(exact))
+            for parameter, argument in zip(seen, arguments, strict=True)
+        ]
         bounds = {
             name: [declared_type(bound, scope, visible) for bound in written]
             for name, written in self._constraint_bounds(method_qn).items()
         }
+        lower = _lower_bounds(seen, arguments, unbound)
+        fixed = self._fixed_types(_Inferred(exact, lower, own))
+        if (
+            fixed is None
+            or self._breaks_constraints(fixed, lower, bounds, unbound)
+            or not self._applies_once_fixed(seen, arguments, fixed, unbound)
+        ):
+            return [None] * len(fits)
+        return fits
+
+    def _recording_judge(self, exact: list[dict[str, str]]) -> _ScopedJudge:
+        # A judge for one argument, whose matches add what they inferred
+        # exactly (inside a type argument) as that argument's entry.
+        inferred: dict[str, str] = {}
+        exact.append(inferred)
+        return _ScopedJudge(
+            partial(self._identical, inferred=inferred),
+            partial(self._converts, inferred=inferred),
+        )
+
+    def _fixed_types(self, inferred: _Inferred) -> dict[str, str] | None:
+        # The type fixed for each type parameter inference can fix, None
+        # when no single type fits every argument. A receiver's parameter is
+        # given, not inferred: only an exact type fixes it, so arguments
+        # passing it alone merely convert to it.
+        fixed = merged_inferences(inferred.exact)
+        if fixed is None:
+            return None
+        for name, lowers in inferred.lower.items():
+            if name not in fixed and name not in inferred.own:
+                continue
+            fails, fixed_type = self._fixing(lowers, fixed.get(name))
+            if fails:
+                return None
+            if fixed_type is not None:
+                fixed[name] = fixed_type
+        return fixed
+
+    def _applies_once_fixed(
+        self,
+        parameters: Sequence[str],
+        arguments: Sequence[ArgumentType | None],
+        fixed: Mapping[str, str],
+        open_names: frozenset[str],
+    ) -> bool:
+        # Whether every argument still binds its parameter with the fixed
+        # types in: a conversion judged with a type parameter open (an
+        # operator to `Box<string>` for `Box<T>`) may not hold once T is int.
+        if not fixed:
+            return True
         judge = _ScopedJudge(self._identical, self._converts)
-        return [
-            None
-            if self._breaks_constraint(bounds.get(parameter, ()), argument, unbound)
-            else fit(declared_type(parameter, scope, visible), argument, unbound, judge)
+        still_open = open_names - fixed.keys()
+        return all(
+            fit(substitute(parameter, fixed), argument, still_open, judge) is not None
             for parameter, argument in zip(parameters, arguments, strict=True)
-        ]
+        )
+
+    def _fixing(self, lowers: list[str], exact: str | None) -> tuple[bool, str | None]:
+        # C#'s fixing of one type parameter from what inference gathered:
+        # its exact type, or else one of its lower bounds (the types passed
+        # for it alone), to which every lower bound converts. (whether no
+        # candidate can be it, the type fixed when that is known)
+        undecided = False
+        for candidate in [exact] if exact is not None else _distinct(lowers):
+            verdicts = {self._implicitly_converts(lower, candidate) for lower in lowers}
+            if verdicts == {True}:
+                return False, candidate
+            undecided = undecided or False not in verdicts
+        return not undecided, None
+
+    def _implicitly_converts(self, source: str, target: str) -> bool | None:
+        # Whether a value of `source` converts implicitly to `target`, each
+        # a resolved type: one type, a predefined conversion, or one the two
+        # first-party classes declare. None when that is not known.
+        if same_type(source, target):
+            return True
+        if type_shape(source)[1] or type_shape(target)[1]:
+            return None
+        predefined = predefined_converts(source, target)
+        if predefined is not None:
+            return predefined
+        if self._first_party_type(source) and self._first_party_type(target):
+            return self._converts(_written_argument(source), target, ())
+        return None
+
+    def _breaks_constraints(
+        self,
+        fixed: Mapping[str, str],
+        lower: Mapping[str, list[str]],
+        bounds: Mapping[str, list[str]],
+        open_names: frozenset[str],
+    ) -> bool:
+        # Whether a type parameter's fixed type breaks its `where` clause,
+        # read with the other parameters' fixed types (`where T : U`), or,
+        # where none was fixed, a lower bound does: a type that derives from
+        # no bound has no base that does.
+        for name, written in bounds.items():
+            closed = [substitute(bound, fixed) for bound in written]
+            given = [fixed[name]] if name in fixed else lower.get(name, [])
+            if any(self._breaks_constraint(closed, g, open_names) for g in given):
+                return True
+        return False
 
     def _constraint_bounds(self, method_qn: str) -> dict[str, list[str]]:
         # Each constrained type parameter of `method_qn`, with its types.
@@ -2121,32 +2277,28 @@ class CSharpTypeInferenceEngine:
         return bounds
 
     def _breaks_constraint(
-        self,
-        bounds: Sequence[str],
-        argument: ArgumentType | None,
-        open_names: Collection[str],
+        self, bounds: Sequence[str], given: str, open_names: Collection[str]
     ) -> bool:
-        # Inferred from an argument that does not derive from a class its
-        # `where` clause names, closed as the bound is, a type parameter
-        # fails its constraint, and C# drops the generic overload
-        # (`M<T>(T) where T : Person` takes no Circle; PR 2814 review). A
-        # user-defined conversion never satisfies a constraint, and an
-        # interface or external bound cannot be judged. Both come resolved,
-        # the argument in the caller's file, the bound in the method's and
-        # closed by the receiver; a bound naming a type parameter still
-        # open (the method's own, or one the receiver leaves unbound) is
-        # open there.
-        if not bounds or argument is None or argument.name is None:
-            return False
-        given_qn = self._first_party_type(argument.name)
+        # Fixed to a type that does not derive from a class its `where`
+        # clause names, closed as the bound is, a type parameter fails its
+        # constraint, and C# drops the generic overload (`M<T>(T) where T :
+        # Person` takes no Circle; PR 2814 review). A user-defined conversion
+        # never satisfies a constraint, and an interface or external bound
+        # cannot be judged. Both come resolved, the type in the caller's
+        # file, the bound in the method's and closed by the receiver; a
+        # bound naming a type parameter still open (the method's own, or one
+        # the receiver leaves unbound) is open there.
+        given_qn = self._first_party_type(given) if bounds else None
         if given_qn is None:
             return False
         for bound in bounds:
             bound_qn = self._first_party_type(bound)
             if bound_qn is None or not self._judgeable(given_qn, bound_qn):
                 continue
-            given = (written_type(argument), given_qn)
-            if self._class_conversion(given, (bound, bound_qn), open_names) is False:
+            if (
+                self._class_conversion((given, given_qn), (bound, bound_qn), open_names)
+                is False
+            ):
                 return True
         return False
 
@@ -2428,13 +2580,17 @@ class CSharpTypeInferenceEngine:
         return given_qn == wanted_qn or wanted_qn in self._partial_roots(given_qn)
 
     def _identical(
-        self, argument: ArgumentType, parameter: str, open_names: Collection[str]
+        self,
+        argument: ArgumentType,
+        parameter: str,
+        open_names: Collection[str],
+        inferred: dict[str, str] | None = None,
     ) -> bool | None:
         # Whether the argument's type IS the parameter's: one class, each
         # side resolved in its own file (or, unresolved, spelled alike up to
         # aliases), in one shape (`Widget[]` is no `Widget`), closed with the
         # same type arguments. None when they are not known on the argument's
-        # side.
+        # side. What a match infers goes into `inferred`.
         (given_core, given_shape), (wanted_core, wanted_shape) = (
             type_shape(argument.name or ""),
             type_shape(parameter),
@@ -2451,16 +2607,21 @@ class CSharpTypeInferenceEngine:
         wanted = type_arguments(parameter)
         if not wanted:
             return True
-        return arguments_match(argument.arguments, wanted, open_names)
+        return arguments_match(argument.arguments, wanted, open_names, inferred)
 
     def _converts(
-        self, argument: ArgumentType, parameter: str, open_names: Collection[str]
+        self,
+        argument: ArgumentType,
+        parameter: str,
+        open_names: Collection[str],
+        inferred: dict[str, str] | None = None,
     ) -> bool | None:
         # Whether the argument converts implicitly to the parameter: up its
         # class hierarchy, or through a declared `implicit operator`, closed
         # as the parameter is either way, or a value wrapped as nullable.
         # Known only between first-party classes, each in any shape; anything
-        # else is not told.
+        # else is not told. Only a conversion up the hierarchy infers (into
+        # `inferred`): C# infers no type parameter through an operator.
         given_text = written_type(argument)
         given_qn = self._first_party_type(type_shape(given_text)[0])
         wanted_qn = self._first_party_type(type_shape(parameter)[0])
@@ -2474,7 +2635,7 @@ class CSharpTypeInferenceEngine:
         wanted = (parameter, wanted_qn)
         if self._wraps_nullable(given, wanted):
             return True
-        derived = self._class_conversion(given, wanted, open_names)
+        derived = self._class_conversion(given, wanted, open_names, inferred)
         if derived:
             return True
         implicit = self._converts_implicitly(given, wanted, open_names)
@@ -2487,6 +2648,7 @@ class CSharpTypeInferenceEngine:
         given: tuple[str, str],
         wanted: tuple[str, str],
         open_names: Collection[str],
+        inferred: dict[str, str] | None = None,
     ) -> bool | None:
         # A conversion up the class hierarchy, each side as (written, qn):
         # the wanted class is the given one or a base of it, and the given
@@ -2503,7 +2665,7 @@ class CSharpTypeInferenceEngine:
         if not expected:
             return True
         return arguments_match(
-            self._closing_through(given, wanted_qn), expected, open_names
+            self._closing_through(given, wanted_qn), expected, open_names, inferred
         )
 
     def _converts_implicitly(
