@@ -1182,3 +1182,97 @@ def test_class_expression_inside_an_object_literal_keeps_its_own_this(
     callees = _from_callers(object_literal_edges, f"{module}.Outer.classInLiteral")
     assert f"{module}.Outer.done" not in callees
     assert f"{module}.Other.done" not in callees
+
+
+# ---------------------------------------------------------------------------
+# A static method returning `this` hands back the class itself (the receiver
+# class, a subclass when called through one): the next hop reaches only its
+# static members, never an instance method
+# ---------------------------------------------------------------------------
+
+_CLASS_VALUE = """\
+export class C {
+  static self() { return this; }
+  static other() { return 1; }
+  instMethod() { return 2; }
+  inst() { return this; }
+}
+
+export class D extends C {
+  static other() { return 3; }
+}
+
+export class E extends C {}
+
+export function oneHop() { return C.self().other(); }
+export function twoHop() { return C.self().self().other(); }
+export function subOwn() { return D.self().other(); }
+export function subInherited() { return E.self().other(); }
+export function staticToInstance() { return C.self().instMethod(); }
+export function instanceSelf() { const c = new C(); return c.inst().instMethod(); }
+export function objectLiteral() {
+  const o = { me() { return this; }, instMethod() { return 0; } };
+  return o.me().instMethod();
+}
+"""
+
+
+@pytest.fixture
+def class_value_edges(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> dict[tuple[str, str], str | None]:
+    root = temp_repo / "clsval"
+    _write(root, {"cv.ts": _CLASS_VALUE, "cv_js.js": _CLASS_VALUE})
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="typescript")
+    return _calls(mock_ingestor)
+
+
+_CV_MODULES = ["clsval.cv", "clsval.cv_js"]
+
+
+@pytest.mark.parametrize("module", _CV_MODULES)
+@pytest.mark.parametrize(
+    ("fn", "expected", "absent"),
+    [
+        ("oneHop", "C.other", "D.other"),
+        ("twoHop", "C.other", "D.other"),
+        # `this` in C's inherited static `self` is D, whose own `other` runs.
+        ("subOwn", "D.other", "C.other"),
+        ("subInherited", "C.other", "D.other"),
+    ],
+)
+def test_static_this_return_reaches_the_receiver_class_statics(
+    class_value_edges: dict[tuple[str, str], str | None],
+    module: str,
+    fn: str,
+    expected: str,
+    absent: str,
+) -> None:
+    callees = _callees(class_value_edges, f"{module}.{fn}")
+    assert callees.get(f"{module}.{expected}") == _EXACT
+    assert f"{module}.{absent}" not in callees
+
+
+@pytest.mark.parametrize("module", _CV_MODULES)
+def test_class_value_never_reaches_an_instance_method(
+    class_value_edges: dict[tuple[str, str], str | None], module: str
+) -> None:
+    # The constructor has no `instMethod`; only an instance does.
+    callees = _callees(class_value_edges, f"{module}.staticToInstance")
+    assert f"{module}.C.instMethod" not in callees
+
+
+@pytest.mark.parametrize("module", _CV_MODULES)
+def test_instance_this_return_still_types_an_instance(
+    class_value_edges: dict[tuple[str, str], str | None], module: str
+) -> None:
+    callees = _callees(class_value_edges, f"{module}.instanceSelf")
+    assert callees.get(f"{module}.C.instMethod") == _EXACT
+
+
+@pytest.mark.parametrize("module", _CV_MODULES)
+def test_object_literal_this_return_types_no_hop(
+    class_value_edges: dict[tuple[str, str], str | None], module: str
+) -> None:
+    callees = _callees(class_value_edges, f"{module}.objectLiteral")
+    assert f"{module}.C.instMethod" not in callees

@@ -45,6 +45,27 @@ _SEARCH_NAME_CACHE: dict[str, str] = {}
 _CHAINED_METHOD_PATTERN = re.compile(r"\.([^.()]+)$")
 # Chain bases whose value depends on the member they are written in.
 _JS_THIS_RECEIVERS = frozenset({cs.TS_THIS, cs.KEYWORD_SUPER})
+_JS_RECEIVER_MARKERS = frozenset({cs.JS_RECEIVER_INSTANCE, cs.JS_RECEIVER_CLASS})
+
+
+def _class_value_of(type_name: str) -> str | None:
+    # The class qn a hop's value is the class itself of (`typeof C`), else
+    # None for an instance type.
+    if type_name.startswith(cs.JS_CLASS_VALUE_PREFIX):
+        return type_name[len(cs.JS_CLASS_VALUE_PREFIX) :]
+    return None
+
+
+def _bind_receiver(returned: str | None, receiver: str | None) -> str | None:
+    # A `this` return is the class the call went through: an instance of
+    # it, or the class itself. With no such class there is nothing to name.
+    if returned == cs.JS_RECEIVER_INSTANCE:
+        return receiver
+    if returned == cs.JS_RECEIVER_CLASS:
+        return f"{cs.JS_CLASS_VALUE_PREFIX}{receiver}" if receiver else None
+    return returned
+
+
 _QN_SPLIT_CACHE: dict[str, tuple[list[str], int]] = {}
 _CHAIN_OPEN_BRACKETS = "([{"
 _CHAIN_CLOSE_BRACKETS = ")]}"
@@ -5848,28 +5869,86 @@ class CallResolver:
                     module_qn,
                 )
                 continue
-            class_qn = self._chain_class_qn(
-                current_type, module_qn, _rust_caller(language, caller_qn)
-            )
-            current_type = self._hop_return_type(
-                f"{class_qn}{cs.SEPARATOR_DOT}{method}", language
+            current_type = self._member_hop_type(
+                current_type, method, module_qn, language, caller_qn
             )
         return current_type
+
+    def _member_hop_type(
+        self,
+        receiver_type: str,
+        method: str,
+        module_qn: str,
+        language: cs.SupportedLanguage | None,
+        caller_qn: str | None,
+    ) -> str | None:
+        # What `receiver.method()` hands the next hop. A receiver that is a
+        # JS/TS class itself (`C.self()` from a static `return this`) reaches
+        # only its static members, its ancestors' included.
+        if (class_value := _class_value_of(receiver_type)) is not None:
+            found = self._js_static_member(class_value, method)
+            if found is None:
+                return None
+            return self._hop_return_type(found[0], language, True, class_value)
+        class_qn = self._chain_class_qn(
+            receiver_type, module_qn, _rust_caller(language, caller_qn)
+        )
+        return self._hop_return_type(
+            f"{class_qn}{cs.SEPARATOR_DOT}{method}", language, False, class_qn
+        )
 
     def _hop_return_type(
         self,
         callable_qn: str,
         language: cs.SupportedLanguage | None,
         static: bool = False,
+        receiver: str | None = None,
     ) -> str | None:
         # The type a call to `callable_qn` hands the next hop. Most languages
         # record it as they ingest; a JS/TS return is read off the callee's
-        # declaration on demand (issue #2468). A hop's receiver is an
+        # declaration on demand (issue #2468), and a `this` return names the
+        # class it is called through (`receiver`). A hop's receiver is an
         # instance, so it reaches the instance member unless told otherwise.
         recorded = self.type_inference.method_return_types.get(callable_qn)
         if recorded is None and language in cs.JS_TS_LANGUAGES:
-            return self._js_return_class(callable_qn, static)
+            return _bind_receiver(self._js_return_class(callable_qn, static), receiver)
         return recorded
+
+    def _js_static_member(self, class_qn: str, method: str) -> tuple[str, int] | None:
+        """`(member qn, line)` of the static `method` the class reaches: its
+        own, else the nearest ancestor's. Instance members of the name are a
+        different namespace and never answer."""
+        for owner in self._mro(class_qn):
+            if (
+                line := self.type_inference.js_static_method_line(owner, method)
+            ) is not None:
+                return f"{owner}{cs.SEPARATOR_DOT}{method}", line
+        return None
+
+    def _js_static_member_target(
+        self, class_qn: str, method: str
+    ) -> tuple[str, str] | None:
+        # A static and an instance member of one name register as `m` and
+        # `m@<line>`, the first in the source taking the plain name; the
+        # static one's line says which it is.
+        found = self._js_static_member(class_qn, method)
+        if found is None:
+            return None
+        member_qn, line = found
+        marked = {
+            marker: variant
+            for variant in self.function_registry.variants(member_qn)
+            if (marker := qn_markers.marker_line(variant)) is not None
+        }
+        if line in marked:
+            variant = marked[line]
+        elif member_qn in self.function_registry and all(
+            marker > line for marker in marked
+        ):
+            variant = member_qn
+        else:
+            return None
+        return self.function_registry[variant], variant
 
     def _callee_return_type(
         self, callee_qn: str, language: cs.SupportedLanguage | None
@@ -5892,6 +5971,9 @@ class CallResolver:
         if key in self._js_return_class_cache:
             return self._js_return_class_cache[key]
         returned = self.type_inference.js_callable_return_type(callable_qn, static)
+        if returned in _JS_RECEIVER_MARKERS:
+            self._js_return_class_cache[key] = returned
+            return returned
         class_qn = (
             self._follow_reexports(returned)
             if returned and cs.SEPARATOR_DOT in returned
@@ -5937,9 +6019,15 @@ class CallResolver:
         if this_static is None:
             return None
         method = hop.split(cs.CHAR_PAREN_OPEN, 1)[0]
-        callee_qn = self._exact_first_hop(
+        # `D.make()` names a class, so it reaches the static `make` D has or
+        # inherits along its `extends` chain, and a `this` that `make`
+        # returns is D. `this` / `super` stand for the enclosing class; any
+        # other base is a value, reaching an instance member.
+        named = None if is_this else self._named_class(base, module_qn)
+        callee_qn = self._first_hop_callee(
             base,
             method,
+            named,
             _CallSite(
                 f"{base}{cs.SEPARATOR_DOT}{method}",
                 module_qn,
@@ -5953,15 +6041,24 @@ class CallResolver:
         )
         if callee_qn is None:
             return None
-        # `D.make()` names the class, so it reaches D's static `make`; any
-        # other named base is a value and reaches the instance one.
-        static = this_static or (
-            not is_this
-            and self._chain_class_qn(base, module_qn)
-            == callee_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-        )
-        returned = self._hop_return_type(callee_qn, language, static)
+        receiver = class_context if is_this else named
+        static = this_static or named is not None
+        returned = self._hop_return_type(callee_qn, language, static, receiver)
         return (returned, parts[1:]) if returned else None
+
+    def _first_hop_callee(
+        self, base: str, method: str, named: str | None, call: _CallSite
+    ) -> str | None:
+        if named is not None:
+            found = self._js_static_member(named, method)
+            return found[0] if found else None
+        return self._exact_first_hop(base, method, call)
+
+    def _named_class(self, name: str, module_qn: str) -> str | None:
+        class_qn = self._chain_class_qn(name, module_qn)
+        return (
+            class_qn if self.function_registry.get(class_qn) == NodeType.CLASS else None
+        )
 
     def _exact_first_hop(self, base: str, method: str, call: _CallSite) -> str | None:
         # The callee of the chain's first hop, bound exactly or not at all: a
@@ -6616,6 +6713,9 @@ class CallResolver:
                 call_point,
             )
         )
+        if object_type and (class_value := _class_value_of(object_type)):
+            # The class itself, not an instance: only a static member binds.
+            return self._js_static_member_target(class_value, final_method)
         if object_type:
             full_object_type = self._qualify_chained_object_type(
                 object_type, module_qn, _rust_caller(language, caller_qn)

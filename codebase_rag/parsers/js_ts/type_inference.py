@@ -206,14 +206,20 @@ def _exported_declaration(node: ASTNode) -> ASTNode:
     return node
 
 
-def _instance_class_of(callable_node: ASTNode, callable_qn: str) -> str | None:
-    # `this` is an instance of the class only inside a non-static method; in
-    # a static one it is the class itself.
-    if callable_node.type != cs.TS_METHOD_DEFINITION or ut.is_static_member(
-        callable_node
+def _this_value_of(callable_node: ASTNode) -> str | None:
+    # `this` in a class's instance method is an instance of the receiver's
+    # class; in a static one it is the receiver class itself (a subclass's
+    # when called through it). Only a class member's `this` is either.
+    parent = callable_node.parent
+    if (
+        callable_node.type != cs.TS_METHOD_DEFINITION
+        or parent is None
+        or parent.type != cs.TS_CLASS_BODY
     ):
         return None
-    return callable_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+    if ut.is_static_member(callable_node):
+        return cs.JS_RECEIVER_CLASS
+    return cs.JS_RECEIVER_INSTANCE
 
 
 def _js_await_call(arguments: ASTNode) -> ASTNode | None:
@@ -561,11 +567,18 @@ class JsTypeInferenceEngine:
         annotation = callable_node.child_by_field_name("return_type")
         return self._annotation_type(annotation, module_qn) if annotation else None
 
+    @staticmethod
+    def static_method_line(
+        root: ASTNode, class_name: str, method_name: str
+    ) -> int | None:
+        """The line of the class's own static `method_name`, if it has one."""
+        node = _method_implementation(root, class_name, method_name, True)
+        return node.start_point[0] + 1 if node is not None else None
+
     def callable_return_type(
         self,
         root: ASTNode,
         names: list[str],
-        callable_qn: str,
         module_qn: str,
         language: cs.SupportedLanguage,
         static: bool,
@@ -580,34 +593,34 @@ class JsTypeInferenceEngine:
         )
         if callable_node is None:
             return None
-        return self._chain_return_type(callable_node, callable_qn, module_qn, language)
+        return self._chain_return_type(callable_node, module_qn, language)
 
     def _chain_return_type(
         self,
         callable_node: ASTNode,
-        callable_qn: str,
         module_qn: str,
         language: cs.SupportedLanguage,
     ) -> str | None:
         """The class a call to this callable evaluates to, read in its own
         module, so the next hop of a fluent chain can bind (issue #2468).
 
-        A declared return is the answer when it names one class (`: this` is
-        the method's own); with none, every return must hand back `this`, or
-        every one construct the same class. Anything else names no class,
-        and the chain ends there rather than guess.
+        A declared return is the answer when it names one class; with none,
+        every return must hand back `this`, or every one construct the same
+        class. A `this` return (or `: this`) is answered with a receiver
+        marker the caller binds to the class it called through. Anything else
+        names no class, and the chain ends there rather than guess.
         """
         if any(
             child.type in cs.TS_CHAIN_OPAQUE_CALLABLE_KEYWORDS
             for child in callable_node.children
         ):
             return None
-        own_class = _instance_class_of(callable_node, callable_qn)
+        this_value = _this_value_of(callable_node)
         if signatures := _overload_signatures(callable_node):
             # A caller sees only the overloads, never the implementation's
             # own signature; `pick(1)` may be a B where the body builds an A.
             declared = {
-                self._declared_chain_type(annotation, own_class, module_qn)
+                self._declared_chain_type(annotation, this_value, module_qn)
                 if (annotation := sig.child_by_field_name(cs.FIELD_RETURN_TYPE))
                 else None
                 for sig in signatures
@@ -615,17 +628,20 @@ class JsTypeInferenceEngine:
             return declared.pop() if len(declared) == 1 else None
         annotation = callable_node.child_by_field_name(cs.FIELD_RETURN_TYPE)
         if annotation is not None:
-            return self._declared_chain_type(annotation, own_class, module_qn)
-        return self._evident_return_class(callable_node, own_class, module_qn, language)
+            return self._declared_chain_type(annotation, this_value, module_qn)
+        return self._evident_return_class(
+            callable_node, this_value, module_qn, language
+        )
 
     def _declared_chain_type(
-        self, annotation: ASTNode, own_class: str | None, module_qn: str
+        self, annotation: ASTNode, this_value: str | None, module_qn: str
     ) -> str | None:
         declared = next(iter(annotation.named_children), None)
         if declared is None:
             return None
         if declared.type == cs.TS_THIS_TYPE:
-            return own_class
+            # The `this` type names an instance; TS allows it in no static.
+            return this_value if this_value == cs.JS_RECEIVER_INSTANCE else None
         if declared.type == cs.TS_GENERIC_TYPE:
             # `Builder<T>` is a Builder; an array-shaped generic is a
             # container, and `Promise<T>` names no first-party class.
@@ -638,7 +654,7 @@ class JsTypeInferenceEngine:
     def _evident_return_class(
         self,
         callable_node: ASTNode,
-        own_class: str | None,
+        this_value: str | None,
         module_qn: str,
         language: cs.SupportedLanguage,
     ) -> str | None:
@@ -646,7 +662,7 @@ class JsTypeInferenceEngine:
         if not values or None in values:
             return None
         if all(value.type == cs.TS_THIS for value in values if value is not None):
-            return own_class
+            return this_value
         constructed = {
             self._infer_js_variable_type_from_value(value, module_qn, language)
             if value.type == cs.TS_NEW_EXPRESSION

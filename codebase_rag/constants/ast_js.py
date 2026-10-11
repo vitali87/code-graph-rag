@@ -320,6 +320,13 @@ JS_LIST_TYPE_FORMAT = "list[{element}]"
 # Promise, a `*` generator an iterator, and an accessor is read or written as
 # a property, never called.
 TS_THIS_TYPE = "this_type"
+# What a `return this` (or `: this`) hands back before the receiver it is
+# called on is known: an instance of the receiver's class from an instance
+# method, the receiver class itself from a static one. A hop on the class
+# itself reaches only its static members.
+JS_RECEIVER_INSTANCE = "this"
+JS_CLASS_VALUE_PREFIX = "typeof "
+JS_RECEIVER_CLASS = f"{JS_CLASS_VALUE_PREFIX}{JS_RECEIVER_INSTANCE}"
 TS_CHAIN_OPAQUE_CALLABLE_KEYWORDS = frozenset({"async", "*", "get", "set"})
 # A member call's receiver declaration, read to confirm or rule out a method
 # bound only by name (issue #2609).

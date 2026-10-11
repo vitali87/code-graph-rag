@@ -742,16 +742,30 @@ class TypeInferenceEngine:
             case _:
                 return None
         module_qn, *names = callable_qn.rsplit(cs.SEPARATOR_DOT, depth)
-        if len(names) != depth:
+        if len(names) != depth or (entry := self._js_module_tree(module_qn)) is None:
             return None
+        root, language = entry
+        return self.js_type_inference.callable_return_type(
+            root, names, module_qn, language, static
+        )
+
+    def js_static_method_line(self, class_qn: str, method_name: str) -> int | None:
+        """The line of a top-level JS/TS class's own static `method_name`."""
+        module_qn, _, class_name = class_qn.rpartition(cs.SEPARATOR_DOT)
+        if (entry := self._js_module_tree(module_qn)) is None:
+            return None
+        return self.js_type_inference.static_method_line(
+            entry[0], class_name, method_name
+        )
+
+    def _js_module_tree(
+        self, module_qn: str
+    ) -> tuple[ASTNode, cs.SupportedLanguage] | None:
         path = self.module_qn_to_file_path.get(module_qn)
         entry = self.ast_cache.load(path) if path else None
         if entry is None or entry[1] not in cs.JS_TS_LANGUAGES:
             return None
-        root, language = entry
-        return self.js_type_inference.callable_return_type(
-            root, names, callable_qn, module_qn, language, static
-        )
+        return entry
 
     def _go_free_fn_return_type(self, name: str, module_qn: str) -> str | None:
         # Same module (file) first; then the enclosing package's sibling files
