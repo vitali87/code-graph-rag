@@ -870,12 +870,39 @@ def _save_parser_fingerprint(stamp_path: Path, fingerprint: str) -> None:
         logger.warning(ls.PARSER_FINGERPRINT_SAVE_FAILED, path=stamp_path, error=e)
 
 
-def _load_embeddings_owed(marker: Path) -> frozenset[str] | None:
-    """The projects whose embeddings pass is owed, as the marker names them.
+def _embeddings_marker(state_dir: Path, project_name: str) -> Path:
+    """The file whose presence says `project_name` owes an embeddings pass.
 
-    Empty without a marker. None for one that does not name them in the form
-    `_save_embeddings_owed` writes, as a write cut short leaves it: which
-    project failed cannot be told then, so every project owes.
+    One per project, named by a digest because a project name may hold any
+    character: each sync creates and removes only its own, so two projects
+    syncing one checkout at once cannot erase each other's debt, as they
+    could while one file listed them all (review of PR #3358).
+    """
+    digest = hashlib.sha256(project_name.encode(cs.ENCODING_UTF8)).hexdigest()
+    return state_dir / cs.EMBEDDINGS_PENDING_PROJECT_TEMPLATE.format(digest=digest)
+
+
+def _save_embeddings_owed(marker: Path, project_name: str, owed: bool) -> None:
+    try:
+        if owed:
+            # The name is for whoever lists the state directory; the file's
+            # presence is what the sync reads.
+            marker.write_text(project_name, encoding=cs.ENCODING_UTF8)
+        else:
+            marker.unlink(missing_ok=True)
+    except OSError:
+        # Best effort, like the other markers: a read-only state directory
+        # must not lose the run to a marker it could not write.
+        logger.debug(ls.EMBEDDINGS_PENDING_NOT_UPDATED)
+
+
+def _load_shared_embeddings_owed(marker: Path) -> frozenset[str] | None:
+    """The projects a marker shared by every project says owe a pass.
+
+    An earlier build kept one marker for all projects: a JSON list of their
+    names, and before that an empty file. Empty without one. None for one
+    that names no project, the empty file included, since which project
+    failed cannot be told then and every project owes.
     """
     try:
         loaded = loads_json(marker.read_text(encoding=cs.ENCODING_UTF8))
@@ -887,18 +914,6 @@ def _load_embeddings_owed(marker: Path) -> frozenset[str] | None:
         return None
     names = [name for name in loaded if isinstance(name, str)]
     return frozenset(names) if len(names) == len(loaded) else None
-
-
-def _save_embeddings_owed(marker: Path, projects: frozenset[str]) -> None:
-    try:
-        if projects:
-            marker.write_text(json.dumps(sorted(projects)), encoding=cs.ENCODING_UTF8)
-        else:
-            marker.unlink(missing_ok=True)
-    except OSError:
-        # Best effort, like the other markers: a read-only state directory
-        # must not lose the run to a marker it could not write.
-        logger.debug(ls.EMBEDDINGS_PENDING_NOT_UPDATED)
 
 
 class ReingestAborted(RuntimeError):
@@ -9190,8 +9205,7 @@ class GraphUpdater:
         return None
 
     def _embeddings_owed(self) -> bool:
-        owed = _load_embeddings_owed(self.state_dir / cs.EMBEDDINGS_PENDING_FILENAME)
-        if owed is not None and self.project_name not in owed:
+        if not self._owes_embeddings():
             return False
         # Only a run that embeds can pay what an earlier one owes, so a run
         # without embeddings keeps the fast path and leaves the marker for
@@ -9199,6 +9213,14 @@ class GraphUpdater:
         return self._embeddings_off_reason() is None and isinstance(
             self.ingestor, QueryProtocol
         )
+
+    def _owes_embeddings(self) -> bool:
+        if _embeddings_marker(self.state_dir, self.project_name).exists():
+            return True
+        shared = _load_shared_embeddings_owed(
+            self.state_dir / cs.EMBEDDINGS_PENDING_FILENAME
+        )
+        return shared is None or self.project_name in shared
 
     def _record_embeddings_pending(self, pending: bool) -> None:
         """Owe the embeddings pass to the next sync, or settle what was owed.
@@ -9210,31 +9232,44 @@ class GraphUpdater:
         unsearchable until another file changed (review of PR #2550). The
         marker makes that fast path refuse. Each pass covers every function
         of the project, so one that stores, verifies and prunes them all
-        settles whatever an earlier run of it owed.
-
-        The marker names the projects that owe: one checkout can be indexed
-        under several, and a clean pass of one must not settle another's
-        debt, which a single-file run of it would leave behind an unchanged
-        stamp and cache (review of PR #3358).
+        settles whatever an earlier run of it owed, and only that: one
+        checkout can be indexed under several projects, each with a marker
+        of its own (review of PR #3358).
         """
         if pending:
             logger.warning(ls.EMBEDDINGS_PENDING.format(project=self.project_name))
-        marker = self.state_dir / cs.EMBEDDINGS_PENDING_FILENAME
-        owed = self._projects_owing_embeddings(marker)
+        self._split_shared_embeddings_marker()
         _save_embeddings_owed(
-            marker,
-            (owed | {self.project_name}) if pending else (owed - {self.project_name}),
+            _embeddings_marker(self.state_dir, self.project_name),
+            self.project_name,
+            pending,
         )
 
-    def _projects_owing_embeddings(self, marker: Path) -> frozenset[str]:
-        owed = _load_embeddings_owed(marker)
-        if owed is not None:
-            return owed
-        # A marker naming no one is every project's debt. Rewritten as the
-        # projects indexed from this tree, each of them still retries once.
-        return frozenset(
-            _load_project_stamps(self.state_dir / cs.EXCLUSION_STATE_FILENAME)
-        )
+    def _split_shared_embeddings_marker(self) -> None:
+        """Hand each project a shared marker names a marker of its own.
+
+        Only created, never removed, for the others: a project that syncs
+        at the same time and settles its debt in between owes one more pass
+        at worst. This run's own debt is what its pass decides.
+        """
+        shared = self.state_dir / cs.EMBEDDINGS_PENDING_FILENAME
+        owed = _load_shared_embeddings_owed(shared)
+        if owed == frozenset():
+            return
+        if owed is None:
+            # Naming no one, it is every project's debt: each one indexed
+            # from this tree still retries once.
+            owed = frozenset(
+                _load_project_stamps(self.state_dir / cs.EXCLUSION_STATE_FILENAME)
+            )
+        for project in sorted(owed - {self.project_name}):
+            _save_embeddings_owed(
+                _embeddings_marker(self.state_dir, project), project, True
+            )
+        try:
+            shared.unlink(missing_ok=True)
+        except OSError:
+            logger.debug(ls.EMBEDDINGS_PENDING_NOT_UPDATED)
 
     def _generate_semantic_embeddings(self) -> None:
         if (off_reason := self._embeddings_off_reason()) is not None:

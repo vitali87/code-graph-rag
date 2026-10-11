@@ -28,6 +28,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import exceptions as ex
+from codebase_rag import graph_updater as gu
 from codebase_rag import vector_store as vs
 from codebase_rag.checkout_state import state_file
 from codebase_rag.constants import VectorStoreBackend
@@ -290,7 +291,7 @@ class TestAMissingEmbeddingIsRetried:
         assert _sync(repo, graph, {2: _KEEP}).skipped_because_in_sync is False
 
         assert _in_sync(repo, graph) is True
-        assert not state_file(repo, cs.EMBEDDINGS_PENDING_FILENAME).exists()
+        assert _pending(repo) == set()
 
 
 class TestWhatTheRetryLeavesAlone:
@@ -369,13 +370,24 @@ _OTHER = "other"
 _OTHER_KEEP = f"{_OTHER}.m.keep_me"
 
 
-def _marker(repo: Path) -> Path:
+def _shared_marker(repo: Path) -> Path:
+    """The marker an earlier build shared between every project."""
     return state_file(repo, cs.EMBEDDINGS_PENDING_FILENAME)
 
 
-def _owed(repo: Path) -> list[str]:
-    """The projects the marker names."""
-    return json.loads(_marker(repo).read_text(encoding="utf-8"))
+def _pending(repo: Path) -> set[str]:
+    """The projects that owe a pass, by the per-project markers."""
+    pattern = cs.EMBEDDINGS_PENDING_PROJECT_TEMPLATE.format(digest="*")
+    return {
+        marker.read_text(encoding="utf-8")
+        for marker in state_file(repo, "").glob(pattern)
+    }
+
+
+def _owe(repo: Path, project: str) -> None:
+    gu._save_embeddings_owed(
+        gu._embeddings_marker(state_file(repo, ""), project), project, True
+    )
 
 
 def _interrupting_batch(number: int) -> Embed:
@@ -422,11 +434,11 @@ class TestAnInterruptedPassIsRetried:
         # Negative: the debt is the interrupted project's, and its next
         # complete pass settles it.
         self._interrupted(repo, graph)
-        assert _owed(repo) == [_PROJECT]
+        assert _pending(repo) == {_PROJECT}
 
         _sync(repo, graph, {1: _KEEP, 2: _DELETE})
 
-        assert not _marker(repo).exists()
+        assert _pending(repo) == set()
 
     def test_an_interrupted_run_without_embeddings_writes_nothing(
         self, repo: Path, graph: _Graph
@@ -448,7 +460,7 @@ class TestAnInterruptedPassIsRetried:
                 skip_embeddings=True,
             )
 
-        assert not _marker(repo).exists()
+        assert _pending(repo) == set()
 
 
 class TestEachProjectOwesItsOwn:
@@ -472,19 +484,48 @@ class TestEachProjectOwesItsOwn:
         assert retry.skipped_because_in_sync is False
         assert (_KEEP, 2) in _points()
 
+    def test_a_clean_pass_racing_another_projects_failure_keeps_its_retry(
+        self, repo: Path, graph: _Graph
+    ) -> None:
+        # Two syncs of one checkout at once, sequenced: other's clean pass
+        # has decided what to write when svc's failed pass records its debt,
+        # and other's write lands after it. svc's next sync must retry.
+        _sync(repo, graph, {1: _KEEP}, source=_SOURCE_KEEP_ONLY)
+        real_save = gu._save_embeddings_owed
+        armed = True
+
+        def save_after_svc_fails(*args: Path | str | bool | frozenset[str]) -> None:
+            nonlocal armed
+            if armed:
+                armed = False
+                with _store_down():
+                    _sync(repo, graph, {2: _KEEP}, source=_SOURCE_KEEP_EDITED)
+            real_save(*args)
+
+        with patch.object(gu, "_save_embeddings_owed", save_after_svc_fails):
+            _sync(repo / _MODULE, graph, {7: _OTHER_KEEP}, project=_OTHER)
+        assert armed is False
+
+        retry = _sync(repo, graph, {2: _KEEP})
+
+        assert retry.skipped_because_in_sync is False
+        assert (_KEEP, 2) in _points()
+
     def test_a_projects_own_clean_pass_settles_its_debt(
         self, repo: Path, graph: _Graph
     ) -> None:
         # Negative: other's debt is other's to clear, and its clean retry
         # does, taking the marker with it once nobody else owes.
+        _sync(repo, graph, {1: _KEEP})
         with _store_down():
             _sync(repo, graph, {7: _OTHER_KEEP}, project=_OTHER)
-        assert _owed(repo) == [_OTHER]
+        _owe(repo, _PROJECT)
+        assert _pending(repo) == {_OTHER, _PROJECT}
 
         retry = _sync(repo, graph, {7: _OTHER_KEEP}, project=_OTHER)
 
         assert retry.skipped_because_in_sync is False
-        assert not _marker(repo).exists()
+        assert _pending(repo) == {_PROJECT}
         assert _in_sync(repo, graph, project=_OTHER) is True
 
     def test_this_projects_clean_pass_keeps_another_projects_debt(
@@ -499,14 +540,18 @@ class TestEachProjectOwesItsOwn:
 
         _sync(repo / _MODULE, graph, {1: _KEEP})
 
-        assert _owed(repo) == [_OTHER]
+        assert _pending(repo) == {_OTHER}
         assert _in_sync(repo, graph, project=_OTHER) is False
 
+    @pytest.mark.parametrize("shared", [False, True])
     def test_a_marker_naming_only_another_project_keeps_this_fast_path(
-        self, repo: Path, graph: _Graph
+        self, repo: Path, graph: _Graph, shared: bool
     ) -> None:
         _sync(repo, graph, {1: _KEEP})
-        _marker(repo).write_text(json.dumps([_OTHER]), encoding="utf-8")
+        if shared:
+            _shared_marker(repo).write_text(json.dumps([_OTHER]), encoding="utf-8")
+        else:
+            _owe(repo, _OTHER)
 
         assert _in_sync(repo, graph) is True
 
@@ -517,8 +562,9 @@ class TestEachProjectOwesItsOwn:
         # and another project's debt is left exactly as it was.
         with _store_down():
             _sync(repo, graph, {1: _KEEP}, skip_embeddings=True)
-            assert not _marker(repo).exists()
-            _marker(repo).write_text(json.dumps([_OTHER]), encoding="utf-8")
+            assert _pending(repo) == set()
+            _owe(repo, _OTHER)
+            _shared_marker(repo).write_text(json.dumps([_OTHER]), encoding="utf-8")
             _sync(
                 repo,
                 graph,
@@ -527,24 +573,32 @@ class TestEachProjectOwesItsOwn:
                 skip_embeddings=True,
             )
 
-        assert _owed(repo) == [_OTHER]
+        assert _pending(repo) == {_OTHER}
+        assert json.loads(_shared_marker(repo).read_text()) == [_OTHER]
 
-    @pytest.mark.parametrize("content", ["", "not json", '{"svc": true}', "[1]"])
-    def test_an_unreadable_marker_makes_every_project_retry_once(
+    @pytest.mark.parametrize(
+        "content",
+        [json.dumps([_PROJECT, _OTHER]), "", "not json", '{"svc": true}', "[1]"],
+    )
+    def test_a_shared_marker_makes_each_project_it_names_retry_once(
         self, repo: Path, graph: _Graph, content: str
     ) -> None:
-        # Which project failed cannot be read back, so each one indexed from
-        # the tree retries; svc's clean retry leaves other's still owed.
+        # An earlier build's marker: the list of projects that owe, or, when
+        # it names no one (its empty file), every project indexed from the
+        # tree. svc's retry splits it, leaving other's debt in a file of its
+        # own, and other's retry settles that.
         _sync(repo, graph, {7: _OTHER_KEEP}, project=_OTHER)
         _sync(repo, graph, {1: _KEEP})
-        _marker(repo).write_text(content, encoding="utf-8")
+        _shared_marker(repo).write_text(content, encoding="utf-8")
         assert _in_sync(repo, graph) is False
 
         assert _sync(repo, graph, {1: _KEEP}).skipped_because_in_sync is False
 
-        assert _owed(repo) == [_OTHER]
+        assert not _shared_marker(repo).exists()
+        assert _pending(repo) == {_OTHER}
+        assert _in_sync(repo, graph) is True
         _sync(repo, graph, {7: _OTHER_KEEP}, project=_OTHER)
-        assert not _marker(repo).exists()
+        assert _pending(repo) == set()
 
 
 def _write_legacy(points: Mapping[int, str]) -> None:
