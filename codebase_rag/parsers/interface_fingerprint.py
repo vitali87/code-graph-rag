@@ -440,6 +440,8 @@ def _call_bindings(
     it is one is kept too (Python; a JS local the flow pass reads through
     is a nested definition, kept whole)."""
     items: list[bytes] = []
+    if not rules.calls:
+        return items
     scopes: dict[int, frozenset[str]] = {}
     stack = list(reversed(body.children))
     while stack:
