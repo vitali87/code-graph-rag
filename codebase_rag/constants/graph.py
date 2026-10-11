@@ -890,8 +890,15 @@ CYPHER_DELETE_MODULE = (
     # it a removed parameter or a deleted function left its nodes orphaned --
     # the shape of the Gloss leak (#1828), but the opposite remedy, because a
     # gloss is written into the graph and must survive a rebuild.
+    # The finding edges for the same reason: a Pattern, CodeSmell or
+    # SecurityIssue is derived from this module's source and keyed under its
+    # qualified name, so no other module can hold it. Outside the walk, a
+    # re-parse stripped its edge and left the node: an orphan per re-parse
+    # after a sync that drops the `findings` capture group, or per finding
+    # the edited source no longer matches (issue #2536).
     "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER"
-    "|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT*0..]->(c) "
+    "|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT"
+    "|IMPLEMENTS_PATTERN|HAS_SMELL|HAS_VULNERABILITY*0..]->(c) "
     "DETACH DELETE m, c"
 )
 # Keyed on absolute_path: the relative path is shared across same-layout
@@ -1079,6 +1086,7 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.is_property AS is_property, n.is_macro AS is_macro, "
     "n.is_body_scoped_name AS is_body_scoped_name, n.path AS path, "
     "n.start_line AS start_line, n.end_line AS end_line, "
+    "n.modifiers AS modifiers, n.decorators AS decorators, "
     "n.return_type AS return_type, n.param_types AS param_types, "
     "n.namespace AS namespace, n.is_object_member AS is_object_member, "
     "n.extension_receiver AS extension_receiver, "
