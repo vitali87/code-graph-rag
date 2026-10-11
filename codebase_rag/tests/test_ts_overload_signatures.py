@@ -21,6 +21,10 @@ from codebase_rag.dead_code import collect_dead_code, default_dead_code_config
 from codebase_rag.editing.rename import RenameRefused, rename
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.js_ts.overloads import (
+    implementation_signatures,
+    overload_signatures,
+)
 from codebase_rag.structural_check import run_check
 from codebase_rag.structural_delta import has_findings
 from codebase_rag.types_defs import PropertyValue
@@ -412,10 +416,16 @@ def test_the_renamed_file_type_checks(tmp_path: Path) -> None:
         f"{PROJECT}.internal.parse",
         "parseValue",
     )
-    tsc = _tsc()
-    assert tsc is not None
+    _assert_type_checks(root / "internal.ts")
+
+
+def _assert_type_checks(path: Path) -> None:
+    # Only where a `tsc` is installed; the caller's text assertions stand
+    # either way.
+    if (tsc := _tsc()) is None:
+        return
     checked = subprocess.run(
-        [tsc, "--noEmit", "--strict", str(root / "internal.ts")],
+        [tsc, "--noEmit", "--strict", str(path)],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -423,6 +433,201 @@ def test_the_renamed_file_type_checks(tmp_path: Path) -> None:
         timeout=120,
     )
     assert checked.returncode == 0, checked.stdout + checked.stderr
+
+
+# --- static and instance members are separate functions -------------------------
+
+# Bot review on PR #3357: an abstract instance `f` beside an overloaded static
+# `f`. They live in different declaration spaces, so renaming the abstract
+# member must leave the static signatures with their implementation; renaming
+# them too is TS2389 on the static implementation.
+ABSTRACT_THEN_STATIC_TS = """\
+export abstract class A {
+  abstract f(): void;
+  static f(a: string): string;
+  static f(a: number): string;
+  static f(a: string | number): string {
+    return String(a);
+  }
+}
+"""
+
+# The same members the other way round: the abstract member is the `@line`
+# variant, so the rename passes its contract and only the file shows the harm.
+STATIC_THEN_ABSTRACT_TS = """\
+export abstract class A {
+  static f(a: string): string;
+  static f(a: number): string;
+  static f(a: string | number): string {
+    return String(a);
+  }
+  abstract f(): void;
+}
+"""
+
+STATIC_OVERLOADS_TS = """\
+export class Codec {
+  static decode(x: string): number;
+  static decode(x: number): number;
+  static decode(x: string | number): number {
+    return Number(x);
+  }
+}
+
+export function use(): number {
+  return Codec.decode(1);
+}
+"""
+
+STATIC_BESIDE_INSTANCE_OVERLOADS_TS = """\
+export class Box {
+  static get(): Box {
+    return new Box();
+  }
+  get(k: string): string;
+  get(k: number): number;
+  get(k: string | number): string | number {
+    return k;
+  }
+}
+"""
+
+BOTH_OVERLOADED_TS = """\
+export class Pair {
+  /** Builds a pair. */
+  static make(a: string): Pair;
+  static make(a: number): Pair;
+  static make(a: string | number): Pair {
+    return new Pair();
+  }
+  make(a: string): string;
+  make(a: number): string;
+  make(a: string | number): string {
+    return String(a);
+  }
+}
+"""
+
+# An abstract property's getter and setter beside a static method of the
+# same name: the accessors are one member, the static set another function.
+ABSTRACT_ACCESSORS_TS = """\
+export abstract class Shape {
+  static size(a: string): number;
+  static size(a: number): number;
+  static size(a: string | number): number {
+    return Number(a);
+  }
+  abstract get size(): number;
+  abstract set size(v: number);
+}
+"""
+
+
+def test_renaming_an_abstract_member_leaves_the_static_overloads_alone(
+    tmp_path: Path,
+) -> None:
+    # Applied without the re-ingest: with it the contract refuses this shape
+    # for a separate reason, since the static implementation's `@5` becomes
+    # the plain name once the abstract member gives it up.
+    root = tmp_path / PROJECT
+    store, _updater = _index(root, {"shape.ts": ABSTRACT_THEN_STATIC_TS})
+    report = rename(root, store.fetch_all, PROJECT, f"{PROJECT}.shape.A.f", "g")
+    assert report.applied, report.message
+    text = (root / "shape.ts").read_text(encoding="utf-8")
+    assert text == ABSTRACT_THEN_STATIC_TS.replace("abstract f(", "abstract g(")
+    _assert_type_checks(root / "shape.ts")
+
+
+def test_a_contract_checked_rename_leaves_the_static_overloads_alone(
+    tmp_path: Path,
+) -> None:
+    root, _store = _renamed(
+        tmp_path,
+        {"shape.ts": STATIC_THEN_ABSTRACT_TS},
+        f"{PROJECT}.shape.A.f{cs.DUP_QN_MARKER}7",
+        "g",
+    )
+    text = (root / "shape.ts").read_text(encoding="utf-8")
+    assert text == STATIC_THEN_ABSTRACT_TS.replace("abstract f(", "abstract g(")
+    _assert_type_checks(root / "shape.ts")
+
+
+def test_a_static_overload_set_folds_and_renames_together(tmp_path: Path) -> None:
+    store, _updater = _index(tmp_path / "graph", {"codec.ts": STATIC_OVERLOADS_TS})
+    qn = f"{PROJECT}.codec.Codec.decode"
+    assert _spans(store, qn) == {(_METHOD, qn): (4, 6)}
+    assert _calls_from(store, f"{PROJECT}.codec.use") == {(qn, _EXACT)}
+
+    root, _store = _renamed(tmp_path, {"codec.ts": STATIC_OVERLOADS_TS}, qn, "parse")
+    text = (root / "codec.ts").read_text(encoding="utf-8")
+    assert text == STATIC_OVERLOADS_TS.replace("decode(", "parse(")
+    _assert_type_checks(root / "codec.ts")
+
+
+def test_an_instance_overload_set_beside_a_static_method_stays_its_own(
+    tmp_path: Path,
+) -> None:
+    store, _updater = _index(
+        tmp_path / "graph", {"box.ts": STATIC_BESIDE_INSTANCE_OVERLOADS_TS}
+    )
+    qn = f"{PROJECT}.box.Box.get"
+    variant = f"{qn}{cs.DUP_QN_MARKER}7"
+    assert _spans(store, qn) == {(_METHOD, qn): (2, 4), (_METHOD, variant): (7, 9)}
+
+    root, _store = _renamed(
+        tmp_path, {"box.ts": STATIC_BESIDE_INSTANCE_OVERLOADS_TS}, variant, "fetch"
+    )
+    text = (root / "box.ts").read_text(encoding="utf-8")
+    assert text == STATIC_BESIDE_INSTANCE_OVERLOADS_TS.replace("  get(k:", "  fetch(k:")
+    _assert_type_checks(root / "box.ts")
+
+
+def test_a_static_and_an_instance_overload_set_stay_two_functions(
+    tmp_path: Path,
+) -> None:
+    store, _updater = _index(tmp_path / "graph", {"pair.ts": BOTH_OVERLOADED_TS})
+    qn = f"{PROJECT}.pair.Pair.make"
+    variant = f"{qn}{cs.DUP_QN_MARKER}10"
+    assert _spans(store, qn) == {(_METHOD, qn): (5, 7), (_METHOD, variant): (10, 12)}
+    nodes = {str(uid): props for (_label, uid), props in store.nodes.items()}
+    # The static set's doc is its own, never the instance implementation's.
+    assert nodes[qn].get(cs.KEY_DOCSTRING) == "Builds a pair."
+    assert nodes[variant].get(cs.KEY_DOCSTRING) is None
+
+    root, _store = _renamed(tmp_path, {"pair.ts": BOTH_OVERLOADED_TS}, variant, "show")
+    assert (root / "pair.ts").read_text(encoding="utf-8") == (
+        BOTH_OVERLOADED_TS.replace("  make(a:", "  show(a:")
+    )
+    _assert_type_checks(root / "pair.ts")
+
+
+def test_a_static_signature_is_no_overload_of_an_instance_implementation() -> None:
+    # Not valid TypeScript (TS2387), but parseable: the key, not the source
+    # order, decides what belongs to an implementation.
+    parsers, _queries = load_parsers()
+    source = b"class C {\n  static f(a: string): void;\n  f(a: string) {}\n}\n"
+    root = parsers[cs.SupportedLanguage.TS].parse(source).root_node
+    body = root.named_children[0].child_by_field_name(cs.FIELD_BODY)
+    assert body is not None
+    implementation = body.named_children[-1]
+    assert implementation.type == cs.TS_METHOD_DEFINITION
+    assert implementation_signatures(implementation) == []
+    assert overload_signatures(implementation) == []
+
+
+def test_an_abstract_accessor_pair_is_renamed_together(tmp_path: Path) -> None:
+    # A getter and a setter of one abstract property are one member, folded
+    # by the interface/abstract rule (issue #2524), so both names move; the
+    # static `size` overloads are another function and keep theirs.
+    root, _store = _renamed(
+        tmp_path,
+        {"shape.ts": ABSTRACT_ACCESSORS_TS},
+        f"{PROJECT}.shape.Shape.size{cs.DUP_QN_MARKER}7",
+        "extent",
+    )
+    text = (root / "shape.ts").read_text(encoding="utf-8")
+    assert text == ABSTRACT_ACCESSORS_TS.replace("t size(", "t extent(")
+    _assert_type_checks(root / "shape.ts")
 
 
 # --- incremental re-parse equals a clean index ----------------------------------

@@ -13,14 +13,19 @@ implementation in its block it is dropped, and a set with no implementation
 
 Folding is per block, the scope TypeScript merges declarations in: a
 same-named function in another function body, namespace or `declare module`
-is a different function and keeps its own node.
+is a different function and keeps its own node. Within a class body a
+`static` member and an instance member of one name live in different
+declaration spaces too, so every set here is keyed by name and staticness:
+an abstract `f` beside an overloaded `static f` is two functions, and
+renaming one must not touch the other's signatures (bot review, PR #3357).
 
 A class body spells its overloads `method_signature`, which the function
 query never captures as a member there (issue #2524), and an interface's or
 abstract class's repeated member registers once
-(`js_ts.utils.repeats_member_signature`); `rename` reads the signatures of
-all of these through `overload_signatures`, so what it rewrites is exactly
-what the graph folded.
+(`js_ts.utils.repeats_member_signature`, by name alone, which is enough
+there: an abstract member cannot be `static` (TS1243) and an interface has
+no static side); `rename` reads the signatures of all of these through
+`overload_signatures`, so what it rewrites is exactly what the graph folded.
 """
 
 from __future__ import annotations
@@ -37,11 +42,14 @@ _WRAPPERS = frozenset({cs.TS_EXPORT_STATEMENT, cs.TS_AMBIENT_DECLARATION})
 _IMPLEMENTATIONS = frozenset(
     {cs.TS_FUNCTION_DECLARATION, cs.TS_GENERATOR_FUNCTION_DECLARATION}
 )
-_SIGNATURE_ONLY = frozenset({cs.TS_FUNCTION_SIGNATURE})
-_BLOCK_FUNCTIONS = _IMPLEMENTATIONS | _SIGNATURE_ONLY
+_BLOCK_FUNCTIONS = _IMPLEMENTATIONS | {cs.TS_FUNCTION_SIGNATURE}
 # What may stand between two overloads of one member: a comment, and in a
 # class body the implementation's decorators.
 _BETWEEN_OVERLOADS = frozenset({cs.TS_COMMENT, cs.TS_DECORATOR})
+
+# What makes two declarations one function's: the name and whether it is
+# `static`.
+type _Key = tuple[str | None, bool]
 
 
 def folded_overload_signatures(functions: Iterable[Node]) -> frozenset[int]:
@@ -64,22 +72,29 @@ def overload_signatures(declaration: Node) -> list[Node]:
 
     An implementation's signatures are the ones written directly above it,
     since TypeScript accepts no other placement (TS2391). A set without an
-    implementation is every same-named signature of its scope.
+    implementation is every signature of its scope with the same key and
+    node type: an abstract set is all abstract (TS2512), and an abstract
+    getter and setter are one property's.
     """
-    name = _name(declaration)
-    if name is None:
-        return []
     match declaration.type:
         case cs.TS_FUNCTION_SIGNATURE:
             block = _statement_of(declaration).parent
             members = [] if block is None else _declarations(block)
-            return _same_named(declaration, name, members, _SIGNATURE_ONLY)
         case cs.TS_METHOD_SIGNATURE | cs.TS_ABSTRACT_METHOD_SIGNATURE:
             body = declaration.parent
             members = [] if body is None else body.named_children
-            return _same_named(declaration, name, members, cs.TS_BODILESS_METHOD_TYPES)
         case _:
             return implementation_signatures(declaration)
+    key = _key(declaration)
+    if key[0] is None:
+        return []
+    return [
+        member
+        for member in members
+        if member.type == declaration.type
+        and member.start_byte != declaration.start_byte
+        and _key(member) == key
+    ]
 
 
 def implementation_signatures(declaration: Node) -> list[Node]:
@@ -88,60 +103,46 @@ def implementation_signatures(declaration: Node) -> list[Node]:
 
     Reads only the run above it, so a caller may ask of every function.
     """
-    name = _name(declaration)
-    if name is None:
-        return []
     match declaration.type:
         case cs.TS_FUNCTION_DECLARATION | cs.TS_GENERATOR_FUNCTION_DECLARATION:
-            return _leading(_statement_of(declaration), cs.TS_FUNCTION_SIGNATURE, name)
+            statement = _statement_of(declaration)
+            signature_type = cs.TS_FUNCTION_SIGNATURE
         case cs.TS_METHOD_DEFINITION:
-            return _leading(declaration, cs.TS_METHOD_SIGNATURE, name)
+            statement = declaration
+            signature_type = cs.TS_METHOD_SIGNATURE
         case _:
             return []
-
-
-def _same_named(
-    declaration: Node, name: str, members: list[Node], kinds: frozenset[str]
-) -> list[Node]:
-    return [
-        member
-        for member in members
-        if member.type in kinds
-        and member.start_byte != declaration.start_byte
-        and _name(member) == name
-    ]
+    key = _key(declaration)
+    if key[0] is None:
+        return []
+    found: list[Node] = []
+    sibling = statement.prev_named_sibling
+    # A different declaration, or one of another key, ends the run.
+    while sibling is not None:
+        if sibling.type not in _BETWEEN_OVERLOADS:
+            signature = _unwrapped(sibling)
+            if signature.type != signature_type or _key(signature) != key:
+                break
+            found.append(signature)
+        sibling = sibling.prev_named_sibling
+    found.reverse()
+    return found
 
 
 def _folded(block: Node) -> Iterator[int]:
     declarations = [
-        (node, name)
+        (node, key)
         for node in _declarations(block)
-        if node.type in _BLOCK_FUNCTIONS and (name := _name(node)) is not None
+        if node.type in _BLOCK_FUNCTIONS and (key := _key(node))[0] is not None
     ]
-    implemented = {name for node, name in declarations if node.type in _IMPLEMENTATIONS}
-    seen: set[str] = set()
-    for node, name in declarations:
+    implemented = {key for node, key in declarations if node.type in _IMPLEMENTATIONS}
+    seen: set[_Key] = set()
+    for node, key in declarations:
         if node.type != cs.TS_FUNCTION_SIGNATURE:
             continue
-        if name in implemented or name in seen:
+        if key in implemented or key in seen:
             yield node.start_byte
-        seen.add(name)
-
-
-def _leading(statement: Node, signature_type: str, name: str) -> list[Node]:
-    # Walks up from the implementation through same-named signatures, so a
-    # different declaration (or a same-named one of another kind) ends it.
-    found: list[Node] = []
-    sibling = statement.prev_named_sibling
-    while sibling is not None:
-        if sibling.type not in _BETWEEN_OVERLOADS:
-            declaration = _unwrapped(sibling)
-            if declaration.type != signature_type or _name(declaration) != name:
-                break
-            found.append(declaration)
-        sibling = sibling.prev_named_sibling
-    found.reverse()
-    return found
+        seen.add(key)
 
 
 def _declarations(block: Node) -> list[Node]:
@@ -171,5 +172,9 @@ def _unwrapped(statement: Node) -> Node:
     return statement
 
 
-def _name(declaration: Node) -> str | None:
-    return safe_decode_text(declaration.child_by_field_name(cs.FIELD_NAME))
+def _key(declaration: Node) -> _Key:
+    # `static` is an anonymous token among the member's own children.
+    return (
+        safe_decode_text(declaration.child_by_field_name(cs.FIELD_NAME)),
+        any(child.type == cs.TS_STATIC for child in declaration.children),
+    )
