@@ -382,3 +382,22 @@ def test_a_raw_line_break_and_a_raw_backslash_n_stay_two_names(
     names = set(_class_names(mock_ingestor).values())
 
     assert {'Box<R"(a\\\\nb)">', 'Box<R"(a\\nb)">'} <= names
+
+
+def test_a_literal_dot_leader_is_not_mistaken_for_an_argument_dot(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The `.` stand-in must stay unambiguous: a string argument that already
+    # holds U+2024 is a different specialization from one holding a `.`.
+    _index(
+        temp_repo,
+        "template <auto S> struct Box {};\n"
+        'template <> struct Box<"a.b"> {};\n'
+        f'template <> struct Box<"a{_DOT}b"> {{}};\n',
+        mock_ingestor,
+    )
+
+    names = set(_class_names(mock_ingestor).values())
+
+    assert len({name for name in names if name.startswith("Box<")}) == 2
+    assert f'Box<"a{_DOT}b">' in names

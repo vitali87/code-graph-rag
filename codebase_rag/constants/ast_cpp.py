@@ -113,6 +113,9 @@ C_FORWARD_DECLARING_NODE_TYPES = frozenset(
 # LEADER, the glyph `sql_names` uses for a dot inside a quoted identifier, so
 # the name still reads as a dot. A C++ identifier cannot contain it.
 CPP_TEMPLATE_ARG_DOT = "\u2024"
+# How a U+2024 already inside a literal argument is written, so the two
+# never collide (review of PR 3356).
+CPP_TEMPLATE_ARG_DOT_ESCAPE = "\\u2024"
 
 CPP_FALLBACK_OPERATOR = "operator_unknown"
 CPP_FALLBACK_DESTRUCTOR = "~destructor"

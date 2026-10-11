@@ -79,6 +79,9 @@ def _token_text(token: Node) -> str:
             raw = raw.replace(
                 cs.CPP_LITERAL_BACKSLASH, cs.CPP_LITERAL_ESCAPED_BACKSLASH
             )
+        # A dot leader the literal already holds is written as its escape, so
+        # it never reads as a `.` that CPP_TEMPLATE_ARG_DOT stands in for.
+        raw = raw.replace(cs.CPP_TEMPLATE_ARG_DOT, cs.CPP_TEMPLATE_ARG_DOT_ESCAPE)
         return raw.translate(_LITERAL_LINE_ESCAPES)
     return cs.CHAR_SPACE.join(raw.split())
 
