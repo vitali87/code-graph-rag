@@ -1057,7 +1057,7 @@ def emit_field_type_edges(
         targets = memo.get(key)
         if targets is None:
             targets = memo[key] = resolver.resolve_annotation(
-                fact.type_name, fact.module_qn
+                fact.type_name, fact.module_qn, fact.path
             )
         source = (cs.NodeLabel.FIELD.value, cs.KEY_QUALIFIED_NAME, fact.field_qn)
         for target_qn in targets:

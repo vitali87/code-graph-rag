@@ -47,6 +47,7 @@ from ..utils.path_utils import (
     module_stem,
     walk_eligible_files,
 )
+from ..utils.qn_markers import strip_arity_marker, strip_dup_marker
 from .import_paths import (
     ImportRead,
     ImportReader,
@@ -588,7 +589,14 @@ class _File:
         imports from the module defining it, where a factory may build one
         (`from pkg.cache import make_cache`). A module that only shares the
         name (`vendor.cache`) is not it."""
-        if next(self._names(self.target.owners), None) is not None:
+        # The class as code spells it, without the marker its qualified name
+        # may carry: ``PB`1`` is written `PB<T>`, `Box@8` `Box` (#2579).
+        # `is_owner` keeps the marker, so the twin spelled the same (`PB`)
+        # holds the file to the method but never vouches for a call.
+        written = frozenset(
+            strip_arity_marker(strip_dup_marker(owner)) for owner in self.target.owners
+        )
+        if next(self._names(written), None) is not None:
             return True
         modules = {**self.modules.home, **self.modules.packages}
         words = {key[-1] for key in modules if key}
