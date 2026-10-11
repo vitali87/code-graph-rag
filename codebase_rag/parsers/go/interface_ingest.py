@@ -203,18 +203,24 @@ class GoInterfaceMixin:
         self.replace_go_implementers(
             self.go_guessed_pairs,
             [(interface_qn, type_qn) for type_qn, interface_qn in pairs],
+            keep=self.go_proven_pairs,
         )
         return len(pairs)
 
     def replace_go_implementers(
-        self, previous: set[tuple[str, str]], current: list[tuple[str, str]]
+        self,
+        previous: set[tuple[str, str]],
+        current: list[tuple[str, str]],
+        keep: set[tuple[str, str]],
     ) -> None:
         """Swap one source's Go (interface, implementer) pairs in
         `interface_implementers` for this pass's. The map only ever gained
         entries, so an updater reused across an edit (the watcher, a second
         sync) kept a type the edit had taken out of an interface, with its
-        OVERRIDES and dispatch edges, where a clean index has none."""
-        for interface_qn, implementer_qn in previous:
+        OVERRIDES and dispatch edges, where a clean index has none. A pair
+        the other source holds (`keep`) stays: one guessed while go/types
+        failed and proven once it ran is still an implementer."""
+        for interface_qn, implementer_qn in previous - keep:
             self.interface_implementers.get(interface_qn, set()).discard(implementer_qn)
         previous.clear()
         for interface_qn, implementer_qn in current:

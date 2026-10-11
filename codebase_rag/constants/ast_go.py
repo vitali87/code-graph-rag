@@ -111,6 +111,9 @@ TS_GO_ARRAY_TYPE = "array_type"
 TS_GO_MAP_TYPE = "map_type"
 TS_GO_CHANNEL_TYPE = "channel_type"
 FIELD_GO_ELEMENT = "element"
+# `for k, v := range xs` declares its variables; `for k, v = range xs`
+# assigns ones declared before the loop.
+TS_GO_DECLARE_ASSIGN = ":="
 # A generic declaration's `[T any]` list (`type_parameter_declaration`s naming
 # the parameters) and a generic receiver's `Box[T]` arguments (`type_elem`s):
 # the names a result type can spell without naming any declared type.

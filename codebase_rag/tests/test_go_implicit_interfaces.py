@@ -622,8 +622,8 @@ def _incremental_implements(
     store: _StatefulIngestor,
 ) -> set[tuple[str, str, str | None]]:
     return {
-        (str(key[1]), str(key[4]), props.get(cs.KEY_RESOLUTION))
-        for key, props in store.edge_props.items()
+        (str(key[1]), str(key[4]), store.edge_props.get(key, {}).get(cs.KEY_RESOLUTION))
+        for key in store.keyed_edges
         if key[2] == cs.RelationshipType.IMPLEMENTS.value
     }
 
@@ -1320,9 +1320,16 @@ def _interface_edges(store: _StatefulIngestor) -> set[tuple[str, ...]]:
         cs.RelationshipType.OVERRIDES.value,
         cs.RelationshipType.CALLS.value,
     }
+    # Every edge, not only those with properties: a proven pair's edges
+    # carry none.
     return {
-        (str(key[1]), str(key[2]), str(key[4]), str(props.get(cs.KEY_RESOLUTION)))
-        for key, props in store.edge_props.items()
+        (
+            str(key[1]),
+            str(key[2]),
+            str(key[4]),
+            str(store.edge_props.get(key, {}).get(cs.KEY_RESOLUTION)),
+        )
+        for key in store.keyed_edges
         if key[2] in kinds
     }
 
@@ -1480,4 +1487,158 @@ def test_a_shadow_in_scope_does_retype_the_range(
 ) -> None:
     assert _area_calls(mock_ingestor, f"{scoped}.Inner") == {
         f"{scoped}.Other.Area": cs.EdgeResolution.EXACT
+    }
+
+
+# --- a pair that changes source on a reused updater (PR #3360 review) -------
+
+
+@pytest.mark.parametrize("how", ["repeated", "incremental", "reingest"])
+@pytest.mark.parametrize("first", ["degraded", "analysed"])
+def test_a_pair_that_changes_source_stays_an_implementer(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch, first: str, how: str
+) -> None:
+    # Run 1 matches Count to Getter by name (go/types failed) or proves it;
+    # run 2, on the same updater, the other way round. Either way the pair
+    # must survive the swap: the guessed and proven sets share one map.
+    from codebase_rag.parsers.frontends import go as go_fe
+
+    getter_line, getter_col = _position(PROVEN_GETTER, "Getter interface")
+    count_line, count_col = _position(PROVEN_GETTER, "Count struct")
+    facts = {
+        "degraded": GoSemanticFacts(
+            call_sites={}, external_sites=set(), implements=[], degraded_modules=(".",)
+        ),
+        "analysed": GoSemanticFacts(
+            call_sites={},
+            external_sites=set(),
+            implements=[
+                GoImplements(
+                    "app.go", count_line, count_col, "app.go", getter_line, getter_col
+                )
+            ],
+            analysed_modules=(".",),
+        ),
+    }
+    second = "analysed" if first == "degraded" else "degraded"
+    current = {"facts": facts[first]}
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
+    monkeypatch.setattr(go_fe, "go_frontend_available", lambda: True)
+    monkeypatch.setattr(
+        go_fe, "run_go_frontend", lambda repo_path, ignored_dirs: current["facts"]
+    )
+
+    def repo(path: Path) -> Path:
+        path.mkdir()
+        (path / "go.mod").write_text("module proj\n\ngo 1.22\n", encoding="utf-8")
+        (path / "app.go").write_text(PROVEN_GETTER, encoding="utf-8")
+        return path
+
+    root = repo(temp_repo / "reused")
+    store = _StatefulIngestor()
+    updater = _go_updater(store, root)
+    updater.run(force=True)
+    current["facts"] = facts[second]
+    path = root / "app.go"
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
+    path.write_text(PROVEN_GETTER + "// touched\n", encoding="utf-8")
+    os.utime(path, (cache_mtime + 1, cache_mtime + 1))
+    if how == "reingest":
+        updater.reingest(["app.go"])
+    else:
+        updater.run(force=how == "repeated")
+
+    clean_root = repo(temp_repo / "clean")
+    (clean_root / "app.go").write_text(PROVEN_GETTER + "// touched\n")
+    clean = _StatefulIngestor()
+    _go_updater(clean, clean_root).run(force=True)
+
+    edges = _interface_edges(store)
+    assert edges == _interface_edges(clean)
+    assert ("proj.app.Count.Get", "OVERRIDES", "proj.app.Getter.Get") in {
+        edge[:3] for edge in edges
+    }
+    assert ("proj.app.Read", "CALLS", "proj.app.Count.Get") in {
+        edge[:3] for edge in edges
+    }
+
+
+# --- a range variable shadows only inside its loop ---------------------------
+
+LOOP_SCOPED = """package shapes
+
+type Shape interface {
+\tArea() float64
+}
+
+type Square struct{}
+
+func (s Square) Area() float64 { return 1 }
+
+type Other struct{}
+
+func (o Other) Area(scale int) float64 { return float64(scale) }
+
+func Shadowed(x Other, xs []Shape) float64 {
+\tt := 0.0
+\tfor _, x := range xs {
+\t\tt += x.Area()
+\t}
+\treturn t + x.Area(2)
+}
+
+func Assigned(squares []Square) float64 {
+\tvar x Shape
+\tt := 0.0
+\tfor _, x = range squares {
+\t\tt += x.Area()
+\t}
+\treturn t
+}
+"""
+
+
+def _calls_by_line(mock_ingestor: MagicMock, caller: str) -> dict[int, dict[str, str]]:
+    by_line: dict[int, dict[str, str]] = {}
+    for c in get_relationships(mock_ingestor, cs.RelationshipType.CALLS.value):
+        props = c.kwargs.get("properties") or (c.args[3] if len(c.args) > 3 else {})
+        if c.args[0][2] == caller and str(c.args[2][2]).endswith(".Area"):
+            by_line.setdefault(props[cs.KEY_LINE], {})[c.args[2][2]] = props[
+                cs.KEY_RESOLUTION
+            ]
+    return by_line
+
+
+def test_a_range_variable_shadows_a_parameter_inside_its_loop_only(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _index(
+        temp_repo / "goloop", {"shapes.go": LOOP_SCOPED}, mock_ingestor, monkeypatch
+    )
+    pkg = f"{project}.shapes"
+    inside, _ = _position(LOOP_SCOPED, "t += x.Area()")
+    after, _ = _position(LOOP_SCOPED, "return t + x.Area(2)")
+    calls = _calls_by_line(mock_ingestor, f"{pkg}.Shadowed")
+    # `for _, x := range xs` declares a new `x`, a Shape, for the loop.
+    assert calls[inside] == {
+        f"{pkg}.Shape.Area": cs.EdgeResolution.EXACT,
+        f"{pkg}.Square.Area": cs.EdgeResolution.HEURISTIC,
+    }
+    # Past the loop `x` is the parameter again.
+    assert calls[after] == {f"{pkg}.Other.Area": cs.EdgeResolution.EXACT}
+
+
+def test_a_range_assignment_keeps_the_variables_declared_type(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `for _, x = range squares` assigns each Square to the Shape `x`: no new
+    # variable, so `x.Area()` still goes through Shape.
+    project = _index(
+        temp_repo / "goassign", {"shapes.go": LOOP_SCOPED}, mock_ingestor, monkeypatch
+    )
+    pkg = f"{project}.shapes"
+    line, _ = _position(LOOP_SCOPED, "for _, x = range squares")
+    assert _calls_by_line(mock_ingestor, f"{pkg}.Assigned")[line + 1] == {
+        f"{pkg}.Shape.Area": cs.EdgeResolution.EXACT,
+        f"{pkg}.Square.Area": cs.EdgeResolution.HEURISTIC,
     }

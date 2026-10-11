@@ -90,35 +90,55 @@ def _range_clauses(body: Node) -> list[Node]:
     return clauses
 
 
-def _collect_range_bindings(
-    caller_node: Node, body: Node, var_types: dict[str, str]
-) -> None:
-    """`for _, s := range shapes` with `shapes []Shape`: `s` is a Shape, so
-    `s.Area()` binds through Shape (issue #2483). `shapes` is the declaration
-    in scope at the loop, not another of that name in a block that has ended
-    or a closure. A name the function types another way keeps that type."""
-    clauses = _range_clauses(body)
+def range_span_bindings(caller_node: Node) -> list[tuple[int, int, str, str]]:
+    """`for _, s := range shapes` with `shapes []Shape` declares a Shape `s`
+    for the loop (issue #2483): (start, end, name, type) for each such
+    variable, its span the loop after the range clause, so a call inside
+    binds through Shape while the name keeps its own type outside. `shapes`
+    is the declaration in scope at the loop, not another of that name in a
+    block that has ended or a closure. `for _, s = range shapes` declares
+    nothing: `s` keeps the type it was declared with."""
+    body = caller_node.child_by_field_name(cs.FIELD_BODY)
+    clauses = (
+        [clause for clause in _range_clauses(body) if _declares(clause)] if body else []
+    )
     bindings = go_utils.local_bindings(caller_node) if clauses else {}
+    spans: list[tuple[int, int, str, str]] = []
     for clause in clauses:
-        ranged = clause.child_by_field_name(cs.FIELD_RIGHT)
         left = clause.child_by_field_name(cs.FIELD_LEFT)
-        if ranged is None or left is None or ranged.type != cs.TS_IDENTIFIER:
-            continue
-        declaration = go_utils.declaration_at(
-            bindings, safe_decode_text(ranged) or "", ranged.start_byte
-        )
-        slots = _declared_slots(declaration) if declaration is not None else None
-        if slots is not None:
-            _bind_range_names(left, slots, var_types)
+        slots = _ranged_slots(clause, bindings)
+        if left is not None and slots is not None and clause.parent is not None:
+            spans.extend(
+                (clause.end_byte, clause.parent.end_byte, name, type_name)
+                for name, type_name in _bound_types(left, slots)
+            )
+    return spans
 
 
-def _bind_range_names(
-    left: Node, slots: _RangeSlots, var_types: dict[str, str]
-) -> None:
-    for bound, type_name in zip(left.named_children, slots, strict=False):
-        name = safe_decode_text(bound) if bound.type == cs.TS_IDENTIFIER else None
-        if name and type_name:
-            var_types.setdefault(name, type_name)
+def _declares(clause: Node) -> bool:
+    return any(child.type == cs.TS_GO_DECLARE_ASSIGN for child in clause.children)
+
+
+def _ranged_slots(
+    clause: Node, bindings: go_utils.GoLocalBindings
+) -> _RangeSlots | None:
+    ranged = clause.child_by_field_name(cs.FIELD_RIGHT)
+    if ranged is None or ranged.type != cs.TS_IDENTIFIER:
+        return None
+    declaration = go_utils.declaration_at(
+        bindings, safe_decode_text(ranged) or "", ranged.start_byte
+    )
+    return _declared_slots(declaration) if declaration is not None else None
+
+
+def _bound_types(left: Node, slots: _RangeSlots) -> list[tuple[str, str]]:
+    return [
+        (name, type_name)
+        for bound, type_name in zip(left.named_children, slots, strict=False)
+        if bound.type == cs.TS_IDENTIFIER
+        and (name := safe_decode_text(bound))
+        and type_name
+    ]
 
 
 class GoTypeInferenceEngine:
@@ -228,8 +248,12 @@ class GoTypeInferenceEngine:
         self._collect_parameters(caller_node, var_types)
         if body := caller_node.child_by_field_name(cs.FIELD_BODY):
             self._collect_body_declarations(body, var_types)
-            _collect_range_bindings(caller_node, body, var_types)
         return var_types
+
+    def collect_range_span_bindings(
+        self, caller_node: Node
+    ) -> list[tuple[int, int, str, str]]:
+        return range_span_bindings(caller_node)
 
     def build_field_type_map(self, class_node: Node) -> dict[str, str]:
         # Map a Go struct's field names to their bare type names (a `type_spec`:

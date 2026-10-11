@@ -3714,6 +3714,29 @@ class CallProcessor:
                     func_node_starts=func_node_starts,
                 )
 
+    def _span_bindings(
+        self,
+        caller_node: Node,
+        module_qn: str,
+        class_context: str | None,
+        language: cs.SupportedLanguage,
+        local_var_types: dict[str, str] | None,
+    ) -> list[tuple[int, int, str, str]]:
+        if local_var_types is None:
+            return []
+        type_inference = self._resolver.type_inference
+        if language == cs.SupportedLanguage.RUST:
+            return type_inference.collect_rust_span_bindings(
+                caller_node, module_qn, class_context
+            )
+        if language == cs.SupportedLanguage.GO:
+            # A `for k, v := range xs` variable is the loop's own, so it holds
+            # the element type inside the loop and nowhere else (issue #2483).
+            return type_inference.go_type_inference.collect_range_span_bindings(
+                caller_node
+            )
+        return []
+
     def _overlay_span_binding(
         self,
         call_name: str,
@@ -4465,11 +4488,9 @@ class CallProcessor:
         # name for different types at different byte ranges (`cmd` per arm;
         # `|x|` per collection); the flat map keeps only one. These span-scoped
         # bindings let each call resolve against the binding containing it.
-        span_bindings: list[tuple[int, int, str, str]] = []
-        if language == cs.SupportedLanguage.RUST and local_var_types is not None:
-            span_bindings = self._resolver.type_inference.collect_rust_span_bindings(
-                caller_node, module_qn, class_context
-            )
+        span_bindings = self._span_bindings(
+            caller_node, module_qn, class_context, language, local_var_types
+        )
 
         caller_spec = (caller_type, cs.KEY_QUALIFIED_NAME, caller_qn)
 

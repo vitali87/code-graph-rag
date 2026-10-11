@@ -1947,7 +1947,7 @@ class GraphUpdater:
                 (iface_label, cs.KEY_QUALIFIED_NAME, iface_qn),
             )
             proven.append((iface_qn, impl_qn))
-        dp.replace_go_implementers(dp.go_proven_pairs, proven)
+        dp.replace_go_implementers(dp.go_proven_pairs, proven, keep=dp.go_guessed_pairs)
         if proven:
             logger.info(ls.GO_FRONTEND_IMPLEMENTS_JOINED.format(count=len(proven)))
 
