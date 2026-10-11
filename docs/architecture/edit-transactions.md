@@ -70,7 +70,9 @@ checkout's state directory under `CGR_HOME`, outside the working tree (see
 timestamp, each file's before/after bytes and the verification outcome.
 The file keeps the last 50 transactions. An older cgr still running records
 its edits in a history at the checkout root instead; the next sync or edit
-adds those entries to this one, so `cgr edits undo` reverses them too.
+adds those entries to this one, so `cgr edits undo` reverses them too, and
+an edit refuses to commit while they cannot be added, so that its entry
+never goes before theirs.
 
 ```bash
 cgr edits show            # newest first; --diff prints each patch set

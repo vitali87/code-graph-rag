@@ -254,6 +254,9 @@ EXCLUSION_STATE_PROJECTS_KEY = "projects"
 # Recorded edit transactions for `cgr edits show|undo` (issue #1528).
 EDIT_HISTORY_FILENAME = ".cgr-edit-history.json"
 EDIT_LOCK_FILENAME = ".cgr-edit-lock"
+# The ids of edit history entries taken from the tree or undone, which are
+# never added from a history in the tree again (issue #2427).
+EDIT_HISTORY_LEDGER_FILENAME = ".cgr-edit-history-ledger.json"
 PLATFORM_WINDOWS = "win32"
 # Permission bits copied onto a replacement file (rwx for u/g/o, setuid etc.).
 EDIT_MODE_MASK = 0o7777
@@ -275,6 +278,7 @@ CGR_STATE_FILENAMES: frozenset[str] = frozenset(
         DELOMBOK_STATE_FILENAME,
         EXCLUSION_STATE_FILENAME,
         EDIT_HISTORY_FILENAME,
+        EDIT_HISTORY_LEDGER_FILENAME,
         EDIT_LOCK_FILENAME,
     }
 )

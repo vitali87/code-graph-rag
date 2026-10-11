@@ -33,7 +33,7 @@ from loguru import logger
 
 from .. import constants as cs
 from .. import logs as ls
-from ..checkout_state import EditLock, state_file
+from ..checkout_state import EditLock, settle_history_ids, state_file
 from ..config import load_ignore_patterns
 from ..utils.path_utils import should_skip_path
 
@@ -607,6 +607,9 @@ def _undo_newest(root: Path) -> TransactionOutcome | None:
             key, staged.after, staged.before, staged.mode
         )
     reversed_files = reverse.staged
+    # Settled first: a copy of the entry left in the tree, or put back
+    # there by git, must not bring the edit back once it is undone.
+    settle_history_ids(root, [str(entry.get(cs.EDIT_KEY_ID, ""))])
     outcome = reverse.commit(_lock=False)
     if outcome.applied:
         try:

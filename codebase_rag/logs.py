@@ -1425,3 +1425,12 @@ CHECKOUT_STATE_LEGACY_LEFT = "Could not remove {legacy} from the working tree: {
 CHECKOUT_STATE_HISTORY_MERGED = (
     "Added {count} edit history entries an older cgr recorded in {legacy} to {target}"
 )
+CHECKOUT_STATE_HISTORY_PENDING = (
+    "Cannot add the edits an older cgr recorded in {legacy} to {target} "
+    "({reason}). Edits of this checkout wait for them, so that undo keeps "
+    "their order: fix the cause, or remove {legacy} if those edits need no undo."
+)
+CHECKOUT_STATE_HISTORY_NOT_CGRS = "{target} is not an edit history cgr wrote"
+CHECKOUT_STATE_HISTORY_DROPPED = (
+    "Removed {legacy} from the working tree: it is not an edit history cgr wrote"
+)

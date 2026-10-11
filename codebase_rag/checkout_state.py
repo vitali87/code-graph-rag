@@ -27,10 +27,10 @@ still running takes it, and an edit takes it as well as its own
 
 The edit history is the other exception. An older cgr still running goes
 on recording its edits there, starting a new history once the old one has
-moved. That history is moved, or its entries are added to the one under
-CGR_HOME, only while both edit locks are held, and whenever they are next
-held, so an entry it records later is never dropped (Greptile, PRs #2490
-and #2550).
+moved. Its entries are added to the one under CGR_HOME, entry by entry,
+only while both edit locks are held, and whenever they are next held, so
+an entry it records later is never dropped (Greptile, PRs #2490 and
+#2550), and an edit waits while they cannot be added (`_adopt_history`).
 
 A move never replaces a file already in the directory. Another process
 may publish the checkout's current state there at any moment, and the
@@ -43,6 +43,7 @@ copy, which state written in place would otherwise change too.
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import json
 import os
@@ -51,6 +52,7 @@ import stat
 import sys
 import tempfile
 import threading
+from collections.abc import Iterable
 from pathlib import Path
 from types import TracebackType
 from typing import IO
@@ -60,6 +62,7 @@ from loguru import logger
 from . import constants as cs
 from . import logs as ls
 from .config import settings
+from .types_defs import JsonValue
 from .utils.path_utils import derive_project_name
 
 
@@ -252,6 +255,35 @@ def _discard(legacy: Path) -> None:
 # --- the edit history an older cgr records in the tree ------------------------
 
 
+class EditHistoryPending(OSError):
+    """The edits an older cgr recorded in the tree are not in the history yet.
+
+    An edit refuses to go ahead until they are: its entry would otherwise
+    go before theirs, and undo would then reverse the wrong edit first.
+    """
+
+    def __init__(self, legacy: Path, target: Path, reason: str | OSError) -> None:
+        super().__init__(
+            ls.CHECKOUT_STATE_HISTORY_PENDING.format(
+                legacy=legacy, target=target, reason=reason
+            )
+        )
+        self.legacy = legacy
+        self.target = target
+        self.reason = reason
+
+
+def settle_history_ids(repo_path: Path, ids: Iterable[str]) -> None:
+    """Record that the entries `ids` must never be added from the tree again.
+
+    Called for an entry being undone, with the edit lock held: a copy of it
+    left in the tree, or put back there by git, would otherwise bring the
+    undone edit back.
+    """
+    directory = state_dir(repo_path)
+    _settle(directory, _settled_ids(directory), ids)
+
+
 def _adopt_history_unless_editing(repo_path: Path) -> None:
     """Move in the tree's edit history if no one is editing the checkout.
 
@@ -263,6 +295,13 @@ def _adopt_history_unless_editing(repo_path: Path) -> None:
     try:
         with EditLock(repo_path) as lock:
             lock.acquire(wait=False)
+    except EditHistoryPending as pending:
+        logger.warning(
+            ls.CHECKOUT_STATE_HISTORY_PENDING,
+            legacy=pending.legacy,
+            target=pending.target,
+            reason=pending.reason,
+        )
     except OSError as error:
         logger.warning(
             ls.CHECKOUT_STATE_ADOPT_FAILED,
@@ -273,66 +312,75 @@ def _adopt_history_unless_editing(repo_path: Path) -> None:
 
 
 def _adopt_history(repo_path: Path, directory: Path) -> None:
-    """Move the tree's edit history into `directory`, with the edit lock held.
+    """Add the tree's edit history to the one in `directory`, then remove it.
 
-    An older cgr that edits after the history moved records its entries in
-    a new history at the root, so a history found there while the one
-    under CGR_HOME exists is added to it rather than dropped.
+    Runs with the edit lock held, so neither this cgr nor an older one
+    writes either history meanwhile. An older cgr that edits after the
+    history moved records its entries in a history at the root again: a
+    new one, one `git` put back (a commit tracked it), or one left behind
+    because removing it failed. So whatever is there is added entry by
+    entry, skipping every entry ever taken from the tree before or undone
+    since (`settle_history_ids`) as well as those the history holds: an
+    undone edit never comes back, and nothing is added twice.
 
-    Only a history that shares no entry with the one under CGR_HOME is
-    added. The older cgr started its history afresh once the old one
-    moved, so one that shares an entry is an older copy, such as one `git`
-    put back from a commit that tracked it: it is dropped as any stale
-    copy is, since adding it would bring back the edits undone since. So
-    is a copy when either is not a history cgr wrote (`_history_entries`):
-    the one under CGR_HOME is rewritten only to add to a well-formed one.
+    Only what cgr wrote is taken (`_history_entries`, `_is_undoable`). A
+    tree copy that is not a history is removed; an entry undo could not
+    read is left out, as it would stop the undo of every earlier edit.
+
+    Raises EditHistoryPending, leaving the tree's copy in place, when its
+    entries cannot be added: the history under CGR_HOME is not one cgr
+    wrote (it is never rewritten then), or it cannot be read or written.
     """
     legacy = repo_path / cs.EDIT_HISTORY_FILENAME
     target = directory / cs.EDIT_HISTORY_FILENAME
     if not _is_regular(legacy):
         return
-    if not target.exists():
-        if _adopt(legacy, target):
-            logger.info(
-                ls.CHECKOUT_STATE_ADOPTED,
-                repo=repo_path,
-                path=directory,
-                names=cs.EDIT_HISTORY_FILENAME,
-            )
-        return
     try:
         recorded = _history_entries(legacy)
-        kept = _history_entries(target)
-        if (
-            recorded
-            and kept is not None
-            and {e[cs.EDIT_KEY_ID] for e in kept}.isdisjoint(
-                e[cs.EDIT_KEY_ID] for e in recorded
+        if recorded is None:
+            logger.info(ls.CHECKOUT_STATE_HISTORY_DROPPED, legacy=legacy)
+            _discard(legacy)
+            return
+        kept = _history_entries(target) if target.exists() else []
+        if kept is None:
+            raise EditHistoryPending(
+                legacy,
+                target,
+                ls.CHECKOUT_STATE_HISTORY_NOT_CGRS.format(target=target),
             )
-        ):
-            _write_history(target, [*kept, *recorded])
+        settled = _settled_ids(directory)
+        known = settled | {entry[cs.EDIT_KEY_ID] for entry in kept}
+        root = repo_path.resolve()
+        added = [
+            entry
+            for entry in recorded
+            if entry[cs.EDIT_KEY_ID] not in known and _is_undoable(entry, root)
+        ]
+        if added:
+            _write_history(target, [*kept, *added])
             logger.info(
                 ls.CHECKOUT_STATE_HISTORY_MERGED,
-                count=len(recorded),
+                count=len(added),
                 legacy=legacy,
                 target=target,
             )
+        # After the write, never before: an id settled for an entry that
+        # did not land would keep it out for good.
+        _settle(directory, settled, (entry[cs.EDIT_KEY_ID] for entry in recorded))
+    except EditHistoryPending:
+        raise
     except OSError as error:
-        # The tree's copy may hold the only record of an older cgr's edits.
-        logger.warning(
-            ls.CHECKOUT_STATE_ADOPT_FAILED, legacy=legacy, target=target, error=error
-        )
-        return
+        raise EditHistoryPending(legacy, target, error) from error
     _discard(legacy)
 
 
 def _history_entries(path: Path) -> list[dict] | None:
     """The entries of the edit history at `path`, or None if it is not one.
 
-    One cgr wrote is a JSON list of objects, each with a string id. The
-    file is data on disk, though: anything else (an id that is a list, or
-    nesting deeper than the decoder recurses) must leave a sync running
-    rather than raise out of it.
+    One cgr wrote is a JSON list of entries (`_is_entry`). The file is data
+    on disk, though: anything else, such as an id that is a list or a value
+    nested deeper than the encoder that writes the history recurses, must
+    leave a sync running rather than raise out of it.
 
     Raises OSError when it cannot be read, so a history that may still
     hold entries is never taken for an empty one.
@@ -341,25 +389,111 @@ def _history_entries(path: Path) -> list[dict] | None:
         data = json.loads(path.read_text(encoding=cs.ENCODING_UTF8))
     except (ValueError, RecursionError):
         return None
-    if not isinstance(data, list) or not all(
-        isinstance(e, dict) and isinstance(e.get(cs.EDIT_KEY_ID), str) for e in data
-    ):
+    if not isinstance(data, list) or not all(_is_entry(entry) for entry in data):
         return None
     return data
 
 
+def _is_entry(entry: JsonValue) -> bool:
+    """Whether `entry` has the shape of one cgr records.
+
+    A string id, a list of file records holding plain values, and plain
+    values or flat lists and mappings of them otherwise. Nothing in it
+    nests deeper than that, so writing it back can never recurse too far.
+    """
+    if not isinstance(entry, dict) or not isinstance(entry.get(cs.EDIT_KEY_ID), str):
+        return False
+    files = entry.get(cs.EDIT_KEY_FILES, [])
+    if not isinstance(files, list) or not all(
+        isinstance(record, dict) and all(_is_scalar(v) for v in record.values())
+        for record in files
+    ):
+        return False
+    return all(_is_flat(v) for key, v in entry.items() if key != cs.EDIT_KEY_FILES)
+
+
+def _is_scalar(value: JsonValue) -> bool:
+    return value is None or isinstance(value, str | int | float | bool)
+
+
+def _is_flat(value: JsonValue) -> bool:
+    if isinstance(value, dict):
+        return all(_is_scalar(v) for v in value.values())
+    if isinstance(value, list):
+        return all(_is_scalar(v) for v in value)
+    return _is_scalar(value)
+
+
+def _is_undoable(entry: dict, root: Path) -> bool:
+    """Whether undo can read every file record of `entry` (`entry_files`).
+
+    Each names a file inside the checkout other than cgr's own state, as
+    an undo requires before it stages anything, and holds its before and
+    after content as base64 or None.
+    """
+    files = entry.get(cs.EDIT_KEY_FILES)
+    return bool(files) and all(
+        _names_a_checkout_file(root, record.get(cs.KEY_PATH))
+        and _is_content(record.get(cs.EDIT_KEY_BEFORE))
+        and _is_content(record.get(cs.EDIT_KEY_AFTER))
+        for record in files
+    )
+
+
+def _names_a_checkout_file(root: Path, rel_path: JsonValue) -> bool:
+    if not isinstance(rel_path, str):
+        return False
+    try:
+        key = (root / rel_path).resolve().relative_to(root).as_posix()
+    except (OSError, ValueError):
+        return False
+    return key != "." and key not in cs.CGR_STATE_FILENAMES
+
+
+def _is_content(value: JsonValue) -> bool:
+    if value is None:
+        return True
+    if not isinstance(value, str):
+        return False
+    try:
+        base64.b64decode(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _settled_ids(directory: Path) -> set[str]:
+    try:
+        data = json.loads(
+            (directory / cs.EDIT_HISTORY_LEDGER_FILENAME).read_text(
+                encoding=cs.ENCODING_UTF8
+            )
+        )
+    except (FileNotFoundError, ValueError, RecursionError):
+        return set()
+    if not isinstance(data, list):
+        return set()
+    return {tx_id for tx_id in data if isinstance(tx_id, str)}
+
+
+def _settle(directory: Path, settled: set[str], ids: Iterable[str]) -> None:
+    updated = settled | {tx_id for tx_id in ids if tx_id}
+    if updated != settled:
+        _write_json(directory / cs.EDIT_HISTORY_LEDGER_FILENAME, sorted(updated))
+
+
 def _write_history(target: Path, entries: list[dict]) -> None:
+    _write_json(target, entries[-cs.EDIT_HISTORY_LIMIT :])
+
+
+def _write_json(target: Path, data: list[dict] | list[str]) -> None:
     handle, name = tempfile.mkstemp(
         dir=target.parent, prefix=f"{target.name}.", suffix=cs.TMP_EXTENSION
     )
     temp = Path(name)
     try:
         with os.fdopen(handle, "wb") as out:
-            out.write(
-                json.dumps(entries[-cs.EDIT_HISTORY_LIMIT :], indent=2).encode(
-                    cs.ENCODING_UTF8
-                )
-            )
+            out.write(json.dumps(data, indent=2).encode(cs.ENCODING_UTF8))
         os.replace(temp, target)
     finally:
         with contextlib.suppress(OSError):

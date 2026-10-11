@@ -79,7 +79,10 @@ own lock for as long as it exists. Delete it once no older cgr runs against
 the checkout. Such an older cgr also goes on recording its edits in a new
 `.cgr-edit-history.json` at the root; the next sync or edit adds those
 entries to the history in the state directory rather than dropping them, so
-`cgr edits undo` still reverses them.
+`cgr edits undo` still reverses them. An entry already taken from the tree,
+or undone since, is never added again. While the entries cannot be added
+(the state directory refuses the write, say), edits of the checkout stop
+with a message saying why, so that undo keeps their order.
 
 ![cgr stats on pallets/flask, then a .cgrignore excluding tests and examples, a cgr start --update-graph sync, and cgr stats showing the smaller graph](../assets/demos/ignore-patterns.gif)
 
