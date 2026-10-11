@@ -1108,6 +1108,69 @@ class TestAConstantConvertsToANarrowerTypeOnlyWhenItFits:
         assert "Lc.C.M(long)" in calls["ConstantField"], calls
 
 
+OPERATOR_LITERAL_CS = """\
+namespace Ud;
+public class Target { public static implicit operator Target(int i) => null; }
+public class LongTarget { public static implicit operator LongTarget(long l) => null; }
+public class TextTarget { public static implicit operator TextTarget(string s) => null; }
+public class RealTarget { public static implicit operator RealTarget(double d) => null; }
+public class ByteTarget { public static implicit operator ByteTarget(byte b) => null; }
+public class Explicit { public static explicit operator Explicit(int i) => null; }
+public class Plain { }
+public class Unrelated { public static implicit operator Unrelated(int i) => null; }
+public class C {
+    public void M(Target t) { } public void M(object o) { }
+    public void L(LongTarget t) { } public void L(object o) { }
+    public void S(TextTarget t) { } public void S(object o) { }
+    public void R(RealTarget t) { } public void R(object o) { }
+    public void B(ByteTarget t) { } public void B(object o) { }
+    public void X(Explicit t) { } public void X(object o) { }
+    public void P(Plain t) { } public void P(object o) { }
+}
+public class Use {
+    public void Negative() { new C().M(-1); }
+    public void Positive() { new C().M(1); }
+    public void Long() { new C().L(1L); }
+    public void Widened() { new C().L(1); }
+    public void Text() { new C().S("s"); }
+    public void Real() { new C().R(1.5); }
+    public void Fits() { new C().B(5); }
+    public void Overflow() { new C().B(300); }
+    public void ExplicitOnly() { new C().X(1); }
+    public void NoOperator() { new C().P(1); }
+}
+"""
+
+
+class TestALiteralConvertsThroughAUserDefinedOperator:
+    # Greptile review of PR 2814: `implicit operator Target(int)` takes -1,
+    # and Target, which converts to object, is the better target.
+    @pytest.mark.parametrize(
+        ("caller", "expected"),
+        [
+            ("Negative", "Ud.C.M(Target)"),
+            ("Positive", "Ud.C.M(Target)"),
+            ("Long", "Ud.C.L(LongTarget)"),
+            # An int widens to the operator's long by a standard conversion.
+            ("Widened", "Ud.C.L(LongTarget)"),
+            ("Text", "Ud.C.S(TextTarget)"),
+            ("Real", "Ud.C.R(RealTarget)"),
+            # 5 is a byte constant; 300 is none, so only object takes it.
+            ("Fits", "Ud.C.B(ByteTarget)"),
+            ("Overflow", "Ud.C.B(object)"),
+            # An explicit operator never converts implicitly.
+            ("ExplicitOnly", "Ud.C.X(object)"),
+            # Nor does an operator another type declares.
+            ("NoOperator", "Ud.C.P(object)"),
+        ],
+    )
+    def test_each_literal_binds_through_the_operators_it_meets(
+        self, caller: str, expected: str, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _calls(OPERATOR_LITERAL_CS, temp_repo, mock_ingestor)
+        assert calls[caller] == {expected}, calls
+
+
 VARIANCE_LIB_CS = """\
 namespace App;
 public interface IBox<out X> { }
@@ -2099,6 +2162,76 @@ INVARIANT_CASES: dict[str, _Case] = {
         "public void M(long l) { } }",
         _use("new C().M(5);"),
         frozenset({"C.M(uint)"}),
+    ),
+    # Greptile review of PR 2814: every path that scores an argument meets
+    # a user-defined operator from a predefined type: a nullable struct's
+    # underlying type, a `params` element, and a typed int as a literal.
+    # The struct's `?` is left out of the method's name, the known gap
+    # `TestANullableStructIsItsOwnParameterType` pins; the call still binds
+    # that method through the operator.
+    "operator-nullable-struct": _Case(
+        "namespace L; public struct Tgt { public static implicit operator Tgt(int i) => default; }\n"
+        f"public class C {{ public void M(Tgt? t) {{ }} {_PAIR} }}",
+        _use("new C().M(1);"),
+        frozenset({"C.M(Tgt)"}),
+    ),
+    "operator-params-element": _Case(
+        "namespace L; public class Tgt { public static implicit operator Tgt(int i) => null; }\n"
+        f"public class C {{ public void M(params Tgt[] ts) {{ }} {_PAIR} }}",
+        _use("new C().M(1);"),
+        frozenset({"C.M(Tgt[])"}),
+    ),
+    "operator-typed-argument": _Case(
+        "namespace L; public class Tgt { public static implicit operator Tgt(int i) => null; }\n"
+        f"public class C {{ public void M(Tgt t) {{ }} {_PAIR} }}",
+        _use("int k = 1; new C().M(k);"),
+        frozenset({"C.M(Tgt)"}),
+    ),
+    "operator-typed-argument-none": _Case(
+        "namespace L; public class Tgt { }\n"
+        f"public class C {{ public void M(Tgt t) {{ }} {_PAIR} }}",
+        _use("int k = 1; new C().M(k);"),
+        frozenset({"C.M(object)"}),
+    ),
+    "operator-generic-target": _Case(
+        "namespace L; public class Box<X> { public static implicit operator Box<X>(X x) => null; }\n"
+        f"public class C {{ public void M(Box<int> b) {{ }} {_PAIR} }}",
+        _use("new C().M(1);"),
+        frozenset({"C.M(Box<int>)"}),
+    ),
+    "operator-generic-target-neg": _Case(
+        "namespace L; public class Box<X> { public static implicit operator Box<X>(X x) => null; }\n"
+        f"public class C {{ public void M(Box<string> b) {{ }} {_PAIR} }}",
+        _use("new C().M(1);"),
+        frozenset({"C.M(object)"}),
+    ),
+    # A first-party value converts to a predefined type only through an
+    # operator it or a base declares; with every base first-party, none
+    # declared means none exists, and the better target then weighs it.
+    "operator-to-predefined": _Case(
+        "namespace L; public class Money { public static implicit operator long(Money m) => 0; }\n"
+        "public class C { public void M(long l) { } public void M(string s) { } }",
+        _use("new C().M(new Money());"),
+        frozenset({"C.M(long)"}),
+    ),
+    "operator-to-predefined-target": _Case(
+        "namespace L; public class B { public static implicit operator B(long l) => null; }\n"
+        "public class Money : B { public static implicit operator long(Money m) => 0; }\n"
+        "public class C { public void M(long l) { } public void M(B b) { } }",
+        _use("new C().M(new Money());"),
+        frozenset({"C.M(long)"}),
+    ),
+    "operator-to-predefined-none": _Case(
+        "namespace L; public class Money { }\n"
+        f"public class C {{ public void M(long l) {{ }} {_PAIR} }}",
+        _use("new C().M(new Money());"),
+        frozenset({"C.M(object)"}),
+    ),
+    "operator-external-base-neg": _Case(
+        "namespace L; public class Money : System.Exception { }\n"
+        f"public class C {{ public void M(long l) {{ }} {_PAIR} }}",
+        _use("new C().M(new Money());"),
+        frozenset({"C.M(long)", "C.M(object)"}),
     ),
     "across-receiver-neg": _Case(
         "namespace L; public class G<X> { public void M(X a, X b) { } "

@@ -914,9 +914,7 @@ def fit(
     if parameter in open_names:
         return Fit.OPEN
     if argument.literal is not None:
-        return literal_fit(
-            parameter, argument.literal, argument.value, judge.is_enum(parameter)
-        )
+        return _literal(parameter, argument, argument.literal, (open_names, judge))
     if argument.name is None:
         return Fit.UNKNOWN
     identical = judge.identical(argument, parameter, open_names)
@@ -925,6 +923,26 @@ def fit(
     if identical is None:
         # One class whose type arguments are not known on one side.
         return Fit.OTHER
+    related = judge.converts(argument, parameter, open_names)
+    if related is None:
+        return Fit.OTHER
+    return Fit.CONVERTIBLE if related else None
+
+
+def _literal(
+    parameter: str,
+    argument: ArgumentType,
+    literal: str,
+    judged: tuple[Collection[str], TypeJudge],
+) -> Fit | None:
+    # A literal binds a predefined type or an enum by C#'s constant rules,
+    # and any other type only through a user-defined implicit conversion
+    # from its type, judged as a typed argument's is (`judge.converts`; PR
+    # 2814 review); a better target then weighs it as any conversion.
+    open_names, judge = judged
+    fitted = literal_fit(parameter, literal, argument.value, judge.is_enum(parameter))
+    if fitted is not Fit.OTHER:
+        return fitted
     related = judge.converts(argument, parameter, open_names)
     if related is None:
         return Fit.OTHER
