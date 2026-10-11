@@ -161,6 +161,14 @@ class _GoPackageFunctionLookup(NamedTuple):
     packages: tuple[tuple[str, bool], ...]
 
 
+class _ScalaCallee(NamedTuple):
+    # What a Scala call binds to through the compiler's lookup. `decided`
+    # False leaves the call to the name-based resolver; True means `callee`
+    # is the answer, and None there is a known non-edge.
+    decided: bool
+    callee: tuple[str, str] | None
+
+
 class _PhpClassCallee(NamedTuple):
     # What a PHP call whose class the site shows binds to. `decided` False
     # leaves the call to the name-based resolver; True means `callee` is the
@@ -5191,19 +5199,11 @@ class CallProcessor:
         call_name: str,
         call_var_types: dict[str, str] | None,
     ) -> tuple[str, str] | None:
-        if ctx.language == cs.SupportedLanguage.SCALA:
-            # Named the way the compiler looks it up: the imports in scope at
-            # the call, the file, its package's other files. A path-qualified
-            # `new shop.Cart()` names no import, so only the package index
-            # reaches it.
-            decided, scala_callee = self._resolver.resolve_scala_callee(
-                call_name,
-                ctx.module_qn,
-                call_node.start_byte,
-                constructing=call_node.type == cs.TS_SCALA_INSTANCE_EXPRESSION,
-            )
-            if decided:
-                return scala_callee
+        if (
+            ctx.language == cs.SupportedLanguage.SCALA
+            and (scala := self._resolve_scala_callee(ctx, call_node, call_name)).decided
+        ):
+            return scala.callee
         if ctx.is_java and call_node.type == cs.TS_METHOD_INVOCATION:
             return self._resolve_java_callee(ctx, call_node)
         if ctx.is_csharp and call_node.type == cs.TS_CSHARP_INVOCATION_EXPRESSION:
@@ -5695,6 +5695,22 @@ class CallProcessor:
                     return current.parent is None
             current = current.parent
         return None
+
+    def _resolve_scala_callee(
+        self, ctx: _CallScanContext, call_node: Node, call_name: str
+    ) -> _ScalaCallee:
+        # Named the way the compiler looks it up: the imports in scope at
+        # the call, the file, its package's other files. A path-qualified
+        # `new shop.Cart()` names no import, so only the package index
+        # reaches it.
+        return _ScalaCallee(
+            *self._resolver.resolve_scala_callee(
+                call_name,
+                ctx.module_qn,
+                call_node.start_byte,
+                constructing=call_node.type == cs.TS_SCALA_INSTANCE_EXPRESSION,
+            )
+        )
 
     def _resolve_php_class_callee(
         self, ctx: _CallScanContext, call_node: Node, call_name: str
