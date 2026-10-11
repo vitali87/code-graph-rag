@@ -1565,6 +1565,12 @@ def _method_container_label(
     # carry the container's real node label. Callers pass Class by default, but a
     # trait/interface (Interface) or enum (Enum) container would then never match
     # and drop the containment edge. Prefer the label it was registered with.
+    # Where a TS interface shares its name with a value (issue #2520) the
+    # registry holds the value's kind, so the label the owner was declared with
+    # decides: an interface's members stay on the Interface node.
+    type_side = function_registry.type_kind(container_qn)
+    if type_side is not None and type_side.value == container_type.value:
+        return container_type
     container_label = container_type
     registered = function_registry.get(container_qn)
     if registered is not None and registered != NodeType.METHOD:
@@ -1596,6 +1602,23 @@ def _record_method_overrides(
         annotated_override_sink.setdefault(container_qn, []).append(
             (method_qn, method_name)
         )
+
+
+def _register_method_qn(
+    function_registry: FunctionRegistryTrieProtocol,
+    method_qn: str,
+    language: cs.SupportedLanguage,
+    start_line: int,
+    start_col: int,
+) -> str:
+    if language == cs.SupportedLanguage.CPP:
+        return method_qn
+    return function_registry.register_unique_qn(
+        method_qn,
+        start_line,
+        start_col,
+        kind=NodeType.METHOD if language in cs.JS_TS_LANGUAGES else None,
+    )
 
 
 def _record_member_aliases(
@@ -1675,11 +1698,13 @@ def ingest_method(
     # function and class sites are guarded at their own extraction points.
     warn_if_name_truncated(method_node, method_name, file_path)
 
-    method_qn = method_qualified_name or f"{container_qn}.{method_name}"
-    if language != cs.SupportedLanguage.CPP:
-        method_qn = function_registry.register_unique_qn(
-            method_qn, method_start_line, method_start_col
-        )
+    method_qn = _register_method_qn(
+        function_registry,
+        method_qualified_name or f"{container_qn}.{method_name}",
+        language,
+        method_start_line,
+        method_start_col,
+    )
 
     decorators = []
     modifiers = []
