@@ -19,6 +19,7 @@ import pytest
 from tree_sitter import Node
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.import_processor import ImportProcessor
@@ -1080,7 +1081,7 @@ object App { def run(): Item = { val c = new Cart(); println(c.size); Item("x") 
     clean_imports = _stateful_edges(store, "IMPORTS")
 
     app = project / "src/main/scala/app/App.scala"
-    cache_mtime = (project / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    cache_mtime = state_file(project, cs.HASH_CACHE_FILENAME).stat().st_mtime
     app.write_text(app.read_text() + "// touched\n")
     os.utime(app, (cache_mtime + 1, cache_mtime + 1))
     _stateful_index(store, project, force=False)
