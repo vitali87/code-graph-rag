@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers import structure_processor
@@ -64,7 +65,7 @@ def test_an_upgraded_sync_drops_a_linked_package_and_keeps_its_target(
     assert {"proj.pkg", "proj.app.vendored"} <= _packages(memgraph_ingestor)
     # The upgrade changes the parser fingerprint (the fix edits fingerprinted
     # sources), which is what sends the first sync past the in-sync fast path.
-    (repo / cs.PARSER_FINGERPRINT_FILENAME).unlink()
+    state_file(repo, cs.PARSER_FINGERPRINT_FILENAME).unlink()
 
     _updater(memgraph_ingestor, repo, "proj").run()
 
@@ -135,7 +136,7 @@ def test_a_link_to_the_other_checkouts_package_leaves_it(
         pytest.skip("symlinks need privileges on this host")
     _updater(memgraph_ingestor, mine, "shared").run(force=True)
     _updater(memgraph_ingestor, other, "shared").run(force=True)
-    (mine / cs.PARSER_FINGERPRINT_FILENAME).unlink()
+    state_file(mine, cs.PARSER_FINGERPRINT_FILENAME).unlink()
 
     _updater(memgraph_ingestor, mine, "shared").run()
 
