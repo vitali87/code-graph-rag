@@ -10,8 +10,9 @@ qualified-name separator to everything that splits qns on `.`.
 
 The bracketed spelling stays (`Box<int>` is how the graph already names a
 specialization, see test_cpp_template_specialization_qn), rendered from the
-tokens: whitespace and comments dropped, one space after each comma and
-between two words, and a `.` in the arguments written as
+tokens: whitespace and comments dropped, one space after each comma, between
+two words, and between two tokens that written together would lex as others
+(`a + ++b`, not `a+++b`); a `.` in the arguments is written as
 CPP_TEMPLATE_ARG_DOT.
 """
 
@@ -449,3 +450,215 @@ def test_a_literal_dot_leader_is_not_mistaken_for_an_argument_dot(
 
     assert len({name for name in names if name.startswith("Box<")}) == 2
     assert f'Box<"a{_DOT}b">' in names
+
+
+# --- operator tokens stay apart (review of PR 3356) --------------------------
+
+
+def _name_tokens_of(spelling: str) -> list[str]:
+    """The tokens tree-sitter lexes a class head named `spelling` into.
+
+    Its lexer munches maximally and closes nested template lists the way C++
+    does, so a rendered name that lexes back to its source's tokens kept
+    every operator apart. tree-sitter lexes a comment only once it is
+    closed, so the trailing `/**/` lets a `/*` the name opens swallow the
+    rest of the head.
+    """
+    parsers, _ = load_parsers()
+    if cs.SupportedLanguage.CPP not in parsers:
+        pytest.skip("cpp parser not available")
+    source = f"template <> struct {spelling.replace(_DOT, '.')} {{}}; /**/\n"
+    tokens: list[str] = []
+    stack = [parsers[cs.SupportedLanguage.CPP].parse(source.encode()).root_node]
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_COMMENT:
+            continue
+        if node.child_count:
+            stack.extend(reversed(node.children))
+        elif node.text:
+            tokens.append(node.text.decode())
+    return tokens
+
+
+def test_specializations_that_split_operators_differently_get_two_names(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `a + ++b` and `a++ + b` are different expressions, and an overloaded
+    # operator can make them pick different specializations; joined without
+    # a space both read `a+++b`, so the later one became an `@line` variant.
+    module = _index(
+        temp_repo,
+        _HELPER + "template <typename T, typename U> struct Box {};\n"
+        "template <typename T> struct Box<T, decltype(T::a + ++T::b)> {\n"
+        "  int put() { return helper(); }\n"
+        "};\n"
+        "template <typename T> struct Box<T, decltype(T::a++ + T::b)> {\n"
+        "  int put() { return helper(); }\n"
+        "};\n",
+        mock_ingestor,
+    )
+    first = "Box<T, decltype(T::a+ ++T::b)>"
+    second = "Box<T, decltype(T::a++ +T::b)>"
+
+    classes = _qns(mock_ingestor, cs.NodeLabel.CLASS)
+    methods = _qns(mock_ingestor, cs.NodeLabel.METHOD)
+
+    assert {f"{module}.{first}", f"{module}.{second}"} <= set(classes), classes
+    assert {f"{module}.{first}.put", f"{module}.{second}.put"} <= set(methods)
+    assert not any(cs.DUP_QN_MARKER in qn for qn in classes + methods)
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "expected"),
+    [
+        pytest.param(
+            "Box<X, decltype(X::a - --X::b)>",
+            "Box<X, decltype(X::a-- - X::b)>",
+            ("Box<X, decltype(X::a- --X::b)>", "Box<X, decltype(X::a-- -X::b)>"),
+            id="minus-then-decrement",
+        ),
+        pytest.param(
+            # `a - -b` must not read `a-- b`.
+            "Box<X, decltype(X::a - -X::b)>",
+            "Box<X, decltype(X::a-- - X::b)>",
+            ("Box<X, decltype(X::a- -X::b)>", "Box<X, decltype(X::a-- -X::b)>"),
+            id="minus-then-negate",
+        ),
+        pytest.param(
+            "Box<X, decltype(X::a & &X::b)>",
+            "Box<X, decltype(X::a && X::b)>",
+            ("Box<X, decltype(X::a& &X::b)>", "Box<X, decltype(X::a&&X::b)>"),
+            id="ampersand-pair",
+        ),
+        pytest.param(
+            # `operator<` given template arguments: `< <`, not `<<`.
+            "Box<X, decltype(&X::operator< <int>)>",
+            "Box<X, decltype(&X::operator<< <int>)>",
+            (
+                "Box<X, decltype(&X::operator< <int>)>",
+                "Box<X, decltype(&X::operator<< <int>)>",
+            ),
+            id="less-then-template-list",
+        ),
+        pytest.param(
+            # `operator-` as the last argument: `- >` must not read `->`.
+            "Box<X, &X::operator- >",
+            "Box<X, &X::operator-> >",
+            ("Box<X, &X::operator- >", "Box<X, &X::operator-> >"),
+            id="minus-then-closer",
+        ),
+        pytest.param(
+            # Two characters of the left token and one of the right make
+            # `<=>`, which no single pair of characters shows.
+            "Box<X, &X::operator<= >",
+            "Box<X, &X::operator<=> >",
+            ("Box<X, &X::operator<= >", "Box<X, &X::operator<=> >"),
+            id="less-equal-then-closer",
+        ),
+        pytest.param(
+            # Not valid C++, but tree-sitter reads it as `.` then `*`, and a
+            # name must still not merge it with `.*`.
+            "Box<X, decltype(X::a . *X::b)>",
+            "Box<X, decltype(X::a .* X::b)>",
+            (
+                f"Box<X, decltype(X::a{_DOT} *X::b)>",
+                f"Box<X, decltype(X::a{_DOT}*X::b)>",
+            ),
+            id="dot-then-star",
+        ),
+        pytest.param(
+            # `/` then `*` written together would open a comment.
+            "Box<X, decltype(X::a / *X::b)>",
+            "Box<X, decltype(X::a /**/ *X::b)>",
+            ("Box<X, decltype(X::a/ *X::b)>", "Box<X, decltype(X::a*X::b)>"),
+            id="slash-then-star",
+        ),
+        pytest.param(
+            # A list's closing `>` then a greater-than or a comparison: only
+            # two closers are written together.
+            "Box<X, decltype(X::template v<int> > 3)>",
+            "Box<X, decltype(X::template v<int> >= 3)>",
+            (
+                "Box<X, decltype(X::template v<int> >3)>",
+                "Box<X, decltype(X::template v<int> >=3)>",
+            ),
+            id="closer-then-comparison",
+        ),
+        pytest.param(
+            # `0x1E+1` is one preprocessing number, not a sum.
+            "Box<X, 0x1E + 1>",
+            "Box<X, 0x1E - 1>",
+            ("Box<X, 0x1E +1>", "Box<X, 0x1E -1>"),
+            id="hex-exponent-then-sign",
+        ),
+        pytest.param(
+            # `<:` is a digraph for `[`, so a less-than keeps `::` apart;
+            # `<=` before `::` spells none and stays joined.
+            "Box<X, decltype(X::a < ::b)>",
+            "Box<X, decltype(X::a <= ::b)>",
+            ("Box<X, decltype(X::a< ::b)>", "Box<X, decltype(X::a<=::b)>"),
+            id="less-then-scope",
+        ),
+    ],
+)
+def test_adjacent_operator_tokens_keep_a_separator(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    first: str,
+    second: str,
+    expected: tuple[str, str],
+) -> None:
+    module = _index(
+        temp_repo,
+        f"template <> struct {first} {{ void put() {{}} }};\n"
+        f"template <> struct {second} {{ void put() {{}} }};\n",
+        mock_ingestor,
+    )
+
+    classes = _class_names(mock_ingestor)
+    names = sorted(name for name in classes.values() if name.startswith("Box<"))
+
+    assert names == sorted(expected), classes
+    # Each name lexes back to its own source's tokens, so no two token
+    # sequences can share one.
+    assert sorted(_name_tokens_of(name) for name in names) == sorted(
+        _name_tokens_of(spelling) for spelling in (first, second)
+    )
+    assert {f"{module}.{name}" for name in expected} <= set(classes)
+    assert not any(cs.DUP_QN_MARKER in qn for qn in classes)
+
+
+@pytest.mark.parametrize(
+    ("spelling", "expected"),
+    [
+        ("Box<A<B<C>>>", "Box<A<B<C>>>"),
+        ("Box<A<B<C> > >", "Box<A<B<C>>>"),
+        ("Box<A<B<C> >>", "Box<A<B<C>>>"),
+        ("Box<::ns::Key>", "Box<::ns::Key>"),
+        ("Box<X, decltype(X::a)>", "Box<X, decltype(X::a)>"),
+        (
+            "Box<typename A<X>::type, unsigned  long>",
+            "Box<typename A<X>::type, unsigned long>",
+        ),
+        ("Box<X, decltype(X::a << X::b)>", "Box<X, decltype(X::a<<X::b)>"),
+        ("Box<X, decltype(X::a->b + 1)>", "Box<X, decltype(X::a->b+1)>"),
+        ("Box<X, decltype(X::a++ - 1)>", "Box<X, decltype(X::a++-1)>"),
+        ("Box<1 + 1>", "Box<1+1>"),
+        ("Box<const X&, X&&>", "Box<const X&, X&&>"),
+    ],
+)
+def test_tokens_that_lex_apart_anyway_stay_unspaced(
+    temp_repo: Path, mock_ingestor: MagicMock, spelling: str, expected: str
+) -> None:
+    # Negative: a separator goes only where joining would re-lex. Closing
+    # template lists still read `>>` however the source spaced them, a
+    # list's `<` still meets a leading `::`, and `::`, words and ordinary
+    # operators keep the spelling they had.
+    module = _index(
+        temp_repo,
+        f"template <> struct {spelling} {{ void put() {{}} }};\n",
+        mock_ingestor,
+    )
+
+    assert _class_names(mock_ingestor).get(f"{module}.{expected}") == expected

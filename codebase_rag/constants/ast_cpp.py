@@ -2,7 +2,12 @@
 
 from enum import StrEnum
 
-from .ast_nodes import TS_ENUM_SPECIFIER, TS_STRUCT_SPECIFIER, TS_UNION_SPECIFIER
+from .ast_nodes import (
+    TS_ENUM_SPECIFIER,
+    TS_STRUCT_SPECIFIER,
+    TS_TEMPLATE_ARGUMENT_LIST,
+    TS_UNION_SPECIFIER,
+)
 
 
 class CppNodeType(StrEnum):
@@ -246,6 +251,29 @@ CPP_LITERAL_BACKSLASH = "\\"
 CPP_SOURCE_CRLF = "\r\n"
 CPP_SOURCE_NEWLINE = "\n"
 CPP_LITERAL_ESCAPED_BACKSLASH = "\\\\"
+# Every C++ punctuator longer than one character (digraphs and C++26's
+# reflection `^^` included) and the two comment openers. Where the end of one
+# token and the start of the next spell one of these, or begin one, writing
+# them together lexes differently (maximal munch): `a + ++b` would read
+# `a+++b`, which is `a++ + b`. A specialization's rendered name keeps a space
+# there (review of PR 3356).
+CPP_MULTI_CHAR_PUNCTUATORS = frozenset(
+    "<: :> <% %> %: %:%: ... :: .* -> ->* ++ -- += -= *= /= %= ^= &= |= "
+    "== != <= >= <=> && || << >> <<= >>= ## ^^ /* //".split()
+)
+# Only a template list's own `<` and `>` are exempt: two closers written
+# together (`A<B<C>>`) still close two lists, and an opener before a leading
+# `::` (`A<::T>`) is not the digraph `<:` ([temp.names], [lex.pptoken]).
+CPP_TEMPLATE_LIST_TYPES = frozenset(
+    {TS_TEMPLATE_ARGUMENT_LIST, TS_CPP_TEMPLATE_PARAMETER_LIST}
+)
+CPP_TEMPLATE_LIST_DELIMITERS = frozenset({"<", ">"})
+# A number ending in an exponent letter (`0x1E`, or `1_E` whose suffix is a
+# token of its own) runs on into a following sign as one preprocessing
+# number: `0x1E+1`. A string's suffix matches too, and only gains a space.
+CPP_PP_NUMBER_TOKEN_TYPES = frozenset({"number_literal", "literal_suffix"})
+CPP_PP_NUMBER_EXPONENTS = frozenset("eEpP")
+CPP_PP_NUMBER_SIGNS = frozenset("+-")
 TS_CPP_STRING_CONTENT = "string_content"
 TS_CPP_COMPOUND_STATEMENT = "compound_statement"
 # `if (int x = 1)` / `switch (int q = f())`: the condition declaration nests
