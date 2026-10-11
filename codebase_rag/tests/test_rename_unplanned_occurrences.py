@@ -3555,10 +3555,11 @@ def test_a_missed_call_on_a_csharp_generic_twin_refuses_the_rename(
     store, _updater = _indexed(root, CS_TWIN_FILES)
     before = _tree(root)
 
+    graph = _missing(store, "src/Acme/Use.cs")
     with pytest.raises(RenameRefused) as refused:
         rename(
             root,
-            _missing(store, "src/Acme/Use.cs"),
+            graph,
             PROJECT,
             CS_GENERIC_RUN,
             "Exec",
@@ -3601,10 +3602,11 @@ def test_a_missed_call_on_a_duplicate_csharp_class_refuses_the_rename(
     )
     before = _tree(root)
 
+    graph = _missing(store, "src/Acme/Use.cs")
     with pytest.raises(RenameRefused) as refused:
         rename(
             root,
-            _missing(store, "src/Acme/Use.cs"),
+            graph,
             PROJECT,
             f"{PROJECT}.src.Acme.Boxes.Box@8.Get",
             "Fetch",
@@ -3656,10 +3658,11 @@ def test_the_plain_twins_rename_never_claims_the_generic_twins_call(
     store, updater = _indexed(root, CS_TWIN_FILES)
     before = _tree(root)
 
+    graph = _missing(store, "src/Acme/Use.cs")
     with pytest.raises(RenameRefused) as refused:
         rename(
             root,
-            _missing(store, "src/Acme/Use.cs"),
+            graph,
             PROJECT,
             CS_PLAIN_RUN,
             "Exec",
