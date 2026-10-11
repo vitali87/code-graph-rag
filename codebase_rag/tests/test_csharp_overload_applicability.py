@@ -780,6 +780,38 @@ class TestANullableStructIsItsOwnParameterType:
         assert calls["Run"] == {"Ns.C.M(Widget)"}, calls
 
 
+NESTED_OPEN_CS = """\
+namespace Ne;
+using System.Collections.Generic;
+public class Box<X> { }
+public class C {
+    public void M(object o) { }
+    public void M<T>(Box<List<T>> b) { }
+}
+public class Use {
+    public void Impossible() { new C().M(new Box<int>()); }
+    public void Possible() { new C().M(new Box<List<int>>()); }
+}
+"""
+
+
+class TestAnOpenTypeArgumentKeepsTheStructureAroundIt:
+    # Greptile review of PR 2814: no T makes `Box<int>` a `Box<List<T>>`,
+    # so mentioning T inside a type argument does not make it fit.
+    def test_an_argument_no_inference_fits_binds_object(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _calls(NESTED_OPEN_CS, temp_repo, mock_ingestor)
+        assert calls["Impossible"] == {"Ne.C.M(object)"}, calls
+
+    def test_an_argument_inference_fits_binds_the_generic(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Negative: T := int makes `Box<List<int>>` the parameter's type.
+        calls = _calls(NESTED_OPEN_CS, temp_repo, mock_ingestor)
+        assert calls["Possible"] == {"Ne.C.M(Box<List<T>>)"}, calls
+
+
 # Every place overload ranking compares, resolves or walks types, against
 # each of three invariants (PR 2814 review): (a) a predefined type is its
 # alias (`int` is `System.Int32`), (b) an argument's type resolves in the
@@ -1075,6 +1107,83 @@ INVARIANT_CASES: dict[str, _Case] = {
         "public class Runner : IRun<int> { void IRun<int>.Go(int x) { } }",
         "using L;\nnamespace U;\npublic class Use { public void Run(IRun<int> r) { r.Go(1); } }\n",
         frozenset({"IRun.Go(T)", "Runner.IRun<int>#Go(int)"}),
+    ),
+    # Greptile review of PR 2814: a type parameter inside a type argument is
+    # inferred, never a wildcard for the structure around it, and one
+    # parameter is one type wherever it stands.
+    "open-base": _Case(
+        "namespace L; using System.Collections.Generic;\n"
+        "public class Box<X> { } public class Ints : Box<int> { }\n"
+        f"public class C {{ public void M<T>(Box<List<T>> b) {{ }} {_PAIR} }}",
+        _use("new C().M(new Ints());"),
+        frozenset({"C.M(object)"}),
+    ),
+    "open-base-neg": _Case(
+        "namespace L; using System.Collections.Generic;\n"
+        "public class Box<X> { } public class Lists : Box<List<int>> { }\n"
+        f"public class C {{ public void M<T>(Box<List<T>> b) {{ }} {_PAIR} }}",
+        _use("new C().M(new Lists());"),
+        frozenset({"C.M(Box<List<T>>)"}),
+    ),
+    "open-repeated": _Case(
+        "namespace L; public class Pair<A, B> { }\n"
+        f"public class C {{ public void M<T>(Pair<T, T> p) {{ }} {_PAIR} }}",
+        _use("new C().M(new Pair<int, string>());"),
+        frozenset({"C.M(object)"}),
+    ),
+    "open-repeated-neg": _Case(
+        "namespace L; public class Pair<A, B> { }\n"
+        f"public class C {{ public void M<T>(Pair<T, T> p) {{ }} {_PAIR} }}",
+        _use("new C().M(new Pair<int, System.Int32>());"),
+        frozenset({"C.M(Pair<T, T>)"}),
+    ),
+    "open-array": _Case(
+        "namespace L; public class Box<X> { }\n"
+        f"public class C {{ public void M<T>(Box<T[]> b) {{ }} {_PAIR} }}",
+        _use("new C().M(new Box<int>());"),
+        frozenset({"C.M(object)"}),
+    ),
+    "open-array-neg": _Case(
+        "namespace L; public class Box<X> { }\n"
+        f"public class C {{ public void M<T>(Box<T[]> b) {{ }} {_PAIR} }}",
+        _use("new C().M(new Box<int[]>());"),
+        frozenset({"C.M(Box<T[]>)"}),
+    ),
+    # Negative: a parameter standing alone in a type argument takes the
+    # given type whole, its shape included.
+    "open-whole-shape-neg": _Case(
+        "namespace L; public class Box<X> { }\n"
+        f"public class C {{ public void M<T>(Box<T> b) {{ }} {_PAIR} }}",
+        _use("new C().M(new Box<int[]>());"),
+        frozenset({"C.M(Box<T>)"}),
+    ),
+    "open-tuple": _Case(
+        "namespace L; public class Box<X> { }\n"
+        f"public class C {{ public void M<T>(Box<(T, int)> b) {{ }} {_PAIR} }}",
+        _use("new C().M(new Box<(string, string)>());"),
+        frozenset({"C.M(object)"}),
+    ),
+    "open-tuple-neg": _Case(
+        "namespace L; public class Box<X> { }\n"
+        f"public class C {{ public void M<T>(Box<(T, int)> b) {{ }} {_PAIR} }}",
+        _use("new C().M(new Box<(string, int)>());"),
+        frozenset({"C.M(Box<(T, int)>)"}),
+    ),
+    "open-bound": _Case(
+        "namespace L; using System.Collections.Generic;\n"
+        "public class Box<X> { } public class Ints : Box<int> { }\n"
+        "public class C { public void M<T, V>(T x, V y) where T : Box<List<V>> { } "
+        "public void M(object o, object p) { } }",
+        _use("new C().M(new Ints(), 1);"),
+        frozenset({"C.M(object, object)"}),
+    ),
+    "open-bound-neg": _Case(
+        "namespace L; using System.Collections.Generic;\n"
+        "public class Box<X> { } public class Lists : Box<List<int>> { }\n"
+        "public class C { public void M<T, V>(T x, V y) where T : Box<List<V>> { } "
+        "public void M(object o, object p) { } }",
+        _use("new C().M(new Lists(), 1);"),
+        frozenset({"C.M(T, V)"}),
     ),
 }
 

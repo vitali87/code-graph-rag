@@ -432,17 +432,82 @@ def arguments_match(
     given: Sequence[str] | None, wanted: Sequence[str], open_names: Collection[str]
 ) -> bool | None:
     """Whether closed type arguments agree, position by position and alias-
-    blind (`Box<System.Int32>` is `Box<int>`). A wanted argument naming an
-    `open_names` parameter is the one inference binds, so any given argument
-    fits it; `given` None (not known) answers None, never a match."""
+    blind (`Box<System.Int32>` is `Box<int>`). An `open_names` parameter in
+    a wanted argument is inferred from the given one, never a wildcard for
+    the structure around it: `List<T>` takes `List<int>` but no `int`, and
+    `Pair<T, T>` no `Pair<int, string>` (PR 2814 review). None when `given`
+    is not known, or only a shape inference might absorb tells them apart."""
     if given is None:
         return None
     if len(given) != len(wanted):
         return False
-    return all(
-        bool(mentioned_names(w) & set(open_names)) or same_type(g, w)
-        for g, w in zip(given, wanted, strict=True)
+    return _infer_all(given, wanted, frozenset(open_names), {})
+
+
+def _infer_all(
+    given: Sequence[str],
+    wanted: Sequence[str],
+    open_names: frozenset[str],
+    inferred: dict[str, str],
+) -> bool | None:
+    # As many types, position by position, under one set of inferences.
+    verdict: bool | None = True
+    for g, w in zip(given, wanted, strict=True):
+        found = _infer(g, w, open_names, inferred)
+        if found is False:
+            return False
+        if found is None:
+            verdict = None
+    return verdict
+
+
+def _infer(
+    given: str, wanted: str, open_names: frozenset[str], inferred: dict[str, str]
+) -> bool | None:
+    # Whether a binding of `open_names`, agreeing with those `inferred` so
+    # far, makes `wanted` the type `given`. A wanted type with no open name
+    # is compared as it is; one with some is taken apart as far as it goes.
+    if not mentioned_names(wanted) & open_names:
+        return same_type(given, wanted)
+    (given_core, given_suffix), (wanted_core, wanted_suffix) = (
+        type_shape(given),
+        type_shape(wanted),
     )
+    if wanted_core in open_names:
+        return _infer_parameter(
+            wanted_core, (given_core, given_suffix), wanted_suffix, inferred
+        )
+    if given_suffix != wanted_suffix:
+        return False
+    if is_tuple(wanted_core):
+        given_elements = _tuple_elements(given_core) if is_tuple(given_core) else []
+        wanted_elements = _tuple_elements(wanted_core)
+        if len(given_elements) != len(wanted_elements):
+            return False
+        return _infer_all(given_elements, wanted_elements, open_names, inferred)
+    if not same_type_name(given_core, wanted_core):
+        return False
+    return _infer_all(
+        type_arguments(given_core), type_arguments(wanted_core), open_names, inferred
+    )
+
+
+def _infer_parameter(
+    name: str, given: tuple[str, str], wanted_suffix: str, inferred: dict[str, str]
+) -> bool | None:
+    # `name` is the given type, its shape and all (`T` of `int[]`), or the
+    # given type's core when both build one shape on it (`T[]` of `int[]`),
+    # and the same type wherever it was inferred before. A shape the given
+    # type does not build on (`T[]` of `int`) is no fit; another one may be
+    # the parameter's own (`T[]` of `int?[]`), which is not told.
+    core, suffix = given
+    if not wanted_suffix:
+        core = f"{core}{suffix}"
+    elif suffix != wanted_suffix:
+        rank = cs.CSHARP_ARRAY_RANK_OPEN
+        return None if suffix.count(rank) >= wanted_suffix.count(rank) else False
+    previous = inferred.setdefault(name, core)
+    return previous == core or same_type(previous, core)
 
 
 def written_type(argument: ArgumentType) -> str:
@@ -536,7 +601,8 @@ def fit(
 
     `open_names` are the type parameters still unbound for this candidate:
     one standing alone takes any argument, as inference would make it, and
-    one inside a type argument takes whatever the argument passes there.
+    one inside a type argument is inferred from what the argument passes
+    there, the structure around it compared (`arguments_match`).
     """
     if argument is None:
         return Fit.UNKNOWN
