@@ -447,6 +447,7 @@ class EditLock:
         self._repo_path = repo_path
         self._directory = state_dir(repo_path)
         self._held = contextlib.ExitStack()
+        self._in_tree = False
 
     def __enter__(self) -> EditLock:
         return self
@@ -478,13 +479,35 @@ class EditLock:
         _adopt_history(self._repo_path, self._directory)
         return True
 
+    def join_tree_lock(self) -> bool:
+        """Take the older cgr's lock if it appeared since `acquire`.
+
+        An older cgr that never edited the tree creates its lock on its
+        first edit, which may come while this lock is held, so that edit
+        can land while a verifier runs. Returns whether the lock was taken
+        here, once that edit finished, so the caller checks the tree again.
+        One created after this call still runs beside the writes that
+        follow: until that file exists there is nothing of the older cgr's
+        to hold, and cgr does not create it in the tree.
+        """
+        if self._in_tree:
+            return False
+        self._take_tree_lock(wait=True)
+        if not self._in_tree:
+            return False
+        _adopt_history(self._repo_path, self._directory)
+        return True
+
     def _take_tree_lock(self, *, wait: bool) -> bool:
         """Take the older cgr's lock if it is there; False if it is busy."""
         handle = _open_tree_lock(self._repo_path)
         if handle is None:
             return True
         self._held.enter_context(handle)
-        return self._take(handle, wait=wait)
+        if not self._take(handle, wait=wait):
+            return False
+        self._in_tree = True
+        return True
 
     def _take(self, handle: IO[bytes], *, wait: bool) -> bool:
         if wait:

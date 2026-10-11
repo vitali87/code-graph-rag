@@ -45,6 +45,8 @@ from codebase_rag.cli import _delete_hash_cache
 from codebase_rag.config import settings
 from codebase_rag.editing.transaction import (
     EditTransaction,
+    StagedTree,
+    TransactionConflict,
     TransactionOutcome,
     load_history,
     undo_last,
@@ -958,6 +960,67 @@ def test_a_sync_while_an_older_cgr_edits_keeps_that_edits_history_entry(
     prepare_state_dir(repo)
 
     assert _ids(repo) == ["earlier", "older-cgr"]
+
+
+def test_an_older_cgr_that_starts_editing_while_a_commit_verifies_is_not_overwritten(
+    repo: Path,
+) -> None:
+    # No tree lock yet: the older cgr creates it, and edits the same file,
+    # while the upgraded cgr's verifier runs. The commit then wrote over that
+    # edit and recorded a `before` the file no longer had.
+    tx = EditTransaction(repo)
+    tx.stage("pkg/util.py", "def helper():\n    return 2\n")
+
+    def verify(tree: StagedTree) -> bool:
+        _an_older_cgr_edits(repo, "pkg/util.py", _UTIL_BY_AN_OLDER_CGR, "older-cgr")
+        return True
+
+    with pytest.raises(TransactionConflict):
+        tx.commit(verify)
+    assert (repo / "pkg" / "util.py").read_text() == _UTIL_BY_AN_OLDER_CGR
+
+
+def test_a_commit_waits_for_an_older_cgr_that_locked_the_tree_while_it_verified(
+    repo: Path,
+) -> None:
+    # The older cgr still holds the lock it created when the verifier
+    # returns: the commit writes only once it is released.
+    verifying = threading.Event()
+    locked = threading.Event()
+
+    def verify(tree: StagedTree) -> bool:
+        verifying.set()
+        return locked.wait(timeout=60)
+
+    outcome: list[TransactionOutcome] = []
+
+    def commit() -> None:
+        tx = EditTransaction(repo)
+        tx.stage("pkg/util.py", "def helper():\n    return 2\n")
+        outcome.append(tx.commit(verify))
+
+    worker = threading.Thread(target=commit, daemon=True)
+    worker.start()
+    assert verifying.wait(timeout=60)
+    with _an_older_cgr_holds_the_tree_lock(repo):
+        locked.set()
+        assert _waits(worker), "the commit wrote while an older cgr held the lock"
+        assert (repo / "pkg" / "util.py").read_text() == SOURCES["pkg/util.py"]
+
+    assert _finishes(worker)
+    assert outcome[0].applied
+
+
+def test_a_verified_commit_with_no_older_cgr_creates_no_lock_in_the_tree(
+    repo: Path,
+) -> None:
+    # Negative: looking for an older cgr's lock after verifying opens one
+    # only if it is there; with none, the tree gets none.
+    tx = EditTransaction(repo)
+    tx.stage("pkg/util.py", "def helper():\n    return 2\n")
+
+    assert tx.commit(lambda tree: True).applied
+    assert _state_in_tree(repo) == []
 
 
 def test_a_history_git_puts_back_does_not_bring_back_an_undone_edit(

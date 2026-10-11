@@ -329,7 +329,7 @@ class EditTransaction:
                 VerificationResult(True),
                 cs.EDIT_NOTHING_STAGED,
             )
-        with _repo_lock(self.repo_root) if _lock else nullcontext():
+        with _repo_lock(self.repo_root) if _lock else nullcontext() as lock:
             self._check_unchanged()
             tree = self.tree()
             try:
@@ -351,6 +351,10 @@ class EditTransaction:
                     verification,
                     cs.EDIT_VERIFICATION_FAILED.format(reason=verification.message),
                 )
+            if lock is not None and lock.join_tree_lock():
+                # An older cgr made its first edit of this tree while the
+                # verifier ran, and it may have written a staged file.
+                self._check_unchanged()
             self._apply_all(verification)
         self._finished = True
         logger.info(ls.EDIT_TX_APPLIED, tx=self.transaction_id, count=len(files))

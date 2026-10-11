@@ -55,8 +55,10 @@ outcome.files  # repo-relative paths, sorted
   directory), so a `cgr edits undo` in another process queues behind an
   agent's commit. While a `.cgr-edit-lock` an older cgr left in the
   checkout root is there, it is taken as well, so an older cgr still
-  running against the tree is excluded too. On a rejected verification the
-  working tree is byte-identical to before.
+  running against the tree is excluded too. An older cgr that creates that
+  file while a commit verifies is waited for before the commit writes, and
+  the commit refuses (`TransactionConflict`) if it changed a staged file.
+  On a rejected verification the working tree is byte-identical to before.
 - **Rollback** discards the overlay. `with transaction(root) as tx:` rolls
   back on an exception.
 
