@@ -37,7 +37,11 @@ from codec import schema_pb2 as pb
 # unnoticed. Removing an entry (by adding the proto field) is always safe;
 # adding one should be a deliberate decision with a reason.
 _NOT_EXPORTED: dict[str, frozenset[str]] = {
-    "Project": frozenset({"root_path"}),
+    # `last_synced_at` (issue #2444) records when a sync last completed into
+    # the graph holding the node, for `cgr status`. It is stamped only on a
+    # graph cgr can write back to, which the protobuf sink is not, and as a
+    # per-run time it would make two exports of an unchanged project differ.
+    "Project": frozenset({"root_path", "last_synced_at"}),
     # `write_id` is the per-call nonce the write tool reads back to prove its
     # statement ran; it means nothing outside that call. `mention_qns` is the
     # note's own record of what it mentions, from which the MENTIONS edges are
@@ -88,12 +92,19 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     # property existed does; the Class, Function and Method `decorators`
     # lists still travel. Exporting it needs a proto field plus regenerated
     # bindings (protoc).
+    # `non_method_members` (issue #2620) lets an incremental run re-register
+    # the names an unchanged class body binds to a value (`run = None`), which
+    # hide a base class's `run`. A graph round-tripped through protobuf loses
+    # them (and `member_aliases` with them), so until that file is parsed
+    # again `Sub().run()` reaches the base's `def run` as it did before #2620.
+    # Exporting it needs a proto field and protoc, which #1490 carries.
     "Class": frozenset(
         {
             "anchor_hash",
             "absolute_path",
             "decorated_start_line",
             "modifiers",
+            "non_method_members",
             "path",
             "start_col",
         }
@@ -135,6 +146,12 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "start_col",
         }
     ),
+    # `member_aliases` (issue #2620) lets an incremental run re-register the
+    # class-body aliases (`run = _plain`) of a file it does not re-parse. A
+    # graph round-tripped through protobuf loses them, so until that file is
+    # parsed again a call through the alias binds to nothing, exactly as it
+    # did before #2620; absent reads as "no aliases", never a wrong target.
+    # Exporting it needs a proto field and protoc, which #1490 carries.
     # `extension_receiver`, `extension_namespace` and
     # `extension_receiver_arity` (issue #3275) are a C# extension method's
     # index entry, read back only by an incremental run's rehydration;
@@ -150,6 +167,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "extension_receiver_arity",
             "is_exported",
             "is_property",
+            "member_aliases",
             "modifiers",
             "name_start_col",
             "name_start_line",

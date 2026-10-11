@@ -234,7 +234,11 @@ MCP_OVERRIDES = (
 )
 MCP_IMPORTERS = (
     "Modules that import a module, with each import statement's line, "
-    "column, bound alias and imported symbol. " + _MCP_DETERMINISTIC_NOTE
+    "column, bound alias and imported symbol. Direct importers only, unless "
+    "`through_reexports` is true: then also the modules that reach it through "
+    "a re-export (a package `__init__.py`, a Rust `pub use`, an `index.ts` "
+    "barrel), each row with `via`, the import statements it came through, "
+    "consumer side first (empty for a direct importer). " + _MCP_DETERMINISTIC_NOTE
 )
 MCP_PARAM_ENDPOINT_TARGET = (
     "The handler's qualified name, or the endpoint identity as `endpoints` "
@@ -326,13 +330,19 @@ MCP_PARAM_GLOSS_AUTHOR = (
     "Optional. Who is writing the note (an agent or session name); default `agent`."
 )
 MCP_PARAM_MODULE_QN = "The module's qualified name (for example `myproj.pkg.util`)."
+MCP_PARAM_THROUGH_REEXPORTS = (
+    "Also list the modules that reach it through re-exports (default false)."
+)
 MCP_RENAME = (
     "Rename a function, method, class or other definition everywhere the graph "
     "knows it is referenced: the definition, every call, reference and "
     "instantiation site, import statements (aliases kept), overrides in both "
     "directions, and Python `__all__` entries. Refuses when any site was "
     "resolved heuristically, by overload fan-out, or only by a trace, unless "
-    "`allow_heuristic` is true. A class referenced by an inheritance or type "
+    "`allow_heuristic` is true. It also refuses when the source names the "
+    "symbol where the graph has no site (a call the index missed), listing "
+    "those occurrences as `unplanned`; `allow_heuristic` rewrites them as "
+    "guessed sites. A class referenced by an inheritance or type "
     "annotation edge that carries no rewrite location refuses regardless of "
     "`allow_heuristic`. Every rewritten file must still parse; "
     "otherwise nothing is written. Set `dry_run` to see the plan and diff "
@@ -342,7 +352,8 @@ MCP_RENAME = (
 )
 MCP_PARAM_NEW_NAME = "The new identifier."
 MCP_PARAM_ALLOW_HEURISTIC = (
-    "Rewrite through heuristic, overload and trace-only sites too (default false)."
+    "Rewrite through heuristic, overload and trace-only sites, and the unplanned "
+    "occurrences the graph has no site for, too (default false)."
 )
 MCP_PARAM_RENAME_DRY_RUN = "Plan only: report the sites and diff, write nothing."
 

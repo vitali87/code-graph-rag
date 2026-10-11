@@ -131,7 +131,8 @@ CMD_GRAPH_OVERRIDES = (
     "Direct overrides only, unless --depth is above 1."
 )
 CMD_GRAPH_IMPORTERS = (
-    "Modules importing a module, with each import statement's location."
+    "Modules importing a module, with each import statement's location. "
+    "Direct importers only, unless --through-reexports."
 )
 CMD_GRAPH_TESTS_REACHING = (
     "Tests from which a qualified name is reachable, with distance."
@@ -147,6 +148,11 @@ HELP_GRAPH_REPO_PATH = (
     "Repository root the project name derives from and source is read from."
 )
 HELP_GRAPH_DEPTH = "How many hops to follow (1 to 5)."
+HELP_GRAPH_THROUGH_REEXPORTS = (
+    "Also list the modules that reach it through a re-export (a package "
+    "__init__.py, a Rust pub use, an index.ts barrel), each row with the "
+    "`via` import statements it came through."
+)
 CMD_CHECK = (
     "Report the structural delta of the working tree against a git ref: "
     "dangling callers and importers, arity findings, new duplicates, new "
@@ -172,7 +178,8 @@ HELP_CHECK_ISOLATED = (
 )
 CMD_RENAME = (
     "Rename a definition everywhere the graph references it (definition, call "
-    "and reference sites, imports, overrides, __all__); refuses on guessed sites."
+    "and reference sites, imports, overrides, __all__); refuses on guessed sites "
+    "and on occurrences the graph has no site for."
 )
 EXAMPLES_RENAME = (
     "Examples:\n  cgr rename myproj.pkg.util.helper assist --dry-run\n"
@@ -181,7 +188,8 @@ EXAMPLES_RENAME = (
 HELP_RENAME_QN = "Qualified name of the definition to rename."
 HELP_RENAME_NEW_NAME = "The new identifier."
 HELP_RENAME_ALLOW_HEURISTIC = (
-    "Rewrite through heuristic, overload and trace-only sites as well."
+    "Rewrite through heuristic, overload and trace-only sites, and through "
+    "occurrences of the old name the graph has no site for, as well."
 )
 HELP_RENAME_DRY_RUN = "Print the plan and diff without writing anything."
 CMD_CONTEXT = (
