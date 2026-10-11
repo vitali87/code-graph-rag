@@ -30,6 +30,16 @@ def derive_project_name(repo_path: Path) -> str:
     return f"{base}{cs.PROJECT_NAME_DIGEST_MARKER}{digest}"
 
 
+def nested_project_names(project_name: str, projects: Iterable[str]) -> list[str]:
+    """The projects whose names extend `project_name` (`svc.v2` for `svc`).
+
+    `svc.` prefixes every qualified name of `svc.v2` too, but the longest
+    registered name a symbol sits under owns it (issue #1970).
+    """
+    prefix = f"{project_name}{cs.SEPARATOR_DOT}"
+    return [name for name in projects if name.startswith(prefix)]
+
+
 def default_project_name(repo_path: Path) -> str:
     """The name a run that names no project writes under.
 

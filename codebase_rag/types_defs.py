@@ -171,8 +171,16 @@ class FunctionRegistryTrieProtocol(Protocol):
     def find_ending_with(self, suffix: str) -> list[QualifiedName]: ...
 
     def register_unique_qn(
-        self, natural_qn: QualifiedName, start_line: int, start_col: int = 0
+        self,
+        natural_qn: QualifiedName,
+        start_line: int,
+        start_col: int = 0,
+        kind: NodeType | None = None,
     ) -> QualifiedName: ...
+
+    def claim_other_space(self, natural_qn: QualifiedName, kind: NodeType) -> bool: ...
+
+    def type_kind(self, qualified_name: QualifiedName) -> NodeType | None: ...
 
     def variants(self, qualified_name: QualifiedName) -> list[QualifiedName]: ...
 
@@ -370,9 +378,26 @@ class QueryJsonOutput(TypedDict):
 class EmbeddingQueryResult(TypedDict):
     node_id: int
     qualified_name: str
+    label: NodeLabel
     start_line: int | None
     end_line: int | None
     path: str | None
+
+
+class EmbeddingSymbol(NamedTuple):
+    """The function or method an embedding belongs to, by what a re-parse keeps.
+
+    The label is part of it because the graph's identity constraints are per
+    label: a Function and a Method may share a qualified name and still be
+    two nodes, each with an embedding of its own.
+    """
+
+    label: NodeLabel
+    qualified_name: str
+
+
+# One embedding to store: the node it answers for, its vector, its symbol.
+type EmbeddingPoint = tuple[int, list[float], EmbeddingSymbol]
 
 
 class SemanticSearchResult(TypedDict):
@@ -1053,6 +1078,10 @@ class DeferredInherit(NamedTuple):
     language: SupportedLanguage
     alt_parent_qn: str | None = None
     written_ref: str | None = None
+    # The label the child was declared with. The registry keeps one kind per
+    # name, so a TS interface sharing its name with a value (issue #2520)
+    # cannot be told from that value by its qualified name alone.
+    child_label: str | None = None
 
 
 class RustTraitImpl(NamedTuple):
