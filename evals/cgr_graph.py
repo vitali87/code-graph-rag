@@ -948,6 +948,19 @@ class _StatefulIngestor:
             if label == cs.NodeLabel.PROJECT.value
         ]
 
+    def _project_sync_rows(self) -> list[ResultRow]:
+        return sorted(
+            (
+                {
+                    cs.KEY_NAME: _result(props.get(cs.KEY_NAME)),
+                    cs.KEY_LAST_SYNCED_AT: _result(props.get(cs.KEY_LAST_SYNCED_AT)),
+                }
+                for (label, _uid), props in self.nodes.items()
+                if label == cs.NodeLabel.PROJECT.value
+            ),
+            key=lambda row: str(row[cs.KEY_NAME]),
+        )
+
     def _graph_rows(self, query: str, params: PropertyDict) -> list[ResultRow]:
         qn = _str(params.get(cs.KEY_QN))
         prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
@@ -1213,6 +1226,8 @@ class _StatefulIngestor:
         match query:
             case cq.CYPHER_LIST_PROJECTS:
                 return self._project_rows()
+            case cq.CYPHER_PROJECT_SYNC_TIMES:
+                return self._project_sync_rows()
             case cs.CYPHER_ALL_FILE_PATHS:
                 return self._path_rows(_FILE_LABEL)
             case (
@@ -1432,6 +1447,16 @@ class _StatefulIngestor:
                         cs.KEY_LABEL: label,
                         cs.KEY_NAME: _text(props.get(cs.KEY_NAME)),
                         cs.KEY_IS_PROPERTY: bool(props.get(cs.KEY_IS_PROPERTY)),
+                        cs.KEY_MEMBER_ALIASES: [_text(a) for a in raw_aliases]
+                        if isinstance(
+                            raw_aliases := props.get(cs.KEY_MEMBER_ALIASES), list
+                        )
+                        else None,
+                        cs.KEY_NON_METHOD_MEMBERS: [_text(n) for n in raw_values]
+                        if isinstance(
+                            raw_values := props.get(cs.KEY_NON_METHOD_MEMBERS), list
+                        )
+                        else None,
                         cs.KEY_IS_MACRO: bool(props.get(cs.KEY_IS_MACRO)),
                         cs.KEY_IS_BODY_SCOPED_NAME: bool(
                             props.get(cs.KEY_IS_BODY_SCOPED_NAME)
@@ -1910,6 +1935,11 @@ class _StatefulIngestor:
         if self._remove_node_keys(query, params or {}):
             return None
         match query:
+            case cq.CYPHER_RECORD_PROJECT_SYNC if params:
+                # MATCH, not MERGE: a project that is not there stays absent.
+                project_key = (cs.NodeLabel.PROJECT.value, params[cs.KEY_PROJECT_NAME])
+                if (project := self.nodes.get(project_key)) is not None:
+                    project[cs.KEY_LAST_SYNCED_AT] = params[cs.KEY_LAST_SYNCED_AT]
             case cq.CYPHER_RELEASE_PROJECT_CLAIM:
                 self._release_project_claim(params or {})
             case cs.CYPHER_CLEAR_UNRESOLVED_REFERENCES:
