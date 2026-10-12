@@ -123,6 +123,10 @@ _SPREADS = frozenset(
 # parameters: copied into a caller they bind to the caller's receiver.
 _IMPLICIT_TYPES = frozenset({cs.TS_THIS, cs.TS_SUPER})
 _TYPE_NAMES = frozenset({*_IDENTIFIERS, cs.TS_TYPE_IDENTIFIER})
+# Names a returned expression depends on beyond its reads: a shorthand
+# property reads its variable, and a type name (`x as User`) must resolve at
+# the call site too or the caller stops type-checking (bot review).
+_FREE_EXTRA = frozenset({cs.TS_SHORTHAND_PROPERTY_IDENTIFIER, cs.TS_TYPE_IDENTIFIER})
 _IMPLICIT_NAMES = frozenset({cs.KEYWORD_SUPER, cs.TS_JS_ARGUMENTS_NAME})
 _SCOPES = frozenset(
     {
@@ -746,8 +750,7 @@ def _free_names(returned: Node, bound: set[str]) -> set[str]:
     names = {
         _text(n)
         for n in _walk(returned)
-        if (_is_read(n) or n.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER)
-        and _text(n) not in bound
+        if (_is_read(n) or n.type in _FREE_EXTRA) and _text(n) not in bound
     }
     return names
 
@@ -800,9 +803,7 @@ def _scope_safe(
 
 def _spelled(node: Node) -> set[str]:
     return {
-        _text(n)
-        for n in _walk(node)
-        if n.type in _IDENTIFIERS or n.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER
+        _text(n) for n in _walk(node) if n.type in _IDENTIFIERS or n.type in _FREE_EXTRA
     }
 
 
