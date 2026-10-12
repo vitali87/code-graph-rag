@@ -190,7 +190,6 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "extension_receiver",
             "extension_receiver_arity",
             "implicit_conversion",
-            "is_exported",
             "is_property",
             "member_aliases",
             "modifiers",

@@ -2664,6 +2664,7 @@ def _dead_code_config(
     decorator_roots: list[str],
     min_resolution: cs.EdgeResolution | None = None,
     endpoint_roots: bool = True,
+    public_roots: bool = True,
 ) -> DeadCodeConfig:
     from .dead_code import normalize_decorator_root
 
@@ -2677,6 +2678,7 @@ def _dead_code_config(
         entry_points=tuple(entry_points),
         min_resolution=str(min_resolution) if min_resolution is not None else None,
         endpoint_roots=endpoint_roots,
+        public_roots=public_roots,
     )
 
 
@@ -2766,12 +2768,43 @@ def _build_dead_code_table(candidates: list[DeadCodeRow], project_name: str) -> 
     return table
 
 
+def _print_root_rule(console: Console, public_roots: bool) -> None:
+    # A clean report says which root rule produced it, on screen and in a
+    # saved copy alike: with public roots on, it can just mean every function
+    # is public (issue #2527).
+    console.print(
+        cs.CLI_DEADCODE_RULE_PUBLIC_ROOTS
+        if public_roots
+        else cs.CLI_DEADCODE_RULE_NO_PUBLIC_ROOTS,
+        markup=False,
+        highlight=False,
+        soft_wrap=True,
+    )
+
+
+def _save_dead_code_table(
+    output: Path,
+    table: Table,
+    notice: str,
+    public_roots: bool,
+    has_candidates: bool,
+) -> None:
+    with output.open("w", encoding=cs.ENCODING_UTF8) as fh:
+        file_console = Console(file=fh)
+        _print_report_table(file_console, table)
+        if not has_candidates:
+            _print_root_rule(file_console, public_roots)
+        if notice:
+            file_console.print(notice)
+
+
 def _emit_dead_code(
     candidates: list[DeadCodeRow],
     output_format: cs.DeadCodeFormat,
     output: Path | None,
     project_name: str,
     structural_tier_symbols: int = 0,
+    public_roots: bool = True,
 ) -> None:
     if output_format == cs.DeadCodeFormat.JSON:
         payload = json.dumps(candidates, indent=2)
@@ -2797,23 +2830,22 @@ def _emit_dead_code(
     )
     table = _build_dead_code_table(candidates, project_name)
     if output is not None:
-        with output.open("w", encoding=cs.ENCODING_UTF8) as fh:
-            file_console = Console(file=fh)
-            _print_report_table(file_console, table)
-            if notice:
-                file_console.print(notice)
+        _save_dead_code_table(output, table, notice, public_roots, bool(candidates))
         app_context.console.print(
             style(
                 cs.CLI_DEADCODE_WRITTEN.format(count=len(candidates), path=output),
                 cs.Color.GREEN,
             )
         )
+        if not candidates:
+            _print_root_rule(app_context.console, public_roots)
         if notice:
             app_context.console.print(style(notice, cs.Color.YELLOW))
         return
 
     if not candidates:
         app_context.console.print(style(cs.CLI_DEADCODE_NONE, cs.Color.GREEN))
+        _print_root_rule(app_context.console, public_roots)
     else:
         _print_report_table(app_context.console, table)
         app_context.console.print(
@@ -2837,13 +2869,15 @@ def _notice_single_project_endpoint_roots(show_progress: bool) -> None:
 
 @app.command(
     name=ch.CLICommandName.DEAD_CODE,
-    help=ch.CMD_DEAD_CODE,
+    help=ch.DESC_DEAD_CODE,
     short_help=ch.CMD_DEAD_CODE,
     epilog=ch.EXAMPLES_DEAD_CODE,
     rich_help_panel=ch.PANEL_GRAPH,
 )
+# Typer turns each parameter into one flag of the command, so the count is the
+# command's option list, not a call site to simplify (python:S107 accepted).
 def dead_code(
-    project: str | None = typer.Option(
+    project: str | None = typer.Option(  # NOSONAR
         None, "--project", "-p", help=ch.HELP_SCAN_PROJECT
     ),
     # The spelling before issue #2415, kept working for scripts.
@@ -2887,6 +2921,11 @@ def dead_code(
         "--endpoint-roots/--no-endpoint-roots",
         help=ch.HELP_DEADCODE_ENDPOINT_ROOTS,
     ),
+    public_roots: bool = typer.Option(
+        True,
+        "--public-roots/--no-public-roots",
+        help=ch.HELP_DEADCODE_PUBLIC_ROOTS,
+    ),
 ) -> None:
     from .dead_code import collect_dead_code_with_coverage
 
@@ -2914,6 +2953,7 @@ def dead_code(
                         decorator_root,
                         min_resolution,
                         endpoint_roots,
+                        public_roots,
                     ),
                 )
                 if not endpoint_roots and len(projects) <= 1:
@@ -2933,7 +2973,12 @@ def dead_code(
         _to_dead_code_row(row) for row in _filter_excluded_rows(rows, exclude)
     ]
     _emit_dead_code(
-        candidates, output_format, output, resolved, structural_tier_symbols
+        candidates,
+        output_format,
+        output,
+        resolved,
+        structural_tier_symbols,
+        public_roots,
     )
 
     if fail_on_found and candidates:

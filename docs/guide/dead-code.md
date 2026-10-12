@@ -29,6 +29,7 @@ the command prints how many symbols were skipped:
 
 ```text
 No unreachable functions or methods found.
+(public symbols treated as roots; use --no-public-roots for application code)
 12 symbol(s) in structural-tier languages were not analyzed (no call graph for these languages).
 ```
 
@@ -90,6 +91,58 @@ cgr dead-code --decorator-root plugins.register --decorator-root signal_handler
 
 *Recorded on a small C plugin whose host resolves `run` and `webhook` with `dlsym()`, so no call site reaches them.*
 
+## Libraries and Applications
+
+By default every exported or public symbol is a root, because a library's
+public API is called from outside the repository. An application or service
+is different: nearly every function in it is public by naming convention, yet
+only a few entry points run it. There the default hides almost all dead code,
+since only private (`_helper`) symbols can ever be reported. Pass
+`--no-public-roots` to drop the rule:
+
+```bash
+cgr dead-code --no-public-roots
+```
+
+Without public roots, the roots are:
+
+- **Program entry points.** A module-level `main` in Python (a console
+  script's target), a top-level one in Dart (not a local function named
+  `main`), and the Java `main` the JVM launcher would start. That is a
+  non-private `void main(String[] args)` (also written `String args[]` or
+  `String... args`), or, when the class declares none, a non-private
+  `void main()`. An instance `main` also needs a concrete class with a
+  non-private zero-argument constructor. The rules every mode applies count
+  too: `main` in C, C++, Go and Rust, and a `static Main` in C#. Module-level
+  code also counts, such as an `if __name__ == "__main__":` block, so
+  whatever it calls is reachable.
+- **Tests**, unless `--no-include-tests`.
+- **Decorated handlers**: routes, tasks, CLI commands and any `--decorator-root`.
+- **Runtime hooks**: dunder and lifecycle methods, and the overrides a
+  runtime calls through an external base (an external Rust trait's impl, a
+  Dart `@override`, a Python standard-library base class).
+- **Every `--entry-point`.**
+
+Symbols in structural-tier languages stay roots in both modes, since they have
+no call graph that could reach them.
+
+A clean report names the rule that produced it, so an empty report on an
+application is not mistaken for a clean one:
+
+```text
+No unreachable functions or methods found.
+(public symbols treated as roots; use --no-public-roots for application code)
+```
+
+With `--no-public-roots` the second line reads
+`(public symbols not treated as roots)`.
+
+Without public roots, a public symbol that only an external framework calls
+has no root. Examples are a Java method that implements a library interface,
+or a page component that a router loads by file name. Name such symbols with
+`--entry-point`, or their decorator or annotation with `--decorator-root`
+(`--decorator-root Override` roots Java `@Override` methods).
+
 ## Excluding Generated Code
 
 Generated or vendored code (API clients, protobuf stubs) is full of callbacks a
@@ -126,6 +179,7 @@ Two rules keep a pattern from silently excluding nothing:
 | `--exclude` | Glob matched against a symbol's whole repo-relative file path to exclude it from the report; quote it. Repeatable. |
 | `--include-tests` / `--no-include-tests` | Treat test code as reachable roots so the production code it exercises is not reported. On by default. |
 | `--classes` / `--no-classes` | Also report unreachable classes. Off by default. |
+| `--public-roots` / `--no-public-roots` | Treat every public or exported symbol as a root, as suits a library. On by default; turn it off for an application (see [Libraries and Applications](#libraries-and-applications)). |
 | `--format` | Output format: `table` (default) or `json`. |
 | `--output`, `-o` | Write the report to this file instead of stdout. |
 | `--fail-on-found` | Exit with code 1 when any candidate is found (useful in CI). |
@@ -151,7 +205,7 @@ so no name or path is cut to fit 80 columns.
 
 ## How It Works
 
-1. **Roots**: exported/public symbols, tests (unless `--no-include-tests`),
+1. **Roots**: exported/public symbols (unless `--no-public-roots`), tests (unless `--no-include-tests`),
    decorated handlers, dunder/lifecycle methods, program entry points (`main`
    in C, C++, Go and Rust; a `static Main` in C#, whatever its accessibility),
    plus any `--entry-point` and `--decorator-root` you add.
