@@ -216,6 +216,18 @@ def _prefix(project_name: str) -> str:
     return f"{project_name}{cs.SEPARATOR_DOT}"
 
 
+def _longer_project_prefixes(fetch_all: QueryFn, project_name: str) -> tuple[str, ...]:
+    """Return registered project names that can own a longer qualified name."""
+    requested_prefix = f"{project_name}{cs.SEPARATOR_DOT}"
+    names = {
+        name
+        for row in fetch_all(cq.CYPHER_LIST_PROJECTS, None)
+        if isinstance(name := row.get(cs.KEY_NAME), str)
+        and name.startswith(requested_prefix)
+    }
+    return tuple(sorted(names))
+
+
 def _text_qn(row: ResultRow) -> str:
     return str(row.get(cs.KEY_QUALIFIED_NAME, ""))
 
