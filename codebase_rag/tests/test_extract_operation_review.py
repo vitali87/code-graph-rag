@@ -553,6 +553,19 @@ def test_extract_refuses_a_conditional_output_possibly_unbound_before(
     assert "`x`" in message
 
 
+def test_extract_refuses_an_output_first_bound_on_one_path_of_the_span(
+    temp_repo: Path,
+) -> None:
+    # Unbound before the span and bound on only one path through it: the
+    # helper's `return x` would raise for f(False), which the original ran
+    # without reading x (bot review).
+    source = (
+        "def pick(flag):\n    if flag:\n        x = 1\n    if flag:\n        print(x)\n"
+    )
+    message = _refused(temp_repo, "pkg/pick.py", source, "pkg.pick.pick", (2, 3))
+    assert "`x`" in message
+
+
 LATE_PY = """\
 def late():
     x = 0

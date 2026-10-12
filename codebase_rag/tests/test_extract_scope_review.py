@@ -88,7 +88,7 @@ def test_js_destructuring_in_the_span_is_a_binding() -> None:
 
 def test_an_overwrite_does_not_read_its_target() -> None:
     source = (
-        "def f(c, a, i):\n"
+        "def f(c, a, i, k):\n"
         "    if c:\n"
         "        x = 0\n"
         "    x = 1\n"
@@ -101,8 +101,9 @@ def test_an_overwrite_does_not_read_its_target() -> None:
         cs.SupportedLanguage.PYTHON, source, cs.TS_PY_FUNCTION_DEFINITION, 4, 7
     )
     # `x = 1` overwrites x: passing x in would evaluate a possibly unbound
-    # name. The subscript target `a[i]` still READS a and i.
-    assert inputs == ["a", "i"]
+    # name. The subscript target `a[i]` still READS a and i. The loop may
+    # run zero times, so k comes in as the parameter it was bound to.
+    assert inputs == ["a", "i", "k"]
     assert outputs == ["x", "k"]
 
 

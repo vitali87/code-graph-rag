@@ -279,6 +279,16 @@ class Inliner:
         callee = _Callee(
             path, returned, params, receiver, _free_names(returned, bound_names)
         )
+        # A receiver whose runtime class overrides the method runs another
+        # body; substituting this one's expression at every call would be
+        # wrong for those receivers. The query matches either end of the edge,
+        # so a base method and an override both refuse (bot review).
+        if related := graph_query.overrides(self.fetch_all, self.project, qn):
+            raise InlineRefused(
+                cs.INLINE_REFUSED_OVERRIDDEN.format(
+                    qn=qn, others=", ".join(r["qualified_name"] for r in related)
+                )
+            )
         callers = graph_query.callers(self.fetch_all, self.project, qn)
         _refuse_guessed(callers)
         sites: list[tuple[str, int]] = []
