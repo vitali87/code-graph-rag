@@ -185,6 +185,7 @@ class FunctionRegistryTrieProtocol(Protocol):
         start_line: int,
         start_col: int = 0,
         kind: NodeType | None = None,
+        origin: str | None = None,
     ) -> QualifiedName: ...
 
     def claim_other_space(self, natural_qn: QualifiedName, kind: NodeType) -> bool: ...
@@ -1399,7 +1400,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.INTERFACE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, generic_arity: int?}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, generic_arity: int?, embeds: list[string]?, implementers_unknown: string?}",
     ),
     NodeSchema(
         NodeLabel.ENUM,
@@ -1607,6 +1608,13 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.CLASS,),
         RelationshipType.IMPLEMENTS,
         (NodeLabel.TYPE,),
+    ),
+    # A Go defined type that is no struct (`type HandlerFunc func(...)`)
+    # carries methods too, and implements an interface by having them.
+    RelationshipSchema(
+        (NodeLabel.TYPE,),
+        RelationshipType.IMPLEMENTS,
+        (NodeLabel.INTERFACE,),
     ),
     RelationshipSchema(
         # A method-body anonymous-class override is a Function node, so it

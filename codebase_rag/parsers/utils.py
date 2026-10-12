@@ -1646,6 +1646,7 @@ def _register_method_qn(
     function_registry: FunctionRegistryTrieProtocol,
     start_line: int,
     start_col: int,
+    file_path: Path | None = None,
 ) -> tuple[str, _CppMember | None]:
     # The registered qn, and for C++ the member it names (issue #2455).
     if language == cs.SupportedLanguage.CPP:
@@ -1655,8 +1656,15 @@ def _register_method_qn(
         return cpp_member.qualified_name, cpp_member
     # TypeScript keeps a type and a same-named value as two nodes (#2520).
     kind = NodeType.METHOD if language in cs.JS_TS_LANGUAGES else None
+    # A Go method's natural qn is its receiver type's, which each build file
+    # declaring the method again shares (#3360 review).
+    origin = (
+        str(file_path)
+        if language == cs.SupportedLanguage.GO and file_path is not None
+        else None
+    )
     registered = function_registry.register_unique_qn(
-        method_qn, start_line, start_col, kind=kind
+        method_qn, start_line, start_col, kind=kind, origin=origin
     )
     return registered, None
 
@@ -1775,6 +1783,7 @@ def ingest_method(
         function_registry,
         method_start_line,
         method_start_col,
+        file_path,
     )
 
     decorators = []

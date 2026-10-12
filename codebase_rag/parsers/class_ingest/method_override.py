@@ -44,7 +44,11 @@ def process_all_method_overrides(
     impl_method_traits: dict[str, str] | None = None,
     inherent_impl_methods: set[str] | None = None,
     module_qns: Collection[str] = (),
+    linked_apart: Collection[str] = (),
 ) -> None:
+    # `linked_apart`: the types whose overrides another pass links (Go's
+    # interfaces, link_go_interfaces), which neither walk below visits. A
+    # walk per type up a chain of embeds was quadratic in its length.
     logger.info(logs.CLASS_PASS_4)
 
     implemented_interfaces = _invert_implementers(interface_implementers or {})
@@ -55,7 +59,7 @@ def process_all_method_overrides(
         # A dotless qn has no class to walk from; rpartition leaves class_qn
         # empty for it, which is the same set the membership test used to skip.
         class_qn, _, method_name = method_qn.rpartition(cs.SEPARATOR_DOT)
-        if not class_qn:
+        if not class_qn or class_qn in linked_apart:
             continue
         # Positive evidence first: a recorded trait binding names the parent
         # outright, so it outranks a classification drawn from absence,
@@ -86,13 +90,16 @@ def process_all_method_overrides(
             csharp_override_methods,
             type_scopes,
         )
-    _process_mro_shadow_overrides(function_registry, class_inheritance, ingestor)
+    _process_mro_shadow_overrides(
+        function_registry, class_inheritance, ingestor, linked_apart
+    )
 
 
 def _process_mro_shadow_overrides(
     function_registry: FunctionRegistryTrieProtocol,
     class_inheritance: dict[str, list[str]],
     ingestor: IngestorProtocol,
+    linked_apart: Collection[str] = (),
 ) -> None:
     # A mixin's method can shadow a same-name method from a SIBLING base
     # branch only in a combining subclass's MRO: django's
@@ -111,6 +118,8 @@ def _process_mro_shadow_overrides(
     ancestor_cache: dict[str, set[str]] = {}
     emitted: set[tuple[str, str]] = set()
     for class_qn in sorted(class_inheritance):
+        if class_qn in linked_apart:
+            continue
         providers = _mro_method_providers(
             class_qn, class_inheritance, function_registry, method_names_cache
         )
