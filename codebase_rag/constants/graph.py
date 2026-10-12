@@ -36,6 +36,13 @@ KEY_MEMBER_ALIASES = "member_aliases"
 # The member names a Python class body binds to a value that is no method
 # (`run = None`), which hide a base class's `run` (issue #2620).
 KEY_NON_METHOD_MEMBERS = "non_method_members"
+# The types a Go interface embeds, as written (`Reader`, `io.Writer`): its
+# method set includes theirs, so satisfying it needs them too (issue #2483).
+KEY_EMBEDS = "embeds"
+# Why cgr cannot tell which types implement a Go interface (a
+# GoImplementersUnknown), or "" when it can (#3360). Written for every Go
+# interface at each link, so a sync clears a mark that no longer holds.
+KEY_IMPLEMENTERS_UNKNOWN = "implementers_unknown"
 # A JS/TS function that is an object literal's property value, reached only
 # through its object (issue #2435).
 KEY_IS_OBJECT_MEMBER = "is_object_member"
@@ -135,6 +142,22 @@ class EdgeResolution(StrEnum):
     HEURISTIC = "heuristic"
     TRACE_CONFIRMED = "trace_confirmed"
     DYNAMIC = "dynamic"
+
+
+class GoImplementersUnknown(StrEnum):
+    """Why cgr cannot tell which types implement a Go interface, so it links
+    none by name and a rename of a method of its name refuses (#3360).
+
+    `builds`: its method set differs between builds in more ways than cgr
+    tells apart (past 64 alternatives, or a combination it cannot decide).
+    `embeds`: it embeds an interface cgr cannot resolve (another module's, or
+    a name it cannot find). `constraint`: whether some type implements it
+    rests on a build constraint cgr cannot read or decide.
+    """
+
+    BUILDS = "builds"
+    EMBEDS = "embeds"
+    CONSTRAINT = "constraint"
 
 
 # Ordering for `--min-resolution`: an edge with no label is a legacy static
@@ -1238,7 +1261,8 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.generic_bases AS generic_bases, "
     "n.type_parameter_variances AS type_parameter_variances, "
     "n.value_type AS value_type, n.base_types AS base_types, "
-    "n.indexer_types AS indexer_types, n.field_types AS field_types"
+    "n.indexer_types AS indexer_types, n.field_types AS field_types, "
+    "n.embeds AS embeds"
 )
 
 # Module-level qns (plus C++20 module interfaces) for incremental runs:
@@ -1543,6 +1567,8 @@ CYPHER_ALL_FUNCTION_LOCATIONS = (
     "f.start_col AS start_col, f.name_start_line AS name_start_line, "
     "f.name_start_col AS name_start_col"
 )
+# `path` is the method's own file: a Go method can sit in another file than
+# its receiver type, whose Module is the one DEFINES reaches (issue #2483).
 CYPHER_ALL_METHOD_LOCATIONS = (
     "MATCH (m:Module)-[:DEFINES]->(c)-[:DEFINES_METHOD]->(f:Method) "
     "WHERE m.qualified_name STARTS WITH $project_prefix "
@@ -1550,7 +1576,7 @@ CYPHER_ALL_METHOD_LOCATIONS = (
     "c.qualified_name AS container_qn, "
     "m.qualified_name AS module_qn, f.start_line AS start_line, "
     "f.start_col AS start_col, f.name_start_line AS name_start_line, "
-    "f.name_start_col AS name_start_col"
+    "f.name_start_col AS name_start_col, f.path AS path"
 )
 KEY_CHILD_QN = "child_qn"
 KEY_BASE_QN = "base_qn"

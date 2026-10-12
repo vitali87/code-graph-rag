@@ -101,7 +101,11 @@ def process_all_method_overrides(
     impl_method_traits: dict[str, str] | None = None,
     inherent_impl_methods: set[str] | None = None,
     module_qns: Collection[str] = (),
+    linked_apart: Collection[str] = (),
 ) -> None:
+    # `linked_apart`: the types whose overrides another pass links (Go's
+    # interfaces, link_go_interfaces), which neither walk below visits. A
+    # walk per type up a chain of embeds was quadratic in its length.
     logger.info(logs.CLASS_PASS_4)
 
     facts = csharp or CSharpOverrideFacts()
@@ -121,7 +125,7 @@ def process_all_method_overrides(
         ):
             continue
         class_qn, method_name = _override_class_and_leaf(method_qn, facts.methods)
-        if not class_qn:
+        if not class_qn or class_qn in linked_apart:
             continue
         # Positive evidence first: a recorded trait binding names the parent
         # outright, so it outranks a classification drawn from absence,
@@ -152,7 +156,9 @@ def process_all_method_overrides(
             members,
             type_scopes,
         )
-    _process_mro_shadow_overrides(function_registry, class_inheritance, ingestor)
+    _process_mro_shadow_overrides(
+        function_registry, class_inheritance, ingestor, linked_apart
+    )
 
 
 def _emit_csharp_explicit_override(
@@ -205,6 +211,7 @@ def _process_mro_shadow_overrides(
     function_registry: FunctionRegistryTrieProtocol,
     class_inheritance: dict[str, list[str]],
     ingestor: IngestorProtocol,
+    linked_apart: Collection[str] = (),
 ) -> None:
     # A mixin's method can shadow a same-name method from a SIBLING base
     # branch only in a combining subclass's MRO: django's
@@ -223,6 +230,8 @@ def _process_mro_shadow_overrides(
     ancestor_cache: dict[str, set[str]] = {}
     emitted: set[tuple[str, str]] = set()
     for class_qn in sorted(class_inheritance):
+        if class_qn in linked_apart:
+            continue
         providers = _mro_method_providers(
             class_qn, class_inheritance, function_registry, method_names_cache
         )

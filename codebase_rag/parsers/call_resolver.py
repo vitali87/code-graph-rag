@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict, deque
-from collections.abc import Collection, Iterator, Mapping
-from pathlib import PurePath
+from collections.abc import Collection, Iterable, Iterator, Mapping
+from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, NamedTuple
 
 from loguru import logger
@@ -25,7 +25,11 @@ from .csharp.overloads import (
     unshadowed,
     written_bindings,
 )
+from .go import interfaces as go_ifaces
 from .go import utils as go_utils
+from .go.builds import ALWAYS, Expr, all_of, holds_wherever, possible
+from .go.interfaces import GoMethodSpec
+from .go.link_state import GoLinkState
 from .import_processor import ImportProcessor
 from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
@@ -317,6 +321,14 @@ class CallResolver:
         "type_aliases",
         "interface_implementers",
         "rehydrated_interface_implementers",
+        "guessed_implementations",
+        "go_methods",
+        "go_checked_files",
+        "go_builtin_shadows",
+        "go_variant_methods",
+        "go_declaration_variants",
+        "go_pair_builds",
+        "go_builds",
         "_interface_impl_cache",
         "_simple_resolution_cache",
         "last_resolution",
@@ -355,6 +367,7 @@ class CallResolver:
         declared_module_qns: set[str] | None = None,
         rehydrated_interface_implementers: dict[str, set[str]] | None = None,
         go_package_names: Mapping[str, str] | None = None,
+        go_links: GoLinkState | None = None,
     ) -> None:
         self.function_registry = function_registry
         self.import_processor = import_processor
@@ -397,6 +410,26 @@ class CallResolver:
             if rehydrated_interface_implementers is not None
             else {}
         )
+        # What the Go interface link shares, each container by reference
+        # (#2483): the pairs above it matched by name, so what dispatch
+        # through them reaches is a guess; each method's signature; the
+        # files go/types type-checked; the predeclared names each package
+        # declares; the declarations a type's build variants hold for it; each
+        # interface's build variants; the builds holding each pair; and each
+        # file's build constraint.
+        links = go_links if go_links is not None else GoLinkState()
+        self.guessed_implementations = links.guessed_implementations
+        self.go_methods: Mapping[str, GoMethodSpec] = links.methods
+        self.go_checked_files = links.checked_files
+        self.go_builtin_shadows: Mapping[str, frozenset[str]] = links.builtin_shadows
+        self.go_variant_methods: Mapping[str, Mapping[str, list[str]]] = (
+            links.variant_methods
+        )
+        self.go_declaration_variants: Mapping[str, tuple[str, ...]] = (
+            links.declaration_variants
+        )
+        self.go_pair_builds: Mapping[tuple[str, str], Expr] = links.pair_builds
+        self.go_builds = links.builds
         self._interface_impl_cache: dict[str, str] | None = None
         # C++ typedef/using alias -> underlying bare type, consulted when a
         # receiver type name is mapped to a class (empty for other languages).
@@ -1601,16 +1634,41 @@ class CallResolver:
         # `helper()` in `a.go` naming `func helper()` in `b.go` of the same
         # package is as certain as a same-file call: Go shares one namespace
         # across the package's files and rejects a duplicate (#2571). Two
-        # candidates are mutually exclusive build-tag variants, which the
-        # heuristic fallback and its sibling fan-out already cover.
-        candidates = self._go_package_scope(
-            call_name, module_qn, _GO_PACKAGE_FUNCTION_TYPES
+        # candidates are build variants (`h_linux.go`, `h_windows.go`) only
+        # when no build compiles them together: the caller then binds the
+        # first its builds may hold, labelled by the builds it reaches
+        # (`_go_build_targets`), and its sibling fan-out reaches the rest.
+        # The name-only fallback took another package's same-named function
+        # there, `p_test`'s even, and no variant (#3360 review).
+        candidates = self._go_build_variant_candidates(
+            self._go_package_scope(call_name, module_qn, _GO_PACKAGE_FUNCTION_TYPES),
+            module_qn,
         )
-        if len(candidates) != 1:
+        if not candidates:
             return None
         qn = candidates[0]
         logger.debug(ls.CALL_GO_SAME_PACKAGE, call_name=call_name, qn=qn)
         return self.function_registry[qn], qn
+
+    def _go_build_variant_candidates(
+        self, candidates: list[str], module_qn: str
+    ) -> list[str]:
+        # The one candidate, or, of several, those a build compiling the
+        # caller may hold when no build compiles two of them together; []
+        # for any other several.
+        if len(candidates) <= 1 or self.go_builds is None:
+            return candidates
+        caller = self.go_caller_rel(module_qn)
+        files = {qn: self.go_declaring_rel(qn) for qn in candidates}
+        reachable = sorted(
+            qn for qn in candidates if not self.go_builds.apart((caller, files[qn]))
+        )
+        apart = all(
+            self.go_builds.apart((files[first], files[second]))
+            for index, first in enumerate(reachable)
+            for second in reachable[index + 1 :]
+        )
+        return reachable if apart else []
 
     def _go_package_type(self, name: str, module_qn: str) -> str | None:
         # A bare Go type name (`var m Mux`, `q *Mux`, the `*Mux` a same-package
@@ -1634,14 +1692,15 @@ class CallResolver:
                 if qn.rpartition(cs.SEPARATOR_DOT)[0] == module_qn
             ]
             candidates = own if own else candidates
-        if len(candidates) != 1:
-            return None
+        # An interface each build declares again is the first of its
+        # variants; a call through it binds per build at emission.
+        found = go_utils.one_declaration(candidates, self.go_declaration_variants)
         # The Go type walker reduces a declared `*aaa.Mux` to `Mux` as well,
         # so a name that a package this file imports also declares may be
         # that one; it keeps the lookup it had before.
-        if self._go_imports_declare_type(name, module_qn):
+        if found is None or self._go_imports_declare_type(name, module_qn):
             return None
-        return candidates[0]
+        return found
 
     def _go_imports_declare_type(self, name: str, module_qn: str) -> bool:
         imported = set(
@@ -1922,6 +1981,154 @@ class CallResolver:
         # shape is not known, which leaves them unmatched by position.
         shape = self.type_inference.csharp_call_shapes.get(method_qn)
         return shape.type_parameters if shape is not None else None
+
+    def interface_dispatch_targets(
+        self, callee_qn: str
+    ) -> dict[tuple[str, str], dict[str, bool]]:
+        # A Go call through an interface runs whichever implementation the
+        # value holds, and the types implement it implicitly, so a sole
+        # implementer is no likelier than one of many: every implementer's
+        # method is a target (issue #2483). Each maps to the implementers it
+        # runs for, each with whether only a guess ties it to the interface
+        # (a pair matched by name and arity), which its edge then says rather
+        # than borrowing the call's own label.
+        class_qn, sep, method_name = callee_qn.rpartition(cs.SEPARATOR_DOT)
+        if not sep or self.function_registry.get(class_qn) != NodeType.INTERFACE:
+            return {}
+        targets: dict[tuple[str, str], dict[str, bool]] = {}
+        for implementer in self.interface_implementers.get(class_qn, ()):
+            guessed = (class_qn, implementer) in self.guessed_implementations
+            found = [
+                (cs.NodeLabel.METHOD.value, qn)
+                for qn in self.go_variant_methods.get(implementer, {}).get(
+                    method_name, ()
+                )
+            ]
+            if result := self._try_resolve_method(implementer, method_name):
+                found.append(result)
+            for target in found:
+                targets.setdefault(target, {})[implementer] = guessed
+        return targets
+
+    def go_declaration_satisfies(
+        self, method_qn: str, interface_method_qn: str
+    ) -> bool:
+        # A build that declares the method again declares its own copy
+        # (`T.M@5`), and one whose signature cannot be the interface
+        # method's never runs for a call through the interface: in that
+        # build the type is no implementer.
+        have = self.go_methods.get(method_qn)
+        want = self.go_methods.get(interface_method_qn)
+        return (
+            have is None
+            or want is None
+            or go_ifaces.compatible(
+                go_ifaces.in_package(have, self.go_builtin_shadows),
+                go_ifaces.in_package(want, self.go_builtin_shadows),
+            )
+        )
+
+    def go_declaration_read(self, method_qn: str) -> bool:
+        spec = self.go_methods.get(method_qn)
+        return spec is None or spec.file in self.go_checked_files
+
+    def _with_go_variants(self, bases: Iterable[str]) -> list[str]:
+        # A Go interface embedding a name each build declares again embeds
+        # the one its build holds, so a method only one build's declares is
+        # still reached through it (#3360 review).
+        found: list[str] = []
+        for base in bases:
+            found.append(base)
+            found.extend(
+                variant
+                for variant in self.go_declaration_variants.get(base, ())
+                if variant != base
+            )
+        return found
+
+    def go_variant_callees(
+        self, callee_qn: str, module_qn: str
+    ) -> list[tuple[str, bool]] | None:
+        """For a Go call bound to `callee_qn`, a method of an interface each
+        build declares again, the method of every declaration a build
+        compiling the caller's file may hold, each with whether every such
+        build holds it. None when the interface has no build variants.
+
+        `J` embedding `p.I` reached `i_linux.go`'s `M` for a caller every
+        build compiles: an exact edge true on Linux alone, and Windows'
+        `M` never reached (#3360 review)."""
+        owner, dot, name = callee_qn.rpartition(cs.SEPARATOR_DOT)
+        group = self.go_declaration_variants.get(owner)
+        if not dot or not group or self.go_builds is None:
+            return None
+        caller = self.go_caller_rel(module_qn)
+        reached = [
+            (method_qn, file)
+            for variant in group
+            if (method_qn := f"{variant}{cs.SEPARATOR_DOT}{name}")
+            in self.function_registry
+            and self.go_builds.together(
+                (caller, file := self.go_declaring_rel(variant))
+            )
+        ]
+        exact = len(reached) == 1 and self.go_builds.covered(caller, [reached[0][1]])
+        return [(method_qn, exact) for method_qn, _ in reached]
+
+    def go_reaches_everywhere(
+        self, module_qn: str, declarations: Iterable[str]
+    ) -> bool:
+        """Whether every build compiling Go file `module_qn` compiles every
+        one of `declarations`: an edge to one only some of them hold is no
+        exact edge."""
+        if self.go_builds is None:
+            return True
+        return self.go_builds.everywhere(
+            self.go_caller_rel(module_qn),
+            [self.go_declaring_rel(qn) for qn in declarations],
+        )
+
+    def go_dispatch_builds(
+        self,
+        module_qn: str,
+        interface_qn: str,
+        implementer: str,
+        declaration: str,
+    ) -> tuple[bool, bool]:
+        """Whether `declaration` runs for `implementer` through a call through
+        `interface_qn` from Go file `module_qn` in some build compiling the
+        caller, and whether in every one."""
+        if self.go_builds is None:
+            return True, True
+        caller = self.go_builds.constraint(self.go_caller_rel(module_qn))
+        runs = all_of(
+            (
+                self.go_pair_builds.get((interface_qn, implementer), ALWAYS),
+                self.go_builds.constraint(self.go_declaring_rel(declaration)),
+            )
+        )
+        return possible((caller, runs)), holds_wherever(caller, runs)
+
+    def go_apart_from_caller(self, module_qn: str, declaration: str) -> bool:
+        """Whether no build compiles Go file `module_qn` with `declaration`:
+        its call never reaches that one."""
+        return self.go_builds is not None and self.go_builds.apart(
+            (self.go_caller_rel(module_qn), self.go_declaring_rel(declaration))
+        )
+
+    def go_caller_rel(self, module_qn: str) -> str:
+        return go_utils.rel_file(
+            self.type_inference.module_qn_to_file_path.get(module_qn),
+            self.type_inference.repo_path,
+        )
+
+    def go_declaring_rel(self, qn: str) -> str:
+        # The repo-relative file declaring Go method or package-level `qn`.
+        if (spec := self.go_methods.get(qn)) is not None:
+            return spec.file
+        path = self._go_declaring_path(qn)
+        return (
+            go_utils.rel_file(Path(path), self.type_inference.repo_path) if path else ""
+        )
 
     def _redirect_protocol_method(
         self, result: tuple[str, str] | None
@@ -7269,6 +7476,8 @@ class CallResolver:
                 return alias
             if self.function_registry.binds_non_method(class_qn, method_name):
                 return None
+        if found := self._go_variant_method(class_qn, method_name):
+            return found
         if class_qn not in self.class_inheritance:
             return None
         # Which class binds the name first decides whether a value hides
@@ -7278,6 +7487,22 @@ class CallResolver:
         if (order := self._binding_aware_mro(class_qn, method_name)) is not None:
             return self._resolve_inherited_along_mro(order, method_name)
         return self._resolve_inherited_breadth_first(class_qn, method_name)
+
+    def _go_variant_method(
+        self, class_qn: str, method_name: str
+    ) -> tuple[str, str] | None:
+        # A Go interface each build declares again has the methods of every
+        # build's declaration, its own and embedded; the call binds to the
+        # caller's builds at emission (`go_variant_callees`).
+        for variant in self.go_declaration_variants.get(class_qn, ()):
+            if variant == class_qn:
+                continue
+            variant_qn = f"{variant}{cs.SEPARATOR_DOT}{method_name}"
+            if variant_qn in self.function_registry:
+                return self.function_registry[variant_qn], variant_qn
+            if found := self._resolve_inherited_breadth_first(variant, method_name):
+                return found
+        return None
 
     def _resolve_inherited_along_mro(
         self, order: list[str], method_name: str
@@ -7295,7 +7520,9 @@ class CallResolver:
     def _resolve_inherited_breadth_first(
         self, class_qn: str, method_name: str
     ) -> tuple[str, str] | None:
-        bfs_queue = deque(self.class_inheritance.get(class_qn, []))
+        bfs_queue = deque(
+            self._with_go_variants(self.class_inheritance.get(class_qn, []))
+        )
         visited = set(bfs_queue)
 
         while bfs_queue:
@@ -7315,7 +7542,9 @@ class CallResolver:
                 )
 
             if parent_class_qn in self.class_inheritance:
-                for grandparent_qn in self.class_inheritance[parent_class_qn]:
+                for grandparent_qn in self._with_go_variants(
+                    self.class_inheritance[parent_class_qn]
+                ):
                     if grandparent_qn not in visited:
                         visited.add(grandparent_qn)
                         bfs_queue.append(grandparent_qn)
