@@ -13,7 +13,7 @@ and it never overrules a pair go/types proved.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from typing import NamedTuple
 
 from tree_sitter import Node, Parser
@@ -481,6 +481,139 @@ def implicit_implementations(
         if (type_qn, interface) not in pairs and in_some_build(type_qn, found):
             pairs[(type_qn, interface)] = None
     return list(pairs)
+
+
+def embedded_method_links(
+    own: Mapping[str, Mapping[GoMethodKey, str]],
+    bases: Mapping[str, Sequence[str]],
+    files: Mapping[str, Expr],
+) -> list[tuple[str, str]]:
+    """The declarations one interface's method set holds of one method in
+    one build, paired (#3360 review): a method an interface declares with
+    the nearest declaration of it down each interface it embeds
+    (`B interface { A; M() }`), and the declarations two embeds bring
+    together (`D interface { B; C }`, both declaring `M`). Go requires them
+    identical, so they are one method: renamed alone, one leaves the set
+    asking for both names, and a value of the embedded interface no longer
+    converts to the embedding one, even with no type implementing either.
+    `own` holds each interface's method qn per method; `bases`, every
+    interface each one may embed (one per build for a name each build
+    declares again); `files`, each one's file constraint. Two declarations
+    no one build compiles together are never paired.
+
+    One pass, embedded interfaces first. An interface declaring nothing, in
+    a file every build compiles, shares what it embeds, so a chain costs a
+    step per link."""
+    pairs: dict[tuple[str, str], None] = {}
+    nearest: dict[str, _Declarations] = {}
+    for interface in _embedded_first(bases, own.keys() | bases.keys()):
+        scope = files.get(interface, ALWAYS)
+        declared = own.get(interface) or {}
+        inherited = _merged_declarations(
+            [
+                _within(nearest[base], scope)
+                for base in bases.get(interface, ())
+                if base in nearest
+            ],
+            declared,
+            pairs,
+        )
+        for key, method_qn in declared.items():
+            pairs.update(
+                ((method_qn, other), None) for other, _ in inherited.get(key, ())
+            )
+        nearest[interface] = (
+            {**inherited, **{key: ((qn, scope),) for key, qn in declared.items()}}
+            if declared
+            else inherited
+        )
+    return list(pairs)
+
+
+# Per method, each nearest declaration of it and the builds it is that in.
+_Declarations = Mapping[GoMethodKey, tuple[tuple[str, Expr], ...]]
+
+
+def _embedded_first(
+    bases: Mapping[str, Sequence[str]], interfaces: Iterable[str]
+) -> Iterator[str]:
+    # Post-order on a stack of its own (a chain of thousands is valid Go).
+    # An embed of an interface on the current path is a cycle Go rejects,
+    # and is skipped.
+    done: set[str] = set()
+    for start in sorted(interfaces):
+        if start in done:
+            continue
+        walking = {start}
+        stack = [(start, iter(bases.get(start, ())))]
+        while stack:
+            interface, pending = stack[-1]
+            base = next(
+                (b for b in pending if b not in done and b not in walking), None
+            )
+            if base is not None:
+                walking.add(base)
+                stack.append((base, iter(bases.get(base, ()))))
+                continue
+            stack.pop()
+            walking.discard(interface)
+            done.add(interface)
+            yield interface
+
+
+def _within(found: _Declarations, scope: Expr) -> _Declarations:
+    # What an embed holds, seen from an interface whose file only `scope`'s
+    # builds compile: a declaration no such build holds drops out.
+    if scope == ALWAYS:
+        return found
+    kept: dict[GoMethodKey, tuple[tuple[str, Expr], ...]] = {}
+    for key, declarations in found.items():
+        held = tuple(
+            (qn, builds)
+            for qn, builds in ((qn, all_of((scope, w))) for qn, w in declarations)
+            if decide((builds,)) is not False
+        )
+        if held:
+            kept[key] = held
+    return kept
+
+
+def _merged_declarations(
+    found: list[_Declarations],
+    declared: Mapping[GoMethodKey, str],
+    pairs: dict[tuple[str, str], None],
+) -> _Declarations:
+    # The nearest declarations of each method down every embed. Where the
+    # interface does not declare the method itself, two of them one build
+    # may hold together are paired, unless an embed below paired them the
+    # other way round. An undecided constraint pairs: a rename that misses
+    # a declaration breaks a build, one more only renames it too.
+    if len(found) < 2:
+        return found[0] if found else {}
+    merged: dict[GoMethodKey, tuple[tuple[str, Expr], ...]] = {}
+    for each in found:
+        for key, declarations in each.items():
+            merged[key] = _joined(merged.get(key, ()), declarations)
+    for key, declarations in merged.items():
+        if key in declared:
+            continue
+        for index, (qn, builds) in enumerate(declarations):
+            pairs.update(
+                ((earlier, qn), None)
+                for earlier, before in declarations[:index]
+                if (qn, earlier) not in pairs and decide((before, builds)) is not False
+            )
+    return merged
+
+
+def _joined(
+    prior: tuple[tuple[str, Expr], ...], more: tuple[tuple[str, Expr], ...]
+) -> tuple[tuple[str, Expr], ...]:
+    # One entry per declaration, in the builds either path reaches it in.
+    builds = dict(prior)
+    for qn, extra in more:
+        builds[qn] = any_of((builds[qn], extra)) if qn in builds else extra
+    return tuple(builds.items())
 
 
 def covering(

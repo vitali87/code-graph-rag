@@ -426,6 +426,7 @@ class GoInterfaceMixin:
         types = self._go_implementer_types(owners)
         linked = self._link_implicit_implementations(pair_builds, compiler, types)
         self._link_go_overrides(owners.method_sets, checked_files, pair_builds)
+        self._link_go_embedded_methods(embeds, owners, files)
         self._record_go_pair_builds(pair_builds)
         self._record_go_implementers_unknown(full, pair_builds, types)
         if linked:
@@ -754,6 +755,39 @@ class GoInterfaceMixin:
                 shared[key],
                 None,
             )
+
+    def _link_go_embedded_methods(
+        self,
+        embeds: dict[str, tuple[go_ifaces.GoEmbedAlternatives, ...] | None],
+        owners: _GoMethodOwners,
+        files: dict[str, Expr],
+    ) -> None:
+        # An interface method and the declarations of it its embeds hold:
+        # what the generic override walks linked before they left Go's
+        # interfaces to this pass, now down every build's declaration of an
+        # embed and between two embeds that both declare it, in the builds
+        # holding both. The INHERITS bases come first: they hold an
+        # interface's resolved embeds even where another did not resolve.
+        registry = self.function_registry
+        bases: dict[str, list[str]] = {}
+        for interface_qn in self.go_interfaces:
+            if registry.get(interface_qn) != NodeType.INTERFACE:
+                continue
+            found = dict.fromkeys(self.class_inheritance.get(interface_qn, ()))
+            for alternatives in embeds.get(interface_qn) or ():
+                found.update(dict.fromkeys(base for base, _ in alternatives))
+            bases[interface_qn] = [
+                base for base in found if base not in cs.GO_BUILTIN_INTERFACE_METHODS
+            ]
+        own = {
+            interface_qn: {
+                key: qns[0]
+                for key, qns in owners.method_qns.get(interface_qn, {}).items()
+            }
+            for interface_qn in bases
+        }
+        for method_qn, other in go_ifaces.embedded_method_links(own, bases, files):
+            self._emit_go_override(method_qn, other, guessed=False)
 
     def _record_go_pair_builds(self, pair_builds: _GoPairBuilds) -> None:
         found: dict[tuple[str, str], Expr] = {}

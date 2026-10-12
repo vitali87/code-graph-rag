@@ -13,6 +13,10 @@ call reaches in each build; cgr's graph is then checked against it:
 - nothing a build proves missing (a heuristic edge is fine), except for an
   interface past cgr's cap on method-set alternatives (`Wide<n>`, n > 6),
   whose method set is unknown by design: those are counted apart;
+- an OVERRIDES edge between two interface methods joins two declarations
+  one interface's method set holds in some build, and the declarations
+  each interface's set holds of one method (its own, and the nearest one
+  down each embed), read from the files go/types compiled, are joined;
 - a rename either refuses and changes nothing, or keeps `go vet` (which
   type-checks every package and test file) passing on every build that
   passed; either way it leaves
@@ -27,7 +31,10 @@ method sets); a fourth go/types build sets every such tag. Some add a
 diamond of embeds 8 to 12 levels deep (`DA<k>` and `DB<k>` each embedding
 both of the level below), one method set per build at every level. Some
 add a chain of 400 or 600 embeds (`L0` embeds `L1`, ...), one method set
-per build at every link.
+per build at every link. Some add interfaces no type implements (`O<k>`),
+each embedding up to two before it and declaring `OM` again or not, one of
+them declared per build, with functions converting each to one embedding
+it: a rename of `OM` that misses a declaration breaks them.
 
 Run: `python -m evals.go_build_variants --cases 400 --seed 7`.
 """
@@ -44,6 +51,7 @@ import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from graphlib import TopologicalSorter
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, NamedTuple, cast
 from unittest.mock import MagicMock
@@ -143,6 +151,7 @@ def generate_case(
     wide: float = 0.0,
     deep: float = 0.0,
     long: float = 0.0,
+    only: float = 0.0,
 ) -> dict[str, str]:
     """One case's files, by repo-relative path: package `p` declaring I (and
     maybe K) per build, J embedding them (in `p`, or in `q` through the
@@ -172,12 +181,83 @@ def generate_case(
     for index in range(1, rng.randint(2, 4) + 1):
         files.update(_type_files(rng, root, pkg, index, case))
     files.update(_caller_files(rng, root, pkg, interfaces, case))
+    files.update(_extra_files(rng, root, case, (wide, deep, long, only)))
+    return files
+
+
+def _extra_files(
+    rng: random.Random, root: str, case: int, shares: tuple[float, float, float, float]
+) -> dict[str, str]:
+    # Each kind of extra a case adds, by the share of cases adding it: a
+    # `Wide<n>` interface, a diamond, a chain, interfaces no type implements.
+    wide, deep, long, only = shares
+    files: dict[str, str] = {}
     if wide and rng.random() < wide:
         files.update(_wide_files(root, case, rng.choice((4, 5, 6, 7, 8))))
     if deep and rng.random() < deep:
         files.update(_deep_files(root, case, rng.choice((8, 10, 12))))
     if long and rng.random() < long:
         files.update(_long_files(root, case, rng.choice((400, 600))))
+    if only and rng.random() < only:
+        files.update(_only_files(root, case, rng))
+    return files
+
+
+def _only_files(root: str, case: int, rng: random.Random) -> dict[str, str]:
+    """Interfaces alone, no type implementing any: O0 to O<n>, each embedding
+    up to two before it and declaring `OM` again half the time (always when
+    it embeds none), so each asks for `OM` alone. O0 may be declared once
+    per build, or the last one per build with different embeds. A function
+    converts each interface to one embedding it in every build, which
+    compiles only while every declaration of `OM` keeps one name, and each
+    one declaring `OM` in every build calls it."""
+    c, count = case, rng.randint(3, 6)
+    last = count - 1
+    embeds = {
+        k: sorted(rng.sample(range(k), rng.randint(0, min(2, k)))) for k in range(count)
+    }
+    declares = {k: not embeds[k] or rng.random() < 0.5 for k in range(count)}
+    split = {"none": None, "first": 0, "last": last}[
+        rng.choice(("none", "first", "last"))
+    ]
+    other = sorted(rng.sample(range(last), rng.randint(0, min(2, last))))
+    other_declares = not other or rng.random() < 0.5
+    if split == 0:
+        other, other_declares = [], True
+
+    def body(bases: list[int], declared: bool) -> str:
+        return "".join(f"\tO{j}\n" for j in bases) + (
+            f"\tOM_{c}()\n" if declared else ""
+        )
+
+    below: dict[int, set[int]] = {}
+    for k in range(count):
+        below[k] = set(embeds[k]).union(*(below[j] for j in embeds[k]))
+    calls = dict(declares)
+    if split == last:
+        below[last] &= set(other).union(*(below[j] for j in other))
+        calls[last] = declares[last] and other_declares
+    lines = [
+        f"type O{k} interface {{\n{body(embeds[k], declares[k])}}}\n"
+        for k in range(count)
+        if k != split
+    ]
+    for k in range(count):
+        if below[k]:
+            j = rng.choice(sorted(below[k]))
+            lines.append(f"func OC{k}_{j}(x O{j}) O{k} {{\n\treturn x\n}}\n")
+        if calls[k]:
+            lines.append(f"func OUse{k}(x O{k}) {{\n\tx.OM_{c}()\n}}\n")
+    files = {f"{root}/p/only.go": "package p\n\n" + "\n".join(lines)}
+    if split is not None:
+        files[f"{root}/p/o{split}_linux.go"] = (
+            f"package p\n\ntype O{split} interface {{\n"
+            f"{body(embeds[split], declares[split])}}}\n"
+        )
+        files[f"{root}/p/o{split}_other.go"] = (
+            f"//go:build !linux\n\npackage p\n\ntype O{split} interface {{\n"
+            f"{body(other, other_declares)}}}\n"
+        )
     return files
 
 
@@ -373,10 +453,11 @@ def write_repo(
     wide: float = 0.0,
     deep: float = 0.0,
     long: float = 0.0,
+    only: float = 0.0,
 ) -> dict[int, dict[str, str]]:
     rng = random.Random(seed)  # noqa: S311 - a reproducible generator, not a secret
     generated = {
-        case: generate_case(rng, case, wide, deep, long) for case in range(cases)
+        case: generate_case(rng, case, wide, deep, long, only) for case in range(cases)
     }
     root.mkdir(parents=True, exist_ok=True)
     (root / "go.mod").write_text(f"module {PROJECT}\n\ngo 1.22\n", encoding="utf-8")
@@ -574,6 +655,8 @@ def _graph(store: _StatefulIngestor) -> _Graph:
 @dataclass
 class Findings:
     pairs_supported: int = 0
+    # The joins the interface method groups of every build ask for.
+    interface_pairs_supported: int = 0
     # IMPLEMENTS edges carrying no heuristic label: go/types' word.
     proven_implements: int = 0
     false_implements: list[str] = field(default_factory=list)
@@ -709,13 +792,150 @@ def _owner(qn: str) -> str:
     return qn.rpartition(cs.SEPARATOR_DOT)[0]
 
 
-def compare(store: _StatefulIngestor, truth: dict[str, BuildFacts]) -> Findings:
+def compare(
+    store: _StatefulIngestor,
+    truth: dict[str, BuildFacts],
+    interfaces: dict[str, InterfaceTruth] | None = None,
+) -> Findings:
+    """`interfaces` holds what `interface_truth` reads per build."""
     graph = _graph(store)
     known = _Truth(graph, truth)
     findings = Findings()
     _compare_pairs(graph, known, findings)
+    _compare_interface_overrides(graph, interfaces or {}, findings)
     _compare_calls(graph, known, findings)
     return findings
+
+
+_GO_EMBED = re.compile(r"^\t(\w+(?:\.\w+)?)$", re.MULTILINE)
+
+
+class InterfaceTruth(NamedTuple):
+    """One build's interface method sets, read from the files it compiles
+    (as go/types listed them)."""
+
+    # Per interface and method, its own declaration and the nearest one
+    # down each embed, where that makes two or more, as method qns. Go
+    # requires them identical: they are one method there.
+    groups: list[tuple[str, ...]]
+    # Each interface -> the interfaces embedding it.
+    embedders: dict[str, list[str]]
+    # Every interface method the build declares.
+    declared: frozenset[str]
+
+    def together(self, first: str, second: str) -> bool:
+        """Whether one interface's method set holds both declarations."""
+        if (
+            _method_name(first) != _method_name(second)
+            or not {
+                first,
+                second,
+            }
+            <= self.declared
+        ):
+            return False
+        return bool(self._above(_owner(first)) & self._above(_owner(second)))
+
+    def _above(self, interface: str) -> set[str]:
+        found, pending = {interface}, [interface]
+        while pending:
+            for embedder in self.embedders.get(pending.pop(), ()):
+                if embedder not in found:
+                    found.add(embedder)
+                    pending.append(embedder)
+        return found
+
+
+def interface_truth(root: Path, checked: frozenset[str]) -> InterfaceTruth:
+    declared: dict[tuple[str, str], tuple[str, list[str], list[str]]] = {}
+    for rel in sorted(checked):
+        if not (root / rel).is_file():
+            continue
+        text = (root / rel).read_text(encoding="utf-8")
+        qn = f"{PROJECT}.{rel.removesuffix(cs.EXT_GO).replace('/', '.')}"
+        for name, body in _GO_INTERFACE.findall(text):
+            declared[(_directory(rel), name)] = (
+                f"{qn}.{name}",
+                _GO_EMBED.findall(body),
+                _GO_INTERFACE_METHOD.findall(body),
+            )
+    embeds = {
+        key: [
+            found for text in written if (found := _embedded(key[0], text)) in declared
+        ]
+        for key, (_, written, _) in declared.items()
+    }
+    embedders: dict[str, list[str]] = {}
+    for key, bases in embeds.items():
+        for base in bases:
+            embedders.setdefault(declared[base][0], []).append(declared[key][0])
+    nearest: dict[tuple[str, str], dict[str, set[str]]] = {}
+    groups: list[tuple[str, ...]] = []
+    for key in TopologicalSorter(embeds).static_order():
+        qn, _, methods = declared[key]
+        merged: dict[str, set[str]] = {}
+        for base in embeds[key]:
+            for name, found in nearest[base].items():
+                merged.setdefault(name, set()).update(found)
+        own = {name: {f"{qn}.{name}"} for name in methods}
+        groups.extend(
+            tuple(sorted(found | own.get(name, set())))
+            for name, found in sorted(merged.items())
+            if len(found | own.get(name, set())) > 1
+        )
+        nearest[key] = {**merged, **own}
+    return InterfaceTruth(
+        groups,
+        embedders,
+        frozenset(
+            f"{qn}.{name}" for qn, _, methods in declared.values() for name in methods
+        ),
+    )
+
+
+def _embedded(directory: str, text: str) -> tuple[str, str]:
+    # `I` in the interface's own package; `p.I` in the case's package `p`.
+    qualifier, dot, name = text.rpartition(".")
+    return (f"{_directory(directory)}/{qualifier}" if dot else directory, name)
+
+
+def _compare_interface_overrides(
+    graph: _Graph, interfaces: dict[str, InterfaceTruth], findings: Findings
+) -> None:
+    # An OVERRIDES edge between two interface methods must join two
+    # declarations one interface's method set holds in some build, and the
+    # declarations each groups (`InterfaceTruth.groups`) must be joined,
+    # through such edges, in the graph.
+    groups = {group for found in interfaces.values() for group in found.groups}
+    findings.interface_pairs_supported += sum(len(group) - 1 for group in groups)
+    joined: dict[str, str] = {}
+    for pair, labels in sorted(_labels(graph, "OVERRIDES").items()):
+        if not _between_interfaces(graph, pair):
+            continue
+        if not any(found.together(*pair) for found in interfaces.values()):
+            findings.false_overrides.append(f"{pair} {labels} (interfaces)")
+        _join(joined, *pair)
+    findings.missing_overrides.extend(
+        f"{group} (interfaces, not joined)"
+        for group in sorted(groups)
+        if len({_root(joined, qn) for qn in group}) > 1
+    )
+
+
+def _between_interfaces(graph: _Graph, pair: tuple[str, str]) -> bool:
+    return all(
+        graph.nodes.get(_owner(qn), ("", 0, 0, ""))[3] == "Interface" for qn in pair
+    )
+
+
+def _root(joined: dict[str, str], qn: str) -> str:
+    while joined.get(qn, qn) != qn:
+        qn = joined[qn]
+    return qn
+
+
+def _join(joined: dict[str, str], first: str, second: str) -> None:
+    joined[_root(joined, first)] = _root(joined, second)
 
 
 def _labels(graph: _Graph, rel: str) -> dict[tuple[str, str], list[str | None]]:
@@ -743,7 +963,11 @@ def _compare_pairs(graph: _Graph, known: _Truth, findings: Findings) -> None:
             findings.missing_overrides,
         ),
     ):
-        emitted = _labels(graph, rel)
+        emitted = {
+            pair: labels
+            for pair, labels in _labels(graph, rel).items()
+            if not _between_interfaces(graph, pair)
+        }
         supported = set().union(*per_build.values())
         findings.pairs_supported += len(supported)
         if rel == "IMPLEMENTS":
@@ -894,8 +1118,11 @@ def _assertions(
     return files
 
 
-_RENAMED = re.compile(r"(?:[ABCDN]|WN|W[AB]\d+|D[MN]\d+|LM)_\d+")
-_WIDE_METHOD = re.compile(r"WN_\d+")
+_RENAMED = re.compile(r"(?:[ABCDN]|WN|W[AB]\d+|D[MN]\d+|LM|OM)_\d+")
+# The methods a case renames half the time when it has them, as they are
+# few beside the others: a `Wide<n>` interface's, and the interface-only
+# hierarchy's.
+_FOCUSED = re.compile(r"(?:WN|OM)_\d+")
 
 
 def _rename_targets(graph: RecordedGraph, files: dict[str, str]) -> list[str]:
@@ -912,11 +1139,9 @@ def _rename_targets(graph: RecordedGraph, files: dict[str, str]) -> list[str]:
 
 
 def _pick(targets: list[str], rng: random.Random) -> str:
-    # A case with a `Wide<n>` interface renames one of its methods half the
-    # time, as they are few beside the others.
-    wide = [qn for qn in targets if _WIDE_METHOD.fullmatch(_method_name(qn))]
-    if wide and rng.random() < 0.5:
-        return rng.choice(wide)
+    focused = [qn for qn in targets if _FOCUSED.fullmatch(_method_name(qn))]
+    if focused and rng.random() < 0.5:
+        return rng.choice(focused)
     return rng.choice(targets)
 
 
@@ -1105,6 +1330,7 @@ class Report:
                 frontend: {
                     "failures": found.failures(),
                     "supported_pairs": found.pairs_supported,
+                    "interface_pairs": found.interface_pairs_supported,
                     "proven_implements": found.proven_implements,
                     "calls_checked": found.calls_checked,
                     "false_implements": len(found.false_implements),
@@ -1149,12 +1375,17 @@ def run(
     wide: float = 0.0,
     deep: float = 0.0,
     long: float = 0.0,
+    only: float = 0.0,
 ) -> Report:
     root = workdir / PROJECT
-    generated = write_repo(root, cases, seed, wide, deep, long)
+    generated = write_repo(root, cases, seed, wide, deep, long, only)
     truth = ground_truth(root, builds_for(generated))
+    interfaces = {
+        build: interface_truth(root, facts.checked) for build, facts in truth.items()
+    }
     findings = {
-        frontend: compare(index(root, frontend), truth) for frontend in frontends
+        frontend: compare(index(root, frontend), truth, interfaces)
+        for frontend in frontends
     }
     rng = random.Random(seed)  # noqa: S311 - a reproducible generator, not a secret
     picked = rng.sample(sorted(generated), min(renames, cases))
@@ -1180,6 +1411,10 @@ def main(
     long: Annotated[
         float, typer.Option(help="Share of cases adding a long chain of embeds.")
     ] = 0.05,
+    only: Annotated[
+        float,
+        typer.Option(help="Share of cases adding interfaces no type implements."),
+    ] = 0.1,
     details: Annotated[bool, typer.Option(help="Print every finding.")] = False,
 ) -> None:
     from loguru import logger
@@ -1187,7 +1422,14 @@ def main(
     logger.remove()
     with tempfile.TemporaryDirectory() as tmp:
         report = run(
-            cases, seed, Path(tmp), renames=renames, wide=wide, deep=deep, long=long
+            cases,
+            seed,
+            Path(tmp),
+            renames=renames,
+            wide=wide,
+            deep=deep,
+            long=long,
+            only=only,
         )
     typer.echo(json.dumps(report.summary(), indent=2, default=str))
     if details:

@@ -5162,6 +5162,119 @@ def test_a_long_chain_into_a_diamond_indexes(
     assert "proj.p.t.T.M" in _calls_from(mock_ingestor, "proj.p.call.Call")
 
 
+# Interfaces alone, no type implementing any: each conversion compiles only
+# while every declaration of `M` keeps one name (Greptile, PR #3360).
+_INTERFACE_ONLY: dict[str, dict[str, str]] = {
+    "redeclare": {
+        "p/i.go": (
+            "package p\n\ntype A interface {\n\tM()\n}\n\n"
+            "type B interface {\n\tA\n\tM()\n}\n\n"
+            "func F(a A) B {\n\treturn a\n}\n\n"
+            "func Use(b B) {\n\tb.M()\n}\n"
+        ),
+    },
+    "chain": {
+        "p/i.go": (
+            "package p\n\ntype A interface {\n\tM()\n}\n\n"
+            "type B interface {\n\tA\n\tM()\n}\n\n"
+            "type C interface {\n\tB\n\tM()\n}\n\n"
+            "func F(a A) C {\n\treturn a\n}\n"
+        ),
+    },
+    "chain-gap": {
+        "p/i.go": (
+            "package p\n\ntype A interface {\n\tM()\n}\n\n"
+            "type B interface {\n\tA\n}\n\n"
+            "type C interface {\n\tB\n\tM()\n}\n\n"
+            "func F(a A) C {\n\treturn a\n}\n"
+        ),
+    },
+    "siblings": {
+        "p/i.go": (
+            "package p\n\ntype B interface {\n\tM()\n}\n\n"
+            "type C interface {\n\tM()\n}\n\n"
+            "type D interface {\n\tB\n\tC\n}\n\n"
+            "func F(b B) D {\n\treturn b\n}\n\n"
+            "func G(c C) D {\n\treturn c\n}\n"
+        ),
+    },
+    "diamond-redeclare": {
+        "p/i.go": (
+            "package p\n\ntype B interface {\n\tM()\n}\n\n"
+            "type C interface {\n\tM()\n}\n\n"
+            "type D interface {\n\tB\n\tC\n\tM()\n}\n\n"
+            "func F(c C) D {\n\treturn c\n}\n"
+        ),
+    },
+    "diamond": {
+        "p/i.go": (
+            "package p\n\ntype A interface {\n\tM()\n}\n\n"
+            "type B interface {\n\tA\n\tM()\n}\n\n"
+            "type C interface {\n\tA\n\tM()\n}\n\n"
+            "type D interface {\n\tB\n\tC\n\tM()\n}\n\n"
+            "func F(a A) D {\n\treturn a\n}\n"
+        ),
+    },
+    "per-build": {
+        "p/a_linux.go": "package p\n\ntype A interface {\n\tM()\n}\n",
+        "p/a_other.go": (
+            "//go:build !linux\n\npackage p\n\ntype A interface {\n\tM()\n}\n"
+        ),
+        "p/b.go": (
+            "package p\n\ntype B interface {\n\tA\n\tM()\n}\n\n"
+            "func F(a A) B {\n\treturn a\n}\n"
+        ),
+    },
+}
+
+
+@pytest.mark.parametrize(
+    ("shape", "target", "frontend"),
+    [
+        ("redeclare", "p.i.A.M", "treesitter"),
+        ("redeclare", "p.i.B.M", "treesitter"),
+        ("redeclare", "p.i.A.M", "gotypes"),
+        ("chain", "p.i.C.M", "treesitter"),
+        ("chain-gap", "p.i.A.M", "treesitter"),
+        ("siblings", "p.i.B.M", "treesitter"),
+        ("diamond-redeclare", "p.i.C.M", "treesitter"),
+        ("diamond", "p.i.A.M", "treesitter"),
+        ("per-build", "p.a_other.A.M", "treesitter"),
+        ("per-build", "p.a_other.A.M", "gotypes"),
+    ],
+)
+def test_an_interface_only_hierarchy_renames_every_declaration(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    shape: str,
+    target: str,
+    frontend: str,
+) -> None:
+    # The generic override walk linked `B.M` to `A.M` where B embeds A and
+    # declares M again; leaving Go's interfaces out of it (for the chain's
+    # sake) left B.M behind a rename of A.M with no type to tie them, and F
+    # stopped compiling. Siblings two embeds bring together, and every
+    # build's declaration of an embed, were never all linked.
+    monkeypatch.setattr(
+        gu.settings,
+        "GO_FRONTEND",
+        cs.GoFrontend.GOTYPES if frontend == "gotypes" else cs.GoFrontend.TREESITTER,
+    )
+    goos = ("linux", "windows") if shape == "per-build" else ("linux",)
+    files = _INTERFACE_ONLY[shape]
+    root = _variant_repo(temp_repo / "proj", files)
+    _go_checks_on(root, goos)
+    graph = _rename_index(root, mock_ingestor)
+
+    report = rename(root, _query(graph), graph.project, f"proj.{target}", "N")
+    assert report.applied, report.message
+    for rel in files:
+        text = (root / rel).read_text(encoding="utf-8")
+        assert "M()" not in text, (rel, text)
+    _go_checks_on(root, goos)
+
+
 def test_a_rename_hierarchy_of_many_members_is_collected_linearly() -> None:
     # The rename hierarchy asked a list whether it had seen each member:
     # quadratic in a hierarchy as long as a long chain's. 50,000 members,

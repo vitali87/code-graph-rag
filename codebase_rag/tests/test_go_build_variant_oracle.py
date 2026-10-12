@@ -40,6 +40,30 @@ def test_generated_build_variants_match_go_types(tmp_path: Path, seed: int) -> N
     assert not any(result.touched for result in report.renames)
 
 
+def test_interfaces_no_type_implements_rename_whole(tmp_path: Path) -> None:
+    # Interfaces alone (`--only`): a method one declares again over an embed,
+    # or two embeds bring together, is one method. Each rename of it takes
+    # every declaration or refuses (PR #3360 review); the graph joins them.
+    if shutil.which("go") is None or not go_frontend_available():
+        pytest.skip("go toolchain not available")
+    report = oracle.run(
+        cases=4,
+        seed=7,
+        workdir=tmp_path,
+        frontends=("treesitter",),
+        renames=3,
+        only=1.0,
+    )
+    found = report.findings["treesitter"]
+    assert found.failures() == 0, vars(found)
+    assert found.interface_pairs_supported
+    assert sum("OM_" in result.target for result in report.renames) >= 2
+    assert all(result.applied or result.refused for result in report.renames)
+    assert not any(result.changed_on_refusal for result in report.renames)
+    assert not any(result.broke for result in report.renames)
+    assert not any(result.touched for result in report.renames)
+
+
 def test_the_oracle_counts_an_interface_past_the_cap_apart() -> None:
     # Wide7 has 2**7 method sets: what a build proves through it is unknown
     # to cgr by design. Wide6, at 64, is checked like any other.

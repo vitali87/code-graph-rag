@@ -428,3 +428,92 @@ def test_negations_cancel_and_complements_decide() -> None:
     assert negated == negate(linux)
     assert any_of((linux, negate(linux))) == ALWAYS
     assert all_of((linux, negate(linux))) == NEVER
+
+
+# --- an interface method's declarations down its embeds (PR #3360) ----------
+
+
+def _links(
+    own: dict[str, dict[str, str]],
+    bases: dict[str, list[str]],
+    files: dict[str, Expr] | None = None,
+) -> set[tuple[str, str]]:
+    # Exported names only: each method's key is its name.
+    return set(
+        go_ifaces.embedded_method_links(
+            {
+                interface: {go_ifaces.method_key(name, "p"): qn}
+                for interface, methods in own.items()
+                for name, qn in methods.items()
+            },
+            bases,
+            files or {},
+        )
+    )
+
+
+@pytest.mark.parametrize("declaring", ["every", "ends"])
+def test_a_chain_of_redeclarations_links_each_link_once(declaring: str) -> None:
+    # I0 embeds I1, ..., each declaring M again, or only the two ends: one
+    # pair per link, or one for the chain, in a step per link.
+    links = 10_000
+    own = {
+        f"I{k}": {"M": f"I{k}.M"}
+        for k in range(links)
+        if declaring == "every" or k in (0, links - 1)
+    }
+    bases = {f"I{k}": [f"I{k + 1}"] for k in range(links - 1)}
+    started = time.monotonic()
+    found = _links(own, bases)
+    assert time.monotonic() - started < 5
+    if declaring == "every":
+        assert found == {(f"I{k}.M", f"I{k + 1}.M") for k in range(links - 1)}
+    else:
+        assert found == {("I0.M", f"I{links - 1}.M")}
+
+
+def test_embeds_bringing_one_method_together_are_linked_once() -> None:
+    # D embeds B and C. B declares M again over A; C only embeds A; E
+    # declares M beside F, which does too. The pair B.M -> A.M is not also
+    # made the other way round where D meets A.M through C.
+    own = {
+        "A": {"M": "A.M"},
+        "B": {"M": "B.M"},
+        "E": {"M": "E.M"},
+        "F": {"M": "F.M"},
+    }
+    bases = {"B": ["A"], "C": ["A"], "D": ["B", "C"], "G": ["E", "F"]}
+    assert _links(own, bases) == {("B.M", "A.M"), ("E.M", "F.M")}
+
+
+def test_unexported_methods_of_two_packages_are_two_methods() -> None:
+    own = {
+        "p.A": {go_ifaces.method_key("m", "p"): "p.A.m"},
+        "q.B": {go_ifaces.method_key("m", "q"): "q.B.m"},
+    }
+    assert go_ifaces.embedded_method_links(own, {"q.B": ["p.A"]}, {}) == []
+
+
+def test_an_embed_cycle_ends() -> None:
+    # Go rejects it; the walk skips the embed that closes it (B's, as it
+    # starts from A).
+    own = {"A": {"M": "A.M"}, "B": {"M": "B.M"}}
+    assert _links(own, {"A": ["B"], "B": ["A"]}) == {("A.M", "B.M")}
+
+
+def test_two_builds_declarations_are_paired_only_where_one_build_holds_both() -> None:
+    # J embeds I, which i_linux.go and i_windows.go each declare with M: no
+    # build holds both, so they are not paired. B (in a file every build
+    # compiles) declares M over I: it is either one's. W, in a Windows
+    # file, declares M over I too: only Windows' I is W's.
+    linux = name_constraint("i_linux.go")
+    windows = name_constraint("i_windows.go")
+    own = {"IL": {"M": "IL.M"}, "IW": {"M": "IW.M"}, "B": {"M": "B.M"}}
+    own["W"] = {"M": "W.M"}
+    bases = {"J": ["IL", "IW"], "B": ["IL", "IW"], "W": ["IL", "IW"]}
+    files = {"IL": linux, "IW": windows, "W": windows}
+    assert _links(own, bases, files) == {
+        ("B.M", "IL.M"),
+        ("B.M", "IW.M"),
+        ("W.M", "IW.M"),
+    }
