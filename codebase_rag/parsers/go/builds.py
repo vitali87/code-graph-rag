@@ -117,11 +117,14 @@ _TAG_NAME = re.compile(r"[A-Za-z0-9_.]+")
 class Expr(NamedTuple):
     """A constraint: a tag (`op` "tag", `name` set), its negation, or an
     all-of ("and") or any-of ("or") of `parts`. An empty all-of holds in
-    every build."""
+    every build. `size` counts its nodes and `depth` its nesting, which
+    `all_of`, `any_of` and `negate` keep (they build every compound one)."""
 
     op: str
     name: str = ""
     parts: tuple[Expr, ...] = ()
+    size: int = 1
+    depth: int = 1
 
 
 ALWAYS = Expr("and")
@@ -131,30 +134,71 @@ NEVER = Expr("or")
 # Every decision resting on it is unknown, and an unknown decision links
 # nothing and calls nothing exact.
 UNKNOWN = Expr("unknown")
+# A constraint built up past this many nodes, or nested past this deep, is
+# UNKNOWN too (#3360 review): the builds an interface inherits through a
+# long chain of per-build embeds must not grow without end, nor nest past
+# what the decision's walk and Python's own hashing recurse through.
+_MAX_EXPR_SIZE = 4096
+_MAX_EXPR_DEPTH = 200
 
 
 def _tag(name: str) -> Expr:
     return Expr("tag", name)
 
 
+def _compound(op: str, parts: tuple[Expr, ...]) -> Expr:
+    size = 1 + sum(part.size for part in parts)
+    depth = 1 + max(part.depth for part in parts)
+    if size > _MAX_EXPR_SIZE or depth > _MAX_EXPR_DEPTH:
+        return UNKNOWN
+    return Expr(op, parts=parts, size=size, depth=depth)
+
+
 def all_of(parts: Iterable[Expr]) -> Expr:
     """Every one of `parts`."""
     kept = _flat("and", parts, ALWAYS)
-    if NEVER in kept:
+    if NEVER in kept or _complementary(kept):
         return NEVER
     if UNKNOWN in kept:
         return UNKNOWN
-    return kept[0] if len(kept) == 1 else Expr("and", parts=kept)
+    if len(kept) < 2:
+        return kept[0] if kept else ALWAYS
+    return _compound("and", kept)
 
 
 def any_of(parts: Iterable[Expr]) -> Expr:
-    """One of `parts`."""
+    """One of `parts`. What every one of them asks for is asked for once
+    beside the rest (`B && linux || B && !linux` is `B`), so the builds an
+    interface's method set merges across embeds stay as small as they are."""
     kept = _flat("or", parts, NEVER)
-    if ALWAYS in kept:
+    if ALWAYS in kept or _complementary(kept):
         return ALWAYS
     if UNKNOWN in kept:
         return UNKNOWN
-    return kept[0] if len(kept) == 1 else Expr("or", parts=kept)
+    if len(kept) < 2:
+        return kept[0] if kept else NEVER
+    shared = [
+        part
+        for part in _conjuncts(kept[0])
+        if all(part in _conjuncts(other) for other in kept[1:])
+    ]
+    if not shared:
+        return _compound("or", kept)
+    rest = any_of(
+        all_of(part for part in _conjuncts(option) if part not in shared)
+        for option in kept
+    )
+    return all_of((*shared, rest))
+
+
+def _conjuncts(part: Expr) -> tuple[Expr, ...]:
+    return part.parts if part.op == "and" and part != ALWAYS else (part,)
+
+
+def _complementary(kept: tuple[Expr, ...]) -> bool:
+    # A part and its negation both.
+    present = set(kept)
+    return any(part.op == "not" and part.parts[0] in present for part in kept)
 
 
 def _flat(op: str, parts: Iterable[Expr], unit: Expr) -> tuple[Expr, ...]:
@@ -177,7 +221,9 @@ def negate(part: Expr) -> Expr:
         return ALWAYS
     if part == UNKNOWN:
         return UNKNOWN
-    return Expr("not", parts=(part,))
+    if part.op == "not":
+        return part.parts[0]
+    return _compound("not", (part,))
 
 
 _all = all_of

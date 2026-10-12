@@ -58,7 +58,10 @@ def hierarchy(
     # declaration of one Go method).
     owns = graph_query._owner_check(fetch_all, project)
     edges: dict[str, list[tuple[str, bool]]] = {}
-    seen: list[str] = [qn]
+    # `found` keeps the members in the order reached, `seen` answers
+    # membership: a list alone was quadratic in a large hierarchy.
+    found: list[str] = [qn]
+    seen = {qn}
     frontier = [qn]
     while frontier:
         current = frontier.pop()
@@ -67,9 +70,10 @@ def hierarchy(
         ]
         for other, _guessed in edges[current]:
             if other not in seen:
-                seen.append(other)
+                seen.add(other)
+                found.append(other)
                 frontier.append(other)
-    return Hierarchy(seen, frozenset(seen) - _proven_reach(qn, edges))
+    return Hierarchy(found, frozenset(found) - _proven_reach(qn, edges))
 
 
 def _override_edges(

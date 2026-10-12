@@ -197,9 +197,8 @@ def _hierarchy(
             else []
         ),
     )
-    seen: list[str] = [qn, *parts]
-    seen += [m for m in found.members if m not in seen]
-    return Hierarchy(seen, found.guessed - set(parts))
+    members = list(dict.fromkeys([qn, *parts, *found.members]))
+    return Hierarchy(members, found.guessed - set(parts))
 
 
 def _go_build_variants(

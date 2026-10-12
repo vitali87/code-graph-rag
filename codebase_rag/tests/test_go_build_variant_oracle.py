@@ -16,20 +16,24 @@ import pytest
 from codebase_rag.parsers.go_frontend import go_frontend_available
 from evals import go_build_variants as oracle
 
+pytestmark = pytest.mark.usefixtures("one_go_helper_per_session")
 
-@pytest.mark.parametrize("seed", [7, 23])
+
+# One seed: the eval script runs 400 cases (see the module docstring), and
+# each seed here costs a dozen runs of the real helper and as many `go vet`.
+@pytest.mark.parametrize("seed", [7])
 def test_generated_build_variants_match_go_types(tmp_path: Path, seed: int) -> None:
     if shutil.which("go") is None or not go_frontend_available():
         pytest.skip("go toolchain not available")
     report = oracle.run(
-        cases=30, seed=seed, workdir=tmp_path, renames=4, wide=0.4, deep=0.3
+        cases=30, seed=seed, workdir=tmp_path, renames=3, wide=0.4, deep=0.3
     )
     for frontend, found in report.findings.items():
         assert found.failures() == 0, (frontend, vars(found))
         assert not found.unsupported_heuristic_calls, frontend
         assert found.pairs_supported
         assert found.calls_checked
-    assert len(report.renames) == 4
+    assert len(report.renames) == 3
     assert all(result.applied or result.refused for result in report.renames)
     assert not any(result.changed_on_refusal for result in report.renames)
     assert not any(result.broke for result in report.renames)

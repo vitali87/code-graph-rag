@@ -320,6 +320,26 @@ def _isolate_cgr_home(
     return home
 
 
+@pytest.fixture(scope="session")
+def _shared_go_helper_cache(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return tmp_path_factory.mktemp("go-helper-shared")
+
+
+@pytest.fixture
+def one_go_helper_per_session(
+    _shared_go_helper_cache: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """The go/types helper built once per test session (per xdist worker)
+    for the tests that use it: each test's fresh CGR_HOME (above) made each
+    one rebuild it, a `go build` and a link apiece, slowest on Windows.
+    Tests of the helper's own build and cache keep their isolation by not
+    using this."""
+    from codebase_rag.parsers.go_frontend import frontend
+
+    monkeypatch.setattr(frontend, "_cache_dir", lambda: _shared_go_helper_cache)
+    return _shared_go_helper_cache
+
+
 # What `shutil.rmtree` passes to `onexc` besides the removals. None of these
 # can be re-called with a single path argument: `os.open` needs `flags`,
 # `os.close` needs a descriptor, and `os.path.islink`/`os.scandir`/`os.lstat`

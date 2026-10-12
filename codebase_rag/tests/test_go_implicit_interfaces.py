@@ -10,11 +10,14 @@ go/types frontend off, which is what most installs run.
 
 from __future__ import annotations
 
+import copy
+import hashlib
 import os
 import re
 import shutil
 import subprocess
 import sys
+import time
 from collections.abc import Iterable
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -35,6 +38,12 @@ from codebase_rag.tests.test_rename_op import RecordedGraph, _write
 from codebase_rag.tests.test_rename_op import _index as _rename_index
 from codebase_rag.utils import qn_markers
 from evals.cgr_graph import _StatefulIngestor
+
+# Every go/types test here shares one helper build per session, one helper
+# run per tree (`_real_go_frontend`) and one `go vet` per tree and GOOS.
+pytestmark = pytest.mark.usefixtures(
+    "one_go_helper_per_session", "_one_real_go_run_per_tree", "_shared_vet_cache"
+)
 
 
 def _query(graph: RecordedGraph) -> QueryFn:
@@ -2095,15 +2104,48 @@ def _real_gotypes_or_skip(root: Path) -> None:
     _real_gotypes_files_or_skip(root, {"shapes.go"})
 
 
+# The real helper's facts, by the Go sources they were read from (paths
+# relative to the module), $GOOS and the directories left out: one run per
+# tree a worker indexes, where a fixture shared across parametrizations, a
+# precondition check and the index after it, and a sync and the clean index
+# it is compared with each ran the helper again. Its facts hold relative
+# paths only, and a copy is handed out each time.
+_REAL_FACTS: dict[tuple[str, str, frozenset[str]], GoSemanticFacts] = {}
+
+
+def _real_go_frontend(
+    root: Path, ignored_dirs: frozenset[str] = cs.IGNORE_PATTERNS
+) -> GoSemanticFacts:
+    from codebase_rag.parsers.go_frontend import frontend
+
+    key = (_go_sources_digest(root), os.environ.get("GOOS", ""), ignored_dirs)
+    if key not in _REAL_FACTS:
+        _REAL_FACTS[key] = frontend.run_go_frontend(root, ignored_dirs=ignored_dirs)
+    return copy.deepcopy(_REAL_FACTS[key])
+
+
 def _real_gotypes_files_or_skip(root: Path, checked: set[str]) -> None:
-    from codebase_rag.parsers.go_frontend import go_frontend_available, run_go_frontend
+    from codebase_rag.parsers.go_frontend import go_frontend_available
 
     if shutil.which("go") is None or not go_frontend_available():
         pytest.skip("go toolchain not available")
-    facts = run_go_frontend(root)
+    facts = _real_go_frontend(root)
     if facts.analysed_modules != (".",):
         pytest.skip("gotypes frontend could not build in this environment")
     assert facts.checked_files == checked
+
+
+@pytest.fixture
+def _one_real_go_run_per_tree(monkeypatch: pytest.MonkeyPatch) -> None:
+    from codebase_rag.parsers.frontends import go as go_frontend
+
+    monkeypatch.setattr(
+        go_frontend,
+        "run_go_frontend",
+        lambda repo_path, ignored_dirs=cs.IGNORE_PATTERNS: _real_go_frontend(
+            Path(repo_path), frozenset(ignored_dirs)
+        ),
+    )
 
 
 def _analysed_goos() -> str:
@@ -3606,19 +3648,9 @@ def _shadow_repo(root: Path, name: str, files: dict[str, str]) -> Path:
 
 
 def _go_checks(root: Path) -> None:
-    # `go vet` type-checks the test packages as well, which `go build` skips.
-    if (go := shutil.which("go")) is None:
-        return
-    for command in ("build", "vet"):
-        done = subprocess.run(
-            [go, command, "./..."],
-            cwd=root,
-            capture_output=True,
-            text=True,
-            encoding=cs.ENCODING_UTF8,
-            check=False,
-        )
-        assert done.returncode == 0, (command, done.stderr)
+    # `go vet` on the host's build: it type-checks the test packages as
+    # well, which `go build` skips.
+    _go_checks_on(root, ("",))
 
 
 @pytest.mark.parametrize("name", ["error", "any"])
@@ -3982,28 +4014,58 @@ def _variant_repo(root: Path, files: dict[str, str]) -> Path:
     return root
 
 
+# Where `_go_checks_on` marks the (sources, GOOS) pairs it found compiling,
+# shared by every xdist worker of the session.
+_VETTED: list[Path] = []
+
+
+@pytest.fixture
+def _shared_vet_cache(tmp_path_factory: pytest.TempPathFactory) -> None:
+    base = tmp_path_factory.getbasetemp()
+    shared = base.parent if os.environ.get("PYTEST_XDIST_WORKER") else base
+    _VETTED[:] = [shared / "go-vetted"]
+    _VETTED[0].mkdir(exist_ok=True)
+
+
+def _go_sources_digest(root: Path) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob("*")):
+        if path.suffix == cs.EXT_GO or path.name == "go.mod":
+            digest.update(path.relative_to(root).as_posix().encode())
+            digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
 def _go_checks_on(root: Path, goos: tuple[str, ...] = ("linux", "windows")) -> None:
-    # `go build` and `go vet` for each GOOS: a rename must leave every build
-    # that compiled compiling.
+    # `go vet` for each GOOS: a rename must leave every build that compiled
+    # compiling, and vet type-checks every package and every test file (a
+    # `go build` of these libraries added a second compile and nothing
+    # more). Sources already vetted for a GOOS in this session, as a
+    # parametrized fixture is, are not vetted again.
     if (go := shutil.which("go")) is None:
         return
+    digest = _go_sources_digest(root)
     for target in goos:
-        for command in ("build", "vet"):
-            done = subprocess.run(
-                [go, command, "./..."],
-                cwd=root,
-                capture_output=True,
-                text=True,
-                encoding=cs.ENCODING_UTF8,
-                check=False,
-                env={
-                    **os.environ,
-                    "GOOS": target,
-                    "GOARCH": "amd64",
-                    "CGO_ENABLED": "0",
-                },
-            )
-            assert done.returncode == 0, (target, command, done.stderr)
+        marker = _VETTED[0] / f"{digest}-{target or 'host'}" if _VETTED else None
+        if marker is not None and marker.exists():
+            continue
+        done = subprocess.run(
+            [go, "vet", "./..."],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            encoding=cs.ENCODING_UTF8,
+            check=False,
+            # "" is the host's build.
+            env=(
+                {**os.environ, "GOOS": target, "GOARCH": "amd64", "CGO_ENABLED": "0"}
+                if target
+                else None
+            ),
+        )
+        assert done.returncode == 0, (target, done.stderr)
+        if marker is not None:
+            marker.touch()
 
 
 @pytest.mark.parametrize("style", sorted(_VARIANT_STYLES))
@@ -4986,6 +5048,146 @@ def test_a_diamond_of_embeds_is_walked_once_per_interface(
     assert f"proj.p.t.T.M{top}" in _calls_from(mock_ingestor, "proj.p.call.Call")
 
 
+# --- a long chain of embeds indexes (Greptile, PR #3360) ----------------------
+
+
+def _chain(links: int, order: str) -> dict[str, str]:
+    # `forward`: I0 embeds I1, declared after it, ... and the last asks for
+    # M(); `backward`: each embeds the one declared before it.
+    decls = []
+    for k in range(links):
+        below = k + 1 if order == "forward" else k - 1
+        body = "\tM()\n" if below in (-1, links) else f"\tI{below}\n"
+        decls.append(f"type I{k} interface {{\n{body}}}\n")
+    top = "I0" if order == "forward" else f"I{links - 1}"
+    return {
+        "p/chain.go": "package p\n\n" + "\n".join(decls),
+        "p/t.go": f"package p\n\ntype T struct{{}}\n\nfunc (T) M() {{}}\n\nvar _ {top} = T{{}}\n",
+        "p/call.go": f"package p\n\nfunc Call(i {top}) {{\n\ti.M()\n}}\n",
+        "other/other.go": "package other\n\nfunc Other() {}\n",
+    }
+
+
+@pytest.mark.parametrize("sync", ["fresh", "incremental"])
+@pytest.mark.parametrize("order", ["forward", "backward"])
+def test_a_long_chain_of_embeds_indexes(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch, order: str, sync: str
+) -> None:
+    # The method-set walk took three Python frames per embed: a chain of
+    # 400 interfaces declared before the ones they embed raised
+    # RecursionError, and the whole index failed. The walk keeps its own
+    # stack now; each interface's set is combined once, and the generic
+    # override walks, quadratic up a chain, leave Go's interfaces to
+    # link_go_interfaces.
+    from codebase_rag.parsers.class_ingest import method_override
+
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    # One chain of 5000 links; the others, 1500, are still five times what
+    # overflowed.
+    links = 5000 if (order, sync) == ("forward", "fresh") else 1500
+    combined: list[int] = []
+    combine = go_ifaces._combined
+
+    def counted(
+        sets: list[go_ifaces.GoBuildSet], options: list[go_ifaces.GoBuildSet]
+    ) -> list[go_ifaces.GoBuildSet]:
+        combined.append(1)
+        return combine(sets, options)
+
+    walked: list[str] = []
+    linearized = method_override._linearized_ancestors
+
+    def linearize(class_qn: str, inheritance: dict[str, list[str]]) -> list[str]:
+        walked.append(class_qn)
+        return linearized(class_qn, inheritance)
+
+    monkeypatch.setattr(go_ifaces, "_combined", counted)
+    monkeypatch.setattr(method_override, "_linearized_ancestors", linearize)
+    files = _chain(links, order)
+    root = _variant_repo(temp_repo / "proj", files)
+    store = _StatefulIngestor()
+    updater = _go_updater(store, root)
+    started = time.monotonic()
+    updater.run(force=True)
+    if sync == "incremental":
+        cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
+        path = root / "other" / "other.go"
+        path.write_text(files["other/other.go"] + "// synced\n", encoding="utf-8")
+        os.utime(path, (cache_mtime + 1, cache_mtime + 1))
+        combined.clear()
+        started = time.monotonic()
+        _go_updater(store, root).run(force=False)
+    elapsed = time.monotonic() - started
+    assert len(combined) <= links
+    assert [qn for qn in walked if qn.startswith("proj.p.chain.")] == []
+    assert elapsed < 60, elapsed
+    top = "I0" if order == "forward" else f"I{links - 1}"
+    edges = _interface_edges(store)
+    assert ("proj.p.t.T", "IMPLEMENTS", f"proj.p.chain.{top}", "heuristic") in edges
+    assert ("proj.p.call.Call", "CALLS", "proj.p.t.T.M", "heuristic") in edges
+
+
+def test_a_long_chain_of_embeds_indexes_with_go_types(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The same chain, 600 links, read by the real go/types helper first.
+    files = _chain(600, "forward")
+    root = _variant_repo(temp_repo / "proj", files)
+    _real_gotypes_files_or_skip(root, set(files))
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="go")
+    implements = _labels(mock_ingestor, cs.RelationshipType.IMPLEMENTS)
+    assert implements[("proj.p.t.T", "proj.p.chain.I0")] is None
+    assert "proj.p.t.T.M" in _calls_from(mock_ingestor, "proj.p.call.Call")
+
+
+def test_a_long_chain_into_a_diamond_indexes(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 1500 links feeding the bottom of a 12-level diamond. Not handed to the
+    # Go toolchain, whose own type checker takes minutes over this shape.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    files = _chain(1500, "forward")
+    diamond = _diamond(12)
+    files["p/d.go"] = diamond["p/d.go"].replace(
+        "type A0 interface{ M0() }", "type A0 interface {\n\tI0\n\tM0()\n}"
+    )
+    files["p/t.go"] = diamond["p/t.go"] + "\nfunc (T) M() {}\n\nvar _ A11 = T{}\n"
+    files["p/call.go"] = "package p\n\nfunc Call(a A11) {\n\ta.M()\n}\n"
+    root = _variant_repo(temp_repo / "proj", files)
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="go")
+    implements = _labels(mock_ingestor, cs.RelationshipType.IMPLEMENTS)
+    assert ("proj.p.t.T", "proj.p.d.A11") in implements
+    assert ("proj.p.t.T", "proj.p.chain.I1499") in implements
+    assert "proj.p.t.T.M" in _calls_from(mock_ingestor, "proj.p.call.Call")
+
+
+def test_a_rename_hierarchy_of_many_members_is_collected_linearly() -> None:
+    # The rename hierarchy asked a list whether it had seen each member:
+    # quadratic in a hierarchy as long as a long chain's. 50,000 members,
+    # each overriding the next.
+    from codebase_rag import cypher_queries as cq
+    from codebase_rag.editing.sites import hierarchy
+
+    members = 50_000
+
+    def fetch_all(query: str, params: dict | None) -> list[dict]:
+        if query != cq.CYPHER_GRAPH_OVERRIDES:
+            return []
+        k = int(str((params or {})[cs.KEY_QN]).rpartition("m")[2])
+        return [
+            {cs.KEY_QUALIFIED_NAME: f"proj.p.m{other}", cs.KEY_RESOLUTION: None}
+            for other in (k - 1, k + 1)
+            if 0 <= other < members
+        ]
+
+    started = time.monotonic()
+    found = hierarchy(fetch_all, "proj", "proj.p.m0")
+    assert time.monotonic() - started < 10
+    assert len(found.members) == members
+    assert found.guessed == frozenset()
+
+
 # --- a license comment before the build line (Greptile, PR #3360) ------------
 
 _LICENSES = {
@@ -5310,8 +5512,9 @@ def test_the_implementers_unknown_mark_travels_in_a_protobuf_export(
     assert marks["proj.p.e1b.E1"] == ""
 
 
-@pytest.mark.parametrize("goos", ["host", "darwin", "windows"])
-@pytest.mark.parametrize("count", [6, 7])
+@pytest.mark.parametrize(
+    ("count", "goos"), [(6, "host"), (7, "host"), (7, "darwin"), (7, "windows")]
+)
 def test_a_pair_go_types_proves_on_an_interface_of_many_method_sets_is_a_guess(
     temp_repo: Path,
     mock_ingestor: MagicMock,

@@ -295,7 +295,7 @@ def full_method_sets(
     varying: set[str] = set()
     for interface in embeds:
         try:
-            sets[interface] = walk.sets(interface, frozenset())
+            sets[interface] = walk.sets(interface)
         except _VaryingError:
             sets[interface] = None
             varying.add(interface)
@@ -309,7 +309,9 @@ class _MethodSetWalk:
     """One pass's method sets, each interface's computed once (#3360 review).
     Without the memo an interface embedded on many paths was walked again
     on each: two interfaces per level, each embedding both of the level
-    below, doubled the work per level."""
+    below, doubled the work per level. The walk keeps its own stack: one
+    frame per embed made a chain of a few hundred interfaces (`I0` embeds
+    `I1`, which embeds `I2`, ...) overflow Python's."""
 
     def __init__(
         self,
@@ -322,22 +324,44 @@ class _MethodSetWalk:
         self.files = files
         self.done: dict[str, tuple[GoBuildSet, ...] | None | str] = {}
 
-    def sets(
-        self, interface: str, seen: frozenset[str]
-    ) -> tuple[GoBuildSet, ...] | None:
+    def sets(self, interface: str) -> tuple[GoBuildSet, ...] | None:
         if interface not in self.done:
-            try:
-                self.done[interface] = self._walk(interface, seen)
-            except _VaryingError:
-                self.done[interface] = _VARYING
+            self._finish(interface)
         found = self.done[interface]
         if isinstance(found, str):
             raise _VaryingError
         return found
 
+    def _finish(self, start: str) -> None:
+        # Post-order: an interface's sets once each interface it embeds has
+        # its own. `walking` holds the path from `start`: an embed of one of
+        # them is a cycle Go itself rejects, skipped, so malformed source
+        # cannot loop the walk (what a cycle yields is then any answer,
+        # never a hang).
+        walking = {start}
+        stack = [(start, self._bases(start))]
+        while stack:
+            interface, bases = stack[-1]
+            base = next(
+                (b for b in bases if b not in self.done and b not in walking), None
+            )
+            if base is not None:
+                walking.add(base)
+                stack.append((base, self._bases(base)))
+                continue
+            stack.pop()
+            self.done[interface] = self._walk(interface, walking)
+            walking.discard(interface)
+
+    def _bases(self, interface: str) -> Iterator[str]:
+        for alternatives in self.embeds.get(interface) or ():
+            for base, _builds in alternatives:
+                if base not in cs.GO_BUILTIN_INTERFACE_METHODS:
+                    yield base
+
     def _walk(
-        self, interface: str, seen: frozenset[str]
-    ) -> tuple[GoBuildSet, ...] | None:
+        self, interface: str, seen: set[str]
+    ) -> tuple[GoBuildSet, ...] | None | str:
         written = self.embeds.get(interface)
         if written is None:
             return None
@@ -346,24 +370,25 @@ class _MethodSetWalk:
                 dict(self.own.get(interface, {})), self.files.get(interface, ALWAYS)
             )
         ]
-        # `seen` guards a cycle Go itself rejects, so malformed source cannot
-        # loop the walk (what a cycle yields is then any answer, never a
-        # hang). An embed that cannot be resolved leaves the set unknown,
-        # but the rest are still walked: one varying past the cap makes it
+        # An embed that cannot be resolved leaves the set unknown, but the
+        # rest are still combined: one varying past the cap makes it
         # varying.
-        inner_seen = seen | {interface}
         resolved = True
-        for alternatives in written:
-            options = self._embedded(alternatives, inner_seen)
-            if options is None:
-                resolved = False
-            elif options:
-                sets = _combined(sets, options)
+        try:
+            for alternatives in written:
+                options = self._embedded(alternatives, seen)
+                if options is None:
+                    resolved = False
+                elif options:
+                    sets = _combined(sets, options)
+        except _VaryingError:
+            return _VARYING
         return tuple(sets) if resolved else None
 
     def _embedded(
-        self, alternatives: GoEmbedAlternatives, seen: frozenset[str]
+        self, alternatives: GoEmbedAlternatives, seen: set[str]
     ) -> list[GoBuildSet] | None:
+        # Each embedded interface's sets, which the walk finished first.
         options: list[GoBuildSet] = []
         resolved = True
         for base, builds in alternatives:
@@ -372,7 +397,9 @@ class _MethodSetWalk:
             if base in cs.GO_BUILTIN_INTERFACE_METHODS:
                 options.append(GoBuildSet(_builtin_methods(base), builds))
                 continue
-            inherited = self.sets(base, seen)
+            inherited = self.done[base]
+            if isinstance(inherited, str):
+                raise _VaryingError
             if inherited is None:
                 resolved = False
                 continue

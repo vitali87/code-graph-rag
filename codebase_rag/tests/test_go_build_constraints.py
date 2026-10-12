@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import random
+import time
 from pathlib import Path
 
 import pytest
@@ -9,13 +11,16 @@ import pytest
 from codebase_rag.parsers.go import interfaces as go_ifaces
 from codebase_rag.parsers.go.builds import (
     ALWAYS,
+    NEVER,
     UNKNOWN,
     Expr,
     GoBuilds,
     all_of,
+    any_of,
     decide,
     header_constraint,
     name_constraint,
+    negate,
 )
 
 
@@ -262,8 +267,6 @@ def _random_hierarchy(
     dict[str, tuple[go_ifaces.GoEmbedAlternatives, ...] | None],
     dict[str, Expr],
 ]:
-    import random
-
     rng = random.Random(seed)  # noqa: S311 - a reproducible case, not a secret
     constraints = [
         ALWAYS,
@@ -309,3 +312,115 @@ def test_the_memo_gives_what_the_walk_without_it_gives(seed: int) -> None:
             expected = "varying"
         found = "varying" if interface in full.varying else full.sets[interface]
         assert found == expected, interface
+
+
+def _random_chain(
+    seed: int, links: int
+) -> tuple[
+    dict[str, go_ifaces.GoMethodSet],
+    dict[str, tuple[go_ifaces.GoEmbedAlternatives, ...] | None],
+    dict[str, Expr],
+]:
+    # I0 embeds I1, ..., each link's embed under a random constraint (one
+    # meaning, so the walk without a memo stays linear), each file under
+    # one, a method of its own now and then.
+    rng = random.Random(seed)  # noqa: S311 - a reproducible case, not a secret
+    constraints = [
+        ALWAYS,
+        name_constraint("x_linux.go"),
+        header_constraint("//go:build !linux\n"),
+    ]
+    own: dict[str, go_ifaces.GoMethodSet] = {}
+    embeds: dict[str, tuple[go_ifaces.GoEmbedAlternatives, ...] | None] = {}
+    files: dict[str, Expr] = {}
+    for k in range(links):
+        name = f"I{k}"
+        own[name] = (
+            {go_ifaces.method_key(f"M{k}", "p"): (go_ifaces.GoSignature((), ()),)}
+            if rng.random() < 0.3
+            else {}
+        )
+        files[name] = rng.choice(constraints)
+        embeds[name] = (
+            () if k == links - 1 else (((f"I{k + 1}", rng.choice(constraints)),),)
+        )
+    return own, embeds, files
+
+
+@pytest.mark.parametrize("seed", range(10))
+def test_the_memo_gives_what_the_walk_without_it_gives_on_a_chain(seed: int) -> None:
+    # Long enough to need many steps, short enough for the reference's own
+    # recursion.
+    own, embeds, files = _random_chain(seed, 150)
+    full = go_ifaces.full_method_sets(own, embeds, files)
+    for interface in embeds:
+        try:
+            expected: object = _walk_without_memo(interface, own, embeds, files)
+        except go_ifaces._VaryingError:
+            expected = "varying"
+        found = "varying" if interface in full.varying else full.sets[interface]
+        assert found == expected, interface
+
+
+@pytest.mark.parametrize("tail", ["known", "unresolved"])
+def test_a_chain_far_past_the_recursion_limit_is_walked(tail: str) -> None:
+    # Three Python frames per embed overflowed at a few hundred links.
+    links = 5000
+    own: dict[str, go_ifaces.GoMethodSet] = {
+        f"I{links - 1}": {
+            go_ifaces.method_key("M", "p"): (go_ifaces.GoSignature((), ()),)
+        }
+    }
+    embeds: dict[str, tuple[go_ifaces.GoEmbedAlternatives, ...] | None] = {
+        f"I{k}": ((((f"I{k + 1}", ALWAYS),),) if k < links - 1 else ())
+        for k in range(links)
+    }
+    if tail == "unresolved":
+        embeds[f"I{links - 1}"] = None
+    started = time.monotonic()
+    full = go_ifaces.full_method_sets(own, embeds, {})
+    assert time.monotonic() - started < 10
+    top = full.sets["I0"]
+    if tail == "unresolved":
+        assert top is None
+    else:
+        assert top is not None
+        assert [set(found.methods) for found in top] == [set(own[f"I{links - 1}"])]
+
+
+def test_merged_builds_along_a_chain_stay_small() -> None:
+    # A method set each build reaches through its own declaration of an
+    # embed merges `B && linux || B && !linux`, which is B: the builds an
+    # interface inherits through a chain of such embeds doubled per link.
+    linux = name_constraint("x_linux.go")
+    builds = header_constraint("//go:build cgo\n")
+    started = time.monotonic()
+    for _ in range(5000):
+        builds = any_of((all_of((builds, linux)), all_of((builds, negate(linux)))))
+    assert time.monotonic() - started < 5
+    assert builds == header_constraint("//go:build cgo\n")
+
+
+def test_a_constraint_past_the_size_or_depth_cap_is_unknown() -> None:
+    # An expression nested deeper than the decision's walk and Python's
+    # hashing recurse through is unknown, and decided as such, at once.
+    nested = header_constraint("//go:build t0\n")
+    started = time.monotonic()
+    for k in range(1, 5000):
+        tag = header_constraint(f"//go:build t{k % 7}\n")
+        nested = any_of(
+            (all_of((nested, tag)), header_constraint(f"//go:build u{k}\n"))
+        )
+    assert time.monotonic() - started < 5
+    assert nested == UNKNOWN
+    assert decide((nested,)) is None
+
+
+def test_negations_cancel_and_complements_decide() -> None:
+    linux = name_constraint("x_linux.go")
+    negated = linux
+    for _ in range(5001):
+        negated = negate(negated)
+    assert negated == negate(linux)
+    assert any_of((linux, negate(linux))) == ALWAYS
+    assert all_of((linux, negate(linux))) == NEVER

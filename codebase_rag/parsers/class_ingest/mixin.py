@@ -2767,6 +2767,7 @@ class ClassIngestMixin:
             self.rust_impl_method_traits,
             self.rust_inherent_impl_methods,
             module_qns={*self.module_qn_to_file_path, *module_qns},
+            linked_apart=self.go_interfaces.keys(),
         )
         self._resolve_java_anon_overrides()
 

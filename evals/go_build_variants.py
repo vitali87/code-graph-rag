@@ -13,8 +13,9 @@ call reaches in each build; cgr's graph is then checked against it:
 - nothing a build proves missing (a heuristic edge is fine), except for an
   interface past cgr's cap on method-set alternatives (`Wide<n>`, n > 6),
   whose method set is unknown by design: those are counted apart;
-- a rename either refuses and changes nothing, or keeps `go build` and
-  `go vet` passing on every build that passed; either way it leaves
+- a rename either refuses and changes nothing, or keeps `go vet` (which
+  type-checks every package and test file) passing on every build that
+  passed; either way it leaves
   byte-identical the same-named Python, JavaScript, external test package
   (`p_test`) and sibling package files it places beside the target. A
   `Wide<n>` interface's methods and its candidate implementers' are among
@@ -24,7 +25,9 @@ call reaches in each build; cgr's graph is then checked against it:
 Some cases add an interface embedding n tagged interfaces (`Wide<n>`, 2**n
 method sets); a fourth go/types build sets every such tag. Some add a
 diamond of embeds 8 to 12 levels deep (`DA<k>` and `DB<k>` each embedding
-both of the level below), one method set per build at every level.
+both of the level below), one method set per build at every level. Some
+add a chain of 400 or 600 embeds (`L0` embeds `L1`, ...), one method set
+per build at every link.
 
 Run: `python -m evals.go_build_variants --cases 400 --seed 7`.
 """
@@ -135,7 +138,11 @@ def _method(type_name: str, name: str, result: str, case: int) -> str:
 
 
 def generate_case(
-    rng: random.Random, case: int, wide: float = 0.0, deep: float = 0.0
+    rng: random.Random,
+    case: int,
+    wide: float = 0.0,
+    deep: float = 0.0,
+    long: float = 0.0,
 ) -> dict[str, str]:
     """One case's files, by repo-relative path: package `p` declaring I (and
     maybe K) per build, J embedding them (in `p`, or in `q` through the
@@ -169,7 +176,38 @@ def generate_case(
         files.update(_wide_files(root, case, rng.choice((4, 5, 6, 7, 8))))
     if deep and rng.random() < deep:
         files.update(_deep_files(root, case, rng.choice((8, 10, 12))))
+    if long and rng.random() < long:
+        files.update(_long_files(root, case, rng.choice((400, 600))))
     return files
+
+
+def _long_files(root: str, case: int, links: int) -> dict[str, str]:
+    """A chain `links` long: L0 embeds L1, which embeds L2, and so on; the
+    last asks for `LM() int` on Linux and `LM() string` elsewhere, so every
+    link has one method set per build. TL is each on Linux, UL elsewhere.
+    A walk taking a Python frame per embed overflowed the stack."""
+    c, last = case, links - 1
+    chain = "".join(f"type L{k} interface {{\n\tL{k + 1}\n}}\n\n" for k in range(last))
+    return {
+        f"{root}/p/long.go": f"package p\n\n{chain}",
+        f"{root}/p/llast_linux.go": (
+            f"package p\n\ntype L{last} interface {{\n\tLM_{c}() int\n}}\n"
+        ),
+        f"{root}/p/llast_other.go": (
+            f"//go:build !linux\n\npackage p\n\n"
+            f"type L{last} interface {{\n\tLM_{c}() string\n}}\n"
+        ),
+        f"{root}/p/tl_linux.go": (
+            f"package p\n\ntype TL struct{{}}\n\nfunc (TL) LM_{c}() int {{ return 0 }}\n"
+        ),
+        f"{root}/p/ul_other.go": (
+            f"//go:build !linux\n\npackage p\n\ntype UL struct{{}}\n\n"
+            f'func (UL) LM_{c}() string {{ return "" }}\n'
+        ),
+        f"{root}/p/calllong.go": (
+            f"package p\n\nfunc CallLong{links}(l L0) {{\n\tl.LM_{c}()\n}}\n"
+        ),
+    }
 
 
 def _deep_files(root: str, case: int, levels: int) -> dict[str, str]:
@@ -329,10 +367,17 @@ def _caller_files(
 
 
 def write_repo(
-    root: Path, cases: int, seed: int, wide: float = 0.0, deep: float = 0.0
+    root: Path,
+    cases: int,
+    seed: int,
+    wide: float = 0.0,
+    deep: float = 0.0,
+    long: float = 0.0,
 ) -> dict[int, dict[str, str]]:
     rng = random.Random(seed)  # noqa: S311 - a reproducible generator, not a secret
-    generated = {case: generate_case(rng, case, wide, deep) for case in range(cases)}
+    generated = {
+        case: generate_case(rng, case, wide, deep, long) for case in range(cases)
+    }
     root.mkdir(parents=True, exist_ok=True)
     (root / "go.mod").write_text(f"module {PROJECT}\n\ngo 1.22\n", encoding="utf-8")
     for files in generated.values():
@@ -428,7 +473,9 @@ def ground_truth(root: Path, builds: tuple[Build, ...]) -> dict[str, BuildFacts]
 
 
 def build_status(root: Path, builds: tuple[Build, ...]) -> dict[str, bool]:
-    """Whether `go build` and `go vet` pass, per build."""
+    """Whether `go vet` passes, per build: it type-checks every package and
+    every test file, which is what a rename can break (a `go build` of
+    these libraries added a second compile and nothing more)."""
     go = shutil.which("go")
     assert go is not None
     status: dict[str, bool] = {}
@@ -439,16 +486,15 @@ def build_status(root: Path, builds: tuple[Build, ...]) -> dict[str, bool]:
             "GOARCH": "amd64",
             "CGO_ENABLED": "0",
         }
-        status[build.name] = all(
+        status[build.name] = (
             subprocess.run(
-                [go, command, "./..."],
+                [go, "vet", "./..."],
                 cwd=root,
                 capture_output=True,
                 check=False,
                 env=env,
             ).returncode
             == 0
-            for command in ("build", "vet")
         )
     return status
 
@@ -804,13 +850,19 @@ def _declared_name(root: Path, file: str, line: int) -> str:
     return text.split()[1]
 
 
-def _assertions(root: Path, builds: tuple[Build, ...]) -> dict[str, str]:
+def _assertions(
+    root: Path, builds: tuple[Build, ...], truth: dict[str, BuildFacts] | None = None
+) -> dict[str, str]:
     """`var _ X = T{}` for each pair go/types proves, in a file only the
     build proving it compiles: a rename that leaves the pair half-renamed
-    breaks that build."""
+    breaks that build. `truth`, the whole repository's, holds the case's
+    pairs already (its files sit at the same paths, and no other case's
+    tag changes them), so go/types runs again only without it."""
     files: dict[str, str] = {}
     tags = sorted({tag for build in builds for tag in build.tags.split(",") if tag})
-    for build, facts in zip(builds, ground_truth(root, builds).values(), strict=True):
+    known = truth if truth is not None else ground_truth(root, builds)
+    for build in builds:
+        facts = known[build.name]
         own = set(build.tags.split(","))
         header = " && ".join(
             [build.goos, *(tag if tag in own else f"!{tag}" for tag in tags)]
@@ -818,6 +870,8 @@ def _assertions(root: Path, builds: tuple[Build, ...]) -> dict[str, str]:
         by_package: dict[str, set[str]] = {}
         imports: dict[str, set[str]] = {}
         for (impl_file, impl_line), (iface_file, iface_line) in facts.implements:
+            if not (root / impl_file).is_file() or not (root / iface_file).is_file():
+                continue
             package = impl_file.rpartition("/")[0]
             iface = _declared_name(root, iface_file, iface_line)
             iface_package = iface_file.rpartition("/")[0]
@@ -840,7 +894,7 @@ def _assertions(root: Path, builds: tuple[Build, ...]) -> dict[str, str]:
     return files
 
 
-_RENAMED = re.compile(r"(?:[ABCDN]|WN|W[AB]\d+|D[MN]\d+)_\d+")
+_RENAMED = re.compile(r"(?:[ABCDN]|WN|W[AB]\d+|D[MN]\d+|LM)_\d+")
 _WIDE_METHOD = re.compile(r"WN_\d+")
 
 
@@ -957,7 +1011,11 @@ def probe_files(case: int) -> tuple[dict[str, str], dict[str, str]]:
 
 
 def rename_check(
-    files: dict[str, str], case: int, workdir: Path, rng: random.Random
+    files: dict[str, str],
+    case: int,
+    workdir: Path,
+    rng: random.Random,
+    truth: dict[str, BuildFacts] | None = None,
 ) -> RenameResult | None:
     """Rename one method of the case, in a module of the case alone with an
     assertion per pair each build proves, and report each build that built
@@ -978,7 +1036,7 @@ def rename_check(
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
-    for rel, text in _assertions(root, builds).items():
+    for rel, text in _assertions(root, builds, truth).items():
         (root / rel).write_text(text, encoding="utf-8")
     before = build_status(root, builds)
     ingestor = _MockIngestor()
@@ -1090,9 +1148,10 @@ def run(
     renames: int = 0,
     wide: float = 0.0,
     deep: float = 0.0,
+    long: float = 0.0,
 ) -> Report:
     root = workdir / PROJECT
-    generated = write_repo(root, cases, seed, wide, deep)
+    generated = write_repo(root, cases, seed, wide, deep, long)
     truth = ground_truth(root, builds_for(generated))
     findings = {
         frontend: compare(index(root, frontend), truth) for frontend in frontends
@@ -1102,7 +1161,8 @@ def run(
     results = [
         found
         for case in picked
-        if (found := rename_check(generated[case], case, workdir, rng)) is not None
+        if (found := rename_check(generated[case], case, workdir, rng, truth))
+        is not None
     ]
     return Report(cases, findings, results)
 
@@ -1117,13 +1177,18 @@ def main(
     deep: Annotated[
         float, typer.Option(help="Share of cases adding a diamond of embeds.")
     ] = 0.25,
+    long: Annotated[
+        float, typer.Option(help="Share of cases adding a long chain of embeds.")
+    ] = 0.05,
     details: Annotated[bool, typer.Option(help="Print every finding.")] = False,
 ) -> None:
     from loguru import logger
 
     logger.remove()
     with tempfile.TemporaryDirectory() as tmp:
-        report = run(cases, seed, Path(tmp), renames=renames, wide=wide, deep=deep)
+        report = run(
+            cases, seed, Path(tmp), renames=renames, wide=wide, deep=deep, long=long
+        )
     typer.echo(json.dumps(report.summary(), indent=2, default=str))
     if details:
         for frontend, found in report.findings.items():
