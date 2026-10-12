@@ -244,6 +244,46 @@ def _go_build_variants(
     )
 
 
+def _go_implementers_unknown(
+    fetch_all: QueryFn, project: str, members: list[str]
+) -> tuple[str, str, str] | None:
+    """A Go interface whose implementers cgr cannot tell that declares the
+    name the Go methods among `members` share, where they could satisfy it,
+    as (interface, why, name); None when there is none.
+
+    Such an interface gets no IMPLEMENTS or OVERRIDES edge by name (#3360),
+    so the hierarchy cannot show what renaming the name must take along:
+    renaming one of its implementations leaves it and any other behind, and
+    renaming its own method leaves every implementation. Any type, in any
+    package, may satisfy it through an exported name; an unexported one only
+    in the interface's own package, which shares its directory."""
+    definitions = [
+        graph_query.definition(fetch_all, project, member, None) for member in members
+    ]
+    methods = [
+        found
+        for found in definitions
+        if found["label"] == cs.NodeLabel.METHOD
+        and found["path"]
+        and _is_go_path(found["path"])
+    ]
+    name = methods[0]["name"] if methods else None
+    if not name:
+        return None
+    directories = {PurePosixPath(str(found["path"])).parent for found in methods}
+    owns = graph_query._owner_check(fetch_all, project)
+    rows = fetch_all(
+        cq.CYPHER_GRAPH_GO_IMPLEMENTERS_UNKNOWN,
+        {cs.KEY_PROJECT_PREFIX: f"{project}{cs.SEPARATOR_DOT}", cs.KEY_NAME: name},
+    )
+    for row in sorted(rows, key=lambda row: str(row.get(cs.KEY_QUALIFIED_NAME))):
+        interface = str(row.get(cs.KEY_QUALIFIED_NAME) or "")
+        directory = PurePosixPath(str(row.get(cs.KEY_PATH) or "")).parent
+        if owns(interface) and (name[:1].isupper() or directory in directories):
+            return interface, str(row.get(cs.KEY_IMPLEMENTERS_UNKNOWN) or ""), name
+    return None
+
+
 def _is_go_path(path: str) -> bool:
     return get_language_for_extension(Path(path).suffix) == cs.SupportedLanguage.GO
 
@@ -1317,6 +1357,21 @@ class Renamer:
         found = _hierarchy(self.fetch_all, self.project, qn, self.repo_root)
         members = found.members
         self._guessed_members = found.guessed
+        unknown = _go_implementers_unknown(self.fetch_all, self.project, members)
+        if unknown is not None:
+            interface, why, name = unknown
+            raise RenameRefused(
+                cs.RENAME_GO_IMPLEMENTERS_UNKNOWN.format(
+                    qn=qn,
+                    interface=interface,
+                    name=name,
+                    why=cs.RENAME_GO_IMPLEMENTERS_UNKNOWN_WHY.get(
+                        why, cs.RENAME_GO_IMPLEMENTERS_UNKNOWN_WHY_OTHER
+                    ),
+                ),
+                [],
+                [],
+            )
         sites: list[RenameSite] = []
         unlocatable: list[str] = []
         old_name: str | None = None

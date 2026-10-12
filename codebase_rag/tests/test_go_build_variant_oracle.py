@@ -21,14 +21,17 @@ from evals import go_build_variants as oracle
 def test_generated_build_variants_match_go_types(tmp_path: Path, seed: int) -> None:
     if shutil.which("go") is None or not go_frontend_available():
         pytest.skip("go toolchain not available")
-    report = oracle.run(cases=30, seed=seed, workdir=tmp_path, renames=4, wide=0.4)
+    report = oracle.run(
+        cases=30, seed=seed, workdir=tmp_path, renames=4, wide=0.4, deep=0.3
+    )
     for frontend, found in report.findings.items():
         assert found.failures() == 0, (frontend, vars(found))
         assert not found.unsupported_heuristic_calls, frontend
         assert found.pairs_supported
         assert found.calls_checked
     assert len(report.renames) == 4
-    assert all(result.applied for result in report.renames)
+    assert all(result.applied or result.refused for result in report.renames)
+    assert not any(result.changed_on_refusal for result in report.renames)
     assert not any(result.broke for result in report.renames)
     assert not any(result.touched for result in report.renames)
 

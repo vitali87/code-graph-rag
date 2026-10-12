@@ -28,6 +28,7 @@ from codebase_rag.editing.rename import RenameRefused, rename
 from codebase_rag.graph_query import QueryFn
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.go import interfaces as go_ifaces
 from codebase_rag.parsers.go_frontend import GoCallSite, GoImplements, GoSemanticFacts
 from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
 from codebase_rag.tests.test_rename_op import RecordedGraph, _write
@@ -2108,7 +2109,8 @@ def _real_gotypes_files_or_skip(root: Path, checked: set[str]) -> None:
 def _analysed_goos() -> str:
     # The GOOS go/packages reads for the helper: $GOOS, else the host's.
     go = shutil.which("go")
-    assert go is not None
+    if go is None:
+        pytest.skip("go toolchain not available")
     return subprocess.run(
         [go, "env", "GOOS"],
         capture_output=True,
@@ -2123,17 +2125,22 @@ def _real_build(
 ) -> str:
     """Index with the real helper on the build `frontend` names (`real` for
     the host's, `real-windows` for GOOS=windows), after checking it read
-    that build's files of `files`: the ones not of the other OS. Returns the
-    GOOS it read."""
+    that build's files of `files`: the ones not of the other OS. These
+    fixtures declare their packages for Linux and Windows alone, so for
+    Darwin no package compiles: go/types checks no file and proves no pair,
+    and every pair is matched by name. Returns the GOOS it read."""
     if shutil.which("go") is None:
         pytest.skip("go toolchain not available")
     if forced := frontend.removeprefix("real").removeprefix("-"):
         monkeypatch.setenv("GOOS", forced)
     goos = _analysed_goos()
-    if goos not in ("linux", "windows"):
+    if goos == "darwin":
+        _real_gotypes_files_or_skip(root, set())
+    elif goos in ("linux", "windows"):
+        other = "windows" if goos == "linux" else "linux"
+        _real_gotypes_files_or_skip(root, {rel for rel in files if other not in rel})
+    else:
         pytest.skip(f"these builds declare nothing for GOOS={goos}")
-    other = "windows" if goos == "linux" else "linux"
-    _real_gotypes_files_or_skip(root, {rel for rel in files if other not in rel})
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
     return goos
 
@@ -4140,6 +4147,7 @@ def _differing_gotypes(monkeypatch: pytest.MonkeyPatch, goos: str) -> None:
         "real",
         "real-linux",
         "real-windows",
+        "real-darwin",
     ],
 )
 def test_an_interface_each_build_declares_apart_links_each_builds_implementers(
@@ -4230,7 +4238,9 @@ def _recorded_identical_gotypes(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-@pytest.mark.parametrize("frontend", ["recorded", "real", "real-linux", "real-windows"])
+@pytest.mark.parametrize(
+    "frontend", ["recorded", "real", "real-linux", "real-windows", "real-darwin"]
+)
 def test_builds_that_agree_keep_the_go_types_proof(
     temp_repo: Path,
     mock_ingestor: MagicMock,
@@ -4238,18 +4248,21 @@ def test_builds_that_agree_keep_the_go_types_proof(
     frontend: str,
 ) -> None:
     # Each build's `p.I` asks for M(): J is one method set, and the pair
-    # go/types proved stays proven.
+    # go/types proved stays proven. Darwin declares no `p.I`: go/types
+    # proves nothing there and the pair is matched by name.
     files = {**_VARIANT_STYLES["suffix"], "q/q.go": VARIANT_EMBEDDER}
     root = _variant_repo(temp_repo / "proj", files)
+    goos = "linux"
     if frontend.startswith("real"):
-        _real_build(monkeypatch, root, files, frontend)
+        goos = _real_build(monkeypatch, root, files, frontend)
     else:
         _recorded_identical_gotypes(monkeypatch)
     create_and_run_updater(root, mock_ingestor, skip_if_missing="go")
+    expected = None if goos != "darwin" else cs.EdgeResolution.HEURISTIC
     implements = _labels(mock_ingestor, cs.RelationshipType.IMPLEMENTS)
-    assert implements[("proj.q.q.T", "proj.q.q.J")] is None
+    assert implements[("proj.q.q.T", "proj.q.q.J")] == expected
     overrides = _labels(mock_ingestor, cs.RelationshipType.OVERRIDES)
-    assert overrides[("proj.q.q.T.N", "proj.q.q.J.N")] is None
+    assert overrides[("proj.q.q.T.N", "proj.q.q.J.N")] == expected
 
 
 # Files one build compiles together: a redeclaration there, so `I` names
@@ -4597,7 +4610,8 @@ def _combined_gotypes(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize(
-    "frontend", ["treesitter", "recorded", "real", "real-linux", "real-windows"]
+    "frontend",
+    ["treesitter", "recorded", "real", "real-linux", "real-windows", "real-darwin"],
 )
 def test_embeds_combine_only_the_builds_one_build_compiles(
     temp_repo: Path,
@@ -4915,6 +4929,102 @@ def test_a_tests_own_build_variant_is_renamed_and_the_external_tests_is_not(
     _go_checks_on(root)
 
 
+# --- a diamond of embeds is walked once per interface (Greptile, PR #3360) ---
+
+
+def _diamond(levels: int) -> dict[str, str]:
+    # A0 and B0, then per level A<k> and B<k>, each embedding both of the
+    # level below; T implements every one, and Call calls through the top.
+    body = ["package p\n", "type A0 interface{ M0() }\n", "type B0 interface{ N0() }\n"]
+    for k in range(1, levels):
+        for name, method in (("A", "M"), ("B", "N")):
+            body.append(
+                f"type {name}{k} interface {{\n\tA{k - 1}\n\tB{k - 1}\n"
+                f"\t{method}{k}()\n}}\n"
+            )
+    top = levels - 1
+    methods = "".join(
+        f"func (T) {method}{k}() {{}}\n" for k in range(levels) for method in "MN"
+    )
+    return {
+        "p/d.go": "\n".join(body),
+        "p/t.go": f"package p\n\ntype T struct{{}}\n\n{methods}",
+        "p/call.go": f"package p\n\nfunc Call(a A{top}) {{\n\ta.M{top}()\n}}\n",
+    }
+
+
+@pytest.mark.parametrize("levels", [16, 40])
+def test_a_diamond_of_embeds_is_walked_once_per_interface(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    levels: int,
+) -> None:
+    # Each embedded interface was walked again on every path to it: two per
+    # level, each embedding both below, doubled the work per level (262,108
+    # walks at 16 levels; 40 never finished). Each interface's method set
+    # is now walked once, combining its two embeds once each.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    combined: list[int] = []
+    combine = go_ifaces._combined
+
+    def counted(
+        sets: list[go_ifaces.GoBuildSet], options: list[go_ifaces.GoBuildSet]
+    ) -> list[go_ifaces.GoBuildSet]:
+        combined.append(1)
+        return combine(sets, options)
+
+    monkeypatch.setattr(go_ifaces, "_combined", counted)
+    root = _variant_repo(temp_repo / "proj", _diamond(levels))
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="go")
+    interfaces = 2 * levels
+    assert len(combined) <= 2 * interfaces
+    top = levels - 1
+    implements = _labels(mock_ingestor, cs.RelationshipType.IMPLEMENTS)
+    assert ("proj.p.t.T", f"proj.p.d.A{top}") in implements
+    assert ("proj.p.t.T", "proj.p.d.B0") in implements
+    assert f"proj.p.t.T.M{top}" in _calls_from(mock_ingestor, "proj.p.call.Call")
+
+
+# --- a license comment before the build line (Greptile, PR #3360) ------------
+
+_LICENSES = {
+    "block": "/* Copyright 2026 The Authors. */\n\n",
+    "multi-line-block": "/*\n * Copyright 2026 The Authors.\n * SPDX-License-Identifier: MIT\n */\n\n",
+    "line-then-block": "// Code by the Authors.\n/* Copyright 2026 */\n\n",
+}
+
+
+@pytest.mark.parametrize("license_style", sorted(_LICENSES))
+def test_a_license_comment_does_not_hide_the_build_line(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    license_style: str,
+) -> None:
+    # The reader stopped at the license's `/*` line: both Getters seemed to
+    # build everywhere, a redeclaration on Windows, so J's embed was
+    # ambiguous and T lost its pairs.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    head = _LICENSES[license_style]
+    files = {
+        "p/getter_a.go": f"{head}//go:build linux\n\npackage p\n\n"
+        "type Getter interface {\n\tGet() int\n}\n",
+        "p/getter_b.go": f"{head}//go:build !linux\n\npackage p\n\n"
+        "type Getter interface {\n\tGet() string\n}\n",
+        "p/j.go": "package p\n\ntype J interface {\n\tGetter\n\tN()\n}\n",
+        "p/t.go": f"{head}//go:build linux\n\npackage p\n\ntype T struct{{}}\n\n"
+        "func (T) Get() int { return 0 }\n\nfunc (T) N() {}\n\nvar _ J = T{}\n",
+    }
+    root = _variant_repo(temp_repo / "proj", files)
+    _go_checks_on(root)
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="go")
+    implements = _labels(mock_ingestor, cs.RelationshipType.IMPLEMENTS)
+    assert ("proj.p.t.T", "proj.p.getter_a.Getter") in implements
+    assert ("proj.p.t.T", "proj.p.j.J") in implements
+    assert ("proj.p.t.T", "proj.p.getter_b.Getter") not in implements
+
+
 # --- past the alternatives cap the method set is unknown (Greptile, PR #3360) -
 
 
@@ -4965,28 +5075,267 @@ def test_an_interface_past_the_alternatives_cap_links_nothing(
     assert (("proj.p.t.T", "proj.p.j.J") in implements) is linked
     assert ("proj.p.t.T.N" in calls) is linked
 
-    report = rename(
-        root, _query(graph), graph.project, "proj.p.u.U.N", "M", allow_heuristic=True
-    )
-    assert report.applied, report.message
+    # Renaming U.N rewrote J.N on a guess. At 64 sets U is no J and renames
+    # alone; past them nothing tells whether U is a J, so the rename refuses
+    # (see the tests below).
+    query = _query(graph)
+    if linked:
+        report = rename(
+            root, query, graph.project, "proj.p.u.U.N", "M", allow_heuristic=True
+        )
+        assert report.applied, report.message
+    else:
+        with pytest.raises(RenameRefused, match=r"proj\.p\.j\.J"):
+            rename(
+                root, query, graph.project, "proj.p.u.U.N", "M", allow_heuristic=True
+            )
     assert (root / "p" / "j.go").read_text(encoding="utf-8") == files["p/j.go"]
     _go_checks_on(root)
 
 
+def _changed(root: Path, files: dict[str, str]) -> list[str]:
+    return [
+        rel
+        for rel, text in files.items()
+        if (root / rel).read_text(encoding="utf-8") != text
+    ]
+
+
+def _unknown_marks(store: _StatefulIngestor) -> dict[str, object]:
+    return {
+        str(uid): props.get(cs.KEY_IMPLEMENTERS_UNKNOWN)
+        for (label, uid), props in store.nodes.items()
+        if label == cs.NodeLabel.INTERFACE
+    }
+
+
+@pytest.mark.parametrize("opt_in", [False, True])
+@pytest.mark.parametrize("target", ["proj.p.j.J.N", "proj.p.t.T.N", "proj.p.u.U.N"])
+def test_a_name_an_interface_of_unknown_implementers_declares_is_never_renamed(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    target: str,
+    opt_in: bool,
+) -> None:
+    # Past the cap J links nothing, so the hierarchy showed nothing to take
+    # along: renaming T.N left J.N and `var _ J = T{}` stopped compiling;
+    # renaming J.N left T.N. Whichever method of that name is asked for,
+    # with or without the opt-in, the rename refuses, names J and says why,
+    # and writes nothing.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    files = {**_tagged_embeds(7), "p/use.go": "package p\n\nvar _ J = T{}\n"}
+    root = _variant_repo(temp_repo / "proj", files)
+    _go_checks_on(root)
+    graph = _rename_index(root, mock_ingestor)
+    assert graph.nodes["proj.p.j.J"][cs.KEY_IMPLEMENTERS_UNKNOWN] == "builds"
+    query = _query(graph)
+    with pytest.raises(RenameRefused) as refused:
+        rename(root, query, graph.project, target, "M", allow_heuristic=opt_in)
+    assert "proj.p.j.J" in str(refused.value)
+    assert "differs between builds" in str(refused.value)
+    assert _changed(root, files) == []
+
+
+@pytest.mark.parametrize(
+    ("count", "target"), [(6, "proj.p.t.T.N"), (7, "proj.p.t.T.B1")]
+)
+def test_a_name_no_interface_of_unknown_implementers_declares_still_renames(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    count: int,
+    target: str,
+) -> None:
+    # Negatives: at 64 sets J is known and T.N renames with J.N; past them
+    # T.B1 still renames, since E1, which declares B1, is known and J
+    # embeds it. `go build` and `go vet` pass after either rename.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    files = {**_tagged_embeds(count), "p/use.go": "package p\n\nvar _ J = T{}\n"}
+    root = _variant_repo(temp_repo / "proj", files)
+    graph = _rename_index(root, mock_ingestor)
+    report = rename(
+        root, _query(graph), graph.project, target, "Renamed", allow_heuristic=True
+    )
+    assert report.applied, report.message
+    assert "Renamed()" in (root / "p" / "t.go").read_text(encoding="utf-8")
+    _go_checks_on(root)
+
+
+UNRESOLVED_EMBED_FILES = {
+    # K embeds io.Closer, which cgr does not read: K's method set is unknown.
+    "q/k.go": 'package q\n\nimport "io"\n\ntype K interface {\n\tio.Closer\n\tn()\n}\n',
+    "q/v.go": (
+        "package q\n\ntype V struct{}\n\nfunc (V) n() {}\n\n"
+        "func (V) Close() error { return nil }\n\nvar _ K = V{}\n"
+    ),
+    # Another package's `n` is another name: no K is satisfied through it.
+    "r/w.go": "package r\n\ntype W struct{}\n\nfunc (W) n() {}\n\nfunc use() { W{}.n() }\n",
+}
+
+
+@pytest.mark.parametrize("opt_in", [False, True])
+def test_an_unexported_name_refuses_only_in_its_interfaces_package(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    opt_in: bool,
+) -> None:
+    # On 44784617d renaming V.n left K.n, and `var _ K = V{}` broke.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    root = _variant_repo(temp_repo / "proj", UNRESOLVED_EMBED_FILES)
+    _go_checks_on(root)
+    graph = _rename_index(root, mock_ingestor)
+    assert graph.nodes["proj.q.k.K"][cs.KEY_IMPLEMENTERS_UNKNOWN] == "embeds"
+    query = _query(graph)
+    with pytest.raises(RenameRefused, match="embeds an interface cgr cannot resolve"):
+        rename(root, query, graph.project, "proj.q.v.V.n", "m", allow_heuristic=opt_in)
+    assert _changed(root, UNRESOLVED_EMBED_FILES) == []
+    report = rename(
+        root, query, graph.project, "proj.r.w.W.n", "m", allow_heuristic=opt_in
+    )
+    assert report.applied, report.message
+    assert "func (W) m()" in (root / "r" / "w.go").read_text(encoding="utf-8")
+    _go_checks_on(root)
+
+
+# Thirteen clauses, each tag but the ends both asked for and ruled out: no
+# tags satisfy it, and twelve tags are more than cgr enumerates.
+UNDECIDED_HEADER = "//go:build " + " && ".join(
+    f"(t{k} || !t{k + 1})" for k in range(13)
+)
+UNDECIDED_FILES = {
+    "p/i.go": "package p\n\ntype I interface{ M() }\n",
+    "p/t.go": "package p\n\ntype T struct{}\n\nfunc (T) M() {}\n\nfunc (T) Other() {}\n",
+    "p/v.go": f"{UNDECIDED_HEADER}\n\npackage p\n\ntype V struct{{}}\n\nfunc (V) M() {{}}\n",
+    "p/use.go": "package p\n\nvar _ I = T{}\n\nvar _ I = V{}\n",
+}
+
+
+@pytest.mark.parametrize("target", ["proj.p.i.I.M", "proj.p.t.T.M", "proj.p.v.V.M"])
+def test_an_interface_a_type_may_implement_under_an_undecided_constraint_refuses(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    target: str,
+) -> None:
+    # Whether V's build holds V with I is undecided, so V gets no edge. On
+    # 44784617d renaming I.M took T.M along, left V.M, and `var _ I = V{}`
+    # broke.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    root = _variant_repo(temp_repo / "proj", UNDECIDED_FILES)
+    _go_checks_on(root)
+    graph = _rename_index(root, mock_ingestor)
+    assert graph.nodes["proj.p.i.I"][cs.KEY_IMPLEMENTERS_UNKNOWN] == "constraint"
+    query = _query(graph)
+    with pytest.raises(RenameRefused, match="build constraint cgr cannot read"):
+        rename(root, query, graph.project, target, "N", allow_heuristic=True)
+    assert _changed(root, UNDECIDED_FILES) == []
+
+
+def test_a_name_the_undecided_interface_does_not_declare_still_renames(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    root = _variant_repo(temp_repo / "proj", UNDECIDED_FILES)
+    graph = _rename_index(root, mock_ingestor)
+    report = rename(root, _query(graph), graph.project, "proj.p.t.T.Other", "Else")
+    assert report.applied, report.message
+    _go_checks_on(root)
+
+
+@pytest.mark.parametrize("sync", ["fresh", "reused"])
+@pytest.mark.parametrize("edit", ["other", "interface"])
+def test_a_sync_marks_unknown_implementers_as_a_clean_index_does(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch, sync: str, edit: str
+) -> None:
+    # J read back from the graph keeps its mark; J edited to embed six
+    # interfaces loses it.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    files = {
+        **_tagged_embeds(7),
+        "other/other.go": "package other\n\nfunc Other() {}\n",
+    }
+    root = _variant_repo(temp_repo / "synced", files)
+    store = _StatefulIngestor()
+    first = _go_updater(store, root)
+    first.run(force=True)
+    assert _unknown_marks(store)["proj.p.j.J"] == "builds"
+    assert _unknown_marks(store)["proj.p.e1b.E1"] == ""
+    edited = dict(files)
+    if edit == "other":
+        edited["other/other.go"] = files["other/other.go"] + "// synced\n"
+    else:
+        edited["p/j.go"] = files["p/j.go"].replace("\tE7\n", "")
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
+    for rel, text in edited.items():
+        if text != files[rel]:
+            (root / rel).write_text(text, encoding="utf-8")
+            os.utime(root / rel, (cache_mtime + 1, cache_mtime + 1))
+    (first if sync == "reused" else _go_updater(store, root)).run(force=False)
+    clean = _StatefulIngestor()
+    _go_updater(clean, _variant_repo(temp_repo / "clean", edited)).run(force=True)
+    assert _unknown_marks(store) == _unknown_marks(clean)
+    assert _unknown_marks(store)["proj.p.j.J"] == ("builds" if edit == "other" else "")
+
+
+def test_the_implementers_unknown_mark_travels_in_a_protobuf_export(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A graph imported from the export must refuse the same renames.
+    from codebase_rag.services.protobuf_service import ProtobufFileIngestor
+    from codec import schema_pb2 as pb
+
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    root = _variant_repo(temp_repo / "proj", _tagged_embeds(7))
+    out = temp_repo / "export"
+    out.mkdir()
+    parsers, queries = load_parsers()
+    GraphUpdater(
+        ingestor=ProtobufFileIngestor(str(out), split_index=False),
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name="proj",
+        skip_embeddings=True,
+    ).run(force=True)
+    index = pb.GraphCodeIndex()
+    index.ParseFromString((out / cs.PROTOBUF_INDEX_FILE).read_bytes())
+    marks = {
+        node.interface_node.qualified_name: node.interface_node.implementers_unknown
+        for node in index.nodes
+        if node.WhichOneof(cs.PROTOBUF_PAYLOAD_ONEOF) == "interface_node"
+    }
+    assert marks["proj.p.j.J"] == "builds"
+    assert marks["proj.p.e1b.E1"] == ""
+
+
+@pytest.mark.parametrize("goos", ["host", "darwin", "windows"])
 @pytest.mark.parametrize("count", [6, 7])
 def test_a_pair_go_types_proves_on_an_interface_of_many_method_sets_is_a_guess(
     temp_repo: Path,
     mock_ingestor: MagicMock,
     monkeypatch: pytest.MonkeyPatch,
     count: int,
+    goos: str,
 ) -> None:
     # go/types proves T a J in the one build it reads, the one without tags,
     # and J asks for other methods in every other build. Past the cap the
     # proven pair stayed the compiler's word for every build, exact, and so
     # did T.N's OVERRIDES and Run's dispatch to it. At the cap the names
     # tell where it holds; past it nothing is known: a guess either way.
+    # No file names a GOOS: whichever build go/types reads, it proves T.
+    # Without the toolchain nothing is proven and, past the cap, nothing is
+    # linked at all (macOS CI has no Go).
+    if goos != "host":
+        monkeypatch.setenv("GOOS", goos)
+    files = _tagged_embeds(count)
+    root = _variant_repo(temp_repo / "proj", files)
+    # The build without tags reads every file but the `t<k>` ones.
+    _real_gotypes_files_or_skip(
+        root, {rel for rel, text in files.items() if "//go:build t" not in text}
+    )
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
-    root = _variant_repo(temp_repo / "proj", _tagged_embeds(count))
     create_and_run_updater(root, mock_ingestor, skip_if_missing="go")
     implements = _labels(mock_ingestor, cs.RelationshipType.IMPLEMENTS)
     overrides = _labels(mock_ingestor, cs.RelationshipType.OVERRIDES)

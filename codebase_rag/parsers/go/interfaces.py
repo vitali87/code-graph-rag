@@ -13,7 +13,7 @@ and it never overrules a pair go/types proved.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from typing import NamedTuple
 
 from tree_sitter import Node, Parser
@@ -290,41 +290,97 @@ def full_method_sets(
     file's constraint. Meanings no one build compiles together are never
     combined: `A` on Linux with `B` on Windows is no method set of any
     build."""
+    walk = _MethodSetWalk(own, embeds, files)
     sets: dict[str, tuple[GoBuildSet, ...] | None] = {}
     varying: set[str] = set()
     for interface in embeds:
         try:
-            sets[interface] = _method_sets(interface, own, embeds, files, frozenset())
+            sets[interface] = walk.sets(interface, frozenset())
         except _VaryingError:
             sets[interface] = None
             varying.add(interface)
     return GoFullMethodSets(sets, frozenset(varying))
 
 
-def _method_sets(
-    interface: str,
-    own: Mapping[str, GoMethodSet],
-    embeds: Mapping[str, tuple[GoEmbedAlternatives, ...] | None],
-    files: Mapping[str, Expr],
-    seen: frozenset[str],
-) -> tuple[GoBuildSet, ...] | None:
-    written = embeds.get(interface)
-    if written is None:
-        return None
-    sets = [GoBuildSet(dict(own.get(interface, {})), files.get(interface, ALWAYS))]
-    # `seen` guards a cycle Go itself rejects, so malformed source cannot
-    # loop the walk. An embed that cannot be resolved leaves the set unknown,
-    # but the rest are still walked: one varying past the cap makes it
-    # varying.
-    inner_seen = seen | {interface}
-    resolved = True
-    for alternatives in written:
-        options = _embedded_sets(alternatives, own, embeds, files, inner_seen)
-        if options is None:
-            resolved = False
-        elif options:
-            sets = _combined(sets, options)
-    return tuple(sets) if resolved else None
+_VARYING = "varying"
+
+
+class _MethodSetWalk:
+    """One pass's method sets, each interface's computed once (#3360 review).
+    Without the memo an interface embedded on many paths was walked again
+    on each: two interfaces per level, each embedding both of the level
+    below, doubled the work per level."""
+
+    def __init__(
+        self,
+        own: Mapping[str, GoMethodSet],
+        embeds: Mapping[str, tuple[GoEmbedAlternatives, ...] | None],
+        files: Mapping[str, Expr],
+    ) -> None:
+        self.own = own
+        self.embeds = embeds
+        self.files = files
+        self.done: dict[str, tuple[GoBuildSet, ...] | None | str] = {}
+
+    def sets(
+        self, interface: str, seen: frozenset[str]
+    ) -> tuple[GoBuildSet, ...] | None:
+        if interface not in self.done:
+            try:
+                self.done[interface] = self._walk(interface, seen)
+            except _VaryingError:
+                self.done[interface] = _VARYING
+        found = self.done[interface]
+        if isinstance(found, str):
+            raise _VaryingError
+        return found
+
+    def _walk(
+        self, interface: str, seen: frozenset[str]
+    ) -> tuple[GoBuildSet, ...] | None:
+        written = self.embeds.get(interface)
+        if written is None:
+            return None
+        sets = [
+            GoBuildSet(
+                dict(self.own.get(interface, {})), self.files.get(interface, ALWAYS)
+            )
+        ]
+        # `seen` guards a cycle Go itself rejects, so malformed source cannot
+        # loop the walk (what a cycle yields is then any answer, never a
+        # hang). An embed that cannot be resolved leaves the set unknown,
+        # but the rest are still walked: one varying past the cap makes it
+        # varying.
+        inner_seen = seen | {interface}
+        resolved = True
+        for alternatives in written:
+            options = self._embedded(alternatives, inner_seen)
+            if options is None:
+                resolved = False
+            elif options:
+                sets = _combined(sets, options)
+        return tuple(sets) if resolved else None
+
+    def _embedded(
+        self, alternatives: GoEmbedAlternatives, seen: frozenset[str]
+    ) -> list[GoBuildSet] | None:
+        options: list[GoBuildSet] = []
+        resolved = True
+        for base, builds in alternatives:
+            if base in seen:
+                continue
+            if base in cs.GO_BUILTIN_INTERFACE_METHODS:
+                options.append(GoBuildSet(_builtin_methods(base), builds))
+                continue
+            inherited = self.sets(base, seen)
+            if inherited is None:
+                resolved = False
+                continue
+            options.extend(
+                GoBuildSet(found.methods, all_of((found.builds, builds)))
+                for found in inherited
+            )
+        return options if resolved else None
 
 
 def _combined(sets: list[GoBuildSet], options: list[GoBuildSet]) -> list[GoBuildSet]:
@@ -346,32 +402,6 @@ def _merged(base: GoBuildSet, option: GoBuildSet) -> GoBuildSet:
     return GoBuildSet(
         {**base.methods, **option.methods}, all_of((base.builds, option.builds))
     )
-
-
-def _embedded_sets(
-    alternatives: GoEmbedAlternatives,
-    own: Mapping[str, GoMethodSet],
-    embeds: Mapping[str, tuple[GoEmbedAlternatives, ...] | None],
-    files: Mapping[str, Expr],
-    seen: frozenset[str],
-) -> list[GoBuildSet] | None:
-    options: list[GoBuildSet] = []
-    resolved = True
-    for base, builds in alternatives:
-        if base in seen:
-            continue
-        if base in cs.GO_BUILTIN_INTERFACE_METHODS:
-            options.append(GoBuildSet(_builtin_methods(base), builds))
-            continue
-        inherited = _method_sets(base, own, embeds, files, seen)
-        if inherited is None:
-            resolved = False
-            continue
-        options.extend(
-            GoBuildSet(found.methods, all_of((found.builds, builds)))
-            for found in inherited
-        )
-    return options if resolved else None
 
 
 def _builtin_methods(name: str) -> GoMethodSet:
@@ -419,23 +449,34 @@ def implicit_implementations(
     empty interface (`interface{}`, `any`) is satisfied by every type, which
     says nothing about any of them, so it gets no edge, as with go/types.
     """
+    pairs: dict[tuple[str, str], None] = {}
+    for type_qn, interface, found in covering(interfaces, types):
+        if (type_qn, interface) not in pairs and in_some_build(type_qn, found):
+            pairs[(type_qn, interface)] = None
+    return list(pairs)
+
+
+def covering(
+    interfaces: Mapping[str, tuple[GoBuildSet, ...] | None],
+    types: Mapping[str, GoMethodSet],
+) -> Iterator[tuple[str, str, GoBuildSet]]:
+    """(type, interface, method set) for each of an interface's known method
+    sets that a type's methods cover by name and signature, whatever the
+    builds: the pairs a build may hold, by interface, then type."""
     by_method: dict[GoMethodKey, list[str]] = {}
     for type_qn, methods in types.items():
         for key in methods:
             by_method.setdefault(key, []).append(type_qn)
-    pairs: list[tuple[str, str]] = []
     for interface, builds in sorted(interfaces.items()):
         required = [found for found in builds or () if found.methods]
-        pairs.extend(
-            (type_qn, interface)
-            for type_qn in _candidates(required, by_method)
-            if type_qn != interface
-            and any(
-                _covers(types[type_qn], found.methods) and in_some_build(type_qn, found)
+        for type_qn in _candidates(required, by_method):
+            if type_qn == interface:
+                continue
+            yield from (
+                (type_qn, interface, found)
                 for found in required
+                if _covers(types[type_qn], found.methods)
             )
-        )
-    return pairs
 
 
 def _candidates(

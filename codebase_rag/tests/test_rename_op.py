@@ -184,6 +184,29 @@ class RecordedGraph:
                     }
                 )
             return out
+        if query == cq.CYPHER_GRAPH_GO_IMPLEMENTERS_UNKNOWN:
+            prefix = str(p.get(cs.KEY_PROJECT_PREFIX, ""))
+            marked = sorted(
+                {
+                    src
+                    for src, rel, dst, _props in self.edges
+                    if rel == "DEFINES_METHOD"
+                    and self.nodes.get(dst, {}).get(cs.KEY_NAME) == p.get(cs.KEY_NAME)
+                    and src.startswith(prefix)
+                    and "Interface" in self.labels.get(src, set())
+                    and self.nodes[src].get(cs.KEY_IMPLEMENTERS_UNKNOWN)
+                }
+            )
+            return [
+                {
+                    cs.KEY_QUALIFIED_NAME: src,
+                    cs.KEY_PATH: self.nodes[src].get(cs.KEY_PATH),
+                    cs.KEY_IMPLEMENTERS_UNKNOWN: self.nodes[src].get(
+                        cs.KEY_IMPLEMENTERS_UNKNOWN
+                    ),
+                }
+                for src in marked
+            ]
         if query == cq.CYPHER_GRAPH_CALLBACK_SITES:
             return [
                 {

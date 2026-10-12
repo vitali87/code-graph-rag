@@ -48,6 +48,7 @@ from .builds import (
     GoBuilds,
     all_of,
     any_of,
+    decide,
     holds_wherever,
     impossible,
     negate,
@@ -230,6 +231,22 @@ class _GoPairBuilds:
     def in_some_build(self, type_qn: str, found: go_ifaces.GoBuildSet) -> bool:
         return possible((self.within(type_qn, found),))
 
+    def undecided(self, type_qn: str, found: go_ifaces.GoBuildSet) -> bool:
+        """Whether cgr cannot tell if a build holds the type with `found`, or
+        with one of the type's declarations of a method `found` asks for: a
+        constraint it cannot read, or more tags than it enumerates. Such a
+        pair, or such a declaration, is never linked, so a rename cannot see
+        it."""
+        within = self.within(type_qn, found)
+        if decide((within,)) is None:
+            return True
+        declared = self.owners.declarations.get(type_qn, {})
+        return any(
+            decide((self.builds.constraint(spec.file), within)) is None
+            for key in found.methods
+            for spec in declared.get(key, [])
+        )
+
     def holding(self, type_qn: str, interface_qn: str, proven: bool = False) -> Expr:
         if interface_qn in self.varying:
             if (interface_qn, type_qn) in self.proven_pairs:
@@ -406,22 +423,64 @@ class GoInterfaceMixin:
         compiler = _GoCompilerView(
             self.repo_path, analysed_roots, checked_files, compared
         )
-        linked = self._link_implicit_implementations(pair_builds, compiler)
+        types = self._go_implementer_types(owners)
+        linked = self._link_implicit_implementations(pair_builds, compiler, types)
         self._link_go_overrides(owners.method_sets, checked_files, pair_builds)
         self._record_go_pair_builds(pair_builds)
+        self._record_go_implementers_unknown(full, pair_builds, types)
         if linked:
             logger.info(ls.GO_IMPLICIT_IMPLEMENTS_LINKED.format(count=linked))
         return linked
 
-    def _link_implicit_implementations(
-        self, pair_builds: _GoPairBuilds, compiler: _GoCompilerView
-    ) -> int:
-        owners, interfaces = pair_builds.owners, pair_builds.interfaces
-        types = {
+    def _go_implementer_types(
+        self, owners: _GoMethodOwners
+    ) -> dict[str, go_ifaces.GoMethodSet]:
+        return {
             qn: methods
             for qn, methods in owners.method_sets.items()
             if self.function_registry.get(qn) in _GO_IMPLEMENTER_TYPES
         }
+
+    def _record_go_implementers_unknown(
+        self,
+        full: go_ifaces.GoFullMethodSets,
+        pair_builds: _GoPairBuilds,
+        types: dict[str, go_ifaces.GoMethodSet],
+    ) -> None:
+        """Mark each Go interface whose implementers cgr cannot tell, and
+        why, on its node (#3360): one of unknown method set, or one some type
+        may implement where cgr cannot tell whether a build holds the pair.
+        Nothing links to it by name, so a rename refuses a method of its
+        name rather than leave an implementation behind. Every interface is
+        written, so a sync clears a mark that no longer holds."""
+        unknown = {
+            interface_qn: (
+                cs.GoImplementersUnknown.BUILDS
+                if interface_qn in full.varying
+                else cs.GoImplementersUnknown.EMBEDS
+            )
+            for interface_qn, sets in full.sets.items()
+            if sets is None
+        }
+        for type_qn, interface_qn, found in go_ifaces.covering(full.sets, types):
+            if interface_qn not in unknown and pair_builds.undecided(type_qn, found):
+                unknown[interface_qn] = cs.GoImplementersUnknown.CONSTRAINT
+        for interface_qn in sorted(full.sets):
+            self.ingestor.ensure_node_batch(
+                cs.NodeLabel.INTERFACE,
+                {
+                    cs.KEY_QUALIFIED_NAME: interface_qn,
+                    cs.KEY_IMPLEMENTERS_UNKNOWN: str(unknown.get(interface_qn, "")),
+                },
+            )
+
+    def _link_implicit_implementations(
+        self,
+        pair_builds: _GoPairBuilds,
+        compiler: _GoCompilerView,
+        types: dict[str, go_ifaces.GoMethodSet],
+    ) -> int:
+        owners, interfaces = pair_builds.owners, pair_builds.interfaces
         # An interface whose method set differs between builds (it embeds
         # `p.I`, which `i_linux.go` and `i_windows.go` declare apart): the
         # one build go/types read speaks for no other, so its silence rules

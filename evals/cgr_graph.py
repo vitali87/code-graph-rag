@@ -946,6 +946,35 @@ class _StatefulIngestor:
             and props.get(cs.KEY_NAME) == params.get(cs.KEY_NAME)
         ]
 
+    def _go_implementers_unknown_rows(self, params: PropertyDict) -> list[ResultRow]:
+        # Interfaces marked `implementers_unknown` (#3360) that declare a
+        # method `$name`, once each.
+        prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
+        interface = cs.NodeLabel.INTERFACE.value
+        rows: dict[str, ResultRow] = {}
+        for (label, uid), props in self.nodes.items():
+            if (
+                label != interface
+                or not _str(uid).startswith(prefix)
+                or not props.get(cs.KEY_IMPLEMENTERS_UNKNOWN)
+            ):
+                continue
+            if any(
+                edge[2] == cs.RelationshipType.DEFINES_METHOD.value
+                and edge[3] == cs.NodeLabel.METHOD.value
+                and self.nodes.get((edge[3], edge[4]), {}).get(cs.KEY_NAME)
+                == params.get(cs.KEY_NAME)
+                for edge in self._out.get((label, uid), ())
+            ):
+                rows[_str(uid)] = {
+                    cs.KEY_QUALIFIED_NAME: _result(uid),
+                    cs.KEY_PATH: _result(props.get(cs.KEY_PATH)),
+                    cs.KEY_IMPLEMENTERS_UNKNOWN: _result(
+                        props.get(cs.KEY_IMPLEMENTERS_UNKNOWN)
+                    ),
+                }
+        return [rows[qn] for qn in sorted(rows)]
+
     def _project_rows(self) -> list[ResultRow]:
         return [
             {
@@ -1302,6 +1331,8 @@ class _StatefulIngestor:
                 return self._graph_rows(query, params or {})
             case cs.CYPHER_SAME_NAMED_CSHARP_TYPES:
                 return self._same_named_csharp_type_rows(params or {})
+            case cq.CYPHER_GRAPH_GO_IMPLEMENTERS_UNKNOWN:
+                return self._go_implementers_unknown_rows(params or {})
             case (
                 cq.CYPHER_CONTEXT_HOTNESS
                 | cq.CYPHER_CONTEXT_TYPES

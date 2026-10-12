@@ -1265,6 +1265,14 @@ CYPHER_GRAPH_OVERRIDES = """MATCH (a)-[r:OVERRIDES]-(b)
 WHERE b.qualified_name = $qn AND a.qualified_name STARTS WITH $project_prefix
 RETURN labels(a)[0] AS label, a.qualified_name AS qualified_name, a.path AS path,
        type(r) AS rel_type, r.resolution AS resolution"""
+# The Go interfaces declaring a method `$name` whose implementers cgr cannot
+# tell (#3360), and why: a rename of a method of that name could leave one
+# of their implementers, or the interface, under the old name.
+CYPHER_GRAPH_GO_IMPLEMENTERS_UNKNOWN = """MATCH (i:Interface)-[:DEFINES_METHOD]->(m:Method)
+WHERE m.name = $name AND i.qualified_name STARTS WITH $project_prefix
+  AND i.implementers_unknown IS NOT NULL AND i.implementers_unknown <> ''
+RETURN DISTINCT i.qualified_name AS qualified_name, i.path AS path,
+       i.implementers_unknown AS implementers_unknown"""
 # One hop of the `depth` walks (issue #2624): the neighbours of a whole
 # frontier at once, each row naming the frontier node it hangs off as
 # `through`. OVERRIDES is read one direction per query so a walk that went

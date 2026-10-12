@@ -39,6 +39,10 @@ KEY_NON_METHOD_MEMBERS = "non_method_members"
 # The types a Go interface embeds, as written (`Reader`, `io.Writer`): its
 # method set includes theirs, so satisfying it needs them too (issue #2483).
 KEY_EMBEDS = "embeds"
+# Why cgr cannot tell which types implement a Go interface (a
+# GoImplementersUnknown), or "" when it can (#3360). Written for every Go
+# interface at each link, so a sync clears a mark that no longer holds.
+KEY_IMPLEMENTERS_UNKNOWN = "implementers_unknown"
 # A JS/TS function that is an object literal's property value, reached only
 # through its object (issue #2435).
 KEY_IS_OBJECT_MEMBER = "is_object_member"
@@ -138,6 +142,22 @@ class EdgeResolution(StrEnum):
     HEURISTIC = "heuristic"
     TRACE_CONFIRMED = "trace_confirmed"
     DYNAMIC = "dynamic"
+
+
+class GoImplementersUnknown(StrEnum):
+    """Why cgr cannot tell which types implement a Go interface, so it links
+    none by name and a rename of a method of its name refuses (#3360).
+
+    `builds`: its method set differs between builds in more ways than cgr
+    tells apart (past 64 alternatives, or a combination it cannot decide).
+    `embeds`: it embeds an interface cgr cannot resolve (another module's, or
+    a name it cannot find). `constraint`: whether some type implements it
+    rests on a build constraint cgr cannot read or decide.
+    """
+
+    BUILDS = "builds"
+    EMBEDS = "embeds"
+    CONSTRAINT = "constraint"
 
 
 # Ordering for `--min-resolution`: an edge with no label is a legacy static

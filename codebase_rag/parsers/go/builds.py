@@ -139,7 +139,7 @@ def _tag(name: str) -> Expr:
 
 def all_of(parts: Iterable[Expr]) -> Expr:
     """Every one of `parts`."""
-    kept = tuple(dict.fromkeys(part for part in parts if part != ALWAYS))
+    kept = _flat("and", parts, ALWAYS)
     if NEVER in kept:
         return NEVER
     if UNKNOWN in kept:
@@ -149,12 +149,25 @@ def all_of(parts: Iterable[Expr]) -> Expr:
 
 def any_of(parts: Iterable[Expr]) -> Expr:
     """One of `parts`."""
-    kept = tuple(dict.fromkeys(part for part in parts if part != NEVER))
+    kept = _flat("or", parts, NEVER)
     if ALWAYS in kept:
         return ALWAYS
     if UNKNOWN in kept:
         return UNKNOWN
     return kept[0] if len(kept) == 1 else Expr("or", parts=kept)
+
+
+def _flat(op: str, parts: Iterable[Expr], unit: Expr) -> tuple[Expr, ...]:
+    # The distinct operands, an operand of the same `op` spliced in: a
+    # constraint built up level by level through an interface hierarchy
+    # stays as large as its distinct tags (#3360 review), where nesting
+    # repeated each shared part once per path to it.
+    kept: dict[Expr, None] = {}
+    for part in parts:
+        for operand in part.parts if part.op == op and part != unit else (part,):
+            if operand != unit:
+                kept[operand] = None
+    return tuple(kept)
 
 
 def negate(part: Expr) -> Expr:
@@ -192,31 +205,76 @@ def name_constraint(rel_path: str) -> Expr:
 
 def header_constraint(text: str, truncated: bool = False) -> Expr:
     """The `//go:build` expression in a file's head, or its `// +build`
-    lines without one. A constraint this cannot read is UNKNOWN, and so is
-    the head of a file cut off (`truncated`) before its first code line:
+    lines without one, read where `go/build` reads them: before the package
+    clause, past blank lines and line and block comments (a license
+    `/* ... */` included), never inside a block comment. A constraint this
+    cannot read is UNKNOWN, and so is a head that ends inside a block
+    comment, or that was cut off (`truncated`) before its first code line:
     its constraint may lie past what was read."""
-    go_build: str | None = None
-    plus_lines: list[str] = []
-    pending: list[str] = []
-    reached_code = False
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line:
-            plus_lines.extend(pending)
-            pending.clear()
-            continue
-        if not line.startswith("//"):
-            reached_code = True
-            break
-        if go_build is None and _is_directive(line, _GO_BUILD_PREFIX):
-            go_build = line[len(_GO_BUILD_PREFIX) :]
-        elif _is_directive(line, _PLUS_BUILD_PREFIX):
-            pending.append(line[len(_PLUS_BUILD_PREFIX) :])
-    if truncated and not reached_code:
+    header = _Header()
+    header.read(text)
+    if header.in_block or (truncated and not header.reached_code):
         return UNKNOWN
-    if go_build is not None:
-        return _parse_go_build(go_build)
-    return _all(_plus_build(line) for line in plus_lines)
+    if header.go_build is not None:
+        return _parse_go_build(header.go_build)
+    return _all(_plus_build(line) for line in header.plus_lines)
+
+
+class _Header:
+    """`go/build`'s parseFileHeader (#3360 review): a `//go:build` line
+    counts anywhere in the head outside a block comment; a `// +build` line
+    only before the first line that is no line comment, and only when a
+    blank line follows it there."""
+
+    def __init__(self) -> None:
+        self.go_build: str | None = None
+        self.plus_lines: list[str] = []
+        self.pending: list[str] = []
+        # A line not opening with `//` was seen: no `// +build` line after.
+        self.ended = False
+        self.in_block = False
+        self.reached_code = False
+
+    def read(self, text: str) -> None:
+        for raw in text.splitlines():
+            if not self._line(raw.strip()):
+                self.reached_code = True
+                return
+
+    def _line(self, line: str) -> bool:
+        # False at the first text that is no comment.
+        if not line:
+            if not self.ended:
+                self.plus_lines.extend(self.pending)
+                self.pending.clear()
+            return True
+        if not line.startswith("//"):
+            self.ended = True
+        if not self.in_block:
+            if self.go_build is None and _is_directive(line, _GO_BUILD_PREFIX):
+                self.go_build = line[len(_GO_BUILD_PREFIX) :]
+            elif not self.ended and _is_directive(line, _PLUS_BUILD_PREFIX):
+                self.pending.append(line[len(_PLUS_BUILD_PREFIX) :])
+        return self._only_comments(line)
+
+    def _only_comments(self, line: str) -> bool:
+        # Whether the rest of `line` is comment, tracking a block comment
+        # across lines (`/* a */ /* b */ package p` is code).
+        while line:
+            if self.in_block:
+                close = line.find("*/")
+                if close < 0:
+                    return True
+                self.in_block = False
+                line = line[close + 2 :].strip()
+            elif line.startswith("//"):
+                return True
+            elif line.startswith("/*"):
+                self.in_block = True
+                line = line[2:].strip()
+            else:
+                return False
+        return True
 
 
 def _is_directive(line: str, prefix: str) -> bool:

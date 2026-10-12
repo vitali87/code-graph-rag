@@ -6,10 +6,13 @@ from pathlib import Path
 
 import pytest
 
+from codebase_rag.parsers.go import interfaces as go_ifaces
 from codebase_rag.parsers.go.builds import (
     ALWAYS,
     UNKNOWN,
+    Expr,
     GoBuilds,
+    all_of,
     decide,
     header_constraint,
     name_constraint,
@@ -159,3 +162,150 @@ def test_a_tag_only_asked_for_or_only_ruled_out_is_never_enumerated() -> None:
 def test_a_constraint_nested_within_the_limit_is_read() -> None:
     nested = "//go:build " + "(" * 50 + "linux" + ")" * 50 + "\n"
     assert decide((header_constraint(nested), name_constraint("x_windows.go"))) is False
+
+
+# Where `go/build` reads a constraint (#3360 review): past blank lines and
+# line and block comments, never inside a block comment, and a `// +build`
+# line only before the first line that is no line comment. Each verdict
+# below is `go list`'s under GOOS=windows: True where the file builds there.
+_HEADERS = {
+    "block": ("/* license */\n\n//go:build linux\n\npackage p\n", False),
+    "multi-line-block": (
+        "/*\n * Copyright 2026\n */\n//go:build linux\n\npackage p\n",
+        False,
+    ),
+    "line-then-block": (
+        "// Copyright\n/* more */\n\n//go:build linux\npackage p\n",
+        False,
+    ),
+    "build-text-in-a-block": (
+        "/* //go:build windows */\n//go:build linux\n\npackage p\n",
+        False,
+    ),
+    "build-line-inside-a-block": (
+        "/*\n//go:build linux\n*/\n\npackage p\n",
+        True,
+    ),
+    "block-on-the-code-line": ("//go:build linux\n/* x */ package p\n", False),
+    "plus-build-after-a-block": (
+        "/* x */\n\n// +build linux\n\npackage p\n",
+        True,
+    ),
+    "plus-build-before-a-block": (
+        "// +build linux\n\n/* x */\npackage p\n",
+        False,
+    ),
+}
+
+
+@pytest.mark.parametrize("header", sorted(_HEADERS))
+def test_a_constraint_is_read_where_go_reads_it(header: str) -> None:
+    text, on_windows = _HEADERS[header]
+    windows = name_constraint("x_windows.go")
+    assert decide((header_constraint(text), windows)) is on_windows
+
+
+def test_a_head_ending_inside_a_block_comment_is_unknown() -> None:
+    assert header_constraint("/* unterminated\n//go:build linux\n") == UNKNOWN
+
+
+def test_nested_conjunctions_stay_as_large_as_their_distinct_parts() -> None:
+    # An interface's builds join its own file's and each embed's, level by
+    # level: nested, a part shared by two embeds was repeated once per path
+    # to it, doubling per level of a diamond.
+    tags = [header_constraint(f"//go:build t{k}\n") for k in range(40)]
+    left = right = ALWAYS
+    for tag in tags:
+        left, right = all_of((tag, left, right)), all_of((tag, right, left))
+    assert left.op == "and"
+    assert len(left.parts) == 40
+
+
+def _walk_without_memo(
+    interface: str,
+    own: dict[str, go_ifaces.GoMethodSet],
+    embeds: dict[str, tuple[go_ifaces.GoEmbedAlternatives, ...] | None],
+    files: dict[str, Expr],
+    seen: frozenset[str] = frozenset(),
+) -> tuple[go_ifaces.GoBuildSet, ...] | None:
+    # The walk as it was before its memo: each embed walked again per path.
+    written = embeds.get(interface)
+    if written is None:
+        return None
+    sets = [go_ifaces.GoBuildSet(dict(own.get(interface, {})), files[interface])]
+    resolved = True
+    for alternatives in written:
+        options: list[go_ifaces.GoBuildSet] = []
+        known = True
+        for base, builds in alternatives:
+            if base in seen | {interface}:
+                continue
+            inherited = _walk_without_memo(base, own, embeds, files, seen | {interface})
+            if inherited is None:
+                known = False
+                continue
+            options.extend(
+                go_ifaces.GoBuildSet(found.methods, all_of((found.builds, builds)))
+                for found in inherited
+            )
+        if not known:
+            resolved = False
+        elif options:
+            sets = go_ifaces._combined(sets, options)
+    return tuple(sets) if resolved else None
+
+
+def _random_hierarchy(
+    seed: int,
+) -> tuple[
+    dict[str, go_ifaces.GoMethodSet],
+    dict[str, tuple[go_ifaces.GoEmbedAlternatives, ...] | None],
+    dict[str, Expr],
+]:
+    import random
+
+    rng = random.Random(seed)  # noqa: S311 - a reproducible case, not a secret
+    constraints = [
+        ALWAYS,
+        name_constraint("x_linux.go"),
+        name_constraint("x_windows.go"),
+        header_constraint("//go:build !linux\n"),
+    ]
+    names = [f"I{k}" for k in range(9)]
+    own: dict[str, go_ifaces.GoMethodSet] = {}
+    embeds: dict[str, tuple[go_ifaces.GoEmbedAlternatives, ...] | None] = {}
+    files: dict[str, Expr] = {}
+    for index, name in enumerate(names):
+        own[name] = {
+            go_ifaces.method_key(f"M{rng.randint(0, 5)}", "p"): (
+                go_ifaces.GoSignature((), (rng.choice(("int", "string")),)),
+            )
+        }
+        files[name] = rng.choice(constraints)
+        if index and rng.random() < 0.1:
+            embeds[name] = None
+            continue
+        lower = names[:index]
+        embeds[name] = tuple(
+            tuple(
+                (base, rng.choice(constraints))
+                for base in rng.sample(lower, rng.randint(1, min(2, len(lower))))
+            )
+            for _ in range(rng.randint(0, min(3, len(lower))))
+        )
+    return own, embeds, files
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_the_memo_gives_what_the_walk_without_it_gives(seed: int) -> None:
+    # The same method sets, unknown ones and varying ones, interface by
+    # interface, on small hierarchies with per-build embeds and files.
+    own, embeds, files = _random_hierarchy(seed)
+    full = go_ifaces.full_method_sets(own, embeds, files)
+    for interface in embeds:
+        try:
+            expected: object = _walk_without_memo(interface, own, embeds, files)
+        except go_ifaces._VaryingError:
+            expected = "varying"
+        found = "varying" if interface in full.varying else full.sets[interface]
+        assert found == expected, interface
