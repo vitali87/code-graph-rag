@@ -30,6 +30,12 @@ from codebase_rag.parsers.go_frontend import GoCallSite, run_go_frontend
 from codebase_rag.parsers.go_frontend import frontend as go_frontend
 from codebase_rag.tests.conftest import get_relationships, run_updater
 
+# The tests that run the real go/types helper share its build, and the
+# fingerprint's tool and grammar versions are read once (conftest).
+pytestmark = pytest.mark.usefixtures(
+    "one_go_helper_per_session", "fingerprint_inputs_once_per_session"
+)
+
 GO_MOD = "module example.com/proj\n\ngo 1.24\n"
 ROUTER = (
     "package gotest\n"

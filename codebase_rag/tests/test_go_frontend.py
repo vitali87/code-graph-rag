@@ -186,6 +186,9 @@ def test_adapter_of_empty_facts_is_empty() -> None:
     assert _adapt_go_semantic_facts(GoSemanticFacts({}, set(), [])).is_empty()
 
 
+@pytest.mark.usefixtures(
+    "one_go_helper_per_session", "fingerprint_inputs_once_per_session"
+)
 def test_gotypes_tool_emits_call_and_external_facts(tmp_path: Path) -> None:
     # End-to-end against the real bundled tool: the compiled gotypes frontend
     # must resolve an embedded-struct PROMOTED method call to its exact
@@ -241,6 +244,9 @@ func main() {
 """
 
 
+@pytest.mark.usefixtures(
+    "one_go_helper_per_session", "fingerprint_inputs_once_per_session"
+)
 def test_gotypes_tool_emits_implements_and_skips_generics(tmp_path: Path) -> None:
     # End-to-end: the tool must emit the Dog -> Speaker pair proven by
     # types.Implements, keyed on both declaring NAME tokens, AND must SKIP the

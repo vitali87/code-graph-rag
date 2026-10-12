@@ -10,13 +10,14 @@ go/types frontend off, which is what most installs run.
 
 from __future__ import annotations
 
-import copy
 import hashlib
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Iterable
 from pathlib import Path
@@ -33,16 +34,24 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.go import interfaces as go_ifaces
 from codebase_rag.parsers.go_frontend import GoCallSite, GoImplements, GoSemanticFacts
-from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
+from codebase_rag.tests.conftest import (
+    create_and_run_updater,
+    get_relationships,
+    shared_session_dir,
+)
 from codebase_rag.tests.test_rename_op import RecordedGraph, _write
 from codebase_rag.tests.test_rename_op import _index as _rename_index
 from codebase_rag.utils import qn_markers
 from evals.cgr_graph import _StatefulIngestor
 
 # Every go/types test here shares one helper build per session, one helper
-# run per tree (`_real_go_frontend`) and one `go vet` per tree and GOOS.
+# run per tree and GOOS (`_one_real_go_run_per_tree`) and one `go vet` per
+# tree and GOOS; every index, the fingerprint's tool and grammar versions.
 pytestmark = pytest.mark.usefixtures(
-    "one_go_helper_per_session", "_one_real_go_run_per_tree", "_shared_vet_cache"
+    "one_go_helper_per_session",
+    "fingerprint_inputs_once_per_session",
+    "_one_real_go_run_per_tree",
+    "_shared_vet_cache",
 )
 
 
@@ -2104,13 +2113,14 @@ def _real_gotypes_or_skip(root: Path) -> None:
     _real_gotypes_files_or_skip(root, {"shapes.go"})
 
 
-# The real helper's facts, by the Go sources they were read from (paths
-# relative to the module), $GOOS and the directories left out: one run per
-# tree a worker indexes, where a fixture shared across parametrizations, a
-# precondition check and the index after it, and a sync and the clean index
-# it is compared with each ran the helper again. Its facts hold relative
-# paths only, and a copy is handed out each time.
-_REAL_FACTS: dict[tuple[str, str, frozenset[str]], GoSemanticFacts] = {}
+# Where the real helper's output is kept, by the Go sources it read (paths
+# relative to the module), the GOOS it read them for and the directories it
+# left out, for every xdist worker of the session: one run per tree, where
+# a fixture shared across parametrizations, a precondition check and the
+# index after it, a sync and the clean index it is compared with, and the
+# host's build named twice (`real` and `real-linux` on Linux) each ran the
+# helper again. Its output holds module-relative paths only.
+_REAL_RUNS: list[Path] = []
 
 
 def _real_go_frontend(
@@ -2118,10 +2128,7 @@ def _real_go_frontend(
 ) -> GoSemanticFacts:
     from codebase_rag.parsers.go_frontend import frontend
 
-    key = (_go_sources_digest(root), os.environ.get("GOOS", ""), ignored_dirs)
-    if key not in _REAL_FACTS:
-        _REAL_FACTS[key] = frontend.run_go_frontend(root, ignored_dirs=ignored_dirs)
-    return copy.deepcopy(_REAL_FACTS[key])
+    return frontend.run_go_frontend(root, ignored_dirs=ignored_dirs)
 
 
 def _real_gotypes_files_or_skip(root: Path, checked: set[str]) -> None:
@@ -2136,16 +2143,51 @@ def _real_gotypes_files_or_skip(root: Path, checked: set[str]) -> None:
 
 
 @pytest.fixture
-def _one_real_go_run_per_tree(monkeypatch: pytest.MonkeyPatch) -> None:
-    from codebase_rag.parsers.frontends import go as go_frontend
+def _one_real_go_run_per_tree(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    from codebase_rag.parsers.go_frontend import frontend
 
-    monkeypatch.setattr(
-        go_frontend,
-        "run_go_frontend",
-        lambda repo_path, ignored_dirs=cs.IGNORE_PATTERNS: _real_go_frontend(
-            Path(repo_path), frozenset(ignored_dirs)
-        ),
-    )
+    _REAL_RUNS[:] = [shared_session_dir(tmp_path_factory, "go-helper-runs")]
+    run = frontend._run_tool_once
+
+    def once(
+        binary: Path, module_root: Path, ignored_dirs: frozenset[str]
+    ) -> GoSemanticFacts | None:
+        key = hashlib.sha256(
+            "\0".join(
+                (
+                    _go_sources_digest(module_root),
+                    _analysed_goos(),
+                    *sorted(ignored_dirs),
+                )
+            ).encode()
+        ).hexdigest()
+        kept = _REAL_RUNS[0] / f"{key}.json"
+        if kept.is_file():
+            stdout, stderr = json.loads(kept.read_text(encoding="utf-8"))
+            return frontend._parse_payload(stdout, stderr)
+        captured: list[tuple[str, str]] = []
+        parse = frontend._parse_payload
+
+        def keep(stdout: str, stderr: str) -> GoSemanticFacts:
+            captured.append((stdout, stderr))
+            return parse(stdout, stderr)
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(frontend, "_parse_payload", keep)
+            facts = run(binary, module_root, ignored_dirs)
+        if facts is not None and captured:
+            partial = kept.with_suffix(f".{os.getpid()}.part")
+            partial.write_text(json.dumps(captured[0]), encoding="utf-8")
+            os.replace(partial, kept)
+        return facts
+
+    monkeypatch.setattr(frontend, "_run_tool_once", once)
+
+
+# The GOOS go/packages reads for the helper, by $GOOS: `go env GOOS` once.
+_ANALYSED_GOOS: dict[str, str] = {}
 
 
 def _analysed_goos() -> str:
@@ -2153,13 +2195,16 @@ def _analysed_goos() -> str:
     go = shutil.which("go")
     if go is None:
         pytest.skip("go toolchain not available")
-    return subprocess.run(
-        [go, "env", "GOOS"],
-        capture_output=True,
-        text=True,
-        encoding=cs.ENCODING_UTF8,
-        check=False,
-    ).stdout.strip()
+    wanted = os.environ.get("GOOS", "")
+    if wanted not in _ANALYSED_GOOS:
+        _ANALYSED_GOOS[wanted] = subprocess.run(
+            [go, "env", "GOOS"],
+            capture_output=True,
+            text=True,
+            encoding=cs.ENCODING_UTF8,
+            check=False,
+        ).stdout.strip()
+    return _ANALYSED_GOOS[wanted]
 
 
 def _real_build(
@@ -3666,7 +3711,7 @@ def test_a_test_packages_own_error_leaves_the_package_alone(
     # and p no longer compiled (`T does not implement I`).
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
     root = _shadow_repo(temp_repo / "proj", name, _SHADOW_FILES["external_test"])
-    _go_checks(root)
+    before = _go_sources(root)
     graph = _rename_index(root, mock_ingestor)
     pkg = "proj.p.p"
     implements = _labels(mock_ingestor, cs.RelationshipType.IMPLEMENTS)
@@ -3684,7 +3729,7 @@ def test_a_test_packages_own_error_leaves_the_package_alone(
     text = (root / "p" / "p.go").read_text(encoding="utf-8")
     assert "\tM()\n" in text, text
     assert "func (T) M()" in text, text
-    _go_checks(root)
+    _go_checks_after(root, before, ("",))
 
 
 @pytest.mark.parametrize("name", ["error", "any"])
@@ -3704,7 +3749,7 @@ def test_a_package_declaring_error_in_a_test_file_shadows_it_there_alone(
     # predeclared one, and U is an I there.
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
     root = _shadow_repo(temp_repo / "proj", name, _SHADOW_FILES[where])
-    _go_checks(root)
+    before = _go_sources(root)
     graph = _rename_index(root, mock_ingestor)
     pkg = "proj.p.p"
     own = "proj.p.own" if where == "production" else "proj.p.own_test"
@@ -3722,7 +3767,7 @@ def test_a_package_declaring_error_in_a_test_file_shadows_it_there_alone(
     assert "\tM()\n" in text, text
     assert "func (T) M()" in text, text
     assert ("func (U) M()" in text) is (where != "production"), text
-    _go_checks(root)
+    _go_checks_after(root, before, ("",))
 
 
 @pytest.mark.parametrize("sync", ["fresh", "reused"])
@@ -3805,7 +3850,7 @@ def test_an_embedded_import_names_the_package_not_its_external_tests(
             "q/q.go": READER_EMBEDDER,
         },
     )
-    _go_checks(root)
+    before = _go_sources(root)
     graph = _rename_index(root, mock_ingestor)
     implements = _labels(mock_ingestor, cs.RelationshipType.IMPLEMENTS)
     assert implements[("proj.q.q.T", "proj.q.q.I")] == cs.EdgeResolution.HEURISTIC
@@ -3820,7 +3865,7 @@ def test_an_embedded_import_names_the_package_not_its_external_tests(
     text = (root / "q" / "q.go").read_text(encoding="utf-8")
     assert "\tM()\n" in text, text
     assert "func (T) M()" in text, text
-    _go_checks(root)
+    _go_checks_after(root, before, ("",))
 
 
 # A method named `error` declares nothing in its package's scope.
@@ -4021,10 +4066,7 @@ _VETTED: list[Path] = []
 
 @pytest.fixture
 def _shared_vet_cache(tmp_path_factory: pytest.TempPathFactory) -> None:
-    base = tmp_path_factory.getbasetemp()
-    shared = base.parent if os.environ.get("PYTEST_XDIST_WORKER") else base
-    _VETTED[:] = [shared / "go-vetted"]
-    _VETTED[0].mkdir(exist_ok=True)
+    _VETTED[:] = [shared_session_dir(tmp_path_factory, "go-vetted")]
 
 
 def _go_sources_digest(root: Path) -> str:
@@ -4068,6 +4110,37 @@ def _go_checks_on(root: Path, goos: tuple[str, ...] = ("linux", "windows")) -> N
             marker.touch()
 
 
+def _go_sources(root: Path) -> dict[str, bytes]:
+    # The Go sources as they stand, for `_go_checks_after`.
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.suffix == cs.EXT_GO or path.name == "go.mod"
+    }
+
+
+def _go_checks_after(
+    root: Path,
+    before: dict[str, bytes],
+    goos: tuple[str, ...] = ("linux", "windows"),
+) -> None:
+    """`go vet` on each GOOS after a rename: it must leave every build
+    compiling. The tree before it (`before`, from `_go_sources`) is vetted
+    only when one fails, to tell a fixture that never compiled from a build
+    the rename broke; vetting it first as well cost a `go` process per GOOS
+    and test, slowest on Windows, and could fail no test this passes."""
+    try:
+        _go_checks_on(root, goos)
+    except AssertionError:
+        with tempfile.TemporaryDirectory() as tmp:
+            for rel, data in before.items():
+                path = Path(tmp) / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
+            _go_checks_on(Path(tmp), goos)
+        raise
+
+
 @pytest.mark.parametrize("style", sorted(_VARIANT_STYLES))
 def test_an_embedded_name_each_build_declares_keeps_its_method_set(
     temp_repo: Path,
@@ -4081,7 +4154,7 @@ def test_an_embedded_name_each_build_declares_keeps_its_method_set(
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
     files = {**_VARIANT_STYLES[style], "q/q.go": VARIANT_EMBEDDER}
     root = _variant_repo(temp_repo / "proj", files)
-    _go_checks_on(root)
+    before = _go_sources(root)
     graph = _rename_index(root, mock_ingestor)
     implements = _labels(mock_ingestor, cs.RelationshipType.IMPLEMENTS)
     assert implements[("proj.q.q.T", "proj.q.q.J")] == cs.EdgeResolution.HEURISTIC
@@ -4095,7 +4168,7 @@ def test_an_embedded_name_each_build_declares_keeps_its_method_set(
     text = (root / "q" / "q.go").read_text(encoding="utf-8")
     assert "\tO()\n" in text, text
     assert "func (T) O()" in text, text
-    _go_checks_on(root)
+    _go_checks_after(root, before)
 
 
 # The builds' `I` differ: T and Y are a J on Linux, U and X on Windows, V
@@ -4224,7 +4297,7 @@ def test_an_interface_each_build_declares_apart_links_each_builds_implementers(
     # it, and its silence on the other build's (U's file it never read, X
     # and Y it read and compared) rules nothing out.
     root = _variant_repo(temp_repo / "proj", DIFFERING_FILES)
-    _go_checks_on(root)
+    before = _go_sources(root)
     # The build go/types read: its pairs there are proven, every other
     # build's matched by name.
     proven_on = frontend.removeprefix("recorded-")
@@ -4269,7 +4342,7 @@ def test_an_interface_each_build_declares_apart_links_each_builds_implementers(
     assert "func (X) O()" in (root / "p" / "x.go").read_text(encoding="utf-8")
     assert "func (Y) O()" in (root / "p" / "y.go").read_text(encoding="utf-8")
     assert "func (V) N()" in (root / "p" / "v.go").read_text(encoding="utf-8")
-    _go_checks_on(root)
+    _go_checks_after(root, before)
 
 
 def _recorded_identical_gotypes(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -4416,7 +4489,7 @@ def test_a_type_each_build_declares_again_has_the_methods_both_compile(
     # Windows no I2 either, so renaming I2.M left t.go's M.
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
     root = _variant_repo(temp_repo / "proj", TYPE_VARIANT_FILES)
-    _go_checks_on(root)
+    before = _go_sources(root)
     graph = _rename_index(root, mock_ingestor)
     linux, windows = "proj.p.t_linux.T", "proj.p.t_windows.T"
     implements = _labels(mock_ingestor, cs.RelationshipType.IMPLEMENTS)
@@ -4446,7 +4519,7 @@ def test_a_type_each_build_declares_again_has_the_methods_both_compile(
     )
     assert report.applied, report.message
     assert "func (T) Y()" in (root / "p" / "t.go").read_text(encoding="utf-8")
-    _go_checks_on(root)
+    _go_checks_after(root, before)
 
 
 # `error` is p's own on Windows alone: elsewhere it is the predeclared one.
@@ -4685,7 +4758,7 @@ def test_embeds_combine_only_the_builds_one_build_compiles(
     # U, a J in no build, got IMPLEMENTS and OVERRIDES that pulled its
     # methods into J's rename hierarchy.
     root = _variant_repo(temp_repo / "proj", COMBINED_FILES)
-    _go_checks_on(root)
+    before = _go_sources(root)
     if frontend.startswith("real"):
         _real_build(monkeypatch, root, COMBINED_FILES, frontend)
     elif frontend == "recorded":
@@ -4707,7 +4780,7 @@ def test_embeds_combine_only_the_builds_one_build_compiles(
     assert report.applied, report.message
     assert "func (V) O()" in (root / "p" / "v.go").read_text(encoding="utf-8")
     assert "func (U) N()" in (root / "p" / "u.go").read_text(encoding="utf-8")
-    _go_checks_on(root)
+    _go_checks_after(root, before)
 
 
 # --- a call binds the build its caller compiles in (Greptile, PR #3360) -------
@@ -4793,7 +4866,7 @@ def test_renaming_one_builds_interface_method_renames_every_builds(
     # against its own I.M, left unrenamed: Windows no longer built.
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
     root = _variant_repo(temp_repo / "proj", CALLER_BUILD_FILES)
-    _go_checks_on(root)
+    before = _go_sources(root)
     graph = _rename_index(root, mock_ingestor)
     report = rename(
         root,
@@ -4806,7 +4879,7 @@ def test_renaming_one_builds_interface_method_renames_every_builds(
     assert report.applied, report.message
     assert "\tZ() string\n" in (root / "p" / "i_windows.go").read_text(encoding="utf-8")
     assert "j.Z()" in (root / "p" / "c.go").read_text(encoding="utf-8")
-    _go_checks_on(root)
+    _go_checks_after(root, before)
 
 
 # Each build declares T.M at the same line and column.
@@ -4827,7 +4900,7 @@ def test_a_method_each_build_declares_at_one_place_keeps_every_declaration(
     # left it, so that build no longer compiled.
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
     root = _variant_repo(temp_repo / "proj", SAME_PLACE_FILES)
-    _go_checks_on(root, ("linux", "windows", "darwin"))
+    before = _go_sources(root)
     graph = _rename_index(root, mock_ingestor)
     files = _method_files(mock_ingestor)
     declared = {
@@ -4845,7 +4918,7 @@ def test_a_method_each_build_declares_at_one_place_keeps_every_declaration(
     assert report.applied, report.message
     for rel in ("p/m_linux.go", "p/m_windows.go", "p/m_darwin.go"):
         assert "func (T) Z()" in (root / rel).read_text(encoding="utf-8"), rel
-    _go_checks_on(root, ("linux", "windows", "darwin"))
+    _go_checks_after(root, before, ("linux", "windows", "darwin"))
 
 
 # A header Go's own reader takes, nested past any depth this one reads.
@@ -4908,7 +4981,7 @@ def test_a_rename_reaches_only_the_same_packages_other_builds(
     # exported.
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
     root = _variant_repo(temp_repo / "proj", VARIANT_NEIGHBOURS)
-    _go_checks_on(root)
+    before = _go_sources(root)
     graph = _rename_index(root, mock_ingestor)
     query, target = _query(graph), "proj.p.h_linux.Helper"
     if opt_in:
@@ -4919,11 +4992,12 @@ def test_a_rename_reaches_only_the_same_packages_other_builds(
         for rel in ("p/h_linux.go", "p/h_windows.go"):
             assert "func Assist()" in (root / rel).read_text(encoding="utf-8"), rel
         assert "Assist()" in (root / "p" / "c.go").read_text(encoding="utf-8")
-        _go_checks_on(root)
+        _go_checks_after(root, before)
     else:
         # c.go reaches each build's Helper, a guess the caller opts into.
         with pytest.raises(RenameRefused):
             rename(root, query, graph.project, target, "Assist")
+        _go_checks_after(root, before)
     for rel in ("p/helper.py", "p/helper.js", "p/ext_test.go", "r/r.go"):
         assert (root / rel).read_text(encoding="utf-8") == VARIANT_NEIGHBOURS[rel], rel
 
@@ -4972,7 +5046,7 @@ def test_a_tests_own_build_variant_is_renamed_and_the_external_tests_is_not(
     # as a variant of `p`'s own test's: `p_test`'s Probe was renamed too.
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
     root = _variant_repo(temp_repo / "proj", PROBE_FILES)
-    _go_checks_on(root)
+    before = _go_sources(root)
     graph = _rename_index(root, mock_ingestor)
     report = rename(
         root,
@@ -4988,7 +5062,7 @@ def test_a_tests_own_build_variant_is_renamed_and_the_external_tests_is_not(
     assert (root / "p" / "ext_windows_test.go").read_text(
         encoding="utf-8"
     ) == PROBE_FILES["p/ext_windows_test.go"]
-    _go_checks_on(root)
+    _go_checks_after(root, before)
 
 
 # --- a diamond of embeds is walked once per interface (Greptile, PR #3360) ---
@@ -5082,9 +5156,10 @@ def test_a_long_chain_of_embeds_indexes(
     from codebase_rag.parsers.class_ingest import method_override
 
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
-    # One chain of 5000 links; the others, 1500, are still five times what
-    # overflowed.
-    links = 5000 if (order, sync) == ("forward", "fresh") else 1500
+    # One chain of 1000 links; the others, 600, are half again what
+    # overflowed. The combines counted and the override walks left out of
+    # it bound the work whatever the length.
+    links = 1000 if (order, sync) == ("forward", "fresh") else 600
     combined: list[int] = []
     combine = go_ifaces._combined
 
@@ -5144,10 +5219,10 @@ def test_a_long_chain_of_embeds_indexes_with_go_types(
 def test_a_long_chain_into_a_diamond_indexes(
     temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 1500 links feeding the bottom of a 12-level diamond. Not handed to the
+    # 600 links feeding the bottom of a 12-level diamond. Not handed to the
     # Go toolchain, whose own type checker takes minutes over this shape.
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
-    files = _chain(1500, "forward")
+    files = _chain(600, "forward")
     diamond = _diamond(12)
     files["p/d.go"] = diamond["p/d.go"].replace(
         "type A0 interface{ M0() }", "type A0 interface {\n\tI0\n\tM0()\n}"
@@ -5158,7 +5233,7 @@ def test_a_long_chain_into_a_diamond_indexes(
     create_and_run_updater(root, mock_ingestor, skip_if_missing="go")
     implements = _labels(mock_ingestor, cs.RelationshipType.IMPLEMENTS)
     assert ("proj.p.t.T", "proj.p.d.A11") in implements
-    assert ("proj.p.t.T", "proj.p.chain.I1499") in implements
+    assert ("proj.p.t.T", "proj.p.chain.I599") in implements
     assert "proj.p.t.T.M" in _calls_from(mock_ingestor, "proj.p.call.Call")
 
 
@@ -5228,51 +5303,63 @@ _INTERFACE_ONLY: dict[str, dict[str, str]] = {
 }
 
 
-@pytest.mark.parametrize(
-    ("shape", "target", "frontend"),
-    [
-        ("redeclare", "p.i.A.M", "treesitter"),
-        ("redeclare", "p.i.B.M", "treesitter"),
-        ("redeclare", "p.i.A.M", "gotypes"),
-        ("chain", "p.i.C.M", "treesitter"),
-        ("chain-gap", "p.i.A.M", "treesitter"),
-        ("siblings", "p.i.B.M", "treesitter"),
-        ("diamond-redeclare", "p.i.C.M", "treesitter"),
-        ("diamond", "p.i.A.M", "treesitter"),
-        ("per-build", "p.a_other.A.M", "treesitter"),
-        ("per-build", "p.a_other.A.M", "gotypes"),
-    ],
-)
+# Per frontend, each rename: the shape, in a package of its own, and the
+# declaration renamed.
+_INTERFACE_ONLY_RENAMES = {
+    "treesitter": (
+        ("redeclare", "i.A.M"),
+        ("redeclare", "i.B.M"),
+        ("chain", "i.C.M"),
+        ("chain-gap", "i.A.M"),
+        ("siblings", "i.B.M"),
+        ("diamond-redeclare", "i.C.M"),
+        ("diamond", "i.A.M"),
+        ("per-build", "a_other.A.M"),
+    ),
+    "gotypes": (("redeclare", "i.A.M"), ("per-build", "a_other.A.M")),
+}
+
+
+@pytest.mark.parametrize("frontend", ["treesitter", "gotypes"])
 def test_an_interface_only_hierarchy_renames_every_declaration(
     temp_repo: Path,
     mock_ingestor: MagicMock,
     monkeypatch: pytest.MonkeyPatch,
-    shape: str,
-    target: str,
     frontend: str,
 ) -> None:
     # The generic override walk linked `B.M` to `A.M` where B embeds A and
     # declares M again; leaving Go's interfaces out of it (for the chain's
     # sake) left B.M behind a rename of A.M with no type to tie them, and F
     # stopped compiling. Siblings two embeds bring together, and every
-    # build's declaration of an embed, were never all linked.
+    # build's declaration of an embed, were never all linked. Each rename
+    # is in a package of its own, so one index serves them all and one
+    # `go vet` per GOOS checks them all.
     monkeypatch.setattr(
         gu.settings,
         "GO_FRONTEND",
         cs.GoFrontend.GOTYPES if frontend == "gotypes" else cs.GoFrontend.TREESITTER,
     )
-    goos = ("linux", "windows") if shape == "per-build" else ("linux",)
-    files = _INTERFACE_ONLY[shape]
+    renames = _INTERFACE_ONLY_RENAMES[frontend]
+    files = {
+        f"r{index}/{rel.removeprefix('p/')}": text.replace(
+            "package p\n", f"package r{index}\n", 1
+        )
+        for index, (shape, _) in enumerate(renames)
+        for rel, text in _INTERFACE_ONLY[shape].items()
+    }
     root = _variant_repo(temp_repo / "proj", files)
-    _go_checks_on(root, goos)
+    before = _go_sources(root)
     graph = _rename_index(root, mock_ingestor)
 
-    report = rename(root, _query(graph), graph.project, f"proj.{target}", "N")
-    assert report.applied, report.message
+    for index, (shape, target) in enumerate(renames):
+        report = rename(
+            root, _query(graph), graph.project, f"proj.r{index}.{target}", "N"
+        )
+        assert report.applied, (shape, target, report.message)
     for rel in files:
         text = (root / rel).read_text(encoding="utf-8")
         assert "M()" not in text, (rel, text)
-    _go_checks_on(root, goos)
+    _go_checks_after(root, before)
 
 
 def test_a_rename_hierarchy_of_many_members_is_collected_linearly() -> None:
@@ -5378,7 +5465,7 @@ def test_an_interface_past_the_alternatives_cap_links_nothing(
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
     files = _tagged_embeds(count)
     root = _variant_repo(temp_repo / "proj", files)
-    _go_checks_on(root)
+    before = _go_sources(root)
     graph = _rename_index(root, mock_ingestor)
     implements = _labels(mock_ingestor, cs.RelationshipType.IMPLEMENTS)
     overrides = _labels(mock_ingestor, cs.RelationshipType.OVERRIDES)
@@ -5405,7 +5492,7 @@ def test_an_interface_past_the_alternatives_cap_links_nothing(
                 root, query, graph.project, "proj.p.u.U.N", "M", allow_heuristic=True
             )
     assert (root / "p" / "j.go").read_text(encoding="utf-8") == files["p/j.go"]
-    _go_checks_on(root)
+    _go_checks_after(root, before)
 
 
 def _changed(root: Path, files: dict[str, str]) -> list[str]:
@@ -5499,7 +5586,7 @@ def test_an_unexported_name_refuses_only_in_its_interfaces_package(
     # On 44784617d renaming V.n left K.n, and `var _ K = V{}` broke.
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
     root = _variant_repo(temp_repo / "proj", UNRESOLVED_EMBED_FILES)
-    _go_checks_on(root)
+    before = _go_sources(root)
     graph = _rename_index(root, mock_ingestor)
     assert graph.nodes["proj.q.k.K"][cs.KEY_IMPLEMENTERS_UNKNOWN] == "embeds"
     query = _query(graph)
@@ -5511,7 +5598,7 @@ def test_an_unexported_name_refuses_only_in_its_interfaces_package(
     )
     assert report.applied, report.message
     assert "func (W) m()" in (root / "r" / "w.go").read_text(encoding="utf-8")
-    _go_checks_on(root)
+    _go_checks_after(root, before)
 
 
 # Thirteen clauses, each tag but the ends both asked for and ruled out: no

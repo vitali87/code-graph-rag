@@ -18,6 +18,10 @@ from codebase_rag.editing.rename import RenameRefused, rename
 from codebase_rag.tests.conftest import create_and_run_updater
 from codebase_rag.types_defs import PropertyDict, ResultRow
 
+# Every index here reads the fingerprint's tool and grammar versions once
+# per session (conftest).
+pytestmark = pytest.mark.usefixtures("fingerprint_inputs_once_per_session")
+
 
 class RecordedGraph:
     """The fixed queries answered from what the indexer emitted."""
@@ -597,6 +601,7 @@ def test_typescript_rename(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     assert "h(1, 2) + assist(3, 4)" in app
 
 
+@pytest.mark.usefixtures("one_go_helper_per_session")
 def test_go_rename(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     _write(temp_repo, "go.mod", "module app\n\ngo 1.21\n")
     _write(

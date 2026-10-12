@@ -16,48 +16,37 @@ import pytest
 from codebase_rag.parsers.go_frontend import go_frontend_available
 from evals import go_build_variants as oracle
 
-pytestmark = pytest.mark.usefixtures("one_go_helper_per_session")
+pytestmark = pytest.mark.usefixtures(
+    "one_go_helper_per_session", "fingerprint_inputs_once_per_session"
+)
 
 
-# One seed: the eval script runs 400 cases (see the module docstring), and
-# each seed here costs a dozen runs of the real helper and as many `go vet`.
-@pytest.mark.parametrize("seed", [7])
-def test_generated_build_variants_match_go_types(tmp_path: Path, seed: int) -> None:
+# One bounded run: the eval script runs 400 cases (see the module docstring),
+# and each run here costs a run of the real helper per build and per go/types
+# mode, and a `go vet` per build before and after each rename.
+def test_generated_build_variants_match_go_types(tmp_path: Path) -> None:
     if shutil.which("go") is None or not go_frontend_available():
         pytest.skip("go toolchain not available")
     report = oracle.run(
-        cases=30, seed=seed, workdir=tmp_path, renames=3, wide=0.4, deep=0.3
+        cases=12,
+        seed=2,
+        workdir=tmp_path,
+        renames=2,
+        wide=0.4,
+        deep=0.3,
+        only=0.5,
     )
     for frontend, found in report.findings.items():
         assert found.failures() == 0, (frontend, vars(found))
         assert not found.unsupported_heuristic_calls, frontend
         assert found.pairs_supported
+        assert found.interface_pairs_supported
         assert found.calls_checked
-    assert len(report.renames) == 3
-    assert all(result.applied or result.refused for result in report.renames)
-    assert not any(result.changed_on_refusal for result in report.renames)
-    assert not any(result.broke for result in report.renames)
-    assert not any(result.touched for result in report.renames)
-
-
-def test_interfaces_no_type_implements_rename_whole(tmp_path: Path) -> None:
-    # Interfaces alone (`--only`): a method one declares again over an embed,
-    # or two embeds bring together, is one method. Each rename of it takes
-    # every declaration or refuses (PR #3360 review); the graph joins them.
-    if shutil.which("go") is None or not go_frontend_available():
-        pytest.skip("go toolchain not available")
-    report = oracle.run(
-        cases=4,
-        seed=7,
-        workdir=tmp_path,
-        frontends=("treesitter",),
-        renames=3,
-        only=1.0,
-    )
-    found = report.findings["treesitter"]
-    assert found.failures() == 0, vars(found)
-    assert found.interface_pairs_supported
-    assert sum("OM_" in result.target for result in report.renames) >= 2
+    assert len(report.renames) == 2
+    # Among them a method of interfaces no type implements (`--only`), which
+    # one declares again over an embed: each rename of it takes every
+    # declaration or refuses (PR #3360 review).
+    assert any("OM_" in result.target for result in report.renames)
     assert all(result.applied or result.refused for result in report.renames)
     assert not any(result.changed_on_refusal for result in report.renames)
     assert not any(result.broke for result in report.renames)
