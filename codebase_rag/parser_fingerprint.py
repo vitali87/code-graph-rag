@@ -101,10 +101,14 @@ def _probe_version(
     if binary is None:
         return _TOOL_ABSENT
     key = _probe_key(binary, argument, cwd)
-    remembered = _PROBE_ANSWERS.get(key)
-    if remembered is not None:
-        return remembered
+    # Asked every time; the remembered answers stand in only for a probe that
+    # timed out. The key cannot see every input that selects a toolchain (an
+    # SDK installed beside an unchanged `dotnet` host and `global.json`), so a
+    # long-lived process serving them first would keep a stale fingerprint
+    # (Codex review of PR 3368).
     answer = _ask_version(binary, argument, cwd, cs.TOOL_VERSION_PROBE_TIMEOUT)
+    if answer is None:
+        answer = _PROBE_ANSWERS.get(key)
     if answer is None:
         answer = _read_state_map(state_dir, cs.TOOL_VERSION_PROBE_CACHE_FILENAME).get(
             key
