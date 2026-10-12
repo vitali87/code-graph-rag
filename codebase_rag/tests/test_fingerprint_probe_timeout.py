@@ -293,6 +293,21 @@ class TestRealChangesStillChangeTheFingerprint:
         assert after != before
         assert go_probe.timeouts == [cs.TOOL_VERSION_PROBE_TIMEOUT]
 
+    def test_a_new_answer_from_an_unchanged_binary_changes_the_fingerprint(
+        self, go_probe: ScriptedRun, repo: Path, state: Path
+    ) -> None:
+        # Codex review of PR 3368: a toolchain can change behind an
+        # unchanged host binary and pins (an SDK installed beside `dotnet`),
+        # so a long-lived process must ask again rather than serve the
+        # answer it remembered.
+        before = pf.compute_parser_fingerprint(repo_path=repo, state_dir=state)
+        go_probe.script(GO_1_27)
+
+        after = pf.compute_parser_fingerprint(repo_path=repo, state_dir=state)
+
+        assert after != before
+        assert f"GO_VERSION={GO_1_27}" in pf._tool_versions(repo, state)
+
     def test_a_changed_binary_is_never_answered_from_the_cache(
         self,
         go_probe: ScriptedRun,
