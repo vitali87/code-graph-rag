@@ -3275,19 +3275,21 @@ class GraphUpdater:
         # Re-emitted handlers drop their previous EXPOSES first, so a
         # template that changed prefix loses its stale anchor and the orphan
         # cleanup prunes the outdated endpoint node.
+        self._drop_stale_exposes(CYPHER_DELETE_HANDLER_EXPOSES, {"qns": handler_qns})
+
+    def _drop_stale_exposes(self, query: str, params: PropertyParams) -> None:
         if not isinstance(self.ingestor, QueryProtocol):
             return
         # With the registry unread, ownership degrades to the prefix rule and
-        # `svc.v2`'s handlers can pass as `svc`'s, so no delete runs at all;
+        # `svc.v2`'s handlers can pass as `svc`'s (a seeded module map can hold
+        # a sibling project's modules the same way), so no delete runs at all;
         # emission only MERGEs, and the next healthy run cleans up
         # (CodeRabbit, PR #2129).
         if self._registry_unread:
             self._exposes_cleanup_skipped = True
             return
         try:
-            self.ingestor.execute_write(
-                CYPHER_DELETE_HANDLER_EXPOSES, {"qns": handler_qns}
-            )
+            self.ingestor.execute_write(query, params)
         except Exception:
             # A delete that failed is owed exactly like one that was skipped.
             self._exposes_cleanup_skipped = True
@@ -3438,20 +3440,9 @@ class GraphUpdater:
     def _drop_stale_module_exposes(self, module_qns: list[str]) -> None:
         # Ownership is the DEFINES containment closure from each Module
         # node, so prefix-sharing sibling modules keep their endpoints.
-        if not isinstance(self.ingestor, QueryProtocol):
-            return
-        # Same reason as the handler cleanup: a seeded module map can hold a
-        # sibling project's modules when the registry could not be read.
-        if self._registry_unread:
-            self._exposes_cleanup_skipped = True
-            return
-        try:
-            self.ingestor.execute_write(
-                CYPHER_DELETE_MODULE_EXPOSES, {"module_qns": module_qns}
-            )
-        except Exception:
-            self._exposes_cleanup_skipped = True
-            logger.debug("Stale EXPOSES cleanup unavailable; emission continues")
+        self._drop_stale_exposes(
+            CYPHER_DELETE_MODULE_EXPOSES, {"module_qns": module_qns}
+        )
 
     def _route_source(
         self,
