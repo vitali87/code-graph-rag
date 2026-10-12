@@ -642,6 +642,55 @@ def test_a_builtins_exec_still_counts_as_dynamic_code(receiver: str) -> None:
     assert not _has_annotations("def f(p):\n    return p.exec\n")
 
 
+@pytest.mark.parametrize(
+    ("scope", "use"),
+    [
+        ("import builtins as bi\n", "bi.exec"),
+        ("from builtins import exec as run\n", "run"),
+    ],
+)
+def test_an_aliased_builtin_counts_as_dynamic_code(scope: str, use: str) -> None:
+    """The alias is bound by the module, not the definition cut out of it,
+    so it is resolved there (bot review)."""
+    definition = f"def f():\n    return {use}\n"
+    assert _has_annotations(definition, scope + definition)
+    assert not _has_annotations(definition, definition)
+
+
+_ALIASED_EXEC = (
+    "from __future__ import annotations\n\nimport builtins as bi\n\n\n"
+    "def helper(a):\n    ns = {}\n"
+    "    bi.exec('def g(x: Missing):\\n    return x', ns)\n"
+    "    return ns['g'].__annotations__['x']\n" + OTHER
+)
+
+
+def test_an_aliased_exec_keeps_postponed_annotations(temp_repo: Path) -> None:
+    fixture = dict(FIXTURE)
+    fixture["pkg/util.py"] = _ALIASED_EXEC
+    fixture["pkg/core.py"] = "VERSION = 1\n"
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    report = _move(root, store, updater)
+    assert report.applied, report.message
+    probe = _python(root, "from pkg.core import helper; print(helper(1))")
+    assert probe.returncode == 0, probe.stderr
+    assert probe.stdout.strip() == "Missing"
+
+
+def test_an_aliased_exec_into_an_annotated_destination_refuses(
+    temp_repo: Path,
+) -> None:
+    fixture = dict(FIXTURE)
+    fixture["pkg/util.py"] = _ALIASED_EXEC
+    fixture["pkg/core.py"] = _ANNOTATED_CORE
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    with pytest.raises(MoveRefused, match="enables from __future__ import annotations"):
+        _move(root, store, updater)
+    assert (root / "pkg/core.py").read_text() == _ANNOTATED_CORE
+
+
 def test_a_from_import_of_the_vacated_module_never_commits_a_broken_caller(
     temp_repo: Path,
 ) -> None:
