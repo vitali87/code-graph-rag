@@ -18,6 +18,7 @@ importer's statement (issue #1522), so the whole move is one transaction:
 from __future__ import annotations
 
 import ast
+import builtins
 import re
 import symtable
 from collections.abc import Callable
@@ -120,6 +121,13 @@ _PY_SCOPES = (
 _PY_STAR = "*"
 _PY_ALL = "__all__"
 _PY_PRIVATE = "_"
+_PY_DUNDER = "__"
+# Names every module can read without binding them: what a star import
+# cannot be the source of.
+_PY_BUILTINS = frozenset(dir(builtins))
+# The one future feature still optional in Python 3, so the one whose
+# presence changes how a module runs: annotations stay unevaluated strings.
+_FUTURE_ANNOTATIONS = "annotations"
 _MODULE_SCOPE = "module"
 _SYMTABLE_FILENAME = "<moved>"
 _SYMTABLE_MODE = "exec"
@@ -461,6 +469,73 @@ def _star_exports(source: bytes, name: str) -> bool:
     except ValueError:
         return True
     return not isinstance(listed, list | tuple) or name in listed
+
+
+def _star_sources(tree: ast.Module) -> list[str]:
+    """The modules a Python module star-imports, as written."""
+    return sorted(
+        {
+            cs.SEPARATOR_DOT * node.level + (node.module or "")
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            and any(alias.name == _PY_STAR for alias in node.names)
+        }
+    )
+
+
+def _star_provided(source: bytes, moved: str, name: str) -> tuple[list[str], list[str]]:
+    """(names, modules): what the moved text reads that only a star import
+    of the old module can bind, and the modules it star-imports.
+
+    The graph records `from pkg.cfg import *` under `*`, with no name to
+    match a use against, so `_needed_imports` copied nothing for it and
+    `RATE` read through it was a NameError at the destination. Every name
+    the module binds itself, or a builtin, is accounted for; what is left
+    can only come through the star.
+    """
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return [], []
+    modules = _star_sources(tree)
+    reads = _global_references(moved)
+    if not modules or reads is None:
+        return [], []
+    bound: set[str] = set()
+    for statement in tree.body:
+        bound |= _py_bound(statement)
+    names = sorted(
+        n
+        for n in reads - bound - _PY_BUILTINS
+        if n != name and not (n.startswith(_PY_DUNDER) and n.endswith(_PY_DUNDER))
+    )
+    return (names, modules) if names else ([], [])
+
+
+def _has_annotations(source: bytes | str) -> bool:
+    """Whether Python `source` annotates anything; True when it won't parse,
+    since then the move cannot tell."""
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return True
+    for node in ast.walk(tree):
+        if isinstance(node, ast.AnnAssign):
+            return True
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and (
+            node.returns is not None
+            or any(
+                a.annotation is not None
+                for a in (
+                    *node.args.posonlyargs,
+                    *node.args.args,
+                    *node.args.kwonlyargs,
+                    *filter(None, (node.args.vararg, node.args.kwarg)),
+                )
+            )
+        ):
+            return True
+    return False
 
 
 def _identifiers(node: Node) -> set[str]:
@@ -875,6 +950,9 @@ class Mover:
                 guarded,
                 language,
             )
+            self._refuse_future_mismatch(
+                source, existing, cut.text, name, old_path, new_path, language
+            )
         old_uses = _uses(remainder, name)
         # The old module imports the moved name back: it still uses it, or
         # keeps a deprecation alias of it.
@@ -1052,6 +1130,15 @@ class Mover:
         # in both branches of an `if` was left behind (a NameError once
         # moved); a name some path leaves unbound cannot be carried.
         carried, unsafe = _flow_bindings(source)
+        starred, modules = _star_provided(source, moved, name)
+        if starred:
+            raise MoveRefused(
+                cs.MOVE_STAR_PROVIDED.format(
+                    names=cs.SEPARATOR_COMMA_SPACE.join(starred),
+                    modules=cs.SEPARATOR_COMMA_SPACE.join(modules),
+                    path=old_path,
+                )
+            )
         reads = _global_references(moved)
         unbound = sorted(
             n
@@ -1174,7 +1261,15 @@ class Mover:
         if existing and not existing.endswith(b"\n"):
             sep = "\n" + sep
         have = set(cls._future_features(existing))
-        missing = [f for f in futures if f not in have]
+        # Enabled for the whole file, `annotations` turns the destination's
+        # own annotations into strings (`existing.__annotations__['x'] is
+        # int` went False); text that annotates nothing does not need it,
+        # and `_refuse_future_mismatch` refused the case that does.
+        missing = [
+            f
+            for f in futures
+            if f not in have and (f != _FUTURE_ANNOTATIONS or _has_annotations(paste))
+        ]
         future_line = (
             cls._FUTURE_IMPORT.format(features=", ".join(missing)) if missing else ""
         )
@@ -1189,6 +1284,42 @@ class Mover:
             new_path,
             (len(existing), len(existing)),
             sep + future_line + paste.lstrip("\n"),
+        )
+
+    @classmethod
+    def _refuse_future_mismatch(
+        cls,
+        source: bytes,
+        existing: bytes,
+        moved: str,
+        name: str,
+        old_path: str,
+        new_path: str,
+        language: cs.SupportedLanguage | None,
+    ) -> None:
+        """Refuse when the two modules disagree on postponed annotations
+        and the move would change how some annotation evaluates.
+
+        A future statement applies to its whole file. Adding the old
+        module's `annotations` to a destination that annotates its own code
+        changes those annotations' values; a destination that has it while
+        the old module did not changes the moved definition's.
+        """
+        if language != cs.SupportedLanguage.PYTHON:
+            return
+        old_has = _FUTURE_ANNOTATIONS in cls._future_features(source)
+        new_has = _FUTURE_ANNOTATIONS in cls._future_features(existing)
+        if old_has == new_has or not _has_annotations(moved):
+            return
+        if old_has and not _has_annotations(existing):
+            return
+        enabled, disabled = (old_path, new_path) if old_has else (new_path, old_path)
+        raise MoveRefused(
+            cs.MOVE_FUTURE_ANNOTATIONS.format(
+                enabled=enabled,
+                disabled=disabled,
+                changed=new_path if old_has else name,
+            )
         )
 
     @staticmethod
