@@ -17,6 +17,13 @@ can publish them, so no run publishes a cache while another writer was
 changing the graph under it. Like the rest of that state it is per user:
 users with separate CGR_HOMEs sync one checkout under separate locks.
 
+Windows releases a dead process's lock asynchronously, though, so a sync
+rerun right after one was killed can find the lock still held, in the name
+of a process that no longer exists. A run that would be refused retries
+for a short grace while the holder the lock file names has exited; a
+holder that is running, or that the file does not name, is refused at
+once.
+
 Nothing is written into the tree, and a `.cgr-sync-lock` found there is
 never opened, moved or removed: it is in `CGR_STATE_LOCK_FILENAMES`, so the
 state move a sync makes under the lock leaves it where it is instead of
@@ -65,6 +72,7 @@ from . import constants as cs
 from . import exceptions as ex
 from . import logs as ls
 from .checkout_state import prepare_state_dir
+from .utils.process_owner import pid_has_exited
 
 if sys.platform == cs.PLATFORM_WINDOWS:  # pragma: no cover - platform
     import msvcrt
@@ -184,7 +192,14 @@ def _record_holder(fd: int, project_name: str) -> None:
         return
 
 
-def _holder(lock_path: Path) -> str:
+@dataclass(frozen=True)
+class _HolderRecord:
+    pid: int
+    project: str
+
+
+def _holder(lock_path: Path) -> _HolderRecord | None:
+    """The holder the lock file names, or None when it names none readably."""
     try:
         fd = os.open(lock_path, os.O_RDONLY | _BINARY | _NO_FOLLOW)
         try:
@@ -192,9 +207,15 @@ def _holder(lock_path: Path) -> str:
         finally:
             os.close(fd)
         pid, project = raw.decode(cs.ENCODING_UTF8).splitlines()[:2]
-        return ex.SYNC_HOLDER.format(pid=int(pid), project=project)
+        return _HolderRecord(int(pid), project)
     except (OSError, ValueError):
+        return None
+
+
+def _describe(holder: _HolderRecord | None) -> str:
+    if holder is None:
         return ex.SYNC_HOLDER_UNKNOWN
+    return ex.SYNC_HOLDER.format(pid=holder.pid, project=holder.project)
 
 
 def _cannot_create(lock_path: Path, error: OSError) -> bool:
@@ -315,7 +336,10 @@ def repo_sync_lock(
     Raises `SyncInProgressError`, naming the holder, when another writer
     holds it, unless `wait` is set: a scoped reingest (the watcher, the MCP
     reingest after an edit, `cgr check`) queues behind a running sync and
-    applies its change to the finished graph instead of dropping it.
+    applies its change to the finished graph instead of dropping it. A
+    holder the lock file names that has exited is not refused at once: its
+    lock gets `SYNC_LOCK_RELEASE_GRACE_SECONDS` to be released, as Windows
+    does some time after the process dies.
 
     The lock file is `.cgr-sync-lock` in the checkout's state directory
     under CGR_HOME; one this user can only read is locked read-only. When
@@ -334,14 +358,28 @@ def repo_sync_lock(
         # tree once it holds the lock, as the edit lock does (issue #2427).
         lock_path = prepare_state_dir(repo_path, adopt=False) / cs.SYNC_LOCK_FILENAME
         announced = False
+        release_deadline: float | None = None
         while not _try_acquire(key, repo_path, lock_path, project_name):
             holder = _holder(lock_path)
             if not wait:
+                # A holder that has exited no longer syncs; its lock is only
+                # waiting for Windows to release it. The holder is read again
+                # on every try, so one that takes the lock meanwhile is
+                # refused at once.
+                if holder is not None and pid_has_exited(holder.pid):
+                    now = time.monotonic()
+                    if release_deadline is None:
+                        release_deadline = now + cs.SYNC_LOCK_RELEASE_GRACE_SECONDS
+                    if now < release_deadline:
+                        time.sleep(cs.SYNC_LOCK_RELEASE_POLL_SECONDS)
+                        continue
                 raise SyncInProgressError(
-                    ex.SYNC_IN_PROGRESS.format(repo=repo_path, holder=holder)
+                    ex.SYNC_IN_PROGRESS.format(repo=repo_path, holder=_describe(holder))
                 )
             if not announced:
-                logger.info(ls.SYNC_LOCK_WAITING, repo=repo_path, holder=holder)
+                logger.info(
+                    ls.SYNC_LOCK_WAITING, repo=repo_path, holder=_describe(holder)
+                )
                 announced = True
             time.sleep(cs.SYNC_LOCK_POLL_SECONDS)
     try:

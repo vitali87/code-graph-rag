@@ -271,6 +271,13 @@ EDIT_LOCK_FILENAME = ".cgr-edit-lock"
 SYNC_LOCK_FILENAME = ".cgr-sync-lock"
 # How often a scoped reingest re-checks a lock a running sync holds.
 SYNC_LOCK_POLL_SECONDS = 0.2
+# How long, and how often, a sync that is refused rather than queued retries
+# a lock whose recorded holder has exited: Windows releases a dead process's
+# byte-range locks asynchronously, "depending upon available system
+# resources" (LockFileEx), so a sync rerun right after one was killed can
+# find its lock still held.
+SYNC_LOCK_RELEASE_GRACE_SECONDS = 2.0
+SYNC_LOCK_RELEASE_POLL_SECONDS = 0.05
 # The byte a Windows sync locks, far past the holder's pid and project at
 # the start of the file: a byte-range lock there also blocks other
 # processes' reads, and a refused writer must read whom it waits for.
