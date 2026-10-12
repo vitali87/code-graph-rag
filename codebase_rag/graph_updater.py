@@ -6644,9 +6644,11 @@ class GraphUpdater:
         )
         # A missing stamp on an existing graph means it was built by an
         # unknown (pre-fingerprint) parser: treat it as stale too, without
-        # paying for a fingerprint computation that cannot match.
+        # paying for a fingerprint computation that cannot match. The state
+        # directory lets a toolchain probe that times out reuse an earlier
+        # run's answer instead of reading as a missing toolchain.
         if stored is None or stored != compute_parser_fingerprint(
-            repo_path=self.repo_path, capture=self.capture
+            repo_path=self.repo_path, capture=self.capture, state_dir=self.state_dir
         ):
             self._parser_changed = True
             logger.warning(ls.PARSER_FINGERPRINT_MISMATCH)
@@ -7876,7 +7878,7 @@ class GraphUpdater:
             is_full_build or (self._parser_changed and self._single_file is None)
         ):
             self._pending_parser_fingerprint = compute_parser_fingerprint(
-                repo_path=self.repo_path, capture=self.capture
+                repo_path=self.repo_path, capture=self.capture, state_dir=self.state_dir
             )
 
     def _pre_parse_changed_files(

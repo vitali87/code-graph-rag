@@ -1494,6 +1494,10 @@ FINGERPRINT_DIST_UNREADABLE = (
     "Skipping a distribution whose metadata could not be read while computing "
     "the parser fingerprint"
 )
+FINGERPRINT_TOOL_UNANSWERED = (
+    "{tool} did not report its version in time, twice; the parser fingerprint "
+    "treats its version as unchanged"
+)
 JAVA_FRONTEND_RUNNING = "javac frontend: attributing Java sources"
 JAVA_FRONTEND_BUILD_FAILED = (
     "javac frontend tool build failed ({stderr}); using tree-sitter"
