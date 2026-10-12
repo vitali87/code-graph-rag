@@ -131,6 +131,9 @@ _FUTURE_ANNOTATIONS = "annotations"
 # Builtins that compile code at runtime, inheriting the caller's future
 # features: an annotation in a string they run is postponed or not with it.
 _PY_DYNAMIC_CODE = frozenset({"exec", "eval", "compile"})
+# The receivers through which an attribute reaches those builtins: any other
+# `.compile` (`re.compile`) is someone else's method.
+_PY_BUILTINS_MODULES = frozenset({"builtins", "__builtins__"})
 _MODULE_SCOPE = "module"
 _SYMTABLE_FILENAME = "<moved>"
 _SYMTABLE_MODE = "exec"
@@ -531,7 +534,12 @@ def _has_annotations(source: bytes | str) -> bool:
         if (
             isinstance(node, ast.AnnAssign)
             or (isinstance(node, ast.Name) and node.id in _PY_DYNAMIC_CODE)
-            or (isinstance(node, ast.Attribute) and node.attr in _PY_DYNAMIC_CODE)
+            or (
+                isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Name)
+                and node.value.id in _PY_BUILTINS_MODULES
+                and node.attr in _PY_DYNAMIC_CODE
+            )
         ):
             return True
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and (
