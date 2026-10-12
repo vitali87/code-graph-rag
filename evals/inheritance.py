@@ -25,12 +25,18 @@ from .oracles.cpp_oracle import cpp_available, run_cpp_oracle
 
 if TYPE_CHECKING:
     from clang.cindex import Cursor
+from .oracle_guard import oracle_unavailable_exits, require_oracle
 from .oracles.csharp_oracle import (
     csharp_oracle_available,
+    csharp_oracle_skip_reason,
     run_csharp_oracle,
 )
 from .oracles.java_oracle import java_available, run_java_oracle
-from .oracles.typescript_oracle import run_typescript_oracle, typescript_available
+from .oracles.typescript_oracle import (
+    run_typescript_oracle,
+    typescript_available,
+    typescript_skip_reason,
+)
 from .score import _prf
 from .structure_report import render, write_outputs
 from .types_defs import DiffBucket, LocationStats, ScoreResult, ScoreRow
@@ -657,9 +663,12 @@ def main(
         # Same reasoning as the Java and C++ branches: without the oracle this
         # would write a header-only CSV and exit 0, reporting "no gradeable
         # edges" when the truth is "the grader never ran".
-        if not csharp_oracle_available():
-            logger.error(ls.CSHARP_ORACLE_MISSING)
-            raise typer.Exit(code=1)
+        require_oracle(
+            csharp_oracle_available,
+            ls.CSHARP_ORACLE_MISSING,
+            ec.DOTNET_BIN,
+            skip_reason=csharp_oracle_skip_reason,
+        )
         result = score_inheritance(
             csharp_cgr_inheritance(target, project),
             csharp_oracle_inheritance(target),
@@ -680,12 +689,17 @@ def main(
         # write a header-only CSV and an empty diff while exiting 0 --
         # reporting "no gradeable edges" when the truth is "the grader never
         # ran".
-        if not typescript_available():
-            logger.error(ls.TS_ORACLE_MISSING)
-            raise typer.Exit(code=1)
+        require_oracle(
+            typescript_available,
+            ls.TS_ORACLE_MISSING,
+            ec.NODE_BIN,
+            skip_reason=typescript_skip_reason,
+        )
+        with oracle_unavailable_exits():
+            ts_oracle = ts_oracle_inheritance(target)
         result = score_inheritance(
             ts_cgr_inheritance(target, project),
-            ts_oracle_inheritance(target),
+            ts_oracle,
             inherits_label=ec.TS_SUPERTYPES_LABEL,
         )
         write_outputs(
@@ -751,9 +765,7 @@ def main(
         # Without a JDK the oracle yields nothing, and scoring that would write
         # a header-only CSV and an empty diff while exiting 0 -- reporting "no
         # gradeable edges" when the truth is "the grader never ran".
-        if not java_available():
-            logger.error(ls.JAVA_ORACLE_MISSING)
-            raise typer.Exit(code=1)
+        require_oracle(java_available, ls.JAVA_ORACLE_MISSING, ec.JAVAC_BIN)
         # The javac oracle names supertypes by SIMPLE name while it pins the
         # subclass to a location, so the row carries its own label: a Java 1.0
         # is not measuring the same unit as the Python one (issue #1190).

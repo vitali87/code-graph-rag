@@ -22,7 +22,9 @@ from .oracles import NodeOracleUnavailable
 def require_oracle(
     available: Callable[[], bool],
     oracle_missing: str,
-    binary: str,
+    # Empty for an oracle with no binary to name (libclang loads in-process);
+    # its message then has no `{binary}` field to fill.
+    binary: str = "",
     skip_reason: Callable[[], str | None] | None = None,
 ) -> None:
     if available():

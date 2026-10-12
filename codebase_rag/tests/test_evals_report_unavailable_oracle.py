@@ -23,9 +23,11 @@ import pytest
 import typer
 from loguru import logger
 
+from evals import constants as ec
 from evals.oracles import (
     NodeOracleUnavailable,
     csharp_oracle,
+    java_oracle,
     lua_oracle,
     php_oracle,
     typescript_oracle,
@@ -171,6 +173,94 @@ def test_csharp_l1_names_the_old_sdk(
     _dotnet_too_old(monkeypatch)
 
     code, errors = _exit_and_errors(_run_main("evals.csharp_l1", tmp_path))
+
+    assert code == 1
+    assert _OLD_SDK in errors
+    assert _FIXED_MESSAGE not in errors, errors
+
+
+def _run_inheritance(tmp_path: Path, language: str) -> Callable[[], None]:
+    from evals import inheritance
+
+    return lambda: inheritance.main(
+        target=tmp_path,
+        project_name="",
+        out_dir=tmp_path / "out",
+        language=ec.InheritanceLanguage(language),
+    )
+
+
+def _java_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(java_oracle, "_toolchain_runs", lambda _binary: False)
+
+
+def _node_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(typescript_oracle, "node_oracle_available", lambda *_: False)
+    monkeypatch.setattr(typescript_oracle, "node_oracle_skip_reason", lambda *_: None)
+
+
+@pytest.mark.parametrize(
+    ("language", "make_missing", "binary"),
+    [
+        (ec.InheritanceLanguage.JAVA, _java_missing, ec.JAVAC_BIN),
+        (ec.InheritanceLanguage.TYPESCRIPT, _node_missing, ec.NODE_BIN),
+    ],
+)
+def test_inheritance_names_the_missing_binary(
+    language: str,
+    make_missing: Callable[[pytest.MonkeyPatch], None],
+    binary: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The arm that reports a missing toolchain is the one nobody who tested
+    # the language ever sees, which is how a raw `{binary}` survived here
+    # after the L1 driver was fixed for it (issue #1518).
+    make_missing(monkeypatch)
+
+    code, errors = _exit_and_errors(_run_inheritance(tmp_path, language))
+
+    assert code == 1
+    assert "{binary}" not in errors, errors
+    assert f"'{binary}'" in errors, errors
+
+
+def test_typescript_inheritance_names_the_probe_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _node_unusable(monkeypatch, typescript_oracle)
+
+    code, errors = _exit_and_errors(
+        _run_inheritance(tmp_path, ec.InheritanceLanguage.TYPESCRIPT)
+    )
+
+    assert code == 1
+    assert _REASON in errors
+    assert _FIXED_MESSAGE not in errors, errors
+
+
+def test_typescript_inheritance_exits_on_a_post_install_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _node_fails_after_install(monkeypatch, typescript_oracle)
+
+    code, errors = _exit_and_errors(
+        _run_inheritance(tmp_path, ec.InheritanceLanguage.TYPESCRIPT)
+    )
+
+    assert code == 1
+    assert _REASON in errors
+    assert not (tmp_path / "out").exists()
+
+
+def test_csharp_inheritance_names_the_old_sdk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _dotnet_too_old(monkeypatch)
+
+    code, errors = _exit_and_errors(
+        _run_inheritance(tmp_path, ec.InheritanceLanguage.CSHARP)
+    )
 
     assert code == 1
     assert _OLD_SDK in errors
