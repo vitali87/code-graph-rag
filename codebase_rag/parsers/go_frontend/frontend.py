@@ -143,6 +143,8 @@ _RUN_TIMEOUT = 900
 # same restore-at-build posture as the C# frontend: an offline failure degrades
 # to tree-sitter, never worse.
 _GO_ENV = {"GOTOOLCHAIN": "local", "CGO_ENABLED": "0"}
+# Where a binary runs, which the helper's own build must leave to the host.
+_TARGET_ENV = frozenset({"GOOS", "GOARCH"})
 
 
 def go_frontend_available() -> bool:
@@ -215,7 +217,7 @@ def _compile_tool(go: str, src: Path, out: Path) -> bool | None:
             encoding=cs.ENCODING_UTF8,
             check=False,
             timeout=_BUILD_TIMEOUT,
-            env={**os.environ, **_GO_ENV},
+            env=_host_build_env(),
         )
     except subprocess.TimeoutExpired:
         # A wedged build degrades exactly like a failed one: the caller falls
@@ -230,6 +232,17 @@ def _compile_tool(go: str, src: Path, out: Path) -> bool | None:
     if proc.returncode != 0:
         logger.warning(ls.GO_FRONTEND_BUILD_FAILED.format(stderr=proc.stderr.strip()))
     return proc.returncode == 0
+
+
+def _host_build_env() -> dict[str, str]:
+    """The environment the helper is built in: the host's GOOS and GOARCH.
+
+    A GOOS or GOARCH set for the analysis (`GOOS=windows cgr ...` on Linux)
+    picks the build go/types reads, and the helper's run honours it; built
+    under it, the helper was a Windows binary this host cannot run, and the
+    index fell back to tree-sitter (#3360 review)."""
+    env = {key: value for key, value in os.environ.items() if key not in _TARGET_ENV}
+    return {**env, **_GO_ENV}
 
 
 def _dotted(version: tuple[int, ...]) -> str:

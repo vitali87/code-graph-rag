@@ -448,3 +448,18 @@ def test_one_failing_module_degrades_only_itself(
     assert facts.external_sites == set()
     assert facts.implements == []
     assert invoked == [repo, repo / "sub"]
+
+
+def test_the_helper_is_built_for_the_host_whatever_goos_the_analysis_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # GOOS=windows on Linux picks the build go/types reads; built under it,
+    # the helper was a Windows binary this host cannot run (#3360 review).
+    from codebase_rag.parsers.go_frontend import frontend
+
+    monkeypatch.setenv("GOOS", "windows")
+    monkeypatch.setenv("GOARCH", "arm64")
+    env = frontend._host_build_env()
+    assert "GOOS" not in env
+    assert "GOARCH" not in env
+    assert env["CGO_ENABLED"] == "0"

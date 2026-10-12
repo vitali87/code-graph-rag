@@ -185,6 +185,7 @@ class FunctionRegistryTrieProtocol(Protocol):
         start_line: int,
         start_col: int = 0,
         kind: NodeType | None = None,
+        origin: str | None = None,
     ) -> QualifiedName: ...
 
     def claim_other_space(self, natural_qn: QualifiedName, kind: NodeType) -> bool: ...

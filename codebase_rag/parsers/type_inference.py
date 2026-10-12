@@ -58,6 +58,7 @@ class TypeInferenceEngine:
         "method_return_types",
         "go_function_return_types",
         "go_package_names",
+        "go_declaration_variants",
         "go_call_sites",
         "go_external_sites",
         "java_call_sites",
@@ -113,6 +114,7 @@ class TypeInferenceEngine:
         method_return_types: dict[str, str] | None = None,
         go_function_return_types: dict[str, str] | None = None,
         go_package_names: dict[str, str] | None = None,
+        go_declaration_variants: dict[str, tuple[str, ...]] | None = None,
         go_call_sites: dict[CallSiteKey, ResolvedCallSite] | None = None,
         go_external_sites: set[CallSiteKey] | None = None,
         java_call_sites: dict[CallSiteKey, ResolvedCallSite] | None = None,
@@ -175,6 +177,9 @@ class TypeInferenceEngine:
         # hold two packages, `p` and the external test package `p_test`, so
         # the free-function index keys by both (#2616 review).
         self.go_package_names = _shared(go_package_names, dict)
+        # Go interface -> the declarations of its name each build makes
+        # (shared, filled by the interface link before any call is typed).
+        self.go_declaration_variants = _shared(go_declaration_variants, dict)
         # Shared references (as with csharp_call_sites): the go/types call-site
         # facts and external sites, populated after construction and read by the
         # Go resolver's semantic path (issue #1179).
@@ -950,7 +955,7 @@ class TypeInferenceEngine:
                 qn.rpartition(cs.SEPARATOR_DOT)[0], package_qn
             ),
         )
-        return declared[0] if len(declared) == 1 else None
+        return go_utils.one_declaration(declared, self.go_declaration_variants)
 
     def _go_imported_file(self, module_qn: str, package_qn: str) -> bool:
         # Whether Go file `module_qn` is a file of the package an import

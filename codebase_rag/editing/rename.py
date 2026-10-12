@@ -46,6 +46,7 @@ from ..parser_loader import load_parsers
 from ..parsers.js_ts.overloads import overload_signatures
 from ..parsers.py.overloads import overload_stub_names
 from ..types_defs import PropertyParams, ResultRow
+from ..utils import qn_markers
 from ..utils.path_utils import (
     base_module_qn,
     declaration_implementations,
@@ -181,10 +182,61 @@ def _hierarchy(fetch_all: QueryFn, project: str, qn: str) -> Hierarchy:
     every method `qn` overrides or is overridden by, transitively, with the
     members only a guessed OVERRIDES edge reaches."""
     parts = _csharp_partial_parts(fetch_all, project, qn)
-    found = hierarchy(fetch_all, project, qn)
+    found = hierarchy(
+        fetch_all,
+        project,
+        qn,
+        lambda member: _go_build_variants(fetch_all, project, member),
+    )
     seen: list[str] = [qn, *parts]
     seen += [m for m in found.members if m not in seen]
     return Hierarchy(seen, found.guessed - set(parts))
+
+
+def _go_build_variants(fetch_all: QueryFn, project: str, qn: str) -> list[str]:
+    """The other builds' declarations of Go method or function `qn`.
+
+    A package declares a name once per build (`func (T) M()` in `t_linux.go`
+    and in `t_windows.go`, `M()` in `i_linux.go`'s and `i_windows.go`'s
+    `I`), and a caller every build compiles calls each build's. Renaming
+    one left the others, and the builds holding them no longer compiled
+    (#3360 review). Two same-named declarations in one package can only be
+    such variants: any build holding both rejects them. An external test
+    package shares the directory but not the package, so a `_test.go` file
+    and another are never variants."""
+    definition = graph_query.definition(fetch_all, project, qn, None)
+    path, name, label = definition["path"], definition["name"], definition["label"]
+    if (
+        not path
+        or not name
+        or label not in (cs.NodeLabel.METHOD, cs.NodeLabel.FUNCTION)
+        or get_language_for_extension(Path(path).suffix) != cs.SupportedLanguage.GO
+    ):
+        return []
+    place = _go_declaration_place(path, qn, label)
+    return sorted(
+        other
+        for symbol in graph_query.resolve(fetch_all, project, name)
+        if (other := symbol["qualified_name"]) != qn
+        and symbol["label"] == label
+        and (other_path := symbol["path"])
+        and other_path != path
+        and _go_declaration_place(other_path, other, label) == place
+    )
+
+
+def _go_declaration_place(path: str, qn: str, label: str) -> tuple[str, bool, str]:
+    # Its directory, whether a `_test.go` file declares it, and the name of
+    # its receiver type (a method's) or "" (a function's).
+    file = PurePosixPath(path)
+    owner = (
+        qn_markers.natural_qn(qn)
+        .rpartition(cs.SEPARATOR_DOT)[0]
+        .rpartition(cs.SEPARATOR_DOT)[2]
+        if label == cs.NodeLabel.METHOD
+        else ""
+    )
+    return file.parent.as_posix(), file.stem.endswith(cs.GO_TEST_FILE_SUFFIX), owner
 
 
 def _longer_project_prefixes(fetch_all: QueryFn, project_name: str) -> tuple[str, ...]:

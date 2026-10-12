@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -735,10 +736,11 @@ def test_renaming_one_implementation_renames_the_interface_method_set(
     _write(temp_repo, "shapes.go", RENAMED)
     graph = _rename_index(temp_repo, mock_ingestor)
     pkg = f"{graph.project}.shapes"
+    query, target = _query(graph), f"{pkg}.Square.Area"
     with pytest.raises(RenameRefused):
         # `s.Area()` reaches each implementation as one candidate of several;
         # rewriting a shared call site is the opt-in it is for a Protocol.
-        rename(temp_repo, _query(graph), graph.project, f"{pkg}.Square.Area", "Size")
+        rename(temp_repo, query, graph.project, target, "Size")
     assert (temp_repo / "shapes.go").read_text(encoding="utf-8") == RENAMED
 
     report = rename(
@@ -1227,8 +1229,9 @@ def test_a_guessed_override_is_renamed_only_on_opt_in(
     assert overrides[(f"{pkg}.Name.Get", f"{pkg}.Getter.Get")] == {
         cs.KEY_RESOLUTION: cs.EdgeResolution.HEURISTIC
     }
+    query, target = _query(graph), f"{pkg}.Name.Get"
     with pytest.raises(RenameRefused):
-        rename(temp_repo, _query(graph), graph.project, f"{pkg}.Name.Get", "Fetch")
+        rename(temp_repo, query, graph.project, target, "Fetch")
     assert (temp_repo / "app.go").read_text(encoding="utf-8") == GUESSED_GETTER
 
     report = rename(
@@ -1241,7 +1244,8 @@ def test_a_guessed_override_is_renamed_only_on_opt_in(
     )
     assert report.applied, report.message
     text = (temp_repo / "app.go").read_text(encoding="utf-8")
-    assert "\tFetch() int" in text and "func (n Name) Fetch() Label" in text
+    assert "\tFetch() int" in text
+    assert "func (n Name) Fetch() Label" in text
 
 
 PROVEN_GETTER = """package app
@@ -2101,6 +2105,39 @@ def _real_gotypes_files_or_skip(root: Path, checked: set[str]) -> None:
     assert facts.checked_files == checked
 
 
+def _analysed_goos() -> str:
+    # The GOOS go/packages reads for the helper: $GOOS, else the host's.
+    go = shutil.which("go")
+    assert go is not None
+    return subprocess.run(
+        [go, "env", "GOOS"],
+        capture_output=True,
+        text=True,
+        encoding=cs.ENCODING_UTF8,
+        check=False,
+    ).stdout.strip()
+
+
+def _real_build(
+    monkeypatch: pytest.MonkeyPatch, root: Path, files: Iterable[str], frontend: str
+) -> str:
+    """Index with the real helper on the build `frontend` names (`real` for
+    the host's, `real-windows` for GOOS=windows), after checking it read
+    that build's files of `files`: the ones not of the other OS. Returns the
+    GOOS it read."""
+    if shutil.which("go") is None:
+        pytest.skip("go toolchain not available")
+    if forced := frontend.removeprefix("real").removeprefix("-"):
+        monkeypatch.setenv("GOOS", forced)
+    goos = _analysed_goos()
+    if goos not in ("linux", "windows"):
+        pytest.skip(f"these builds declare nothing for GOOS={goos}")
+    other = "windows" if goos == "linux" else "linux"
+    _real_gotypes_files_or_skip(root, {rel for rel in files if other not in rel})
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
+    return goos
+
+
 def _recorded_gotypes(monkeypatch: pytest.MonkeyPatch) -> None:
     # What the bundled tool reports for the repository on a build that leaves
     # the other OS's files out: it type-checked shapes.go alone and proved
@@ -2493,8 +2530,10 @@ def test_renaming_the_interface_method_renames_every_build_variant(
     assert "func (u U) Measure() float64" in windows
     assert "func (w W) Measure() float64" in windows
     assert "func (w W) Measure() Celsius" in other
-    # Not U's Area() int, nor either Size.
-    assert "func (u U) Area() int" in other
+    # U's Area() int is no Shape's, but it is the other build's U.Area: a
+    # caller both builds compile calls each, so it is renamed with it.
+    assert "func (u U) Measure() int" in other
+    # Neither Size.
     assert "func (t T) Size() float64" in windows
     assert "func (t T) Size() float64" in other
     if shutil.which("go") is not None:
@@ -2605,7 +2644,7 @@ def test_go_types_leaves_a_build_it_did_not_read_to_the_name_match(
     for rel, text in VARIANT_FILES.items():
         (root / rel).write_text(text, encoding="utf-8")
     if facts == "real":
-        if sys.platform == "win32":
+        if _analysed_goos() == "windows":
             pytest.skip("the Windows build reads the other files")
         _real_gotypes_files_or_skip(root, {"shape.go", "t_other.go"})
         monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
@@ -2652,10 +2691,12 @@ def test_go_types_leaves_a_build_it_did_not_read_to_the_name_match(
         callee: str(resolution)
         for callee, resolution in _area_calls(mock_ingestor, f"{pkg}.Total").items()
     }
+    # Total compiles in every build, and t_other.go's Area runs in none of
+    # Windows': proven, but a candidate of some of Total's builds only.
     assert calls == {
         f"{pkg}.Shape.Area": "exact",
         f"{pkg}.Square.Area": "overload",
-        t_other: "overload",
+        t_other: "heuristic",
         t_windows: "heuristic",
         u_windows: "heuristic",
         **w_both,
@@ -3266,8 +3307,9 @@ def test_a_hierarchy_reached_through_a_guess_needs_the_opt_in(
     _two_modules(temp_repo, monkeypatch)
     graph = _rename_index(temp_repo, mock_ingestor)
     target = f"{graph.project}.a.I1.M"
+    query = _query(graph)
     with pytest.raises(RenameRefused):
-        rename(temp_repo, _query(graph), graph.project, target, "N")
+        rename(temp_repo, query, graph.project, target, "N")
     assert (temp_repo / "a.go").read_text(encoding="utf-8") == MODULE_A
     assert (temp_repo / "modb" / "b.go").read_text(encoding="utf-8") == MODULE_B
 
@@ -3282,7 +3324,8 @@ def test_a_hierarchy_reached_through_a_guess_needs_the_opt_in(
     assert report.applied, report.message
     for rel in ("a.go", "modb/b.go"):
         text = (temp_repo / rel).read_text(encoding="utf-8")
-        assert "\tN() int" in text and ") N() int" in text, text
+        assert "\tN() int" in text, text
+        assert ") N() int" in text, text
     if (go := shutil.which("go")) is not None:
         for module in (temp_repo, temp_repo / "modb"):
             built = subprocess.run(
@@ -3326,7 +3369,8 @@ def test_a_proven_hierarchy_renames_without_the_opt_in(
     )
     assert report.applied, report.message
     text = (temp_repo / "a.go").read_text(encoding="utf-8")
-    assert "\tN() int" in text and "func (T1) N() int" in text
+    assert "\tN() int" in text
+    assert "func (T1) N() int" in text
 
 
 # --- a package's own `error` and `any` (Greptile, PR #3360) ------------------
@@ -3599,7 +3643,8 @@ def test_a_test_packages_own_error_leaves_the_package_alone(
     )
     assert report.applied, report.message
     text = (root / "p" / "p.go").read_text(encoding="utf-8")
-    assert "\tM()\n" in text and "func (T) M()" in text, text
+    assert "\tM()\n" in text, text
+    assert "func (T) M()" in text, text
     _go_checks(root)
 
 
@@ -3635,7 +3680,8 @@ def test_a_package_declaring_error_in_a_test_file_shadows_it_there_alone(
     )
     assert report.applied, report.message
     text = (root / "p" / "p.go").read_text(encoding="utf-8")
-    assert "\tM()\n" in text and "func (T) M()" in text, text
+    assert "\tM()\n" in text, text
+    assert "func (T) M()" in text, text
     assert ("func (U) M()" in text) is (where != "production"), text
     _go_checks(root)
 
@@ -3733,7 +3779,8 @@ def test_an_embedded_import_names_the_package_not_its_external_tests(
     )
     assert report.applied, report.message
     text = (root / "q" / "q.go").read_text(encoding="utf-8")
-    assert "\tM()\n" in text and "func (T) M()" in text, text
+    assert "\tM()\n" in text, text
+    assert "func (T) M()" in text, text
     _go_checks(root)
 
 
@@ -3977,7 +4024,8 @@ def test_an_embedded_name_each_build_declares_keeps_its_method_set(
     )
     assert report.applied, report.message
     text = (root / "q" / "q.go").read_text(encoding="utf-8")
-    assert "\tO()\n" in text and "func (T) O()" in text, text
+    assert "\tO()\n" in text, text
+    assert "func (T) O()" in text, text
     _go_checks_on(root)
 
 
@@ -4084,7 +4132,15 @@ def _differing_gotypes(monkeypatch: pytest.MonkeyPatch, goos: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "frontend", ["treesitter", "recorded-linux", "recorded-windows", "real"]
+    "frontend",
+    [
+        "treesitter",
+        "recorded-linux",
+        "recorded-windows",
+        "real",
+        "real-linux",
+        "real-windows",
+    ],
 )
 def test_an_interface_each_build_declares_apart_links_each_builds_implementers(
     temp_repo: Path,
@@ -4099,13 +4155,13 @@ def test_an_interface_each_build_declares_apart_links_each_builds_implementers(
     # and Y it read and compared) rules nothing out.
     root = _variant_repo(temp_repo / "proj", DIFFERING_FILES)
     _go_checks_on(root)
-    if frontend == "real":
-        _real_gotypes_files_or_skip(
-            root, {rel for rel in DIFFERING_FILES if "windows" not in rel}
-        )
-        monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
+    # The build go/types read: its pairs there are proven, every other
+    # build's matched by name.
+    proven_on = frontend.removeprefix("recorded-")
+    if frontend.startswith("real"):
+        proven_on = _real_build(monkeypatch, root, DIFFERING_FILES, frontend)
     elif frontend != "treesitter":
-        _differing_gotypes(monkeypatch, frontend.removeprefix("recorded-"))
+        _differing_gotypes(monkeypatch, proven_on)
     else:
         monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
     graph = _rename_index(root, mock_ingestor)
@@ -4118,7 +4174,6 @@ def test_an_interface_each_build_declares_apart_links_each_builds_implementers(
     assert implements[("proj.p.y.Y", "proj.p.j.J")] == cs.EdgeResolution.HEURISTIC
     assert ("proj.p.v.V", "proj.p.j.J") not in implements
     # One build's own interface is that build's: go/types' proof stands.
-    proven_on = "windows" if frontend == "recorded-windows" else "linux"
     for owner, own in (("proj.p.t_linux.T", "linux"), ("proj.p.x.X", "windows")):
         expected = (
             None
@@ -4175,7 +4230,7 @@ def _recorded_identical_gotypes(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-@pytest.mark.parametrize("frontend", ["recorded", "real"])
+@pytest.mark.parametrize("frontend", ["recorded", "real", "real-linux", "real-windows"])
 def test_builds_that_agree_keep_the_go_types_proof(
     temp_repo: Path,
     mock_ingestor: MagicMock,
@@ -4186,9 +4241,8 @@ def test_builds_that_agree_keep_the_go_types_proof(
     # go/types proved stays proven.
     files = {**_VARIANT_STYLES["suffix"], "q/q.go": VARIANT_EMBEDDER}
     root = _variant_repo(temp_repo / "proj", files)
-    if frontend == "real":
-        _real_gotypes_files_or_skip(root, {"p/i_linux.go", "q/q.go"})
-        monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
+    if frontend.startswith("real"):
+        _real_build(monkeypatch, root, files, frontend)
     else:
         _recorded_identical_gotypes(monkeypatch)
     create_and_run_updater(root, mock_ingestor, skip_if_missing="go")
@@ -4299,7 +4353,8 @@ def test_a_type_each_build_declares_again_has_the_methods_both_compile(
     # Windows file's under Windows' T.
     nodes = _node_labels(mock_ingestor)
     assert {f"{linux}.M", f"{linux}.N", f"{windows}.W"} <= nodes.keys()
-    assert f"{windows}.M" not in nodes and f"{linux}.W" not in nodes
+    assert f"{windows}.M" not in nodes
+    assert f"{linux}.W" not in nodes
     overrides = _labels(mock_ingestor, cs.RelationshipType.OVERRIDES)
     assert (f"{linux}.M", "proj.p.m_windows.I2.M") in overrides
     calls = _edges(mock_ingestor, cs.RelationshipType.CALLS)
@@ -4474,3 +4529,277 @@ func Call(j p.J) { j.N() }
         assert (owner, "IMPLEMENTS", "proj.p.j.J", "heuristic") in synced
         assert ("proj.other.other.Call", "CALLS", f"{owner}.N", "heuristic") in synced
     assert not any(edge[0] == "proj.p.v.V" for edge in synced)
+
+
+# --- builds combine only with builds (Greptile, PR #3360) ---------------------
+
+# A asks for M() on Linux and W() on Windows, B for L() and R(): J is
+# {M, L, N} on Linux and {W, R, N} on Windows, and never {M, R, N}.
+COMBINED_FILES = {
+    "p/a_linux.go": "package p\n\ntype A interface {\n\tM()\n}\n",
+    "p/a_windows.go": "package p\n\ntype A interface {\n\tW()\n}\n",
+    "p/b_linux.go": "package p\n\ntype B interface {\n\tL()\n}\n",
+    "p/b_windows.go": "package p\n\ntype B interface {\n\tR()\n}\n",
+    "p/j.go": "package p\n\ntype J interface {\n\tA\n\tB\n\tN()\n}\n",
+    "p/t.go": """package p
+
+type T struct{}
+
+func (T) M() {}
+func (T) L() {}
+func (T) N() {}
+""",
+    "p/t_linux.go": "package p\n\nvar _ J = T{}\n",
+    "p/v.go": """package p
+
+type V struct{}
+
+func (V) W() {}
+func (V) R() {}
+func (V) N() {}
+""",
+    "p/v_windows.go": "package p\n\nvar _ J = V{}\n",
+    # M from Linux's A, R from Windows' B: a J in no build.
+    "p/u.go": """package p
+
+type U struct{}
+
+func (U) M() {}
+func (U) R() {}
+func (U) N() {}
+""",
+}
+
+
+def _combined_gotypes(monkeypatch: pytest.MonkeyPatch) -> None:
+    linux = {rel: text for rel, text in COMBINED_FILES.items() if "windows" not in rel}
+    t_file, j_file = COMBINED_FILES["p/t.go"], COMBINED_FILES["p/j.go"]
+    _gotypes_facts(
+        monkeypatch,
+        GoSemanticFacts(
+            call_sites={},
+            external_sites=set(),
+            implements=[
+                GoImplements(
+                    "p/t.go",
+                    *_position(t_file, "T struct"),
+                    "p/j.go",
+                    *_position(j_file, "J interface"),
+                )
+            ],
+            analysed_modules=(".",),
+            checked_files=frozenset(linux),
+            compared_types=frozenset().union(
+                *(_compared(rel, text) for rel, text in linux.items())
+            ),
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "frontend", ["treesitter", "recorded", "real", "real-linux", "real-windows"]
+)
+def test_embeds_combine_only_the_builds_one_build_compiles(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    frontend: str,
+) -> None:
+    # J's method sets were every product of A's and B's: {M, R, N} too, and
+    # U, a J in no build, got IMPLEMENTS and OVERRIDES that pulled its
+    # methods into J's rename hierarchy.
+    root = _variant_repo(temp_repo / "proj", COMBINED_FILES)
+    _go_checks_on(root)
+    if frontend.startswith("real"):
+        _real_build(monkeypatch, root, COMBINED_FILES, frontend)
+    elif frontend == "recorded":
+        _combined_gotypes(monkeypatch)
+    else:
+        monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    graph = _rename_index(root, mock_ingestor)
+    implements = _labels(mock_ingestor, cs.RelationshipType.IMPLEMENTS)
+    assert ("proj.p.t.T", "proj.p.j.J") in implements
+    assert ("proj.p.v.V", "proj.p.j.J") in implements
+    assert ("proj.p.u.U", "proj.p.j.J") not in implements
+    overrides = _labels(mock_ingestor, cs.RelationshipType.OVERRIDES)
+    assert ("proj.p.u.U.N", "proj.p.j.J.N") not in overrides
+    assert ("proj.p.t.T.N", "proj.p.j.J.N") in overrides
+
+    report = rename(
+        root, _query(graph), graph.project, "proj.p.t.T.N", "O", allow_heuristic=True
+    )
+    assert report.applied, report.message
+    assert "func (V) O()" in (root / "p" / "v.go").read_text(encoding="utf-8")
+    assert "func (U) N()" in (root / "p" / "u.go").read_text(encoding="utf-8")
+    _go_checks_on(root)
+
+
+# --- a call binds the build its caller compiles in (Greptile, PR #3360) -------
+
+CALLER_BUILD_FILES = {
+    "p/i_linux.go": "package p\n\ntype I interface {\n\tM() int\n}\n",
+    "p/i_windows.go": "package p\n\ntype I interface {\n\tM() string\n\tX()\n}\n",
+    "p/j.go": "package p\n\ntype J interface {\n\tI\n\tN()\n}\n",
+    "p/t_linux.go": """package p
+
+type T struct{}
+
+func (T) M() int { return 0 }
+func (T) N()     {}
+
+var _ J = T{}
+""",
+    "p/u_windows.go": """package p
+
+type U struct{}
+
+func (U) M() string { return "" }
+func (U) X()        {}
+func (U) N()        {}
+
+var _ J = U{}
+""",
+    "p/c_windows.go": """package p
+
+func CallM(j J) { j.M() }
+
+func CallX(j J) { j.X() }
+""",
+    "p/c.go": "package p\n\nfunc CallAny(j J) { j.M() }\n",
+}
+
+
+def _calls_from(mock_ingestor: MagicMock, caller: str) -> dict[str, str | None]:
+    return {
+        callee: props.get(cs.KEY_RESOLUTION)
+        for (source, callee), props in _edges(
+            mock_ingestor, cs.RelationshipType.CALLS
+        ).items()
+        if source == caller
+    }
+
+
+def test_a_call_through_an_embed_binds_the_callers_builds(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # J's one INHERITS edge named Linux's I: a Windows-only caller's `j.M()`
+    # got an exact edge to Linux's M and its Linux implementation, and
+    # `j.X()`, which only Windows' I declares, reached no implementation.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    root = _variant_repo(temp_repo / "proj", CALLER_BUILD_FILES)
+    _go_checks_on(root)
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="go")
+    linux, windows = "proj.p.i_linux.I", "proj.p.i_windows.I"
+    t_m, u_m, u_x = "proj.p.t_linux.T.M", "proj.p.u_windows.U.M", "proj.p.u_windows.U.X"
+    windows_m = _calls_from(mock_ingestor, "proj.p.c_windows.CallM")
+    assert windows_m[f"{windows}.M"] == cs.EdgeResolution.EXACT
+    assert windows_m[u_m] == cs.EdgeResolution.HEURISTIC
+    assert f"{linux}.M" not in windows_m
+    assert t_m not in windows_m
+    windows_x = _calls_from(mock_ingestor, "proj.p.c_windows.CallX")
+    assert windows_x == {
+        f"{windows}.X": cs.EdgeResolution.EXACT,
+        u_x: cs.EdgeResolution.HEURISTIC,
+    }
+    # Every build compiles c.go, and each has its own M: no edge is exact.
+    assert _calls_from(mock_ingestor, "proj.p.c.CallAny") == {
+        f"{linux}.M": cs.EdgeResolution.HEURISTIC,
+        f"{windows}.M": cs.EdgeResolution.HEURISTIC,
+        t_m: cs.EdgeResolution.HEURISTIC,
+        u_m: cs.EdgeResolution.HEURISTIC,
+    }
+
+
+def test_renaming_one_builds_interface_method_renames_every_builds(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Renaming Linux's I.M rewrote c.go's `j.M()`, which Windows compiles
+    # against its own I.M, left unrenamed: Windows no longer built.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    root = _variant_repo(temp_repo / "proj", CALLER_BUILD_FILES)
+    _go_checks_on(root)
+    graph = _rename_index(root, mock_ingestor)
+    report = rename(
+        root,
+        _query(graph),
+        graph.project,
+        "proj.p.i_linux.I.M",
+        "Z",
+        allow_heuristic=True,
+    )
+    assert report.applied, report.message
+    assert "\tZ() string\n" in (root / "p" / "i_windows.go").read_text(encoding="utf-8")
+    assert "j.Z()" in (root / "p" / "c.go").read_text(encoding="utf-8")
+    _go_checks_on(root)
+
+
+# Each build declares T.M at the same line and column.
+SAME_PLACE_FILES = {
+    "p/i.go": "package p\n\ntype I interface {\n\tM()\n}\n\nvar _ I = T{}\n",
+    "p/t.go": "package p\n\ntype T struct{}\n",
+    "p/m_linux.go": "package p\n\nfunc (T) M() {}\n",
+    "p/m_windows.go": "package p\n\nfunc (T) M() {}\n",
+    "p/m_darwin.go": "package p\n\nfunc (T) M() {}\n",
+}
+
+
+def test_a_method_each_build_declares_at_one_place_keeps_every_declaration(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `T.M@3` named the Windows and the Darwin declaration both: one node
+    # stood for two, the other build's M had no OVERRIDES, and renaming I.M
+    # left it, so that build no longer compiled.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    root = _variant_repo(temp_repo / "proj", SAME_PLACE_FILES)
+    _go_checks_on(root, ("linux", "windows", "darwin"))
+    graph = _rename_index(root, mock_ingestor)
+    files = _method_files(mock_ingestor)
+    declared = {
+        files[qn] for qn in files if qn_markers.natural_qn(qn) == "proj.p.t.T.M"
+    }
+    assert declared == {"p/m_linux.go", "p/m_windows.go", "p/m_darwin.go"}
+    overrides = _labels(mock_ingestor, cs.RelationshipType.OVERRIDES)
+    assert {
+        files[method] for method, base in overrides if base == "proj.p.i.I.M"
+    } == declared
+
+    report = rename(
+        root, _query(graph), graph.project, "proj.p.i.I.M", "Z", allow_heuristic=True
+    )
+    assert report.applied, report.message
+    for rel in ("p/m_linux.go", "p/m_windows.go", "p/m_darwin.go"):
+        assert "func (T) Z()" in (root / rel).read_text(encoding="utf-8"), rel
+    _go_checks_on(root, ("linux", "windows", "darwin"))
+
+
+# A header Go's own reader takes, nested past any depth this one reads.
+DEEP_HEADER = "//go:build " + "(" * 300 + "linux" + ")" * 300 + "\n\n"
+
+
+@pytest.mark.parametrize("how", ["index", "reingest"])
+def test_a_build_line_too_deep_to_read_stops_no_index(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch, how: str
+) -> None:
+    # Reading the header recursed once per parenthesis: RecursionError out
+    # of deferred resolution aborted the index, and a reingest after it had
+    # changed the graph.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    files = {
+        "p/i_a.go": DEEP_HEADER + VARIANT_I,
+        "p/i_b.go": _NOT_LINUX + VARIANT_I,
+        "p/j.go": LOCAL_EMBEDDER.replace("package p\n", "package p\n", 1),
+    }
+    root = _variant_repo(temp_repo / "proj", files)
+    store = _StatefulIngestor()
+    updater = _go_updater(store, root)
+    updater.run(force=True)
+    if how == "reingest":
+        path = root / "p" / "i_a.go"
+        path.write_text(path.read_text(encoding="utf-8") + "// edited\n")
+        updater.reingest([path])
+    edges = _interface_edges(store)
+    # The deep header holds in every build as far as this can tell, so the
+    # two `I` may build together: J's method set stays unknown.
+    assert not any(
+        edge[1] == "IMPLEMENTS" and edge[2] == "proj.p.j.J" for edge in edges
+    )

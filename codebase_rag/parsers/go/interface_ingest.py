@@ -12,7 +12,7 @@ one implementation find the interface method and the other implementations.
 from __future__ import annotations
 
 from abc import abstractmethod
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
@@ -40,7 +40,17 @@ from ..parameter_nodes import PendingParameterType
 from ..utils import ingest_method
 from . import interfaces as go_ifaces
 from . import utils as go_utils
-from .builds import GoBuilds
+from .builds import (
+    ALWAYS,
+    NEVER,
+    Expr,
+    GoBuilds,
+    all_of,
+    any_of,
+    holds_wherever,
+    negate,
+    satisfiable,
+)
 
 if TYPE_CHECKING:
     from ...services import IngestorProtocol
@@ -79,13 +89,17 @@ def _add_declaration(
     owners.method_qns.setdefault(owner, {}).setdefault(key, []).append(method_qn)
 
 
-def _first_party(alternatives: tuple[str, ...] | None) -> str | None:
+def _first_party(alternatives: go_ifaces.GoEmbedAlternatives | None) -> str | None:
     # The interface an embed's INHERITS edge names: the first of the
     # declarations it may be, one edge per embedded name as written.
     if alternatives is None:
         return None
     return next(
-        (base for base in alternatives if base not in cs.GO_BUILTIN_INTERFACE_METHODS),
+        (
+            base
+            for base, _ in alternatives
+            if base not in cs.GO_BUILTIN_INTERFACE_METHODS
+        ),
         None,
     )
 
@@ -146,6 +160,92 @@ class _GoCompilerView:
         )
 
 
+@dataclass
+class _GoPairBuilds:
+    """The builds in which a type implements an interface, as a constraint
+    on GOOS, GOARCH and tags: those holding the type, one of the interface's
+    method sets, and for each of its methods a declaration of the type that
+    may be it. A pair that holds in no build is no pair, and one go/types
+    proved holds only where every build holding both ends holds it."""
+
+    builds: GoBuilds
+    owners: _GoMethodOwners
+    interfaces: dict[str, tuple[go_ifaces.GoBuildSet, ...] | None]
+    declaring_file: Callable[[str], str]
+    # The files go/types type-checked: in a pair it proved, a declaration
+    # there is the compiler's in the build it read, whatever the names say.
+    trusted: frozenset[str]
+    memo: dict[tuple[str, str, bool], Expr] = field(default_factory=dict)
+    trusted_builds: Expr = ALWAYS
+
+    def __post_init__(self) -> None:
+        # The build go/types read compiles every file it checked.
+        self.trusted_builds = all_of(
+            self.builds.constraint(path) for path in sorted(self.trusted)
+        )
+
+    def of_type(self, type_qn: str) -> Expr:
+        return self.builds.constraint(self.declaring_file(type_qn))
+
+    def within(
+        self, type_qn: str, found: go_ifaces.GoBuildSet, proven: bool = False
+    ) -> Expr:
+        declared = self.owners.declarations.get(type_qn, {})
+        return all_of(
+            (
+                found.builds,
+                self.of_type(type_qn),
+                *(
+                    any_of(
+                        self._declared(spec, wanted, proven)
+                        for spec in declared.get(key, [])
+                    )
+                    for key, wanted in found.methods.items()
+                ),
+            )
+        )
+
+    def _declared(
+        self,
+        spec: go_ifaces.GoMethodSpec,
+        wanted: tuple[go_ifaces.GoSignature, ...],
+        proven: bool,
+    ) -> Expr:
+        # The builds in which `spec` may be the method `wanted` asks for.
+        builds = self.builds.constraint(spec.file)
+        if go_ifaces.satisfies((spec.signature,), wanted):
+            return builds
+        if proven and spec.file in self.trusted:
+            return all_of((builds, self.trusted_builds))
+        return NEVER
+
+    def in_some_build(self, type_qn: str, found: go_ifaces.GoBuildSet) -> bool:
+        return satisfiable((self.within(type_qn, found),))
+
+    def holding(self, type_qn: str, interface_qn: str, proven: bool = False) -> Expr:
+        key = (type_qn, interface_qn, proven)
+        if key not in self.memo:
+            self.memo[key] = any_of(
+                self.within(type_qn, found, proven)
+                for found in self.interfaces.get(interface_qn) or ()
+                if found.methods
+            )
+        return self.memo[key]
+
+    def interface_builds(self, interface_qn: str) -> Expr:
+        # The builds compiling the interface: one of its method sets holds.
+        return any_of(found.builds for found in self.interfaces.get(interface_qn) or ())
+
+    def partial(self, type_qn: str, interface_qn: str) -> bool:
+        """Whether a pair go/types proved holds in some build holding both
+        ends but not in another: the type's, and one compiling the
+        interface. A pair the names cannot see at all (go/types reads
+        methods an embedded struct promotes) is the compiler's alone."""
+        holding = self.holding(type_qn, interface_qn, proven=True)
+        scope = all_of((self.of_type(type_qn), self.interface_builds(interface_qn)))
+        return satisfiable((scope, holding)) and not holds_wherever(scope, holding)
+
+
 class GoInterfaceMixin:
     ingestor: IngestorProtocol
     repo_path: Path
@@ -179,6 +279,14 @@ class GoInterfaceMixin:
     # holds for it in a file both builds compile, refilled by each link
     # (shared with the call resolver).
     go_variant_methods: dict[str, dict[str, list[str]]]
+    # Go interface -> every declaration of its name that another build
+    # makes (itself included), refilled by each link (shared with the call
+    # resolver, which binds a call through it per the caller's builds).
+    go_declaration_variants: dict[str, tuple[str, ...]]
+    # (Go interface, implementer) -> the builds in which the pair holds,
+    # refilled by each link (shared with the call resolver, which reaches an
+    # implementation only from a caller one of those builds compiles).
+    go_pair_builds: dict[tuple[str, str], Expr]
     go_builds: GoBuilds
     rehydrated_definition_paths: dict[str, str]
 
@@ -266,22 +374,32 @@ class GoInterfaceMixin:
         embeds = self._resolve_go_embeds()
         owners = self._go_method_sets()
         self._share_go_variant_methods(owners)
+        self._record_go_interface_variants()
+        files = {
+            qn: self.go_builds.constraint(decl.file)
+            for qn, decl in self.go_interfaces.items()
+        }
+        pair_builds = _GoPairBuilds(
+            self.go_builds,
+            owners,
+            go_ifaces.full_method_sets(owners.method_sets, embeds, files),
+            self._go_declaring_rel,
+            checked_files,
+        )
         compiler = _GoCompilerView(
             self.repo_path, analysed_roots, checked_files, compared
         )
-        linked = self._link_implicit_implementations(embeds, owners, compiler)
-        self._link_go_overrides(owners.method_sets, checked_files)
+        linked = self._link_implicit_implementations(pair_builds, compiler)
+        self._link_go_overrides(owners.method_sets, checked_files, pair_builds)
+        self._record_go_pair_builds(pair_builds)
         if linked:
             logger.info(ls.GO_IMPLICIT_IMPLEMENTS_LINKED.format(count=linked))
         return linked
 
     def _link_implicit_implementations(
-        self,
-        embeds: dict[str, tuple[tuple[str, ...], ...] | None],
-        owners: _GoMethodOwners,
-        compiler: _GoCompilerView,
+        self, pair_builds: _GoPairBuilds, compiler: _GoCompilerView
     ) -> int:
-        interfaces = go_ifaces.full_method_sets(owners.method_sets, embeds)
+        owners, interfaces = pair_builds.owners, pair_builds.interfaces
         types = {
             qn: methods
             for qn, methods in owners.method_sets.items()
@@ -299,31 +417,33 @@ class GoInterfaceMixin:
             if interface_qn in per_build:
                 return False
             declared = owners.declarations.get(type_qn, {})
-            builds = interfaces[interface_qn] or ({},)
+            builds = interfaces[interface_qn] or ()
+            methods = builds[0].methods if builds else {}
             return compiler.owns(
                 (type_qn, interface_qn),
                 owners.packages.get(type_qn),
                 self.go_interfaces[interface_qn],
                 [
                     _satisfying_files(declared.get(key, []), wanted)
-                    for key, wanted in builds[0].items()
+                    for key, wanted in methods.items()
                 ],
             )
 
         # The pairs go/types proved (joined before this) are not guessed
         # again, whatever other build declares a method again, unless the
-        # interface is another in another build.
+        # interface is another in another build or the pair holds in some
+        # builds holding both ends and not in others.
         pairs = [
             (type_qn, interface_qn)
             for type_qn, interface_qn in go_ifaces.implicit_implementations(
-                interfaces, types
+                interfaces, types, pair_builds.in_some_build
             )
             if (interface_qn, type_qn) not in self.go_proven_pairs
             and not compiler_owned(type_qn, interface_qn)
         ] + sorted(
             (type_qn, interface_qn)
             for interface_qn, type_qn in self.go_proven_pairs
-            if interface_qn in per_build
+            if interface_qn in per_build or pair_builds.partial(type_qn, interface_qn)
         )
         for type_qn, interface_qn in pairs:
             create_implements_relationship(
@@ -456,7 +576,22 @@ class GoInterfaceMixin:
             if self.function_registry.get(owner) in _GO_IMPLEMENTER_TYPES
         }
 
-    def _go_type_variants(self, type_qn: str) -> list[str]:
+    def _record_go_interface_variants(self) -> None:
+        groups: dict[str, tuple[str, ...]] = {}
+        for interface_qn in self.go_interfaces:
+            if self.function_registry.get(interface_qn) != NodeType.INTERFACE:
+                continue
+            if variants := self._go_type_variants(
+                interface_qn, frozenset({NodeType.INTERFACE})
+            ):
+                groups[interface_qn] = tuple(sorted((interface_qn, *variants)))
+        # In place: the call resolver holds the map.
+        self.go_declaration_variants.clear()
+        self.go_declaration_variants.update(groups)
+
+    def _go_type_variants(
+        self, type_qn: str, labels: frozenset[NodeType] = _GO_IMPLEMENTER_TYPES
+    ) -> list[str]:
         # The other declarations of `type_qn`'s name in its package that no
         # build compiles with it.
         scope = self._go_declaration_scope(type_qn)
@@ -467,7 +602,7 @@ class GoInterfaceMixin:
             for qn in sorted(self.function_registry.find_ending_with(name))
             if qn != type_qn
             and qn.rpartition(cs.SEPARATOR_DOT)[2] == name
-            and self.function_registry.get(qn) in _GO_IMPLEMENTER_TYPES
+            and self.function_registry.get(qn) in labels
             and self._go_declaration_scope(qn) == scope
             and not self.go_builds.together((own_file, self._go_declaring_rel(qn)))
         ]
@@ -476,6 +611,7 @@ class GoInterfaceMixin:
         self,
         method_sets: dict[str, go_ifaces.GoMethodSet],
         checked_files: frozenset[str],
+        pair_builds: _GoPairBuilds,
     ) -> None:
         # The generic override walk links a method to the FIRST interface
         # declaring its name, as Java resolves it. A Go method satisfies every
@@ -485,18 +621,89 @@ class GoInterfaceMixin:
             if not declared or interface_qn not in self.go_interfaces:
                 continue
             for type_qn in sorted(implementers):
-                guessed = (interface_qn, type_qn) in self.go_guessed_pairs
-                for key in sorted(declared.keys() & method_sets.get(type_qn, {})):
-                    method_qn = f"{type_qn}{cs.SEPARATOR_DOT}{key[1]}"
-                    self._override_declarations(
-                        [
-                            *self.function_registry.variants(method_qn),
-                            *self.go_variant_methods.get(type_qn, {}).get(key[1], []),
-                        ],
-                        f"{interface_qn}{cs.SEPARATOR_DOT}{key[1]}",
-                        declared[key],
-                        None if guessed else checked_files,
+                self._override_pair(
+                    type_qn,
+                    interface_qn,
+                    {
+                        key: declared[key]
+                        for key in declared.keys() & method_sets.get(type_qn, {})
+                    },
+                    checked_files,
+                    pair_builds,
+                )
+
+    def _override_pair(
+        self,
+        type_qn: str,
+        interface_qn: str,
+        shared: go_ifaces.GoMethodSet,
+        checked_files: frozenset[str],
+        pair_builds: _GoPairBuilds,
+    ) -> None:
+        guessed = (interface_qn, type_qn) in self.go_guessed_pairs
+        # A declaration overrides only in a build where its type implements
+        # the interface: `T.M` in `t_windows.go` overrides nothing a
+        # Linux-only pair asks for. A proven pair's declaration is the
+        # compiler's only where every build compiling it and the interface
+        # holds the pair: `func (T) M()` in a file every build compiles is
+        # Windows' `T`'s there, not `t_linux.go`'s.
+        holding = pair_builds.holding(type_qn, interface_qn, not guessed)
+        if not guessed and not satisfiable((holding,)):
+            holding = ALWAYS
+        claim = all_of((pair_builds.of_type(type_qn), holding))
+        scope = pair_builds.interface_builds(interface_qn)
+        for key in sorted(shared):
+            method_qn = f"{type_qn}{cs.SEPARATOR_DOT}{key[1]}"
+            found = [
+                variant
+                for variant in (
+                    *self.function_registry.variants(method_qn),
+                    *self.go_variant_methods.get(type_qn, {}).get(key[1], []),
+                )
+                if satisfiable((self._go_method_builds(variant), holding))
+            ]
+            exact = [
+                variant
+                for variant in found
+                if not guessed
+                and holds_wherever(
+                    all_of((self._go_method_builds(variant), scope)), claim
+                )
+            ]
+            target = f"{interface_qn}{cs.SEPARATOR_DOT}{key[1]}"
+            self._override_declarations(exact, target, shared[key], checked_files)
+            self._override_declarations(
+                [variant for variant in found if variant not in exact],
+                target,
+                shared[key],
+                None,
+            )
+
+    def _record_go_pair_builds(self, pair_builds: _GoPairBuilds) -> None:
+        found: dict[tuple[str, str], Expr] = {}
+        for interface_qn, implementers in self.interface_implementers.items():
+            if interface_qn not in self.go_interfaces:
+                continue
+            for type_qn in implementers:
+                guessed = (interface_qn, type_qn) not in self.go_proven_pairs
+                holding = all_of(
+                    (
+                        pair_builds.of_type(type_qn),
+                        pair_builds.holding(type_qn, interface_qn, not guessed),
                     )
+                )
+                # A pair go/types proved that the names cannot see holds
+                # wherever both ends do.
+                if not guessed and not satisfiable((holding,)):
+                    holding = pair_builds.of_type(type_qn)
+                found[(interface_qn, type_qn)] = holding
+        # In place: the call resolver holds the map.
+        self.go_pair_builds.clear()
+        self.go_pair_builds.update(found)
+
+    def _go_method_builds(self, method_qn: str) -> Expr:
+        spec = self.go_methods.get(method_qn)
+        return ALWAYS if spec is None else self.go_builds.constraint(spec.file)
 
     def _override_declarations(
         self,
@@ -547,11 +754,13 @@ class GoInterfaceMixin:
             properties,
         )
 
-    def _resolve_go_embeds(self) -> dict[str, tuple[tuple[str, ...], ...] | None]:
+    def _resolve_go_embeds(
+        self,
+    ) -> dict[str, tuple[go_ifaces.GoEmbedAlternatives, ...] | None]:
         """Each Go interface's embedded names, each as the interfaces (or the
         predeclared name) it is in the builds that compile the interface,
         None when one does not resolve to an interface."""
-        resolved: dict[str, tuple[tuple[str, ...], ...] | None] = {}
+        resolved: dict[str, tuple[go_ifaces.GoEmbedAlternatives, ...] | None] = {}
         for interface_qn, decl in self.go_interfaces.items():
             if self.function_registry.get(interface_qn) != NodeType.INTERFACE:
                 continue
@@ -566,9 +775,9 @@ class GoInterfaceMixin:
 
     def _parsed_embeds(
         self, interface_qn: str, module_qn: str, decl: go_ifaces.GoInterfaceDecl
-    ) -> tuple[tuple[str, ...], ...] | None:
+    ) -> tuple[go_ifaces.GoEmbedAlternatives, ...] | None:
         imports = self.import_processor.import_mapping.get(module_qn) or {}
-        resolved: list[tuple[str, ...] | None] = []
+        resolved: list[go_ifaces.GoEmbedAlternatives | None] = []
         for text in decl.embeds:
             qualifier, dot, name = text.partition(cs.SEPARATOR_DOT)
             if not dot:
@@ -585,7 +794,7 @@ class GoInterfaceMixin:
 
     def _stored_embeds(
         self, interface_qn: str, decl: go_ifaces.GoInterfaceDecl
-    ) -> tuple[tuple[str, ...], ...] | None:
+    ) -> tuple[go_ifaces.GoEmbedAlternatives, ...] | None:
         # An unchanged interface's embeds were resolved when it was parsed and
         # are its INHERITS edges now, read back into class_inheritance in
         # `base_index` order, the order they were written in. Matching them
@@ -595,7 +804,7 @@ class GoInterfaceMixin:
         # the parse read them. A count or name that disagrees means an embed
         # did not resolve then, so the method set is unknown.
         stored = iter(self.class_inheritance.get(interface_qn, []))
-        resolved: list[tuple[str, ...]] = []
+        resolved: list[go_ifaces.GoEmbedAlternatives] = []
         for text in decl.embeds:
             found = self._stored_embed(decl, text, stored)
             if found is None:
@@ -605,7 +814,7 @@ class GoInterfaceMixin:
 
     def _stored_embed(
         self, decl: go_ifaces.GoInterfaceDecl, text: str, stored: Iterator[str]
-    ) -> tuple[str, ...] | None:
+    ) -> go_ifaces.GoEmbedAlternatives | None:
         _, dot, name = text.partition(cs.SEPARATOR_DOT)
         if not dot:
             return self._stored_local_embed(decl, text, stored)
@@ -617,7 +826,7 @@ class GoInterfaceMixin:
 
     def _stored_local_embed(
         self, decl: go_ifaces.GoInterfaceDecl, name: str, stored: Iterator[str]
-    ) -> tuple[str, ...] | None:
+    ) -> go_ifaces.GoEmbedAlternatives | None:
         # The parse wrote an edge for this name only where it found one of
         # the package's own interfaces by it.
         found = self._embed_alternatives(decl, name, None)
@@ -629,7 +838,7 @@ class GoInterfaceMixin:
 
     def _embed_alternatives(
         self, decl: go_ifaces.GoInterfaceDecl, name: str, package_qn: str | None
-    ) -> tuple[str, ...] | None:
+    ) -> go_ifaces.GoEmbedAlternatives | None:
         """What embedded `name` is in the builds that compile `decl`'s file:
         its own package's (`package_qn` None) or an imported package's
         declarations of it, one per build that declares it again
@@ -640,8 +849,20 @@ class GoInterfaceMixin:
         no interface at all (issue #2483), and the predeclared one in any
         other."""
         builtin = package_qn is None and name in cs.GO_BUILTIN_INTERFACE_METHODS
-        if builtin and name not in self._go_shadowed(decl):
-            return (name,)
+        meanings = (
+            [(name, ALWAYS)]
+            if builtin and name not in self._go_shadowed(decl)
+            else self._declared_meanings(decl, name, package_qn, builtin)
+        )
+        return tuple(meanings) if meanings else None
+
+    def _declared_meanings(
+        self,
+        decl: go_ifaces.GoInterfaceDecl,
+        name: str,
+        package_qn: str | None,
+        builtin: bool,
+    ) -> list[tuple[str, Expr]] | None:
         candidates = (
             self._go_package_declarations(decl, name)
             if package_qn is None
@@ -667,11 +888,13 @@ class GoInterfaceMixin:
             self.function_registry.get(qn) != NodeType.INTERFACE for qn in found
         ):
             return None
-        if builtin and not self.go_builds.covered(
-            decl.file, [self._go_declaring_rel(qn) for qn in found]
-        ):
-            found = (*found, name)
-        return found or None
+        meanings = [
+            (qn, self.go_builds.constraint(self._go_declaring_rel(qn))) for qn in found
+        ]
+        if builtin:
+            # The predeclared name in every build that holds none of them.
+            meanings.append((name, negate(any_of(builds for _, builds in meanings))))
+        return meanings
 
     def _go_package_declarations(
         self, decl: go_ifaces.GoInterfaceDecl, name: str

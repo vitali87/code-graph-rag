@@ -13,7 +13,7 @@ and it never overrules a pair go/types proved.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import NamedTuple
 
 from tree_sitter import Node, Parser
@@ -23,6 +23,7 @@ from ...types_defs import PropertyDict
 from ..type_facts import extract_type_facts
 from ..utils import safe_decode_text
 from . import utils as go_utils
+from .builds import ALWAYS, Expr, all_of, any_of, satisfiable
 
 # A method's identity in a method set: (package, name). Go qualifies an
 # unexported name with the package declaring it, so `get` of package store
@@ -123,10 +124,14 @@ def signature(method: Node) -> GoSignature:
 def declared_types(result: Node | None) -> tuple[str, ...]:
     """One type per result a method's result declares: none for no result
     or `()`, the type for a lone one, and one per name in a list."""
+    return tuple(_result_types(result))
+
+
+def _result_types(result: Node | None) -> list[str]:
     if result is None:
-        return ()
+        return []
     if result.type != cs.TS_GO_PARAMETER_LIST:
-        return (_type_text(result),)
+        return [_type_text(result)]
     types: list[str] = []
     for declaration in result.named_children:
         if declaration.type not in _GO_DECLARATIONS:
@@ -136,14 +141,14 @@ def declared_types(result: Node | None) -> tuple[str, ...]:
         )
         type_text = _type_text(declaration.child_by_field_name(cs.FIELD_TYPE))
         types.extend([type_text] * max(1, names))
-    return tuple(types)
+    return types
 
 
 def stored_result_types(result: str, parser: Parser | None) -> tuple[str, ...] | None:
     """`declared_types` of a result read back as the graph's `return_type`
     text, parsed again as Go; None when it cannot be read."""
     if not result:
-        return ()
+        return declared_types(None)
     if result not in _STORED_RESULTS:
         if parser is None:
             return None
@@ -242,22 +247,37 @@ _GO_DECLARATIONS = frozenset(
 
 # An embedded name stands for the interface each build declares by it
 # (`i_linux.go`, `i_windows.go`), so an interface has one method set per
-# combination; past this many they are merged into the methods all agree on.
+# combination one build compiles; past this many they are merged into the
+# methods all agree on.
 _MAX_METHOD_SET_ALTERNATIVES = 64
+
+# An embedded name's meanings: each interface qn (or predeclared name) it
+# may be, with the builds in which it is that one.
+GoEmbedAlternatives = tuple[tuple[str, Expr], ...]
+
+
+class GoBuildSet(NamedTuple):
+    """An interface's complete method set in the builds `builds` admits."""
+
+    methods: GoMethodSet
+    builds: Expr
 
 
 def full_method_sets(
     own: Mapping[str, GoMethodSet],
-    embeds: Mapping[str, tuple[tuple[str, ...], ...] | None],
-) -> dict[str, tuple[GoMethodSet, ...] | None]:
-    """Each interface's complete method set in each build, its embedded
-    interfaces' methods included, or None when an embedded interface could
-    not be resolved: a type with the known methods may still lack the
-    unknown ones. `embeds` holds, per embedded name, the interfaces (or the
-    predeclared name) it is in the builds that compile the interface: one
-    for most names, one per build for a name each build declares again."""
+    embeds: Mapping[str, tuple[GoEmbedAlternatives, ...] | None],
+    files: Mapping[str, Expr],
+) -> dict[str, tuple[GoBuildSet, ...] | None]:
+    """Each interface's complete method set in each set of builds, its
+    embedded interfaces' methods included, or None when an embedded
+    interface could not be resolved: a type with the known methods may
+    still lack the unknown ones. `embeds` holds, per embedded name, what it
+    is in which builds: one meaning for most names, one per build for a
+    name each build declares again. `files` is each interface's own file's
+    constraint. Meanings no one build compiles together are never combined:
+    `A` on Linux with `B` on Windows is no method set of any build."""
     return {
-        interface: _method_sets(interface, own, embeds, frozenset())
+        interface: _method_sets(interface, own, embeds, files, frozenset())
         for interface in embeds
     }
 
@@ -265,78 +285,111 @@ def full_method_sets(
 def _method_sets(
     interface: str,
     own: Mapping[str, GoMethodSet],
-    embeds: Mapping[str, tuple[tuple[str, ...], ...] | None],
+    embeds: Mapping[str, tuple[GoEmbedAlternatives, ...] | None],
+    files: Mapping[str, Expr],
     seen: frozenset[str],
-) -> tuple[GoMethodSet, ...] | None:
+) -> tuple[GoBuildSet, ...] | None:
     written = embeds.get(interface)
     if written is None:
         return None
-    sets: list[GoMethodSet] = [dict(own.get(interface, {}))]
+    sets = [GoBuildSet(dict(own.get(interface, {})), files.get(interface, ALWAYS))]
     # `seen` guards a cycle Go itself rejects, so malformed source cannot
     # loop the walk.
     inner_seen = seen | {interface}
     for alternatives in written:
-        options = _embedded_sets(alternatives, own, embeds, inner_seen)
+        options = _embedded_sets(alternatives, own, embeds, files, inner_seen)
         if options is None:
             return None
         if options:
             sets = _distinct(
-                [{**base, **option} for base in sets for option in options]
+                [
+                    combined
+                    for base in sets
+                    for option in options
+                    if satisfiable(((combined := _merged(base, option)).builds,))
+                ]
             )
     return tuple(sets)
 
 
+def _merged(base: GoBuildSet, option: GoBuildSet) -> GoBuildSet:
+    return GoBuildSet(
+        {**base.methods, **option.methods}, all_of((base.builds, option.builds))
+    )
+
+
 def _embedded_sets(
-    alternatives: tuple[str, ...],
+    alternatives: GoEmbedAlternatives,
     own: Mapping[str, GoMethodSet],
-    embeds: Mapping[str, tuple[tuple[str, ...], ...] | None],
+    embeds: Mapping[str, tuple[GoEmbedAlternatives, ...] | None],
+    files: Mapping[str, Expr],
     seen: frozenset[str],
-) -> list[GoMethodSet] | None:
-    options: list[GoMethodSet] = []
-    for base in alternatives:
+) -> list[GoBuildSet] | None:
+    options: list[GoBuildSet] = []
+    for base, builds in alternatives:
         if base in seen:
             continue
         if base in cs.GO_BUILTIN_INTERFACE_METHODS:
-            options.append(
-                {
-                    method_key(name, ""): (GoSignature(params, results),)
-                    for name, params, results in cs.GO_BUILTIN_INTERFACE_METHODS[base]
-                }
-            )
+            options.append(GoBuildSet(_builtin_methods(base), builds))
             continue
-        inherited = _method_sets(base, own, embeds, seen)
+        inherited = _method_sets(base, own, embeds, files, seen)
         if inherited is None:
             return None
-        options.extend(inherited)
+        options.extend(
+            GoBuildSet(found.methods, all_of((found.builds, builds)))
+            for found in inherited
+        )
     return options
 
 
-def _distinct(sets: list[GoMethodSet]) -> list[GoMethodSet]:
-    unique = list(
-        {tuple(sorted(methods.items())): methods for methods in sets}.values()
-    )
+def _builtin_methods(name: str) -> GoMethodSet:
+    return {
+        method_key(method, ""): (GoSignature(params, results),)
+        for method, params, results in cs.GO_BUILTIN_INTERFACE_METHODS[name]
+    }
+
+
+def _distinct(sets: list[GoBuildSet]) -> list[GoBuildSet]:
+    # One method set reached in several builds is one alternative.
+    merged: dict[
+        tuple[tuple[GoMethodKey, tuple[GoSignature, ...]], ...], GoBuildSet
+    ] = {}
+    for found in sets:
+        key = tuple(sorted(found.methods.items()))
+        earlier = merged.get(key)
+        merged[key] = (
+            found
+            if earlier is None
+            else earlier._replace(builds=any_of((earlier.builds, found.builds)))
+        )
+    unique = list(merged.values())
     if len(unique) <= _MAX_METHOD_SET_ALTERNATIVES:
         return unique
     # The methods every build asks for, each with every build's declaration:
     # a type with those may implement the interface in some build.
-    shared = set.intersection(*(set(methods) for methods in unique))
+    shared = set.intersection(*(set(found.methods) for found in unique))
     return [
-        {
-            key: tuple(sig for methods in unique for sig in methods[key])
-            for key in shared
-        }
+        GoBuildSet(
+            {
+                key: tuple(sig for found in unique for sig in found.methods[key])
+                for key in shared
+            },
+            any_of(found.builds for found in unique),
+        )
     ]
 
 
 def implicit_implementations(
-    interfaces: Mapping[str, tuple[GoMethodSet, ...] | None],
+    interfaces: Mapping[str, tuple[GoBuildSet, ...] | None],
     types: Mapping[str, GoMethodSet],
+    in_some_build: Callable[[str, GoBuildSet], bool],
 ) -> list[tuple[str, str]]:
     """(type, interface) for every type defining each method of the
-    interface, in one of its builds, with a signature that may be the same
-    (`compatible`): in any one declaration, so a method each build declares
-    again counts once. A pair that holds in one build is a pair: renaming
-    either side must rename the other, or that build no longer compiles.
+    interface in one of its sets of builds, with a signature that may be the
+    same (`compatible`), and that `in_some_build` finds one build holding
+    together with the declarations that do. A pair that holds in one build
+    is a pair: renaming either side must rename the other, or that build no
+    longer compiles.
 
     A type's method set here holds its value- and pointer-receiver methods
     alike. The graph has one node for `T` and `*T`, and the go/types frontend
@@ -350,22 +403,29 @@ def implicit_implementations(
             by_method.setdefault(key, []).append(type_qn)
     pairs: list[tuple[str, str]] = []
     for interface, builds in sorted(interfaces.items()):
-        required = [methods for methods in builds or () if methods]
+        required = [found for found in builds or () if found.methods]
         pairs.extend(
             (type_qn, interface)
             for type_qn in _candidates(required, by_method)
             if type_qn != interface
-            and any(_covers(types[type_qn], methods) for methods in required)
+            and any(
+                _covers(types[type_qn], found.methods) and in_some_build(type_qn, found)
+                for found in required
+            )
         )
     return pairs
 
 
 def _candidates(
-    required: list[GoMethodSet], by_method: Mapping[GoMethodKey, list[str]]
+    required: list[GoBuildSet], by_method: Mapping[GoMethodKey, list[str]]
 ) -> list[str]:
     # Only a type defining one of a build's methods can define them all.
     return sorted(
-        {type_qn for methods in required for type_qn in by_method.get(min(methods), [])}
+        {
+            type_qn
+            for found in required
+            for type_qn in by_method.get(min(found.methods), [])
+        }
     )
 
 

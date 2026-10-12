@@ -41,17 +41,30 @@ class Hierarchy(NamedTuple):
     guessed: frozenset[str]
 
 
-def hierarchy(fetch_all: QueryFn, project: str, qn: str) -> Hierarchy:
+def _no_links(_qn: str) -> list[str]:
+    return []
+
+
+def hierarchy(
+    fetch_all: QueryFn,
+    project: str,
+    qn: str,
+    linked: Callable[[str], list[str]] = _no_links,
+) -> Hierarchy:
     # Each edge keeps its own confidence. Asking per member whether all of
     # its edges were guesses missed two hierarchies a guess joins: every
     # member had a proven edge of its own, and each was renamed unasked.
+    # `linked` names the members another way certainly joins (each build's
+    # declaration of one Go method).
     owns = graph_query._owner_check(fetch_all, project)
     edges: dict[str, list[tuple[str, bool]]] = {}
     seen: list[str] = [qn]
     frontier = [qn]
     while frontier:
         current = frontier.pop()
-        edges[current] = _override_edges(fetch_all, project, current, owns)
+        edges[current] = _override_edges(fetch_all, project, current, owns) + [
+            (other, False) for other in linked(current)
+        ]
         for other, _guessed in edges[current]:
             if other not in seen:
                 seen.append(other)

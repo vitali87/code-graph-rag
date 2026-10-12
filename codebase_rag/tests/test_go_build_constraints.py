@@ -98,3 +98,34 @@ def test_a_changed_file_is_read_again(tmp_path: Path) -> None:
     assert not builds.together(("a.go", "x_windows.go"))
     path.write_text("//go:build windows\n\npackage p\n\n// grown\n", encoding="utf-8")
     assert builds.together(("a.go", "x_windows.go"))
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        "//go:build " + "(" * 300 + "linux" + ")" * 300 + "\n",
+        "//go:build " + "!" * 5000 + "linux\n",
+        "//go:build " + " && ".join(["linux"] * 900) + "\n",
+        "//go:build ((linux)\n",
+        "//go:build linux))\n",
+        "//go:build ) linux (\n",
+        "//go:build linux && || windows\n",
+        "//go:build linux $ windows\n",
+        "//go:build \x00\n",
+        "// +build ,,, !\n\n",
+    ],
+)
+def test_a_constraint_this_cannot_read_holds_in_every_build(
+    tmp_path: Path, header: str
+) -> None:
+    # Malformed, or nested past what this reads: never an exception, and
+    # the file builds with anything.
+    (tmp_path / "a.go").write_text(f"{header}\npackage p\n", encoding="utf-8")
+    builds = GoBuilds(tmp_path)
+    assert builds.together(("a.go", "b_windows.go"))
+    assert builds.together(("a.go", "b_linux.go"))
+
+
+def test_a_constraint_nested_within_the_limit_is_read() -> None:
+    nested = "//go:build " + "(" * 50 + "linux" + ")" * 50 + "\n"
+    assert not satisfiable((header_constraint(nested), name_constraint("x_windows.go")))

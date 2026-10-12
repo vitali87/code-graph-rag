@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict, deque
-from collections.abc import Collection, Iterator, Mapping
-from pathlib import PurePath
+from collections.abc import Collection, Iterable, Iterator, Mapping
+from pathlib import Path, PurePath
 from typing import NamedTuple
 
 from loguru import logger
@@ -17,8 +17,9 @@ from ..utils import qn_markers
 from .cpp import utils as cpp_utils
 from .go import interfaces as go_ifaces
 from .go import utils as go_utils
-from .go.builds import GoBuilds
+from .go.builds import ALWAYS, Expr, all_of, holds_wherever, satisfiable
 from .go.interfaces import GoMethodSpec
+from .go.link_state import GoLinkState
 from .import_processor import ImportProcessor
 from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
@@ -312,6 +313,8 @@ class CallResolver:
         "go_checked_files",
         "go_builtin_shadows",
         "go_variant_methods",
+        "go_declaration_variants",
+        "go_pair_builds",
         "go_builds",
         "_interface_impl_cache",
         "_simple_resolution_cache",
@@ -351,12 +354,7 @@ class CallResolver:
         declared_module_qns: set[str] | None = None,
         rehydrated_interface_implementers: dict[str, set[str]] | None = None,
         go_package_names: Mapping[str, str] | None = None,
-        guessed_implementations: set[tuple[str, str]] | None = None,
-        go_methods: Mapping[str, GoMethodSpec] | None = None,
-        go_checked_files: set[str] | None = None,
-        go_builtin_shadows: Mapping[str, frozenset[str]] | None = None,
-        go_variant_methods: Mapping[str, Mapping[str, list[str]]] | None = None,
-        go_builds: GoBuilds | None = None,
+        go_links: GoLinkState | None = None,
     ) -> None:
         self.function_registry = function_registry
         self.import_processor = import_processor
@@ -399,35 +397,26 @@ class CallResolver:
             if rehydrated_interface_implementers is not None
             else {}
         )
-        # The (interface, implementer) pairs above matched by method name and
-        # arity alone (shared ref, Go #2483): what dispatch through them
-        # reaches is a guess.
-        self.guessed_implementations = (
-            guessed_implementations if guessed_implementations is not None else set()
-        )
-        # Each Go method's signature (shared ref, #2483), which tells the
-        # build variants of an implementation that can be one apart.
-        self.go_methods = go_methods if go_methods is not None else {}
-        # The files the go/types frontend type-checked (shared ref): a pair it
-        # proved holds for the build they make up, not for another's files.
-        self.go_checked_files = (
-            go_checked_files if go_checked_files is not None else set()
-        )
-        # Go package (`dir:clause`, or its test files' scope) -> the
-        # predeclared names it declares itself (shared ref): there `int` may
-        # be any type.
-        self.go_builtin_shadows = (
-            go_builtin_shadows if go_builtin_shadows is not None else {}
-        )
-        # Go type -> method name -> the declarations a variant of it that
-        # another build declares holds in a file both builds compile (shared
-        # ref): a call through an interface the type implements runs them.
+        # What the Go interface link shares, each container by reference
+        # (#2483): the pairs above it matched by name, so what dispatch
+        # through them reaches is a guess; each method's signature; the
+        # files go/types type-checked; the predeclared names each package
+        # declares; the declarations a type's build variants hold for it; each
+        # interface's build variants; the builds holding each pair; and each
+        # file's build constraint.
+        links = go_links if go_links is not None else GoLinkState()
+        self.guessed_implementations = links.guessed_implementations
+        self.go_methods: Mapping[str, GoMethodSpec] = links.methods
+        self.go_checked_files = links.checked_files
+        self.go_builtin_shadows: Mapping[str, frozenset[str]] = links.builtin_shadows
         self.go_variant_methods: Mapping[str, Mapping[str, list[str]]] = (
-            go_variant_methods if go_variant_methods is not None else {}
+            links.variant_methods
         )
-        # Each Go file's build constraint (shared): which files one build
-        # compiles together.
-        self.go_builds = go_builds
+        self.go_declaration_variants: Mapping[str, tuple[str, ...]] = (
+            links.declaration_variants
+        )
+        self.go_pair_builds: Mapping[tuple[str, str], Expr] = links.pair_builds
+        self.go_builds = links.builds
         self._interface_impl_cache: dict[str, str] | None = None
         # C++ typedef/using alias -> underlying bare type, consulted when a
         # receiver type name is mapped to a class (empty for other languages).
@@ -1665,14 +1654,15 @@ class CallResolver:
                 if qn.rpartition(cs.SEPARATOR_DOT)[0] == module_qn
             ]
             candidates = own if own else candidates
-        if len(candidates) != 1:
-            return None
+        # An interface each build declares again is the first of its
+        # variants; a call through it binds per build at emission.
+        found = go_utils.one_declaration(candidates, self.go_declaration_variants)
         # The Go type walker reduces a declared `*aaa.Mux` to `Mux` as well,
         # so a name that a package this file imports also declares may be
         # that one; it keeps the lookup it had before.
-        if self._go_imports_declare_type(name, module_qn):
+        if found is None or self._go_imports_declare_type(name, module_qn):
             return None
-        return candidates[0]
+        return found
 
     def _go_imports_declare_type(self, name: str, module_qn: str) -> bool:
         imported = set(
@@ -1831,17 +1821,20 @@ class CallResolver:
             return {result}
         return set()
 
-    def interface_dispatch_targets(self, callee_qn: str) -> dict[tuple[str, str], bool]:
+    def interface_dispatch_targets(
+        self, callee_qn: str
+    ) -> dict[tuple[str, str], dict[str, bool]]:
         # A Go call through an interface runs whichever implementation the
         # value holds, and the types implement it implicitly, so a sole
         # implementer is no likelier than one of many: every implementer's
-        # method is a target (issue #2483). Each maps to whether only a guess
-        # ties it to the interface (a pair matched by name and arity), which
-        # its edge then says rather than borrowing the call's own label.
+        # method is a target (issue #2483). Each maps to the implementers it
+        # runs for, each with whether only a guess ties it to the interface
+        # (a pair matched by name and arity), which its edge then says rather
+        # than borrowing the call's own label.
         class_qn, sep, method_name = callee_qn.rpartition(cs.SEPARATOR_DOT)
         if not sep or self.function_registry.get(class_qn) != NodeType.INTERFACE:
             return {}
-        targets: dict[tuple[str, str], bool] = {}
+        targets: dict[tuple[str, str], dict[str, bool]] = {}
         for implementer in self.interface_implementers.get(class_qn, ()):
             guessed = (class_qn, implementer) in self.guessed_implementations
             found = [
@@ -1853,7 +1846,7 @@ class CallResolver:
             if result := self._try_resolve_method(implementer, method_name):
                 found.append(result)
             for target in found:
-                targets[target] = targets.get(target, True) and guessed
+                targets.setdefault(target, {})[implementer] = guessed
         return targets
 
     def go_declaration_satisfies(
@@ -1877,6 +1870,97 @@ class CallResolver:
     def go_declaration_read(self, method_qn: str) -> bool:
         spec = self.go_methods.get(method_qn)
         return spec is None or spec.file in self.go_checked_files
+
+    def _with_go_variants(self, bases: Iterable[str]) -> list[str]:
+        # A Go interface embedding a name each build declares again embeds
+        # the one its build holds, so a method only one build's declares is
+        # still reached through it (#3360 review).
+        found: list[str] = []
+        for base in bases:
+            found.append(base)
+            found.extend(
+                variant
+                for variant in self.go_declaration_variants.get(base, ())
+                if variant != base
+            )
+        return found
+
+    def go_variant_callees(
+        self, callee_qn: str, module_qn: str
+    ) -> list[tuple[str, bool]] | None:
+        """For a Go call bound to `callee_qn`, a method of an interface each
+        build declares again, the method of every declaration a build
+        compiling the caller's file may hold, each with whether every such
+        build holds it. None when the interface has no build variants.
+
+        `J` embedding `p.I` reached `i_linux.go`'s `M` for a caller every
+        build compiles: an exact edge true on Linux alone, and Windows'
+        `M` never reached (#3360 review)."""
+        owner, dot, name = callee_qn.rpartition(cs.SEPARATOR_DOT)
+        group = self.go_declaration_variants.get(owner)
+        if not dot or not group or self.go_builds is None:
+            return None
+        caller = self.go_caller_rel(module_qn)
+        reached = [
+            (method_qn, file)
+            for variant in group
+            if (method_qn := f"{variant}{cs.SEPARATOR_DOT}{name}")
+            in self.function_registry
+            and self.go_builds.together(
+                (caller, file := self.go_declaring_rel(variant))
+            )
+        ]
+        exact = len(reached) == 1 and self.go_builds.covered(caller, [reached[0][1]])
+        return [(method_qn, exact) for method_qn, _ in reached]
+
+    def go_reaches_everywhere(
+        self, module_qn: str, declarations: Iterable[str]
+    ) -> bool:
+        """Whether every build compiling Go file `module_qn` compiles every
+        one of `declarations`: an edge to one only some of them hold is no
+        exact edge."""
+        if self.go_builds is None:
+            return True
+        return self.go_builds.everywhere(
+            self.go_caller_rel(module_qn),
+            [self.go_declaring_rel(qn) for qn in declarations],
+        )
+
+    def go_dispatch_builds(
+        self,
+        module_qn: str,
+        interface_qn: str,
+        implementer: str,
+        declaration: str,
+    ) -> tuple[bool, bool]:
+        """Whether `declaration` runs for `implementer` through a call through
+        `interface_qn` from Go file `module_qn` in some build compiling the
+        caller, and whether in every one."""
+        if self.go_builds is None:
+            return True, True
+        caller = self.go_builds.constraint(self.go_caller_rel(module_qn))
+        runs = all_of(
+            (
+                self.go_pair_builds.get((interface_qn, implementer), ALWAYS),
+                self.go_builds.constraint(self.go_declaring_rel(declaration)),
+            )
+        )
+        return satisfiable((caller, runs)), holds_wherever(caller, runs)
+
+    def go_caller_rel(self, module_qn: str) -> str:
+        return go_utils.rel_file(
+            self.type_inference.module_qn_to_file_path.get(module_qn),
+            self.type_inference.repo_path,
+        )
+
+    def go_declaring_rel(self, qn: str) -> str:
+        # The repo-relative file declaring Go method or package-level `qn`.
+        if (spec := self.go_methods.get(qn)) is not None:
+            return spec.file
+        path = self._go_declaring_path(qn)
+        return (
+            go_utils.rel_file(Path(path), self.type_inference.repo_path) if path else ""
+        )
 
     def _redirect_protocol_method(
         self, result: tuple[str, str] | None
@@ -7224,6 +7308,8 @@ class CallResolver:
                 return alias
             if self.function_registry.binds_non_method(class_qn, method_name):
                 return None
+        if found := self._go_variant_method(class_qn, method_name):
+            return found
         if class_qn not in self.class_inheritance:
             return None
         # Which class binds the name first decides whether a value hides
@@ -7233,6 +7319,22 @@ class CallResolver:
         if (order := self._binding_aware_mro(class_qn, method_name)) is not None:
             return self._resolve_inherited_along_mro(order, method_name)
         return self._resolve_inherited_breadth_first(class_qn, method_name)
+
+    def _go_variant_method(
+        self, class_qn: str, method_name: str
+    ) -> tuple[str, str] | None:
+        # A Go interface each build declares again has the methods of every
+        # build's declaration, its own and embedded; the call binds to the
+        # caller's builds at emission (`go_variant_callees`).
+        for variant in self.go_declaration_variants.get(class_qn, ()):
+            if variant == class_qn:
+                continue
+            variant_qn = f"{variant}{cs.SEPARATOR_DOT}{method_name}"
+            if variant_qn in self.function_registry:
+                return self.function_registry[variant_qn], variant_qn
+            if found := self._resolve_inherited_breadth_first(variant, method_name):
+                return found
+        return None
 
     def _resolve_inherited_along_mro(
         self, order: list[str], method_name: str
@@ -7250,7 +7352,9 @@ class CallResolver:
     def _resolve_inherited_breadth_first(
         self, class_qn: str, method_name: str
     ) -> tuple[str, str] | None:
-        bfs_queue = deque(self.class_inheritance.get(class_qn, []))
+        bfs_queue = deque(
+            self._with_go_variants(self.class_inheritance.get(class_qn, []))
+        )
         visited = set(bfs_queue)
 
         while bfs_queue:
@@ -7270,7 +7374,9 @@ class CallResolver:
                 )
 
             if parent_class_qn in self.class_inheritance:
-                for grandparent_qn in self.class_inheritance[parent_class_qn]:
+                for grandparent_qn in self._with_go_variants(
+                    self.class_inheritance[parent_class_qn]
+                ):
                     if grandparent_qn not in visited:
                         visited.add(grandparent_qn)
                         bfs_queue.append(grandparent_qn)

@@ -43,9 +43,10 @@ from .field_nodes import PendingFieldType
 from .frontends.protocol import ImplementsPair, ResolvedCallSite
 from .function_ingest import FunctionIngestMixin
 from .go import utils as go_utils
-from .go.builds import GoBuilds
+from .go.builds import Expr, GoBuilds
 from .go.interface_ingest import GoInterfaceMixin
 from .go.interfaces import GoInterfaceDecl, GoMethodSpec
+from .go.link_state import GoLinkState
 from .handlers import get_handler
 from .java_generated import generator_hint
 from .js_ts.ingest import JsTsIngestMixin
@@ -332,6 +333,12 @@ class DefinitionProcessor(
         # in files its build compiles too, refilled by each link (shared with
         # the call resolver).
         self.go_variant_methods: dict[str, dict[str, list[str]]] = {}
+        # Go interface -> the declarations of its name each build makes
+        # (shared with the call resolver).
+        self.go_declaration_variants: dict[str, tuple[str, ...]] = {}
+        # (Go interface, implementer) -> the builds holding the pair (shared
+        # with the call resolver).
+        self.go_pair_builds: dict[tuple[str, str], Expr] = {}
         # (rel_file, type_start_line) -> class qn for every ingested C# type,
         # the reverse of the Roslyn fact keys, so partial declaration groups
         # join back to the Pass-2 Class nodes.
@@ -452,6 +459,20 @@ class DefinitionProcessor(
         self.rehydrated_definition_paths: dict[str, str] = {}
         self._handler = get_handler(cs.SupportedLanguage.PYTHON)
         self._func_class_captures_cache = func_class_captures_cache
+
+    def go_link_state(self) -> GoLinkState:
+        """The Go interface link's containers call resolution reads, by
+        reference: the link refills them in place."""
+        return GoLinkState(
+            guessed_implementations=self.go_guessed_pairs,
+            methods=self.go_methods,
+            checked_files=self.go_checked_files,
+            builtin_shadows=self.go_builtin_shadows,
+            variant_methods=self.go_variant_methods,
+            declaration_variants=self.go_declaration_variants,
+            pair_builds=self.go_pair_builds,
+            builds=self.go_builds,
+        )
 
     def reset_interface_implementers(self) -> None:
         """Forget every implementer pair, parsed or read back from the graph.

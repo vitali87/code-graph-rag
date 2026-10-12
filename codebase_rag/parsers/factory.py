@@ -169,6 +169,9 @@ class ProcessorFactory:
                 method_return_types=self.definition_processor.method_return_types,
                 go_function_return_types=self.definition_processor.go_function_return_types,
                 go_package_names=self.definition_processor.go_package_names,
+                go_declaration_variants=(
+                    self.definition_processor.go_declaration_variants
+                ),
                 go_call_sites=self.definition_processor.go_call_sites,
                 python_call_sites=self.definition_processor.python_call_sites,
                 python_external_sites=self.definition_processor.python_external_sites,
@@ -225,11 +228,6 @@ class ProcessorFactory:
                 rehydrated_interface_implementers=(
                     self.definition_processor.rehydrated_interface_implementers
                 ),
-                guessed_implementations=self.definition_processor.go_guessed_pairs,
-                go_methods=self.definition_processor.go_methods,
-                go_checked_files=self.definition_processor.go_checked_files,
-                go_builtin_shadows=self.definition_processor.go_builtin_shadows,
-                go_variant_methods=self.definition_processor.go_variant_methods,
-                go_builds=self.definition_processor.go_builds,
+                go_links=self.definition_processor.go_link_state(),
             )
         return self._call_processor

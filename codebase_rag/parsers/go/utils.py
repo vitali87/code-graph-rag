@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Mapping
 from pathlib import Path, PurePosixPath
 
 from tree_sitter import Node
@@ -33,6 +33,19 @@ def package_level_definitions(
         for qn in registry.find_ending_with(name)
         if registry.get(qn) in labels and in_package(qn)
     ]
+
+
+def one_declaration(
+    declared: list[str], variants: Mapping[str, tuple[str, ...]]
+) -> str | None:
+    """The declaration a Go name is, of the package-level `declared`: the
+    only one, or, for an interface each build declares again, the first of
+    its build variants. A call through it reaches the variant each build
+    holds (`CallResolver.go_variant_callees`). None for any other two."""
+    if len(declared) == 1:
+        return declared[0]
+    group = variants.get(declared[0], ()) if declared else ()
+    return min(declared) if declared and set(declared) <= set(group) else None
 
 
 def file_package_qn(

@@ -55,8 +55,7 @@ from .field_nodes import declared_fields
 from .flow_access import FlowProcessor
 from .go import type_inference as go_ti
 from .go import utils as go_utils
-from .go.builds import GoBuilds
-from .go.interfaces import GoMethodSpec
+from .go.link_state import GoLinkState
 from .import_processor import ImportProcessor
 from .io_access import IOAccessProcessor
 from .java import type_inference as java_ti
@@ -2078,12 +2077,7 @@ class CallProcessor:
         rust_function_modules: dict[str, str] | None = None,
         declared_module_qns: set[str] | None = None,
         rehydrated_interface_implementers: dict[str, set[str]] | None = None,
-        guessed_implementations: set[tuple[str, str]] | None = None,
-        go_methods: Mapping[str, GoMethodSpec] | None = None,
-        go_checked_files: set[str] | None = None,
-        go_builtin_shadows: Mapping[str, frozenset[str]] | None = None,
-        go_variant_methods: Mapping[str, Mapping[str, list[str]]] | None = None,
-        go_builds: GoBuilds | None = None,
+        go_links: GoLinkState | None = None,
     ) -> None:
         self.ingestor = ingestor
         # The tree-sitter node whose span every edge emitted right now records
@@ -2152,12 +2146,7 @@ class CallProcessor:
             declared_module_qns=declared_module_qns,
             rehydrated_interface_implementers=rehydrated_interface_implementers,
             go_package_names=self._go_package_names,
-            guessed_implementations=guessed_implementations,
-            go_methods=go_methods,
-            go_checked_files=go_checked_files,
-            go_builtin_shadows=go_builtin_shadows,
-            go_variant_methods=go_variant_methods,
-            go_builds=go_builds,
+            go_links=go_links,
         )
         # Inter-procedural callable-parameter flow: ordered params per function and
         # the per-call-site argument bindings, resolved to a fixpoint in finalize.
@@ -7517,36 +7506,73 @@ class CallProcessor:
         # The resolver's verdict on this callee, then one edge per
         # same-named candidate when the callee fans out (issue #1526).
         self._resolution = self._resolver.last_resolution
+        exact_in_every_build: dict[str, bool] = {}
+        if ctx.language == cs.SupportedLanguage.GO:
+            targets, exact_in_every_build = self._go_build_targets(
+                ctx, callee_type, callee_qn, targets
+            )
         if len(targets) > 1:
             self._resolution = cs.EdgeResolution.OVERLOAD
+        call_resolution = self._resolution
         for target_qn in targets:
-            # A duplicate-suffixed variant may be a DIFFERENT kind of
-            # node (a TS namespace merged onto a function registers as
-            # a class); only callable variants take a CALLS edge, and
-            # emitting the primary's label onto a differently-typed
-            # node is a phantom the database drops (issue #652). An
-            # unregistered target keeps its edge (resolver-derived
-            # callees like an unwrapped fn.call base may not register).
-            target_type = self._resolver.function_registry.get(target_qn)
-            if target_type is not None and target_type not in (
-                NodeType.FUNCTION,
-                NodeType.METHOD,
-            ):
-                if ctx.is_python:
-                    self._emit_python_binding_twin(ctx, target_qn, target_type)
-                continue
-            # A callable variant takes its OWN label: a Scala method's local
-            # def or anonymous-object member registers as a Function beside
-            # the class's same-named Method, and the primary's label on the
-            # other is the same phantom (issue #2848).
-            label = (
-                callee_type if target_type is None else cs.NodeLabel(target_type.value)
+            self._resolution = (
+                call_resolution
+                if exact_in_every_build.get(target_qn, True)
+                else cs.EdgeResolution.HEURISTIC
             )
-            ctx.ensure_rel(
-                ctx.caller_spec,
-                cs.RelationshipType.CALLS,
-                (label, cs.KEY_QUALIFIED_NAME, target_qn),
-            )
+            self._emit_callee_target(ctx, callee_type, target_qn)
+        self._resolution = call_resolution
+
+    def _emit_callee_target(
+        self, ctx: _CallScanContext, callee_type: str, target_qn: str
+    ) -> None:
+        # A duplicate-suffixed variant may be a DIFFERENT kind of node (a TS
+        # namespace merged onto a function registers as a class); only
+        # callable variants take a CALLS edge, and emitting the primary's
+        # label onto a differently-typed node is a phantom the database drops
+        # (issue #652). An unregistered target keeps its edge
+        # (resolver-derived callees like an unwrapped fn.call base may not
+        # register).
+        target_type = self._resolver.function_registry.get(target_qn)
+        if target_type is not None and target_type not in (
+            NodeType.FUNCTION,
+            NodeType.METHOD,
+        ):
+            if ctx.is_python:
+                self._emit_python_binding_twin(ctx, target_qn, target_type)
+            return
+        # A callable variant takes its OWN label: a Scala method's local def
+        # or anonymous-object member registers as a Function beside the
+        # class's same-named Method, and the primary's label on the other is
+        # the same phantom (issue #2848).
+        label = callee_type if target_type is None else cs.NodeLabel(target_type.value)
+        ctx.ensure_rel(
+            ctx.caller_spec,
+            cs.RelationshipType.CALLS,
+            (label, cs.KEY_QUALIFIED_NAME, target_qn),
+        )
+
+    def _go_build_targets(
+        self,
+        ctx: _CallScanContext,
+        callee_type: str,
+        callee_qn: str,
+        targets: list[str],
+    ) -> tuple[list[str], dict[str, bool]]:
+        # A Go call reaches a declaration exactly only when every build
+        # compiling the caller holds it. A method of an interface each build
+        # declares again is each build's own (`go_variant_callees`); any
+        # other target in a file some of those builds leave out (a method
+        # `t_linux.go` declares again) is one candidate of several.
+        resolver = self._resolver
+        if callee_type == cs.NodeLabel.METHOD and (
+            variants := resolver.go_variant_callees(callee_qn, ctx.module_qn)
+        ):
+            return [qn for qn, _ in variants], dict(variants)
+        return targets, {
+            target: resolver.go_reaches_everywhere(ctx.module_qn, (target,))
+            for target in targets
+        }
 
     def _emit_python_binding_twin(
         self, ctx: _CallScanContext, twin_qn: str, twin_type: NodeType
@@ -7594,7 +7620,10 @@ class CallProcessor:
             callee_type == cs.NodeLabel.METHOD
             and ctx.language == cs.SupportedLanguage.GO
         ):
-            self._emit_go_interface_dispatch(ctx, callee_qn)
+            for method_qn, exact in self._resolver.go_variant_callees(
+                callee_qn, ctx.module_qn
+            ) or [(callee_qn, True)]:
+                self._emit_go_interface_dispatch(ctx, method_qn, guessed=not exact)
         elif callee_type == cs.NodeLabel.METHOD:
             self._emit_interface_sole_impls(ctx, callee_qn)
 
@@ -7620,15 +7649,23 @@ class CallProcessor:
         # build-tag variants (gin's `validate`), so emit an edge to each so
         # no build variant is reported dead. sorted(): the target label is a
         # hash-randomized StrEnum, so sort for deterministic output.
+        call_resolution = self._resolution
         for sibling_type, sibling_qn in sorted(
             self._resolver.go_package_sibling_targets(callee_qn)
         ):
             for variant in self._resolver.function_registry.variants(sibling_qn):
+                # Exact only where every build compiling the caller holds it.
+                self._resolution = (
+                    call_resolution
+                    if self._resolver.go_reaches_everywhere(ctx.module_qn, (variant,))
+                    else cs.EdgeResolution.HEURISTIC
+                )
                 ctx.ensure_rel(
                     ctx.caller_spec,
                     cs.RelationshipType.CALLS,
                     (sibling_type, cs.KEY_QUALIFIED_NAME, variant),
                 )
+        self._resolution = call_resolution
 
     def _emit_interface_sole_impls(self, ctx: _CallScanContext, callee_qn: str) -> None:
         # A call bound to an interface/trait method (the static callee;
@@ -7648,20 +7685,24 @@ class CallProcessor:
                 )
 
     def _emit_go_interface_dispatch(
-        self, ctx: _CallScanContext, callee_qn: str
+        self, ctx: _CallScanContext, callee_qn: str, guessed: bool = False
     ) -> None:
         # The interface method is the static callee and keeps its edge; each
         # implementation is one candidate of the value's dynamic type. A
         # callee the name-only fallback merely guessed says nothing about
-        # the receiver, so it is not fanned out (the #2931 rule).
+        # the receiver, so it is not fanned out (the #2931 rule). One that
+        # only some of the caller's builds hold (`guessed`) is still the
+        # receiver's, in those builds: its implementations are candidates.
         if self._resolution == cs.EdgeResolution.HEURISTIC:
             return
-        edges = self._go_dispatch_edges(callee_qn)
+        edges = self._go_dispatch_edges(callee_qn, ctx.module_qn)
         prev_resolution = self._resolution
         proven = cs.EdgeResolution.OVERLOAD if len(edges) > 1 else prev_resolution
         try:
-            for target_type, target_qn, guessed in edges:
-                self._resolution = cs.EdgeResolution.HEURISTIC if guessed else proven
+            for target_type, target_qn, target_guessed in edges:
+                self._resolution = (
+                    cs.EdgeResolution.HEURISTIC if guessed or target_guessed else proven
+                )
                 ctx.ensure_rel(
                     ctx.caller_spec,
                     cs.RelationshipType.CALLS,
@@ -7670,22 +7711,60 @@ class CallProcessor:
         finally:
             self._resolution = prev_resolution
 
-    def _go_dispatch_edges(self, callee_qn: str) -> list[tuple[str, str, bool]]:
+    def _go_dispatch_edges(
+        self, callee_qn: str, module_qn: str
+    ) -> list[tuple[str, str, bool]]:
         # (label, method, guessed) per implementation. Each declaration a build
         # makes again is a target of its own. One go/types read for a pair it
         # proved is the compiler's, whatever the names say; any other is
         # matched by name, and one whose signature differs for certain runs
-        # in no build where its type is an implementer.
+        # in no build where its type is an implementer. One that a build
+        # compiling the caller leaves out, or whose type it does, is a
+        # candidate in some of the caller's builds only.
         resolver = self._resolver
         edges: list[tuple[str, str, bool]] = []
-        for (target_type, target_qn), guessed in sorted(
+        for (target_type, target_qn), implementers in sorted(
             resolver.interface_dispatch_targets(callee_qn).items()
         ):
             for variant in resolver.function_registry.variants(target_qn):
-                proven = not guessed and resolver.go_declaration_read(variant)
-                if proven or resolver.go_declaration_satisfies(variant, callee_qn):
-                    edges.append((target_type, variant, not proven))
+                if (
+                    guessed := self._go_dispatch_guess(
+                        callee_qn, module_qn, variant, implementers
+                    )
+                ) is not None:
+                    edges.append((target_type, variant, guessed))
         return edges
+
+    def _go_dispatch_guess(
+        self,
+        callee_qn: str,
+        module_qn: str,
+        variant: str,
+        implementers: dict[str, bool],
+    ) -> bool | None:
+        # Whether a dispatch edge to `variant` is a guess, or None for none:
+        # it runs only for an implementer a build compiling the caller holds
+        # with it, and a proven one is exact only where every such build
+        # does.
+        resolver = self._resolver
+        interface_qn = callee_qn.rpartition(cs.SEPARATOR_DOT)[0]
+        builds = {
+            implementer: (
+                guessed,
+                *resolver.go_dispatch_builds(
+                    module_qn, interface_qn, implementer, variant
+                ),
+            )
+            for implementer, guessed in implementers.items()
+        }
+        read = resolver.go_declaration_read(variant)
+        reachable = {impl: found for impl, found in builds.items() if found[1]}
+        proven = [impl for impl, found in reachable.items() if not found[0] and read]
+        if not reachable or not (
+            proven or resolver.go_declaration_satisfies(variant, callee_qn)
+        ):
+            return None
+        return not any(reachable[implementer][2] for implementer in proven)
 
     def _emit_js_member_twins(self, ctx: _CallScanContext, callee_qn: str) -> None:
         # A JS member call that bound one twin of a double-registered

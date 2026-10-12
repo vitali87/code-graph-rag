@@ -17,6 +17,7 @@ apart are taken to build together.
 
 from __future__ import annotations
 
+import functools
 import itertools
 import re
 from collections.abc import Callable, Iterable
@@ -101,6 +102,11 @@ _HEADER_SCAN_BYTES = 64 * 1024
 # Beyond this many tags of its own (not a GOOS or GOARCH) a constraint is
 # not enumerated: its files are taken to build with anything.
 _MAX_FREE_TAGS = 10
+# A constraint nested deeper than this (`!` and parentheses), or longer than
+# this many tokens, is not read: its file is taken to build with anything.
+# Go's own reader rejects such expressions too.
+_MAX_DEPTH = 100
+_MAX_TOKENS = 1000
 _GO_BUILD_PREFIX = "//go:build"
 _PLUS_BUILD_PREFIX = "// +build"
 _TOKEN = re.compile(r"\s*(\(|\)|!|&&|\|\||[A-Za-z0-9_.]+)")
@@ -117,23 +123,40 @@ class Expr(NamedTuple):
 
 
 ALWAYS = Expr("and")
+NEVER = Expr("or")
 
 
 def _tag(name: str) -> Expr:
     return Expr("tag", name)
 
 
-def _all(parts: Iterable[Expr]) -> Expr:
-    kept = tuple(part for part in parts if part != ALWAYS)
+def all_of(parts: Iterable[Expr]) -> Expr:
+    """Every one of `parts`."""
+    kept = tuple(dict.fromkeys(part for part in parts if part != ALWAYS))
+    if NEVER in kept:
+        return NEVER
     return kept[0] if len(kept) == 1 else Expr("and", parts=kept)
 
 
-def _any(parts: Iterable[Expr]) -> Expr:
-    return Expr("or", parts=tuple(parts))
+def any_of(parts: Iterable[Expr]) -> Expr:
+    """One of `parts`."""
+    kept = tuple(dict.fromkeys(part for part in parts if part != NEVER))
+    if ALWAYS in kept:
+        return ALWAYS
+    return kept[0] if len(kept) == 1 else Expr("or", parts=kept)
 
 
-def _not(part: Expr) -> Expr:
+def negate(part: Expr) -> Expr:
+    if part == ALWAYS:
+        return NEVER
+    if part == NEVER:
+        return ALWAYS
     return Expr("not", parts=(part,))
+
+
+_all = all_of
+_any = any_of
+_not = negate
 
 
 def name_constraint(rel_path: str) -> Expr:
@@ -203,13 +226,20 @@ def _parse_go_build(text: str) -> Expr:
     stripped = text.rstrip()
     while position < len(stripped):
         match = _TOKEN.match(stripped, position)
-        if match is None:
+        if match is None or len(tokens) >= _MAX_TOKENS:
             return ALWAYS
         tokens.append(match.group(1))
         position = match.end()
     parser = _ExprParser(tokens)
-    parsed = parser.parse_or()
+    try:
+        parsed = parser.parse_or()
+    except _TooDeepError:
+        return ALWAYS
     return parsed if parsed is not None and parser.done() else ALWAYS
+
+
+class _TooDeepError(Exception):
+    """A constraint nested past `_MAX_DEPTH`."""
 
 
 class _ExprParser:
@@ -218,6 +248,7 @@ class _ExprParser:
     def __init__(self, tokens: list[str]) -> None:
         self.tokens = tokens
         self.index = 0
+        self.depth = 0
 
     def done(self) -> bool:
         return self.index == len(self.tokens)
@@ -253,16 +284,23 @@ class _ExprParser:
         if token is None:
             return None
         self.index += 1
-        if token == "!":
-            inner = self.parse_not()
-            return None if inner is None else _not(inner)
-        if token == "(":
-            inner = self.parse_or()
-            if inner is None or self._peek() != ")":
-                return None
-            self.index += 1
-            return inner
-        return None if token in (")", "&&", "||") else _tag(token)
+        if token not in ("!", "("):
+            return None if token in (")", "&&", "||") else _tag(token)
+        self.depth += 1
+        if self.depth > _MAX_DEPTH:
+            raise _TooDeepError
+        inner = self.parse_not() if token == "!" else self._parse_group()
+        self.depth -= 1
+        if inner is None:
+            return None
+        return _not(inner) if token == "!" else inner
+
+    def _parse_group(self) -> Expr | None:
+        inner = self.parse_or()
+        if inner is None or self._peek() != ")":
+            return None
+        self.index += 1
+        return inner
 
 
 def _tags(expr: Expr, into: set[str]) -> set[str]:
@@ -300,6 +338,18 @@ def _holds(expr: Expr, build: _Build) -> bool:
 def satisfiable(exprs: Iterable[Expr]) -> bool:
     """Whether one build satisfies every constraint in `exprs`."""
     combined = _all(exprs)
+    if combined in (ALWAYS, NEVER):
+        return combined == ALWAYS
+    return _satisfiable(combined)
+
+
+def holds_wherever(scope: Expr, claim: Expr) -> bool:
+    """Whether every build satisfying `scope` satisfies `claim`."""
+    return not satisfiable((scope, negate(claim)))
+
+
+@functools.lru_cache(maxsize=4096)
+def _satisfiable(combined: Expr) -> bool:
     tags = _tags(combined, set())
     os_bound = tags & (KNOWN_OS | {_UNIX_TAG})
     arch_bound = tags & KNOWN_ARCH
@@ -343,9 +393,7 @@ class GoBuilds:
         cached = self._constraints.get(rel_path)
         if cached is not None and cached[0] == stamp:
             return cached[1]
-        constraint = _all(
-            (name_constraint(rel_path), header_constraint(_read_head(path)))
-        )
+        constraint = _all((name_constraint(rel_path), _safe_header(path)))
         self._constraints[rel_path] = (stamp, constraint)
         return constraint
 
@@ -359,8 +407,16 @@ class GoBuilds:
     def covered(self, rel_path: str, others: Iterable[str]) -> bool:
         """Whether every build compiling `rel_path` compiles one of
         `others`."""
-        alternatives = _any(self.constraint(path) for path in others)
-        return not satisfiable((self.constraint(rel_path), _not(alternatives)))
+        return holds_wherever(
+            self.constraint(rel_path), _any(self.constraint(path) for path in others)
+        )
+
+    def everywhere(self, rel_path: str, needed: Iterable[str]) -> bool:
+        """Whether every build compiling `rel_path` compiles all of
+        `needed`."""
+        return holds_wherever(
+            self.constraint(rel_path), _all(self.constraint(path) for path in needed)
+        )
 
     def variants(
         self, candidates: Iterable[tuple[str, str]], rel_path: str
@@ -376,6 +432,15 @@ class GoBuilds:
             if self.together((rel_path, first, second)):
                 return None
         return tuple(qn for qn, _ in usable)
+
+
+def _safe_header(path: Path) -> Expr:
+    # Whatever a file's head holds, reading its constraint never stops an
+    # index: a constraint this cannot read holds in every build.
+    try:
+        return header_constraint(_read_head(path))
+    except Exception:  # noqa: BLE001 - any failure is an unread constraint
+        return ALWAYS
 
 
 def _read_head(path: Path) -> str:
