@@ -2633,11 +2633,11 @@ def test_an_incremental_run_reads_indexer_parameters_back(temp_repo: Path) -> No
     # type's node, so an index into a type of an unchanged file binds by
     # name and by default as a fresh index binds it.
     fresh, edited = _two_file_calls(temp_repo, NAMED_INDEX_LIB_CS, NAMED_INDEX_USE_CS)
-    assert {
+    assert fresh == {
         ("Named", "Left", "Run"),
         ("Omitted", "Right", "Run"),
         ("Defaulted", "Left", "Run"),
-    } == fresh, fresh
+    }, fresh
     assert edited == fresh
 
 
