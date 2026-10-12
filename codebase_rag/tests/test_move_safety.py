@@ -564,3 +564,69 @@ def test_a_destination_postponing_annotations_refuses_an_eager_definition(
     with pytest.raises(MoveRefused, match="annotations in helper evaluate"):
         _move(root, store, updater)
     assert (root / "pkg/core.py").read_text() == fixture["pkg/core.py"]
+
+
+def test_a_definition_that_execs_annotated_code_keeps_postponed_annotations(
+    temp_repo: Path,
+) -> None:
+    """`exec` inherits the caller's future features, so the generated
+    `x: Missing` annotation stayed a string only while `annotations` was on;
+    the unannotated mover dropped it and the call raised NameError
+    (bot review)."""
+    fixture = dict(FIXTURE)
+    fixture["pkg/util.py"] = (
+        "from __future__ import annotations\n\n\n"
+        "def helper(a):\n    ns = {}\n"
+        "    exec('def g(x: Missing):\\n    return x', ns)\n"
+        "    return ns['g'].__annotations__['x']\n" + OTHER
+    )
+    fixture["pkg/core.py"] = "VERSION = 1\n"
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    report = _move(root, store, updater)
+    assert report.applied, report.message
+    assert (
+        (root / "pkg/core.py")
+        .read_text()
+        .startswith("from __future__ import annotations\n")
+    )
+    probe = _python(root, "from pkg.core import helper; print(helper(1))")
+    assert probe.returncode == 0, probe.stderr
+    assert probe.stdout.strip() == "Missing"
+
+
+def test_an_exec_into_an_annotated_destination_without_the_future_refuses(
+    temp_repo: Path,
+) -> None:
+    fixture = dict(FIXTURE)
+    fixture["pkg/util.py"] = (
+        "from __future__ import annotations\n\n\n"
+        "def helper(a):\n    ns = {}\n"
+        "    exec('def g(x: Missing):\\n    return x', ns)\n"
+        "    return ns['g'].__annotations__['x']\n" + OTHER
+    )
+    fixture["pkg/core.py"] = _ANNOTATED_CORE
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    with pytest.raises(MoveRefused, match="enables from __future__ import annotations"):
+        _move(root, store, updater)
+    assert (root / "pkg/core.py").read_text() == _ANNOTATED_CORE
+
+
+def test_a_from_import_of_the_vacated_module_never_commits_a_broken_caller(
+    temp_repo: Path,
+) -> None:
+    """`from pkg import util` then `util.helper()`: the contract cleared that
+    import as one of a constant the module kept (bot review). End to end the
+    caller must still run, whether the move retargets it or rolls back."""
+    fixture = {
+        "pkg/__init__.py": "",
+        "pkg/util.py": "SEP = '-'\n\n\ndef helper(a):\n    return SEP.join(a)\n",
+        "pkg/a.py": "from pkg import util\n\n\ndef run():\n    return util.helper(['x', 'y'])\n",
+    }
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    report = _move(root, store, updater)
+    probe = _python(root, "from pkg.a import run; print(run())")
+    assert probe.returncode == 0, (report.applied, report.message, probe.stderr)
+    assert probe.stdout.strip() == "x-y"
