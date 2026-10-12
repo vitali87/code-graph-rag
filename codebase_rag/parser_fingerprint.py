@@ -4,6 +4,7 @@
 # fingerprint keys the other inputs: parse-relevant source files, the pinned
 # grammar wheel versions, and the frontend settings, so a sync can detect the
 # graph was built by a different parser or frontend config.
+import errno
 import hashlib
 import json
 import os
@@ -57,6 +58,19 @@ _TOOL_ABSENT = "absent"
 # what is extracted just as much as removing its toolchain.
 _TOOL_INACTIVE = "inactive"
 
+# A probe the OS refused to start for want of a resource was never asked, so
+# it is retried like a timeout. Every other start failure is permanent -- a
+# corrupt binary (ENOEXEC, WinError 193) or a script whose interpreter is gone
+# (ENOENT) -- and the frontend cannot run that tool either, so it is `absent`
+# rather than hidden behind a remembered version (Codex review of PR 3371).
+_TRANSIENT_START_ERRNOS = frozenset(
+    {errno.EAGAIN, errno.ENOMEM, errno.EMFILE, errno.ENFILE}
+)
+# ERROR_NOT_ENOUGH_MEMORY, ERROR_OUTOFMEMORY, ERROR_NO_SYSTEM_RESOURCES and
+# ERROR_COMMITMENT_LIMIT (the paging file is too small). CPython does not map
+# every one of them to ENOMEM, so they are matched as Windows codes.
+_TRANSIENT_START_WINERRORS = frozenset({8, 14, 1450, 1455})
+
 
 def _digest_file(path: Path) -> str:
     # compile_commands.json is repository-controlled and can be very large,
@@ -89,14 +103,15 @@ def _probe_version(
     toolchain the indexed repository never uses. `None` inherits the caller's
     cwd rather than inventing one.
 
-    A timeout is not an answer, and neither is a process that could not be
-    started. Recording either as `absent` made one slow or starved probe on a
-    loaded machine (a cold JVM or dotnet start, an antivirus scan, a full
-    paging file) read as an uninstalled compiler, so the fingerprint changed
-    and the next sync re-parsed everything (follow-up to #2634). When the
-    same binary under the same pins answered before, in this process or in
-    an earlier one that left it in `state_dir`, that answer stands; otherwise
-    the tool is asked once more for longer, and failing that it is `unknown`.
+    A timeout is not an answer, and neither is a process the OS could not
+    start for want of a resource. Recording either as `absent` made one slow
+    or starved probe on a loaded machine (a cold JVM or dotnet start, an
+    antivirus scan, a full paging file) read as an uninstalled compiler, so
+    the fingerprint changed and the next sync re-parsed everything (follow-up
+    to #2634). When the same binary under the same pins answered before, in
+    this process or in an earlier one that left it in `state_dir`, that
+    answer stands; otherwise the tool is asked once more for longer, and
+    failing that it is `unknown`.
     """
     binary = shutil.which(executable)
     if binary is None:
@@ -143,15 +158,17 @@ def _ask_version(
             timeout=timeout,
             cwd=None if cwd is None else str(cwd),
         )
-    # A timeout (TimeoutExpired is a SubprocessError) or a process the OS
-    # could not start: either way the tool never got to answer, and `which`
-    # has already found it. A loaded machine can fail CreateProcess itself
-    # (WinError 1455, the paging file is too small), and `absent` there flips
-    # the fingerprint between two back-to-back computations as a timeout did.
-    # The #2634 CI failures hashed `GO_VERSION=absent` first and the real
-    # `go version` second, and `absent` then stood for either cause.
-    except (subprocess.SubprocessError, OSError):
+    except subprocess.TimeoutExpired:
         return None
+    # A loaded machine can fail CreateProcess itself (WinError 1455, the
+    # paging file is too small), and `absent` there flips the fingerprint
+    # between two back-to-back computations as a timeout did. The #2634 CI
+    # failures hashed `GO_VERSION=absent` first and the real `go version`
+    # second, and `absent` then stood for either cause.
+    except OSError as exc:
+        return None if _is_transient_start_failure(exc) else _TOOL_ABSENT
+    except subprocess.SubprocessError:
+        return _TOOL_ABSENT
     if proc.returncode != 0:
         return _TOOL_ABSENT
     output = (proc.stdout or proc.stderr or "").strip()
@@ -159,6 +176,13 @@ def _ask_version(
     # `javac -version` can carry extra lines on some installs, and a
     # multi-line value would make the fingerprint sensitive to noise.
     return output.splitlines()[0].strip() if output else _TOOL_ABSENT
+
+
+def _is_transient_start_failure(exc: OSError) -> bool:
+    return (
+        exc.errno in _TRANSIENT_START_ERRNOS
+        or getattr(exc, "winerror", None) in _TRANSIENT_START_WINERRORS
+    )
 
 
 def _probe_key(binary: str, argument: str, cwd: Path | None) -> str:

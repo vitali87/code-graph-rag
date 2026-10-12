@@ -14,7 +14,6 @@ from __future__ import annotations
 import subprocess
 from unittest.mock import patch
 
-from codebase_rag import constants as cs
 from codebase_rag import parser_fingerprint as pf
 
 _PROBES = "codebase_rag.parser_fingerprint._tool_versions"
@@ -66,31 +65,23 @@ def test_an_absent_toolchain_is_distinguishable_from_any_version() -> None:
 def test_a_probe_failure_degrades_rather_than_raising() -> None:
     """The fingerprint is computed on every index; a probe must never abort it.
 
-    A binary `which` found but the OS could not start was never asked, so it
-    reads `unknown` as a timed-out one does, not `absent`: a starved process
-    on a loaded machine is not an uninstalled compiler (follow-up to #2634).
-    Either way it has to be reached without an exception escaping.
+    A tool that cannot be probed cannot be running, so its absence is the
+    honest answer -- but it has to be reached without an exception escaping.
     """
     all_active = dict.fromkeys((key for key, _exe, _arg in pf._VERSIONED_TOOLS), True)
     with (
         patch.object(pf, "_active_tools", return_value=all_active),
-        # Every tool is found, so the result does not depend on which
-        # toolchains this machine has; a missing one is `absent` before any
-        # process is started.
-        patch.object(pf.shutil, "which", return_value="/usr/bin/tool"),
         patch(
             "codebase_rag.parser_fingerprint.subprocess.run",
-            side_effect=OSError("cannot start"),
+            side_effect=OSError("no such tool"),
         ),
     ):
         versions = pf._tool_versions()
 
     assert versions, "no version entries produced"
     # Every tool forced active, so each one is genuinely probed and each probe
-    # raises: `unknown` here is the degradation path, not the inactive marker.
-    assert all(entry.endswith(f"={cs.TOOL_VERSION_UNKNOWN}") for entry in versions), (
-        versions
-    )
+    # raises: `absent` here is the degradation path, not the inactive marker.
+    assert all(entry.endswith("=absent") for entry in versions), versions
 
 
 def test_an_inactive_tool_version_does_not_change_the_fingerprint() -> None:
