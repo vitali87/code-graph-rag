@@ -17,7 +17,6 @@ the call; `callee_path` is where the invoked symbol is defined (issue #2460).
 from __future__ import annotations
 
 import difflib
-import posixpath
 from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import NamedTuple, TypedDict
@@ -33,7 +32,7 @@ from .dead_code import (
     _rust_test_modules_from_nodes,
 )
 from .types_defs import PropertyDict, PropertyParams, ResultRow
-from .utils.path_utils import project_roots_from_rows
+from .utils.path_utils import portable_posix, project_roots_from_rows
 from .utils.source_extraction import extract_source_lines
 
 QueryFn = Callable[[str, PropertyParams | None], list[ResultRow]]
@@ -297,12 +296,6 @@ def _location_readings(target: str) -> list[Location]:
     return [whole]
 
 
-def _posix_spelling(path: str) -> str:
-    # Nodes store `as_posix()` of the path relative to the root, so `\`
-    # separators, `./` and doubled slashes are spellings of the same file.
-    return posixpath.normpath(path.replace(cs.SEPARATOR_BACKSLASH, cs.SEPARATOR_SLASH))
-
-
 def _is_absolute(path: str) -> bool:
     # A Windows path is absolute wherever the graph is read: the root the
     # project was indexed under may be one.
@@ -313,7 +306,7 @@ def _spellings(path: str) -> list[str]:
     """`path` as written and, when native here, with its symlinks resolved:
     the stored root is resolved at index time, a caller's path may not be
     (`$PWD` through a symlink, `/tmp` on macOS)."""
-    forms = [_posix_spelling(path)]
+    forms = [portable_posix(path)]
     native = Path(path)
     if native.is_absolute():
         try:
@@ -340,7 +333,7 @@ def _location_paths(path: str, roots: Sequence[str]) -> list[str]:
     root is kept as written: it matches nothing, and a refusal names it
     rather than guessing at a suffix that may be another checkout's file.
     """
-    posix = _posix_spelling(path)
+    posix = portable_posix(path)
     if not _is_absolute(posix):
         return [posix]
     root_forms = [form for root in roots if root for form in _spellings(root)]
@@ -497,7 +490,7 @@ def _resolve_location(
     owns: Callable[[str], bool],
 ) -> list[SymbolRow] | TargetRefusal:
     readings = _location_readings(target)
-    absolute = any(_is_absolute(_posix_spelling(r.path)) for r in readings)
+    absolute = any(_is_absolute(portable_posix(r.path)) for r in readings)
     roots = _location_roots(fetch_all, project_name) if absolute else []
     spelled = {r: _location_paths(r.path, roots) for r in readings}
     every_path = [path for paths in spelled.values() for path in paths]
