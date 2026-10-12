@@ -133,6 +133,12 @@ class Scope(NamedTuple):
     # (type parameter, whether a `?` on it makes it `Nullable<T>`) for each
     # of `type_parameters` whose declaration is read (`nullable_lifts`).
     lifts: tuple[tuple[str, bool], ...] = ()
+    # A call site's: its type parameters are fixed types there, each
+    # spelled as its token (`type_parameter_token`) wherever a type written
+    # there names it, the nearest declaration's of a name. A declaration's
+    # scope has none, its type parameters staying as written for a use's
+    # bindings to substitute.
+    tokens: tuple[tuple[str, str], ...] = ()
 
 
 def with_type_parameters(
@@ -210,6 +216,10 @@ def _annotates_reference(before: str, reference: ReferenceKind | None) -> bool |
     annotated = _last_type(before)
     if annotated.endswith(cs.CSHARP_ARRAY_RANK_CLOSE):
         return True
+    # A call site's type parameter keeps a `?` only where it lifts it: one
+    # that annotates it is gone before its token is spelled.
+    if is_type_parameter_token(annotated):
+        return False
     if annotated.endswith(cs.CHAR_PAREN_CLOSE):
         return False
     if annotated == cs.CSHARP_DYNAMIC_KEYWORD:
@@ -278,6 +288,28 @@ def predefined_keyword(core: str) -> str | None:
         return path
     return cs.CSHARP_PREDEFINED_TYPE_KEYWORDS.get(
         path.removeprefix(cs.CSHARP_SYSTEM_PREFIX)
+    )
+
+
+def type_parameter_token(name: str, declaration: str) -> str:
+    """How every type written at a call site spells a type parameter in scope
+    there, `declaration` naming the declaration declaring it: one token,
+    which names no type, predefined, framework or first-party, nor another
+    type parameter of its name (a method's `T` hiding its class's), and is
+    the same wherever it is written, so `x` of a `Go<String>(String x)` is
+    exactly what `new H<String>()` binds `H`'s T to (Greptile review of PR
+    2814)."""
+    return (
+        f"{cs.CSHARP_TYPE_PARAMETER_MARK}{name}"
+        f"{cs.CSHARP_TYPE_PARAMETER_SCOPE_SEPARATOR}{declaration}"
+    )
+
+
+def is_type_parameter_token(core: str) -> bool:
+    """Whether a type with no shape after it is a call site's type
+    parameter (`type_parameter_token`), not a method's by position."""
+    return core.startswith(cs.CSHARP_TYPE_PARAMETER_MARK) and not core.startswith(
+        cs.CSHARP_METHOD_TYPE_PARAMETER_MARK
     )
 
 
@@ -626,7 +658,9 @@ def canonical_type(written: str, scope: Scope | None, arity: int | None = None) 
 
 def _canonical_core(core: str, scope: Scope, arity: int | None) -> str:
     # A type with no shape after it: a tuple, or a name and its arguments.
-    if core.startswith(cs.CSHARP_RESOLVED_PREFIX) or core in scope.type_parameters:
+    if core in scope.type_parameters:
+        return dict(scope.tokens).get(core, core)
+    if core.startswith(cs.CSHARP_RESOLVED_PREFIX):
         return core
     if is_tuple(core):
         elements = cs.SEPARATOR_COMMA_SPACE.join(

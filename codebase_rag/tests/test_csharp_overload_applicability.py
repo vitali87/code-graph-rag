@@ -2999,6 +2999,100 @@ def test_an_incremental_run_reads_type_parameter_kinds_as_a_fresh_one(
     assert edited == fresh
 
 
+ONE_IDENTITY_CS = """\
+#nullable enable
+namespace Ti;
+using System.Collections.Generic;
+public struct Impl { }
+public class H<T> {
+    public void M(T t) { }
+    public void M(object o) { }
+    public void N<U>(U u) { }
+    public void N<U>(object o) { }
+    public T Get() => default!;
+}
+public class HB<T> {
+    public void B(T t) { }
+    public void B(object o) { }
+}
+public class Use<String> : HB<String> where String : struct {
+    public void Receiver() { String x = default; new H<String>().M(x); }
+    public void Explicit() { String x = default; new H<String>().N<String>(x); }
+    public void Inferred() { String x = default; new H<String>().N(x); }
+    public void Nested() { new H<List<String>>().M(new List<String>()); }
+    public void Result() { new H<String>().M(new H<String>().Get()); }
+    public void Bare() { String x = default; B(x); }
+    public void This() { String x = default; this.B(x); }
+    public void Shadowed() { String x = default; Sh(x); void Sh<String>(String y) { B(y); } }
+}
+"""
+
+
+class TestACallersTypeParameterIsOneTypeEverywhere:
+    # Greptile review of PR 2814, round 25, and the oracle family it led
+    # to: a call site's type parameter is one type wherever the call writes
+    # it, an argument's, a receiver's type argument, an explicit method type
+    # argument, a nested one, what a call returns, and the type `this` is,
+    # never one of its name, nor another type parameter of its name. Each
+    # source states what Roslyn runs (.NET 8).
+    def test_a_receivers_type_argument_is_the_arguments_type(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Greptile 4246563420: `new H<String>().M(x)` with a `String x` binds
+        # `M(T)` by identity.
+        calls = _resolved_calls(ONE_IDENTITY_CS, temp_repo, mock_ingestor)
+        assert calls["Receiver"] == {("Ti.H.M(T)", _EXACT)}, calls
+        assert calls["Nested"] == {("Ti.H.M(T)", _EXACT)}, calls
+        # A call's result is closed by what the call bound.
+        assert calls["Result"] == {("Ti.H.Get", _EXACT), ("Ti.H.M(T)", _EXACT)}, calls
+
+    def test_a_method_type_argument_is_the_same_type(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(ONE_IDENTITY_CS, temp_repo, mock_ingestor)
+        assert calls["Explicit"] == {("Ti.H.N(U)", _EXACT)}, calls
+        assert calls["Inferred"] == {("Ti.H.N(U)", _EXACT)}, calls
+
+    def test_this_is_the_caller_closed_by_its_own_type_parameters(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(ONE_IDENTITY_CS, temp_repo, mock_ingestor)
+        assert calls["Bare"] == {("Ti.HB.B(T)", _EXACT)}, calls
+        assert calls["This"] == {("Ti.HB.B(T)", _EXACT)}, calls
+
+    def test_a_redeclared_name_is_another_type(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Inside `Sh<String>`, `y` is no value of the class's String: `B(T)`
+        # does not take it, and `B(object)` runs.
+        calls = _resolved_calls(ONE_IDENTITY_CS, temp_repo, mock_ingestor)
+        local = calls["Shadowed.Sh"]
+        assert ("Ti.HB.B(object)", _OVERLOAD) in local, local
+        assert ("Ti.HB.B(T)", _EXACT) not in local, local
+
+
+def test_an_incremental_run_gives_a_type_parameter_one_identity_as_a_fresh_one(
+    temp_repo: Path,
+) -> None:
+    # The callee types read back from an unchanged file close over the
+    # caller's tokens as a fresh index's do.
+    lib, _, use = ONE_IDENTITY_CS.partition("public class Use<String>")
+    fresh, edited = _two_file_calls(
+        temp_repo,
+        lib,
+        "#nullable enable\nnamespace Ti;\nusing System.Collections.Generic;\n"
+        f"public class Use<String>{use}",
+    )
+    assert {
+        ("Receiver", "H", "M(T)"),
+        ("Explicit", "H", "N(U)"),
+        ("Nested", "H", "M(T)"),
+        ("Bare", "HB", "B(T)"),
+    } <= fresh, fresh
+    assert ("Receiver", "H", "M(object)") not in fresh, fresh
+    assert edited == fresh
+
+
 def test_an_incremental_run_closes_constructed_bases_as_a_fresh_one(
     temp_repo: Path,
 ) -> None:

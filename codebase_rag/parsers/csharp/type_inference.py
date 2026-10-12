@@ -60,6 +60,7 @@ from .overloads import (
     framework_upcast,
     infer_into,
     is_tuple,
+    is_type_parameter_token,
     marked_parameters,
     mentioned_names,
     merged_inferences,
@@ -74,6 +75,7 @@ from .overloads import (
     signed_preference,
     substitute,
     type_arguments,
+    type_parameter_token,
     type_shape,
     unannotated,
     unshadowed,
@@ -347,13 +349,32 @@ def _canonical_argument(
 
 
 def _argument_type(written: str, scope: Scope, arity: int | None = None) -> str:
-    # An argument's type resolved in the caller's file, less the `?` that
-    # only annotates a type parameter there, and with one whose name a
-    # predefined or framework type also bears marked as no such type: in a
+    # An argument's type resolved at the call site, less the `?` that only
+    # annotates a type parameter there, which is spelled as its token: in a
     # `Go<String>(String? s) where String : struct`, `s` is a
     # `Nullable<String>`, not a `string` (Greptile review of PR 2814).
-    canonical = parameters_unannotated(canonical_type(written, scope, arity), scope)
-    return marked_parameters(canonical, scope.type_parameters)
+    return canonical_type(parameters_unannotated(written, scope), scope, arity)
+
+
+def _converts_to_token(argument: ArgumentType, parameter: str) -> bool | None:
+    # Whether an argument converts to a call site's type parameter, in any
+    # shape: C# converts to one only itself (into its nullable too) and a
+    # type parameter its `where` clauses bound by it, never a type of the
+    # name or of another (`TD : T` takes no `Box<T>[U]` of a `Use<T>`). None
+    # for another type parameter, whose bounds may reach it unseen.
+    core, shape = type_shape(parameter)
+    if argument.literal is not None:
+        return False
+    if argument.name is None:
+        return None
+    given_core, given_shape = type_shape(argument.name)
+    if given_core == core:
+        return shape in (given_shape, f"{given_shape}{cs.CSHARP_NULLABLE_SUFFIX}")
+    if argument.bounds is not None and not shape:
+        if any(type_shape(bound)[0] == core for bound in argument.bounds):
+            return True
+        return None
+    return None if is_type_parameter_token(given_core) else False
 
 
 def _written_argument(
@@ -485,6 +506,41 @@ def _predefined_at(written: str, node: Node) -> str | None:
     if core in _type_parameters_at(node):
         return None
     return predefined_keyword(written)
+
+
+def _type_parameter_tokens_at(node: Node) -> dict[str, str]:
+    # The token (`type_parameter_token`) of each type parameter in scope
+    # where `node` is written: the nearest declaration's of a name, as
+    # `_type_parameter_bounds_at` finds it.
+    tokens: dict[str, str] = {}
+    current = node.parent
+    while current is not None:
+        if current.type in cs.CSHARP_GENERIC_DECLARATIONS:
+            where = _declared_at(current)
+            for name in _declared_bounds(current):
+                tokens.setdefault(name, type_parameter_token(name, where))
+        current = current.parent
+    return tokens
+
+
+def _own_type_tokens(node: Node) -> dict[str, str]:
+    # The tokens of the type parameters the type declaration around `node`
+    # declares, whatever a method or local function between redeclares.
+    current = node.parent
+    while current is not None:
+        if current.type in cs.CSHARP_GENERIC_TYPE_DECLARATIONS:
+            where = _declared_at(current)
+            return {
+                name: type_parameter_token(name, where)
+                for name in _declared_bounds(current)
+            }
+        current = current.parent
+    return {}
+
+
+def _declared_at(declaration: Node) -> str:
+    # What tells one declaration apart from every other in its file.
+    return str(declaration.start_byte)
 
 
 def _type_parameters_at(node: Node) -> frozenset[str]:
@@ -1692,6 +1748,10 @@ class CSharpTypeInferenceEngine:
         # partial part of the class so a field declared on ANOTHER part
         # (`helper` on P1, used in a method on P2) is found; a visited guard
         # stops a malformed inheritance cycle looping.
+        # A field of a type parameter of the type declaring it (`T F` of an
+        # `H<T>`) is of no type its name names: the receiver's closing tells
+        # which, which a name alone does not carry (Greptile review of PR
+        # 2814).
         seen: set[str] = set()
         queue = deque(self.csharp_partial_groups.get(class_qn) or [class_qn])
         while queue:
@@ -1701,9 +1761,26 @@ class CSharpTypeInferenceEngine:
             seen.add(current)
             fields = self.class_field_types.get(current)
             if fields and field_name in fields:
-                return fields[field_name]
+                declared = fields[field_name]
+                return (
+                    None if self._names_own_parameter(declared, current) else declared
+                )
             queue.extend(self.class_inheritance.get(current, []))
         return None
+
+    def _names_own_parameter(self, type_name: str, declaring_qn: str) -> bool:
+        # Whether a declared type name is a type parameter in scope where it
+        # is declared (`declaring_qn` a type, or a method).
+        name = split_type_ref(type_name)[0].removesuffix(cs.CHAR_QUESTION_MARK)
+        owner = (
+            declaring_qn
+            if self.function_registry.get(declaring_qn) in _TYPE_DECLS
+            else _member_type(declaring_qn)
+        )
+        return name in (
+            self._type_parameters_in_scope(owner)
+            | self._method_type_parameters(declaring_qn)
+        )
 
     # --- typed method-call resolution ------------------------------------
 
@@ -3741,15 +3818,18 @@ class CSharpTypeInferenceEngine:
         module_qn: str,
         caller_qn: str | None,
     ) -> str | None:
+        # A return type naming a type parameter in scope where the method is
+        # declared is of no type its name names (`T Get()` of an `H<T>`).
         inner = self.resolve_csharp_method_call(
             receiver, local_var_types, module_qn, caller_qn
         )
         if inner is None:
             return None
-        if entry := self.csharp_method_return_types.get(inner[1]):
-            rname, rarity = entry
-            return f"{rname}`{rarity}" if rarity else rname
-        return None
+        entry = self.csharp_method_return_types.get(inner[1])
+        if entry is None or self._names_own_parameter(entry[0], inner[1]):
+            return None
+        rname, rarity = entry
+        return f"{rname}`{rarity}" if rarity else rname
 
     def _unwrap_receiver(self, receiver: Node) -> Node | None:
         # Peel interleaved parens and null-forgiving postfix wrappers
@@ -4468,7 +4548,7 @@ class CSharpTypeInferenceEngine:
         spelled = tuple(canonical_type(a, caller) for a in call.type_arguments)
         hierarchy = self._hierarchy(class_qn)
         views = self._views(
-            hierarchy, self._receiver_bindings(call.receiver, class_qn, caller), spelled
+            hierarchy, self._receiver_bindings(call, class_qn, caller), spelled
         )
         gathering = _Gathering()
         scoring: tuple[list[ArgumentType | None], _CallSite] | None = None
@@ -5352,18 +5432,19 @@ class CSharpTypeInferenceEngine:
         return (types + [""] * arg_count)[:arg_count]
 
     def _receiver_bindings(
-        self, receiver: Node, class_qn: str, caller: Scope | None
+        self, call: _MemberCall, class_qn: str, caller: Scope
     ) -> dict[str, str]:
         # The type arguments the receiver's written type passes its class's
         # parameters: `new Handler<Person>()`, or `Handler<Person> h`, each
-        # resolved in the caller's file, which wrote it. Empty when the
-        # syntax spells none, or not one per parameter.
+        # resolved in the caller's file, which wrote it; on `this` or a bare
+        # call, the caller's own (`_own_bindings`). Empty when the syntax
+        # spells none, or not one per parameter.
         shape = self.csharp_generic_shapes.get(class_qn)
         if shape is None or not shape.parameters:
             return {}
-        written = self._written_receiver_type(receiver)
+        written = self._written_receiver_type(call.receiver)
         if not written:
-            return {}
+            return self._own_bindings(call, class_qn, shape.parameters)
         arguments = type_arguments(signature_type_name(written))
         if len(arguments) != len(shape.parameters):
             return {}
@@ -5371,6 +5452,28 @@ class CSharpTypeInferenceEngine:
             parameter: canonical_type(argument, caller)
             for parameter, argument in zip(shape.parameters, arguments, strict=True)
         }
+
+    def _own_bindings(
+        self, call: _MemberCall, class_qn: str, parameters: Sequence[str]
+    ) -> dict[str, str]:
+        # On `this`, or a bare call, inside the class declaring them, each of
+        # its type parameters is the caller's own, its token: `M(x)` with a
+        # `T x` in an `H<T>` takes `M(T)` by identity (Greptile review of PR
+        # 2814). The class's, not a method's that redeclares its name.
+        if call.receiver.type not in (
+            cs.TS_CSHARP_THIS,
+            cs.TS_CSHARP_IDENTIFIER,
+            cs.TS_CSHARP_GENERIC_NAME,
+        ) or (
+            call.receiver.type != cs.TS_CSHARP_THIS
+            and call.receiver.parent != call.node
+        ):
+            return {}
+        containing = self._containing_class_qn(call.caller_qn)
+        if containing is None or class_qn not in self._partial_roots(containing):
+            return {}
+        tokens = _own_type_tokens(call.node)
+        return {p: tokens[p] for p in parameters if p in tokens}
 
     def _written_receiver_type(self, receiver: Node) -> str | None:
         # The type a receiver is written with: a construction's own type, or
@@ -5634,6 +5737,16 @@ class CSharpTypeInferenceEngine:
         )
         if result is not None:
             return None if isinstance(result, _Unread) else result
+        # A call's result, closed by what the call bound (`new H<String>()
+        # .Get()` returns the caller's String).
+        if value.type == cs.TS_CSHARP_INVOCATION_EXPRESSION and self._one_result(
+            value, local_var_types, module_qn, caller_qn
+        ):
+            returned = self._result_argument(
+                value, local_var_types, module_qn, caller_qn
+            )
+            if returned is not None:
+                return None if isinstance(returned, _Unread) else returned
         annotated = self._receiver_type_name(
             value, local_var_types, module_qn, caller_qn
         )
@@ -5955,6 +6068,8 @@ class CSharpTypeInferenceEngine:
         # value, a literal's above all, through an operator (`_from_predefined`).
         # Only a conversion up the hierarchy infers (into `inferred`): C#
         # infers no type parameter through an operator.
+        if is_type_parameter_token(type_shape(parameter)[0]):
+            return _converts_to_token(argument, parameter)
         if (origin := _predefined_origin(argument)) is not None:
             # A type parameter still open is no type of its name (`String?`
             # of a `where String : struct`): what converts to it is told
@@ -6745,7 +6860,8 @@ class CSharpTypeInferenceEngine:
 
     def _caller_scope(self, call: _MemberCall) -> Scope:
         # Where a call site resolves the types it writes: the caller's file,
-        # with the caller's own type parameters and its type's in scope.
+        # with the caller's own type parameters and its type's in scope, each
+        # spelled as its token (`type_parameter_token`).
         in_scope = self._method_type_parameters(call.caller_qn or "")
         if (class_qn := self._containing_class_qn(call.caller_qn)) is not None:
             in_scope |= self._type_parameters_in_scope(class_qn)
@@ -6758,12 +6874,14 @@ class CSharpTypeInferenceEngine:
             self._is_reference,
             tuple(bounds.items()),
             tuple(lifts_in_scope(call.node).items()),
+            tuple(_type_parameter_tokens_at(call.node).items()),
         )
 
     def _scope_at(self, node: Node, module_qn: str) -> Scope:
         # Where an expression resolves the types it writes: its file, with
         # the type parameters around it in scope, which a type of the file
-        # of the same name does not stand for, and their `where` clauses.
+        # of the same name does not stand for, each spelled as its token, and
+        # their `where` clauses.
         bounds = _type_parameter_bounds_at(node)
         return Scope(
             partial(self._resolve_in, module_qn),
@@ -6771,6 +6889,7 @@ class CSharpTypeInferenceEngine:
             self._is_reference,
             tuple(bounds.items()),
             tuple(lifts_in_scope(node).items()),
+            tuple(_type_parameter_tokens_at(node).items()),
         )
 
     def _resolve_in(self, module_qn: str, name: str, arity: int) -> str | None:

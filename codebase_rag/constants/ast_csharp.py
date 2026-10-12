@@ -69,14 +69,20 @@ TS_CSHARP_METHOD_DECLARATION = "method_declaration"
 TS_CSHARP_CONSTRUCTOR_DECLARATION = "constructor_declaration"
 TS_CSHARP_DESTRUCTOR_DECLARATION = "destructor_declaration"
 TS_CSHARP_LOCAL_FUNCTION_STATEMENT = "local_function_statement"
-# The declarations whose type parameters are in scope in what they hold: a
-# type's members, a method's or local function's body.
-CSHARP_GENERIC_DECLARATIONS = frozenset(
+# The type declarations that may declare type parameters.
+CSHARP_GENERIC_TYPE_DECLARATIONS = frozenset(
     {
         TS_CSHARP_CLASS_DECLARATION,
         TS_CSHARP_STRUCT_DECLARATION,
         TS_CSHARP_RECORD_DECLARATION,
         TS_CSHARP_INTERFACE_DECLARATION,
+    }
+)
+# The declarations whose type parameters are in scope in what they hold: a
+# type's members, a method's or local function's body.
+CSHARP_GENERIC_DECLARATIONS = frozenset(
+    {
+        *CSHARP_GENERIC_TYPE_DECLARATIONS,
         TS_CSHARP_METHOD_DECLARATION,
         TS_CSHARP_LOCAL_FUNCTION_STATEMENT,
     }
@@ -161,10 +167,14 @@ CSHARP_UNMANAGED_CONSTRAINT = "unmanaged"
 # members' signatures are compared, `!!0` for the first: no C# type is
 # spelled so (Greptile review of PR 2814).
 CSHARP_METHOD_TYPE_PARAMETER_MARK = "!!"
-# A caller's type parameter whose name a predefined or framework type also
-# bears (`String`, `Int32`), as an argument's type spells it: it names no
-# type (Greptile review of PR 2814).
+# A call site's type parameter, as every type resolved there spells it: an
+# argument's, a receiver's type argument, an explicit method type argument,
+# a `where` bound. It is one type, itself, never one of its name (`String`
+# of a `Go<String>` is no `string`; Greptile review of PR 2814).
 CSHARP_TYPE_PARAMETER_MARK = "!"
+# Between a call site's type parameter's name and the declaration declaring
+# it, in its token: `!T@412`.
+CSHARP_TYPE_PARAMETER_SCOPE_SEPARATOR = "@"
 # `where T : default`, which only an override or an explicit implementation
 # writes: a `T?` there annotates T (C# 9). Every type meets it.
 CSHARP_DEFAULT_CONSTRAINT = "default"
