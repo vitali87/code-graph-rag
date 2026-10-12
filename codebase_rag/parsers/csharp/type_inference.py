@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from functools import partial
-from itertools import chain
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -79,6 +78,7 @@ from .utils import (
     _normalize_type_name,
     annotate_type_ref,
     binds_local,
+    declared_namespace,
     generic_arity_of_type_text,
     leaf_type_segment,
     local_binder,
@@ -481,6 +481,16 @@ class _Form(NamedTuple):
     known: bool = True
 
 
+def _slot(
+    shape: CSharpCallShape, position: int, name: str | None, tail: int | None
+) -> int:
+    # The declared parameter one argument binds: a named one its name's, a
+    # positional one its position's, or, past an expanded `tail`, the tail.
+    if name is not None:
+        return _index_of(shape.names, name)
+    return position if tail is None else min(position, tail)
+
+
 def _slots(
     shape: CSharpCallShape, count: int, names: Sequence[str | None], expanded: bool
 ) -> list[int] | None:
@@ -493,13 +503,16 @@ def _slots(
     # `params` tail in its normal form.
     last = count - 1
     slots: list[int] = []
+    named: set[int] = set()
     for position, name in enumerate(names):
+        index = _slot(shape, position, name, last if expanded else None)
         if name is not None:
-            index = _index_of(shape.names, name)
-        else:
-            index = min(position, last) if expanded else position
-        repeated = index in slots and not (expanded and index == last)
-        if not 0 <= index < count or repeated:
+            named.add(index)
+        # Only positional arguments share an expanded tail: a named one
+        # binds its parameter alone (`M(1, r: 2)` passes `params object[]
+        # r` twice).
+        shared = expanded and index == last and index not in named
+        if not 0 <= index < count or (index in slots and not shared):
             return None
         slots.append(index)
     needed = set(range(shape.required))
@@ -537,6 +550,85 @@ _READ_ONLY_TAKES: dict[str, tuple[str, ...]] = {
 }
 
 
+# How an extension method's `this` parameter receives the call's receiver,
+# which the call writes no mode for: a variable (a local, a parameter, a
+# field, an element), which a `this ref` parameter takes by reference; a
+# value (a literal, a computed or constructed one), which it cannot; or
+# not known (a call's result, which may be a reference). Any of them binds a
+# by-value, `this in` or `this ref readonly` parameter (PR 2814 review).
+_RECEIVER_VARIABLE = "receiver variable"
+_RECEIVER_VALUE = "receiver value"
+_RECEIVER_UNSURE = "receiver"
+_RECEIVER_PASSING = frozenset({_RECEIVER_VARIABLE, _RECEIVER_VALUE, _RECEIVER_UNSURE})
+# What a receiver is, by its expression's syntax.
+_VARIABLE_RECEIVERS = frozenset(
+    {
+        cs.TS_CSHARP_IDENTIFIER,
+        cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION,
+        cs.TS_CSHARP_ELEMENT_ACCESS_EXPRESSION,
+        cs.TS_CSHARP_THIS,
+    }
+)
+
+
+def _receiver_passing(receiver: Node) -> str:
+    # How a member call passes its receiver to an extension's `this`.
+    while receiver.type == cs.TS_PARENTHESIZED_EXPRESSION and receiver.named_children:
+        receiver = receiver.named_children[0]
+    if receiver.type in _VARIABLE_RECEIVERS:
+        return _RECEIVER_VARIABLE
+    if receiver.type == cs.TS_CSHARP_INVOCATION_EXPRESSION:
+        return _RECEIVER_UNSURE
+    return _RECEIVER_VALUE
+
+
+# Where C# finds a type a file names by its simple name, nearest first
+# (`_visibility`).
+_ENCLOSING = 0
+_GLOBAL_NAMESPACE = 1
+_IMPORTED = 2
+_NOT_VISIBLE = 3
+
+# How deep an operand chain is typed (`(a + b) * c`).
+_MAX_VALUE_DEPTH = 8
+
+
+def _promoted(left: str | None, right: str | None) -> str | None:
+    # C#'s binary numeric promotion of two predefined operand types; None
+    # when either is not numeric or the pair has no common type.
+    if left is None or right is None:
+        return None
+    pair = {left, right}
+    if not pair <= cs.CSHARP_NUMERIC_KEYWORDS:
+        return None
+    wide = next((w for w in cs.CSHARP_PROMOTION_ORDER if w in pair), None)
+    if wide is None:
+        return cs.CSHARP_INT_KEYWORD
+    other = next(iter(pair - {wide}), wide)
+    if other in cs.CSHARP_PROMOTION_CLASHES.get(wide, frozenset()):
+        return None
+    return cs.CSHARP_PROMOTION_WIDENS.get(wide, {}).get(other, wide)
+
+
+def _shifted(left: str | None, right: str | None) -> str | None:
+    # A shift is of its left operand's type after unary promotion (`u << 1`
+    # is a uint, `b << 1` an int), its count of a type converting to int.
+    if right not in cs.CSHARP_SHIFT_COUNTS:
+        return None
+    return cs.CSHARP_SHIFTED.get(left or "")
+
+
+def _operated(operator: str, left: str | None, right: str | None) -> str | None:
+    # The type an arithmetic or bitwise operator gives two predefined
+    # operands: their promotion (`bool & bool` is a bool).
+    if (
+        operator in cs.CSHARP_BITWISE_OPERATORS
+        and left == right == cs.CSHARP_BOOL_KEYWORD
+    ):
+        return cs.CSHARP_BOOL_KEYWORD
+    return _promoted(left, right)
+
+
 def _passed(fit: Fit | None, given: str, wanted: str) -> Fit | None:
     # How an argument passed `given` binds a parameter passed `wanted`. By
     # value it binds a by-value, `in` or `ref readonly` parameter as its
@@ -544,6 +636,8 @@ def _passed(fit: Fit | None, given: str, wanted: str) -> Fit | None:
     # it binds only a parameter of its mode (a `ref` one an `in` or `ref
     # readonly` one too, an `in` one a `ref readonly` one), and only by
     # identity (PR 2814's Roslyn oracle).
+    if given in _RECEIVER_PASSING:
+        return None if given == _RECEIVER_VALUE and wanted in _BY_REFERENCE else fit
     if not given:
         return None if wanted in _BY_REFERENCE else fit
     if wanted != given and wanted not in _READ_ONLY_TAKES.get(given, ()):
@@ -567,6 +661,40 @@ def _initializer(declarator: Node) -> Node | None:
     return value
 
 
+def _reads_as_sum(cast: Node) -> bool:
+    # `(x) + 1` and `(x) - y` parse as a cast of a signed operand to a type
+    # `x`, but C# reads a parenthesized name before `+` or `-` as a sum
+    # (`(E)-1` does not compile), of whatever type its operator gives.
+    cast_to = cast.child_by_field_name(cs.FIELD_TYPE)
+    operand = cast.child_by_field_name(cs.FIELD_VALUE)
+    return (
+        cast_to is not None
+        and cast_to.type == cs.TS_CSHARP_IDENTIFIER
+        and operand is not None
+        and operand.type == cs.TS_CSHARP_PREFIX_UNARY_EXPRESSION
+        and bool(operand.children)
+        and bool(operand.named_children)
+        and safe_decode_text(operand.children[0])
+        in (cs.CSHARP_UNARY_PLUS, cs.CSHARP_UNARY_MINUS)
+    )
+
+
+def _declared_constness(
+    statement: Node, declarator: Node
+) -> tuple[bool | None, int | None]:
+    # A local is a variable unless declared `const`, whose value its literal
+    # initializer writes.
+    if not any(
+        child.type == cs.TS_CSHARP_MODIFIER
+        and safe_decode_text(child) == cs.CSHARP_CONST_MODIFIER
+        for child in statement.children
+    ):
+        return False, None
+    constant = _literal_constant(declarator.named_children[-1])
+    value = constant.value if constant is not None else None
+    return True, value if isinstance(value, int) else None
+
+
 def _spelled_type(value: Node) -> str | None:
     # The type an expression spells as its own: a construction's, a cast's
     # or an `as`'s. Any other expression's type is its result's, which only
@@ -575,9 +703,8 @@ def _spelled_type(value: Node) -> str | None:
     # Input; Greptile review of PR 2814).
     while value.type == cs.TS_PARENTHESIZED_EXPRESSION and value.named_children:
         value = value.named_children[0]
-    if value.type in (
-        cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION,
-        cs.TS_CSHARP_CAST_EXPRESSION,
+    if value.type == cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION or (
+        value.type == cs.TS_CSHARP_CAST_EXPRESSION and not _reads_as_sum(value)
     ):
         return safe_decode_text(value.child_by_field_name(cs.FIELD_TYPE))
     if value.type == cs.TS_CSHARP_AS_EXPRESSION:
@@ -896,22 +1023,124 @@ class _ExtendedReceiver(NamedTuple):
 type _ReceiverView = tuple[Mapping[str, str], frozenset[str], tuple[str, ...]]
 
 
-class _Level(NamedTuple):
-    """One declaring type's overloads a member call may bind, as the
-    receiver reads them, and the override standing for each virtual one."""
-
-    receiver: _ReceiverView
-    qns: list[str]
-    stands: Mapping[str, str]
-
-
 class _Standing(NamedTuple):
     """An override waiting for the virtual method it stands for: its
-    parameter types as the receiver reads them, its qn and that reading."""
+    parameter types as the receiver reads them, its qn, that reading and
+    the type declaring it."""
 
     signature: Sequence[str]
     qn: str
     receiver: _ReceiverView
+    declaring: str
+
+
+class _Hierarchy(NamedTuple):
+    """The types a receiver reaches, each before every type it derives
+    from, the reached types deriving from each one directly, and each
+    one's ancestors among them. C# drops a base's methods once a type
+    deriving from it holds one that applies, and sibling bases (two
+    interfaces) drop none of each other's, so every type deriving from a
+    base is weighed before it (PR 2814 review)."""
+
+    order: list[str]
+    derived: Mapping[str, list[str]]
+    ancestors: Mapping[str, frozenset[str]]
+
+
+class _Gathering:
+    """What a member call's walk of the receiver's types gathered: every
+    candidate scored, the parameter types each type declares (which hide a
+    base's method of those types), the overrides waiting for their virtual
+    methods, the types holding a candidate known to apply, and their
+    ancestors, whose methods C# drops."""
+
+    __slots__ = ("blocked", "declared", "picks", "placed", "settled", "standing")
+
+    def __init__(self) -> None:
+        self.picks: list[Scored] = []
+        self.declared: list[tuple[str, Sequence[str]]] = []
+        self.standing: list[_Standing] = []
+        self.placed: set[str] = set()
+        self.settled: set[str] = set()
+        self.blocked: set[str] = set()
+
+
+# An extension candidate's owner, by the scope it is found in.
+_EXTENSION_SCOPE = "<extension scope>"
+
+
+def _outer_scope(owner: str, other: str) -> bool:
+    # Whether `owner` is an extension scope C# searches after `other`'s,
+    # whose methods it never beats: they apply or it is not searched.
+    return int(owner[len(_EXTENSION_SCOPE) :]) > int(other[len(_EXTENSION_SCOPE) :])
+
+
+def _received(scored: Scored, receiving: Fit) -> Scored:
+    # An extension candidate with its receiver's fit as `_receiving` judged
+    # it, unless its passing mode already ruled the receiver out.
+    if not scored.fits or scored.fits[0] is None:
+        return scored
+    return scored._replace(fits=[receiving, *scored.fits[1:]])
+
+
+def _enclosing_namespaces(node: Node) -> list[str]:
+    # The namespaces a node is declared in, innermost first: `A.B` is in
+    # `A.B` and `A`.
+    declared = declared_namespace(node)
+    if not declared:
+        return []
+    parts = declared.split(cs.SEPARATOR_DOT)
+    return [cs.SEPARATOR_DOT.join(parts[:i]) for i in range(len(parts), 0, -1)]
+
+
+# The owner of an override whose virtual method is in a base no walk
+# reached: a base of every type reached.
+_UNPLACED = "<base>"
+
+
+def _outranked(ancestors: Mapping[str, frozenset[str]], owner: str, other: str) -> bool:
+    # Whether `owner`'s methods are dropped once `other`'s apply: it is one
+    # of `other`'s bases.
+    if not owner or not other or owner == other:
+        return False
+    return owner == _UNPLACED or owner in ancestors.get(other, frozenset())
+
+
+def _derived_first(
+    reached: Sequence[str], derived: Mapping[str, list[str]]
+) -> list[str]:
+    # Each type once every type deriving from it is placed, ties in walk
+    # order; a cycle (a malformed base list) leaves the rest in walk order.
+    placed: list[str] = []
+    done: set[str] = set()
+    pending = list(reached)
+    while pending:
+        ready = next((t for t in pending if done.issuperset(derived[t])), None)
+        if ready is None:
+            return placed + pending
+        placed.append(ready)
+        done.add(ready)
+        pending.remove(ready)
+    return placed
+
+
+def _ancestors_within(
+    reached: Sequence[str], inheritance: Mapping[str, list[str]]
+) -> dict[str, frozenset[str]]:
+    # Each reached type's ancestors among the reached types.
+    inside = set(reached)
+    found: dict[str, frozenset[str]] = {}
+    for start in reached:
+        seen: set[str] = set()
+        stack = [b for b in inheritance.get(start, []) if b in inside]
+        while stack:
+            base = stack.pop()
+            if base in seen or base == start:
+                continue
+            seen.add(base)
+            stack.extend(b for b in inheritance.get(base, []) if b in inside)
+        found[start] = frozenset(seen)
+    return found
 
 
 def _same_signature(first: Sequence[str], second: Sequence[str]) -> bool:
@@ -1369,6 +1598,8 @@ class CSharpTypeInferenceEngine:
 
         receiver_class_qn = self._resolve_receiver_class_qn(
             receiver, local_var_types or {}, module_qn, caller_qn
+        ) or self._named_receiver_class(
+            receiver, local_var_types or {}, module_qn, caller_qn
         )
         member_call = _MemberCall(
             call_node,
@@ -1398,22 +1629,62 @@ class CSharpTypeInferenceEngine:
         # Delegate.Invoke, not a call to the property.
         if picks:
             return self._method_or_property_target(self._settle(member_call, picks))
-        # Only a call no overload was scored for falls back on the name, and
-        # that is a guess, never an exact edge: one the ranking proved takes
-        # none of its arguments is not bound at all.
-        if not ranking.scored and (
-            guess := self._fallback_member_target(member_call, receiver_class_qn)
-        ):
-            if guess != CSHARP_EXTERNAL_TARGET:
-                self._guessed_calls.add(self._call_key(call_node, module_qn, caller_qn))
-            return guess
-        return self._external_or_unresolved(
-            receiver,
-            method_name,
-            receiver_class_qn,
-            local_var_types or {},
-            caller_qn,
+        return self._unranked_member_target(
+            member_call, receiver_class_qn, bool(ranking.scored)
         )
+
+    def _unranked_member_target(
+        self, call: _MemberCall, receiver_class_qn: str | None, scored: bool
+    ) -> tuple[str, str] | None:
+        # What a member call no ranking settled binds. Only a call no
+        # overload was scored for falls back on the name, and that is a
+        # guess, never an exact edge, unless the name can name no other
+        # method: one the ranking proved takes none of its arguments is not
+        # bound at all.
+        key = self._call_key(call.node, call.module_qn, call.caller_qn)
+        if not scored and (
+            guess := self._fallback_member_target(call, receiver_class_qn)
+        ):
+            if guess != CSHARP_EXTERNAL_TARGET and not (
+                receiver_class_qn and self._names_alone(call, receiver_class_qn)
+            ):
+                self._guessed_calls.add(key)
+            return guess
+        if external := self._external_or_unresolved(
+            call.receiver,
+            call.method_name,
+            receiver_class_qn,
+            call.local_var_types,
+            call.caller_qn,
+        ):
+            return external
+        # A receiver of no type the index knows: every extension of the name
+        # that takes the arguments may be what runs, a guess each.
+        if receiver_class_qn is None and (
+            guesses := self._untyped_extension_picks(call)
+        ):
+            self._guessed_calls.add(key)
+            return self._method_or_property_target(self._settle(call, guesses))
+        return None
+
+    def _bare_target_in(
+        self, bare: _MemberCall, class_qn: str, generic_call: bool
+    ) -> tuple[str, str] | None:
+        # A bare call's target among `class_qn`'s methods: ranked by argument
+        # type as a member call on `this` is (PR 2814's Roslyn oracle); the
+        # arity match only when no overload was scored.
+        ranking = self._rank_member_overloads(bare, class_qn)
+        if ranking.picks:
+            return self._method_or_property_target(self._settle(bare, ranking.picks))
+        matches = self._find_bare_call_matches(
+            class_qn, bare.method_name, bare.arg_count, generic_call
+        )
+        if not matches:
+            return None
+        preferred = [
+            m for m in matches if (m in self.csharp_generic_methods) == generic_call
+        ]
+        return cs.NodeLabel.METHOD.value, (preferred or matches)[0]
 
     def _settle(self, call: _MemberCall, picks: Sequence[Scored]) -> str:
         # The first of the overloads a call may bind; the rest, kept for the
@@ -1445,6 +1716,55 @@ class CSharpTypeInferenceEngine:
             # reachability comes from the read pass.
             return self._method_or_property_target(name_hit)
         return None
+
+    def _names_alone(self, call: _MemberCall, receiver_class_qn: str) -> bool:
+        # Whether a call no overload takes still names one method alone: its
+        # receiver's whole first-party ancestry declares the name with one
+        # signature, and nothing else can take the call, as no extension
+        # method takes a type name and none of the name is indexed. C# binds
+        # the call to that method and reports the error against it (a `cgr
+        # check` edit dropping a default), which is no guess.
+        ancestry = self._class_ancestry(receiver_class_qn)
+        if not self._all_indexed(ancestry):
+            return False
+        named = [
+            qn
+            for owner in ancestry
+            for qn in self.declared_methods(owner).get(call.method_name, ())
+        ]
+        signatures = {qn.partition(cs.CHAR_PAREN_OPEN)[2] for qn in named}
+        # Type arguments the method does not declare as many of leave it out
+        # of the member group (`c.G<int>(1)` on a plain `G(int)`).
+        spelled = len(call.type_arguments)
+        if spelled and any(
+            len(self._declared_type_parameters(qn)) != spelled for qn in named
+        ):
+            return False
+        return len(signatures) == 1 and (
+            self._names_type(call)
+            or not self.csharp_extension_methods.get(call.method_name)
+        )
+
+    def _names_type(self, call: _MemberCall) -> bool:
+        # Whether a call's receiver is a type's name (`Util.Fmt(1)`), not a
+        # value: no local, parameter or field of the name is in scope.
+        receiver = call.receiver
+        name = safe_decode_text(receiver)
+        return (
+            receiver.type == cs.TS_CSHARP_IDENTIFIER
+            and bool(name)
+            and not self._binds_local(receiver, name or "")
+            and not self._receiver_type_name(
+                receiver, call.local_var_types, call.module_qn, call.caller_qn
+            )
+        )
+
+    def csharp_call_ranked(
+        self, call_node: Node, module_qn: str, caller_qn: str | None
+    ) -> bool:
+        """Whether a call's overloads were ranked by argument type, which
+        left the candidates it may bind in its family (PR 2814 review)."""
+        return self._call_key(call_node, module_qn, caller_qn) in self._call_picks
 
     def csharp_call_guessed(
         self, call_node: Node, module_qn: str, caller_qn: str | None
@@ -1665,17 +1985,19 @@ class CSharpTypeInferenceEngine:
         # whose GENERICNESS matches the callee shape (`M<TResult>(...)` is a
         # generic_name, `M(...)` a plain identifier).
         generic_call = func.type == cs.TS_CSHARP_GENERIC_NAME
+        bare = _MemberCall(
+            call_node,
+            func,
+            name,
+            arg_count,
+            {},
+            module_qn,
+            caller_qn,
+            type_arguments(safe_decode_text(func) or ""),
+        )
         for class_qn in self._caller_class_candidates(caller_qn, module_qn):
-            matches = self._find_bare_call_matches(
-                class_qn, name, arg_count, generic_call
-            )
-            if matches:
-                preferred = [
-                    m
-                    for m in matches
-                    if (m in self.csharp_generic_methods) == generic_call
-                ]
-                return cs.NodeLabel.METHOD.value, (preferred or matches)[0]
+            if target := self._bare_target_in(bare, class_qn, generic_call):
+                return target
         # A bare object-virtual with no local declaration is
         # `this.GetType()` -> System.Object (Polly's PolicyBase.PolicyKey);
         # a bare name that IS a delegate-typed member of the enclosing type
@@ -2062,28 +2384,55 @@ class CSharpTypeInferenceEngine:
         self, call: _MemberCall, receiver_qn: str | None
     ) -> list[Scored]:
         # The extension methods a member call may bind: those whose `this`
-        # type is the receiver's that take its arguments, ranked by them as
-        # instance methods are, the receiver passed first (PR 2814's Roslyn
-        # oracle: `c.M("s")` binds `M(this C, string)` beside
-        # `M(this C, int)`). The receiver's own type is not compared: every
-        # candidate already names it.
-        if not self.csharp_extension_methods:
-            return []
+        # type takes the receiver (`_receiving`) that take its arguments,
+        # ranked by them as instance methods are, the receiver passed first
+        # (PR 2814's Roslyn oracle: `c.M("s")` binds `M(this C, string)`
+        # beside `M(this C, int)`).
         args = (call.receiver, call.local_var_types, call.module_qn, call.caller_qn)
         type_name = self._receiver_type_name(*args)
         if not type_name:
             return []
-        caller = self._caller_scope(call)
-        spelled = tuple(canonical_type(a, caller) for a in call.type_arguments)
-        qns = [
-            qn
-            for qn in self._extension_candidates(
+        receiving = dict(
+            self._extension_candidates(
                 _ExtendedReceiver(
                     type_name, self._receiver_type_arity(*args), receiver_qn
                 ),
                 call.method_name,
                 call.arg_count,
             )
+        )
+        return self._rank_extensions(call, receiving)
+
+    def _untyped_extension_picks(self, call: _MemberCall) -> list[Scored]:
+        # The extension methods of the name in scope that take the
+        # arguments, when the receiver is of no type the index knows: any
+        # may take it. One no `using` the index sees brings in is left out,
+        # as it would bind a receiver of any type anywhere.
+        qns = [
+            entry[0]
+            for entry in self.csharp_extension_methods.get(call.method_name, ())
+            if self._takes_after_receiver(entry[0], call.arg_count)
+        ]
+        outside = len(_enclosing_namespaces(call.node)) + 1
+        receiving = {
+            qn: Fit.UNKNOWN
+            for level, level_qns in self._extension_levels(call, qns)
+            if level < outside
+            for qn in level_qns
+        }
+        return self._rank_extensions(call, receiving)
+
+    def _rank_extensions(
+        self, call: _MemberCall, receiving: Mapping[str, Fit]
+    ) -> list[Scored]:
+        # Extension candidates ranked by the call's arguments, the receiver
+        # first, taken as `receiving` says. C# looks for them scope by scope
+        # (`_extension_levels`): a scope holding one known to apply decides.
+        caller = self._caller_scope(call)
+        spelled = tuple(canonical_type(a, caller) for a in call.type_arguments)
+        qns = [
+            qn
+            for qn in receiving
             if not spelled or len(self._declared_type_parameters(qn)) == len(spelled)
         ]
         if not qns:
@@ -2098,14 +2447,207 @@ class CSharpTypeInferenceEngine:
             ),
         ]
         names, modes = _argument_names(call.node), _argument_modes(call.node)
+        # The receiver is passed as its `this` parameter takes it.
         site = _CallSite(
             (None, *names) if any(names) else (),
-            ("", *modes) if any(modes) else (),
+            (_receiver_passing(call.receiver), *(modes or ("",) * call.arg_count)),
         )
-        best, _certain = self._best_overloads(
-            qns, arguments, ({}, frozenset(), spelled), site
+        picks: list[Scored] = []
+        for level, level_qns in self._extension_levels(call, qns):
+            scored = [
+                _received(s, receiving[qn])._replace(owner=f"{_EXTENSION_SCOPE}{level}")
+                for qn in level_qns
+                for s in self._scores(qn, arguments, ({}, frozenset(), spelled), site)
+            ]
+            picks.extend(scored)
+            if any(certainly_applies(s) for s in scored):
+                break
+        return best_candidates(picks, self._better_target, _outer_scope)
+
+    def _extension_levels(
+        self, call: _MemberCall, qns: Sequence[str]
+    ) -> list[tuple[int, list[str]]]:
+        # Extension candidates by the scope C# finds them in: each namespace
+        # enclosing the call, innermost first, then the file's (the global
+        # namespace's, and those its own and every global `using` imports),
+        # then any other, which an import the index does not see (a project
+        # file's `<Using>`) may still bring in (PR 2814's Roslyn oracle).
+        enclosing = _enclosing_namespaces(call.node)
+        imports = self.import_processor
+        imported = set(imports.import_mapping.get(call.module_qn, {}).values())
+        for usings in imports.csharp_global_usings.values():
+            imported |= usings
+        statics = {
+            path for _ns, path in imports.csharp_static_imports.get(call.module_qn, ())
+        }
+        for paths in imports.csharp_global_static_imports.values():
+            statics |= paths
+        namespaces = {
+            entry[0]: entry[2]
+            for entry in self.csharp_extension_methods.get(call.method_name, ())
+        }
+        levels: dict[int, list[str]] = {}
+        for qn in qns:
+            namespace = namespaces.get(qn, "")
+            if namespace in enclosing:
+                level = enclosing.index(namespace)
+            elif (
+                not namespace
+                or namespace in imported
+                or self._namespaced_owner(qn) in statics
+            ):
+                level = len(enclosing)
+            else:
+                level = len(enclosing) + 1
+            levels.setdefault(level, []).append(qn)
+        return sorted(levels.items())
+
+    def _namespaced_owner(self, method_qn: str) -> str | None:
+        # The namespace-qualified name of a method's declaring class.
+        owner = method_qn.split(cs.CHAR_PAREN_OPEN, 1)[0].rpartition(cs.SEPARATOR_DOT)[
+            0
+        ]
+        return self.csharp_class_namespaced.get(owner)
+
+    def _value_keyword(self, value: Node, depth: int = 0) -> str | None:
+        # The predefined type a literal, a local or parameter of one, or an
+        # arithmetic or comparison of them is: C#'s binary numeric promotion
+        # (`x + 1L` is long), string concatenation and comparisons. None for
+        # anything else.
+        while value.type == cs.TS_PARENTHESIZED_EXPRESSION and value.named_children:
+            value = value.named_children[0]
+        if (constant := _literal_constant(value)) is not None:
+            return predefined_keyword(constant.type) if constant.type else None
+        if value.type == cs.TS_CSHARP_CAST_EXPRESSION:
+            return self._cast_keyword(value, depth)
+        if value.type == cs.TS_CSHARP_IDENTIFIER:
+            written = self._written_receiver_type(value)
+            return predefined_keyword(written) if written else None
+        if value.type != cs.TS_BINARY_EXPRESSION or depth > _MAX_VALUE_DEPTH:
+            return None
+        left = value.child_by_field_name(cs.FIELD_LEFT)
+        right = value.child_by_field_name(cs.FIELD_RIGHT)
+        operator = safe_decode_text(value.child_by_field_name(cs.FIELD_OPERATOR))
+        if left is None or right is None or operator is None:
+            return None
+        if operator in cs.CSHARP_COMPARISON_OPERATORS:
+            return cs.CSHARP_BOOL_KEYWORD
+        if operator == cs.CSHARP_COALESCE_OPERATOR:
+            return self._coalesced(left, right, depth)
+        return self._binary_keyword(operator, left, right, depth)
+
+    def _binary_keyword(
+        self, operator: str, left: Node, right: Node, depth: int
+    ) -> str | None:
+        # What `left operator right` gives predefined operands: a string for
+        # a concatenation, a shift its left operand's promotion, and C#'s
+        # binary numeric promotion otherwise, where a constant the unsigned
+        # operand's type holds takes that type (`u + 1` is a uint, `u + i`
+        # a long). None while an operand may be a constant of unknown value.
+        operands = (
+            self._value_keyword(left, depth + 1),
+            self._value_keyword(right, depth + 1),
         )
-        return best
+        if operator == cs.CHAR_PLUS and cs.CSHARP_STRING_KEYWORD in operands:
+            return cs.CSHARP_STRING_KEYWORD
+        if operator in cs.CSHARP_SHIFT_OPERATORS:
+            return _shifted(*operands)
+        for unsigned, other, node in (
+            (operands[0], operands[1], right),
+            (operands[1], operands[0], left),
+        ):
+            if other not in cs.CSHARP_UNSIGNED_CONSTANT_SOURCES.get(unsigned or "", ()):
+                continue
+            constant, value = self._constness(node, depth + 1)
+            if constant is None or (constant and value is None):
+                return None
+            if constant and value is not None and value >= 0:
+                return unsigned
+        return _operated(operator, *operands)
+
+    def _constness(self, value: Node, depth: int) -> tuple[bool | None, int | None]:
+        # Whether an operand is a constant, with the value a literal writes,
+        # a variable (False), or either (None): an integral constant converts
+        # to an unsigned type that holds it.
+        while value.type == cs.TS_PARENTHESIZED_EXPRESSION and value.named_children:
+            value = value.named_children[0]
+        if (constant := _literal_constant(value)) is not None:
+            return True, constant.value if isinstance(constant.value, int) else None
+        if value.type == cs.TS_CSHARP_IDENTIFIER:
+            return self._local_constness(value)
+        # A cast of a constant is one: `(int)1`, not `(int)x`.
+        if value.type == cs.TS_CSHARP_CAST_EXPRESSION and (
+            operand := value.child_by_field_name(cs.FIELD_VALUE)
+        ):
+            return self._constness(operand, depth + 1)
+        if value.type != cs.TS_BINARY_EXPRESSION or depth > _MAX_VALUE_DEPTH:
+            return None, None
+        return self._operands_constness(value, depth)
+
+    def _operands_constness(
+        self, value: Node, depth: int
+    ) -> tuple[bool | None, int | None]:
+        # An operator over a variable is a variable; over two constants, a
+        # constant of a value not read.
+        parts = [
+            self._constness(part, depth + 1)
+            for part in (
+                value.child_by_field_name(cs.FIELD_LEFT),
+                value.child_by_field_name(cs.FIELD_RIGHT),
+            )
+            if part is not None
+        ]
+        if any(constant is False for constant, _ in parts):
+            return False, None
+        both = len(parts) == 2 and all(constant for constant, _ in parts)
+        return (True, None) if both else (None, None)
+
+    def _local_constness(self, name_node: Node) -> tuple[bool | None, int | None]:
+        # A parameter or a local is a variable unless declared `const`, whose
+        # value its literal initializer writes; anything else (a field) may
+        # be a constant.
+        name = safe_decode_text(name_node) or ""
+        current = name_node.parent
+        while current is not None and current.type != cs.TS_CSHARP_DECLARATION_LIST:
+            if current.type == cs.TS_CSHARP_BLOCK and (
+                found := self._block_declaration(current, name)
+            ):
+                return _declared_constness(found[0], found[2])
+            if self._parameter_type(current, name):
+                return False, None
+            current = current.parent
+        return None, None
+
+    def _coalesced(self, left: Node, right: Node, depth: int) -> str | None:
+        # `n ?? 1` on an `int? n`: the nullable's value type, when the right
+        # operand is of that type too.
+        if left.type != cs.TS_CSHARP_IDENTIFIER:
+            return None
+        written = self._written_receiver_type(left) or ""
+        underlying = predefined_keyword(written.removesuffix(cs.CHAR_QUESTION_MARK))
+        if not written.endswith(cs.CHAR_QUESTION_MARK) or underlying is None:
+            return None
+        return (
+            underlying if self._value_keyword(right, depth + 1) == underlying else None
+        )
+
+    def _cast_keyword(self, value: Node, depth: int) -> str | None:
+        # A cast to a predefined type is of that type. `(x) + 1` parses as a
+        # cast of `+1` to a type `x`; C# reads it as a sum when `x` is a
+        # variable, not a type. None for a cast to any other type.
+        cast_to = value.child_by_field_name(cs.FIELD_TYPE)
+        operand = value.child_by_field_name(cs.FIELD_VALUE)
+        if cast_to is not None and cast_to.type == cs.TS_CSHARP_PREDEFINED_TYPE:
+            return predefined_keyword(safe_decode_text(cast_to) or "")
+        if (
+            cast_to is None
+            or operand is None
+            or not _reads_as_sum(value)
+            or self._value_keyword(cast_to, depth + 1) is None
+        ):
+            return None
+        sign = safe_decode_text(operand.children[0]) or ""
+        return self._binary_keyword(sign, cast_to, operand.named_children[-1], depth)
 
     def _receiver_type_name(
         self,
@@ -2123,9 +2665,15 @@ class CSharpTypeInferenceEngine:
         if unwrapped is None:
             return None
         receiver = unwrapped
+        # A literal or a computed value of a predefined type: `1.Touch()`,
+        # `(x + 1).Touch()` (PR 2814's Roslyn oracle).
+        if (keyword := self._value_keyword(receiver)) is not None:
+            return keyword
         # `((Widget)o).Ext()`: the cast target IS the receiver type, so an
         # extension-only method still binds on a cast receiver; same for a
-        # `new Widget(...)` receiver.
+        # `new Widget(...)` receiver. `(w) + 1` is a sum of no type known.
+        if receiver.type == cs.TS_CSHARP_CAST_EXPRESSION and _reads_as_sum(receiver):
+            return None
         if receiver.type in (
             cs.TS_CSHARP_CAST_EXPRESSION,
             cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION,
@@ -2142,12 +2690,86 @@ class CSharpTypeInferenceEngine:
         if receiver.type == cs.TS_CSHARP_THIS:
             return self._this_receiver_type(module_qn, caller_qn)
         if receiver.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
-            return self._this_field_receiver_type(receiver, caller_qn)
+            return self._this_field_receiver_type(
+                receiver, caller_qn
+            ) or self._member_field_type(
+                receiver, local_var_types, module_qn, caller_qn
+            )
+        if receiver.type == cs.TS_CSHARP_ELEMENT_ACCESS_EXPRESSION:
+            return self._element_type(receiver, local_var_types, module_qn, caller_qn)
         if receiver.type == cs.TS_CSHARP_IDENTIFIER:
             return self._local_result_type(
                 receiver, local_var_types, module_qn, caller_qn
             ) or self._identifier_receiver_type(receiver, local_var_types, caller_qn)
         return None
+
+    def _named_receiver_class(
+        self,
+        receiver: Node,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        caller_qn: str | None,
+    ) -> str | None:
+        # The first-party class a receiver's type name names, when only the
+        # extension lookup's typing reads it (an array element): its
+        # instance methods come before any extension (PR 2814's oracle).
+        if receiver.type != cs.TS_CSHARP_ELEMENT_ACCESS_EXPRESSION:
+            return None
+        name = self._receiver_type_name(receiver, local_var_types, module_qn, caller_qn)
+        return self._type_name_to_qn(name, module_qn) if name else None
+
+    def _member_field_type(
+        self,
+        receiver: Node,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        caller_qn: str | None,
+    ) -> str | None:
+        # `Holder.F` or `holder.F`: the type the field's declaration records,
+        # on the class the expression before the dot is or holds.
+        expr = receiver.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
+        field = safe_decode_text(receiver.child_by_field_name(cs.FIELD_NAME))
+        if expr is None or not field:
+            return None
+        owner = self._resolve_receiver_class_qn(
+            expr, local_var_types, module_qn, caller_qn
+        )
+        return self._field_type(owner, field) if owner else None
+
+    def _element_type(
+        self,
+        receiver: Node,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        caller_qn: str | None,
+    ) -> str | None:
+        # `arr[0]`, `Holder.Arr[0]` or `list[0]`: the element of an array, or
+        # of a framework collection whose indexer returns its type argument.
+        expr = receiver.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
+        if expr is None:
+            return None
+        if expr.type == cs.TS_CSHARP_IDENTIFIER:
+            written = self._written_receiver_type(expr)
+        elif expr.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
+            written = self._member_field_type(
+                expr, local_var_types, module_qn, caller_qn
+            )
+        else:
+            return None
+        if not written:
+            return None
+        if written.endswith(cs.CSHARP_ARRAY_SUFFIX):
+            return written.removesuffix(cs.CSHARP_ARRAY_SUFFIX)
+        # A string's indexer returns its chars.
+        if predefined_keyword(written.removesuffix(cs.CHAR_QUESTION_MARK)) == (
+            cs.CSHARP_STRING_KEYWORD
+        ):
+            return cs.CSHARP_CHAR_KEYWORD
+        indexed = cs.CSHARP_INDEXED_ELEMENT.get(strip_generic_arguments(written))
+        arguments = type_arguments(written)
+        if indexed is None or indexed >= len(arguments):
+            return None
+        return arguments[indexed]
 
     def _local_result_type(
         self,
@@ -2450,9 +3072,9 @@ class CSharpTypeInferenceEngine:
         if unwrapped is None:
             return None
         receiver = unwrapped
-        if receiver.type in (
-            cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION,
-            cs.TS_CSHARP_CAST_EXPRESSION,
+        if receiver.type == cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION or (
+            receiver.type == cs.TS_CSHARP_CAST_EXPRESSION
+            and not _reads_as_sum(receiver)
         ):
             type_node = receiver.child_by_field_name(cs.FIELD_TYPE)
             raw = safe_decode_text(type_node) if type_node else None
@@ -2500,9 +3122,10 @@ class CSharpTypeInferenceEngine:
 
     def _extension_candidates(
         self, receiver: _ExtendedReceiver, method_name: str, arg_count: int
-    ) -> list[str]:
-        # The extension methods of the name whose `this` type is the
-        # receiver's and that take `arg_count` arguments after it.
+    ) -> list[tuple[str, Fit]]:
+        # The extension methods of the name whose `this` type takes the
+        # receiver, and how (`_receiving`), that take `arg_count` arguments
+        # after it.
         candidates = self.csharp_extension_methods.get(method_name)
         if not candidates:
             return []
@@ -2516,12 +3139,63 @@ class CSharpTypeInferenceEngine:
         ambiguous_unqualified = not recv_qualified and self._same_arity_type_twins(
             recv_simple
         )
-        return [
-            entry[0]
-            for entry in candidates
-            if self._takes_after_receiver(entry[0], arg_count)
-            and self._extends(receiver, entry, ambiguous_unqualified)
-        ]
+        found: list[tuple[str, Fit]] = []
+        for entry in candidates:
+            if not self._takes_after_receiver(entry[0], arg_count):
+                continue
+            receiving = self._receiving(receiver, entry, ambiguous_unqualified)
+            if receiving is not None:
+                found.append((entry[0], receiving))
+        return found
+
+    def _receiving(
+        self,
+        receiver: _ExtendedReceiver,
+        entry: tuple[str, str, str, int],
+        ambiguous_unqualified: bool,
+    ) -> Fit | None:
+        # How an extension's `this` parameter takes the receiver, which C#
+        # converts to it only by identity, a reference or a boxing
+        # conversion (PR 2814's Roslyn oracle): the receiver's own type is
+        # an identity (one of no type arguments; with them, of no known
+        # closing), `object` a conversion, a type parameter of the method an
+        # inference. A first-party class takes its first-party bases, and an
+        # external type only through a base the index does not hold; a
+        # predefined value or an external type takes no first-party or other
+        # predefined type. An external `this` type such a receiver may
+        # implement is not known, and never ruled out.
+        qn, recv_type, _namespace, arity = entry
+        written = strip_generic_arguments(recv_type)
+        if written in self._method_type_parameters(qn):
+            return Fit.UNKNOWN
+        keyword = predefined_keyword(written)
+        if keyword in (cs.CSHARP_OBJECT_KEYWORD, cs.CSHARP_DYNAMIC_KEYWORD):
+            return Fit.CONVERTIBLE
+        if self._extends(receiver, entry, ambiguous_unqualified):
+            return Fit.UNKNOWN if arity else Fit.EXACT
+        given = predefined_keyword(receiver.name)
+        if given is not None and keyword is not None:
+            return Fit.EXACT if keyword == given else None
+        if receiver.qn is not None and keyword is None:
+            return self._class_receiving(receiver.qn, entry)
+        # A predefined value or an external type converts to no first-party
+        # or other predefined type, and maybe to an external one.
+        if keyword is not None or self._extended_type(qn, recv_type, arity):
+            return None
+        return Fit.UNKNOWN
+
+    def _class_receiving(
+        self, receiver_qn: str, entry: tuple[str, str, str, int]
+    ) -> Fit | None:
+        # How a first-party class receiver converts to a `this` type its own
+        # name does not match: a first-party base by a reference conversion;
+        # anything else only through a base the index does not hold.
+        qn, recv_type, _namespace, arity = entry
+        ancestry = self._class_ancestry(receiver_qn)
+        bases = ancestry - set(self._partial_roots(receiver_qn))
+        if self._extended_type(qn, recv_type, arity) in bases:
+            return Fit.UNKNOWN if arity else Fit.CONVERTIBLE
+        return None if self._all_indexed(ancestry) else Fit.UNKNOWN
 
     def _takes_after_receiver(self, method_qn: str, arg_count: int) -> bool:
         # Whether an extension method takes `arg_count` arguments after its
@@ -2592,6 +3266,8 @@ class CSharpTypeInferenceEngine:
             return None
         receiver = unwrapped
         if receiver.type == cs.TS_CSHARP_CAST_EXPRESSION:
+            if _reads_as_sum(receiver):
+                return None
             return self._cast_receiver_qn(receiver, module_qn)
         # `new Builder().Add()`: an object-creation receiver IS its type.
         if receiver.type == cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION:
@@ -2683,17 +3359,23 @@ class CSharpTypeInferenceEngine:
             if class_qn := self._containing_class_qn(caller_qn):
                 if ftype := self._field_type(class_qn, field):
                     return self._type_name_to_qn(ftype, module_qn)
-        if raw := safe_decode_text(receiver):
-            head, separator, tail = raw.partition(cs.SEPARATOR_DOT)
-            if (
-                separator
-                and cs.SEPARATOR_DOUBLE_COLON not in raw
-                and head in local_var_types
-            ):
-                return self._field_chain_qn(local_var_types[head], tail, module_qn)
-            if qualified := self._qualified_type_name_to_qn(raw, module_qn):
-                return qualified
-        return None
+        raw = safe_decode_text(receiver)
+        return (
+            self._dotted_receiver_qn(raw, local_var_types, module_qn) if raw else None
+        )
+
+    def _dotted_receiver_qn(
+        self, raw: str, local_var_types: dict[str, str], module_qn: str
+    ) -> str | None:
+        # `local.Field`, a qualified type name, or `Holder.Field`: a static
+        # field of a type the head names.
+        head, separator, tail = raw.partition(cs.SEPARATOR_DOT)
+        chained = bool(separator) and cs.SEPARATOR_DOUBLE_COLON not in raw
+        if chained and head in local_var_types:
+            return self._field_chain_qn(local_var_types[head], tail, module_qn)
+        if qualified := self._qualified_type_name_to_qn(raw, module_qn):
+            return qualified
+        return self._field_chain_qn(head, tail, module_qn) if chained else None
 
     def _field_chain_qn(self, head_type: str, tail: str, module_qn: str) -> str | None:
         current_qn = self._type_name_to_qn(head_type, module_qn)
@@ -2900,10 +3582,25 @@ class CSharpTypeInferenceEngine:
         # resolution then spans the whole group).
         if part := self._single_partial_group_member(candidates):
             return part
-        # Prefer a candidate in the calling file's module; ambiguity across
-        # unrelated files is left unresolved rather than guessed.
+        # Prefer a candidate in the calling file's module, then the one C#
+        # finds nearest from the file (`_visibility`): a type of the file's
+        # own namespace in another file beside a same-named one elsewhere.
+        # Ambiguity C# would not resolve is left unresolved, not guessed.
         same_module = [q for q in candidates if q.startswith(f"{module_qn}.")]
-        return same_module[0] if len(same_module) == 1 else None
+        if len(same_module) == 1:
+            return same_module[0]
+        return self._nearest_visible(candidates, module_qn)
+
+    def _nearest_visible(self, candidates: list[str], module_qn: str) -> str | None:
+        # The one candidate C# finds nearest from the file, if it is one.
+        levels: dict[str, int] = {}
+        for qn in candidates:
+            if (level := self._visibility(module_qn, qn)) is None:
+                return None
+            levels[qn] = level
+        nearest = min(levels.values())
+        found = [q for q, level in levels.items() if level == nearest]
+        return found[0] if nearest != _NOT_VISIBLE and len(found) == 1 else None
 
     def _same_arity_type_twins(self, simple_name: str) -> bool:
         # An UNqualified receiver whose simple name maps to more than one
@@ -2947,12 +3644,12 @@ class CSharpTypeInferenceEngine:
         """The overloads a member call may bind, best first.
 
         Every overload taking the argument count, by its arity, defaults or
-        a `params` tail, competes. Declaring types are visited from the
-        receiver up, as the arity walk visits them: C# drops a base's
-        methods once a derived one applies, so a type holding one known to
-        apply decides, and the best of each type before it, which may or may
-        not apply, stay beside its best (PR 2814 review). A base's method of
-        the parameter types a derived one declares is that one's, overridden
+        a `params` tail, competes, from every type the receiver reaches,
+        ranked as one set. A type holding one known to apply drops every
+        method of its ancestors, as C# drops a base's methods; one that may
+        or may not apply drops none, and sibling bases (two interfaces)
+        drop none of each other's (PR 2814 review). A base's method of the
+        parameter types a derived type declares is that one's, overridden
         or hidden. Each type is seen with the type arguments its subclasses
         pass it, so `Validator<T>.Validate(T)` takes a Person on a
         `PersonValidator : Inline<Person>`, and the receiver's own with the
@@ -2964,106 +3661,211 @@ class CSharpTypeInferenceEngine:
         # and its own type arguments) is resolved once, in the caller's file.
         caller = self._caller_scope(call)
         spelled = tuple(canonical_type(a, caller) for a in call.type_arguments)
-        levels = self._candidate_levels(call, class_qn, caller, spelled)
-        first = next(levels, None)
-        if first is None:
+        hierarchy = self._hierarchy(class_qn)
+        views = self._views(
+            hierarchy, self._receiver_bindings(call.receiver, class_qn, caller), spelled
+        )
+        gathering = _Gathering()
+        scoring: tuple[list[ArgumentType | None], _CallSite] | None = None
+        for declaring in hierarchy.order:
+            if declaring in gathering.blocked:
+                continue
+            view = views(declaring)
+            qns = self._candidate_methods(declaring, call, len(spelled))
+            kept, stands = self._level(qns, view, (declaring, hierarchy), gathering)
+            if not kept:
+                continue
+            scoring = scoring or self._call_scoring(call, caller)
+            self._weigh(kept, stands, (declaring, view, hierarchy), gathering, scoring)
+        if scoring is None:
             return _Ranking([], False, False)
+        self._weigh_unplaced(gathering, scoring)
+        best = best_candidates(
+            gathering.picks,
+            self._better_target,
+            partial(_outranked, hierarchy.ancestors),
+        )
+        return _Ranking(best, bool(gathering.settled), True)
+
+    def _call_scoring(
+        self, call: _MemberCall, caller: Scope
+    ) -> tuple[list[ArgumentType | None], _CallSite]:
+        # The call's argument types, resolved in the caller's file, and what
+        # it writes of them beside their types.
         arguments = [
             _canonical_argument(argument, caller)
             for argument in self._argument_types(
                 call.node, call.local_var_types, call.module_qn, call.caller_qn
             )
         ]
-        site = _CallSite(_argument_names(call.node), _argument_modes(call.node))
-        picks: list[Scored] = []
-        for level in chain((first,), levels):
-            best, certain = self._best_overloads(
-                level.qns, arguments, level.receiver, site
-            )
-            # A virtual's place goes to the override standing for it, which
-            # is what runs; how the virtual's types bind says nothing of
-            # the override's own.
-            picks.extend(
-                pick._replace(qn=level.stands[pick.qn], binds=())
-                if pick.qn in level.stands
-                else pick
-                for pick in best
-            )
-            if certain:
-                return _Ranking(picks, True, True)
-        return _Ranking(picks, False, True)
+        return arguments, _CallSite(
+            _argument_names(call.node), _argument_modes(call.node)
+        )
 
-    def _candidate_levels(
+    def _weigh(
         self,
-        call: _MemberCall,
-        class_qn: str,
-        caller: Scope,
+        qns: Sequence[str],
+        stands: Mapping[str, str],
+        where: tuple[str, _ReceiverView, _Hierarchy],
+        gathering: _Gathering,
+        scoring: tuple[list[ArgumentType | None], _CallSite],
+    ) -> None:
+        # Scores one type's candidates into the gathering. A virtual's place
+        # goes to the override standing for it, which is what runs; how the
+        # virtual's types bind says nothing of the override's own. A
+        # candidate known to apply drops every method of the type's
+        # ancestors.
+        declaring, view, hierarchy = where
+        arguments, site = scoring
+        scored = [
+            s._replace(owner=declaring)
+            for qn in qns
+            for s in self._scores(qn, arguments, view, site)
+        ]
+        gathering.picks.extend(
+            s._replace(qn=stands[s.qn], binds=()) if s.qn in stands else s
+            for s in scored
+        )
+        if any(certainly_applies(s) for s in scored):
+            gathering.settled.add(declaring)
+            gathering.blocked |= hierarchy.ancestors.get(declaring, frozenset())
+            return
+        # Read only when a base may still be weighed.
+        gathering.declared.extend(
+            (declaring, self._signature(qn, view))
+            for qn in qns
+            if not self._overrides(qn)
+        )
+
+    def _weigh_unplaced(
+        self,
+        gathering: _Gathering,
+        scoring: tuple[list[ArgumentType | None], _CallSite],
+    ) -> None:
+        # An override no virtual method was found for stands in its
+        # virtual's place, in a base of its type: one a type holding a
+        # candidate known to apply derives from, which drops it, or a base
+        # no first-party type is, which every class in the chain derives
+        # from. So it is weighed only while no candidate is known to apply.
+        if gathering.settled:
+            return
+        arguments, site = scoring
+        for stand in gathering.standing:
+            if stand.qn not in gathering.placed:
+                gathering.picks.extend(
+                    s._replace(owner=_UNPLACED)
+                    for s in self._scores(stand.qn, arguments, stand.receiver, site)
+                )
+
+    def _hierarchy(self, class_qn: str) -> _Hierarchy:
+        # The types the receiver's parts reach through their base lists,
+        # each before every type it derives from.
+        reached: list[str] = []
+        seen: set[str] = set()
+        stack = list(reversed(self._partial_roots(class_qn)))
+        while stack:
+            current = stack.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            reached.append(current)
+            stack.extend(reversed(self.class_inheritance.get(current, [])))
+        derived: dict[str, list[str]] = {t: [] for t in reached}
+        for t in reached:
+            for base in dict.fromkeys(self.class_inheritance.get(t, [])):
+                if base in derived and base != t:
+                    derived[base].append(t)
+        return _Hierarchy(
+            _derived_first(reached, derived),
+            derived,
+            _ancestors_within(reached, self.class_inheritance),
+        )
+
+    def _views(
+        self,
+        hierarchy: _Hierarchy,
+        receiver_bindings: dict[str, str],
         spelled: tuple[str, ...],
-    ) -> Iterator[_Level]:
-        # Each declaring type's overloads the call may bind, from the
-        # receiver's type up, as that type is closed (its bindings, its open
-        # parameters and the call's type arguments). A method of the
-        # parameter types a type visited before declares is hidden by it. C#
-        # weighs an override as the virtual method it overrides, declared in
-        # the base (Roslyn runs `D.N(object)` for `d.N(1)` beside an override
-        # `D.N(int)`; PR 2814's oracle): the most derived override stands in
-        # its virtual's place, or, its virtual not first-party, after every
-        # type.
-        hidden: list[Sequence[str]] = []
-        standing: list[_Standing] = []
-        placed: set[str] = set()
-        for declaring, bindings, open_names in self._typed_hierarchy(
-            class_qn, self._receiver_bindings(call.receiver, class_qn, caller)
-        ):
-            receiver = (bindings, open_names, spelled)
-            level = self._level(
-                self._candidate_methods(declaring, call, len(spelled)),
-                receiver,
-                (hidden, standing, placed),
+    ) -> Callable[[str], _ReceiverView]:
+        # How the call reads each type's members: the receiver's parts with
+        # the type arguments its written type passes, each base with those
+        # the first type deriving from it passes it, in that type's terms.
+        bound: dict[str, dict[str, str]] = {}
+
+        def view(declaring: str) -> _ReceiverView:
+            # Asked once per type, every type deriving from it asked first.
+            via = next((d for d in hierarchy.derived[declaring] if d in bound), None)
+            bindings = bound[declaring] = (
+                receiver_bindings
+                if via is None
+                else bindings_for_base(
+                    self.csharp_generic_shapes,
+                    self.csharp_class_generic_arity,
+                    via,
+                    bound[via],
+                    declaring,
+                    self.scope_of(via),
+                )
             )
-            if level.qns:
-                yield level
-                # Read only when the walk goes on past this type.
-                hidden.extend(self._signature(qn, receiver) for qn in level.qns)
-        for stand in standing:
-            if stand.qn not in placed:
-                yield _Level(stand.receiver, [stand.qn], {})
+            shape = self.csharp_generic_shapes.get(declaring)
+            parameters = shape.parameters if shape is not None else ()
+            return (
+                bindings,
+                frozenset(p for p in parameters if p not in bindings),
+                spelled,
+            )
+
+        return view
 
     def _level(
         self,
         qns: Sequence[str],
         receiver: _ReceiverView,
-        walked: tuple[list[Sequence[str]], list[_Standing], set[str]],
-    ) -> _Level:
-        # One type's candidates, less those hidden and the overrides, which
-        # wait for their virtual; each virtual an override stands for.
+        where: tuple[str, _Hierarchy],
+        gathering: _Gathering,
+    ) -> tuple[list[str], dict[str, str]]:
+        # One type's candidates, less those a type deriving from it hides
+        # and the overrides, which wait for their virtual; each virtual an
+        # override stands for.
         kept: list[str] = []
         stands: dict[str, str] = {}
         for qn in qns:
-            stand = self._stand_for(qn, receiver, walked)
+            stand = self._stand_for(qn, receiver, where, gathering)
             if isinstance(stand, _Sentinel):
                 continue
             if stand is not None:
                 stands[qn] = stand
-                walked[2].add(stand)
+                gathering.placed.add(stand)
             kept.append(qn)
-        return _Level(receiver, kept, stands)
+        return kept, stands
 
     def _stand_for(
         self,
         qn: str,
         receiver: _ReceiverView,
-        walked: tuple[list[Sequence[str]], list[_Standing], set[str]],
+        where: tuple[str, _Hierarchy],
+        gathering: _Gathering,
     ) -> str | _Sentinel | None:
         # The override standing for a virtual candidate, None for one no
-        # override stands for; `_PASSED_OVER` for one a derived type hides,
-        # and for an override, which then waits for its virtual.
-        hidden, standing, _placed = walked
+        # override stands for; `_PASSED_OVER` for one a type deriving from
+        # its own hides, and for an override, which then waits for its
+        # virtual.
+        declaring, hierarchy = where
+        hiding = [
+            sig
+            for owner, sig in gathering.declared
+            if declaring in hierarchy.ancestors.get(owner, frozenset())
+        ]
+        standing = [
+            o
+            for o in gathering.standing
+            if declaring in hierarchy.ancestors.get(o.declaring, frozenset())
+        ]
         overrides = self._overrides(qn)
-        if not (hidden or standing or overrides):
+        if not (hiding or standing or overrides):
             return None
         signature = self._signature(qn, receiver)
-        if any(_same_signature(signature, other) for other in hidden):
+        if any(_same_signature(signature, other) for other in hiding):
             return _PASSED_OVER
         stand = next(
             (o.qn for o in standing if _same_signature(signature, o.signature)), None
@@ -3071,7 +3873,7 @@ class CSharpTypeInferenceEngine:
         if not overrides:
             return stand
         if stand is None:
-            standing.append(_Standing(signature, qn, receiver))
+            gathering.standing.append(_Standing(signature, qn, receiver, declaring))
         return _PASSED_OVER
 
     def _overrides(self, method_qn: str) -> bool:
@@ -3084,7 +3886,7 @@ class CSharpTypeInferenceEngine:
         reading = self._reading(method_qn, receiver)
         return [
             declared_type(p, reading.scope, reading.visible)
-            for p in _param_types(method_qn)
+            for p in self._ranked_types(method_qn)
         ]
 
     def _best_overloads(
@@ -3144,7 +3946,7 @@ class CSharpTypeInferenceEngine:
         # these names: normal, and expanded for a `params` tail, each binding
         # every argument to a declared parameter (`_slots`). None when the
         # call names an argument and the parameters' names are not known.
-        types = _param_types(method_qn)
+        types = self._ranked_types(method_qn)
         shape = self.csharp_call_shapes.get(method_qn)
         if shape is None or len(shape.names) != len(types):
             return None if any(names) else self._unshaped_forms(method_qn, arg_count)
@@ -3156,26 +3958,22 @@ class CSharpTypeInferenceEngine:
         ]
 
     def _unshaped_forms(self, method_qn: str, arg_count: int) -> list[_Form]:
-        # The forms of a method whose parameters are not known by name, read
-        # off its signature: one argument for a trailing array is the array
-        # itself (normal form) or one element (expanded form), more or fewer
-        # bind elements or leave defaults out, which only the call vouches
-        # for, so it is not known to apply.
-        types = _param_types(method_qn)
+        # The form of a method whose parameters are not known by name (no
+        # call shape records them), read off its signature: a trailing array
+        # takes the arguments past the others as elements, and defaults leave
+        # the rest out, which only the call vouches for, so it is not known to
+        # apply unless it takes exactly its declared parameters.
+        types = self._ranked_types(method_qn)
         variadic = self._is_variadic(method_qn, types)
-        if not variadic or arg_count != len(types):
-            return [
-                _Form(
-                    self._call_parameters(method_qn, arg_count),
-                    None,
-                    variadic,
-                    arg_count < len(types) - int(variadic),
-                    arg_count == len(types) and not variadic,
-                )
-            ]
-        expanded = [*types[:-1], types[-1].removesuffix(cs.CSHARP_ARRAY_SUFFIX)]
-        shaped = method_qn in self.csharp_call_shapes
-        return [_Form(types, None, False), _Form(expanded, None, True, known=shaped)]
+        return [
+            _Form(
+                self._call_parameters(method_qn, arg_count),
+                None,
+                variadic,
+                arg_count < len(types) - int(variadic),
+                arg_count == len(types) and not variadic,
+            )
+        ]
 
     def _candidate_methods(
         self, declaring: str, call: _MemberCall, spelled: int
@@ -3216,7 +4014,9 @@ class CSharpTypeInferenceEngine:
             for parameter in form.parameters
         ]
         inferred = self._inferred_fits(method_qn, seen, arguments, reading)
-        declared = [canonical_type(p, reading.scope) for p in _param_types(method_qn)]
+        declared = [
+            canonical_type(p, reading.scope) for p in self._ranked_types(method_qn)
+        ]
         return Scored(
             method_qn,
             self._passed_fits(method_qn, form, inferred.fits, site.modes),
@@ -3695,13 +4495,24 @@ class CSharpTypeInferenceEngine:
             return shape.variadic
         return bool(types) and types[-1].endswith(cs.CSHARP_ARRAY_SUFFIX)
 
+    def _ranked_types(self, method_qn: str) -> list[str]:
+        # A method's parameter types as written, which keep the `?` the qn's
+        # signature drops off a struct or a type parameter (`M<T>(T? x)
+        # where T : struct` takes `Nullable<T>`); the qn's when the
+        # declaration was not read.
+        types = _param_types(method_qn)
+        shape = self.csharp_call_shapes.get(method_qn)
+        if shape is not None and len(shape.types) == len(types):
+            return list(shape.types)
+        return types
+
     def _call_parameters(self, method_qn: str, arg_count: int) -> list[str]:
         # The parameter each of `arg_count` arguments binds, one per argument,
         # so every overload is scored on every argument. A call that expands
         # a `params T[]` tail passes its trailing arguments as `T`; one that
         # leaves defaulted parameters out binds the leading ones. A position
         # no parameter takes (an overload that cannot apply) is unknown.
-        types = _param_types(method_qn)
+        types = self._ranked_types(method_qn)
         if self._is_variadic(method_qn, types) and arg_count != len(types):
             element = types[-1].removesuffix(cs.CSHARP_ARRAY_SUFFIX)
             types = types[:-1] + [element] * max(arg_count - len(types) + 1, 0)
@@ -3852,7 +4663,8 @@ class CSharpTypeInferenceEngine:
         # arity, defaults or a `params` tail. A line-suffixed twin
         # (`M(int)@12`, a `#if` branch) is the same overload, which the call
         # pass reaches through the registry variants, unless it takes its
-        # arguments in other modes (`M(out int)` beside `M(int)`).
+        # arguments in other modes or types (`M(out int)` beside `M(int)`,
+        # `M(Point?)` beside `M(Point)`).
         prefix = f"{class_qn}{cs.SEPARATOR_DOT}"
         found = [
             qn
@@ -3866,12 +4678,14 @@ class CSharpTypeInferenceEngine:
             for qn in found
             if (natural := qn_markers.strip_dup_marker(qn)) == qn
             or natural not in spelled
-            or self._modes_of(natural) != self._modes_of(qn)
+            or self._declared_as(natural) != self._declared_as(qn)
         ]
 
-    def _modes_of(self, method_qn: str) -> tuple[str, ...]:
+    def _declared_as(self, method_qn: str) -> tuple[tuple[str, ...], ...]:
+        # How a method takes its parameters beyond what its qn spells: their
+        # modes and their types as written.
         shape = self.csharp_call_shapes.get(method_qn)
-        return shape.modes if shape is not None else ()
+        return (shape.modes, shape.types) if shape is not None else ((), ())
 
     def _method_type_parameters(self, method_qn: str) -> frozenset[str]:
         # The type parameters a generic method declares (`M<U>(U item)`),
@@ -3909,9 +4723,8 @@ class CSharpTypeInferenceEngine:
             return None
         if (constant := _literal_constant(value)) is not None:
             return ArgumentType(constant.type, None, 0, None, constant.value)
-        if value.type in (
-            cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION,
-            cs.TS_CSHARP_CAST_EXPRESSION,
+        if value.type == cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION or (
+            value.type == cs.TS_CSHARP_CAST_EXPRESSION and not _reads_as_sum(value)
         ):
             # The written type keeps its arguments: `new Ctx<Person>()` is
             # an identity for `Ctx<T>` with T := Person, not for `Ctx<Order>`.
@@ -3924,11 +4737,23 @@ class CSharpTypeInferenceEngine:
         if value.type == cs.TS_CSHARP_IDENTIFIER and (
             declared := self._written_receiver_type(value)
         ):
-            constant = self._local_constant(value)
-            if constant is not None:
-                return ArgumentType(constant.type, None, 0, None, constant.value)
-            return _written_argument(declared)
+            return self._local_argument(value, declared)
+        # An operator over a variable is no constant: its value is of the type
+        # the operator gives (`u + 1` a uint), as a typed local's is.
+        if (
+            value.type == cs.TS_BINARY_EXPRESSION
+            and self._constness(value, 0)[0] is False
+        ):
+            keyword = self._value_keyword(value)
+            return _written_argument(keyword) if keyword else None
         return self._member_argument(value, local_var_types, module_qn, caller_qn)
+
+    def _local_argument(self, value: Node, declared: str) -> ArgumentType:
+        # A `const` local passes its constant; any other its declared type.
+        constant = self._local_constant(value)
+        if constant is not None:
+            return ArgumentType(constant.type, None, 0, None, constant.value)
+        return _written_argument(declared)
 
     def _member_argument(
         self,
@@ -4171,6 +4996,18 @@ class CSharpTypeInferenceEngine:
             all(certain for _text, certain in erased),
         )
 
+    def _names_first_party(self, written: str, arity: int | None) -> bool:
+        # Whether a spelling's simple name is some first-party type's, which
+        # an unresolved spelling of it may or may not mean.
+        simple = strip_generic_arguments(written).rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        return any(
+            self.function_registry.get(qn) in _TYPE_DECLS
+            for spelled in arity_spellings(
+                simple, generic_arity_of_type_text(written) or arity
+            )
+            for qn in self.simple_name_lookup.get(spelled, ())
+        )
+
     def _identical_as_written(
         self,
         argument: ArgumentType,
@@ -4201,6 +5038,15 @@ class CSharpTypeInferenceEngine:
                 return False
         elif not same_type_name(argument.name or "", parameter, argument.arity):
             return False
+        elif (
+            given_qn is not None
+            or wanted_qn is not None
+            or self._names_first_party(wanted_core, argument.arity)
+        ):
+            # A first-party type against a spelling of its name its file does
+            # not resolve to it, or two such spellings: that type or another
+            # of the name (`Outer2.In` against `Outer.In` written `In`).
+            return None
         wanted = type_arguments(parameter)
         if not wanted:
             return True
@@ -4686,9 +5532,58 @@ class CSharpTypeInferenceEngine:
 
     def _resolve_in(self, module_qn: str, name: str, arity: int) -> str | None:
         # The first-party type `name` names in `module_qn`, one partial part
-        # standing for every part.
+        # standing for every part. A simple name the file cannot see the type
+        # by names another (PR 2814's Roslyn oracle: `Widget` in a file that
+        # imports an unindexed namespace, beside a `Widget` it does not
+        # import), whose type is not known.
         qn = self._type_name_to_qn(name, module_qn, arity)
-        return min(self._partial_roots(qn)) if qn is not None else None
+        if qn is None or not self._named_from(module_qn, name, qn):
+            return None
+        return min(self._partial_roots(qn))
+
+    def _named_from(self, module_qn: str, written: str, type_qn: str) -> bool:
+        # Whether a file's spelling names the type it resolved to: a
+        # qualified or imported spelling says where the type is, a simple
+        # one only when C# finds the type from the file.
+        simple = split_type_ref(written)[0]
+        if (
+            cs.SEPARATOR_DOT in simple
+            or cs.SEPARATOR_DOUBLE_COLON in simple
+            or simple in self.import_processor.import_mapping.get(module_qn, {})
+        ):
+            return True
+        return self._visibility(module_qn, type_qn) != _NOT_VISIBLE
+
+    def _visibility(self, module_qn: str, type_qn: str) -> int | None:
+        # Where C# finds a type a file names by its simple name, nearest
+        # first: in the file or a namespace enclosing it, in the global
+        # namespace, in a namespace a `using` of the file or a global one
+        # imports, or not at all (`_NOT_VISIBLE`). None when the index cannot
+        # tell: a nested type, a file whose namespaces were not scanned, or a
+        # file of several namespaces where the type's encloses one of them.
+        if any(
+            part.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
+            for part in self._partial_roots(type_qn)
+        ):
+            return _ENCLOSING
+        imports = self.import_processor
+        namespaced = self.csharp_class_namespaced.get(type_qn)
+        declared = imports.csharp_declared_namespaces(module_qn)
+        if namespaced is None or declared is None:
+            return None
+        namespace = namespaced.rpartition(cs.SEPARATOR_DOT)[0]
+        if namespace in self.csharp_namespaced_qns:
+            return None
+        if not namespace:
+            return _GLOBAL_NAMESPACE
+        if any(d == namespace or d.startswith(f"{namespace}.") for d in declared):
+            # A file of several namespaces: which one encloses the name is
+            # not known here.
+            return _ENCLOSING if len(declared) == 1 else None
+        imported = set(imports.import_mapping.get(module_qn, {}).values())
+        for usings in imports.csharp_global_usings.values():
+            imported |= usings
+        return _IMPORTED if namespace in imported else _NOT_VISIBLE
 
     def _all_indexed(self, ancestry: Collection[str]) -> bool:
         # Whether every type of an ancestry is one the index declares: one it

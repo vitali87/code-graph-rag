@@ -6307,7 +6307,11 @@ class CallProcessor:
             # the site: that is the compiler's exact overload
             # choice, and widening it would revive dead siblings.
             engine = self._resolver.type_inference.csharp_type_inference
-            if not engine.semantic_fact_resolved(call_node, ctx.module_qn):
+            if not engine.semantic_fact_resolved(
+                call_node, ctx.module_qn
+            ) and not engine.csharp_call_ranked(
+                call_node, ctx.module_qn, ctx.caller_qn
+            ):
                 for sibling_qn in engine.csharp_same_arity_family(callee_info[1]):
                     ctx.ensure_rel(
                         ctx.caller_spec,
@@ -6348,19 +6352,19 @@ class CallProcessor:
         # the resolver's verdict carries the label onto the edge it returned
         # too (issue #2619).
         engine = self._resolver.type_inference.csharp_type_inference
-        if engine.csharp_call_guessed(call_node, ctx.module_qn, ctx.caller_qn):
-            # Bound by name alone, which no ranking of its arguments chose:
-            # a guess, never an exact edge (PR 2814 review).
-            self._resolution = cs.EdgeResolution.HEURISTIC
-            self._resolver.last_resolution = cs.EdgeResolution.HEURISTIC
-            return
         family = engine.csharp_member_overload_family(
             call_node, ctx.module_qn, ctx.caller_qn
         )
-        if not family:
+        # Bound by name alone, or on a receiver of no known type: a guess,
+        # never an exact edge (PR 2814 review).
+        if engine.csharp_call_guessed(call_node, ctx.module_qn, ctx.caller_qn):
+            resolution = cs.EdgeResolution.HEURISTIC
+        elif family:
+            resolution = cs.EdgeResolution.OVERLOAD
+        else:
             return
-        self._resolution = cs.EdgeResolution.OVERLOAD
-        self._resolver.last_resolution = cs.EdgeResolution.OVERLOAD
+        self._resolution = resolution
+        self._resolver.last_resolution = resolution
         for sibling_qn in family:
             for variant in self._resolver.function_registry.variants(sibling_qn):
                 ctx.ensure_rel(

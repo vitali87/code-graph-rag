@@ -586,6 +586,79 @@ CSHARP_PREDEFINED_TYPE_KEYWORDS: dict[str, str] = {
 # Every type converts to it implicitly, and it to nothing else but `dynamic`.
 CSHARP_OBJECT_KEYWORD = "object"
 CSHARP_DYNAMIC_KEYWORD = "dynamic"
+CSHARP_STRING_KEYWORD = "string"
+CSHARP_CHAR_KEYWORD = "char"
+CSHARP_BOOL_KEYWORD = "bool"
+CSHARP_INT_KEYWORD = "int"
+# C#'s binary numeric promotion (an operator's operands of two predefined
+# numeric types are taken to one): the types an operand of which wins, in
+# order; for each, the other operand types it clashes with (no common
+# type), and those it widens to another type (`uint` with `int` is `long`).
+CSHARP_NUMERIC_KEYWORDS = frozenset(
+    {
+        "decimal",
+        "double",
+        "float",
+        "ulong",
+        "long",
+        "uint",
+        "int",
+        "ushort",
+        "short",
+        "byte",
+        "sbyte",
+        "char",
+    }
+)
+CSHARP_PROMOTION_ORDER = ("decimal", "double", "float", "ulong", "long", "uint")
+CSHARP_PROMOTION_CLASHES: dict[str, frozenset[str]] = {
+    "decimal": frozenset({"double", "float"}),
+    "ulong": frozenset({"sbyte", "short", "int", "long"}),
+}
+CSHARP_PROMOTION_WIDENS: dict[str, dict[str, str]] = {
+    "uint": {"sbyte": "long", "short": "long", "int": "long"},
+}
+CSHARP_BITWISE_OPERATORS = frozenset({"&", "|", "^"})
+CSHARP_COALESCE_OPERATOR = "??"
+CSHARP_SHIFT_OPERATORS = frozenset({"<<", ">>", ">>>"})
+# A shift's result: its left operand's unary promotion; its count converts
+# to int.
+CSHARP_SHIFTED: dict[str, str] = {
+    "int": "int",
+    "uint": "uint",
+    "long": "long",
+    "ulong": "ulong",
+    "sbyte": "int",
+    "byte": "int",
+    "short": "int",
+    "ushort": "int",
+    "char": "int",
+}
+CSHARP_SHIFT_COUNTS = frozenset({"int", "sbyte", "byte", "short", "ushort", "char"})
+# The constant types an unsigned type holds a non-negative value of.
+CSHARP_UNSIGNED_CONSTANT_SOURCES: dict[str, frozenset[str]] = {
+    "uint": frozenset({"int"}),
+    "ulong": frozenset({"int", "long"}),
+}
+# A framework collection's indexer: the type argument its element is.
+CSHARP_INDEXED_ELEMENT: dict[str, int] = {
+    "List": 0,
+    "IList": 0,
+    "IReadOnlyList": 0,
+    "Collection": 0,
+    "ReadOnlyCollection": 0,
+    "Span": 0,
+    "ReadOnlySpan": 0,
+    "Memory": 0,
+    "Dictionary": 1,
+    "IDictionary": 1,
+    "IReadOnlyDictionary": 1,
+    "SortedDictionary": 1,
+    "SortedList": 1,
+    "ConcurrentDictionary": 1,
+}
+CSHARP_COMPARISON_OPERATORS = frozenset({"<", ">", "<=", ">=", "==", "!=", "&&", "||"})
+CHAR_PLUS = "+"
 # The predefined types that are reference types; every other is a value type.
 CSHARP_REFERENCE_KEYWORDS = frozenset({"object", "string"})
 # The framework interfaces each of these predefined types implements, so a

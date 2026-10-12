@@ -1440,6 +1440,338 @@ class TestEveryExactEdgeIsTheOneRoslynRuns:
         assert calls["Spelled"] == {("Nf.C.G(int)", _HEURISTIC)}, calls
 
 
+REF_RECEIVER_CS = """\
+namespace Rr;
+public struct S { }
+public static class Ext {
+    public static void Touch(this ref int value) { }
+    public static void Touch(this long value) { }
+    public static void Read(this in int value) { }
+    public static void Peek(this ref readonly int value) { }
+    public static void Poke(this ref S value) { }
+    public static void Poke(this object value) { }
+}
+public class Use {
+    public void Local() { int x = 1; x.Touch(); }
+    public void InLiteral() { 5.Read(); }
+    public void InLocal() { int x = 1; x.Read(); }
+    public void RefReadonly() { int x = 1; x.Peek(); }
+    public void Struct() { S s = new S(); s.Poke(); }
+}
+"""
+
+
+INTERFACE_SET_CS = """\
+namespace Is;
+public interface IA { void M(object x, int n = 0); }
+public interface IB { void M(string x); }
+public interface IC : IA, IB { }
+public interface IBase { void N(string x); }
+public interface IL : IBase { }
+public interface IR : IBase { new void N(string x); }
+public interface IJ : IL, IR { }
+public class Impl : IC, IJ {
+    void IA.M(object x, int n) { }
+    void IB.M(string x) { }
+    void IBase.N(string x) { }
+    void IR.N(string x) { }
+}
+public class Use {
+    public void Sibling() { IC c = new Impl(); c.M("s"); }
+    public void Object() { IC c = new Impl(); c.M(1); }
+    public void Hidden() { IJ j = new Impl(); j.N("s"); }
+}
+"""
+
+
+TIE_BREAK_CS = """\
+namespace Tb;
+public class C {
+    public void M(int a, params int[] r) { }
+    public void M(int a, long b = 2, params int[] r) { }
+    public void S(object x) { }
+    public void S<T>(T? x) where T : struct { }
+}
+public class Use {
+    public void Omits() { new C().M(1); }
+    public void NamedOmits() { new C().M(a: 1); }
+    public void Expanded() { new C().M(1, 2, 3); }
+    public void NotNullable() { new C().S(1); }
+    public void Nullable() { int? n = 1; new C().S(n); }
+}
+"""
+
+
+OPERAND_CS = """\
+namespace Op;
+public class C {
+    public void M(int v) { }
+    public void M(uint v) { }
+    public void M(long v) { }
+    public void M(ulong v) { }
+}
+public class Use {
+    public void Literal() { uint u = 1; new C().M(u + 1); }
+    public void Reversed() { uint u = 1; new C().M(1 + u); }
+    public void Const() { uint u = 1; const int k = 2; new C().M(u + k); }
+    public void Shift() { uint u = 1; new C().M(u << 1); }
+    public void Wide() { ulong u = 1; new C().M(u + 1L); }
+    public void Variable() { uint u = 1; int i = 1; new C().M(u + i); }
+    public void Negative() { uint u = 1; new C().M(u + -1); }
+    public void Byte() { byte b = 1; new C().M(b << 1); }
+}
+"""
+
+
+RECEIVER_EXPR_CS = """\
+namespace Re;
+public class W {
+    public void T(long a) { }
+    public static W operator +(W a, int b) => a;
+}
+public static class Holder { public static W F = new W(); }
+public static class Ext {
+    public static void T(this W w, int a) { }
+    public static void X(this int v) { }
+    public static void X(this char v) { }
+    public static void X(this object v) { }
+    public static void Y(this W w) { }
+    public static void Y(this object v) { }
+}
+public class Use {
+    public void Field() { Holder.F.T(1); }
+    public void Coalesced() { int? n = 1; (n ?? 2).X(); }
+    public void Indexed() { string s = "ab"; s[0].X(); }
+    public void Sum() { W w = new W(); ((w) + 1).Y(); }
+    public void Cast() { object o = new W(); ((W)o).Y(); }
+}
+"""
+
+
+BARE_CS = """\
+namespace Bc;
+public class B {
+    public virtual void V(int x) { }
+    public void V(long x) { }
+}
+public class Use : B {
+    public void Int() { V(1); }
+    public void Long() { V(1L); }
+}
+"""
+
+
+SCOPE_CS = """\
+using Sc.Other;
+namespace Sc.Outer {
+    public static class E1 {
+        public static void Sc(this int v) { }
+    }
+}
+namespace Sc.Other {
+    public static class E2 {
+        public static void Sc(this int other) { }
+    }
+}
+namespace Sc.Outer.Inner {
+    public class Use { public void Nearest() { 1.Sc(); } }
+}
+"""
+
+
+NESTED_CS = """\
+namespace Nt;
+public class Outer {
+    public class In { }
+    public void M(In i) { }
+    public void M(object o) { }
+}
+public class Outer2 { public class In { } }
+public class Use : Outer {
+    public void Twin() { M(new Outer2.In()); }
+}
+"""
+
+
+UNTYPED_CS = """\
+namespace Ut;
+public static class Ext {
+    public static void X(this int v) { }
+}
+public class Use {
+    public void Unknown() { int x = 1; (x + Hx.Unknown()).X(); }
+}
+"""
+
+
+SAME_NAME_FILES = {
+    "NA_C.cs": (
+        "namespace NA;\n"
+        "public class C {\n"
+        "    public void M(int x) { }\n"
+        "    public void M(object x) { }\n"
+        "}\n"
+    ),
+    "NB_C.cs": ("namespace NB;\npublic class C {\n    public void M(int x) { }\n}\n"),
+    "NA_Use.cs": (
+        "namespace NA;\n"
+        "public class Use {\n"
+        "    public void Same() { var c = new C(); c.M(1); }\n"
+        "}\n"
+    ),
+}
+
+
+UNSEEN_TYPE_FILES = {
+    "Lib.cs": (
+        "namespace L;\n"
+        "using H;\n"
+        "public static class F {\n"
+        "    public static Widget Make() => new Widget();\n"
+        "}\n"
+    ),
+    "Use.cs": (
+        "namespace N;\n"
+        "public class Widget { }\n"
+        "public class C {\n"
+        "    public void M(Widget w) { }\n"
+        "    public void M(object o) { }\n"
+        "}\n"
+        "public class Use {\n"
+        "    public void Result() { var w = L.F.Make(); new C().M(w); }\n"
+        "}\n"
+    ),
+}
+
+
+class TestEveryCallTheGeneratedOracleCrosses:
+    # Greptile review of PR 2814, round 18, and the generated Roslyn oracle
+    # that crossed every ranking feature after it: each source below states
+    # what Roslyn runs (checked with the .NET 8 SDK), and an exact edge names
+    # that overload or none does.
+    def test_a_reference_receiver_binds_its_extension(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Greptile 4243627469: `x.Touch()` passes the local `x` by reference
+        # to `Touch(this ref int)` without writing `ref`; `this in` and
+        # `this ref readonly` take a value too.
+        calls = _resolved_calls(REF_RECEIVER_CS, temp_repo, mock_ingestor)
+        assert calls["Local"] == {("Rr.Ext.Touch(int)", _EXACT)}, calls
+        assert calls["InLiteral"] == {("Rr.Ext.Read(int)", _EXACT)}, calls
+        assert calls["InLocal"] == {("Rr.Ext.Read(int)", _EXACT)}, calls
+        assert calls["RefReadonly"] == {("Rr.Ext.Peek(int)", _EXACT)}, calls
+        # Negative: by reference, the identity beats boxing to `object`.
+        assert calls["Struct"] == {("Rr.Ext.Poke(S)", _EXACT)}, calls
+
+    def test_interface_bases_are_ranked_as_one_set(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Greptile 4243627470: `IC : IA, IB` gathers both bases' `M` before
+        # ranking, and `M(string)` beats `M(object, int = 0)` for a string.
+        calls = _resolved_calls(INTERFACE_SET_CS, temp_repo, mock_ingestor)
+        assert calls["Sibling"] == {("Is.IB.M(string)", _EXACT)}, calls
+        # A member a more derived interface hides with `new` is not weighed.
+        assert calls["Hidden"] == {("Is.IR.N(string)", _EXACT)}, calls
+        # Negative: only `M(object, int)` takes an int.
+        assert calls["Object"] == {("Is.IA.M(object, int)", _EXACT)}, calls
+
+    def test_tie_breaks_follow_roslyns_order(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # A candidate leaving no default out wins before the declared counts
+        # of two expanded forms are compared.
+        calls = _resolved_calls(TIE_BREAK_CS, temp_repo, mock_ingestor)
+        best = {("Tb.C.M(int, int[])", _EXACT)}
+        assert calls["Omits"] == best, calls
+        assert calls["NamedOmits"] == best, calls
+        assert calls["Expanded"] == best, calls
+        # `S<T>(T? x) where T : struct` takes a `Nullable<T>`, which a
+        # nullable local is and an int is not.
+        assert calls["Nullable"] == {("Tb.C.S(T)", _EXACT)}, calls
+        assert ("Tb.C.S(T)", _EXACT) not in calls["NotNullable"], calls
+        assert ("Tb.C.S(object)", _OVERLOAD) in calls["NotNullable"], calls
+
+    def test_an_operator_gives_its_operands_type(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # A constant an unsigned operand's type holds takes that type, and a
+        # shift is of its left operand's type.
+        calls = _resolved_calls(OPERAND_CS, temp_repo, mock_ingestor)
+        uint = {("Op.C.M(uint)", _EXACT)}
+        assert calls["Literal"] == uint, calls
+        assert calls["Reversed"] == uint, calls
+        assert calls["Const"] == uint, calls
+        assert calls["Shift"] == uint, calls
+        assert calls["Wide"] == {("Op.C.M(ulong)", _EXACT)}, calls
+        # Negatives: an int variable or a negative constant promotes a uint
+        # to long, and a byte shifts as an int.
+        assert calls["Variable"] == {("Op.C.M(long)", _EXACT)}, calls
+        assert calls["Negative"] == {("Op.C.M(long)", _EXACT)}, calls
+        assert calls["Byte"] == {("Op.C.M(int)", _EXACT)}, calls
+
+    def test_an_expression_receiver_is_of_the_type_csharp_gives_it(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(RECEIVER_EXPR_CS, temp_repo, mock_ingestor)
+        # A static field's instance method comes before any extension.
+        assert calls["Field"] == {("Re.W.T(long)", _EXACT)}, calls
+        assert calls["Coalesced"] == {("Re.Ext.X(int)", _EXACT)}, calls
+        assert calls["Indexed"] == {("Re.Ext.X(char)", _EXACT)}, calls
+        assert calls["Cast"] == {("Re.Ext.Y(W)", _EXACT)}, calls
+        # Negative: `(w) + 1` is a sum through an operator, no cast to `w`.
+        assert all(r != _EXACT for _c, r in calls["Sum"]), calls
+        assert ("Re.Ext.Y(W)", _HEURISTIC) in calls["Sum"], calls
+
+    def test_a_bare_call_ranks_the_inherited_overloads(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(BARE_CS, temp_repo, mock_ingestor)
+        assert calls["Int"] == {("Bc.B.V(int)", _EXACT)}, calls
+        assert calls["Long"] == {("Bc.B.V(long)", _EXACT)}, calls
+
+    def test_an_enclosing_namespace_extension_comes_first(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # `Sc.Outer` encloses the call, so its extension wins before the
+        # file's `using Sc.Other` is read.
+        calls = _resolved_calls(SCOPE_CS, temp_repo, mock_ingestor)
+        assert calls["Nearest"] == {("Sc.Outer.E1.Sc(int)", _EXACT)}, calls
+
+    def test_a_twin_nested_type_is_no_exact_match(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # `Outer2.In` is not the `In` that `M(In)` takes inside `Outer`.
+        calls = _resolved_calls(NESTED_CS, temp_repo, mock_ingestor)
+        assert ("Nt.Outer.M(In)", _EXACT) not in calls["Twin"], calls
+        assert ("Nt.Outer.M(object)", _OVERLOAD) in calls["Twin"], calls
+
+    def test_an_untyped_receiver_guesses_its_extensions(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # `Hx` is not indexed: the extension in scope may be what runs.
+        calls = _resolved_calls(UNTYPED_CS, temp_repo, mock_ingestor)
+        assert calls["Unknown"] == {("Ut.Ext.X(int)", _HEURISTIC)}, calls
+
+    def test_a_simple_name_names_the_type_of_its_namespace(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # `C` in a file of `namespace NA;` is `NA.C`, declared in another
+        # file beside an `NB.C`.
+        calls = _resolved_file_calls(SAME_NAME_FILES, temp_repo, mock_ingestor)
+        assert calls["Same"] == {("NA.C.M(int)", _EXACT)}, calls
+
+    def test_a_type_its_file_cannot_see_is_another(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # `Make` returns the `Widget` of the unindexed `H` its file imports,
+        # not `N.Widget`: Roslyn runs `M(object)`.
+        calls = _resolved_file_calls(UNSEEN_TYPE_FILES, temp_repo, mock_ingestor)
+        assert _ranked(calls, "Result", "N.C.") == {
+            ("N.C.M(Widget)", _OVERLOAD),
+            ("N.C.M(object)", _OVERLOAD),
+        }, calls
+
+
 CONSTRAINT_CS = """\
 namespace K;
 public interface IThing { }

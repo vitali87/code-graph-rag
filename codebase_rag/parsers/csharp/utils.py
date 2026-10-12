@@ -201,6 +201,20 @@ def normalize_csharp_type_name(type_node: Node) -> str | None:
     return _normalize_type_name(text) if text else None
 
 
+def written_parameter_type(text: str) -> str:
+    """A parameter's type as overload ranking reads it: as a signature
+    spells it (`signature_type_name`), without a `params` mark, and with the
+    trailing `?` a signature drops kept, since a struct's or a type
+    parameter's `?` may be `Nullable<T>` (`M<T>(T? x) where T : struct`)."""
+    written = text.strip().removeprefix(cs.CSHARP_PARAMS_PREFIX).strip()
+    spelled = signature_type_name(written)
+    if written.endswith(cs.CHAR_QUESTION_MARK) and not spelled.endswith(
+        cs.CHAR_QUESTION_MARK
+    ):
+        return f"{spelled}{cs.CHAR_QUESTION_MARK}"
+    return spelled
+
+
 def signature_type_name(text: str) -> str:
     """A type as a method signature spells it: `Ctx< T >?` -> `Ctx<T>`.
 

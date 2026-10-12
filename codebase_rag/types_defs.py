@@ -548,6 +548,10 @@ class CSharpCallShape(NamedTuple):
     # Whether it overrides a base's virtual method (`override`), which it
     # stands for in overload resolution.
     overrides: bool = False
+    # The parameters' types as written, in declared order, a trailing `?`
+    # kept (`T?`, `Point?`), which the qn's signature drops; empty when not
+    # known.
+    types: tuple[str, ...] = ()
 
 
 class JavaStaticImport(NamedTuple):

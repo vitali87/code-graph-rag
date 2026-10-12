@@ -18,7 +18,11 @@ from tree_sitter import Node
 from .. import constants as cs
 from ..services import IngestorProtocol
 from ..types_defs import CSharpCallShape
-from .csharp.utils import type_parameter_constraints, type_parameter_names
+from .csharp.utils import (
+    type_parameter_constraints,
+    type_parameter_names,
+    written_parameter_type,
+)
 from .utils import safe_decode_text
 
 if TYPE_CHECKING:
@@ -480,6 +484,7 @@ def csharp_call_shape(func_node: Node) -> CSharpCallShape:
         returns=_csharp_return_text(func_node),
         modes=modes if any(modes := csharp_parameter_modes(func_node)) else (),
         overrides=cs.TS_CSHARP_MODIFIER_OVERRIDE in modifiers,
+        types=tuple(written_parameter_type(p.type_name or "") for p in params),
     )
 
 

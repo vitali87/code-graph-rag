@@ -24,7 +24,12 @@ from ...types_defs import (
 )
 from ..parameter_nodes import csharp_call_shape
 from .overloads import type_arguments
-from .utils import generic_shape, implicit_conversion, strip_generic_arguments
+from .utils import (
+    generic_shape,
+    implicit_conversion,
+    strip_generic_arguments,
+    written_parameter_type,
+)
 
 
 def type_props(type_node: Node) -> PropertyDict:
@@ -130,6 +135,14 @@ def method_call_shape(row: ResultRow) -> CSharpCallShape | None:
         else "",
         modes=tuple(_strings(row.get(cs.KEY_PARAMETER_MODES))),
         overrides=cs.TS_CSHARP_MODIFIER_OVERRIDE in modifiers,
+        types=types if len(types := _written_types(row)) == len(entries) else (),
+    )
+
+
+def _written_types(row: ResultRow) -> tuple[str, ...]:
+    # The stored parameter types as overload ranking reads them.
+    return tuple(
+        written_parameter_type(t) for t in _strings(row.get(cs.KEY_PARAM_TYPES))
     )
 
 

@@ -1219,6 +1219,7 @@ class Scored(NamedTuple):
     count: int = 0
     open: frozenset[str] = frozenset()
     binds: tuple[tuple[str, str], ...] = ()
+    owner: str = ""
 
 
 # The fits a candidate certainly takes an argument by.
@@ -1245,18 +1246,32 @@ def _names_open(parameter: str, open_names: frozenset[str]) -> bool:
 type TargetOrder = Callable[[str, str], int]
 
 
+# (an owner, another) -> whether the first's methods are dropped once the
+# second's apply: it is a base the second derives from.
+type Outranked = Callable[[str, str], bool]
+
+
 def best_candidates(
-    scored: Sequence[Scored], target_order: TargetOrder | None = None
+    scored: Sequence[Scored],
+    target_order: TargetOrder | None = None,
+    outranked: Outranked | None = None,
 ) -> list[Scored]:
     """The applicable candidates no other applicable one is better than, as
     C# finds a better function member, in their given order; empty when
     none applies. `target_order` ranks two types two known conversions
-    reach; without it, such conversions tie."""
+    reach; without it, such conversions tie. A base's method never beats
+    one of a type deriving from it (`outranked`): C# compares them only
+    once that one does not apply, which drops it anyway (PR 2814 review)."""
     viable = [c for c in scored if None not in c.fits]
     return [
         c
         for c in viable
-        if not any(_better(o, c, target_order) for o in viable if o is not c)
+        if not any(
+            _better(o, c, target_order)
+            for o in viable
+            if o is not c
+            and not (outranked is not None and outranked(o.owner, c.owner))
+        )
     ]
 
 
@@ -1356,16 +1371,17 @@ def _equivalent(given: Sequence[str], wanted: Sequence[str]) -> bool:
 
 
 def _tie_break(p: Scored, q: Scored) -> int:
-    # C#'s tie-breaks, in order: a non-generic method beats a generic one, a
-    # normal form an expanded one, of two expanded forms the one declaring
-    # more parameters, one passing every parameter an argument one leaving
-    # a default out, and more specific declared parameter types less
-    # specific ones. +1 for `p`, -1 for `q`, 0 for neither.
+    # C#'s tie-breaks, in the order Roslyn applies them (PR 2814's oracle):
+    # a non-generic method beats a generic one, a normal form an expanded
+    # one, one passing every parameter an argument one leaving a default
+    # out, of two expanded forms the one declaring more parameters, and
+    # more specific declared parameter types less specific ones. +1 for
+    # `p`, -1 for `q`, 0 for neither.
     return (
         int(q.generic) - int(p.generic)
         or int(q.expanded) - int(p.expanded)
-        or (_sign(p.count - q.count) if p.expanded and q.expanded else 0)
         or int(q.omits) - int(p.omits)
+        or (_sign(p.count - q.count) if p.expanded and q.expanded else 0)
         or _more_specific(
             p.declared, q.declared, (p.type_parameters, q.type_parameters)
         )
