@@ -191,6 +191,12 @@ KEY_ABSOLUTE_PATH = "absolute_path"
 # registry AND the FLOWS_TO capture group was enabled at indexing. Read by
 # the three-verdict flow reachability query (issue #1050).
 KEY_FLOW_COVERED = "flow_covered"
+# What a Module's callers can see of it, hashed (issue #2531): its
+# definitions, signatures and module-level statements, and the parts of
+# function bodies cross-file inference reads. A sync that re-parses the file
+# compares the stored value with the new source's, and leaves the callers'
+# edges as they are when the two agree.
+KEY_INTERFACE_FINGERPRINT = "interface_fingerprint"
 KEY_GENERATED = "generated"
 KEY_GENERATOR = "generator"
 KEY_EXTENSION = "extension"
@@ -648,6 +654,35 @@ DEFAULT_CAPTURE_GROUPS: frozenset[CaptureGroup] = frozenset(
         CaptureGroup.TYPES,
         CaptureGroup.IMPORTS,
     }
+)
+
+# What a dependent of a re-parsed file may hold into it and still keep its
+# edges without a re-parse (issue #2531): the relationships CYPHER_INBOUND_EDGES
+# captures for source-derived edges and the restore re-emits by qualified
+# name, onto targets the restore can find again (a Module, or a definition
+# the function registry holds once the file is re-parsed).
+INTERFACE_RESTORED_RELS: frozenset[RelationshipType] = frozenset(
+    {
+        RelationshipType.CALLS,
+        RelationshipType.REFERENCES,
+        RelationshipType.INSTANTIATES,
+        RelationshipType.IMPORTS,
+        RelationshipType.INHERITS,
+        RelationshipType.IMPLEMENTS,
+        RelationshipType.OVERRIDES,
+        RelationshipType.RETURNS,
+        RelationshipType.ACCEPTS,
+    }
+)
+INTERFACE_RESTORED_TARGET_LABELS: frozenset[NodeLabel] = DEFINITION_NODE_LABELS
+# The capture groups whose cross-file readers the interface fingerprint was
+# written against. Any other group enabled (data flow, parameters, fields,
+# ...) brings readers it does not model, so every dependent is re-parsed.
+INTERFACE_SKIP_RELS: frozenset[RelationshipType] = frozenset().union(
+    *(
+        CAPTURE_GROUP_RELS[group]
+        for group in (*DEFAULT_CAPTURE_GROUPS, CaptureGroup.GLOSSES)
+    )
 )
 
 # What each group adds, for the generated Capture Groups table in
@@ -1258,6 +1293,45 @@ CYPHER_LINKING_DOCUMENT_PATHS = (
     "RETURN DISTINCT source.path AS caller_path, "
     "head(labels(target)) AS target_label, target.path AS target_path"
 )
+# The stored interface fingerprint of each Module a sync is about to re-parse
+# (issue #2531), read while the old subtree is still there. When the new
+# source reproduces it, nothing the module's callers resolve against moved,
+# and their edges are kept rather than re-derived by re-parsing them. The
+# root module's qn IS the bare project name, as CYPHER_DELETE_MODULE notes.
+CYPHER_INTERFACE_FINGERPRINTS = (
+    "MATCH (m:Module) WHERE m.path IN $paths "
+    "AND (m.qualified_name = $project_name "
+    "OR m.qualified_name STARTS WITH $project_prefix) "
+    "RETURN m.path AS path, m.qualified_name AS qualified_name, "
+    "m.interface_fingerprint AS interface_fingerprint"
+)
+# Every relationship between a file whose interface held and a file that
+# depends on it, in either direction (issue #2531). The dependent keeps its
+# edges only when each one is an edge the inbound capture brings back by
+# qualified name; anything else -- an edge kind the capture leaves behind,
+# or any edge from the re-parsed file INTO the dependent, which the
+# dependent's own parse may have written (a callable it passes in) -- would
+# be lost with the subtree, so that dependent is re-parsed as before.
+CYPHER_INTERFACE_BOUNDARY_EDGES = (
+    "MATCH (inner)-[r]-(outer) "
+    "WHERE inner.path IN $paths AND outer.path IN $callers "
+    "RETURN outer.path AS caller_path, head(labels(outer)) AS caller_label, "
+    "type(r) AS rel, startNode(r) = outer AS inbound, "
+    "inner.path AS target_path, head(labels(inner)) AS target_label, "
+    "inner.qualified_name AS target_qn"
+)
+CYPHER_PARAM_CALLERS = "callers"
+# The re-indexed files that hold a function invoking a callable another file
+# hands it (issue #2531). The flow edge `run -> on_done` starts in such a
+# file, so its re-parse drops the edge, and only the parse of the file that
+# passed `on_done` (directly, or through functions that forward it) writes
+# it back: whatever its fingerprint says, every dependent re-parses.
+CYPHER_INTERFACE_FLOW_SOURCE_PATHS = (
+    "MATCH (fn)-[flow:CALLS]->() "
+    "WHERE fn.path IN $paths AND flow.via_param IS NOT NULL "
+    "RETURN DISTINCT fn.path AS path"
+)
+KEY_INBOUND = "inbound"
 # Documents holding a link to a file that did not exist when they were parsed
 # (issue #2458), with those links as written. Read when a sync creates files,
 # so a document waiting on one is re-parsed and gains the edge a clean index
