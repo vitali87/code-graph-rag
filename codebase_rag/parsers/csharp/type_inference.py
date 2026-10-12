@@ -3895,7 +3895,9 @@ class CSharpTypeInferenceEngine:
         # `this` type is not read, a first-party base by its name, and
         # anything else only through a base the index does not hold.
         if self._this_type(entry[0]) is not None:
-            return self._closed_receiving(receiver, entry, Fit.CONVERTIBLE)
+            return self._closed_receiving(
+                receiver, entry, Fit.CONVERTIBLE, bases_only=True
+            )
         qn, recv_type, _namespace, arity = entry
         receiver_qn = receiver.qn or ""
         ancestry = self._class_ancestry(receiver_qn)
@@ -3905,7 +3907,11 @@ class CSharpTypeInferenceEngine:
         return None if self._all_indexed(ancestry) else Fit.UNKNOWN
 
     def _closed_receiving(
-        self, receiver: _ExtendedReceiver, entry: tuple[str, str, str, int], taken: Fit
+        self,
+        receiver: _ExtendedReceiver,
+        entry: tuple[str, str, str, int],
+        taken: Fit,
+        bases_only: bool = False,
     ) -> Fit | None:
         # How a first-party receiver takes a `this` type closed as the
         # extension writes it (Greptile review of PR 2814: a `Two :
@@ -3921,7 +3927,10 @@ class CSharpTypeInferenceEngine:
             else strip_generic_arguments(receiver.name)
         )
         verdict = self._constructed_converts(
-            (given, receiver.qn), target, self._method_type_parameters(entry[0])
+            (given, receiver.qn),
+            target,
+            self._method_type_parameters(entry[0]),
+            bases_only,
         )
         if verdict is None:
             return Fit.UNKNOWN
@@ -6059,6 +6068,7 @@ class CSharpTypeInferenceEngine:
         given: tuple[str, str],
         wanted: tuple[str, str],
         open_names: Collection[str],
+        bases_only: bool = False,
     ) -> bool | None:
         # Whether a first-party type, closed as written, converts by
         # reference or boxing to a first-party base or interface, closed as
@@ -6069,12 +6079,15 @@ class CSharpTypeInferenceEngine:
         # parameter `where T : IBox<int>` is no `IBox<string>`). None when
         # a way is not known: a base the index does not resolve, a closing
         # not bound, or a type argument whose conversion is not told.
+        # `bases_only` leaves the given type itself out, for a caller that
+        # judged its identity apart.
         wanted_text, wanted_qn = wanted
         closings, complete = self._constructed_ancestry(given)
+        own = set(self._partial_roots(given[1])) if bases_only else set()
         verdicts = {
             self._closing_converts(closing, wanted_text, open_names)
             for qn, closing in closings
-            if self._same_class(qn, wanted_qn)
+            if qn not in own and self._same_class(qn, wanted_qn)
         }
         if True in verdicts:
             return True
