@@ -1408,35 +1408,7 @@ class _StatefulIngestor:
             case cq.CYPHER_CHECK_SCOPE_EDGES:
                 return self._check_scope_edges(params or {})
             case cs.CYPHER_INBOUND_EDGES:
-                raw_paths = params.get(cs.CYPHER_PARAM_PATHS) if params else None
-                changed: set[str] = (
-                    set(raw_paths) if isinstance(raw_paths, list) else set()
-                )
-                inbound: list[ResultRow] = []
-                for edge in self._edges_into(changed):
-                    from_label, from_val, rel_type, to_label, to_val, _site = edge
-                    if rel_type not in _INBOUND_DEPENDENT_RELS:
-                        continue
-                    caller = self.nodes.get((from_label, from_val))
-                    if caller is None:
-                        continue
-                    caller_path = caller.get(cs.KEY_PATH)
-                    if caller_path in changed:
-                        continue
-                    inbound.append(
-                        {
-                            cs.KEY_CALLER_LABEL: from_label,
-                            cs.KEY_CALLER_QN: _text(from_val),
-                            cs.KEY_REL: rel_type,
-                            cs.KEY_TARGET_LABEL: to_label,
-                            cs.KEY_TARGET_QN: _text(to_val),
-                            cs.KEY_CALLER_PATH: _text(caller_path),
-                            # The restore re-emits the edge with its own
-                            # properties (its site, issue #1522).
-                            cs.KEY_PROPS: _result_props(self.edge_props.get(edge, {})),
-                        }
-                    )
-                return inbound
+                return self._inbound_edge_rows(params or {})
             case cq.CYPHER_TRACE_EDGES_AT_PATHS:
                 # Trace-derived CALLS edges touching the re-parsed files, in
                 # both directions (issue #2429). Only an edge a test wrote
@@ -1823,6 +1795,12 @@ class _StatefulIngestor:
                 return [{cs.KEY_CALLER_PATH: p} for p in sorted(waiting)]
             case cs.CYPHER_LINKING_DOCUMENT_PATHS:
                 return self._linking_document_rows(params or {})
+            case (
+                cs.CYPHER_INTERFACE_FINGERPRINTS
+                | cs.CYPHER_INTERFACE_BOUNDARY_EDGES
+                | cs.CYPHER_INTERFACE_FLOW_SOURCE_PATHS
+            ):
+                return self._interface_rows(query, params or {})
             case cs.CYPHER_BROKEN_LINK_DOCUMENTS:
                 return self._broken_link_rows(params or {})
             case cs.CYPHER_UNRESOLVED_SPECIFIER_IMPORTERS:
@@ -2323,6 +2301,120 @@ class _StatefulIngestor:
                 ):
                     return True
         return False
+
+    def _inbound_edge_rows(self, params: PropertyDict) -> list[ResultRow]:
+        raw_paths = params.get(cs.CYPHER_PARAM_PATHS)
+        changed: set[str] = set(raw_paths) if isinstance(raw_paths, list) else set()
+        inbound: list[ResultRow] = []
+        for edge in self._edges_into(changed):
+            from_label, from_val, rel_type, to_label, to_val, _site = edge
+            if rel_type not in _INBOUND_DEPENDENT_RELS:
+                continue
+            caller = self.nodes.get((from_label, from_val))
+            if caller is None:
+                continue
+            caller_path = caller.get(cs.KEY_PATH)
+            if caller_path in changed:
+                continue
+            inbound.append(
+                {
+                    cs.KEY_CALLER_LABEL: from_label,
+                    cs.KEY_CALLER_QN: _text(from_val),
+                    cs.KEY_REL: rel_type,
+                    cs.KEY_TARGET_LABEL: to_label,
+                    cs.KEY_TARGET_QN: _text(to_val),
+                    cs.KEY_CALLER_PATH: _text(caller_path),
+                    # The restore re-emits the edge with its own
+                    # properties (its site, issue #1522).
+                    cs.KEY_PROPS: _result_props(self.edge_props.get(edge, {})),
+                }
+            )
+        return inbound
+
+    def _interface_rows(self, query: str, params: PropertyDict) -> list[ResultRow]:
+        # The three reads the interface skip makes (issue #2531).
+        if query == cs.CYPHER_INTERFACE_FINGERPRINTS:
+            return self._interface_fingerprint_rows(params)
+        if query == cs.CYPHER_INTERFACE_FLOW_SOURCE_PATHS:
+            return self._interface_flow_source_rows(params)
+        return self._interface_boundary_rows(params)
+
+    def _interface_flow_source_rows(self, params: PropertyDict) -> list[ResultRow]:
+        """CYPHER_INTERFACE_FLOW_SOURCE_PATHS: the `$paths` holding a node
+        that starts a CALLS edge carrying `via_param`."""
+        raw_paths = params.get(cs.CYPHER_PARAM_PATHS)
+        paths = set(raw_paths) if isinstance(raw_paths, list) else set()
+        found = {
+            path
+            for node, props in self.nodes.items()
+            if isinstance(path := props.get(cs.KEY_PATH), str)
+            and path in paths
+            and any(
+                edge[2] == cs.RelationshipType.CALLS
+                and self.edge_props.get(edge, {}).get(cs.KEY_VIA_PARAM) is not None
+                for edge in self._out.get(node, ())
+            )
+        }
+        return [{cs.KEY_PATH: path} for path in sorted(found)]
+
+    def _interface_fingerprint_rows(self, params: PropertyDict) -> list[ResultRow]:
+        """CYPHER_INTERFACE_FINGERPRINTS: the Modules at `$paths` under the
+        project (its root module's qn is the bare project name)."""
+        raw_paths = params.get(cs.CYPHER_PARAM_PATHS)
+        paths = set(raw_paths) if isinstance(raw_paths, list) else set()
+        prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
+        project = _str(params.get(cs.KEY_PROJECT_NAME))
+        rows: list[ResultRow] = []
+        for (label, _uid), props in self.nodes.items():
+            qn = _str(props.get(cs.KEY_QUALIFIED_NAME))
+            if (
+                label == _MODULE_LABEL
+                and props.get(cs.KEY_PATH) in paths
+                and (qn == project or qn.startswith(prefix))
+            ):
+                rows.append(
+                    {
+                        cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
+                        cs.KEY_QUALIFIED_NAME: qn,
+                        cs.KEY_INTERFACE_FINGERPRINT: _text(
+                            props.get(cs.KEY_INTERFACE_FINGERPRINT)
+                        ),
+                    }
+                )
+        return rows
+
+    def _interface_boundary_rows(self, params: PropertyDict) -> list[ResultRow]:
+        """CYPHER_INTERFACE_BOUNDARY_EDGES: every edge, either direction,
+        between a node at `$paths` and a node at `$callers`."""
+        raw_paths = params.get(cs.CYPHER_PARAM_PATHS)
+        raw_callers = params.get(cs.CYPHER_PARAM_CALLERS)
+        paths = set(raw_paths) if isinstance(raw_paths, list) else set()
+        callers = set(raw_callers) if isinstance(raw_callers, list) else set()
+        rows: list[ResultRow] = []
+        for inner, inner_props in self.nodes.items():
+            if inner_props.get(cs.KEY_PATH) not in paths:
+                continue
+            touching = [(edge, False) for edge in self._out.get(inner, ())] + [
+                (edge, True) for edge in self._in.get(inner, ())
+            ]
+            for edge, inbound in touching:
+                from_label, from_val, rel_type, to_label, to_val, _site = edge
+                outer = (from_label, from_val) if inbound else (to_label, to_val)
+                outer_path = (self.nodes.get(outer) or {}).get(cs.KEY_PATH)
+                if outer_path not in callers:
+                    continue
+                rows.append(
+                    {
+                        cs.KEY_CALLER_PATH: _text(outer_path),
+                        cs.KEY_CALLER_LABEL: outer[0],
+                        cs.KEY_REL: rel_type,
+                        cs.KEY_INBOUND: inbound,
+                        cs.KEY_TARGET_PATH: _text(inner_props.get(cs.KEY_PATH)),
+                        cs.KEY_TARGET_LABEL: inner[0],
+                        cs.KEY_TARGET_QN: _text(inner_props.get(cs.KEY_QUALIFIED_NAME)),
+                    }
+                )
+        return rows
 
     def _linking_document_rows(self, params: PropertyDict) -> list[ResultRow]:
         # CYPHER_LINKING_DOCUMENT_PATHS (issue #2458): documents whose links

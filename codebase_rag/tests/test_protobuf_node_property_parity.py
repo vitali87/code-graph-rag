@@ -81,6 +81,10 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     # when the missing file appears, and the next parse rewrites the list.
     # Exporting it needs the proto field and regenerated bindings, the same
     # protoc gap #1490 tracks for the rest of this set.
+    # `interface_fingerprint` (issue #2531) degrades the same safe way: a
+    # graph round-tripped through protobuf has no stored fingerprint to
+    # compare against, so a sync re-parses every dependent caller, as it did
+    # before the property existed, and the re-parse writes it back.
     "Module": frozenset(
         {
             "absolute_path",
@@ -89,6 +93,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "unresolved_specifiers",
             "unresolved_references",
             "broken_links",
+            "interface_fingerprint",
         }
     ),
     # `type_parameters`, `generic_bases` and `base_types` on a C# type, its
