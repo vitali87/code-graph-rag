@@ -275,6 +275,17 @@ def _pin_csharp_frontend_treesitter(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _forget_toolchain_probe_answers(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The parser fingerprint remembers each toolchain's version answer for the
+    # life of the process, so one test's real or scripted `go version` would
+    # answer the next test's probe in the same worker. Each test starts as a
+    # new process does, remembering nothing.
+    from codebase_rag import parser_fingerprint
+
+    monkeypatch.setattr(parser_fingerprint, "_PROBE_ANSWERS", {})
+
+
+@pytest.fixture(autouse=True)
 def _isolate_vector_store(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
