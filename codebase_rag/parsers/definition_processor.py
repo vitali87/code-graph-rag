@@ -44,11 +44,19 @@ from .frontends.protocol import ImplementsPair, ResolvedCallSite
 from .function_ingest import FunctionIngestMixin
 from .go import utils as go_utils
 from .handlers import get_handler
+from .interface_fingerprint import interface_fingerprint
 from .java_generated import generator_hint
 from .js_ts.ingest import JsTsIngestMixin
+from .js_ts.overloads import folded_overload_signatures, implementation_signatures
 from .module_docstring import extract_module_docstring
+from .notebook import is_notebook_path
 from .parameter_nodes import PendingParameterType
-from .utils import safe_decode_with_fallback, sorted_captures
+from .py.overloads import folded_overload_stubs
+from .utils import (
+    get_function_captures,
+    safe_decode_with_fallback,
+    sorted_captures,
+)
 
 if TYPE_CHECKING:
     from ..services import IngestorProtocol
@@ -56,6 +64,22 @@ if TYPE_CHECKING:
     from .handlers import LanguageHandler
     from .import_processor import ImportProcessor
 from .io_access import FLOW_REGISTERED_LANGUAGES
+
+
+def _signature_docstring(node: ASTNode, language: cs.SupportedLanguage) -> str | None:
+    # A TypeScript overload set is documented on its signatures, the part a
+    # caller sees, and they fold into the implementation's node (issue
+    # #2457): with no doc of its own, the function keeps the first one.
+    if language not in (cs.SupportedLanguage.TS, cs.SupportedLanguage.TSX):
+        return None
+    return next(
+        (
+            doc
+            for signature in implementation_signatures(node)
+            if (doc := extract_definition_docstring(signature, language))
+        ),
+        None,
+    )
 
 
 class DefinitionProcessor(
@@ -126,10 +150,24 @@ class DefinitionProcessor(
         # constructor call resolves to its own method, so the call pass
         # needs this set to record the construction (issue #2012).
         self.dart_constructor_qns: set[str] = set()
+        # {module qn: start bytes of the overload declarations that fold into
+        # their implementation}: Python's `@overload` stubs (issue #2590) and
+        # TypeScript's overload signatures (issue #2457). Both the function and
+        # the method pass skip them so the implementation owns the name.
+        self.folded_overloads: dict[str, frozenset[int]] = {}
         # {interface_qn: [implementer_class_qns]} from IMPLEMENTS edges, so the
         # resolver can redirect an interface-typed call `I.m` to the concrete
         # `Impl.m` when I has exactly one first-party implementer (unambiguous).
         self.interface_implementers: dict[str, set[str]] = {}
+        # The same pairs read back from the graph on an incremental run, which
+        # parses only the changed files (issue #2403). Kept apart and rebuilt
+        # on every rehydration so a pair the graph no longer holds leaves.
+        self.rehydrated_interface_implementers: dict[str, set[str]] = {}
+        # {Rust impl target qn: module of the file whose `impl Trait for T`
+        # recorded its pair}. A primitive or foreign target (`u64`) has no
+        # class node, so `class_owner_module` never names that file, and the
+        # pair outlived the impl on a reused updater (#2403 review).
+        self.rust_impl_owner_module: dict[str, str] = {}
         # {class_qn: {field_name: bare_type_name}} for C++ member fields, so a
         # member call `field_.method()` in a (possibly out-of-line, cross-file)
         # method resolves via the field's declared type. Populated at class
@@ -376,7 +414,27 @@ class DefinitionProcessor(
         self._handler = get_handler(cs.SupportedLanguage.PYTHON)
         self._func_class_captures_cache = func_class_captures_cache
 
+    def reset_interface_implementers(self) -> None:
+        """Forget every implementer pair, parsed or read back from the graph.
+
+        A full build re-parses every file and so re-records each pair it
+        should hold, but a forced one skips the read-back that rebuilds the
+        graph's pairs. A reused updater then kept an earlier run's pairs, and
+        a deleted implementer still counted: the remaining one lost the
+        sole-implementer edge a fresh build emits.
+        """
+        # In place: the call resolver holds both maps by reference.
+        self.interface_implementers.clear()
+        self.rehydrated_interface_implementers.clear()
+        self.rust_impl_owner_module.clear()
+
     def _disambiguate_module_qn(self, module_qn: str, file_path: Path) -> str:
+        # A notebook always carries its extension (`proj.analysis.ipynb`). No
+        # import can load it, so the bare name belongs to `analysis.py` or the
+        # package `analysis/` whether or not one exists yet, and adding one
+        # beside it never renames the notebook's definitions (issue #2480).
+        if is_notebook_path(file_path):
+            module_qn = own_extension_module_qn(module_qn, file_path.name)
         # A TypeScript declaration file and its implementation strip to the
         # SAME module qn once `.d.ts` is treated as one extension (#1720), and
         # the rule below would award it to whichever is walked first. That is
@@ -459,7 +517,9 @@ class DefinitionProcessor(
             self.function_registry,
             self.import_processor.import_mapping,
             self.project_name,
+            self.csharp_class_generic_arity,
         )
+        resolver.join_partial_groups(self.csharp_partial_groups)
         emitted = emit_type_edges(self.pending_type_facts, resolver, self.ingestor)
         # Parameter OF_TYPE edges resolve in the same pass, for the same
         # reason: the annotation may name a type from a later file.
@@ -576,6 +636,16 @@ class DefinitionProcessor(
                 CppTypeInferenceEngine().collect_type_aliases(
                     root_node, self.type_aliases, self._type_alias_conflicts
                 )
+            self._fold_overloads(
+                root_node, module_qn, language, queries, combined_captures
+            )
+            self._ingest_inline_modules(
+                root_node,
+                module_qn,
+                language,
+                queries,
+                combined_captures=combined_captures,
+            )
             self._ingest_all_functions(
                 root_node,
                 module_qn,
@@ -648,6 +718,8 @@ class DefinitionProcessor(
         }
         if docstring := self._get_module_docstring(root_node, language):
             module_props[cs.KEY_DOCSTRING] = docstring
+        if fingerprint := interface_fingerprint(root_node, language):
+            module_props[cs.KEY_INTERFACE_FINGERPRINT] = fingerprint
         if self.generated_source_prefixes and (
             hint := generator_hint(relative_path_str, self.generated_source_prefixes)
         ):
@@ -680,6 +752,27 @@ class DefinitionProcessor(
             cs.RelationshipType.CONTAINS_MODULE,
             (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
         )
+
+    def _fold_overloads(
+        self,
+        root_node: ASTNode,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        combined_captures: dict[str, list] | None,
+    ) -> None:
+        match language:
+            case cs.SupportedLanguage.PYTHON:
+                self.folded_overloads[module_qn] = folded_overload_stubs(root_node)
+            case cs.SupportedLanguage.TS | cs.SupportedLanguage.TSX:
+                # The signatures are function captures, so the passes that
+                # register them read the same nodes this folds.
+                if combined_captures is None:
+                    found = get_function_captures(root_node, language, queries)
+                    combined_captures = found.captures if found else {}
+                self.folded_overloads[module_qn] = folded_overload_signatures(
+                    combined_captures.get(cs.CAPTURE_FUNCTION, ())
+                )
 
     def _file_combined_captures(
         self,
@@ -835,7 +928,9 @@ class DefinitionProcessor(
         with nothing failing.
         """
         if language != cs.SupportedLanguage.PYTHON:
-            return extract_definition_docstring(node, language)
+            return extract_definition_docstring(node, language) or _signature_docstring(
+                node, language
+            )
         if node.type == cs.TS_PY_MODULE:
             # A module node has no `body` field: its statements are direct
             # children, one level shallower than a class or function body.

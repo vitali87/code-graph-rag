@@ -86,19 +86,6 @@ def relative_new(node: Node) -> cs.PhpRelativeScope | None:
     return relative_scope(text)
 
 
-def creation_class_node(node: Node) -> Node | None:
-    """The named type of `new Foo` / `new \\App\\Foo`, else None.
-
-    Relative keywords, dynamic names and anonymous classes are not types.
-    """
-    if relative_new(node) is not None:
-        return None
-    target = _creation_target(node)
-    if target is None or target.type not in (cs.TS_PHP_NAME, cs.TS_PHP_QUALIFIED_NAME):
-        return None
-    return target
-
-
 def is_dynamic_or_anonymous_new(node: Node) -> bool:
     target = _creation_target(node)
     return target is not None and target.type in (

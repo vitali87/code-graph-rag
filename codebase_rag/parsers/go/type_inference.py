@@ -240,21 +240,23 @@ class GoTypeInferenceEngine:
 
     def collect_call_var_bindings(
         self, caller_node: Node
-    ) -> list[tuple[str, list[str]]]:
+    ) -> list[tuple[str, list[str], int]]:
         # `x := recv.m(...)` / `x := e.field.m(...)` / `x := f(...)`: pair the bound
         # name with the callee selector segments (`e.trees.get` -> ['e','trees',
-        # 'get']). The unified engine resolves the segments to the call's return type
-        # (needs field + method-return maps this stateless engine lacks) and types
-        # `x`. Only clean identifier-dotted callees are collected; any index/paren/
-        # generic in the callee is skipped and stays unresolved.
-        bindings: list[tuple[str, list[str]]] = []
+        # 'get']) and the call's start byte. The unified engine resolves the
+        # segments to the call's return type (needs field + method-return maps this
+        # stateless engine lacks) and types `x`; the start byte tells it which
+        # binding the first segment has there. Only clean identifier-dotted callees
+        # are collected; any index/paren/generic in the callee is skipped and stays
+        # unresolved.
+        bindings: list[tuple[str, list[str], int]] = []
         body = caller_node.child_by_field_name(cs.FIELD_BODY)
         if body is not None:
             self._collect_call_bindings(body, bindings)
         return bindings
 
     def _collect_call_bindings(
-        self, node: Node, bindings: list[tuple[str, list[str]]]
+        self, node: Node, bindings: list[tuple[str, list[str], int]]
     ) -> None:
         if node.type == cs.TS_GO_SHORT_VAR_DECLARATION:
             self._collect_call_binding(node, bindings)
@@ -262,7 +264,7 @@ class GoTypeInferenceEngine:
             self._collect_call_bindings(child, bindings)
 
     def _collect_call_binding(
-        self, node: Node, bindings: list[tuple[str, list[str]]]
+        self, node: Node, bindings: list[tuple[str, list[str], int]]
     ) -> None:
         left = node.child_by_field_name(cs.FIELD_LEFT)
         right = node.child_by_field_name(cs.FIELD_RIGHT)
@@ -276,7 +278,7 @@ class GoTypeInferenceEngine:
             if not name or value.type != cs.TS_GO_CALL_EXPRESSION:
                 continue
             if segments := self.callee_segments(value):
-                bindings.append((name, segments))
+                bindings.append((name, segments, value.start_byte))
 
     def callee_segments(self, call: Node) -> list[str] | None:
         # The callee selector of a call, split into identifier segments. A plain

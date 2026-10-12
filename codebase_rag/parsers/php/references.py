@@ -86,24 +86,19 @@ def ingest_php_callable_values(
         stack.extend(node.children)
 
 
-def php_constructor_qn(resolver: CallResolver, class_qn: str) -> str | None:
-    return _method_qn(resolver, class_qn, cs.PHP_CONSTRUCTOR)
-
-
 def _ingest_new(host: _PhpEmitter, ctx: _CallView, call_node: Node) -> bool:
     if php_callables.is_dynamic_or_anonymous_new(call_node):
         return True
     relative = php_callables.relative_new(call_node)
-    class_node = php_callables.creation_class_node(call_node)
-    if relative is None and class_node is None:
+    if relative is None:
+        # A written `new Name` belongs to the class-path resolver (issue
+        # #2466). It already ignores `use function` and `use const`, and it
+        # finds a constructor the trie would skip.
         return False
     host._site_node = call_node
-    if relative is not None:
-        classes = _relative_classes(host, ctx.class_context, relative)
-    else:
-        assert class_node is not None
-        classes = _classes_for_type(host, ctx.module_qn, class_node)
-    _emit_constructions(host, ctx.caller_spec, classes)
+    _emit_constructions(
+        host, ctx.caller_spec, _relative_classes(host, ctx.class_context, relative)
+    )
     return True
 
 
@@ -343,9 +338,10 @@ def _emit_constructions(
             cs.RelationshipType.INSTANTIATES,
             (cs.NodeLabel.CLASS, cs.KEY_QUALIFIED_NAME, class_qn),
         )
-        ctor = php_constructor_qn(host._resolver, class_qn)
-        if ctor is None:
+        found = host._resolver.php_constructor(class_qn)
+        if found is None:
             continue
+        _, ctor = found
         host._emit_rel(
             caller_spec,
             cs.RelationshipType.CALLS,

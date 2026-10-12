@@ -62,6 +62,7 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 
 <!-- SECTION:latest_news -->
 - **Incremental Indexing**: Improved handling of same-stem sibling matches and skipped EXPOSES cleanups during incremental updates.
+- **Real-Time Watcher**: `cgr watch` ships the file watcher with the package, so an installed cgr keeps a repository's graph in sync while you edit, in the same project `cgr start` syncs.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
@@ -99,14 +100,14 @@ Python, TypeScript, TSX, JavaScript, Rust, Go, Java, C, C++, C#, PHP, Lua, and D
 
 ## Installation
 
-`cgr` is published to PyPI. Install it system-wide with the `treesitter-full` (all languages) and `semantic` (vector search) extras:
+`cgr` is published to PyPI. Install it system-wide with the `treesitter-full` (tree-sitter grammars), `ast-grep` (Ruby, Kotlin, Swift, Elixir, Haskell, Solidity, Bash, Nix) and `semantic` (vector search) extras:
 
 ```bash
 # with uv (recommended)
-uv tool install "code-graph-rag[treesitter-full,semantic]"
+uv tool install "code-graph-rag[treesitter-full,ast-grep,semantic]"
 
 # or with pipx
-pipx install "code-graph-rag[treesitter-full,semantic]"
+pipx install "code-graph-rag[treesitter-full,ast-grep,semantic]"
 ```
 
 ### Which version am I getting?
@@ -131,7 +132,7 @@ addressable; binaries and PyPI uploads follow the cadence above.
 To run code newer than the latest release, install from git:
 
 ```bash
-uv tool install "code-graph-rag[treesitter-full,semantic] @ git+https://github.com/vitali87/code-graph-rag@main"
+uv tool install "code-graph-rag[treesitter-full,ast-grep,semantic] @ git+https://github.com/vitali87/code-graph-rag@main"
 ```
 
 To upgrade an existing install, run `uv tool upgrade code-graph-rag` (with pipx, `pipx upgrade code-graph-rag`, or `pipx reinstall code-graph-rag` for a git install). [Upgrade](docs/getting-started/installation.md#upgrade) covers the other install methods.

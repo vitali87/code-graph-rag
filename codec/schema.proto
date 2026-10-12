@@ -454,6 +454,8 @@ message GraphCodeIndex {
 
     string name = 2;
     string kind = 3;
+    // The serving project, on ENDPOINT resources only (#2536); "" elsewhere.
+    string project = 4;
   }
 
   // A heading in a document, and the prose beneath it. Sections nest by
@@ -491,6 +493,8 @@ message GraphCodeIndex {
     // A JS/TS object literal's function value (#2435): reached through its
     // object, never by its key alone, so a bare call must not bind to it.
     bool is_object_member = 13;
+    // A top-level Dart `main`, which `dart run` starts (#2527).
+    bool is_program_main = 14;
   }
 
   message Method {
@@ -509,6 +513,16 @@ message GraphCodeIndex {
     // Annotations as written (#1527); absent return_type is the empty string.
     string return_type = 10;
     repeated string param_types = 11;
+    // A C++ member's overload signature and whether its class body declares
+    // it (#2455). An incremental run reads both back to tell which overload
+    // a re-parsed out-of-class definition defines; absent signature is the
+    // empty string (not a C++ member).
+    string signature = 12;
+    bool declared_in_class = 13;
+    // The dead-code roots read both (#2527): whether the method is public
+    // API, and whether the JVM launcher starts it as `main`.
+    bool is_exported = 14;
+    bool is_program_main = 15;
   }
 
   message Class {
@@ -523,6 +537,9 @@ message GraphCodeIndex {
     bool is_exported = 7;
     // The namespace a C# type is declared in (issue #1629).
     string namespace = 8;
+    // How many type parameters a generic C# type declares; 0 when it is
+    // not generic (issue #2579).
+    int32 generic_arity = 9;
   }
 
   message Interface {
@@ -533,6 +550,9 @@ message GraphCodeIndex {
     string path = 3;
     string absolute_path = 4;
     string namespace = 5;
+    // How many type parameters a generic C# interface declares; 0 when it
+    // is not generic (issue #2579).
+    int32 generic_arity = 6;
   }
 
   message Enum {
