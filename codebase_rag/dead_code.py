@@ -628,6 +628,29 @@ def _is_react_root(
     return cls is not None and cls in react_component_classes
 
 
+def _is_py_ast_visitor_root(
+    qn: str,
+    member: str,
+    is_method: bool,
+    path: str,
+    method_to_class: dict[str, str],
+    ast_visitor_classes: set[str],
+) -> bool:
+    # NodeVisitor.visit reaches a `visit_<NodeClass>` handler, or the
+    # generic_visit fallback, by name, never by a call the graph sees, so
+    # they are roots on a class reaching ast.NodeVisitor. The helpers they
+    # call expand from them; a same-named method on any other class is
+    # ordinary code.
+    if not is_method or not path.endswith(cs.EXT_PY):
+        return False
+    if member != cs.PY_AST_GENERIC_VISIT_METHOD and not member.startswith(
+        cs.PY_AST_VISIT_METHOD_PREFIX
+    ):
+        return False
+    cls = method_to_class.get(qn)
+    return cls is not None and cls in ast_visitor_classes
+
+
 def _walk(
     frontier: set[str],
     adjacency: dict[str, set[str]],
@@ -655,6 +678,7 @@ def _is_root(
     class_decorators_norm: dict[str, frozenset[str]],
     nest_factory_classes: set[str],
     react_component_classes: set[str],
+    ast_visitor_classes: set[str],
     rust_test_modules: set[str],
     rust_test_spans: dict[str, list[tuple[int, int]]],
     project_prefix: str,
@@ -756,6 +780,9 @@ def _is_root(
         lambda: _is_react_root(
             qn, bare_leaf, is_method, path, method_to_class, react_component_classes
         ),
+        lambda: _is_py_ast_visitor_root(
+            qn, leaf, is_method, path, method_to_class, ast_visitor_classes
+        ),
         lambda: (
             is_well_known_symbol_member(qn)
             and str(props.get(cs.KEY_PATH, "")).endswith(cs.JS_TS_ALL_EXTENSIONS)
@@ -851,6 +878,9 @@ class _StructuralRels:
     # React drives at runtime (issue #978). Seeds are direct extenders; the
     # transitive closure over INHERITS is computed after the scan.
     react_component_classes: set[str] = field(default_factory=set)
+    # Likewise a class reaching ast.NodeVisitor, whose handlers `visit`
+    # dispatches by name; seeds are direct subclasses, closed the same way.
+    ast_visitor_classes: set[str] = field(default_factory=set)
     inherits_subclasses: dict[str, set[str]] = field(
         default_factory=lambda: defaultdict(set)
     )
@@ -923,6 +953,8 @@ def _scan_structural_rels(
             found.inherits_subclasses[to_qn].add(from_qn)
             if to_qn in cs.PROTOCOL_BASE_QNS:
                 found.protocol_classes.add(from_qn)
+            elif to_qn in cs.PY_AST_VISITOR_BASE_QNS:
+                found.ast_visitor_classes.add(from_qn)
             elif _is_react_base_qn(to_qn):
                 found.react_component_classes.add(from_qn)
         elif rel_type == _DEFINES_METHOD:
@@ -1264,6 +1296,13 @@ def dead_code_from_graph(
         structural.inherits_subclasses,
         structural.react_component_classes,
     )
+    # Visitors the same way: `visit` dispatches on a subclass of a project
+    # visitor base exactly as on the base.
+    _walk(
+        set(structural.ast_visitor_classes),
+        structural.inherits_subclasses,
+        structural.ast_visitor_classes,
+    )
 
     # Every rule in _is_root makes `qn` a root; they are alternatives, not a
     # priority order, so one membership test replaces a chain of identical
@@ -1281,6 +1320,7 @@ def dead_code_from_graph(
             scan.class_decorators_norm,
             structural.nest_factory_classes,
             structural.react_component_classes,
+            structural.ast_visitor_classes,
             rust_test_modules,
             rust_test_spans,
             project_prefix,

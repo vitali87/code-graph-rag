@@ -4,7 +4,9 @@
 #   mixins (`_AstAnalyzerDeps`); every `self._x()` resolves to the real
 #   implementation, so 23 of the 25 default-mode candidates were its stubs;
 # - a typing.Protocol is named only in annotations, which the walk does not
-#   follow, so with --classes every protocol was reported unreachable.
+#   follow, so with --classes every protocol was reported unreachable;
+# - `ast.NodeVisitor.visit` finds its `visit_*` handlers with getattr, so
+#   with --no-public-roots every visitor handler was reported.
 # Each test indexes a small project end to end and reads the dead set from
 # the same node properties the `CYPHER_DEAD_CODE_NODES` fetch returns.
 from __future__ import annotations
@@ -248,3 +250,81 @@ def test_protocol_classes_and_their_stubs_are_not_dead(
     assert f"{_PROTOS}.Implementation._unused" in dead
     if not public_roots:
         assert f"{_PROTOS}.Implementation" in dead
+
+
+# --- 3. ast.NodeVisitor handlers are dispatched by name ---------------------
+
+# Both bases, both import spellings, and a visitor that inherits the dispatch
+# from a project visitor. Handlers are public, so only --no-public-roots
+# could ever report them.
+_VISITORS = """from __future__ import annotations
+
+import ast
+from ast import NodeTransformer, NodeVisitor
+
+
+class Calls(ast.NodeVisitor):
+    def visit_Call(self, node: ast.Call) -> None:
+        self._record(node)
+
+    def _record(self, node: ast.Call) -> None:
+        return None
+
+    def _unused(self) -> None:
+        return None
+
+
+class Names(NodeVisitor):
+    def visit_Name(self, node: ast.Name) -> None:
+        return None
+
+    def generic_visit(self, node: ast.AST) -> None:
+        return None
+
+
+class Attributes(Names):
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        return None
+
+
+class Rewriter(NodeTransformer):
+    def visit_Import(self, node: ast.Import) -> ast.Import:
+        return node
+
+
+class Dotted(ast.NodeTransformer):
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> ast.ImportFrom:
+        return node
+
+
+class NotAVisitor:
+    def visit_Call(self, node: ast.Call) -> None:
+        return None
+"""
+
+_VISIT = f"{_PROJECT}.pkg.visitors"
+
+
+def test_ast_visitor_handlers_and_their_callees_are_not_dead(
+    tmp_path: Path,
+) -> None:
+    ingestor = _index(tmp_path, {"pkg/__init__.py": "", "pkg/visitors.py": _VISITORS})
+    dispatched = {
+        f"{_VISIT}.{member}"
+        for member in (
+            "Calls.visit_Call",
+            "Calls._record",
+            "Names.visit_Name",
+            "Names.generic_visit",
+            "Attributes.visit_Attribute",
+            "Rewriter.visit_Import",
+            "Dotted.visit_ImportFrom",
+        )
+    }
+    unused = {f"{_VISIT}.Calls._unused", f"{_VISIT}.NotAVisitor.visit_Call"}
+    _defined(ingestor, *dispatched, *unused)
+    dead = _dead(ingestor, public_roots=False)
+    assert not dispatched & dead, sorted(dispatched & dead)
+    # The name alone roots nothing: a `visit_*` method on a class that is no
+    # visitor, and a visitor's own unused helper, are still reported.
+    assert unused <= dead, sorted(unused - dead)

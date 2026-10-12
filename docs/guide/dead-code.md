@@ -118,9 +118,11 @@ Without public roots, the roots are:
   whatever it calls is reachable.
 - **Tests**, unless `--no-include-tests`.
 - **Decorated handlers**: routes, tasks, CLI commands and any `--decorator-root`.
-- **Runtime hooks**: dunder and lifecycle methods, and the overrides a
-  runtime calls through an external base (an external Rust trait's impl, a
-  Dart `@override`, a Python standard-library base class).
+- **Runtime hooks**: dunder and lifecycle methods, the overrides a runtime
+  calls through an external base (an external Rust trait's impl, a Dart
+  `@override`, a Python standard-library base class), and the `visit_*` and
+  `generic_visit` handlers of a Python `ast.NodeVisitor` or
+  `ast.NodeTransformer` subclass, which `visit` looks up by name.
 - **Type-checker declarations**: a Python `typing.Protocol` and a class
   declared under `if TYPE_CHECKING:`, with their members. Their stubs type a
   receiver, such as `self` in a mixin, whose calls resolve to the

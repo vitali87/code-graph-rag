@@ -235,6 +235,14 @@ CSHARP_NULLABLE_MARKER = "?"
 # it lists Protocol again, and otherwise it is an implementation.
 PROTOCOL_BASE_QNS: tuple[str, ...] = ("typing.Protocol", "typing_extensions.Protocol")
 
+# `ast.NodeVisitor.visit` looks its handler up by name, `getattr(self,
+# "visit_" + type(node).__name__, self.generic_visit)`, so a subclass's
+# handlers have no call site the graph sees. NodeTransformer is a
+# NodeVisitor; a first-party subclass of either inherits the dispatch.
+PY_AST_VISITOR_BASE_QNS: tuple[str, ...] = ("ast.NodeVisitor", "ast.NodeTransformer")
+PY_AST_VISIT_METHOD_PREFIX = "visit_"
+PY_AST_GENERIC_VISIT_METHOD = "generic_visit"
+
 # What marks a repo-relative path as test code (path_filters.matches_test_path).
 # Judged on whole words of path segments, never raw substrings: `test_` as a
 # substring made shortest_paths/ and latest_prices.py tests (issue #2618).
