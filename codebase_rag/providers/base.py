@@ -361,8 +361,9 @@ class MiniMaxProvider(ApiKeyProvider):
             )
             # The Messages protocol falls back to the provider default exactly
             # as AnthropicProvider did before issue #1498, so the budget is set
-            # here too. The cache flags stay off: they are Anthropic's own
-            # extension and MiniMax does not document them.
+            # here too. The cache flags stay with AnthropicProvider: they ask
+            # for Anthropic's prompt caching, which a compatible endpoint need
+            # not implement.
             return AnthropicModel(
                 model_id,
                 provider=anthropic_provider,

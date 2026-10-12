@@ -9404,10 +9404,12 @@ class CallProcessor:
         # express) registers by its OWN name; neither the key nor the position
         # form matches it, so try the name under the scope and module-flat
         # (where the def pass puts it).
-        candidates = _scoped_candidates(caller_spec[2], names)
         name_node = value.child_by_field_name(cs.FIELD_NAME)
-        if name_node is not None and (own := safe_decode_text(name_node)):
-            candidates.update(_scoped_candidates(caller_spec[2], [own]))
+        own = safe_decode_text(name_node) if name_node is not None else None
+        if own:
+            names.append(own)
+        candidates = _scoped_candidates(caller_spec[2], names)
+        if own:
             candidates.add(f"{module_qn}{cs.SEPARATOR_DOT}{own}")
         self._reference_registered(
             caller_spec, candidates, ensure_rel, cs.RelationshipType.REFERENCES
