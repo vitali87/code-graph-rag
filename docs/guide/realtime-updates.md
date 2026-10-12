@@ -180,5 +180,25 @@ re-resolution of the project (a hub file imported by dozens still pays for each
 of them); see [Scoped re-ingest latency](../reports/REINGEST_BENCHMARK.md)
 for measured numbers.
 
+An edit that leaves the file's interface as it was skips its dependents
+altogether. A comment, a reformatted line, or a change inside a function body
+that no other file's call resolution reads all count. The file's Module records
+an `interface_fingerprint`: its definitions, signatures, annotations, bases and
+module-level statements, plus the parts of function bodies that cross-file
+type inference reads and the functions a body hands to other files as call
+arguments (a constructor argument filling a field another file invokes, a
+callback forwarded to the function that calls it). When the new source hashes
+to the same value, the dependents keep their edges and only the edited file is
+re-parsed. A function body whose returned or forwarded values are read through
+a local it binds (`r = A(); return r.run`) is hashed whole, so any edit to it
+re-parses the dependents. A dependent whose edges with the file could not be
+restored by name is still re-parsed, and so is every dependent of a file
+holding a function that invokes a callable another file passes it, since that
+file's parse cannot rebuild the flow edge on its own. The same rule applies to
+`cgr start --update-graph`. Python, Java, JavaScript and TypeScript files carry
+the fingerprint; the dependents of any other file are re-parsed as before, as
+they are when a capture group beyond the default ones is enabled or a semantic
+frontend (Jedi, javac) is selected.
+
 Agents that edit files directly can call the MCP `reingest` tool with the paths
 they touched instead of waiting for the watcher or running `update_repository`.
