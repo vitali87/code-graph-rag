@@ -13,7 +13,12 @@ from loguru import logger
 
 from . import constants as ec
 from . import logs as ls
-from .oracles import csharp_oracle_available, run_csharp_call_oracle
+from .oracle_guard import require_oracle
+from .oracles import (
+    csharp_oracle_available,
+    csharp_oracle_skip_reason,
+    run_csharp_call_oracle,
+)
 from .retrieval_eval import (
     CALLS,
     INSTANTIATES,
@@ -71,9 +76,12 @@ def main(
         typer.Option(help="Directory for csharp_retrieval_scores.csv and diff json."),
     ] = Path(ec.DEFAULT_OUT_DIR),
 ) -> None:
-    if not csharp_oracle_available():
-        logger.error(ls.CSHARP_ORACLE_MISSING)
-        raise typer.Exit(code=1)
+    require_oracle(
+        csharp_oracle_available,
+        ls.CSHARP_ORACLE_MISSING,
+        ec.DOTNET_BIN,
+        skip_reason=csharp_oracle_skip_reason,
+    )
 
     target = target.resolve()
     project = project_name or target.name

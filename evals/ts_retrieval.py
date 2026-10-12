@@ -13,7 +13,12 @@ from loguru import logger
 
 from . import constants as ec
 from . import logs as ls
-from .oracles import run_typescript_call_oracle, typescript_available
+from .oracle_guard import oracle_unavailable_exits, require_oracle
+from .oracles import (
+    run_typescript_call_oracle,
+    typescript_available,
+    typescript_skip_reason,
+)
 from .retrieval_eval import (
     CallEdge,
     cgr_call_edges,
@@ -62,15 +67,19 @@ def main(
         typer.Option(help="Directory for ts_retrieval_scores.csv and diff json."),
     ] = Path(ec.DEFAULT_OUT_DIR),
 ) -> None:
-    if not typescript_available():
-        logger.error(ls.TS_ORACLE_MISSING.format(binary=ec.NODE_BIN))
-        raise typer.Exit(code=1)
+    require_oracle(
+        typescript_available,
+        ls.TS_ORACLE_MISSING,
+        ec.NODE_BIN,
+        skip_reason=typescript_skip_reason,
+    )
 
     target = target.resolve()
     project = project_name or target.name
 
     logger.info(ls.TS_RETRIEVAL_ORACLE.format(binary=ec.NODE_BIN, target=target))
-    oracle, declared = oracle_ts_call_edges(target)
+    with oracle_unavailable_exits():
+        oracle, declared = oracle_ts_call_edges(target)
     logger.success(ls.TS_RETRIEVAL_ORACLE_DONE.format(count=len(oracle)))
 
     logger.info(ls.TS_RETRIEVAL_CGR.format(target=target, project=project))
