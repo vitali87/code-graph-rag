@@ -1183,6 +1183,9 @@ class _ExtendedReceiver(NamedTuple):
     name: str
     arity: int | None
     qn: str | None
+    # Where the receiver's type name resolves: the call's file, with the
+    # type parameters around it; None when not known.
+    scope: Scope | None = None
 
 
 # How a use reads a declaring type's members: the type arguments its
@@ -2516,7 +2519,10 @@ class CSharpTypeInferenceEngine:
         receiving = dict(
             self._extension_candidates(
                 _ExtendedReceiver(
-                    type_name, self._receiver_type_arity(*args), receiver_qn
+                    type_name,
+                    self._receiver_type_arity(*args),
+                    receiver_qn,
+                    self._caller_scope(call),
                 ),
                 call.method_name,
                 call.arg_count,
@@ -3078,15 +3084,27 @@ class CSharpTypeInferenceEngine:
             for bound in bounds[core]
             if bound not in cs.CSHARP_KIND_CONSTRAINTS
             and strip_generic_arguments(bound) not in bounds
-            and self._type_name_to_qn(bound, module_qn) is not None
+            and self._bound_qn(bound, module_qn) is not None
         ]
         return named[0] if len(named) == 1 else None
+
+    def _bound_qn(self, bound: str, module_qn: str) -> str | None:
+        # The first-party type a `where` clause names, closed or not.
+        return self._resolve_in(
+            module_qn,
+            strip_generic_arguments(bound),
+            generic_arity_of_type_text(bound),
+        )
 
     def _type_at(self, type_name: str, node: Node, module_qn: str) -> str | None:
         # The first-party type a receiver of a written type is of
         # (`_named_at`).
         named = self._named_at(type_name, node, module_qn)
-        return self._type_name_to_qn(named, module_qn) if named else None
+        if named is None:
+            return None
+        if named != type_name:
+            return self._bound_qn(named, module_qn)
+        return self._type_name_to_qn(named, module_qn)
 
     def _named_receiver_class(
         self,
@@ -3852,12 +3870,16 @@ class CSharpTypeInferenceEngine:
         if keyword in (cs.CSHARP_OBJECT_KEYWORD, cs.CSHARP_DYNAMIC_KEYWORD):
             return Fit.CONVERTIBLE
         if self._extends(receiver, entry, ambiguous_unqualified):
-            return Fit.UNKNOWN if arity else Fit.EXACT
+            return (
+                self._closed_receiving(receiver, entry, Fit.EXACT)
+                if arity
+                else Fit.EXACT
+            )
         given = predefined_keyword(receiver.name)
         if given is not None and keyword is not None:
             return Fit.EXACT if keyword == given else None
         if receiver.qn is not None and keyword is None:
-            return self._class_receiving(receiver.qn, entry)
+            return self._class_receiving(receiver, entry)
         # A predefined value or an external type converts to no first-party
         # or other predefined type, and maybe to an external one.
         if keyword is not None or self._extended_type(qn, recv_type, arity):
@@ -3865,17 +3887,59 @@ class CSharpTypeInferenceEngine:
         return Fit.UNKNOWN
 
     def _class_receiving(
-        self, receiver_qn: str, entry: tuple[str, str, str, int]
+        self, receiver: _ExtendedReceiver, entry: tuple[str, str, str, int]
     ) -> Fit | None:
-        # How a first-party class receiver converts to a `this` type its own
-        # name does not match: a first-party base by a reference conversion;
+        # How a first-party receiver converts to a `this` type its own name
+        # does not match: by reference or boxing up its bases and
+        # interfaces, closed as written (`_closed_receiving`); where the
+        # `this` type is not read, a first-party base by its name, and
         # anything else only through a base the index does not hold.
+        if self._this_type(entry[0]) is not None:
+            return self._closed_receiving(receiver, entry, Fit.CONVERTIBLE)
         qn, recv_type, _namespace, arity = entry
+        receiver_qn = receiver.qn or ""
         ancestry = self._class_ancestry(receiver_qn)
         bases = ancestry - set(self._partial_roots(receiver_qn))
         if self._extended_type(qn, recv_type, arity) in bases:
             return Fit.UNKNOWN if arity else Fit.CONVERTIBLE
         return None if self._all_indexed(ancestry) else Fit.UNKNOWN
+
+    def _closed_receiving(
+        self, receiver: _ExtendedReceiver, entry: tuple[str, str, str, int], taken: Fit
+    ) -> Fit | None:
+        # How a first-party receiver takes a `this` type closed as the
+        # extension writes it (Greptile review of PR 2814: a `Two :
+        # IBox<int>, IBox<string>` is an `IBox<string>`; a receiver `where T
+        # : IBox<int>` is none): `taken` when it converts, None when it
+        # cannot, unknown when that is not known.
+        target = self._this_type(entry[0])
+        if target is None or receiver.qn is None:
+            return Fit.UNKNOWN
+        given = (
+            canonical_type(receiver.name, receiver.scope)
+            if receiver.scope is not None
+            else strip_generic_arguments(receiver.name)
+        )
+        verdict = self._constructed_converts(
+            (given, receiver.qn), target, self._method_type_parameters(entry[0])
+        )
+        if verdict is None:
+            return Fit.UNKNOWN
+        return taken if verdict else None
+
+    def _this_type(self, method_qn: str) -> tuple[str, str] | None:
+        # The first-party type an extension method's `this` parameter is,
+        # closed as written and resolved where the method is declared, with
+        # its qn; None when it is not one, or not read.
+        scope = self.scope_of(
+            _member_type(method_qn), self._method_type_parameters(method_qn)
+        )
+        types = self._ranked_types(method_qn)
+        if scope is None or not types:
+            return None
+        written = canonical_type(types[0], scope)
+        qn = resolved_qn(written)
+        return (written, qn) if qn is not None else None
 
     def _takes_after_receiver(self, method_qn: str, arg_count: int) -> bool:
         # Whether an extension method takes `arg_count` arguments after its
@@ -5786,14 +5850,32 @@ class CSharpTypeInferenceEngine:
         wanted_qn = self._first_party_type(type_shape(parameter)[0])
         if given_qn is not None and wanted_qn is None:
             return self._to_predefined((given_text, given_qn), parameter)
-        if (
-            given_qn is None
-            or wanted_qn is None
-            or not self._judgeable(given_qn, wanted_qn)
-        ):
+        if given_qn is None or wanted_qn is None:
             return None
-        given = (given_text, given_qn)
-        wanted = (parameter, wanted_qn)
+        return self._first_party_converts(
+            argument,
+            (given_text, given_qn),
+            (parameter, wanted_qn),
+            (open_names, inferred),
+        )
+
+    def _first_party_converts(
+        self,
+        argument: ArgumentType,
+        given: tuple[str, str],
+        wanted: tuple[str, str],
+        reading: tuple[Collection[str], Inferred | None],
+    ) -> bool | None:
+        # A conversion between two first-party types: one an interface takes
+        # part in (`_interface_conversion`), else, between classes, up the
+        # hierarchy, by a declared `implicit operator`, or wrapping a value
+        # as nullable. None when it is not told.
+        open_names, inferred = reading
+        interfaced = self._interface_conversion(given, wanted, open_names)
+        if not isinstance(interfaced, _Sentinel):
+            return interfaced
+        if not self._judgeable(given[1], wanted[1]):
+            return None
         wraps = self._wraps_nullable(given, wanted, argument.arguments, open_names)
         if wraps is not False:
             return wraps
@@ -5834,10 +5916,9 @@ class CSharpTypeInferenceEngine:
             and not wanted_shape
             and self.function_registry.get(bound_qn) == NodeType.INTERFACE
         ):
-            ancestry = self._class_ancestry(bound_qn)
-            if wanted_qn in ancestry:
-                return True
-            return False if self._all_indexed(ancestry) else None
+            return self._constructed_converts(
+                (bound, bound_qn), (parameter, wanted_qn), open_names
+            )
         given = ArgumentType(
             None,
             strip_generic_arguments(bound),
@@ -5944,9 +6025,174 @@ class CSharpTypeInferenceEngine:
             return True
         source_qn = self._first_party_type(source)
         target_qn = self._first_party_type(target)
+        if source_qn and target_qn:
+            interfaced = self._interface_conversion(
+                (source, source_qn), (target, target_qn), ()
+            )
+            if not isinstance(interfaced, _Sentinel):
+                return interfaced
         if source_qn and target_qn and self._judgeable(source_qn, target_qn):
             return self._class_conversion((source, source_qn), (target, target_qn), ())
         return self._variance_converts(source, target, ())
+
+    def _interface_conversion(
+        self,
+        given: tuple[str, str],
+        wanted: tuple[str, str],
+        open_names: Collection[str],
+    ) -> bool | _Sentinel | None:
+        # A conversion an interface takes part in: to one, by reference or
+        # boxing up the given type's bases and interfaces, closed as written
+        # (`_constructed_converts`); from one to a class, none, as no
+        # user-defined conversion is to or from an interface. `_PASSED_OVER`
+        # when neither side is an interface.
+        if type_shape(given[0])[1] or type_shape(wanted[0])[1]:
+            return _PASSED_OVER
+        if self.function_registry.get(wanted[1]) == NodeType.INTERFACE:
+            return self._constructed_converts(given, wanted, open_names)
+        if self.function_registry.get(given[1]) == NodeType.INTERFACE:
+            return False
+        return _PASSED_OVER
+
+    def _constructed_converts(
+        self,
+        given: tuple[str, str],
+        wanted: tuple[str, str],
+        open_names: Collection[str],
+    ) -> bool | None:
+        # Whether a first-party type, closed as written, converts by
+        # reference or boxing to a first-party base or interface, closed as
+        # the parameter is: some way up its bases and interfaces closes the
+        # wanted type with type arguments the wanted ones take, each the
+        # same type or, for a variant interface's or delegate's parameter, a
+        # reference conversion its way (Greptile review of PR 2814: a type
+        # parameter `where T : IBox<int>` is no `IBox<string>`). None when
+        # a way is not known: a base the index does not resolve, a closing
+        # not bound, or a type argument whose conversion is not told.
+        wanted_text, wanted_qn = wanted
+        closings, complete = self._constructed_ancestry(given)
+        verdicts = {
+            self._closing_converts(closing, wanted_text, open_names)
+            for qn, closing in closings
+            if self._same_class(qn, wanted_qn)
+        }
+        if True in verdicts:
+            return True
+        return None if None in verdicts or not complete else False
+
+    def _constructed_ancestry(
+        self, given: tuple[str, str]
+    ) -> tuple[list[tuple[str, tuple[str, ...] | None]], bool]:
+        # Every first-party type a type converts to by reference up its
+        # written base lists, interfaces too, each with the type arguments
+        # that way closes it (None where one is not bound), and whether the
+        # walk met only bases it resolved. A type implementing one generic
+        # interface twice (`IBox<int>, IBox<string>`) is closed both ways.
+        written, type_qn = given
+        found: list[tuple[str, tuple[str, ...] | None]] = []
+        complete = True
+        pending: list[tuple[str, tuple[str, ...] | None]] = [
+            (type_qn, type_arguments(type_shape(written)[0]) or None)
+        ]
+        seen: set[tuple[str, tuple[str, ...] | None]] = set()
+        while pending:
+            current, closing = pending.pop()
+            if (current, closing) in seen:
+                continue
+            seen.add((current, closing))
+            found.append((current, closing))
+            bases, resolved = self._closed_bases(current, closing)
+            complete = complete and resolved
+            pending.extend(bases)
+        return found, complete
+
+    def _closed_bases(
+        self, type_qn: str, closing: tuple[str, ...] | None
+    ) -> tuple[list[tuple[str, tuple[str, ...] | None]], bool]:
+        # The first-party bases and interfaces a type's base lists write,
+        # each closed through the type's own closing, and whether every one
+        # resolved (an external base may lead anywhere).
+        bases: list[tuple[str, tuple[str, ...] | None]] = []
+        resolved = True
+        for part in self._partial_roots(type_qn):
+            part_bases = self._part_bases(part, closing)
+            if part_bases is None:
+                resolved = resolved and not self.class_inheritance.get(part)
+                continue
+            for base in part_bases:
+                if base is None:
+                    resolved = False
+                else:
+                    bases.append(base)
+        return bases, resolved
+
+    def _part_bases(
+        self, part: str, closing: tuple[str, ...] | None
+    ) -> list[tuple[str, tuple[str, ...] | None] | None] | None:
+        # Each base one part of a type writes, as (its qn, the type arguments
+        # it is closed with through `closing`, None when one is not bound),
+        # None for one its file does not resolve; None when the part's shape
+        # or file is not known.
+        shape = self.csharp_generic_shapes.get(part)
+        module_qn = self.csharp_class_owner_module.get(part)
+        if shape is None or module_qn is None:
+            return None
+        parameters = shape.parameters
+        bindings = (
+            dict(zip(parameters, closing, strict=True))
+            if closing is not None and len(closing) == len(parameters)
+            else None
+        )
+        scope = self.scope_of(part)
+        found: list[tuple[str, tuple[str, ...] | None] | None] = []
+        for written in shape.base_types:
+            arguments = type_arguments(written)
+            base = self._resolve_in(
+                module_qn, strip_generic_arguments(written), len(arguments)
+            )
+            if base is None:
+                found.append(None)
+                continue
+            known = bindings is not None or not parameters
+            found.append(
+                (
+                    base,
+                    tuple(declared_type(a, scope, bindings or {}) for a in arguments)
+                    if arguments and known
+                    else None,
+                )
+            )
+        return found
+
+    def _closing_converts(
+        self,
+        closing: tuple[str, ...] | None,
+        wanted_text: str,
+        open_names: Collection[str],
+    ) -> bool | None:
+        # Whether a closing of a generic type takes the wanted closing's
+        # place: each type argument the same type, or a reference conversion
+        # the parameter's variance allows. None for a closing not bound, or
+        # a wanted argument naming a type parameter still to infer.
+        wanted_core, wanted_shape = type_shape(wanted_text)
+        expected = type_arguments(wanted_core)
+        if wanted_shape:
+            return False
+        if not expected:
+            return True
+        if closing is None or len(closing) != len(expected):
+            return None
+        if any(mentioned_names(w) & set(open_names) for w in expected):
+            return None
+        variances = self._variances(wanted_core) or ("",) * len(expected)
+        return _all_hold(
+            {
+                self._varies_to(variance, given, wanted)
+                for variance, given, wanted in zip(
+                    variances, closing, expected, strict=True
+                )
+            }
+        )
 
     def _class_conversion(
         self,

@@ -2610,6 +2610,132 @@ class TestTypeParametersAndHiddenIndexersBindAsCSharpDoes:
         assert calls["Explicit"] == {("Ih.Left.Run", _EXACT)}, calls
 
 
+CONSTRUCTED_ANCESTRY_CS = """\
+namespace Ca;
+public interface IBox<X> { }
+public interface IDerived<Y> : IBox<Y> { }
+public interface IOut<out X> { }
+public class Animal { }
+public class Cat : Animal { }
+public class Box : IBox<int> { }
+public class Two : IBox<int>, IBox<string> { }
+public class Base<Z> { }
+public class Der : Base<int>, IDerived<string> { }
+public class OutCat : IOut<Cat> { }
+public class OutInt : IOut<int> { }
+public class C {
+    public void M(IBox<string> b) { }
+    public void M(object o) { }
+    public void N(IBox<int> b) { }
+    public void N(IBox<string> b) { }
+    public void B(Base<string> b) { }
+    public void B(object o) { }
+    public void V(IOut<Animal> v) { }
+    public void V(object o) { }
+}
+public static class Ext {
+    public static void X(this IBox<string> b) { }
+    public static void X(this object o) { }
+}
+public class Use {
+    public void Mismatched() { Bounded<Box>(); }
+    public void Through() { Derived<Der>(); }
+    public void ClassBound() { Based<Base<int>>(); }
+    public void Nested() { Inner<Box2, string>(); }
+    public void ValueVariance() { Valued<OutInt>(); }
+    public void Implemented() { new C().M(new Box()); }
+    public void Twice() { new C().M(new Two()); }
+    public void Inherited() { new C().M(new Der()); }
+    public void TieBreak() { new C().N(new Box()); }
+    public void Variant() { new C().V(new OutCat()); }
+    public void Invariant() { new C().V(new OutInt()); }
+    public void ClassReceiver() { new Two().X(); }
+    public void BoxReceiver() { new Box().X(); }
+    void Bounded<T>() where T : IBox<int> { T v = default!; new C().M(v); new C().N(v); v.X(); }
+    void Derived<U>() where U : IDerived<string> { U v = default!; new C().M(v); v.X(); }
+    void Based<B0>() where B0 : Base<int> { B0 v = default!; new C().B(v); }
+    void Inner<P, Q>() where P : IBox<Q> where Q : class { P v = default!; new C().M(v); }
+    void Valued<R>() where R : IOut<int> { R v = default!; new C().V(v); }
+}
+public class Box2 : IBox<string> { }
+"""
+
+
+class TestConstructedTypesConvertAsTheirClosingsDo:
+    # Greptile review of PR 2814, round 22, and the oracle family it led
+    # to: a type converts to a constructed base or interface only where the
+    # way up its bases and interfaces closes it with type arguments the
+    # parameter's take, as they are or as its variance allows. Each source
+    # states what Roslyn runs (.NET 8).
+    def test_a_type_parameter_is_no_interface_of_other_type_arguments(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Greptile 4245081615: `where T : IBox<int>` is no `IBox<string>`.
+        calls = _resolved_calls(CONSTRUCTED_ANCESTRY_CS, temp_repo, mock_ingestor)
+        assert calls["Bounded"] == {
+            ("Ca.C.M(object)", _EXACT),
+            ("Ca.C.N(IBox<int>)", _EXACT),
+            ("Ca.Ext.X(object)", _EXACT),
+        }, calls
+        # Through `IDerived<Y> : IBox<Y>`, `IDerived<string>` is one.
+        assert calls["Derived"] == {
+            ("Ca.C.M(IBox<string>)", _EXACT),
+            ("Ca.Ext.X(IBox<string>)", _EXACT),
+        }, calls
+
+    def test_class_nested_and_value_bounds_close_as_written(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(CONSTRUCTED_ANCESTRY_CS, temp_repo, mock_ingestor)
+        assert calls["Based"] == {("Ca.C.B(object)", _EXACT)}, calls
+        # `where P : IBox<Q>` is an `IBox<Q>`, whatever `Q` is bound to.
+        assert calls["Inner"] == {("Ca.C.M(object)", _EXACT)}, calls
+        # `IOut<int>` varies to no `IOut<Animal>`: `int` is a value type.
+        assert calls["Valued"] == {("Ca.C.V(object)", _EXACT)}, calls
+
+    def test_a_class_converts_to_the_interfaces_it_closes(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(CONSTRUCTED_ANCESTRY_CS, temp_repo, mock_ingestor)
+        assert calls["Implemented"] == {("Ca.C.M(object)", _EXACT)}, calls
+        assert calls["Twice"] == {("Ca.C.M(IBox<string>)", _EXACT)}, calls
+        assert calls["Inherited"] == {("Ca.C.M(IBox<string>)", _EXACT)}, calls
+        assert calls["TieBreak"] == {("Ca.C.N(IBox<int>)", _EXACT)}, calls
+
+    def test_a_variant_interface_converts_by_its_reference_arguments(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(CONSTRUCTED_ANCESTRY_CS, temp_repo, mock_ingestor)
+        assert calls["Variant"] == {("Ca.C.V(IOut<Animal>)", _EXACT)}, calls
+        assert calls["Invariant"] == {("Ca.C.V(object)", _EXACT)}, calls
+
+    def test_an_extension_receiver_converts_as_its_closing_does(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(CONSTRUCTED_ANCESTRY_CS, temp_repo, mock_ingestor)
+        assert calls["ClassReceiver"] == {("Ca.Ext.X(IBox<string>)", _EXACT)}, calls
+        assert calls["BoxReceiver"] == {("Ca.Ext.X(object)", _EXACT)}, calls
+
+
+def test_an_incremental_run_closes_constructed_bases_as_a_fresh_one(
+    temp_repo: Path,
+) -> None:
+    # The base lists a constructed conversion walks are read back for types
+    # of a file an incremental run does not re-parse.
+    lib, _, use = CONSTRUCTED_ANCESTRY_CS.partition("public class Use {")
+    fresh, edited = _two_file_calls(
+        temp_repo, lib, f"namespace Ca;\npublic class Use {{{use}"
+    )
+    assert {
+        ("Bounded", "C", "M(object)"),
+        ("Derived", "C", "M(IBox<string>)"),
+        ("Twice", "C", "M(IBox<string>)"),
+        ("ClassReceiver", "Ext", "X(IBox<string>)"),
+    } <= fresh, fresh
+    assert ("Bounded", "C", "M(IBox<string>)") not in fresh, fresh
+    assert edited == fresh
+
+
 def test_an_incremental_run_hides_and_skips_indexers_as_a_fresh_one(
     temp_repo: Path,
 ) -> None:
