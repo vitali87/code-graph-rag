@@ -27,7 +27,7 @@ _SPEC = RETRIEVAL_SPECS[ec.RetrievalLanguage.CPP]
 def oracle_cpp_call_edges(
     target: Path, extra_defines: tuple[str, ...] = ()
 ) -> CallOracle:
-    return CallOracle(*run_cpp_call_oracle(target, extra_defines))
+    return run_cpp_call_oracle(target, extra_defines)
 
 
 def cgr_cpp_call_edges(

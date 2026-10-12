@@ -123,6 +123,9 @@ class OraclePayload(TypedDict):
     # Optional: only call-aware oracles (Go multi-language retrieval) emit call
     # sites; structure-only oracles omit this key.
     calls: NotRequired[list[OracleCall]]
+    # Optional: only an oracle that skips unparseable files (scalameta) lists
+    # the ones it parsed cleanly.
+    covered: NotRequired[list[str]]
 
 
 class IndexingStats(TypedDict):
