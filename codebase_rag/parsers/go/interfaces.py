@@ -607,14 +607,26 @@ def _within(found: _Declarations, scope: Expr) -> _Declarations:
 def _merged_declarations(
     found: list[_Declarations], declared: Mapping[GoMethodKey, str], joined: _Joined
 ) -> _Declarations:
-    # What every embed holds, one declaration per method and set of builds:
-    # one the same builds hold beside it is joined to it. Where the
-    # interface does not declare the method itself, two under different
-    # builds are joined if one build may hold both and nothing joined them
-    # yet. An undecided constraint joins: a rename that misses a
-    # declaration breaks a build, one more only renames it too.
+    # What every embed holds, one declaration per method and set of builds.
+    # Where the interface does not declare a method itself, its declarations
+    # under different builds are joined across them.
     if len(found) < 2:
         return found[0] if found else {}
+    merged = _by_builds(found, joined)
+    for key, kept in merged.items():
+        if key not in declared:
+            _join_across_builds(kept, joined)
+    return {
+        key: tuple((qn, builds) for builds, qn in kept.items())
+        for key, kept in merged.items()
+    }
+
+
+def _by_builds(
+    found: list[_Declarations], joined: _Joined
+) -> dict[GoMethodKey, dict[Expr, str]]:
+    # Per method, the first declaration under each set of builds; another
+    # the same builds hold is joined to it.
     merged: dict[GoMethodKey, dict[Expr, str]] = {}
     for each in found:
         for key, declarations in each.items():
@@ -623,20 +635,21 @@ def _merged_declarations(
                 first = kept.setdefault(builds, qn)
                 if first != qn and decide((builds,)) is not False:
                     joined.join(first, qn)
-    for key, kept in merged.items():
-        if key in declared or len(kept) < 2:
-            continue
-        held = list(kept.items())
-        for index, (builds, qn) in enumerate(held):
-            for before, earlier in held[:index]:
-                if joined.root(earlier) != joined.root(qn) and (
-                    decide((before, builds)) is not False
-                ):
-                    joined.join(earlier, qn)
-    return {
-        key: tuple((qn, builds) for builds, qn in kept.items())
-        for key, kept in merged.items()
-    }
+    return merged
+
+
+def _join_across_builds(kept: dict[Expr, str], joined: _Joined) -> None:
+    # Two declarations under different builds are joined if one build may
+    # hold both and nothing joined them yet. An undecided constraint joins:
+    # a rename that misses a declaration breaks a build, one more only
+    # renames it too.
+    held = list(kept.items())
+    for index, (builds, qn) in enumerate(held):
+        for before, earlier in held[:index]:
+            if joined.root(earlier) != joined.root(qn) and (
+                decide((before, builds)) is not False
+            ):
+                joined.join(earlier, qn)
 
 
 def covering(
