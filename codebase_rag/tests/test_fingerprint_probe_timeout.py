@@ -35,6 +35,9 @@ GO_1_26 = "go version go1.26.6 linux/amd64"
 GO_1_27 = "go version go1.27.0 linux/amd64"
 # Outcomes a scripted probe can give besides a version banner.
 TIMED_OUT = "<timed out>"
+# The OS could not start the process at all, as CreateProcess does on a
+# loaded Windows runner.
+NOT_STARTED = "<not started>"
 EXIT_FAILURE = 1
 
 _ONLY_GO_ACTIVE = {"GO_VERSION": True, "JAVAC_VERSION": False, "DOTNET_VERSION": False}
@@ -66,6 +69,8 @@ class ScriptedRun:
         outcome = self.outcomes.pop(0) if len(self.outcomes) > 1 else self.outcomes[0]
         if outcome == TIMED_OUT:
             raise subprocess.TimeoutExpired(cmd, timeout)
+        if outcome == NOT_STARTED:
+            raise OSError("[WinError 1455] The paging file is too small")
         if isinstance(outcome, int):
             return subprocess.CompletedProcess(cmd, outcome, stdout="", stderr="boom")
         return subprocess.CompletedProcess(cmd, 0, stdout=f"{outcome}\n", stderr="")
@@ -226,6 +231,50 @@ class TestATimedOutProbeIsNotAMissingTool:
         self, go_probe: ScriptedRun, repo: Path
     ) -> None:
         go_probe.script(TIMED_OUT)
+
+        answer = pf._probe_version("go", "version", repo)
+
+        assert answer == cs.TOOL_VERSION_UNKNOWN
+        assert len(go_probe.timeouts) == 2
+
+    def test_a_probe_that_did_not_start_before_answering_keeps_the_fingerprint(
+        self, go_probe: ScriptedRun
+    ) -> None:
+        """The shape both #2634 CI failures had: `absent`, then the version.
+
+        Their digests reproduce with `GO_VERSION=absent` in the first
+        computation and the real `go version` in the second, and the old code
+        gave `absent` for a process that could not be started as well as for a
+        timeout. A first attempt the OS refused is asked again.
+        """
+        go_probe.script(NOT_STARTED, GO_1_26)
+
+        first = pf.compute_parser_fingerprint()
+        second = pf.compute_parser_fingerprint()
+
+        assert second == first
+        assert f"GO_VERSION={GO_1_26}" in pf._tool_versions()
+
+    def test_a_probe_that_did_not_start_after_answering_keeps_the_fingerprint(
+        self, go_probe: ScriptedRun
+    ) -> None:
+        go_probe.script(GO_1_26, NOT_STARTED)
+
+        first = pf.compute_parser_fingerprint()
+        second = pf.compute_parser_fingerprint()
+
+        assert second == first
+        # The refused attempt was answered from this process's memo, with no
+        # retry.
+        assert go_probe.timeouts == [
+            cs.TOOL_VERSION_PROBE_TIMEOUT,
+            cs.TOOL_VERSION_PROBE_TIMEOUT,
+        ]
+
+    def test_a_probe_that_never_starts_is_unknown_not_absent(
+        self, go_probe: ScriptedRun, repo: Path
+    ) -> None:
+        go_probe.script(NOT_STARTED)
 
         answer = pf._probe_version("go", "version", repo)
 

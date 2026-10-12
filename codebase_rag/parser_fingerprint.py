@@ -89,13 +89,14 @@ def _probe_version(
     toolchain the indexed repository never uses. `None` inherits the caller's
     cwd rather than inventing one.
 
-    A timeout is not an answer. Recording it as `absent` made one slow probe
-    on a loaded machine (a cold JVM or dotnet start, an antivirus scan) read
-    as an uninstalled compiler, so the fingerprint changed and the next sync
-    re-parsed everything (follow-up to #2634). When the same binary under the
-    same pins answered before, in this process or in an earlier one that
-    left it in `state_dir`, that answer stands; otherwise the tool is asked
-    once more for longer, and failing that it is `unknown`.
+    A timeout is not an answer, and neither is a process that could not be
+    started. Recording either as `absent` made one slow or starved probe on a
+    loaded machine (a cold JVM or dotnet start, an antivirus scan, a full
+    paging file) read as an uninstalled compiler, so the fingerprint changed
+    and the next sync re-parsed everything (follow-up to #2634). When the
+    same binary under the same pins answered before, in this process or in
+    an earlier one that left it in `state_dir`, that answer stands; otherwise
+    the tool is asked once more for longer, and failing that it is `unknown`.
     """
     binary = shutil.which(executable)
     if binary is None:
@@ -131,7 +132,7 @@ def _probe_version(
 def _ask_version(
     binary: str, argument: str, cwd: Path | None, timeout: float
 ) -> str | None:
-    """The tool's first output line, `absent` when it has none, None on timeout."""
+    """The tool's first output line, `absent` when it has none, None if unasked."""
     try:
         proc = subprocess.run(
             [binary, argument],
@@ -142,10 +143,15 @@ def _ask_version(
             timeout=timeout,
             cwd=None if cwd is None else str(cwd),
         )
-    except subprocess.TimeoutExpired:
-        return None
+    # A timeout (TimeoutExpired is a SubprocessError) or a process the OS
+    # could not start: either way the tool never got to answer, and `which`
+    # has already found it. A loaded machine can fail CreateProcess itself
+    # (WinError 1455, the paging file is too small), and `absent` there flips
+    # the fingerprint between two back-to-back computations as a timeout did.
+    # The #2634 CI failures hashed `GO_VERSION=absent` first and the real
+    # `go version` second, and `absent` then stood for either cause.
     except (subprocess.SubprocessError, OSError):
-        return _TOOL_ABSENT
+        return None
     if proc.returncode != 0:
         return _TOOL_ABSENT
     output = (proc.stdout or proc.stderr or "").strip()

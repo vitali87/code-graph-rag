@@ -1495,8 +1495,8 @@ FINGERPRINT_DIST_UNREADABLE = (
     "the parser fingerprint"
 )
 FINGERPRINT_TOOL_UNANSWERED = (
-    "{tool} did not report its version in time, twice; the parser fingerprint "
-    "treats its version as unchanged"
+    "{tool} could not be asked for its version (timed out or did not start), "
+    "twice; the parser fingerprint treats its version as unchanged"
 )
 JAVA_FRONTEND_RUNNING = "javac frontend: attributing Java sources"
 JAVA_FRONTEND_BUILD_FAILED = (
