@@ -762,3 +762,30 @@ def test_inline_refuses_a_return_naming_the_callee_type_parameter(
     with pytest.raises(InlineRefused, match="type parameter `T`"):
         inline(root, store.fetch_all, PROJECT, qualified_name)
     assert (root / rel).read_text() == source
+
+
+# --- overridden methods (bot review) ------------------------------------------------
+
+_OVERRIDE_FILES = {
+    "pkg/__init__.py": "",
+    "pkg/shapes.py": (
+        "class Base:\n    def size(self):\n        return 1\n\n\n"
+        "class Child(Base):\n    def size(self):\n        return 2\n\n\n"
+        "def measure(shape: Base):\n    return shape.size()\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("method", ["Base.size", "Child.size"])
+def test_inline_refuses_a_method_with_an_override_either_way(
+    temp_repo: Path, method: str
+) -> None:
+    # `measure(Child())` dispatches to Child.size at runtime; substituting
+    # Base.size's `1` at the call would print 1 where the original printed 2.
+    root, store = _build(temp_repo, _OVERRIDE_FILES)
+    before = _python(root, "from pkg.shapes import *; print(measure(Child()))")
+    assert before == "2"
+    qualified_name = _project_qn(f"pkg.shapes.{method}")
+    with pytest.raises(InlineRefused, match="overrid"):
+        inline(root, store.fetch_all, PROJECT, qualified_name)
+    assert (root / "pkg/shapes.py").read_text() == _OVERRIDE_FILES["pkg/shapes.py"]

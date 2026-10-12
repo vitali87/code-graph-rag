@@ -1254,6 +1254,10 @@ INLINE_REFUSED_TYPE_PARAMETER = (
     "call site declares"
 )
 INLINE_REFUSED_PARAMETER = "{qn} has a parameter inlining cannot bind: {parameter}"
+INLINE_REFUSED_OVERRIDDEN = (
+    "{qn} overrides or is overridden by {others}; a call may dispatch to "
+    "another body at runtime"
+)
 # move (issue #1534).
 MOVE_UNKNOWN = "No definition named {qn} in the graph"
 MOVE_METHOD = "{qn} is a method; move its class instead"
