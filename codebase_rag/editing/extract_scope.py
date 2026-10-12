@@ -433,11 +433,13 @@ def _analyse_span_dependencies(
     read_after = _read_after(span)
     outputs = [name for name in bound_in if name in read_after]
     for name in outputs:
-        if name in inputs or name in surely_in or name not in bound_before:
+        if name in inputs or name in surely_in:
             continue
         # A path through the span that leaves the name alone must hand back
         # the value it came in with, so the helper takes it as a parameter;
         # returned unbound it raised or read undefined (Greptile, PR #2932).
+        # That holds for a name first bound in the span too: the helper's
+        # `return x` raises where the original only skipped (bot review).
         if name not in surely_before:
             raise ExtractRefused(cs.EXTRACT_MAYBE_UNBOUND.format(name=name))
         inputs.append(name)
