@@ -192,6 +192,16 @@ CLI_SYNC_RUN_ID = "cli-sync"
 PROCESS_BOOT_ID_PATH = "/proc/sys/kernel/random/boot_id"
 PROCESS_PID_NAMESPACE_PATH = "/proc/self/ns/pid"
 PROCESS_HOST_SEPARATOR = "|"
+# Windows' process probe, which reads a process's exit code through a query
+# handle instead of signalling it: `os.kill` terminates the process there.
+WINDOWS_KERNEL32 = "kernel32"
+WINDOWS_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+# What OpenProcess fails with when no process has the pid.
+WINDOWS_ERROR_INVALID_PARAMETER = 87
+# GetExitCodeProcess' exit code while the process runs.
+WINDOWS_STILL_ACTIVE = 259
+# Windows pids are DWORDs; ctypes would truncate a larger one to another pid.
+WINDOWS_MAX_PID = 0xFFFFFFFF
 CLI_ERR_SYNC_MARKER_FAILED = (
     "Refusing to sync '{project}': the incomplete-run marker could not be "
     "written, so an interrupted sync would leave a partial graph that looks "
