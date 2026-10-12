@@ -1040,36 +1040,6 @@ class StackManager:
         return final
 
 
-def ensure_running() -> StackStatus:
-    return StackManager().ensure_running()
-
-
-def daemon_up() -> StackStatus:
-    mgr = StackManager()
-    mgr.up()
-    mgr.wait_healthy()
-    return mgr.status()
-
-
-def daemon_down() -> None:
-    StackManager().down()
-
-
-def daemon_status() -> StackStatus:
-    return StackManager().status()
-
-
-def daemon_logs(service: str | None = None, follow: bool = False) -> int:
-    return StackManager().logs(service=service, follow=follow)
-
-
-def daemon_restart() -> StackStatus:
-    mgr = StackManager()
-    mgr.restart()
-    mgr.wait_healthy()
-    return mgr.status()
-
-
 def bundled_qdrant_url(home: Path | None = None) -> str | None:
     """Where the Qdrant `cgr daemon up` runs, when it takes the app's writes.
 
