@@ -1944,27 +1944,18 @@ class GraphUpdater:
         # csharp_call_sites is mutated in place because the type-inference
         # engine holds a reference.
         self._reset_semantic_facts()
-        if settings.CSHARP_FRONTEND == cs.CSharpFrontend.TREESITTER:
-            return
-        frontend = FRONTENDS.get(cs.SupportedLanguage.CSHARP)
-        if frontend is None or not frontend.applies(self.repo_path):
-            # Skip silently when the frontend has nothing to augment (no C#
-            # project): applicability is the frontend's own rule (issue #1178), so
-            # a registered replacement can define its own.
-            return
-        if not frontend.available():
-            # AUTO promises hybrid only where the toolchain exists, so a
-            # missing dotnet is the expected fallback (info); an EXPLICIT
-            # hybrid/roslyn request that cannot run stays a warning.
-            if settings.CSHARP_FRONTEND == cs.CSharpFrontend.AUTO:
-                logger.info(ls.CSHARP_FRONTEND_AUTO_FALLBACK)
-            else:
-                logger.warning(ls.CSHARP_FRONTEND_UNAVAILABLE)
-            return
-        logger.info(
-            ls.CSHARP_FRONTEND_RUNNING.format(path=find_csharp_project(self.repo_path))
+        mode = settings.CSHARP_FRONTEND
+        facts = self._run_semantic_frontend(
+            cs.SupportedLanguage.CSHARP,
+            off=mode == cs.CSharpFrontend.TREESITTER,
+            auto=mode == cs.CSharpFrontend.AUTO,
+            find_root=find_csharp_project,
+            auto_fallback_log=ls.CSHARP_FRONTEND_AUTO_FALLBACK,
+            unavailable_log=ls.CSHARP_FRONTEND_UNAVAILABLE,
+            running_log=ls.CSHARP_FRONTEND_RUNNING,
         )
-        facts = frontend.run(self.repo_path, (), rescued_files=self._rescued_files())
+        if facts is None:
+            return
         self._apply_semantic_facts(facts)
         logger.info(ls.CSHARP_FRONTEND_TYPES.format(count=len(facts.base_kinds)))
         logger.info(
@@ -1975,6 +1966,39 @@ class GraphUpdater:
                 externals=len(facts.external_sites),
             )
         )
+
+    def _run_semantic_frontend(
+        self,
+        language: cs.SupportedLanguage,
+        *,
+        off: bool,
+        auto: bool,
+        find_root: Callable[[Path], Path | None],
+        auto_fallback_log: str,
+        unavailable_log: str,
+        running_log: str,
+    ) -> SemanticFacts | None:
+        # The facts of a registered LanguageFrontend pre-pass, or None when it
+        # is off, has nothing to augment, or cannot run.
+        if off:
+            return None
+        frontend = FRONTENDS.get(language)
+        if frontend is None or not frontend.applies(self.repo_path):
+            # Skip silently when the frontend has nothing to augment (no C#
+            # project, no go.mod): applicability is the frontend's own rule
+            # (issue #1178), so a registered replacement can define its own.
+            return None
+        if not frontend.available():
+            # AUTO promises the compiler only where the toolchain exists, so a
+            # missing toolchain is the expected fallback (info); an EXPLICIT
+            # request that cannot run stays a warning.
+            if auto:
+                logger.info(auto_fallback_log)
+            else:
+                logger.warning(unavailable_log)
+            return None
+        logger.info(running_log.format(path=find_root(self.repo_path)))
+        return frontend.run(self.repo_path, (), rescued_files=self._rescued_files())
 
     def _rescued_files(self) -> frozenset[str]:
         # The compiler tools skip the default-excluded names on their own; the
@@ -2019,19 +2043,18 @@ class GraphUpdater:
         # a later run with it off; the maps are mutated in place because the
         # type-inference engine holds a reference.
         self._reset_go_semantic_facts()
-        if settings.GO_FRONTEND == cs.GoFrontend.TREESITTER:
+        mode = settings.GO_FRONTEND
+        facts = self._run_semantic_frontend(
+            cs.SupportedLanguage.GO,
+            off=mode == cs.GoFrontend.TREESITTER,
+            auto=mode == cs.GoFrontend.AUTO,
+            find_root=find_go_module,
+            auto_fallback_log=ls.GO_FRONTEND_AUTO_FALLBACK,
+            unavailable_log=ls.GO_FRONTEND_UNAVAILABLE,
+            running_log=ls.GO_FRONTEND_RUNNING,
+        )
+        if facts is None:
             return
-        frontend = FRONTENDS.get(cs.SupportedLanguage.GO)
-        if frontend is None or not frontend.applies(self.repo_path):
-            return
-        if not frontend.available():
-            if settings.GO_FRONTEND == cs.GoFrontend.AUTO:
-                logger.info(ls.GO_FRONTEND_AUTO_FALLBACK)
-            else:
-                logger.warning(ls.GO_FRONTEND_UNAVAILABLE)
-            return
-        logger.info(ls.GO_FRONTEND_RUNNING.format(path=find_go_module(self.repo_path)))
-        facts = frontend.run(self.repo_path, (), rescued_files=self._rescued_files())
         self._apply_go_semantic_facts(facts)
         logger.info(
             ls.GO_FRONTEND_FACTS.format(
