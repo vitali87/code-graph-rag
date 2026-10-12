@@ -3093,6 +3093,104 @@ def test_an_incremental_run_gives_a_type_parameter_one_identity_as_a_fresh_one(
     assert edited == fresh
 
 
+USER_CONVERSIONS_CS = """\
+#nullable enable
+namespace Uc;
+public struct Impl { }
+public class Box<T> {
+    public static implicit operator T(Box<T> b) => default!;
+    public static implicit operator Box<T>(T v) => new Box<T>();
+}
+public class XBox<T> {
+    public static explicit operator T(XBox<T> b) => default!;
+}
+public class Wrap<T> {
+    public static implicit operator Wrap<T>(Box<T> b) => new Wrap<T>();
+}
+public class DBox<T> : Box<T> { }
+public class IntBox : Box<int> { }
+public struct SBox<T> where T : struct {
+    public static implicit operator T(SBox<T> b) => default;
+}
+public class Holder<T> {
+    public void M(T t) { }
+    public void M(object o) { }
+    public void B(Box<T> b) { }
+    public void B(object o) { }
+    public void W(Wrap<T> w) { }
+    public void W(object o) { }
+}
+public class HB<T> {
+    public void Z(T t) { }
+    public void Z(object o) { }
+}
+public class Use<T> : HB<T> where T : struct {
+    public void Source() { Box<T> b = new Box<T>(); new Holder<T>().M(b); }
+    public void Target() { T x = default; new Holder<T>().B(x); }
+    public void Explicit() { new Holder<T>().M(new XBox<T>()); }
+    public void Chain() { T x = default; new Holder<T>().W(x); }
+    public void Inherited() { new Holder<T>().M(new DBox<T>()); }
+    public void OtherClosing() { new Holder<T>().M(new IntBox()); }
+    public void Lifted() { SBox<T> s = default; new Holder<T?>().M(s); }
+    public void Bare() { Box<T> b = new Box<T>(); Z(b); }
+}
+"""
+
+
+class TestAUserDefinedConversionReachesATypeParameter:
+    # Greptile review of PR 2814, round 26, and the oracle family it led
+    # to: a call site's type parameter converts from no other type but
+    # through a user-defined implicit operator, which the argument's class
+    # or a base declares to it, or the parameter's class declares from it.
+    # One user-defined step, implicit alone. Each source states what Roslyn
+    # runs (.NET 8).
+    def test_an_operator_to_the_type_parameter_applies(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Greptile 4247517208: `operator T(Box<T>)` takes a `Box<T>` to T.
+        calls = _resolved_calls(USER_CONVERSIONS_CS, temp_repo, mock_ingestor)
+        assert calls["Source"] == {("Uc.Holder.M(T)", _EXACT)}, calls
+        # A base declaring it does too, and a struct's into T's nullable.
+        assert calls["Inherited"] == {("Uc.Holder.M(T)", _EXACT)}, calls
+        assert calls["Lifted"] == {("Uc.Holder.M(T)", _EXACT)}, calls
+        assert calls["Bare"] == {("Uc.HB.Z(T)", _EXACT)}, calls
+
+    def test_an_operator_from_the_type_parameter_applies(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(USER_CONVERSIONS_CS, temp_repo, mock_ingestor)
+        assert calls["Target"] == {("Uc.Holder.B(Box<T>)", _EXACT)}, calls
+
+    def test_no_other_conversion_reaches_it(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # An explicit operator, two user-defined steps, and an operator to
+        # another type (`IntBox : Box<int>` gives an int) take nothing.
+        calls = _resolved_calls(USER_CONVERSIONS_CS, temp_repo, mock_ingestor)
+        assert calls["Explicit"] == {("Uc.Holder.M(object)", _EXACT)}, calls
+        assert calls["Chain"] == {("Uc.Holder.W(object)", _EXACT)}, calls
+        assert calls["OtherClosing"] == {("Uc.Holder.M(object)", _EXACT)}, calls
+
+
+def test_an_incremental_run_reads_conversions_to_a_type_parameter_as_a_fresh_one(
+    temp_repo: Path,
+) -> None:
+    # The operators read back from an unchanged file take the caller's
+    # type parameter as a fresh index's do.
+    lib, _, use = USER_CONVERSIONS_CS.partition("public class Use<T>")
+    fresh, edited = _two_file_calls(
+        temp_repo, lib, f"#nullable enable\nnamespace Uc;\npublic class Use<T>{use}"
+    )
+    assert {
+        ("Source", "Holder", "M(T)"),
+        ("Target", "Holder", "B(Box<T>)"),
+        ("Inherited", "Holder", "M(T)"),
+        ("Explicit", "Holder", "M(object)"),
+    } <= fresh, fresh
+    assert ("Source", "Holder", "M(object)") not in fresh, fresh
+    assert edited == fresh
+
+
 def test_an_incremental_run_closes_constructed_bases_as_a_fresh_one(
     temp_repo: Path,
 ) -> None:

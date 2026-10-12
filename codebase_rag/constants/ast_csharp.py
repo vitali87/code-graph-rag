@@ -175,6 +175,8 @@ CSHARP_TYPE_PARAMETER_MARK = "!"
 # Between a call site's type parameter's name and the declaration declaring
 # it, in its token: `!T@412`.
 CSHARP_TYPE_PARAMETER_SCOPE_SEPARATOR = "@"
+# A token as it appears inside a type: `!T@412` in `Box<!T@412>`.
+CSHARP_TYPE_PARAMETER_TOKEN_PATTERN = r"!+[A-Za-z_]\w*(?:@\d+)?"
 # `where T : default`, which only an override or an explicit implementation
 # writes: a `T?` there annotates T (C# 9). Every type meets it.
 CSHARP_DEFAULT_CONSTRAINT = "default"

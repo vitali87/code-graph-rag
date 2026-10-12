@@ -356,25 +356,13 @@ def _argument_type(written: str, scope: Scope, arity: int | None = None) -> str:
     return canonical_type(parameters_unannotated(written, scope), scope, arity)
 
 
-def _converts_to_token(argument: ArgumentType, parameter: str) -> bool | None:
-    # Whether an argument converts to a call site's type parameter, in any
-    # shape: C# converts to one only itself (into its nullable too) and a
-    # type parameter its `where` clauses bound by it, never a type of the
-    # name or of another (`TD : T` takes no `Box<T>[U]` of a `Use<T>`). None
-    # for another type parameter, whose bounds may reach it unseen.
-    core, shape = type_shape(parameter)
-    if argument.literal is not None:
-        return False
-    if argument.name is None:
-        return None
-    given_core, given_shape = type_shape(argument.name)
-    if given_core == core:
-        return shape in (given_shape, f"{given_shape}{cs.CSHARP_NULLABLE_SUFFIX}")
-    if argument.bounds is not None and not shape:
-        if any(type_shape(bound)[0] == core for bound in argument.bounds):
-            return True
-        return None
-    return None if is_type_parameter_token(given_core) else False
+def _tokens_in(type_text: str) -> set[str]:
+    # The call-site type parameter tokens a type spells.
+    return {
+        part
+        for part in re.findall(cs.CSHARP_TYPE_PARAMETER_TOKEN_PATTERN, type_text)
+        if is_type_parameter_token(part)
+    }
 
 
 def _written_argument(
@@ -5754,8 +5742,10 @@ class CSharpTypeInferenceEngine:
             return None
         name, arity = split_type_ref(annotated)
         # A field or property of a predefined type may be a constant whose
-        # value is not read: a narrowing it takes stays undecided.
-        if not arity and (keyword := predefined_keyword(name)) is not None:
+        # value is not read: a narrowing it takes stays undecided. A type
+        # parameter in scope is no predefined type of its name (a cast to the
+        # `String` of a `Use<String>`).
+        if not arity and (keyword := _predefined_at(name, value)) is not None:
             return ArgumentType(keyword, None, 0, None)
         return ArgumentType(None, name, arity, None)
 
@@ -6069,7 +6059,7 @@ class CSharpTypeInferenceEngine:
         # Only a conversion up the hierarchy infers (into `inferred`): C#
         # infers no type parameter through an operator.
         if is_type_parameter_token(type_shape(parameter)[0]):
-            return _converts_to_token(argument, parameter)
+            return self._converts_to_token(argument, parameter)
         if (origin := _predefined_origin(argument)) is not None:
             # A type parameter still open is no type of its name (`String?`
             # of a `where String : struct`): what converts to it is told
@@ -6083,7 +6073,7 @@ class CSharpTypeInferenceEngine:
             # `dynamic`: a known conversion, ranked as any other.
             return True
         if argument.bounds is not None:
-            return self._bound_converts(argument.bounds, parameter, open_names)
+            return self._parameter_value_converts(argument, parameter, open_names)
         upcast = framework_upcast(given_text, parameter)
         if upcast is not None:
             return self._upcast_converts(upcast, parameter, open_names, inferred)
@@ -6102,6 +6092,144 @@ class CSharpTypeInferenceEngine:
             (parameter, wanted_qn),
             (open_names, inferred),
         )
+
+    def _converts_to_token(self, argument: ArgumentType, parameter: str) -> bool | None:
+        # Whether an argument converts to a call site's type parameter, in
+        # any shape: itself does (into its nullable too), and a type
+        # parameter its `where` clauses bound by it; any other type only
+        # through a user-defined implicit operator its own class or a base
+        # declares (C#'s set D: a type parameter target adds none), whose
+        # target, closed by the argument, is the parameter (`operator
+        # T(Box<T>)` takes a `Box<T>` to T; Greptile review of PR 2814). A
+        # literal of a predefined type declares none. Only a proven absence
+        # is False; another type parameter, whose bounds may reach it
+        # unseen, or a type of no declaration read, is not known.
+        core, shape = type_shape(parameter)
+        if argument.literal is not None:
+            return False
+        if argument.name is None:
+            return None
+        given_core, given_shape = type_shape(argument.name)
+        if given_core == core:
+            return shape in (given_shape, f"{given_shape}{cs.CSHARP_NULLABLE_SUFFIX}")
+        if argument.bounds is not None and not shape:
+            if any(type_shape(bound)[0] == core for bound in argument.bounds):
+                return True
+            return None
+        if is_type_parameter_token(given_core):
+            return None
+        return self._operator_to_token(written_type(argument), parameter)
+
+    def _operator_to_token(self, given: str, parameter: str) -> bool | None:
+        # Whether a user-defined implicit operator takes a value of `given` to
+        # the type parameter `parameter`, lifted when both are nullable and
+        # the value's type a struct (`SBox<T>?` to `T?` through `operator
+        # T(SBox<T>)`). No predefined type declares one; a type the index
+        # does not declare may, where it names the type parameter.
+        given_core, given_shape = type_shape(given)
+        core, shape = type_shape(parameter)
+        if given_shape == cs.CSHARP_NULLABLE_SUFFIX and shape.endswith(
+            cs.CSHARP_NULLABLE_SUFFIX
+        ):
+            if self._is_reference(given_core) is not False:
+                return None
+            given, parameter = given_core, f"{core}{shape[:-1]}"
+        given_qn = self._first_party_type(type_shape(given)[0])
+        if given_qn is None or type_shape(given)[1]:
+            return None if _tokens_in(given) & _tokens_in(parameter) else False
+        ancestry = self._class_ancestry(given_qn)
+        return self._any_operator(
+            ancestry,
+            lambda operator, declaring: self._operator_gives_token(
+                (given, given_qn), operator, declaring, parameter
+            ),
+            False if self._all_indexed(ancestry) else None,
+        )
+
+    def _operator_gives_token(
+        self,
+        given: tuple[str, str],
+        operator: tuple[str, str],
+        declaring: str,
+        parameter: str,
+    ) -> bool | None:
+        # Whether `implicit operator Target(Source)` takes the value to the
+        # type parameter: the value converts to its source, closed as
+        # written, and its target, with the declaring type's own parameters
+        # bound from the value, is exactly the parameter.
+        source, target = operator
+        source_qn = self._first_party_type(type_shape(source)[0])
+        if source_qn is None:
+            return False
+        owned = self._owned_parameters(declaring)
+        takes = self._class_conversion(given, (source, source_qn), owned)
+        if takes is False:
+            return False
+        bound = substitute(
+            target, self._operator_bindings(given, (source, source_qn), owned)
+        )
+        # A standard conversion may follow: a value type's into its nullable.
+        if bound == parameter or same_type(bound, parameter):
+            return takes
+        if type_shape(parameter) == (bound, cs.CSHARP_NULLABLE_SUFFIX):
+            return takes
+        return None if mentioned_names(bound) & owned else False
+
+    def _parameter_value_converts(
+        self, argument: ArgumentType, parameter: str, open_names: Collection[str]
+    ) -> bool | None:
+        # Whether a value of a call site's type parameter converts to the
+        # parameter: through a type its `where` clauses name (`_bound_converts`),
+        # or through a user-defined implicit operator the parameter's class
+        # or a base declares from it (`operator Box<T>(T)` takes a T to a
+        # `Box<T>`). C# chains no two user-defined conversions.
+        bounded = self._bound_converts(argument.bounds or (), parameter, open_names)
+        if bounded:
+            return True
+        operated = self._operator_from_token(argument.name or "", parameter)
+        if operated:
+            return True
+        return None if None in (bounded, operated) else False
+
+    def _operator_from_token(self, token: str, parameter: str) -> bool | None:
+        # Whether a user-defined implicit operator the parameter's class or a
+        # base declares takes a value of the type parameter `token` to it:
+        # its target closed as the parameter is, its source, so bound, is
+        # that type parameter. A type the index does not declare may declare
+        # one, where it names the type parameter.
+        wanted_core, wanted_shape = type_shape(parameter)
+        wanted_qn = self._first_party_type(wanted_core)
+        if wanted_qn is None or wanted_shape:
+            return None if _tokens_in(token) & _tokens_in(parameter) else False
+        ancestry = self._class_ancestry(wanted_qn)
+        return self._any_operator(
+            ancestry,
+            lambda operator, declaring: self._operator_takes_token(
+                token, operator, declaring, (parameter, wanted_qn)
+            ),
+            False if self._all_indexed(ancestry) else None,
+        )
+
+    def _operator_takes_token(
+        self,
+        token: str,
+        operator: tuple[str, str],
+        declaring: str,
+        wanted: tuple[str, str],
+    ) -> bool | None:
+        # Whether `implicit operator Target(Source)` takes a value of the type
+        # parameter `token` to the parameter: its target is the parameter's
+        # type or derives from it, closed as the parameter is, and its
+        # source, the declaring type's parameters so bound, is `token`.
+        source, target = operator
+        owned = self._owned_parameters(declaring)
+        matched, bindings = self._target_bindings(target, wanted, owned)
+        if not matched:
+            return matched
+        bound = substitute(source, bindings)
+        if bound == token:
+            return True
+        return None if mentioned_names(bound) & owned else False
 
     def _upcast_converts(
         self,
