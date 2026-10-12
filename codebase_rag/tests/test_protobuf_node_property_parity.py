@@ -175,7 +175,6 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "extension_namespace",
             "extension_receiver",
             "extension_receiver_arity",
-            "is_exported",
             "is_property",
             "member_aliases",
             "modifiers",

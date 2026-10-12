@@ -820,6 +820,13 @@ KEY_DECORATORS = "decorators"
 # languages the extractor does not read (the positional_params rule).
 KEY_RETURN_TYPE = "return_type"
 KEY_PARAM_TYPES = "param_types"
+# A `main` the language's launcher starts, judged by the parser because the
+# graph cannot say it otherwise (issue #2527). For Java, the method the JVM
+# launch protocol would pick from its class body (JLS 12.1.4, JEP 512);
+# `param_types` records `String args[]` and a scalar `String arg` alike. For
+# Dart, a top-level `main` (a local one registers under its module too). Set
+# only when true.
+KEY_IS_PROGRAM_MAIN = "is_program_main"
 # A C++ member's overload identity, `(int,double) const` (issue #2455): what
 # tells `Sep.g` from `Sep.g@4`, and what an incremental run reads back so a
 # re-parsed out-of-class definition lands on the overload it defines.

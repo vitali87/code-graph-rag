@@ -700,7 +700,10 @@ def _is_root(
         )
     rules: tuple[Callable[[], bool], ...] = (
         lambda: _has_root_decorator(props, config.root_decorators),
-        lambda: props.get(cs.KEY_IS_EXPORTED) is True,
+        lambda: (
+            props.get(cs.KEY_IS_EXPORTED) is True
+            and (config.public_roots or _in_structural_tier(path))
+        ),
         # A method overriding an EXTERNAL stdlib base's method (click's
         # textwrap.TextWrapper subclass) is invoked by the base's machinery,
         # never by a first-party call, so it is a root.
@@ -757,6 +760,9 @@ def _is_root(
             is_well_known_symbol_member(qn)
             and str(props.get(cs.KEY_PATH, "")).endswith(cs.JS_TS_ALL_EXTENSIONS)
         ),
+        lambda: _is_program_main_root(
+            bare_leaf, is_method, path, props, config.public_roots
+        ),
         lambda: _is_named_entry_point(qn, config),
         lambda: _is_rooted_test_symbol(
             props, qn, path, config, rust_test_modules, rust_test_spans
@@ -780,6 +786,38 @@ def _is_rooted_test_symbol(
     return config.include_tests and _is_test_symbol(
         props, qn, path, rust_test_modules, rust_test_spans
     )
+
+
+def _in_structural_tier(path: str) -> bool:
+    # The ast-grep tier emits no CALLS edges, so nothing can reach its
+    # symbols: they stay roots without public roots too, or every one of them
+    # would be reported.
+    from .parsers.ast_grep_tier import structural_tier_extensions
+
+    return path.endswith(tuple(structural_tier_extensions()))
+
+
+def _is_program_main_root(
+    name: str, is_method: bool, path: str, props: PropertyDict, public_roots: bool
+) -> bool:
+    # A launcher calls `main` with no call site the graph sees: a console
+    # script calls a module-level Python function, while `dart run` and the
+    # JVM start the `main` the parser judged from its declaration
+    # (KEY_IS_PROGRAM_MAIN). Only the exported rule rooted them, so without
+    # public roots an application's whole call tree read as dead (issue
+    # #2527). A Python `main` nested in a function is not exported. The
+    # C, C++, C#, Go and Rust entries have their own rules.
+    if name != cs.PROGRAM_MAIN_NAME:
+        return False
+    exported = props.get(cs.KEY_IS_EXPORTED) is True
+    if path.endswith(cs.EXT_PY):
+        return exported and not is_method
+    if not path.endswith((cs.EXT_DART, cs.EXT_JAVA)):
+        return False
+    # The launcher starts a package-private Java `main` too, so without public
+    # roots the judged mark alone decides. With them, the rule roots only
+    # what the exported rule already does, so library mode stays as it was.
+    return props.get(cs.KEY_IS_PROGRAM_MAIN) is True and (exported or not public_roots)
 
 
 @dataclass
@@ -1289,6 +1327,8 @@ def _node_props(row: ResultRow) -> PropertyDict:
         cs.KEY_DECORATORS: _as_str_list(row.get(cs.KEY_DECORATORS)),
         cs.KEY_IS_EXPORTED: row.get(cs.KEY_IS_EXPORTED) is True,
         cs.KEY_OVERRIDES_EXTERNAL: row.get(cs.KEY_OVERRIDES_EXTERNAL) is True,
+        # The launcher `main` the parser judged from its declaration (#2527).
+        cs.KEY_IS_PROGRAM_MAIN: row.get(cs.KEY_IS_PROGRAM_MAIN) is True,
         # Spans feed the Rust nested-test-symbol exclusion (issue #1008);
         # non-int values coalesce to 0 so the containment checks skip them.
         cs.KEY_START_LINE: _as_line(row.get(cs.KEY_START_LINE)),
