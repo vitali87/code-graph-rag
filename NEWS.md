@@ -12,6 +12,7 @@ the README. The release workflow prepends feature entries via
 inserted; hand edits remain welcome between releases and render too.
 
 - **Incremental Indexing**: Improved handling of same-stem sibling matches and skipped EXPOSES cleanups during incremental updates.
+- **Real-Time Watcher**: `cgr watch` ships the file watcher with the package, so an installed cgr keeps a repository's graph in sync while you edit, in the same project `cgr start` syncs.
 <!-- latest-release-end -->
 - **Vector Store Improvements**: Enhanced handling of Milvus collection sizes and embedding size checks to prevent errors.
 - **Provider Configuration**: Improved default endpoint handling for providers when configuration is not explicitly set.

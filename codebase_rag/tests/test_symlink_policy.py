@@ -46,8 +46,8 @@ from codebase_rag.utils.path_utils import (
     python_stub_has_implementation,
     walk_eligible_files,
 )
+from codebase_rag.watch import CodeChangeEventHandler
 from evals.cgr_graph import _StatefulIngestor
-from realtime_updater import CodeChangeEventHandler
 
 SECRET = "sk-live-123"
 # Every link in the `layout` fixture, by its path in the repository.

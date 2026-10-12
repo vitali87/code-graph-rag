@@ -62,6 +62,7 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 
 <!-- SECTION:latest_news -->
 - **Incremental Indexing**: Improved handling of same-stem sibling matches and skipped EXPOSES cleanups during incremental updates.
+- **Real-Time Watcher**: `cgr watch` ships the file watcher with the package, so an installed cgr keeps a repository's graph in sync while you edit, in the same project `cgr start` syncs.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.

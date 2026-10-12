@@ -44,6 +44,7 @@ CLI_ERR_OUTPUT_REQUIRES_UPDATE = (
     "Error: --output/-o option requires --update-graph to be specified."
 )
 CLI_OPT_CLEAN = "--clean"
+CLI_OPT_REPO_PATH = "--repo-path"
 CLI_OPT_OUTPUT = "--output"
 CLI_OPT_INTERACTIVE_SETUP = "--interactive-setup"
 CLI_ERR_WORKSPACE_UPDATE_OPTION = (
@@ -195,6 +196,14 @@ CLI_ERR_SYNC_MARKER_FAILED = (
     "Refusing to sync '{project}': the incomplete-run marker could not be "
     "written, so an interrupted sync would leave a partial graph that looks "
     "complete. Check the graph connection and retry."
+)
+# `cgr watch` ensures the graph's constraints before its first scan, under the
+# marker, as `cgr start` does (review of PR 3365).
+CLI_ERR_GRAPH_CONSTRAINTS_FAILED = (
+    "Error: could not ensure the graph's constraints and indexes before "
+    "watching '{project}' ({error}). Nothing was scanned, and the project stays "
+    "marked as an unfinished sync until one finishes. Check the graph "
+    "connection and retry."
 )
 CLI_STATUS_SYNC_INCOMPLETE = (
     "sync interrupted or in progress -- re-run if no sync is active"

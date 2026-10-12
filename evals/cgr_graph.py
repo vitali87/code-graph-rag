@@ -1350,6 +1350,12 @@ class _StatefulIngestor:
                 # every marker-consulting path refuse and looks exactly like
                 # a production guard firing (PR #1547).
                 return []
+            case cq.CYPHER_CLI_SYNC_MARKER_OWNER:
+                # The CLI sync's own marker, which `cgr watch` reads before
+                # each scoped write (review of PR 3365). Never kept here, for
+                # the reason above: unmodelled, that read would fail and the
+                # watcher would refuse every edit it is handed.
+                return []
             case cq.CYPHER_CHECK_SCOPE_NODES:
                 return [
                     {

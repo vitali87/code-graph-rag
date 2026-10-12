@@ -4,6 +4,7 @@ from enum import StrEnum
 class CLICommandName(StrEnum):
     START = "start"
     INDEX = "index"
+    WATCH = "watch"
     EXPORT = "export"
     OPTIMIZE = "optimize"
     MCP_SERVER = "mcp-server"
@@ -42,6 +43,7 @@ PANEL_HELP = "Help"
 
 CMD_START = "Open the code assistant for a repository or workspace"
 CMD_INDEX = "Write an offline protobuf index for a repository"
+CMD_WATCH = "Keep a repository's graph in sync while you edit it"
 CMD_EXPORT = "Export the shared graph, or chosen projects, to JSON"
 CMD_OPTIMIZE = "Run a language-focused code optimisation session"
 CMD_MCP_SERVER = "Serve cgr tools over stdio or HTTP"
@@ -215,6 +217,12 @@ EXAMPLES_START = (
     '  cgr start --ask-agent "Where is authentication handled?"'
 )
 EXAMPLES_INDEX = "EXAMPLE\n\n  cgr index --repo-path ./my-repo -o ./index-out"
+EXAMPLES_WATCH = (
+    "EXAMPLES\n\n"
+    "  cgr watch --repo-path ./my-repo\n\n"
+    "  cgr watch --repo-path ./my-repo --debounce 2 --max-wait 10\n\n"
+    "  MEMGRAPH_PORT=7688 cgr watch --project-name my-project"
+)
 EXAMPLES_EXPORT = (
     "EXAMPLES\n\n"
     "  cgr export -o graph.json\n\n"
@@ -418,17 +426,22 @@ HELP_NO_INSTRUCTIONS = (
 HELP_REPO_PATH_RETRIEVAL = "Repository to open. Defaults to the current directory."
 HELP_REPO_PATH_INDEX = "Repository to index. Defaults to the current directory."
 HELP_REPO_PATH_OPTIMIZE = "Repository to optimise. Defaults to the current directory."
-HELP_REPO_PATH_WATCH = "Repository to watch."
+HELP_REPO_PATH_WATCH = "Repository to watch. Defaults to the current directory."
 HELP_PROJECT_NAME_WATCH = (
     "Project name to store in the graph. Defaults to the name "
-    "`cgr start --repo-path` gives the same repository, so both update one project."
+    "`cgr start --repo-path` gives the same repository, so both update one "
+    "project; if you passed `cgr start --project-name`, pass the same name here."
 )
 HELP_VERSION = "Show the version and exit."
 HELP_QUIET = "Suppress progress, banners, and informational logs."
 
-HELP_DEBOUNCE = "Debounce delay in seconds. Set to 0 to disable debouncing."
+HELP_DEBOUNCE = (
+    "Seconds to wait after a file's last change before updating the graph, so "
+    "a burst of saves becomes one update. 0 applies every change at once."
+)
 HELP_MAX_WAIT = (
-    "Maximum wait time in seconds before forcing an update during continuous edits."
+    "Longest a file that keeps changing waits before the graph is updated "
+    "anyway. Raised to --debounce when lower."
 )
 
 HELP_UPDATE_GRAPH = (
@@ -448,6 +461,10 @@ HELP_CLEAN_DB = (
 HELP_ASSUME_YES = (
     "Answer yes to destructive confirmations, such as the one --clean asks before "
     "deleting other projects from the shared graph."
+)
+HELP_ASSUME_YES_WATCH = (
+    "Watch even a home directory or the filesystem root, and take over a "
+    "--project-name another repository already indexes, as cgr start --yes does."
 )
 HELP_OUTPUT_GRAPH = (
     "Write this repository's project graph to PATH as JSON. Requires "
@@ -620,6 +637,7 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.OPTIMIZE: CMD_OPTIMIZE,
     CLICommandName.MCP_SERVER: CMD_MCP_SERVER,
     CLICommandName.INDEX: CMD_INDEX,
+    CLICommandName.WATCH: CMD_WATCH,
     CLICommandName.EXPORT: CMD_EXPORT,
     CLICommandName.GRAPH_LOADER: CMD_GRAPH_LOADER,
     CLICommandName.STATS: CMD_STATS,
