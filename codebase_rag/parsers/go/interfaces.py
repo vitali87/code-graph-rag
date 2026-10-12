@@ -13,6 +13,7 @@ and it never overrules a pair go/types proved.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from typing import NamedTuple
 
@@ -488,27 +489,32 @@ def embedded_method_links(
     bases: Mapping[str, Sequence[str]],
     files: Mapping[str, Expr],
 ) -> list[tuple[str, str]]:
-    """The declarations one interface's method set holds of one method in
-    one build, paired (#3360 review): a method an interface declares with
-    the nearest declaration of it down each interface it embeds
-    (`B interface { A; M() }`), and the declarations two embeds bring
-    together (`D interface { B; C }`, both declaring `M`). Go requires them
-    identical, so they are one method: renamed alone, one leaves the set
-    asking for both names, and a value of the embedded interface no longer
-    converts to the embedding one, even with no type implementing either.
-    `own` holds each interface's method qn per method; `bases`, every
-    interface each one may embed (one per build for a name each build
-    declares again); `files`, each one's file constraint. Two declarations
-    no one build compiles together are never paired.
+    """Links that join the declarations one interface's method set holds of
+    one method in one build (#3360 review): a method an interface declares
+    again over an embed (`B interface { A; M() }`), and the declarations two
+    embeds bring together (`D interface { B; C }`, both declaring `M`). Go
+    requires them identical, so they are one method: renamed alone, one
+    leaves the set asking for both names, and a value of the embedded
+    interface no longer converts to the embedding one, even with no type
+    implementing either. `own` holds each interface's method qn per method;
+    `bases`, every interface each one may embed (one per build for a name
+    each build declares again); `files`, each one's file constraint.
 
-    One pass, embedded interfaces first. An interface declaring nothing, in
-    a file every build compiles, shares what it embeds, so a chain costs a
-    step per link."""
-    pairs: dict[tuple[str, str], None] = {}
+    Every link joins two declarations one build compiles together, and the
+    links join each such set of declarations, as a tree: a rename follows
+    them transitively, so no pair is linked twice, nor checked once joined.
+    One pass, embedded interfaces first, carries per method one declaration
+    for each set of builds (the others are joined to it), and only for the
+    methods declared more than once: a chain costs a step per link, however
+    many declarations it gathers."""
+    counts = Counter(key for declared in own.values() for key in declared)
+    joined = _Joined()
     nearest: dict[str, _Declarations] = {}
     for interface in _embedded_first(bases, own.keys() | bases.keys()):
         scope = files.get(interface, ALWAYS)
-        declared = own.get(interface) or {}
+        declared = {
+            key: qn for key, qn in (own.get(interface) or {}).items() if counts[key] > 1
+        }
         inherited = _merged_declarations(
             [
                 _within(nearest[base], scope)
@@ -516,22 +522,42 @@ def embedded_method_links(
                 if base in nearest
             ],
             declared,
-            pairs,
+            joined,
         )
         for key, method_qn in declared.items():
-            pairs.update(
-                ((method_qn, other), None) for other, _ in inherited.get(key, ())
-            )
+            for other, _ in inherited.get(key, ()):
+                joined.join(method_qn, other)
         nearest[interface] = (
             {**inherited, **{key: ((qn, scope),) for key, qn in declared.items()}}
             if declared
             else inherited
         )
-    return list(pairs)
+    return joined.links
 
 
-# Per method, each nearest declaration of it and the builds it is that in.
+# Per method, a declaration of it for each set of builds it holds in.
 _Declarations = Mapping[GoMethodKey, tuple[tuple[str, Expr], ...]]
+
+
+class _Joined:
+    """The declarations joined so far, as a union-find, and the links that
+    joined them: one per join, never one between two already joined."""
+
+    def __init__(self) -> None:
+        self.parent: dict[str, str] = {}
+        self.links: list[tuple[str, str]] = []
+
+    def root(self, qn: str) -> str:
+        while (parent := self.parent.get(qn, qn)) != qn:
+            self.parent[qn] = self.parent.get(parent, parent)
+            qn = parent
+        return qn
+
+    def join(self, first: str, second: str) -> None:
+        roots = (self.root(first), self.root(second))
+        if roots[0] != roots[1]:
+            self.parent[roots[0]] = roots[1]
+            self.links.append((first, second))
 
 
 def _embedded_first(
@@ -579,41 +605,38 @@ def _within(found: _Declarations, scope: Expr) -> _Declarations:
 
 
 def _merged_declarations(
-    found: list[_Declarations],
-    declared: Mapping[GoMethodKey, str],
-    pairs: dict[tuple[str, str], None],
+    found: list[_Declarations], declared: Mapping[GoMethodKey, str], joined: _Joined
 ) -> _Declarations:
-    # The nearest declarations of each method down every embed. Where the
-    # interface does not declare the method itself, two of them one build
-    # may hold together are paired, unless an embed below paired them the
-    # other way round. An undecided constraint pairs: a rename that misses
-    # a declaration breaks a build, one more only renames it too.
+    # What every embed holds, one declaration per method and set of builds:
+    # one the same builds hold beside it is joined to it. Where the
+    # interface does not declare the method itself, two under different
+    # builds are joined if one build may hold both and nothing joined them
+    # yet. An undecided constraint joins: a rename that misses a
+    # declaration breaks a build, one more only renames it too.
     if len(found) < 2:
         return found[0] if found else {}
-    merged: dict[GoMethodKey, tuple[tuple[str, Expr], ...]] = {}
+    merged: dict[GoMethodKey, dict[Expr, str]] = {}
     for each in found:
         for key, declarations in each.items():
-            merged[key] = _joined(merged.get(key, ()), declarations)
-    for key, declarations in merged.items():
-        if key in declared:
+            kept = merged.setdefault(key, {})
+            for qn, builds in declarations:
+                first = kept.setdefault(builds, qn)
+                if first != qn and decide((builds,)) is not False:
+                    joined.join(first, qn)
+    for key, kept in merged.items():
+        if key in declared or len(kept) < 2:
             continue
-        for index, (qn, builds) in enumerate(declarations):
-            pairs.update(
-                ((earlier, qn), None)
-                for earlier, before in declarations[:index]
-                if (qn, earlier) not in pairs and decide((before, builds)) is not False
-            )
-    return merged
-
-
-def _joined(
-    prior: tuple[tuple[str, Expr], ...], more: tuple[tuple[str, Expr], ...]
-) -> tuple[tuple[str, Expr], ...]:
-    # One entry per declaration, in the builds either path reaches it in.
-    builds = dict(prior)
-    for qn, extra in more:
-        builds[qn] = any_of((builds[qn], extra)) if qn in builds else extra
-    return tuple(builds.items())
+        held = list(kept.items())
+        for index, (builds, qn) in enumerate(held):
+            for before, earlier in held[:index]:
+                if joined.root(earlier) != joined.root(qn) and (
+                    decide((before, builds)) is not False
+                ):
+                    joined.join(earlier, qn)
+    return {
+        key: tuple((qn, builds) for builds, qn in kept.items())
+        for key, kept in merged.items()
+    }
 
 
 def covering(

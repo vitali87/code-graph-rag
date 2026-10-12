@@ -33,6 +33,7 @@ from codebase_rag.graph_query import QueryFn
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.go import interfaces as go_ifaces
+from codebase_rag.parsers.go.builds import Expr
 from codebase_rag.parsers.go_frontend import GoCallSite, GoImplements, GoSemanticFacts
 from codebase_rag.tests.conftest import (
     create_and_run_updater,
@@ -5202,6 +5203,80 @@ def test_a_long_chain_of_embeds_indexes(
     assert ("proj.p.call.Call", "CALLS", "proj.p.t.T.M", "heuristic") in edges
 
 
+def _cascade_files(count: int) -> dict[str, str]:
+    # Greptile's fixture (PR #3360): each `A<i>` declares M; `C0` embeds A0,
+    # and each `C<i>` embeds `C<i-1>` and `A<i>`, so `C<i>` holds i + 1
+    # declarations of M, and F converts A0 to the last C.
+    decls = ["type A0 interface {\n\tM()\n}\n", "type C0 interface {\n\tA0\n}\n"]
+    for index in range(1, count):
+        decls.append(f"type A{index} interface {{\n\tM()\n}}\n")
+        decls.append(f"type C{index} interface {{\n\tC{index - 1}\n\tA{index}\n}}\n")
+    return {
+        "p/cascade.go": "package p\n\n" + "\n".join(decls),
+        "p/use.go": f"package p\n\nfunc F(a A0) C{count - 1} {{\n\treturn a\n}}\n",
+        "other/other.go": "package other\n\nfunc Other() {}\n",
+    }
+
+
+def _cascade_work(
+    root: Path, files: dict[str, str], sync: str, decided: list[int]
+) -> tuple[int, int, float]:
+    # The decisions the interface passes made and the links between
+    # interface methods the index wrote, fresh or in a sync after a
+    # comment-only edit, and how long that run took.
+    store = _StatefulIngestor()
+    decided.clear()
+    started = time.monotonic()
+    _go_updater(store, root).run(force=True)
+    if sync == "incremental":
+        cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
+        path = root / "other" / "other.go"
+        path.write_text(files["other/other.go"] + "// synced\n", encoding="utf-8")
+        os.utime(path, (cache_mtime + 1, cache_mtime + 1))
+        decided.clear()
+        started = time.monotonic()
+        _go_updater(store, root).run(force=False)
+    elapsed = time.monotonic() - started
+    joins = {
+        (source, target)
+        for source, kind, target, _ in _interface_edges(store)
+        if kind == cs.RelationshipType.OVERRIDES.value
+        and source.startswith("proj.p.cascade.A")
+        and target.startswith("proj.p.cascade.A")
+    }
+    return len(decided), len(joins), elapsed
+
+
+@pytest.mark.parametrize("sync", ["fresh", "incremental"])
+def test_a_cascade_of_gathered_declarations_indexes_in_linear_work(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch, sync: str
+) -> None:
+    # Each combining interface checked every pair of declarations gathered
+    # below it again and linked them all: n**3/6 decisions and n**2/2
+    # OVERRIDES, fresh and in a comment-only sync; 2000 interfaces did not
+    # finish linking in 12 s. Now one link per declaration, and the
+    # decisions grow as the cascade does.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    decide = go_ifaces.decide
+    decided: list[int] = []
+
+    def counted(exprs: Iterable[Expr]) -> bool | None:
+        decided.append(1)
+        return decide(exprs)
+
+    monkeypatch.setattr(go_ifaces, "decide", counted)
+    work = {}
+    for count in (150, 300, 2000) if sync == "fresh" else (150, 300):
+        files = _cascade_files(count)
+        (temp_repo / f"c{count}").mkdir()
+        root = _variant_repo(temp_repo / f"c{count}" / "proj", files)
+        work[count] = _cascade_work(root, files, sync, decided)
+        assert work[count][1] == count - 1, (count, work[count])
+    assert work[300][0] <= 3 * max(work[150][0], 1), work
+    if sync == "fresh":
+        assert work[2000][2] < 60, work
+
+
 def test_a_long_chain_of_embeds_indexes_with_go_types(
     temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -5290,6 +5365,11 @@ _INTERFACE_ONLY: dict[str, dict[str, str]] = {
             "func F(a A) D {\n\treturn a\n}\n"
         ),
     },
+    # Greptile's cascade, small: renaming one A renames every A.
+    "cascade": {
+        "p/i.go": _cascade_files(5)["p/cascade.go"]
+        + "\nfunc F(a A0) C4 {\n\treturn a\n}\n",
+    },
     "per-build": {
         "p/a_linux.go": "package p\n\ntype A interface {\n\tM()\n}\n",
         "p/a_other.go": (
@@ -5314,6 +5394,7 @@ _INTERFACE_ONLY_RENAMES = {
         ("siblings", "i.B.M"),
         ("diamond-redeclare", "i.C.M"),
         ("diamond", "i.A.M"),
+        ("cascade", "i.A2.M"),
         ("per-build", "a_other.A.M"),
     ),
     "gotypes": (("redeclare", "i.A.M"), ("per-build", "a_other.A.M")),

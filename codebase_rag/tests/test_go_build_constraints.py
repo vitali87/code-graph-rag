@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import random
 import time
+from collections.abc import Iterable
 from pathlib import Path
 
 import pytest
@@ -517,3 +518,54 @@ def test_two_builds_declarations_are_paired_only_where_one_build_holds_both() ->
         ("B.M", "IW.M"),
         ("W.M", "IW.M"),
     }
+
+
+def _cascade(count: int) -> tuple[dict[str, dict[str, str]], dict[str, list[str]]]:
+    # Greptile's fixture (PR #3360): each `A<i>` declares M; `C0` embeds A0,
+    # and each `C<i>` embeds `C<i-1>` and `A<i>`, so `C<i>` holds i + 1
+    # declarations of M.
+    own = {f"A{index}": {"M": f"A{index}.M"} for index in range(count)}
+    bases = {"C0": ["A0"]}
+    bases.update(
+        {f"C{index}": [f"C{index - 1}", f"A{index}"] for index in range(1, count)}
+    )
+    return own, bases
+
+
+@pytest.mark.parametrize("builds", ["one", "alternating"])
+def test_a_cascade_of_gathered_declarations_is_joined_in_linear_work(
+    monkeypatch: pytest.MonkeyPatch, builds: str
+) -> None:
+    # Every combining interface checked every pair gathered below it again:
+    # n**3/6 checks and n**2/2 links (a clique). Now one link per
+    # declaration, and the decisions grow as the cascade does. `alternating`
+    # declares every other A for Linux only and the rest for Windows, so
+    # half the gathered declarations never share a build.
+    decide = go_ifaces.decide
+    decided: list[int] = []
+
+    def counted(exprs: Iterable[Expr]) -> bool | None:
+        decided.append(1)
+        return decide(exprs)
+
+    monkeypatch.setattr(go_ifaces, "decide", counted)
+    files = (
+        {
+            f"A{index}": name_constraint("a_linux.go" if index % 2 else "a_windows.go")
+            for index in range(4000)
+        }
+        if builds == "alternating"
+        else {}
+    )
+    work: dict[int, tuple[int, int]] = {}
+    for count in (1000, 2000):
+        decided.clear()
+        own, bases = _cascade(count)
+        links = _links(own, bases, files)
+        work[count] = (len(decided), len(links))
+    assert work[2000][1] == (2000 - 1 if builds == "one" else 2000 - 2)
+    assert work[2000][0] <= 3 * max(work[1000][0], 1)
+    own, bases = _cascade(4000)
+    started = time.monotonic()
+    _links(own, bases, files)
+    assert time.monotonic() - started < 5
