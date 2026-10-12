@@ -417,6 +417,19 @@ def contains_node(parent: ASTNode, target: ASTNode) -> bool:
     )
 
 
+def unparenthesized(node: Node | None) -> Node | None:
+    """The expression under any parentheses: `(fn)()` still calls `fn`.
+
+    Without the unwrap a stored computed lookup invoked as `(fn)()` was not
+    recognised as a call, and `(registry[name])()` was not recognised as a
+    computed dispatch, so an unrelated invoked literal in the same body could
+    be recorded as the dynamic-trace site (#1543 review).
+    """
+    while node is not None and node.type == cs.TS_PARENTHESIZED_EXPRESSION:
+        node = next(iter(node.named_children), None)
+    return node
+
+
 def _decorator_tail_names(decorators: list[str]) -> set[str]:
     return {
         decorator.lstrip("@#[]() ")
