@@ -39,13 +39,17 @@ _TUPLE_ELEMENT_NAME = re.compile(cs.CSHARP_TUPLE_ELEMENT_NAME_PATTERN)
 class ArgumentType(NamedTuple):
     """What the syntax says about one argument: a literal's C# type and,
     for an integral one, its value, or a type's written name, its arity and,
-    where the source spells them (`new Ctx<Person>()`), its type arguments."""
+    where the source spells them (`new Ctx<Person>()`), its type arguments.
+    `bounds` marks a value of a type parameter in scope where it is passed
+    (Greptile review of PR 2814): no type of its name, it converts to
+    `object` and to the types its `where` clauses name, these."""
 
     literal: str | None
     name: str | None
     arity: int
     arguments: tuple[str, ...] | None
     value: int | None = None
+    bounds: tuple[str, ...] | None = None
 
 
 class Fit(IntEnum):
@@ -123,6 +127,9 @@ class Scope(NamedTuple):
     # Whether a resolved type is a reference type, None when not known: a
     # `?` on one only annotates it (`unannotated`).
     reference: ReferenceKind | None = None
+    # (type parameter, the types its `where` clauses name) where they are
+    # known: an expression's, read off the declarations around it.
+    bounds: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
 def with_type_parameters(scope: Scope | None, names: Collection[str]) -> Scope | None:

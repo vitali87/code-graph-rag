@@ -506,7 +506,12 @@ def _declared_indexers(type_node: Node) -> tuple[str, ...]:
         return ()
     indexers: list[str] = []
     for member in body.named_children:
-        if member.type != cs.TS_CSHARP_INDEXER_DECLARATION:
+        # An explicit interface implementation (`Left IA.this[int i]`) is
+        # reached through the interface alone, never the type's own index.
+        if member.type != cs.TS_CSHARP_INDEXER_DECLARATION or any(
+            child.type == cs.TS_CSHARP_EXPLICIT_INTERFACE_SPECIFIER
+            for child in member.children
+        ):
             continue
         returned = safe_decode_text(member.child_by_field_name(cs.FIELD_TYPE))
         if not returned or member.child_by_field_name(cs.FIELD_PARAMETERS) is None:

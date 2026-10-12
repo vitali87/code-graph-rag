@@ -2422,6 +2422,212 @@ public class Use {
 """
 
 
+TYPE_PARAMETER_SHADOW_CS = """\
+namespace Tsh;
+public class Left {
+    public void Run() { }
+}
+public class Right {
+    public void Run() { }
+}
+public struct S { }
+public interface IIdx {
+    Left this[int i] { get; }
+    void Act();
+}
+public class Impl : IIdx {
+    public Left this[int i] => new Left();
+    public void Act() { }
+}
+public class T {
+    public static S operator ==(T a, T b) => new S();
+    public static S operator !=(T a, T b) => new S();
+    public override bool Equals(object? o) => true;
+    public override int GetHashCode() => 0;
+    public Right this[int i] => new Right();
+    public void Act() { }
+}
+public class TD : T { }
+public class G {
+    public Left this[object o] => new Left();
+    public Right this[T t] => new Right();
+}
+public class Box<U> {
+    public Left this[U u] => new Left();
+    public Right this[object o] => new Right();
+}
+public class C {
+    public void N(bool v) { }
+    public void N(S v) { }
+    public void P(object v) { }
+    public void P(T v) { }
+}
+public class Use<T> where T : class, IIdx, new() {
+    public void Argument() { var g = new G(); T x = new T(); g[x].Run(); }
+    public void Receiver() { T t = new T(); t[0].Run(); }
+    public void TypeArgument() { var b = new Box<T>(); TD d = new TD(); b[d].Run(); }
+    public void Operands() { T x = new T(); T y = new T(); new C().N(x == y); }
+    public void Member() { T t = new T(); t.Act(); }
+    public void Passed() { T t = new T(); new C().P(t); }
+}
+"""
+
+LOCAL_TYPE_PARAMETER_CS = """\
+namespace Tsl;
+public class Left {
+    public void Run() { }
+}
+public class Right {
+    public void Run() { }
+}
+public interface IIdx {
+    Left this[int i] { get; }
+}
+public class Impl : IIdx {
+    public Left this[int i] => new Left();
+}
+public class T {
+    public Right this[int i] => new Right();
+}
+public class G {
+    public Left this[object o] => new Left();
+    public Right this[T t] => new Right();
+}
+public class Use {
+    public void Argument() { Go(new Impl()); }
+    public void Receiver() { Index(new Impl()); }
+    void Go<T>(T x) where T : class, IIdx { var g = new G(); g[x].Run(); }
+    void Index<T>(T t) where T : IIdx { t[0].Run(); }
+}
+"""
+
+INTERFACE_INDEX_HIDING_CS = """\
+namespace Ih;
+public class Left {
+    public void Run() { }
+}
+public class Right {
+    public void Run() { }
+}
+public interface IA { Left this[int i] { get; } }
+public interface IB : IA { new Right this[int i] { get; } }
+public interface IC : IB, IA { }
+public interface IB1 : IA { new Right this[int i] { get; } }
+public interface IB2 : IA { }
+public interface ID : IB1, IB2 { }
+public interface IS : IA { Right this[string s] { get; } }
+public interface IG<V> { V this[int i] { get; } }
+public interface IH : IG<Left> { new Right this[int i] { get; } }
+public interface IHH : IH, IG<Left> { }
+public class Impl : IC, ID, IS, IHH {
+    Left IA.this[int i] => new Left();
+    public Right this[int i] => new Right();
+    public Right this[string s] => new Right();
+    Left IG<Left>.this[int i] => new Left();
+}
+public class K : IA {
+    Left IA.this[int i] => new Left();
+    public Right this[int i] => new Right();
+}
+public class Use {
+    public void Relisted() { IC c = new Impl(); c[0].Run(); }
+    public void Diamond() { ID d = new Impl(); d[0].Run(); }
+    public void OtherSignature() { IS s = new Impl(); s[0].Run(); }
+    public void OwnSignature() { IS s = new Impl(); s["x"].Run(); }
+    public void Generic() { IHH h = new Impl(); h[0].Run(); }
+    public void Base() { IA a = new Impl(); a[0].Run(); }
+    public void Class() { K k = new K(); k[0].Run(); }
+    public void Explicit() { IA a = new K(); a[0].Run(); }
+}
+"""
+
+
+class TestTypeParametersAndHiddenIndexersBindAsCSharpDoes:
+    # Greptile review of PR 2814, round 21, and the oracle families it led
+    # to: a type parameter in scope where an index, an operand or a
+    # receiver is written is no type of its name in the file, and an
+    # indexer a base interface declares is hidden by one a type deriving
+    # from it declares, however the base is reached. Each source states
+    # what Roslyn runs (.NET 8).
+    def test_an_index_of_a_type_parameter_binds_by_its_constraints(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Greptile 4244867928: `x` is a `T`, the type parameter, which only
+        # `this[object]` takes; the class `T`'s `this[T]` does not.
+        calls = _resolved_calls(TYPE_PARAMETER_SHADOW_CS, temp_repo, mock_ingestor)
+        assert calls["Argument"] == {("Tsh.Left.Run", _EXACT)}, calls
+        # `Box<T>`'s `this[U u]` takes a `T` alone, so `TD` binds `this[object]`.
+        assert calls["TypeArgument"] == {("Tsh.Right.Run", _EXACT)}, calls
+
+    def test_a_receiver_of_a_type_parameter_has_its_constraints_members(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(TYPE_PARAMETER_SHADOW_CS, temp_repo, mock_ingestor)
+        # `t[0]` is `IIdx`'s indexer, not the class `T`'s.
+        assert calls["Receiver"] == {("Tsh.Left.Run", _EXACT)}, calls
+        assert ("Tsh.IIdx.Act", _EXACT) in calls["Member"], calls
+        assert ("Tsh.T.Act", _EXACT) not in calls["Member"], calls
+
+    def test_operands_and_arguments_of_a_type_parameter_take_no_types_of_its_name(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(TYPE_PARAMETER_SHADOW_CS, temp_repo, mock_ingestor)
+        # The class `T`'s `operator ==` takes no type parameter `T`.
+        assert calls["Operands"] == {("Tsh.C.N(bool)", _EXACT)}, calls
+        assert calls["Passed"] == {("Tsh.C.P(object)", _EXACT)}, calls
+
+    def test_a_methods_type_parameter_shadows_a_type_of_its_name(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(LOCAL_TYPE_PARAMETER_CS, temp_repo, mock_ingestor)
+        assert calls["Go(T)"] == {("Tsl.Left.Run", _EXACT)}, calls
+        assert calls["Index(T)"] == {("Tsl.Left.Run", _EXACT)}, calls
+
+    def test_a_relisted_base_interfaces_indexer_is_hidden(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Greptile 4244867933: `IC : IB, IA` binds `IB`'s indexer, which
+        # hides `IA`'s however `IA` is reached; so does a diamond.
+        calls = _resolved_calls(INTERFACE_INDEX_HIDING_CS, temp_repo, mock_ingestor)
+        assert calls["Relisted"] == {("Ih.Right.Run", _EXACT)}, calls
+        assert calls["Diamond"] == {("Ih.Right.Run", _EXACT)}, calls
+        assert calls["Generic"] == {("Ih.Right.Run", _EXACT)}, calls
+        # Negative: `IA` itself keeps its own.
+        assert calls["Base"] == {("Ih.Left.Run", _EXACT)}, calls
+
+    def test_a_derived_indexer_that_cannot_take_the_index_hides_nothing(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(INTERFACE_INDEX_HIDING_CS, temp_repo, mock_ingestor)
+        assert calls["OtherSignature"] == {("Ih.Left.Run", _EXACT)}, calls
+        assert calls["OwnSignature"] == {("Ih.Right.Run", _EXACT)}, calls
+
+    def test_an_explicit_implementation_is_no_indexer_of_its_class(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(INTERFACE_INDEX_HIDING_CS, temp_repo, mock_ingestor)
+        assert calls["Class"] == {("Ih.Right.Run", _EXACT)}, calls
+        assert calls["Explicit"] == {("Ih.Left.Run", _EXACT)}, calls
+
+
+def test_an_incremental_run_hides_and_skips_indexers_as_a_fresh_one(
+    temp_repo: Path,
+) -> None:
+    # The hiding and an explicit implementation's absence hold for types an
+    # incremental run reads back from an unchanged file.
+    lib, _, use = INTERFACE_INDEX_HIDING_CS.partition("public class Use {")
+    fresh, edited = _two_file_calls(
+        temp_repo, lib, f"namespace Ih;\npublic class Use {{{use}"
+    )
+    assert {
+        ("Relisted", "Right", "Run"),
+        ("Diamond", "Right", "Run"),
+        ("Class", "Right", "Run"),
+        ("Explicit", "Left", "Run"),
+    } <= fresh, fresh
+    assert edited == fresh
+
+
 def test_an_incremental_run_reads_indexer_parameters_back(temp_repo: Path) -> None:
     # An indexer's parameter names, defaults and modes are stored on its
     # type's node, so an index into a type of an unchanged file binds by

@@ -86,6 +86,8 @@ from .utils import (
     signature_type_name,
     split_type_ref,
     strip_generic_arguments,
+    type_parameter_constraints,
+    type_parameter_names,
     unique_carrier,
 )
 
@@ -312,7 +314,8 @@ def _canonical_argument(
 ) -> ArgumentType | None:
     # An argument's type, resolved once in the caller's file: its name with
     # its arity, its shape kept (`Widget[]`, a tuple's elements), and each
-    # type argument the syntax spells.
+    # type argument the syntax spells. A value of a type parameter whose
+    # `where` clauses the scope knows carries the types they name.
     if argument is None or argument.name is None:
         return argument
     arguments = (
@@ -320,11 +323,19 @@ def _canonical_argument(
         if argument.arguments is not None
         else None
     )
+    bounds = dict(scope.bounds).get(argument.name) if not arguments else None
     return ArgumentType(
         argument.literal,
         canonical_type(argument.name, scope, argument.arity),
         argument.arity,
         arguments,
+        bounds=None
+        if bounds is None
+        else tuple(
+            canonical_type(bound, scope)
+            for bound in bounds
+            if bound not in cs.CSHARP_KIND_CONSTRAINTS
+        ),
     )
 
 
@@ -411,6 +422,44 @@ def _takes_any_value(parameter: str) -> bool:
     )
 
 
+def _type_parameter_bounds_at(node: Node) -> dict[str, tuple[str, ...]]:
+    # The type parameters in scope where `node` is written, those of every
+    # type, method and local function around it, the nearest of a name
+    # first, each with the types and kinds its `where` clauses write. They
+    # shadow a type of the same name in the file (Greptile review of PR
+    # 2814).
+    found: dict[str, tuple[str, ...]] = {}
+    current = node.parent
+    while current is not None:
+        if current.type in cs.CSHARP_GENERIC_DECLARATIONS:
+            for name, bounds in _declared_bounds(current).items():
+                found.setdefault(name, bounds)
+        current = current.parent
+    return found
+
+
+def _declared_bounds(declaration: Node) -> dict[str, tuple[str, ...]]:
+    # The type parameters a declaration declares, each with the types and
+    # kinds its `where` clauses write.
+    names = [
+        name
+        for child in declaration.children
+        if child.type == cs.TS_CSHARP_TYPE_PARAMETER_LIST
+        for name in type_parameter_names(child)
+    ]
+    if not names:
+        return {}
+    constraints = type_parameter_constraints(declaration)
+    return {
+        name: tuple(bound for of, bound in constraints if of == name) for name in names
+    }
+
+
+def _type_parameters_at(node: Node) -> frozenset[str]:
+    # The names of the type parameters in scope where `node` is written.
+    return frozenset(_type_parameter_bounds_at(node))
+
+
 def _argument_list(node: Node) -> Node | None:
     # The arguments a call writes, or the index an element access writes,
     # which binds an indexer as a call's arguments bind a method.
@@ -469,6 +518,16 @@ class _IndexSite(NamedTuple):
     local_var_types: dict[str, str]
     module_qn: str
     caller_qn: str | None
+
+
+class _Index(NamedTuple):
+    """An element access's index as indexers are scored against it: its
+    arguments' types, what it writes of them beside their types, and the
+    type parameters in scope where it is written."""
+
+    arguments: list[ArgumentType | None]
+    site: _CallSite
+    type_parameters: frozenset[str]
 
 
 class _Form(NamedTuple):
@@ -676,6 +735,28 @@ def _passed_in_modes(
             fits, given or ("",) * len(fits), form.slots, strict=True
         )
     ]
+
+
+def _to_type_parameter(
+    fitted: Fit | None,
+    parameter: str,
+    argument: ArgumentType | None,
+    in_scope: frozenset[str],
+) -> Fit | None:
+    # A parameter of a type parameter in scope where the index is written
+    # (`Box<T>`'s `this[U u]` read as `this[T u]`) takes a value of that
+    # type parameter, or a literal, as judged; a value of any other type
+    # known does not convert to it.
+    if (
+        fitted is None
+        or parameter not in in_scope
+        or argument is None
+        or argument.name is None
+        or argument.literal is not None
+        or argument.bounds is not None
+    ):
+        return fitted
+    return None
 
 
 def _index_of(names: Sequence[str], name: str) -> int:
@@ -2794,7 +2875,7 @@ class CSharpTypeInferenceEngine:
             return []
         if module_qn is None:
             return None
-        caller = self._file_scope(module_qn)
+        caller = self._scope_at(nodes[0], module_qn)
         arguments = [
             _canonical_argument(self._operand_argument(node, typed), caller)
             for node, typed in zip(nodes, operands, strict=True)
@@ -2853,6 +2934,21 @@ class CSharpTypeInferenceEngine:
         written = typed or _spelled_type(node)
         return _written_argument(written) if written else None
 
+    def _operand_bound(
+        self, written: str, node: Node, module_qn: str
+    ) -> str | _Sentinel | None:
+        # The type whose operators an operand of a written type brings in:
+        # itself; for a type parameter in scope, the one type its `where`
+        # clauses name, None for one they name no type of, `_PASSED_OVER`
+        # for several or one not known.
+        bounds = _type_parameter_bounds_at(node)
+        core = strip_generic_arguments(written)
+        if core not in bounds:
+            return written
+        if all(bound in cs.CSHARP_KIND_CONSTRAINTS for bound in bounds[core]):
+            return None
+        return self._named_at(written, node, module_qn) or _PASSED_OVER
+
     def _operator_return(self, operator_qn: str) -> str | None:
         # The type a user-defined operator is declared to return: a keyword,
         # or the first-party type's qn; None when that is not known.
@@ -2883,6 +2979,10 @@ class CSharpTypeInferenceEngine:
         )
         if not written or module_qn is None:
             return _PASSED_OVER
+        bound = self._operand_bound(written, node, module_qn)
+        if not isinstance(bound, str):
+            return bound
+        written = bound
         if predefined_keyword(written) is not None:
             return None
         qn = self._resolve_in(
@@ -2939,13 +3039,54 @@ class CSharpTypeInferenceEngine:
             ) or self._member_field_type(
                 receiver, local_var_types, module_qn, caller_qn
             )
+        if receiver.type in (
+            cs.TS_CSHARP_ELEMENT_ACCESS_EXPRESSION,
+            cs.TS_CSHARP_IDENTIFIER,
+        ):
+            return self._held_type_name(receiver, local_var_types, module_qn, caller_qn)
+        return None
+
+    def _held_type_name(
+        self,
+        receiver: Node,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        caller_qn: str | None,
+    ) -> str | None:
+        # The type name an element or a local, parameter or field receiver
+        # is declared with, read where it is written (`_named_at`).
         if receiver.type == cs.TS_CSHARP_ELEMENT_ACCESS_EXPRESSION:
-            return self._element_type(receiver, local_var_types, module_qn, caller_qn)
-        if receiver.type == cs.TS_CSHARP_IDENTIFIER:
-            return self._local_result_type(
+            held = self._element_type(receiver, local_var_types, module_qn, caller_qn)
+        else:
+            held = self._local_result_type(
                 receiver, local_var_types, module_qn, caller_qn
             ) or self._identifier_receiver_type(receiver, local_var_types, caller_qn)
-        return None
+        return self._named_at(held, receiver, module_qn) if held else None
+
+    def _named_at(self, type_name: str, node: Node, module_qn: str) -> str | None:
+        # A type a receiver is of, by the name it is written with where
+        # `node` is: a type parameter in scope there stands for the one
+        # first-party type its `where` clauses name, whose members it has,
+        # and for no type of the file of its name (Greptile review of PR
+        # 2814); None when they name none or several.
+        bounds = _type_parameter_bounds_at(node)
+        core = split_type_ref(type_name)[0].removesuffix(cs.CHAR_QUESTION_MARK)
+        if core not in bounds:
+            return type_name
+        named = [
+            bound
+            for bound in bounds[core]
+            if bound not in cs.CSHARP_KIND_CONSTRAINTS
+            and strip_generic_arguments(bound) not in bounds
+            and self._type_name_to_qn(bound, module_qn) is not None
+        ]
+        return named[0] if len(named) == 1 else None
+
+    def _type_at(self, type_name: str, node: Node, module_qn: str) -> str | None:
+        # The first-party type a receiver of a written type is of
+        # (`_named_at`).
+        named = self._named_at(type_name, node, module_qn)
+        return self._type_name_to_qn(named, module_qn) if named else None
 
     def _named_receiver_class(
         self,
@@ -3027,8 +3168,12 @@ class CSharpTypeInferenceEngine:
         # the name is the framework's: the file sees no first-party type of
         # it, and imports the framework's namespace or no first-party type
         # has the name at all.
-        name = strip_generic_arguments(written)
-        arguments = type_arguments(written)
+        # A type parameter's indexers are its constraint's.
+        named = self._named_at(written, site.access, site.module_qn)
+        if named is None:
+            return None
+        name = strip_generic_arguments(named)
+        arguments = type_arguments(named)
         owner = self._resolve_in(site.module_qn, name, len(arguments))
         if owner is not None:
             return self._indexer_result(owner, arguments, site)
@@ -3072,21 +3217,24 @@ class CSharpTypeInferenceEngine:
         # The type the indexer C# binds an index to returns (§12.8.12.3): of
         # the indexers a first-party type and its bases declare, those the
         # index may bind, ranked as a call's overloads are (Greptile review
-        # of PR 2814: `xs[b: "s", a: 0]` binds `this[int a, string b]`), a
-        # base's dropped once one of a type deriving from it is known to
-        # take it. Each type's parameters are bound by the written type
-        # arguments and those each type passes its bases. A type deriving
-        # from a framework collection indexes as it where no indexer of its
-        # own takes the index. None when no indexer is known or several may
+        # of PR 2814: `xs[b: "s", a: 0]` binds `this[int a, string b]`). Once
+        # one a type declares is known to take the index, every indexer its
+        # bases declare drops out, however else they are reached (`IC : IB,
+        # IA` binds `IB`'s, which hides `IA`'s). The index and the written
+        # type arguments resolve where the access is written, the type
+        # parameters around it in scope; each type's parameters are bound by
+        # them and by those each type passes its bases. A type deriving from
+        # a framework collection indexes as it where no indexer of its own
+        # takes the index. None when no indexer is known or several may
         # apply.
-        caller = self._file_scope(site.module_qn)
+        caller = self._scope_at(site.access, site.module_qn)
         shape = self.csharp_generic_shapes.get(owner)
         parameters = shape.parameters if shape is not None else ()
         bindings = {
             p: canonical_type(a, caller)
             for p, a in zip(parameters, arguments, strict=False)
         }
-        index = (
+        index = _Index(
             [
                 _canonical_argument(argument, caller)
                 for argument in self._argument_types(
@@ -3094,22 +3242,43 @@ class CSharpTypeInferenceEngine:
                 )
             ],
             _CallSite(_argument_names(site.access), _argument_modes(site.access)),
+            caller.type_parameters,
         )
+        walk, bases_of = self._indexer_walk(owner, bindings)
+        ancestors = _ancestors_within([current for current, _ in walk], bases_of)
         picks: list[Scored] = []
         returns: dict[str, str | None] = {}
-        framework: str | None = None
-        pending = [(owner, bindings)]
-        seen: set[str] = set()
-        while pending:
-            current, bound = pending.pop(0)
-            if current in seen:
-                continue
-            seen.add(current)
+        deciding: set[str] = set()
+        frameworks: list[tuple[str, str]] = []
+        for current, bound in walk:
             level = self._indexer_level(current, bound, index, returns)
             picks.extend(level)
             if any(certainly_applies(scored) for scored in level):
+                deciding.add(current)
+            elif (element := self._framework_base_element(current, bound)) is not None:
+                frameworks.append((current, element))
+        hidden = set().union(*(ancestors[current] for current in deciding))
+        return self._picked_index(
+            [scored for scored in picks if scored.owner not in hidden],
+            returns,
+            next((e for current, e in frameworks if current not in hidden), None),
+        )
+
+    def _indexer_walk(
+        self, owner: str, bindings: Mapping[str, str]
+    ) -> tuple[list[tuple[str, Mapping[str, str]]], dict[str, list[str]]]:
+        # The types an index into `owner` looks up indexers in, nearest
+        # first, each with the type arguments its parameters are bound to,
+        # and the bases each one passes them on to (`_indexer_bases`).
+        walk: list[tuple[str, Mapping[str, str]]] = []
+        bases_of: dict[str, list[str]] = {}
+        pending: list[tuple[str, Mapping[str, str]]] = [(owner, bindings)]
+        while pending:
+            current, bound = pending.pop(0)
+            if current in bases_of:
                 continue
-            framework = framework or self._framework_base_element(current, bound)
+            walk.append((current, bound))
+            bases_of[current] = self._indexer_bases(current)
             pending.extend(
                 (
                     base,
@@ -3117,20 +3286,20 @@ class CSharpTypeInferenceEngine:
                         self.csharp_generic_shapes,
                         self.csharp_class_generic_arity,
                         current,
-                        bound,
+                        dict(bound),
                         base,
                         self.scope_of(current),
                     ),
                 )
-                for base in self._indexer_bases(current)
+                for base in bases_of[current]
             )
-        return self._picked_index(picks, returns, framework)
+        return walk, bases_of
 
     def _indexer_level(
         self,
         declaring: str,
         bindings: Mapping[str, str],
-        index: tuple[list[ArgumentType | None], _CallSite],
+        index: _Index,
         returns: dict[str, str | None],
     ) -> list[Scored]:
         # `declaring`'s indexers the index may bind, scored, each keyed in
@@ -3162,7 +3331,7 @@ class CSharpTypeInferenceEngine:
         self,
         key: str,
         shape: CSharpCallShape,
-        index: tuple[list[ArgumentType | None], _CallSite],
+        index: _Index,
         reading: tuple[Scope | None, Mapping[str, str], frozenset[str]],
     ) -> list[Scored]:
         # One indexer scored in each form its index binds it in, as `_scores`
@@ -3170,7 +3339,7 @@ class CSharpTypeInferenceEngine:
         # defaults out, each argument passed in its mode. One whose
         # parameters are not known by name (an older graph's) takes a named
         # index as not known.
-        arguments, site = index
+        arguments, site, in_scope = index
         scope, bindings, open_names = reading
         types = list(shape.types)
         if len(shape.names) != len(types) and any(site.names):
@@ -3190,7 +3359,7 @@ class CSharpTypeInferenceEngine:
             form = _form_of(types, slots, expanded, shape.variadic)
             seen = [declared_type(p, scope, bindings) for p in form.parameters]
             fits = [
-                fit(p, a, open_names, judge)
+                _to_type_parameter(fit(p, a, open_names, judge), p, a, in_scope)
                 for p, a in zip(seen, arguments, strict=True)
             ]
             scored.append(
@@ -3916,7 +4085,7 @@ class CSharpTypeInferenceEngine:
         # receiver may itself be a type name (a static call `Foo.Bar()`).
         type_name = local_var_types.get(name)
         if type_name is not None:
-            return self._type_name_to_qn(type_name, module_qn)
+            return self._type_at(type_name, receiver, module_qn)
         # A `var` local a call initializes is of the type the call returns,
         # as a chained call's receiver is (Greptile review of PR 2814).
         if result := self._call_result(
@@ -3937,7 +4106,7 @@ class CSharpTypeInferenceEngine:
             return None
         if class_qn := self._containing_class_qn(caller_qn):
             if ftype := self._field_type(class_qn, name):
-                return self._type_name_to_qn(ftype, module_qn)
+                return self._type_at(ftype, receiver, module_qn)
         return self._type_name_to_qn(name, module_qn)
 
     def _qualified_type_name_to_qn(
@@ -5553,6 +5722,9 @@ class CSharpTypeInferenceEngine:
         if wanted_core in open_names and (passed := _passed_type(argument)):
             kinds = TypeKinds(self._variances, self._is_reference)
             return infer_into(passed, parameter, open_names, inferred, kinds)
+        if argument.bounds is not None:
+            # A type parameter is itself alone, never a type of its name.
+            return argument.name == parameter
         if given_shape != wanted_shape:
             return False
         given_qn = self._first_party_type(given_core)
@@ -5605,6 +5777,8 @@ class CSharpTypeInferenceEngine:
             # Every type converts to `object` (boxing a value), and to
             # `dynamic`: a known conversion, ranked as any other.
             return True
+        if argument.bounds is not None:
+            return self._bound_converts(argument.bounds, parameter, open_names)
         varies = self._variance_converts(given_text, parameter, open_names)
         if varies is not None:
             return varies
@@ -5630,6 +5804,51 @@ class CSharpTypeInferenceEngine:
         if implicit:
             return True
         return None if None in (derived, implicit) else False
+
+    def _bound_converts(
+        self, bounds: Sequence[str], parameter: str, open_names: Collection[str]
+    ) -> bool | None:
+        # Whether a value of a type parameter converts to the parameter
+        # through one of the types its `where` clauses name; besides
+        # `object`, it converts to nothing else.
+        verdicts = {
+            self._one_bound_converts(bound, parameter, open_names) for bound in bounds
+        }
+        if True in verdicts:
+            return True
+        return None if None in verdicts else False
+
+    def _one_bound_converts(
+        self, bound: str, parameter: str, open_names: Collection[str]
+    ) -> bool | None:
+        # Whether a type parameter's value converts to the parameter through
+        # one bound. An interface bound gives it that interface and its base
+        # interfaces alone: no user-defined conversion is from an interface,
+        # and none from it to a class is implicit.
+        bound_qn = self._first_party_type(strip_generic_arguments(bound))
+        wanted_core, wanted_shape = type_shape(parameter)
+        wanted_qn = self._first_party_type(wanted_core)
+        if (
+            bound_qn is not None
+            and wanted_qn is not None
+            and not wanted_shape
+            and self.function_registry.get(bound_qn) == NodeType.INTERFACE
+        ):
+            ancestry = self._class_ancestry(bound_qn)
+            if wanted_qn in ancestry:
+                return True
+            return False if self._all_indexed(ancestry) else None
+        given = ArgumentType(
+            None,
+            strip_generic_arguments(bound),
+            generic_arity_of_type_text(bound),
+            type_arguments(bound),
+        )
+        identical = self._identical_as_written(given, parameter, open_names)
+        converts = self._converts_as_written(given, parameter, open_names)
+        if identical or converts:
+            return True
+        return None if None in (identical, converts) else False
 
     def _variances(self, core: str) -> tuple[str, ...] | None:
         # Each type parameter's variance, "out", "in" or "", of the generic
@@ -6050,15 +6269,26 @@ class CSharpTypeInferenceEngine:
         in_scope = self._method_type_parameters(call.caller_qn or "")
         if (class_qn := self._containing_class_qn(call.caller_qn)) is not None:
             in_scope |= self._type_parameters_in_scope(class_qn)
+        # The declarations around the call add the `where` clauses, and a
+        # local function's own type parameters.
+        bounds = _type_parameter_bounds_at(call.node)
         return Scope(
-            partial(self._resolve_in, call.module_qn), in_scope, self._is_reference
+            partial(self._resolve_in, call.module_qn),
+            in_scope | frozenset(bounds),
+            self._is_reference,
+            tuple(bounds.items()),
         )
 
-    def _file_scope(self, module_qn: str) -> Scope:
-        # Where an expression of `module_qn` resolves the types it writes,
-        # when the method around it is not known.
+    def _scope_at(self, node: Node, module_qn: str) -> Scope:
+        # Where an expression resolves the types it writes: its file, with
+        # the type parameters around it in scope, which a type of the file
+        # of the same name does not stand for, and their `where` clauses.
+        bounds = _type_parameter_bounds_at(node)
         return Scope(
-            partial(self._resolve_in, module_qn), frozenset(), self._is_reference
+            partial(self._resolve_in, module_qn),
+            frozenset(bounds),
+            self._is_reference,
+            tuple(bounds.items()),
         )
 
     def _resolve_in(self, module_qn: str, name: str, arity: int) -> str | None:

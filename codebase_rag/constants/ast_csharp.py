@@ -69,6 +69,18 @@ TS_CSHARP_METHOD_DECLARATION = "method_declaration"
 TS_CSHARP_CONSTRUCTOR_DECLARATION = "constructor_declaration"
 TS_CSHARP_DESTRUCTOR_DECLARATION = "destructor_declaration"
 TS_CSHARP_LOCAL_FUNCTION_STATEMENT = "local_function_statement"
+# The declarations whose type parameters are in scope in what they hold: a
+# type's members, a method's or local function's body.
+CSHARP_GENERIC_DECLARATIONS = frozenset(
+    {
+        TS_CSHARP_CLASS_DECLARATION,
+        TS_CSHARP_STRUCT_DECLARATION,
+        TS_CSHARP_RECORD_DECLARATION,
+        TS_CSHARP_INTERFACE_DECLARATION,
+        TS_CSHARP_METHOD_DECLARATION,
+        TS_CSHARP_LOCAL_FUNCTION_STATEMENT,
+    }
+)
 TS_CSHARP_OPERATOR_DECLARATION = "operator_declaration"
 TS_CSHARP_CONVERSION_OPERATOR_DECLARATION = "conversion_operator_declaration"
 TS_CSHARP_IMPLICIT_KEYWORD = "implicit"
