@@ -651,6 +651,18 @@ def _is_py_ast_visitor_root(
     return cls is not None and cls in ast_visitor_classes
 
 
+def _is_pytest_hook_root(name: str, path: str, props: PropertyDict) -> bool:
+    # A conftest.py is test code, rooted (or left out) with the tests; a
+    # plugin module or object is production code that only pytest calls.
+    # Being a plugin attribute needs module or class scope, which the export
+    # mark gives: a function nested in another is neither.
+    return (
+        name.startswith(cs.PYTEST_HOOK_PREFIX)
+        and path.endswith(cs.EXT_PY)
+        and props.get(cs.KEY_IS_EXPORTED) is True
+    )
+
+
 def _walk(
     frontier: set[str],
     adjacency: dict[str, set[str]],
@@ -783,6 +795,7 @@ def _is_root(
         lambda: _is_py_ast_visitor_root(
             qn, leaf, is_method, path, method_to_class, ast_visitor_classes
         ),
+        lambda: _is_pytest_hook_root(leaf, path, props),
         lambda: (
             is_well_known_symbol_member(qn)
             and str(props.get(cs.KEY_PATH, "")).endswith(cs.JS_TS_ALL_EXTENSIONS)

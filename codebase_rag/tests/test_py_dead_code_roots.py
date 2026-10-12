@@ -6,7 +6,9 @@
 # - a typing.Protocol is named only in annotations, which the walk does not
 #   follow, so with --classes every protocol was reported unreachable;
 # - `ast.NodeVisitor.visit` finds its `visit_*` handlers with getattr, so
-#   with --no-public-roots every visitor handler was reported.
+#   with --no-public-roots every visitor handler was reported;
+# - pytest calls a plugin's `pytest_*` hooks by name, so with
+#   --no-public-roots the hooks of the `pytest11` plugin were reported.
 # Each test indexes a small project end to end and reads the dead set from
 # the same node properties the `CYPHER_DEAD_CODE_NODES` fetch returns.
 from __future__ import annotations
@@ -36,13 +38,15 @@ def _index(tmp_path: Path, files: dict[str, str]) -> _CapturingIngestor:
     return _capture(project, _PROJECT)
 
 
-def _dead(ingestor: _CapturingIngestor, public_roots: bool = True) -> set[str]:
+def _dead(
+    ingestor: _CapturingIngestor, public_roots: bool = True, include_tests: bool = True
+) -> set[str]:
     # Only what the dead-code fetch returns reaches the engine in
     # production, so a rule keyed on any other property would pass here and
     # do nothing against Memgraph. Classes are reported too: a root rule that
     # covers members must not leave their class behind.
     nodes = {key: _node_props(props) for key, props in ingestor.nodes.items()}
-    config = default_dead_code_config(include_tests=True, include_classes=True)
+    config = default_dead_code_config(include_tests, include_classes=True)
     return dead_code_from_graph(
         nodes,
         list(ingestor.rels),
@@ -327,4 +331,72 @@ def test_ast_visitor_handlers_and_their_callees_are_not_dead(
     assert not dispatched & dead, sorted(dispatched & dead)
     # The name alone roots nothing: a `visit_*` method on a class that is no
     # visitor, and a visitor's own unused helper, are still reported.
+    assert unused <= dead, sorted(unused - dead)
+
+
+# --- 4. pytest hooks are called by name ------------------------------------
+
+# A plugin module (what a `pytest11` entry point names) with a plugin object
+# it registers. A conftest.py hook is test code, rooted with the tests and
+# left out without them, so it is never reported either way.
+_PLUGIN = """from __future__ import annotations
+
+
+def pytest_addoption(parser) -> None:
+    parser.addoption("--trace-out")
+
+
+def pytest_unconfigure(config) -> None:
+    _flush()
+
+
+def _flush() -> None:
+    return None
+
+
+def _unused() -> None:
+    return None
+
+
+class _Reporter:
+    def pytest_runtest_logreport(self, report) -> None:
+        return None
+
+
+def outer() -> None:
+    def pytest_nested() -> None:
+        return None
+"""
+
+_CONFTEST = """def pytest_collection_modifyitems(items) -> None:
+    return None
+"""
+
+_PLUGIN_QN = f"{_PROJECT}.pkg.plugin"
+
+
+@pytest.mark.parametrize("include_tests", [True, False])
+def test_pytest_hooks_and_their_callees_are_not_dead(
+    tmp_path: Path, include_tests: bool
+) -> None:
+    ingestor = _index(
+        tmp_path,
+        {"pkg/__init__.py": "", "pkg/plugin.py": _PLUGIN, "conftest.py": _CONFTEST},
+    )
+    hooks = {
+        f"{_PLUGIN_QN}.{member}"
+        for member in (
+            "pytest_addoption",
+            "pytest_unconfigure",
+            "_flush",
+            "_Reporter.pytest_runtest_logreport",
+        )
+    }
+    conftest_hook = f"{_PROJECT}.conftest.pytest_collection_modifyitems"
+    unused = {f"{_PLUGIN_QN}._unused", f"{_PLUGIN_QN}.outer.pytest_nested"}
+    _defined(ingestor, *hooks, conftest_hook, *unused)
+    dead = _dead(ingestor, public_roots=False, include_tests=include_tests)
+    assert not hooks & dead, sorted(hooks & dead)
+    assert conftest_hook not in dead
+    # A function nested in another is no plugin attribute pytest could call.
     assert unused <= dead, sorted(unused - dead)

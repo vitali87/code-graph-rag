@@ -243,6 +243,11 @@ PY_AST_VISITOR_BASE_QNS: tuple[str, ...] = ("ast.NodeVisitor", "ast.NodeTransfor
 PY_AST_VISIT_METHOD_PREFIX = "visit_"
 PY_AST_GENERIC_VISIT_METHOD = "generic_visit"
 
+# pytest (through pluggy) calls every `pytest_*` attribute of a registered
+# plugin by name: a conftest.py, a module named by a `pytest11` entry point,
+# `-p` or `pytest_plugins`, or an object passed to `pluginmanager.register`.
+PYTEST_HOOK_PREFIX = "pytest_"
+
 # What marks a repo-relative path as test code (path_filters.matches_test_path).
 # Judged on whole words of path segments, never raw substrings: `test_` as a
 # substring made shortest_paths/ and latest_prices.py tests (issue #2618).

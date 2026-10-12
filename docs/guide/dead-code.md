@@ -122,7 +122,9 @@ Without public roots, the roots are:
   calls through an external base (an external Rust trait's impl, a Dart
   `@override`, a Python standard-library base class), and the `visit_*` and
   `generic_visit` handlers of a Python `ast.NodeVisitor` or
-  `ast.NodeTransformer` subclass, which `visit` looks up by name.
+  `ast.NodeTransformer` subclass, which `visit` looks up by name. A
+  `pytest_*` function or method is a pytest hook, which pytest calls by name
+  in a plugin module (a `pytest11` entry point) as in a `conftest.py`.
 - **Type-checker declarations**: a Python `typing.Protocol` and a class
   declared under `if TYPE_CHECKING:`, with their members. Their stubs type a
   receiver, such as `self` in a mixin, whose calls resolve to the
