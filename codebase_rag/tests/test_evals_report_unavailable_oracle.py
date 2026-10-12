@@ -149,3 +149,29 @@ def test_csharp_retrieval_names_the_old_sdk(
     assert code == 1
     assert _OLD_SDK in errors
     assert _FIXED_MESSAGE not in errors, errors
+
+
+def test_js_l1_names_the_probe_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # ts_l1 passed the reason probe; js_l1 shares the same tsc oracle and
+    # guard but did not, so the same toolchain read as "not found" there.
+    _node_unusable(monkeypatch, typescript_oracle)
+
+    code, errors = _exit_and_errors(_run_main("evals.js_l1", tmp_path))
+
+    assert code == 1
+    assert _REASON in errors
+    assert _FIXED_MESSAGE not in errors, errors
+
+
+def test_csharp_l1_names_the_old_sdk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _dotnet_too_old(monkeypatch)
+
+    code, errors = _exit_and_errors(_run_main("evals.csharp_l1", tmp_path))
+
+    assert code == 1
+    assert _OLD_SDK in errors
+    assert _FIXED_MESSAGE not in errors, errors
