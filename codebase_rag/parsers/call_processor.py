@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from functools import lru_cache, wraps
 from pathlib import Path
@@ -782,6 +782,18 @@ def _scope_qn_candidates(scope_qn: str) -> list[str]:
     if natural == scope_qn:
         return [scope_qn]
     return [scope_qn, natural]
+
+
+def _scoped_candidates(scope_qn: str, names: Iterable[str]) -> set[str]:
+    # Every reference path that names a member of the caller's scope must try
+    # the variant-stripped scope too; building the candidates in one place
+    # keeps a new path from repeating the object-literal gap, where only the
+    # inline-argument path tried it.
+    return {
+        f"{scope}{cs.SEPARATOR_DOT}{name}"
+        for scope in _scope_qn_candidates(scope_qn)
+        for name in names
+    }
 
 
 def _names_a_callable(node: Node) -> bool:
@@ -8188,17 +8200,13 @@ class CallProcessor:
             return
         if not (name := safe_decode_text(name_node)):
             return
-        registry = self._resolver.function_registry
         scope_qn = caller_qn or caller_spec[2]
-        candidate = f"{scope_qn}{cs.SEPARATOR_DOT}{name}"
-        for target_qn in registry.variants(candidate):
-            if registry.get(target_qn) is None:
-                continue
-            ensure_rel(
-                caller_spec,
-                cs.RelationshipType.REFERENCES,
-                (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
-            )
+        self._reference_registered(
+            caller_spec,
+            [f"{scope_qn}{cs.SEPARATOR_DOT}{name}"],
+            ensure_rel,
+            cs.RelationshipType.REFERENCES,
+        )
 
     @_site_scoped
     def _ingest_jsx_component_references(
@@ -9378,44 +9386,32 @@ class CallProcessor:
         # the value's position. Reference every candidate actually registered
         # (variants cover same-name duplicates in one scope).
         self._site_node = value
-        registry = self._resolver.function_registry
-        scope_qn = caller_spec[2]
-        candidates = {
-            f"{scope_qn}{cs.SEPARATOR_DOT}{cs.PREFIX_ANONYMOUS}"
-            f"{value.start_point[0]}_{value.start_point[1]}"
-        }
+        names = [f"{cs.PREFIX_ANONYMOUS}{value.start_point[0]}_{value.start_point[1]}"]
         key_node = pair.child_by_field_name(cs.FIELD_KEY)
         if (
             key_node is not None
             and key_node.type in (cs.TS_PROPERTY_IDENTIFIER, cs.TS_IDENTIFIER)
             and (key := safe_decode_text(key_node))
         ):
-            candidates.add(f"{scope_qn}{cs.SEPARATOR_DOT}{key}")
+            names.append(key)
             # A value nested under ANOTHER pair-arrow (`{ onCreated: (s) => {
             # s.setEvents({ compute: ... }) } }`) registers under the pair-key
             # PATH (scope.onCreated.compute); prefix the ancestor pair keys so
             # the candidate matches the def pass's qn.
             if pair_path := self._ancestor_pair_key_path(pair):
-                candidates.add(
-                    f"{scope_qn}{cs.SEPARATOR_DOT}{pair_path}{cs.SEPARATOR_DOT}{key}"
-                )
+                names.append(f"{pair_path}{cs.SEPARATOR_DOT}{key}")
         # A NAMED function expression value (`get: function getrouter() {...}`,
         # express) registers by its OWN name; neither the key nor the position
         # form matches it, so try the name under the scope and module-flat
         # (where the def pass puts it).
+        candidates = _scoped_candidates(caller_spec[2], names)
         name_node = value.child_by_field_name(cs.FIELD_NAME)
         if name_node is not None and (own := safe_decode_text(name_node)):
-            candidates.add(f"{scope_qn}{cs.SEPARATOR_DOT}{own}")
+            candidates.update(_scoped_candidates(caller_spec[2], [own]))
             candidates.add(f"{module_qn}{cs.SEPARATOR_DOT}{own}")
-        for candidate in candidates:
-            for target_qn in registry.variants(candidate):
-                if registry.get(target_qn) is None:
-                    continue
-                ensure_rel(
-                    caller_spec,
-                    cs.RelationshipType.REFERENCES,
-                    (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
-                )
+        self._reference_registered(
+            caller_spec, candidates, ensure_rel, cs.RelationshipType.REFERENCES
+        )
 
     def _ancestor_pair_key_path(self, pair: Node) -> str | None:
         # Dotted key path of the ENCLOSING pairs above this one (`compute` inside
@@ -9453,24 +9449,19 @@ class CallProcessor:
         # position form used when the name is taken.
         self._site_node = method_node
         name_node = method_node.child_by_field_name(cs.FIELD_NAME)
-        registry = self._resolver.function_registry
-        scope_qn = caller_spec[2]
-        candidates = {
-            f"{scope_qn}{cs.SEPARATOR_DOT}{cs.PREFIX_ANONYMOUS}"
+        names = [
+            f"{cs.PREFIX_ANONYMOUS}"
             f"{method_node.start_point[0]}_{method_node.start_point[1]}"
-        }
-        if name_node is not None and (name := safe_decode_text(name_node)):
-            candidates.add(f"{scope_qn}{cs.SEPARATOR_DOT}{name}")
+        ]
+        name = safe_decode_text(name_node) if name_node is not None else None
+        if name:
+            names.append(name)
+        candidates = _scoped_candidates(caller_spec[2], names)
+        if name:
             candidates.add(f"{module_qn}{cs.SEPARATOR_DOT}{name}")
-        for candidate in candidates:
-            for target_qn in registry.variants(candidate):
-                if registry.get(target_qn) is None:
-                    continue
-                ensure_rel(
-                    caller_spec,
-                    cs.RelationshipType.REFERENCES,
-                    (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
-                )
+        self._reference_registered(
+            caller_spec, candidates, ensure_rel, cs.RelationshipType.REFERENCES
+        )
 
     @_site_scoped
     def _ingest_default_param_references(
@@ -9588,7 +9579,6 @@ class CallProcessor:
         # start position. The anonymous node lives in the CALLER's scope, so build
         # the candidate from caller_qn (source_spec[2] is the callee for the
         # callable-param path). Registry guard skips unregistered names.
-        registry = self._resolver.function_registry
         scope_qn = caller_qn or source_spec[2]
         suffixes = [
             f"{cs.SEPARATOR_DOT}{cs.PREFIX_ANONYMOUS}"
@@ -9608,17 +9598,33 @@ class CallProcessor:
         scopes = _scope_qn_candidates(scope_qn)
         if named and module_qn is not None and module_qn not in scopes:
             scopes = [*scopes, module_qn]
-        for scope in scopes:
-            for suffix in suffixes:
-                candidate = f"{scope}{suffix}"
-                for target_qn in registry.variants(candidate):
-                    if registry.get(target_qn) is None:
-                        continue
-                    ensure_rel(
-                        source_spec,
-                        rel_type,
-                        (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
-                    )
+        self._reference_registered(
+            source_spec,
+            [f"{scope}{suffix}" for scope in scopes for suffix in suffixes],
+            ensure_rel,
+            rel_type,
+        )
+
+    def _reference_registered(
+        self,
+        source_spec: tuple[str, str, str],
+        candidates: Iterable[str],
+        ensure_rel,
+        rel_type: cs.RelationshipType,
+    ) -> None:
+        # Only a name the definition pass registered gets an edge, each of its
+        # duplicate variants included, so an over-collected candidate costs a
+        # lookup and never a dangling relationship.
+        registry = self._resolver.function_registry
+        for candidate in candidates:
+            for target_qn in registry.variants(candidate):
+                if registry.get(target_qn) is None:
+                    continue
+                ensure_rel(
+                    source_spec,
+                    rel_type,
+                    (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
+                )
 
     @staticmethod
     def _flow_scope_boundaries(lang_config: LanguageSpec) -> frozenset[str]:
