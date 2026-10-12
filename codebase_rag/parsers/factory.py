@@ -229,5 +229,7 @@ class ProcessorFactory:
                 go_methods=self.definition_processor.go_methods,
                 go_checked_files=self.definition_processor.go_checked_files,
                 go_builtin_shadows=self.definition_processor.go_builtin_shadows,
+                go_variant_methods=self.definition_processor.go_variant_methods,
+                go_builds=self.definition_processor.go_builds,
             )
         return self._call_processor

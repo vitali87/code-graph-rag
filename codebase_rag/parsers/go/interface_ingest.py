@@ -12,7 +12,7 @@ one implementation find the interface method and the other implementations.
 from __future__ import annotations
 
 from abc import abstractmethod
-from collections.abc import Callable
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
@@ -40,6 +40,7 @@ from ..parameter_nodes import PendingParameterType
 from ..utils import ingest_method
 from . import interfaces as go_ifaces
 from . import utils as go_utils
+from .builds import GoBuilds
 
 if TYPE_CHECKING:
     from ...services import IngestorProtocol
@@ -60,6 +61,33 @@ class _GoMethodOwners(NamedTuple):
     method_sets: dict[str, go_ifaces.GoMethodSet]
     packages: dict[str, str]
     declarations: dict[str, dict[go_ifaces.GoMethodKey, list[go_ifaces.GoMethodSpec]]]
+    # The method qn of each declaration, in `declarations`' order.
+    method_qns: dict[str, dict[go_ifaces.GoMethodKey, list[str]]]
+
+
+def _add_declaration(
+    owners: _GoMethodOwners,
+    owner: str,
+    key: go_ifaces.GoMethodKey,
+    spec: go_ifaces.GoMethodSpec,
+    method_qn: str,
+) -> None:
+    method_set = owners.method_sets.setdefault(owner, {})
+    method_set[key] = (*method_set.get(key, ()), spec.signature)
+    owners.packages[owner] = spec.package
+    owners.declarations.setdefault(owner, {}).setdefault(key, []).append(spec)
+    owners.method_qns.setdefault(owner, {}).setdefault(key, []).append(method_qn)
+
+
+def _first_party(alternatives: tuple[str, ...] | None) -> str | None:
+    # The interface an embed's INHERITS edge names: the first of the
+    # declarations it may be, one edge per embedded name as written.
+    if alternatives is None:
+        return None
+    return next(
+        (base for base in alternatives if base not in cs.GO_BUILTIN_INTERFACE_METHODS),
+        None,
+    )
 
 
 def _satisfying_files(
@@ -146,15 +174,18 @@ class GoInterfaceMixin:
     go_proven_pairs: set[tuple[str, str]]
     go_guessed_pairs: set[tuple[str, str]]
     go_builtin_shadows: dict[str, frozenset[str]]
+    # Go type -> method name -> the declarations a variant of the type that
+    # another build declares (`t_linux.go`'s `T` beside `t_windows.go`'s)
+    # holds for it in a file both builds compile, refilled by each link
+    # (shared with the call resolver).
+    go_variant_methods: dict[str, dict[str, list[str]]]
+    go_builds: GoBuilds
     rehydrated_definition_paths: dict[str, str]
 
     @abstractmethod
     def _get_docstring(
         self, node: Node, language: cs.SupportedLanguage
     ) -> str | None: ...
-
-    @abstractmethod
-    def _resolve_go_container_qn(self, module_qn: str, receiver_type: str) -> str: ...
 
     def _ingest_go_interface_methods(
         self,
@@ -234,6 +265,7 @@ class GoInterfaceMixin:
         self._record_go_builtin_shadows()
         embeds = self._resolve_go_embeds()
         owners = self._go_method_sets()
+        self._share_go_variant_methods(owners)
         compiler = _GoCompilerView(
             self.repo_path, analysed_roots, checked_files, compared
         )
@@ -245,7 +277,7 @@ class GoInterfaceMixin:
 
     def _link_implicit_implementations(
         self,
-        embeds: dict[str, tuple[str, ...] | None],
+        embeds: dict[str, tuple[tuple[str, ...], ...] | None],
         owners: _GoMethodOwners,
         compiler: _GoCompilerView,
     ) -> int:
@@ -255,22 +287,32 @@ class GoInterfaceMixin:
             for qn, methods in owners.method_sets.items()
             if self.function_registry.get(qn) in _GO_IMPLEMENTER_TYPES
         }
+        # An interface whose method set differs between builds (it embeds
+        # `p.I`, which `i_linux.go` and `i_windows.go` declare apart): the
+        # one build go/types read speaks for no other, so its silence rules
+        # nothing out, and a pair it proved holds in that build alone.
+        per_build = {
+            qn for qn, builds in interfaces.items() if builds and len(builds) > 1
+        }
 
         def compiler_owned(type_qn: str, interface_qn: str) -> bool:
+            if interface_qn in per_build:
+                return False
             declared = owners.declarations.get(type_qn, {})
-            required = interfaces[interface_qn] or {}
+            builds = interfaces[interface_qn] or ({},)
             return compiler.owns(
                 (type_qn, interface_qn),
                 owners.packages.get(type_qn),
                 self.go_interfaces[interface_qn],
                 [
                     _satisfying_files(declared.get(key, []), wanted)
-                    for key, wanted in required.items()
+                    for key, wanted in builds[0].items()
                 ],
             )
 
         # The pairs go/types proved (joined before this) are not guessed
-        # again, whatever other build declares a method again.
+        # again, whatever other build declares a method again, unless the
+        # interface is another in another build.
         pairs = [
             (type_qn, interface_qn)
             for type_qn, interface_qn in go_ifaces.implicit_implementations(
@@ -278,7 +320,11 @@ class GoInterfaceMixin:
             )
             if (interface_qn, type_qn) not in self.go_proven_pairs
             and not compiler_owned(type_qn, interface_qn)
-        ]
+        ] + sorted(
+            (type_qn, interface_qn)
+            for interface_qn, type_qn in self.go_proven_pairs
+            if interface_qn in per_build
+        )
         for type_qn, interface_qn in pairs:
             create_implements_relationship(
                 str(self.function_registry[type_qn]),
@@ -342,17 +388,24 @@ class GoInterfaceMixin:
         # is package-level: its file module is the qn above it.
         if self.function_registry.get(qn) == NodeType.METHOD:
             return None
-        module_qn = qn.rpartition(cs.SEPARATOR_DOT)[0]
-        path = self.rehydrated_definition_paths.get(qn) or go_utils.rel_file(
-            self.module_qn_to_file_path.get(module_qn), self.repo_path
-        )
+        path = self._go_declaring_rel(qn)
         if not path.endswith(cs.EXT_GO):
             return None
-        package = go_utils.package_key(path, self.go_package_names.get(module_qn))
+        package = go_utils.package_key(
+            path, self.go_package_names.get(qn.rpartition(cs.SEPARATOR_DOT)[0])
+        )
         return go_utils.declaration_scope(path, package)
 
+    def _go_declaring_rel(self, qn: str) -> str:
+        # The repo-relative file declaring package-level `qn`, read back or
+        # parsed ("" when unknown).
+        return self.rehydrated_definition_paths.get(qn) or go_utils.rel_file(
+            self.module_qn_to_file_path.get(qn.rpartition(cs.SEPARATOR_DOT)[0]),
+            self.repo_path,
+        )
+
     def _go_method_sets(self) -> _GoMethodOwners:
-        owners = _GoMethodOwners({}, {}, {})
+        owners = _GoMethodOwners({}, {}, {}, {})
         registry = self.function_registry
         for method_qn, declared in self.go_methods.items():
             if registry.get(method_qn) != NodeType.METHOD:
@@ -364,11 +417,60 @@ class GoInterfaceMixin:
                 signature=go_ifaces.in_package(declared, self.go_builtin_shadows)
             )
             key = go_ifaces.method_key(qn_markers.strip_dup_marker(name), spec.package)
-            method_set = owners.method_sets.setdefault(owner, {})
-            method_set[key] = (*method_set.get(key, ()), spec.signature)
-            owners.packages[owner] = spec.package
-            owners.declarations.setdefault(owner, {}).setdefault(key, []).append(spec)
+            _add_declaration(owners, owner, key, spec, method_qn)
         return owners
+
+    def _share_go_variant_methods(self, owners: _GoMethodOwners) -> None:
+        # A type each build declares again (`type T struct{}` in `t_linux.go`
+        # and in `t_windows.go`) is one type to the methods a file both
+        # builds compile declares (`func (T) M()` in `t.go`), but cgr files
+        # each method under one of them. The other has it too: in its method
+        # set, and as a declaration its overrides and dispatch reach.
+        shared: dict[str, dict[str, list[str]]] = {}
+        for owner, declarations in self._own_go_declarations(owners).items():
+            for variant in self._go_type_variants(owner):
+                variant_file = self._go_declaring_rel(variant)
+                for key, method_qn, spec in declarations:
+                    if self.go_builds.together((spec.file, variant_file)):
+                        _add_declaration(owners, variant, key, spec, method_qn)
+                        shared.setdefault(variant, {}).setdefault(key[1], []).append(
+                            method_qn
+                        )
+        # In place: the call resolver holds the map.
+        self.go_variant_methods.clear()
+        self.go_variant_methods.update(shared)
+
+    def _own_go_declarations(
+        self, owners: _GoMethodOwners
+    ) -> dict[str, list[tuple[go_ifaces.GoMethodKey, str, go_ifaces.GoMethodSpec]]]:
+        # Each type's own (key, method qn, declaration), before any is shared.
+        return {
+            owner: [
+                (key, method_qn, spec)
+                for key, declared in owners.declarations[owner].items()
+                for method_qn, spec in zip(
+                    owners.method_qns[owner][key], declared, strict=True
+                )
+            ]
+            for owner in sorted(owners.declarations)
+            if self.function_registry.get(owner) in _GO_IMPLEMENTER_TYPES
+        }
+
+    def _go_type_variants(self, type_qn: str) -> list[str]:
+        # The other declarations of `type_qn`'s name in its package that no
+        # build compiles with it.
+        scope = self._go_declaration_scope(type_qn)
+        own_file = self._go_declaring_rel(type_qn)
+        name = type_qn.rpartition(cs.SEPARATOR_DOT)[2]
+        return [
+            qn
+            for qn in sorted(self.function_registry.find_ending_with(name))
+            if qn != type_qn
+            and qn.rpartition(cs.SEPARATOR_DOT)[2] == name
+            and self.function_registry.get(qn) in _GO_IMPLEMENTER_TYPES
+            and self._go_declaration_scope(qn) == scope
+            and not self.go_builds.together((own_file, self._go_declaring_rel(qn)))
+        ]
 
     def _link_go_overrides(
         self,
@@ -385,8 +487,12 @@ class GoInterfaceMixin:
             for type_qn in sorted(implementers):
                 guessed = (interface_qn, type_qn) in self.go_guessed_pairs
                 for key in sorted(declared.keys() & method_sets.get(type_qn, {})):
+                    method_qn = f"{type_qn}{cs.SEPARATOR_DOT}{key[1]}"
                     self._override_declarations(
-                        f"{type_qn}{cs.SEPARATOR_DOT}{key[1]}",
+                        [
+                            *self.function_registry.variants(method_qn),
+                            *self.go_variant_methods.get(type_qn, {}).get(key[1], []),
+                        ],
                         f"{interface_qn}{cs.SEPARATOR_DOT}{key[1]}",
                         declared[key],
                         None if guessed else checked_files,
@@ -394,7 +500,7 @@ class GoInterfaceMixin:
 
     def _override_declarations(
         self,
-        method_qn: str,
+        declarations: list[str],
         interface_method_qn: str,
         wanted: tuple[go_ifaces.GoSignature, ...],
         proven_in: frozenset[str] | None,
@@ -407,7 +513,7 @@ class GoInterfaceMixin:
         # compiler's word, whatever the names say. Any other is matched by
         # name, and one whose signature differs for certain implements the
         # interface in no build.
-        for variant in self.function_registry.variants(method_qn):
+        for variant in declarations:
             spec = self.go_methods.get(variant)
             proven = proven_in is not None and (spec is None or spec.file in proven_in)
             if (
@@ -441,93 +547,149 @@ class GoInterfaceMixin:
             properties,
         )
 
-    def _resolve_go_embeds(self) -> dict[str, tuple[str, ...] | None]:
-        """Each Go interface's embedded interfaces as qns (or a predeclared
-        name), None when one does not resolve to an interface."""
-        resolved: dict[str, tuple[str, ...] | None] = {}
+    def _resolve_go_embeds(self) -> dict[str, tuple[tuple[str, ...], ...] | None]:
+        """Each Go interface's embedded names, each as the interfaces (or the
+        predeclared name) it is in the builds that compile the interface,
+        None when one does not resolve to an interface."""
+        resolved: dict[str, tuple[tuple[str, ...], ...] | None] = {}
         for interface_qn, decl in self.go_interfaces.items():
             if self.function_registry.get(interface_qn) != NodeType.INTERFACE:
                 continue
             module_qn = self.go_interfaces_parsed.get(interface_qn)
             resolved[interface_qn] = (
-                self._stored_embeds(interface_qn, decl.embeds)
+                self._stored_embeds(interface_qn, decl)
                 if module_qn is None
-                else self._parsed_embeds(interface_qn, module_qn, decl.embeds)
+                else self._parsed_embeds(interface_qn, module_qn, decl)
             )
         self.go_interfaces_parsed.clear()
         return resolved
 
     def _parsed_embeds(
-        self, interface_qn: str, module_qn: str, written: tuple[str, ...]
-    ) -> tuple[str, ...] | None:
-        resolve = self._parsed_embed_resolver(
-            module_qn, self._go_shadowed(interface_qn)
+        self, interface_qn: str, module_qn: str, decl: go_ifaces.GoInterfaceDecl
+    ) -> tuple[tuple[str, ...], ...] | None:
+        imports = self.import_processor.import_mapping.get(module_qn) or {}
+        resolved: list[tuple[str, ...] | None] = []
+        for text in decl.embeds:
+            qualifier, dot, name = text.partition(cs.SEPARATOR_DOT)
+            if not dot:
+                resolved.append(self._embed_alternatives(decl, text, None))
+            elif (package_qn := imports.get(qualifier)) is not None:
+                resolved.append(self._embed_alternatives(decl, name, package_qn))
+            else:
+                resolved.append(None)
+        self._record_go_embedding(
+            interface_qn,
+            [base for found in resolved if (base := _first_party(found)) is not None],
         )
-        bases = [base for text in written if (base := resolve(text)) is not None]
-        self._record_go_embedding(interface_qn, bases)
-        return tuple(bases) if len(bases) == len(written) else None
+        return None if None in resolved else tuple(filter(None, resolved))
 
     def _stored_embeds(
-        self, interface_qn: str, written: tuple[str, ...]
-    ) -> tuple[str, ...] | None:
+        self, interface_qn: str, decl: go_ifaces.GoInterfaceDecl
+    ) -> tuple[tuple[str, ...], ...] | None:
         # An unchanged interface's embeds were resolved when it was parsed and
         # are its INHERITS edges now, read back into class_inheritance in
         # `base_index` order, the order they were written in. Matching them
         # by position keeps `a.Contract` and `b.Contract` two bases; by name
-        # alone both would find the first. A count or name that disagrees
-        # means an embed did not resolve then, so the method set is unknown.
+        # alone both would find the first. A qualified name is the stored
+        # base's package, its unqualified one the interface's own, read as
+        # the parse read them. A count or name that disagrees means an embed
+        # did not resolve then, so the method set is unknown.
         stored = iter(self.class_inheritance.get(interface_qn, []))
-        shadowed = self._go_shadowed(interface_qn)
-        bases: list[str] = []
-        for text in written:
-            if text in cs.GO_BUILTIN_INTERFACE_METHODS and text not in shadowed:
-                bases.append(text)
-                continue
+        resolved: list[tuple[str, ...]] = []
+        for text in decl.embeds:
+            found = self._stored_embed(decl, text, stored)
+            if found is None:
+                return None
+            resolved.append(found)
+        return None if next(stored, None) is not None else tuple(resolved)
+
+    def _stored_embed(
+        self, decl: go_ifaces.GoInterfaceDecl, text: str, stored: Iterator[str]
+    ) -> tuple[str, ...] | None:
+        _, dot, name = text.partition(cs.SEPARATOR_DOT)
+        if not dot:
+            return self._stored_local_embed(decl, text, stored)
+        base = next(stored, None)
+        if base is None or base.rpartition(cs.SEPARATOR_DOT)[2] != name:
+            return None
+        package_qn = self._go_module_package(base.rpartition(cs.SEPARATOR_DOT)[0])
+        return self._embed_alternatives(decl, name, package_qn)
+
+    def _stored_local_embed(
+        self, decl: go_ifaces.GoInterfaceDecl, name: str, stored: Iterator[str]
+    ) -> tuple[str, ...] | None:
+        # The parse wrote an edge for this name only where it found one of
+        # the package's own interfaces by it.
+        found = self._embed_alternatives(decl, name, None)
+        if found is not None and _first_party(found) is not None:
             base = next(stored, None)
-            name = text.rpartition(cs.SEPARATOR_DOT)[2]
             if base is None or base.rpartition(cs.SEPARATOR_DOT)[2] != name:
                 return None
-            bases.append(base)
-        return None if next(stored, None) is not None else tuple(bases)
+        return found
 
-    def _go_shadowed(self, interface_qn: str) -> frozenset[str]:
-        # The predeclared names the interface's package declares itself.
-        decl = self.go_interfaces[interface_qn]
-        return go_ifaces.shadowed_in(decl.file, decl.package, self.go_builtin_shadows)
-
-    def _parsed_embed_resolver(
-        self, module_qn: str, shadowed: frozenset[str]
-    ) -> Callable[[str], str | None]:
-        # A package that declares `error` or `any` itself means its own by
-        # the name, an interface of its methods or no interface at all, and
-        # never the predeclared one (issue #2483).
-        def resolve(text: str) -> str | None:
-            if text in cs.GO_BUILTIN_INTERFACE_METHODS and text not in shadowed:
-                return text
-            qualifier, dot, name = text.partition(cs.SEPARATOR_DOT)
-            if not dot:
-                candidate = self._resolve_go_container_qn(module_qn, text)
-                return self._interface_or_none(candidate)
-            return self._imported_interface(module_qn, qualifier, name)
-
-        return resolve
-
-    def _imported_interface(
-        self, module_qn: str, qualifier: str, name: str
-    ) -> str | None:
-        imports = self.import_processor.import_mapping.get(module_qn) or {}
-        package_qn = imports.get(qualifier)
-        if package_qn is None:
-            return None
-        candidates = go_utils.package_level_definitions(
-            self.function_registry,
-            name,
-            {NodeType.INTERFACE},
-            lambda qn: self._go_imported_file(
-                qn.rpartition(cs.SEPARATOR_DOT)[0], package_qn
-            ),
+    def _embed_alternatives(
+        self, decl: go_ifaces.GoInterfaceDecl, name: str, package_qn: str | None
+    ) -> tuple[str, ...] | None:
+        """What embedded `name` is in the builds that compile `decl`'s file:
+        its own package's (`package_qn` None) or an imported package's
+        declarations of it, one per build that declares it again
+        (`i_linux.go`, `i_windows.go`). None when it names no interface, or
+        two declarations one build compiles together. A package that
+        declares `error` or `any` itself means its own by the name in the
+        builds that hold that declaration, an interface of its methods or
+        no interface at all (issue #2483), and the predeclared one in any
+        other."""
+        builtin = package_qn is None and name in cs.GO_BUILTIN_INTERFACE_METHODS
+        if builtin and name not in self._go_shadowed(decl):
+            return (name,)
+        candidates = (
+            self._go_package_declarations(decl, name)
+            if package_qn is None
+            else go_utils.package_level_definitions(
+                self.function_registry,
+                name,
+                {NodeType.INTERFACE},
+                lambda qn: self._go_imported_file(
+                    qn.rpartition(cs.SEPARATOR_DOT)[0], package_qn
+                ),
+            )
         )
-        return candidates[0] if len(candidates) == 1 else None
+        # One declaration is the name's, as it always was; only a name
+        # declared again has its files' builds read.
+        found = (
+            tuple(candidates)
+            if len(candidates) == 1 and not builtin
+            else self.go_builds.variants(
+                ((qn, self._go_declaring_rel(qn)) for qn in candidates), decl.file
+            )
+        )
+        if found is None or any(
+            self.function_registry.get(qn) != NodeType.INTERFACE for qn in found
+        ):
+            return None
+        if builtin and not self.go_builds.covered(
+            decl.file, [self._go_declaring_rel(qn) for qn in found]
+        ):
+            found = (*found, name)
+        return found or None
+
+    def _go_package_declarations(
+        self, decl: go_ifaces.GoInterfaceDecl, name: str
+    ) -> list[str]:
+        # The types named `name` that `decl`'s package declares and its file
+        # sees: a `_test.go` file's only from its package's test files.
+        seen_from = {decl.package, go_utils.declaration_scope(decl.file, decl.package)}
+        return [
+            qn
+            for qn in sorted(self.function_registry.find_ending_with(name))
+            if qn.rpartition(cs.SEPARATOR_DOT)[2] == name
+            and self.function_registry.get(qn) in go_utils.TYPE_DECLARATION_TYPES
+            and self._go_declaration_scope(qn) in seen_from
+        ]
+
+    def _go_shadowed(self, decl: go_ifaces.GoInterfaceDecl) -> frozenset[str]:
+        # The predeclared names the interface's package declares itself.
+        return go_ifaces.shadowed_in(decl.file, decl.package, self.go_builtin_shadows)
 
     def _go_imported_file(self, module_qn: str, package_qn: str) -> bool:
         # Whether Go file `module_qn` is a file of the package an import
@@ -551,9 +713,6 @@ class GoInterfaceMixin:
             self.repo_path,
             self.project_name,
         )
-
-    def _interface_or_none(self, qn: str) -> str | None:
-        return qn if self.function_registry.get(qn) == NodeType.INTERFACE else None
 
     def _record_go_embedding(self, interface_qn: str, bases: list[str]) -> None:
         # An embedded interface is to Go what an extended one is to Java, so

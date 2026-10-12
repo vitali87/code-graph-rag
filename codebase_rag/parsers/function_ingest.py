@@ -39,6 +39,7 @@ from .dart import dart_definition_end_point, dart_return_type_name
 from .endpoints import emit_endpoints, queue_endpoints
 from .go import interfaces as go_interfaces
 from .go import utils as go_utils
+from .go.builds import GoBuilds
 from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
 from .parameter_nodes import (
@@ -265,6 +266,7 @@ class FunctionIngestMixin:
     simple_name_lookup: SimpleNameLookup
     module_qn_to_file_path: dict[str, Path]
     go_package_names: dict[str, str]
+    go_builds: GoBuilds
     java_anon_overrides: list[tuple[str, str, str, str]]
     pending_endpoints: list[tuple[cs.NodeLabel, str, list[str], str | None]]
     pending_type_facts: list[PendingTypeFact]
@@ -1220,13 +1222,33 @@ class FunctionIngestMixin:
         if self.function_registry.get(same_file) is not None:
             return same_file
         method_file = self.module_qn_to_file_path.get(module_qn)
-        for qn in self.simple_name_lookup.get(receiver_type, set()):
-            if self.function_registry.get(qn) not in _GO_TYPE_NODE_TYPES:
-                continue
-            type_module = qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-            if self._go_type_visible_from(type_module, module_qn, method_file):
-                return qn
-        return same_file
+        visible = sorted(
+            qn
+            for qn in self.simple_name_lookup.get(receiver_type, set())
+            if self.function_registry.get(qn) in _GO_TYPE_NODE_TYPES
+            and self._go_type_visible_from(
+                qn.rsplit(cs.SEPARATOR_DOT, 1)[0], module_qn, method_file
+            )
+        )
+        if len(visible) > 1:
+            # A type each build declares again (`t_linux.go`, `t_windows.go`):
+            # the one a build compiling this file holds, else the first by
+            # name, never whichever a set yields first, which changes with
+            # the process (#3360 review).
+            method_rel = go_utils.rel_file(method_file, self.repo_path)
+            building = [
+                qn
+                for qn in visible
+                if self.go_builds.together((method_rel, self._go_type_rel_file(qn)))
+            ]
+            visible = building or visible
+        return visible[0] if visible else same_file
+
+    def _go_type_rel_file(self, type_qn: str) -> str:
+        return go_utils.rel_file(
+            self.module_qn_to_file_path.get(type_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]),
+            self.repo_path,
+        )
 
     def _go_type_visible_from(
         self, type_module: str, method_module: str, method_file: Path | None

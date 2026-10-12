@@ -3874,3 +3874,603 @@ def test_a_generic_type_or_interface_keeps_the_name_match(
         # A type go/types compared and rejected stays rejected.
         assert cat not in implements
         assert f"{pkg}.Cat.Speak" not in calls
+
+
+# --- a name each build declares again (Greptile, PR #3360) -------------------
+
+_LINUX_ONLY = "//go:build linux\n\n"
+_NOT_LINUX = "//go:build !linux\n\n"
+
+VARIANT_I = """package p
+
+type I interface {
+\tM()
+}
+"""
+
+# Greptile's fixture: `p.I` is declared once per build, the same in both.
+VARIANT_EMBEDDER = """package q
+
+import "proj/p"
+
+type J interface {
+\tp.I
+\tN()
+}
+
+type T struct{}
+
+func (T) M() {}
+func (T) N() {}
+
+var _ J = T{}
+"""
+
+_VARIANT_STYLES = {
+    # By file name, and by `//go:build` line; a single declaration is the
+    # control both must match.
+    "suffix": {"p/i_linux.go": VARIANT_I, "p/i_windows.go": VARIANT_I},
+    "tag": {
+        "p/i_a.go": _LINUX_ONLY + VARIANT_I,
+        "p/i_b.go": _NOT_LINUX + VARIANT_I,
+    },
+    "single": {"p/i.go": VARIANT_I},
+}
+
+
+def _variant_repo(root: Path, files: dict[str, str]) -> Path:
+    root.mkdir()
+    (root / "go.mod").write_text("module proj\n\ngo 1.22\n", encoding="utf-8")
+    for rel, text in files.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    return root
+
+
+def _go_checks_on(root: Path, goos: tuple[str, ...] = ("linux", "windows")) -> None:
+    # `go build` and `go vet` for each GOOS: a rename must leave every build
+    # that compiled compiling.
+    if (go := shutil.which("go")) is None:
+        return
+    for target in goos:
+        for command in ("build", "vet"):
+            done = subprocess.run(
+                [go, command, "./..."],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                encoding=cs.ENCODING_UTF8,
+                check=False,
+                env={
+                    **os.environ,
+                    "GOOS": target,
+                    "GOARCH": "amd64",
+                    "CGO_ENABLED": "0",
+                },
+            )
+            assert done.returncode == 0, (target, command, done.stderr)
+
+
+@pytest.mark.parametrize("style", sorted(_VARIANT_STYLES))
+def test_an_embedded_name_each_build_declares_keeps_its_method_set(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    style: str,
+) -> None:
+    # Both builds' `p.I` passed the package filter, so `p.I` was ambiguous,
+    # J's method set unknown, and T lost IMPLEMENTS J and T.N OVERRIDES J.N.
+    # Renaming T.N then left J.N, and q compiled on neither OS.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    files = {**_VARIANT_STYLES[style], "q/q.go": VARIANT_EMBEDDER}
+    root = _variant_repo(temp_repo / "proj", files)
+    _go_checks_on(root)
+    graph = _rename_index(root, mock_ingestor)
+    implements = _labels(mock_ingestor, cs.RelationshipType.IMPLEMENTS)
+    assert implements[("proj.q.q.T", "proj.q.q.J")] == cs.EdgeResolution.HEURISTIC
+    overrides = _labels(mock_ingestor, cs.RelationshipType.OVERRIDES)
+    assert overrides[("proj.q.q.T.N", "proj.q.q.J.N")] == cs.EdgeResolution.HEURISTIC
+
+    report = rename(
+        root, _query(graph), graph.project, "proj.q.q.T.N", "O", allow_heuristic=True
+    )
+    assert report.applied, report.message
+    text = (root / "q" / "q.go").read_text(encoding="utf-8")
+    assert "\tO()\n" in text and "func (T) O()" in text, text
+    _go_checks_on(root)
+
+
+# The builds' `I` differ: T and Y are a J on Linux, U and X on Windows, V
+# on neither.
+DIFFERING_FILES = {
+    "p/i_linux.go": VARIANT_I,
+    "p/i_windows.go": """package p
+
+type I interface {
+\tW()
+}
+""",
+    "p/j.go": """package p
+
+type J interface {
+\tI
+\tN()
+}
+""",
+    "p/t_linux.go": """package p
+
+type T struct{}
+
+func (T) M() {}
+func (T) N() {}
+
+var _ J = T{}
+""",
+    "p/u_windows.go": """package p
+
+type U struct{}
+
+func (U) W() {}
+func (U) N() {}
+
+var _ J = U{}
+""",
+    "p/v.go": """package p
+
+type V struct{}
+
+func (V) N() {}
+""",
+    # Files every build compiles, whose types are a J on one OS alone.
+    "p/x.go": """package p
+
+type X struct{}
+
+func (X) W() {}
+func (X) N() {}
+""",
+    "p/y.go": """package p
+
+type Y struct{}
+
+func (Y) M() {}
+func (Y) N() {}
+""",
+}
+
+
+# What the helper proves on each OS: the pairs of the files that build reads.
+_DIFFERING_PROOFS = {
+    "linux": [
+        ("p/t_linux.go", "T", "p/j.go", "J"),
+        ("p/t_linux.go", "T", "p/i_linux.go", "I"),
+        ("p/y.go", "Y", "p/j.go", "J"),
+        ("p/y.go", "Y", "p/i_linux.go", "I"),
+    ],
+    "windows": [
+        ("p/u_windows.go", "U", "p/j.go", "J"),
+        ("p/u_windows.go", "U", "p/i_windows.go", "I"),
+        ("p/x.go", "X", "p/j.go", "J"),
+        ("p/x.go", "X", "p/i_windows.go", "I"),
+    ],
+}
+
+
+def _differing_gotypes(monkeypatch: pytest.MonkeyPatch, goos: str) -> None:
+    other = "windows" if goos == "linux" else "linux"
+    read = {rel: text for rel, text in DIFFERING_FILES.items() if other not in rel}
+    _gotypes_facts(
+        monkeypatch,
+        GoSemanticFacts(
+            call_sites={},
+            external_sites=set(),
+            implements=[
+                GoImplements(
+                    impl_file,
+                    *_position(DIFFERING_FILES[impl_file], f"{impl} struct"),
+                    iface_file,
+                    *_position(DIFFERING_FILES[iface_file], f"{iface} interface"),
+                )
+                for impl_file, impl, iface_file, iface in _DIFFERING_PROOFS[goos]
+            ],
+            analysed_modules=(".",),
+            checked_files=frozenset(read),
+            compared_types=frozenset().union(
+                *(_compared(rel, text) for rel, text in read.items())
+            ),
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "frontend", ["treesitter", "recorded-linux", "recorded-windows", "real"]
+)
+def test_an_interface_each_build_declares_apart_links_each_builds_implementers(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    frontend: str,
+) -> None:
+    # J embeds the I of its build. The name match took whichever `I` a set
+    # yielded first, so one build's implementers lost their pairs. Each pair
+    # holds in one build only: none is proven, even where go/types proved
+    # it, and its silence on the other build's (U's file it never read, X
+    # and Y it read and compared) rules nothing out.
+    root = _variant_repo(temp_repo / "proj", DIFFERING_FILES)
+    _go_checks_on(root)
+    if frontend == "real":
+        _real_gotypes_files_or_skip(
+            root, {rel for rel in DIFFERING_FILES if "windows" not in rel}
+        )
+        monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
+    elif frontend != "treesitter":
+        _differing_gotypes(monkeypatch, frontend.removeprefix("recorded-"))
+    else:
+        monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    graph = _rename_index(root, mock_ingestor)
+    implements = _labels(mock_ingestor, cs.RelationshipType.IMPLEMENTS)
+    assert implements[("proj.p.t_linux.T", "proj.p.j.J")] == cs.EdgeResolution.HEURISTIC
+    assert (
+        implements[("proj.p.u_windows.U", "proj.p.j.J")] == cs.EdgeResolution.HEURISTIC
+    )
+    assert implements[("proj.p.x.X", "proj.p.j.J")] == cs.EdgeResolution.HEURISTIC
+    assert implements[("proj.p.y.Y", "proj.p.j.J")] == cs.EdgeResolution.HEURISTIC
+    assert ("proj.p.v.V", "proj.p.j.J") not in implements
+    # One build's own interface is that build's: go/types' proof stands.
+    proven_on = "windows" if frontend == "recorded-windows" else "linux"
+    for owner, own in (("proj.p.t_linux.T", "linux"), ("proj.p.x.X", "windows")):
+        expected = (
+            None
+            if frontend != "treesitter" and own == proven_on
+            else cs.EdgeResolution.HEURISTIC
+        )
+        assert implements[(owner, f"proj.p.i_{own}.I")] == expected
+    overrides = _labels(mock_ingestor, cs.RelationshipType.OVERRIDES)
+    for owner in ("proj.p.t_linux.T", "proj.p.u_windows.U"):
+        assert overrides[(f"{owner}.N", "proj.p.j.J.N")] == cs.EdgeResolution.HEURISTIC
+    assert ("proj.p.v.V.N", "proj.p.j.J.N") not in overrides
+
+    report = rename(
+        root,
+        _query(graph),
+        graph.project,
+        "proj.p.t_linux.T.N",
+        "O",
+        allow_heuristic=True,
+    )
+    assert report.applied, report.message
+    assert "func (U) O()" in (root / "p" / "u_windows.go").read_text(encoding="utf-8")
+    assert "func (X) O()" in (root / "p" / "x.go").read_text(encoding="utf-8")
+    assert "func (Y) O()" in (root / "p" / "y.go").read_text(encoding="utf-8")
+    assert "func (V) N()" in (root / "p" / "v.go").read_text(encoding="utf-8")
+    _go_checks_on(root)
+
+
+def _recorded_identical_gotypes(monkeypatch: pytest.MonkeyPatch) -> None:
+    _gotypes_facts(
+        monkeypatch,
+        GoSemanticFacts(
+            call_sites={},
+            external_sites=set(),
+            implements=[
+                GoImplements(
+                    "q/q.go",
+                    *_position(VARIANT_EMBEDDER, "T struct"),
+                    "q/q.go",
+                    *_position(VARIANT_EMBEDDER, "J interface"),
+                ),
+                GoImplements(
+                    "q/q.go",
+                    *_position(VARIANT_EMBEDDER, "T struct"),
+                    "p/i_linux.go",
+                    *_position(VARIANT_I, "I interface"),
+                ),
+            ],
+            analysed_modules=(".",),
+            checked_files=frozenset({"p/i_linux.go", "q/q.go"}),
+            compared_types=_compared("p/i_linux.go", VARIANT_I)
+            | _compared("q/q.go", VARIANT_EMBEDDER),
+        ),
+    )
+
+
+@pytest.mark.parametrize("frontend", ["recorded", "real"])
+def test_builds_that_agree_keep_the_go_types_proof(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    frontend: str,
+) -> None:
+    # Each build's `p.I` asks for M(): J is one method set, and the pair
+    # go/types proved stays proven.
+    files = {**_VARIANT_STYLES["suffix"], "q/q.go": VARIANT_EMBEDDER}
+    root = _variant_repo(temp_repo / "proj", files)
+    if frontend == "real":
+        _real_gotypes_files_or_skip(root, {"p/i_linux.go", "q/q.go"})
+        monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
+    else:
+        _recorded_identical_gotypes(monkeypatch)
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="go")
+    implements = _labels(mock_ingestor, cs.RelationshipType.IMPLEMENTS)
+    assert implements[("proj.q.q.T", "proj.q.q.J")] is None
+    overrides = _labels(mock_ingestor, cs.RelationshipType.OVERRIDES)
+    assert overrides[("proj.q.q.T.N", "proj.q.q.J.N")] is None
+
+
+# Files one build compiles together: a redeclaration there, so `I` names
+# no one interface, and J's method set stays unknown.
+_OVERLAPPING = {
+    "arch": {"p/i_linux.go": VARIANT_I, "p/i_amd64.go": VARIANT_I},
+    "plain": {"p/a.go": VARIANT_I, "p/b.go": VARIANT_I},
+    "tag": {"p/i_a.go": _LINUX_ONLY + VARIANT_I, "p/i_b.go": VARIANT_I},
+}
+
+LOCAL_EMBEDDER = """package p
+
+type J interface {
+\tI
+\tN()
+}
+
+type T struct{}
+
+func (T) M() {}
+func (T) N() {}
+"""
+
+
+@pytest.mark.parametrize("embed", ["imported", "local"])
+@pytest.mark.parametrize("overlap", sorted(_OVERLAPPING))
+def test_two_declarations_one_build_compiles_stay_ambiguous(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    overlap: str,
+    embed: str,
+) -> None:
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    files = dict(_OVERLAPPING[overlap])
+    if embed == "imported":
+        files["q/q.go"] = VARIANT_EMBEDDER.replace("\nvar _ J = T{}\n", "")
+        pkg = "proj.q.q"
+    else:
+        files["p/j.go"] = LOCAL_EMBEDDER
+        pkg = "proj.p.j"
+    root = _variant_repo(temp_repo / "proj", files)
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="go")
+    implements = _labels(mock_ingestor, cs.RelationshipType.IMPLEMENTS)
+    assert (f"{pkg}.T", f"{pkg}.J") not in implements
+
+
+# A type each build declares again, its methods in a file both compile.
+TYPE_VARIANT_FILES = {
+    "p/t_linux.go": "package p\n\ntype T struct{ a int }\n",
+    "p/t_windows.go": "package p\n\ntype T struct{ b int }\n",
+    "p/t.go": """package p
+
+func (T) M() {}
+func (T) N() {}
+""",
+    "p/m_windows.go": """package p
+
+func (T) W() {}
+
+type I2 interface {
+\tM()
+\tW()
+}
+
+var _ I2 = T{}
+
+func Run2(i I2) { i.M() }
+""",
+    "p/i.go": """package p
+
+type I interface {
+\tM()
+\tN()
+}
+
+var _ I = T{}
+
+func Run(i I) { i.M() }
+""",
+}
+
+
+def test_a_type_each_build_declares_again_has_the_methods_both_compile(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `func (T) M()` in t.go was filed under whichever `T` a set yielded
+    # first, and the other build's T had no M: no IMPLEMENTS I, and on
+    # Windows no I2 either, so renaming I2.M left t.go's M.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    root = _variant_repo(temp_repo / "proj", TYPE_VARIANT_FILES)
+    _go_checks_on(root)
+    graph = _rename_index(root, mock_ingestor)
+    linux, windows = "proj.p.t_linux.T", "proj.p.t_windows.T"
+    implements = _labels(mock_ingestor, cs.RelationshipType.IMPLEMENTS)
+    assert implements[(linux, "proj.p.i.I")] == cs.EdgeResolution.HEURISTIC
+    assert implements[(windows, "proj.p.i.I")] == cs.EdgeResolution.HEURISTIC
+    assert implements[(windows, "proj.p.m_windows.I2")] == cs.EdgeResolution.HEURISTIC
+    assert (linux, "proj.p.m_windows.I2") not in implements
+    # The shared file's methods sit under the first `T` by name; the
+    # Windows file's under Windows' T.
+    nodes = _node_labels(mock_ingestor)
+    assert {f"{linux}.M", f"{linux}.N", f"{windows}.W"} <= nodes.keys()
+    assert f"{windows}.M" not in nodes and f"{linux}.W" not in nodes
+    overrides = _labels(mock_ingestor, cs.RelationshipType.OVERRIDES)
+    assert (f"{linux}.M", "proj.p.m_windows.I2.M") in overrides
+    calls = _edges(mock_ingestor, cs.RelationshipType.CALLS)
+    assert ("proj.p.m_windows.Run2", f"{linux}.M") in calls
+    assert ("proj.p.i.Run", f"{linux}.M") in calls
+
+    report = rename(
+        root,
+        _query(graph),
+        graph.project,
+        "proj.p.m_windows.I2.M",
+        "Y",
+        allow_heuristic=True,
+    )
+    assert report.applied, report.message
+    assert "func (T) Y()" in (root / "p" / "t.go").read_text(encoding="utf-8")
+    _go_checks_on(root)
+
+
+# `error` is p's own on Windows alone: elsewhere it is the predeclared one.
+PARTIAL_SHADOW_FILES = {
+    "p/err_windows.go": """package p
+
+type error interface {
+\tCode()
+}
+""",
+    "p/i.go": """package p
+
+type I interface {
+\terror
+\tN()
+}
+""",
+    "p/t_linux.go": """package p
+
+type T struct{}
+
+func (T) Error() string { return "" }
+func (T) N()            {}
+
+var _ I = T{}
+""",
+    "p/u_windows.go": """package p
+
+type U struct{}
+
+func (U) Code() {}
+func (U) N()    {}
+
+var _ I = U{}
+""",
+}
+
+PARTIAL_SHADOW_CALLER = """package other
+
+import "proj/p"
+
+func Call(i p.I) { i.N() }
+"""
+
+
+@pytest.mark.parametrize("sync", ["parse", "fresh", "reused"])
+def test_an_error_one_build_declares_shadows_it_in_that_build_alone(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch, sync: str
+) -> None:
+    # p's Windows-only `error` hid the predeclared one from every build: I
+    # asked for Code() alone, and T, an I on Linux, lost its pair.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    files = {**PARTIAL_SHADOW_FILES, "other/other.go": PARTIAL_SHADOW_CALLER}
+    root = _variant_repo(temp_repo / "synced", files)
+    _go_checks_on(root)
+    store = _StatefulIngestor()
+    first = _go_updater(store, root)
+    first.run(force=True)
+    if sync != "parse":
+        cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
+        path = root / "other" / "other.go"
+        path.write_text(path.read_text(encoding="utf-8") + "// synced\n")
+        os.utime(path, (cache_mtime + 1, cache_mtime + 1))
+        (first if sync == "reused" else _go_updater(store, root)).run(force=False)
+        clean_root = _variant_repo(temp_repo / "clean", files)
+        (clean_root / "other" / "other.go").write_text(path.read_text(encoding="utf-8"))
+        clean = _StatefulIngestor()
+        _go_updater(clean, clean_root).run(force=True)
+        assert _interface_edges(store) == _interface_edges(clean)
+    edges = _interface_edges(store)
+    for owner in ("proj.p.t_linux.T", "proj.p.u_windows.U"):
+        assert (owner, "IMPLEMENTS", "proj.p.i.I", "heuristic") in edges
+        assert ("proj.other.other.Call", "CALLS", f"{owner}.N", "heuristic") in edges
+
+
+@pytest.mark.parametrize("sync", ["fresh", "reused"])
+def test_a_sync_reads_build_variant_embeds_back_as_its_parse_did(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch, sync: str
+) -> None:
+    # Re-parsing other/ alone reads p and q back: J's stored embed names one
+    # build's `p.I`, and both builds' are still J's.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    files = {
+        **_VARIANT_STYLES["suffix"],
+        "p/i_windows.go": DIFFERING_FILES["p/i_windows.go"],
+        # T is a J on Linux alone, U on Windows alone.
+        "q/q.go": VARIANT_EMBEDDER.replace("\nvar _ J = T{}\n", ""),
+        "q/u_windows.go": """package q
+
+type U struct{}
+
+func (U) W() {}
+func (U) N() {}
+""",
+        "other/other.go": """package other
+
+import "proj/q"
+
+func Call(j q.J) { j.N() }
+""",
+    }
+    root = _variant_repo(temp_repo / "synced", files)
+    _go_checks_on(root)
+    store = _StatefulIngestor()
+    first = _go_updater(store, root)
+    first.run(force=True)
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
+    path = root / "other" / "other.go"
+    path.write_text(path.read_text(encoding="utf-8") + "// synced\n")
+    os.utime(path, (cache_mtime + 1, cache_mtime + 1))
+    (first if sync == "reused" else _go_updater(store, root)).run(force=False)
+    clean_root = _variant_repo(temp_repo / "clean", files)
+    (clean_root / "other" / "other.go").write_text(path.read_text(encoding="utf-8"))
+    clean = _StatefulIngestor()
+    _go_updater(clean, clean_root).run(force=True)
+    synced = _interface_edges(store)
+    assert synced == _interface_edges(clean)
+    for owner in ("proj.q.q.T", "proj.q.u_windows.U"):
+        assert (owner, "IMPLEMENTS", "proj.q.q.J", "heuristic") in synced
+        assert ("proj.other.other.Call", "CALLS", f"{owner}.N", "heuristic") in synced
+
+
+@pytest.mark.parametrize("sync", ["fresh", "reused"])
+def test_a_sync_reads_a_local_build_variant_embed_back_as_its_parse_did(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch, sync: str
+) -> None:
+    # p read back from the graph: J's unqualified `I` is each build's own
+    # again, so both builds' implementers keep their pairs.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    files = {
+        **DIFFERING_FILES,
+        "other/other.go": """package other
+
+import "proj/p"
+
+func Call(j p.J) { j.N() }
+""",
+    }
+    root = _variant_repo(temp_repo / "synced", files)
+    store = _StatefulIngestor()
+    first = _go_updater(store, root)
+    first.run(force=True)
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
+    path = root / "other" / "other.go"
+    path.write_text(path.read_text(encoding="utf-8") + "// synced\n")
+    os.utime(path, (cache_mtime + 1, cache_mtime + 1))
+    (first if sync == "reused" else _go_updater(store, root)).run(force=False)
+    clean_root = _variant_repo(temp_repo / "clean", files)
+    (clean_root / "other" / "other.go").write_text(path.read_text(encoding="utf-8"))
+    clean = _StatefulIngestor()
+    _go_updater(clean, clean_root).run(force=True)
+    synced = _interface_edges(store)
+    assert synced == _interface_edges(clean)
+    for owner in ("proj.p.t_linux.T", "proj.p.u_windows.U"):
+        assert (owner, "IMPLEMENTS", "proj.p.j.J", "heuristic") in synced
+        assert ("proj.other.other.Call", "CALLS", f"{owner}.N", "heuristic") in synced
+    assert not any(edge[0] == "proj.p.v.V" for edge in synced)

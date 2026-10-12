@@ -55,6 +55,7 @@ from .field_nodes import declared_fields
 from .flow_access import FlowProcessor
 from .go import type_inference as go_ti
 from .go import utils as go_utils
+from .go.builds import GoBuilds
 from .go.interfaces import GoMethodSpec
 from .import_processor import ImportProcessor
 from .io_access import IOAccessProcessor
@@ -2081,6 +2082,8 @@ class CallProcessor:
         go_methods: Mapping[str, GoMethodSpec] | None = None,
         go_checked_files: set[str] | None = None,
         go_builtin_shadows: Mapping[str, frozenset[str]] | None = None,
+        go_variant_methods: Mapping[str, Mapping[str, list[str]]] | None = None,
+        go_builds: GoBuilds | None = None,
     ) -> None:
         self.ingestor = ingestor
         # The tree-sitter node whose span every edge emitted right now records
@@ -2153,6 +2156,8 @@ class CallProcessor:
             go_methods=go_methods,
             go_checked_files=go_checked_files,
             go_builtin_shadows=go_builtin_shadows,
+            go_variant_methods=go_variant_methods,
+            go_builds=go_builds,
         )
         # Inter-procedural callable-parameter flow: ordered params per function and
         # the per-call-site argument bindings, resolved to a fixpoint in finalize.

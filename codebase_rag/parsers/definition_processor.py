@@ -43,6 +43,7 @@ from .field_nodes import PendingFieldType
 from .frontends.protocol import ImplementsPair, ResolvedCallSite
 from .function_ingest import FunctionIngestMixin
 from .go import utils as go_utils
+from .go.builds import GoBuilds
 from .go.interface_ingest import GoInterfaceMixin
 from .go.interfaces import GoInterfaceDecl, GoMethodSpec
 from .handlers import get_handler
@@ -125,6 +126,10 @@ class DefinitionProcessor(
         # {go module qn: its `package` clause name}; Go package membership is
         # (directory, clause), so receiver binding needs both.
         self.go_package_names: dict[str, str] = {}
+        # Each Go file's build constraint, for telling a name each build
+        # declares again (`i_linux.go`, `i_windows.go`) from a redeclaration
+        # (shared with the call resolver and type inference).
+        self.go_builds = GoBuilds(repo_path)
         self.class_inheritance: dict[str, list[str]] = {}
         # {class qn: module qn of the file that DECLARED it}, written for
         # EVERY language at class ingest. `class_inheritance` and
@@ -323,6 +328,10 @@ class DefinitionProcessor(
         # by each link (shared with the call resolver): there the name is the
         # package's own type.
         self.go_builtin_shadows: dict[str, frozenset[str]] = {}
+        # Go type -> method name -> the declarations its build variants hold
+        # in files its build compiles too, refilled by each link (shared with
+        # the call resolver).
+        self.go_variant_methods: dict[str, dict[str, list[str]]] = {}
         # (rel_file, type_start_line) -> class qn for every ingested C# type,
         # the reverse of the Roslyn fact keys, so partial declaration groups
         # join back to the Pass-2 Class nodes.

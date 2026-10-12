@@ -17,6 +17,7 @@ from ..utils import qn_markers
 from .cpp import utils as cpp_utils
 from .go import interfaces as go_ifaces
 from .go import utils as go_utils
+from .go.builds import GoBuilds
 from .go.interfaces import GoMethodSpec
 from .import_processor import ImportProcessor
 from .js_ts import utils as js_ts_utils
@@ -310,6 +311,8 @@ class CallResolver:
         "go_methods",
         "go_checked_files",
         "go_builtin_shadows",
+        "go_variant_methods",
+        "go_builds",
         "_interface_impl_cache",
         "_simple_resolution_cache",
         "last_resolution",
@@ -352,6 +355,8 @@ class CallResolver:
         go_methods: Mapping[str, GoMethodSpec] | None = None,
         go_checked_files: set[str] | None = None,
         go_builtin_shadows: Mapping[str, frozenset[str]] | None = None,
+        go_variant_methods: Mapping[str, Mapping[str, list[str]]] | None = None,
+        go_builds: GoBuilds | None = None,
     ) -> None:
         self.function_registry = function_registry
         self.import_processor = import_processor
@@ -414,6 +419,15 @@ class CallResolver:
         self.go_builtin_shadows = (
             go_builtin_shadows if go_builtin_shadows is not None else {}
         )
+        # Go type -> method name -> the declarations a variant of it that
+        # another build declares holds in a file both builds compile (shared
+        # ref): a call through an interface the type implements runs them.
+        self.go_variant_methods: Mapping[str, Mapping[str, list[str]]] = (
+            go_variant_methods if go_variant_methods is not None else {}
+        )
+        # Each Go file's build constraint (shared): which files one build
+        # compiles together.
+        self.go_builds = go_builds
         self._interface_impl_cache: dict[str, str] | None = None
         # C++ typedef/using alias -> underlying bare type, consulted when a
         # receiver type name is mapped to a class (empty for other languages).
@@ -1829,9 +1843,17 @@ class CallResolver:
             return {}
         targets: dict[tuple[str, str], bool] = {}
         for implementer in self.interface_implementers.get(class_qn, ()):
+            guessed = (class_qn, implementer) in self.guessed_implementations
+            found = [
+                (cs.NodeLabel.METHOD.value, qn)
+                for qn in self.go_variant_methods.get(implementer, {}).get(
+                    method_name, ()
+                )
+            ]
             if result := self._try_resolve_method(implementer, method_name):
-                guessed = (class_qn, implementer) in self.guessed_implementations
-                targets[result] = targets.get(result, True) and guessed
+                found.append(result)
+            for target in found:
+                targets[target] = targets.get(target, True) and guessed
         return targets
 
     def go_declaration_satisfies(
