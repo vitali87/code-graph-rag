@@ -318,6 +318,9 @@ TS_CSHARP_FIELD_SUBSCRIPT = "subscript"
 # A stored indexer parameter's name, marked as a method's positional
 # parameters are: `...xs` a `params` tail, `b?` a defaulted one.
 CSHARP_STORED_PARAMETER_NAME_PATTERN = r"(?:\.\.\.)?@?[^\W\d]\w*\??"
+# A simple name a `?` follows (`U?`): on a type parameter, an annotation or
+# a `Nullable<U>` by its constraint.
+CSHARP_ANNOTATED_NAME_PATTERN = r"(?<![\w.])([^\W\d]\w*)\?"
 # Between the two halves of a pair a C# type node stores: an indexer's
 # return type and parameters, a field's name and type.
 CSHARP_STORED_PAIR_SEPARATOR = "=>"

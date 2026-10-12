@@ -2717,6 +2717,127 @@ class TestConstructedTypesConvertAsTheirClosingsDo:
         assert calls["BoxReceiver"] == {("Ca.Ext.X(object)", _EXACT)}, calls
 
 
+NULLABLE_ANNOTATIONS_CS = """\
+#nullable enable
+namespace Na;
+public interface IBox<X> { }
+public interface IOut<out X> { }
+public class Animal { }
+public class Cat : Animal { }
+public class Box : IBox<string?> { }
+public class IntBox : IBox<int?> { }
+public class OutCatQ : IOut<Cat?> { }
+public class ArrBox : IBox<string?[]> { }
+public class TupBox : IBox<(string?, int)> { }
+public class NestBox : IBox<IBox<string?>> { }
+public class GBox<U> : IBox<U?> { }
+public class Base {
+    public virtual void V(string s) { }
+}
+public class Derived : Base {
+    public override void V(string? s) { }
+}
+public class C {
+    public void M(IBox<string> b) { }
+    public void M(object o) { }
+    public void N(IBox<int> b) { }
+    public void N(IBox<int?> b) { }
+    public void N(object o) { }
+    public void W(IOut<Animal> o) { }
+    public void W(object o) { }
+    public void A(IBox<string[]> a) { }
+    public void A(object o) { }
+    public void T(IBox<(string, int)> t) { }
+    public void T(object o) { }
+    public void L(IBox<IBox<string>> l) { }
+    public void L(object o) { }
+}
+public static class Ext {
+    public static void X(this IBox<string> b) { }
+    public static void X(this object o) { }
+}
+public class Use {
+    public void Annotated() { new C().M(new Box()); }
+    public void ValueNullable() { new C().N(new IntBox()); }
+    public void Mismatch() { new C().N(new Box()); }
+    public void Variant() { new C().W(new OutCatQ()); }
+    public void Array() { new C().A(new ArrBox()); }
+    public void Tuple() { new C().T(new TupBox()); }
+    public void Nested() { new C().L(new NestBox()); }
+    public void Unconstrained() { new C().M(new GBox<string>()); }
+    public void UnconstrainedValue() { new C().N(new GBox<int>()); }
+    public void Receiver() { new Box().X(); }
+    public void Bound() { Go(new Box()); }
+    public void Override() { new Derived().V("x"); }
+    void Go<T>(T t) where T : IBox<string?> { new C().M(t); t.X(); }
+}
+"""
+
+
+class TestANullableReferenceAnnotationChangesNoClosing:
+    # Greptile review of PR 2814, round 23, and the oracle family it led
+    # to: `?` on a reference type only annotates it, at any depth of a
+    # closed base, a bound, a signature or a receiver, while `int?` is
+    # `Nullable<int>`. Each source states what Roslyn runs (.NET 8).
+    def test_an_annotated_base_closes_the_unannotated_interface(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Greptile 4245357916: `Box : IBox<string?>` is an `IBox<string>`.
+        calls = _resolved_calls(NULLABLE_ANNOTATIONS_CS, temp_repo, mock_ingestor)
+        assert calls["Annotated"] == {("Na.C.M(IBox<string>)", _EXACT)}, calls
+        assert calls["Variant"] == {("Na.C.W(IOut<Animal>)", _EXACT)}, calls
+        assert calls["Unconstrained"] == {("Na.C.M(IBox<string>)", _EXACT)}, calls
+
+    def test_annotations_inside_arrays_tuples_and_nested_closings_are_dropped(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(NULLABLE_ANNOTATIONS_CS, temp_repo, mock_ingestor)
+        assert calls["Array"] == {("Na.C.A(IBox<string[]>)", _EXACT)}, calls
+        assert calls["Tuple"] == {("Na.C.T(IBox<(string, int)>)", _EXACT)}, calls
+        assert calls["Nested"] == {("Na.C.L(IBox<IBox<string>>)", _EXACT)}, calls
+
+    def test_a_nullable_value_stays_its_own_type(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(NULLABLE_ANNOTATIONS_CS, temp_repo, mock_ingestor)
+        assert calls["ValueNullable"] == {("Na.C.N(IBox<int?>)", _EXACT)}, calls
+        assert calls["Mismatch"] == {("Na.C.N(object)", _EXACT)}, calls
+        # `GBox<int> : IBox<U?>` is an `IBox<int>` unless `U` is a struct,
+        # which the stored shape does not tell: it may bind either.
+        assert ("Na.C.N(IBox<int>)", _OVERLOAD) in calls["UnconstrainedValue"], calls
+        assert not any(
+            resolution == _EXACT for _, resolution in calls["UnconstrainedValue"]
+        ), calls
+
+    def test_receivers_bounds_and_overrides_read_no_annotation(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(NULLABLE_ANNOTATIONS_CS, temp_repo, mock_ingestor)
+        assert calls["Receiver"] == {("Na.Ext.X(IBox<string>)", _EXACT)}, calls
+        assert calls["Go(T)"] == {
+            ("Na.C.M(IBox<string>)", _EXACT),
+            ("Na.Ext.X(IBox<string>)", _EXACT),
+        }, calls
+        # `V(string?)` overrides `V(string)`: it stands in its place.
+        assert calls["Override"] == {("Na.Derived.V(string)", _EXACT)}, calls
+
+
+def test_an_incremental_run_drops_annotations_as_a_fresh_one(temp_repo: Path) -> None:
+    # Base lists and signatures read back from an unchanged file keep their
+    # `?` as written, and compare as a fresh index compares them.
+    lib, _, use = NULLABLE_ANNOTATIONS_CS.partition("public class Use {")
+    fresh, edited = _two_file_calls(
+        temp_repo, lib, f"#nullable enable\nnamespace Na;\npublic class Use {{{use}"
+    )
+    assert {
+        ("Annotated", "C", "M(IBox<string>)"),
+        ("Array", "C", "A(IBox<string[]>)"),
+        ("Receiver", "Ext", "X(IBox<string>)"),
+        ("Override", "Derived", "V(string)"),
+    } <= fresh, fresh
+    assert edited == fresh
+
+
 def test_an_incremental_run_closes_constructed_bases_as_a_fresh_one(
     temp_repo: Path,
 ) -> None:

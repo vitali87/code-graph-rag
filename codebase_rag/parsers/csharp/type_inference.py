@@ -606,6 +606,7 @@ def _form_of(
 
 # A stored indexer parameter's name, marked as `indexer_entry` marks it.
 _STORED_PARAMETER_NAME = re.compile(cs.CSHARP_STORED_PARAMETER_NAME_PATTERN)
+_ANNOTATED_NAME = re.compile(cs.CSHARP_ANNOTATED_NAME_PATTERN)
 # A parameter only an argument passed in its mode binds.
 _BY_REFERENCE = frozenset({cs.CSHARP_MODE_REF, cs.CSHARP_MODE_OUT})
 # The read-only parameter modes an argument passed by reference binds too.
@@ -3894,11 +3895,13 @@ class CSharpTypeInferenceEngine:
         # interfaces, closed as written (`_closed_receiving`); where the
         # `this` type is not read, a first-party base by its name, and
         # anything else only through a base the index does not hold.
-        if self._this_type(entry[0]) is not None:
-            return self._closed_receiving(
-                receiver, entry, Fit.CONVERTIBLE, bases_only=True
-            )
         qn, recv_type, _namespace, arity = entry
+        if self._this_type(qn) is not None:
+            # `_extends` judged a non-generic `this` type's identity by its
+            # name; a generic one's it cannot spell, so its own closing counts.
+            return self._closed_receiving(
+                receiver, entry, Fit.CONVERTIBLE, bases_only=not arity
+            )
         receiver_qn = receiver.qn or ""
         ancestry = self._class_ancestry(receiver_qn)
         bases = ancestry - set(self._partial_roots(receiver_qn))
@@ -4639,10 +4642,15 @@ class CSharpTypeInferenceEngine:
         # reads them, its own type parameters named by position: an override
         # or a hiding member may rename them (`M<T>(T)`, `M<U>(U)`; Greptile
         # review of PR 2814).
+        # A nullable reference annotation is no part of a signature (`V(string?)`
+        # overrides `V(string)`).
         reading = self._reading(method_qn, receiver)
         return by_position(
             [
-                declared_type(p, reading.scope, reading.visible)
+                unannotated(
+                    declared_type(p, reading.scope, reading.visible),
+                    self._is_reference,
+                )[0]
                 for p in self._ranked_types(method_qn)
             ],
             self._declared_type_parameters(method_qn),
@@ -5434,10 +5442,13 @@ class CSharpTypeInferenceEngine:
         # How a method takes its parameters beyond what its qn spells: their
         # modes and their types as written, its own type parameters named by
         # position.
+        # A nullable reference annotation tells no two overloads apart
+        # (`M(string?)` in one `#if` branch is `M(string)` in the other).
         shape = self.csharp_call_shapes.get(method_qn)
         if shape is None:
             return (), ()
-        return shape.modes, tuple(by_position(list(shape.types), shape.type_parameters))
+        types = [unannotated(t, self._is_reference)[0] for t in shape.types]
+        return shape.modes, tuple(by_position(types, shape.type_parameters))
 
     def _method_type_parameters(self, method_qn: str) -> frozenset[str]:
         # The type parameters a generic method declares (`M<U>(U item)`),
@@ -6167,15 +6178,30 @@ class CSharpTypeInferenceEngine:
                 found.append(None)
                 continue
             known = bindings is not None or not parameters
-            found.append(
-                (
-                    base,
-                    tuple(declared_type(a, scope, bindings or {}) for a in arguments)
-                    if arguments and known
-                    else None,
-                )
+            closed = (
+                self._closed_arguments(arguments, scope, bindings or {})
+                if arguments and known
+                else None
             )
+            found.append((base, closed))
         return found
+
+    def _closed_arguments(
+        self,
+        arguments: Sequence[str],
+        scope: Scope | None,
+        bindings: Mapping[str, str],
+    ) -> tuple[str, ...] | None:
+        # A base list's type arguments with the deriving type's bound in.
+        # A `?` on one of its type parameters is `Nullable<U>` under a
+        # `struct` constraint and an annotation otherwise, which the stored
+        # shape does not tell: bound to a type of no known reference kind,
+        # the closing is not known (None).
+        for argument in arguments:
+            for name in _ANNOTATED_NAME.findall(argument):
+                if name in bindings and not self._is_reference(bindings[name]):
+                    return None
+        return tuple(declared_type(a, scope, bindings) for a in arguments)
 
     def _closing_converts(
         self,
@@ -6198,14 +6224,28 @@ class CSharpTypeInferenceEngine:
         if any(mentioned_names(w) & set(open_names) for w in expected):
             return None
         variances = self._variances(wanted_core) or ("",) * len(expected)
-        return _all_hold(
-            {
-                self._varies_to(variance, given, wanted)
-                for variance, given, wanted in zip(
-                    variances, closing, expected, strict=True
-                )
-            }
-        )
+        return self._closing_varies(variances, closing, expected)
+
+    def _closing_varies(
+        self,
+        variances: Sequence[str],
+        closing: Sequence[str],
+        expected: Sequence[str],
+    ) -> bool | None:
+        # Whether each type argument of a closing takes the expected one's
+        # place as its parameter varies, both read without the `?` marks
+        # that only annotate a reference type (Greptile review of PR 2814:
+        # `IBox<string?>` is an `IBox<string>`, `IBox<int?>` no `IBox<int>`).
+        # A `?` on a type of no known kind may be either, so a mismatch it
+        # alone may cause is not known.
+        verdicts: set[bool | None] = set()
+        for variance, given, wanted in zip(variances, closing, expected, strict=True):
+            plain_given, given_told = unannotated(given, self._is_reference)
+            plain_wanted, wanted_told = unannotated(wanted, self._is_reference)
+            verdict = self._varies_to(variance, plain_given, plain_wanted)
+            told = given_told and wanted_told
+            verdicts.add(None if verdict is False and not told else verdict)
+        return _all_hold(verdicts)
 
     def _class_conversion(
         self,
