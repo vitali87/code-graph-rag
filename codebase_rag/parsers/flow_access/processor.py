@@ -2068,7 +2068,7 @@ class FlowProcessor:
         type_name = type_node.text.decode(cs.ENCODING_UTF8)
         if type_name in jc.new_wrappers:
             inner = self._lean_handle_binding(
-                self._first_positional_arg(node), handles, jc
+                positional_arg_node(node, 0, None), handles, jc
             )
             if inner:
                 return inner
@@ -2114,7 +2114,7 @@ class FlowProcessor:
         )
         if identity != DYNAMIC_TARGET or ctor.target_arg != 0:
             return identity
-        arg = self._first_positional_arg(node)
+        arg = positional_arg_node(node, 0, None)
         if arg is None:
             return identity
         if jc.identity_calls and arg.type == d.call_type:
@@ -2148,13 +2148,6 @@ class FlowProcessor:
             ):
                 return self._lean_literal_arg0(arg, jc)
         return identity
-
-    @staticmethod
-    def _first_positional_arg(call_node: Node) -> Node | None:
-        args = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
-        if args is None:
-            return None
-        return next((c for c in args.named_children if c.type != cs.TS_COMMENT), None)
 
     @staticmethod
     def _lean_literal_arg0(node: Node, jc: _JsCtx) -> str:
