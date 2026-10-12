@@ -1,5 +1,6 @@
 # Supported languages, file extensions, metadata, and grammar modules.
 
+import re
 from enum import StrEnum
 from typing import NamedTuple
 
@@ -160,6 +161,17 @@ class GoFrontend(StrEnum):
     AUTO = "auto"
     TREESITTER = "treesitter"
     GOTYPES = "gotypes"
+
+
+# How long a failed build of the go/types helper is remembered (issue #2395).
+# Inside it, a sync skips the build and warns once instead of paying for
+# another `go build` that is likely to fail the same way. The marker lives in a
+# cache that later syncs and other repositories share, and most failures that
+# get past the Go version check come from the environment (no network, a module
+# proxy outage, a full disk). An hour bounds how long go/types facts stay off
+# after such a failure clears, while a lasting failure costs one build attempt
+# an hour (PR #2417 review).
+GO_FRONTEND_BUILD_FAILURE_TTL_S = 60 * 60
 
 
 # JS/TS import specifier schemes naming genuinely external code (node
@@ -410,6 +422,11 @@ INDEX_LUA_INIT = "init"
 MODULE_INDEX_FILE_STEMS = frozenset(
     {INDEX_INIT, INDEX_INDEX, INDEX_MOD, INDEX_LUA_INIT}
 )
+# A Rust library crate's root, where its `pub use` facade lives.
+INDEX_RS_LIB = "lib"
+# Stems of the files a package exposes its internals through (issue #2573):
+# an import of the whole module, or of `*`, reaches what it imports.
+REEXPORT_FACADE_STEMS = MODULE_INDEX_FILE_STEMS | {INDEX_RS_LIB}
 
 # Parser loader paths and args
 GRAMMARS_DIR = "grammars"
@@ -448,6 +465,21 @@ class TreeSitterModule(StrEnum):
 DIR_BIN = "bin"
 DIR_SRC = "src"
 
+# Default-excluded directory names that hold first-party, committed source as
+# often as build output: Dart's `bin/` entry point, npm and gem executables, a
+# Go package `out`, a JS `env` module. The files git tracks under a directory
+# with one of these names are indexed; untracked or ignored output under the
+# same name, even beside tracked files, is still skipped (issue #2406).
+TRACKED_SOURCE_DIR_NAMES = frozenset(
+    {"bin", "coverage", "env", "obj", "out", "target", "temp", "tmp"}
+)
+# gitwildmatch reads these as pattern syntax, so a tracked path holding them
+# cannot be rescued by its literal path. It also drops trailing whitespace,
+# which `_tracked_source_dirs` checks separately.
+TRACKED_PATH_PATTERN_CHARS = re.compile(r"[*?\[\]\\!]")
+GIT_LS_FILES_TIMEOUT_S = 30
+GIT_INDEX_FILENAME = "index"
+
 # Patterns detected at repo root and offered as exclude candidates (user picks which)
 IGNORE_PATTERNS = frozenset(
     {
@@ -465,6 +497,9 @@ IGNORE_PATTERNS = frozenset(
         ".gradle",
         ".hg",
         ".idea",
+        # Jupyter's autosaved copy of each notebook beside it: indexing it
+        # would define every notebook function twice (issue #2480).
+        ".ipynb_checkpoints",
         ".maven",
         ".mypy_cache",
         ".nox",

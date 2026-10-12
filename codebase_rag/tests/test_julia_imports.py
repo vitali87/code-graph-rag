@@ -450,7 +450,7 @@ def test_gone_julia_file_invalidates_stem_cache(
     (issue #1882 review: invalidation ran only for reparsed files)."""
     from watchdog.events import FileDeletedEvent, FileModifiedEvent
 
-    import realtime_updater
+    from codebase_rag.watch import CodeChangeEventHandler
 
     project = temp_repo / "julia_gonecache"
     (project / "old").mkdir(parents=True)
@@ -467,7 +467,7 @@ def test_gone_julia_file_invalidates_stem_cache(
         == f"{project.name}.old.Utils"
     )
 
-    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler = CodeChangeEventHandler(updater, debounce_seconds=0)
 
     (project / "old" / "Utils.jl").unlink()
     handler.dispatch(FileDeletedEvent(str(project / "old" / "Utils.jl")))
