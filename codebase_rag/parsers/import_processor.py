@@ -57,11 +57,12 @@ from .dart import (
     dart_resolve_import,
 )
 from .go import discover_go_module_paths, resolve_go_import_path
+from .js_ts.commonjs_exports import commonjs_export_bindings, is_commonjs_module
 from .js_ts.module_paths import (
     discover_js_workspace_packages,
     resolve_js_workspace_import,
 )
-from .js_ts.reexports import JsExport, follow_js_reexports
+from .js_ts.reexports import JsExport, follow_js_reexports, js_ts_module_qn
 from .lua import utils as lua_utils
 from .python_source_roots import discover_python_source_roots, resolve_via_source_roots
 from .rs import cargo_semver
@@ -86,6 +87,7 @@ from .stdlib_extractor import (
     save_persistent_cache,
 )
 from .utils import (
+    follow_reexports,
     get_query_cursor,
     node_site_properties,
     safe_decode_text,
@@ -1219,7 +1221,8 @@ class ImportProcessor:
         # file against it to find the modules that waited (issue #1568).
         self.unresolved_references: dict[str, set[str]] = {}
         # JS/TS module qn -> {exported name: what it names}, from every
-        # `export { ... }` (with or without a `from`) and `export default`.
+        # `export { ... }` (with or without a `from`) and `export default`,
+        # and from what a CommonJS module publishes (`module.exports = {...}`).
         # An importer's map holds `<module>.strip`, which names nothing
         # registered; the call resolver follows it through this table, and
         # only through it, since a module's own imports are not its exports
@@ -1798,7 +1801,7 @@ class ImportProcessor:
                     | cs.SupportedLanguage.TS
                     | cs.SupportedLanguage.TSX
                 ):
-                    self._parse_js_ts_imports(captures, module_qn)
+                    self._parse_js_ts_imports(captures, module_qn, root_node)
                 case cs.SupportedLanguage.JAVA:
                     self._parse_java_imports(captures, module_qn)
                 case cs.SupportedLanguage.RUST:
@@ -4748,7 +4751,9 @@ class ImportProcessor:
 
         return cs.SEPARATOR_DOT.join(target_parts)
 
-    def _parse_js_ts_imports(self, captures: dict, module_qn: str) -> None:
+    def _parse_js_ts_imports(
+        self, captures: dict, module_qn: str, root_node: Node
+    ) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type == cs.TS_IMPORT_STATEMENT:
                 self._parse_js_import_statement(import_node, module_qn)
@@ -4762,6 +4767,34 @@ class ImportProcessor:
             elif import_node.type == cs.TS_EXPORT_STATEMENT:
                 self._parse_js_reexport(import_node, module_qn)
                 self._record_js_export_bindings(import_node, module_qn)
+        self._record_commonjs_export_bindings(root_node, module_qn)
+
+    def _record_commonjs_export_bindings(self, root_node: Node, module_qn: str) -> None:
+        """Record what a CommonJS module publishes as its export table.
+
+        `module.exports = { Svc }` is such a module's whole API, as its export
+        statements are an ES module's, so the re-export walk follows only the
+        names it publishes, never a binding it keeps to itself (CodeRabbit,
+        PR #3355). A module with a value ES export keeps that table alone
+        (`is_commonjs_module`).
+        """
+        if not is_commonjs_module(root_node):
+            return
+        # A name only a top-level `require` or `import` binds leads straight
+        # to what it imports, so a nested declaration of the same name, which
+        # registers under the module's qn too, cannot stand in for it. The
+        # reader has already dropped a name anything else imports or declares.
+        imports = self.import_mapping.get(module_qn, {})
+        published: dict[str, JsExport] = {}
+        for name, found in commonjs_export_bindings(root_node).items():
+            if not found.imported:
+                published[name] = JsExport(
+                    f"{module_qn}{cs.SEPARATOR_DOT}{found.binding}", local=True
+                )
+            elif (target := imports.get(found.binding)) is not None:
+                published[name] = JsExport(target, local=False)
+        if published:
+            self.js_export_bindings.setdefault(module_qn, {}).update(published)
 
     def _ts_alias_module_qn(self, import_path: str) -> str | None:
         # Resolve a tsconfig `paths` alias (`@/util` -> `src/util`) to the
@@ -5215,6 +5248,25 @@ class ImportProcessor:
             module_paths,
             function_registry,
         )
+
+    def follow_module_reexports(
+        self,
+        qn: str,
+        module_paths: Mapping[str, Path],
+        function_registry: FunctionRegistryTrieProtocol,
+    ) -> str:
+        """Where `qn` leads through the modules re-exporting it, by the rule
+        of the language its module is written in.
+
+        A JS/TS module passes on only what it exports: its own imports are
+        not its exports (issue #2464), so a name a barrel only imports must
+        not lead anywhere (#2560 follow-up). Every other module is followed
+        through its import map.
+        """
+        module_qn, separator, _name = qn.rpartition(cs.SEPARATOR_DOT)
+        if separator and js_ts_module_qn(module_qn, module_paths) is not None:
+            return self.follow_js_reexports(qn, module_paths, function_registry)
+        return follow_reexports(qn, self.import_mapping, function_registry)
 
     def _record_js_export_bindings(self, statement: Node, module_qn: str) -> None:
         """Record what each name an `export` statement publishes stands for.

@@ -28,8 +28,8 @@ from watchdog.events import (
     FileSystemEventHandler,
 )
 
-import realtime_updater
 from codebase_rag import constants as cs
+from codebase_rag import watch
 from codebase_rag.config import (
     CGRIGNORE_FILENAME,
     git_index_path,
@@ -492,11 +492,11 @@ def _start_watcher(
     store = _StatefulIngestor()
     parsers, queries = load_parsers()
     with monkeypatch.context() as patched:
-        patched.setattr(realtime_updater, "Observer", lambda: observer)
+        patched.setattr(watch, "Observer", lambda: observer)
         patched.setattr(
-            realtime_updater, "time", SimpleNamespace(sleep=_interrupt, time=time.time)
+            watch, "time", SimpleNamespace(sleep=_interrupt, time=time.time)
         )
-        realtime_updater._run_watcher_loop(store, repo, parsers, queries, 0, 0, "defex")
+        watch._run_watcher_loop(store, repo, parsers, queries, 0, 0, "defex", True)
     (handler,) = set(observer.handlers)
     return store, handler
 
@@ -603,7 +603,7 @@ def test_a_linked_worktree_watches_its_index_outside_the_checkout(
     linked = tmp_path / "linked"
     _git(git_repo, "worktree", "add", "-q", str(linked))
 
-    rules = realtime_updater.IgnoreRules(linked, _never_built)
+    rules = watch.IgnoreRules(linked, _never_built)
 
     index = git_index_path(linked)
     assert index is not None
@@ -671,7 +671,7 @@ def _updater_double(repo: Path) -> MagicMock:
 def _rules_handler(
     tmp_path: Path, built: MagicMock, owed_rebuild: bool
 ) -> FileSystemEventHandler:
-    handler = realtime_updater.CodeChangeEventHandler(
+    handler = watch.CodeChangeEventHandler(
         _updater_double(tmp_path),
         debounce_seconds=0,
         ignore_rules=_ChangedRules(tmp_path, built),

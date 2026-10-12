@@ -115,13 +115,6 @@ CONTENT_EVENT_TYPES = frozenset(
 )
 
 
-REALTIME_LOGGER_FORMAT = (
-    "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
-    "<level>{level: <8}</level> | "
-    "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
-    "<level>{message}</level>"
-)
-
 WATCHER_SLEEP_INTERVAL = 1
 LOG_LEVEL_INFO = "INFO"
 LOG_LEVEL_ERROR = "ERROR"
@@ -135,7 +128,7 @@ ENV_PYTHON_DOTENV_DISABLED = "PYTHON_DOTENV_DISABLED"
 PYTHON_DOTENV_DISABLED_VALUES = frozenset({"1", "true", "t", "yes", "y"})
 LOGURU_DEFAULT_HANDLER_ID = 0
 
-# Debounce settings for realtime watcher
+# Debounce settings for the real-time watcher (`cgr watch`)
 DEFAULT_DEBOUNCE_SECONDS = 5
 DEFAULT_MAX_WAIT_SECONDS = 30
 
@@ -243,6 +236,20 @@ EXPOSES_CLEANUP_PENDING_FILENAME = ".cgr-exposes-cleanup-pending"
 # could not establish were left (issue #1985). Unchanged files would otherwise
 # take the in-sync fast path, which never prunes, and keep those rows forever.
 PRUNE_PENDING_FILENAME = ".cgr-prune-pending"
+# Present while an embeddings pass a run left incomplete is still owed by the
+# project the file names: a symbol's point was not stored and verified, or a
+# stale point was not removed. Unchanged files would otherwise take the in-sync
+# fast path, which never embeds, and an edited function whose new point the
+# store refused stayed unsearchable until another file changed (review of PR
+# #2550). One file per project, `{digest}` the SHA-256 of its name, so that
+# projects syncing one checkout at once never rewrite each other's (review of
+# PR #3358). Not in CGR_STATE_FILENAMES: no cgr ever wrote one into the tree,
+# so there is nothing to move out of it.
+EMBEDDINGS_PENDING_PROJECT_TEMPLATE = ".cgr-embeddings-pending-{digest}"
+# The marker an earlier build shared between every project of a checkout: a
+# JSON list of the projects owing a pass, or an empty file. Read so that each
+# still retries once, then split into the per-project files above.
+EMBEDDINGS_PENDING_FILENAME = ".cgr-embeddings-pending"
 PARSER_FINGERPRINT_FILENAME = ".cgr-parser-fingerprint"
 DELOMBOK_STATE_FILENAME = ".cgr-delombok-state.json"
 # The exclusion set the last run indexed under, covering both the excludes and
@@ -292,6 +299,7 @@ CGR_STATE_FILENAMES: frozenset[str] = frozenset(
         DIR_MTIMES_FILENAME,
         EXPOSES_CLEANUP_PENDING_FILENAME,
         PRUNE_PENDING_FILENAME,
+        EMBEDDINGS_PENDING_FILENAME,
         PARSER_FINGERPRINT_FILENAME,
         DELOMBOK_STATE_FILENAME,
         EXCLUSION_STATE_FILENAME,

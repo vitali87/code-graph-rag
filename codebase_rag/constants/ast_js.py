@@ -3,8 +3,10 @@
 from .ast_nodes import (
     TS_CALL_EXPRESSION,
     TS_IDENTIFIER,
+    TS_INTERFACE_DECLARATION,
     TS_MEMBER_EXPRESSION,
     TS_NEW_EXPRESSION,
+    TS_TYPE_ALIAS_DECLARATION,
 )
 
 # Locals query patterns for JS/TS
@@ -55,6 +57,15 @@ JS_TS_PARENT_REF_TYPES = (TS_IDENTIFIER, TS_MEMBER_EXPRESSION)
 # The `*` of `export * from './m'`. The JavaScript and TypeScript grammars
 # spell it as an anonymous token, not Java's named `asterisk` node.
 TS_JS_STAR = "*"
+# TypeScript's CommonJS export (`export = value`) is an export_statement whose
+# token after `export` is `=`.
+TS_EXPORT_ASSIGNMENT_TOKEN = "="
+# A type-only export (`export type { T }`, `export interface I`) is erased at
+# runtime, so it says nothing about the module's value exports.
+TS_TYPE_ONLY_TOKEN = "type"
+TS_TYPE_ONLY_EXPORT_DECLARATIONS = frozenset(
+    {TS_INTERFACE_DECLARATION, TS_TYPE_ALIAS_DECLARATION}
+)
 # JSX element nodes that carry a component name (javascript and tsx grammars
 # share these); the closing element repeats the name and must not double-emit.
 TS_JSX_SELF_CLOSING_ELEMENT = "jsx_self_closing_element"
@@ -116,6 +127,7 @@ TS_JS_UPDATE_EXPRESSION = "update_expression"
 TS_JS_FIELD_ARGUMENT = "argument"
 TS_FIELD_PATTERN = "pattern"
 TS_FIELD_PARAMETER = "parameter"
+TS_FIELD_INITIALIZER = "initializer"
 TS_MODULE = "module"
 TS_CLASS_BODY = "class_body"
 
@@ -157,6 +169,22 @@ JS_SYMBOL_GLOBAL = "Symbol"
 JS_PROTOTYPE_KEYWORD = "prototype"
 JS_OBJECT_NAME = "Object"
 JS_CREATE_METHOD = "create"
+# `Object.assign(module.exports, { Svc })` publishes the keys it copies.
+JS_OBJECT_ASSIGN_METHOD = "assign"
+# The other `Object` calls the CommonJS export reader models.
+JS_OBJECT_FREEZE_METHOD = "freeze"
+JS_OBJECT_DEFINE_PROPERTY_METHOD = "defineProperty"
+# What the CommonJS export reader (`js_ts.commonjs_exports`) must recognise
+# to keep a module's exports knowable: a read of `exports` through `typeof`
+# or an equality test, and the constructs that hide a write from it.
+TS_JS_UNARY_EXPRESSION = "unary_expression"
+TS_JS_THIS = "this"
+TS_JS_ASYNC_KEYWORD = "async"
+JS_TYPEOF_OPERATOR = "typeof"
+JS_DELETE_OPERATOR = "delete"
+JS_EQUALITY_OPERATORS = frozenset({"===", "!==", "==", "!="})
+JS_ARGUMENTS_NAME = "arguments"
+JS_EVAL_NAME = "eval"
 
 # JS/TS ingest query capture names
 CAPTURE_CHILD_CLASS = "child_class"
@@ -314,6 +342,23 @@ TS_ARRAY_GENERIC_NAMES = frozenset(
 )
 JS_LIST_TYPE_PREFIX = "list["
 JS_LIST_TYPE_FORMAT = "list[{element}]"
+# A fluent chain hop types from the callee's return (issue #2468). `: this`
+# names the receiver's own class. A callable carrying one of these keywords
+# does not hand the caller what its body returns: an `async` one gives a
+# Promise, a `*` generator an iterator, and an accessor is read or written as
+# a property, never called.
+TS_THIS_TYPE = "this_type"
+# What a `return this` (or `: this`) hands back before the receiver it is
+# called on is known: an instance of the receiver's class from an instance
+# method, the receiver class itself from a static one. A hop on the class
+# itself reaches only its static members.
+JS_RECEIVER_INSTANCE = "this"
+JS_CLASS_VALUE_PREFIX = "typeof "
+JS_RECEIVER_CLASS = f"{JS_CLASS_VALUE_PREFIX}{JS_RECEIVER_INSTANCE}"
+TS_CHAIN_OPAQUE_CALLABLE_KEYWORDS = frozenset({"async", "*", "get", "set"})
+TS_ACCESSOR_KEYWORDS = frozenset({"get", "set"})
+# `declare class C {}` / `declare module "x" {}`.
+TS_AMBIENT_DECLARATION = "ambient_declaration"
 # A member call's receiver declaration, read to confirm or rule out a method
 # bound only by name (issue #2609).
 TS_PREDEFINED_TYPE = "predefined_type"

@@ -234,7 +234,7 @@ EMBEDDINGS_COMPLETE = "Successfully generated {count} semantic embeddings"
 EMBEDDING_GENERATION_FAILED = "Failed to generate semantic embeddings: {error}"
 EMBEDDINGS_INTERRUPTED = (
     "Semantic embedding generation interrupted; the graph is saved without the"
-    " remaining embeddings, which the next sync that finds a code change generates"
+    " remaining embeddings"
 )
 EMBEDDING_STORE_FAILED = "Failed to store embedding for {name}: {error}"
 EMBEDDING_STORE_RETRY = "Vector store upsert failed (attempt {attempt}/{max_attempts}), retrying in {delay:.1f}s: {error}"
@@ -258,6 +258,11 @@ EMBEDDING_STALE_SKIPPED = (
     "registry could not be read, so a nested project's vectors cannot be told "
     "from this one's; the next sync removes them"
 )
+EMBEDDINGS_PENDING = (
+    "Embeddings of project '{project}' are incomplete; the next sync retries "
+    "them even if no file changed"
+)
+EMBEDDINGS_PENDING_NOT_UPDATED = "Embeddings pending marker not updated"
 VECTOR_STORE_REKEYED = (
     "Removed {count} {backend} vectors of project '{project}' that were keyed "
     "by Memgraph node id; its vectors are keyed by symbol now"
@@ -458,6 +463,14 @@ WATCHER_REBUILDING_AFTER_FAILURE = (
     "Re-indexing the whole repository before this change, because the last "
     "re-ingest failed part way through."
 )
+WATCHER_FULL_RUN_OVER_UNFINISHED_SYNC = (
+    "A sync of project {project} did not finish, so its graph may be partial. "
+    "Re-indexing the whole repository instead of only what changed."
+)
+WATCHER_SYNC_UNFINISHED = (
+    "A sync of project {project} did not finish, so its graph may be partial. "
+    "Re-indexing the whole repository instead of re-ingesting this change."
+)
 WATCHER_EXPANSION_FAILED = (
     "Could not list the files a directory event covers: {error}. Re-indexing "
     "the whole repository instead."
@@ -472,8 +485,7 @@ WATCHER_IGNORE_RULES_SYNC_FAILED = (
 )
 INITIAL_SCAN = "Performing initial full codebase scan..."
 INITIAL_SCAN_DONE = "Initial scan complete. Starting real-time watcher."
-WATCHING = "Watching for changes in: {path}"
-LOGGER_CONFIGURED = "Logger configured for Real-Time Updater."
+WATCHING = "Watching for changes in: {path} (project {project})"
 
 # Build logs
 BUILD_BINARY = "Building binary: {name}"
