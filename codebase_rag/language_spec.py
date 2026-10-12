@@ -10,8 +10,9 @@ from loguru import logger
 from . import constants as cs
 from .models import FQNSpec, LanguageSpec
 from .sql_names import normalize_sql_reference
+from .utils import path_utils
 from .utils.path_utils import module_extension, module_stem, should_skip_path
-from .utils.qn_markers import strip_dup_marker
+from .utils.qn_markers import strip_arity_marker, strip_dup_marker, with_leaf_arity
 
 if TYPE_CHECKING:
     from tree_sitter import Node
@@ -214,7 +215,11 @@ def _cpp_get_name(node: Node) -> str | None:
     if node.type in cs.CPP_NAME_NODE_TYPES:
         name_node = node.child_by_field_name(cs.FIELD_NAME)
         if name_node and name_node.text:
-            return decode_node_text(name_node.text)
+            # A specialization's `Box<T, int>` is rendered from its tokens,
+            # so it stays one line and free of `.` (issue #2434).
+            from .parsers.cpp import utils as cpp_utils
+
+            return cpp_utils.type_name_text(name_node)
     elif node.type == cs.TS_CPP_FUNCTION_DEFINITION:
         declarator = node.child_by_field_name(cs.FIELD_DECLARATOR)
         if declarator and declarator.type == cs.TS_CPP_FUNCTION_DECLARATOR:
@@ -292,31 +297,39 @@ def csharp_namespaced_from_graph(
     index is rebuilt for the rest from what the node stores: its qn, path
     and declared namespace. The fold is undone by the same directory rule
     `_csharp_fold_scopes` applied, and a duplicate-qn marker (`Bench@24`)
-    is dropped as the parsed form never carries it (bot review on #1999).
+    is dropped as the parsed form never carries it (bot review on #1999),
+    as is a generic twin's arity (`PB`1`, issue #2579): the declared form
+    is the written name, which both twins share.
     A module qn that is neither of the two path spellings is not guessed.
     """
     split = _csharp_graph_scope(qn, path, project_name)
     if split is None:
         return None
     directory, suffix = split
-    scoped = [strip_dup_marker(part) for part in suffix.split(cs.SEPARATOR_DOT)]
+    scoped = [
+        strip_arity_marker(strip_dup_marker(part))
+        for part in suffix.split(cs.SEPARATOR_DOT)
+    ]
     if namespace and directory.endswith(f"{cs.SEPARATOR_DOT}{namespace}"):
         scoped.insert(0, namespace)
     return cs.SEPARATOR_DOT.join(scoped)
 
 
-def csharp_partial_key_from_graph(qn: str, path: str, project_name: str) -> str | None:
+def csharp_partial_key_from_graph(
+    qn: str, path: str, project_name: str, arity: int
+) -> str | None:
     """The partial-group key parsing gives a C# type, for one read back from
     the graph: its declaring directory plus its declared name, marker
-    stripped. Whether the type was `partial` is not stored, so an unchanged
-    part must rejoin its siblings by this key or a declared name spanning
-    two unchanged parts reads as two projects (bot review on #1999).
+    stripped and generic arity spelled. Whether the type was `partial` is
+    not stored, so an unchanged part must rejoin its siblings by this key or
+    a declared name spanning two unchanged parts reads as two projects (bot
+    review on #1999).
     """
     split = _csharp_graph_scope(qn, path, project_name)
     if split is None:
         return None
     directory, suffix = split
-    return f"{directory}{cs.SEPARATOR_DOT}{strip_dup_marker(suffix)}"
+    return f"{directory}{cs.SEPARATOR_DOT}{with_leaf_arity(suffix, arity)}"
 
 
 def _csharp_graph_scope(
@@ -362,6 +375,13 @@ def _csharp_get_name(node: Node) -> str | None:
     # node is never a real definition, so drop it.
     if name in cs.CSHARP_RESERVED_KEYWORDS:
         return None
+    # `Foo<T>` beside a `Foo` is a different type (issue #2579); its segment
+    # is decided here so the graph, a nested type's scope walk and the
+    # source lookup by qualified name all spell it alike.
+    if name and node.type in cs.SPEC_CSHARP_CLASS_TYPES:
+        from .parsers.csharp import utils as csharp_utils
+
+        return csharp_utils.arity_qualified_name(node, name)
     return name
 
 
@@ -521,6 +541,20 @@ _TS_CLASS_NODE_TYPES = cs.JS_TS_CLASS_NODES + (
     cs.TS_TYPE_ALIAS_DECLARATION,
     cs.TS_INTERNAL_MODULE,
 )
+# Bodiless members are captured by POSITION, not by type (issue #2524): see
+# TS_METHOD_SIGNATURE for the class-overload and object-type spellings of the
+# same node that must not register. They stay out of function_node_types, whose
+# consumers treat a listed type as a scope that can hold calls and closures.
+_TS_FUNCTION_QUERY = " ".join(
+    [
+        *(
+            f"({node_type}) @{cs.CAPTURE_FUNCTION}"
+            for node_type in _TS_FUNCTION_NODE_TYPES
+        ),
+        f"({cs.TS_INTERFACE_BODY} ({cs.TS_METHOD_SIGNATURE}) @{cs.CAPTURE_FUNCTION})",
+        f"({cs.TS_CLASS_BODY} ({cs.TS_ABSTRACT_METHOD_SIGNATURE}) @{cs.CAPTURE_FUNCTION})",
+    ]
+)
 
 LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
     cs.SupportedLanguage.PYTHON: LanguageSpec(
@@ -548,6 +582,7 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         language=cs.SupportedLanguage.TS,
         file_extensions=cs.TS_EXTENSIONS,
         function_node_types=_TS_FUNCTION_NODE_TYPES,
+        function_query=_TS_FUNCTION_QUERY,
         class_node_types=_TS_CLASS_NODE_TYPES,
         module_node_types=cs.SPEC_JS_MODULE_TYPES,
         call_node_types=cs.SPEC_JS_CALL_TYPES,
@@ -562,6 +597,7 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         language=cs.SupportedLanguage.TSX,
         file_extensions=cs.TSX_EXTENSIONS,
         function_node_types=_TS_FUNCTION_NODE_TYPES,
+        function_query=_TS_FUNCTION_QUERY,
         class_node_types=_TS_CLASS_NODE_TYPES,
         module_node_types=cs.SPEC_JS_MODULE_TYPES,
         call_node_types=cs.SPEC_JS_CALL_TYPES,
@@ -791,6 +827,8 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
             (name) @name) @call
         (object_creation_expression
             (qualified_name) @name) @call
+        (object_creation_expression
+            (relative_name) @name) @call
         """,
     ),
     cs.SupportedLanguage.LUA: LanguageSpec(
@@ -940,6 +978,9 @@ def has_other_language_sibling(
         ):
             continue
         candidate = path.parent / name
+        # A linked file is no sibling: the walk leaves links out (#2451).
+        if path_utils.is_symlink_entry(candidate):
+            continue
         if candidate.is_file() and not should_skip_path(
             candidate,
             repo_path,

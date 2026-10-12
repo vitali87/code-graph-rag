@@ -25,18 +25,27 @@ from ..types_defs import (
     FunctionLocation,
     FunctionRegistryTrieProtocol,
     FunctionSpanKey,
+    JavaStaticImport,
     LanguageFamily,
     LanguageQueries,
     PropertyDict,
+    ScalaBlockImports,
+    ScalaImportBinding,
+    ScalaImportTarget,
+    ScalaPackageBlock,
+    ScalaPackageIndex,
+    ScalaPackageScan,
     StemSiblingModules,
 )
 from ..utils.json_io import loads_json
 from ..utils.path_utils import (
     base_module_qn,
+    cached_relative_path,
     declaration_extension,
     module_extension,
     should_keep_dir,
     should_skip_rel_file,
+    walk_eligible_files,
 )
 from .cpp_frontend.qn import build_module_qn_map
 from .dart import (
@@ -48,14 +57,26 @@ from .dart import (
     dart_resolve_import,
 )
 from .go import discover_go_module_paths, resolve_go_import_path
+from .js_ts.commonjs_exports import commonjs_export_bindings, is_commonjs_module
 from .js_ts.module_paths import (
     discover_js_workspace_packages,
     resolve_js_workspace_import,
 )
-from .js_ts.reexports import JsExport, follow_js_reexports
+from .js_ts.reexports import JsExport, follow_js_reexports, js_ts_module_qn
 from .lua import utils as lua_utils
 from .python_source_roots import discover_python_source_roots, resolve_via_source_roots
+from .rs import cargo_semver
 from .rs import utils as rs_utils
+from .scala import (
+    bind_scala_import,
+    resolve_scala_import,
+    scala_blocks_at,
+    scala_enclosing_packages_at,
+    scala_import_block,
+    scala_package_index,
+    scala_package_owner,
+    scan_scala_packages,
+)
 from .stdlib_extractor import (
     StdlibCacheStats,
     StdlibExtractor,
@@ -66,6 +87,7 @@ from .stdlib_extractor import (
     save_persistent_cache,
 )
 from .utils import (
+    follow_reexports,
     get_query_cursor,
     node_site_properties,
     safe_decode_text,
@@ -74,6 +96,10 @@ from .utils import (
 )
 
 _JS_SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9.+-]*):")
+# A module known to declare no Scala package: not a Scala file, or unreadable.
+_EMPTY_SCALA_SCAN = ScalaPackageScan(
+    packages={}, enclosing=(), mentions=frozenset(), blocks=(), class_bases={}
+)
 # Bodyless `mod NAME;` declarations in a Rust crate entry file: the mod graph
 # is what assigns a file to the lib or the bin crate (issue #1007). Attribute
 # prefixes on the same line (`#[cfg(unix)] mod unix;`) are idiomatic; the
@@ -798,6 +824,23 @@ def _ts_alias_target(raw_path: str) -> str | None:
     return normalized
 
 
+def _js_binds_whole_module(site: PropertyDict | None) -> bool:
+    # A JS/TS binding that names one export records it as the site's imported
+    # name; a namespace import and `export *` record the wildcard, and a bare
+    # `require` or the CommonJS fallback (no site) record none.
+    if site is None:
+        return True
+    return site.get(cs.KEY_IMPORTED_NAME) in (None, cs.IMPORTED_NAME_WILDCARD)
+
+
+def _is_known_js_module(qn: str, known_module_paths: Mapping[str, str]) -> bool:
+    # A registered module whose FILE is JS/TS. Another language can own the
+    # same qn (`pkg/__init__.py` is `proj.pkg`), and a JS/TS import must never
+    # bind to it.
+    path = known_module_paths.get(qn)
+    return path is not None and path.endswith(cs.JS_TS_MODULE_EXTENSIONS)
+
+
 def _lua_relative_module(import_path: str, current_module: str) -> str:
     # Resolve `./x` / `../x` against the importing module's package.
     parts = current_module.split(cs.SEPARATOR_DOT)[:-1]
@@ -853,6 +896,94 @@ def _rust_manifest_section_tables(manifest: dict, section: str) -> list[dict]:
     if not isinstance(entries, list):
         return []
     return [entry for entry in entries if isinstance(entry, dict)]
+
+
+def _rust_manifest_dep_entries(
+    manifest: dict,
+) -> Iterator[tuple[str, str | dict[str, object]]]:
+    # Every dependency entry a manifest declares, of every kind, its
+    # `[target.<cfg>]` tables included: a version string or a table.
+    tables = [manifest]
+    target = manifest.get(cs.RS_MANIFEST_TARGET_TABLE_KEY)
+    if isinstance(target, dict):
+        tables.extend(t for t in target.values() if isinstance(t, dict))
+    for table in tables:
+        for section in cs.RS_MANIFEST_DEP_SECTIONS:
+            entries = table.get(section)
+            if isinstance(entries, dict):
+                yield from entries.items()
+
+
+def _rust_dep_source(value: object) -> str | None:
+    # Where a pathless dependency entry fetches its package from: its git
+    # URL, its alternate registry, or crates.io. None for a path entry,
+    # which binds a directory instead, and for a malformed one.
+    if isinstance(value, str):
+        return cs.RS_DEFAULT_REGISTRY
+    if not isinstance(value, dict) or cs.RS_MANIFEST_PATH_KEY in value:
+        return None
+    for key in cs.RS_MANIFEST_DEP_SOURCE_KEYS:
+        if isinstance(source := value.get(key), str):
+            return source
+    return cs.RS_DEFAULT_REGISTRY
+
+
+def _rust_dep_requirement(value: object) -> str | None:
+    # The version requirement a dependency entry states, if any.
+    if isinstance(value, str):
+        return value
+    version = value.get(cs.RS_MANIFEST_VERSION_KEY) if isinstance(value, dict) else None
+    return version if isinstance(version, str) else None
+
+
+def _rust_patch_winner(
+    local: list[tuple[str | None, tuple[str, ...]]], foreign: list[str | None]
+) -> tuple[str, ...] | None:
+    # The repo dir Cargo builds against, given the qualifying in-repo
+    # patches as (version, dir) and every other patch of the package by its
+    # own `version` requirement, each one able to meet the dependency's.
+    # Cargo takes the highest qualifying version wherever it comes from,
+    # and an out-of-repo patch's version cannot be read, so the local copy
+    # wins only when each of those is pinned below it; otherwise the
+    # dependency is external, as for any unreadable version.
+    if not local:
+        return None
+    version, target = max(local, key=lambda candidate: _rust_version_rank(candidate[0]))
+    if foreign and (
+        version is None
+        or not all(
+            req is not None and cargo_semver.all_below(req, version) for req in foreign
+        )
+    ):
+        return None
+    return target
+
+
+def _rust_patch_may_qualify(own: str | None, requirement: str | None) -> bool:
+    # Whether a patch whose version is unknown could meet the dependency's
+    # requirement. Its own `version` requirement says what it can be, and
+    # one that cannot overlap the dependency's is a patch Cargo leaves
+    # unused (`=2.0.0` against `=1.2.0`), so it never outranks the local
+    # copy (PR #2791 review).
+    return (
+        own is None
+        or requirement is None
+        or not cargo_semver.requirements_disjoint(own, requirement)
+    )
+
+
+def _rust_version_rank(version: str | None) -> tuple[bool, tuple]:
+    # Readable versions in Cargo's order, after every unreadable one.
+    key = cargo_semver.version_key(version) if version else None
+    return key is not None, key or ()
+
+
+def _rust_dep_package(key: str, value: object) -> str:
+    # The package a dependency entry names, underscore-spelled: its
+    # `package =` rename, else its key.
+    package = value.get(cs.RS_MANIFEST_PACKAGE_KEY) if isinstance(value, dict) else None
+    name = package if isinstance(package, str) and package else key
+    return name.replace(cs.CHAR_HYPHEN, cs.CHAR_UNDERSCORE)
 
 
 def _java_import_shape(import_node: Node) -> tuple[str | None, bool, bool]:
@@ -923,9 +1054,11 @@ class ImportProcessor:
         "function_registry",
         "exclude_paths",
         "unignore_paths",
+        "module_qn_to_file_path",
         "import_mapping",
         "csharp_static_imports",
         "csharp_global_static_imports",
+        "java_static_imports",
         "commonjs_direct_exports",
         "conditional_imports",
         "python_import_rebinds",
@@ -967,6 +1100,10 @@ class ImportProcessor:
         "_rust_auto_discovery_flags",
         "_rust_workspace_crates",
         "_rust_pkg_deps",
+        "_rust_dep_closures",
+        "_rust_qn_packages",
+        "_rust_dep_members",
+        "_rust_member_packages",
         "_rust_inline_scope_keys",
         "rust_impl_self_paths",
         "_rust_impl_self_path_keys",
@@ -986,6 +1123,13 @@ class ImportProcessor:
         "_rust_pending_mod_scope_uses",
         "_rust_mod_scope_registry",
         "_rust_mod_scope_shadows",
+        "_scala_scans",
+        "_scala_imports",
+        "_scala_block_imports",
+        "_scala_resolved_edges",
+        "_scala_requeue",
+        "_scala_import_members",
+        "_scala_package_index",
     )
 
     def __init__(
@@ -996,6 +1140,7 @@ class ImportProcessor:
         function_registry: FunctionRegistryTrieProtocol | None = None,
         exclude_paths: frozenset[str] | None = None,
         unignore_paths: frozenset[str] | None = None,
+        module_qn_to_file_path: dict[str, Path] | None = None,
     ) -> None:
         self.repo_path = repo_path
         self.project_name = project_name
@@ -1005,6 +1150,13 @@ class ImportProcessor:
         # exactly the files the graph holds (issue #1088).
         self.exclude_paths = exclude_paths
         self.unignore_paths = unignore_paths
+        # The factory's shared module -> file map, filled before a file's
+        # imports are parsed. A JS/TS relative specifier resolves against the
+        # importer's DIRECTORY, which only the file path spells reliably: a
+        # dotted stem (`url.test.ts`) keeps its dots in the qn (issue #2565).
+        self.module_qn_to_file_path: dict[str, Path] = (
+            module_qn_to_file_path if module_qn_to_file_path is not None else {}
+        )
         self.import_mapping: dict[str, dict[str, str]] = {}
         # `using static N.T;` brings T's MEMBERS into bare-call scope, which
         # import_mapping cannot express: it maps the TYPE name (T -> N.T), so a
@@ -1017,6 +1169,13 @@ class ImportProcessor:
         # compilation. Keyed by the DECLARING module, so a re-parse or a
         # removal of that file drops exactly its own directives.
         self.csharp_global_static_imports: dict[str, set[str]] = {}
+        # Java `import static` brings a class's static MEMBERS into bare-call
+        # scope. import_mapping keys `import static C.m;` like a type import,
+        # and files `import static C.*;` (members of CLASS C) under the same
+        # `*path` key as `import p.*;` (types of PACKAGE p), so a bare `m()`
+        # cannot tell from it whether any static import names it. Module qn ->
+        # its static imports in source order (issue #2544).
+        self.java_static_imports: dict[str, list[JavaStaticImport]] = {}
         # CommonJS modules whose ENTIRE export is one function
         # (`module.exports = function (...) {...}`): module qn -> the
         # exported function's qn, so a whole-module require alias called
@@ -1058,7 +1217,8 @@ class ImportProcessor:
         # file against it to find the modules that waited (issue #1568).
         self.unresolved_references: dict[str, set[str]] = {}
         # JS/TS module qn -> {exported name: what it names}, from every
-        # `export { ... }` (with or without a `from`) and `export default`.
+        # `export { ... }` (with or without a `from`) and `export default`,
+        # and from what a CommonJS module publishes (`module.exports = {...}`).
         # An importer's map holds `<module>.strip`, which names nothing
         # registered; the call resolver follows it through this table, and
         # only through it, since a module's own imports are not its exports
@@ -1077,6 +1237,30 @@ class ImportProcessor:
         self._inferred_module_imports: dict[str, set[str]] = {}
         self._csharp_module_namespaces: dict[str, dict[str, set[str]]] = {}
         self._csharp_module_identifiers: dict[str, frozenset[str]] = {}
+        # Scala packages need not mirror directories (issue #2450): each
+        # file's package clauses, scanned when it is parsed, say which
+        # modules declare a package an import names.
+        self._scala_scans: dict[str, ScalaPackageScan] = {}
+        # Each Scala file's imports as written, in order. The import maps are
+        # rebuilt from these once every file is parsed, so a provider edited
+        # in watch mode re-points importers that were not re-parsed.
+        self._scala_imports: dict[str, list[ScalaImportBinding]] = {}
+        # Importer -> the resolved import map of each `package p { ... }`
+        # block. Sibling blocks may bind one name to different classes, so a
+        # block's imports stay out of the file-level map and its own.
+        self._scala_block_imports: dict[str, list[ScalaBlockImports]] = {}
+        # (importer, module qn) pairs of the deferred IMPORTS edges that land
+        # on the project's own modules; any other Scala edge is external.
+        self._scala_resolved_edges: set[tuple[str, str]] = set()
+        # Scala files parsed since the last resolution: their IMPORTS edges
+        # are queued per binding once the project's packages are known.
+        self._scala_requeue: set[str] = set()
+        # Importer -> written import path -> the project member it names, for
+        # consumers that captured the written path before it was resolved.
+        self._scala_import_members: dict[str, dict[str, str]] = {}
+        # The packages every known Scala module declares, for name lookups
+        # that follow the same visibility rules as the imports.
+        self._scala_package_index = ScalaPackageIndex(modules={}, owners={})
         # Exact-case directory listings and entry-file `mod` declarations for
         # Rust path rewriting (issue #1007); cleared per run by
         # reset_rust_path_caches so watch re-runs re-observe the filesystem.
@@ -1121,6 +1305,19 @@ class ImportProcessor:
         self._rust_pkg_deps: dict[
             tuple[str, ...], dict[str, tuple[str, ...] | None]
         ] = {}
+        # Per-package dependency closure (the package itself, its
+        # dependencies of every kind and theirs), or None for a manifest
+        # without a [package] table; and the package each probed qn sits in.
+        # Both derive from the manifests, so they reset with the above.
+        self._rust_dep_closures: dict[
+            tuple[str, ...], frozenset[tuple[str, ...]] | None
+        ] = {}
+        self._rust_qn_packages: dict[str, tuple[str, ...] | None] = {}
+        # Per-package dependency name (as the code spells it) -> the
+        # workspace member a pathless entry fetches by package name, and the
+        # members' package names -> package dir. Manifest-derived as well.
+        self._rust_dep_members: dict[tuple[str, ...], dict[str, tuple[str, ...]]] = {}
+        self._rust_member_packages: dict[str, tuple[str, ...]] | None = None
         # Inline-mod import scopes minted per file (file qn -> effective qns),
         # so a watch-mode re-parse of the file drops its stale sub-scopes.
         self._rust_inline_scope_keys: dict[str, set[str]] = {}
@@ -1425,8 +1622,13 @@ class ImportProcessor:
         nothing the edited file no longer says.
         """
         self.import_mapping[module_qn] = {}
+        # Re-recorded once the Scala parse completes; a parse that fails
+        # midway must not leave the previous imports to be restored.
+        self._scala_imports.pop(module_qn, None)
+        self._scala_block_imports.pop(module_qn, None)
         self.csharp_static_imports.pop(module_qn, None)
         self.csharp_global_static_imports.pop(module_qn, None)
+        self.java_static_imports.pop(module_qn, None)
         # Cleared with the mapping it shadows: these entries ADD edges, so a
         # stale one would resurrect an include the edited file has removed
         # (issue #1758).
@@ -1534,6 +1736,8 @@ class ImportProcessor:
         language: cs.SupportedLanguage,
         queries: Mapping[cs.SupportedLanguage, LanguageQueries],
         pre_captures: dict | None = None,
+        *,
+        defer_edges: bool = True,
     ) -> None:
         if language not in queries:
             return
@@ -1554,6 +1758,8 @@ class ImportProcessor:
             self._csharp_module_identifiers[module_qn] = (
                 self._collect_csharp_identifiers(root_node)
             )
+        elif language == cs.SupportedLanguage.SCALA:
+            self._scala_scans[module_qn] = scan_scala_packages(root_node)
         # A re-parsed module that no longer directly exports one function
         # must not leave the stale whole-module alias mapping behind.
         self.commonjs_direct_exports.pop(module_qn, None)
@@ -1590,7 +1796,7 @@ class ImportProcessor:
                     | cs.SupportedLanguage.TS
                     | cs.SupportedLanguage.TSX
                 ):
-                    self._parse_js_ts_imports(captures, module_qn)
+                    self._parse_js_ts_imports(captures, module_qn, root_node)
                 case cs.SupportedLanguage.JAVA:
                     self._parse_java_imports(captures, module_qn)
                 case cs.SupportedLanguage.RUST:
@@ -1622,7 +1828,7 @@ class ImportProcessor:
                 module=module_qn,
             )
 
-            if self.ingestor:
+            if self.ingestor and defer_edges:
                 self._defer_module_import_edges(module_qn, language)
         except Exception as e:
             logger.warning(ls.IMP_PARSE_FAILED, module=module_qn, error=e)
@@ -1859,6 +2065,30 @@ class ImportProcessor:
         """
         self._recover_unparsed_csharp_namespaces(known_module_paths)
 
+    def restore_unparsed_imports(
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        function_locations: Mapping[FunctionSpanKey, FunctionLocation],
+    ) -> None:
+        """Rebuild the import state of a module this run did not parse.
+
+        A re-parsed file types `from pkg import Client` by following the
+        re-export through `pkg`'s own import map, and an incremental run
+        parses only CHANGED files, so an unchanged `pkg` had no map and the
+        receiver fell to a name-only guess (issue #2559). The module's IMPORTS
+        edges are still in the graph, so none are queued for the flush.
+        """
+        self.parse_imports(root_node, module_qn, language, queries, defer_edges=False)
+        if language == cs.SupportedLanguage.RUST:
+            # The tail a parsed Rust file gets from the definition pass: body
+            # `use`s key on their functions' registered qns, and inline-mod
+            # maps wait for the flush-time arbitration like every file's.
+            self.finalise_rust_function_scope_uses(module_qn, function_locations)
+            self.retract_rust_mod_scope_uses(module_qn)
+
     def _recover_unparsed_csharp_namespaces(
         self, known_module_paths: dict[str, str]
     ) -> None:
@@ -2033,10 +2263,29 @@ class ImportProcessor:
                     entry, declaring, known_module_qns
                 )
                 continue
+            if self._is_scala_project_import(entry):
+                emitted += self._flush_scala_project_import(entry, known_module_qns)
+                continue
             emitted += self._flush_resolved_import(
                 entry, known_module_paths, module_aliases, siblings
             )
         return emitted
+
+    def _is_scala_project_import(self, entry: DeferredImportEdge) -> bool:
+        return (
+            entry.language == cs.SupportedLanguage.SCALA
+            and (entry.module_qn, entry.full_name) in self._scala_resolved_edges
+        )
+
+    def _flush_scala_project_import(
+        self, entry: DeferredImportEdge, known_module_qns: set[str]
+    ) -> int:
+        # A path into the project's own packages lands on the module
+        # declaring its member; never on an ExternalModule.
+        if entry.full_name not in known_module_qns:
+            return 0
+        self._emit_import_edge(entry, cs.NodeLabel.MODULE, entry.full_name)
+        return 1
 
     def _is_rust_project_import(self, entry: DeferredImportEdge) -> bool:
         return entry.language == cs.SupportedLanguage.RUST and self._is_project_qn(
@@ -2145,7 +2394,9 @@ class ImportProcessor:
         module_aliases: dict[str, str],
         siblings: StemSiblingModules,
     ) -> int:
-        module_path = self._resolve_module_path(entry.full_name, entry.language)
+        module_path = self._resolve_module_path(
+            entry.full_name, entry.language, known_module_paths, entry.site
+        )
         target_label = self._module_label(module_path)
         if target_label == cs.NodeLabel.EXTERNAL_MODULE:
             # An external import target has no file pass to create its
@@ -2291,22 +2542,337 @@ class ImportProcessor:
         siblings = self.stem_sibling_modules(module_paths)
         if not siblings:
             return
-        for importer, mapping in self.import_mapping.items():
-            importer_path = module_paths.get(importer)
-            language = (
-                get_language_for_extension(importer_path.suffix)
-                if importer_path is not None
-                else None
+        for importer in self.import_mapping:
+            self.point_module_imports_at_own_language_siblings(
+                importer, module_paths, siblings
             )
-            if language is None:
-                continue
-            family = language_family(language)
-            for local_name, full_name in mapping.items():
-                target = self._own_language_target(
-                    full_name, family, module_paths, siblings
+
+    def point_module_imports_at_own_language_siblings(
+        self,
+        importer: str,
+        module_paths: Mapping[str, Path],
+        siblings: StemSiblingModules,
+    ) -> None:
+        """`point_imports_at_own_language_siblings` for one importer's map."""
+        mapping = self.import_mapping.get(importer)
+        importer_path = module_paths.get(importer)
+        if not mapping or not siblings or importer_path is None:
+            return
+        language = get_language_for_extension(importer_path.suffix)
+        if language is None:
+            return
+        family = language_family(language)
+        for local_name, full_name in mapping.items():
+            target = self._own_language_target(
+                full_name, family, module_paths, siblings
+            )
+            if target != full_name:
+                mapping[local_name] = target
+
+    def resolve_scala_project_imports(self, known_module_paths: dict[str, str]) -> None:
+        """Point Scala imports of the project's own packages at its modules.
+
+        A Scala import names a package path (`shop.Cart`), and the package
+        lives wherever a `package shop` clause says, not in a directory: read
+        raw, every first-party import became an ExternalModule and the names
+        it bound resolved nowhere (issue #2450). Rebuilt from the written
+        imports on every run, after every module is known and before the
+        inheritance pass reads bases through the map.
+        """
+        importers = [qn for qn in self._scala_imports if qn in known_module_paths]
+        # The edges queued by this run's parse were keyed by name, which two
+        # package blocks can share, and left a block's imports out; they are
+        # queued again per binding.
+        requeue = self._scala_requeue if self.ingestor is not None else set()
+        self._scala_requeue = set()
+        self._scala_import_members = {}
+        if not importers:
+            return
+        self._recover_unscanned_scala_modules(known_module_paths)
+        index = scala_package_index(self._scala_scans, known_module_paths)
+        self._scala_package_index = index
+        self._deferred_import_edges = [
+            entry
+            for entry in self._deferred_import_edges
+            if entry.module_qn not in requeue
+            or entry.language != cs.SupportedLanguage.SCALA
+        ]
+        self._scala_resolved_edges = {
+            pair for pair in self._scala_resolved_edges if pair[0] not in requeue
+        }
+        for importer in importers:
+            self._rewrite_scala_imports(importer, index, importer in requeue)
+
+    def _rewrite_scala_imports(
+        self, importer: str, index: ScalaPackageIndex, requeue: bool
+    ) -> None:
+        scan = self._scala_scans.get(importer)
+        file_mapping: dict[str, str] = {}
+        block_mappings: dict[ScalaPackageBlock, dict[str, str]] = {}
+        members: dict[str, str] = {}
+        for binding in self._scala_imports[importer]:
+            target = resolve_scala_import(binding.path, binding.enclosing, index)
+            if binding.block is None:
+                mapping = file_mapping
+                if target is not None and target.member_qn is not None:
+                    members[binding.path] = target.member_qn
+            else:
+                mapping = block_mappings.setdefault(binding.block, {})
+            bind_scala_import(mapping, binding.local_name, binding.path, target)
+            if requeue:
+                self._requeue_scala_import_edges(importer, binding, target, scan)
+        current = self.import_mapping.setdefault(importer, {})
+        current.clear()
+        current.update(file_mapping)
+        self._scala_block_imports[importer] = [
+            ScalaBlockImports(block, mapping)
+            for block, mapping in block_mappings.items()
+        ]
+        if members:
+            self._scala_import_members[importer] = members
+
+    def _requeue_scala_import_edges(
+        self,
+        importer: str,
+        binding: ScalaImportBinding,
+        target: ScalaImportTarget | None,
+        scan: ScalaPackageScan | None,
+    ) -> None:
+        if target is None:
+            # Not the project's: the written path takes the external route.
+            self._deferred_import_edges.append(
+                DeferredImportEdge(
+                    importer, binding.path, cs.SupportedLanguage.SCALA, binding.site
                 )
-                if target != full_name:
-                    mapping[local_name] = target
+            )
+            return
+        for module_qn in self._scala_edge_modules(importer, target, scan):
+            self._scala_resolved_edges.add((importer, module_qn))
+            self._deferred_import_edges.append(
+                DeferredImportEdge(
+                    importer, module_qn, cs.SupportedLanguage.SCALA, binding.site
+                )
+            )
+
+    def scala_block_import(
+        self, module_qn: str, name: str, position: int
+    ) -> str | None:
+        """What `name` is imported as by the package blocks around `position`.
+
+        The innermost block binding it wins, an explicit import over a
+        wildcard; None when no block around the position imports it, so the
+        file-level imports answer. A class the importing block, or a block
+        inside it, declares in this file binds tighter than the import, so
+        that declaration answers instead.
+        """
+        scan = self._scala_scans.get(module_qn)
+        blocks = {
+            imports.block: imports.mapping
+            for imports in self._scala_block_imports.get(module_qn, ())
+        }
+        if scan is None or not blocks:
+            return None
+        declared: str | None = None
+        for block in scala_blocks_at(scan.blocks, position):
+            declared = declared or self._scala_block_declared(
+                module_qn, scan, block, name
+            )
+            if imported := self._scala_block_mapped(blocks.get(block, {}), name):
+                return declared or imported
+        return None
+
+    def _scala_block_mapped(self, mapping: dict[str, str], name: str) -> str | None:
+        if name in mapping:
+            return mapping[name]
+        return self._scala_wildcard_member(mapping, name)
+
+    def _scala_block_declared(
+        self,
+        module_qn: str,
+        scan: ScalaPackageScan,
+        block: ScalaPackageBlock,
+        name: str,
+    ) -> str | None:
+        # A member the block's own package declares in this file, which the
+        # definition pass names under the module: package blocks add nothing.
+        own = f"{module_qn}{cs.SEPARATOR_DOT}{name}"
+        if (
+            block.enclosing
+            and name in scan.packages.get(block.enclosing[0], ())
+            and self.function_registry is not None
+            and own in self.function_registry
+        ):
+            return own
+        return None
+
+    def _scala_wildcard_member(self, mapping: dict[str, str], name: str) -> str | None:
+        # The first wildcard import whose package or object registers `name`.
+        registry = self.function_registry
+        if registry is None:
+            return None
+        for key, imported in mapping.items():
+            candidate = f"{imported}{cs.SEPARATOR_DOT}{name}"
+            if key.startswith(cs.SCALA_WILDCARD_PREFIX) and candidate in registry:
+                return candidate
+        return None
+
+    def scala_type_qn(
+        self, module_qn: str, written: str, position: int | None = None
+    ) -> str | None:
+        """The project qn a type name written in a Scala file names, if any.
+
+        Looked up the way the compiler would, and no further: the imports of
+        the package blocks around `position`, the file's imports, its own
+        definitions, its packages' other files, then wildcard imports. A name
+        none of them reaches is not the project's, however many classes
+        elsewhere share it.
+        """
+        head, _, rest = written.partition(cs.SEPARATOR_DOT)
+        if position is not None and (
+            imported := self.scala_block_import(module_qn, head, position)
+        ):
+            return f"{imported}{cs.SEPARATOR_DOT}{rest}" if rest else imported
+        enclosing = self._scala_enclosing_packages(module_qn, position)
+        if rest:
+            target = resolve_scala_import(written, enclosing, self._scala_package_index)
+            return target.member_qn if target is not None else None
+        return self._scala_simple_type_qn(module_qn, written, enclosing)
+
+    def _scala_enclosing_packages(
+        self, module_qn: str, position: int | None
+    ) -> tuple[str, ...]:
+        # The packages of the innermost package block around `position`, or
+        # the file's own when no block holds it.
+        scan = self._scala_scans.get(module_qn)
+        if scan is None:
+            return ()
+        if position is not None and (blocks := scala_blocks_at(scan.blocks, position)):
+            return blocks[0].enclosing
+        return scan.enclosing
+
+    def _scala_simple_type_qn(
+        self, module_qn: str, written: str, enclosing: tuple[str, ...]
+    ) -> str | None:
+        # An undotted name, past the package blocks: the file's imports, its
+        # own definitions, its packages' other files, then wildcard imports.
+        mapping = self.import_mapping.get(module_qn, {})
+        if written in mapping:
+            return mapping[written]
+        registry = self.function_registry
+        own = f"{module_qn}{cs.SEPARATOR_DOT}{written}"
+        if registry is not None and own in registry:
+            return own
+        for package in enclosing:
+            if owner := scala_package_owner(
+                package, written, self._scala_package_index
+            ):
+                return f"{owner}{cs.SEPARATOR_DOT}{written}"
+        return self._scala_wildcard_member(mapping, written)
+
+    def scala_base_qn(
+        self, module_qn: str, child_qn: str, parent_qn: str, base_index: int
+    ) -> str | None:
+        """The project qn a Scala class's base names through its imports.
+
+        The base was bound while the file was parsed, before any package was
+        known to be the project's own: to its file-level import's written
+        path, or by name alone when only a package block imports it. A base
+        a block around the class imports resolves through that block, or to
+        the class of that name the block declares in this file.
+        """
+        prefix = f"{module_qn}{cs.SEPARATOR_DOT}"
+        scan = self._scala_scans.get(module_qn)
+        site = (
+            scan.class_bases.get(child_qn[len(prefix) :])
+            if scan is not None and child_qn.startswith(prefix)
+            else None
+        )
+        if site is not None and base_index < len(site.bases):
+            written = site.bases[base_index]
+            head, _, rest = written.partition(cs.SEPARATOR_DOT)
+            last = written.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            if parent_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1] == last and (
+                imported := self.scala_block_import(module_qn, head, site.point)
+            ):
+                return f"{imported}{cs.SEPARATOR_DOT}{rest}" if rest else imported
+        return self._scala_import_members.get(module_qn, {}).get(parent_qn)
+
+    def _scala_edge_modules(
+        self,
+        importer: str,
+        target: ScalaImportTarget,
+        scan: ScalaPackageScan | None,
+    ) -> tuple[str, ...]:
+        if target.member_qn is not None:
+            return tuple(qn for qn in target.declaring if qn != importer)
+        # A package import pins only the modules whose names the file uses,
+        # as a C# namespace `using` does (issue #1347); a name the file
+        # declares itself binds to its own definition, so it is no evidence.
+        used: frozenset[str] = frozenset()
+        if scan is not None:
+            own = {name for names in scan.packages.values() for name in names}
+            used = scan.mentions - own
+        return tuple(
+            sorted(
+                qn
+                for qn, names in target.declaring.items()
+                if qn != importer and not used.isdisjoint(names)
+            )
+        )
+
+    def _recover_unscanned_scala_modules(
+        self, known_module_paths: dict[str, str]
+    ) -> None:
+        # An incremental run parses only CHANGED files, and a module it did
+        # not parse is known by qn alone: without its package clauses an
+        # unchanged provider would turn its importers back into external
+        # imports. Its file is found by the walk the indexer itself takes.
+        pending = {
+            qn: Path(path)
+            for qn, path in known_module_paths.items()
+            if qn not in self._scala_scans and path.endswith(cs.SCALA_EXTENSIONS)
+        }
+        pathless = {
+            qn
+            for qn, path in known_module_paths.items()
+            if not path and qn not in self._scala_scans
+        }
+        if pathless:
+            pending.update(self._scala_files_for(pathless))
+            for qn in pathless - pending.keys():
+                # Not a Scala file: remembered so later runs skip the walk.
+                self._scala_scans[qn] = _EMPTY_SCALA_SCAN
+        if not pending:
+            return
+        from ..parser_loader import load_parsers
+
+        parsers, _queries = load_parsers()
+        parser = parsers.get(cs.SupportedLanguage.SCALA)
+        for qn, path in pending.items():
+            try:
+                source = path.read_bytes()
+            except OSError:
+                self._scala_scans[qn] = _EMPTY_SCALA_SCAN
+                continue
+            self._scala_scans[qn] = (
+                scan_scala_packages(parser.parse(source).root_node)
+                if parser is not None
+                else _EMPTY_SCALA_SCAN
+            )
+
+    def _scala_files_for(self, module_qns: set[str]) -> dict[str, Path]:
+        found: dict[str, Path] = {}
+        for _dirpath, fname, rel in walk_eligible_files(
+            self.repo_path, self.exclude_paths, self.unignore_paths
+        ):
+            if not fname.endswith(cs.SCALA_EXTENSIONS):
+                continue
+            base = base_module_qn(Path(rel), self.project_name)
+            # A stem shared with another file carries its extension.
+            for qn in (base, own_extension_module_qn(base, fname)):
+                if qn in module_qns:
+                    found[qn] = self.repo_path / rel
+        return found
 
     def _module_alias_map(self, known_module_qns: set[str]) -> dict[str, str]:
         # A module reached through its container's name: pkg/__init__.py,
@@ -2498,9 +3064,22 @@ class ImportProcessor:
     def _is_local_js_import(self, full_name: str) -> bool:
         return full_name.startswith(self.project_name + cs.SEPARATOR_DOT)
 
-    def _resolve_js_internal_module(self, full_name: str) -> str:
+    def _resolve_js_internal_module(
+        self,
+        full_name: str,
+        known_module_paths: Mapping[str, str] | None = None,
+        site: PropertyDict | None = None,
+    ) -> str:
         if full_name.endswith(cs.IMPORT_DEFAULT_SUFFIX):
             return full_name[: -len(cs.IMPORT_DEFAULT_SUFFIX)]
+
+        # A namespace import, `export *` or bare `require` binds the module
+        # itself, so a real module under the full name is the target. Probing
+        # a shorter prefix first would send `* as c from './app.config'` to
+        # `app.ts`, since the dotted stem spells `app` plus one more segment.
+        known = known_module_paths or {}
+        if _is_known_js_module(full_name, known) and _js_binds_whole_module(site):
+            return full_name
 
         parts = full_name.split(cs.SEPARATOR_DOT)
         if len(parts) <= 2:
@@ -2525,6 +3104,16 @@ class ImportProcessor:
         # from the #1682 review: a canonical set restated at a second site and
         # drifting from it. Delegating is what stops it recurring here.
         if self._js_module_rel_on_disk(relative_path) is not None:
+            return potential_module
+
+        # The slash-join above splits a dotted stem or directory
+        # (`users.service.ts`, `v1.2/`) into two path segments, so the disk
+        # probe misses it. The registry of real module qns spells it the way
+        # the indexer did (issue #2565); a directory is found by its `index`
+        # entry point, as the disk probe finds `v1/`.
+        if _is_known_js_module(potential_module, known) or _is_known_js_module(
+            f"{potential_module}{cs.SEPARATOR_DOT}{cs.JS_INDEX_STEM}", known
+        ):
             return potential_module
 
         return full_name
@@ -2893,34 +3482,17 @@ class ImportProcessor:
         if (cached := self._rust_pkg_deps.get(pkg_parts)) is not None:
             return cached
         manifest = self._rust_read_manifest(self.repo_path.joinpath(*pkg_parts))
-        tables = [manifest]
-        target = manifest.get(cs.RS_MANIFEST_TARGET_TABLE_KEY)
-        if isinstance(target, dict):
-            tables.extend(t for t in target.values() if isinstance(t, dict))
         deps: dict[str, tuple[str, ...] | None] = {}
-        for table in tables:
-            self._rust_collect_dep_table(pkg_parts, table, deps)
+        for key, value in _rust_manifest_dep_entries(manifest):
+            name = key.replace(cs.CHAR_HYPHEN, cs.CHAR_UNDERSCORE)
+            resolved = self._rust_dep_target_dir(pkg_parts, key, value)
+            # A path target from any section wins over a registry
+            # spelling elsewhere (version + path in one entry is the
+            # common published-workspace shape).
+            if resolved is not None or name not in deps:
+                deps[name] = resolved
         self._rust_pkg_deps[pkg_parts] = deps
         return deps
-
-    def _rust_collect_dep_table(
-        self,
-        pkg_parts: tuple[str, ...],
-        table: dict,
-        deps: dict[str, tuple[str, ...] | None],
-    ) -> None:
-        for section in cs.RS_MANIFEST_DEP_SECTIONS:
-            entries = table.get(section)
-            if not isinstance(entries, dict):
-                continue
-            for key, value in entries.items():
-                name = key.replace(cs.CHAR_HYPHEN, cs.CHAR_UNDERSCORE)
-                resolved = self._rust_dep_target_dir(pkg_parts, key, value)
-                # A path target from any section wins over a registry
-                # spelling elsewhere (version + path in one entry is the
-                # common published-workspace shape).
-                if resolved is not None or name not in deps:
-                    deps[name] = resolved
 
     def _rust_dep_target_dir(
         self, pkg_parts: tuple[str, ...], key: str, value: str | dict[str, object]
@@ -2934,15 +3506,8 @@ class ImportProcessor:
             return None
         base = self.repo_path.joinpath(*pkg_parts)
         if value.get(cs.RS_MANIFEST_WORKSPACE_KEY) is True:
-            workspace = self._rust_read_manifest(self.repo_path).get(
-                cs.RS_MANIFEST_WORKSPACE_KEY
-            )
-            entry = (
-                workspace.get(cs.RS_MANIFEST_DEP_SECTIONS[0], {}).get(key)
-                if isinstance(workspace, dict)
-                else None
-            )
-            if not isinstance(entry, dict):
+            entry = self._rust_workspace_dep_entry(key)
+            if entry is None:
                 return None
             value = entry
             base = self.repo_path
@@ -2984,6 +3549,243 @@ class ImportProcessor:
             return False
         deps = self._rust_package_deps(pkg)
         return head in deps and deps[head] is None
+
+    def rust_crate_reaches(self, module_qn: str, target_qn: str) -> bool:
+        """Whether code in `module_qn` can call into the crate of `target_qn`.
+
+        Cargo lets a crate name items of itself and of the packages its
+        manifest depends on, directly or through them, dev- and
+        build-dependencies included, and nothing else. A name-based
+        candidate in any other crate is impossible, however close its name
+        (issue #2622: ripgrep's `globset` "called" into `ignore`, which
+        depends on it). A side outside every package manifest proves
+        nothing, so it reaches.
+        """
+        closure = self._rust_dependency_closure(self._rust_package_of(module_qn))
+        if closure is None:
+            return True
+        target = self._rust_package_of(target_qn)
+        return (
+            target is None
+            or target in closure
+            or self._rust_dependency_closure(target) is None
+        )
+
+    def _rust_package_of(self, qn: str) -> tuple[str, ...] | None:
+        if qn in self._rust_qn_packages:
+            return self._rust_qn_packages[qn]
+        package = self._rust_enclosing_package(qn)
+        self._rust_qn_packages[qn] = package
+        return package
+
+    def _rust_dependency_closure(
+        self, pkg: tuple[str, ...] | None
+    ) -> frozenset[tuple[str, ...]] | None:
+        if pkg is None:
+            return None
+        if pkg in self._rust_dep_closures:
+            return self._rust_dep_closures[pkg]
+        closure: frozenset[tuple[str, ...]] | None = None
+        manifest = self._rust_read_manifest(self.repo_path.joinpath(*pkg))
+        if isinstance(manifest.get(cs.RS_MANIFEST_PACKAGE_KEY), dict):
+            seen = {pkg}
+            pending = [pkg]
+            while pending:
+                for target in self._rust_dep_targets(pending.pop()):
+                    if target not in seen:
+                        seen.add(target)
+                        pending.append(target)
+            closure = frozenset(seen)
+        self._rust_dep_closures[pkg] = closure
+        return closure
+
+    def _rust_dep_targets(self, pkg: tuple[str, ...]) -> Iterator[tuple[str, ...]]:
+        # The repo package each dependency of `pkg` fetches: a path entry's
+        # dir, or the workspace member a pathless entry names, since a member
+        # declared by version alone is still the member the repo holds (the
+        # published-workspace shape, #1048).
+        members = self._rust_dep_members_of(pkg)
+        for name, target in self._rust_package_deps(pkg).items():
+            found = target if target is not None else members.get(name)
+            if found is not None:
+                yield found
+
+    def rust_head_is_member_dep(self, head: str, module_qn: str) -> bool:
+        """Whether the importer's manifest fetches this head as a member crate.
+
+        A pathless entry names the PACKAGE it fetches, by its key or by a
+        `package =` rename that leaves the key as the name the code writes
+        (`base-alias = { version = "1", package = "my-base" }`, then
+        `base_alias::Meter`). Naming a workspace member, it binds the crate
+        the repo holds, exactly as a version-only entry spelled with the
+        member's own name does (issue #1048), though no lib is called
+        `base_alias` (PR #2791 review).
+        """
+        pkg = self._rust_package_of(module_qn)
+        return pkg is not None and head in self._rust_dep_members_of(pkg)
+
+    def _rust_dep_members_of(self, pkg: tuple[str, ...]) -> dict[str, tuple[str, ...]]:
+        if (cached := self._rust_dep_members.get(pkg)) is not None:
+            return cached
+        manifest = self._rust_read_manifest(self.repo_path.joinpath(*pkg))
+        found: dict[str, tuple[str, ...]] = {}
+        for key, value in _rust_manifest_dep_entries(manifest):
+            if self._rust_dep_target_dir(pkg, key, value) is not None:
+                continue
+            member = self._rust_fetched_member(key, value)
+            if member is not None:
+                found.setdefault(
+                    key.replace(cs.CHAR_HYPHEN, cs.CHAR_UNDERSCORE), member
+                )
+        self._rust_dep_members[pkg] = found
+        return found
+
+    def _rust_fetched_member(self, key: str, value: object) -> tuple[str, ...] | None:
+        """The repo package a pathless dependency entry builds against.
+
+        A crates.io entry stands for the workspace member of its package
+        name, the published-workspace shape (#1048). A git, alternate
+        registry or out-of-repo path entry fetches another copy of the
+        package, which only a root `[patch.<source>]` path makes a repo
+        package (PR #2791 review). A patch of the package decides for its
+        source either way, the crates.io name rule included.
+        `workspace = true` inherits the root's [workspace.dependencies]
+        entry, source, rename and requirement included.
+        """
+        if isinstance(value, dict) and value.get(cs.RS_MANIFEST_WORKSPACE_KEY) is True:
+            value = self._rust_workspace_dep_value(key)
+        source = _rust_dep_source(value)
+        if source is None:
+            return None
+        package = _rust_dep_package(key, value)
+        if patches := self._rust_patch_entries(source, package):
+            return self._rust_patch_target(patches, _rust_dep_requirement(value))
+        if source != cs.RS_DEFAULT_REGISTRY:
+            return None
+        return self._rust_member_package_dirs().get(package)
+
+    def _rust_patch_entries(
+        self, source: str, package: str
+    ) -> list[tuple[str, dict[str, object]]]:
+        # Every entry of the root manifest's `[patch.<source>]` table (a git
+        # URL as written, or a registry name) that patches `package`: one
+        # table may list it at several versions, under its own name and
+        # under other keys that name it through `package =`.
+        patch = self._rust_read_manifest(self.repo_path).get(cs.RS_MANIFEST_PATCH_KEY)
+        entries = patch.get(source) if isinstance(patch, dict) else None
+        if not isinstance(entries, dict):
+            return []
+        return [
+            (key, value)
+            for key, value in entries.items()
+            if isinstance(value, dict) and _rust_dep_package(key, value) == package
+        ]
+
+    def _rust_patch_target(
+        self, patches: list[tuple[str, dict[str, object]]], requirement: str | None
+    ) -> tuple[str, ...] | None:
+        """The repo dir a patch puts in place of the dependency, if Cargo uses one.
+
+        Only a path patch lands in the repo, and Cargo applies one only when
+        the patched package's version meets the dependency's requirement;
+        otherwise it warns "patch was not used" and builds against the
+        source's own copy, which no local call reaches (PR #2791 review).
+        Among several patched versions it takes the highest that qualifies,
+        wherever the table lists it, a git or out-of-repo patch included
+        (PR #2791 review). A dependency stating no requirement takes any of
+        them; a version that cannot be read or checked never meets a
+        requirement, so the dependency stays external.
+        """
+        local: list[tuple[str | None, tuple[str, ...]]] = []
+        foreign: list[str | None] = []
+        for key, value in patches:
+            target = self._rust_dep_target_dir((), key, value)
+            if target is None:
+                own = _rust_dep_requirement(value)
+                if _rust_patch_may_qualify(own, requirement):
+                    foreign.append(own)
+                continue
+            version = self._rust_package_version(target)
+            if requirement is None or (
+                version is not None and cargo_semver.satisfies(version, requirement)
+            ):
+                local.append((version, target))
+        return _rust_patch_winner(local, foreign)
+
+    def _rust_package_version(self, pkg: tuple[str, ...]) -> str | None:
+        # A package's `[package] version`, or the root `[workspace.package]`
+        # one it inherits through `version.workspace = true`.
+        package = self._rust_read_manifest(self.repo_path.joinpath(*pkg)).get(
+            cs.RS_MANIFEST_PACKAGE_KEY
+        )
+        version = (
+            package.get(cs.RS_MANIFEST_VERSION_KEY)
+            if isinstance(package, dict)
+            else None
+        )
+        if (
+            isinstance(version, dict)
+            and version.get(cs.RS_MANIFEST_WORKSPACE_KEY) is True
+        ):
+            workspace = self._rust_read_manifest(self.repo_path).get(
+                cs.RS_MANIFEST_WORKSPACE_KEY
+            )
+            inherited = (
+                workspace.get(cs.RS_MANIFEST_PACKAGE_KEY)
+                if isinstance(workspace, dict)
+                else None
+            )
+            version = (
+                inherited.get(cs.RS_MANIFEST_VERSION_KEY)
+                if isinstance(inherited, dict)
+                else None
+            )
+        return version if isinstance(version, str) else None
+
+    def _rust_member_package_dirs(self) -> dict[str, tuple[str, ...]]:
+        # Workspace members with a lib target, by [package] name
+        # (underscore-spelled) -> package dir. A dependency entry names the
+        # package, never the lib target, whose `[lib] name` may differ.
+        if self._rust_member_packages is not None:
+            return self._rust_member_packages
+        mapping: dict[str, tuple[str, ...]] = {}
+        for member in self._rust_workspace_member_dirs():
+            manifest = self._rust_read_manifest(member)
+            package = manifest.get(cs.RS_MANIFEST_PACKAGE_KEY)
+            name = (
+                package.get(cs.RS_MANIFEST_NAME_KEY)
+                if isinstance(package, dict)
+                else None
+            )
+            if (
+                isinstance(name, str)
+                and name
+                and self._rust_member_lib_root(member, manifest) is not None
+            ):
+                mapping.setdefault(
+                    name.replace(cs.CHAR_HYPHEN, cs.CHAR_UNDERSCORE),
+                    member.relative_to(self.repo_path).parts,
+                )
+        self._rust_member_packages = mapping
+        return mapping
+
+    def _rust_workspace_dep_entry(self, key: str) -> dict | None:
+        # The root manifest's [workspace.dependencies] entry a member's
+        # `key = { workspace = true }` inherits, when it is a table.
+        entry = self._rust_workspace_dep_value(key)
+        return entry if isinstance(entry, dict) else None
+
+    def _rust_workspace_dep_value(self, key: str) -> object:
+        # That entry as written: a table, a bare version string, or None.
+        workspace = self._rust_read_manifest(self.repo_path).get(
+            cs.RS_MANIFEST_WORKSPACE_KEY
+        )
+        deps = (
+            workspace.get(cs.RS_MANIFEST_DEP_SECTIONS[0])
+            if isinstance(workspace, dict)
+            else None
+        )
+        return deps.get(key) if isinstance(deps, dict) else None
 
     def rust_head_is_repo_crate(self, head: str) -> bool:
         """Whether this use head names a lib crate the repo itself holds.
@@ -3770,6 +4572,8 @@ class ImportProcessor:
         self,
         full_name: str,
         language: cs.SupportedLanguage,
+        known_module_paths: Mapping[str, str] | None = None,
+        site: PropertyDict | None = None,
     ) -> str:
         project_prefix = self.project_name + cs.SEPARATOR_DOT
         match language:
@@ -3787,7 +4591,9 @@ class ImportProcessor:
                 | cs.SupportedLanguage.TSX
             ):
                 if self._is_local_js_import(full_name):
-                    return self._resolve_js_internal_module(full_name)
+                    return self._resolve_js_internal_module(
+                        full_name, known_module_paths, site
+                    )
             case cs.SupportedLanguage.RUST:
                 return self._resolve_rust_import_path(full_name)
 
@@ -3933,7 +4739,9 @@ class ImportProcessor:
 
         return cs.SEPARATOR_DOT.join(target_parts)
 
-    def _parse_js_ts_imports(self, captures: dict, module_qn: str) -> None:
+    def _parse_js_ts_imports(
+        self, captures: dict, module_qn: str, root_node: Node
+    ) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type == cs.TS_IMPORT_STATEMENT:
                 self._parse_js_import_statement(import_node, module_qn)
@@ -3947,6 +4755,34 @@ class ImportProcessor:
             elif import_node.type == cs.TS_EXPORT_STATEMENT:
                 self._parse_js_reexport(import_node, module_qn)
                 self._record_js_export_bindings(import_node, module_qn)
+        self._record_commonjs_export_bindings(root_node, module_qn)
+
+    def _record_commonjs_export_bindings(self, root_node: Node, module_qn: str) -> None:
+        """Record what a CommonJS module publishes as its export table.
+
+        `module.exports = { Svc }` is such a module's whole API, as its export
+        statements are an ES module's, so the re-export walk follows only the
+        names it publishes, never a binding it keeps to itself (CodeRabbit,
+        PR #3355). A module with a value ES export keeps that table alone
+        (`is_commonjs_module`).
+        """
+        if not is_commonjs_module(root_node):
+            return
+        # A name only a top-level `require` or `import` binds leads straight
+        # to what it imports, so a nested declaration of the same name, which
+        # registers under the module's qn too, cannot stand in for it. The
+        # reader has already dropped a name anything else imports or declares.
+        imports = self.import_mapping.get(module_qn, {})
+        published: dict[str, JsExport] = {}
+        for name, found in commonjs_export_bindings(root_node).items():
+            if not found.imported:
+                published[name] = JsExport(
+                    f"{module_qn}{cs.SEPARATOR_DOT}{found.binding}", local=True
+                )
+            elif (target := imports.get(found.binding)) is not None:
+                published[name] = JsExport(target, local=False)
+        if published:
+            self.js_export_bindings.setdefault(module_qn, {}).update(published)
 
     def _ts_alias_module_qn(self, import_path: str) -> str | None:
         # Resolve a tsconfig `paths` alias (`@/util` -> `src/util`) to the
@@ -4055,16 +4891,52 @@ class ImportProcessor:
         """
         if not specifier.startswith(cs.PATH_CURRENT_DIR):
             return
-        resolved = self._resolve_js_module_path(specifier, module_qn)
-        prefix = f"{self.project_name}{cs.SEPARATOR_DOT}"
-        if not resolved.startswith(prefix):
+        parts = self._js_relative_target_parts(specifier, module_qn)
+        if len(parts) < 2 or parts[0] != self.project_name:
             # Escapes the project (`../../outside`), so no file this repo can
             # create would ever satisfy it.
             return
-        rel = resolved[len(prefix) :].replace(cs.SEPARATOR_DOT, cs.SEPARATOR_SLASH)
+        # Joined from the path segments, not re-split from the dotted qn:
+        # `users.service` is one file name, not a `users/` directory.
+        rel = cs.SEPARATOR_SLASH.join(parts[1:])
         if self._js_module_rel_on_disk(rel) is not None:
             return
         self.unresolved_specifiers.setdefault(module_qn, set()).add(specifier)
+
+    def _js_module_directory_parts(self, module_qn: str) -> list[str]:
+        """The project name plus the importer's directory, one part per segment.
+
+        Read from the module's FILE when it is known. A dotted stem keeps its
+        dots in the qn (`url.test.ts` is `proj.src.url.test`, as a dotted C#
+        stem is under `module_directory_qn`), so dropping the qn's last
+        segment lands inside the file name (`proj.src.url`) and every
+        relative specifier resolved from there misses (issue #2565). The path
+        also keeps a dotted DIRECTORY (`v1.2/`) as the single segment the
+        on-disk probe needs.
+        """
+        file_path = self.module_qn_to_file_path.get(module_qn)
+        if file_path is not None:
+            try:
+                rel_dir = cached_relative_path(file_path, self.repo_path).parent
+            except ValueError:
+                rel_dir = None
+            if rel_dir is not None:
+                return [self.project_name, *rel_dir.parts]
+        return module_qn.split(cs.SEPARATOR_DOT)[:-1]
+
+    def _js_relative_target_parts(self, import_path: str, module_qn: str) -> list[str]:
+        # A relative specifier applied to the importer's directory; the first
+        # part is the project name unless `..` climbed out of the project.
+        current_parts = self._js_module_directory_parts(module_qn)
+        for part in self._strip_js_extension(import_path).split(cs.SEPARATOR_SLASH):
+            if part == cs.PATH_CURRENT_DIR:
+                continue
+            if part == cs.PATH_PARENT_DIR:
+                if current_parts:
+                    current_parts.pop()
+            elif part:
+                current_parts.append(part)
+        return current_parts
 
     def _resolve_js_module_path(
         self, import_path: str, current_module: str, require: bool = False
@@ -4089,21 +4961,12 @@ class ImportProcessor:
                 not _has_aliased_scheme(import_path)
                 and not self._js_base_url_names_file(import_path, current_module),
             )
-        import_path = self._strip_js_extension(import_path)
-
-        current_parts = current_module.split(cs.SEPARATOR_DOT)[:-1]
-        import_parts = import_path.split(cs.SEPARATOR_SLASH)
-
-        for part in import_parts:
-            if part == cs.PATH_CURRENT_DIR:
-                continue
-            if part == cs.PATH_PARENT_DIR:
-                if current_parts:
-                    current_parts.pop()
-            elif part:
-                current_parts.append(part)
-
-        return JsImportTarget(cs.SEPARATOR_DOT.join(current_parts), False)
+        return JsImportTarget(
+            cs.SEPARATOR_DOT.join(
+                self._js_relative_target_parts(import_path, current_module)
+            ),
+            False,
+        )
 
     def _parse_js_import_clause(
         self,
@@ -4374,6 +5237,25 @@ class ImportProcessor:
             function_registry,
         )
 
+    def follow_module_reexports(
+        self,
+        qn: str,
+        module_paths: Mapping[str, Path],
+        function_registry: FunctionRegistryTrieProtocol,
+    ) -> str:
+        """Where `qn` leads through the modules re-exporting it, by the rule
+        of the language its module is written in.
+
+        A JS/TS module passes on only what it exports: its own imports are
+        not its exports (issue #2464), so a name a barrel only imports must
+        not lead anywhere (#2560 follow-up). Every other module is followed
+        through its import map.
+        """
+        module_qn, separator, _name = qn.rpartition(cs.SEPARATOR_DOT)
+        if separator and js_ts_module_qn(module_qn, module_paths) is not None:
+            return self.follow_js_reexports(qn, module_paths, function_registry)
+        return follow_reexports(qn, self.import_mapping, function_registry)
+
     def _record_js_export_bindings(self, statement: Node, module_qn: str) -> None:
         """Record what each name an `export` statement publishes stands for.
 
@@ -4427,6 +5309,8 @@ class ImportProcessor:
         is_static: bool,
         is_wildcard: bool,
     ) -> None:
+        if is_static:
+            self._record_java_static_import(module_qn, resolved_path, is_wildcard)
         if is_wildcard:
             logger.debug(ls.IMP_JAVA_WILDCARD, path=resolved_path)
             self.import_mapping[module_qn][f"*{resolved_path}"] = resolved_path
@@ -4445,6 +5329,20 @@ class ImportProcessor:
             name=imported_name,
             path=resolved_path,
         )
+
+    def _record_java_static_import(
+        self, module_qn: str, resolved_path: str, is_wildcard: bool
+    ) -> None:
+        # The on-demand form names the class itself; the single-member form
+        # names one member past it.
+        if is_wildcard:
+            entry = JavaStaticImport(class_path=resolved_path, member=None)
+        else:
+            class_path, _, member = resolved_path.rpartition(cs.SEPARATOR_DOT)
+            if not class_path:
+                return
+            entry = JavaStaticImport(class_path=class_path, member=member)
+        self.java_static_imports.setdefault(module_qn, []).append(entry)
 
     @staticmethod
     def _csharp_using_target(import_node: Node) -> tuple[str, Node | None] | None:
@@ -4559,6 +5457,10 @@ class ImportProcessor:
         self._rust_auto_discovery_flags.clear()
         self._rust_workspace_crates = None
         self._rust_pkg_deps.clear()
+        self._rust_dep_closures.clear()
+        self._rust_qn_packages.clear()
+        self._rust_dep_members.clear()
+        self._rust_member_packages = None
 
     def refresh_rust_path_caches_for(self, file_path: Path, created: bool) -> None:
         # The realtime watcher re-parses through process_file without
@@ -4676,6 +5578,10 @@ class ImportProcessor:
         self._rust_auto_discovery_flags.clear()
         self._rust_workspace_crates = None
         self._rust_pkg_deps.clear()
+        self._rust_dep_closures.clear()
+        self._rust_qn_packages.clear()
+        self._rust_dep_members.clear()
+        self._rust_member_packages = None
         for key, stems in self._rust_entry_mod_decls.items():
             allowed = {
                 name[: -len(cs.EXT_RS)] for name in self._rust_explicit_entry_files(key)
@@ -4934,6 +5840,22 @@ class ImportProcessor:
                 (line, col, resolved_imports, True)
             )
 
+    def rust_mod_scope_targets(self, writer_qn: str) -> list[str]:
+        """What the inline `mod` uses of the file `writer_qn` name.
+
+        Read before `finalise_rust_mod_scope_uses` decides which of them
+        commit: until then a parsed or restored file's inline-scope maps are
+        held back, and a walk out from the file has to see them (#2805
+        review). This run's entries if it parsed the file, else the last
+        finalised ones.
+        """
+        entries = self._rust_pending_mod_scope_uses.get(writer_qn)
+        if entries is None:
+            entries = self._rust_mod_scope_registry.get(writer_qn, [])
+        return [
+            target for _key, _pure, imports in entries for target in imports.values()
+        ]
+
     def retract_rust_mod_scope_uses(self, module_qn: str) -> None:
         # Reverse replay so a key shadowing another file's entries (the
         # collision finalise arbitrates later) gets them back exactly.
@@ -5072,10 +5994,32 @@ class ImportProcessor:
             import a.b.{C => Alias} -> Alias -> a.b.C   (C stays unbound)
             import a.b._            -> *a.b  -> a.b
         """
+        mapping = self.import_mapping[module_qn]
+        bindings: list[ScalaImportBinding] = []
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type != cs.TS_SCALA_IMPORT_DECLARATION:
                 continue
-            self._parse_scala_import_declaration(import_node, module_qn)
+            # Bound into a map of its own first, so exactly the names THIS
+            # declaration binds are known: each resolves from the package the
+            # import sits in, once the project's packages are (issue #2450).
+            bound: dict[str, str] = {}
+            self.import_mapping[module_qn] = bound
+            try:
+                self._parse_scala_import_declaration(import_node, module_qn)
+            finally:
+                self.import_mapping[module_qn] = mapping
+            block = scala_import_block(import_node)
+            if block is None:
+                # A package block's imports are visible in that block only.
+                mapping.update(bound)
+            enclosing = scala_enclosing_packages_at(import_node)
+            sites = self._import_sites.get(module_qn, {})
+            bindings.extend(
+                ScalaImportBinding(name, path, enclosing, block, sites.get(name))
+                for name, path in bound.items()
+            )
+        self._scala_imports[module_qn] = bindings
+        self._scala_requeue.add(module_qn)
 
     def _parse_scala_import_declaration(
         self, import_node: Node, module_qn: str
@@ -5132,8 +6076,9 @@ class ImportProcessor:
             # `import a.b._` (Scala 2) and `_root_.a.b.*` (Scala 3) both reach
             # here; the package itself is what comes into scope.
             package = cs.SEPARATOR_DOT.join(prefix_parts)
-            self.import_mapping[module_qn][f"*{package}"] = package
-            self._record_import_site(module_qn, f"*{package}", import_node)
+            key = f"{cs.SCALA_WILDCARD_PREFIX}{package}"
+            self.import_mapping[module_qn][key] = package
+            self._record_import_site(module_qn, key, import_node)
             return
 
         if selectors is not None:
@@ -5188,8 +6133,9 @@ class ImportProcessor:
                 self._bind_scala_rename(child, package, module_qn, import_node)
             elif child.type == cs.TS_SCALA_NAMESPACE_WILDCARD:
                 # `import a.{b, _}` -- a wildcard alongside explicit names.
-                self.import_mapping[module_qn][f"*{package}"] = package
-                self._record_import_site(module_qn, f"*{package}", import_node)
+                key = f"{cs.SCALA_WILDCARD_PREFIX}{package}"
+                self.import_mapping[module_qn][key] = package
+                self._record_import_site(module_qn, key, import_node)
             elif child.type == cs.TS_IDENTIFIER:
                 if name := safe_decode_with_fallback(child):
                     self.import_mapping[module_qn][name] = (
