@@ -15,7 +15,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.editing.contract import Verdict
-from codebase_rag.editing.move import MoveRefused, move
+from codebase_rag.editing.move import MoveRefused, _has_annotations, move
 from codebase_rag.editing.transaction import EditTransaction, load_history
 from codebase_rag.tests.test_move_op import (
     FIXTURE,
@@ -611,6 +611,35 @@ def test_an_exec_into_an_annotated_destination_without_the_future_refuses(
     with pytest.raises(MoveRefused, match="enables from __future__ import annotations"):
         _move(root, store, updater)
     assert (root / "pkg/core.py").read_text() == _ANNOTATED_CORE
+
+
+def test_a_compile_method_on_another_object_is_not_dynamic_code(
+    temp_repo: Path,
+) -> None:
+    """`re.compile` compiles a pattern, not code, so an unannotated helper
+    calling it relies on no future feature and moves into an annotated
+    destination (bot review)."""
+    fixture = dict(FIXTURE)
+    fixture["pkg/util.py"] = (
+        "from __future__ import annotations\n\nimport re\n\n\n"
+        "def helper(a):\n    return re.compile(a).pattern\n" + OTHER
+    )
+    fixture["pkg/core.py"] = _ANNOTATED_CORE
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    report = _move(root, store, updater)
+    assert report.applied, report.message
+    probe = _python(
+        root, "from pkg.core import existing, helper; print(helper('x'), existing(1))"
+    )
+    assert probe.returncode == 0, probe.stderr
+    assert probe.stdout.strip() == "x True"
+
+
+@pytest.mark.parametrize("receiver", ["builtins", "__builtins__"])
+def test_a_builtins_exec_still_counts_as_dynamic_code(receiver: str) -> None:
+    assert _has_annotations(f"def f():\n    return {receiver}.exec\n")
+    assert not _has_annotations("def f(p):\n    return p.exec\n")
 
 
 def test_a_from_import_of_the_vacated_module_never_commits_a_broken_caller(
