@@ -26,7 +26,11 @@ WORKDIR /app
 ENV UV_PYTHON_INSTALL_DIR=/app/.uv-python
 ENV UV_PYTHON_PREFERENCE=only-managed
 
-COPY pyproject.toml uv.lock ./
+# .python-version must arrive with the manifests: without it this first sync
+# falls back to the newest managed Python allowed by requires-python (which
+# moves with each uv release), and the later sync, once COPY . . brings in the
+# pin, rebuilds .venv on the pinned version.
+COPY pyproject.toml uv.lock .python-version ./
 RUN uv sync --frozen --no-dev --extra treesitter-full --no-install-project --no-binary-package pymgclient
 
 COPY . .
