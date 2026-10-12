@@ -3439,7 +3439,10 @@ def _imports_what_left(
     whole-module import, or one the graph recorded without names, may still
     reach the moved symbol and stays stale. So does a wildcard (`from old
     import *`, recorded as `*`), unless the vacated module imports every
-    moved name back for the star to carry.
+    moved name back for the star to carry. A `from pkg import util` binds
+    the module itself under its last segment, so `util.helper()` still
+    reaches the moved name through it and that import stays stale too
+    (bot review).
     """
     names = {
         name for (src, dst, name) in after.imported if src == importer and dst == target
@@ -3448,7 +3451,8 @@ def _imports_what_left(
         kept = {name for (src, _dst, name) in after.imported if src == target}
         if not moved <= kept:
             return True
-    return not names or "" in names or bool(names & moved)
+    leaf = target.rpartition(cs.SEPARATOR_DOT)[2]
+    return not names or "" in names or leaf in names or bool(names & moved)
 
 
 def observe(

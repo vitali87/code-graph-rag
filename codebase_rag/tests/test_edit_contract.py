@@ -1412,6 +1412,28 @@ def test_an_importer_of_a_vacated_module_is_reported() -> None:
     assert [entry["importer"] for entry in stale] == ["p.pkg.app"]
 
 
+def test_a_from_import_of_the_vacated_module_itself_is_reported() -> None:
+    """`from pkg import util` is recorded against `pkg.util` under the name
+    `util`, which is not a moved name, so it was cleared like an import of a
+    constant left behind -- while `util.helper()` raised AttributeError
+    after the move (bot review)."""
+    from codebase_rag.structural_delta import _stale_importers
+
+    base = _snapshot(
+        definitions={"p.pkg.core.helper": "pkg/core.py"},
+        imports={"p.pkg.app": {"p.pkg.util"}},
+    )
+    module = base._replace(imported=frozenset({("p.pkg.app", "p.pkg.util", "util")}))
+    constant = base._replace(imported=frozenset({("p.pkg.app", "p.pkg.util", "SEP")}))
+    moved = _renamed("p.pkg.util.helper", "p.pkg.core.helper")
+
+    assert [entry["importer"] for entry in _stale_importers(module, moved)] == [
+        "p.pkg.app"
+    ]
+    # The control: a named import of a constant the module kept is not stale.
+    assert _stale_importers(constant, moved) == []
+
+
 def test_a_module_that_still_defines_something_is_not_vacated() -> None:
     """Moving one helper out of a busy module must not indict its siblings.
 
