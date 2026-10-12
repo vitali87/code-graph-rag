@@ -27,7 +27,7 @@ import pytest
 
 from codebase_rag.constants import EventType
 from codebase_rag.graph_updater import ReingestAborted
-from realtime_updater import CodeChangeEventHandler
+from codebase_rag.watch import CodeChangeEventHandler
 
 
 class _Event:

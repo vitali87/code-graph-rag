@@ -39,12 +39,14 @@ EXPECTED_SECTIONS: dict[str, frozenset[str]] = {
     ),
     "docs/guide/mcp-server.md": frozenset({"mcp_tools"}),
     "docs/guide/interactive-querying.md": frozenset({"agentic_tools"}),
+    "docs/guide/realtime-updates.md": frozenset({"cli_options_watch"}),
     "docs/guide/cli-reference.md": frozenset(
         {
             "cli_commands",
             "makefile_commands",
             "cli_options_start",
             "cli_options_index",
+            "cli_options_watch",
             "cli_options_export",
             "cli_options_optimize",
             "cli_options_mcp_server",

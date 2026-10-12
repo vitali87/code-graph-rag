@@ -16,6 +16,7 @@ TARGET_FILES = (
     "docs/guide/mcp-server.md",
     "docs/guide/interactive-querying.md",
     "docs/guide/cli-reference.md",
+    "docs/guide/realtime-updates.md",
     "docs/getting-started/installation.md",
     "docs/advanced/ignore-patterns.md",
 )

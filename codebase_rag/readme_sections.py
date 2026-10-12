@@ -56,6 +56,7 @@ CAPTURE_OPT_IN_NOTE = " (opt-in: [`{group}`](#capture-groups))"
 CLI_OPTION_COMMANDS = (
     ch.CLICommandName.START,
     ch.CLICommandName.INDEX,
+    ch.CLICommandName.WATCH,
     ch.CLICommandName.EXPORT,
     ch.CLICommandName.OPTIMIZE,
     ch.CLICommandName.MCP_SERVER,
