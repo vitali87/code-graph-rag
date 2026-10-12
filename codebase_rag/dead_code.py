@@ -650,7 +650,7 @@ def _is_root(
     props: PropertyDict,
     config: DeadCodeConfig,
     method_qns: set[str],
-    protocol_stubs: set[str],
+    declaration_roots: set[str],
     method_to_class: dict[str, str],
     class_decorators_norm: dict[str, frozenset[str]],
     nest_factory_classes: set[str],
@@ -708,7 +708,7 @@ def _is_root(
         # textwrap.TextWrapper subclass) is invoked by the base's machinery,
         # never by a first-party call, so it is a root.
         lambda: props.get(cs.KEY_OVERRIDES_EXTERNAL) is True,
-        lambda: qn in protocol_stubs,
+        lambda: qn in declaration_roots,
         # A `.pyi` definition declares an API whose body lives elsewhere,
         # usually in a compiled extension that is not source; no first-party
         # call is needed for it to be used, and deleting it from the stub
@@ -932,6 +932,23 @@ def _scan_structural_rels(
         ):
             found.nest_factory_classes.add(from_qn)
     return found
+
+
+def _declaration_roots(
+    nodes: dict[_NodeId, PropertyDict], structural: _StructuralRels
+) -> set[str]:
+    """What the type checker reads as a declaration: the members of a
+    typing.Protocol, and a class declared under `if TYPE_CHECKING:` with its
+    members. A stub there types a receiver (`self` in a mixin) whose calls
+    resolve to the implementation, so no edge ever lands on it; like a `.pyi`
+    definition it is a root, never dead code on its own."""
+    checker_only = {
+        str(uid)
+        for (label, uid), props in nodes.items()
+        if label == _CLASS and props.get(cs.KEY_TYPE_CHECKING_ONLY) is True
+    }
+    declarations = structural.protocol_classes | checker_only
+    return checker_only | {m for c, m in structural.class_methods if c in declarations}
 
 
 def _module_roots(
@@ -1237,9 +1254,7 @@ def dead_code_from_graph(
         scan.candidates -= php_tests
         roots -= php_tests
 
-    protocol_stubs = {
-        m for c, m in structural.class_methods if c in structural.protocol_classes
-    }
+    declaration_roots = _declaration_roots(nodes, structural)
     method_to_class = {m: c for c, m in structural.class_methods}
     # Expand React components down the inheritance tree: a class extending a
     # first-party base that (transitively) extends react.Component is itself a
@@ -1261,7 +1276,7 @@ def dead_code_from_graph(
             scan.props_by_qn[qn],
             config,
             scan.method_qns,
-            protocol_stubs,
+            declaration_roots,
             method_to_class,
             scan.class_decorators_norm,
             structural.nest_factory_classes,
@@ -1339,6 +1354,9 @@ def _node_props(row: ResultRow) -> PropertyDict:
         cs.KEY_MODIFIERS: _as_str_list(row.get(cs.KEY_MODIFIERS)),
         cs.KEY_RETURN_TYPE: str(row.get(cs.KEY_RETURN_TYPE) or ""),
         cs.KEY_PARAM_TYPES: _as_str_list(row.get(cs.KEY_PARAM_TYPES)),
+        # The parse-time mark the declaration roots read: no edge says a
+        # class exists for the type checker only.
+        cs.KEY_TYPE_CHECKING_ONLY: row.get(cs.KEY_TYPE_CHECKING_ONLY) is True,
     }
 
 
