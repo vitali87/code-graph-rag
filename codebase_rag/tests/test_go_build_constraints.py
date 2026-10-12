@@ -307,7 +307,9 @@ def test_the_memo_gives_what_the_walk_without_it_gives(seed: int) -> None:
     full = go_ifaces.full_method_sets(own, embeds, files)
     for interface in embeds:
         try:
-            expected: object = _walk_without_memo(interface, own, embeds, files)
+            expected: tuple[go_ifaces.GoBuildSet, ...] | None | str = (
+                _walk_without_memo(interface, own, embeds, files)
+            )
         except go_ifaces._VaryingError:
             expected = "varying"
         found = "varying" if interface in full.varying else full.sets[interface]
@@ -355,7 +357,9 @@ def test_the_memo_gives_what_the_walk_without_it_gives_on_a_chain(seed: int) -> 
     full = go_ifaces.full_method_sets(own, embeds, files)
     for interface in embeds:
         try:
-            expected: object = _walk_without_memo(interface, own, embeds, files)
+            expected: tuple[go_ifaces.GoBuildSet, ...] | None | str = (
+                _walk_without_memo(interface, own, embeds, files)
+            )
         except go_ifaces._VaryingError:
             expected = "varying"
         found = "varying" if interface in full.varying else full.sets[interface]
