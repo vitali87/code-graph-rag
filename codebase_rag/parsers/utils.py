@@ -1720,6 +1720,24 @@ def _method_positional_params_props(
     return {} if declared is None else {cs.KEY_POSITIONAL_PARAMS: declared}
 
 
+def _language_method_props(
+    method_node: ASTNode, language: cs.SupportedLanguage
+) -> PropertyDict:
+    """The Method properties only one language records."""
+    if language == cs.SupportedLanguage.CSHARP:
+        # Local import: the C# helpers import this module.
+        from .csharp import utils as csharp_utils
+
+        return csharp_utils.extension_method_props(method_node)
+    if language == cs.SupportedLanguage.JAVA:
+        # Local import: the Java helpers import this module.
+        from .java import utils as java_utils
+
+        if java_utils.is_main_declaration(method_node):
+            return {cs.KEY_IS_PROGRAM_MAIN: True}
+    return {}
+
+
 def ingest_method(
     method_node: ASTNode,
     container_qn: str,
@@ -1807,11 +1825,7 @@ def ingest_method(
 
     type_facts = extract_type_facts(method_node, language)
     method_props.update(type_facts_props(type_facts))
-    if language == cs.SupportedLanguage.CSHARP:
-        # Local import: the C# helpers import this module.
-        from .csharp import utils as csharp_utils
-
-        method_props.update(csharp_utils.extension_method_props(method_node))
+    method_props.update(_language_method_props(method_node, language))
     method_path = method_props.get(cs.KEY_PATH)
     queue_type_facts(
         type_fact_sink,

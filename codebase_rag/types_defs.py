@@ -737,6 +737,11 @@ class DeadCodeConfig(NamedTuple):
     # exposing an endpoint is live only if an indexed call site reaches that
     # endpoint, so an endpoint nobody calls is reported (issue #1603).
     endpoint_roots: bool = True
+    # Every public or exported symbol is a root (the default, right for a
+    # library, whose API is called from outside the repository). Off, a
+    # symbol roots only as an entry point, test, decorated handler or runtime
+    # hook, so an application's unused public code is reported (issue #2527).
+    public_roots: bool = True
 
 
 class ProjectSync(NamedTuple):
@@ -1387,11 +1392,11 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.FUNCTION,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, is_object_member: boolean?, is_body_scoped_name: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, is_object_member: boolean?, is_body_scoped_name: boolean?, is_program_main: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
     ),
     NodeSchema(
         NodeLabel.METHOD,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, member_aliases: list[string]?, overrides_external: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, signature: string?, declared_in_class: boolean?, extension_receiver: string?, extension_namespace: string?, extension_receiver_arity: int?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, member_aliases: list[string]?, overrides_external: boolean?, is_program_main: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, signature: string?, declared_in_class: boolean?, extension_receiver: string?, extension_namespace: string?, extension_receiver_arity: int?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
     ),
     NodeSchema(
         NodeLabel.INTERFACE,

@@ -371,6 +371,12 @@ CLI_DEADCODE_COL_LINES = "Lines"
 CLI_DEADCODE_LINE_RANGE = "{start}-{end}"
 CLI_DEADCODE_SUMMARY = "{count} candidate(s) for review."
 CLI_DEADCODE_NONE = "No unreachable functions or methods found."
+# Printed under a clean report, naming the root rule that produced it
+# (issue #2527).
+CLI_DEADCODE_RULE_PUBLIC_ROOTS = (
+    "(public symbols treated as roots; use --no-public-roots for application code)"
+)
+CLI_DEADCODE_RULE_NO_PUBLIC_ROOTS = "(public symbols not treated as roots)"
 CLI_DEADCODE_WRITTEN = "Wrote {count} candidate(s) to {path}"
 CLI_DEADCODE_STRUCTURAL_TIER_SKIPPED = (
     "{count} symbol(s) in structural-tier languages were not analyzed "

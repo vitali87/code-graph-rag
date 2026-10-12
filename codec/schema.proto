@@ -493,6 +493,8 @@ message GraphCodeIndex {
     // A JS/TS object literal's function value (#2435): reached through its
     // object, never by its key alone, so a bare call must not bind to it.
     bool is_object_member = 13;
+    // A top-level Dart `main`, which `dart run` starts (#2527).
+    bool is_program_main = 14;
   }
 
   message Method {
@@ -517,6 +519,10 @@ message GraphCodeIndex {
     // empty string (not a C++ member).
     string signature = 12;
     bool declared_in_class = 13;
+    // The dead-code roots read both (#2527): whether the method is public
+    // API, and whether the JVM launcher starts it as `main`.
+    bool is_exported = 14;
+    bool is_program_main = 15;
   }
 
   message Class {

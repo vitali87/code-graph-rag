@@ -35,7 +35,11 @@ from .anchor_hash import anchor_hash_props
 from .ast_fingerprint import fingerprint_props
 from .cpp import utils as cpp_utils
 from .cpp.overloads import cpp_overload_signature
-from .dart import dart_definition_end_point, dart_return_type_name
+from .dart import (
+    dart_definition_end_point,
+    dart_is_top_level_main,
+    dart_return_type_name,
+)
 from .endpoints import emit_endpoints, queue_endpoints
 from .go import interfaces as go_interfaces
 from .go import utils as go_utils
@@ -1688,6 +1692,8 @@ class FunctionIngestMixin:
         elif (declared := declared_positional_params(func_node, language)) is not None:
             props[cs.KEY_POSITIONAL_PARAMS] = declared
         props.update(type_facts_props(extract_type_facts(func_node, language)))
+        if language == cs.SupportedLanguage.DART and dart_is_top_level_main(func_node):
+            props[cs.KEY_IS_PROGRAM_MAIN] = True
         props.update(fingerprint_props(func_node))
         props.update(anchor_hash_props(func_node, decorators))
         props.update(decorated_start_props(func_node))
