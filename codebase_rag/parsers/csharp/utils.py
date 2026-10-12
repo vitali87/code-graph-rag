@@ -7,7 +7,12 @@ from types import MappingProxyType
 from tree_sitter import Node
 
 from ... import constants as cs
-from ...types_defs import CSharpGenericBase, CSharpGenericShape, PropertyDict
+from ...types_defs import (
+    CSharpCallShape,
+    CSharpGenericBase,
+    CSharpGenericShape,
+    PropertyDict,
+)
 from ..utils import safe_decode_text
 
 
@@ -492,8 +497,10 @@ def generic_shape(type_node: Node) -> CSharpGenericShape | None:
 
 
 def _declared_indexers(type_node: Node) -> tuple[str, ...]:
-    # Each indexer the type's body declares, as `<return type>=><parameter
-    # types>` written: `Right this[int i]` is `Right=>int`.
+    # Each indexer the type's body declares, as `indexer_entry` stores it.
+    # Local import: the parameter readers import this module.
+    from ..parameter_nodes import csharp_call_shape
+
     body = type_node.child_by_field_name(cs.FIELD_BODY)
     if body is None:
         return ()
@@ -502,20 +509,38 @@ def _declared_indexers(type_node: Node) -> tuple[str, ...]:
         if member.type != cs.TS_CSHARP_INDEXER_DECLARATION:
             continue
         returned = safe_decode_text(member.child_by_field_name(cs.FIELD_TYPE))
-        parameters = member.child_by_field_name(cs.FIELD_PARAMETERS)
-        if not returned or parameters is None:
+        if not returned or member.child_by_field_name(cs.FIELD_PARAMETERS) is None:
             continue
-        written = [
-            written_parameter_type(safe_decode_text(kind) or "")
-            for parameter in parameters.named_children
-            if parameter.type == cs.TS_CSHARP_PARAMETER
-            and (kind := parameter.child_by_field_name(cs.FIELD_TYPE)) is not None
-        ]
         indexers.append(
-            f"{written_parameter_type(returned)}{cs.CSHARP_STORED_PAIR_SEPARATOR}"
-            f"{cs.SEPARATOR_COMMA_SPACE.join(written)}"
+            indexer_entry(written_parameter_type(returned), csharp_call_shape(member))
         )
     return tuple(indexers)
+
+
+def indexer_entry(returned: str, shape: CSharpCallShape) -> str:
+    """An indexer as a type's shape keeps it: its return type, then each
+    parameter's passing mode, written type and name, the name marked as
+    `positional_params` marks a method's (`b?` defaulted, `...xs` a `params`
+    tail), so a named, defaulted or expanded index binds it as a call's
+    arguments bind a method: `Left this[in int a, string b = "x"]` ->
+    `Left=>in int a, string b?`."""
+    last = len(shape.types) - 1
+    parameters = []
+    for index, (written, name) in enumerate(
+        zip(shape.types, shape.names, strict=False)
+    ):
+        if shape.variadic and index == last:
+            marked = f"{cs.POSITIONAL_REST_PREFIX}{name}"
+        elif index >= shape.required:
+            marked = f"{name}{cs.POSITIONAL_OPTIONAL_SUFFIX}"
+        else:
+            marked = name
+        mode = shape.modes[index] if index < len(shape.modes) else ""
+        parameters.append(" ".join(part for part in (mode, written, marked) if part))
+    return (
+        f"{returned}{cs.CSHARP_STORED_PAIR_SEPARATOR}"
+        f"{cs.SEPARATOR_COMMA_SPACE.join(parameters)}"
+    )
 
 
 def _implicit_base(type_node: Node, parameters: list[str]) -> str | None:

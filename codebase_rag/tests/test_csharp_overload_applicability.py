@@ -2182,6 +2182,259 @@ def test_a_base_its_file_cannot_see_lends_no_indexer(temp_repo: Path) -> None:
     assert edited == fresh
 
 
+MIXED_OPERATOR_CS = """\
+namespace Mo;
+public struct S {
+    public static S operator +(S a, S b) => a;
+    public static S operator -(S a) => a;
+    public void Run() { }
+}
+public struct Ci {
+    public static implicit operator Ci(int i) => new Ci();
+    public static Ci operator +(Ci a, Ci b) => a;
+}
+public struct Co {
+    public static implicit operator int(Co c) => 0;
+}
+public class B {
+    public static B operator +(B a, B b) => a;
+}
+public class D2 : B {
+    public static D2 operator +(D2 a, int b) => a;
+}
+public class C {
+    public void M(S v) { }
+    public void M(string v) { }
+    public void N(Ci v) { }
+    public void N(int v) { }
+    public void P(B v) { }
+    public void P(D2 v) { }
+}
+public class Use {
+    public void Concat() { S s = new S(); string text = "x"; new C().M(text + s); }
+    public void ConcatAfter() { S s = new S(); string text = "x"; new C().M(s + text); }
+    public void Literal() { S s = new S(); new C().M("x" + s); }
+    public void Sum() { S s = new S(); new C().M(s + s); }
+    public void Negated() { S s = new S(); new C().M(-s); }
+    public void NegatedReceiver() { S s = new S(); (-s).Run(); }
+    public void Converted() { Ci c = new Ci(); new C().N(c + 1); }
+    public void ConvertedFirst() { Ci c = new Ci(); new C().N(1 + c); }
+    public void Inherited() { D2 d = new D2(); new C().P(d + d); }
+    public void Derived() { D2 d = new D2(); new C().P(d + 1); }
+    public void Predefined() { Co o = new Co(); new C().N(o + 1); }
+}
+"""
+
+INDEX_SHAPES_CS = """\
+namespace Nx;
+public class Left {
+    public void Run() { }
+}
+public class Right {
+    public void Run() { }
+}
+public class N2 {
+    public Left this[int a, string b] => new Left();
+    public Right this[string a, int b] => new Right();
+}
+public class P2 {
+    public Left this[params int[] xs] => new Left();
+    public Right this[int a, int b] => new Right();
+}
+public class D3 {
+    public Left this[int a, string b = "x"] => new Left();
+    public Right this[int a] => new Right();
+}
+public class R3 {
+    public Left this[in int a] => new Left();
+    public Right this[string a] => new Right();
+}
+public class G3<T> {
+    public Left this[T a, int b] => new Left();
+    public Right this[int a, T b] => new Right();
+}
+public class Bx {
+    public Left this[string s] => new Left();
+}
+public class Dx : Bx {
+    public Right this[int i] => new Right();
+}
+public class Use {
+    public void Named() { N2 n = new N2(); n[b: "s", a: 0].Run(); }
+    public void Swapped() { N2 n = new N2(); n[a: "s", b: 0].Run(); }
+    public void Positional() { N2 n = new N2(); n[0, "s"].Run(); }
+    public void Expanded() { P2 p = new P2(); p[1, 2, 3].Run(); }
+    public void Normal() { P2 p = new P2(); p[1, 2].Run(); }
+    public void Single() { P2 p = new P2(); p[1].Run(); }
+    public void Omitted() { D3 d = new D3(); d[1].Run(); }
+    public void Defaulted() { D3 d = new D3(); d[b: "y", a: 1].Run(); }
+    public void ByIn() { R3 r = new R3(); int i = 1; r[in i].Run(); }
+    public void Generic() { G3<string> g = new G3<string>(); g[b: 1, a: "s"].Run(); }
+    public void GenericSwapped() { G3<string> g = new G3<string>(); g[1, "s"].Run(); }
+    public void Base() { Dx d = new Dx(); d["s"].Run(); }
+    public void Own() { Dx d = new Dx(); d[1].Run(); }
+}
+"""
+
+STATIC_IMPORT_CS = """\
+using static Si.H;
+namespace Si;
+public static class H {
+    public static void F(int a, string b) { }
+    public static void F(string a, int b) { }
+    public static void G(int a) { }
+    public static void G(long a) { }
+}
+public class Use {
+    public void Named() { F(b: "s", a: 1); }
+    public void Typed() { int i = 1; string s = "x"; F(s, i); }
+    public void Literal() { F(1, "s"); }
+    public void Widened() { long l = 1; G(l); }
+}
+"""
+
+
+class TestOperatorsAndIndexesBindOnlyWhatTakesTheirArguments:
+    # Greptile review of PR 2814, round 20, and the oracle families it led
+    # to: a user-defined operator is a candidate only where it takes the
+    # operands (§12.4.5), sole or not, and an indexer only where the index
+    # binds its parameters by name, `params` and defaults, as a call binds
+    # a method's. Each source states what Roslyn runs (.NET 8).
+    def test_a_sole_operator_that_cannot_take_a_string_leaves_concatenation(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Greptile 4244637204: `+(S, S)` takes no `string`, so `text + s`
+        # is a string concatenation and `M(string)` runs.
+        calls = _resolved_calls(MIXED_OPERATOR_CS, temp_repo, mock_ingestor)
+        assert calls["Concat"] == {("Mo.C.M(string)", _EXACT)}, calls
+        assert calls["ConcatAfter"] == {("Mo.C.M(string)", _EXACT)}, calls
+        assert calls["Literal"] == {("Mo.C.M(string)", _EXACT)}, calls
+        # Negative: two `S` operands take the sole operator.
+        assert calls["Sum"] == {("Mo.C.M(S)", _EXACT)}, calls
+
+    def test_a_user_unary_operator_is_its_type(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(MIXED_OPERATOR_CS, temp_repo, mock_ingestor)
+        assert calls["Negated"] == {("Mo.C.M(S)", _EXACT)}, calls
+        assert calls["NegatedReceiver"] == {("Mo.S.Run", _EXACT)}, calls
+
+    def test_an_operator_taking_an_operand_by_conversion_applies(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # `int` converts to `Ci`, so `+(Ci, Ci)` takes `c + 1` and `1 + c`.
+        calls = _resolved_calls(MIXED_OPERATOR_CS, temp_repo, mock_ingestor)
+        assert calls["Converted"] == {("Mo.C.N(Ci)", _EXACT)}, calls
+        assert calls["ConvertedFirst"] == {("Mo.C.N(Ci)", _EXACT)}, calls
+        # Negative: `Co` declares no operator, so a predefined one adds its
+        # `int`, which the index does not type: never `N(Ci)` exactly.
+        assert ("Mo.C.N(int)", _OVERLOAD) in calls["Predefined"], calls
+        assert ("Mo.C.N(Ci)", _EXACT) not in calls["Predefined"], calls
+
+    def test_a_base_operator_applies_where_the_derived_types_cannot(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # `+(D2, int)` takes no `D2` on the right, so `B`'s `+(B, B)` does.
+        calls = _resolved_calls(MIXED_OPERATOR_CS, temp_repo, mock_ingestor)
+        assert calls["Inherited"] == {("Mo.C.P(B)", _EXACT)}, calls
+        assert calls["Derived"] == {("Mo.C.P(D2)", _EXACT)}, calls
+
+    def test_a_named_index_binds_by_parameter_name(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Greptile 4244637211: `n[b: "s", a: 0]` binds `this[int a, string b]`.
+        calls = _resolved_calls(INDEX_SHAPES_CS, temp_repo, mock_ingestor)
+        assert calls["Named"] == {("Nx.Left.Run", _EXACT)}, calls
+        assert calls["Swapped"] == {("Nx.Right.Run", _EXACT)}, calls
+        assert calls["Positional"] == {("Nx.Left.Run", _EXACT)}, calls
+
+    def test_params_and_defaulted_indexers_bind_as_calls_do(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(INDEX_SHAPES_CS, temp_repo, mock_ingestor)
+        # Expanded into `params int[] xs`, unless the normal form fits.
+        assert calls["Expanded"] == {("Nx.Left.Run", _EXACT)}, calls
+        assert calls["Single"] == {("Nx.Left.Run", _EXACT)}, calls
+        assert calls["Normal"] == {("Nx.Right.Run", _EXACT)}, calls
+        # A default left out loses to an indexer taking the index whole.
+        assert calls["Omitted"] == {("Nx.Right.Run", _EXACT)}, calls
+        assert calls["Defaulted"] == {("Nx.Left.Run", _EXACT)}, calls
+
+    def test_an_index_passed_in_binds_an_in_indexer(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(INDEX_SHAPES_CS, temp_repo, mock_ingestor)
+        assert calls["ByIn"] == {("Nx.Left.Run", _EXACT)}, calls
+
+    def test_a_generic_index_binds_by_name_and_type(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(INDEX_SHAPES_CS, temp_repo, mock_ingestor)
+        assert calls["Generic"] == {("Nx.Left.Run", _EXACT)}, calls
+        assert calls["GenericSwapped"] == {("Nx.Right.Run", _EXACT)}, calls
+
+    def test_a_base_indexer_binds_where_the_derived_types_cannot(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # `Dx`'s `this[int]` takes no string; `Bx`'s `this[string]` does.
+        calls = _resolved_calls(INDEX_SHAPES_CS, temp_repo, mock_ingestor)
+        assert calls["Base"] == {("Nx.Left.Run", _EXACT)}, calls
+        assert calls["Own"] == {("Nx.Right.Run", _EXACT)}, calls
+
+    def test_a_static_import_binds_the_overload_its_arguments_take(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # The round-20 audit: a `using static` method group was picked by
+        # arity and positional literals, and every same-arity overload got
+        # an `exact` edge too.
+        calls = _resolved_calls(STATIC_IMPORT_CS, temp_repo, mock_ingestor)
+        assert calls["Named"] == {("Si.H.F(int, string)", _EXACT)}, calls
+        assert calls["Typed"] == {("Si.H.F(string, int)", _EXACT)}, calls
+        assert calls["Literal"] == {("Si.H.F(int, string)", _EXACT)}, calls
+        assert calls["Widened"] == {("Si.H.G(long)", _EXACT)}, calls
+
+
+NAMED_INDEX_LIB_CS = """\
+namespace Ni;
+public class Left {
+    public void Run() { }
+}
+public class Right {
+    public void Run() { }
+}
+public class N2 {
+    public Left this[int a, string b] => new Left();
+    public Right this[string a, int b] => new Right();
+}
+public class D3 {
+    public Left this[int a, string b = "x"] => new Left();
+    public Right this[int a] => new Right();
+}
+"""
+
+NAMED_INDEX_USE_CS = """\
+namespace Ni;
+public class Use {
+    public void Named() { N2 n = new N2(); n[b: "s", a: 0].Run(); }
+    public void Omitted() { D3 d = new D3(); d[1].Run(); }
+    public void Defaulted() { D3 d = new D3(); d[b: "y", a: 1].Run(); }
+}
+"""
+
+
+def test_an_incremental_run_reads_indexer_parameters_back(temp_repo: Path) -> None:
+    # An indexer's parameter names, defaults and modes are stored on its
+    # type's node, so an index into a type of an unchanged file binds by
+    # name and by default as a fresh index binds it.
+    fresh, edited = _two_file_calls(temp_repo, NAMED_INDEX_LIB_CS, NAMED_INDEX_USE_CS)
+    assert {
+        ("Named", "Left", "Run"),
+        ("Omitted", "Right", "Run"),
+        ("Defaulted", "Left", "Run"),
+    } == fresh, fresh
+    assert edited == fresh
+
+
 CONSTRAINT_CS = """\
 namespace K;
 public interface IThing { }

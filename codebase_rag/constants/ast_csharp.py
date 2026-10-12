@@ -300,8 +300,14 @@ TS_CSHARP_ARROW_EXPRESSION_CLAUSE = "arrow_expression_clause"
 # `public T this[int i] { ... }`: return-typed via `type` like a property.
 TS_CSHARP_INDEXER_DECLARATION = "indexer_declaration"
 TS_CSHARP_BRACKETED_ARGUMENT_LIST = "bracketed_argument_list"
+# An element access's index (`xs[b: "s", a: 0]`), which binds an indexer as
+# a call's arguments bind a method.
+TS_CSHARP_FIELD_SUBSCRIPT = "subscript"
+# A stored indexer parameter's name, marked as a method's positional
+# parameters are: `...xs` a `params` tail, `b?` a defaulted one.
+CSHARP_STORED_PARAMETER_NAME_PATTERN = r"(?:\.\.\.)?@?[^\W\d]\w*\??"
 # Between the two halves of a pair a C# type node stores: an indexer's
-# return type and parameter types, a field's name and type.
+# return type and parameters, a field's name and type.
 CSHARP_STORED_PAIR_SEPARATOR = "=>"
 # The name an indexer is declared under, as its signature is read.
 CSHARP_INDEXER_NAME = "this"
@@ -659,6 +665,8 @@ CSHARP_COMPARISON_OPERATORS = frozenset({"<", ">", "<=", ">=", "==", "!=", "&&",
 # The user-defined operator a conditional logical operator runs through:
 # `a && b` on a type declaring `operator &` (and `true`/`false`) is `&`'s.
 CSHARP_CONDITIONAL_OPERATORS: dict[str, str] = {"&&": "&", "||": "|"}
+# The prefix operators a type may declare an `operator` for (`-s`, `!s`).
+CSHARP_OVERLOADABLE_UNARY_OPERATORS = frozenset({"-", "+", "!", "~"})
 CHAR_PLUS = "+"
 # The predefined types that are reference types; every other is a value type.
 CSHARP_REFERENCE_KEYWORDS = frozenset({"object", "string"})
