@@ -154,3 +154,44 @@ def test_annotated_instance_calls_are_exact(
         ("proj.app.App.read", "proj.models.Store.get", "exact"),
         ("proj.app.Other.read", "proj.models.Cache.get", "exact"),
     }
+
+
+@pytest.mark.parametrize(
+    ("imports", "annotation"),
+    [
+        ("import models", "models.Store"),
+        ("import models as m", "m.Store"),
+        ("import models", "Optional[models.Store]"),
+        ("import models", '"models.Store"'),
+    ],
+)
+@pytest.mark.parametrize("initializer", ["", " = None", " = models_ctor()"])
+def test_module_qualified_annotation_calls_are_exact(
+    tmp_path: Path, imports: str, annotation: str, initializer: str
+) -> None:
+    (tmp_path / "models.py").write_text(
+        "class Store:\n    def get(self): pass\nclass Cache:\n    def get(self): pass\n"
+    )
+    module_alias = imports.rpartition(" ")[2]
+    initializer = initializer.replace("models_ctor", f"{module_alias}.Store")
+    (tmp_path / "app.py").write_text(
+        f"{imports}\nfrom typing import Optional\n"
+        "class App:\n"
+        f"    def __init__(self):\n        self._s: {annotation}{initializer}\n"
+        "    def read(self):\n        return self._s.get()\n"
+    )
+    parsers, queries = load_parsers()
+    cap = _Capture()
+    GraphUpdater(
+        ingestor=cap,
+        repo_path=tmp_path,
+        parsers=parsers,
+        queries=queries,
+        project_name=PROJECT,
+    ).run(force=True)
+    calls = {
+        (frm, to, props.get("resolution"))
+        for frm, rel, to, props in cap.rels
+        if rel == cs.RelationshipType.CALLS and frm == "proj.app.App.read"
+    }
+    assert calls == {("proj.app.App.read", "proj.models.Store.get", "exact")}

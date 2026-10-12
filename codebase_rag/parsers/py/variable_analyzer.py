@@ -18,7 +18,7 @@ from ...types_defs import (
 from ..import_processor import ImportProcessor
 from ..utils import get_cached_query, safe_decode_text
 from .forward_refs import unquote_forward_refs
-from .utils import resolve_class_name
+from .utils import resolve_class_name, resolve_dotted_class
 
 # Deepest operand chain `_value_leaves` will walk. Each term of `a or b or c`
 # or `x + y + z` is one level. Measured over every assignment in this repo the
@@ -380,6 +380,19 @@ class PythonVariableAnalyzerMixin(_VarBase):
                 if annotation
                 else None
             )
+            if (
+                assigned_type
+                and cs.SEPARATOR_DOT in assigned_type
+                and not self._get_project_class_qn(assigned_type, module_qn)
+            ):
+                # `models.Store` / `m.Store` names the class through the
+                # module's imports; the registry only knows `proj.models.Store`.
+                assigned_type = resolve_dotted_class(
+                    assigned_type,
+                    module_qn,
+                    self.import_processor,
+                    self.function_registry,
+                )
             if assigned_type and self._get_project_class_qn(assigned_type, module_qn):
                 local_var_types[attr_name] = assigned_type
             else:

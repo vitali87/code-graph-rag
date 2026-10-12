@@ -345,6 +345,7 @@ class TestSelfAssignmentAnalysisWithRealParsing:
             ("self._s: Store = Cache()", "Store"),
             ("self._s: Missing = Store()", None),
             ("self._s: Missing", None),
+            ("self._s: ext.Store = Store()", None),
             ("self._s = None", None),
             ("self._s = None\n        self._s = Store()", "Store"),
             ("self._s = Store()\n        self._s = None", "Store"),
