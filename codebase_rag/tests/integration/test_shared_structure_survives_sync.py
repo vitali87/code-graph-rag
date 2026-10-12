@@ -82,24 +82,95 @@ def test_two_names_on_one_checkout_survive_another_sync(
     assert after == before
 
 
+def test_windows_roots_keep_the_nodes_they_share(
+    memgraph_ingestor: MemgraphIngestor,
+) -> None:
+    # Project.root_path is the resolved path as the OS spells it, so on
+    # Windows it carries backslashes, while absolute_path is always POSIX.
+    # Compared unnormalised, every shared node read as outside its owners'
+    # trees and was purged (review of PR 3216).
+    ing = memgraph_ingestor
+    ing.ensure_constraints()
+    ing._execute_query(
+        "CREATE (svc:Project {name: 'svc', root_path: $root}), "
+        "(copy:Project {name: 'svc-copy', root_path: $root}), "
+        "(app:Folder {path: 'app', absolute_path: $app}), "
+        "(main:File {path: 'app/main.py', absolute_path: $main}), "
+        "(svc)-[:CONTAINS_FOLDER]->(app), "
+        "(copy)-[:CONTAINS_FOLDER]->(app), "
+        "(app)-[:CONTAINS_FILE]->(main)",
+        {
+            "root": "C:\\repos\\svc",
+            "app": "C:/repos/svc/app",
+            "main": "C:/repos/svc/app/main.py",
+        },
+    )
+
+    ing.ensure_constraints()
+
+    assert _structure(ing, "svc") == 2
+    assert _structure(ing, "svc-copy") == 2
+
+
+@pytest.mark.parametrize(
+    ("svc_root", "cli_root", "shared", "own"),
+    [
+        ("/repos/svc", "/repos/cli", "/repos/svc/app", "/repos/cli/lib"),
+        ("C:\\repos\\svc", "C:\\repos\\cli", "C:/repos/svc/app", "C:/repos/cli/lib"),
+    ],
+    ids=["posix", "windows"],
+)
 def test_a_cross_directory_merge_is_still_purged(
     memgraph_ingestor: MemgraphIngestor,
+    svc_root: str,
+    cli_root: str,
+    shared: str,
+    own: str,
 ) -> None:
     # Negative: two projects in different directories reaching one node is
     # the old key's merge even when both record their roots, so it goes.
     ing = memgraph_ingestor
     ing.ensure_constraints()
     ing._execute_query(
-        "CREATE (svc:Project {name: 'svc', root_path: '/repos/svc'}), "
-        "(cli:Project {name: 'cli', root_path: '/repos/cli'}), "
-        "(shared:Folder {path: 'app', absolute_path: '/repos/svc/app'}), "
-        "(own:Folder {path: 'lib', absolute_path: '/repos/cli/lib'}), "
+        "CREATE (svc:Project {name: 'svc', root_path: $svc_root}), "
+        "(cli:Project {name: 'cli', root_path: $cli_root}), "
+        "(shared:Folder {path: 'app', absolute_path: $shared}), "
+        "(own:Folder {path: 'lib', absolute_path: $own}), "
         "(svc)-[:CONTAINS_FOLDER]->(shared), "
         "(cli)-[:CONTAINS_FOLDER]->(shared), "
-        "(cli)-[:CONTAINS_FOLDER]->(own)"
+        "(cli)-[:CONTAINS_FOLDER]->(own)",
+        {"svc_root": svc_root, "cli_root": cli_root, "shared": shared, "own": own},
     )
 
     ing.ensure_constraints()
 
     left = ing.fetch_all("MATCH (n:Folder) RETURN n.absolute_path AS p ORDER BY p")
-    assert left == [{"p": "/repos/cli/lib"}], left
+    assert left == [{"p": own}], left
+
+
+@pytest.mark.parametrize(
+    "new_root",
+    [None, "/repos/svc"],
+    ids=["both-rootless", "beside-an-enclosing-root"],
+)
+def test_a_node_shared_with_a_rootless_project_is_purged(
+    memgraph_ingestor: MemgraphIngestor, new_root: str | None
+) -> None:
+    # A Project written before root_path existed records no tree, so a node it
+    # shares is the old key's merge. collect() drops nulls, so a detector that
+    # collected the roots saw none (or only the enclosing one), reported no
+    # damage, and the purge never ran (review of PR 3216).
+    ing = memgraph_ingestor
+    ing.ensure_constraints()
+    ing._execute_query(
+        "CREATE (old:Project {name: 'old'}), "
+        "(new:Project {name: 'new', root_path: $new_root}), "
+        "(app:Folder {path: 'app', absolute_path: '/repos/svc/app'}), "
+        "(old)-[:CONTAINS_FOLDER]->(app), "
+        "(new)-[:CONTAINS_FOLDER]->(app)",
+        {"new_root": new_root},
+    )
+
+    ing.ensure_constraints()
+
+    assert ing.fetch_all("MATCH (n:Folder) RETURN count(n) AS n") == [{"n": 0}]

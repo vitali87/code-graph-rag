@@ -321,26 +321,31 @@ DETACH DELETE p, container, defined
 # names, or a project nested in another -- and the node lies inside every
 # owner's tree, so it is not damage (issue #3025). A parent's tree is a
 # Project's root_path or a Folder's own absolute_path; a parent that records
-# neither predates both and counts as legacy.
+# neither predates both and counts as legacy. root_path is the resolved path as
+# the OS spells it, backslashes on Windows, while absolute_path is POSIX, so
+# both sides are compared with forward slashes (review of PR 3216).
 def _outside_tree(root: str) -> str:
+    node = "replace(n.absolute_path, '\\\\', '/')"
+    tree = f"replace({root}, '\\\\', '/')"
     return (
-        f"({root} IS NULL OR NOT (n.absolute_path = {root} "
-        f"OR n.absolute_path STARTS WITH ({root} + '/') "
-        f"OR n.absolute_path STARTS WITH ({root} + '\\\\')))"
+        f"({root} IS NULL OR NOT ({node} = {tree} "
+        f"OR {node} STARTS WITH ({tree} + '/')))"
     )
 
 
 # Sharing always leaves a single-hop signature: the topmost merged node has
 # containment parents in two projects (Project roots are never merged, so the
 # parents are distinct nodes). Keyless rows match the second purge's predicate
-# directly.
+# directly. The parents themselves are collected, not their roots: collect()
+# drops nulls, so a parent that records no root would vanish from the list
+# instead of counting as legacy (review of PR 3216).
 CYPHER_ANY_SHARED_STRUCTURE = (
     "MATCH (parent)-[:CONTAINS_FOLDER|CONTAINS_FILE]->(n) "
     "WHERE (n:Folder OR n:File) AND n.absolute_path IS NOT NULL "
-    "WITH n, collect(coalesce(parent.root_path, parent.absolute_path)) AS roots, "
-    "count(parent) AS parents "
-    "WHERE parents > 1 "
-    f"AND any(root IN roots WHERE {_outside_tree('root')}) "
+    "WITH n, collect(parent) AS parents "
+    "WHERE size(parents) > 1 "
+    "AND any(owner IN parents WHERE "
+    f"{_outside_tree('coalesce(owner.root_path, owner.absolute_path)')}) "
     "RETURN 1 AS damaged LIMIT 1"
 )
 
