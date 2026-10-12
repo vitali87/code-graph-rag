@@ -789,3 +789,28 @@ def test_inline_refuses_a_method_with_an_override_either_way(
     with pytest.raises(InlineRefused, match="overrid"):
         inline(root, store.fetch_all, PROJECT, qualified_name)
     assert (root / "pkg/shapes.py").read_text() == _OVERRIDE_FILES["pkg/shapes.py"]
+
+
+# --- type names in the returned expression (bot review) ----------------------------
+
+_TYPE_NAME_FILES = {
+    "web/models.ts": (
+        "export interface User { name: string; }\n"
+        "export function asUser(x: unknown): User { return x as User; }\n"
+    ),
+    "web/app.ts": (
+        "import { asUser } from './models';\n"
+        "const raw: unknown = { name: 'a' };\n"
+        "console.log(asUser(raw).name);\n"
+    ),
+}
+
+
+def test_inline_leaves_a_call_whose_return_names_a_type_from_another_module(
+    temp_repo: Path,
+) -> None:
+    # Copied into app.ts, `raw as User` names a type app.ts never imported
+    # (TS2304), though the file still parses.
+    root, store = _build(temp_repo, _TYPE_NAME_FILES)
+    _inline(root, store, "web.models.asUser")
+    assert (root / "web/app.ts").read_text() == _TYPE_NAME_FILES["web/app.ts"]
