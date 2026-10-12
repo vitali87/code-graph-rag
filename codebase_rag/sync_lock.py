@@ -357,35 +357,49 @@ def repo_sync_lock(
         # Created, not adopted: the sync moves what an older cgr left in the
         # tree once it holds the lock, as the edit lock does (issue #2427).
         lock_path = prepare_state_dir(repo_path, adopt=False) / cs.SYNC_LOCK_FILENAME
-        announced = False
-        release_deadline: float | None = None
-        while not _try_acquire(key, repo_path, lock_path, project_name):
-            holder = _holder(lock_path)
-            if not wait:
-                # A holder that has exited no longer syncs; its lock is only
-                # waiting for Windows to release it. The holder is read again
-                # on every try, so one that takes the lock meanwhile is
-                # refused at once.
-                if holder is not None and pid_has_exited(holder.pid):
-                    now = time.monotonic()
-                    if release_deadline is None:
-                        release_deadline = now + cs.SYNC_LOCK_RELEASE_GRACE_SECONDS
-                    if now < release_deadline:
-                        time.sleep(cs.SYNC_LOCK_RELEASE_POLL_SECONDS)
-                        continue
-                raise SyncInProgressError(
-                    ex.SYNC_IN_PROGRESS.format(repo=repo_path, holder=_describe(holder))
-                )
-            if not announced:
-                logger.info(
-                    ls.SYNC_LOCK_WAITING, repo=repo_path, holder=_describe(holder)
-                )
-                announced = True
-            time.sleep(cs.SYNC_LOCK_POLL_SECONDS)
+        _acquire(key, repo_path, lock_path, project_name, wait=wait)
     try:
         yield
     finally:
         _release(key)
+
+
+def _release_deadline(
+    holder: _HolderRecord | None, deadline: float | None
+) -> float | None:
+    # A holder that has exited no longer syncs; its lock is only waiting for
+    # Windows to release it. None refuses the lock now: a live or unknown
+    # holder at once, without reading the clock, and a dead one's once the
+    # grace has run out.
+    if holder is None or not pid_has_exited(holder.pid):
+        return None
+    now = time.monotonic()
+    if deadline is None:
+        deadline = now + cs.SYNC_LOCK_RELEASE_GRACE_SECONDS
+    return deadline if now < deadline else None
+
+
+def _acquire(
+    key: str, repo_path: Path, lock_path: Path, project_name: str, *, wait: bool
+) -> None:
+    announced = False
+    release_deadline: float | None = None
+    while not _try_acquire(key, repo_path, lock_path, project_name):
+        # Read again on every try, so a holder that takes the lock meanwhile
+        # is refused at once.
+        holder = _holder(lock_path)
+        if not wait:
+            release_deadline = _release_deadline(holder, release_deadline)
+            if release_deadline is None:
+                raise SyncInProgressError(
+                    ex.SYNC_IN_PROGRESS.format(repo=repo_path, holder=_describe(holder))
+                )
+            time.sleep(cs.SYNC_LOCK_RELEASE_POLL_SECONDS)
+            continue
+        if not announced:
+            logger.info(ls.SYNC_LOCK_WAITING, repo=repo_path, holder=_describe(holder))
+            announced = True
+        time.sleep(cs.SYNC_LOCK_POLL_SECONDS)
 
 
 def holds_sync_lock[S: _Syncs, **P, R](
