@@ -96,8 +96,9 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "interface_fingerprint",
         }
     ),
-    # `type_parameters`, `generic_bases` and `base_types` on a C# type, its
-    # interface's `type_parameter_variances`, a struct's `value_type`, and
+    # `type_parameters`, `generic_bases`, `base_types`, `indexer_types` and
+    # `field_types` on a C# type, its interface's `type_parameter_variances`,
+    # a struct's `value_type`, and
     # `type_parameters`, `type_constraints`, `implicit_conversion` and
     # `parameter_modes` on a C# method (PR 2814 review), are what overload
     # ranking reads, read back only by an incremental run's rehydration;
@@ -117,6 +118,8 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     # Exporting it needs a proto field and protoc, which #1490 carries.
     "Class": frozenset(
         {
+            "field_types",
+            "indexer_types",
             "anchor_hash",
             "absolute_path",
             "base_types",
@@ -204,6 +207,8 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     ),
     "Interface": frozenset(
         {
+            "field_types",
+            "indexer_types",
             "anchor_hash",
             "base_types",
             "decorated_start_line",

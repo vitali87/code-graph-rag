@@ -472,6 +472,7 @@ def csharp_call_shape(func_node: Node) -> CSharpCallShape:
         for child in func_node.children
         if child.type == cs.TS_CSHARP_MODIFIER
     }
+    modes = csharp_parameter_modes(func_node)
     return CSharpCallShape(
         required=sum(not (p.has_default or p.is_variadic) for p in params),
         variadic=any(p.is_variadic for p in params),
@@ -482,7 +483,7 @@ def csharp_call_shape(func_node: Node) -> CSharpCallShape:
         constraints=type_parameter_constraints(func_node),
         names=tuple(p.name for p in params),
         returns=_csharp_return_text(func_node),
-        modes=modes if any(modes := csharp_parameter_modes(func_node)) else (),
+        modes=modes if any(modes) else (),
         overrides=cs.TS_CSHARP_MODIFIER_OVERRIDE in modifiers,
         types=tuple(written_parameter_type(p.type_name or "") for p in params),
     )

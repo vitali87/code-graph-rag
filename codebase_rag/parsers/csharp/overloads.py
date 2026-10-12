@@ -440,11 +440,11 @@ def member_verdict(
     if given_own is None or wanted_own is None:
         return False
     given_scope, wanted_scope = scopes if scopes is not None else (None, None)
-    given = _by_position(
+    given = by_position(
         [_unannotated_in(canonical_type(p, given_scope), given_scope) for p in given],
         given_own,
     )
-    wanted = _by_position(
+    wanted = by_position(
         [
             _unannotated_in(declared_type(p, wanted_scope, bindings), wanted_scope)
             for p in parameter_types(f"{wanted_name}{paren}{wanted_params}")
@@ -484,9 +484,10 @@ def _matched_own(
     return given_own, wanted_own
 
 
-def _by_position(types: list[str], own: Sequence[str] | None) -> list[str]:
-    # Each of a method's own type parameters named by its declaration
-    # position (`!!0`), a name no source type spells.
+def by_position(types: list[str], own: Sequence[str] | None) -> list[str]:
+    """Each of a method's own type parameters named by its declaration
+    position (`!!0`), a name no source type spells: `M<T>(T)` and its
+    override `M<U>(U)` take one parameter list."""
     if not own:
         return types
     renamed = {

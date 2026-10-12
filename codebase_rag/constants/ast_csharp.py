@@ -272,6 +272,15 @@ TS_CSHARP_NESTED_SCOPE_TYPES = (
 
 # Import form: `using System;`, `using X = Y;`, `global using System.Linq;`.
 TS_CSHARP_USING_DIRECTIVE = "using_directive"
+# Where a `using` directive can stand: the file, a namespace (block or
+# file-scoped), its body, and a conditional-compilation branch.
+CSHARP_USING_HOLDERS = frozenset(
+    {
+        TS_CSHARP_NAMESPACE_DECLARATION,
+        TS_CSHARP_FILE_SCOPED_NAMESPACE_DECLARATION,
+        *CSHARP_TYPE_DECLARATION_HOLDERS,
+    }
+)
 TS_CSHARP_STATIC = "static"
 TS_CSHARP_GLOBAL = "global"
 # A `params T[]` tail parameter is an array type in the method signature.
@@ -290,6 +299,12 @@ TS_CSHARP_IDENTIFIER = "identifier"
 TS_CSHARP_ARROW_EXPRESSION_CLAUSE = "arrow_expression_clause"
 # `public T this[int i] { ... }`: return-typed via `type` like a property.
 TS_CSHARP_INDEXER_DECLARATION = "indexer_declaration"
+TS_CSHARP_BRACKETED_ARGUMENT_LIST = "bracketed_argument_list"
+# Between the two halves of a pair a C# type node stores: an indexer's
+# return type and parameter types, a field's name and type.
+CSHARP_STORED_PAIR_SEPARATOR = "=>"
+# The name an indexer is declared under, as its signature is read.
+CSHARP_INDEXER_NAME = "this"
 # Some grammar versions wrap a declarator's `= value` initializer in an
 # equals_value_clause node (the pinned grammar hangs the value directly off
 # the declarator); the target-typed-new walk skips it either way, mirroring
@@ -640,24 +655,10 @@ CSHARP_UNSIGNED_CONSTANT_SOURCES: dict[str, frozenset[str]] = {
     "uint": frozenset({"int"}),
     "ulong": frozenset({"int", "long"}),
 }
-# A framework collection's indexer: the type argument its element is.
-CSHARP_INDEXED_ELEMENT: dict[str, int] = {
-    "List": 0,
-    "IList": 0,
-    "IReadOnlyList": 0,
-    "Collection": 0,
-    "ReadOnlyCollection": 0,
-    "Span": 0,
-    "ReadOnlySpan": 0,
-    "Memory": 0,
-    "Dictionary": 1,
-    "IDictionary": 1,
-    "IReadOnlyDictionary": 1,
-    "SortedDictionary": 1,
-    "SortedList": 1,
-    "ConcurrentDictionary": 1,
-}
 CSHARP_COMPARISON_OPERATORS = frozenset({"<", ">", "<=", ">=", "==", "!=", "&&", "||"})
+# The user-defined operator a conditional logical operator runs through:
+# `a && b` on a type declaring `operator &` (and `true`/`false`) is `&`'s.
+CSHARP_CONDITIONAL_OPERATORS: dict[str, str] = {"&&": "&", "||": "|"}
 CHAR_PLUS = "+"
 # The predefined types that are reference types; every other is a value type.
 CSHARP_REFERENCE_KEYWORDS = frozenset({"object", "string"})
@@ -760,6 +761,25 @@ CSHARP_FRAMEWORK_GENERICS: dict[tuple[str, int], tuple[str, bool, tuple[str, ...
     # `Tuple<...>` is a class and `ValueTuple<...>` a struct, every arity.
     **{("Tuple", count): (_SYSTEM, True, ("",) * count) for count in range(1, 9)},
     **{("ValueTuple", count): (_SYSTEM, False, ("",) * count) for count in range(1, 9)},
+}
+# A framework collection's indexer: its namespace and the type argument its
+# element is. Only a spelling that names the framework's type reads so.
+_OBJECT_MODEL = "System.Collections.ObjectModel"
+_CONCURRENT = "System.Collections.Concurrent"
+CSHARP_INDEXED_ELEMENT: dict[str, tuple[str, int]] = {
+    "List": (_GENERIC_COLLECTIONS, 0),
+    "IList": (_GENERIC_COLLECTIONS, 0),
+    "IReadOnlyList": (_GENERIC_COLLECTIONS, 0),
+    "Collection": (_OBJECT_MODEL, 0),
+    "ReadOnlyCollection": (_OBJECT_MODEL, 0),
+    "Span": (_SYSTEM, 0),
+    "ReadOnlySpan": (_SYSTEM, 0),
+    "Dictionary": (_GENERIC_COLLECTIONS, 1),
+    "IDictionary": (_GENERIC_COLLECTIONS, 1),
+    "IReadOnlyDictionary": (_GENERIC_COLLECTIONS, 1),
+    "SortedDictionary": (_GENERIC_COLLECTIONS, 1),
+    "SortedList": (_GENERIC_COLLECTIONS, 1),
+    "ConcurrentDictionary": (_CONCURRENT, 1),
 }
 # The implicit numeric conversions, by keyword: what each predefined type
 # converts to besides itself and `object`. Fixing a type parameter needs

@@ -256,25 +256,6 @@ def _class_start_point(
     return class_node.start_point[0] + 1, class_node.start_point[1]
 
 
-def _csharp_record_parameter_types(
-    member_node: Node, field_types: dict[str, str]
-) -> None:
-    # A record's positional parameters ARE public properties of
-    # the record type; record them as members so receiver typing
-    # and the delegate-invoke gate see them (`Callback();` on a
-    # record param is Action.Invoke, not a first-party call).
-    for pl in member_node.children:
-        if pl.type != cs.TS_CSHARP_PARAMETER_LIST:
-            continue
-        for prm in pl.children:
-            if prm.type != cs.TS_CSHARP_PARAMETER:
-                continue
-            pname = safe_decode_text(prm.child_by_field_name(cs.FIELD_NAME))
-            ptype = safe_decode_text(prm.child_by_field_name(cs.FIELD_TYPE))
-            if pname and ptype:
-                field_types.setdefault(pname, csharp_utils.annotate_type_ref(ptype))
-
-
 def _enclosing_rust_mod(module_node: Node) -> Node | None:
     enclosing_module_node = module_node.parent
     while (
@@ -1846,9 +1827,7 @@ class ClassIngestMixin:
         # (`_w.M()`, `this._w.M()`) resolves, including a field inherited
         # from a base class in another file (the resolver walks
         # class_inheritance over these per-class maps).
-        field_types = csharp_utils.build_field_type_map(member_node) or {}
-        if member_node.type == cs.TS_CSHARP_RECORD_DECLARATION:
-            _csharp_record_parameter_types(member_node, field_types)
+        field_types = csharp_utils.member_type_map(member_node)
         if field_types:
             self.class_field_types[class_qn] = field_types
         # The declaring module, recorded because the class qn cannot yield
@@ -2726,15 +2705,17 @@ class ClassIngestMixin:
             self.class_inheritance,
             self.ingestor,
             self._override_walk_implementers(),
-            self.csharp_methods,
-            self.csharp_override_methods,
+            mo.CSharpOverrideFacts(
+                methods=self.csharp_methods,
+                override_methods=self.csharp_override_methods,
+                class_generic_arity=self.csharp_class_generic_arity,
+                generic_shapes=self.csharp_generic_shapes,
+                class_namespaced=self.csharp_class_namespaced,
+                call_shapes=self.csharp_call_shapes,
+                type_scopes=csharp_type_scopes,
+            ),
             self.rust_impl_method_traits,
             self.rust_inherent_impl_methods,
-            self.csharp_class_generic_arity,
-            self.csharp_generic_shapes,
-            self.csharp_class_namespaced,
-            self.csharp_call_shapes,
-            csharp_type_scopes,
             module_qns={*self.module_qn_to_file_path, *module_qns},
         )
         self._resolve_java_anon_overrides()

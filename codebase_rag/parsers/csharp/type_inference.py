@@ -47,6 +47,7 @@ from .overloads import (
     arguments_match,
     best_candidates,
     bindings_for_base,
+    by_position,
     canonical_type,
     certainly_applies,
     constant_converts,
@@ -661,6 +662,19 @@ def _initializer(declarator: Node) -> Node | None:
     return value
 
 
+def _indexer_signatures(
+    indexers: Sequence[str], scope: Scope | None
+) -> list[tuple[str, list[str]]]:
+    # Each stored indexer's written return type and its parameter types,
+    # read in the declaring file.
+    signatures = []
+    for entry in indexers:
+        returned, _, written = entry.partition(cs.CSHARP_STORED_PAIR_SEPARATOR)
+        taken = parameter_types(f"{cs.CSHARP_INDEXER_NAME}({written})")
+        signatures.append((returned, [canonical_type(t, scope) for t in taken]))
+    return signatures
+
+
 def _reads_as_sum(cast: Node) -> bool:
     # `(x) + 1` and `(x) - y` parse as a cast of a signed operand to a type
     # `x`, but C# reads a parenthesized name before `+` or `-` as a sum
@@ -833,11 +847,12 @@ def _owner_body(owner: Node, local_type: str | None) -> Node | _Unread | None:
     # does not declare.
     if owner.type == cs.TS_CSHARP_THIS:
         return _enclosing_body(owner)
+    name = safe_decode_text(owner) or ""
     if owner.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
         found = _this_member_type(owner)
     elif owner.type != cs.TS_CSHARP_IDENTIFIER:
         return None
-    elif binds_local(owner, name := safe_decode_text(owner) or ""):
+    elif binds_local(owner, name):
         type_name = simple_type_name(local_type) if local_type else None
         found = simple_name(owner, type_name, types_only=True) if type_name else None
     else:
@@ -2474,7 +2489,7 @@ class CSharpTypeInferenceEngine:
         # file's `<Using>`) may still bring in (PR 2814's Roslyn oracle).
         enclosing = _enclosing_namespaces(call.node)
         imports = self.import_processor
-        imported = set(imports.import_mapping.get(call.module_qn, {}).values())
+        imported = set(imports.csharp_usings(call.module_qn).values())
         for usings in imports.csharp_global_usings.values():
             imported |= usings
         statics = {
@@ -2509,17 +2524,21 @@ class CSharpTypeInferenceEngine:
         ]
         return self.csharp_class_namespaced.get(owner)
 
-    def _value_keyword(self, value: Node, depth: int = 0) -> str | None:
-        # The predefined type a literal, a local or parameter of one, or an
-        # arithmetic or comparison of them is: C#'s binary numeric promotion
-        # (`x + 1L` is long), string concatenation and comparisons. None for
-        # anything else.
+    def _value_keyword(
+        self, value: Node, depth: int = 0, module_qn: str | None = None
+    ) -> str | None:
+        # The type a literal, a local or parameter of a predefined type, or
+        # an operator over them is: C#'s binary numeric promotion (`x + 1L`
+        # is long), string concatenation and comparisons, or, read in
+        # `module_qn`, the result of a user-defined operator an operand's
+        # first-party type declares (its qn: `s1 && s2` on a struct with
+        # `operator &`). None for anything else.
         while value.type == cs.TS_PARENTHESIZED_EXPRESSION and value.named_children:
             value = value.named_children[0]
         if (constant := _literal_constant(value)) is not None:
             return predefined_keyword(constant.type) if constant.type else None
         if value.type == cs.TS_CSHARP_CAST_EXPRESSION:
-            return self._cast_keyword(value, depth)
+            return self._cast_keyword(value, depth, module_qn)
         if value.type == cs.TS_CSHARP_IDENTIFIER:
             written = self._written_receiver_type(value)
             return predefined_keyword(written) if written else None
@@ -2530,28 +2549,55 @@ class CSharpTypeInferenceEngine:
         operator = safe_decode_text(value.child_by_field_name(cs.FIELD_OPERATOR))
         if left is None or right is None or operator is None:
             return None
-        if operator in cs.CSHARP_COMPARISON_OPERATORS:
-            return cs.CSHARP_BOOL_KEYWORD
         if operator == cs.CSHARP_COALESCE_OPERATOR:
             return self._coalesced(left, right, depth)
-        return self._binary_keyword(operator, left, right, depth)
+        return self._binary_keyword(operator, left, right, depth, module_qn)
 
     def _binary_keyword(
-        self, operator: str, left: Node, right: Node, depth: int
+        self,
+        operator: str,
+        left: Node,
+        right: Node,
+        depth: int,
+        module_qn: str | None = None,
     ) -> str | None:
-        # What `left operator right` gives predefined operands: a string for
-        # a concatenation, a shift its left operand's promotion, and C#'s
-        # binary numeric promotion otherwise, where a constant the unsigned
-        # operand's type holds takes that type (`u + 1` is a uint, `u + i`
-        # a long). None while an operand may be a constant of unknown value.
+        # What `left operator right` gives. A user-defined operator an
+        # operand's type declares decides (Greptile review of PR 2814: `&&`
+        # on a type with `operator &` is of that type); while one may, the
+        # result is not known. Otherwise a comparison is a bool, a
+        # concatenation a string, a shift its left operand's promotion, and
+        # C#'s binary numeric promotion the rest, where a constant the
+        # unsigned operand's type holds takes that type (`u + 1` is a uint,
+        # `u + i` a long). None while an operand may be a constant of unknown
+        # value.
         operands = (
-            self._value_keyword(left, depth + 1),
-            self._value_keyword(right, depth + 1),
+            self._value_keyword(left, depth + 1, module_qn),
+            self._value_keyword(right, depth + 1, module_qn),
         )
+        user = self._user_operator(operator, (left, right), operands, module_qn)
+        if not isinstance(user, _Sentinel):
+            return user
+        if operator in cs.CSHARP_COMPARISON_OPERATORS:
+            return cs.CSHARP_BOOL_KEYWORD
         if operator == cs.CHAR_PLUS and cs.CSHARP_STRING_KEYWORD in operands:
             return cs.CSHARP_STRING_KEYWORD
         if operator in cs.CSHARP_SHIFT_OPERATORS:
             return _shifted(*operands)
+        unsigned = self._unsigned_result(operands, (left, right), depth)
+        if not isinstance(unsigned, _Sentinel):
+            return unsigned
+        return _operated(operator, *operands)
+
+    def _unsigned_result(
+        self,
+        operands: tuple[str | None, str | None],
+        nodes: tuple[Node, Node],
+        depth: int,
+    ) -> str | _Sentinel | None:
+        # An unsigned operand's type, where the other is a constant it holds
+        # (`u + 1` is a uint); None while that constant's value is not known;
+        # `_PASSED_OVER` for the operands' promotion.
+        left, right = nodes
         for unsigned, other, node in (
             (operands[0], operands[1], right),
             (operands[1], operands[0], left),
@@ -2563,7 +2609,7 @@ class CSharpTypeInferenceEngine:
                 return None
             if constant and value is not None and value >= 0:
                 return unsigned
-        return _operated(operator, *operands)
+        return _PASSED_OVER
 
     def _constness(self, value: Node, depth: int) -> tuple[bool | None, int | None]:
         # Whether an operand is a constant, with the value a literal writes,
@@ -2631,7 +2677,9 @@ class CSharpTypeInferenceEngine:
             underlying if self._value_keyword(right, depth + 1) == underlying else None
         )
 
-    def _cast_keyword(self, value: Node, depth: int) -> str | None:
+    def _cast_keyword(
+        self, value: Node, depth: int, module_qn: str | None = None
+    ) -> str | None:
         # A cast to a predefined type is of that type. `(x) + 1` parses as a
         # cast of `+1` to a type `x`; C# reads it as a sum when `x` is a
         # variable, not a type. None for a cast to any other type.
@@ -2647,7 +2695,139 @@ class CSharpTypeInferenceEngine:
         ):
             return None
         sign = safe_decode_text(operand.children[0]) or ""
-        return self._binary_keyword(sign, cast_to, operand.named_children[-1], depth)
+        return self._binary_keyword(
+            sign, cast_to, operand.named_children[-1], depth, module_qn
+        )
+
+    def _user_operator(
+        self,
+        operator: str,
+        nodes: tuple[Node, Node],
+        operands: tuple[str | None, str | None],
+        module_qn: str | None,
+    ) -> str | _Sentinel | None:
+        # The type the user-defined operator two operands bind gives;
+        # `_PASSED_OVER` when neither operand's type declares one, so a
+        # predefined operator applies; None when that is not known: an
+        # operand of no known type, or several operators to choose from.
+        symbol = cs.CSHARP_CONDITIONAL_OPERATORS.get(operator, operator)
+        found = self._operands_operators(symbol, nodes, operands, module_qn)
+        if found is None:
+            return None
+        if not found:
+            return _PASSED_OVER
+        return self._operator_result(
+            found,
+            tuple(
+                self._operand_type(node, typed, module_qn)
+                for node, typed in zip(nodes, operands, strict=True)
+            ),
+        )
+
+    def _operand_type(
+        self, node: Node, typed: str | None, module_qn: str | None
+    ) -> str | None:
+        # An operand's type as an operator's parameters are compared with
+        # it: its keyword, else the first-party type it is written with;
+        # None when neither is known.
+        if typed is not None:
+            return typed
+        owner = self._operand_owner(node, None, module_qn)
+        return owner if isinstance(owner, str) else None
+
+    def _operands_operators(
+        self,
+        symbol: str,
+        nodes: tuple[Node, Node],
+        operands: tuple[str | None, str | None],
+        module_qn: str | None,
+    ) -> list[str] | None:
+        # The `operator symbol` overloads the operands' types declare; None
+        # when an operand's type, or one of its bases, is not known.
+        found: list[str] = []
+        for node, typed in zip(nodes, operands, strict=True):
+            owner = self._operand_owner(node, typed, module_qn)
+            if isinstance(owner, _Sentinel):
+                return None
+            if owner is None:
+                continue
+            declared = self._operator_overloads(owner, symbol)
+            if declared is None:
+                return None
+            found.extend(declared)
+        return list(dict.fromkeys(found))
+
+    def _operator_result(
+        self, candidates: list[str], operands: tuple[str | None, ...]
+    ) -> str | None:
+        # The return type of the one operator the operands bind: the only
+        # one, or the one declared for exactly their types.
+        if len(candidates) > 1:
+            candidates = [qn for qn in candidates if self._takes_operands(qn, operands)]
+        if len(candidates) != 1:
+            return None
+        declared_return = self._declared_return(candidates[0])
+        if declared_return is None or not declared_return[1]:
+            return None
+        canonical = declared_return[0]
+        return predefined_keyword(canonical) or self._first_party_type(canonical)
+
+    def _operand_owner(
+        self, node: Node, typed: str | None, module_qn: str | None
+    ) -> str | _Sentinel | None:
+        # The first-party type whose operators an operand brings in; None
+        # for a literal or a predefined type, which declares none;
+        # `_PASSED_OVER` for an operand of no type known.
+        if typed is not None and predefined_keyword(typed) is not None:
+            return None
+        if typed is not None and self.function_registry.get(typed) in _TYPE_DECLS:
+            return typed
+        while node.type == cs.TS_PARENTHESIZED_EXPRESSION and node.named_children:
+            node = node.named_children[0]
+        if _literal_constant(node) is not None:
+            return None
+        written = _spelled_type(node) or (
+            self._written_receiver_type(node)
+            if node.type == cs.TS_CSHARP_IDENTIFIER
+            else None
+        )
+        if not written or module_qn is None:
+            return _PASSED_OVER
+        if predefined_keyword(written) is not None:
+            return None
+        qn = self._resolve_in(
+            module_qn,
+            strip_generic_arguments(written),
+            generic_arity_of_type_text(written),
+        )
+        return qn if qn is not None else _PASSED_OVER
+
+    def _operator_overloads(self, owner: str, symbol: str) -> list[str] | None:
+        # The `operator symbol` overloads a type and its bases declare; None
+        # when a base is not indexed, which may declare more.
+        ancestry = self._class_ancestry(owner)
+        if not self._all_indexed(ancestry):
+            return None
+        name = f"{cs.TS_CSHARP_OPERATOR_NAME_PREFIX}{symbol}"
+        return [qn for t in ancestry for qn in self.declared_methods(t).get(name, ())]
+
+    def _takes_operands(
+        self, operator_qn: str, operands: tuple[str | None, ...]
+    ) -> bool:
+        # Whether an operator's declared parameters are the operands' types.
+        owner, _member = qn_markers.owner_and_member(operator_qn)
+        scope = self.scope_of(owner)
+        declared = [
+            canonical_type(t, scope) if scope is not None else t
+            for t in self._ranked_types(operator_qn)
+        ]
+        given = [
+            typed
+            if typed is None or predefined_keyword(typed) is not None
+            else f"{cs.CSHARP_RESOLVED_PREFIX}{typed}"
+            for typed in operands
+        ]
+        return declared == given
 
     def _receiver_type_name(
         self,
@@ -2666,8 +2846,9 @@ class CSharpTypeInferenceEngine:
             return None
         receiver = unwrapped
         # A literal or a computed value of a predefined type: `1.Touch()`,
-        # `(x + 1).Touch()` (PR 2814's Roslyn oracle).
-        if (keyword := self._value_keyword(receiver)) is not None:
+        # `(x + 1).Touch()` (PR 2814's Roslyn oracle), or of the type a
+        # user-defined operator gives.
+        if (keyword := self._value_keyword(receiver, 0, module_qn)) is not None:
             return keyword
         # `((Widget)o).Ext()`: the cast target IS the receiver type, so an
         # extension-only method still binds on a cast receiver; same for a
@@ -2711,9 +2892,14 @@ class CSharpTypeInferenceEngine:
         caller_qn: str | None,
     ) -> str | None:
         # The first-party class a receiver's type name names, when only the
-        # extension lookup's typing reads it (an array element): its
-        # instance methods come before any extension (PR 2814's oracle).
-        if receiver.type != cs.TS_CSHARP_ELEMENT_ACCESS_EXPRESSION:
+        # extension lookup's typing reads it (an array element, an operator's
+        # result): its instance methods come before any extension (PR 2814's
+        # oracle).
+        unwrapped = self._unwrap_receiver(receiver)
+        if unwrapped is None or unwrapped.type not in (
+            cs.TS_CSHARP_ELEMENT_ACCESS_EXPRESSION,
+            cs.TS_BINARY_EXPRESSION,
+        ):
             return None
         name = self._receiver_type_name(receiver, local_var_types, module_qn, caller_qn)
         return self._type_name_to_qn(name, module_qn) if name else None
@@ -2743,8 +2929,8 @@ class CSharpTypeInferenceEngine:
         module_qn: str,
         caller_qn: str | None,
     ) -> str | None:
-        # `arr[0]`, `Holder.Arr[0]` or `list[0]`: the element of an array, or
-        # of a framework collection whose indexer returns its type argument.
+        # `arr[0]`, `Holder.Arr[0]` or `list[0]`: the element of an array, a
+        # string's char, or what the indexed type's indexer returns.
         expr = receiver.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
         if expr is None:
             return None
@@ -2765,11 +2951,174 @@ class CSharpTypeInferenceEngine:
             cs.CSHARP_STRING_KEYWORD
         ):
             return cs.CSHARP_CHAR_KEYWORD
-        indexed = cs.CSHARP_INDEXED_ELEMENT.get(strip_generic_arguments(written))
+        return self._indexed_type(written, receiver, module_qn)
+
+    def _indexed_type(self, written: str, access: Node, module_qn: str) -> str | None:
+        # What indexing a value of a written type gives. A first-party type
+        # the file names by it gives what its indexer is declared to return
+        # (Greptile review of PR 2814: a project's `List<T>` may index to
+        # anything); a framework collection its type argument, only where
+        # the name is the framework's: the file sees no first-party type of
+        # it, and imports the framework's namespace or no first-party type
+        # has the name at all.
+        name = strip_generic_arguments(written)
         arguments = type_arguments(written)
-        if indexed is None or indexed >= len(arguments):
+        if (owner := self._resolve_in(module_qn, name, len(arguments))) is not None:
+            return self._indexer_result(owner, arguments, access, module_qn)
+        return self._framework_element(name, arguments, module_qn)
+
+    def _framework_element(
+        self, name: str, arguments: Sequence[str], module_qn: str
+    ) -> str | None:
+        # The element a framework collection a spelling names indexes to,
+        # where the spelling names the framework's type: by its namespace
+        # (an alias of it too), or bare in a file that sees no first-party
+        # type of the name and imports the framework's namespace, or when no
+        # first-party type has the name at all.
+        namespace, _, simple = name.rpartition(cs.SEPARATOR_DOT)
+        entry = cs.CSHARP_INDEXED_ELEMENT.get(simple)
+        if entry is None or entry[1] >= len(arguments):
             return None
-        return arguments[indexed]
+        framework, index = entry
+        namespace = self.import_processor.csharp_usings(module_qn).get(
+            namespace, namespace
+        )
+        if namespace not in ("", framework) or not (
+            namespace
+            or framework in self._imported_namespaces(module_qn)
+            or not self._names_first_party(name, len(arguments))
+        ):
+            return None
+        return arguments[index]
+
+    def _imported_namespaces(self, module_qn: str) -> set[str]:
+        # The namespaces a file's `using`s and every global `using` import.
+        imports = self.import_processor
+        imported = set(imports.csharp_usings(module_qn).values())
+        for usings in imports.csharp_global_usings.values():
+            imported |= usings
+        return imported
+
+    def _indexer_result(
+        self, owner: str, arguments: Sequence[str], access: Node, module_qn: str
+    ) -> str | None:
+        # The type the nearest indexer up a first-party type's hierarchy
+        # returns, its type parameters bound by the written type arguments
+        # and those each type passes its bases; the one taking the index's
+        # argument types where the type declares several. None when no
+        # indexer is known or several may apply.
+        caller = Scope(
+            partial(self._resolve_in, module_qn), frozenset(), self._is_reference
+        )
+        shape = self.csharp_generic_shapes.get(owner)
+        parameters = shape.parameters if shape is not None else ()
+        bindings = {
+            p: canonical_type(a, caller)
+            for p, a in zip(parameters, arguments, strict=False)
+        }
+        pending = [(owner, bindings)]
+        seen: set[str] = set()
+        while pending:
+            current, bound = pending.pop(0)
+            if current in seen:
+                continue
+            seen.add(current)
+            shape = self.csharp_generic_shapes.get(current)
+            if shape is not None and shape.indexers:
+                return self._indexer_return(current, shape, bound, (access, module_qn))
+            if (inherited := self._framework_base_element(current, bound)) is not None:
+                return inherited
+            pending.extend(
+                (
+                    base,
+                    bindings_for_base(
+                        self.csharp_generic_shapes,
+                        self.csharp_class_generic_arity,
+                        current,
+                        bound,
+                        base,
+                        self.scope_of(current),
+                    ),
+                )
+                for base in self._written_bases(current)
+            )
+        return None
+
+    def _written_bases(self, type_qn: str) -> list[str]:
+        # The first-party types a type's base list names, each resolved as
+        # C# resolves it in the type's own file: a namesake elsewhere that
+        # the file cannot see is not a base.
+        shape = self.csharp_generic_shapes.get(type_qn)
+        module_qn = self.csharp_class_owner_module.get(type_qn)
+        if shape is None or module_qn is None or not shape.base_types:
+            return list(self.class_inheritance.get(type_qn, []))
+        resolved = (
+            self._resolve_in(
+                module_qn,
+                strip_generic_arguments(written),
+                len(type_arguments(written)),
+            )
+            for written in shape.base_types
+        )
+        return [base for base in resolved if base is not None]
+
+    def _framework_base_element(
+        self, type_qn: str, bindings: Mapping[str, str]
+    ) -> str | None:
+        # The element a framework collection a first-party type derives
+        # from indexes to (`MyList : List<Widget>`), read in the type's file
+        # with its own type parameters bound.
+        shape = self.csharp_generic_shapes.get(type_qn)
+        module_qn = self.csharp_class_owner_module.get(type_qn)
+        if shape is None or module_qn is None:
+            return None
+        scope = self.scope_of(type_qn)
+        for written in shape.base_types:
+            name = strip_generic_arguments(written)
+            arguments = type_arguments(written)
+            if self._resolve_in(module_qn, name, len(arguments)) is not None:
+                continue
+            element = self._framework_element(name, arguments, module_qn)
+            if element is not None:
+                result = declared_type(element, scope, bindings)
+                if mentioned_names(result) & (set(shape.parameters) - bindings.keys()):
+                    return None
+                return self._first_party_type(result) or result
+        return None
+
+    def _indexer_return(
+        self,
+        declaring: str,
+        shape: CSharpGenericShape,
+        bindings: Mapping[str, str],
+        site: tuple[Node, str],
+    ) -> str | None:
+        # The type one of `declaring`'s indexers returns for an index: the
+        # indexers taking as many arguments, narrowed by the arguments'
+        # predefined types where they return different types.
+        access, module_qn = site
+        scope = self.scope_of(declaring)
+        given = [
+            self._value_keyword(argument.named_children[-1], 0, module_qn)
+            for subscript in access.named_children
+            if subscript.type == cs.TS_CSHARP_BRACKETED_ARGUMENT_LIST
+            for argument in subscript.named_children
+            if argument.named_children
+        ]
+        candidates = [
+            (declared_type(returned, scope, bindings), taken)
+            for returned, taken in _indexer_signatures(shape.indexers, scope)
+            if len(taken) == len(given)
+        ]
+        results = {result for result, _ in candidates}
+        if len(results) > 1:
+            results = {result for result, taken in candidates if taken == given}
+        if len(results) != 1:
+            return None
+        (result,) = results
+        if mentioned_names(result) & (set(shape.parameters) - bindings.keys()):
+            return None
+        return self._first_party_type(result) or result
 
     def _local_result_type(
         self,
@@ -3217,8 +3566,9 @@ class CSharpTypeInferenceEngine:
         # extension whose `this` type is that class where the extension is
         # declared, however many first-party types share its name (PR 2814's
         # oracle).
+        # A receiver typed by its qn (an operator's result) is that class.
         unqualified = cs.SEPARATOR_DOT not in receiver.name + recv_type
-        if receiver.qn is not None and unqualified:
+        if receiver.qn is not None and (unqualified or receiver.name == receiver.qn):
             extended = self._extended_type(qn, recv_type, cand_recv_arity)
             if extended is not None:
                 return extended == receiver.qn
@@ -3443,7 +3793,7 @@ class CSharpTypeInferenceEngine:
         is_global = expanded.startswith(global_prefix)
         if is_global:
             expanded = expanded[len(global_prefix) :]
-        import_map = self.import_processor.import_mapping.get(module_qn)
+        import_map = self.import_processor.csharp_usings(module_qn)
         first, separator, rest = expanded.partition(cs.SEPARATOR_DOT)
         if not is_global and import_map and (mapped := import_map.get(first)):
             expanded = f"{mapped}{separator}{rest}" if separator else mapped
@@ -3520,7 +3870,7 @@ class CSharpTypeInferenceEngine:
         if self.function_registry.get(type_name) in _TYPE_DECLS:
             return type_name
         simple = type_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        import_map = self.import_processor.import_mapping.get(module_qn)
+        import_map = self.import_processor.csharp_usings(module_qn)
         if import_map and (mapped := import_map.get(simple)):
             if self.function_registry.get(mapped) in _TYPE_DECLS:
                 return self.arity_twin(mapped, generic_arity)
@@ -3882,12 +4232,17 @@ class CSharpTypeInferenceEngine:
 
     def _signature(self, method_qn: str, receiver: _ReceiverView) -> list[str]:
         # A method's declared parameter types, as a use through the receiver
-        # reads them.
+        # reads them, its own type parameters named by position: an override
+        # or a hiding member may rename them (`M<T>(T)`, `M<U>(U)`; Greptile
+        # review of PR 2814).
         reading = self._reading(method_qn, receiver)
-        return [
-            declared_type(p, reading.scope, reading.visible)
-            for p in self._ranked_types(method_qn)
-        ]
+        return by_position(
+            [
+                declared_type(p, reading.scope, reading.visible)
+                for p in self._ranked_types(method_qn)
+            ],
+            self._declared_type_parameters(method_qn),
+        )
 
     def _best_overloads(
         self,
@@ -4669,8 +5024,10 @@ class CSharpTypeInferenceEngine:
         found = [
             qn
             for qn in self._direct_same_name_methods(class_qn, method_name)
-            if _arity(leaf := qn[len(prefix) :]) == arg_count
-            or _accepts_arg_count(leaf, arg_count, self.csharp_call_shapes.get(qn))
+            if _arity(qn[len(prefix) :]) == arg_count
+            or _accepts_arg_count(
+                qn[len(prefix) :], arg_count, self.csharp_call_shapes.get(qn)
+            )
         ]
         spelled = set(found)
         return [
@@ -4683,9 +5040,12 @@ class CSharpTypeInferenceEngine:
 
     def _declared_as(self, method_qn: str) -> tuple[tuple[str, ...], ...]:
         # How a method takes its parameters beyond what its qn spells: their
-        # modes and their types as written.
+        # modes and their types as written, its own type parameters named by
+        # position.
         shape = self.csharp_call_shapes.get(method_qn)
-        return (shape.modes, shape.types) if shape is not None else ((), ())
+        if shape is None:
+            return (), ()
+        return shape.modes, tuple(by_position(list(shape.types), shape.type_parameters))
 
     def _method_type_parameters(self, method_qn: str) -> frozenset[str]:
         # The type parameters a generic method declares (`M<U>(U item)`),
@@ -4744,7 +5104,7 @@ class CSharpTypeInferenceEngine:
             value.type == cs.TS_BINARY_EXPRESSION
             and self._constness(value, 0)[0] is False
         ):
-            keyword = self._value_keyword(value)
+            keyword = self._value_keyword(value, 0, module_qn)
             return _written_argument(keyword) if keyword else None
         return self._member_argument(value, local_var_types, module_qn, caller_qn)
 
@@ -5549,7 +5909,7 @@ class CSharpTypeInferenceEngine:
         if (
             cs.SEPARATOR_DOT in simple
             or cs.SEPARATOR_DOUBLE_COLON in simple
-            or simple in self.import_processor.import_mapping.get(module_qn, {})
+            or simple in self.import_processor.csharp_usings(module_qn)
         ):
             return True
         return self._visibility(module_qn, type_qn) != _NOT_VISIBLE
@@ -5580,7 +5940,7 @@ class CSharpTypeInferenceEngine:
             # A file of several namespaces: which one encloses the name is
             # not known here.
             return _ENCLOSING if len(declared) == 1 else None
-        imported = set(imports.import_mapping.get(module_qn, {}).values())
+        imported = set(imports.csharp_usings(module_qn).values())
         for usings in imports.csharp_global_usings.values():
             imported |= usings
         return _IMPORTED if namespace in imported else _NOT_VISIBLE

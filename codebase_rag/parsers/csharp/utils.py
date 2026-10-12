@@ -193,6 +193,11 @@ def split_type_ref(name: str) -> tuple[str, int]:
     return name, 0
 
 
+def normalize_csharp_type_text(text: str) -> str:
+    """A written type's normalized name (`normalize_csharp_type_name`)."""
+    return _normalize_type_name(text)
+
+
 def normalize_csharp_type_name(type_node: Node) -> str | None:
     # A type node's normalized name (generic-free, nullable-stripped) or
     # None for unnameable types (`void` callers never chain off it, but a
@@ -478,11 +483,39 @@ def generic_shape(type_node: Node) -> CSharpGenericShape | None:
     if (implicit := _implicit_base(type_node, parameters)) is not None:
         written.append(implicit)
     value_type = is_value_type_declaration(type_node)
-    if not (parameters or bases or value_type or written):
+    indexers = _declared_indexers(type_node)
+    if not (parameters or bases or value_type or written or indexers):
         return None
     return CSharpGenericShape(
-        tuple(parameters), bases, variances, value_type, tuple(written)
+        tuple(parameters), bases, variances, value_type, tuple(written), indexers
     )
+
+
+def _declared_indexers(type_node: Node) -> tuple[str, ...]:
+    # Each indexer the type's body declares, as `<return type>=><parameter
+    # types>` written: `Right this[int i]` is `Right=>int`.
+    body = type_node.child_by_field_name(cs.FIELD_BODY)
+    if body is None:
+        return ()
+    indexers: list[str] = []
+    for member in body.named_children:
+        if member.type != cs.TS_CSHARP_INDEXER_DECLARATION:
+            continue
+        returned = safe_decode_text(member.child_by_field_name(cs.FIELD_TYPE))
+        parameters = member.child_by_field_name(cs.FIELD_PARAMETERS)
+        if not returned or parameters is None:
+            continue
+        written = [
+            written_parameter_type(safe_decode_text(kind) or "")
+            for parameter in parameters.named_children
+            if parameter.type == cs.TS_CSHARP_PARAMETER
+            and (kind := parameter.child_by_field_name(cs.FIELD_TYPE)) is not None
+        ]
+        indexers.append(
+            f"{written_parameter_type(returned)}{cs.CSHARP_STORED_PAIR_SEPARATOR}"
+            f"{cs.SEPARATOR_COMMA_SPACE.join(written)}"
+        )
+    return tuple(indexers)
 
 
 def _implicit_base(type_node: Node, parameters: list[str]) -> str | None:
@@ -864,6 +897,33 @@ def _declared_fields(member: Node) -> list[tuple[str, str]]:
         if name:
             declared.append((name, annotated))
     return declared
+
+
+def member_type_map(type_node: Node) -> dict[str, str]:
+    """{field or property name: type name} of a type declaration: its body's
+    members (`build_field_type_map`) and, for a record, its positional
+    parameters, which are public properties of it."""
+    field_types = build_field_type_map(type_node) or {}
+    if type_node.type == cs.TS_CSHARP_RECORD_DECLARATION:
+        _record_parameter_types(type_node, field_types)
+    return field_types
+
+
+def _record_parameter_types(member_node: Node, field_types: dict[str, str]) -> None:
+    # A record's positional parameters ARE public properties of
+    # the record type; record them as members so receiver typing
+    # and the delegate-invoke gate see them (`Callback();` on a
+    # record param is Action.Invoke, not a first-party call).
+    for pl in member_node.children:
+        if pl.type != cs.TS_CSHARP_PARAMETER_LIST:
+            continue
+        for prm in pl.children:
+            if prm.type != cs.TS_CSHARP_PARAMETER:
+                continue
+            pname = safe_decode_text(prm.child_by_field_name(cs.FIELD_NAME))
+            ptype = safe_decode_text(prm.child_by_field_name(cs.FIELD_TYPE))
+            if pname and ptype:
+                field_types.setdefault(pname, annotate_type_ref(ptype))
 
 
 def build_field_type_map(class_node: Node) -> dict[str, str]:

@@ -1090,6 +1090,7 @@ class ImportProcessor:
         "_inferred_module_imports",
         "_csharp_module_namespaces",
         "_csharp_module_identifiers",
+        "_csharp_recovered_usings",
         "_cpp_declaration_mappings",
         "_cpp_shadowed_include_targets",
         "_rust_dir_listing",
@@ -1241,6 +1242,9 @@ class ImportProcessor:
         self._inferred_module_imports: dict[str, set[str]] = {}
         self._csharp_module_namespaces: dict[str, dict[str, set[str]]] = {}
         self._csharp_module_identifiers: dict[str, frozenset[str]] = {}
+        # An unchanged C# file's `using`s, as `import_mapping` records a
+        # parsed one's, read back for the type names its declarations write.
+        self._csharp_recovered_usings: dict[str, dict[str, str]] = {}
         # Scala packages need not mirror directories (issue #2450): each
         # file's package clauses, scanned when it is parsed, say which
         # modules declare a package an import names.
@@ -1757,6 +1761,7 @@ class ImportProcessor:
         # longer makes (issue #1347).
         self._inferred_module_imports.pop(module_qn, None)
         if language == cs.SupportedLanguage.CSHARP:
+            self._csharp_recovered_usings.pop(module_qn, None)
             self._csharp_module_namespaces[module_qn] = self._collect_csharp_namespaces(
                 root_node
             )
@@ -2025,6 +2030,7 @@ class ImportProcessor:
         # would rebuild edges a clean rebuild of the same tree never emits.
         self._csharp_module_namespaces.pop(module_qn, None)
         self._csharp_module_identifiers.pop(module_qn, None)
+        self._csharp_recovered_usings.pop(module_qn, None)
         self._inferred_module_imports.pop(module_qn, None)
         self.import_mapping.pop(module_qn, None)
         self.csharp_static_imports.pop(module_qn, None)
@@ -2132,7 +2138,45 @@ class ImportProcessor:
             self._csharp_module_identifiers[module_qn] = (
                 self._collect_csharp_identifiers(tree.root_node)
             )
+            self._csharp_recovered_usings[module_qn] = self._collect_csharp_usings(
+                tree.root_node
+            )
             self._collect_csharp_global_static_imports(tree.root_node, module_qn)
+
+    def _collect_csharp_usings(self, root: Node) -> dict[str, str]:
+        # Each `using` a file writes, keyed as `_parse_csharp_imports` keys
+        # a parsed file's in `import_mapping`: its alias, or its path's last
+        # segment.
+        usings: dict[str, str] = {}
+        pending = [root]
+        while pending:
+            node = pending.pop()
+            if node.type != cs.TS_CSHARP_USING_DIRECTIVE:
+                pending.extend(
+                    child
+                    for child in node.children
+                    if child.type == cs.TS_CSHARP_USING_DIRECTIVE
+                    or child.type in cs.CSHARP_USING_HOLDERS
+                )
+                continue
+            parsed = self._csharp_using_target(node)
+            if parsed is None:
+                continue
+            imported_path, alias_node = parsed
+            local_name = (
+                safe_decode_with_fallback(alias_node)
+                if alias_node is not None and alias_node.text
+                else imported_path.split(cs.SEPARATOR_DOT)[-1]
+            )
+            usings[local_name] = imported_path
+        return usings
+
+    def csharp_usings(self, module_qn: str) -> Mapping[str, str]:
+        """A C# file's `using`s by local name: as its parse recorded them,
+        or, for a file this run did not parse, as its source writes them."""
+        return self.import_mapping.get(module_qn) or self._csharp_recovered_usings.get(
+            module_qn, {}
+        )
 
     def _emit_csharp_internal_imports(
         self,

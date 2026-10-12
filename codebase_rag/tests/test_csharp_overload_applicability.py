@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
 from typing import NamedTuple
 from unittest.mock import MagicMock
@@ -1772,6 +1773,415 @@ class TestEveryCallTheGeneratedOracleCrosses:
         }, calls
 
 
+USER_OPERATOR_CS = """\
+namespace Uo;
+public struct S {
+    public static S operator &(S a, S b) => a;
+    public static S operator |(S a, S b) => a;
+    public static bool operator true(S s) => true;
+    public static bool operator false(S s) => false;
+    public static S operator ==(S a, S b) => a;
+    public static S operator !=(S a, S b) => a;
+    public static S operator +(string a, S b) => b;
+    public static S operator +(S a, S b) => a;
+    public override bool Equals(object? o) => true;
+    public override int GetHashCode() => 0;
+    public void Run() { }
+}
+public class Cb {
+    public static implicit operator bool(Cb c) => true;
+}
+public class K { }
+public class C {
+    public void M(S v) { }
+    public void M(bool v) { }
+    public void T(S v) { }
+    public void T(string v) { }
+}
+public static class Ext {
+    public static void X(this S v) { }
+    public static void X(this bool v) { }
+    public static void X(this object v) { }
+}
+public class Use {
+    public void And() { S a = new S(); S b = new S(); new C().M(a && b); }
+    public void Or() { S a = new S(); S b = new S(); new C().M(a || b); }
+    public void Bools() { bool a = true; bool b = false; new C().M(a && b); }
+    public void Convertible() { Cb a = new Cb(); new C().M(a && a); }
+    public void Equal() { S a = new S(); S b = new S(); new C().M(a == b); }
+    public void Reference() { K a = new K(); K b = new K(); new C().M(a == b); }
+    public void Concat() { S a = new S(); string t = "x"; new C().T(t + a); }
+    public void Literal() { S a = new S(); new C().T("x" + a); }
+    public void Sum() { S a = new S(); new C().T(a + a); }
+    public void Wrapped() { S a = new S(); new C().T(("x") + a); }
+    public void Plain() { K a = new K(); string t = "x"; new C().T(t + a); }
+    public void Receiver() { S a = new S(); S b = new S(); (a && b).X(); }
+    public void Member() { S a = new S(); S b = new S(); (a & b).Run(); }
+    public void Unknown() { string t = "x"; new C().T(t + Hx.Unknown()); }
+}
+"""
+
+
+INDEXER_CS = """\
+namespace Ix;
+public class Left {
+    public void Run() { }
+}
+public class Right {
+    public void Run() { }
+}
+public class List<T> { public Right this[int i] => new Right(); }
+public class Box<T> where T : new() { public T this[int i] => new T(); }
+public class BoxD : Box<Right> { }
+public class Two {
+    public Left this[int i] => new Left();
+    public Right this[string s] => new Right();
+}
+public class C {
+    public void M(Left v) { }
+    public void M(Right v) { }
+}
+public class Use {
+    public void Own() { List<Left> xs = new List<Left>(); xs[0].Run(); }
+    public void Argument() { List<Left> xs = new List<Left>(); new C().M(xs[0]); }
+    public void Generic() { Box<Right> b = new Box<Right>(); b[0].Run(); }
+    public void Inherited() { BoxD b = new BoxD(); b[0].Run(); }
+    public void ByInt() { Two w = new Two(); w[0].Run(); }
+    public void ByString() { Two w = new Two(); w["a"].Run(); }
+}
+"""
+
+
+FRAMEWORK_LIST_FILES = {
+    "Use.cs": (
+        "using System.Collections.Generic;\n"
+        "namespace Fw;\n"
+        "public class Left {\n"
+        "    public void Run() { }\n"
+        "}\n"
+        "public class Right {\n"
+        "    public void Run() { }\n"
+        "}\n"
+        "public class Use {\n"
+        "    public void Framework() { List<Left> xs = new List<Left> { new Left() }; xs[0].Run(); }\n"
+        "}\n"
+    ),
+    "Other.cs": (
+        "namespace Fo;\n"
+        "using Fw;\n"
+        "public class List<T> { public Right this[int i] => new Right(); }\n"
+    ),
+    "Imported.cs": (
+        "using Fo;\n"
+        "namespace Fi;\n"
+        "using Fw;\n"
+        "public class Use {\n"
+        "    public void Imported() { List<Left> xs = new List<Left>(); xs[0].Run(); }\n"
+        "}\n"
+    ),
+}
+
+
+GENERIC_OVERRIDE_CS = """\
+namespace Go;
+public class Base {
+    public virtual void M<T>(T x) { }
+    public virtual void K<A, B>(A a, B b) { }
+}
+public class Derived : Base {
+    public override void M<U>(U x) { }
+    public override void K<B, A>(B a, A b) { }
+}
+public class Hider : Base {
+    public new void M<U>(U x) { }
+}
+public class GB<T> {
+    public virtual void P(T x) { }
+    public virtual void Q<W>(T x, W w) { }
+}
+public class GD<U> : GB<U> {
+    public override void P(U x) { }
+    public override void Q<Z>(U x, Z w) { }
+}
+public class GH<U> : GB<U> {
+    public new void P(U x) { }
+}
+public class Use {
+    public void Renamed() { new Derived().M(1); }
+    public void Spelled() { new Derived().M<int>(1); }
+    public void Swapped() { new Derived().K(1, "s"); }
+    public void Hidden() { new Hider().M(1); }
+    public void Through() { new GD<int>().P(1); }
+    public void HiddenThrough() { new GH<string>().P("s"); }
+    public void Both() { new GD<int>().Q(1, "s"); }
+}
+"""
+
+
+REHYDRATED_LIB_CS = """\
+namespace Rh;
+public class W {
+    public void T(long a) { }
+}
+public static class Holder {
+    public static W F = new W();
+    public static W Get() => new W();
+}
+public class Left {
+    public void Run() { }
+}
+public class Right {
+    public void Run() { }
+}
+public class List<T> { public Right this[int i] => new Right(); }
+public struct S {
+    public static S operator &(S a, S b) => a;
+    public static S operator |(S a, S b) => a;
+    public static bool operator true(S s) => true;
+    public static bool operator false(S s) => false;
+}
+public class C {
+    public void M(S v) { }
+    public void M(bool v) { }
+}
+public static class Ext {
+    public static void T(this W w, int a) { }
+}
+"""
+
+
+REHYDRATED_USE_CS = """\
+namespace Rh;
+public class Use {
+    public void Field() { Holder.F.T(1); }
+    public void Chained() { Holder.Get().T(1); }
+    public void Indexed() { List<Left> xs = new List<Left>(); xs[0].Run(); }
+    public void Logical() { S a = new S(); new C().M(a && a); }
+}
+"""
+
+
+class TestOperatorsIndexersAndRenamedOverridesBindAsCSharpDoes:
+    # Greptile review of PR 2814, round 19, and the oracle families it led
+    # to: an operator's result is the type of the user-defined operator an
+    # operand declares, an indexed value what the type's indexer returns,
+    # and an override that renames its type parameters still stands in its
+    # virtual's place. Each source states what Roslyn runs (.NET 8).
+    def test_a_conditional_logical_operator_is_its_user_operators_type(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Greptile 4244182212: `a && b` on a struct declaring `operator &`,
+        # `true` and `false` is that struct, so `M(S)` runs, not `M(bool)`.
+        calls = _resolved_calls(USER_OPERATOR_CS, temp_repo, mock_ingestor)
+        assert calls["And"] == {("Uo.C.M(S)", _EXACT)}, calls
+        assert calls["Or"] == {("Uo.C.M(S)", _EXACT)}, calls
+        # Negatives: bool operands, and a type converting to bool with no
+        # `operator &`, give a bool.
+        assert calls["Bools"] == {("Uo.C.M(bool)", _EXACT)}, calls
+        assert calls["Convertible"] == {("Uo.C.M(bool)", _EXACT)}, calls
+
+    def test_a_user_comparison_is_its_operators_type(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(USER_OPERATOR_CS, temp_repo, mock_ingestor)
+        assert calls["Equal"] == {("Uo.C.M(S)", _EXACT)}, calls
+        # Negative: a class declaring no `==` compares by reference, a bool.
+        assert calls["Reference"] == {("Uo.C.M(bool)", _EXACT)}, calls
+
+    def test_a_concatenation_through_a_user_operator_is_its_type(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(USER_OPERATOR_CS, temp_repo, mock_ingestor)
+        assert calls["Concat"] == {("Uo.C.T(S)", _EXACT)}, calls
+        # Of `+(string, S)` and `+(S, S)`, the one taking the operands' types.
+        assert calls["Sum"] == {("Uo.C.T(S)", _EXACT)}, calls
+        # A literal operand brings no operators, the other operand's apply.
+        assert calls["Literal"] == {("Uo.C.T(S)", _EXACT)}, calls
+        assert calls["Wrapped"] == {("Uo.C.T(S)", _EXACT)}, calls
+        # Negative: a class declaring no `operator +` concatenates.
+        assert calls["Plain"] == {("Uo.C.T(string)", _EXACT)}, calls
+
+    def test_an_operand_of_no_known_type_leaves_the_result_unknown(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # `Hx` is not indexed: its result's type may declare an operator.
+        calls = _resolved_calls(USER_OPERATOR_CS, temp_repo, mock_ingestor)
+        assert calls["Unknown"] == {
+            ("Uo.C.T(S)", _OVERLOAD),
+            ("Uo.C.T(string)", _OVERLOAD),
+        }, calls
+
+    def test_an_operator_result_receiver_binds_its_types_members(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(USER_OPERATOR_CS, temp_repo, mock_ingestor)
+        assert calls["Receiver"] == {("Uo.Ext.X(S)", _EXACT)}, calls
+        assert calls["Member"] == {("Uo.S.Run", _EXACT)}, calls
+
+    def test_a_first_party_list_indexes_as_its_indexer_declares(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Greptile 4244182214: the project's `List<Left>` indexes to `Right`.
+        calls = _resolved_calls(INDEXER_CS, temp_repo, mock_ingestor)
+        assert calls["Own"] == {("Ix.Right.Run", _EXACT)}, calls
+        assert calls["Argument"] == {("Ix.C.M(Right)", _EXACT)}, calls
+
+    def test_generic_and_inherited_indexers_bind_their_type_arguments(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(INDEXER_CS, temp_repo, mock_ingestor)
+        assert calls["Generic"] == {("Ix.Right.Run", _EXACT)}, calls
+        # `BoxD : Box<Right>` indexes through its base's `T this[int]`.
+        assert calls["Inherited"] == {("Ix.Right.Run", _EXACT)}, calls
+
+    def test_overloaded_indexers_choose_by_argument(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(INDEXER_CS, temp_repo, mock_ingestor)
+        assert calls["ByInt"] == {("Ix.Left.Run", _EXACT)}, calls
+        assert calls["ByString"] == {("Ix.Right.Run", _EXACT)}, calls
+
+    def test_a_framework_collection_is_read_only_where_its_name_is_the_frameworks(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_file_calls(FRAMEWORK_LIST_FILES, temp_repo, mock_ingestor)
+        # A `using Fo;` makes `List` the project's, which indexes to `Right`.
+        assert calls["Imported"] == {("Fw.Right.Run", _EXACT)}, calls
+        # Negative: a file that sees only the framework's `List<T>` indexes
+        # to its element, `Left`.
+        assert calls["Framework"] == {("Fw.Left.Run", _EXACT)}, calls
+
+    def test_an_override_renaming_its_type_parameters_stands_in_its_place(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Greptile 4244182215: `Derived.M<U>(U)` overrides `Base.M<T>(T)`,
+        # matched by position, so the inferred `d.M(1)` runs the override.
+        calls = _resolved_calls(GENERIC_OVERRIDE_CS, temp_repo, mock_ingestor)
+        assert calls["Renamed"] == {("Go.Derived.M(U)", _EXACT)}, calls
+        assert calls["Swapped"] == {("Go.Derived.K(B, A)", _EXACT)}, calls
+        # Negative: spelled type arguments bound it already.
+        assert calls["Spelled"] == {("Go.Derived.M(U)", _EXACT)}, calls
+
+    def test_class_type_parameters_match_through_generic_bases(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # `GD<U>.Q<Z>(U, Z)` overrides `GB<T>.Q<W>(T, W)`: the class's by
+        # what `GD<U> : GB<U>` passes, the method's by position.
+        calls = _resolved_calls(GENERIC_OVERRIDE_CS, temp_repo, mock_ingestor)
+        assert calls["Both"] == {("Go.GD.Q(U, Z)", _EXACT)}, calls
+        # Negatives: an override and two `new` members matched the same way.
+        assert calls["Through"] == {("Go.GD.P(U)", _EXACT)}, calls
+        assert calls["Hidden"] == {("Go.Hider.M(U)", _EXACT)}, calls
+        assert calls["HiddenThrough"] == {("Go.GH.P(U)", _EXACT)}, calls
+
+
+def test_an_incremental_run_reads_fields_returns_and_indexers_back(
+    temp_repo: Path,
+) -> None:
+    # Only a parse records a type's field types, a method's return type and
+    # a type's indexers, so an incremental run reads them off the unchanged
+    # file's nodes and binds an edited caller as a fresh index does.
+    fresh, edited = _two_file_calls(temp_repo, REHYDRATED_LIB_CS, REHYDRATED_USE_CS)
+    assert {
+        ("Field", "W", "T(long)"),
+        ("Chained", "W", "T(long)"),
+        ("Indexed", "Right", "Run"),
+        ("Logical", "C", "M(S)"),
+    } <= fresh, fresh
+    assert edited == fresh
+
+
+DERIVED_LIST_LIB_CS = """\
+using SCG = System.Collections.Generic;
+namespace Dl;
+public class Left {
+    public void Run() { }
+}
+public class Right {
+    public void Run() { }
+}
+public class MyList : SCG.List<Left> { }
+public class C {
+    public void M(Left v) { }
+    public void M(Right v) { }
+}
+"""
+
+DERIVED_LIST_OTHER_CS = """\
+namespace Dm;
+public class List<T> { public Dl.Right this[int i] => new Dl.Right(); }
+"""
+
+DERIVED_LIST_USE_CS = """\
+namespace Dl;
+public class Use {
+    public void Element() { MyList ml = new MyList(); ml[0].Run(); }
+    public void Argument() { MyList ml = new MyList(); new C().M(ml[0]); }
+}
+"""
+
+
+def test_an_unchanged_files_usings_still_name_its_bases(temp_repo: Path) -> None:
+    # `MyList : SCG.List<Left>` derives from the framework's list through
+    # its file's alias, not from the `Dm.List<T>` namesake that file cannot
+    # see, so `ml[0]` is a Left (Roslyn, .NET 8). An incremental run that
+    # does not re-parse that file still reads its `using`s.
+    fresh, edited = _two_file_calls(
+        temp_repo,
+        DERIVED_LIST_LIB_CS,
+        DERIVED_LIST_USE_CS,
+        {"Other.cs": DERIVED_LIST_OTHER_CS},
+    )
+    assert {("Element", "Left", "Run"), ("Argument", "C", "M(Left)")} <= fresh, fresh
+    # Negative: neither the namesake's element type nor a fan-out.
+    assert not {c for c in fresh if c[1] == "Right" or c[2] == "M(Right)"}, fresh
+    assert edited == fresh
+
+
+UNLISTED_BASE_LIB_CS = """\
+using System.Collections.ObjectModel;
+namespace Oc;
+public class Left {
+    public void Run() { }
+}
+public class Right {
+    public void Run() { }
+}
+public class MyColl : ObservableCollection<Left> { }
+public class C {
+    public void M(Left v) { }
+    public void M(Right v) { }
+}
+"""
+
+UNLISTED_BASE_OTHER_CS = """\
+namespace Od;
+public class ObservableCollection<T> { public Oc.Right this[int i] => new Oc.Right(); }
+"""
+
+UNLISTED_BASE_USE_CS = """\
+namespace Oc;
+public class Use {
+    public void Argument() { MyColl mc = new MyColl(); new C().M(mc[0]); }
+}
+"""
+
+
+def test_a_base_its_file_cannot_see_lends_no_indexer(temp_repo: Path) -> None:
+    # `MyColl : ObservableCollection<Left>` derives from the framework's
+    # collection, whose element the index does not know: the `Od` namesake
+    # its file does not import lends it no indexer, so `M(mc[0])` keeps
+    # `M(Left)`, which Roslyn runs (.NET 8), as a candidate.
+    fresh, edited = _two_file_calls(
+        temp_repo,
+        UNLISTED_BASE_LIB_CS,
+        UNLISTED_BASE_USE_CS,
+        {"Other.cs": UNLISTED_BASE_OTHER_CS},
+    )
+    assert ("Argument", "C", "M(Left)") in fresh, fresh
+    assert edited == fresh
+
+
 CONSTRAINT_CS = """\
 namespace K;
 public interface IThing { }
@@ -2076,7 +2486,7 @@ class TestARehydratedExplicitMemberStaysOutOfBareNameLookup:
 
 
 def _two_file_calls(
-    temp_repo: Path, lib: str, use: str
+    temp_repo: Path, lib: str, use: str, others: Mapping[str, str] | None = None
 ) -> tuple[set[tuple[str, str, str]], set[tuple[str, str, str]]]:
     # (fresh, after a caller-only edit) CALLS out of `Use`.
     pytest.importorskip("tree_sitter_c_sharp")
@@ -2084,6 +2494,8 @@ def _two_file_calls(
     root.mkdir()
     (root / "Lib.cs").write_text(lib, encoding="utf-8")
     (root / "Use.cs").write_text(use, encoding="utf-8")
+    for name, source in (others or {}).items():
+        (root / name).write_text(source, encoding="utf-8")
     store = _StatefulIngestor()
 
     def calls() -> set[tuple[str, str, str]]:

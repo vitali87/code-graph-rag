@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from functools import partial
 from itertools import chain
 from typing import TYPE_CHECKING
@@ -58,6 +59,22 @@ type ScopeOf = Callable[[str, Collection[str]], Scope | None]
 type MethodsNamed = Callable[[str, str], Sequence[str]]
 
 
+@dataclass(frozen=True, slots=True)
+class CSharpOverrideFacts:
+    """What the override pass reads about C# code, as the class pass
+    recorded it: the C# methods and those written `override`, each type's
+    generic arity, generic shape and namespaced name, each method's call
+    shape, and where a type's declarations resolve the names they write."""
+
+    methods: set[str] | None = None
+    override_methods: set[str] | None = None
+    class_generic_arity: Mapping[str, int] | None = None
+    generic_shapes: Mapping[str, CSharpGenericShape] | None = None
+    class_namespaced: Mapping[str, str] | None = None
+    call_shapes: Mapping[str, CSharpCallShape] | None = None
+    type_scopes: ScopeOf | None = None
+
+
 def methods_named(function_registry: FunctionRegistryTrieProtocol) -> MethodsNamed:
     """Each class's own methods by name, read off the registry once per class
     asked about (issue #2453): matching every method against each ancestor's
@@ -80,19 +97,14 @@ def process_all_method_overrides(
     class_inheritance: dict[str, list[str]],
     ingestor: IngestorProtocol,
     interface_implementers: dict[str, set[str]] | None = None,
-    csharp_methods: set[str] | None = None,
-    csharp_override_methods: set[str] | None = None,
+    csharp: CSharpOverrideFacts | None = None,
     impl_method_traits: dict[str, str] | None = None,
     inherent_impl_methods: set[str] | None = None,
-    csharp_class_generic_arity: Mapping[str, int] | None = None,
-    csharp_generic_shapes: Mapping[str, CSharpGenericShape] | None = None,
-    csharp_class_namespaced: Mapping[str, str] | None = None,
-    csharp_call_shapes: Mapping[str, CSharpCallShape] | None = None,
-    csharp_type_scopes: ScopeOf | None = None,
     module_qns: Collection[str] = (),
 ) -> None:
     logger.info(logs.CLASS_PASS_4)
 
+    facts = csharp or CSharpOverrideFacts()
     implemented_interfaces = _invert_implementers(interface_implementers or {})
     members = methods_named(function_registry)
     type_scopes = TypeScopes(function_registry, module_qns)
@@ -101,18 +113,14 @@ def process_all_method_overrides(
             continue
         if _emit_csharp_explicit_override(
             method_qn,
-            csharp_methods,
             function_registry,
-            class_inheritance,
-            implemented_interfaces,
-            csharp_class_generic_arity,
-            csharp_class_namespaced,
+            (class_inheritance, implemented_interfaces),
             ingestor,
-            csharp_generic_shapes,
-            (csharp_call_shapes, csharp_type_scopes, members),
+            facts,
+            members,
         ):
             continue
-        class_qn, method_name = _override_class_and_leaf(method_qn, csharp_methods)
+        class_qn, method_name = _override_class_and_leaf(method_qn, facts.methods)
         if not class_qn:
             continue
         # Positive evidence first: a recorded trait binding names the parent
@@ -140,12 +148,7 @@ def process_all_method_overrides(
             class_inheritance,
             ingestor,
             implemented_interfaces,
-            csharp_methods,
-            csharp_override_methods,
-            csharp_generic_shapes,
-            csharp_class_generic_arity,
-            csharp_call_shapes,
-            csharp_type_scopes,
+            facts,
             members,
             type_scopes,
         )
@@ -154,24 +157,20 @@ def process_all_method_overrides(
 
 def _emit_csharp_explicit_override(
     method_qn: str,
-    csharp_methods: set[str] | None,
     function_registry: FunctionRegistryTrieProtocol,
-    class_inheritance: dict[str, list[str]],
-    implemented_interfaces: dict[str, list[str]],
-    generic_arity: Mapping[str, int] | None,
-    namespaced: Mapping[str, str] | None,
+    hierarchy: tuple[dict[str, list[str]], dict[str, list[str]]],
     ingestor: IngestorProtocol,
-    generic_shapes: Mapping[str, CSharpGenericShape] | None = None,
-    lookup: tuple[
-        Mapping[str, CSharpCallShape] | None, ScopeOf | None, MethodsNamed | None
-    ] = (None, None, None),
+    csharp: CSharpOverrideFacts,
+    members: MethodsNamed | None = None,
 ) -> bool:
-    """Link a C# explicit interface implementation, if `method_qn` is one."""
-    if not csharp_methods or method_qn not in csharp_methods:
+    """Link a C# explicit interface implementation, if `method_qn` is one.
+    `hierarchy` is each class's bases and the interfaces it implements."""
+    if not csharp.methods or method_qn not in csharp.methods:
         return False
     explicit = _csharp_explicit_member(method_qn)
     if explicit is None:
         return False
+    class_inheritance, implemented_interfaces = hierarchy
     # Its leaf names the interface it implements; matching that
     # leaf by name, as the walk below does, would find nothing.
     _emit_explicit_impl_override(
@@ -179,11 +178,11 @@ def _emit_csharp_explicit_override(
         explicit,
         function_registry,
         _ancestors(explicit[0], class_inheritance, implemented_interfaces),
-        generic_arity or {},
-        namespaced or {},
+        csharp.class_generic_arity or {},
+        csharp.class_namespaced or {},
         ingestor,
-        generic_shapes or {},
-        (lookup[0] or {}, lookup[1], lookup[2]),
+        csharp.generic_shapes or {},
+        (csharp.call_shapes or {}, csharp.type_scopes, members),
     )
     return True
 
@@ -787,36 +786,51 @@ def _parent_method_qn(
             return _method_only(scoped, function_registry)
     parent_method_qn = f"{parent_class}.{method_name}"
     if parent_method_qn not in function_registry:
-        # Fall back to name+arity so a generic type-var rename in the override
-        # signature still matches the base method.
-        substituted = (
-            _find_override_by_substitution(
+        parent_method_qn = (
+            _respelled_parent(
                 parent_class,
                 method_name,
                 function_registry,
-                (bindings, None, own),
-                call_shapes or {},
-                named,
-            )[0]
-            if bindings
-            else None
-        )
-        erased = (
-            _find_override_by_erasure(
-                parent_class, method_name, function_registry, named
-            )
-            if erase_generics and substituted is None
-            else None
-        )
-        parent_method_qn = (
-            substituted
-            or erased
-            or _find_override_by_arity(
-                parent_class, method_name, function_registry, named
+                (bindings, own),
+                (erase_generics, call_shapes or {}, named),
             )
             or parent_method_qn
         )
     return _method_only(parent_method_qn, function_registry)
+
+
+def _respelled_parent(
+    parent_class: str,
+    method_name: str,
+    function_registry: FunctionRegistryTrieProtocol,
+    substitution: tuple[Mapping[str, str] | None, Sequence[str] | None],
+    lookup: tuple[bool, Mapping[str, CSharpCallShape], MethodsNamed],
+) -> str | None:
+    # The base member an override spelled otherwise targets: matched with
+    # its type parameters bound (`substitution`: the base's bindings and the
+    # override's own type parameters), with generics erased when the walk
+    # asks for it, else by name and arity, so a generic type-var rename in
+    # the override signature still matches the base method.
+    bindings, own = substitution
+    erase_generics, call_shapes, named = lookup
+    if bindings:
+        substituted = _find_override_by_substitution(
+            parent_class,
+            method_name,
+            function_registry,
+            (bindings, None, own),
+            call_shapes,
+            named,
+        )[0]
+        if substituted is not None:
+            return substituted
+    if erase_generics and (
+        erased := _find_override_by_erasure(
+            parent_class, method_name, function_registry, named
+        )
+    ):
+        return erased
+    return _find_override_by_arity(parent_class, method_name, function_registry, named)
 
 
 def _signed_parent(
@@ -864,12 +878,7 @@ def check_method_overrides(
     class_inheritance: dict[str, list[str]],
     ingestor: IngestorProtocol,
     implemented_interfaces: dict[str, list[str]] | None = None,
-    csharp_methods: set[str] | None = None,
-    csharp_override_methods: set[str] | None = None,
-    csharp_generic_shapes: Mapping[str, CSharpGenericShape] | None = None,
-    csharp_class_generic_arity: Mapping[str, int] | None = None,
-    csharp_call_shapes: Mapping[str, CSharpCallShape] | None = None,
-    csharp_type_scopes: ScopeOf | None = None,
+    csharp: CSharpOverrideFacts | None = None,
     members: MethodsNamed | None = None,
     type_scopes: TypeScopes | None = None,
 ) -> None:
@@ -877,21 +886,23 @@ def check_method_overrides(
     if class_qn not in class_inheritance and class_qn not in implemented:
         return
 
+    facts = csharp or CSharpOverrideFacts()
+    csharp_call_shapes = facts.call_shapes
     # A C# method overrides a base CLASS member only with the explicit
     # `override` modifier; a `new`/implicit-hide member must not. Interface
     # members need no modifier, so gate only class-parent matches.
     csharp_gated = _csharp_override_gated(
-        method_qn, csharp_methods, csharp_override_methods
+        method_qn, facts.methods, facts.override_methods
     )
-    is_csharp = csharp_methods is not None and method_qn in csharp_methods
+    is_csharp = facts.methods is not None and method_qn in facts.methods
 
     queue = deque([class_qn])
     visited = {class_qn}
     # The type arguments each visited C# ancestor's parameters are bound to,
     # in the overriding class's terms (`Derived : Base<int>` binds Base's T).
     bindings_of: dict[str, dict[str, str]] = {class_qn: {}}
-    shapes = csharp_generic_shapes if is_csharp else None
-    scope_of = csharp_type_scopes if is_csharp else None
+    shapes = facts.generic_shapes if is_csharp else None
+    scope_of = facts.type_scopes if is_csharp else None
     # The overriding member's types resolve in its own class's file.
     given = _scope(
         scope_of, class_qn, _own_type_parameters(csharp_call_shapes, method_qn)
@@ -944,7 +955,7 @@ def check_method_overrides(
         visited.update(fresh)
         queue.extend(fresh)
         _bind_fresh_ancestors(
-            (shapes, csharp_class_generic_arity, scope_of),
+            (shapes, facts.class_generic_arity, scope_of),
             current_class,
             fresh,
             bindings_of,

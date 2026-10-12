@@ -1476,6 +1476,9 @@ def _restore_csharp_method_facts(
         processor.csharp_implicit_conversions.setdefault(class_qn, []).append(
             conversion
         )
+    # What a chained call off it is typed by (`Holder.Get().M()`).
+    if (returned := csharp_graph_facts.method_return_type(row)) is not None:
+        processor.csharp_method_return_types.setdefault(qn, returned)
 
 
 def _drop_class_keyed_entry(
@@ -4315,6 +4318,9 @@ class GraphUpdater:
             processor.csharp_generic_shapes[qn] = shape
             if shape.parameters:
                 processor.csharp_class_generic_arity[qn] = len(shape.parameters)
+        # A field's type types a receiver read through it (`Holder.F.M()`).
+        if fields := csharp_graph_facts.type_field_types(row):
+            processor.class_field_types.setdefault(qn, fields)
 
     def _rehydrate_csharp_declared_form(
         self, qn: str, path: str, row: ResultRow

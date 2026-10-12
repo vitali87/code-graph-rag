@@ -25,8 +25,11 @@ from ...types_defs import (
 from ..parameter_nodes import csharp_call_shape
 from .overloads import type_arguments
 from .utils import (
+    generic_arity_of_type_text,
     generic_shape,
     implicit_conversion,
+    member_type_map,
+    normalize_csharp_type_text,
     strip_generic_arguments,
     written_parameter_type,
 )
@@ -34,12 +37,17 @@ from .utils import (
 
 def type_props(type_node: Node) -> PropertyDict:
     # A generic type's parameters, their variances, the bases it passes
-    # type arguments to, whether it is a value type, and every base it
-    # writes.
+    # type arguments to, whether it is a value type, every base it writes,
+    # its indexers, and its fields' and properties' types.
+    props: PropertyDict = {}
+    if fields := member_type_map(type_node):
+        props[cs.KEY_FIELD_TYPES] = [
+            f"{name}{cs.CSHARP_STORED_PAIR_SEPARATOR}{written}"
+            for name, written in fields.items()
+        ]
     shape = generic_shape(type_node)
     if shape is None:
-        return {}
-    props: PropertyDict = {}
+        return props
     if shape.parameters:
         props[cs.KEY_TYPE_PARAMETERS] = list(shape.parameters)
     if shape.variances:
@@ -54,6 +62,8 @@ def type_props(type_node: Node) -> PropertyDict:
         ]
     if shape.base_types:
         props[cs.KEY_BASE_TYPES] = list(shape.base_types)
+    if shape.indexers:
+        props[cs.KEY_INDEXER_TYPES] = list(shape.indexers)
     return props
 
 
@@ -84,6 +94,28 @@ def _strings(value: object) -> list[str]:
     )
 
 
+def method_return_type(row: ResultRow) -> tuple[str, int] | None:
+    """A method's or property's return type as a parse records it for a
+    chained call (normalized name, written generic arity), read back from
+    the stored `return_type`; None for none."""
+    returned = row.get(cs.KEY_RETURN_TYPE)
+    if not isinstance(returned, str) or not returned:
+        return None
+    return normalize_csharp_type_text(returned), generic_arity_of_type_text(returned)
+
+
+def type_field_types(row: ResultRow) -> dict[str, str]:
+    """The field and property types `type_props` stored, by member name."""
+    return {
+        name: written
+        for entry in _strings(row.get(cs.KEY_FIELD_TYPES))
+        for name, separator, written in (
+            entry.partition(cs.CSHARP_STORED_PAIR_SEPARATOR),
+        )
+        if separator and name and written
+    }
+
+
 def type_shape(row: ResultRow) -> CSharpGenericShape | None:
     """The generic shape `type_props` stored, or None for a reference type
     that takes and passes no type argument."""
@@ -94,10 +126,13 @@ def type_shape(row: ResultRow) -> CSharpGenericShape | None:
     )
     value_type = row.get(cs.KEY_VALUE_TYPE) is True
     written = tuple(_strings(row.get(cs.KEY_BASE_TYPES)))
-    if not (parameters or bases or value_type or written):
+    indexers = tuple(_strings(row.get(cs.KEY_INDEXER_TYPES)))
+    if not (parameters or bases or value_type or written or indexers):
         return None
     variances = tuple(_strings(row.get(cs.KEY_TYPE_PARAMETER_VARIANCES)))
-    return CSharpGenericShape(parameters, bases, variances, value_type, written)
+    return CSharpGenericShape(
+        parameters, bases, variances, value_type, written, indexers
+    )
 
 
 def method_call_shape(row: ResultRow) -> CSharpCallShape | None:
@@ -117,6 +152,8 @@ def method_call_shape(row: ResultRow) -> CSharpCallShape | None:
         )
         if name and bound
     )
+    returns = row.get(cs.KEY_RETURN_TYPE)
+    types = _written_types(row)
     return CSharpCallShape(
         required=sum(
             not (
@@ -130,12 +167,10 @@ def method_call_shape(row: ResultRow) -> CSharpCallShape | None:
         type_parameters=tuple(_strings(row.get(cs.KEY_TYPE_PARAMETERS))),
         constraints=constraints,
         names=tuple(_declared_name(entry) for entry in entries),
-        returns=returns
-        if isinstance(returns := row.get(cs.KEY_RETURN_TYPE), str)
-        else "",
+        returns=returns if isinstance(returns, str) else "",
         modes=tuple(_strings(row.get(cs.KEY_PARAMETER_MODES))),
         overrides=cs.TS_CSHARP_MODIFIER_OVERRIDE in modifiers,
-        types=types if len(types := _written_types(row)) == len(entries) else (),
+        types=types if len(types) == len(entries) else (),
     )
 
 

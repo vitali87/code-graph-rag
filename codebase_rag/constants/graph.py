@@ -851,6 +851,12 @@ KEY_VALUE_TYPE = "value_type"
 # For judging a `where` clause (PR 2814 review): every base a C# type's base
 # list writes, as written, so what it implements is known.
 KEY_BASE_TYPES = "base_types"
+# A C# type's indexers, each as `<return type>=><parameter types>` written
+# (`Right=>int`), for what indexing a value of it gives (PR 2814 review).
+KEY_INDEXER_TYPES = "indexer_types"
+# A C# type's field and property types, each as `<name>=><type>`, so a
+# receiver read through a field of an unchanged type is typed (PR 2814).
+KEY_FIELD_TYPES = "field_types"
 KEY_IMPLICIT_CONVERSION = "implicit_conversion"
 # How each of a C# method's parameters is passed ("ref", "out", "in", "ref
 # readonly", "" by value), stored only when one is not by value (PR 2814).
@@ -1224,7 +1230,8 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.parameter_modes AS parameter_modes, "
     "n.generic_bases AS generic_bases, "
     "n.type_parameter_variances AS type_parameter_variances, "
-    "n.value_type AS value_type, n.base_types AS base_types"
+    "n.value_type AS value_type, n.base_types AS base_types, "
+    "n.indexer_types AS indexer_types, n.field_types AS field_types"
 )
 
 # Module-level qns (plus C++20 module interfaces) for incremental runs:
