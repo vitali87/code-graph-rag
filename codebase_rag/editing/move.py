@@ -518,26 +518,47 @@ def _star_provided(source: bytes, moved: str, name: str) -> tuple[list[str], lis
     return (names, modules) if names else ([], [])
 
 
-def _has_annotations(source: bytes | str) -> bool:
+def _builtin_aliases(tree: ast.Module) -> tuple[frozenset[str], frozenset[str]]:
+    """The names `tree` reaches the dynamic-code builtins through: the
+    receivers `builtins` is bound to (`import builtins as bi`), and the
+    names the builtins themselves are (`from builtins import exec as run`)."""
+    receivers = set(_PY_BUILTINS_MODULES)
+    names = set(_PY_DYNAMIC_CODE)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            receivers |= {
+                a.asname or a.name for a in node.names if a.name in _PY_BUILTINS_MODULES
+            }
+        elif isinstance(node, ast.ImportFrom) and node.module in _PY_BUILTINS_MODULES:
+            names |= {
+                a.asname or a.name for a in node.names if a.name in _PY_DYNAMIC_CODE
+            }
+    return frozenset(receivers), frozenset(names)
+
+
+def _has_annotations(source: bytes | str, scope: bytes | str | None = None) -> bool:
     """Whether Python `source` annotates anything, or runs code that may;
     True when it won't parse, since then the move cannot tell.
 
     `exec`, `eval` and `compile` inherit the calling module's future
     features, so `exec("def g(x: Missing): pass")` relied on postponed
-    annotations with no annotation of its own in sight (bot review).
+    annotations with no annotation of its own in sight (bot review). The
+    imports that alias them live in `scope`, the module `source` came from
+    when it is only a definition cut out of one (bot review).
     """
     try:
         tree = ast.parse(source)
+        receivers, names = _builtin_aliases(tree if scope is None else ast.parse(scope))
     except (SyntaxError, ValueError):
         return True
     for node in ast.walk(tree):
         if (
             isinstance(node, ast.AnnAssign)
-            or (isinstance(node, ast.Name) and node.id in _PY_DYNAMIC_CODE)
+            or (isinstance(node, ast.Name) and node.id in names)
             or (
                 isinstance(node, ast.Attribute)
                 and isinstance(node.value, ast.Name)
-                and node.value.id in _PY_BUILTINS_MODULES
+                and node.value.id in receivers
                 and node.attr in _PY_DYNAMIC_CODE
             )
         ):
@@ -1329,7 +1350,7 @@ class Mover:
             return
         old_has = _FUTURE_ANNOTATIONS in cls._future_features(source)
         new_has = _FUTURE_ANNOTATIONS in cls._future_features(existing)
-        if old_has == new_has or not _has_annotations(moved):
+        if old_has == new_has or not _has_annotations(moved, source):
             return
         if old_has and not _has_annotations(existing):
             return
