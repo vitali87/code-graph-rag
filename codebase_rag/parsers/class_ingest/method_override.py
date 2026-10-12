@@ -432,7 +432,7 @@ def _emit_explicit_impl_override(
     call_shapes, scope_of, members = lookup
     # The member's types resolve in its class's file; so does the interface
     # spelling, which its class's declaration wrote.
-    given = _scope(scope_of, class_qn, _own_type_parameters(call_shapes, method_qn))
+    given = _member_scope(scope_of, class_qn, call_shapes, method_qn)
     spelled_in = _scope(scope_of, class_qn)
     types = DeclaredTypes(namespaced, generic_arity)
     for ancestor in ancestors:
@@ -581,7 +581,13 @@ def _find_override_by_substitution(
         # declared, and name no type there.
         candidate_scopes = (
             CSharpScopes(
-                scopes.given, with_type_parameters(scopes.wanted, own) or scopes.wanted
+                scopes.given,
+                with_type_parameters(
+                    scopes.wanted,
+                    own,
+                    csharp_utils.call_shape_lifts(call_shapes.get(qn), qn),
+                )
+                or scopes.wanted,
             )
             if scopes is not None
             else None
@@ -904,9 +910,7 @@ def check_method_overrides(
     shapes = facts.generic_shapes if is_csharp else None
     scope_of = facts.type_scopes if is_csharp else None
     # The overriding member's types resolve in its own class's file.
-    given = _scope(
-        scope_of, class_qn, _own_type_parameters(csharp_call_shapes, method_qn)
-    )
+    given = _member_scope(scope_of, class_qn, csharp_call_shapes, method_qn)
     # A C++ override's signature, which picks among the base's overloads.
     signature = function_registry.overload_signature(method_qn)
 
@@ -1026,11 +1030,26 @@ def _own_parameters(
     return shape.type_parameters if shape is not None else None
 
 
-def _scope(
-    scope_of: ScopeOf | None, type_qn: str, parameters: Collection[str] = ()
-) -> Scope | None:
+def _scope(scope_of: ScopeOf | None, type_qn: str) -> Scope | None:
     # Where a declaration in `type_qn` resolves its types, when that is known.
-    return scope_of(type_qn, parameters) if scope_of else None
+    return scope_of(type_qn, ()) if scope_of else None
+
+
+def _member_scope(
+    scope_of: ScopeOf | None,
+    type_qn: str,
+    call_shapes: Mapping[str, CSharpCallShape] | None,
+    method_qn: str,
+) -> Scope | None:
+    # Where a C# method's declaration resolves its types: its type's file,
+    # with the type parameters it declares in scope, and what a `?` on each
+    # makes it (`nullable_lifts`; Greptile review of PR 2814).
+    shape = call_shapes.get(method_qn) if call_shapes else None
+    return with_type_parameters(
+        _scope(scope_of, type_qn),
+        _own_type_parameters(call_shapes, method_qn),
+        csharp_utils.call_shape_lifts(shape, method_qn),
+    )
 
 
 def _scopes(given: Scope | None, wanted: Scope | None) -> CSharpScopes | None:

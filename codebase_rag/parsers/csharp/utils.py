@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from functools import lru_cache
 from types import MappingProxyType
 
@@ -225,7 +225,7 @@ def written_parameter_type(text: str) -> str:
     return spelled
 
 
-def signature_type_name(text: str) -> str:
+def signature_type_name(text: str, lifts: Mapping[str, bool] | None = None) -> str:
     """A type as a method signature spells it: `Ctx< T >?` -> `Ctx<T>`.
 
     Generic arguments are kept, because `Validate(Ctx<T>)` and
@@ -234,7 +234,11 @@ def signature_type_name(text: str) -> str:
     canonical spacing so two spellings of a type name one overload. A
     trailing nullable `?` is dropped as the type maps drop it, except on a
     known value type: `int?` is `Nullable<int>`, so `F(int)` and `F(int?)`
-    are two overloads (CodeRabbit, PR 2814).
+    are two overloads (CodeRabbit, PR 2814). `lifts` are the type parameters
+    in scope where the type is written (`nullable_lifts`): a `?` on one is
+    kept as its constraint makes it `Nullable<T>`, whatever type its name
+    also names (`M<String>(String?) where String : struct`; Greptile review
+    of PR 2814).
     """
     collapsed = cs.CHAR_SPACE.join(text.split())
     out: list[str] = []
@@ -250,11 +254,20 @@ def signature_type_name(text: str) -> str:
         out.append(char)
         if char == cs.CHAR_COMMA and depth:
             out.append(cs.CHAR_SPACE)
-    spelled = "".join(out).strip()
+    return _nullable_spelled("".join(out).strip(), lifts)
+
+
+def _nullable_spelled(spelled: str, lifts: Mapping[str, bool] | None) -> str:
+    # `spelled` with its trailing `?` kept only where it makes the type
+    # `Nullable<T>`: on a type parameter in scope as `lifts` say, else on a
+    # known value type.
     underlying = spelled.rstrip(cs.CHAR_QUESTION_MARK)
-    if underlying != spelled and _is_nullable_value_type(underlying):
-        return f"{underlying}{cs.CSHARP_NULLABLE_SUFFIX}"
-    return underlying
+    if underlying == spelled:
+        return underlying
+    lifted = lifts.get(underlying) if lifts is not None else None
+    if lifted is None:
+        lifted = _is_nullable_value_type(underlying)
+    return f"{underlying}{cs.CSHARP_NULLABLE_SUFFIX}" if lifted else underlying
 
 
 def _is_nullable_value_type(underlying: str) -> bool:
@@ -288,6 +301,7 @@ def extract_parameter_type_names(method_node: Node) -> list[str]:
     param_list = method_node.child_by_field_name(cs.FIELD_PARAMETERS)
     if param_list is None:
         return []
+    lifts = lifts_in_scope(method_node)
     types: list[str] = []
     for child in param_list.children:
         type_node: Node | None = None
@@ -297,8 +311,81 @@ def extract_parameter_type_names(method_node: Node) -> list[str]:
             type_node = child
         if type_node is not None and type_node.text:
             if name := safe_decode_text(type_node):
-                types.append(signature_type_name(name))
+                types.append(signature_type_name(name, lifts))
     return types
+
+
+def nullable_lifts(
+    names: Iterable[str], constraints: Iterable[tuple[str, str]], lifted: bool
+) -> dict[str, bool]:
+    """Whether a `?` on each of `names`, the type parameters one declaration
+    declares, makes it `Nullable<T>` (True) or only annotates it (False), as
+    its `where` clauses (`constraints`) say: `struct` and `unmanaged` make
+    it `Nullable<T>`, and C# 9 reads a `?` on any other type parameter as an
+    annotation, save in an override or an explicit implementation
+    (`lifted`), where it is `Nullable<T>` short of a `class` or `default`
+    constraint (Greptile review of PR 2814)."""
+    kinds: dict[str, set[str]] = {name: set() for name in names}
+    for name, bound in constraints:
+        if name in kinds:
+            kinds[name].add(bound)
+    return {
+        name: bool(bound & cs.CSHARP_LIFTING_CONSTRAINTS)
+        or (lifted and not bound & cs.CSHARP_ANNOTATING_CONSTRAINTS)
+        for name, bound in kinds.items()
+    }
+
+
+def declared_lifts(declaration: Node) -> dict[str, bool]:
+    """`nullable_lifts` of the type parameters a declaration declares."""
+    names = [
+        name
+        for child in declaration.children
+        if child.type == cs.TS_CSHARP_TYPE_PARAMETER_LIST
+        for name in type_parameter_names(child)
+    ]
+    if not names:
+        return {}
+    return nullable_lifts(
+        names, type_parameter_constraints(declaration), _reads_base_member(declaration)
+    )
+
+
+def _reads_base_member(declaration: Node) -> bool:
+    # Whether a declaration overrides or explicitly implements a member,
+    # whose `T?` C# 9 reads as `Nullable<T>` when nothing else is said.
+    if declaration.type != cs.TS_CSHARP_METHOD_DECLARATION:
+        return False
+    return explicit_interface_name(declaration) is not None or any(
+        child.type == cs.TS_CSHARP_MODIFIER
+        and safe_decode_text(child) == cs.TS_CSHARP_MODIFIER_OVERRIDE
+        for child in declaration.children
+    )
+
+
+def call_shape_lifts(shape: CSharpCallShape | None, method_qn: str) -> dict[str, bool]:
+    """`nullable_lifts` of the type parameters a method declares itself, as
+    its call shape records them; none when the shape is not known."""
+    if shape is None:
+        return {}
+    return nullable_lifts(
+        shape.type_parameters,
+        shape.constraints,
+        shape.overrides or is_explicit_member_qn(method_qn),
+    )
+
+
+def lifts_in_scope(node: Node) -> dict[str, bool]:
+    """`declared_lifts` of every declaration from `node` out, which shadows
+    a type parameter of the same name further out."""
+    found: dict[str, bool] = {}
+    current: Node | None = node
+    while current is not None:
+        if current.type in cs.CSHARP_GENERIC_DECLARATIONS:
+            for name, lifted in declared_lifts(current).items():
+                found.setdefault(name, lifted)
+        current = current.parent
+    return found
 
 
 def explicit_interface_name(member_node: Node) -> str | None:
@@ -354,7 +441,7 @@ def _base_type_name(node: Node | None) -> Node | None:
     return node
 
 
-def _generic_base(entry: Node) -> CSharpGenericBase | None:
+def _generic_base(entry: Node, lifts: Mapping[str, bool]) -> CSharpGenericBase | None:
     # A base list entry that passes type arguments, else None: a plain base
     # binds no parameter.
     node = _base_type_name(entry)
@@ -370,7 +457,7 @@ def _generic_base(entry: Node) -> CSharpGenericBase | None:
     if not name or arg_list is None:
         return None
     arguments = tuple(
-        signature_type_name(text)
+        signature_type_name(text, lifts)
         for arg in arg_list.named_children
         if (text := safe_decode_text(arg))
     )
@@ -475,8 +562,9 @@ def generic_shape(type_node: Node) -> CSharpGenericShape | None:
             variances = type_parameter_variances(child)
         elif child.type == cs.TS_CSHARP_BASE_LIST:
             entries.extend(child.named_children)
+    lifts = lifts_in_scope(type_node)
     bases = tuple(
-        base for entry in entries if (base := _generic_base(entry)) is not None
+        base for entry in entries if (base := _generic_base(entry, lifts)) is not None
     )
     # An enum's base list writes its underlying type, which is no base.
     written = [
@@ -492,7 +580,13 @@ def generic_shape(type_node: Node) -> CSharpGenericShape | None:
     if not (parameters or bases or value_type or written or indexers):
         return None
     return CSharpGenericShape(
-        tuple(parameters), bases, variances, value_type, tuple(written), indexers
+        tuple(parameters),
+        bases,
+        variances,
+        value_type,
+        tuple(written),
+        indexers,
+        type_parameter_constraints(type_node),
     )
 
 

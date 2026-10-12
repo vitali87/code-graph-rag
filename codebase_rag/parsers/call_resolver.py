@@ -1850,7 +1850,11 @@ class CallResolver:
         # interface spelling binds in the implementer's file (PR 2814 review).
         engine = inference.csharp_type_inference
         spelled_in = engine.scope_of(impl_qn)
-        wanted = engine.scope_of(interface_qn, declared)
+        wanted = engine.scope_of(
+            interface_qn,
+            declared,
+            engine.member_lifts(f"{interface_qn}{cs.SEPARATOR_DOT}{method_name}"),
+        )
         # A type parameter the member declares itself is not the interface's,
         # so the spelling's argument never reaches it.
         found = [
@@ -1889,7 +1893,9 @@ class CallResolver:
         # The explicit member's file, its own type parameters in scope, and
         # the interface member's.
         given = engine.scope_of(
-            impl_qn, self._csharp_declared_type_parameters(member_qn)
+            impl_qn,
+            self._csharp_declared_type_parameters(member_qn),
+            engine.member_lifts(member_qn),
         )
         return TypeScopes(given, wanted) if given and wanted else None
 

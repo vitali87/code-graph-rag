@@ -130,13 +130,55 @@ class Scope(NamedTuple):
     # (type parameter, the types its `where` clauses name) where they are
     # known: an expression's, read off the declarations around it.
     bounds: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    # (type parameter, whether a `?` on it makes it `Nullable<T>`) for each
+    # of `type_parameters` whose declaration is read (`nullable_lifts`).
+    lifts: tuple[tuple[str, bool], ...] = ()
 
 
-def with_type_parameters(scope: Scope | None, names: Collection[str]) -> Scope | None:
-    """`scope` with a member's own type parameters in scope too."""
+def with_type_parameters(
+    scope: Scope | None,
+    names: Collection[str],
+    lifts: Mapping[str, bool] | None = None,
+) -> Scope | None:
+    """`scope` with a member's own type parameters in scope too, which
+    shadow any of their names around it, with `lifts`, their kinds where
+    they are known."""
     if scope is None or not names:
         return scope
-    return scope._replace(type_parameters=scope.type_parameters | frozenset(names))
+    return scope._replace(
+        type_parameters=scope.type_parameters | frozenset(names),
+        lifts=tuple(
+            [(name, lifted) for name, lifted in scope.lifts if name not in names]
+            + list((lifts or {}).items())
+        ),
+    )
+
+
+def annotation_reader(
+    type_parameters: Collection[str],
+    lifts: Mapping[str, bool],
+    reference: ReferenceKind | None,
+) -> ReferenceKind:
+    """What a `?` on a type means where `type_parameters` are in scope
+    (`unannotated`): on one of them, what its declaration makes it
+    (`lifts`; Greptile review of PR 2814), and never what it means on a
+    type of its name (`M<String>(String?) where String : struct` takes a
+    `Nullable<String>`); on another type, as `reference` tells."""
+
+    def read(core: str) -> bool | None:
+        if core in type_parameters:
+            lifted = lifts.get(core)
+            return None if lifted is None else not lifted
+        return reference(core) if reference is not None else None
+
+    return read
+
+
+def scope_reader(scope: Scope | None) -> ReferenceKind | None:
+    """`annotation_reader` of the type parameters `scope` holds."""
+    if scope is None:
+        return None
+    return annotation_reader(scope.type_parameters, dict(scope.lifts), scope.reference)
 
 
 def unannotated(
@@ -239,6 +281,24 @@ def predefined_keyword(core: str) -> str | None:
     )
 
 
+def marked_parameters(type_text: str, names: Collection[str]) -> str:
+    """`type_text` with each of `names`, type parameters in scope where it
+    is written, that a predefined or framework type's name also spells
+    (`String`, `Int32`) marked as no type of that name: `List<String>` of a
+    `G<String>` is no `List<string>` (Greptile review of PR 2814). A name
+    no type table reads keeps its spelling."""
+    return _opened(type_text, frozenset(n for n in names if _names_built_in(n)))
+
+
+def _names_built_in(name: str) -> bool:
+    # Whether a simple name, read as a type, is a predefined or framework one.
+    return (
+        name == cs.CSHARP_DYNAMIC_KEYWORD
+        or predefined_keyword(name) is not None
+        or framework_reference(name) is not None
+    )
+
+
 def mentioned_names(type_text: str) -> set[str]:
     """Every name a type spells that no dot qualifies:
     `Dictionary<T, N.Widget>` -> {Dictionary, T, N}."""
@@ -262,8 +322,25 @@ def declared_type(
     receiver sees it: resolved once in `scope`, the declaring file, and
     `bindings` (each resolved where it was written) substituted after. Its
     parameters and its `where` bounds are read alike, so on a `C<Person>`
-    `where T : U` is `where T : Person` (PR 2814 review)."""
-    return substitute(canonical_type(written, scope), bindings)
+    `where T : U` is `where T : Person` (PR 2814 review). A `?` that only
+    annotates a type parameter is gone before it is substituted: C# 9 reads
+    an unconstrained `T?` with T := int as `int` (Greptile review of PR
+    2814)."""
+    canonical = canonical_type(written, scope)
+    if scope is not None and scope.type_parameters:
+        canonical = parameters_unannotated(canonical, scope)
+    return substitute(canonical, bindings)
+
+
+def parameters_unannotated(text: str, scope: Scope) -> str:
+    """`text` less each `?` that only annotates a type parameter in scope."""
+    read = scope_reader(scope)
+    return unannotated(
+        text,
+        lambda core: (
+            core in scope.type_parameters and read is not None and read(core) is True
+        ),
+    )[0]
 
 
 def unshadowed(
@@ -474,7 +551,7 @@ def _unannotated_in(canonical: str, scope: Scope | None) -> str:
     # A parameter type less the nullable annotations on the reference types
     # its file declares or the framework does: `Go(Box<string?>)` declares
     # the member `Go(Box<string>)` does (Greptile review of PR 2814).
-    return unannotated(canonical, scope.reference if scope is not None else None)[0]
+    return unannotated(canonical, scope_reader(scope))[0]
 
 
 def _matched_own(
@@ -893,6 +970,44 @@ def predefined_implements(keyword: str, bound: str) -> bool:
     )
 
 
+def framework_upcast(given: str, wanted: str) -> str | None:
+    """The closing of `wanted`, a framework collection interface, that
+    `given`, a framework collection or a one-rank array, implements over its
+    element (`IEnumerable<int?>` of a `List<int?>` for `IEnumerable<T?>`):
+    what C# converts it to and infers through (Greptile review of PR 2814).
+    None for any other pair, a first-party type of the name among them."""
+    wanted_core, wanted_shape = type_shape(wanted)
+    if wanted_shape or framework_generic(wanted_core) is None:
+        return None
+    interface = strip_generic_arguments(wanted_core)
+    element = _collection_element(given)
+    if element is None:
+        return None
+    collection, implemented = element
+    simple = interface.rpartition(cs.SEPARATOR_DOUBLE_COLON)[2]
+    if simple.rpartition(cs.SEPARATOR_DOT)[2] not in implemented:
+        return None
+    return f"{interface}{cs.CHAR_ANGLE_OPEN}{collection}{cs.CHAR_ANGLE_CLOSE}"
+
+
+def _collection_element(given: str) -> tuple[str, tuple[str, ...]] | None:
+    # (the element, the interfaces implemented over it) of a framework
+    # collection with one type argument, or of a one-rank array.
+    core, shape = type_shape(given)
+    if shape.endswith(cs.CSHARP_ARRAY_SUFFIX):
+        return given.strip()[: -len(cs.CSHARP_ARRAY_SUFFIX)].rstrip(), (
+            cs.CSHARP_ARRAY_ELEMENT_INTERFACES
+        )
+    arguments = type_arguments(core)
+    if shape or len(arguments) != 1 or framework_generic(core) is None:
+        return None
+    name = strip_generic_arguments(core).rpartition(cs.SEPARATOR_DOUBLE_COLON)[2]
+    implemented = cs.CSHARP_FRAMEWORK_ELEMENT_INTERFACES.get(
+        name.rpartition(cs.SEPARATOR_DOT)[2]
+    )
+    return (arguments[0], implemented) if implemented else None
+
+
 def framework_reference(core: str) -> bool | None:
     """Whether a framework type with no shape after it is a reference type,
     as far as the tables tell: a known generic one's entry, or a known value
@@ -1190,7 +1305,14 @@ def _literal(
     # from its type, judged as a typed argument's is (`judge.converts`; PR
     # 2814 review); a better target then weighs it as any conversion.
     open_names, judge = judged
-    fitted = literal_fit(parameter, literal, argument.value, judge.is_enum(parameter))
+    # A type parameter still open is no type of its name: a `String?` of a
+    # `M<String>(String?) where String : struct` takes an int once String is
+    # fixed (Greptile review of PR 2814).
+    fitted = (
+        Fit.OTHER
+        if type_shape(parameter)[0] in open_names
+        else literal_fit(parameter, literal, argument.value, judge.is_enum(parameter))
+    )
     if fitted is not Fit.OTHER:
         return fitted
     related = judge.converts(argument, parameter, open_names)
@@ -1300,7 +1422,10 @@ def _better(p: Scored, q: Scored, target_order: TargetOrder | None) -> bool:
         return False
     if 1 in verdicts:
         return True
-    return _equivalent(p.parameters, q.parameters) and _tie_break(p, q) > 0
+    return (
+        _equivalent(p.parameters, q.parameters, (p.open, q.open))
+        and _tie_break(p, q) > 0
+    )
 
 
 def _better_conversion(
@@ -1316,13 +1441,13 @@ def _better_conversion(
     if Fit.UNDECIDED in (p_fit, q_fit):
         return None
     if Fit.UNKNOWN in (p_fit, q_fit):
-        return 0 if p_type == q_type or same_type(p_type, q_type) else None
+        return 0 if _one_type(p_type, q_type, open_names) else None
     opened = (
         _is_open(p_fit, p_type, open_names[0]),
         _is_open(q_fit, q_type, open_names[1]),
     )
     if any(opened):
-        return _open_conversion(conversion, *opened)
+        return _open_conversion(conversion, *opened, open_names)
     if Fit.OTHER in (p_fit, q_fit):
         return _uncertain_conversion(p_fit, q_fit, p_type, q_type)
     if p_fit != q_fit:
@@ -1339,7 +1464,10 @@ def _is_open(fit: Fit | None, parameter: str, open_names: frozenset[str]) -> boo
 
 
 def _open_conversion(
-    conversion: tuple[Fit | None, Fit | None, str, str], p_open: bool, q_open: bool
+    conversion: tuple[Fit | None, Fit | None, str, str],
+    p_open: bool,
+    q_open: bool,
+    open_names: tuple[frozenset[str], frozenset[str]],
 ) -> int | None:
     # A parameter naming a type parameter nothing bound is of no known type
     # (PR 2814 review): its conversion is never the better one. It is the
@@ -1347,7 +1475,7 @@ def _open_conversion(
     # binds the type parameter at best ties, and a tie then goes to the
     # more specific known type; against anything else it is not known.
     p_fit, q_fit, p_type, q_type = conversion
-    if p_type == q_type or same_type(p_type, q_type):
+    if _one_type(p_type, q_type, open_names):
         return 0
     if p_open and q_open:
         return None
@@ -1373,9 +1501,39 @@ def _uncertain_conversion(
     return None
 
 
-def _equivalent(given: Sequence[str], wanted: Sequence[str]) -> bool:
+def _equivalent(
+    given: Sequence[str],
+    wanted: Sequence[str],
+    open_names: tuple[frozenset[str], frozenset[str]],
+) -> bool:
     # Whether two parameter type lists are one type, position by position.
-    return all(g == w or same_type(g, w) for g, w in zip(given, wanted, strict=True))
+    return all(_one_type(g, w, open_names) for g, w in zip(given, wanted, strict=True))
+
+
+def _one_type(
+    first: str, second: str, open_names: tuple[frozenset[str], frozenset[str]]
+) -> bool:
+    # Whether two candidates' parameter types are one type: alias-blind
+    # (`System.Int32` is `int`), save that a type parameter nothing bound is
+    # itself alone, no type of its name (`String` of an `S<String>(String)`
+    # is no `string`; Greptile review of PR 2814).
+    if first == second:
+        return True
+    return same_type(_opened(first, open_names[0]), _opened(second, open_names[1]))
+
+
+def _opened(type_text: str, open_names: frozenset[str]) -> str:
+    # `type_text` with each of `open_names` it spells marked as no type.
+    if not open_names:
+        return type_text
+    return _TYPE_IDENTIFIER.sub(
+        lambda match: (
+            f"{cs.CSHARP_TYPE_PARAMETER_MARK}{match.group(0)}"
+            if match.group(0) in open_names
+            else match.group(0)
+        ),
+        type_text,
+    )
 
 
 def _tie_break(p: Scored, q: Scored) -> int:

@@ -699,12 +699,13 @@ class TestANullableReferenceAnnotationIsNoPartOfAType:
         calls = _resolved_calls(ANNOTATED_CS, temp_repo, mock_ingestor)
         assert all(r != _EXACT for _c, r in calls["External(Box<Ext?>)"]), calls
 
-    def test_an_unconstrained_type_parameter_binds_nothing_exactly(
+    def test_an_unconstrained_type_parameters_annotation_is_no_part_of_it(
         self, temp_repo: Path, mock_ingestor: MagicMock
     ) -> None:
+        # C# 9 reads `T?` on an unconstrained T as T, a value type's too:
+        # `Box<T?>` is `Box<T>` (.NET 8 runs `M(Box<T>)` with T := int).
         calls = _resolved_calls(ANNOTATED_GENERIC_CS, temp_repo, mock_ingestor)
-        assert all(r != _EXACT for _c, r in calls["Open(Box<T?>)"]), calls
-        # Negative: unannotated, it is the one type.
+        assert calls["Open(Box<T?>)"] == {("Ng.K.M(Box<T>)", _EXACT)}, calls
         assert calls["Closed(Box<T>)"] == {("Ng.K.M(Box<T>)", _EXACT)}, calls
 
     def test_an_annotated_implementation_still_links(
@@ -1687,9 +1688,9 @@ class TestEveryCallTheGeneratedOracleCrosses:
         assert calls["NamedOmits"] == best, calls
         assert calls["Expanded"] == best, calls
         # `S<T>(T? x) where T : struct` takes a `Nullable<T>`, which a
-        # nullable local is and an int is not.
-        assert calls["Nullable"] == {("Tb.C.S(T)", _EXACT)}, calls
-        assert ("Tb.C.S(T)", _EXACT) not in calls["NotNullable"], calls
+        # nullable local is and an int is not; its qn keeps the `?`.
+        assert calls["Nullable"] == {("Tb.C.S(T?)", _EXACT)}, calls
+        assert ("Tb.C.S(T?)", _EXACT) not in calls["NotNullable"], calls
         assert ("Tb.C.S(object)", _OVERLOAD) in calls["NotNullable"], calls
 
     def test_an_operator_gives_its_operands_type(
@@ -2802,12 +2803,10 @@ class TestANullableReferenceAnnotationChangesNoClosing:
         calls = _resolved_calls(NULLABLE_ANNOTATIONS_CS, temp_repo, mock_ingestor)
         assert calls["ValueNullable"] == {("Na.C.N(IBox<int?>)", _EXACT)}, calls
         assert calls["Mismatch"] == {("Na.C.N(object)", _EXACT)}, calls
-        # `GBox<int> : IBox<U?>` is an `IBox<int>` unless `U` is a struct,
-        # which the stored shape does not tell: it may bind either.
-        assert ("Na.C.N(IBox<int>)", _OVERLOAD) in calls["UnconstrainedValue"], calls
-        assert not any(
-            resolution == _EXACT for _, resolution in calls["UnconstrainedValue"]
-        ), calls
+        # `GBox<int> : IBox<U?>` is an `IBox<int>`: C# 9 reads a `?` on a
+        # type parameter with no `struct` constraint as an annotation, which
+        # the type's stored `where` clauses tell (round 24).
+        assert calls["UnconstrainedValue"] == {("Na.C.N(IBox<int>)", _EXACT)}, calls
 
     def test_receivers_bounds_and_overrides_read_no_annotation(
         self, temp_repo: Path, mock_ingestor: MagicMock
@@ -2834,6 +2833,168 @@ def test_an_incremental_run_drops_annotations_as_a_fresh_one(temp_repo: Path) ->
         ("Array", "C", "A(IBox<string[]>)"),
         ("Receiver", "Ext", "X(IBox<string>)"),
         ("Override", "Derived", "V(string)"),
+    } <= fresh, fresh
+    assert edited == fresh
+
+
+SHADOWED_PARAMETERS_CS = """\
+#nullable enable
+namespace Sh;
+public class Widget { }
+public interface IBox<X> { }
+public class SB<String> : IBox<String?> where String : struct { }
+public class GB<String> : IBox<String?> { }
+public class C {
+    public void M<String>(String s) where String : struct { }
+    public void M<String>(String? s) where String : struct { }
+    public void M(object o) { }
+    public void M(string s) { }
+    public void W<Widget>(Widget? w) where Widget : struct { }
+    public void W(Widget w) { }
+    public void F<Int32>(Int32 a, Int32? b) where Int32 : struct { }
+    public void F(object a, object b) { }
+    public void E<T>(System.Collections.Generic.IEnumerable<T?> s) where T : struct { }
+    public void E(object o) { }
+    public void N(IBox<int> b) { }
+    public void N(IBox<int?> b) { }
+    public void N(object o) { }
+}
+public class TW {
+#if !NEVER
+    public void T<String>(String? s) where String : struct { }
+#else
+    public void T<String>(String? s) where String : struct { }
+#endif
+    public void T<String>(String s) where String : struct { }
+}
+public class B {
+    public virtual void V<String>(String s) where String : struct { }
+    public virtual void V<String>(String? s) where String : struct { }
+}
+public class D : B {
+    public override void V<String>(String s) { }
+    public override void V<String>(String? s) { }
+}
+public class H<String> where String : struct {
+    public void K(String s) { }
+    public void K(String? s) { }
+}
+public class HU<String> {
+    public void K(String? s) { }
+    public void K(int? s) { }
+}
+public static class Ext {
+    public static void X(this string s) { }
+    public static void X(this object o) { }
+}
+public class Use {
+    public void Implicit() { int? x = 1; new C().M(x); }
+    public void Explicit() { int? x = 1; new C().M<int>(x); }
+    public void Plain() { int y = 1; new C().M(y); }
+    public void FirstParty() { int? x = 1; new C().W(x); }
+    public void Literal() { int y = 1; new C().F(y, 2); }
+    public void Nested() { new C().E(new System.Collections.Generic.List<int?>()); }
+    public void Lifted() { new C().N(new SB<int>()); }
+    public void Annotated() { new C().N(new GB<int>()); }
+    public void Twin() { int? x = 1; new TW().T(x); }
+    public void TwinPlain() { int y = 1; new TW().T(y); }
+    public void Override() { int? x = 1; new D().V(x); }
+    public void Enclosing() { int? x = 1; new H<int>().K(x); }
+    public void Unconstrained() { int y = 1; new HU<int>().K(y); }
+    public void Generic() { Caller<int>(1, 2); }
+    public void Caller<String>(String? w, String v) where String : struct { new C().M(w); new C().M(v); v.X(); }
+}
+"""
+
+
+class TestATypeParameterIsNoTypeOfItsName:
+    # Greptile review of PR 2814, round 24, and the oracle family it led
+    # to: a type parameter named like a framework or first-party type
+    # (`String`, `Int32`, `Widget`) is no such type anywhere, and a `?` on a
+    # type parameter is what its constraint makes it: `Nullable<T>` under
+    # `struct` (and, in an override, short of `class` or `default`), an
+    # annotation otherwise. Each source states what Roslyn runs (.NET 8).
+    def test_a_nullable_generic_overload_is_kept_and_inferred(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Greptile 4245656358: `M<String>(String?) where String : struct` is
+        # no twin of `M<String>(String)`, and an `int?` infers String := int.
+        calls = _resolved_calls(SHADOWED_PARAMETERS_CS, temp_repo, mock_ingestor)
+        assert calls["Implicit"] == {("Sh.C.M(String?)", _EXACT)}, calls
+        assert calls["Explicit"] == {("Sh.C.M(String?)", _EXACT)}, calls
+        assert calls["Plain"] == {("Sh.C.M(String)", _EXACT)}, calls
+        assert calls["FirstParty"] == {("Sh.C.W(Widget?)", _EXACT)}, calls
+        # A literal is never read against an open type parameter's name.
+        assert calls["Literal"] == {("Sh.C.F(Int32, Int32?)", _EXACT)}, calls
+
+    def test_inference_reaches_a_nullable_inside_a_framework_interface(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # `IEnumerable<T?>` from a `List<int?>` is T := int.
+        calls = _resolved_calls(SHADOWED_PARAMETERS_CS, temp_repo, mock_ingestor)
+        assert calls["Nested"] == {
+            ("Sh.C.E(System.Collections.Generic.IEnumerable<T?>)", _EXACT)
+        }, calls
+
+    def test_a_base_list_type_parameter_closes_as_its_constraint_says(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(SHADOWED_PARAMETERS_CS, temp_repo, mock_ingestor)
+        assert calls["Lifted"] == {("Sh.C.N(IBox<int?>)", _EXACT)}, calls
+        assert calls["Annotated"] == {("Sh.C.N(IBox<int>)", _EXACT)}, calls
+        assert calls["Enclosing"] == {("Sh.H.K(String?)", _EXACT)}, calls
+        # `HU<int>.K(String?)` is `K(int)`, no twin of `K(int?)`.
+        assert calls["Unconstrained"] == {("Sh.HU.K(String)", _EXACT)}, calls
+
+    def test_twins_overrides_and_qns_keep_a_lifting_mark(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        calls = _resolved_calls(SHADOWED_PARAMETERS_CS, temp_repo, mock_ingestor)
+        # The `#if` twins are one overload, either body a guess; the other
+        # overload is told apart from them.
+        assert calls["Twin"] == {
+            ("Sh.TW.T(String?)", _OVERLOAD),
+            ("Sh.TW.T(String?)@26", _OVERLOAD),
+        }, calls
+        assert calls["TwinPlain"] == {("Sh.TW.T(String)", _EXACT)}, calls
+        assert calls["Override"] == {("Sh.D.V(String?)", _EXACT)}, calls
+        overrides = {
+            (_leaf_pair(str(c.args[0][2])), _leaf_pair(str(c.args[2][2])))
+            for c in get_relationships(mock_ingestor, cs.RelationshipType.OVERRIDES)
+        }
+        assert ("D.V(String?)", "B.V(String?)") in overrides, overrides
+        assert ("D.V(String)", "B.V(String)") in overrides, overrides
+        assert ("D.V(String?)", "B.V(String)") not in overrides, overrides
+
+    def test_a_callers_type_parameter_binds_no_type_of_its_name(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Inside `Caller<String>`, `w` is a `Nullable<String>` and `v` a
+        # `String`: no `string`, so neither `M(string)` nor `X(this string)`
+        # is what runs. Each runs among those the call may bind.
+        calls = _resolved_calls(SHADOWED_PARAMETERS_CS, temp_repo, mock_ingestor)
+        caller = calls["Caller(String?, String)"]
+        targets = {callee for callee, _resolution in caller}
+        assert {"Sh.C.M(String?)", "Sh.C.M(String)", "Sh.Ext.X(object)"} <= targets
+        assert not any(resolution == _EXACT for _, resolution in caller), caller
+
+
+def test_an_incremental_run_reads_type_parameter_kinds_as_a_fresh_one(
+    temp_repo: Path,
+) -> None:
+    # A type's and a method's `where` clauses read back from an unchanged
+    # file give each `?` the kind a fresh index gives it.
+    lib, _, use = SHADOWED_PARAMETERS_CS.partition("public class Use {")
+    fresh, edited = _two_file_calls(
+        temp_repo, lib, f"#nullable enable\nnamespace Sh;\npublic class Use {{{use}"
+    )
+    assert {
+        ("Implicit", "C", "M(String?)"),
+        ("Lifted", "C", "N(IBox<int?>)"),
+        ("Annotated", "C", "N(IBox<int>)"),
+        ("Enclosing", "H", "K(String?)"),
+        ("Unconstrained", "HU", "K(String)"),
+        ("Override", "D", "V(String?)"),
     } <= fresh, fresh
     assert edited == fresh
 
@@ -3725,13 +3886,13 @@ class TestAVariantTypeArgumentBoundsItsParameter:
         calls = _calls(VARIANCE_CS, temp_repo, mock_ingestor)
         assert calls["Reference"] == {"Va.C.M(IBox<T>, IBox<T>)"}, calls
 
-    def test_a_list_passed_for_an_enumerable_keeps_the_generic(
+    def test_a_list_passed_for_an_enumerable_binds_the_generic(
         self, temp_repo: Path, mock_ingestor: MagicMock
     ) -> None:
-        # A framework class's interfaces are not known here, so nothing
-        # proves the generic inapplicable: it stays a candidate.
+        # A `List<X>` is an `IEnumerable<X>` (round 24), so T is fixed to
+        # Person, and the interface beats `object` (.NET 8 runs it).
         calls = _calls(VARIANCE_CS, temp_repo, mock_ingestor)
-        assert "Va.E.M(IEnumerable<T>, IEnumerable<T>)" in calls["Lists"], calls
+        assert calls["Lists"] == {"Va.E.M(IEnumerable<T>, IEnumerable<T>)"}, calls
 
     @pytest.mark.parametrize(
         ("caller", "expected"),

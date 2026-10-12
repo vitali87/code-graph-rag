@@ -26,7 +26,7 @@ CSHARP_EXPLICIT_IMPL_SEPARATOR = "#"
 CSHARP_SIGNATURE_TIGHT_CHARS = "<>,"
 # A simple name in a type, not one a dot qualifies: what a type parameter
 # looks like where a signature spells it (`T` in `Ctx<T>`, not in `N.T`).
-CSHARP_TYPE_IDENTIFIER_PATTERN = r"(?<![\w.@])[A-Za-z_]\w*"
+CSHARP_TYPE_IDENTIFIER_PATTERN = r"(?<![\w.@!])[A-Za-z_]\w*"
 # Brackets a type argument may contain, whose commas are not its own.
 CSHARP_NESTED_OPEN = "(["
 CSHARP_NESTED_CLOSE = ")]"
@@ -161,8 +161,29 @@ CSHARP_UNMANAGED_CONSTRAINT = "unmanaged"
 # members' signatures are compared, `!!0` for the first: no C# type is
 # spelled so (Greptile review of PR 2814).
 CSHARP_METHOD_TYPE_PARAMETER_MARK = "!!"
+# A caller's type parameter whose name a predefined or framework type also
+# bears (`String`, `Int32`), as an argument's type spells it: it names no
+# type (Greptile review of PR 2814).
+CSHARP_TYPE_PARAMETER_MARK = "!"
+# `where T : default`, which only an override or an explicit implementation
+# writes: a `T?` there annotates T (C# 9). Every type meets it.
+CSHARP_DEFAULT_CONSTRAINT = "default"
 CSHARP_KIND_CONSTRAINTS = frozenset(
-    {CSHARP_STRUCT_CONSTRAINT, CSHARP_CLASS_CONSTRAINT, CSHARP_UNMANAGED_CONSTRAINT}
+    {
+        CSHARP_STRUCT_CONSTRAINT,
+        CSHARP_CLASS_CONSTRAINT,
+        CSHARP_UNMANAGED_CONSTRAINT,
+        CSHARP_DEFAULT_CONSTRAINT,
+    }
+)
+# The kinds that make a `T?` `Nullable<T>`, and those that keep it an
+# annotation in an override or an explicit implementation, where C# 9 reads
+# an unconstrained one as `Nullable<T>`.
+CSHARP_LIFTING_CONSTRAINTS = frozenset(
+    {CSHARP_STRUCT_CONSTRAINT, CSHARP_UNMANAGED_CONSTRAINT}
+)
+CSHARP_ANNOTATING_CONSTRAINTS = frozenset(
+    {CSHARP_CLASS_CONSTRAINT, CSHARP_DEFAULT_CONSTRAINT}
 )
 # `where T : System.Enum` is met by an enum alone, and `System.ValueType`
 # (a type parameter fixed to it) by a value type alone.
@@ -785,6 +806,40 @@ CSHARP_FRAMEWORK_GENERICS: dict[tuple[str, int], tuple[str, bool, tuple[str, ...
     **{("Tuple", count): (_SYSTEM, True, ("",) * count) for count in range(1, 9)},
     **{("ValueTuple", count): (_SYSTEM, False, ("",) * count) for count in range(1, 9)},
 }
+# The generic collection interfaces of `CSHARP_FRAMEWORK_GENERICS` each of
+# its one-parameter collections implements over its element (`List<int?>`
+# is an `IEnumerable<int?>`), and an array implements over its own: what C#
+# converts it to and infers a type parameter through (`IEnumerable<T?>`
+# from `List<int?>` is T := int; Greptile review of PR 2814).
+_LIST_INTERFACES = (
+    "IList",
+    "ICollection",
+    "IEnumerable",
+    "IReadOnlyList",
+    "IReadOnlyCollection",
+)
+_SET_INTERFACES = (
+    "ISet",
+    "ICollection",
+    "IEnumerable",
+    "IReadOnlyCollection",
+    "IReadOnlySet",
+)
+CSHARP_FRAMEWORK_ELEMENT_INTERFACES: dict[str, tuple[str, ...]] = {
+    "List": _LIST_INTERFACES,
+    "HashSet": _SET_INTERFACES,
+    "SortedSet": _SET_INTERFACES,
+    "Queue": ("IEnumerable", "IReadOnlyCollection"),
+    "Stack": ("IEnumerable", "IReadOnlyCollection"),
+    "LinkedList": ("ICollection", "IEnumerable", "IReadOnlyCollection"),
+    "IList": ("ICollection", "IEnumerable"),
+    "ICollection": ("IEnumerable",),
+    "ISet": ("ICollection", "IEnumerable"),
+    "IReadOnlyList": ("IReadOnlyCollection", "IEnumerable"),
+    "IReadOnlyCollection": ("IEnumerable",),
+    "IReadOnlySet": ("IReadOnlyCollection", "IEnumerable"),
+}
+CSHARP_ARRAY_ELEMENT_INTERFACES = _LIST_INTERFACES
 # A framework collection's indexer: its namespace and the type argument its
 # element is. Only a spelling that names the framework's type reads so.
 _OBJECT_MODEL = "System.Collections.ObjectModel"

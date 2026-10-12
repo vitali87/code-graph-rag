@@ -1181,6 +1181,10 @@ class CSharpGenericShape(NamedTuple):
     value_type: bool = False
     base_types: tuple[str, ...] = ()
     indexers: tuple[str, ...] = ()
+    # (type parameter, type or kind it is constrained to), as a method's
+    # `where` clauses are (`CSharpCallShape.constraints`): what a `?` on one
+    # of its type parameters means follows from them.
+    constraints: tuple[tuple[str, str], ...] = ()
 
 
 class PendingTypeFact(NamedTuple):
@@ -1436,7 +1440,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.CLASS,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, generic_arity: int?, non_method_members: list[string]?, type_parameters: list[string]?, generic_bases: list[string]?, value_type: boolean?, base_types: list[string]?, indexer_types: list[string]?, field_types: list[string]?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, generic_arity: int?, non_method_members: list[string]?, type_parameters: list[string]?, type_constraints: list[string]?, generic_bases: list[string]?, value_type: boolean?, base_types: list[string]?, indexer_types: list[string]?, field_types: list[string]?}",
     ),
     NodeSchema(
         NodeLabel.FUNCTION,
@@ -1448,7 +1452,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.INTERFACE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, generic_arity: int?, type_parameters: list[string]?, type_parameter_variances: list[string]?, generic_bases: list[string]?, base_types: list[string]?, indexer_types: list[string]?, field_types: list[string]?}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, generic_arity: int?, type_parameters: list[string]?, type_constraints: list[string]?, type_parameter_variances: list[string]?, generic_bases: list[string]?, base_types: list[string]?, indexer_types: list[string]?, field_types: list[string]?}",
     ),
     NodeSchema(
         NodeLabel.ENUM,

@@ -96,8 +96,9 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "interface_fingerprint",
         }
     ),
-    # `type_parameters`, `generic_bases`, `base_types`, `indexer_types` and
-    # `field_types` on a C# type, its interface's `type_parameter_variances`,
+    # `type_parameters`, `type_constraints`, `generic_bases`, `base_types`,
+    # `indexer_types` and `field_types` on a C# type, its interface's
+    # `type_parameter_variances`,
     # a struct's `value_type`, and
     # `type_parameters`, `type_constraints`, `implicit_conversion` and
     # `parameter_modes` on a C# method (PR 2814 review), are what overload
@@ -129,6 +130,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "non_method_members",
             "path",
             "start_col",
+            "type_constraints",
             "type_parameters",
             "value_type",
         }
@@ -220,6 +222,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "start_col",
             "start_line",
             "type_parameter_variances",
+            "type_constraints",
             "type_parameters",
         }
     ),

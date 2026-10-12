@@ -64,7 +64,28 @@ def type_props(type_node: Node) -> PropertyDict:
         props[cs.KEY_BASE_TYPES] = list(shape.base_types)
     if shape.indexers:
         props[cs.KEY_INDEXER_TYPES] = list(shape.indexers)
+    if shape.constraints:
+        props[cs.KEY_TYPE_CONSTRAINTS] = _stored_constraints(shape.constraints)
     return props
+
+
+def _stored_constraints(constraints: tuple[tuple[str, str], ...]) -> list[str]:
+    # `where` clauses as a node stores them: `T:struct`, `T:Shape`.
+    return [
+        f"{name}{cs.CSHARP_CONSTRAINT_SEPARATOR}{bound}" for name, bound in constraints
+    ]
+
+
+def _read_constraints(row: ResultRow) -> tuple[tuple[str, str], ...]:
+    # The `where` clauses `_stored_constraints` stored.
+    return tuple(
+        (name, bound)
+        for name, _, bound in (
+            entry.partition(cs.CSHARP_CONSTRAINT_SEPARATOR)
+            for entry in _strings(row.get(cs.KEY_TYPE_CONSTRAINTS))
+        )
+        if name and bound
+    )
 
 
 def method_props(method_node: Node) -> PropertyDict:
@@ -75,10 +96,7 @@ def method_props(method_node: Node) -> PropertyDict:
     if shape.type_parameters:
         props[cs.KEY_TYPE_PARAMETERS] = list(shape.type_parameters)
     if shape.constraints:
-        props[cs.KEY_TYPE_CONSTRAINTS] = [
-            f"{name}{cs.CSHARP_CONSTRAINT_SEPARATOR}{bound}"
-            for name, bound in shape.constraints
-        ]
+        props[cs.KEY_TYPE_CONSTRAINTS] = _stored_constraints(shape.constraints)
     if conversion := implicit_conversion(method_node):
         props[cs.KEY_IMPLICIT_CONVERSION] = list(conversion)
     if shape.modes:
@@ -131,7 +149,13 @@ def type_shape(row: ResultRow) -> CSharpGenericShape | None:
         return None
     variances = tuple(_strings(row.get(cs.KEY_TYPE_PARAMETER_VARIANCES)))
     return CSharpGenericShape(
-        parameters, bases, variances, value_type, written, indexers
+        parameters,
+        bases,
+        variances,
+        value_type,
+        written,
+        indexers,
+        _read_constraints(row),
     )
 
 
@@ -144,14 +168,7 @@ def method_call_shape(row: ResultRow) -> CSharpCallShape | None:
         return None
     entries = _strings(declared)
     modifiers = _strings(row.get(cs.KEY_MODIFIERS))
-    constraints = tuple(
-        (name, bound)
-        for name, _, bound in (
-            entry.partition(cs.CSHARP_CONSTRAINT_SEPARATOR)
-            for entry in _strings(row.get(cs.KEY_TYPE_CONSTRAINTS))
-        )
-        if name and bound
-    )
+    constraints = _read_constraints(row)
     returns = row.get(cs.KEY_RETURN_TYPE)
     types = _written_types(row)
     return CSharpCallShape(

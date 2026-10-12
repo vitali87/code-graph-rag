@@ -45,6 +45,7 @@ from .overloads import (
     Scope,
     Scored,
     TypeKinds,
+    annotation_reader,
     arguments_match,
     best_candidates,
     bindings_for_base,
@@ -56,11 +57,14 @@ from .overloads import (
     fit,
     framework_generic,
     framework_reference,
+    framework_upcast,
     infer_into,
     is_tuple,
+    marked_parameters,
     mentioned_names,
     merged_inferences,
     parameter_types,
+    parameters_unannotated,
     predefined_converts,
     predefined_implements,
     predefined_keyword,
@@ -79,10 +83,13 @@ from .utils import (
     _normalize_type_name,
     annotate_type_ref,
     binds_local,
+    call_shape_lifts,
     declared_namespace,
     generic_arity_of_type_text,
     leaf_type_segment,
+    lifts_in_scope,
     local_binder,
+    nullable_lifts,
     signature_type_name,
     split_type_ref,
     strip_generic_arguments,
@@ -319,31 +326,45 @@ def _canonical_argument(
     if argument is None or argument.name is None:
         return argument
     arguments = (
-        tuple(canonical_type(a, scope) for a in argument.arguments)
+        tuple(_argument_type(a, scope) for a in argument.arguments)
         if argument.arguments is not None
         else None
     )
     bounds = dict(scope.bounds).get(argument.name) if not arguments else None
     return ArgumentType(
         argument.literal,
-        canonical_type(argument.name, scope, argument.arity),
+        _argument_type(argument.name, scope, argument.arity),
         argument.arity,
         arguments,
         bounds=None
         if bounds is None
         else tuple(
-            canonical_type(bound, scope)
+            _argument_type(bound, scope)
             for bound in bounds
             if bound not in cs.CSHARP_KIND_CONSTRAINTS
         ),
     )
 
 
-def _written_argument(raw: str) -> ArgumentType:
+def _argument_type(written: str, scope: Scope, arity: int | None = None) -> str:
+    # An argument's type resolved in the caller's file, less the `?` that
+    # only annotates a type parameter there, and with one whose name a
+    # predefined or framework type also bears marked as no such type: in a
+    # `Go<String>(String? s) where String : struct`, `s` is a
+    # `Nullable<String>`, not a `string` (Greptile review of PR 2814).
+    canonical = parameters_unannotated(canonical_type(written, scope, arity), scope)
+    return marked_parameters(canonical, scope.type_parameters)
+
+
+def _written_argument(
+    raw: str, lifts: Mapping[str, bool] | None = None
+) -> ArgumentType:
     # An argument typed by a type the source writes: its name, arity and
     # type arguments, canonically spelled, with the shape built on it after
     # its arguments (`Box<int>[]` is `Box[]` of int); a tuple as it is.
-    written = signature_type_name(raw)
+    # `lifts` are the type parameters in scope where it is written, a `?`
+    # on one kept as its constraint makes it `Nullable<T>`.
+    written = signature_type_name(raw, lifts)
     core, suffix = type_shape(written)
     if is_tuple(core):
         return ArgumentType(None, written, 0, ())
@@ -453,6 +474,17 @@ def _declared_bounds(declaration: Node) -> dict[str, tuple[str, ...]]:
     return {
         name: tuple(bound for of, bound in constraints if of == name) for name in names
     }
+
+
+def _predefined_at(written: str, node: Node) -> str | None:
+    # The predefined type a type written where `node` is names, none for a
+    # type parameter in scope there, whatever predefined type its name also
+    # names (`s` of a `Go<String>(String s)` is no string; Greptile review
+    # of PR 2814).
+    core = strip_generic_arguments(type_shape(written)[0])
+    if core in _type_parameters_at(node):
+        return None
+    return predefined_keyword(written)
 
 
 def _type_parameters_at(node: Node) -> frozenset[str]:
@@ -965,7 +997,7 @@ def _property_argument(declaration: Node, name: str) -> ArgumentType | None:
     if safe_decode_text(declaration.child_by_field_name(cs.FIELD_NAME)) != name:
         return None
     written = safe_decode_text(declaration.child_by_field_name(cs.FIELD_TYPE))
-    return _written_argument(written) if written else None
+    return _written_argument(written, lifts_in_scope(declaration)) if written else None
 
 
 def _enclosing_body(node: Node) -> Node | None:
@@ -2073,7 +2105,12 @@ class CSharpTypeInferenceEngine:
             # A local/param (any casing) whose DECLARED type resolves to
             # no registered type (`string[]`, reflection FieldInfo) is
             # external; its members cannot be attributed by name
-            # (`names.Contains(x)` bound Context.Contains).
+            # (`names.Contains(x)` bound Context.Contains). One of a type
+            # parameter that names no type to have members (`where T :
+            # struct`) has none but `object`'s, so a first-party extension
+            # may be what it calls.
+            if self._kind_only_parameter(local_var_types[head], unwrapped):
+                return False
             return not self._registered_type_declares(
                 local_var_types[head], method_name
             )
@@ -2093,6 +2130,17 @@ class CSharpTypeInferenceEngine:
         ):
             return False
         return True
+
+    @staticmethod
+    def _kind_only_parameter(type_name: str, node: Node) -> bool:
+        # Whether a type is a type parameter in scope at `node` whose `where`
+        # clauses name no type, only kinds (`struct`, `class`) or nothing.
+        bounds = _type_parameter_bounds_at(node).get(
+            split_type_ref(type_name)[0].removesuffix(cs.CHAR_QUESTION_MARK)
+        )
+        return bounds is not None and all(
+            bound in cs.CSHARP_KIND_CONSTRAINTS for bound in bounds
+        )
 
     def _is_untyped_local(self, bound: Node, local_var_types: dict[str, str]) -> bool:
         # Only an IMPLICIT binding: `foreach (Item it in ...)` declares a
@@ -2654,7 +2702,7 @@ class CSharpTypeInferenceEngine:
             return self._cast_keyword(value, depth, module_qn)
         if value.type == cs.TS_CSHARP_IDENTIFIER:
             written = self._written_receiver_type(value)
-            return predefined_keyword(written) if written else None
+            return _predefined_at(written, value) if written else None
         if value.type == cs.TS_CSHARP_PREFIX_UNARY_EXPRESSION:
             return self._unary_keyword(value, depth, module_qn)
         if value.type != cs.TS_BINARY_EXPRESSION or depth > _MAX_VALUE_DEPTH:
@@ -2803,7 +2851,7 @@ class CSharpTypeInferenceEngine:
         if left.type != cs.TS_CSHARP_IDENTIFIER:
             return None
         written = self._written_receiver_type(left) or ""
-        underlying = predefined_keyword(written.removesuffix(cs.CHAR_QUESTION_MARK))
+        underlying = _predefined_at(written.removesuffix(cs.CHAR_QUESTION_MARK), left)
         if not written.endswith(cs.CHAR_QUESTION_MARK) or underlying is None:
             return None
         return (
@@ -2939,7 +2987,7 @@ class CSharpTypeInferenceEngine:
         ):
             return self._local_argument(node, declared)
         written = typed or _spelled_type(node)
-        return _written_argument(written) if written else None
+        return _written_argument(written, lifts_in_scope(node)) if written else None
 
     def _operand_bound(
         self, written: str, node: Node, module_qn: str
@@ -3171,7 +3219,7 @@ class CSharpTypeInferenceEngine:
         if written.endswith(cs.CSHARP_ARRAY_SUFFIX):
             return written.removesuffix(cs.CSHARP_ARRAY_SUFFIX)
         # A string's indexer returns its chars.
-        if predefined_keyword(written.removesuffix(cs.CHAR_QUESTION_MARK)) == (
+        if _predefined_at(written.removesuffix(cs.CHAR_QUESTION_MARK), expr) == (
             cs.CSHARP_STRING_KEYWORD
         ):
             return cs.CSHARP_CHAR_KEYWORD
@@ -3580,9 +3628,13 @@ class CSharpTypeInferenceEngine:
         # True; or, that file not known, as recorded (`Box`1`) and False.
         # None for a method of no return type known.
         shape = self.csharp_call_shapes.get(method_qn)
-        written = signature_type_name(shape.returns) if shape and shape.returns else ""
+        written = (
+            signature_type_name(shape.returns, self._reading_lifts(method_qn))
+            if shape and shape.returns
+            else ""
+        )
         owner, _member = qn_markers.owner_and_member(method_qn)
-        scope = self.scope_of(owner, self._method_type_parameters(method_qn))
+        scope = self.member_scope(owner, method_qn)
         if scope is not None and written:
             return canonical_type(written, scope), True
         entry = self.csharp_method_return_types.get(method_qn)
@@ -3646,7 +3698,7 @@ class CSharpTypeInferenceEngine:
             return None
         canonical = found[0]
         owner, _member = qn_markers.owner_and_member(method_qn)
-        scope = self.scope_of(owner, self._method_type_parameters(method_qn))
+        scope = self.member_scope(owner, method_qn)
         names = (scope.type_parameters if scope else frozenset()) | (
             self._method_type_parameters(method_qn)
         )
@@ -3943,9 +3995,7 @@ class CSharpTypeInferenceEngine:
         # The first-party type an extension method's `this` parameter is,
         # closed as written and resolved where the method is declared, with
         # its qn; None when it is not one, or not read.
-        scope = self.scope_of(
-            _member_type(method_qn), self._method_type_parameters(method_qn)
-        )
+        scope = self.member_scope(_member_type(method_qn), method_qn)
         types = self._ranked_types(method_qn)
         if scope is None or not types:
             return None
@@ -3994,9 +4044,7 @@ class CSharpTypeInferenceEngine:
     def _extended_type(self, method_qn: str, written: str, arity: int) -> str | None:
         # The first-party type an extension method's `this` parameter names,
         # resolved where the method is declared; None when it names none.
-        scope = self.scope_of(
-            _member_type(method_qn), self._method_type_parameters(method_qn)
-        )
+        scope = self.member_scope(_member_type(method_qn), method_qn)
         if scope is None:
             return None
         return resolved_qn(canonical_type(written, scope, arity))
@@ -4644,15 +4692,19 @@ class CSharpTypeInferenceEngine:
         # review of PR 2814).
         # A nullable reference annotation is no part of a signature (`V(string?)`
         # overrides `V(string)`).
+        # A type parameter of its type the receiver leaves unbound is no
+        # type its name also names (`String` of a `G<String>`).
         reading = self._reading(method_qn, receiver)
+        read = self._declaration_reader(method_qn)
+        unbound = self._type_parameters_in_scope(_member_type(method_qn)) - (
+            reading.visible.keys() | reading.own
+        )
+        plain = [
+            unannotated(declared_type(p, reading.scope, reading.visible), read)[0]
+            for p in self._ranked_types(method_qn)
+        ]
         return by_position(
-            [
-                unannotated(
-                    declared_type(p, reading.scope, reading.visible),
-                    self._is_reference,
-                )[0]
-                for p in self._ranked_types(method_qn)
-            ],
+            [marked_parameters(p, unbound) for p in plain],
             self._declared_type_parameters(method_qn),
         )
 
@@ -4827,7 +4879,7 @@ class CSharpTypeInferenceEngine:
         declared = self._declared_type_parameters(method_qn)
         fixed = dict(zip(declared, spelled, strict=True)) if spelled else {}
         return _Reading(
-            self.scope_of(_member_type(method_qn), own),
+            self.member_scope(_member_type(method_qn), method_qn),
             {**unshadowed(bindings, own), **fixed},
             own,
             (open_names | own) - fixed.keys(),
@@ -4852,8 +4904,14 @@ class CSharpTypeInferenceEngine:
         if self._uninferable(parameters, reading):
             return _Judged([None] * len(arguments), {})
         found: list[Inferred] = []
+        lifts = self._reading_lifts(method_qn)
         fits = [
-            fit(parameter, argument, reading.unbound, self._recording_judge(found))
+            fit(
+                parameter,
+                argument,
+                reading.unbound,
+                self._recording_judge(found, lifts),
+            )
             for parameter, argument in zip(parameters, arguments, strict=True)
         ]
         if None in fits:
@@ -4876,7 +4934,9 @@ class CSharpTypeInferenceEngine:
         if breaks:
             return _Judged([None] * len(fits), {})
         if fixed:
-            fits = self._fits_once_fixed(parameters, arguments, fixed, reading.unbound)
+            fits = self._fits_once_fixed(
+                parameters, arguments, fixed, (reading.unbound, lifts)
+            )
         unfixed = (merged.keys() & reading.own) - fixed.keys()
         return _Judged(fits, fixed, breaks is False and not unfixed)
 
@@ -4914,16 +4974,27 @@ class CSharpTypeInferenceEngine:
             return -1
         return signed_preference(first, second) if forward is backward is False else 0
 
-    def _recording_judge(self, found: list[Inferred]) -> _ScopedJudge:
+    def _recording_judge(
+        self, found: list[Inferred], lifts: Mapping[str, bool]
+    ) -> _ScopedJudge:
         # A judge for one argument, whose matches add the bounds they
-        # inferred inside a type argument as that argument's entry.
+        # inferred inside a type argument as that argument's entry, reading
+        # a `?` on an open type parameter as its declaration makes it.
         inferred: Inferred = {}
         found.append(inferred)
         return _ScopedJudge(
-            partial(self._identical, inferred=inferred),
-            partial(self._converts, inferred=inferred),
+            partial(self._identical, inferred=inferred, lifts=lifts),
+            partial(self._converts, inferred=inferred, lifts=lifts),
             self._names_enum,
         )
+
+    def _reading_lifts(self, method_qn: str) -> dict[str, bool]:
+        # What a `?` on each type parameter in scope at `method_qn`'s
+        # declaration makes it, its own shadowing its type's.
+        return {
+            **self._type_lifts(_member_type(method_qn)),
+            **self.member_lifts(method_qn),
+        }
 
     def _fixed_types(
         self, merged: Inferred, own: frozenset[str]
@@ -4949,14 +5020,19 @@ class CSharpTypeInferenceEngine:
         parameters: Sequence[str],
         arguments: Sequence[ArgumentType | None],
         fixed: Mapping[str, str],
-        open_names: frozenset[str],
+        reading: tuple[frozenset[str], Mapping[str, bool]],
     ) -> list[Fit | None]:
         # How every argument binds its parameter with the fixed types in: a
         # conversion judged with a type parameter open (an operator to
         # `Box<string>` for `Box<T>`) may not hold once T is int, and C#
         # compares the conversions to these types, so `M<T>(T)` with T := int
         # ties `M(int)`, which then wins as the non-generic method.
-        judge = _ScopedJudge(self._identical, self._converts, self._names_enum)
+        open_names, lifts = reading
+        judge = _ScopedJudge(
+            partial(self._identical, lifts=lifts),
+            partial(self._converts, lifts=lifts),
+            self._names_enum,
+        )
         still_open = open_names - fixed.keys()
         return [
             fit(substitute(parameter, fixed), argument, still_open, judge)
@@ -5157,6 +5233,8 @@ class CSharpTypeInferenceEngine:
         # `class` takes a reference type alone; `struct` a value type that is
         # no nullable, `unmanaged` one whose every field is unmanaged too: a
         # predefined value type's and an enum's are.
+        if kind == cs.CSHARP_DEFAULT_CONSTRAINT:
+            return True
         reference = self._is_reference(given)
         if reference is None or kind == cs.CSHARP_CLASS_CONSTRAINT:
             return reference
@@ -5444,10 +5522,14 @@ class CSharpTypeInferenceEngine:
         # position.
         # A nullable reference annotation tells no two overloads apart
         # (`M(string?)` in one `#if` branch is `M(string)` in the other).
+        # A `?` on a type parameter is what its declaration makes it, never
+        # what it makes a type of its name (`M<String>(String?) where String
+        # : struct` is no `M<String>(String)`; Greptile review of PR 2814).
         shape = self.csharp_call_shapes.get(method_qn)
         if shape is None:
             return (), ()
-        types = [unannotated(t, self._is_reference)[0] for t in shape.types]
+        read = self._declaration_reader(method_qn)
+        types = [unannotated(t, read)[0] for t in shape.types]
         return shape.modes, tuple(by_position(types, shape.type_parameters))
 
     def _method_type_parameters(self, method_qn: str) -> frozenset[str]:
@@ -5492,7 +5574,7 @@ class CSharpTypeInferenceEngine:
             # The written type keeps its arguments: `new Ctx<Person>()` is
             # an identity for `Ctx<T>` with T := Person, not for `Ctx<Order>`.
             raw = safe_decode_text(value.child_by_field_name(cs.FIELD_TYPE))
-            return _written_argument(raw) if raw else None
+            return _written_argument(raw, lifts_in_scope(value)) if raw else None
         # A parameter or local carries the type it was declared with, type
         # arguments included (`Box<int> b`), so its closing is known too.
         # A `const` local passes its constant, so C#'s constant conversions
@@ -5530,7 +5612,7 @@ class CSharpTypeInferenceEngine:
         constant = self._local_constant(value)
         if constant is not None:
             return ArgumentType(constant.type, None, 0, None, constant.value)
-        return _written_argument(declared)
+        return _written_argument(declared, lifts_in_scope(value))
 
     def _member_argument(
         self,
@@ -5640,7 +5722,7 @@ class CSharpTypeInferenceEngine:
         if constant is not None:
             return ArgumentType(constant.type, None, 0, None, constant.value)
         written = self._declarator_written_type(decl, declarator)
-        return _written_argument(written) if written else None
+        return _written_argument(written, lifts_in_scope(decl)) if written else None
 
     def _local_constant(self, identifier: Node) -> _Constant | None:
         # The constant a `const` local an identifier names is, found as
@@ -5714,9 +5796,13 @@ class CSharpTypeInferenceEngine:
         parameter: str,
         open_names: Collection[str],
         inferred: Inferred | None = None,
+        lifts: Mapping[str, bool] | None = None,
     ) -> bool | None:
         return self._annotation_blind(
-            self._identical_as_written, (argument, parameter), open_names, inferred
+            self._identical_as_written,
+            (argument, parameter),
+            (open_names, lifts or {}),
+            inferred,
         )
 
     def _converts(
@@ -5725,9 +5811,13 @@ class CSharpTypeInferenceEngine:
         parameter: str,
         open_names: Collection[str],
         inferred: Inferred | None = None,
+        lifts: Mapping[str, bool] | None = None,
     ) -> bool | None:
         return self._annotation_blind(
-            self._converts_as_written, (argument, parameter), open_names, inferred
+            self._converts_as_written,
+            (argument, parameter),
+            (open_names, lifts or {}),
+            inferred,
         )
 
     def _annotation_blind(
@@ -5736,29 +5826,40 @@ class CSharpTypeInferenceEngine:
             [ArgumentType, str, Collection[str], Inferred | None], bool | None
         ],
         pair: tuple[ArgumentType, str],
-        open_names: Collection[str],
+        reading: tuple[Collection[str], Mapping[str, bool]],
         inferred: Inferred | None,
     ) -> bool | None:
         # `judged` of the argument and the parameter less their nullable
         # reference annotations, which no type's identity holds (Greptile
         # review of PR 2814). Where a `?` marks a type of no known kind, a
-        # `False` it alone may cause is not known.
-        (argument, parameter), certain = self._unannotated(pair, lenient=False)
+        # `False` it alone may cause is not known. A `?` on one of the
+        # candidate's open type parameters is what its declaration (`lifts`)
+        # makes it, never what it makes a type of its name.
+        open_names, lifts = reading
+        read = annotation_reader(open_names, lifts, self._is_reference)
+        (argument, parameter), certain = self._unannotated(pair, False, read)
         verdict = judged(argument, parameter, open_names, inferred)
         if verdict is not False or certain:
             return verdict
-        (argument, parameter), _ = self._unannotated(pair, lenient=True)
+        (argument, parameter), _ = self._unannotated(pair, True, read)
         lenient = judged(argument, parameter, open_names, None)
         return None if lenient is not False else False
 
     def _unannotated(
-        self, pair: tuple[ArgumentType, str], lenient: bool
+        self,
+        pair: tuple[ArgumentType, str],
+        lenient: bool,
+        read: Callable[[str], bool | None],
     ) -> tuple[tuple[ArgumentType, str], bool]:
         # An argument and a parameter without their reference annotations,
-        # and whether every `?` either holds was told apart.
+        # and whether every `?` either holds was told apart: the parameter's
+        # read by `read`.
         argument, parameter = pair
-        texts = [argument.name or "", *(argument.arguments or ()), parameter]
-        erased = [unannotated(text, self._is_reference, lenient) for text in texts]
+        texts = [argument.name or "", *(argument.arguments or ())]
+        erased = [
+            *(unannotated(text, self._is_reference, lenient) for text in texts),
+            unannotated(parameter, read, lenient),
+        ]
         name, *arguments, wanted = (text for text, _certain in erased)
         return (
             (
@@ -5855,6 +5956,11 @@ class CSharpTypeInferenceEngine:
         # Only a conversion up the hierarchy infers (into `inferred`): C#
         # infers no type parameter through an operator.
         if (origin := _predefined_origin(argument)) is not None:
+            # A type parameter still open is no type of its name (`String?`
+            # of a `where String : struct`): what converts to it is told
+            # once it is fixed.
+            if type_shape(parameter)[0] in open_names:
+                return None
             return self._from_predefined(origin, parameter)
         given_text = written_type(argument)
         if _takes_any_value(parameter) and "*" not in type_shape(given_text)[1]:
@@ -5863,6 +5969,9 @@ class CSharpTypeInferenceEngine:
             return True
         if argument.bounds is not None:
             return self._bound_converts(argument.bounds, parameter, open_names)
+        upcast = framework_upcast(given_text, parameter)
+        if upcast is not None:
+            return self._upcast_converts(upcast, parameter, open_names, inferred)
         varies = self._variance_converts(given_text, parameter, open_names)
         if varies is not None:
             return varies
@@ -5878,6 +5987,23 @@ class CSharpTypeInferenceEngine:
             (parameter, wanted_qn),
             (open_names, inferred),
         )
+
+    def _upcast_converts(
+        self,
+        given: str,
+        parameter: str,
+        open_names: Collection[str],
+        inferred: Inferred | None,
+    ) -> bool | None:
+        # A framework collection as the closing of the framework interface
+        # it implements (`framework_upcast`): inferred into as C# infers into
+        # an interface, or that closing converting as the interface varies.
+        if mentioned_names(parameter) & set(open_names):
+            kinds = TypeKinds(self._variances, self._is_reference)
+            return infer_into(given, parameter, open_names, inferred, kinds)
+        if same_type(given, parameter):
+            return True
+        return self._variance_converts(given, parameter, ())
 
     def _first_party_converts(
         self,
@@ -6194,12 +6320,17 @@ class CSharpTypeInferenceEngine:
     ) -> tuple[str, ...] | None:
         # A base list's type arguments with the deriving type's bound in.
         # A `?` on one of its type parameters is `Nullable<U>` under a
-        # `struct` constraint and an annotation otherwise, which the stored
-        # shape does not tell: bound to a type of no known reference kind,
-        # the closing is not known (None).
+        # `struct` constraint and an annotation otherwise (`declared_type`);
+        # where its constraints are not read, bound to a type of no known
+        # reference kind, the closing is not known (None).
+        known = dict(scope.lifts) if scope is not None else {}
         for argument in arguments:
             for name in _ANNOTATED_NAME.findall(argument):
-                if name in bindings and not self._is_reference(bindings[name]):
+                if (
+                    name in bindings
+                    and name not in known
+                    and not self._is_reference(bindings[name])
+                ):
                     return None
         return tuple(declared_type(a, scope, bindings) for a in arguments)
 
@@ -6536,19 +6667,69 @@ class CSharpTypeInferenceEngine:
         return None
 
     def scope_of(
-        self, type_qn: str, member_parameters: Collection[str] = ()
+        self,
+        type_qn: str,
+        member_parameters: Collection[str] = (),
+        member_lifts: Mapping[str, bool] | None = None,
     ) -> Scope | None:
         """Where a declaration in `type_qn` (a member declaring
         `member_parameters` itself, or the type's own base list) resolves the
         type names it writes: the type's file, with every type parameter in
-        scope there left as written (PR 2814 review). None when that file is
-        not recorded, which leaves its spellings unresolved."""
+        scope there left as written (PR 2814 review), and what a `?` on each
+        makes it (`nullable_lifts`), the member's own as `member_lifts` say.
+        None when that file is not recorded, which leaves its spellings
+        unresolved."""
         module_qn = self.csharp_class_owner_module.get(type_qn)
         if module_qn is None:
             return None
+        lifts = {
+            name: lifted
+            for name, lifted in self._type_lifts(type_qn).items()
+            if name not in member_parameters
+        }
+        lifts.update(member_lifts or {})
         return Scope(
             partial(self._resolve_in, module_qn),
             self._type_parameters_in_scope(type_qn) | frozenset(member_parameters),
+            self._is_reference,
+            (),
+            tuple(lifts.items()),
+        )
+
+    def member_scope(self, owner_qn: str, method_qn: str) -> Scope | None:
+        """`scope_of` the declaration of `method_qn`, a member of `owner_qn`."""
+        return self.scope_of(
+            owner_qn,
+            self._method_type_parameters(method_qn),
+            self.member_lifts(method_qn),
+        )
+
+    def member_lifts(self, method_qn: str) -> dict[str, bool]:
+        """What a `?` on each type parameter `method_qn` declares itself makes
+        it (`nullable_lifts`), as its call shape records them."""
+        return call_shape_lifts(self.csharp_call_shapes.get(method_qn), method_qn)
+
+    def _type_lifts(self, type_qn: str) -> dict[str, bool]:
+        # What a `?` on each type parameter of `type_qn` and of every type it
+        # is nested in makes it, the nearest of a name first.
+        lifts: dict[str, bool] = {}
+        current = type_qn
+        while self.function_registry.get(current) in _TYPE_DECLS:
+            if (shape := self.csharp_generic_shapes.get(current)) is not None:
+                kinds = nullable_lifts(shape.parameters, shape.constraints, False)
+                for name, lifted in kinds.items():
+                    lifts.setdefault(name, lifted)
+            current = current.rpartition(cs.SEPARATOR_DOT)[0]
+        return lifts
+
+    def _declaration_reader(self, method_qn: str) -> Callable[[str], bool | None]:
+        # What a `?` on a type `method_qn` declares means (`annotation_reader`),
+        # its own type parameters shadowing its type's.
+        owner = _member_type(method_qn)
+        return annotation_reader(
+            self._type_parameters_in_scope(owner)
+            | self._method_type_parameters(method_qn),
+            {**self._type_lifts(owner), **self.member_lifts(method_qn)},
             self._is_reference,
         )
 
@@ -6576,6 +6757,7 @@ class CSharpTypeInferenceEngine:
             in_scope | frozenset(bounds),
             self._is_reference,
             tuple(bounds.items()),
+            tuple(lifts_in_scope(call.node).items()),
         )
 
     def _scope_at(self, node: Node, module_qn: str) -> Scope:
@@ -6588,6 +6770,7 @@ class CSharpTypeInferenceEngine:
             frozenset(bounds),
             self._is_reference,
             tuple(bounds.items()),
+            tuple(lifts_in_scope(node).items()),
         )
 
     def _resolve_in(self, module_qn: str, name: str, arity: int) -> str | None:
