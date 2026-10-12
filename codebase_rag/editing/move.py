@@ -128,6 +128,9 @@ _PY_BUILTINS = frozenset(dir(builtins))
 # The one future feature still optional in Python 3, so the one whose
 # presence changes how a module runs: annotations stay unevaluated strings.
 _FUTURE_ANNOTATIONS = "annotations"
+# Builtins that compile code at runtime, inheriting the caller's future
+# features: an annotation in a string they run is postponed or not with it.
+_PY_DYNAMIC_CODE = frozenset({"exec", "eval", "compile"})
 _MODULE_SCOPE = "module"
 _SYMTABLE_FILENAME = "<moved>"
 _SYMTABLE_MODE = "exec"
@@ -513,14 +516,23 @@ def _star_provided(source: bytes, moved: str, name: str) -> tuple[list[str], lis
 
 
 def _has_annotations(source: bytes | str) -> bool:
-    """Whether Python `source` annotates anything; True when it won't parse,
-    since then the move cannot tell."""
+    """Whether Python `source` annotates anything, or runs code that may;
+    True when it won't parse, since then the move cannot tell.
+
+    `exec`, `eval` and `compile` inherit the calling module's future
+    features, so `exec("def g(x: Missing): pass")` relied on postponed
+    annotations with no annotation of its own in sight (bot review).
+    """
     try:
         tree = ast.parse(source)
     except (SyntaxError, ValueError):
         return True
     for node in ast.walk(tree):
-        if isinstance(node, ast.AnnAssign):
+        if (
+            isinstance(node, ast.AnnAssign)
+            or (isinstance(node, ast.Name) and node.id in _PY_DYNAMIC_CODE)
+            or (isinstance(node, ast.Attribute) and node.attr in _PY_DYNAMIC_CODE)
+        ):
             return True
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and (
             node.returns is not None
