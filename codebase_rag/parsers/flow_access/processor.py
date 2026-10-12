@@ -2011,34 +2011,9 @@ class FlowProcessor:
         args: list[tuple[str, Taint | None]],
         jc: _JsCtx,
     ) -> None:
-        callee_type, callee_qn = callee
         for via, taint in args:
-            if taint is None:
-                continue
-            if taint.origins:
-                self.ingestor.ensure_relationship_batch(
-                    jc.flow.caller_spec,
-                    cs.RelationshipType.FLOWS_TO,
-                    (callee_type, cs.KEY_QUALIFIED_NAME, callee_qn),
-                    properties={KEY_VIA: via, KEY_KIND: FlowKind.ARG.value},
-                )
-            elif taint.pending:
-                self._deferred_arg_edges.append(
-                    (taint.pending, jc.flow.caller_spec, callee_type, callee_qn, via)
-                )
-            # Forward parameter-taint (issue #1169), orthogonal to the arg edge:
-            # a concrete argument records a call site to compose against the
-            # callee's parameter-sink closure; an argument that IS one of this
-            # function's parameters records a transitive hand-off so a wrapper of
-            # a wrapper still resolves. The token ties a pass-through composition
-            # to this exact call so it is not shared across calls (issue #1168).
-            if taint.origins or taint.pending:
-                token = _passthrough_result_token(jc.flow.caller_qn, node)
-                self._param_call_sites.append((taint, callee_qn, via, token))
-            for pname in taint.params:
-                self._param_flow_edges.append(
-                    (jc.flow.caller_qn, pname, callee_qn, via)
-                )
+            if taint is not None:
+                self._flow_arg_into_callee(taint, via, callee, node, jc.flow)
 
     def _lean_handle_binding(
         self, rhs: Node | None, handles: _HandleMap, jc: _JsCtx
@@ -2740,36 +2715,7 @@ class FlowProcessor:
             return
         for via, taint in args:
             if taint is not None:
-                self._dart_arg_edge(taint, via, callee, selector, jc)
-
-    def _dart_arg_edge(
-        self,
-        taint: Taint,
-        via: str,
-        callee: tuple[str, str],
-        selector: Node,
-        jc: _JsCtx,
-    ) -> None:
-        # One tainted argument into a resolved callee: a concrete edge now, a
-        # deferred edge on a pending return, plus pass-through and parameter
-        # bookkeeping.
-        callee_type, callee_qn = callee
-        if taint.origins:
-            self.ingestor.ensure_relationship_batch(
-                jc.flow.caller_spec,
-                cs.RelationshipType.FLOWS_TO,
-                (callee_type, cs.KEY_QUALIFIED_NAME, callee_qn),
-                properties={KEY_VIA: via, KEY_KIND: FlowKind.ARG.value},
-            )
-        elif taint.pending:
-            self._deferred_arg_edges.append(
-                (taint.pending, jc.flow.caller_spec, callee_type, callee_qn, via)
-            )
-        if taint.origins or taint.pending:
-            token = _passthrough_result_token(jc.flow.caller_qn, selector)
-            self._param_call_sites.append((taint, callee_qn, via, token))
-        for pname in taint.params:
-            self._param_flow_edges.append((jc.flow.caller_qn, pname, callee_qn, via))
+                self._flow_arg_into_callee(taint, via, callee, selector, jc.flow)
 
     @staticmethod
     def _dart_arguments(selector: Node) -> Node | None:
@@ -4244,12 +4190,12 @@ class FlowProcessor:
             self._deferred_arg_edges.append(
                 (taint.pending, ctx.caller_spec, callee_type, callee_qn, via)
             )
-        # Forward parameter-taint (issue #1142), orthogonal to the arg edge: a
-        # concrete argument records a call site to compose against the callee's
-        # parameter-sink closure; an argument that IS one of this function's
-        # parameters records a transitive hand-off so a wrapper of a wrapper
-        # still resolves. The token ties a pass-through composition to this
-        # exact call so it is not shared across calls (issue #1168).
+        # Forward parameter-taint (issues #1142, #1169), orthogonal to the arg
+        # edge: a concrete argument records a call site to compose against the
+        # callee's parameter-sink closure; an argument that IS one of this
+        # function's parameters records a transitive hand-off so a wrapper of a
+        # wrapper still resolves. The token ties a pass-through composition to
+        # this exact call so it is not shared across calls (issue #1168).
         if taint.origins or taint.pending:
             token = _passthrough_result_token(ctx.caller_qn, node)
             self._param_call_sites.append((taint, callee_qn, via, token))
