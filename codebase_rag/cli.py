@@ -2938,8 +2938,10 @@ def _notice_single_project_endpoint_roots(show_progress: bool) -> None:
     epilog=ch.EXAMPLES_DEAD_CODE,
     rich_help_panel=ch.PANEL_GRAPH,
 )
+# Typer turns each parameter into one flag of the command, so the count is the
+# command's option list, not a call site to simplify (python:S107 accepted).
 def dead_code(
-    project: str | None = typer.Option(
+    project: str | None = typer.Option(  # NOSONAR
         None, "--project", "-p", help=ch.HELP_SCAN_PROJECT
     ),
     # The spelling before issue #2415, kept working for scripts.
