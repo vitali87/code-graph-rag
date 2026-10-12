@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import errno
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -30,7 +31,9 @@ from loguru import logger
 from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
+from codebase_rag import exceptions as ex
 from codebase_rag import logs as ls
+from codebase_rag import sync_lock
 from codebase_rag.checkout_state import state_dir
 from codebase_rag.cli import app
 from codebase_rag.config import settings
@@ -352,11 +355,158 @@ def test_a_killed_sync_leaves_no_stale_lock(
 ) -> None:
     # Negative: the kernel releases the lock however its holder dies.
     with _held_elsewhere(repo, "click") as holder:
-        holder.process.kill()
+        # The interpreter that holds the lock is killed, not `holder.process`:
+        # on Windows that is the venv launcher, whose job object ends the
+        # interpreter only after the launcher is gone, so the sync below could
+        # still meet a live holder. The launcher exits once its interpreter has.
+        os.kill(holder.pid, getattr(signal, "SIGKILL", signal.SIGTERM))
         holder.process.wait(timeout=10)
         _updater(repo, mock_ingestor).run()
 
     mock_ingestor.ensure_node_batch.assert_called()
+
+
+def _gone_pid() -> int:
+    """The pid of a process that has exited and been reaped."""
+    child = subprocess.Popen([sys.executable, "-c", ""])
+    child.wait(timeout=60)
+    return child.pid
+
+
+def _record(pid: int, project: str = "click") -> bytes:
+    # The holder's name as `_record_holder` writes it into the lock file.
+    return f"{pid}\n{project}\n".encode(cs.ENCODING_UTF8)
+
+
+@contextmanager
+def _lock_still_held(
+    repo: Path, record: bytes, refusals: int | None = None
+) -> Iterator[MagicMock]:
+    # The lock file names a holder (`record`), and the OS refuses the lock
+    # `refusals` more times (None: every time) before it grants it. That is
+    # Windows after a holder was killed: it releases a dead process's
+    # byte-range locks asynchronously, "depending upon available system
+    # resources" (LockFileEx), so the lock outlives its holder for a moment.
+    # Linux releases a flock(2) lock at once, so the delay is played here.
+    lock_path = _lock_path(repo)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.write_bytes(record)
+    real_try_lock = sync_lock._try_lock
+    refused: list[int] = []
+
+    def try_lock(fd: int) -> bool:
+        if refusals is None or len(refused) < refusals:
+            refused.append(fd)
+            return False
+        return real_try_lock(fd)
+
+    with patch("codebase_rag.sync_lock._try_lock", side_effect=try_lock) as attempts:
+        yield attempts
+
+
+class TestALockItsKilledHolderHasNotReleasedYet:
+    """A refused sync waits out the release of a lock whose holder is gone.
+
+    Windows CI: right after a test killed the holder, the next sync was
+    refused with "Another sync ... is running (pid 9192, ...)", naming a
+    process that no longer existed. A user who stops a sync and reruns it at
+    once met the same refusal. A holder that is still running is refused at
+    once, as before.
+    """
+
+    def test_the_sync_runs_once_the_lock_is_released(
+        self, repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        with _lock_still_held(repo, _record(_gone_pid()), refusals=3) as attempts:
+            _updater(repo, mock_ingestor).run()
+
+        assert attempts.call_count == 4, "fixture guard: the lock was never refused"
+        mock_ingestor.ensure_node_batch.assert_called()
+
+    def test_the_sync_holds_the_lock_it_waited_for(self, repo: Path) -> None:
+        # Taken for real once released, not run around: another process is
+        # refused while it is held.
+        with _lock_still_held(repo, _record(_gone_pid()), refusals=3):
+            with repo_sync_lock(repo, "click"):
+                during = _contend_elsewhere(repo)
+
+        assert during == "refused"
+        assert _contend_elsewhere(repo) == "acquired"
+
+    def test_a_running_holder_is_refused_at_once(
+        self, repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Negative: a live holder's lock is not retried, so the refusal comes
+        # after one attempt, well inside the grace a dead holder gets.
+        updater = _updater(repo, mock_ingestor)
+        with (
+            _held_elsewhere(repo, "click__a4231746") as holder,
+            patch(
+                "codebase_rag.sync_lock._try_lock", side_effect=sync_lock._try_lock
+            ) as attempts,
+        ):
+            started = time.monotonic()
+            with pytest.raises(SyncInProgressError) as refused:
+                updater.run()
+            elapsed = time.monotonic() - started
+
+        assert attempts.call_count == 1
+        assert elapsed < 1.0
+        assert str(holder.pid) in str(refused.value)
+        mock_ingestor.ensure_node_batch.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "record",
+        [b"", b"not-a-pid\nclick\n", b"4231746\n"],
+        ids=["empty", "not-a-pid", "no-project"],
+    )
+    def test_a_holder_it_cannot_read_is_refused_at_once(
+        self, repo: Path, mock_ingestor: MagicMock, record: bytes
+    ) -> None:
+        # Negative: with no pid to probe, nothing says the holder is gone.
+        updater = _updater(repo, mock_ingestor)
+        with _lock_still_held(repo, record) as attempts:
+            with pytest.raises(SyncInProgressError) as refused:
+                updater.run()
+
+        assert attempts.call_count == 1
+        assert ex.SYNC_HOLDER_UNKNOWN in str(refused.value)
+        mock_ingestor.ensure_node_batch.assert_not_called()
+
+    def test_a_lock_that_outlasts_the_grace_is_still_refused(
+        self, repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # Negative: the wait is bounded. A lock still held once the grace is
+        # over is refused, naming the holder the lock file names.
+        gone = _gone_pid()
+        updater = _updater(repo, mock_ingestor)
+        with (
+            patch.object(cs, "SYNC_LOCK_RELEASE_GRACE_SECONDS", 0.3),
+            _lock_still_held(repo, _record(gone)) as attempts,
+        ):
+            started = time.monotonic()
+            with pytest.raises(SyncInProgressError) as refused:
+                updater.run()
+            elapsed = time.monotonic() - started
+
+        assert attempts.call_count > 1
+        assert 0.3 <= elapsed < 5.0
+        assert f"pid {gone}," in str(refused.value)
+        mock_ingestor.ensure_node_batch.assert_not_called()
+
+    def test_a_waiting_lock_still_waits_past_the_grace(self, repo: Path) -> None:
+        # Negative for `wait=True`: it waits for any holder, gone or running,
+        # at its own pace; the grace bounds only a refusal.
+        with (
+            patch.object(cs, "SYNC_LOCK_RELEASE_GRACE_SECONDS", 0.1),
+            _lock_still_held(repo, _record(_gone_pid()), refusals=3) as attempts,
+        ):
+            started = time.monotonic()
+            with repo_sync_lock(repo, "watcher", wait=True):
+                elapsed = time.monotonic() - started
+
+        assert attempts.call_count == 4
+        assert elapsed >= 2 * cs.SYNC_LOCK_POLL_SECONDS
 
 
 def test_another_checkout_is_not_blocked(
