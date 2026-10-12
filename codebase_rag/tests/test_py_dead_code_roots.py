@@ -2,7 +2,9 @@
 # running `cgr dead-code` on this repository:
 # - a class declared under `if TYPE_CHECKING:` types `self` in the parser
 #   mixins (`_AstAnalyzerDeps`); every `self._x()` resolves to the real
-#   implementation, so 23 of the 25 default-mode candidates were its stubs.
+#   implementation, so 23 of the 25 default-mode candidates were its stubs;
+# - a typing.Protocol is named only in annotations, which the walk does not
+#   follow, so with --classes every protocol was reported unreachable.
 # Each test indexes a small project end to end and reads the dead set from
 # the same node properties the `CYPHER_DEAD_CODE_NODES` fetch returns.
 from __future__ import annotations
@@ -161,3 +163,88 @@ def test_the_dead_code_fetch_returns_the_checker_only_mark() -> None:
     # `_node_props` reads the mark off the fetched row; a query that does not
     # return it would make the rule a no-op against Memgraph.
     assert f"AS {cs.KEY_TYPE_CHECKING_ONLY}" in cq.CYPHER_DEAD_CODE_NODES
+
+
+# --- 2. A typing.Protocol is a declaration with its members -----------------
+
+# Every spelling of the base the inheritance pass resolves to typing's or
+# typing_extensions' Protocol, generic ones included. `Implementation` names
+# a protocol without relisting Protocol, which makes it an ordinary class.
+_PROTOCOLS = """from __future__ import annotations
+
+import typing
+import typing_extensions
+from typing import Protocol, TypeVar
+from typing_extensions import Protocol as ExtProtocol
+
+T = TypeVar("T")
+
+
+class Plain(Protocol):
+    def _plain(self) -> int: ...
+
+
+class Generic(Protocol[T]):
+    def _generic(self) -> T: ...
+
+
+class Dotted(typing.Protocol):
+    def _dotted(self) -> int: ...
+
+
+class DottedGeneric(typing.Protocol[T]):
+    def _dotted_generic(self) -> T: ...
+
+
+class Extensions(typing_extensions.Protocol):
+    def _extensions(self) -> int: ...
+
+
+class Aliased(ExtProtocol):
+    def _aliased(self) -> int: ...
+
+
+class Extended(Plain, Protocol):
+    def _extended(self) -> int: ...
+
+
+class _Private(Protocol):
+    def _private(self) -> int: ...
+
+
+class Implementation(Plain):
+    def _plain(self) -> int:
+        return 1
+
+    def _unused(self) -> int:
+        return 0
+"""
+
+_PROTOCOL_MEMBERS = {
+    "Plain": "_plain",
+    "Generic": "_generic",
+    "Dotted": "_dotted",
+    "DottedGeneric": "_dotted_generic",
+    "Extensions": "_extensions",
+    "Aliased": "_aliased",
+    "Extended": "_extended",
+    "_Private": "_private",
+}
+
+_PROTOS = f"{_PROJECT}.pkg.protos"
+
+
+@pytest.mark.parametrize("public_roots", [True, False])
+def test_protocol_classes_and_their_stubs_are_not_dead(
+    tmp_path: Path, public_roots: bool
+) -> None:
+    ingestor = _index(tmp_path, {"pkg/__init__.py": "", "pkg/protos.py": _PROTOCOLS})
+    declared = {f"{_PROTOS}.{cls}" for cls in _PROTOCOL_MEMBERS} | {
+        f"{_PROTOS}.{cls}.{member}" for cls, member in _PROTOCOL_MEMBERS.items()
+    }
+    _defined(ingestor, *declared, f"{_PROTOS}.Implementation._unused")
+    dead = _dead(ingestor, public_roots)
+    assert not declared & dead, sorted(declared & dead)
+    assert f"{_PROTOS}.Implementation._unused" in dead
+    if not public_roots:
+        assert f"{_PROTOS}.Implementation" in dead

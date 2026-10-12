@@ -230,8 +230,9 @@ CSHARP_NULLABLE_MARKER = "?"
 
 # Base classes that mark a class as a structural interface: its method stubs
 # are never call targets themselves (callers resolve to the implementations),
-# so dead-code analysis roots every method the class defines.
-# ponytail: direct bases only; transitive Protocol subclassing is not chased.
+# so dead-code analysis roots the class and every method it defines. Direct
+# bases only, as typing reads them: a subclass of a protocol is one only when
+# it lists Protocol again, and otherwise it is an implementation.
 PROTOCOL_BASE_QNS: tuple[str, ...] = ("typing.Protocol", "typing_extensions.Protocol")
 
 # What marks a repo-relative path as test code (path_filters.matches_test_path).

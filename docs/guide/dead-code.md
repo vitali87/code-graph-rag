@@ -121,10 +121,11 @@ Without public roots, the roots are:
 - **Runtime hooks**: dunder and lifecycle methods, and the overrides a
   runtime calls through an external base (an external Rust trait's impl, a
   Dart `@override`, a Python standard-library base class).
-- **Type-checker declarations**: the members of a Python `typing.Protocol`,
-  and a class declared under `if TYPE_CHECKING:` with its members. Their
-  stubs type a receiver, such as `self` in a mixin, whose calls resolve to
-  the implementation, so nothing ever calls the stub itself.
+- **Type-checker declarations**: a Python `typing.Protocol` and a class
+  declared under `if TYPE_CHECKING:`, with their members. Their stubs type a
+  receiver, such as `self` in a mixin, whose calls resolve to the
+  implementation, so nothing ever calls the stub itself, and the class is
+  named only in annotations.
 - **Every `--entry-point`.**
 
 Symbols in structural-tier languages stay roots in both modes, since they have

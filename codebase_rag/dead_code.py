@@ -937,18 +937,18 @@ def _scan_structural_rels(
 def _declaration_roots(
     nodes: dict[_NodeId, PropertyDict], structural: _StructuralRels
 ) -> set[str]:
-    """What the type checker reads as a declaration: the members of a
-    typing.Protocol, and a class declared under `if TYPE_CHECKING:` with its
-    members. A stub there types a receiver (`self` in a mixin) whose calls
-    resolve to the implementation, so no edge ever lands on it; like a `.pyi`
-    definition it is a root, never dead code on its own."""
-    checker_only = {
+    """What the type checker reads as a declaration: a typing.Protocol and a
+    class declared under `if TYPE_CHECKING:`, with their members. A stub
+    there types a receiver (`self` in a mixin) whose calls resolve to the
+    implementation, and the class itself is named only in annotations, which
+    the walk does not follow; like a `.pyi` definition each is a root, never
+    dead code on its own."""
+    declarations = structural.protocol_classes | {
         str(uid)
         for (label, uid), props in nodes.items()
         if label == _CLASS and props.get(cs.KEY_TYPE_CHECKING_ONLY) is True
     }
-    declarations = structural.protocol_classes | checker_only
-    return checker_only | {m for c, m in structural.class_methods if c in declarations}
+    return declarations | {m for c, m in structural.class_methods if c in declarations}
 
 
 def _module_roots(
