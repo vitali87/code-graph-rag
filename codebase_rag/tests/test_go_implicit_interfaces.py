@@ -4803,3 +4803,227 @@ def test_a_build_line_too_deep_to_read_stops_no_index(
     assert not any(
         edge[1] == "IMPLEMENTS" and edge[2] == "proj.p.j.J" for edge in edges
     )
+
+
+# --- a build variant is the same package's, and apart (Greptile, PR #3360) ----
+
+VARIANT_NEIGHBOURS = {
+    "p/h_linux.go": "package p\n\nfunc Helper() {}\n",
+    "p/h_windows.go": "package p\n\nfunc Helper() {}\n",
+    "p/c.go": "package p\n\nfunc Run() { Helper() }\n",
+    # Same name, same directory, never the same declaration.
+    "p/helper.py": "def Helper():\n    return 1\n\n\ndef use():\n    return Helper()\n",
+    "p/helper.js": "function Helper() {\n  return 1;\n}\n\nHelper();\n",
+    "p/ext_test.go": "package p_test\n\nfunc Helper() {}\n\nfunc use() { Helper() }\n",
+    "r/r.go": "package r\n\nfunc Helper() {}\n",
+}
+
+
+@pytest.mark.parametrize("opt_in", [False, True])
+def test_a_rename_reaches_only_the_same_packages_other_builds(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    opt_in: bool,
+) -> None:
+    # Every same-named Function in the directory counted as a build variant,
+    # proven: the Python and JavaScript `Helper`, and `p_test`'s, were
+    # rewritten unasked, and the Python module lost the name its API
+    # exported.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    root = _variant_repo(temp_repo / "proj", VARIANT_NEIGHBOURS)
+    _go_checks_on(root)
+    graph = _rename_index(root, mock_ingestor)
+    query, target = _query(graph), "proj.p.h_linux.Helper"
+    if opt_in:
+        report = rename(
+            root, query, graph.project, target, "Assist", allow_heuristic=True
+        )
+        assert report.applied, report.message
+        for rel in ("p/h_linux.go", "p/h_windows.go"):
+            assert "func Assist()" in (root / rel).read_text(encoding="utf-8"), rel
+        assert "Assist()" in (root / "p" / "c.go").read_text(encoding="utf-8")
+        _go_checks_on(root)
+    else:
+        # c.go reaches each build's Helper, a guess the caller opts into.
+        with pytest.raises(RenameRefused):
+            rename(root, query, graph.project, target, "Assist")
+    for rel in ("p/helper.py", "p/helper.js", "p/ext_test.go", "r/r.go"):
+        assert (root / rel).read_text(encoding="utf-8") == VARIANT_NEIGHBOURS[rel], rel
+
+
+def test_two_declarations_one_build_compiles_are_no_rename_variants(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `s/a.go` and `s/b_linux.go` both build on Linux: a redeclaration, not
+    # one name each build declares, so the other is left alone.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    files = {
+        "s/a.go": "package s\n\nfunc Helper() {}\n",
+        "s/b_linux.go": "package s\n\nfunc Helper() {}\n",
+    }
+    root = _variant_repo(temp_repo / "proj", files)
+    graph = _rename_index(root, mock_ingestor)
+    report = rename(
+        root,
+        _query(graph),
+        graph.project,
+        "proj.s.a.Helper",
+        "Assist",
+        allow_heuristic=True,
+    )
+    assert report.applied, report.message
+    assert (root / "s" / "b_linux.go").read_text(encoding="utf-8") == files[
+        "s/b_linux.go"
+    ]
+
+
+PROBE_FILES = {
+    "p/p.go": "package p\n",
+    "p/probe_linux_test.go": "package p\n\nfunc Probe() {}\n",
+    "p/probe_windows_test.go": "package p\n\nfunc Probe() {}\n",
+    "p/use_test.go": "package p\n\nfunc use() { Probe() }\n",
+    # `p_test`: same directory, a `_test.go` file, the other build, another
+    # package.
+    "p/ext_windows_test.go": "package p_test\n\nfunc Probe() {}\n",
+}
+
+
+def test_a_tests_own_build_variant_is_renamed_and_the_external_tests_is_not(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Any same-named Function of a `_test.go` file in the directory counted
+    # as a variant of `p`'s own test's: `p_test`'s Probe was renamed too.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    root = _variant_repo(temp_repo / "proj", PROBE_FILES)
+    _go_checks_on(root)
+    graph = _rename_index(root, mock_ingestor)
+    report = rename(
+        root,
+        _query(graph),
+        graph.project,
+        "proj.p.probe_linux_test.Probe",
+        "Assist",
+        allow_heuristic=True,
+    )
+    assert report.applied, report.message
+    for rel in ("p/probe_linux_test.go", "p/probe_windows_test.go", "p/use_test.go"):
+        assert "Assist()" in (root / rel).read_text(encoding="utf-8"), rel
+    assert (root / "p" / "ext_windows_test.go").read_text(
+        encoding="utf-8"
+    ) == PROBE_FILES["p/ext_windows_test.go"]
+    _go_checks_on(root)
+
+
+# --- past the alternatives cap the method set is unknown (Greptile, PR #3360) -
+
+
+def _tagged_embeds(count: int) -> dict[str, str]:
+    # E1..En each ask for A<k>() under tag t<k> and B<k>() without it: J has
+    # 2**n method sets, and the build without tags asks for every B<k>.
+    files: dict[str, str] = {}
+    for index in range(1, count + 1):
+        for header, method in ((f"t{index}", "A"), (f"!t{index}", "B")):
+            name = "a" if method == "A" else "b"
+            files[f"p/e{index}{name}.go"] = (
+                f"//go:build {header}\n\npackage p\n\n"
+                f"type E{index} interface {{\n\t{method}{index}()\n}}\n"
+            )
+    embeds = "".join(f"\tE{index}\n" for index in range(1, count + 1))
+    files["p/j.go"] = f"package p\n\ntype J interface {{\n{embeds}\tN()\n}}\n"
+    methods = "".join(f"func (T) B{index}() {{}}\n" for index in range(1, count + 1))
+    files["p/t.go"] = f"package p\n\ntype T struct{{}}\n\n{methods}func (T) N() {{}}\n"
+    files["p/u.go"] = "package p\n\ntype U struct{}\n\nfunc (U) N() {}\n"
+    files["p/run.go"] = "package p\n\nfunc Run(j J) { j.N() }\n"
+    return files
+
+
+@pytest.mark.parametrize("count", [6, 7])
+def test_an_interface_past_the_alternatives_cap_links_nothing(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    count: int,
+) -> None:
+    # Past 64 method sets J fell back to the methods every set shares, {N}:
+    # U, with N alone, got IMPLEMENTS, OVERRIDES and dispatch, and a guessed
+    # rename of U.N rewrote J's N. Past the cap the set is unknown now; at
+    # 64 (six embeds) it still resolves, and T, a J in the build without
+    # tags, is linked while U is not.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    files = _tagged_embeds(count)
+    root = _variant_repo(temp_repo / "proj", files)
+    _go_checks_on(root)
+    graph = _rename_index(root, mock_ingestor)
+    implements = _labels(mock_ingestor, cs.RelationshipType.IMPLEMENTS)
+    overrides = _labels(mock_ingestor, cs.RelationshipType.OVERRIDES)
+    calls = _calls_from(mock_ingestor, "proj.p.run.Run")
+    assert ("proj.p.u.U", "proj.p.j.J") not in implements
+    assert ("proj.p.u.U.N", "proj.p.j.J.N") not in overrides
+    assert "proj.p.u.U.N" not in calls
+    linked = count == 6
+    assert (("proj.p.t.T", "proj.p.j.J") in implements) is linked
+    assert ("proj.p.t.T.N" in calls) is linked
+
+    report = rename(
+        root, _query(graph), graph.project, "proj.p.u.U.N", "M", allow_heuristic=True
+    )
+    assert report.applied, report.message
+    assert (root / "p" / "j.go").read_text(encoding="utf-8") == files["p/j.go"]
+    _go_checks_on(root)
+
+
+@pytest.mark.parametrize("count", [6, 7])
+def test_a_pair_go_types_proves_on_an_interface_of_many_method_sets_is_a_guess(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    count: int,
+) -> None:
+    # go/types proves T a J in the one build it reads, the one without tags,
+    # and J asks for other methods in every other build. Past the cap the
+    # proven pair stayed the compiler's word for every build, exact, and so
+    # did T.N's OVERRIDES and Run's dispatch to it. At the cap the names
+    # tell where it holds; past it nothing is known: a guess either way.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
+    root = _variant_repo(temp_repo / "proj", _tagged_embeds(count))
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="go")
+    implements = _labels(mock_ingestor, cs.RelationshipType.IMPLEMENTS)
+    overrides = _labels(mock_ingestor, cs.RelationshipType.OVERRIDES)
+    calls = _calls_from(mock_ingestor, "proj.p.run.Run")
+    heuristic = cs.EdgeResolution.HEURISTIC
+    assert implements[("proj.p.t.T", "proj.p.j.J")] == heuristic
+    assert overrides[("proj.p.t.T.N", "proj.p.j.J.N")] == heuristic
+    assert calls["proj.p.t.T.N"] == heuristic
+    assert ("proj.p.u.U", "proj.p.j.J") not in implements
+    assert "proj.p.u.U.N" not in calls
+
+
+def test_a_pair_resting_on_the_build_go_types_read_survives_many_tags(
+    temp_repo: Path, mock_ingestor: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # On Windows J embeds an I asking for `M() string`, which T's `M() int`
+    # is not, yet go/types proved T a J: where the pair holds rests on the
+    # build go/types read, which rules out the tag of each `!t<k>` file it
+    # type-checked. Twelve such tags were more than a decision enumerates,
+    # so that was unknown and Run's dispatch to T.N was dropped. A tag only
+    # ever ruled out is unset in the one build that matters, and is not
+    # enumerated.
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
+    files = {
+        "p/i.go": "//go:build !windows\n\npackage p\n\ntype I interface{ M() int }\n",
+        "p/i_windows.go": "package p\n\ntype I interface{ M() string }\n",
+        "p/t.go": (
+            "package p\n\ntype T struct{}\n\nfunc (T) M() int { return 0 }\n\n"
+            "func (T) N() {}\n"
+        ),
+        "p/j.go": "package p\n\ntype J interface {\n\tI\n\tN()\n}\n",
+        "p/run.go": "package p\n\nfunc Run(j J) { j.N() }\n",
+        **{f"p/y{k}.go": f"//go:build !t{k}\n\npackage p\n" for k in range(12)},
+    }
+    root = _variant_repo(temp_repo / "proj", files)
+    create_and_run_updater(root, mock_ingestor, skip_if_missing="go")
+    assert ("proj.p.t.T", "proj.p.j.J") in _labels(
+        mock_ingestor, cs.RelationshipType.IMPLEMENTS
+    )
+    assert "proj.p.t.T.N" in _calls_from(mock_ingestor, "proj.p.run.Run")

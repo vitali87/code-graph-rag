@@ -7654,7 +7654,10 @@ class CallProcessor:
             self._resolver.go_package_sibling_targets(callee_qn)
         ):
             for variant in self._resolver.function_registry.variants(sibling_qn):
-                # Exact only where every build compiling the caller holds it.
+                # None in a file no build compiles with the caller; exact only
+                # where every build compiling the caller holds it.
+                if self._resolver.go_apart_from_caller(ctx.module_qn, variant):
+                    continue
                 self._resolution = (
                     call_resolution
                     if self._resolver.go_reaches_everywhere(ctx.module_qn, (variant,))

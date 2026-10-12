@@ -3,15 +3,23 @@
 Generates small multi-file Go packages whose interfaces, types and methods
 are declared per build (file-name suffixes and `//go:build` lines), with
 local and imported embeds and callers in build-specific and common files.
-The real go/types, run once per GOOS, is the ground truth for what
-implements what and what each call reaches in each build; cgr's graph is
-then checked against it:
+The real go/types, run once per build (each GOOS, and Linux with every tag
+the cases use), is the ground truth for what implements what and what each
+call reaches in each build; cgr's graph is then checked against it:
 
 - no IMPLEMENTS or OVERRIDES edge that no build supports;
 - no exact (unlabelled, `exact` or `overload`) edge that fails in a build
   holding both its ends (for a call: a build compiling the caller);
-- nothing a build proves missing (a heuristic edge is fine);
-- a rename keeps `go build` and `go vet` passing on every GOOS that passed.
+- nothing a build proves missing (a heuristic edge is fine), except for an
+  interface past cgr's cap on method-set alternatives (`Wide<n>`, n > 6),
+  whose method set is unknown by design: those are counted apart;
+- a rename keeps `go build` and `go vet` passing on every build that
+  passed, and leaves byte-identical the same-named Python, JavaScript,
+  external test package (`p_test`) and sibling package files it places
+  beside the target.
+
+Some cases add an interface embedding n tagged interfaces (`Wide<n>`, 2**n
+method sets); a fourth go/types build sets every such tag.
 
 Run: `python -m evals.go_build_variants --cases 400 --seed 7`.
 """
@@ -21,6 +29,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import re
 import shutil
 import subprocess
 import tempfile
@@ -46,6 +55,11 @@ _ALL = frozenset(GOOS)
 # cgr's modes: names only, and the go/types helper reading the host's build
 # (Linux here), Windows' and Darwin's.
 FRONTENDS = ("treesitter", "gotypes", "gotypes-windows", "gotypes-darwin")
+# cgr's cap on an interface's method-set alternatives: past it the set is
+# unknown and links nothing.
+_ALTERNATIVES_CAP = 64
+_WIDE_TAG = re.compile(r"\bc\d{3}w\d+\b")
+_WIDE_NAME = re.compile(r"(?:Wide|CallWide)(\d+)")
 _NOT_HEURISTIC = {None, "None", cs.EdgeResolution.EXACT, cs.EdgeResolution.OVERLOAD}
 
 
@@ -115,7 +129,7 @@ def _method(type_name: str, name: str, result: str, case: int) -> str:
     )
 
 
-def generate_case(rng: random.Random, case: int) -> dict[str, str]:
+def generate_case(rng: random.Random, case: int, wide: float = 0.0) -> dict[str, str]:
     """One case's files, by repo-relative path: package `p` declaring I (and
     maybe K) per build, J embedding them (in `p`, or in `q` through the
     import), types implementing some of them in some builds, and callers."""
@@ -144,6 +158,41 @@ def generate_case(rng: random.Random, case: int) -> dict[str, str]:
     for index in range(1, rng.randint(2, 4) + 1):
         files.update(_type_files(rng, root, pkg, index, case))
     files.update(_caller_files(rng, root, pkg, interfaces, case))
+    if wide and rng.random() < wide:
+        files.update(_wide_files(root, case, rng.choice((4, 5, 6, 7, 8))))
+    return files
+
+
+def _wide_files(root: str, case: int, count: int) -> dict[str, str]:
+    """`Wide<count>` embeds W1..W<count>, each asking for WA<k> under its own
+    tag and WB<k> without it: 2**count method sets. TW is one in the build
+    without tags, AW in the build with every tag, UW, with WN alone, in
+    none."""
+    files: dict[str, str] = {}
+    for index in range(1, count + 1):
+        tag = f"c{case:03d}w{index}"
+        for header, method in ((tag, "WA"), (f"!{tag}", "WB")):
+            files[f"{root}/p/w{index}{method[1].lower()}.go"] = (
+                f"//go:build {header}\n\npackage p\n\n"
+                f"type W{index} interface {{\n\t{method}{index}_{case}()\n}}\n"
+            )
+    embeds = "".join(f"\tW{index}\n" for index in range(1, count + 1))
+    files[f"{root}/p/wide.go"] = (
+        f"package p\n\ntype Wide{count} interface {{\n{embeds}\tWN_{case}()\n}}\n"
+    )
+    for name, prefix in (("TW", "WB"), ("AW", "WA"), ("UW", "")):
+        methods = "".join(
+            f"func ({name}) {prefix}{index}_{case}() {{}}\n"
+            for index in range(1, count + 1)
+            if prefix
+        )
+        files[f"{root}/p/{name.lower()}.go"] = (
+            f"package p\n\ntype {name} struct{{}}\n\n{methods}"
+            f"func ({name}) WN_{case}() {{}}\n"
+        )
+    files[f"{root}/p/callwide.go"] = (
+        f"package p\n\nfunc CallWide{count}(w Wide{count}) {{\n\tw.WN_{case}()\n}}\n"
+    )
     return files
 
 
@@ -226,9 +275,11 @@ def _caller_files(
     return files
 
 
-def write_repo(root: Path, cases: int, seed: int) -> dict[int, dict[str, str]]:
+def write_repo(
+    root: Path, cases: int, seed: int, wide: float = 0.0
+) -> dict[int, dict[str, str]]:
     rng = random.Random(seed)  # noqa: S311 - a reproducible generator, not a secret
-    generated = {case: generate_case(rng, case) for case in range(cases)}
+    generated = {case: generate_case(rng, case, wide) for case in range(cases)}
     root.mkdir(parents=True, exist_ok=True)
     (root / "go.mod").write_text(f"module {PROJECT}\n\ngo 1.22\n", encoding="utf-8")
     for files in generated.values():
@@ -242,8 +293,30 @@ def write_repo(root: Path, cases: int, seed: int) -> dict[int, dict[str, str]]:
 # --- ground truth ------------------------------------------------------------
 
 
+class Build(NamedTuple):
+    """One build the ground truth reads: a GOOS and the tags it sets."""
+
+    name: str
+    goos: str
+    tags: str = ""
+
+
+def builds_for(generated: dict[int, dict[str, str]]) -> tuple[Build, ...]:
+    # Each GOOS without tags, and Linux with every tag a case uses.
+    tags = sorted(
+        {
+            tag
+            for files in generated.values()
+            for text in files.values()
+            for tag in _WIDE_TAG.findall(text)
+        }
+    )
+    base = tuple(Build(goos, goos) for goos in GOOS)
+    return base + ((Build("linux-tags", "linux", ",".join(tags)),) if tags else ())
+
+
 class BuildFacts(NamedTuple):
-    """What go/types proved for one GOOS, by (file, line) of declarations."""
+    """What go/types proved for one build, by (file, line) of declarations."""
 
     checked: frozenset[str]
     implements: set[tuple[tuple[str, int], tuple[str, int]]]
@@ -252,19 +325,27 @@ class BuildFacts(NamedTuple):
 
 
 @contextmanager
-def _goos(value: str) -> Iterator[None]:
-    old = os.environ.get("GOOS")
-    os.environ["GOOS"] = value
+def _environment(**values: str) -> Iterator[None]:
+    old = {key: os.environ.get(key) for key in values}
+    os.environ.update(values)
     try:
         yield
     finally:
-        if old is None:
-            os.environ.pop("GOOS", None)
-        else:
-            os.environ["GOOS"] = old
+        for key, value in old.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
-def ground_truth(root: Path) -> dict[str, BuildFacts]:
+def _build_env(build: Build) -> dict[str, str]:
+    env = {"GOOS": build.goos}
+    if build.tags:
+        env["GOFLAGS"] = f"-tags={build.tags}"
+    return env
+
+
+def ground_truth(root: Path, builds: tuple[Build, ...]) -> dict[str, BuildFacts]:
     from codebase_rag.parsers.go_frontend import frontend
 
     go = shutil.which("go")
@@ -274,12 +355,12 @@ def ground_truth(root: Path) -> dict[str, BuildFacts]:
     if binary is None:
         raise RuntimeError("go/types helper did not build")
     truth: dict[str, BuildFacts] = {}
-    for goos in GOOS:
-        with _goos(goos):
+    for build in builds:
+        with _environment(**_build_env(build)):
             facts = frontend._run_tool_once(binary, root, cs.IGNORE_PATTERNS)
         if facts is None:
-            raise RuntimeError(f"go/types helper failed for GOOS={goos}")
-        truth[goos] = BuildFacts(
+            raise RuntimeError(f"go/types helper failed for {build.name}")
+        truth[build.name] = BuildFacts(
             facts.checked_files,
             {
                 ((p.impl_file, p.impl_line), (p.iface_file, p.iface_line))
@@ -293,14 +374,19 @@ def ground_truth(root: Path) -> dict[str, BuildFacts]:
     return truth
 
 
-def build_status(root: Path) -> dict[str, bool]:
-    """Whether `go build` and `go vet` pass, per GOOS."""
+def build_status(root: Path, builds: tuple[Build, ...]) -> dict[str, bool]:
+    """Whether `go build` and `go vet` pass, per build."""
     go = shutil.which("go")
     assert go is not None
     status: dict[str, bool] = {}
-    for goos in GOOS:
-        env = {**os.environ, "GOOS": goos, "GOARCH": "amd64", "CGO_ENABLED": "0"}
-        status[goos] = all(
+    for build in builds:
+        env = {
+            **os.environ,
+            **_build_env(build),
+            "GOARCH": "amd64",
+            "CGO_ENABLED": "0",
+        }
+        status[build.name] = all(
             subprocess.run(
                 [go, command, "./..."],
                 cwd=root,
@@ -332,7 +418,7 @@ def index(root: Path, frontend: str) -> _StatefulIngestor:
     try:
         parsers, queries = load_parsers()
         store = _StatefulIngestor()
-        with _goos(goos) if goos else _host():
+        with _environment(GOOS=goos) if goos else _host():
             GraphUpdater(
                 ingestor=store,
                 repo_path=root,
@@ -400,6 +486,9 @@ class Findings:
     partial_exact_calls: list[str] = field(default_factory=list)
     missing_calls: list[str] = field(default_factory=list)
     unsupported_heuristic_calls: list[str] = field(default_factory=list)
+    # What a build proves through an interface past the alternatives cap:
+    # cgr knows nothing of its method set by design, so links nothing.
+    unknown_past_cap: list[str] = field(default_factory=list)
     calls_checked: int = 0
 
     def failures(self) -> int:
@@ -416,6 +505,17 @@ class Findings:
                 self.missing_calls,
             )
         )
+
+
+def _past_cap(item: str) -> bool:
+    return any(
+        2 ** int(count) > _ALTERNATIVES_CAP for count in _WIDE_NAME.findall(item)
+    )
+
+
+def _add_missing(findings: Findings, missing: list[str], items: list[str]) -> None:
+    for item in items:
+        (findings.unknown_past_cap if _past_cap(item) else missing).append(item)
 
 
 def _receiver(qn: str) -> str:
@@ -538,7 +638,7 @@ def _compare_pairs(graph: _Graph, known: _Truth, findings: Findings) -> None:
         ),
         (
             "OVERRIDES",
-            {goos: known.overrides(goos) for goos in GOOS},
+            {build: known.overrides(build) for build in known.truth},
             findings.false_overrides,
             findings.partial_exact_overrides,
             findings.missing_overrides,
@@ -559,10 +659,14 @@ def _compare_pairs(graph: _Graph, known: _Truth, findings: Findings) -> None:
                 known.built(goos, pair[0])
                 and known.built(goos, pair[1])
                 and pair not in per_build[goos]
-                for goos in GOOS
+                for goos in known.truth
             ):
                 partial.append(f"{pair} {labels}")
-        missing.extend(str(pair) for pair in sorted(supported - emitted.keys()))
+        _add_missing(
+            findings,
+            missing,
+            [str(pair) for pair in sorted(supported - emitted.keys())],
+        )
 
 
 def _compare_calls(graph: _Graph, known: _Truth, findings: Findings) -> None:
@@ -570,7 +674,7 @@ def _compare_calls(graph: _Graph, known: _Truth, findings: Findings) -> None:
     for caller in _callers(graph):
         possible = {
             goos: known.possible(goos, caller)
-            for goos in GOOS
+            for goos in known.truth
             if known.built(goos, caller)
         }
         findings.calls_checked += 1
@@ -579,7 +683,9 @@ def _compare_calls(graph: _Graph, known: _Truth, findings: Findings) -> None:
         }
         for target, labels in reached.items():
             _check_call(findings, caller, target, labels, possible)
-        findings.missing_calls.extend(_missing(caller, reached, possible))
+        _add_missing(
+            findings, findings.missing_calls, _missing(caller, reached, possible)
+        )
 
 
 def _callers(graph: _Graph) -> list[str]:
@@ -630,8 +736,10 @@ class RenameResult:
     target: str
     applied: bool
     broke: list[str]
-    # Whether any GOOS built and vetted before the rename.
+    # Whether any build built and vetted before the rename.
     built: bool = True
+    # Neighbour files (other languages, other packages) the rename changed.
+    touched: list[str] = field(default_factory=list)
 
 
 def _declared_name(root: Path, file: str, line: int) -> str:
@@ -640,12 +748,17 @@ def _declared_name(root: Path, file: str, line: int) -> str:
     return text.split()[1]
 
 
-def _assertions(root: Path) -> dict[str, str]:
+def _assertions(root: Path, builds: tuple[Build, ...]) -> dict[str, str]:
     """`var _ X = T{}` for each pair go/types proves, in a file only the
-    GOOS proving it compiles: a rename that leaves the pair half-renamed
+    build proving it compiles: a rename that leaves the pair half-renamed
     breaks that build."""
     files: dict[str, str] = {}
-    for goos, facts in ground_truth(root).items():
+    tags = sorted({tag for build in builds for tag in build.tags.split(",") if tag})
+    for build, facts in zip(builds, ground_truth(root, builds).values(), strict=True):
+        own = set(build.tags.split(","))
+        header = " && ".join(
+            [build.goos, *(tag if tag in own else f"!{tag}" for tag in tags)]
+        )
         by_package: dict[str, set[str]] = {}
         imports: dict[str, set[str]] = {}
         for (impl_file, impl_line), (iface_file, iface_line) in facts.implements:
@@ -664,29 +777,122 @@ def _assertions(root: Path) -> dict[str, str]:
                 f'import "{PROJECT}/{path}"\n'
                 for path in sorted(imports.get(package, ()))
             )
-            files[f"{package}/zz_assert_{goos}.go"] = (
-                f"package {name}\n\n{imported}\n" + "".join(sorted(lines))
+            files[f"{package}/zz_assert_{build.name.replace('-', '_')}.go"] = (
+                f"//go:build {header}\n\npackage {name}\n\n{imported}\n"
+                + "".join(sorted(lines))
             )
     return files
 
 
-def _rename_targets(graph: RecordedGraph, case: int) -> list[str]:
-    # An implementer's own method, or an interface's, by name.
+def _rename_targets(graph: RecordedGraph, files: dict[str, str]) -> list[str]:
+    # An implementer's own method, or an interface's, by name, in a file the
+    # case generated.
     return sorted(
         qn
         for qn, props in graph.nodes.items()
         if props.get(cs.KEY_LABEL) == "Method"
-        and qn.startswith(f"{PROJECT}.c{case:03d}.")
+        and props.get(cs.KEY_PATH) in files
         and _method_name(qn).rpartition("_")[0] in ("A", "B", "C", "D", "N")
     )
+
+
+_GO_TYPE = re.compile(r"^type (\w+) struct\{\}$", re.MULTILINE)
+_GO_METHOD = re.compile(r"^func \((\w+)\) (\w+)\(", re.MULTILINE)
+_GO_INTERFACE = re.compile(
+    r"^type (\w+) interface \{\n(.*?)^\}", re.DOTALL | re.MULTILINE
+)
+_GO_INTERFACE_METHOD = re.compile(r"^\t(\w+)\(", re.MULTILINE)
+_GO_HEADER = re.compile(r"\A(//go:build [^\n]*\n\n)?package \w+\n")
+
+
+def _declared_methods(text: str) -> list[tuple[str, str]]:
+    # (owner, method) for each method of a type or an interface.
+    found = set(_GO_METHOD.findall(text))
+    for owner, body in _GO_INTERFACE.findall(text):
+        found |= {(owner, name) for name in _GO_INTERFACE_METHOD.findall(body)}
+    return sorted(found)
+
+
+def neighbours(files: dict[str, str]) -> dict[str, str]:
+    """What no rename of the case may touch. Beside each Go file declaring
+    methods, a Python and a JavaScript file declaring same-named classes,
+    methods and functions; and for each Go file declaring types or their
+    methods, the same declarations, under the same name and constraint, in
+    an external test package (`p_test`) and in a sibling package. A
+    neighbour's method takes an `int`, so no interface of the case is
+    implemented by a neighbour, nor one of them by a type of the case."""
+    found: dict[str, str] = {}
+    for rel, text in sorted(files.items()):
+        directory, _, name = rel.rpartition("/")
+        stem = name.removesuffix(".go")
+        declared = _declared_methods(text)
+        if declared:
+            found[f"{directory}/{stem}_alt.py"] = "".join(
+                f"class {owner}:\n    def {method}(self):\n        return 0\n\n\n"
+                f"def {method}():\n    return {owner}().{method}()\n\n\n"
+                for owner, method in declared
+            )
+            found[f"{directory}/{stem}_alt.js"] = "".join(
+                f"class {owner} {{\n  {method}() {{\n    return 0;\n  }}\n}}\n"
+                f"function {method}() {{\n  return new {owner}().{method}();\n}}\n"
+                for owner, method in declared
+            )
+        mirrored = _mirrored(text)
+        if mirrored is None:
+            continue
+        package = directory.rpartition("/")[2]
+        header = _GO_HEADER.match(text)
+        constraint = (header.group(1) or "") if header else ""
+        found[f"{directory}/{stem}_test.go"] = (
+            f"{constraint}package {package}_test\n\n{mirrored}"
+        )
+        found[f"{directory}sib/{stem}.go"] = (
+            f"{constraint}package {package}sib\n\n{mirrored}"
+        )
+    return found
+
+
+def _mirrored(text: str) -> str | None:
+    types = _GO_TYPE.findall(text)
+    methods = _GO_METHOD.findall(text)
+    if not types and not methods:
+        return None
+    return "".join(f"type {name} struct{{}}\n\n" for name in types) + "".join(
+        f"func ({owner}) {method}(int) {{}}\n" for owner, method in methods
+    )
+
+
+def probe_files(case: int) -> tuple[dict[str, str], dict[str, str]]:
+    """A method `p`'s own tests declare once per GOOS and a common test
+    calls, to rename, and an external test package's same-named type and
+    method beside it, never to touch: (the first, the second)."""
+    method = f"N_{case}"
+    own = {
+        f"c{case:03d}/p/zz_probe_test.go": (
+            f"package p\n\ntype TP struct{{}}\n\nfunc probe() {{\n\tTP{{}}.{method}()\n}}\n"
+        ),
+        **{
+            f"c{case:03d}/p/zz_probe_{goos}_test.go": (
+                f"package p\n\nfunc (TP) {method}() {{}}\n"
+            )
+            for goos in GOOS
+        },
+    }
+    beside = {
+        f"c{case:03d}/p/zz_probe_ext_test.go": (
+            f"package p_test\n\ntype TP struct{{}}\n\nfunc (TP) {method}(int) {{}}\n"
+        )
+    }
+    return own, beside
 
 
 def rename_check(
     files: dict[str, str], case: int, workdir: Path, rng: random.Random
 ) -> RenameResult | None:
     """Rename one method of the case, in a module of the case alone with an
-    assertion per pair each build proves, and report each GOOS whose build
-    and vet passed before and fail after."""
+    assertion per pair each build proves, and report each build that built
+    and vetted before and fails after, and each neighbour file (see
+    `neighbours`) it changed."""
     from codebase_rag.editing.rename import RenameRefused, rename
     from codebase_rag.tests.conftest import _MockIngestor, create_and_run_updater
     from codebase_rag.tests.test_rename_op import RecordedGraph
@@ -694,18 +900,22 @@ def rename_check(
     root = workdir / f"rename{case:03d}" / PROJECT
     root.mkdir(parents=True)
     (root / "go.mod").write_text(f"module {PROJECT}\n\ngo 1.22\n", encoding="utf-8")
-    for rel, text in files.items():
+    builds = builds_for({case: files})
+    probe, probe_beside = probe_files(case)
+    own = {**files, **probe}
+    beside = {**neighbours(files), **probe_beside}
+    for rel, text in {**own, **beside}.items():
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
-    for rel, text in _assertions(root).items():
+    for rel, text in _assertions(root, builds).items():
         (root / rel).write_text(text, encoding="utf-8")
-    before = build_status(root)
+    before = build_status(root, builds)
     ingestor = _MockIngestor()
     create_and_run_updater(root, cast(MagicMock, ingestor))
     graph = RecordedGraph(cast(MagicMock, ingestor), PROJECT)
     graph.root_path = str(root.resolve())
-    targets = _rename_targets(graph, case)
+    targets = _rename_targets(graph, own)
     if not targets:
         return None
     target = rng.choice(targets)
@@ -721,13 +931,18 @@ def rename_check(
         applied = report.applied
     except RenameRefused:
         applied = False
-    after = build_status(root)
+    after = build_status(root, builds)
     return RenameResult(
         case,
         target,
         applied,
-        [goos for goos in GOOS if before[goos] and not after[goos]],
+        [build for build, passed in before.items() if passed and not after[build]],
         any(before.values()),
+        sorted(
+            rel
+            for rel, text in beside.items()
+            if (root / rel).read_text(encoding="utf-8") != text
+        ),
     )
 
 
@@ -760,6 +975,7 @@ class Report:
                     "unsupported_heuristic_calls": len(
                         found.unsupported_heuristic_calls
                     ),
+                    "unknown_past_cap": len(found.unknown_past_cap),
                 }
                 for frontend, found in self.findings.items()
             },
@@ -769,6 +985,9 @@ class Report:
                 (r.case, r.target, r.broke) for r in self.renames if r.broke
             ],
             "renames_never_built": [r.case for r in self.renames if not r.built],
+            "renames_touching_neighbours": [
+                (r.case, r.target, r.touched) for r in self.renames if r.touched
+            ],
         }
 
 
@@ -778,10 +997,11 @@ def run(
     workdir: Path,
     frontends: tuple[str, ...] = FRONTENDS,
     renames: int = 0,
+    wide: float = 0.0,
 ) -> Report:
     root = workdir / PROJECT
-    generated = write_repo(root, cases, seed)
-    truth = ground_truth(root)
+    generated = write_repo(root, cases, seed, wide)
+    truth = ground_truth(root, builds_for(generated))
     findings = {
         frontend: compare(index(root, frontend), truth) for frontend in frontends
     }
@@ -799,13 +1019,16 @@ def main(
     cases: Annotated[int, typer.Option(help="Generated cases.")] = 400,
     seed: Annotated[int, typer.Option(help="Generator seed.")] = 7,
     renames: Annotated[int, typer.Option(help="Cases to rename and rebuild.")] = 30,
+    wide: Annotated[
+        float, typer.Option(help="Share of cases adding a Wide<n> interface.")
+    ] = 0.25,
     details: Annotated[bool, typer.Option(help="Print every finding.")] = False,
 ) -> None:
     from loguru import logger
 
     logger.remove()
     with tempfile.TemporaryDirectory() as tmp:
-        report = run(cases, seed, Path(tmp), renames=renames)
+        report = run(cases, seed, Path(tmp), renames=renames, wide=wide)
     typer.echo(json.dumps(report.summary(), indent=2, default=str))
     if details:
         for frontend, found in report.findings.items():

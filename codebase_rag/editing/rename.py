@@ -43,6 +43,9 @@ from ..function_registry import TYPE_SPACE_KINDS
 from ..graph_updater import ReingestAborted
 from ..language_spec import csharp_partial_key_from_graph, get_language_for_extension
 from ..parser_loader import load_parsers
+from ..parsers.go import utils as go_utils
+from ..parsers.go.builds import GoBuilds
+from ..parsers.go.module_paths import read_package_clause
 from ..parsers.js_ts.overloads import overload_signatures
 from ..parsers.py.overloads import overload_stub_names
 from ..types_defs import PropertyParams, ResultRow
@@ -177,7 +180,9 @@ class RenameReport(NamedTuple):
 # --- site collection -----------------------------------------------------------
 
 
-def _hierarchy(fetch_all: QueryFn, project: str, qn: str) -> Hierarchy:
+def _hierarchy(
+    fetch_all: QueryFn, project: str, qn: str, repo_root: Path | None = None
+) -> Hierarchy:
     """`qn`, every other part of the C# partial type `qn` is a part of, and
     every method `qn` overrides or is overridden by, transitively, with the
     members only a guessed OVERRIDES edge reaches."""
@@ -186,34 +191,46 @@ def _hierarchy(fetch_all: QueryFn, project: str, qn: str) -> Hierarchy:
         fetch_all,
         project,
         qn,
-        lambda member: _go_build_variants(fetch_all, project, member),
+        lambda member: (
+            _go_build_variants(fetch_all, project, member, repo_root)
+            if repo_root is not None
+            else []
+        ),
     )
     seen: list[str] = [qn, *parts]
     seen += [m for m in found.members if m not in seen]
     return Hierarchy(seen, found.guessed - set(parts))
 
 
-def _go_build_variants(fetch_all: QueryFn, project: str, qn: str) -> list[str]:
+def _go_build_variants(
+    fetch_all: QueryFn, project: str, qn: str, repo_root: Path
+) -> list[str]:
     """The other builds' declarations of Go method or function `qn`.
 
     A package declares a name once per build (`func (T) M()` in `t_linux.go`
     and in `t_windows.go`, `M()` in `i_linux.go`'s and `i_windows.go`'s
     `I`), and a caller every build compiles calls each build's. Renaming
     one left the others, and the builds holding them no longer compiled
-    (#3360 review). Two same-named declarations in one package can only be
-    such variants: any build holding both rejects them. An external test
-    package shares the directory but not the package, so a `_test.go` file
-    and another are never variants."""
+    (#3360 review). A variant is a Go declaration of the same kind and name
+    (a method of the same-named receiver, or a function) in the same
+    package: its directory and `package` clause (`p_test` beside `p` is
+    another), seen from the same files (a `_test.go` file's from test files
+    alone), in a file no build compiles with `qn`'s. A Python `helper`
+    beside a Go one, another package's, or a twin a build could compile
+    together with it (which would not compile) is none."""
     definition = graph_query.definition(fetch_all, project, qn, None)
     path, name, label = definition["path"], definition["name"], definition["label"]
     if (
         not path
         or not name
         or label not in (cs.NodeLabel.METHOD, cs.NodeLabel.FUNCTION)
-        or get_language_for_extension(Path(path).suffix) != cs.SupportedLanguage.GO
+        or not _is_go_path(path)
     ):
         return []
-    place = _go_declaration_place(path, qn, label)
+    place = _go_declaration_place(repo_root, path, qn, label)
+    if place is None:
+        return []
+    builds = GoBuilds(repo_root)
     return sorted(
         other
         for symbol in graph_query.resolve(fetch_all, project, name)
@@ -221,14 +238,25 @@ def _go_build_variants(fetch_all: QueryFn, project: str, qn: str) -> list[str]:
         and symbol["label"] == label
         and (other_path := symbol["path"])
         and other_path != path
-        and _go_declaration_place(other_path, other, label) == place
+        and _is_go_path(other_path)
+        and _go_declaration_place(repo_root, other_path, other, label) == place
+        and builds.apart((path, other_path))
     )
 
 
-def _go_declaration_place(path: str, qn: str, label: str) -> tuple[str, bool, str]:
-    # Its directory, whether a `_test.go` file declares it, and the name of
-    # its receiver type (a method's) or "" (a function's).
-    file = PurePosixPath(path)
+def _is_go_path(path: str) -> bool:
+    return get_language_for_extension(Path(path).suffix) == cs.SupportedLanguage.GO
+
+
+def _go_declaration_place(
+    repo_root: Path, path: str, qn: str, label: str
+) -> tuple[str, str] | None:
+    # The files that see it (its package, `dir:clause`, or that package's
+    # test files) and the name of its receiver type (a method's) or "" (a
+    # function's). None when its `package` clause cannot be read.
+    clause = read_package_clause(repo_root / path)
+    if clause is None:
+        return None
     owner = (
         qn_markers.natural_qn(qn)
         .rpartition(cs.SEPARATOR_DOT)[0]
@@ -236,7 +264,8 @@ def _go_declaration_place(path: str, qn: str, label: str) -> tuple[str, bool, st
         if label == cs.NodeLabel.METHOD
         else ""
     )
-    return file.parent.as_posix(), file.stem.endswith(cs.GO_TEST_FILE_SUFFIX), owner
+    package = go_utils.package_key(path, clause)
+    return go_utils.declaration_scope(path, package), owner
 
 
 def _longer_project_prefixes(fetch_all: QueryFn, project_name: str) -> tuple[str, ...]:
@@ -1285,7 +1314,7 @@ class Renamer:
         """Collect everything a rename touches; refuse on ambiguity."""
         if not re.fullmatch(r"[A-Za-z_]\w*", new_name):
             raise RenameRefused(cs.RENAME_BAD_NAME.format(name=new_name), [], [])
-        found = _hierarchy(self.fetch_all, self.project, qn)
+        found = _hierarchy(self.fetch_all, self.project, qn, self.repo_root)
         members = found.members
         self._guessed_members = found.guessed
         sites: list[RenameSite] = []

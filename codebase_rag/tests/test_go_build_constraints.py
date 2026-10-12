@@ -8,10 +8,11 @@ import pytest
 
 from codebase_rag.parsers.go.builds import (
     ALWAYS,
+    UNKNOWN,
     GoBuilds,
+    decide,
     header_constraint,
     name_constraint,
-    satisfiable,
 )
 
 
@@ -33,7 +34,7 @@ from codebase_rag.parsers.go.builds import (
 def test_a_file_name_constrains_its_build(
     first: str, second: str, together: bool
 ) -> None:
-    assert satisfiable((name_constraint(first), name_constraint(second))) is together
+    assert decide((name_constraint(first), name_constraint(second))) is together
 
 
 @pytest.mark.parametrize(
@@ -56,19 +57,16 @@ def test_a_file_name_constrains_its_build(
 def test_a_build_line_constrains_its_build(
     first: str, second: str, together: bool
 ) -> None:
-    assert (
-        satisfiable((header_constraint(first), header_constraint(second))) is together
-    )
+    assert decide((header_constraint(first), header_constraint(second))) is together
 
 
 @pytest.mark.parametrize(
     "header",
     [
         # Not a constraint: no blank line ends the legacy block, the line
-        # follows the package clause, or it does not parse.
+        # follows the package clause, or it is no directive.
         "// +build linux\npackage p\n",
         "package p\n\n//go:build linux\n",
-        "//go:build linux &&\n\npackage p\n",
         "//go:buildlinux\n\npackage p\n",
     ],
 )
@@ -112,20 +110,52 @@ def test_a_changed_file_is_read_again(tmp_path: Path) -> None:
         "//go:build linux && || windows\n",
         "//go:build linux $ windows\n",
         "//go:build \x00\n",
+        "//go:build linux &&\n",
         "// +build ,,, !\n\n",
     ],
 )
-def test_a_constraint_this_cannot_read_holds_in_every_build(
-    tmp_path: Path, header: str
-) -> None:
+def test_a_constraint_this_cannot_read_is_unknown(tmp_path: Path, header: str) -> None:
     # Malformed, or nested past what this reads: never an exception, and
-    # the file builds with anything.
+    # neither true nor false in any build, so the file is neither known to
+    # build with another nor known apart from it.
+    assert header_constraint(header) == UNKNOWN
     (tmp_path / "a.go").write_text(f"{header}\npackage p\n", encoding="utf-8")
     builds = GoBuilds(tmp_path)
-    assert builds.together(("a.go", "b_windows.go"))
-    assert builds.together(("a.go", "b_linux.go"))
+    for other in ("b_windows.go", "b_linux.go"):
+        assert not builds.together(("a.go", other))
+        assert not builds.apart(("a.go", other))
+
+
+def test_a_head_cut_off_before_its_package_clause_is_unknown(tmp_path: Path) -> None:
+    # The constraint may lie past the bytes read.
+    filler = "// filler\n" * 8000
+    (tmp_path / "a.go").write_text(
+        f"{filler}//go:build linux\n\npackage p\n", encoding="utf-8"
+    )
+    builds = GoBuilds(tmp_path)
+    assert builds.constraint("a.go") == UNKNOWN
+    assert not builds.apart(("a.go", "b_windows.go"))
+
+
+def test_more_tags_than_this_enumerates_is_undecided() -> None:
+    # Each tag both asked for and ruled out: only enumerating tells.
+    chain = " && ".join(f"(t{index} || !t{index + 1})" for index in range(12))
+    assert decide((header_constraint(f"//go:build {chain}\n"),)) is None
+
+
+def test_a_tag_only_asked_for_or_only_ruled_out_is_never_enumerated() -> None:
+    # The build go/types read rules out the tag of each `!t<k>` file it
+    # type-checked: dozens, in a repository of many tags. Set each tag only
+    # asked for and unset each only ruled out, and no other part fails for
+    # it, so what rests on them is still decided.
+    ruled_out = [header_constraint(f"//go:build !t{k}\n") for k in range(40)]
+    asked = [header_constraint(f"//go:build u{k}\n") for k in range(40)]
+    linux, windows = name_constraint("x_linux.go"), name_constraint("y_windows.go")
+    assert decide((*ruled_out, *asked, linux)) is True
+    assert decide((*ruled_out, *asked, linux, windows)) is False
+    assert decide((*ruled_out, header_constraint("//go:build t3\n"))) is False
 
 
 def test_a_constraint_nested_within_the_limit_is_read() -> None:
     nested = "//go:build " + "(" * 50 + "linux" + ")" * 50 + "\n"
-    assert not satisfiable((header_constraint(nested), name_constraint("x_windows.go")))
+    assert decide((header_constraint(nested), name_constraint("x_windows.go"))) is False

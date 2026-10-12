@@ -17,7 +17,7 @@ from ..utils import qn_markers
 from .cpp import utils as cpp_utils
 from .go import interfaces as go_ifaces
 from .go import utils as go_utils
-from .go.builds import ALWAYS, Expr, all_of, holds_wherever, satisfiable
+from .go.builds import ALWAYS, Expr, all_of, holds_wherever, possible
 from .go.interfaces import GoMethodSpec
 from .go.link_state import GoLinkState
 from .import_processor import ImportProcessor
@@ -1621,16 +1621,41 @@ class CallResolver:
         # `helper()` in `a.go` naming `func helper()` in `b.go` of the same
         # package is as certain as a same-file call: Go shares one namespace
         # across the package's files and rejects a duplicate (#2571). Two
-        # candidates are mutually exclusive build-tag variants, which the
-        # heuristic fallback and its sibling fan-out already cover.
-        candidates = self._go_package_scope(
-            call_name, module_qn, _GO_PACKAGE_FUNCTION_TYPES
+        # candidates are build variants (`h_linux.go`, `h_windows.go`) only
+        # when no build compiles them together: the caller then binds the
+        # first its builds may hold, labelled by the builds it reaches
+        # (`_go_build_targets`), and its sibling fan-out reaches the rest.
+        # The name-only fallback took another package's same-named function
+        # there, `p_test`'s even, and no variant (#3360 review).
+        candidates = self._go_build_variant_candidates(
+            self._go_package_scope(call_name, module_qn, _GO_PACKAGE_FUNCTION_TYPES),
+            module_qn,
         )
-        if len(candidates) != 1:
+        if not candidates:
             return None
         qn = candidates[0]
         logger.debug(ls.CALL_GO_SAME_PACKAGE, call_name=call_name, qn=qn)
         return self.function_registry[qn], qn
+
+    def _go_build_variant_candidates(
+        self, candidates: list[str], module_qn: str
+    ) -> list[str]:
+        # The one candidate, or, of several, those a build compiling the
+        # caller may hold when no build compiles two of them together; []
+        # for any other several.
+        if len(candidates) <= 1 or self.go_builds is None:
+            return candidates
+        caller = self.go_caller_rel(module_qn)
+        files = {qn: self.go_declaring_rel(qn) for qn in candidates}
+        reachable = sorted(
+            qn for qn in candidates if not self.go_builds.apart((caller, files[qn]))
+        )
+        apart = all(
+            self.go_builds.apart((files[first], files[second]))
+            for index, first in enumerate(reachable)
+            for second in reachable[index + 1 :]
+        )
+        return reachable if apart else []
 
     def _go_package_type(self, name: str, module_qn: str) -> str | None:
         # A bare Go type name (`var m Mux`, `q *Mux`, the `*Mux` a same-package
@@ -1945,7 +1970,14 @@ class CallResolver:
                 self.go_builds.constraint(self.go_declaring_rel(declaration)),
             )
         )
-        return satisfiable((caller, runs)), holds_wherever(caller, runs)
+        return possible((caller, runs)), holds_wherever(caller, runs)
+
+    def go_apart_from_caller(self, module_qn: str, declaration: str) -> bool:
+        """Whether no build compiles Go file `module_qn` with `declaration`:
+        its call never reaches that one."""
+        return self.go_builds is not None and self.go_builds.apart(
+            (self.go_caller_rel(module_qn), self.go_declaring_rel(declaration))
+        )
 
     def go_caller_rel(self, module_qn: str) -> str:
         return go_utils.rel_file(

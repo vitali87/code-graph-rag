@@ -12,7 +12,7 @@ one implementation find the interface method and the other implementations.
 from __future__ import annotations
 
 from abc import abstractmethod
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Collection, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
@@ -43,13 +43,15 @@ from . import utils as go_utils
 from .builds import (
     ALWAYS,
     NEVER,
+    UNKNOWN,
     Expr,
     GoBuilds,
     all_of,
     any_of,
     holds_wherever,
+    impossible,
     negate,
-    satisfiable,
+    possible,
 )
 
 if TYPE_CHECKING:
@@ -175,6 +177,12 @@ class _GoPairBuilds:
     # The files go/types type-checked: in a pair it proved, a declaration
     # there is the compiler's in the build it read, whatever the names say.
     trusted: frozenset[str]
+    # The interfaces whose method set varies between builds past what the
+    # names tell apart: a pair go/types proved (`proven_pairs`, as
+    # (interface, type)) holds in the build it read, and nothing is known of
+    # any other.
+    varying: frozenset[str] = frozenset()
+    proven_pairs: Collection[tuple[str, str]] = frozenset()
     memo: dict[tuple[str, str, bool], Expr] = field(default_factory=dict)
     trusted_builds: Expr = ALWAYS
 
@@ -220,9 +228,13 @@ class _GoPairBuilds:
         return NEVER
 
     def in_some_build(self, type_qn: str, found: go_ifaces.GoBuildSet) -> bool:
-        return satisfiable((self.within(type_qn, found),))
+        return possible((self.within(type_qn, found),))
 
     def holding(self, type_qn: str, interface_qn: str, proven: bool = False) -> Expr:
+        if interface_qn in self.varying:
+            if (interface_qn, type_qn) in self.proven_pairs:
+                return self.trusted_builds
+            return UNKNOWN
         key = (type_qn, interface_qn, proven)
         if key not in self.memo:
             self.memo[key] = any_of(
@@ -234,6 +246,8 @@ class _GoPairBuilds:
 
     def interface_builds(self, interface_qn: str) -> Expr:
         # The builds compiling the interface: one of its method sets holds.
+        if interface_qn in self.varying:
+            return UNKNOWN
         return any_of(found.builds for found in self.interfaces.get(interface_qn) or ())
 
     def partial(self, type_qn: str, interface_qn: str) -> bool:
@@ -243,7 +257,7 @@ class _GoPairBuilds:
         methods an embedded struct promotes) is the compiler's alone."""
         holding = self.holding(type_qn, interface_qn, proven=True)
         scope = all_of((self.of_type(type_qn), self.interface_builds(interface_qn)))
-        return satisfiable((scope, holding)) and not holds_wherever(scope, holding)
+        return not impossible((scope, holding)) and not holds_wherever(scope, holding)
 
 
 class GoInterfaceMixin:
@@ -379,12 +393,15 @@ class GoInterfaceMixin:
             qn: self.go_builds.constraint(decl.file)
             for qn, decl in self.go_interfaces.items()
         }
+        full = go_ifaces.full_method_sets(owners.method_sets, embeds, files)
         pair_builds = _GoPairBuilds(
             self.go_builds,
             owners,
-            go_ifaces.full_method_sets(owners.method_sets, embeds, files),
+            full.sets,
             self._go_declaring_rel,
             checked_files,
+            full.varying,
+            self.go_proven_pairs,
         )
         compiler = _GoCompilerView(
             self.repo_path, analysed_roots, checked_files, compared
@@ -409,7 +426,7 @@ class GoInterfaceMixin:
         # `p.I`, which `i_linux.go` and `i_windows.go` declare apart): the
         # one build go/types read speaks for no other, so its silence rules
         # nothing out, and a pair it proved holds in that build alone.
-        per_build = {
+        per_build = pair_builds.varying | {
             qn for qn, builds in interfaces.items() if builds and len(builds) > 1
         }
 
@@ -604,7 +621,7 @@ class GoInterfaceMixin:
             and qn.rpartition(cs.SEPARATOR_DOT)[2] == name
             and self.function_registry.get(qn) in labels
             and self._go_declaration_scope(qn) == scope
-            and not self.go_builds.together((own_file, self._go_declaring_rel(qn)))
+            and self.go_builds.apart((own_file, self._go_declaring_rel(qn)))
         ]
 
     def _link_go_overrides(
@@ -648,7 +665,7 @@ class GoInterfaceMixin:
         # holds the pair: `func (T) M()` in a file every build compiles is
         # Windows' `T`'s there, not `t_linux.go`'s.
         holding = pair_builds.holding(type_qn, interface_qn, not guessed)
-        if not guessed and not satisfiable((holding,)):
+        if not guessed and impossible((holding,)):
             holding = ALWAYS
         claim = all_of((pair_builds.of_type(type_qn), holding))
         scope = pair_builds.interface_builds(interface_qn)
@@ -660,7 +677,7 @@ class GoInterfaceMixin:
                     *self.function_registry.variants(method_qn),
                     *self.go_variant_methods.get(type_qn, {}).get(key[1], []),
                 )
-                if satisfiable((self._go_method_builds(variant), holding))
+                if possible((self._go_method_builds(variant), holding))
             ]
             exact = [
                 variant
@@ -694,7 +711,7 @@ class GoInterfaceMixin:
                 )
                 # A pair go/types proved that the names cannot see holds
                 # wherever both ends do.
-                if not guessed and not satisfiable((holding,)):
+                if not guessed and impossible((holding,)):
                     holding = pair_builds.of_type(type_qn)
                 found[(interface_qn, type_qn)] = holding
         # In place: the call resolver holds the map.

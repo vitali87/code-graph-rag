@@ -23,7 +23,7 @@ from ...types_defs import PropertyDict
 from ..type_facts import extract_type_facts
 from ..utils import safe_decode_text
 from . import utils as go_utils
-from .builds import ALWAYS, Expr, all_of, any_of, satisfiable
+from .builds import ALWAYS, Expr, all_of, any_of, decide
 
 # A method's identity in a method set: (package, name). Go qualifies an
 # unexported name with the package declaring it, so `get` of package store
@@ -247,8 +247,7 @@ _GO_DECLARATIONS = frozenset(
 
 # An embedded name stands for the interface each build declares by it
 # (`i_linux.go`, `i_windows.go`), so an interface has one method set per
-# combination one build compiles; past this many they are merged into the
-# methods all agree on.
+# combination one build compiles; past this many its method set is unknown.
 _MAX_METHOD_SET_ALTERNATIVES = 64
 
 # An embedded name's meanings: each interface qn (or predeclared name) it
@@ -263,23 +262,43 @@ class GoBuildSet(NamedTuple):
     builds: Expr
 
 
+class GoFullMethodSets(NamedTuple):
+    # Per interface, its method sets, or None when unknown.
+    sets: dict[str, tuple[GoBuildSet, ...] | None]
+    # The unknown ones whose method set differs between builds in more ways
+    # than are told apart: no one build speaks for another.
+    varying: frozenset[str]
+
+
+class _VaryingError(Exception):
+    """A method set past the cap on alternatives, or resting on a decision
+    about builds that cannot be made."""
+
+
 def full_method_sets(
     own: Mapping[str, GoMethodSet],
     embeds: Mapping[str, tuple[GoEmbedAlternatives, ...] | None],
     files: Mapping[str, Expr],
-) -> dict[str, tuple[GoBuildSet, ...] | None]:
+) -> GoFullMethodSets:
     """Each interface's complete method set in each set of builds, its
-    embedded interfaces' methods included, or None when an embedded
-    interface could not be resolved: a type with the known methods may
-    still lack the unknown ones. `embeds` holds, per embedded name, what it
-    is in which builds: one meaning for most names, one per build for a
-    name each build declares again. `files` is each interface's own file's
-    constraint. Meanings no one build compiles together are never combined:
-    `A` on Linux with `B` on Windows is no method set of any build."""
-    return {
-        interface: _method_sets(interface, own, embeds, files, frozenset())
-        for interface in embeds
-    }
+    embedded interfaces' methods included, or None when unknown: an
+    embedded interface could not be resolved (a type with the known methods
+    may still lack the unknown ones), or the sets vary between builds past
+    what this tells apart (`varying`). `embeds` holds, per embedded name,
+    what it is in which builds: one meaning for most names, one per build
+    for a name each build declares again. `files` is each interface's own
+    file's constraint. Meanings no one build compiles together are never
+    combined: `A` on Linux with `B` on Windows is no method set of any
+    build."""
+    sets: dict[str, tuple[GoBuildSet, ...] | None] = {}
+    varying: set[str] = set()
+    for interface in embeds:
+        try:
+            sets[interface] = _method_sets(interface, own, embeds, files, frozenset())
+        except _VaryingError:
+            sets[interface] = None
+            varying.add(interface)
+    return GoFullMethodSets(sets, frozenset(varying))
 
 
 def _method_sets(
@@ -294,22 +313,33 @@ def _method_sets(
         return None
     sets = [GoBuildSet(dict(own.get(interface, {})), files.get(interface, ALWAYS))]
     # `seen` guards a cycle Go itself rejects, so malformed source cannot
-    # loop the walk.
+    # loop the walk. An embed that cannot be resolved leaves the set unknown,
+    # but the rest are still walked: one varying past the cap makes it
+    # varying.
     inner_seen = seen | {interface}
+    resolved = True
     for alternatives in written:
         options = _embedded_sets(alternatives, own, embeds, files, inner_seen)
         if options is None:
-            return None
-        if options:
-            sets = _distinct(
-                [
-                    combined
-                    for base in sets
-                    for option in options
-                    if satisfiable(((combined := _merged(base, option)).builds,))
-                ]
-            )
-    return tuple(sets)
+            resolved = False
+        elif options:
+            sets = _combined(sets, options)
+    return tuple(sets) if resolved else None
+
+
+def _combined(sets: list[GoBuildSet], options: list[GoBuildSet]) -> list[GoBuildSet]:
+    # Each set with each option one build compiles together. Where that
+    # cannot be told, or past the cap, the method set is unknown.
+    merged = [_merged(base, option) for base in sets for option in options]
+    decisions = [decide((found.builds,)) for found in merged]
+    if None in decisions:
+        raise _VaryingError
+    distinct = _distinct(
+        [found for found, holds in zip(merged, decisions, strict=True) if holds]
+    )
+    if distinct is None:
+        raise _VaryingError
+    return distinct
 
 
 def _merged(base: GoBuildSet, option: GoBuildSet) -> GoBuildSet:
@@ -326,6 +356,7 @@ def _embedded_sets(
     seen: frozenset[str],
 ) -> list[GoBuildSet] | None:
     options: list[GoBuildSet] = []
+    resolved = True
     for base, builds in alternatives:
         if base in seen:
             continue
@@ -334,12 +365,13 @@ def _embedded_sets(
             continue
         inherited = _method_sets(base, own, embeds, files, seen)
         if inherited is None:
-            return None
+            resolved = False
+            continue
         options.extend(
             GoBuildSet(found.methods, all_of((found.builds, builds)))
             for found in inherited
         )
-    return options
+    return options if resolved else None
 
 
 def _builtin_methods(name: str) -> GoMethodSet:
@@ -349,8 +381,10 @@ def _builtin_methods(name: str) -> GoMethodSet:
     }
 
 
-def _distinct(sets: list[GoBuildSet]) -> list[GoBuildSet]:
-    # One method set reached in several builds is one alternative.
+def _distinct(sets: list[GoBuildSet]) -> list[GoBuildSet] | None:
+    # One method set reached in several builds is one alternative. Past the
+    # cap the method set is unknown: no reduced set stands for them, since a
+    # type with only the methods all agree on implements it in no build.
     merged: dict[
         tuple[tuple[GoMethodKey, tuple[GoSignature, ...]], ...], GoBuildSet
     ] = {}
@@ -362,21 +396,9 @@ def _distinct(sets: list[GoBuildSet]) -> list[GoBuildSet]:
             if earlier is None
             else earlier._replace(builds=any_of((earlier.builds, found.builds)))
         )
-    unique = list(merged.values())
-    if len(unique) <= _MAX_METHOD_SET_ALTERNATIVES:
-        return unique
-    # The methods every build asks for, each with every build's declaration:
-    # a type with those may implement the interface in some build.
-    shared = set.intersection(*(set(found.methods) for found in unique))
-    return [
-        GoBuildSet(
-            {
-                key: tuple(sig for found in unique for sig in found.methods[key])
-                for key in shared
-            },
-            any_of(found.builds for found in unique),
-        )
-    ]
+    if len(merged) > _MAX_METHOD_SET_ALTERNATIVES:
+        return None
+    return list(merged.values())
 
 
 def implicit_implementations(
