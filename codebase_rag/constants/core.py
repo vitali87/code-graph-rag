@@ -251,6 +251,28 @@ EMBEDDINGS_PENDING_PROJECT_TEMPLATE = ".cgr-embeddings-pending-{digest}"
 # still retries once, then split into the per-project files above.
 EMBEDDINGS_PENDING_FILENAME = ".cgr-embeddings-pending"
 PARSER_FINGERPRINT_FILENAME = ".cgr-parser-fingerprint"
+# The parser fingerprint asks each active toolchain for its version (`go
+# version`, `javac -version`, `dotnet --version`) on every sync. A probe that
+# misses the first timeout is asked once more, for longer, unless an earlier
+# process already got an answer from the same binary under the same pins.
+TOOL_VERSION_PROBE_TIMEOUT = 10.0
+TOOL_VERSION_PROBE_RETRY_TIMEOUT = 30.0
+# A toolchain that could not be asked in either attempt. It is not `absent`
+# (no binary, or one that exits non-zero): a slow machine is not a missing
+# compiler, so this value compares as unchanged rather than forcing a re-parse.
+TOOL_VERSION_UNKNOWN = "unknown"
+# Files that select a toolchain from the probe's working directory or one of
+# its parents: `go.work` and `go.mod` (its `go` and `toolchain` lines) for Go,
+# `global.json` for .NET. A remembered answer stands only while they do.
+TOOLCHAIN_PIN_FILENAMES: tuple[str, ...] = ("go.work", "go.mod", "global.json")
+# The last answer each probe gave, keyed by the binary's path and stat
+# identity, the argument, the working directory and its pins; at most
+# TOOL_VERSION_PROBE_CACHE_MAX_ENTRIES of them, the most recent kept.
+TOOL_VERSION_PROBE_CACHE_FILENAME = ".cgr-tool-version-probes.json"
+TOOL_VERSION_PROBE_CACHE_MAX_ENTRIES = 16
+# The tool versions the checkout's last parser fingerprint hashed, which an
+# `unknown` answer stands in for.
+TOOL_VERSIONS_HASHED_FILENAME = ".cgr-tool-versions.json"
 DELOMBOK_STATE_FILENAME = ".cgr-delombok-state.json"
 # The exclusion set the last run indexed under, covering both the excludes and
 # the unignores (which come from `!` lines in .cgrignore/.gitignore and from
@@ -308,6 +330,8 @@ CGR_STATE_FILENAMES: frozenset[str] = frozenset(
         PRUNE_PENDING_FILENAME,
         EMBEDDINGS_PENDING_FILENAME,
         PARSER_FINGERPRINT_FILENAME,
+        TOOL_VERSION_PROBE_CACHE_FILENAME,
+        TOOL_VERSIONS_HASHED_FILENAME,
         DELOMBOK_STATE_FILENAME,
         EXCLUSION_STATE_FILENAME,
         EDIT_HISTORY_FILENAME,
