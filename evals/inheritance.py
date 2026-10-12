@@ -7,6 +7,7 @@
 # (counted, never dropped), so it stays independent of cgr.
 import ast
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, NamedTuple
 
@@ -230,16 +231,44 @@ def _location_key(file: str, line: int) -> str:
     return f"{file}{ec.LOCATION_KEY_SEPARATOR}{line}"
 
 
+def _indexed_file_filter(target: Path) -> Callable[[str], bool]:
+    """Whether cgr indexes a target-relative file, under the target's own rules.
+
+    The located-supertype oracles walk the target themselves, so the
+    configured exclusions have to be applied to their OUTPUT: the cgr side
+    captures through `_capture`, which passes the merged ignore rules to
+    `GraphUpdater` (issue #1520), and grading a wider set on the oracle side
+    than the graph can contain scores every edge in an excluded directory as
+    a miss (Greptile P1, PR #1519). Filtered through the indexer's own
+    predicate rather than a second copy of the rule, for the same reason
+    `_iter_py_files` is.
+    """
+    exclude_paths, unignore_paths = ignore_rules(target)
+    eligible: dict[str, bool] = {}
+
+    def _keep(rel_file: str) -> bool:
+        if rel_file not in eligible:
+            eligible[rel_file] = not should_skip_path(
+                target / rel_file, target, exclude_paths, unignore_paths, is_file=True
+            )
+        return eligible[rel_file]
+
+    return _keep
+
+
 def java_oracle_inheritance(target: Path) -> OracleResult:
     # The javac oracle already emits extends/implements as `name_edges`; no
     # oracle-side work is needed (issue #1190). It emits no OVERRIDES, so that
     # category stays empty and _prf omits the row rather than scoring a
     # category the oracle cannot adjudicate.
     graph = run_java_oracle(target)
+    keep = _indexed_file_filter(target)
     inherits: set[InheritEdge] = set()
     subclasses: set[str] = set()
     for edge in graph.name_edges:
         if edge.rel_type not in (_INHERITS, _IMPLEMENTS):
+            continue
+        if not keep(edge.source.file):
             continue
         key = _location_key(edge.source.file, edge.source.start_line)
         subclasses.add(key)
@@ -429,6 +458,7 @@ def cpp_oracle_inheritance(target: Path) -> OracleResult:
     # category stays empty and _prf omits the row rather than scoring a
     # category the oracle cannot adjudicate.
     graph = run_cpp_oracle(target)
+    keep = _indexed_file_filter(target)
     inherits: set[InheritEdge] = set()
     subclasses: set[str] = set()
     for edge in graph.name_edges:
@@ -439,6 +469,8 @@ def cpp_oracle_inheritance(target: Path) -> OracleResult:
         # not silently start scoring that kind as inheritance; the guard in
         # test_cpp_inheritance_eval.py fails if that assumption stops holding.
         if edge.rel_type != _INHERITS:
+            continue
+        if not keep(edge.source.file):
             continue
         key = _location_key(edge.source.file, edge.source.start_line)
         subclasses.add(key)
@@ -489,10 +521,13 @@ def csharp_oracle_inheritance(target: Path) -> OracleResult:
     # deliberately kept rather than split, because cgr's own edges are graded
     # as one supertype relation.
     graph = run_csharp_oracle(target)
+    keep = _indexed_file_filter(target)
     inherits: set[InheritEdge] = set()
     subclasses: set[str] = set()
     for edge in graph.name_edges:
         if edge.rel_type not in (_INHERITS, _IMPLEMENTS):
+            continue
+        if not keep(edge.source.file):
             continue
         key = _location_key(edge.source.file, edge.source.start_line)
         subclasses.add(key)
@@ -542,30 +577,13 @@ def ts_oracle_inheritance(target: Path) -> OracleResult:
     # test_ts_inheritance_eval.py pins it so a later oracle edit cannot
     # silently drop those rows from the graded set.
     graph = run_typescript_oracle(target)
-    # The oracle walks the target itself, so the configured exclusions have to
-    # be applied to its OUTPUT: `ts_cgr_inheritance` captures through
-    # `_capture`, which passes the merged ignore rules to `GraphUpdater`
-    # (issue #1520), and grading a wider set on the oracle side than the graph
-    # can contain scores an excluded directory as a hit on both sides
-    # (Greptile P1, PR #1519). Filtered through the indexer's own predicate
-    # rather than a second copy of the rule, for the same reason
-    # `_iter_py_files` is.
-    exclude_paths, unignore_paths = ignore_rules(target)
-    eligible: dict[str, bool] = {}
-
-    def _keep(rel_file: str) -> bool:
-        if rel_file not in eligible:
-            eligible[rel_file] = not should_skip_path(
-                target / rel_file, target, exclude_paths, unignore_paths, is_file=True
-            )
-        return eligible[rel_file]
-
+    keep = _indexed_file_filter(target)
     inherits: set[InheritEdge] = set()
     subclasses: set[str] = set()
     for edge in graph.name_edges:
         if edge.rel_type not in (_INHERITS, _IMPLEMENTS):
             continue
-        if not _keep(edge.source.file):
+        if not keep(edge.source.file):
             continue
         key = _location_key(edge.source.file, edge.source.start_line)
         subclasses.add(key)
