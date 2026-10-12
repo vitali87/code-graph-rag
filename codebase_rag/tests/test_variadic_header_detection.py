@@ -26,7 +26,7 @@ from codebase_rag.structural_delta import (
     Definition,
     _absorbs_extra_positionals,
     _header_absorbs_extra_positionals,
-    _parameter_list_end_row,
+    _header_end_row,
 )
 
 
@@ -184,6 +184,10 @@ def test_a_multiline_header_is_not_cut_at_a_paren_in_a_default(
         ('def f(\n    a=")",\n    *rest,\n):', 4),
         ("def f(\n    a=1,  # )\n    *rest,\n):", 4),
         ('    def m(\n        self, a="(",\n    ):', 3),
+        # A return annotation runs past the `)` that closes the parameters.
+        ("def f(a, *rest) -> tuple[\n    int,\n    str,\n]:", 4),
+        ("def f[T](a: T, *rest) -> T:", 1),
+        ("def f(a: int, *rest) -> dict[str, int]:", 1),
     ],
 )
 def test_the_header_cut_follows_the_brackets(header: str, end_row: int | None) -> None:
@@ -202,7 +206,7 @@ def test_the_header_cut_follows_the_brackets(header: str, end_row: int | None) -
     exists to avoid. A raw bracket count then had the same fault for
     `a=")"` and for a `)` in a comment (bot review).
     """
-    assert _parameter_list_end_row(header.splitlines()) == end_row
+    assert _header_end_row(header.splitlines()) == end_row
 
 
 def test_a_paren_in_a_string_default_does_not_cut_the_header(
@@ -215,6 +219,36 @@ def test_a_paren_in_a_string_default_does_not_cut_the_header(
         label="Function",
         qualified_name="m.f",
         name="f",
+        path="m.py",
+        start_line=1,
+        end_line=5,
+        positional_params=("a",),
+        fingerprint="",
+        fingerprint_nodes=0,
+        branches=frozenset(),
+    )
+
+    assert _absorbs_extra_positionals(definition, tmp_path) is True
+
+
+def test_a_multiline_return_annotation_does_not_cut_the_header(
+    tmp_path: Path,
+) -> None:
+    """`def helper(a, *rest) -> tuple[` with the annotation on later rows.
+
+    The cut used to stop at the `)` closing the parameter list, leaving
+    `-> tuple[` unfinished; the fragment did not parse, so `helper(1, 2)`
+    was reported as receiving too many arguments and a correct signature
+    change rolled back (bot review).
+    """
+    source = (
+        "def helper(a, *rest) -> tuple[\n    int,\n    str,\n]:\n    return (a, 'x')\n"
+    )
+    (tmp_path / "m.py").write_text(source, encoding="utf-8")
+    definition = Definition(
+        label="Function",
+        qualified_name="m.helper",
+        name="helper",
         path="m.py",
         start_line=1,
         end_line=5,

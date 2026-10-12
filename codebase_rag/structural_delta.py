@@ -1316,14 +1316,19 @@ def _header_absorbs_extra_positionals(header: str) -> bool:
     return node.args.vararg is not None
 
 
-def _parameter_list_end_row(lines: list[str]) -> int | None:
-    """The 1-based row of the `)` that ends the parameter list, or None.
+def _header_end_row(lines: list[str]) -> int | None:
+    """The 1-based row of the `:` that ends the `def` header, or None.
 
     Tokenised rather than counted character by character: a bracket inside
     a string or comment (`a=")"`, `# (`) is not a delimiter, and a raw count
     ended the header early on one, dropping a `*rest` that followed (bot
-    review). One pass over the lines, stopping at the close. Input that ends
-    before the list closes, or does not tokenise, answers None.
+    review). The cut is the header's own colon, at bracket depth zero once
+    the parameter list has opened, not the `)` closing that list: a return
+    annotation can run on (`-> tuple[` over several rows), and a cut at the
+    `)` left it unfinished, so the fragment failed to parse and a `*rest`
+    callee was reported as receiving too many arguments (bot review). One
+    pass over the lines, stopping at the colon. Input that ends before it,
+    or does not tokenise, answers None.
     """
     source = iter(line + "\n" for line in lines)
     depth = 0
@@ -1337,8 +1342,8 @@ def _parameter_list_end_row(lines: list[str]) -> int | None:
                 seen_open = True
             elif token.string in (")", "]", "}"):
                 depth -= 1
-                if seen_open and depth <= 0:
-                    return token.end[0]
+            elif token.string == ":" and seen_open and depth == 0:
+                return token.end[0]
     except (tokenize.TokenError, SyntaxError):
         return None
     return None
@@ -1362,14 +1367,14 @@ def _absorbs_extra_positionals(definition: Definition, repo_root: Path | None) -
         )
     except (OSError, UnicodeDecodeError):
         return False
-    # Stop where the parameter list CLOSES, not at the first `)`. A default
-    # can contain one (`a=g()`, `a=(1, 2)`, `a=")"`), and cutting there drops
-    # a `*rest` that follows it -- the header then fails to parse and answers
+    # Stop at the header's colon, not at the first `)`. A default can
+    # contain one (`a=g()`, `a=(1, 2)`, `a=")"`), and cutting there drops a
+    # `*rest` that follows it -- the header then fails to parse and answers
     # False, which suppresses nothing and reports a variadic callee as
-    # receiving too many arguments. A list that never closes keeps every
+    # receiving too many arguments. A header that never ends keeps every
     # line to `end_line`, which is the safe direction.
     body = lines[definition.start_line - 1 : definition.end_line or None]
-    end_row = _parameter_list_end_row(body)
+    end_row = _header_end_row(body)
     header = body[:end_row] if end_row is not None else body
     return _header_absorbs_extra_positionals("\n".join(header))
 

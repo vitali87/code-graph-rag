@@ -134,7 +134,8 @@ def test_moving_an_empty_class_declares_the_rename_to_the_contract(
     store, updater = _index(root)
     report = _move(root, store, updater, qn=_qn("pkg.util.Empty"))
     assert report.applied, report.message
-    assert report.verdict is not None and report.verdict.ok
+    assert report.verdict is not None
+    assert report.verdict.ok
 
 
 # --- the new destination is checked like every other file -------------------------
@@ -169,12 +170,13 @@ def test_a_language_move_does_not_implement_is_refused(temp_repo: Path) -> None:
     _write(root, "go.mod", "module example.com/m\n\ngo 1.21\n")
     _write(root, "util/util.go", "package util\n\nfunc Helper() int {\n\treturn 1\n}\n")
     store, updater = _index(root)
+    helper = _qn("util.util.Helper")
     with pytest.raises(MoveRefused, match="does not support"):
         _move(
             root,
             store,
             updater,
-            qn=_qn("util.util.Helper"),
+            qn=helper,
             target="core/core.go",
             dry_run=True,
         )
@@ -199,8 +201,9 @@ def test_a_nested_definition_is_refused(temp_repo: Path) -> None:
     )
     root = _materialise(temp_repo, fixture)
     store, updater = _index(root)
+    inner = _qn("pkg.util.outer.inner")
     with pytest.raises(MoveRefused, match="nested"):
-        _move(root, store, updater, qn=_qn("pkg.util.outer.inner"))
+        _move(root, store, updater, qn=inner)
     assert not (root / "pkg/core.py").exists()
 
 
@@ -248,7 +251,8 @@ def test_moving_the_last_function_beside_a_module_constant_passes_its_contract(
     store, updater = _index(root)
     report = _move(root, store, updater)
     assert report.applied, report.message
-    assert report.verdict is not None and report.verdict.ok
+    assert report.verdict is not None
+    assert report.verdict.ok
     assert "from pkg.util import SEP" in (root / "pkg/core.py").read_text()
     assert "from pkg.core import helper" in (root / "pkg/a.py").read_text()
 
@@ -460,3 +464,103 @@ def test_a_js_module_constant_is_imported_only_when_exported(
         return
     report = _move(root, store, updater, target="pkg/core.js", dry_run=True)
     assert "+import { SEP } from './util';" in report.diff
+
+
+# --- names a star import provides, and postponed annotations ----------------------
+
+
+def test_a_name_only_a_star_import_provides_refuses_the_move(temp_repo: Path) -> None:
+    """`from pkg.cfg import *` is recorded under `*`, so nothing carried
+    `RATE` and the moved `helper` raised NameError once called, while the
+    move committed and passed its contract (bot review)."""
+    fixture = dict(FIXTURE)
+    fixture["pkg/cfg.py"] = "RATE = 3\n"
+    fixture["pkg/util.py"] = (
+        "from pkg.cfg import *  # noqa: F403\n\n\n"
+        "def helper(a):\n    return len(a) * RATE  # noqa: F405\n" + OTHER
+    )
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    with pytest.raises(MoveRefused, match="RATE reaches pkg/util.py only through"):
+        _move(root, store, updater)
+    assert (root / "pkg/util.py").read_text() == fixture["pkg/util.py"]
+    assert not (root / "pkg/core.py").exists()
+
+
+def test_a_star_import_the_definition_does_not_rely_on_does_not_refuse(
+    temp_repo: Path,
+) -> None:
+    fixture = dict(FIXTURE)
+    fixture["pkg/cfg.py"] = "RATE = 3\n"
+    fixture["pkg/util.py"] = (
+        "from pkg.cfg import *  # noqa: F403\n\nSEP = '-'\n\n\n"
+        "def helper(a):\n    return SEP.join(a)\n" + OTHER
+    )
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    report = _move(root, store, updater)
+    assert report.applied, report.message
+    probe = _python(root, "from pkg.core import helper; print(helper(['a', 'b']))")
+    assert probe.returncode == 0, probe.stderr
+    assert probe.stdout.strip() == "a-b"
+
+
+_ANNOTATED_CORE = (
+    "def existing(x: int):\n    return existing.__annotations__['x'] is int\n"
+)
+
+
+def test_postponed_annotations_are_not_forced_on_an_annotated_destination(
+    temp_repo: Path,
+) -> None:
+    """Adding the old module's `annotations` future to the destination
+    turned `existing`'s annotations into strings, so it returned False
+    after a move that committed and passed its contract (bot review)."""
+    fixture = dict(FIXTURE)
+    fixture["pkg/util.py"] = (
+        "from __future__ import annotations\n\n\n"
+        "def helper(a: list[str]) -> str:\n    return '-'.join(a)\n" + OTHER
+    )
+    fixture["pkg/core.py"] = _ANNOTATED_CORE
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    with pytest.raises(MoveRefused, match="enables from __future__ import annotations"):
+        _move(root, store, updater)
+    assert (root / "pkg/core.py").read_text() == _ANNOTATED_CORE
+
+
+def test_an_unannotated_definition_does_not_carry_postponed_annotations(
+    temp_repo: Path,
+) -> None:
+    fixture = dict(FIXTURE)
+    fixture["pkg/util.py"] = (
+        "from __future__ import annotations\n\n\n"
+        "def helper(a):\n    return '-'.join(a)\n" + OTHER
+    )
+    fixture["pkg/core.py"] = _ANNOTATED_CORE
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    report = _move(root, store, updater)
+    assert report.applied, report.message
+    assert "__future__" not in (root / "pkg/core.py").read_text()
+    probe = _python(
+        root, "from pkg.core import existing, helper; print(existing(1), helper('ab'))"
+    )
+    assert probe.returncode == 0, probe.stderr
+    assert probe.stdout.strip() == "True a-b"
+
+
+def test_a_destination_postponing_annotations_refuses_an_eager_definition(
+    temp_repo: Path,
+) -> None:
+    """The other direction: the moved annotations would become strings."""
+    fixture = dict(FIXTURE)
+    fixture["pkg/util.py"] = (
+        "def helper(a: list[str]) -> str:\n    return '-'.join(a)\n" + OTHER
+    )
+    fixture["pkg/core.py"] = "from __future__ import annotations\n\nVERSION = 1\n"
+    root = _materialise(temp_repo, fixture)
+    store, updater = _index(root)
+    with pytest.raises(MoveRefused, match="annotations in helper evaluate"):
+        _move(root, store, updater)
+    assert (root / "pkg/core.py").read_text() == fixture["pkg/core.py"]
