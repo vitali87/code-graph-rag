@@ -891,6 +891,11 @@ SIGNATURE_ROLLBACK_REFUSED = (
     "edit was recorded on top of it, so it was not rolled back; undo the later "
     "edit and rerun"
 )
+SIGNATURE_ROLLBACK_FAILED = (
+    "Signature change failed its postcondition ({reasons}) and its rollback "
+    "raised ({error}); its files may remain modified, so check the working "
+    "tree and rebuild the graph before the next graph-backed operation"
+)
 SIGNATURE_ROLLBACK_UNMEASURED = (
     "Signature change rolled back after its postcondition failed ({reasons}), "
     "but the graph could not be re-ingested afterwards ({error}); rebuild the "
