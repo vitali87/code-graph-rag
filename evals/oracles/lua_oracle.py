@@ -16,7 +16,6 @@ from ._common import (
 
 _ORACLE_DIR = Path(__file__).parent / ec.LUA_ORACLE_DIRNAME
 _SCRIPT = _ORACLE_DIR / ec.LUA_ORACLE_SCRIPT
-_NODE_MODULES = _ORACLE_DIR / ec.NODE_MODULES_DIRNAME
 _CALLABLE_KINDS = frozenset({cs.NodeLabel.FUNCTION.value})
 
 

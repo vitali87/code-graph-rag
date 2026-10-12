@@ -14,7 +14,6 @@ from ._common import (
 
 _ORACLE_DIR = Path(__file__).parent / ec.PHP_ORACLE_DIRNAME
 _SCRIPT = _ORACLE_DIR / ec.PHP_ORACLE_SCRIPT
-_NODE_MODULES = _ORACLE_DIR / ec.NODE_MODULES_DIRNAME
 
 
 def php_oracle_available() -> bool:
