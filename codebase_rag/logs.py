@@ -111,6 +111,10 @@ GO_FRONTEND_FACTS = (
 GO_FRONTEND_IMPLEMENTS_JOINED = (
     "Go go/types frontend: {count} IMPLEMENTS edge(s) joined to Pass-2 type nodes"
 )
+GO_IMPLICIT_IMPLEMENTS_LINKED = (
+    "Go: {count} type(s) implement an interface by method name and arity "
+    "(IMPLEMENTS, heuristic)"
+)
 GO_FRONTEND_BUILD_FAILED = (
     "Go frontend tool failed to build; using tree-sitter.\nstderr: {stderr}"
 )
@@ -1489,6 +1493,10 @@ DELOMBOK_OVERLAY_BUILT = "Delombok overlay covers {count} Lombok-affected file(s
 FINGERPRINT_DIST_UNREADABLE = (
     "Skipping a distribution whose metadata could not be read while computing "
     "the parser fingerprint"
+)
+FINGERPRINT_TOOL_UNANSWERED = (
+    "{tool} did not report its version in time, twice; the parser fingerprint "
+    "treats its version as unchanged"
 )
 JAVA_FRONTEND_RUNNING = "javac frontend: attributing Java sources"
 JAVA_FRONTEND_BUILD_FAILED = (

@@ -553,6 +553,10 @@ message GraphCodeIndex {
     // How many type parameters a generic C# interface declares; 0 when it
     // is not generic (issue #2579).
     int32 generic_arity = 6;
+    // Why cgr cannot tell which types implement a Go interface: "builds",
+    // "embeds" or "constraint"; empty when it can (#3360). A rename of a
+    // method of its name refuses.
+    string implementers_unknown = 7;
   }
 
   message Enum {

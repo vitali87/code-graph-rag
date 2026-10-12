@@ -40,6 +40,7 @@ from ..dart.type_inference import DartTypeInferenceEngine
 from ..enum_variants import emit_declared_variants, is_python_enum
 from ..field_nodes import PendingFieldType, emit_declared_fields
 from ..go import GoTypeInferenceEngine
+from ..go import interfaces as go_ifaces
 from ..java import utils as java_utils
 from ..js_ts import utils as js_ts_utils
 from ..parameter_nodes import PendingParameterType, csharp_call_shape
@@ -381,6 +382,7 @@ class ClassIngestMixin:
     rehydrated_interface_implementers: dict[str, set[str]]
     rust_impl_owner_module: dict[str, str]
     rehydrated_definition_paths: dict[str, str]
+    go_interfaces: dict[str, go_ifaces.GoInterfaceDecl]
     function_locations: dict[FunctionSpanKey, FunctionLocation]
     cpp_definition_spans: dict[str, list[CppDefinitionSpan]]
     _deferred_forward_decls: list[_DeferredForwardDecl]
@@ -430,6 +432,15 @@ class ClassIngestMixin:
 
     @abstractmethod
     def _extract_decorators(self, node: ASTNode) -> list[str]: ...
+
+    @abstractmethod
+    def _ingest_go_interface_methods(
+        self,
+        type_spec: Node,
+        interface_qn: str,
+        module_qn: str,
+        file_path: Path | None,
+    ) -> None: ...
 
     @abstractmethod
     def _emit_or_defer_defines(
@@ -1479,8 +1490,9 @@ class ClassIngestMixin:
                 file_path, self.repo_path
             ).as_posix()
             class_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
-        if language == cs.SupportedLanguage.PHP:
-            self._record_php_namespace(class_node, class_props)
+        self._record_language_type_props(
+            class_node, class_qn, class_name, node_type, language, class_props
+        )
         # A container's hash covers its whole subtree, the same reading as a
         # function's: a note on a class is about the class as declared, and
         # a member edit is a change under it. It makes a class note gradable
@@ -1488,9 +1500,6 @@ class ClassIngestMixin:
         # move, which refuses a hash-less candidate (issue #1808).
         class_props.update(anchor_hash_props(class_node, decorators))
         class_props.update(decorated_start_props(class_node))
-        if language == cs.SupportedLanguage.CSHARP:
-            self._record_csharp_namespace(class_node, class_qn, class_props)
-            self._record_csharp_arity(class_node, class_name, class_props)
         # Stored on the node so an incremental run that does not re-parse
         # this file can register them again.
         if non_method_members := _python_non_method_members(class_node, language):
@@ -1581,32 +1590,13 @@ class ClassIngestMixin:
             defer_inherits=self._deferred_inherits,
             csharp_base_kinds=csharp_base_kinds,
         )
-        # The variants ride with their enum the way fields ride with their
-        # owner (issue #1807). After the relationships, because a Python enum
-        # is a Class that only its resolved bases identify (issue #2583).
-        if node_type == NodeType.ENUM or (
-            language == cs.SupportedLanguage.PYTHON
-            and is_python_enum(self.class_inheritance.get(class_qn, ()))
-        ):
-            emit_declared_variants(
-                self.ingestor,
-                cs.NodeLabel(node_type.value),
-                class_qn,
-                member_node,
-                language,
-                class_props,
-                self.import_processor.import_mapping.get(module_qn),
+        self._record_declared_type_members(
+            member_node, class_qn, module_qn, node_type, language, class_props
+        )
+        if language == cs.SupportedLanguage.GO and node_type == NodeType.INTERFACE:
+            self._ingest_go_interface_methods(
+                class_node, class_qn, module_qn, file_path
             )
-        if language == cs.SupportedLanguage.DART and (
-            type_args := pe.extract_dart_extends_type_args(
-                member_node, module_qn, partial(self._resolve_to_qn, language=language)
-            )
-        ):
-            self.dart_extends_type_args[class_qn] = type_args
-        if language == cs.SupportedLanguage.DART and (
-            on_type := dart_utils.dart_extension_on_type(member_node)
-        ):
-            self.dart_extension_on_types[class_qn] = on_type
         self._record_class_field_types(
             class_node,
             member_node,
@@ -1697,6 +1687,65 @@ class ClassIngestMixin:
                     func_node_starts,
                 )
             )
+
+    def _record_language_type_props(
+        self,
+        class_node: Node,
+        class_qn: str,
+        class_name: str,
+        node_type: NodeType,
+        language: cs.SupportedLanguage,
+        class_props: PropertyDict,
+    ) -> None:
+        if language == cs.SupportedLanguage.PHP:
+            self._record_php_namespace(class_node, class_props)
+        elif language == cs.SupportedLanguage.CSHARP:
+            self._record_csharp_namespace(class_node, class_qn, class_props)
+            self._record_csharp_arity(class_node, class_name, class_props)
+        elif language == cs.SupportedLanguage.GO and node_type == NodeType.INTERFACE:
+            # Stored so an incremental run that does not re-parse the
+            # interface still knows what its method set is built from.
+            class_props.update(go_ifaces.embeds_props(class_node))
+
+    def _record_declared_type_members(
+        self,
+        member_node: Node,
+        class_qn: str,
+        module_qn: str,
+        node_type: NodeType,
+        language: cs.SupportedLanguage,
+        class_props: PropertyDict,
+    ) -> None:
+        # The variants ride with their enum the way fields ride with their
+        # owner (issue #1807). After the relationships, because a Python enum
+        # is a Class that only its resolved bases identify (issue #2583).
+        if node_type == NodeType.ENUM or (
+            language == cs.SupportedLanguage.PYTHON
+            and is_python_enum(self.class_inheritance.get(class_qn, ()))
+        ):
+            emit_declared_variants(
+                self.ingestor,
+                cs.NodeLabel(node_type.value),
+                class_qn,
+                member_node,
+                language,
+                class_props,
+                self.import_processor.import_mapping.get(module_qn),
+            )
+        if language == cs.SupportedLanguage.DART:
+            self._record_dart_heritage(member_node, class_qn, module_qn)
+
+    def _record_dart_heritage(
+        self, member_node: Node, class_qn: str, module_qn: str
+    ) -> None:
+        if type_args := pe.extract_dart_extends_type_args(
+            member_node,
+            module_qn,
+            partial(self._resolve_to_qn, language=cs.SupportedLanguage.DART),
+        ):
+            self.dart_extends_type_args[class_qn] = type_args
+        if on_type := dart_utils.dart_extension_on_type(member_node):
+            self.dart_extension_on_types[class_qn] = on_type
 
     def _record_php_namespace(
         self, class_node: Node, class_props: PropertyDict
@@ -2718,6 +2767,7 @@ class ClassIngestMixin:
             self.rust_impl_method_traits,
             self.rust_inherent_impl_methods,
             module_qns={*self.module_qn_to_file_path, *module_qns},
+            linked_apart=self.go_interfaces.keys(),
         )
         self._resolve_java_anon_overrides()
 
@@ -2732,18 +2782,28 @@ class ClassIngestMixin:
         # parsing records, and walking the trait instead would link an
         # inherent method sharing the trait method's name. An unchanged impl
         # keeps the edges its own parse wrote.
-        merged = {qn: set(impls) for qn, impls in self.interface_implementers.items()}
+        #
+        # Nor do a Go interface's (issue #2483): link_go_interfaces gave each
+        # implementer its OVERRIDES, one per interface satisfied and labelled
+        # with the pair's confidence, from every method set, read back ones
+        # included. The walk would add an unlabelled copy, and a pair the
+        # graph still holds after an edit took it away.
+        merged = {
+            qn: set(impls)
+            for qn, impls in self.interface_implementers.items()
+            if qn not in self.go_interfaces
+        }
         for iface, implementers in self.rehydrated_interface_implementers.items():
             if walked := {qn for qn in implementers if self._walks_read_back(qn)}:
                 merged.setdefault(iface, set()).update(walked)
         return merged
 
     def _walks_read_back(self, implementer_qn: str) -> bool:
-        # Read back from a file other than Rust. No recorded path means this
-        # run parsed the class (its parsed pairs already cover it) or it is a
-        # Rust impl target with no node of its own.
+        # Read back from a file other than Rust or Go. No recorded path means
+        # this run parsed the class (its parsed pairs already cover it) or it
+        # is a Rust impl target with no node of its own.
         path = self.rehydrated_definition_paths.get(implementer_qn)
-        return path is not None and not path.endswith(cs.EXT_RS)
+        return path is not None and not path.endswith((cs.EXT_RS, cs.EXT_GO))
 
     def _resolve_java_anon_overrides(self) -> None:
         # Emit OVERRIDES edges for Java anonymous-class methods recorded at ingestion

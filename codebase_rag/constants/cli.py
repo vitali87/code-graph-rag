@@ -870,6 +870,20 @@ RENAME_WRONG_ROOT = (
     "Project {project} was not indexed from this server's repository; "
     "rename it from the MCP server rooted at its source tree"
 )
+RENAME_GO_IMPLEMENTERS_UNKNOWN = (
+    "Refusing to rename {qn}: Go interface {interface} declares {name}, and cgr "
+    "cannot tell which types implement it ({why}). A type that satisfies it "
+    "through {name}, or the interface itself, could be left under the old name "
+    "and stop compiling. Rename it by hand and run `go build ./...` and "
+    "`go vet ./...` for each build"
+)
+RENAME_GO_IMPLEMENTERS_UNKNOWN_WHY = {
+    "builds": "its method set differs between builds in more ways than cgr tells apart",
+    "embeds": "it embeds an interface cgr cannot resolve",
+    "constraint": "whether a type implements it rests on a build constraint "
+    "cgr cannot read or decide",
+}
+RENAME_GO_IMPLEMENTERS_UNKNOWN_WHY_OTHER = "its implementers are unknown"
 RENAME_STRUCTURAL_UNLOCATABLE = (
     "Cannot rename {qn}: {count} structural edge(s) (inherits, accepts, returns) "
     "carry no rewrite site, so the rename would leave them pointing at the old name"

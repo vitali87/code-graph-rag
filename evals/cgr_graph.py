@@ -283,6 +283,11 @@ def _text(value: PropertyValue) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _texts(value: PropertyValue | None) -> list[ResultScalar] | None:
+    # A stored list property as the store returns it; absent reads as null.
+    return [_text(item) for item in value] if isinstance(value, list) else None
+
+
 def _shadowed_by_longer_owner(
     qualified_name: str, longer_project_prefixes: set[str]
 ) -> bool:
@@ -725,6 +730,8 @@ class _StatefulIngestor:
     # A reference read also names the parameter a callback is invoked
     # through (issue #2459).
     _GRAPH_REFERENCE_KEYS = (*_GRAPH_SITE_KEYS, cs.KEY_VIA_PARAM)
+    # A Go override matched by name and arity says so (issue #2483).
+    _GRAPH_OVERRIDE_KEYS = (cs.KEY_RESOLUTION,)
     _GRAPH_IMPORT_KEYS = (
         cs.KEY_LINE,
         cs.KEY_COL,
@@ -939,6 +946,35 @@ class _StatefulIngestor:
             and props.get(cs.KEY_NAME) == params.get(cs.KEY_NAME)
         ]
 
+    def _go_implementers_unknown_rows(self, params: PropertyDict) -> list[ResultRow]:
+        # Interfaces marked `implementers_unknown` (#3360) that declare a
+        # method `$name`, once each.
+        prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
+        interface = cs.NodeLabel.INTERFACE.value
+        rows: dict[str, ResultRow] = {}
+        for (label, uid), props in self.nodes.items():
+            if (
+                label != interface
+                or not _str(uid).startswith(prefix)
+                or not props.get(cs.KEY_IMPLEMENTERS_UNKNOWN)
+            ):
+                continue
+            if any(
+                edge[2] == cs.RelationshipType.DEFINES_METHOD.value
+                and edge[3] == cs.NodeLabel.METHOD.value
+                and self.nodes.get((edge[3], edge[4]), {}).get(cs.KEY_NAME)
+                == params.get(cs.KEY_NAME)
+                for edge in self._out.get((label, uid), ())
+            ):
+                rows[_str(uid)] = {
+                    cs.KEY_QUALIFIED_NAME: _result(uid),
+                    cs.KEY_PATH: _result(props.get(cs.KEY_PATH)),
+                    cs.KEY_IMPLEMENTERS_UNKNOWN: _result(
+                        props.get(cs.KEY_IMPLEMENTERS_UNKNOWN)
+                    ),
+                }
+        return [rows[qn] for qn in sorted(rows)]
+
     def _project_rows(self) -> list[ResultRow]:
         return [
             {
@@ -1047,12 +1083,20 @@ class _StatefulIngestor:
                     if edge[2] == overrides and self._in_project(
                         (edge[0], edge[1]), prefix
                     ):
-                        rows.append(self._graph_edge_row(edge, (), (edge[0], edge[1])))
+                        rows.append(
+                            self._graph_edge_row(
+                                edge, self._GRAPH_OVERRIDE_KEYS, (edge[0], edge[1])
+                            )
+                        )
                 for edge in self._out.get(target, ()):
                     if edge[2] == overrides and self._in_project(
                         (edge[3], edge[4]), prefix
                     ):
-                        rows.append(self._graph_edge_row(edge, (), (edge[3], edge[4])))
+                        rows.append(
+                            self._graph_edge_row(
+                                edge, self._GRAPH_OVERRIDE_KEYS, (edge[3], edge[4])
+                            )
+                        )
         elif query == cq.CYPHER_GRAPH_IMPORTERS:
             for target in targets:
                 for edge in self._in.get(target, ()):
@@ -1287,6 +1331,8 @@ class _StatefulIngestor:
                 return self._graph_rows(query, params or {})
             case cs.CYPHER_SAME_NAMED_CSHARP_TYPES:
                 return self._same_named_csharp_type_rows(params or {})
+            case cq.CYPHER_GRAPH_GO_IMPLEMENTERS_UNKNOWN:
+                return self._go_implementers_unknown_rows(params or {})
             case (
                 cq.CYPHER_CONTEXT_HOTNESS
                 | cq.CYPHER_CONTEXT_TYPES
@@ -1506,6 +1552,7 @@ class _StatefulIngestor:
                         cs.KEY_IS_EXPORTED: bool(props[cs.KEY_IS_EXPORTED])
                         if cs.KEY_IS_EXPORTED in props
                         else None,
+                        cs.KEY_EMBEDS: _texts(props.get(cs.KEY_EMBEDS)),
                     }
                     defs.append(row)
                 return defs
@@ -1948,6 +1995,7 @@ class _StatefulIngestor:
                 }
                 if container_qn is not None:
                     row[cs.KEY_CONTAINER_QN] = _text(container_qn)
+                    row[cs.KEY_PATH] = _text(props.get(cs.KEY_PATH))
                 rows.append(row)
         return rows
 
