@@ -7,7 +7,7 @@ deleted functions stayed forever: semantic search returned several copies of
 each edited function plus functions long gone (issue #2447).
 
 These tests drive the sync's embedding pass against a real embedded Qdrant
-(and Milvus Lite), with the graph's answer for the project scripted per sync
+(and Milvus Lite, and sqlite-vec), with the graph's answer for the project scripted per sync
 the way an incremental re-parse changes it: a re-parsed file's functions come
 back under new node ids, a deleted function does not come back at all.
 """
@@ -15,8 +15,9 @@ back under new node ids, a deleted function does not come back at all.
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 from collections.abc import Callable, Generator, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -29,10 +30,17 @@ from codebase_rag.constants import VectorStoreBackend
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.sqlite_vectors import extensions_loadable
 from codebase_rag.types_defs import ResultRow
-from codebase_rag.utils.dependencies import has_pymilvus, has_qdrant_client
+from codebase_rag.utils.dependencies import (
+    has_pymilvus,
+    has_qdrant_client,
+    has_sqlite_vec,
+)
 
-pytestmark = pytest.mark.skipif(
+# Only the Qdrant classes need the client; the other backends' classes run
+# without it.
+_needs_qdrant = pytest.mark.skipif(
     not has_qdrant_client(), reason="qdrant-client not installed"
 )
 
@@ -242,6 +250,7 @@ def _write_legacy(points: Mapping[int, str]) -> None:
         )
 
 
+@_needs_qdrant
 @pytest.mark.usefixtures("small_vectors")
 class TestASyncKeepsOnePointPerSymbol:
     def test_an_edit_replaces_the_symbols_point_instead_of_adding_one(
@@ -349,6 +358,7 @@ class TestASyncKeepsOnePointPerSymbol:
         assert _points() == [(_DELETE, 2), (_KEEP, 1)]
 
 
+@_needs_qdrant
 @pytest.mark.usefixtures("small_vectors")
 class TestDeleteProject:
     def test_delete_project_removes_every_point_of_the_project(
@@ -392,6 +402,7 @@ def _searched_node_ids() -> set[int]:
     return {node_id for node_id, _ in vs.search_embeddings(_vector(_NOW), top_k=10)}
 
 
+@_needs_qdrant
 @pytest.mark.usefixtures("small_vectors")
 class TestAFunctionAndAMethodSharingAName:
     """Both are live nodes, so each keeps a point of its own (bot review)."""
@@ -442,6 +453,7 @@ class TestAFunctionAndAMethodSharingAName:
         assert _points() == []
 
 
+@_needs_qdrant
 @pytest.mark.usefixtures("small_vectors")
 class TestUpgradeFromNodeIdKeys:
     """A collection written before the fix holds points keyed by node id."""
@@ -660,3 +672,103 @@ class TestMilvus:
         _sync(repo, ingestor, {}, project="svc_a", source="")
 
         assert self._rows() == [("svcXa.m.keep_me", 7)]
+
+
+@pytest.mark.skipif(not has_sqlite_vec(), reason="sqlite-vec not installed")
+@pytest.mark.skipif(
+    not extensions_loadable(), reason="this Python's sqlite3 cannot load extensions"
+)
+class TestSqlite:
+    """sqlite-vec keys points by symbol, as Qdrant does; a sync prunes the rest."""
+
+    @pytest.fixture(autouse=True)
+    def sqlite(
+        self, small_vectors: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> Generator[None, None, None]:
+        monkeypatch.setattr(
+            vs.settings, "VECTOR_STORE_BACKEND", VectorStoreBackend.SQLITE
+        )
+        monkeypatch.setattr(
+            vs.settings, "SQLITE_VECTOR_PATH", tmp_path / "vectors.sqlite"
+        )
+        monkeypatch.setattr(vs.settings, "SQLITE_VECTOR_DIM", _DIM)
+        yield
+        vs.close_vector_store_client()
+
+    @staticmethod
+    def _rows() -> list[tuple[str, int]]:
+        # The payload table is plain SQLite, readable without the extension.
+        with closing(sqlite3.connect(vs.settings.sqlite_vector_path)) as conn:
+            rows = conn.execute(
+                "SELECT qualified_name, node_id FROM cgr_vector_points"
+            ).fetchall()
+        return sorted(rows)
+
+    def test_an_edit_replaces_the_point_and_a_deleted_function_loses_it(
+        self, repo: Path, ingestor: MagicMock
+    ) -> None:
+        # The issue's reproduction, as for Qdrant.
+        _sync(repo, ingestor, {1: _KEEP, 2: _DELETE})
+        assert self._rows() == [(_DELETE, 2), (_KEEP, 1)]
+
+        _sync(repo, ingestor, {3: _KEEP}, source=_SOURCE_V2)
+        assert self._rows() == [(_KEEP, 3)]
+
+        _sync(repo, ingestor, {4: _KEEP}, source=_SOURCE_V3)
+        assert self._rows() == [(_KEEP, 4)]
+
+    def test_search_answers_with_the_symbols_current_node(
+        self, repo: Path, ingestor: MagicMock
+    ) -> None:
+        _sync(repo, ingestor, {1: _KEEP, 2: _DELETE})
+        _sync(repo, ingestor, {3: _KEEP}, source=_SOURCE_V2)
+
+        hits = vs.search_embeddings(_vector("keep_me"), top_k=10)
+
+        assert [node_id for node_id, _ in hits] == [3]
+
+    def test_another_projects_points_survive_a_sync(
+        self, repo: Path, ingestor: MagicMock
+    ) -> None:
+        other_keep = f"{_OTHER}.m.keep_me"
+        _sync(repo, ingestor, {7: other_keep}, project=_OTHER)
+
+        _sync(repo, ingestor, {1: _KEEP, 2: _DELETE})
+        _sync(repo, ingestor, {3: _KEEP}, source=_SOURCE_V2)
+
+        assert self._rows() == [(other_keep, 7), (_KEEP, 3)]
+
+    def test_a_sync_leaves_a_nested_projects_points_alone(
+        self, repo: Path, ingestor: MagicMock
+    ) -> None:
+        nested = f"{_PROJECT}.v2.m.keep_me"
+        projects = (_PROJECT, f"{_PROJECT}.v2")
+        _sync(repo, ingestor, {30: nested}, project=f"{_PROJECT}.v2", projects=projects)
+
+        _sync(repo, ingestor, {1: _KEEP, 30: nested}, projects=projects)
+        _sync(repo, ingestor, {3: _KEEP, 30: nested}, projects=projects)
+
+        assert self._rows() == [(_KEEP, 3), (nested, 30)]
+
+    def test_delete_project_leaves_a_nested_projects_points(
+        self, repo: Path, ingestor: MagicMock
+    ) -> None:
+        nested = f"{_PROJECT}.v2.m.keep_me"
+        projects = (_PROJECT, f"{_PROJECT}.v2")
+        _sync(repo, ingestor, {30: nested}, project=f"{_PROJECT}.v2", projects=projects)
+        _sync(repo, ingestor, {1: _KEEP, 30: nested}, projects=projects)
+
+        vs.delete_project_embeddings(_PROJECT, [1, 30], [f"{_PROJECT}.v2"])
+
+        assert self._rows() == [(nested, 30)]
+
+    def test_a_function_and_a_method_sharing_a_name_keep_a_point_each(
+        self, clock_repo: Path, ingestor: MagicMock
+    ) -> None:
+        _sync(clock_repo, ingestor, _clock(1, 2))
+        assert self._rows() == [(_NOW, 1), (_NOW, 2)]
+        assert _searched_node_ids() == {1, 2}
+
+        _sync(clock_repo, ingestor, [_clock_row(1, cs.NodeLabel.FUNCTION)])
+        assert self._rows() == [(_NOW, 1)]
+        assert _searched_node_ids() == {1}

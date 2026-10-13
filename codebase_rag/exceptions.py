@@ -112,6 +112,22 @@ QDRANT_API_KEY_OVER_HTTP = (
     "way (for example, it never leaves the machine)."
 )
 
+SQLITE_VECTOR_DIM_MISMATCH = (
+    "SQLite vector store '{path}' has vector dimension {dim}, expected "
+    "{expected}. Set SQLITE_VECTOR_DIM to the embedding model's output size, "
+    "or re-index with --clean to rebuild the store with the new size."
+)
+SQLITE_VEC_NOT_INSTALLED = (
+    "CGR_VECTOR_STORE_BACKEND=sqlite needs sqlite-vec, which is not installed. "
+    "Install it with `pip install 'code-graph-rag[sqlite-vec]'` (or "
+    "`uv sync --extra sqlite-vec`)."
+)
+SQLITE_VEC_EXTENSIONS_UNSUPPORTED = (
+    "CGR_VECTOR_STORE_BACKEND=sqlite loads the sqlite-vec extension, but this "
+    "Python's sqlite3 module was built without extension loading. Use a Python "
+    "that has it (uv-managed Pythons do), or set CGR_VECTOR_STORE_BACKEND=qdrant."
+)
+
 EMBEDDING_DIM_MISMATCH = (
     "The embedding model produced {dim}-dimensional vectors, but the {backend} "
     "collection holds {expected}-dimensional ones. Set {setting} to the "

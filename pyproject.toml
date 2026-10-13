@@ -120,6 +120,8 @@ test = [
     # The suite exercises the Memgraph backend with a mocked server, but
     # imports the real driver's exception types to do it.
     "pymgclient>=1.6.0",
+    # The `sqlite` vector store's tests run against a real sqlite-vec file.
+    "sqlite-vec>=0.1.9",
 ]
 
 cpp = [
@@ -168,6 +170,12 @@ semantic = [
 
 milvus = [
     "pymilvus[milvus-lite]>=3.0.0",
+]
+
+# The `sqlite` vector store (CGR_VECTOR_STORE_BACKEND=sqlite): vectors in a
+# file beside the embedded graph, so semantic search needs no server either.
+sqlite-vec = [
+    "sqlite-vec>=0.1.9",
 ]
 
 ast-grep = [

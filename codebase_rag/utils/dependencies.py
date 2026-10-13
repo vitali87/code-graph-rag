@@ -7,6 +7,7 @@ from codebase_rag.constants import (
     MODULE_AST_GREP,
     MODULE_PYMILVUS,
     MODULE_QDRANT_CLIENT,
+    MODULE_SQLITE_VEC,
     MODULE_TORCH,
     MODULE_TRANSFORMERS,
     UNIXCODER_MODEL,
@@ -41,6 +42,10 @@ def has_pymilvus() -> bool:
     return _check_dependency(MODULE_PYMILVUS)
 
 
+def has_sqlite_vec() -> bool:
+    return _check_dependency(MODULE_SQLITE_VEC)
+
+
 def has_ast_grep() -> bool:
     return _check_dependency(MODULE_AST_GREP)
 
@@ -51,6 +56,8 @@ def has_vector_store_dependencies() -> bool:
     backend = settings.VECTOR_STORE_BACKEND
     if backend == VectorStoreBackend.MILVUS:
         return has_pymilvus()
+    if backend == VectorStoreBackend.SQLITE:
+        return has_sqlite_vec()
     return has_qdrant_client()
 
 

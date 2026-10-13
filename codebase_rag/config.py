@@ -443,6 +443,19 @@ class AppConfig(BaseSettings):
     MILVUS_VECTOR_DIM: int = 768
     MILVUS_TOP_K: int = 5
     MILVUS_CONSISTENCY_LEVEL: str = "Strong"
+    # The `sqlite` vector store's file; unset means `vectors.sqlite` under
+    # CGR_HOME, beside the embedded graph's, so semantic search needs no
+    # server either.
+    SQLITE_VECTOR_PATH: Path | None = None
+    SQLITE_VECTOR_DIM: int = 768
+    SQLITE_VECTOR_TOP_K: int = 5
+
+    @property
+    def sqlite_vector_path(self) -> Path:
+        if self.SQLITE_VECTOR_PATH is not None:
+            return self.SQLITE_VECTOR_PATH.expanduser()
+        return self.CGR_HOME.expanduser() / cs.SQLITE_VEC_DEFAULT_DB_FILENAME
+
     EMBEDDING_PROVIDER: cs.EmbeddingProvider = Field(
         cs.EmbeddingProvider.UNIXCODER, validation_alias="CGR_EMBEDDING_PROVIDER"
     )

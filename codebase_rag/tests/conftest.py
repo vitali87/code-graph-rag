@@ -307,6 +307,13 @@ def _isolate_vector_store(
         "MILVUS_URI",
         str(tmp_path_factory.mktemp("milvus-iso") / "milvus.db"),
     )
+    # Unset it already lands under the isolated CGR_HOME; a developer .env
+    # that sets it would not.
+    monkeypatch.setattr(
+        settings,
+        "SQLITE_VECTOR_PATH",
+        tmp_path_factory.mktemp("sqlite-vec-iso") / "vectors.sqlite",
+    )
 
 
 @pytest.fixture(autouse=True)
