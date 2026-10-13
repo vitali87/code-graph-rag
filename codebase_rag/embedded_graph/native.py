@@ -1,12 +1,12 @@
 """The optional Rust extension (`cgr_graph_rs`) and the engine's paths into it.
 
-rust/cgr_graph_rs does in Rust what the engine otherwise does in Python: the
-whole-graph procedures (procedures.py), the ingestor's batch writes and the
-decoding of result rows. Each Rust path returns exactly what the Python path
-returns. The Python path stays the reference, and runs whenever the extension
-is not installed, the graph has no file another connection could open
-(`:memory:`), or the input holds a value the Rust path cannot reproduce
-exactly: it declines rather than approximates.
+rust/cgr_graph_rs does in Rust what the engine otherwise does in Python and
+SQL: the whole-graph procedures (procedures.py), variable-length walks, the
+ingestor's batch writes and the decoding of result rows. Each Rust path
+returns exactly what the Python path returns. The Python path stays the
+reference, and runs whenever the extension is not installed, the graph has no
+file another connection could open (`:memory:`), or the input holds a value
+the Rust path cannot reproduce exactly: it declines rather than approximates.
 
 The extension reads on its own connection, which sees committed data only
 and need not share the calling statement's snapshot: another process may
@@ -52,6 +52,7 @@ from ..constants.embedded_graph import (
     EG_RUST_READER,
     EG_RUST_WRITER,
     EgDecode,
+    EgSqlFn,
 )
 from ..constants.graph import (
     KEY_FROM_VAL,
@@ -72,8 +73,14 @@ if TYPE_CHECKING:
 
 # Which paths may use the extension; the parity tests and benchmarks flip
 # them to compare it with the Python path (docs/architecture/embedded-graph.md
-# has the numbers).
+# has the numbers). Walks stay off: the extension walks row for row as the
+# CTE does, but handing the rows back to SQLite (about 1.2 us each through
+# json_each) costs what SQLite's own walk of cgr's tree-shaped containment
+# costs, so cgr's shipped walks ran 0.8-1.3x as fast; and SQLite plans the
+# joins around the two differently, so an unordered result can come back in
+# another order.
 PROCEDURES: bool = True
+WALKS: bool = False
 INGEST: bool = True
 DECODE: bool = True
 
@@ -84,6 +91,16 @@ type Pattern = tuple[str, str, str, str, str]
 
 
 class Reader(Protocol):
+    def walk(
+        self,
+        seconds_left: float | None,
+        seeds: str,
+        version: str | None,
+        direction: str,
+        max_depth: int | None,
+        *types: str,
+    ) -> str | None: ...
+
     def run_procedure(
         self,
         version: str | None,
@@ -179,6 +196,10 @@ class NativeGraph:
         self._conn = conn
         self._key = key
         self._file = file
+        self.walks = False
+        # Why the extension's last walk failed its statement, if it did.
+        self.walk_saw_newer_graph = False
+        self.walk_timed_out = False
 
     @property
     def lock(self) -> threading.RLock:
@@ -195,6 +216,16 @@ class NativeGraph:
             if self._file.writer is None:
                 self._file.writer = _new_writer(self._file.path)
             return self._file.writer
+
+    def register_walks(self) -> None:
+        """Let this connection's compiled walks call the extension."""
+        reader = self._reader()
+        if reader is None:
+            return
+        self._conn.create_function(
+            EgSqlFn.WALK, -1, _walk_function(self, reader), deterministic=True
+        )
+        self.walks = True
 
     def run_procedure(self, name: str, args: Sequence[SqlValue]) -> list[Record] | None:
         """A ported procedure's records at this connection's snapshot."""
@@ -304,6 +335,39 @@ def _new_writer(path: str) -> Writer | None:
     )
 
 
+class _NewerGraph(Exception):
+    """Fails a statement whose walk found a newer graph than its own."""
+
+
+def _walk_function(graph: NativeGraph, reader: Reader) -> Callable[..., str]:
+    """What the walk SQL function calls: the reader's walk, handed the
+    statement's remaining time (a seam the snapshot tests wrap).
+
+    SQLite reports any exception a function raises as one generic error,
+    so the reason a walk failed its statement is kept on `graph`.
+    """
+
+    def walk(
+        seeds: str,
+        version: str | None,
+        direction: str,
+        max_depth: int | None,
+        *types: str,
+    ) -> str:
+        left = seconds_left()
+        try:
+            rows = reader.walk(left, seeds, version, direction, max_depth, *types)
+        except TimeoutError:
+            graph.walk_timed_out = True
+            raise
+        if rows is None:
+            graph.walk_saw_newer_graph = True
+            raise _NewerGraph
+        return rows
+
+    return walk
+
+
 def _snapshot_version(conn: sqlite3.Connection) -> str | None:
     """The graph version `conn`'s open transaction reads.
 
@@ -328,6 +392,8 @@ def attach(conn: sqlite3.Connection, path: str) -> NativeGraph | None:
         file = _FILES.setdefault(key, _File(str(target)))
         file.users += 1
         graph = _GRAPHS[id(conn)] = NativeGraph(conn, key, file)
+    if WALKS:
+        graph.register_walks()
     return graph
 
 
@@ -352,6 +418,30 @@ def run_procedure(
     """
     graph = _GRAPHS.get(id(conn))
     return graph.run_procedure(name, args) if graph is not None else None
+
+
+# ------------------------------------------------------------------- walks
+
+
+def with_walks[R](graph: NativeGraph | None, run: Callable[[bool], R]) -> R:
+    """`run(True)` lets a statement walk in the extension, `run(False)` in SQL.
+
+    A walk that found a newer graph than its statement's fails the
+    statement; nothing was written (walks run only in statements that write
+    nothing), so it runs again, in the same transaction, with SQL's walks.
+    One that ran out of time is the statement's timeout.
+    """
+    if graph is None or not graph.walks:
+        return run(False)
+    graph.walk_saw_newer_graph = graph.walk_timed_out = False
+    try:
+        return run(True)
+    except sqlite3.OperationalError as error:
+        if graph.walk_timed_out:
+            raise QueryTimeout(EG_ERR_TIMEOUT) from error
+        if not graph.walk_saw_newer_graph:
+            raise
+    return run(False)
 
 
 # ---------------------------------------------------------------- decoding

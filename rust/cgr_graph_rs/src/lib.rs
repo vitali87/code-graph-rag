@@ -29,6 +29,7 @@ pub mod json_text;
 #[cfg(feature = "python")]
 mod reader;
 pub mod snapshot;
+pub mod walk;
 
 const DEFAULT_ITERATIONS: u32 = 100;
 const DEFAULT_DAMPING: f64 = 0.85;

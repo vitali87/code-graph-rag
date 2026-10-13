@@ -2,12 +2,14 @@
 //!
 //! The engine keeps one `Reader` per file for as long as any of its own
 //! connections to the file is open (codebase_rag/embedded_graph/native.py
-//! says why), and serves from it the procedures `run_procedure` ports. They
-//! read at the caller's snapshot or not at all (see `snapshot`), and stop at
-//! the caller's deadline, raising `Timeout` (see `deadline`).
+//! says why), and serves from it the walks its compiled queries call and the
+//! procedures `run_procedure` ports. Both read at the caller's snapshot or
+//! not at all (see `snapshot`), and stop at the caller's deadline, raising
+//! `Timeout` (see `deadline`).
 
 use std::sync::Mutex;
 
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 use rusqlite::Connection;
@@ -15,6 +17,7 @@ use rusqlite::Connection;
 use crate::deadline::{Deadline, Stopped};
 use crate::python::{records_to_list, stopped_error, to_arg};
 use crate::snapshot::at_version;
+use crate::walk::{parse_seeds, to_json, walk, Direction, WalkSpec};
 use crate::{implements, open, run_until, Arg, Graph};
 
 #[pyclass(frozen)]
@@ -69,6 +72,37 @@ impl Reader {
             version_sql,
             conn: Mutex::new(None),
         }
+    }
+
+    /// The SQL function a compiled walk calls (through native.py, which
+    /// puts the statement's `seconds_left` first): its rows as JSON text,
+    /// `[[seed, node, depth, path], ...]` (see `walk`), or None where the
+    /// graph is newer than `version`. A statement cannot fall back halfway,
+    /// so native.py then fails it and runs it again with SQL's walk.
+    #[pyo3(signature = (seconds_left, seeds, version, direction, max_depth, *types))]
+    #[allow(clippy::too_many_arguments)]
+    fn walk(
+        &self,
+        py: Python<'_>,
+        seconds_left: Option<f64>,
+        seeds: &str,
+        version: Option<&str>,
+        direction: &str,
+        max_depth: Option<i64>,
+        types: Vec<String>,
+    ) -> PyResult<Option<String>> {
+        let seeds = parse_seeds(seeds).map_err(|e| PyValueError::new_err(e.0))?;
+        let direction = Direction::parse(direction)
+            .ok_or_else(|| PyValueError::new_err(direction.to_string()))?;
+        let spec = WalkSpec {
+            direction,
+            types,
+            max_depth,
+        };
+        let deadline = Deadline::after(seconds_left);
+        self.at(py, version, &deadline, |conn| {
+            Ok(to_json(&walk(conn, &seeds, &spec, &deadline)?))
+        })
     }
 
     /// A ported procedure's records at `version`, as `run_procedure`

@@ -101,7 +101,9 @@ class EmbeddedConnection:
         self._sqlite = open_connection(path, read_only, heap_limit_mb)
         # The Rust extension's handles on this file, if it is installed.
         self.native = native.attach(self._sqlite, path)
-        self._executor = Executor(self._sqlite, supports_json_arrow(), read_only)
+        self._executor = Executor(
+            self._sqlite, supports_json_arrow(), read_only, self.native
+        )
         self._lock = threading.Lock()
         self._closed = False
         self.autocommit = True

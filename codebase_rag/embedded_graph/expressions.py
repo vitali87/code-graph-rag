@@ -102,6 +102,9 @@ class Ctx:
 
     param_types: dict[str, T]
     json_arrow: bool
+    # Variable-length walks call the Rust extension (native.py) instead of
+    # a recursive CTE.
+    native_walks: bool = False
     params: list[ParamSpec] = field(default_factory=list)
     _param_index: dict[tuple[str, EgParamMode], str] = field(default_factory=dict)
     _counter: int = 0

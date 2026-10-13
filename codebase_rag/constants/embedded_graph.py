@@ -428,6 +428,9 @@ class EgSqlFn(StrEnum):
     SIGN = "eg_sign"
     TIMESTAMP = "eg_timestamp"
     PATHS_DISJOINT = "eg_paths_disjoint"
+    # Registered by native.py, on a file's connections, where the Rust
+    # extension walks variable-length relationships.
+    WALK = "eg_walk"
 
 
 # JSON's spelling of the booleans, which `eg_` functions read and write.

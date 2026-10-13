@@ -90,7 +90,7 @@ from .compiler import (
 )
 from .expressions import CE, CompileError, Ctx, ParamSpec
 from .limits import Deadline, QueryTimeout, running_until
-from .native import decode_rows
+from .native import NativeGraph, decode_rows, with_walks
 from .parser import parse
 from .procedures import PROCEDURES, ProcValue, run_procedure
 from .types import Kind, SqlValue, T
@@ -226,12 +226,15 @@ def _mutates(query: a.Query) -> bool:
 
 @lru_cache(maxsize=EG_COMPILE_CACHE_SIZE)
 def compile_read(
-    text: str, param_sig: tuple[tuple[str, T], ...], json_arrow: bool
+    text: str,
+    param_sig: tuple[tuple[str, T], ...],
+    json_arrow: bool,
+    native_walks: bool = False,
 ) -> ReadPlan:
     stmt = parse(text)
     query = stmt.query if isinstance(stmt, a.Explain) else stmt
     assert isinstance(query, a.Query)
-    ctx = Ctx(dict(param_sig), json_arrow)
+    ctx = Ctx(dict(param_sig), json_arrow, native_walks)
     qc = QueryCompiler(ctx)
     pipeline = Pipeline()
     parts: list[tuple[str, list[OutputColumn], list[str]]] = []
@@ -283,11 +286,16 @@ def _union(
 
 class Executor:
     def __init__(
-        self, conn: sqlite3.Connection, json_arrow: bool, read_only: bool = False
+        self,
+        conn: sqlite3.Connection,
+        json_arrow: bool,
+        read_only: bool = False,
+        native: NativeGraph | None = None,
     ) -> None:
         self.conn = conn
         self.json_arrow = json_arrow
         self.read_only = read_only
+        self.native = native
         self._temp_counter = 0
 
     def execute(
@@ -322,7 +330,10 @@ class Executor:
                 # Once per transaction that changes the graph (native.py).
                 self.conn.execute(sq.BUMP_GRAPH_VERSION)
             with running_until(deadline):
-                result = self._run(stmt, text, sig, params, writes)
+                result = with_walks(
+                    None if mutates else self.native,
+                    lambda walks: self._run(stmt, text, sig, params, writes, walks),
+                )
         except BaseException as error:
             self.conn.set_progress_handler(None, 0)
             self.conn.execute(sq.ROLLBACK)
@@ -341,9 +352,10 @@ class Executor:
         sig: tuple[tuple[str, T], ...],
         params: CypherParams,
         writes: bool,
+        walks: bool = False,
     ) -> Result:
         if not writes:
-            plan = compile_read(text, sig, self.json_arrow)
+            plan = compile_read(text, sig, self.json_arrow, walks)
             binds = {spec.placeholder: bind_value(spec, params) for spec in plan.params}
             rows = self.conn.execute(plan.sql, binds).fetchall()
             return Result(
@@ -352,7 +364,7 @@ class Executor:
             )
         if len(stmt.parts) > 1:
             raise CompileError(EG_ERR_UNSUPPORTED.format(what=EG_WHAT_UNION_UPDATES))
-        ctx = Ctx(dict(sig), self.json_arrow)
+        ctx = Ctx(dict(sig), self.json_arrow, walks)
         return _Run(self, ctx, params).single(stmt.parts[0])
 
     def fresh_temp(self) -> str:

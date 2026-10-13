@@ -678,9 +678,15 @@ class _MatchBuilder:
         if rp.direction != EgDirection.BOTH:
             direction_out = (rp.direction == EgDirection.OUT) == forward
         name = self.ctx.fresh(sq.WALK_PREFIX)
+        # The Rust extension walks from node ids only (native.py); a seed of
+        # another type keeps the CTE, which compares it as SQL would.
+        seed_np = left_np if forward else right_np
+        seed_var = self.stage.vars.get(seed_np.var) if seed_np.var else None
+        native = self.ctx.native_walks and (seed_var is None or seed_var.t == ty.NODE)
+        walk = sq.native_walk if native else sq.walk
         self.pipeline.add(
             sq.walk_columns(name),
-            sq.walk(name, seeds, direction_out, rp.types, high),
+            walk(name, seeds, direction_out, rp.types, high),
         )
         alias = self.ctx.fresh(sq.WALK_ROW_PREFIX)
         self.from_items.append(sq.table(name, alias))

@@ -19,6 +19,7 @@ from ..constants.embedded_graph import (
     EG_REL_END,
     EG_REL_START,
     EG_REL_TYPE,
+    EgDirection,
     EgSqlFn,
 )
 
@@ -310,6 +311,41 @@ def walk(
         f"ON {walk_join(direction_out, types)} "
         f"WHERE {bound}{path_avoids(path, edge_id)}"
     )
+
+
+def native_walk(
+    name: str,
+    seeds: str,
+    direction_out: bool | None,
+    types: tuple[str, ...],
+    high: int | None,
+) -> str:
+    """`walk`'s rows, path included, from the Rust extension (native.py).
+
+    The seeds go in as one JSON array with the graph version this statement
+    reads, and the rows come back as JSON `[[seed, node, depth, path], ...]`.
+    They stay a recursive CTE whose step adds none: SQLite then plans the
+    MATCH as it plans `walk`'s, taking the rows for a large table and
+    indexing them for the join; a plain `json_each` reads as 25 rows and was
+    scanned once per outer row (7 s for one project's ownership walk).
+    """
+    if direction_out is None:
+        direction = EgDirection.BOTH
+    else:
+        direction = EgDirection.OUT if direction_out else EgDirection.IN
+    seed_ids = paren(select([call(JSON_GROUP_ARRAY, ID)], paren(seeds)))
+    args = [
+        seed_ids,
+        paren(GRAPH_VERSION),
+        sql_str(direction),
+        NULL if high is None else str(high),
+        *(sql_str(t) for t in types),
+    ]
+    rows = json_each(call(EgSqlFn.WALK, *args), EACH_PREFIX)
+    element = column(EACH_PREFIX, VALUE)
+    picked = [json_extract(element, sql_str(f"$[{i}]")) for i in range(4)]
+    columns = [WALK_SEED, WALK_NODE, WALK_DEPTH, WALK_PATH]
+    return f"{select(picked, rows)} UNION ALL {select(columns, name)} WHERE {ZERO}"
 
 
 def path_avoids(path: str, edge_id: str) -> str:

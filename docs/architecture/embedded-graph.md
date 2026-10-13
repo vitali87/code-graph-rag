@@ -172,6 +172,13 @@ against the Python path, which stays the reference and the fallback:
   graph `MATCH (n) RETURN n` takes 0.60 s instead of 1.31 s, and returning
   every relationship 0.80 s instead of 2.24 s.
 
+The extension can also walk variable-length relationships
+(`-[:CALLS*1..3]->`), row for row and path for path as the engine's recursive
+CTE does, but the engine does not use it: handing the rows back to SQLite
+costs about what the walk saves, so on cgr's own graph its shipped walks ran
+0.8 to 1.3 times as fast as SQLite's, and wider model-style walks 0.9 to 1.9
+times.
+
 ## Switching backends
 
 The engines do not share data. To keep using a Memgraph graph you already

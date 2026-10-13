@@ -1,11 +1,12 @@
 """The Rust extension's accelerators against the engine paths they replace.
 
-rust/cgr_graph_rs writes the ingestor's node and relationship batches,
-decodes result rows and runs the ported procedures (embedded_graph/native.py).
-Each must give exactly what the engine gives without it, so these tests run
-both on the same input and compare: rows in order, values with their types,
-files table by table. The graph version counter and the fallbacks belong to
-the engine and are tested without the extension too.
+rust/cgr_graph_rs walks variable-length relationships, writes the ingestor's
+node and relationship batches, decodes result rows and runs the ported
+procedures (embedded_graph/native.py). Each must give exactly what the engine
+gives without it, so these tests run both on the same input and compare:
+rows in order, values with their types, files table by table. The graph
+version counter and the fallbacks belong to the engine and are tested
+without the extension too.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ import math
 import random
 import re
 import sqlite3
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import closing
 from pathlib import Path
 from types import ModuleType
@@ -34,7 +35,7 @@ from codebase_rag.constants import (
 from codebase_rag.embedded_graph import executor, native
 from codebase_rag.embedded_graph import sql as sq
 from codebase_rag.embedded_graph.connection import EmbeddedConnection
-from codebase_rag.embedded_graph.executor import decode
+from codebase_rag.embedded_graph.executor import compile_read, decode
 from codebase_rag.embedded_graph.extension import rust_extension
 from codebase_rag.embedded_graph.limits import (
     Deadline,
@@ -355,6 +356,178 @@ def graphs(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
         out[name] = root / f"{name}.sqlite"
         _build_graph(out[name], seed, nodes, edges)
     return out
+
+
+# ------------------------------------------------------------------- walks
+
+
+@pytest.fixture
+def walking(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    monkeypatch.setattr(native, "WALKS", True)
+    yield
+
+
+def _walk_rows(conn: EmbeddedConnection, query: str, accelerated: bool) -> Rows:
+    """The rows of the query's first walk CTE, as the statement builds them."""
+    plan = compile_read(query, (), True, accelerated)
+    name = re.findall(r"\b(eg_vl\d+)\(", plan.sql)[0]
+    with_part = plan.sql.rsplit("\n", 1)[0]
+    sql = f"{with_part}\nSELECT seed, node, depth, path FROM {name}"
+    return conn._sqlite.execute(sql).fetchall()
+
+
+_ARROWS = ["-[{t}*{h}]->", "<-[{t}*{h}]-", "-[{t}*{h}]-"]
+_TYPES = ["", ":A", ":A|B", ":C|A|A"]
+_HOPS = ["1..3", "0..2", "2", "..2"]
+
+
+def _walk_queries(arrow: str) -> list[str]:
+    return [
+        f"MATCH (a){arrow}(b) RETURN count(*) AS c",
+        f"MATCH (a:N {{k: 3}}){arrow}(b) RETURN b.k AS k",
+        f"MATCH (b:N) WHERE b.k IN [1, 5] MATCH (a){arrow}(b) RETURN a.k AS k",
+        f"MATCH (a:N {{k: 4}}) OPTIONAL MATCH (a){arrow}(b:Nope) RETURN b AS b",
+    ]
+
+
+@needs_rust
+@pytest.mark.usefixtures("walking")
+class TestWalks:
+    @pytest.mark.parametrize("hops", _HOPS)
+    @pytest.mark.parametrize("types", _TYPES)
+    @pytest.mark.parametrize("arrow", _ARROWS)
+    @pytest.mark.parametrize("graph", ["dense", "other"])
+    def test_walk_rows_are_the_ctes_rows_in_order(
+        self, graphs: dict[str, Path], graph: str, arrow: str, types: str, hops: str
+    ) -> None:
+        with EmbeddedConnection(str(graphs[graph]), read_only=True) as conn:
+            for query in _walk_queries(arrow.format(t=types, h=hops)):
+                cte = _walk_rows(conn, query, False)
+                rust = _walk_rows(conn, query, True)
+                assert rust == cte, query
+
+    @pytest.mark.parametrize("arrow", _ARROWS)
+    def test_unbounded_walks_match_on_a_small_graph(
+        self, graphs: dict[str, Path], arrow: str
+    ) -> None:
+        with EmbeddedConnection(str(graphs["small"]), read_only=True) as conn:
+            for query in _walk_queries(arrow.format(t="", h="")):
+                assert _walk_rows(conn, query, True) == _walk_rows(conn, query, False)
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "MATCH (a:N {k: 2})-[:A|B*1..3]->(b) RETURN b.k AS k, count(*) AS n ORDER BY k",
+            "MATCH (a)<-[*2]-(b) RETURN a.k AS a, b.k AS b ORDER BY a, b",
+            "MATCH (a:N)-[r:A]->(b)-[:A|B*1..2]-(c) RETURN a.k AS a, c.k AS c ORDER BY a, c",
+            "MATCH (a:N {k: 1})-[*1..2]->(b)-[*1..2]->(c) RETURN c.k AS c ORDER BY c",
+            "MATCH (a:N {k: 0}) OPTIONAL MATCH (a)-[:C*1..2]->(b) RETURN b.k AS k ORDER BY k",
+        ],
+    )
+    def test_queries_answer_as_with_the_cte(
+        self,
+        graphs: dict[str, Path],
+        monkeypatch: pytest.MonkeyPatch,
+        query: str,
+    ) -> None:
+        path = str(graphs["dense"])
+        with EmbeddedConnection(path, read_only=True) as conn:
+            assert conn.native is not None and conn.native.walks
+            rust = conn.run(query).rows
+        monkeypatch.setattr(native, "WALKS", False)
+        with EmbeddedConnection(path, read_only=True) as conn:
+            assert conn.native is None or not conn.native.walks
+            python = conn.run(query).rows
+        assert _same(rust, python)
+
+    def test_a_seed_that_is_not_a_node_keeps_the_cte(self) -> None:
+        plan = compile_read(
+            "UNWIND $xs AS x MATCH (x)-[:R*1..2]->(y) RETURN y AS y",
+            (("xs", executor.value_type([1, "a"])),),
+            True,
+            True,
+        )
+        assert "eg_walk" not in plan.sql
+
+    def test_a_walk_that_meets_a_newer_graph_answers_from_its_statements(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Another writer commits between the statement's first read and its
+        # walk: the walk sees the new edge, the statement's own reads the old
+        # properties, a mix that never existed. The walk must decline it.
+        path = str(tmp_path / "g.sqlite")
+        with EmbeddedConnection(path) as conn:
+            conn.run(
+                "CREATE (:T {k: 'a', v: 1})-[:R]->(:T {k: 'b', v: 1})-[:R]->(:T {k: 'c', v: 1})"
+            )
+        query = "MATCH (a:T {k: 'a'}) MATCH (a)-[:R*1..3]->(x) RETURN x.k AS k, x.v AS v ORDER BY k"
+        monkeypatch.setattr(native, "WALKS", False)
+        with EmbeddedConnection(path) as conn:
+            before = conn.run(query).rows
+        monkeypatch.setattr(native, "WALKS", True)
+        walked: list[int] = []
+        real = native._walk_function
+
+        def committing_first(
+            graph: native.NativeGraph, reader: native.Reader
+        ) -> Callable[..., str]:
+            walk = real(graph, reader)
+
+            def wrapped(*args: str | int | None) -> str:
+                if not walked:
+                    with EmbeddedConnection(path) as writer:
+                        writer.run(
+                            "MATCH (c:T {k: 'c'}) CREATE (c)-[:R]->(:T {k: 'd', v: 2})"
+                        )
+                        writer.run("MATCH (n:T) SET n.v = 2")
+                walked.append(1)
+                return walk(*args)
+
+            return wrapped
+
+        monkeypatch.setattr(native, "_walk_function", committing_first)
+        with EmbeddedConnection(path) as conn:
+            assert conn.run(query).rows == before
+            # Run again in SQL within the statement, not walked once more.
+            assert walked == [1]
+            assert conn.run(query).rows == [("b", 2), ("c", 2), ("d", 2)]
+
+    def test_a_walk_past_its_deadline_times_the_statement_out(
+        self, graphs: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(native, "seconds_left", lambda: -1.0)
+        with EmbeddedConnection(str(graphs["dense"]), read_only=True) as conn:
+            with pytest.raises(QueryTimeout):
+                conn.run("MATCH (a)-[:A*1..2]->(b) RETURN count(*) AS c")
+
+    def test_the_reader_walks_within_a_deadline_and_not_past_it(
+        self, graphs: dict[str, Path]
+    ) -> None:
+        assert RUST is not None
+        reader = RUST.Reader(str(graphs["dense"]), 1000, 1024, sq.GRAPH_VERSION)
+        version = _version(graphs["dense"])
+        unlimited = reader.walk(None, "[1, 2]", version, "both", 2)
+        assert reader.walk(600.0, "[1, 2]", version, "both", 2) == unlimited
+        assert reader.walk(None, "[1, 2]", "stale", "both", 2) is None
+        with pytest.raises(TimeoutError):
+            reader.walk(-1.0, "[1, 2]", version, "both", 2)
+        reader.close()
+
+    def test_another_failure_of_a_walk_is_not_swallowed(
+        self, graphs: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def broken(
+            graph: native.NativeGraph, reader: native.Reader
+        ) -> Callable[..., str]:
+            def walk(*args: str | int | None) -> str:
+                raise ValueError(args)
+
+            return walk
+
+        monkeypatch.setattr(native, "_walk_function", broken)
+        with EmbeddedConnection(str(graphs["dense"]), read_only=True) as conn:
+            with pytest.raises(sqlite3.OperationalError):
+                conn.run("MATCH (a)-[:A*1..2]->(b) RETURN count(*) AS c")
 
 
 # -------------------------------------------------------------- procedures
@@ -702,8 +875,10 @@ class TestWithoutTheExtension:
             native, "rust_extension", lambda: ModuleType(EG_RUST_MODULE)
         )
         monkeypatch.setattr(native, "_decoder", lambda: None)
+        monkeypatch.setattr(native, "WALKS", True)
         with EmbeddedConnection(str(tmp_path / "g.sqlite")) as conn:
             assert conn.native is not None
+            assert not conn.native.walks
             rows: list[NodeBatchRow] = [{"id": "p.m", "props": {}}]
             assert not conn.native.merge_nodes("Module", "qualified_name", rows)
             assert conn.native.run_procedure("pagerank.get", []) is None
