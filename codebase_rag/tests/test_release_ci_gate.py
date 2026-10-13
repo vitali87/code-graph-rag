@@ -105,6 +105,11 @@ def _steps() -> list[Step]:
     ]
 
 
+MARKER = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["env"][
+    "DEFERRED_RELEASE_MARKER"
+]
+
+
 def _execute(
     pages: str,
     *,
@@ -179,6 +184,7 @@ def _execute(
             "NEW_VERSION": "0.0.951",
             "RELEASE": str(release).lower(),
             "CI_GATE": "skipped",
+            "DEFERRED_RELEASE_MARKER": MARKER,
             "GITHUB_OUTPUT": os.devnull,
             "GITHUB_STEP_SUMMARY": os.devnull,
             **(env or {}),
@@ -193,11 +199,14 @@ def _execute(
 
 def _assert_deferred(result: subprocess.CompletedProcess[str]) -> None:
     """The bump keeps its tag, pushed over GITHUB_TOKEN so nothing publishes;
-    only the release waits for a bump whose CI is proven."""
+    only the release waits for a bump whose CI is proven. The annotation is
+    what keeps that release due on the next run."""
     assert result.returncode == 0, result.stdout + result.stderr
     assert "git: commit -m chore: bump version to 0.0.951" in result.stdout
     assert "git: push\n" in result.stdout
-    assert "git: tag v0.0.951" in result.stdout
+    assert (
+        f"git: tag -a v0.0.951 -m {MARKER}: CI is not proven for {SHA}" in result.stdout
+    )
     assert (
         f"git: push https://x-access-token:unused-test-token@github.com/{REPO}.git"
         " v0.0.951"
@@ -210,6 +219,7 @@ def test_successful_ci_releases_the_pushed_bump() -> None:
     result = _execute(_pages([_make_ci_run()]))
 
     assert result.returncode == 0, result.stdout + result.stderr
+    assert "git: tag v0.0.951\n" in result.stdout
     assert "git: push origin v0.0.951" in result.stdout
     assert "git: push https://x-access-token:" not in result.stdout
     assert "::warning::" not in result.stdout
@@ -233,6 +243,7 @@ def test_interim_tag_does_not_wait_for_ci() -> None:
     result = _execute(_pages([]), release=False, env={"GH_RUNS_EXIT": "1"})
 
     assert result.returncode == 0, result.stdout + result.stderr
+    assert "git: tag v0.0.951\n" in result.stdout
     assert "git: push https://x-access-token:" in result.stdout
     assert "::warning::" not in result.stdout
     assert "wait:" not in result.stdout

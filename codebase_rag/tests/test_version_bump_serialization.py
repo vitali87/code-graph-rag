@@ -16,6 +16,7 @@ SHA = "a" * 40
 NEWER = "b" * 40
 OLDER = "c" * 40
 PUSHED = "steps.commit.outputs.pushed == 'true'"
+TAG_OBJECT = "d" * 40
 # The workflow runs on Ubuntu, where jq ends lines with LF. A native jq.exe
 # ends them with CRLF, and Git Bash keeps the CR inside the last word of each
 # line, so `for SHA in $COMMITS` would build `commits/<sha>\r/pulls`. Strip it
@@ -36,6 +37,9 @@ class Step(TypedDict, total=False):
 
 def _workflow() -> dict:
     return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+
+
+MARKER = _workflow()["env"]["DEFERRED_RELEASE_MARKER"]
 
 
 def _step(name: str) -> Step:
@@ -248,6 +252,10 @@ gh() {
       [ "$PULLS_FAIL" = true ] && return 1
       cat "labels/$(basename "$(dirname "$url")")" 2> /dev/null || true
       ;;
+    */git/tags/*)
+      basename "$url" >> annotation_calls
+      cat "annotations/$(basename "$url")" 2> /dev/null
+      ;;
     *) return 1 ;;
   esac
 }
@@ -261,7 +269,7 @@ git() {
       if [ "$2" = --exit-code ]; then
         return "$LS_REMOTE_EXIT"
       fi
-      if [ "$3" = --refs ]; then
+      if [ "$2" = --tags ] && [ "$3" = origin ]; then
         [ "$TAG_LIST_FAILS" = true ] && return 128
         printf '%b' "$TAG_LIST"
       fi
@@ -306,6 +314,7 @@ def _decide_run(
             "TAG_LIST": "",
             "TAG_LIST_FAILS": "false",
             "STATUS_FAILS": "false",
+            "DEFERRED_RELEASE_MARKER": MARKER,
             **env,
         },
     )
@@ -568,5 +577,77 @@ def test_a_failed_ancestry_check_fails_instead_of_narrowing_the_scan(
     )
     assert result.returncode != 0
     assert "could not compare v0.1.0" in result.stdout
+    assert not (tmp_path / "compare_call").exists()
+    assert "release" not in out
+
+
+def _annotated(tmp_path: Path, tag: str, message: str, obj: str) -> str:
+    annotations = tmp_path / "annotations"
+    annotations.mkdir(exist_ok=True)
+    (annotations / obj).write_text(message + "\n", encoding="utf-8")
+    return f"{obj}\\trefs/tags/{tag}\\n{NEWER}\\trefs/tags/{tag}" + "^{}\\n"
+
+
+def test_a_deferred_release_scans_its_commits_again(tmp_path: Path) -> None:
+    """A security fix whose release was deferred still ships on a later bump,
+    however long the streak of deferrals: their tags are never where the scan
+    starts, so the fix's commit is read again."""
+    _commits(tmp_path, {OLDER: "fix: patch [security]", SHA: "feat: x"})
+    deferred = f"{MARKER}: CI is not proven for {OLDER}"
+    tags = (
+        f"{OLDER}\\trefs/tags/v0.1.11\\n"
+        + _annotated(tmp_path, "v0.1.12", deferred, "1" * 40)
+        + _annotated(tmp_path, "v0.1.13", deferred, "2" * 40)
+    )
+    result, out = _decide_run(
+        tmp_path, f"{OLDER}\\n{SHA}\\n", CURRENT="0.1.13", TAG_LIST=tags
+    )
+    assert result.returncode == 0, result.stderr
+    assert _lines(tmp_path / "status_calls") == [
+        f"repos/vitali87/code-graph-rag/compare/v0.1.11...{SHA}?per_page=1"
+    ]
+    call = (tmp_path / "compare_call").read_text(encoding="utf-8")
+    assert f"compare/v0.1.11...{SHA}" in call
+    assert out["security"] == "true"
+    assert out["release"] == "true"
+
+
+def test_an_annotated_tag_that_deferred_nothing_still_bounds_the_scan(
+    tmp_path: Path,
+) -> None:
+    _commits(tmp_path, {SHA: "feat: x"})
+    tags = f"{OLDER}\\trefs/tags/v0.1.11\\n" + _annotated(
+        tmp_path, "v0.1.12", "v0.1.12", TAG_OBJECT
+    )
+    result, out = _decide_run(tmp_path, f"{SHA}\\n", CURRENT="0.1.12", TAG_LIST=tags)
+    assert result.returncode == 0, result.stderr
+    assert _lines(tmp_path / "annotation_calls") == [TAG_OBJECT]
+    call = (tmp_path / "compare_call").read_text(encoding="utf-8")
+    assert f"compare/v0.1.12...{SHA}" in call
+    assert out["release"] == "false"
+
+
+def test_annotations_up_to_the_latest_release_are_not_read(tmp_path: Path) -> None:
+    """The latest release resolved every deferral before it, and reading them
+    would make each run's cost grow with the repository's age."""
+    _commits(tmp_path, {SHA: "feat: x"})
+    tags = _annotated(tmp_path, "v0.0.0", f"{MARKER}: old", "1" * 40) + _annotated(
+        tmp_path, "v0.0.1", f"{MARKER}: old", "2" * 40
+    )
+    result, out = _decide_run(tmp_path, f"{SHA}\\n", TAG_LIST=tags)
+    assert result.returncode == 0, result.stderr
+    assert not (tmp_path / "annotation_calls").exists()
+    call = (tmp_path / "compare_call").read_text(encoding="utf-8")
+    assert f"compare/v0.0.1...{SHA}" in call
+
+
+def test_an_unreadable_annotation_fails_instead_of_narrowing_the_scan(
+    tmp_path: Path,
+) -> None:
+    _commits(tmp_path, {SHA: "feat: x"})
+    tags = f"{TAG_OBJECT}\\trefs/tags/v0.1.12\\n{NEWER}\\trefs/tags/v0.1.12" + "^{}\\n"
+    result, out = _decide_run(tmp_path, f"{SHA}\\n", CURRENT="0.1.12", TAG_LIST=tags)
+    assert result.returncode != 0
+    assert "could not read the annotation of v0.1.12" in result.stdout
     assert not (tmp_path / "compare_call").exists()
     assert "release" not in out
