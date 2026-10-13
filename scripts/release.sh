@@ -29,7 +29,7 @@ fi
 # for every platform; publishing without them would make this version
 # uninstallable, so stop before anything is committed or uploaded.
 echo "==> Checking cgr-graph-rs on PyPI"
-python3 scripts/check_cgr_graph_rs_on_pypi.py
+uv run --no-project --python ">=3.12" python scripts/check_cgr_graph_rs_on_pypi.py
 
 echo "==> Syncing server.json to ${VERSION}"
 perl -i -pe 's/"version": "[^"]*"/"version": "'"${VERSION}"'"/g' server.json

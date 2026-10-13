@@ -219,3 +219,18 @@ def test_the_local_release_checks_before_it_commits_or_uploads() -> None:
     check = script.index("scripts/check_cgr_graph_rs_on_pypi.py")
     assert check < script.index("git commit")
     assert check < script.index("twine upload")
+
+
+def test_the_local_release_runs_the_check_on_a_supported_python() -> None:
+    """A workstation's own python3 may predate tomllib (3.11); uv picks an
+    interpreter code-graph-rag supports, as the build and upload steps do,
+    without syncing the project, which would compile the crate."""
+    script = RELEASE_SCRIPT.read_text(encoding="utf-8")
+    (line,) = [
+        line
+        for line in script.splitlines()
+        if "scripts/check_cgr_graph_rs_on_pypi.py" in line
+    ]
+    requires = _toml(REPO_ROOT / "pyproject.toml")["project"]["requires-python"]
+    assert line.startswith("uv run --no-project ")
+    assert f'--python "{requires}"' in line
