@@ -37,6 +37,57 @@ rules:
                   any:
                     - kind: parenthesized_expression
                     - kind: concatenated_string
+  - id: sqli_format
+    message: "Possible SQL injection: query built with str.format()"
+    # `"... {}".format(u)` builds the query as `+`, `%` and f-strings do
+    # (issue #2863). The query is execute's first argument, the receiver a
+    # string literal, and at least one formatted value is not a constant, so
+    # `.format(5)`, a value formatted into the bound parameters and a string
+    # built inside a nested call stay clean.
+    rule:
+      kind: call
+      all:
+        - has: { field: function, regex: '(?:^|\.)execute(?:many)?$' }
+        - has:
+            field: arguments
+            has:
+              kind: call
+              nthChild: 1
+              all:
+                - has:
+                    field: function
+                    kind: attribute
+                    all:
+                      - has:
+                          field: object
+                          any: [{ kind: string }, { kind: concatenated_string }]
+                      - has: { field: attribute, regex: '^format$' }
+                - has:
+                    field: arguments
+                    has:
+                      any:
+                        - kind: identifier
+                        - kind: attribute
+                        - kind: subscript
+                        - kind: call
+                        - kind: binary_operator
+                        - kind: conditional_expression
+                        - kind: list_splat
+                        - kind: dictionary_splat
+                        - kind: keyword_argument
+                          has:
+                            field: value
+                            any:
+                              - kind: identifier
+                              - kind: attribute
+                              - kind: subscript
+                              - kind: call
+                              - kind: binary_operator
+                              - kind: conditional_expression
+                              - kind: list_splat
+                              - kind: dictionary_splat
+              stopBy:
+                not: { kind: parenthesized_expression }
   - id: hardcoded_secret
     # Security rule: favour recall. Value must be a non-trivial literal (>=8
     # chars) that is not a format/message template (an f-string/.format {..}
@@ -72,6 +123,72 @@ rules:
     message: "Possible command injection: os.system() with concatenation"
     rule:
       pattern: "os.system($A + $B)"
+  - id: os_system_fstring
+    message: "Possible command injection: os.system() with an f-string"
+    # The command f-string must interpolate something: `f"ping localhost"` is
+    # a constant (issue #2863).
+    rule:
+      kind: call
+      all:
+        - has: { field: function, regex: '^os\.system$' }
+        - has:
+            field: arguments
+            has:
+              kind: string
+              regex: '^(?i:f|rf|fr)[\x27"]'
+              has: { kind: interpolation }
+              stopBy:
+                not:
+                  any:
+                    - kind: parenthesized_expression
+                    - kind: concatenated_string
+  - id: os_system_format
+    message: "Possible command injection: os.system() with str.format()"
+    # Same str.format() shape as sqli_format (issue #2863).
+    rule:
+      kind: call
+      all:
+        - has: { field: function, regex: '^os\.system$' }
+        - has:
+            field: arguments
+            has:
+              kind: call
+              nthChild: 1
+              all:
+                - has:
+                    field: function
+                    kind: attribute
+                    all:
+                      - has:
+                          field: object
+                          any: [{ kind: string }, { kind: concatenated_string }]
+                      - has: { field: attribute, regex: '^format$' }
+                - has:
+                    field: arguments
+                    has:
+                      any:
+                        - kind: identifier
+                        - kind: attribute
+                        - kind: subscript
+                        - kind: call
+                        - kind: binary_operator
+                        - kind: conditional_expression
+                        - kind: list_splat
+                        - kind: dictionary_splat
+                        - kind: keyword_argument
+                          has:
+                            field: value
+                            any:
+                              - kind: identifier
+                              - kind: attribute
+                              - kind: subscript
+                              - kind: call
+                              - kind: binary_operator
+                              - kind: conditional_expression
+                              - kind: list_splat
+                              - kind: dictionary_splat
+              stopBy:
+                not: { kind: parenthesized_expression }
   - id: subprocess_shell
     message: "subprocess called with shell=True enables command injection"
     # The call's OWN `shell=True` keyword argument: the text anywhere under
