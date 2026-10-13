@@ -151,6 +151,21 @@ meaning rests on Python itself (a non-ASCII identifier, an integer beyond 64
 bits, very deep nesting), and the suite compares the two on every query cgr
 ships and thousands of mutations of them.
 
+One more hot path uses the extension when it is installed, checked against
+the Python path, which stays the reference and the fallback:
+
+- **The ingestor's batches.** The node and relationship MERGE batches the
+  indexer flushes are written in one transaction, row by row in the engine's
+  order and through SQLite's own JSON functions, so the file comes out the
+  same: every row, id and property text. The suite replays random batches
+  both ways and compares the tables, and indexing this repository (37k
+  nodes, 158k relationships), recorded and replayed through each writer,
+  gave identical tables. Replaying that run's ingestor calls took 7.9 s
+  instead of 21.0 s, and writing a 38k-node graph's batches 6.8 s instead of
+  22.4 s. A batch with a value the extension cannot write exactly as the
+  engine would, such as a non-finite float, an integer beyond 64 bits or a
+  boolean key, is written by the engine.
+
 ## Switching backends
 
 The engines do not share data. To keep using a Memgraph graph you already

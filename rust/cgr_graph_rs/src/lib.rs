@@ -22,6 +22,8 @@ use deadline::{Deadline, TimedOut};
 
 pub mod cypher;
 pub mod deadline;
+pub mod ingest;
+pub mod json_text;
 #[cfg(feature = "python")]
 mod reader;
 pub mod snapshot;
@@ -541,6 +543,7 @@ pub(crate) mod python {
         m.add("Timeout", m.py().get_type::<Timeout>())?;
         crate::cypher::python::register(m)?;
         crate::reader::register(m)?;
+        crate::ingest::python::register(m)?;
         Ok(())
     }
 }

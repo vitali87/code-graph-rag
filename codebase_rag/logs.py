@@ -1549,3 +1549,7 @@ CHECKOUT_STATE_TREE_LOCK_UNAVAILABLE = (
 CHECKOUT_STATE_HISTORY_DROPPED = (
     "Removed {legacy} from the working tree: it is not an edit history cgr wrote"
 )
+# The embedded graph's Rust extension (embedded_graph/native.py).
+EG_NATIVE_WRITE_FAILED = (
+    "The Rust extension could not write a batch ({error}); the engine writes it"
+)

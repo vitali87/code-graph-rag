@@ -1,9 +1,11 @@
 """The optional Rust extension (`cgr_graph_rs`) and the engine's paths into it.
 
-rust/cgr_graph_rs runs the whole-graph procedures (procedures.py) in Rust,
-returning exactly what the Python implementations return. Those stay the
-reference, and run whenever the extension is not installed or the graph has
-no file another connection could open (`:memory:`).
+rust/cgr_graph_rs does in Rust what the engine otherwise does in Python: the
+whole-graph procedures (procedures.py) and the ingestor's batch writes. Each
+Rust path returns exactly what the Python path returns. The Python path stays
+the reference, and runs whenever the extension is not installed, the graph has
+no file another connection could open (`:memory:`), or the input holds a value
+the Rust path cannot reproduce exactly: it declines rather than approximates.
 
 The extension reads on its own connection, which sees committed data only
 and need not share the calling statement's snapshot: another process may
@@ -20,28 +22,41 @@ file drops every lock the process holds on it (sqlite.org/howtocorrupt.html,
 "multiple copies of SQLite linked into the same application"). So the
 extension's connections to a file are opened once, kept while any engine
 connection to the file is open in this process and closed after the last; and
-the engine's statements on one file, inside which the extension reads, take
-turns under one lock, so neither library works inside a transaction of the
-other's.
+the engine's statements and the extension's writes on one file take turns
+under one lock, so neither library works inside a transaction of the other's.
 """
 
 from __future__ import annotations
 
 import sqlite3
 import threading
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, NamedTuple, Protocol
 
+from loguru import logger
+
+from .. import logs as ls
 from ..constants.embedded_graph import (
     EG_BUSY_TIMEOUT_MS,
     EG_CACHE_SIZE_KIB,
     EG_ERR_TIMEOUT,
     EG_MEMORY_PATH,
+    EG_PRAGMAS,
     EG_RUST_READER,
+    EG_RUST_WRITER,
 )
+from ..constants.graph import (
+    KEY_FROM_VAL,
+    KEY_ID,
+    KEY_PROPS,
+    KEY_ROW_INDEX,
+    KEY_TO_VAL,
+    NODE_UNIQUE_CONSTRAINTS,
+)
+from ..types_defs import NodeBatchRow, RelBatchRow
 from . import sql as sq
 from .extension import rust_extension
 from .limits import QueryTimeout, seconds_left
@@ -54,6 +69,9 @@ if TYPE_CHECKING:
 # them to compare it with the Python path (docs/architecture/embedded-graph.md
 # has the numbers).
 PROCEDURES: bool = True
+INGEST: bool = True
+
+type Pattern = tuple[str, str, str, str, str]
 
 
 class Reader(Protocol):
@@ -64,6 +82,41 @@ class Reader(Protocol):
         args: list[SqlValue],
         seconds_left: float | None,
     ) -> list[Record] | None: ...
+
+    def close(self) -> None: ...
+
+
+class RelFields(NamedTuple):
+    """The field names of the ingestor's relationship rows."""
+
+    from_val: str
+    to_val: str
+    props: str
+    row_index: str
+
+
+class Writer(Protocol):
+    def merge_node_rows(
+        self,
+        label: str,
+        key_prop: str,
+        key_path: str,
+        id_field: str,
+        props_field: str,
+        rows: list[NodeBatchRow],
+    ) -> bool: ...
+
+    def merge_relationship_rows(
+        self,
+        from_label: str,
+        to_label: str,
+        rel_type: str,
+        merge_keys: list[str],
+        merge_paths: list[str],
+        has_props: bool,
+        fields: RelFields,
+        rows: list[RelBatchRow],
+    ) -> int | None: ...
 
     def close(self) -> None: ...
 
@@ -79,13 +132,22 @@ class _File:
     lock: threading.RLock = field(default_factory=threading.RLock)
     users: int = 0
     reader: Reader | None = None
+    writer: Writer | None = None
 
 
+_REL_FIELDS = RelFields(KEY_FROM_VAL, KEY_TO_VAL, KEY_PROPS, KEY_ROW_INDEX)
 _FILES: dict[tuple[int, int], _File] = {}
 # Each open engine connection's graph by id() of its sqlite3 connection, for
 # the procedures, which are handed only that connection.
 _GRAPHS: dict[int, NativeGraph] = {}
 _FILES_GUARD = threading.Lock()
+
+
+class RelMerge(NamedTuple):
+    """What a relationship batch's MERGE query was built from."""
+
+    merge_keys: tuple[str, ...]
+    has_props: bool
 
 
 class NativeGraph:
@@ -108,6 +170,12 @@ class NativeGraph:
                 self._file.reader = _new_reader(self._file.path)
             return self._file.reader
 
+    def _writer(self) -> Writer | None:
+        with _FILES_GUARD:
+            if self._file.writer is None:
+                self._file.writer = _new_writer(self._file.path)
+            return self._file.writer
+
     def run_procedure(self, name: str, args: Sequence[SqlValue]) -> list[Record] | None:
         """A ported procedure's records at this connection's snapshot."""
         reader = self._reader() if PROCEDURES else None
@@ -127,9 +195,73 @@ class NativeGraph:
             if self._file.users:
                 return
             _FILES.pop(self._key, None)
-            reader, self._file.reader = self._file.reader, None
-        if reader is not None:
-            reader.close()
+            handles = (self._file.reader, self._file.writer)
+            self._file.reader = self._file.writer = None
+        for handle in handles:
+            if handle is not None:
+                handle.close()
+
+    def _write[R](self, work: Callable[[Writer], R]) -> R | None:
+        writer = self._writer()
+        if writer is None:
+            return None
+        with self._file.lock:
+            # A transaction of the engine's own would not see this write.
+            if self._conn.in_transaction:
+                return None
+            try:
+                return work(writer)
+            except RuntimeError as error:
+                logger.debug(ls.EG_NATIVE_WRITE_FAILED.format(error=error))
+                return None
+
+    def merge_nodes(
+        self, label: str, id_key: str, rows: Sequence[NodeBatchRow]
+    ) -> bool:
+        """`MERGE (n:label {id_key: row.id}) SET n += row.props` for each row.
+
+        False leaves the batch to the engine, which then writes it (or fails
+        on it) as it always has: the extension declines a row holding a value
+        the engine would store differently from plain `json.dumps` (see
+        rust/cgr_graph_rs/src/ingest.rs).
+        """
+        if not INGEST or NODE_UNIQUE_CONSTRAINTS.get(label) != id_key:
+            return False
+        path = sq.json_path(id_key)
+        done = self._write(
+            lambda w: w.merge_node_rows(
+                label, id_key, path, KEY_ID, KEY_PROPS, list(rows)
+            )
+        )
+        return bool(done)
+
+    def merge_relationships(
+        self, pattern: Pattern, spec: RelMerge, rows: Sequence[RelBatchRow]
+    ) -> int | None:
+        """The batch of `build_merge_relationship_query` for `pattern`.
+
+        Returns what its RETURN counts, or None to leave it to the engine.
+        """
+        from_label, from_key, rel_type, to_label, to_key = pattern
+        if (
+            not INGEST
+            or NODE_UNIQUE_CONSTRAINTS.get(from_label) != from_key
+            or NODE_UNIQUE_CONSTRAINTS.get(to_label) != to_key
+        ):
+            return None
+        paths = [sq.json_path(k) for k in spec.merge_keys]
+        return self._write(
+            lambda w: w.merge_relationship_rows(
+                from_label,
+                to_label,
+                rel_type,
+                list(spec.merge_keys),
+                paths,
+                spec.has_props,
+                _REL_FIELDS,
+                list(rows),
+            )
+        )
 
 
 def _new_reader(path: str) -> Reader | None:
@@ -137,6 +269,19 @@ def _new_reader(path: str) -> Reader | None:
     if make is None:
         return None
     return make(path, EG_BUSY_TIMEOUT_MS, EG_CACHE_SIZE_KIB, sq.GRAPH_VERSION)
+
+
+def _new_writer(path: str) -> Writer | None:
+    make = getattr(rust_extension(), EG_RUST_WRITER, None)
+    if make is None:
+        return None
+    return make(
+        path,
+        EG_BUSY_TIMEOUT_MS,
+        EG_CACHE_SIZE_KIB,
+        list(EG_PRAGMAS),
+        sq.BUMP_GRAPH_VERSION,
+    )
 
 
 def _snapshot_version(conn: sqlite3.Connection) -> str | None:

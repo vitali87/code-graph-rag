@@ -477,10 +477,11 @@ jobs:
     name: Rust Graph Core
     runs-on: ubuntu-latest
     # rust/cgr_graph_rs is an optional extension the embedded graph uses
-    # for its whole-graph procedures and its Cypher parser (issue #386). Its
-    # own tests check the algorithms and the grammar; the Python tests check
-    # it returns exactly what the Python implementations it replaces return,
-    # and run the engine's suites with it installed.
+    # for its whole-graph procedures, its Cypher parser and the ingestor's
+    # batch writes (issue #386). Its own tests check the algorithms and the
+    # grammar; the Python tests check it returns and writes exactly what the
+    # Python implementations it replaces do, and run the engine's suites
+    # with it installed.
     timeout-minutes: 20
 
     steps:

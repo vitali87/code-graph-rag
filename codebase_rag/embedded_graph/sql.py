@@ -369,9 +369,9 @@ BEGIN_READ = "BEGIN"
 COMMIT = "COMMIT"
 ROLLBACK = "ROLLBACK"
 
-# A counter every transaction that changes the graph bumps once; the Rust
-# extension reads only where it equals what the calling statement's own
-# transaction reads (native.py).
+# A counter every transaction that changes the graph bumps once, here and
+# in the Rust extension's writes; the extension reads only where it equals
+# what the calling statement's own transaction reads (native.py).
 GRAPH_VERSION = (
     f"SELECT CAST(value AS TEXT) FROM cgr_meta WHERE name = '{EG_META_GRAPH_VERSION}'"
 )

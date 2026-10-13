@@ -1,17 +1,19 @@
 """The Rust extension's accelerators against the engine paths they replace.
 
-rust/cgr_graph_rs runs the ported procedures (embedded_graph/native.py) at
-the calling statement's snapshot and within its deadline. They must give
-exactly what the engine gives without them, so these tests run both on the
-same input and compare the rows, values with their types. The graph version
-counter and the fallbacks belong to the engine and are tested without the
-extension too.
+rust/cgr_graph_rs writes the ingestor's node and relationship batches and
+runs the ported procedures (embedded_graph/native.py). Each must give exactly
+what the engine gives without it, so these tests run both on the same input
+and compare: rows in order, values with their types, files table by table.
+The graph version counter and the fallbacks belong to the engine and are
+tested without the extension too.
 """
 
 from __future__ import annotations
 
+import json
 import math
 import random
+import re
 import sqlite3
 from collections.abc import Sequence
 from contextlib import closing
@@ -25,6 +27,8 @@ from codebase_rag.constants import (
     EG_RUST_MODULE,
     EG_RUST_READER,
     EG_SQL_SEED_GRAPH_VERSION,
+    MERGE_KEY_PROPS_BY_REL,
+    NODE_UNIQUE_CONSTRAINTS,
 )
 from codebase_rag.embedded_graph import native
 from codebase_rag.embedded_graph import sql as sq
@@ -38,7 +42,13 @@ from codebase_rag.embedded_graph.limits import (
 )
 from codebase_rag.embedded_graph.procedures import Record
 from codebase_rag.embedded_graph.types import SqlValue
+from codebase_rag.graph_dialects import DIALECT_SQLITE, get_dialect
+from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.types_defs import (
+    JsonValue,
+    NodeBatchRow,
+    PropertyValue,
+    RelBatchRow,
     ResultValue,
 )
 
@@ -66,6 +76,14 @@ def _same(a: Compared, b: Compared) -> bool:
     if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
         return len(a) == len(b) and all(_same(x, y) for x, y in zip(a, b))
     return a == b
+
+
+def _table_dump(path: Path) -> list[list[tuple[str | int | None, ...]]]:
+    with closing(sqlite3.connect(path)) as raw:
+        return [
+            raw.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall()
+            for table in (sq.NODES, sq.EDGES, "cgr_meta")
+        ]
 
 
 def _version(path: Path) -> str | None:
@@ -115,6 +133,38 @@ class TestGraphVersion:
         with running_until(Deadline.after(60)):
             left = seconds_left()
             assert left is not None and 0 < left <= 60
+
+
+# ------------------------------------------------------------------ values
+
+_CHARS = 'aZ09 "\\/\n\t\r\b\f\x00\x1f\x7fé€\U0001f600 '
+_FLOATS = [0.0, -0.0, 0.1, 1.5, 1e-7, 1e16, 1e300, 5e-324, -2.5e-5, 1.0]
+
+
+def _random_text(rng: random.Random) -> str:
+    return "".join(rng.choice(_CHARS) for _ in range(rng.randrange(8)))
+
+
+def _random_value(rng: random.Random, depth: int = 0) -> JsonValue:
+    pick = rng.randrange(10 if depth < 4 else 6)
+    if pick == 0:
+        return None
+    if pick == 1:
+        return rng.random() < 0.5
+    if pick == 2:
+        return rng.randrange(-1000, 1000)
+    if pick == 3:
+        return rng.choice([2**63 - 1, -(2**63), 2**63, 10**25, -(10**30)])
+    if pick == 4:
+        return rng.choice(_FLOATS) if rng.random() < 0.6 else rng.uniform(-1e6, 1e6)
+    if pick == 5:
+        return _random_text(rng)
+    if pick < 8:
+        return [_random_value(rng, depth + 1) for _ in range(rng.randrange(4))]
+    return {
+        _random_text(rng): _random_value(rng, depth + 1)
+        for _ in range(rng.randrange(4))
+    }
 
 
 # ------------------------------------------------------------------ graphs
@@ -257,6 +307,198 @@ class TestProcedures:
         assert served == [False, True]
 
 
+# ------------------------------------------------------------------ ingest
+
+_LABELS = ["Function", "Module", "Project", "File", "Class"]
+_REL_TYPES = ["CALLS", "FLOWS_TO", "DEFINES", "IMPORTS"]
+_PROP_NAMES = ["name", "doc", "n", "tags", "meta"]
+
+
+def _random_prop(
+    rng: random.Random,
+) -> PropertyValue | dict[str, JsonValue] | set[int]:
+    pick = rng.randrange(14)
+    if pick < 4:
+        return _random_text(rng).replace("\ud800", "")
+    if pick == 4:
+        return rng.randrange(-5, 5000)
+    if pick == 5:
+        return rng.choice([2**63 - 1, 2**64 + 1, -(2**70)])
+    if pick == 6:
+        return rng.choice([*_FLOATS, math.nan])
+    if pick == 7:
+        return rng.random() < 0.5
+    if pick == 8:
+        return [_random_text(rng) for _ in range(rng.randrange(3))]
+    if pick == 9:
+        return None
+    if pick == 10:
+        return {"x": None, "y": rng.randrange(3), "z": {"w": None}}
+    if pick == 11:
+        return {1, 2}
+    return _random_text(rng)
+
+
+def _random_key(rng: random.Random, label: str, end: bool = False) -> str | int | bool:
+    # A boolean key is only ever looked up here: the engine stores a node's
+    # True as "True" and rewrites it to "1", so a second MERGE of one fails
+    # on the unique index whichever path writes it.
+    pick = rng.randrange(20)
+    if pick == 0:
+        return 7
+    if pick == 1 and end:
+        return True
+    return (
+        f"{label}.{rng.choice(['a', 'b', 'c', 'd', 'e', 'q"u', 'ü'])}{rng.randrange(6)}"
+    )
+
+
+def _merge_key_value(rng: random.Random) -> PropertyValue:
+    return rng.choice([1, 2, 3, None, True, 2.5, "x", "y", 3])
+
+
+def _replay(
+    path: Path, seed: int, accelerated: bool, monkeypatch: pytest.MonkeyPatch
+) -> tuple[int, int]:
+    """Random batches through the ingestor; how many the extension wrote."""
+    monkeypatch.setattr(native, "INGEST", accelerated)
+    rng = random.Random(seed)
+    written = declined = 0
+    real_nodes = native.NativeGraph.merge_nodes
+    real_rels = native.NativeGraph.merge_relationships
+
+    def count(done: bool) -> None:
+        nonlocal written, declined
+        written, declined = written + done, declined + (not done)
+
+    def nodes(
+        graph: native.NativeGraph,
+        label: str,
+        key: str,
+        rows: Sequence[NodeBatchRow],
+    ) -> bool:
+        done = real_nodes(graph, label, key, rows)
+        count(done)
+        return done
+
+    def rels(
+        graph: native.NativeGraph,
+        pattern: tuple[str, str, str, str, str],
+        spec: native.RelMerge,
+        rows: Sequence[RelBatchRow],
+    ) -> int | None:
+        done = real_rels(graph, pattern, spec, rows)
+        count(done is not None)
+        return done
+
+    monkeypatch.setattr(native.NativeGraph, "merge_nodes", nodes)
+    monkeypatch.setattr(native.NativeGraph, "merge_relationships", rels)
+    with MemgraphIngestor(
+        "unused",
+        0,
+        batch_size=7,
+        dialect=get_dialect(DIALECT_SQLITE),
+        sqlite_path=str(path),
+    ) as ingestor:
+        ingestor.ensure_constraints()
+        for _ in range(160):
+            if rng.random() < 0.55:
+                label = rng.choice(_LABELS)
+                key = NODE_UNIQUE_CONSTRAINTS[label]
+                props = {key: _random_key(rng, label)}
+                for _ in range(rng.randrange(4)):
+                    props[rng.choice([n for n in _PROP_NAMES if n != key])] = (
+                        _random_prop(rng)
+                    )
+                ingestor.ensure_node_batch(label, props)
+            else:
+                rel = rng.choice(_REL_TYPES)
+                ends = []
+                for _ in range(2):
+                    label = rng.choice(_LABELS)
+                    value = (
+                        None if rng.random() < 0.05 else _random_key(rng, label, True)
+                    )
+                    ends.append((label, NODE_UNIQUE_CONSTRAINTS[label], value))
+                props: dict[str, PropertyValue] = {}
+                for name in MERGE_KEY_PROPS_BY_REL.get(rel, ()):
+                    if rng.random() < 0.8:
+                        props[name] = _merge_key_value(rng)
+                if rng.random() < 0.5:
+                    props["resolution"] = _random_prop(rng)
+                ingestor.ensure_relationship_batch(ends[0], rel, ends[1], props)
+            if rng.random() < 0.05:
+                ingestor.flush_all()
+    return written, declined
+
+
+@needs_rust
+class TestIngest:
+    @pytest.mark.parametrize("seed", range(6))
+    def test_random_batches_write_the_same_file(
+        self, tmp_path: Path, seed: int, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        python, rust = tmp_path / "python.sqlite", tmp_path / "rust.sqlite"
+        assert _replay(python, seed, False, monkeypatch)[0] == 0
+        written, declined = _replay(rust, seed, True, monkeypatch)
+        assert _table_dump(rust) == _table_dump(python)
+        # Both paths ran: most batches in Rust, the odd values in Python.
+        assert written > declined > 0
+
+    def test_a_failed_write_leaves_the_batch_to_the_engine(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class Failing:
+            def merge_node_rows(self, *args: str | list[str]) -> bool:
+                raise RuntimeError(args)
+
+            def close(self) -> None:
+                pass
+
+        monkeypatch.setattr(native, "_new_writer", lambda path: Failing())
+        with EmbeddedConnection(str(tmp_path / "g.sqlite")) as conn:
+            assert conn.native is not None
+            rows: list[NodeBatchRow] = [{"id": "p.m", "props": {"name": "m"}}]
+            assert not conn.native.merge_nodes("Module", "qualified_name", rows)
+
+    def test_no_write_inside_a_transaction_of_the_engines(self, tmp_path: Path) -> None:
+        with EmbeddedConnection(str(tmp_path / "g.sqlite")) as conn:
+            assert conn.native is not None
+            conn._sqlite.execute("BEGIN")
+            rows: list[NodeBatchRow] = [{"id": "p.m", "props": {}}]
+            assert not conn.native.merge_nodes("Module", "qualified_name", rows)
+            conn._sqlite.execute("ROLLBACK")
+            assert conn.native.merge_nodes("Module", "qualified_name", rows)
+
+    @pytest.mark.parametrize("seed", range(3))
+    def test_the_renderer_writes_what_json_dumps_writes(self, seed: int) -> None:
+        assert RUST is not None
+        rng = random.Random(seed)
+        for _ in range(400):
+            value = _random_value(rng)
+            for compact, separators in ((False, None), (True, (",", ":"))):
+                rendered = RUST.render_json(value, compact)
+                try:
+                    expected = json.dumps(value, separators=separators, allow_nan=False)
+                except ValueError:
+                    expected = None
+                big = re.search(r"\d{19,}", expected or "")
+                if big is None:
+                    assert rendered == expected, value
+                else:
+                    assert rendered is None or rendered == expected
+
+    @pytest.mark.parametrize(
+        "value",
+        [float("nan"), float("inf"), {1, 2}, {1: "a"}, "\ud800", 2**64, b"x"],
+    )
+    def test_the_renderer_declines_what_the_engine_writes_otherwise(
+        self, value: float | set[int] | dict[int, str] | str | int | bytes
+    ) -> None:
+        assert RUST is not None
+        assert RUST.render_json([value], True) is None
+
+
 # --------------------------------------------------------------- lifecycle
 
 
@@ -302,6 +544,8 @@ class TestWithoutTheExtension:
         )
         with EmbeddedConnection(str(tmp_path / "g.sqlite")) as conn:
             assert conn.native is not None
+            rows: list[NodeBatchRow] = [{"id": "p.m", "props": {}}]
+            assert not conn.native.merge_nodes("Module", "qualified_name", rows)
             assert conn.native.run_procedure("pagerank.get", []) is None
             conn.run("CREATE (:T {k: 1})-[:R]->(:T {k: 2})")
             assert conn.run("MATCH (a:T)-[:R*1..2]->(b) RETURN b.k AS k").rows == [(2,)]

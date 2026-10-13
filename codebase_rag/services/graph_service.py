@@ -72,6 +72,7 @@ from ..cypher_queries import (
 from ..embedded_graph.connection import EmbeddedConnection
 from ..embedded_graph.expressions import CompileError
 from ..embedded_graph.lexer import CypherSyntaxError
+from ..embedded_graph.native import NativeGraph, RelMerge
 from ..embedded_graph.store import EmbeddedGraphUnsupported
 from ..graph_dialects import (
     DIALECT_MEMGRAPH,
@@ -144,6 +145,11 @@ def _group_by_merge_keys(
         props = row[KEY_PROPS] or {}
         by_keys[tuple(p for p in candidate if p in props)].append(row)
     return by_keys
+
+
+def _native_graph(conn: ConnectionProtocol) -> NativeGraph | None:
+    """The Rust extension's handle on an embedded connection's file, if any."""
+    return conn.native if isinstance(conn, EmbeddedConnection) else None
 
 
 def _created_count(results: Sequence[ResultRow]) -> int:
@@ -777,7 +783,10 @@ class MemgraphIngestor:
             return 0, skipped + len(batch_rows)
         lock = self._conn_lock if conn is None else nullcontext()
         with lock:
-            self._execute_batch_on(target_conn, query, batch_rows)
+            # The Rust extension writes the same rows when it can (native.py).
+            native = _native_graph(target_conn) if self._use_merge else None
+            if native is None or not native.merge_nodes(label, id_key, batch_rows):
+                self._execute_batch_on(target_conn, query, batch_rows)
         return len(batch_rows), skipped
 
     def _flush_node_group_with_own_conn(
@@ -924,11 +933,13 @@ class MemgraphIngestor:
                 has_props,
                 merge_key_props=merge_key_props,
             )
+            merge = RelMerge(merge_key_props, has_props)
         else:
             query = build_create_relationship_query(
                 from_label, from_key, rel_type, to_label, to_key, has_props
             )
-        return self._execute_rel_pattern_query(pattern, query, params_list, conn)
+            merge = None
+        return self._execute_rel_pattern_query(pattern, query, params_list, conn, merge)
 
     def _execute_rel_pattern_query(
         self,
@@ -936,6 +947,7 @@ class MemgraphIngestor:
         query: str,
         params_list: list[RelBatchRow],
         conn: ConnectionProtocol | None,
+        merge: RelMerge | None = None,
     ) -> tuple[int, int]:
         target_conn = conn or self.conn
         if not target_conn:
@@ -946,8 +958,20 @@ class MemgraphIngestor:
             RelBatchRow(**row, row_index=index) for index, row in enumerate(params_list)
         ]
         with lock:
-            results = self._execute_batch_with_return_on(target_conn, query, indexed)
-            batch_successful = _created_count(results)
+            # `merge` says what the MERGE query was built from, so the Rust
+            # extension can write the same rows (native.py).
+            native = _native_graph(target_conn) if merge is not None else None
+            created = (
+                native.merge_relationships(pattern, merge, indexed)
+                if native is not None and merge is not None
+                else None
+            )
+            if created is None:
+                results = self._execute_batch_with_return_on(
+                    target_conn, query, indexed
+                )
+                created = _created_count(results)
+            batch_successful = created
             failed_rows = (
                 self._missing_endpoint_rows(target_conn, pattern, params_list)
                 if batch_successful < len(params_list)
