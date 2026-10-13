@@ -33,6 +33,13 @@ SYNTHETIC_NAME_PREFIXES = "~"
 # What `errors="replace"` substitutes for an undecodable byte. Its presence
 # in an extracted symbol name means the name is damaged.
 UNICODE_REPLACEMENT_CHAR = "\ufffd"
+# Line endings a text file can use. Text-mode reading maps each one to "\n",
+# so an editor that writes back what it read must read and write with
+# newline="" (no translation) to keep the file's own endings.
+LINE_FEED = "\n"
+CARRIAGE_RETURN = "\r"
+CRLF = "\r\n"
+NEWLINE_UNTRANSLATED = ""
 
 ARG_TARGET_CODE = "target_code"
 ARG_REPLACEMENT_CODE = "replacement_code"
