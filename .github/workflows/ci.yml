@@ -387,7 +387,7 @@ jobs:
         run: |
           python -m venv .fresh-venv
           ./.fresh-venv/bin/python -m pip install --upgrade pip
-          ./.fresh-venv/bin/python -m pip install --find-links dist-rust dist/*.whl
+          ./.fresh-venv/bin/python -m pip install dist/*.whl --find-links dist-rust
 
       - name: Record resolved dependency versions
         run: ./.fresh-venv/bin/python -m pip list
