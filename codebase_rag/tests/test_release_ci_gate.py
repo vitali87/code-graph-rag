@@ -129,7 +129,21 @@ def _execute(
             RELEASE_PUSHED,
         }
         assert "${{" not in step["run"]
-        scripts.append("(\n" + step["run"] + "\n)\n")
+        script = "(\n" + step["run"] + "\n)\n"
+        if step["name"] == GATE_NAME:
+            # continue-on-error, as GitHub runs it: the gate's failure is
+            # recorded as its outcome rather than ending the job. Not `if (…)`
+            # or `|| …`: bash ignores `set -e` inside a subshell used as a
+            # condition, so the gate's own error handling would stop working.
+            script = (
+                "set +e\n"
+                + script
+                + "gate_status=$?\n"
+                + "set -e\n"
+                + "CI_GATE=failure\n"
+                + 'if [ "$gate_status" -eq 0 ]; then CI_GATE=success; fi\n'
+            )
+        scripts.append(script)
     return subprocess.run(
         [
             bash,
@@ -164,7 +178,9 @@ def _execute(
             "GH_NEXT_PAGES": "",
             "NEW_VERSION": "0.0.951",
             "RELEASE": str(release).lower(),
+            "CI_GATE": "skipped",
             "GITHUB_OUTPUT": os.devnull,
+            "GITHUB_STEP_SUMMARY": os.devnull,
             **(env or {}),
         },
         capture_output=True,
@@ -175,12 +191,19 @@ def _execute(
     )
 
 
-def _assert_blocked(result: subprocess.CompletedProcess[str]) -> None:
-    assert result.returncode != 0, result.stdout + result.stderr
+def _assert_deferred(result: subprocess.CompletedProcess[str]) -> None:
+    """The bump keeps its tag, pushed over GITHUB_TOKEN so nothing publishes;
+    only the release waits for a bump whose CI is proven."""
+    assert result.returncode == 0, result.stdout + result.stderr
     assert "git: commit -m chore: bump version to 0.0.951" in result.stdout
     assert "git: push\n" in result.stdout
-    assert "git: tag " not in result.stdout
+    assert "git: tag v0.0.951" in result.stdout
+    assert (
+        f"git: push https://x-access-token:unused-test-token@github.com/{REPO}.git"
+        " v0.0.951"
+    ) in result.stdout
     assert "git: push origin v" not in result.stdout
+    assert "::warning::CI is not proven" in result.stdout
 
 
 def test_successful_ci_releases_the_pushed_bump() -> None:
@@ -188,6 +211,8 @@ def test_successful_ci_releases_the_pushed_bump() -> None:
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "git: push origin v0.0.951" in result.stdout
+    assert "git: push https://x-access-token:" not in result.stdout
+    assert "::warning::" not in result.stdout
     assert "wait:" not in result.stdout
 
 
@@ -209,6 +234,7 @@ def test_interim_tag_does_not_wait_for_ci() -> None:
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "git: push https://x-access-token:" in result.stdout
+    assert "::warning::" not in result.stdout
     assert "wait:" not in result.stdout
 
 
@@ -225,17 +251,17 @@ def test_interim_tag_does_not_wait_for_ci() -> None:
         None,
     ],
 )
-def test_unsuccessful_ci_keeps_the_bump_but_blocks_the_tag(
+def test_unsuccessful_ci_tags_the_bump_without_a_release(
     conclusion: str | None,
 ) -> None:
-    _assert_blocked(_execute(_pages([_make_ci_run(conclusion=conclusion)])))
+    _assert_deferred(_execute(_pages([_make_ci_run(conclusion=conclusion)])))
 
 
 @pytest.mark.parametrize(
     "status", ["queued", "in_progress", "pending", "waiting", "requested"]
 )
 def test_unfinished_ci_cannot_release(status: str) -> None:
-    _assert_blocked(_execute(_pages([_make_ci_run(status=status, conclusion=None)])))
+    _assert_deferred(_execute(_pages([_make_ci_run(status=status, conclusion=None)])))
 
 
 @pytest.mark.parametrize(
@@ -249,10 +275,10 @@ def test_delayed_ci_can_finish_successfully(initial: list[WorkflowRun]) -> None:
     assert "git: push origin v0.0.951" in result.stdout
 
 
-def test_no_run_times_out_without_tagging() -> None:
+def test_no_run_times_out_into_an_interim_tag() -> None:
     result = _execute(_pages([]))
 
-    _assert_blocked(result)
+    _assert_deferred(result)
     assert "Timed out" in result.stdout
 
 
@@ -282,7 +308,7 @@ def test_no_run_times_out_without_tagging() -> None:
     ],
 )
 def test_unrelated_green_run_is_not_release_evidence(run: WorkflowRun) -> None:
-    _assert_blocked(_execute(_pages([run])))
+    _assert_deferred(_execute(_pages([run])))
 
 
 @pytest.mark.parametrize(
@@ -303,7 +329,7 @@ def test_missing_run_identity_fails_closed(field: str) -> None:
     run = _make_ci_run()
     run.pop(field)
 
-    _assert_blocked(_execute(_pages([run])))
+    _assert_deferred(_execute(_pages([run])))
 
 
 @pytest.mark.parametrize(
@@ -324,7 +350,7 @@ def test_newer_run_or_attempt_overrides_old_success(
     pages = [[newer], [_make_ci_run()]]
     if not newer_first:
         pages.reverse()
-    _assert_blocked(_execute(_pages(*pages)))
+    _assert_deferred(_execute(_pages(*pages)))
 
 
 def test_success_on_later_page_is_accepted() -> None:
@@ -341,13 +367,13 @@ def test_successful_rerun_supersedes_old_failure() -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_ci_that_fails_after_waiting_blocks_the_tag() -> None:
+def test_ci_that_fails_after_waiting_defers_the_release() -> None:
     result = _execute(
         _pages([_make_ci_run(status="in_progress", conclusion=None)]),
         env={"GH_NEXT_PAGES": _pages([_make_ci_run(conclusion="failure")])},
     )
 
-    _assert_blocked(result)
+    _assert_deferred(result)
     assert "wait: 30" in result.stdout
 
 
@@ -356,7 +382,7 @@ def test_incomplete_pagination_cannot_authorize_a_release() -> None:
 
     result = _execute(pages)
 
-    _assert_blocked(result)
+    _assert_deferred(result)
     assert (
         f"::error::Could not validate complete CI run evidence for {SHA}"
         in result.stdout
@@ -368,7 +394,7 @@ def test_incomplete_pagination_cannot_authorize_a_release() -> None:
 def test_api_failure_cannot_authorize_a_release_even_with_success_output(
     field: str,
 ) -> None:
-    _assert_blocked(_execute(_pages([_make_ci_run()]), env={field: "1"}))
+    _assert_deferred(_execute(_pages([_make_ci_run()]), env={field: "1"}))
 
 
 @pytest.mark.parametrize(
@@ -385,7 +411,7 @@ def test_api_failure_cannot_authorize_a_release_even_with_success_output(
 def test_malformed_responses_fail_closed(pages: str) -> None:
     result = _execute(pages)
 
-    _assert_blocked(result)
+    _assert_deferred(result)
     assert (
         f"::error::Could not validate complete CI run evidence for {SHA}"
         in result.stdout
@@ -414,7 +440,7 @@ def test_malformed_responses_fail_closed(pages: str) -> None:
 def test_workflow_identity_must_be_verified(
     workflow: dict[str, str | int | None],
 ) -> None:
-    _assert_blocked(
+    _assert_deferred(
         _execute(_pages([_make_ci_run()]), env={"GH_WORKFLOW": json.dumps(workflow)})
     )
 
@@ -423,7 +449,7 @@ def test_workflow_identity_must_be_verified(
     "env", [{"PARENT_SHA": "b" * 40}, {"GITHUB_REF": "refs/heads/feature"}]
 )
 def test_release_source_must_be_the_bump_parent_on_main(env: dict[str, str]) -> None:
-    _assert_blocked(_execute(_pages([_make_ci_run()]), env=env))
+    _assert_deferred(_execute(_pages([_make_ci_run()]), env=env))
 
 
 def test_gate_is_required_between_bump_push_and_release_side_effects() -> None:
@@ -432,6 +458,8 @@ def test_gate_is_required_between_bump_push_and_release_side_effects() -> None:
     steps = job["steps"]
     names = [step["name"] for step in steps]
     gate = steps[names.index(GATE_NAME)]
+    tag = steps[names.index("Create git tag")]
+    release = steps[names.index("Create release")]
 
     assert names.index("Commit version bump") < names.index(GATE_NAME)
     assert (
@@ -440,7 +468,14 @@ def test_gate_is_required_between_bump_push_and_release_side_effects() -> None:
         < names.index("Create release")
     )
     assert gate["if"] == RELEASE_PUSHED
-    assert not gate.get("continue-on-error", False)
+    # The gate's failure must defer the release, not end the job before the
+    # tag: _execute stands in for continue-on-error with the CI_GATE variable,
+    # so the tag step has to read exactly that outcome.
+    assert gate["continue-on-error"] is True
+    assert gate["id"] == "ci_gate"
+    assert tag["if"] == "steps.commit.outputs.pushed == 'true'"
+    assert tag["env"]["CI_GATE"] == "${{ steps.ci_gate.outcome }}"
+    assert release["if"] == (RELEASE_PUSHED + " && steps.ci_gate.outcome == 'success'")
     assert gate["timeout-minutes"] == 50
     assert gate["env"]["CI_WAIT_ATTEMPTS"] == 90
     assert job["timeout-minutes"] >= 90

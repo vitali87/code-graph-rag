@@ -83,17 +83,19 @@ All pull requests are validated by CI, which runs in parallel:
 
 ### Release cadence and why tags outrun releases
 
-`version-bump.yml` tags every merge, but only some of those tags publish. The
-difference is the CREDENTIAL used to push the tag, which is easy to miss when
-reading the workflows:
+`version-bump.yml` tags every version bump, but only some of those tags publish.
+A bump is not one per merge: runs are serialised, and only the run for the
+newest commit on `main` bumps, so merges that land close together share one
+bump and one tag. Which tags publish comes down to the CREDENTIAL used to push
+the tag, which is easy to miss when reading the workflows:
 
 ```yaml
-git tag "v${{ steps.bump_version.outputs.new }}"
-if [ "${{ steps.decide.outputs.release }}" = "true" ]; then
-  git push origin "v${{ steps.bump_version.outputs.new }}"          # SSH deploy key
+git tag "v${NEW_VERSION}"
+if [ "$RELEASE" = "true" ] && [ "$CI_GATE" = "success" ]; then
+  git push origin "v${NEW_VERSION}"          # SSH deploy key
 else
   git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
-    "v${{ steps.bump_version.outputs.new }}"
+    "v${NEW_VERSION}"
 fi
 ```
 
@@ -105,7 +107,11 @@ the publish.
 
 A release happens every 50 versions, or immediately when the `decide` step
 sees a security fix (a GHSA id in the commit message, an explicit `[security]`
-marker, or an associated PR labelled `security`).
+marker, or an associated PR labelled `security`). A release also needs green CI
+on the merge commit it is cut from, within 45 minutes of the bump being pushed.
+When CI fails or does not finish in time, the bump is still tagged, as an
+interim tag, and the release moves to the next bump (the run's summary reads
+"Release: deferred").
 
 If you are ever debugging "the tag exists but PyPI did not update", check WHICH
 kind of tag it is first. For an interim tag this is the intended behaviour and

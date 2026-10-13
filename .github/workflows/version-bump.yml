@@ -612,7 +612,17 @@ jobs:
           exit 1
 
       - name: Require successful CI for the release source
+        id: ci_gate
         if: steps.decide.outputs.release == 'true' && steps.commit.outputs.pushed == 'true'
+        # A gate that does not pass defers the release, not the tag. The bump
+        # is already on main, so a tag held back here leaves that version
+        # untagged for good, and an untagged bump does not count toward
+        # RELEASE_EVERY: every later run is then another release run behind the
+        # same wait, and no tag lands for as long as CI on main runs behind
+        # (v0.1.88). "Create git tag" reads this step's outcome instead and
+        # pushes over GITHUB_TOKEN, which triggers no publish, so the release
+        # moves to the next bump whose CI is proven.
+        continue-on-error: true
         timeout-minutes: 50
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -689,16 +699,21 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NEW_VERSION: ${{ steps.bump_version.outputs.new }}
           RELEASE: ${{ steps.decide.outputs.release }}
+          CI_GATE: ${{ steps.ci_gate.outcome }}
         run: |
           git tag "v${NEW_VERSION}"
-          if [ "$RELEASE" = "true" ]; then
+          if [ "$RELEASE" = "true" ] && [ "$CI_GATE" = "success" ]; then
             git push origin "v${NEW_VERSION}"
           else
+            if [ "$RELEASE" = "true" ]; then
+              echo "::warning::CI is not proven for ${GITHUB_SHA}; v${NEW_VERSION} is tagged without a release, which moves to the next bump"
+              echo "- **Release:** deferred, CI is not proven for ${GITHUB_SHA}; v${NEW_VERSION} is tagged without publishing" >> "$GITHUB_STEP_SUMMARY"
+            fi
             git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "v${NEW_VERSION}"
           fi
 
       - name: Create release
-        if: steps.decide.outputs.release == 'true' && steps.commit.outputs.pushed == 'true'
+        if: steps.decide.outputs.release == 'true' && steps.commit.outputs.pushed == 'true' && steps.ci_gate.outcome == 'success'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NEW_VERSION: ${{ steps.bump_version.outputs.new }}
