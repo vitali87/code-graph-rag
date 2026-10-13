@@ -42,11 +42,15 @@ rules:
                   - kind: template_string
                     not: { has: { kind: template_substitution } }
   - id: hardcoded_secret
+    # The credential word must END the name, optionally followed by key
+    # words and digits (SECRET_KEY, secret_key_base, AWS_SECRET_ACCESS_KEY,
+    # password2): `tokenizer`, `token_count` and `password_prompt` only
+    # contain one, and name no credential (issue #2870).
     message: "Hardcoded secret assigned to a credential-named variable"
     rule:
       kind: variable_declarator
       all:
-        - has: { field: name, regex: '(?i)(password|secret|api_key|token)' }
+        - has: { field: name, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
         - has:
             field: value
             all:

@@ -22,6 +22,10 @@ rules:
         - has: { kind: string, regex: '(?i)\b(select|insert|update|delete)\b' }
         - has: { kind: operator_identifier, regex: '^\+$' }
   - id: hardcoded_secret
+    # The credential word must END the name, optionally followed by key
+    # words and digits (SECRET_KEY, secret_key_base, AWS_SECRET_ACCESS_KEY,
+    # password2): `tokenizer`, `token_count` and `password_prompt` only
+    # contain one, and name no credential (issue #2870).
     # Security rule: favour recall. A val/var whose name matches a credential
     # keyword bound to a non-trivial (>=10 char) string literal.
     message: "Hardcoded secret assigned to a credential-named variable"
@@ -30,5 +34,5 @@ rules:
         - any:
             - kind: val_definition
             - kind: var_definition
-        - has: { kind: identifier, regex: '(?i)(password|secret|api_key|token)' }
+        - has: { kind: identifier, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
         - has: { kind: string, regex: '^.{12,}$' }
