@@ -241,24 +241,18 @@ def _with_projects(*names: str) -> AbstractContextManager[MagicMock]:
     return patch.object(MemgraphIngestor, "list_projects", return_value=list(names))
 
 
-def _with_project_roots(*names: str) -> AbstractContextManager[MagicMock]:
-    return patch.object(
-        MemgraphIngestor, "list_project_roots", return_value=dict.fromkeys(names)
-    )
-
-
 class TestDeletingAProjectThatIsNotThere:
     def test_prints_only_the_not_found_message(
         self, conn: MagicMock, logged: list[_Logged]
     ) -> None:
         with (
-            _with_project_roots(_STORED_NAME, _OTHER_PROJECT),
+            _with_projects(_STORED_NAME, _OTHER_PROJECT),
             patch("codebase_rag.cli.delete_project_embeddings") as embeddings,
         ):
             result = runner.invoke(app, ["delete-project", "-n", "click"])
 
         assert result.exit_code == 1, result.output
-        assert "Project 'click' not found" in _plain(result.output)
+        assert "Project 'click' is not indexed" in _plain(result.output)
         assert _alarming(logged) == []
         embeddings.assert_not_called()
         conn.close.assert_called_once_with()
@@ -267,7 +261,7 @@ class TestDeletingAProjectThatIsNotThere:
         self, conn: MagicMock, logged: list[_Logged]
     ) -> None:
         failure = ConnectionError("bolt connection lost")
-        with patch.object(MemgraphIngestor, "list_project_roots", side_effect=failure):
+        with patch.object(MemgraphIngestor, "list_projects", side_effect=failure):
             result = runner.invoke(app, ["delete-project", "-n", "click"])
 
         assert result.exit_code == 1, result.output

@@ -1,6 +1,6 @@
 [project]
 name = "code-graph-rag"
-version = "0.1.59"
+version = "0.1.88"
 description = "The ultimate RAG for your monorepo. Query, understand, and edit multi-language codebases with the power of AI and knowledge graphs"
 readme = "PYPI_README.md"
 requires-python = ">=3.12"
@@ -44,7 +44,7 @@ dependencies = [
     # meta-package also installs logfire, evals, a CLI and a web UI, none used.
     "pydantic-ai-slim[anthropic,google,openai]>=2.0.0",
     "pydantic-settings>=2.12.0",
-    "pymgclient>=1.5.1",
+    "pymgclient>=1.6.0",
     "python-dotenv>=1.2.1",
     "tiktoken>=0.12.0",
     "tomli-w>=1.2.0",
@@ -99,6 +99,9 @@ codebase_rag = [
     "parsers/java_frontend/javac/cgr/*.java",
     "parsers/ast_grep_patterns/*.yaml",
     "analyzers/ast_grep_rules/*/*.yaml",
+    # Julia's pip grammar ships no HIGHLIGHTS_QUERY, so its highlights come
+    # only from this fallback file; without it the wheel silently disables
+    # Julia modifier/decorator extraction (issue #1882 review).
     "queries/highlights/*.scm",
 ]
 # The provenance manifest hashes this file to stamp each index with its codec
@@ -141,6 +144,7 @@ treesitter-full = [
     "tree-sitter-c>=0.24.1",
     "tree-sitter-cpp>=0.23.0",
     "tree-sitter-lua>=0.0.19",
+    "tree-sitter-julia>=0.23.1",
     "tree-sitter-php>=0.24.1",
     "tree-sitter-c-sharp>=0.23.5",
     # Exact pin: PyPI's tree-sitter-dart is a single-maintainer repackaging of
