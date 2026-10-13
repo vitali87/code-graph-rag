@@ -87,6 +87,15 @@ class TestParser:
         with pytest.raises(CypherSyntaxError):
             parse("MATCH (n RETURN n")
 
+    def test_a_syntax_error_quotes_the_punctuation_it_expected(self) -> None:
+        # The message goes back to the model for a repair attempt, so it
+        # names the `)` itself rather than the enum member that spells it.
+        with pytest.raises(CypherSyntaxError) as raised:
+            parse("MATCH (n RETURN n")
+        assert str(raised.value) == (
+            "Cypher syntax error at offset 9: unexpected 'RETURN', expected ')'"
+        )
+
 
 class TestWrites:
     def test_merge_is_idempotent_on_the_unique_key(self, conn) -> None:

@@ -118,9 +118,9 @@ class _Parser:
             return True
         return False
 
-    def expect_punct(self, text: str) -> None:
-        if not self.accept_punct(text):
-            raise self.error(repr(text))
+    def expect_punct(self, punct: EgPunct) -> None:
+        if not self.accept_punct(punct):
+            raise self.error(repr(punct.value))
 
     def name(self) -> str:
         """Any identifier, keywords included: labels, keys, aliases."""
