@@ -110,19 +110,19 @@ def test_doctor_does_not_require_docker_for_the_embedded_graph(
     results = HealthChecker().run_all_checks()
     graph = results[0]
     assert graph.passed, graph
-    assert str(settings.sqlite_graph_path) in graph.message
+    assert str(settings.graph_db_file) in graph.message
 
 
 def test_doctor_names_the_embedded_graph(embedded) -> None:
     assert health_checker._backend_engine_name() == "Embedded graph (SQLite)"
-    assert health_checker._backend_endpoint() == str(settings.sqlite_graph_path)
+    assert health_checker._backend_endpoint() == str(settings.graph_db_file)
 
 
 def test_the_default_graph_opens_under_cgr_home(embedded) -> None:
     with MemgraphIngestor(host="unused", port=0) as ingestor:
         ingestor.ensure_constraints()
-    assert settings.sqlite_graph_path.is_file()
-    assert settings.sqlite_graph_path.parent == settings.CGR_HOME
+    assert settings.graph_db_file.is_file()
+    assert settings.graph_db_file.parent == settings.CGR_HOME
 
 
 def test_an_unwritable_graph_path_is_one_clear_error(tmp_path: Path) -> None:

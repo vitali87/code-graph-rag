@@ -64,4 +64,4 @@ def test_milvus_uri_is_isolated_for_unit_tests(tmp_path: Path) -> None:
 
 
 def test_sqlite_vector_path_is_isolated_for_unit_tests(tmp_path: Path) -> None:
-    assert settings.sqlite_vector_path.is_relative_to(tmp_path.parent)
+    assert settings.vector_db_file.is_relative_to(tmp_path.parent)

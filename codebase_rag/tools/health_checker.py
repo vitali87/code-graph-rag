@@ -103,7 +103,7 @@ def _backend_endpoint() -> str:
     if settings.GRAPH_BACKEND == DIALECT_NEO4J:
         return settings.NEO4J_URI
     if settings.GRAPH_BACKEND == DIALECT_SQLITE:
-        return str(settings.sqlite_graph_path)
+        return str(settings.graph_db_file)
     return f"{settings.MEMGRAPH_HOST}:{settings.MEMGRAPH_PORT}"
 
 

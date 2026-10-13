@@ -510,7 +510,7 @@ class MemgraphIngestor:
         return conn
 
     def sqlite_graph_path(self) -> str:
-        return self._sqlite_path or str(settings.sqlite_graph_path)
+        return self._sqlite_path or str(settings.graph_db_file)
 
     def _embedded_connection(
         self, read_only: bool, heap_limit_mb: int | None = None

@@ -338,7 +338,7 @@ class AppConfig(BaseSettings):
     CGR_HOME: Path = Field(default_factory=lambda: Path.home() / ".cgr")
 
     @property
-    def sqlite_graph_path(self) -> Path:
+    def graph_db_file(self) -> Path:
         if self.SQLITE_GRAPH_PATH is not None:
             return self.SQLITE_GRAPH_PATH.expanduser()
         return self.CGR_HOME.expanduser() / cs.EG_DEFAULT_DB_FILENAME
@@ -451,7 +451,7 @@ class AppConfig(BaseSettings):
     SQLITE_VECTOR_TOP_K: int = 5
 
     @property
-    def sqlite_vector_path(self) -> Path:
+    def vector_db_file(self) -> Path:
         if self.SQLITE_VECTOR_PATH is not None:
             return self.SQLITE_VECTOR_PATH.expanduser()
         return self.CGR_HOME.expanduser() / cs.SQLITE_VEC_DEFAULT_DB_FILENAME

@@ -16,7 +16,7 @@ import math
 import random
 import re
 import sqlite3
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Sequence
 from contextlib import closing
 from pathlib import Path
 from types import ModuleType
@@ -137,7 +137,8 @@ class TestGraphVersion:
         assert seconds_left() is None
         with running_until(Deadline.after(60)):
             left = seconds_left()
-            assert left is not None and 0 < left <= 60
+            assert left is not None
+            assert 0 < left <= 60
 
 
 # ------------------------------------------------------------------ values
@@ -362,9 +363,8 @@ def graphs(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
 
 
 @pytest.fixture
-def walking(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+def walking(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(native, "WALKS", True)
-    yield
 
 
 def _walk_rows(conn: EmbeddedConnection, query: str, accelerated: bool) -> Rows:
@@ -432,7 +432,8 @@ class TestWalks:
     ) -> None:
         path = str(graphs["dense"])
         with EmbeddedConnection(path, read_only=True) as conn:
-            assert conn.native is not None and conn.native.walks
+            assert conn.native is not None
+            assert conn.native.walks
             rust = conn.run(query).rows
         monkeypatch.setattr(native, "WALKS", False)
         with EmbeddedConnection(path, read_only=True) as conn:

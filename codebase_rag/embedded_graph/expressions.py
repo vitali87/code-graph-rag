@@ -17,7 +17,7 @@ ascending, `collect()` drops nulls.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 
 from ..constants.embedded_graph import (
     EG_AGGREGATES,
@@ -255,7 +255,7 @@ class ExprCompiler:
             raise CompileError(EG_ERR_UNSUPPORTED.format(what=type(e).__name__))
         ce = method(self, e, scope)
         if not ce.const and _is_constant(e, scope):
-            return replace(ce, const=True)
+            return CE(ce.sql, ce.t, ce.alias, ce.names, const=True)
         return ce
 
     def _literal(self, e: a.Literal, _scope: Scope) -> CE:

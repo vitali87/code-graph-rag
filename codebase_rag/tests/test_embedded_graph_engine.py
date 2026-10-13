@@ -451,4 +451,4 @@ class TestIngestor:
 
         monkeypatch.setattr(settings, "CGR_HOME", tmp_path)
         monkeypatch.setattr(settings, "SQLITE_GRAPH_PATH", None)
-        assert settings.sqlite_graph_path == tmp_path / "graph.sqlite"
+        assert settings.graph_db_file == tmp_path / "graph.sqlite"

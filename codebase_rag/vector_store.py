@@ -315,7 +315,7 @@ def embedding_cache_dir() -> Path:
     if _bundled_qdrant_url() is not None:
         return settings.CGR_HOME.expanduser()
     if settings.VECTOR_STORE_BACKEND == VectorStoreBackend.SQLITE:
-        return settings.sqlite_vector_path.parent
+        return settings.vector_db_file.parent
     return Path(settings.QDRANT_DB_PATH)
 
 
@@ -479,7 +479,7 @@ def _ensure_sqlite_collection(client: SqliteVectorClient, validate: bool) -> Non
     if validate and dim != settings.SQLITE_VECTOR_DIM:
         raise ValueError(
             ex.SQLITE_VECTOR_DIM_MISMATCH.format(
-                path=settings.sqlite_vector_path,
+                path=settings.vector_db_file,
                 dim=dim,
                 expected=settings.SQLITE_VECTOR_DIM,
             )
@@ -493,7 +493,7 @@ def get_sqlite_vector_client(validate: bool = True) -> SqliteVectorClient:
 
     _ensure_client_backend(VectorStoreBackend.SQLITE)
     if _CLIENT is None:
-        client = open_sqlite_vector_client(settings.sqlite_vector_path)
+        client = open_sqlite_vector_client(settings.vector_db_file)
         try:
             _ensure_sqlite_collection(client, validate)
         except Exception:

@@ -698,7 +698,7 @@ class TestSqlite:
     @staticmethod
     def _rows() -> list[tuple[str, int]]:
         # The payload table is plain SQLite, readable without the extension.
-        with closing(sqlite3.connect(vs.settings.sqlite_vector_path)) as conn:
+        with closing(sqlite3.connect(vs.settings.vector_db_file)) as conn:
             rows = conn.execute(
                 "SELECT qualified_name, node_id FROM cgr_vector_points"
             ).fetchall()

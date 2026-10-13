@@ -503,8 +503,10 @@ class TestFailures:
             SqliteVectorRow("p-2", 2, "pkg.b", [1.0, 0.0, 0.0]),
         ]
 
+        client = vs.get_sqlite_vector_client()
+
         with pytest.raises(sqlite3.OperationalError, match="Dimension mismatch"):
-            vs.get_sqlite_vector_client().upsert(_PROJECT, rows)
+            client.upsert(_PROJECT, rows)
 
         assert _rows(store_path) == []
 
@@ -534,10 +536,12 @@ class TestFailures:
 
         assert vs._CLIENT is None
 
-    def test_switching_to_sqlite_closes_the_other_backends_client(self) -> None:
+    def test_switching_to_sqlite_closes_the_other_backends_client(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         other = MagicMock()
-        vs._CLIENT = other
-        vs._CLIENT_BACKEND = VectorStoreBackend.QDRANT
+        monkeypatch.setattr(vs, "_CLIENT", other)
+        monkeypatch.setattr(vs, "_CLIENT_BACKEND", VectorStoreBackend.QDRANT)
 
         client = vs.get_sqlite_vector_client()
 
@@ -613,8 +617,10 @@ class TestVectorSize:
         client.close.assert_called_once()
 
     def test_vectors_of_the_wrong_size_name_the_setting_to_change(self) -> None:
+        points = [(1, [0.1, 0.2, 0.3], _fn("pkg.a"))]
+
         with pytest.raises(ValueError, match="3-dimensional.*SQLITE_VECTOR_DIM"):
-            _store(_PROJECT, [(1, [0.1, 0.2, 0.3], _fn("pkg.a"))])
+            _store(_PROJECT, points)
         with pytest.raises(ValueError, match="SQLITE_VECTOR_DIM"):
             vs.search_embeddings([0.1, 0.2])
 
@@ -627,17 +633,17 @@ class TestWhereTheFileGoes:
         monkeypatch.setattr(vs.settings, "SQLITE_GRAPH_PATH", None)
         monkeypatch.setattr(vs.settings, "CGR_HOME", tmp_path / "home")
 
-        path = vs.settings.sqlite_vector_path
+        path = vs.settings.vector_db_file
 
         assert path == tmp_path / "home" / cs.SQLITE_VEC_DEFAULT_DB_FILENAME
-        assert path.parent == vs.settings.sqlite_graph_path.parent
+        assert path.parent == vs.settings.graph_db_file.parent
 
     def test_a_set_path_is_used_with_the_home_directory_expanded(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(vs.settings, "SQLITE_VECTOR_PATH", Path("~/v.sqlite"))
 
-        assert vs.settings.sqlite_vector_path == Path.home() / "v.sqlite"
+        assert vs.settings.vector_db_file == Path.home() / "v.sqlite"
 
     def test_opening_the_store_creates_its_folder(self, store_path: Path) -> None:
         assert not store_path.parent.exists()
