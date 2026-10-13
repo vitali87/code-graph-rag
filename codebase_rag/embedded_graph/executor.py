@@ -90,6 +90,7 @@ from .compiler import (
 )
 from .expressions import CE, CompileError, Ctx, ParamSpec
 from .limits import Deadline, QueryTimeout, running_until
+from .native import decode_rows
 from .parser import parse
 from .procedures import PROCEDURES, ProcValue, run_procedure
 from .types import Kind, SqlValue, T
@@ -347,10 +348,7 @@ class Executor:
             rows = self.conn.execute(plan.sql, binds).fetchall()
             return Result(
                 [c.name for c in plan.columns],
-                [
-                    tuple(decode(c.decode, v) for c, v in zip(plan.columns, row))
-                    for row in rows
-                ],
+                decode_rows([c.decode for c in plan.columns], rows, decode),
             )
         if len(stmt.parts) > 1:
             raise CompileError(EG_ERR_UNSUPPORTED.format(what=EG_WHAT_UNION_UPDATES))
@@ -422,10 +420,7 @@ class _Run:
                     ).fetchall()
                     return Result(
                         [c.name for c in outputs],
-                        [
-                            tuple(decode(c.decode, v) for c, v in zip(outputs, row))
-                            for row in rows
-                        ],
+                        decode_rows([c.decode for c in outputs], rows, decode),
                     )
                 if isinstance(clause, (*_READ_CLAUSES, a.Projection)):
                     stage = self.qc.clause(pipeline, stage, clause, after)

@@ -1,11 +1,11 @@
 """The Rust extension's accelerators against the engine paths they replace.
 
-rust/cgr_graph_rs writes the ingestor's node and relationship batches and
-runs the ported procedures (embedded_graph/native.py). Each must give exactly
-what the engine gives without it, so these tests run both on the same input
-and compare: rows in order, values with their types, files table by table.
-The graph version counter and the fallbacks belong to the engine and are
-tested without the extension too.
+rust/cgr_graph_rs writes the ingestor's node and relationship batches,
+decodes result rows and runs the ported procedures (embedded_graph/native.py).
+Each must give exactly what the engine gives without it, so these tests run
+both on the same input and compare: rows in order, values with their types,
+files table by table. The graph version counter and the fallbacks belong to
+the engine and are tested without the extension too.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import math
 import random
 import re
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import closing
 from pathlib import Path
 from types import ModuleType
@@ -29,10 +29,12 @@ from codebase_rag.constants import (
     EG_SQL_SEED_GRAPH_VERSION,
     MERGE_KEY_PROPS_BY_REL,
     NODE_UNIQUE_CONSTRAINTS,
+    EgDecode,
 )
-from codebase_rag.embedded_graph import native
+from codebase_rag.embedded_graph import executor, native
 from codebase_rag.embedded_graph import sql as sq
 from codebase_rag.embedded_graph.connection import EmbeddedConnection
+from codebase_rag.embedded_graph.executor import decode
 from codebase_rag.embedded_graph.extension import rust_extension
 from codebase_rag.embedded_graph.limits import (
     Deadline,
@@ -44,6 +46,7 @@ from codebase_rag.embedded_graph.procedures import Record
 from codebase_rag.embedded_graph.types import SqlValue
 from codebase_rag.graph_dialects import DIALECT_SQLITE, get_dialect
 from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.tests.test_embedded_graph_memgraph_parity import MEMGRAPH_PROBES
 from codebase_rag.types_defs import (
     JsonValue,
     NodeBatchRow,
@@ -59,6 +62,7 @@ needs_rust = pytest.mark.skipif(
     reason="cgr_graph_rs with the accelerators is not installed",
 )
 
+type SqlRows = list[tuple[SqlValue, ...]]
 type Rows = list[tuple[ResultValue, ...]]
 type Compared = ResultValue | tuple[ResultValue, ...] | Rows
 
@@ -165,6 +169,160 @@ def _random_value(rng: random.Random, depth: int = 0) -> JsonValue:
         _random_text(rng): _random_value(rng, depth + 1)
         for _ in range(rng.randrange(4))
     }
+
+
+# ---------------------------------------------------------------- decoding
+
+# Text json.loads judges itself: errors, Python's extras, edge numbers.
+_HANDMADE = [
+    "",
+    " ",
+    "{",
+    "[1,]",
+    "[1 2]",
+    "01",
+    "1.",
+    ".5",
+    "-",
+    "1e",
+    "1e+",
+    "1.e5",
+    "nul",
+    "tru",
+    "'x'",
+    "﻿[]",
+    '"\\ud800"',
+    '"\\udc00x"',
+    '"\\ud83d\\ude00"',
+    '"\\ud83dx"',
+    '"a\nb"',
+    '"\\x41"',
+    '"\\u12G4"',
+    '"\\u+123"',
+    " [1, 2] ",
+    '{"a":1,"a":2,"b":3}',
+    "NaN",
+    "-Infinity",
+    "Infinity",
+    "-0",
+    "-0.0",
+    "1E+2",
+    "1e400",
+    "-1e400",
+    "123456789012345678901234567890",
+    "9223372036854775807",
+    "9223372036854775808",
+    "-9223372036854775808",
+    "-9223372036854775809",
+    "[" * 300 + "]" * 300,
+    '{"k": ' * 300 + "1" + "}" * 300,
+    '"\\/"',
+    '{"":""}',
+    "[{}]",
+    "1 2",
+    "true false",
+    '{"a" 1}',
+    '{"a":1,}',
+    "{1:2}",
+    '"tab\tin"',
+    "\t[\r\n1\n]\t",
+]
+
+
+def _random_json(rng: random.Random) -> str:
+    value = _random_value(rng)
+    return json.dumps(
+        value,
+        ensure_ascii=rng.random() < 0.5,
+        indent=rng.choice([None, None, 0, 2]),
+        separators=rng.choice([None, (",", ":")]),
+    )
+
+
+def _decoded(
+    kinds: list[EgDecode], rows: SqlRows, accelerated: bool
+) -> tuple[str, Rows | str]:
+    saved, native.DECODE = native.DECODE, accelerated
+    try:
+        return "rows", native.decode_rows(kinds, rows, decode)
+    except Exception as error:
+        # Which error, and its message, is the result to compare.
+        return "error", f"{type(error).__name__}: {error}"
+    finally:
+        native.DECODE = saved
+
+
+def _assert_decoders_agree(kinds: list[EgDecode], rows: SqlRows) -> None:
+    python, rust = _decoded(kinds, rows, False), _decoded(kinds, rows, True)
+    assert python[0] == rust[0], (rows, python, rust)
+    if python[0] == "error":
+        assert python == rust, rows
+    else:
+        assert _same(python[1], rust[1]), (rows, python, rust)
+
+
+@needs_rust
+class TestDecoding:
+    @pytest.mark.parametrize("seed", range(4))
+    def test_random_json_decodes_as_json_loads_does(self, seed: int) -> None:
+        rng = random.Random(seed)
+        for _ in range(500):
+            _assert_decoders_agree([EgDecode.JSON], [(_random_json(rng),)])
+
+    @pytest.mark.parametrize("text", _HANDMADE)
+    @pytest.mark.parametrize("kind", list(EgDecode))
+    def test_edge_cases_and_errors_match(self, text: str, kind: EgDecode) -> None:
+        _assert_decoders_agree([kind], [(text,)])
+
+    @pytest.mark.parametrize("kind", list(EgDecode))
+    def test_values_that_are_not_text_match(self, kind: EgDecode) -> None:
+        for value in (None, 0, 1, -7, 2.5, 0.0, "", "x", "1"):
+            _assert_decoders_agree([kind], [(value,)])
+
+    def test_a_row_longer_than_its_kinds_is_cut_as_zip_cuts_it(self) -> None:
+        rows: SqlRows = [(1, '{"a": 1}', 0, "extra"), (None, "[1, 2.0]", 3, None)]
+        _assert_decoders_agree([EgDecode.RAW, EgDecode.JSON, EgDecode.BOOL], rows)
+        _assert_decoders_agree([], rows)
+
+    def test_the_engine_corpus_decodes_the_same(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # Every result the queries below produce, through both decoders:
+        # the Memgraph probes and a graph's nodes, relationships and maps.
+        checked: list[int] = []
+        real = native.decode_rows
+
+        def both(
+            kinds: list[EgDecode],
+            rows: SqlRows,
+            dec: Callable[[EgDecode, SqlValue], ResultValue],
+        ) -> Rows:
+            _assert_decoders_agree(kinds, rows)
+            checked.append(len(rows))
+            return real(kinds, rows, dec)
+
+        monkeypatch.setattr(executor, "decode_rows", both)
+        with EmbeddedConnection(":memory:") as conn:
+            for query, _, _ in MEMGRAPH_PROBES:
+                conn.run(query)
+        with EmbeddedConnection(str(tmp_path / "g.sqlite")) as conn:
+            conn.run(
+                "CREATE (a:Module {qualified_name: 'p.m', name: 'm', "
+                "tags: ['x', 'y'], doc: 'line\\nnext é'})"
+                "-[:DEFINES {line: 3, weight: 0.5, ok: true}]->"
+                "(f:Function {qualified_name: 'p.m.f', start_line: 1, big: 9007199254740993})"
+            )
+            for query in (
+                "MATCH (n) RETURN n",
+                "MATCH ()-[r]->() RETURN r",
+                "MATCH (n) RETURN properties(n) AS p, labels(n) AS l, keys(n) AS k",
+                "MATCH (n) RETURN collect(n) AS ns",
+                "MATCH (a)-[r]->(b) RETURN a, r, b, r.ok AS ok, r.weight AS w",
+                "MATCH (n) RETURN n.qualified_name AS q UNION ALL RETURN 1 AS q",
+                "MATCH (n) WHERE n.nope IS NULL RETURN n.nope AS x, null AS y",
+            ):
+                conn.run(query)
+        assert sum(checked) > 0
 
 
 # ------------------------------------------------------------------ graphs
@@ -525,10 +683,11 @@ class TestHandles:
 
 
 class TestWithoutTheExtension:
-    def test_nothing_attaches_and_the_engine_answers(
+    def test_nothing_attaches_and_rows_decode_in_python(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(native, "rust_extension", lambda: None)
+        monkeypatch.setattr(native, "_decoder", lambda: None)
         with EmbeddedConnection(str(tmp_path / "g.sqlite")) as conn:
             assert conn.native is None
             conn.run("CREATE (:T {k: 1, f: true})")
@@ -542,6 +701,7 @@ class TestWithoutTheExtension:
         monkeypatch.setattr(
             native, "rust_extension", lambda: ModuleType(EG_RUST_MODULE)
         )
+        monkeypatch.setattr(native, "_decoder", lambda: None)
         with EmbeddedConnection(str(tmp_path / "g.sqlite")) as conn:
             assert conn.native is not None
             rows: list[NodeBatchRow] = [{"id": "p.m", "props": {}}]

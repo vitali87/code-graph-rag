@@ -151,8 +151,8 @@ meaning rests on Python itself (a non-ASCII identifier, an integer beyond 64
 bits, very deep nesting), and the suite compares the two on every query cgr
 ships and thousands of mutations of them.
 
-One more hot path uses the extension when it is installed, checked against
-the Python path, which stays the reference and the fallback:
+Two more hot paths use the extension when it is installed. Each is checked
+against the Python path, which stays the reference and the fallback:
 
 - **The ingestor's batches.** The node and relationship MERGE batches the
   indexer flushes are written in one transaction, row by row in the engine's
@@ -165,6 +165,12 @@ the Python path, which stays the reference and the fallback:
   22.4 s. A batch with a value the extension cannot write exactly as the
   engine would, such as a non-finite float, an integer beyond 64 bits or a
   boolean key, is written by the engine.
+- **Result decoding.** The JSON text SQLite returns for nodes,
+  relationships, lists and maps is turned into Python values for the whole
+  result set at once, with the values and types `json.loads` gives (it hands
+  `json.loads` what it cannot decide, such as a lone surrogate). On that
+  graph `MATCH (n) RETURN n` takes 0.60 s instead of 1.31 s, and returning
+  every relationship 0.80 s instead of 2.24 s.
 
 ## Switching backends
 

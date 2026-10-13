@@ -22,6 +22,8 @@ use deadline::{Deadline, TimedOut};
 
 pub mod cypher;
 pub mod deadline;
+#[cfg(feature = "python")]
+mod decode;
 pub mod ingest;
 pub mod json_text;
 #[cfg(feature = "python")]
@@ -544,6 +546,7 @@ pub(crate) mod python {
         crate::cypher::python::register(m)?;
         crate::reader::register(m)?;
         crate::ingest::python::register(m)?;
+        crate::decode::register(m)?;
         Ok(())
     }
 }

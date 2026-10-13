@@ -1,11 +1,12 @@
 """The optional Rust extension (`cgr_graph_rs`) and the engine's paths into it.
 
 rust/cgr_graph_rs does in Rust what the engine otherwise does in Python: the
-whole-graph procedures (procedures.py) and the ingestor's batch writes. Each
-Rust path returns exactly what the Python path returns. The Python path stays
-the reference, and runs whenever the extension is not installed, the graph has
-no file another connection could open (`:memory:`), or the input holds a value
-the Rust path cannot reproduce exactly: it declines rather than approximates.
+whole-graph procedures (procedures.py), the ingestor's batch writes and the
+decoding of result rows. Each Rust path returns exactly what the Python path
+returns. The Python path stays the reference, and runs whenever the extension
+is not installed, the graph has no file another connection could open
+(`:memory:`), or the input holds a value the Rust path cannot reproduce
+exactly: it declines rather than approximates.
 
 The extension reads on its own connection, which sees committed data only
 and need not share the calling statement's snapshot: another process may
@@ -28,11 +29,13 @@ under one lock, so neither library works inside a transaction of the other's.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
+from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple, Protocol
 
@@ -45,8 +48,10 @@ from ..constants.embedded_graph import (
     EG_ERR_TIMEOUT,
     EG_MEMORY_PATH,
     EG_PRAGMAS,
+    EG_RUST_DECODE_ROWS,
     EG_RUST_READER,
     EG_RUST_WRITER,
+    EgDecode,
 )
 from ..constants.graph import (
     KEY_FROM_VAL,
@@ -56,7 +61,7 @@ from ..constants.graph import (
     KEY_TO_VAL,
     NODE_UNIQUE_CONSTRAINTS,
 )
-from ..types_defs import NodeBatchRow, RelBatchRow
+from ..types_defs import NodeBatchRow, RelBatchRow, ResultValue
 from . import sql as sq
 from .extension import rust_extension
 from .limits import QueryTimeout, seconds_left
@@ -70,6 +75,10 @@ if TYPE_CHECKING:
 # has the numbers).
 PROCEDURES: bool = True
 INGEST: bool = True
+DECODE: bool = True
+
+# The extension's decode kinds; any other kind passes the value through.
+_DECODE_CODES = {EgDecode.BOOL: 1, EgDecode.JSON: 2, EgDecode.NULL: 3}
 
 type Pattern = tuple[str, str, str, str, str]
 
@@ -119,6 +128,17 @@ class Writer(Protocol):
     ) -> int | None: ...
 
     def close(self) -> None: ...
+
+
+type RowDecoder = Callable[
+    [list[tuple[SqlValue, ...]], list[int], Callable[[str], ResultValue]],
+    list[tuple[ResultValue, ...]],
+]
+
+
+@cache
+def _decoder() -> RowDecoder | None:
+    return getattr(rust_extension(), EG_RUST_DECODE_ROWS, None)
 
 
 # ------------------------------------------------------------------- files
@@ -332,3 +352,18 @@ def run_procedure(
     """
     graph = _GRAPHS.get(id(conn))
     return graph.run_procedure(name, args) if graph is not None else None
+
+
+# ---------------------------------------------------------------- decoding
+
+
+def decode_rows(
+    kinds: Sequence[EgDecode],
+    rows: list[tuple[SqlValue, ...]],
+    decode: Callable[[EgDecode, SqlValue], ResultValue],
+) -> list[tuple[ResultValue, ...]]:
+    """Each row's values decoded by their column's kind, as `decode` does."""
+    accelerated = _decoder() if DECODE else None
+    if accelerated is None:
+        return [tuple(decode(k, v) for k, v in zip(kinds, row)) for row in rows]
+    return accelerated(rows, [_DECODE_CODES.get(k, 0) for k in kinds], json.loads)
