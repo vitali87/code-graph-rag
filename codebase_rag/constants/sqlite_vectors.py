@@ -89,3 +89,5 @@ SQLITE_VEC_DELETE_VECTORS_BY_POINT = (
 SQLITE_VEC_DELETE_POINTS = (
     "DELETE FROM cgr_vector_points WHERE point_id IN (SELECT value FROM json_each(?))"
 )
+# The sqlite3 method a Python built without extension loading lacks.
+SQLITE_LOAD_EXTENSION_METHOD = "enable_load_extension"

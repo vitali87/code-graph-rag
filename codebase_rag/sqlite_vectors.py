@@ -42,7 +42,7 @@ class SqliteVectorHit(NamedTuple):
 def extensions_loadable() -> bool:
     # sqlite3 has no enable_load_extension unless CPython was configured with
     # --enable-loadable-sqlite-extensions, which some builds leave out.
-    return hasattr(sqlite3.Connection, "enable_load_extension")
+    return hasattr(sqlite3.Connection, cs.SQLITE_LOAD_EXTENSION_METHOD)
 
 
 def _float32(vector: Sequence[float]) -> bytes:

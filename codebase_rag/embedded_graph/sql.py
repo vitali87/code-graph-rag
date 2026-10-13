@@ -514,6 +514,7 @@ EMPTY_JSON_ARRAY = "json_array()"
 JSON_ROOT = "'$'"
 JSON_FIRST = "'$[0]'"
 JSON_LAST = "'$[#-1]'"
+JSON_GROUP_ARRAY = "json_group_array"
 # A uniform float in [0, 1) from SQLite's 64-bit signed random().
 RANDOM_UNIT = "((random() + 9223372036854775808.0) / 18446744073709551616.0)"
 
@@ -633,7 +634,7 @@ def list_comprehension(
     """`[x IN source WHERE ... | element]`, elements in list order."""
     rows = select([STAR], each, where(filters) + order_by([column(alias, KEY)]))
     collected = call(
-        EgSqlFn.COALESCE, call("json_group_array", element), EMPTY_JSON_ARRAY
+        EgSqlFn.COALESCE, call(JSON_GROUP_ARRAY, element), EMPTY_JSON_ARRAY
     )
     return paren(
         select(
@@ -717,7 +718,7 @@ def sum_or_zero(value: str, distinct: bool) -> str:
 
 def collect(value: str, present: str, distinct: bool) -> str:
     """collect(): every non-null value, as a JSON array (empty, not NULL)."""
-    grouped = aggregate("json_group_array", value, distinct)
+    grouped = aggregate(JSON_GROUP_ARRAY, value, distinct)
     return (
         f"coalesce({grouped} FILTER (WHERE {present} IS NOT NULL "
         f"AND {present} <> 'null'), {EMPTY_JSON_ARRAY})"
@@ -732,7 +733,7 @@ def keys_of(doc: str) -> str:
     """keys(): a map's keys in their stored order."""
     keys = select([KEY], f"json_each({doc})", order_by([ID]))
     collected = call(
-        EgSqlFn.COALESCE, call("json_group_array", column("k", KEY)), EMPTY_JSON_ARRAY
+        EgSqlFn.COALESCE, call(JSON_GROUP_ARRAY, column("k", KEY)), EMPTY_JSON_ARRAY
     )
     return paren(
         select(
@@ -799,7 +800,7 @@ def map_list(items: str, alias: str, element: str) -> str:
     in list order."""
     return paren(
         select(
-            [call("json_group_array", json_text(element))],
+            [call(JSON_GROUP_ARRAY, json_text(element))],
             f"json_each({items}) {alias}",
         )
     )
