@@ -234,3 +234,28 @@ def test_the_local_release_runs_the_check_on_a_supported_python() -> None:
     requires = _toml(REPO_ROOT / "pyproject.toml")["project"]["requires-python"]
     assert line.startswith("uv run --no-project ")
     assert f'--python "{requires}"' in line
+
+
+def test_the_fuzz_build_installs_the_crate_it_carries() -> None:
+    """ClusterFuzzLite pip-installs the project, so without the crate in the
+    same call pip looks for cgr-graph-rs on PyPI and the build fails before a
+    target is compiled."""
+    build = (REPO_ROOT / ".clusterfuzzlite" / "build.sh").read_text(encoding="utf-8")
+    (install,) = [
+        line
+        for line in build.splitlines()
+        if "pip install" in line and "[treesitter-full]" in line
+    ]
+    assert "./rust/cgr_graph_rs" in install
+    assert install.index("./rust/cgr_graph_rs") < install.index("[treesitter-full]")
+    # OSS-Fuzz's sanitizer flags are for fuzz targets, not a dependency.
+    assert "-u RUSTFLAGS" in build
+
+
+def test_the_fuzz_image_has_a_checked_rust_toolchain() -> None:
+    """base-builder-python's cargo is a wrapper around /rust/bin/cargo, which
+    that image does not have."""
+    image = (REPO_ROOT / ".clusterfuzzlite" / "Dockerfile").read_text(encoding="utf-8")
+    assert "CARGO_HOME=/rust" in image
+    assert "RUSTUP_SHA256=" in image
+    assert "sha256sum -c -" in image.split("rustup-init", 1)[1]
