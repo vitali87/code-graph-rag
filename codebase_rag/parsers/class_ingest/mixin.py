@@ -45,7 +45,11 @@ from ..java import utils as java_utils
 from ..js_ts import utils as js_ts_utils
 from ..parameter_nodes import PendingParameterType, csharp_call_shape
 from ..php import namespaces as php_namespaces
-from ..py import external_stdlib_base_method_names, resolve_class_name
+from ..py import (
+    external_stdlib_base_method_names,
+    resolve_class_name,
+    under_type_checking,
+)
 from ..py.class_aliases import scan_class_body_aliases
 from ..rs import RustTypeInferenceEngine
 from ..rs import utils as rs_utils
@@ -1706,6 +1710,13 @@ class ClassIngestMixin:
             # Stored so an incremental run that does not re-parse the
             # interface still knows what its method set is built from.
             class_props.update(go_ifaces.embeds_props(class_node))
+        elif language == cs.SupportedLanguage.PYTHON and under_type_checking(
+            class_node
+        ):
+            # A checker-only class types `self` in mixins whose calls resolve
+            # to the real implementation, so no edge ever reaches it; only the
+            # parse can tell dead code it is a declaration.
+            class_props[cs.KEY_TYPE_CHECKING_ONLY] = True
 
     def _record_declared_type_members(
         self,
