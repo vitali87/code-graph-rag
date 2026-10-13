@@ -3,11 +3,16 @@
 Covers every query cgr itself issues plus the shapes its Cypher prompt asks a
 model to write. Anything outside the subset is a CypherSyntaxError, which the
 query tool already turns into a repair attempt.
+
+This is the reference implementation. The Rust extension carries a port
+(rust/cgr_graph_rs/src/cypher) that builds the same tree, or raises the same
+error, about ten times faster; `parse` uses it when it is installed.
 """
 
 from __future__ import annotations
 
-from functools import lru_cache
+from collections.abc import Callable
+from functools import cache, lru_cache
 
 from ..constants.embedded_graph import (
     EG_BACKTICK,
@@ -22,6 +27,7 @@ from ..constants.embedded_graph import (
     EG_EXPECT_SCHEMA,
     EG_EXPECT_SET_ITEM,
     EG_EXPRESSION_STOP_WORDS,
+    EG_RUST_PARSE_CYPHER,
     EgBinary,
     EgDirection,
     EgKw,
@@ -34,7 +40,10 @@ from ..constants.embedded_graph import (
     EgUnary,
 )
 from . import cypher_ast as a
+from .extension import rust_extension
 from .lexer import CypherSyntaxError, Token, tokenize
+
+type Statement = a.Query | a.Explain | a.SchemaCommand
 
 _COMPARISON_OPS: dict[str, EgBinary] = {
     EgPunct.EQ: EgBinary.EQ,
@@ -64,8 +73,26 @@ _QUANTIFIERS: dict[str, EgQuantifier] = {
 
 
 @lru_cache(maxsize=EG_COMPILE_CACHE_SIZE)
-def parse(text: str) -> a.Query | a.Explain | a.SchemaCommand:
+def parse(text: str) -> Statement:
+    rust = rust_parser()
+    if rust is not None and (stmt := rust(text)) is not None:
+        return stmt
+    return parse_python(text)
+
+
+def parse_python(text: str) -> Statement:
     return _Parser(tokenize(text), text).statement()
+
+
+@cache
+def rust_parser() -> Callable[[str], Statement | None] | None:
+    """The extension's parser, if this build of it has one.
+
+    It answers None for the rare query whose meaning rests on Python itself
+    (non-ASCII outside strings and backtick names, integers beyond 64 bits,
+    very deep nesting), which `parse` then hands to `parse_python`.
+    """
+    return getattr(rust_extension(), EG_RUST_PARSE_CYPHER, None)
 
 
 class _Parser:
@@ -141,9 +168,9 @@ class _Parser:
 
     # ------------------------------------------------------------ statements
 
-    def statement(self) -> a.Query | a.Explain | a.SchemaCommand:
+    def statement(self) -> Statement:
         if self.accept_word(EgKw.EXPLAIN) or self.accept_word(EgKw.PROFILE):
-            result: a.Query | a.Explain | a.SchemaCommand = a.Explain(self.query())
+            result: Statement = a.Explain(self.query())
         elif self._at_schema_command():
             result = self.schema_command()
         else:

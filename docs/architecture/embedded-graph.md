@@ -137,6 +137,16 @@ The other procedures, and any statement that writes before its `CALL`, stay
 in Python: the extension reads the file on its own connection, which only sees
 committed data.
 
+The extension also carries a port of the engine's Cypher lexer and parser,
+which the engine uses when it is installed: it builds the very syntax tree the
+Python parser builds, or raises the same `CypherSyntaxError` (offset and
+message), about ten times faster. Parsed queries are cached either way, so
+this speeds up the first run of each query, such as one a model just wrote.
+The Python parser stays the reference: the port hands it the rare query whose
+meaning rests on Python itself (a non-ASCII identifier, an integer beyond 64
+bits, very deep nesting), and the suite compares the two on every query cgr
+ships and thousands of mutations of them.
+
 ## Switching backends
 
 The engines do not share data. To keep using a Memgraph graph you already

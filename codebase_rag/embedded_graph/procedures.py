@@ -12,9 +12,6 @@ import sqlite3
 from collections import defaultdict, deque
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
-from functools import cache
-from importlib import import_module
-from types import ModuleType
 
 from ..constants.embedded_graph import (
     EG_DEGREE_UNDIRECTED,
@@ -29,13 +26,13 @@ from ..constants.embedded_graph import (
     EG_PROC_SHORTEST_PATH,
     EG_PROC_TOPOSORT,
     EG_PROC_WCC,
-    EG_RUST_MODULE,
     EG_RUST_RUN_PROCEDURE,
     EgDirection,
     EgProcCol,
 )
 from . import sql as sq
 from . import types as ty
+from .extension import rust_extension
 from .limits import check_deadline
 from .types import SqlValue, T
 
@@ -55,14 +52,6 @@ _MAX_CYCLES = 1000
 class ProcSpec:
     columns: tuple[tuple[str, T], ...]
     fn: Callable[[sqlite3.Connection, Sequence[SqlValue]], Iterable[Record]]
-
-
-@cache
-def _rust() -> ModuleType | None:
-    try:
-        return import_module(EG_RUST_MODULE)
-    except ImportError:
-        return None
 
 
 def _graph(
@@ -403,7 +392,7 @@ def run_procedure(
     extension answers None for a procedure it does not implement or for an
     in-memory graph it cannot open.
     """
-    rust = _rust() if external_reads_ok else None
+    rust = rust_extension() if external_reads_ok else None
     accelerated = (
         getattr(rust, EG_RUST_RUN_PROCEDURE, None) if rust is not None else None
     )

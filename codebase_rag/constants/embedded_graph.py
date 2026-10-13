@@ -461,6 +461,7 @@ EG_DEGREE_UNDIRECTED = "undirected"
 # The optional Rust extension and the one function the engine calls in it.
 EG_RUST_MODULE = "cgr_graph_rs"
 EG_RUST_RUN_PROCEDURE = "run_procedure"
+EG_RUST_PARSE_CYPHER = "parse_cypher"
 # Property types as the node and relationship schemas declare them.
 EG_SCHEMA_STRING = "string"
 EG_SCHEMA_INT = "int"

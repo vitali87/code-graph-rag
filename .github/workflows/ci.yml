@@ -477,9 +477,10 @@ jobs:
     name: Rust Graph Core
     runs-on: ubuntu-latest
     # rust/cgr_graph_rs is an optional extension the embedded graph uses
-    # for its whole-graph procedures (issue #386). Its own tests check the
-    # algorithms; the Python test checks it returns exactly what the Python
-    # implementations it replaces return.
+    # for its whole-graph procedures and its Cypher parser (issue #386). Its
+    # own tests check the algorithms and the grammar; the Python tests check
+    # it returns exactly what the Python implementations it replaces return,
+    # and run the engine's suites with it installed.
     timeout-minutes: 20
 
     steps:
@@ -507,9 +508,13 @@ jobs:
           uv sync --extra test --group dev
           uv pip install ./rust/cgr_graph_rs
 
-      - name: Check it against the Python procedures
+      - name: Check it against the Python procedures and parser
         run: |
-          uv run --no-sync pytest codebase_rag/tests/test_embedded_graph_rust.py --tb=short
+          uv run --no-sync pytest codebase_rag/tests/test_embedded_graph_rust.py codebase_rag/tests/test_embedded_graph_rust_parser.py --tb=short
+
+      - name: Run the engine's tests on the Rust parser
+        run: |
+          uv run --no-sync pytest codebase_rag/tests/test_embedded_graph_engine.py codebase_rag/tests/test_embedded_graph_memgraph_parity.py codebase_rag/tests/test_embedded_graph_default.py --tb=short
 
   sonar-gate:
     name: Sonar Zero Issues Gate
