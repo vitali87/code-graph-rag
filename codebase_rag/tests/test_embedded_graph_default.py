@@ -22,6 +22,7 @@ from codebase_rag.mgclient_compat import _absent_driver
 from codebase_rag.schemas import HealthCheckResult
 from codebase_rag.services import graph_service
 from codebase_rag.services.graph_service import GraphUnavailableError, MemgraphIngestor
+from codebase_rag.stack.constants import SERVICE_QDRANT
 from codebase_rag.stack.manager import StackManager
 from codebase_rag.tools import health_checker
 from codebase_rag.tools.health_checker import HealthChecker
@@ -52,6 +53,8 @@ def test_the_stack_starts_when_it_holds_the_vectors(embedded) -> None:
         manager.return_value.status.return_value.state = None
         _maybe_start_stack()
     manager.return_value.ensure_running.assert_called_once()
+    # Only the Qdrant: its Memgraph would need a driver this install lacks.
+    manager.assert_called_once_with(services=(SERVICE_QDRANT,))
 
 
 @pytest.mark.parametrize(
@@ -90,7 +93,7 @@ def test_the_stack_is_still_started_for_memgraph(monkeypatch) -> None:
     monkeypatch.setattr(settings, "GRAPH_BACKEND", DIALECT_MEMGRAPH)
     with patch.object(cli, "StackManager") as manager:
         _maybe_start_stack()
-    manager.assert_called_once()
+    manager.assert_called_once_with()
 
 
 def test_doctor_does_not_require_docker_for_the_embedded_graph(
