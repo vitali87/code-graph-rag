@@ -1219,9 +1219,10 @@ WHERE h.qualified_name STARTS WITH $project_prefix
 OPTIONAL MATCH (c)-[:READS_FROM|WRITES_TO]->(n:Resource)-[:RESOLVES_TO]->(e)
 WITH h, e, count(DISTINCT c) AS resolved
 OPTIONAL MATCH (d)-[:READS_FROM|WRITES_TO]->(e)
+WITH h, e, resolved, count(DISTINCT d) AS direct
 RETURN e.name AS endpoint, e.kind AS kind, labels(h)[0] AS label,
        h.qualified_name AS handler, h.path AS path,
-       resolved + count(DISTINCT d) AS callers
+       resolved + direct AS callers
 ORDER BY endpoint, handler"""
 # `$qn` names the handler or the endpoint identity (`GET /users/{id}`).
 CYPHER_GRAPH_ENDPOINT_CALLERS = """MATCH (h)-[:EXPOSES]->(e:Resource)
@@ -1249,14 +1250,18 @@ RETURN labels(c)[0] AS label, c.qualified_name AS qualified_name, c.path AS path
        h.qualified_name AS handler, e.project AS handler_project
 ORDER BY qualified_name, url, handler"""
 # The dead-code walk's view of the same joins: per exposing handler, how many
-# call sites reach its resource (through RESOLVES_TO, or directly).
+# call sites reach its resource (through RESOLVES_TO, or directly). Each
+# count is finished in its own WITH: `resolved + count(DISTINCT d)` in one
+# RETURN mixes a variable with an aggregate, which Neo4j 5 rejects as an
+# ambiguous aggregation (Memgraph accepts it).
 CYPHER_DEAD_CODE_ENDPOINT_LINKS = """MATCH (h)-[:EXPOSES]->(e:Resource)
 WHERE h.qualified_name STARTS WITH $project_prefix
 OPTIONAL MATCH (c)-[:READS_FROM|WRITES_TO]->(n:Resource)-[:RESOLVES_TO]->(e)
 WITH h, e, count(DISTINCT c) AS resolved
 OPTIONAL MATCH (d)-[:READS_FROM|WRITES_TO]->(e)
+WITH h, e, resolved, count(DISTINCT d) AS direct
 RETURN h.qualified_name AS handler, e.name AS endpoint,
-       resolved + count(DISTINCT d) AS callers"""
+       resolved + direct AS callers"""
 CYPHER_GRAPH_IMPLEMENTORS = """MATCH (impl)-[r:INHERITS|IMPLEMENTS]->(base)
 WHERE base.qualified_name = $qn AND impl.qualified_name STARTS WITH $project_prefix
 RETURN labels(impl)[0] AS label, impl.qualified_name AS qualified_name,
