@@ -124,10 +124,11 @@ jobs:
   test-unit:
     name: Unit Tests (${{ matrix.os }}, py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
-    # The full -n auto suite now takes 25-30 min on Windows and on macOS with
-    # coverage, so a 30 min cap cancelled healthy runs mid-suite (a spurious
-    # CANCELLED); 45 min absorbs slow runners while still bounding a hang.
-    timeout-minutes: 45
+    # The full -n auto suite now takes 36-44 min on Windows, and 5 of main's 8
+    # most recent CI runs had a Windows job cancelled at the old 45 min cap
+    # mid-suite (a spurious CANCELLED); 60 min absorbs slow runners while
+    # still bounding a hang.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -542,8 +543,8 @@ jobs:
       && github.event.pull_request.head.repo.full_name == github.repository
     # The polling loop below does the waiting (it holds out for as long as
     # SonarCloud Analysis is queued or running); this cap only bounds a hang,
-    # and covers that job's 50 min cap, a late start and the publish window.
-    timeout-minutes: 90
+    # and covers that job's 70 min cap, a late start and the publish window.
+    timeout-minutes: 110
     permissions:
       # checks: read backs the check-runs API call that detects a failed
       # SonarCloud Analysis job, so the gate fails fast instead of waiting

@@ -23,9 +23,10 @@ jobs:
     # ci.yml mirrors this condition, so both must key on the same field.
     if: github.event_name == 'push' || (github.event.pull_request.user.login != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
-    # The coverage run of the full suite alone takes about 28 min, so a 30 min
-    # cap cut the scan off and the Sonar gate never saw an analysis.
-    timeout-minutes: 50
+    # The coverage run of the full suite alone now takes 26-47 min depending on
+    # the runner, and the scan 2-4 min more, so a 50 min cap cut the scan off
+    # and the Sonar gate never saw an analysis.
+    timeout-minutes: 70
 
     steps:
       - name: Checkout code
