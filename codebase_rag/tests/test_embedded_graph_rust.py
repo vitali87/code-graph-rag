@@ -17,6 +17,7 @@ import pytest
 
 from codebase_rag.embedded_graph import procedures
 from codebase_rag.embedded_graph.connection import EmbeddedConnection
+from codebase_rag.embedded_graph.types import SqlValue
 
 rust = pytest.importorskip("cgr_graph_rs")
 
@@ -51,7 +52,7 @@ def _random_graph(path: Path, seed: int) -> list[int]:
 @pytest.mark.parametrize("seed", [1, 2, 3])
 @pytest.mark.parametrize(("name", "args"), _PORTED)
 def test_ported_procedures_match_python(
-    tmp_path: Path, seed: int, name: str, args: list[object]
+    tmp_path: Path, seed: int, name: str, args: list[SqlValue]
 ) -> None:
     path = tmp_path / "graph.sqlite"
     _random_graph(path, seed)

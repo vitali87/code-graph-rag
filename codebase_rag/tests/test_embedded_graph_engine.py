@@ -35,6 +35,7 @@ from codebase_rag.graph_dialects import (
     get_dialect,
 )
 from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.types_defs import CypherParamValue, ResultValue
 
 # Pieces the graph audit formats into a query, not queries themselves.
 _QUERY_FRAGMENTS = frozenset(
@@ -57,7 +58,9 @@ def conn() -> Iterator[EmbeddedConnection]:
         yield c
 
 
-def _rows(conn: EmbeddedConnection, query: str, **params: object) -> list[tuple]:
+def _rows(
+    conn: EmbeddedConnection, query: str, **params: CypherParamValue
+) -> list[tuple[ResultValue, ...]]:
     return conn.run(query, params).rows
 
 

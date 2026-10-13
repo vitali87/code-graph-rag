@@ -15,6 +15,7 @@ from typer.testing import CliRunner
 
 from codebase_rag.graph_dialects import DIALECT_SQLITE, get_dialect
 from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.types_defs import JsonValue
 from evals import graph_backend_parity as parity
 
 
@@ -25,7 +26,7 @@ class _MgNode:
         self.labels, self.properties = labels, properties
 
 
-def _result(columns: list[str], rows: list[list[object]]) -> dict:
+def _result(columns: list[str], rows: list[list[JsonValue]]) -> dict[str, JsonValue]:
     return {"columns": columns, "rows": rows}
 
 

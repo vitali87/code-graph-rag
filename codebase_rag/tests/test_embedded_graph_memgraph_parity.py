@@ -16,9 +16,10 @@ from collections.abc import Iterator
 import pytest
 
 from codebase_rag.embedded_graph.connection import EmbeddedConnection
+from codebase_rag.types_defs import JsonValue
 
 # (query, columns, rows) as Memgraph returned them.
-MEMGRAPH_PROBES: list[tuple[str, list[str], list[list[object]]]] = [
+MEMGRAPH_PROBES: list[tuple[str, list[str], list[list[JsonValue]]]] = [
     ("UNWIND [3, null, 1] AS x RETURN x ORDER BY x", ["x"], [[1], [3], [None]]),
     ("UNWIND [3, null, 1] AS x RETURN x ORDER BY x DESC", ["x"], [[None], [3], [1]]),
     (
@@ -229,7 +230,7 @@ MEMGRAPH_PROBES: list[tuple[str, list[str], list[list[object]]]] = [
 ]
 
 
-def _comparable(value: object) -> object:
+def _comparable(value: JsonValue) -> JsonValue:
     # Memgraph's ids are its own, so a node compares by labels and
     # properties and a relationship by type and properties.
     if isinstance(value, dict) and "labels" in value and "properties" in value:
