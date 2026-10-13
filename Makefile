@@ -19,7 +19,7 @@ all: ## Install everything for full development environment (deps, grammars, hoo
 	@echo "✓ Tests passed successfully"
 
 install: ## Install project dependencies with full language support
-	uv sync --extra treesitter-full
+	uv sync --extra treesitter-full --extra ast-grep
 
 python: ## Install project dependencies for Python only
 	uv sync
@@ -58,9 +58,8 @@ watch: ## Watch repository for changes and update graph in real-time
 		echo "Error: REPO_PATH is required. Usage: make watch REPO_PATH=/path/to/repo"; \
 		exit 1; \
 	fi
-	.venv/bin/python realtime_updater.py $(REPO_PATH) \
-		--host $(or $(HOST),localhost) \
-		--port $(or $(PORT),7687) \
+	$(if $(HOST),MEMGRAPH_HOST=$(HOST) )$(if $(PORT),MEMGRAPH_PORT=$(PORT) ).venv/bin/cgr watch \
+		--repo-path $(REPO_PATH) \
 		$(if $(BATCH_SIZE),--batch-size $(BATCH_SIZE),)
 
 readme: ## Regenerate README.md from codebase

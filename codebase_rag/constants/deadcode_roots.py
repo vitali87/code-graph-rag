@@ -14,6 +14,11 @@ C_CPP_ENTRY_FUNCTION_NAMES: frozenset[str] = frozenset(
     {"main", "wmain", "WinMain", "wWinMain", "DllMain"}
 )
 
+# The `main` a launcher calls with no call site the graph sees: the
+# module-level function a console script or `dart run` names. The JVM's and
+# Dart's `main` are judged at parse time (KEY_IS_PROGRAM_MAIN).
+PROGRAM_MAIN_NAME = "main"
+
 # Decorators whose presence marks a function/method as an implicit entry point
 # (web routes, task/flow handlers, fixtures, CLI commands, event listeners, and
 # Pydantic validators/serializers the framework invokes by registration).
