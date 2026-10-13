@@ -670,7 +670,13 @@ does not know are counted per reason instead of being silently dropped.
   keep `include=` scoped to your own packages and avoid tracing
   compute-heavy inner loops.
 - **JVM resolution.** A lambda body has no static node of its own, so its
-  frame resolves to the enclosing method by line span. An anonymous-class
+  frame resolves to the enclosing method by line span. The call that runs
+  the lambda (`main → lambda$main$0`) then lands on one node at both ends.
+  It is counted as unresolved (`intra_node`) rather than written as
+  `main → main`; the lambda's own calls (`main → greet`) are kept. The same
+  holds for Scala `$anonfun$`, C# lambda bodies, JS anonymous functions and
+  PHP closures. Real recursion, where both frames name the method, is still
+  a self-edge. An anonymous-class
   method resolves to its own node — the innermost source span containing the
   frame line, threaded under the enclosing method — rather than to the
   enclosing method itself. Frames the static graph cannot account for
