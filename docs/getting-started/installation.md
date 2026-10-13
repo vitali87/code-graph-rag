@@ -107,6 +107,10 @@ With semantic code search (UniXcoder embeddings):
 pip install 'code-graph-rag[semantic]'
 ```
 
+Its vectors go to an embedded Qdrant by default. Add the `sqlite-vec` extra and
+set `CGR_VECTOR_STORE_BACKEND=sqlite` to keep them in a SQLite file beside the
+graph instead; see [Semantic Search](../sdk/semantic-search.md).
+
 With both full language support and semantic search:
 
 ```bash

@@ -45,7 +45,9 @@ pip install 'code-graph-rag[semantic]'
 Qdrant is the default vector store for semantic search. To use Milvus Lite,
 install `code-graph-rag[semantic,milvus]`, then set
 `CGR_VECTOR_STORE_BACKEND=milvus` and `MILVUS_URI=./.milvus_code_embeddings.db`
-before indexing.
+before indexing. To keep the vectors in a SQLite file beside the embedded graph
+(`~/.cgr/vectors.sqlite`, no server), install `code-graph-rag[semantic,sqlite-vec]`
+and set `CGR_VECTOR_STORE_BACKEND=sqlite`.
 
 To compute embeddings on an OpenAI-compatible endpoint (OpenAI, Ollama, vLLM)
 instead of locally, set `CGR_EMBEDDING_PROVIDER=openai` with

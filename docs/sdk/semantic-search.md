@@ -64,13 +64,36 @@ export MILVUS_URI="./.milvus_code_embeddings.db"
 You can also point `MILVUS_URI` at a self-hosted open-source Milvus endpoint,
 such as `http://localhost:19530`.
 
+To keep the vectors in a SQLite file instead, as the embedded graph keeps the
+graph, install the `sqlite-vec` extra and set:
+
+```bash
+pip install 'code-graph-rag[semantic,sqlite-vec]'
+export CGR_VECTOR_STORE_BACKEND=sqlite
+```
+
+The vectors go to `$CGR_HOME/vectors.sqlite` (default `~/.cgr/vectors.sqlite`,
+beside the graph's `graph.sqlite`); set `SQLITE_VECTOR_PATH` to move the file.
+No server and no Docker are involved, the embedding cache sits beside the
+file, and several cgr processes (an MCP server and an indexing run, say) can
+share it. It needs a Python whose `sqlite3` module can load extensions, which
+uv-managed Pythons can. A vector of all zeros has no direction for cosine
+similarity, so this store keeps it but never returns it from a search.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `SQLITE_VECTOR_PATH` | `$CGR_HOME/vectors.sqlite` | The vectors' file |
+| `SQLITE_VECTOR_DIM` | `768` | Vector size, fixed when the file's table is made |
+| `SQLITE_VECTOR_TOP_K` | `5` | Hits returned when a search names no count |
+
 ## OpenAI-Compatible Embedding Providers
 
 By default embeddings are computed locally with UniXcoder (requires the
 `semantic` extra's torch/transformers). Alternatively, any OpenAI-compatible
 embeddings endpoint (OpenAI, Ollama, vLLM, LM Studio, and others) can compute
 them server-side, so torch and transformers are not needed locally; only the
-vector store dependency (`qdrant-client` or the `milvus` extra) is required:
+vector store dependency (`qdrant-client`, the `milvus` extra or the
+`sqlite-vec` extra) is required:
 
 ```bash
 pip install 'code-graph-rag' qdrant-client
@@ -90,7 +113,8 @@ Additional settings:
 
 The vector store dimension must match the embedding model's output. UniXcoder
 produces 768-dimensional vectors (the default), while `text-embedding-3-small`
-produces 1536; set `QDRANT_VECTOR_DIM` (or `MILVUS_VECTOR_DIM`) accordingly, or
+produces 1536; set `QDRANT_VECTOR_DIM` (or `MILVUS_VECTOR_DIM`,
+`SQLITE_VECTOR_DIM`) accordingly, or
 use `OPENAI_EMBEDDING_DIMENSIONS` to request 768-dimensional output. Cached
 embeddings are keyed per provider and model, so switching models never replays
 vectors from another embedding space.
