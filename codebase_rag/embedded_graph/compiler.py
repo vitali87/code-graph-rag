@@ -518,9 +518,10 @@ class _MatchBuilder:
             if bound.t.kind not in (Kind.NODE, Kind.ANY, Kind.NULL):
                 raise CompileError(EG_ERR_NOT_NODE.format(name=np.var))
             self.conds.append(f"{alias}.id = {bound.sql}")
-        names = np.labels or (bound.names if bound is not None else ())
-        if np.labels:
-            self.conds.append(f"{alias}.label IN {sql_in_list(np.labels)}")
+        labels = np.labels or self._labels_from_where(np.var)
+        names = labels or (bound.names if bound is not None else ())
+        if labels:
+            self.conds.append(f"{alias}.label IN {sql_in_list(labels)}")
         ce = CE(f"{alias}.id", ty.NODE, alias, names)
         self._prop_conditions(alias, np.props, names, is_node=True)
         if np.var and bound is None:
@@ -531,6 +532,22 @@ class _MatchBuilder:
                 np.var, CE(bound.sql, ty.NODE, alias, names, const=bound.const)
             )
         return ce
+
+    def _labels_from_where(self, var: str | None) -> tuple[str, ...]:
+        """Labels a WHERE conjunct requires of an unlabelled node, if any.
+
+        `MATCH (n {qualified_name: $qn}) WHERE (n:Function OR n:Method)` is
+        the portable spelling of `(n:Function|Method {...})`; reading the
+        labels back lets its key lookup stay an index seek.
+        """
+        if not var:
+            return ()
+        required: set[str] | None = None
+        for cond in self.where:
+            labels = _label_alternatives(cond, var)
+            if labels is not None:
+                required = labels if required is None else required & labels
+        return tuple(sorted(required)) if required is not None else ()
 
     def _prop_conditions(
         self, alias: str, props: a.Expr | None, names: tuple[str, ...], is_node: bool
@@ -593,13 +610,15 @@ class _MatchBuilder:
             return f"SELECT {info.const_sql} AS id"
         return f"SELECT DISTINCT {info.col} AS id FROM {self.stage.name}"
 
-    def _static_seed(self, np: a.NodePattern) -> str | None:
+    def _static_seed(self, pattern: a.NodePattern) -> str | None:
         """Ids matching what a node pattern and the WHERE say of it alone.
 
         Seeding a walk from these instead of from its whole label is what
         keeps `MATCH (m:Module)-[*]->(f) WHERE m.qualified_name IN $qns`
         from walking out of every module only to keep a handful.
         """
+        labels = pattern.labels or self._labels_from_where(pattern.var)
+        np = a.NodePattern(pattern.var, labels, pattern.props)
         conds = []
         if np.labels:
             conds.append(f"{_SEED_ALIAS}.label IN {sql_in_list(np.labels)}")
@@ -677,6 +696,23 @@ class _MatchBuilder:
         self.conds.append(f"{alias}.node = {node_side.sql}")
         if low > 0:
             self.conds.append(f"{alias}.depth >= {low}")
+
+
+def _label_alternatives(e: a.Expr, var: str) -> set[str] | None:
+    """The labels `e` allows `var`, when it is `var:A` or an OR of those."""
+    if (
+        isinstance(e, a.LabelTest)
+        and isinstance(e.subject, a.Var)
+        and e.subject.name == var
+        and len(e.labels) == 1
+    ):
+        return {e.labels[0]}
+    if isinstance(e, a.BinOp) and e.op == EgBinary.OR:
+        left = _label_alternatives(e.left, var)
+        right = _label_alternatives(e.right, var)
+        if left is not None and right is not None:
+            return left | right
+    return None
 
 
 def _conjuncts(e: a.Expr) -> list[a.Expr]:
