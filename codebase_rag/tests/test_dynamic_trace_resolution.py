@@ -139,17 +139,18 @@ def test_unresolved_reasons_are_categorised(tmp_path):
     }
 
 
-def test_wrapper_falls_back_to_line_containment(tmp_path):
-    # A decorator's wrapper can run under a name the static pass recorded
-    # differently; when the name lookup fails, the innermost span containing
-    # the runtime line must win.
+def test_a_name_the_file_lacks_is_not_bound_by_line(tmp_path):
+    # The tracer records co_qualname, which a decorator does not rename
+    # (functools.wraps copies __qualname__ onto the function, not its code),
+    # so a frame whose name the file lacks comes from other code: binding it
+    # to the span around its line invented a dynamic edge (issue #2843).
     resolver = _resolver(tmp_path)
     stats = ResolutionStats()
     resolved = resolver.resolve(
         _frame(tmp_path, "pkg/mod.py", "renamed_at_runtime", 3), stats
     )
-    assert resolved is not None
-    assert resolved.qualified_name == f"{_PROJECT}.pkg.mod.outer.inner"
+    assert resolved is None
+    assert stats.unresolved == {cs.TraceUnresolvedReason.NO_MATCH.value: 1}
 
 
 def test_repo_relative_collapses_parent_traversal_and_gates_escapes(tmp_path):
