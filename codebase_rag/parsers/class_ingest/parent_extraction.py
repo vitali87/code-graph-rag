@@ -310,33 +310,6 @@ def _rust_supertrait_parents(
     return parents
 
 
-# Only these wrappers are descended; see the constants module for why
-# `type_arguments` must not be.
-_SCALA_BASE_WRAPPERS = (
-    cs.TS_SCALA_GENERIC_TYPE,
-    cs.TS_SCALA_STABLE_TYPE_IDENTIFIER,
-)
-
-
-def _scala_base_type_identifier(node: Node) -> Node | None:
-    """The `type_identifier` naming a Scala base, at whatever depth it sits.
-
-    Descends the LAST type-bearing child at each level, which is what picks
-    the simple name out of `foo.bar.Baz`: the qualifier segments come first
-    and the type name is last. Bounded to the wrapper kinds the grammar
-    actually produces, so this never walks into a type argument list and
-    returns `Int` from `foo.Service[Int]`.
-    """
-    if node.type == cs.TS_TYPE_IDENTIFIER:
-        return node
-    if node.type not in _SCALA_BASE_WRAPPERS:
-        return None
-    for child in reversed(node.children):
-        if found := _scala_base_type_identifier(child):
-            return found
-    return None
-
-
 def _scala_base_written_name(node: Node) -> str | None:
     """The base as WRITTEN, qualifier included, with type arguments stripped.
 
