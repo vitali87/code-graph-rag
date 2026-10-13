@@ -57,6 +57,7 @@ from .editor_links import (
     url_template_problem,
 )
 from .graph_cli import cli as graph_cli
+from .graph_dialects import DIALECT_MEMGRAPH
 from .parser_loader import load_parsers
 from .project_selection import ProjectChoice, choose_project, scope_refusal
 from .services.graph_diff import DiffError, diff_indexes, diff_is_empty
@@ -740,6 +741,10 @@ def _resolve_active_projects(projects: str | None, default_project: str) -> list
 
 
 def _maybe_start_stack() -> None:
+    # The Docker stack serves Memgraph; the embedded graph is a file and
+    # Neo4j is the user's own server, so neither has anything to start.
+    if settings.GRAPH_BACKEND != DIALECT_MEMGRAPH:
+        return
     mgr = StackManager()
     try:
         mgr.locate_published_qdrant()

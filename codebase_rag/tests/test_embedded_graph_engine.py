@@ -1,0 +1,366 @@
+"""The embedded graph engine: what cgr writes and reads through it (issue #386).
+
+Reads are checked against Memgraph's recorded answers in
+test_embedded_graph_memgraph_parity.py; these tests cover the write path the
+ingestor drives, the read-only guard, the procedures the prompt advertises,
+and the compiler rewrites that keep big intermediate values off every row.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+
+from codebase_rag import cypher_queries as cq
+from codebase_rag.constants import EG_PLANNER_STATISTICS
+from codebase_rag.embedded_graph import cypher_ast as a
+from codebase_rag.embedded_graph.compiler import ALL_LIVE, live_after
+from codebase_rag.embedded_graph.connection import EmbeddedConnection
+from codebase_rag.embedded_graph.executor import compile_read, value_type
+from codebase_rag.embedded_graph.expressions import (
+    CompileError,
+)
+from codebase_rag.embedded_graph.lexer import CypherSyntaxError
+from codebase_rag.embedded_graph.parser import parse
+from codebase_rag.exceptions import ReadOnlyQueryError
+from codebase_rag.graph_dialects import (
+    DIALECT_SQLITE,
+    MemgraphDialect,
+    Neo4jDialect,
+    get_dialect,
+)
+from codebase_rag.services.graph_service import MemgraphIngestor
+
+# Pieces the graph audit formats into a query, not queries themselves.
+_QUERY_FRAGMENTS = frozenset(
+    {"CYPHER_AUDIT_IS_NULL", "CYPHER_AUDIT_MISSING_REQUIRED", "CYPHER_AUDIT_OR"}
+)
+
+
+_QUERY_NAMES = sorted(
+    n
+    for n in dir(cq)
+    if n.startswith("CYPHER_")
+    and isinstance(getattr(cq, n), str)
+    and n not in _QUERY_FRAGMENTS
+)
+
+
+@pytest.fixture
+def conn() -> Iterator[EmbeddedConnection]:
+    with EmbeddedConnection(":memory:") as c:
+        yield c
+
+
+def _rows(conn: EmbeddedConnection, query: str, **params: object) -> list[tuple]:
+    return conn.run(query, params).rows
+
+
+class TestParser:
+    @pytest.mark.parametrize("name", _QUERY_NAMES)
+    def test_every_query_constant_parses(self, name: str) -> None:
+        parse(getattr(cq, name))
+
+    @pytest.mark.parametrize(
+        "statement",
+        [
+            MemgraphDialect().create_index("Function", "name"),
+            Neo4jDialect().create_index("Function", "name"),
+            MemgraphDialect().create_constraint("Module", "qualified_name"),
+            Neo4jDialect().create_constraint("Module", "qualified_name"),
+        ],
+    )
+    def test_both_engines_ddl_names_label_and_property(self, statement: str) -> None:
+        # The store derives its own schema from the label and property, so
+        # whichever engine's spelling arrives must reduce to the same pair.
+        command = parse(statement)
+        assert isinstance(command, a.SchemaCommand)
+        assert command.label in ("Function", "Module")
+        assert command.props in (("name",), ("qualified_name",))
+
+    def test_a_syntax_error_names_its_offset(self) -> None:
+        with pytest.raises(CypherSyntaxError):
+            parse("MATCH (n RETURN n")
+
+
+class TestWrites:
+    def test_merge_is_idempotent_on_the_unique_key(self, conn) -> None:
+        for _ in range(2):
+            conn.run(
+                "UNWIND $batch AS row MERGE (n:Module {qualified_name: row.qn}) "
+                "SET n += row.props",
+                {"batch": [{"qn": "p.m", "props": {"name": "m", "path": "m.py"}}]},
+            )
+        assert _rows(conn, "MATCH (n:Module) RETURN count(n) AS c") == [(1,)]
+        assert _rows(conn, "MATCH (n:Module) RETURN n.path AS p") == [("m.py",)]
+
+    def test_relationships_merge_once_between_bound_ends(self, conn) -> None:
+        conn.run(
+            "CREATE (:Module {qualified_name: 'a'}), (:Module {qualified_name: 'b'})"
+        )
+        query = (
+            "UNWIND $batch AS row MATCH (a:Module {qualified_name: row.f}), "
+            "(b:Module {qualified_name: row.t}) MERGE (a)-[r:IMPORTS]->(b) "
+            "RETURN count(r) AS created"
+        )
+        batch = {"batch": [{"f": "a", "t": "b"}]}
+        conn.run(query, batch)
+        conn.run(query, batch)
+        assert _rows(conn, "MATCH ()-[r:IMPORTS]->() RETURN count(r) AS c") == [(1,)]
+
+    def test_on_create_and_on_match_run_on_their_own_rows(self, conn) -> None:
+        query = (
+            "MERGE (n:T {k: 'z'}) ON CREATE SET n.created = 1 "
+            "ON MATCH SET n.matched = 1 RETURN n.created AS c, n.matched AS m"
+        )
+        assert _rows(conn, query) == [(1, None)]
+        assert _rows(conn, query) == [(1, 1)]
+
+    def test_setting_a_key_property_moves_the_unique_key(self, conn) -> None:
+        conn.run("CREATE (:Function {qualified_name: 'old'})")
+        conn.run("MATCH (n:Function) SET n.qualified_name = 'new'")
+        assert _rows(
+            conn, "MATCH (n:Function {qualified_name: 'new'}) RETURN count(n) AS c"
+        ) == [(1,)]
+
+    def test_delete_refuses_a_node_with_relationships(self, conn) -> None:
+        conn.run("CREATE (:T {k: 'a'})-[:R]->(:T {k: 'b'})")
+        with pytest.raises(CompileError):
+            conn.run("MATCH (n:T {k: 'a'}) DELETE n")
+        conn.run("MATCH (n:T {k: 'a'}) DETACH DELETE n")
+        assert _rows(conn, "MATCH (n) RETURN count(n) AS c") == [(1,)]
+        assert _rows(conn, "MATCH ()-[r]->() RETURN count(r) AS c") == [(0,)]
+
+    def test_a_failed_statement_changes_nothing(self, conn) -> None:
+        conn.run("CREATE (:T {k: 'a'})-[:R]->(:T {k: 'b'})")
+        with pytest.raises(CompileError):
+            conn.run("MATCH (n:T) SET n.touched = true WITH n DELETE n")
+        assert _rows(conn, "MATCH (n:T) WHERE n.touched RETURN count(n) AS c") == [(0,)]
+
+
+class TestReadOnly:
+    def test_explain_reports_writes_in_memgraph_operator_names(self, conn) -> None:
+        plan = [row[0] for row in _rows(conn, "EXPLAIN MATCH (n) SET n.x = 1")]
+        assert " * SetProperties" in plan
+
+    def test_a_read_only_connection_refuses_writes(self, tmp_path: Path) -> None:
+        path = str(tmp_path / "g.sqlite")
+        with EmbeddedConnection(path) as writer:
+            writer.run("CREATE (:T {k: 'a'})")
+        with EmbeddedConnection(path, read_only=True) as reader:
+            assert reader.run("MATCH (n:T) RETURN n.k AS k").rows == [("a",)]
+            with pytest.raises(CompileError):
+                reader.run("MATCH (n:T) SET n.k = 'b'")
+
+    def test_procedures_run_on_a_read_only_connection(self, tmp_path: Path) -> None:
+        # CALL works through temp tables, which a read-only file still allows.
+        path = str(tmp_path / "g.sqlite")
+        with EmbeddedConnection(path) as writer:
+            writer.run("CREATE (:T {k: 'a'})-[:R]->(:T {k: 'b'})")
+        with EmbeddedConnection(path, read_only=True) as reader:
+            rows = reader.run(
+                "CALL pagerank.get() YIELD node, rank RETURN node.k AS k ORDER BY rank DESC"
+            ).rows
+        assert rows == [("b",), ("a",)]
+
+
+class TestProcedures:
+    @pytest.fixture
+    def cyclic(self, conn) -> EmbeddedConnection:
+        conn.run(
+            "CREATE (a:F {k: 'a'})-[:CALLS]->(b:F {k: 'b'})-[:CALLS]->(a), "
+            "(b)-[:CALLS]->(c:F {k: 'c'})"
+        )
+        return conn
+
+    def test_strongly_connected_components(self, cyclic) -> None:
+        rows = _rows(
+            cyclic,
+            "CALL nxalg.strongly_connected_components() YIELD components "
+            "UNWIND components AS comp RETURN size(comp) AS n ORDER BY n DESC",
+        )
+        assert rows == [(2,), (1,)]
+
+    def test_shortest_path_returns_its_nodes(self, cyclic) -> None:
+        rows = _rows(
+            cyclic,
+            "MATCH (a:F {k: 'a'}), (c:F {k: 'c'}) CALL nxalg.shortest_path(a, c) "
+            "YIELD path RETURN [n IN path | n.k] AS ks",
+        )
+        assert rows == [(["a", "b", "c"],)]
+
+    def test_ancestors(self, cyclic) -> None:
+        rows = _rows(
+            cyclic,
+            "MATCH (c:F {k: 'c'}) CALL graph_util.ancestors(c) YIELD ancestors "
+            "UNWIND ancestors AS n RETURN n.k AS k ORDER BY k",
+        )
+        assert rows == [("a",), ("b",)]
+
+
+class TestCompiler:
+    def test_a_projection_ends_what_earlier_clauses_must_carry(self) -> None:
+        query = parse("MATCH (a)-[:R]->(b) WITH a MATCH (a)-[:S]->(c) RETURN c.k AS k")
+        assert isinstance(query, a.Query)
+        live = live_after(query.parts[0].clauses)
+        assert live[0] == {"a"}
+        assert live[2] == {"c"}
+
+    def test_a_star_projection_keeps_everything(self) -> None:
+        query = parse("MATCH (a)-[:R]->(b) WITH * RETURN a.k AS k")
+        assert isinstance(query, a.Query)
+        assert ALL_LIVE in live_after(query.parts[0].clauses)[0]
+
+    def test_a_single_row_list_is_read_once_not_carried(self) -> None:
+        # The project export collects every owned node into one list, then
+        # matches relationships against it: carried per row, that list cost
+        # 8.5 GB on a 38k-node graph.
+        plan = compile_read(
+            "MATCH (n:Module) WITH collect(n) AS owned "
+            "MATCH (a)-[r]->(b) WHERE a IN owned RETURN count(r) AS c",
+            (),
+            True,
+        )
+        assert "IN (SELECT" in plan.sql
+        assert "GROUP BY" not in plan.sql
+
+    def test_a_walk_starts_only_where_the_where_clause_allows(self) -> None:
+        # Seeded from every Module and filtered afterwards, the module walk
+        # in endpoint_routes took 7 minutes on a 38k-node graph.
+        plan = compile_read(
+            "MATCH (m:Module)-[:DEFINES*]->(f) WHERE m.qualified_name IN $qns "
+            "RETURN f.name AS name",
+            (("qns", value_type(["a"])),),
+            True,
+        )
+        seed = plan.sql.split("UNION ALL")[0]
+        assert "json_each" in seed
+
+    def test_a_walk_expands_from_its_queue_row_outwards(self) -> None:
+        # CROSS JOIN fixes the join order: the recursive step looks up the
+        # edges leaving its one queue row instead of scanning a whole type.
+        plan = compile_read("MATCH (a)-[:R*1..3]->(b) RETURN count(*) AS c", (), True)
+        assert "CROSS JOIN cgr_edges" in plan.sql
+
+    def test_walks_agree_with_and_without_a_pushed_seed(self, conn) -> None:
+        conn.run(
+            "CREATE (:Module {qualified_name: 'p.a'})-[:DEFINES]->"
+            "(:Function {qualified_name: 'p.a.f', name: 'f'}), "
+            "(:Module {qualified_name: 'p.b'})-[:DEFINES]->"
+            "(:Function {qualified_name: 'p.b.g', name: 'g'})"
+        )
+        pushed = _rows(
+            conn,
+            "MATCH (m:Module)-[:DEFINES*]->(f) WHERE m.qualified_name IN $qns "
+            "RETURN f.name AS name",
+            qns=["p.a"],
+        )
+        assert pushed == [("f",)]
+
+    def test_grouping_by_a_constant_over_no_rows_gives_no_rows(self, conn) -> None:
+        rows = _rows(
+            conn,
+            "WITH [1] AS l MATCH (n:Nope) RETURN l AS l, count(n) AS c",
+        )
+        assert rows == []
+
+    def test_an_aggregate_over_no_rows_gives_one_row(self, conn) -> None:
+        assert _rows(conn, "MATCH (n:Nope) RETURN count(n) AS c") == [(0,)]
+
+
+class TestStatistics:
+    def test_an_analyze_of_a_small_graph_does_not_stick(self, tmp_path: Path) -> None:
+        # Measured while a sync was still writing, statistics described a
+        # near-empty graph and every relationship batch was planned as if
+        # each label held one node.
+        path = tmp_path / "g.sqlite"
+        with EmbeddedConnection(str(path)) as conn:
+            conn.run("CREATE (:T {k: 1})-[:R]->(:T {k: 2})")
+        with sqlite3.connect(path) as raw:
+            raw.execute("ANALYZE")
+        with EmbeddedConnection(str(path)):
+            pass
+        with sqlite3.connect(path) as raw:
+            stats = set(
+                raw.execute(
+                    "SELECT tbl, idx, stat FROM sqlite_stat1 "
+                    "WHERE tbl IN ('cgr_nodes', 'cgr_edges')"
+                )
+            )
+        assert stats == set(EG_PLANNER_STATISTICS)
+
+    def test_a_batch_looks_each_row_up_by_its_unique_key(self, conn) -> None:
+        # The ingestor's relationship batches: each row's two endpoints
+        # must be index seeks on (label, key), driven by the batch.
+        plan = compile_read(
+            "UNWIND $batch AS row MATCH (a:Method {qualified_name: row.from_val}), "
+            "(b:Method {qualified_name: row.to_val}) RETURN a.name AS name",
+            (("batch", value_type([{"from_val": "x", "to_val": "y"}])),),
+            True,
+        )
+        binds = {f":{p.placeholder}": "[]" for p in plan.params}
+        steps = [
+            row[3]
+            for row in conn._sqlite.execute(
+                "EXPLAIN QUERY PLAN " + plan.sql,
+                {k.lstrip(":"): v for k, v in binds.items()},
+            )
+        ]
+        # Reading `a.name` afterwards is a rowid lookup; the two pattern
+        # nodes are the steps that search an index of cgr_nodes.
+        index_steps = [step for step in steps if "INDEX cgr_nodes" in step]
+        assert len(index_steps) == 2, steps
+        assert all("label=? AND key=?" in step for step in index_steps), steps
+
+
+class TestIngestor:
+    @pytest.fixture
+    def ingestor(self, tmp_path: Path) -> Iterator[MemgraphIngestor]:
+        with MemgraphIngestor(
+            host="unused",
+            port=0,
+            dialect=get_dialect(DIALECT_SQLITE),
+            sqlite_path=str(tmp_path / "graph.sqlite"),
+        ) as ingestor:
+            ingestor.ensure_constraints()
+            yield ingestor
+
+    def test_nodes_and_relationships_flush_and_read_back(self, ingestor) -> None:
+        ingestor.ensure_node_batch("Project", {"name": "p"})
+        ingestor.ensure_node_batch(
+            "Module", {"qualified_name": "p.m", "name": "m", "path": "m.py"}
+        )
+        ingestor.ensure_relationship_batch(
+            ("Project", "name", "p"),
+            "CONTAINS_MODULE",
+            ("Module", "qualified_name", "p.m"),
+        )
+        ingestor.flush_all()
+        assert ingestor.list_projects() == ["p"]
+        graph = ingestor.export_graph_to_dict()
+        assert graph["metadata"]["total_nodes"] == 2
+        assert graph["metadata"]["total_relationships"] == 1
+
+    def test_generated_queries_run_but_cannot_write(self, ingestor) -> None:
+        ingestor.ensure_node_batch("Project", {"name": "p"})
+        ingestor.flush_all()
+        assert ingestor.fetch_read_only("MATCH (p:Project) RETURN p.name AS name") == [
+            {"name": "p"}
+        ]
+        with pytest.raises(ReadOnlyQueryError):
+            ingestor.fetch_read_only("MATCH (p:Project) SET p.name = 'x' RETURN p")
+
+    def test_the_embedded_engine_flushes_on_one_connection(self, ingestor) -> None:
+        # One SQLite file takes one writer at a time; a pool of flush
+        # workers would only queue on its lock.
+        assert ingestor._executor is None
+
+    def test_the_graph_lives_under_cgr_home_by_default(self, tmp_path, monkeypatch):
+        from codebase_rag.config import settings
+
+        monkeypatch.setattr(settings, "CGR_HOME", tmp_path)
+        monkeypatch.setattr(settings, "SQLITE_GRAPH_PATH", None)
+        assert settings.sqlite_graph_path == tmp_path / "graph.sqlite"

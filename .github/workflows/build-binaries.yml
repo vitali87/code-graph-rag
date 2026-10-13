@@ -89,7 +89,7 @@ jobs:
             export OPENSSL_STATIC=1
             uv cache clean cryptography
           fi
-          uv sync --extra treesitter-full
+          uv sync --extra treesitter-full --extra memgraph
           uv add --dev pyinstaller
 
       - name: Build binary

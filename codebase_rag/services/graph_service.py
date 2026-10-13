@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import sqlite3
 import threading
 import time
 import types
@@ -13,7 +14,6 @@ from functools import partial
 from typing import TYPE_CHECKING, cast
 
 import click
-import mgclient
 import typer
 from loguru import logger
 
@@ -25,6 +25,7 @@ from .. import logs as ls
 from ..constants import (
     CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES,
     CYPHER_EXPLAIN_PREFIX,
+    EG_MEMORY_PATH,
     ERR_SUBSTR_ALREADY_EXISTS,
     ERR_SUBSTR_CONSTRAINT,
     FAILED_REL_ROWS_SHOWN,
@@ -68,12 +69,16 @@ from ..cypher_queries import (
     build_missing_rel_endpoints_query,
     wrap_with_unwind,
 )
+from ..embedded_graph.connection import EmbeddedConnection
+from ..embedded_graph.store import EmbeddedGraphUnsupported
 from ..graph_dialects import (
     DIALECT_MEMGRAPH,
     DIALECT_NEO4J,
+    DIALECT_SQLITE,
     GraphDialect,
     get_dialect,
 )
+from ..mgclient_compat import MGCLIENT_AVAILABLE, mgclient
 from ..stack.constants import MEMGRAPH_AUTH_FAILURE
 from ..types_defs import (
     BatchParams,
@@ -151,10 +156,10 @@ def _created_count(results: Sequence[ResultRow]) -> int:
 # pymgclient 1.6 re-exports its C extension through `import *`, which a type
 # checker cannot see into, so the exception types are bound once here.
 # TransientError first appears in 1.6.0, hence the `pymgclient>=1.6.0` floor.
-_MgclientError: type[Exception] = mgclient.Error  # ty: ignore[unresolved-attribute]
-_MgclientDatabaseError: type[Exception] = mgclient.DatabaseError  # ty: ignore[unresolved-attribute]
-_MgclientOperationalError: type[Exception] = mgclient.OperationalError  # ty: ignore[unresolved-attribute]
-_MgclientTransientError: type[Exception] = mgclient.TransientError  # ty: ignore[unresolved-attribute]
+_MgclientError: type[Exception] = mgclient.Error
+_MgclientDatabaseError: type[Exception] = mgclient.DatabaseError
+_MgclientOperationalError: type[Exception] = mgclient.OperationalError
+_MgclientTransientError: type[Exception] = mgclient.TransientError
 
 
 def is_query_rejection(error: BaseException) -> bool:
@@ -277,8 +282,10 @@ class MemgraphIngestor:
         "_dialect",
         "_driver",
         "_driver_lock",
+        "_read_conn",
         "_rel_count",
         "_rel_groups",
+        "_sqlite_path",
         "batch_size",
         "conn",
         "node_buffer",
@@ -293,6 +300,7 @@ class MemgraphIngestor:
         password: str | None = None,
         use_merge: bool = True,
         dialect: GraphDialect | None = None,
+        sqlite_path: str | None = None,
     ):
         # The engine is resolved once here rather than read from settings at
         # each call site, so a single ingestor cannot straddle two dialects
@@ -300,6 +308,9 @@ class MemgraphIngestor:
         self._dialect = dialect or get_dialect(settings.GRAPH_BACKEND)
         self._driver: object | None = None
         self._driver_lock = threading.Lock()
+        # The embedded engine's file; None reads SQLITE_GRAPH_PATH at connect.
+        self._sqlite_path = sqlite_path
+        self._read_conn: EmbeddedConnection | None = None
         self._host = host
         self._port = port
         self._username = username.strip() if username and username.strip() else None
@@ -330,6 +341,8 @@ class MemgraphIngestor:
         logger.debug(ls.MG_CONNECTING.format(host=self._host, port=self._port))
         try:
             self.conn = self._create_connection()
+        except GraphUnavailableError:
+            raise
         except _MgclientError as e:
             raise GraphUnavailableError(self._unavailable_message(e)) from e
         except Exception as e:
@@ -339,7 +352,12 @@ class MemgraphIngestor:
                 ls.MG_CONNECT_FAILED.format(host=self._host, port=self._port, error=e)
             )
             raise
-        self._executor = ThreadPoolExecutor(max_workers=settings.FLUSH_THREAD_POOL_SIZE)
+        # One SQLite file takes one writer at a time: a worker per label
+        # would only queue on its lock, so the embedded engine flushes serially.
+        if self._dialect.name != DIALECT_SQLITE:
+            self._executor = ThreadPoolExecutor(
+                max_workers=settings.FLUSH_THREAD_POOL_SIZE
+            )
         logger.debug(ls.MG_CONNECTED)
         return self
 
@@ -385,6 +403,9 @@ class MemgraphIngestor:
             if self._executor:
                 self._executor.shutdown(wait=True)
                 self._executor = None
+            if self._read_conn:
+                self._read_conn.close()
+                self._read_conn = None
             if self.conn:
                 self.conn.close()
                 logger.debug(ls.MG_DISCONNECTED)
@@ -456,6 +477,10 @@ class MemgraphIngestor:
         """
         if self._dialect.name == DIALECT_NEO4J:
             return self._neo4j_driver().connect()
+        if self._dialect.name == DIALECT_SQLITE:
+            return self._embedded_connection(read_only=False)
+        if not MGCLIENT_AVAILABLE:
+            raise GraphUnavailableError(ex.MGCLIENT_MISSING)
         if self._username is not None:
             conn = mgclient.connect(
                 host=self._host,
@@ -467,6 +492,18 @@ class MemgraphIngestor:
             conn = mgclient.connect(host=self._host, port=self._port)
         conn.autocommit = True
         return conn
+
+    def sqlite_graph_path(self) -> str:
+        return self._sqlite_path or str(settings.sqlite_graph_path)
+
+    def _embedded_connection(self, read_only: bool) -> EmbeddedConnection:
+        path = self.sqlite_graph_path()
+        try:
+            return EmbeddedConnection(path, read_only=read_only)
+        except (sqlite3.Error, OSError, EmbeddedGraphUnsupported) as e:
+            raise GraphUnavailableError(
+                ex.EMBEDDED_GRAPH_UNAVAILABLE.format(path=path, error=e)
+            ) from e
 
     def close_driver(self) -> None:
         """Release the Neo4j connection pool, if one was ever built.
@@ -1052,7 +1089,29 @@ class MemgraphIngestor:
             ),
             query,
         )
+        if self._dialect.name == DIALECT_SQLITE:
+            return self._fetch_embedded_read_only(bounded_query)
         return self._execute_query(bounded_query)
+
+    def _fetch_embedded_read_only(self, query: str) -> list[ResultRow]:
+        """Run a checked query on a connection SQLite itself opened read-only.
+
+        Unlike Neo4j's READ session this is access control: the file is
+        opened `mode=ro`, so a write the plan check missed fails in SQLite.
+        An in-memory graph has no file to reopen and uses the main
+        connection, where the plan check is the guard.
+        """
+        if self.sqlite_graph_path() == EG_MEMORY_PATH:
+            return self._execute_query(query)
+        with self._conn_lock:
+            if self._read_conn is None:
+                self._read_conn = self._embedded_connection(read_only=True)
+            cursor = self._read_conn.cursor()
+            try:
+                cursor.execute(query)
+                return self._cursor_to_results(cursor)
+            finally:
+                cursor.close()
 
     def execute_write(self, query: str, params: PropertyParams | None = None) -> None:
         logger.debug(ls.MG_WRITE_QUERY, query=query, params=params)

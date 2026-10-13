@@ -44,7 +44,6 @@ dependencies = [
     # meta-package also installs logfire, evals, a CLI and a web UI, none used.
     "pydantic-ai-slim[anthropic,google,openai]>=2.0.0",
     "pydantic-settings>=2.12.0",
-    "pymgclient>=1.6.0",
     "python-dotenv>=1.2.1",
     "tiktoken>=0.12.0",
     "tomli-w>=1.2.0",
@@ -118,14 +117,25 @@ test = [
     "filelock>=3.12",
     "ast-grep-py>=0.44.0",
     "pyyaml>=6.0",
+    # The suite exercises the Memgraph backend with a mocked server, but
+    # imports the real driver's exception types to do it.
+    "pymgclient>=1.6.0",
 ]
 
 cpp = [
     "libclang>=18.1.1",
 ]
 
-# Neo4j is an optional backend (issue #1590): Memgraph remains the default,
-# so a default install must not pay for a driver it will never load.
+# Memgraph is an optional backend since the embedded graph became the
+# default (issue #386). Its driver is a C extension that builds with cmake
+# wherever no wheel fits, the setup step first-time users tripped on.
+# TransientError, which the ingestor retries, first appears in 1.6.0.
+memgraph = [
+    "pymgclient>=1.6.0",
+]
+
+# Neo4j is an optional backend (issue #1590), so a default install must not
+# pay for a driver it will never load.
 neo4j = [
     "neo4j>=5.28.1",
 ]
@@ -268,6 +278,8 @@ dev = [
     "pyinstaller>=6.14.1",
     "pytest>=9.0.2",
     "pytest-xdist>=3.8.0",
+    # ty resolves the Memgraph driver's types where the code names them.
+    "pymgclient>=1.6.0",
     "ruff>=0.5.5",
     "semgrep>=1.79.0",
     "ty>=0.0.7",

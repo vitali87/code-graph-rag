@@ -213,6 +213,17 @@ GRAPH_UNREACHABLE = (
     "`cgr daemon up`, or set MEMGRAPH_HOST/MEMGRAPH_PORT. `cgr doctor` checks "
     "the setup."
 )
+MGCLIENT_MISSING = (
+    "Error: GRAPH_BACKEND=memgraph needs the Memgraph driver, which is not "
+    "installed. Install it with `pip install 'code-graph-rag[memgraph]'` (or "
+    "`uv sync --extra memgraph`), or unset GRAPH_BACKEND to use the embedded "
+    "graph, which needs no server."
+)
+EMBEDDED_GRAPH_UNAVAILABLE = (
+    "Error: cannot open the embedded graph at {path} ({error}). Set "
+    "SQLITE_GRAPH_PATH to a writable file, or GRAPH_BACKEND=memgraph to use "
+    "a server."
+)
 GRAPH_CREDENTIALS_REFUSED = (
     "Error: Memgraph at {address} refused the credentials ({error}). Set "
     "MEMGRAPH_USERNAME/MEMGRAPH_PASSWORD to the ones the stack was started "

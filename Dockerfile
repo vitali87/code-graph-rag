@@ -31,10 +31,10 @@ ENV UV_PYTHON_PREFERENCE=only-managed
 # moves with each uv release), and the later sync, once COPY . . brings in the
 # pin, rebuilds .venv on the pinned version.
 COPY pyproject.toml uv.lock .python-version ./
-RUN uv sync --frozen --no-dev --extra treesitter-full --no-install-project --no-binary-package pymgclient
+RUN uv sync --frozen --no-dev --extra treesitter-full --extra memgraph --no-install-project --no-binary-package pymgclient
 
 COPY . .
-RUN uv sync --frozen --no-dev --extra treesitter-full --no-binary-package pymgclient
+RUN uv sync --frozen --no-dev --extra treesitter-full --extra memgraph --no-binary-package pymgclient
 
 FROM python:3.14-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d
 
