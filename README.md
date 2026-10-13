@@ -137,7 +137,7 @@ uv tool install "code-graph-rag[treesitter-full,ast-grep,semantic] @ git+https:/
 
 To upgrade an existing install, run `uv tool upgrade code-graph-rag` (with pipx, `pipx upgrade code-graph-rag`, or `pipx reinstall code-graph-rag` for a git install). [Upgrade](docs/getting-started/installation.md#upgrade) covers the other install methods.
 
-You also need Python 3.12+, Docker (for Memgraph), `cmake`, and `ripgrep`. Full prerequisites, source installs, and environment setup are in the [Installation](docs/getting-started/installation.md) guide.
+You also need Python 3.12+ and `ripgrep`. The graph lives in an embedded SQLite file by default, so there is no database server to run: no Docker and no `cmake`. Memgraph and Neo4j remain available as opt-in backends ([Graph Backends](docs/architecture/embedded-graph.md)). Full prerequisites, source installs, and environment setup are in the [Installation](docs/getting-started/installation.md) guide.
 
 > [!NOTE]
 > The wheel is pure Python (`py3-none-any`), so it installs on any platform with Python 3.12 or newer. Older system interpreters (Debian Bookworm ships 3.11) need the interpreter pinned explicitly; see [Installation](docs/getting-started/installation.md#older-system-interpreters) for the commands.
@@ -145,13 +145,15 @@ You also need Python 3.12+, Docker (for Memgraph), `cmake`, and `ripgrep`. Full 
 ## Quick Start
 
 ```bash
-# Start the packaged Memgraph + Qdrant stack (no compose file needed)
-cgr daemon up
-
 # Parse a repository into the graph, then query it
 cgr start --repo-path /path/to/repo --update-graph
 cgr start --repo-path /path/to/repo
 ```
+
+The graph is written to `~/.cgr/graph.sqlite` (set `SQLITE_GRAPH_PATH` to move it).
+To use Memgraph instead, install the driver with the `memgraph` extra, set
+`GRAPH_BACKEND=memgraph`, and start the packaged Memgraph + Qdrant stack with
+`cgr daemon up`.
 
 Repeat the first command for each repository you want indexed; the graph is
 shared, and syncing one project leaves the others alone. To start over from an
