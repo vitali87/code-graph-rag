@@ -1,0 +1,26 @@
+[package]
+name = "cgr_graph_rs"
+version = "0.1.0"
+edition = "2021"
+description = "Graph algorithms for code-graph-rag's embedded graph, over its SQLite file"
+license = "MIT"
+publish = false
+
+[lib]
+name = "cgr_graph_rs"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# The Python module, built by maturin; `cargo test` leaves it off and so
+# needs no interpreter to link against.
+python = ["dep:pyo3", "pyo3/extension-module"]
+default = []
+
+[dependencies]
+pyo3 = { version = "0.27", features = ["abi3-py312"], optional = true }
+rusqlite = { version = "0.37", features = ["bundled"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+opt-level = 3
