@@ -372,7 +372,11 @@ class Executor:
                 result = with_walks(None if mutates else self.native, run)
         except BaseException as error:
             self.conn.set_progress_handler(None, 0)
-            self.conn.execute(sq.ROLLBACK)
+            # SQLite rolls the whole transaction back itself when it
+            # interrupts a write (or runs out of disk or memory), and a
+            # second ROLLBACK would then replace the real error with its own.
+            if self.conn.in_transaction:
+                self.conn.execute(sq.ROLLBACK)
             # The progress handler aborts a statement as "interrupted".
             if isinstance(error, sqlite3.OperationalError) and deadline.passed():
                 raise QueryTimeout(EG_ERR_TIMEOUT) from error
@@ -601,19 +605,23 @@ class _Run:
         values = self._eval(stage, exprs)
         cols = list(stage.vars)
         for i, row in enumerate(rows):
-            if only is not None and i not in only:
-                continue
-            k = 0
-            for item in items:
-                value = None
-                if item.value is not None:
-                    value = values[i][k]
-                    k += 1
-                target_info = stage.vars[item.var]
-                target = row[cols.index(item.var)]
-                if target is None:
-                    continue
-                self._apply_set(item, target_info.t, _entity_id(target), value)
+            if only is None or i in only:
+                self._set_row(stage, items, row, iter(values[i]), cols)
+
+    def _set_row(
+        self,
+        stage: Stage,
+        items: Sequence[a.SetItem],
+        row: list[SqlValue],
+        values: Iterator[SqlValue],
+        cols: list[str],
+    ) -> None:
+        for item in items:
+            # Only the items that carry a value took a column of `values`.
+            value = next(values) if item.value is not None else None
+            target = row[cols.index(item.var)]
+            if target is not None:
+                self._apply_set(item, stage.vars[item.var].t, _entity_id(target), value)
 
     def _apply_set(self, item: a.SetItem, t: T, target: int, value: SqlValue) -> None:
         table = self._table_of(t)

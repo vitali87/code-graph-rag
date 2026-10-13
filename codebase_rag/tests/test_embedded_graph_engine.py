@@ -202,6 +202,14 @@ class TestLimits:
         # The handler is cleared: a statement without a limit runs to the end.
         assert wide.run("MATCH (a:N) RETURN count(a) AS n").rows == [(400,)]
 
+    def test_a_write_stops_at_its_deadline_and_writes_nothing(self, wide) -> None:
+        # SQLite rolls an interrupted write's transaction back itself, so the
+        # engine's own rollback must not run again and mask the timeout.
+        with pytest.raises(QueryTimeout):
+            wide.run("UNWIND range(1, 3000000) AS i CREATE (:W {i: i})", timeout_s=0.05)
+        assert wide.run("MATCH (w:W) RETURN count(w) AS n").rows == [(0,)]
+        assert wide.run("MATCH (a:N) RETURN count(a) AS n").rows == [(400,)]
+
     def test_a_python_procedure_stops_at_its_deadline(self, wide) -> None:
         expired = Deadline(at=0.0)
         with running_until(expired), pytest.raises(QueryTimeout):
