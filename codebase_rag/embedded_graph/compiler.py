@@ -1,0 +1,690 @@
+"""Read clauses compiled to one SQLite statement of chained CTEs.
+
+Each clause turns the binding table of the previous one into a new CTE:
+MATCH joins `cgr_nodes`/`cgr_edges` onto it, OPTIONAL MATCH left-joins a
+match over its distinct inputs (so a partly matched pattern binds nothing,
+as Cypher requires), WITH/RETURN project, group and sort. Variable-length
+relationships are recursive CTEs that keep each path's edge list, giving
+Cypher's one-row-per-path result with no relationship repeated in a path.
+
+Two things keep big values from being copied row by row:
+
+* liveness: a stage carries only the variables some later clause reads;
+* single-row stages (`WITH collect(n) AS owned`): what they bind is read
+  back with a scalar subquery instead of riding along as a column, so a
+  36k-element list is stored once rather than once per downstream row.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from ..constants.embedded_graph import (
+    EG_ERR_NOT_NODE,
+    EG_ERR_NOT_REL,
+    EG_ERR_UNSUPPORTED,
+    EG_ERR_VARLEN_VAR,
+    EgBinary,
+    EgDirection,
+)
+from ..constants.graph import NODE_UNIQUE_CONSTRAINTS
+from . import cypher_ast as a
+from . import types as ty
+from .expressions import (
+    CE,
+    CompileError,
+    Ctx,
+    ExprCompiler,
+    Scope,
+    each_value_sql,
+    free_vars,
+    is_aggregate,
+    json_path,
+    sql_in_list,
+)
+from .types import Kind, T
+
+_INPUT_ALIAS = "p"
+_OPT_ALIAS = "o"
+_SEED_ALIAS = "s"
+_ONE_COLUMN = "1 AS c_one"
+# In a live set: every variable is live (a `WITH *` / `RETURN *` follows).
+ALL_LIVE = "*"
+
+DECODE_RAW = "raw"
+DECODE_BOOL = "bool"
+DECODE_JSON = "json"
+DECODE_NULL = "null"
+
+
+@dataclass
+class VarInfo:
+    col: str
+    t: T
+    names: tuple[str, ...] = ()
+    # Set for a value read from a single-row stage: the SQL that reads it.
+    const_sql: str | None = None
+
+
+@dataclass
+class Stage:
+    """A binding table: a CTE (or temp table) and the variables it holds."""
+
+    name: str
+    vars: dict[str, VarInfo]
+    cols: list[str]
+    # At most one row, so its variables can be read with a scalar subquery.
+    single_row: bool = False
+
+    def scope(self, alias: str) -> Scope:
+        scope = Scope()
+        for var, info in self.vars.items():
+            if info.const_sql is not None:
+                ce = CE(info.const_sql, info.t, None, info.names, const=True)
+            else:
+                ce = CE(f"{alias}.{info.col}", info.t, None, info.names)
+            scope = scope.with_var(var, ce)
+        return scope
+
+    def carried(self, live: set[str]) -> list[tuple[str, VarInfo]]:
+        return [
+            (var, info)
+            for var, info in self.vars.items()
+            if info.const_sql is None and _is_live(var, live)
+        ]
+
+    def consts(self, live: set[str]) -> dict[str, VarInfo]:
+        return {
+            var: info
+            for var, info in self.vars.items()
+            if info.const_sql is not None and _is_live(var, live)
+        }
+
+
+def _is_live(var: str, live: set[str]) -> bool:
+    return ALL_LIVE in live or var in live
+
+
+@dataclass
+class OutputColumn:
+    name: str
+    decode: str
+
+
+@dataclass
+class Pipeline:
+    ctes: list[tuple[str, str]] = field(default_factory=list)
+
+    def add(self, name: str, sql: str) -> None:
+        self.ctes.append((name, sql))
+
+    def with_clause(self) -> str:
+        if not self.ctes:
+            return ""
+        body = ",\n".join(f"{name} AS ({sql})" for name, sql in self.ctes)
+        return f"WITH RECURSIVE {body}\n"
+
+
+def decode_for(t: T) -> str:
+    if t.kind == Kind.BOOL:
+        return DECODE_BOOL
+    if t.kind == Kind.NULL:
+        return DECODE_NULL
+    if t.is_entity or t.is_json:
+        return DECODE_JSON
+    return DECODE_RAW
+
+
+# ------------------------------------------------------------------- liveness
+
+
+def clause_refs(clause: a.Clause) -> set[str]:
+    """Variables a clause reads; ALL_LIVE for a `*` projection."""
+    if isinstance(clause, (a.Match, a.Create)):
+        out: set[str] = set()
+        for pattern in clause.patterns:
+            out |= _pattern_refs(pattern)
+        if isinstance(clause, a.Match) and clause.where is not None:
+            out |= free_vars(clause.where)
+        return out
+    if isinstance(clause, a.Unwind):
+        return free_vars(clause.expr)
+    if isinstance(clause, a.Projection):
+        return _projection_refs(clause)
+    if isinstance(clause, a.Merge):
+        out = _pattern_refs(clause.pattern)
+        for item in (*clause.on_create, *clause.on_match):
+            out |= _set_refs(item)
+        return out
+    if isinstance(clause, a.SetClause):
+        out = set()
+        for item in clause.items:
+            out |= _set_refs(item)
+        return out
+    if isinstance(clause, a.Remove):
+        return {item.var for item in clause.items}
+    if isinstance(clause, a.Delete):
+        return _union_vars(clause.exprs)
+    if isinstance(clause, a.Foreach):
+        out = free_vars(clause.source)
+        for inner in clause.clauses:
+            out |= clause_refs(inner) - {clause.var}
+        return out
+    if isinstance(clause, a.Call):
+        out = _union_vars(clause.args)
+        if clause.where is not None:
+            out |= free_vars(clause.where) - {y.alias for y in clause.yields}
+        return out
+    return set()
+
+
+def _union_vars(exprs: tuple[a.Expr, ...]) -> set[str]:
+    out: set[str] = set()
+    for e in exprs:
+        out |= free_vars(e)
+    return out
+
+
+def _projection_refs(proj: a.Projection) -> set[str]:
+    if proj.star:
+        return {ALL_LIVE}
+    out = _union_vars(tuple(item.expr for item in proj.items))
+    # ORDER BY may also read variables from before the projection.
+    aliases = {item.alias for item in proj.items}
+    out |= _union_vars(tuple(s.expr for s in proj.order)) - aliases
+    return out | _union_vars(tuple(x for x in (proj.skip, proj.limit) if x is not None))
+
+
+def _pattern_refs(pattern: a.PathPattern) -> set[str]:
+    out: set[str] = set()
+    for item in (*pattern.nodes, *pattern.rels):
+        if item.var:
+            out.add(item.var)
+        if item.props is not None:
+            out |= free_vars(item.props)
+    return out
+
+
+def _set_refs(item: a.SetItem) -> set[str]:
+    out = {item.var}
+    if item.value is not None:
+        out |= free_vars(item.value)
+    return out
+
+
+def live_after(clauses: tuple[a.Clause, ...]) -> list[set[str]]:
+    """For each clause, the variables some later clause reads."""
+    result: list[set[str]] = [set() for _ in clauses]
+    acc: set[str] = set()
+    for i in range(len(clauses) - 1, -1, -1):
+        result[i] = set(acc)
+        refs = clause_refs(clauses[i])
+        if isinstance(clauses[i], a.Projection) and ALL_LIVE not in refs:
+            # A projection ends the scope: before it, only its inputs matter.
+            acc = refs
+        else:
+            acc |= refs
+    return result
+
+
+# ------------------------------------------------------------------- compiler
+
+
+class QueryCompiler:
+    def __init__(self, ctx: Ctx) -> None:
+        self.ctx = ctx
+        self.x = ExprCompiler(ctx)
+
+    def start_stage(self, pipeline: Pipeline) -> Stage:
+        name = self.ctx.fresh("eg_s")
+        pipeline.add(name, f"SELECT {_ONE_COLUMN}")
+        return Stage(name, {}, [], single_row=True)
+
+    def _new_col(self) -> str:
+        return self.ctx.fresh("c")
+
+    def clause(
+        self, pipeline: Pipeline, stage: Stage, clause: a.Clause, live: set[str]
+    ) -> Stage:
+        if isinstance(clause, a.Match):
+            if clause.optional:
+                return self._optional_match(pipeline, stage, clause, live)
+            return self._match(pipeline, stage, clause, live)
+        if isinstance(clause, a.Unwind):
+            return self._unwind(pipeline, stage, clause, live)
+        if isinstance(clause, a.Projection) and not clause.is_return:
+            return self._with(pipeline, stage, clause)
+        raise CompileError(EG_ERR_UNSUPPORTED.format(what=type(clause).__name__))
+
+    def _extend(
+        self,
+        pipeline: Pipeline,
+        stage: Stage,
+        live: set[str],
+        source: str,
+        added: list[tuple[str, str, VarInfo]],
+        tail: str = "",
+    ) -> Stage:
+        """A stage of the live input variables plus `added` (var, sql, info)."""
+        name = self.ctx.fresh("eg_s")
+        out_vars = stage.consts(live)
+        cols: list[str] = []
+        select: list[str] = []
+        for var, info in stage.carried(live):
+            out_vars[var] = info
+            cols.append(info.col)
+            select.append(f"{_INPUT_ALIAS}.{info.col}")
+        for var, sql, info in added:
+            out_vars[var] = info
+            cols.append(info.col)
+            select.append(f"{sql} AS {info.col}")
+        pipeline.add(
+            name, f"SELECT {', '.join(select) or _ONE_COLUMN} FROM {source}{tail}"
+        )
+        return Stage(name, out_vars, cols)
+
+    # ------------------------------------------------------------------ MATCH
+
+    def _match(
+        self, pipeline: Pipeline, stage: Stage, m: a.Match, live: set[str]
+    ) -> Stage:
+        conjuncts = _conjuncts(m.where) if m.where is not None else []
+        builder = _MatchBuilder(self, pipeline, stage, conjuncts)
+        for pattern in m.patterns:
+            builder.add_pattern(pattern)
+        conds = list(builder.conds)
+        if m.where is not None:
+            conds.append(self.x.boolean(self.x.compile(m.where, builder.scope)))
+        conds.extend(builder.uniqueness())
+        added = [
+            (var, ce.sql, VarInfo(self._new_col(), ce.t, ce.names))
+            for var, ce in builder.new_vars.items()
+            if _is_live(var, live)
+        ]
+        where = f" WHERE {' AND '.join(f'({c})' for c in conds)}" if conds else ""
+        return self._extend(
+            pipeline, stage, live, ", ".join(builder.from_items), added, where
+        )
+
+    def _optional_match(
+        self, pipeline: Pipeline, stage: Stage, m: a.Match, live: set[str]
+    ) -> Stage:
+        used = clause_refs(m)
+        consts = stage.consts(used)
+        inputs = dict(stage.carried(used))
+        used_cols = [info.col for info in inputs.values()]
+        inp = self.ctx.fresh("eg_s")
+        if used_cols:
+            pipeline.add(
+                inp, f"SELECT DISTINCT {', '.join(used_cols)} FROM {stage.name}"
+            )
+        else:
+            pipeline.add(inp, f"SELECT {_ONE_COLUMN}")
+        inner = Stage(inp, {**consts, **inputs}, used_cols)
+        inner_live = live | set(inputs)
+        matched = self._match(
+            pipeline, inner, a.Match(False, m.patterns, m.where), inner_live
+        )
+        on = " AND ".join(f"{_OPT_ALIAS}.{c} IS {_INPUT_ALIAS}.{c}" for c in used_cols)
+        added = [
+            (var, f"{_OPT_ALIAS}.{info.col}", info)
+            for var, info in matched.vars.items()
+            if var not in stage.vars and info.const_sql is None
+        ]
+        source = (
+            f"{stage.name} AS {_INPUT_ALIAS} LEFT JOIN {matched.name} AS {_OPT_ALIAS} "
+            f"ON {on or '1'}"
+        )
+        return self._extend(pipeline, stage, live, source, added)
+
+    # ----------------------------------------------------------------- UNWIND
+
+    def _unwind(
+        self, pipeline: Pipeline, stage: Stage, u: a.Unwind, live: set[str]
+    ) -> Stage:
+        source = self.x.compile(u.expr, stage.scope(_INPUT_ALIAS))
+        alias = self.ctx.fresh("je")
+        elem = (source.t.elem if source.t.kind == Kind.LIST else None) or ty.ANY
+        if source.t.kind not in (Kind.LIST, Kind.ANY, Kind.NULL):
+            elem = source.t
+        added = [(u.var, each_value_sql(alias, elem), VarInfo(self._new_col(), elem))]
+        from_sql = f"{stage.name} AS {_INPUT_ALIAS}, json_each({self.x.jsonv(source)}) AS {alias}"
+        # LIMIT -1 keeps SQLite from flattening the unwound rows into the
+        # next MATCH: flattened, its planner put json_each innermost and
+        # scanned the whole label per row (6 s for 200 rows; 0.7 ms after).
+        return self._extend(pipeline, stage, live, from_sql, added, " LIMIT -1")
+
+    # --------------------------------------------------------- WITH / RETURN
+
+    def _project(
+        self, stage: Stage, proj: a.Projection, for_output: bool
+    ) -> tuple[str, dict[str, VarInfo], list[str], list[OutputColumn], bool]:
+        scope = stage.scope(_INPUT_ALIAS)
+        items: list[tuple[str, CE, bool]] = []
+        if proj.star:
+            items.extend((var, scope.get(var), False) for var in stage.vars)
+        for item in proj.items:
+            items.append(
+                (item.alias, self.x.compile(item.expr, scope), is_aggregate(item.expr))
+            )
+        aggregating = any(agg for _, _, agg in items)
+        has_keys = any(not agg for _, _, agg in items)
+        select: list[str] = []
+        group_by: list[str] = []
+        new_vars: dict[str, VarInfo] = {}
+        cols: list[str] = []
+        outputs: list[OutputColumn] = []
+        alias_scope = Scope(scope.binds)
+        for alias, ce, agg in items:
+            col = self._new_col()
+            select.append(f"{self.x.output(ce) if for_output else ce.sql} AS {col}")
+            # A constant key is the same in every group: grouping by it
+            # would only make SQLite compare a large value per row.
+            if aggregating and not agg and not ce.const:
+                group_by.append(ce.sql)
+            new_vars[alias] = VarInfo(col, ce.t, ce.names)
+            cols.append(col)
+            outputs.append(OutputColumn(alias, decode_for(ce.t)))
+            alias_scope = alias_scope.with_var(alias, ce)
+        sql = (
+            f"SELECT {'DISTINCT ' if proj.distinct else ''}{', '.join(select)} "
+            f"FROM {stage.name} AS {_INPUT_ALIAS}"
+        )
+        if group_by:
+            sql += f" GROUP BY {', '.join(group_by)}"
+        elif aggregating and has_keys:
+            # Grouping keys over no rows give no groups, unlike a bare
+            # aggregate, which gives one row.
+            sql += " HAVING count(*) > 0"
+        order = self._order_by(proj, alias_scope)
+        if order:
+            sql += f" ORDER BY {order}"
+        sql += self._limit(proj, scope)
+        single_row = (aggregating and not group_by) or (
+            stage.single_row and not aggregating
+        )
+        return sql, new_vars, cols, outputs, single_row
+
+    def _order_by(self, proj: a.Projection, scope: Scope) -> str:
+        parts = []
+        for item in proj.order:
+            ce = self.x.compile(item.expr, scope)
+            key = ce.sql if ce.t.is_entity else self.x.native(ce)
+            if item.descending:
+                parts.append(f"{key} DESC NULLS FIRST")
+            else:
+                parts.append(f"{key} ASC NULLS LAST")
+        return ", ".join(parts)
+
+    def _limit(self, proj: a.Projection, scope: Scope) -> str:
+        if proj.limit is None and proj.skip is None:
+            return ""
+        limit = self.x.native(self.x.compile(proj.limit, scope)) if proj.limit else "-1"
+        skip = self.x.native(self.x.compile(proj.skip, scope)) if proj.skip else "0"
+        return f" LIMIT {limit} OFFSET {skip}"
+
+    def _with(self, pipeline: Pipeline, stage: Stage, proj: a.Projection) -> Stage:
+        sql, new_vars, cols, _, single_row = self._project(
+            stage, proj, for_output=False
+        )
+        name = self.ctx.fresh("eg_s")
+        pipeline.add(name, sql)
+        out = Stage(name, new_vars, cols, single_row)
+        if single_row:
+            # Later stages read these back once; their own rows still come
+            # from this stage, so an empty one still empties what follows.
+            out = Stage(
+                name,
+                {
+                    var: VarInfo(
+                        info.col, info.t, info.names, f"(SELECT {info.col} FROM {name})"
+                    )
+                    for var, info in new_vars.items()
+                },
+                [],
+                single_row=True,
+            )
+        if proj.where is None:
+            return out
+        filtered = self.ctx.fresh("eg_s")
+        cond = self.x.boolean(self.x.compile(proj.where, out.scope(_INPUT_ALIAS)))
+        select = ", ".join(out.cols) or _ONE_COLUMN
+        pipeline.add(
+            filtered, f"SELECT {select} FROM {name} AS {_INPUT_ALIAS} WHERE ({cond})"
+        )
+        return Stage(filtered, out.vars, out.cols, out.single_row)
+
+    def returning(
+        self, stage: Stage, proj: a.Projection
+    ) -> tuple[str, list[OutputColumn], list[str]]:
+        sql, _, cols, outputs, _ = self._project(stage, proj, for_output=True)
+        return sql, outputs, cols
+
+    def project_rows(self, stage: Stage) -> tuple[str, list[str]]:
+        """Every variable of a stage as a plain column, for materializing it."""
+        scope = stage.scope(_INPUT_ALIAS)
+        parts = [
+            f"{scope.get(var).sql} AS {info.col}" for var, info in stage.vars.items()
+        ]
+        cols = [info.col for info in stage.vars.values()]
+        select = ", ".join(parts) or _ONE_COLUMN
+        return f"SELECT {select} FROM {stage.name} AS {_INPUT_ALIAS}", cols
+
+
+class _MatchBuilder:
+    """Accumulates the FROM items and conditions of one MATCH clause."""
+
+    def __init__(
+        self,
+        qc: QueryCompiler,
+        pipeline: Pipeline,
+        stage: Stage,
+        where: list[a.Expr],
+    ) -> None:
+        self.x = qc.x
+        self.ctx = qc.ctx
+        self.pipeline = pipeline
+        self.stage = stage
+        self.scope = stage.scope(_INPUT_ALIAS)
+        self.from_items = [f"{stage.name} AS {_INPUT_ALIAS}"]
+        self.conds: list[str] = []
+        self.new_vars: dict[str, CE] = {}
+        self.fixed_rels: list[str] = []
+        # The WHERE clause's conjuncts; those on one start node alone also
+        # narrow where a variable-length walk begins.
+        self.where = where
+
+    def add_pattern(self, pattern: a.PathPattern) -> None:
+        if pattern.var is not None:
+            raise CompileError(EG_ERR_UNSUPPORTED.format(what="path variables"))
+        nodes = [self._node(n) for n in pattern.nodes]
+        for i, rel in enumerate(pattern.rels):
+            if rel.var_length is not None:
+                self._var_length(
+                    rel, pattern.nodes[i], pattern.nodes[i + 1], nodes[i], nodes[i + 1]
+                )
+            else:
+                self._rel(rel, nodes[i], nodes[i + 1])
+
+    def _bind(self, var: str, ce: CE) -> None:
+        self.new_vars[var] = ce
+        self.scope = self.scope.with_var(var, ce)
+
+    def _node(self, np: a.NodePattern) -> CE:
+        alias = self.ctx.fresh("n")
+        self.from_items.append(f"cgr_nodes AS {alias}")
+        bound = self.scope.get(np.var) if np.var and self.scope.has(np.var) else None
+        if bound is not None:
+            if bound.t.kind not in (Kind.NODE, Kind.ANY, Kind.NULL):
+                raise CompileError(EG_ERR_NOT_NODE.format(name=np.var))
+            self.conds.append(f"{alias}.id = {bound.sql}")
+        names = np.labels or (bound.names if bound is not None else ())
+        if np.labels:
+            self.conds.append(f"{alias}.label IN {sql_in_list(np.labels)}")
+        ce = CE(f"{alias}.id", ty.NODE, alias, names)
+        self._prop_conditions(alias, np.props, names, is_node=True)
+        if np.var and bound is None:
+            self._bind(np.var, ce)
+        elif np.var and bound is not None:
+            # Same node, now joined: later reads use the joined row.
+            self.scope = self.scope.with_var(
+                np.var, CE(bound.sql, ty.NODE, alias, names, const=bound.const)
+            )
+        return ce
+
+    def _prop_conditions(
+        self, alias: str, props: a.Expr | None, names: tuple[str, ...], is_node: bool
+    ) -> None:
+        if props is None:
+            return
+        if not isinstance(props, a.MapLit):
+            raise CompileError(
+                EG_ERR_UNSUPPORTED.format(what="parameter property maps in patterns")
+            )
+        for key, value in props.items:
+            rhs = self.x.native(self.x.compile(value, self.scope))
+            if is_node and _is_key(names, key):
+                self.conds.append(f"{alias}.key = {rhs}")
+            else:
+                self.conds.append(
+                    f"json_extract({alias}.props, {json_path(key)}) = {rhs}"
+                )
+
+    def _rel(self, rp: a.RelPattern, left: CE, right: CE) -> None:
+        alias = self.ctx.fresh("r")
+        self.from_items.append(f"cgr_edges AS {alias}")
+        if rp.types:
+            self.conds.append(f"{alias}.type IN {sql_in_list(rp.types)}")
+        lid, rid = left.sql, right.sql
+        if rp.direction == EgDirection.OUT:
+            self.conds.append(f"{alias}.src = {lid} AND {alias}.dst = {rid}")
+        elif rp.direction == EgDirection.IN:
+            self.conds.append(f"{alias}.dst = {lid} AND {alias}.src = {rid}")
+        else:
+            self.conds.append(
+                f"(({alias}.src = {lid} AND {alias}.dst = {rid}) OR "
+                f"({alias}.dst = {lid} AND {alias}.src = {rid} AND {alias}.src <> {alias}.dst))"
+            )
+        self._prop_conditions(alias, rp.props, rp.types, is_node=False)
+        if rp.var:
+            if self.scope.has(rp.var):
+                bound = self.scope.get(rp.var)
+                if bound.t.kind != Kind.REL:
+                    raise CompileError(EG_ERR_NOT_REL.format(name=rp.var))
+                self.conds.append(f"{alias}.id = {bound.sql}")
+            else:
+                self._bind(rp.var, CE(f"{alias}.id", ty.REL, alias, rp.types))
+        self.fixed_rels.append(alias)
+
+    def uniqueness(self) -> list[str]:
+        rels = self.fixed_rels
+        return [
+            f"{rels[i]}.id <> {rels[j]}.id"
+            for i in range(len(rels))
+            for j in range(i + 1, len(rels))
+        ]
+
+    def _input_seed(self, np: a.NodePattern) -> str | None:
+        """Start ids for a path whose end node the input already binds."""
+        if not np.var or np.var not in self.stage.vars:
+            return None
+        info = self.stage.vars[np.var]
+        if info.const_sql is not None:
+            return f"SELECT {info.const_sql} AS id"
+        return f"SELECT DISTINCT {info.col} AS id FROM {self.stage.name}"
+
+    def _static_seed(self, np: a.NodePattern) -> str | None:
+        """Ids matching what a node pattern and the WHERE say of it alone.
+
+        Seeding a walk from these instead of from its whole label is what
+        keeps `MATCH (m:Module)-[*]->(f) WHERE m.qualified_name IN $qns`
+        from walking out of every module only to keep a handful.
+        """
+        conds = []
+        if np.labels:
+            conds.append(f"{_SEED_ALIAS}.label IN {sql_in_list(np.labels)}")
+        if isinstance(np.props, a.MapLit):
+            for key, value in np.props.items:
+                if free_vars(value):
+                    continue
+                rhs = self.x.native(self.x.compile(value, Scope()))
+                if _is_key(np.labels, key):
+                    conds.append(f"{_SEED_ALIAS}.key = {rhs}")
+                else:
+                    conds.append(
+                        f"json_extract({_SEED_ALIAS}.props, {json_path(key)}) = {rhs}"
+                    )
+        if np.var and np.var not in self.stage.vars:
+            node = CE(f"{_SEED_ALIAS}.id", ty.NODE, _SEED_ALIAS, np.labels)
+            scope = Scope().with_var(np.var, node)
+            for cond in self.where:
+                if free_vars(cond) == {np.var}:
+                    conds.append(self.x.boolean(self.x.compile(cond, scope)))
+        if not conds:
+            return None
+        where = " AND ".join(f"({c})" for c in conds)
+        return f"SELECT {_SEED_ALIAS}.id AS id FROM cgr_nodes AS {_SEED_ALIAS} WHERE {where}"
+
+    def _var_length(
+        self,
+        rp: a.RelPattern,
+        left_np: a.NodePattern,
+        right_np: a.NodePattern,
+        left: CE,
+        right: CE,
+    ) -> None:
+        if rp.var is not None:
+            raise CompileError(EG_ERR_VARLEN_VAR)
+        low, high = rp.var_length or (1, None)
+        forward = True
+        seeds = self._input_seed(left_np)
+        if seeds is None:
+            seeds = self._input_seed(right_np)
+            forward = seeds is None
+        if seeds is None:
+            left_seed = self._static_seed(left_np)
+            right_seed = self._static_seed(right_np)
+            if left_seed is None and right_seed is not None:
+                seeds, forward = right_seed, False
+            else:
+                seeds, forward = left_seed or "SELECT id FROM cgr_nodes", True
+        direction = rp.direction
+        if not forward and direction != EgDirection.BOTH:
+            direction = (
+                EgDirection.IN if direction == EgDirection.OUT else EgDirection.OUT
+            )
+        type_cond = f" AND e.type IN {sql_in_list(rp.types)}" if rp.types else ""
+        if direction == EgDirection.OUT:
+            join, far = f"e.src = v.node{type_cond}", "e.dst"
+        elif direction == EgDirection.IN:
+            join, far = f"e.dst = v.node{type_cond}", "e.src"
+        else:
+            join = f"(e.src = v.node OR e.dst = v.node){type_cond}"
+            far = "(CASE WHEN e.src = v.node THEN e.dst ELSE e.src END)"
+        depth_cond = f"v.depth < {high} AND " if high is not None else ""
+        name = self.ctx.fresh("eg_vl")
+        self.pipeline.add(
+            f"{name}(seed, node, depth, path)",
+            f"SELECT id, id, 0, ',' FROM ({seeds}) "
+            f"UNION ALL SELECT v.seed, {far}, v.depth + 1, v.path || e.id || ',' "
+            f"FROM {name} AS v CROSS JOIN cgr_edges AS e ON {join} "
+            f"WHERE {depth_cond}instr(v.path, ',' || e.id || ',') = 0",
+        )
+        alias = self.ctx.fresh("v")
+        self.from_items.append(f"{name} AS {alias}")
+        seed_side, node_side = (left, right) if forward else (right, left)
+        self.conds.append(f"{alias}.seed = {seed_side.sql}")
+        self.conds.append(f"{alias}.node = {node_side.sql}")
+        if low > 0:
+            self.conds.append(f"{alias}.depth >= {low}")
+
+
+def _conjuncts(e: a.Expr) -> list[a.Expr]:
+    if isinstance(e, a.BinOp) and e.op == EgBinary.AND:
+        return _conjuncts(e.left) + _conjuncts(e.right)
+    return [e]
+
+
+def _is_key(labels: tuple[str, ...], key: str) -> bool:
+    """Whether `key` is the unique-constraint property of every label."""
+    return bool(labels) and all(NODE_UNIQUE_CONSTRAINTS.get(n) == key for n in labels)

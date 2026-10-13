@@ -19,6 +19,7 @@ from .core import *  # noqa: F403
 from .deadcode_roots import *  # noqa: F403
 from .deps import *  # noqa: F403
 from .duplicates import *  # noqa: F403
+from .embedded_graph import *  # noqa: F403
 from .fqn_specs import *  # noqa: F403
 from .graph import *  # noqa: F403
 from .graph import _NODE_LABEL_UNIQUE_KEYS as _NODE_LABEL_UNIQUE_KEYS
