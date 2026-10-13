@@ -79,6 +79,41 @@ def _node_arg(args: Sequence[SqlValue], i: int) -> int | None:
     return value if isinstance(value, int) else None
 
 
+def _spread_rank(
+    nodes: list[int], out: dict[int, list[int]], rank: dict[int, float]
+) -> dict[int, float]:
+    """The rank each node receives along its in-edges in one iteration."""
+    nxt = dict.fromkeys(nodes, 0.0)
+    for v in nodes:
+        targets = out.get(v)
+        if targets:
+            share = rank[v] / len(targets)
+            for w in targets:
+                nxt[w] += share
+    return nxt
+
+
+def _pagerank_step(
+    nodes: list[int], out: dict[int, list[int]], rank: dict[int, float], damping: float
+) -> float:
+    """Advance `rank` one iteration in place; return how far it moved."""
+    n = len(nodes)
+    # A plain running sum, not sum(): Python's compensates rounding,
+    # and the Rust path must produce the same ranks bit for bit.
+    dangling = 0.0
+    for v in nodes:
+        if not out.get(v):
+            dangling += rank[v]
+    nxt = _spread_rank(nodes, out, rank)
+    base = (1.0 - damping) / n + damping * dangling / n
+    delta = 0.0
+    for v in nodes:
+        value = base + damping * nxt[v]
+        delta += abs(value - rank[v])
+        rank[v] = value
+    return delta
+
+
 def _pagerank(conn: sqlite3.Connection, args: Sequence[SqlValue]) -> Iterable[Record]:
     iterations = int(_number_arg(args, 0, _DEFAULT_ITERATIONS))
     damping = _number_arg(args, 1, _DEFAULT_DAMPING)
@@ -90,26 +125,7 @@ def _pagerank(conn: sqlite3.Connection, args: Sequence[SqlValue]) -> Iterable[Re
     rank = dict.fromkeys(nodes, 1.0 / n)
     for _ in range(iterations):
         check_deadline()
-        nxt = dict.fromkeys(nodes, 0.0)
-        # A plain running sum, not sum(): Python's compensates rounding,
-        # and the Rust path must produce the same ranks bit for bit.
-        dangling = 0.0
-        for v in nodes:
-            if not out.get(v):
-                dangling += rank[v]
-        for v in nodes:
-            targets = out.get(v)
-            if targets:
-                share = rank[v] / len(targets)
-                for w in targets:
-                    nxt[w] += share
-        base = (1.0 - damping) / n + damping * dangling / n
-        delta = 0.0
-        for v in nodes:
-            value = base + damping * nxt[v]
-            delta += abs(value - rank[v])
-            rank[v] = value
-        if delta < epsilon:
+        if _pagerank_step(nodes, out, rank, damping) < epsilon:
             break
     return [{EgProcCol.NODE: v, EgProcCol.RANK: rank[v]} for v in nodes]
 
@@ -128,7 +144,7 @@ def _degree(conn: sqlite3.Connection, args: Sequence[SqlValue]) -> Iterable[Reco
     ]
 
 
-def _wcc(conn: sqlite3.Connection, args: Sequence[SqlValue]) -> Iterable[Record]:
+def _wcc(conn: sqlite3.Connection, _args: Sequence[SqlValue]) -> Iterable[Record]:
     nodes, _, edges = _graph(conn)
     parent = {v: v for v in nodes}
 
@@ -149,56 +165,93 @@ def _wcc(conn: sqlite3.Connection, args: Sequence[SqlValue]) -> Iterable[Record]
     ]
 
 
+class _TarjanState:
+    """The bookkeeping Tarjan's algorithm carries across its work stack."""
+
+    def __init__(self) -> None:
+        self.index: dict[int, int] = {}
+        self.low: dict[int, int] = {}
+        self.on_stack: set[int] = set()
+        self.stack: list[int] = []
+        self.comps: list[list[int]] = []
+        self.counter = 0
+
+    def enter(self, v: int) -> None:
+        """Number `v` and push it onto the current path."""
+        self.index[v] = self.low[v] = self.counter
+        self.counter += 1
+        self.stack.append(v)
+        self.on_stack.add(v)
+
+    def pop_component(self, v: int) -> None:
+        """Unwind the path down to `v`, which closes one component."""
+        comp = []
+        while True:
+            w = self.stack.pop()
+            self.on_stack.discard(w)
+            comp.append(w)
+            if w == v:
+                break
+        self.comps.append(comp)
+
+
+def _tarjan_step(
+    state: _TarjanState, out: dict[int, list[int]], work: list[tuple[int, int]]
+) -> None:
+    """Take one frame off the work stack: follow its next edge, or finish it."""
+    v, i = work.pop()
+    if i == 0:
+        state.enter(v)
+    targets = out.get(v, [])
+    if i < len(targets):
+        work.append((v, i + 1))
+        w = targets[i]
+        if w not in state.index:
+            work.append((w, 0))
+        elif w in state.on_stack:
+            state.low[v] = min(state.low[v], state.index[w])
+        return
+    if state.low[v] == state.index[v]:
+        state.pop_component(v)
+    if work:
+        parent = work[-1][0]
+        state.low[parent] = min(state.low[parent], state.low[v])
+
+
 def _tarjan(nodes: list[int], out: dict[int, list[int]]) -> list[list[int]]:
-    index: dict[int, int] = {}
-    low: dict[int, int] = {}
-    on_stack: set[int] = set()
-    stack: list[int] = []
-    comps: list[list[int]] = []
-    counter = 0
+    state = _TarjanState()
     for root in nodes:
-        if root in index:
+        if root in state.index:
             continue
         check_deadline()
         work = [(root, 0)]
         while work:
-            v, i = work.pop()
-            if i == 0:
-                index[v] = low[v] = counter
-                counter += 1
-                stack.append(v)
-                on_stack.add(v)
-            targets = out.get(v, [])
-            if i < len(targets):
-                work.append((v, i + 1))
-                w = targets[i]
-                if w not in index:
-                    work.append((w, 0))
-                elif w in on_stack:
-                    low[v] = min(low[v], index[w])
-                continue
-            if low[v] == index[v]:
-                comp = []
-                while True:
-                    w = stack.pop()
-                    on_stack.discard(w)
-                    comp.append(w)
-                    if w == v:
-                        break
-                comps.append(comp)
-            if work:
-                parent = work[-1][0]
-                low[parent] = min(low[parent], low[v])
-    return comps
+            _tarjan_step(state, out, work)
+    return state.comps
 
 
-def _scc(conn: sqlite3.Connection, args: Sequence[SqlValue]) -> Iterable[Record]:
+def _scc(conn: sqlite3.Connection, _args: Sequence[SqlValue]) -> Iterable[Record]:
     nodes, out, _ = _graph(conn)
     return [{EgProcCol.COMPONENTS: _tarjan(nodes, out)}]
 
 
+def _cycles_through(
+    start: int, members: set[int], out: dict[int, list[int]], cycles: list[list[int]]
+) -> None:
+    """Append the cycles through `start` that stay within `members`."""
+    stack = [(start, [start])]
+    while stack and len(cycles) < _MAX_CYCLES:
+        check_deadline()
+        v, path = stack.pop()
+        for w in out.get(v, []):
+            if w == start:
+                cycles.append(path)
+            elif w in members and w > start and w not in path:
+                stack.append((w, [*path, w]))
+
+
 def _simple_cycles(
-    conn: sqlite3.Connection, args: Sequence[SqlValue]
+    conn: sqlite3.Connection, _args: Sequence[SqlValue]
 ) -> Iterable[Record]:
     nodes, out, _ = _graph(conn)
     cycles: list[list[int]] = []
@@ -209,15 +262,7 @@ def _simple_cycles(
         for start in sorted(comp):
             # Cycles through `start` using only members >= start: each cycle
             # is reported once, from its smallest node.
-            stack = [(start, [start])]
-            while stack and len(cycles) < _MAX_CYCLES:
-                check_deadline()
-                v, path = stack.pop()
-                for w in out.get(v, []):
-                    if w == start:
-                        cycles.append(path)
-                    elif w in members and w > start and w not in path:
-                        stack.append((w, [*path, w]))
+            _cycles_through(start, members, out, cycles)
             members.discard(start)
             if len(cycles) >= _MAX_CYCLES:
                 return [{EgProcCol.CYCLES: cycles}]
@@ -232,7 +277,7 @@ def _find_cycle(conn: sqlite3.Connection, args: Sequence[SqlValue]) -> Iterable[
     return [{EgProcCol.CYCLE: []}]
 
 
-def _toposort(conn: sqlite3.Connection, args: Sequence[SqlValue]) -> Iterable[Record]:
+def _toposort(conn: sqlite3.Connection, _args: Sequence[SqlValue]) -> Iterable[Record]:
     nodes, out, _ = _graph(conn)
     indegree = dict.fromkeys(nodes, 0)
     for v in nodes:
@@ -279,37 +324,53 @@ def _shortest_path(
     return [{EgProcCol.PATH: path[::-1]}]
 
 
+def _shortest_path_counts(
+    s: int, nodes: list[int], out: dict[int, list[int]]
+) -> tuple[list[int], dict[int, list[int]], dict[int, float]]:
+    """Brandes' forward pass from `s`: the nodes in the order reached, each
+    one's predecessors on a shortest path, and its count of shortest paths."""
+    stack: list[int] = []
+    preds: dict[int, list[int]] = defaultdict(list)
+    sigma = dict.fromkeys(nodes, 0.0)
+    sigma[s] = 1.0
+    dist = dict.fromkeys(nodes, -1)
+    dist[s] = 0
+    queue = deque([s])
+    while queue:
+        v = queue.popleft()
+        stack.append(v)
+        for w in out.get(v, []):
+            if dist[w] < 0:
+                dist[w] = dist[v] + 1
+                queue.append(w)
+            if dist[w] == dist[v] + 1:
+                sigma[w] += sigma[v]
+                preds[w].append(v)
+    return stack, preds, sigma
+
+
+def _add_dependencies(
+    s: int, nodes: list[int], out: dict[int, list[int]], score: dict[int, float]
+) -> None:
+    """Brandes' backward pass: add `s`'s dependency on each node to its score."""
+    stack, preds, sigma = _shortest_path_counts(s, nodes, out)
+    delta = dict.fromkeys(nodes, 0.0)
+    while stack:
+        w = stack.pop()
+        for v in preds[w]:
+            delta[v] += sigma[v] / sigma[w] * (1 + delta[w])
+        if w != s:
+            score[w] += delta[w]
+
+
 def _betweenness(
-    conn: sqlite3.Connection, args: Sequence[SqlValue]
+    conn: sqlite3.Connection, _args: Sequence[SqlValue]
 ) -> Iterable[Record]:
     nodes, out, _ = _graph(conn)
     score = dict.fromkeys(nodes, 0.0)
     for s in nodes:
         check_deadline()
-        stack: list[int] = []
-        preds: dict[int, list[int]] = defaultdict(list)
-        sigma = dict.fromkeys(nodes, 0.0)
-        sigma[s] = 1.0
-        dist = dict.fromkeys(nodes, -1)
-        dist[s] = 0
-        queue = deque([s])
-        while queue:
-            v = queue.popleft()
-            stack.append(v)
-            for w in out.get(v, []):
-                if dist[w] < 0:
-                    dist[w] = dist[v] + 1
-                    queue.append(w)
-                if dist[w] == dist[v] + 1:
-                    sigma[w] += sigma[v]
-                    preds[w].append(v)
-        delta = dict.fromkeys(nodes, 0.0)
-        while stack:
-            w = stack.pop()
-            for v in preds[w]:
-                delta[v] += sigma[v] / sigma[w] * (1 + delta[w])
-            if w != s:
-                score[w] += delta[w]
+        _add_dependencies(s, nodes, out, score)
     n = len(nodes)
     scale = 1.0 / ((n - 1) * (n - 2)) if n > 2 else 1.0
     return [{EgProcCol.NODE: v, EgProcCol.BETWEENNESS: score[v] * scale} for v in nodes]

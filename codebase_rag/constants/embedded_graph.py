@@ -39,8 +39,8 @@ class EgSetKind(StrEnum):
 
 
 class EgRemoveKind(StrEnum):
-    PROP = "prop"
-    LABEL = "label"
+    PROP = EgSetKind.PROP.value
+    LABEL = EgSetKind.LABEL.value
 
 
 class EgQuantifier(StrEnum):
@@ -392,11 +392,11 @@ class EgSqlFn(StrEnum):
     functions `embedded_graph.functions` registers on every connection."""
 
     LOWER = "lower"
-    UPPER = "upper"
+    UPPER = EgFn.UPPER.value
     TRIM = "trim"
     LTRIM = "ltrim"
     RTRIM = "rtrim"
-    REPLACE = "replace"
+    REPLACE = EgFn.REPLACE.value
     ABS = "abs"
     COALESCE = "coalesce"
     SUBSTR = "substr"
@@ -470,10 +470,10 @@ EG_RUST_READER = "Reader"
 EG_RUST_WRITER = "Writer"
 EG_RUST_DECODE_ROWS = "decode_rows"
 # Property types as the node and relationship schemas declare them.
-EG_SCHEMA_STRING = "string"
-EG_SCHEMA_INT = "int"
+EG_SCHEMA_STRING = EgKind.STRING.value
+EG_SCHEMA_INT = EgKind.INT.value
 EG_SCHEMA_BOOLEAN = "boolean"
-EG_SCHEMA_FLOAT = "float"
+EG_SCHEMA_FLOAT = EgKind.FLOAT.value
 EG_SCHEMA_LIST_OPEN = "list["
 EG_SCHEMA_LIST_CLOSE = "]"
 # How SQLite's version prints, for the version error.
@@ -547,6 +547,9 @@ CREATE INDEX IF NOT EXISTS cgr_edges_dst ON cgr_edges(dst, type);
 CREATE INDEX IF NOT EXISTS cgr_edges_type ON cgr_edges(type);
 CREATE TABLE IF NOT EXISTS cgr_meta(name TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
+# Its node and relationship tables, as sqlite_stat1 rows name them.
+EG_NODES_TABLE = "cgr_nodes"
+EG_EDGES_TABLE = "cgr_edges"
 EG_PRAGMAS: tuple[str, ...] = (
     "PRAGMA journal_mode=WAL",
     "PRAGMA synchronous=NORMAL",
@@ -566,12 +569,12 @@ EG_PRAGMA_HEAP_LIMIT = "PRAGMA hard_heap_limit={bytes}"
 # 166k-relationship cgr graph, the plans behind its 154-query parity run;
 # the shape (unique keys, a few edges per node and type) holds at any size.
 EG_PLANNER_STATISTICS: tuple[tuple[str, str, str], ...] = (
-    ("cgr_nodes", "cgr_nodes_label", "38183 3819"),
-    ("cgr_nodes", "cgr_nodes_key", "38183 1"),
-    ("cgr_nodes", "cgr_nodes_label_key", "38183 3819 1"),
-    ("cgr_edges", "cgr_edges_type", "166107 11074"),
-    ("cgr_edges", "cgr_edges_src", "166107 6 4"),
-    ("cgr_edges", "cgr_edges_dst", "166107 5 3"),
+    (EG_NODES_TABLE, "cgr_nodes_label", "38183 3819"),
+    (EG_NODES_TABLE, "cgr_nodes_key", "38183 1"),
+    (EG_NODES_TABLE, "cgr_nodes_label_key", "38183 3819 1"),
+    (EG_EDGES_TABLE, "cgr_edges_type", "166107 11074"),
+    (EG_EDGES_TABLE, "cgr_edges_src", "166107 6 4"),
+    (EG_EDGES_TABLE, "cgr_edges_dst", "166107 5 3"),
 )
 # ANALYZE of an empty table creates sqlite_stat1 and writes nothing to it.
 EG_SQL_CREATE_STATS = "ANALYZE cgr_meta"
@@ -618,11 +621,11 @@ EG_COL_STORAGE_VALUE = "value"
 # Value shapes a node or relationship takes in a result row.
 EG_NODE_ID = "id"
 EG_NODE_LABELS = "labels"
-EG_NODE_PROPERTIES = "properties"
+EG_NODE_PROPERTIES = EgFn.PROPERTIES.value
 EG_REL_TYPE = "type"
 EG_REL_START = "start"
 EG_REL_END = "end"
-EG_PATH_NODES = "nodes"
+EG_PATH_NODES = EgFn.NODES.value
 EG_PATH_RELATIONSHIPS = "relationships"
 
 # ----------------------------------------------------------------- errors

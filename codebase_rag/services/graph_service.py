@@ -783,11 +783,21 @@ class MemgraphIngestor:
             return 0, skipped + len(batch_rows)
         lock = self._conn_lock if conn is None else nullcontext()
         with lock:
-            # The Rust extension writes the same rows when it can (native.py).
-            native = _native_graph(target_conn) if self._use_merge else None
-            if native is None or not native.merge_nodes(label, id_key, batch_rows):
-                self._execute_batch_on(target_conn, query, batch_rows)
+            self._write_node_rows(target_conn, label, id_key, query, batch_rows)
         return len(batch_rows), skipped
+
+    def _write_node_rows(
+        self,
+        conn: ConnectionProtocol,
+        label: str,
+        id_key: str,
+        query: str,
+        batch_rows: list[NodeBatchRow],
+    ) -> None:
+        # The Rust extension writes the same rows when it can (native.py).
+        native = _native_graph(conn) if self._use_merge else None
+        if native is None or not native.merge_nodes(label, id_key, batch_rows):
+            self._execute_batch_on(conn, query, batch_rows)
 
     def _flush_node_group_with_own_conn(
         self,
