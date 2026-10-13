@@ -1,5 +1,7 @@
 from typing import NamedTuple, NotRequired, TypedDict
 
+from codebase_rag.types_defs import JsonValue, PropertyValue
+
 
 class NodeKey(NamedTuple):
     kind: str
@@ -144,3 +146,39 @@ class QARecord(TypedDict):
     answered: list[str]
     expected: list[str]
     error: str
+
+
+# --- graph backend parity (issue #386) ---------------------------------------
+class ParityQueryRecording(TypedDict, total=False):
+    """One read query's outcome on one backend: its rows, or its error."""
+
+    columns: list[str]
+    rows: list[list[JsonValue]]
+    ms: float
+    error: str
+
+
+class ParityRecording(TypedDict, total=False):
+    engine: str
+    load_s: float
+    results: dict[str, ParityQueryRecording]
+
+
+class ParityRelationship(TypedDict):
+    from_label: str
+    from_props: dict[str, PropertyValue]
+    type: str
+    props: dict[str, PropertyValue]
+    to_label: str
+    to_props: dict[str, PropertyValue]
+
+
+class ParityNode(TypedDict):
+    labels: list[str]
+    props: dict[str, PropertyValue]
+
+
+class ParityDump(TypedDict):
+    nodes: list[ParityNode]
+    rels: list[ParityRelationship]
+    params: dict[str, PropertyValue]

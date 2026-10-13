@@ -194,3 +194,14 @@ ORACLE_UNAVAILABLE = "Oracle unavailable: {reason}"
 FIRST_TOOL_SUMMARY = (
     "{graph_first}/{total} structural questions went to the graph first"
 )
+
+# --- graph backend parity (issue #386) ---------------------------------------
+PARITY_DUMPED = "Dumped {nodes} nodes and {rels} relationships (project {project})"
+PARITY_LOADED = "Loaded the dump into {engine} in {seconds:.1f}s"
+PARITY_RAN = "Ran {count} read queries on {engine}; wrote {path}"
+PARITY_SUMMARY = (
+    "{engine}: {same}/{total} queries return the same rows as {reference} "
+    "({differ} differ, {errors} error); query time {engine_s:.1f}s vs {reference_s:.1f}s"
+)
+PARITY_DIFFERS = "  differs: {name}"
+PARITY_ERRORS = "  error:   {name}: {error}"
