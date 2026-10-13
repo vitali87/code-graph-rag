@@ -17,7 +17,7 @@ from ...types_defs import (
     JavaSupertypes,
     NodeType,
 )
-from ..utils import module_qn_for_entity, safe_decode_text
+from ..utils import method_signature_arity, module_qn_for_entity, safe_decode_text
 from .type_resolver import JAVA_TYPE_DECL_NODE_TYPES
 from .utils import (
     extract_class_info,
@@ -48,29 +48,6 @@ _JAVA_FULLY_DECLARED_TYPES = frozenset(
     {cs.TS_CLASS_DECLARATION, cs.TS_INTERFACE_DECLARATION}
 )
 _NO_SUPERTYPES = JavaSupertypes({}, frozenset())
-
-
-def _java_signature_arity(qn_or_member: str) -> int | None:
-    # Top-level parameter count of a signatured Java method name
-    # (`resolve(A,B,Map<K, V>)` -> 3, `create()` -> 0); None if unsignatured.
-    # Generic commas (`Map<K, V>`) are nested, so only depth-0 commas separate
-    # parameters. Picks the arity-matching overload for a call.
-    open_idx = qn_or_member.find(cs.CHAR_PAREN_OPEN)
-    if open_idx < 0:
-        return None
-    inner = qn_or_member[open_idx + 1 : qn_or_member.rfind(cs.CHAR_PAREN_CLOSE)]
-    if not inner.strip():
-        return 0
-    depth = 0
-    count = 1
-    for ch in inner:
-        if ch in "<([":
-            depth += 1
-        elif ch in ">)]":
-            depth -= 1
-        elif ch == "," and depth == 0:
-            count += 1
-    return count
 
 
 def _java_param_type_names(qn: str) -> list[str]:
@@ -491,7 +468,7 @@ def _best_overloads(
             return best
     if len(matches) > 1 and arg_count is not None:
         if same_arity := [
-            match for match in matches if _java_signature_arity(match[1]) == arg_count
+            match for match in matches if method_signature_arity(match[1]) == arg_count
         ]:
             return same_arity
     return list(matches[:1])
@@ -1425,7 +1402,7 @@ class JavaMethodResolverMixin:
         )
         # Inferring argument types can resolve nested calls, so it waits until
         # a second candidate of the call's arity makes it worth the cost.
-        if sum(_java_signature_arity(qn) == arg_count for _, qn in family) < 2:
+        if sum(method_signature_arity(qn) == arg_count for _, qn in family) < 2:
             return []
         arg_types = self._infer_arg_types(call_node, local_var_types or {}, module_qn)
         tied = _overload_contenders(
@@ -1436,7 +1413,7 @@ class JavaMethodResolverMixin:
             self._candidate_lookups,
         )
         if all(qn != method_qn for _, qn in tied):
-            if _java_signature_arity(method_qn) != arg_count or all(
+            if method_signature_arity(method_qn) != arg_count or all(
                 at is None for at in arg_types
             ):
                 return []

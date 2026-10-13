@@ -290,7 +290,11 @@ def _decode_profile(
 
 
 def _build_frame(
-    function: _Function | None, strings: list[str], root_prefix: str
+    function: _Function | None,
+    strings: list[str],
+    root_prefix: str,
+    excluded_dir: str,
+    bare_name: Callable[[str], str],
 ) -> FramePoint | None:
     """A project FramePoint for the function, or None if out of scope."""
     if function is None or not (0 < function.filename_index < len(strings)):
@@ -298,13 +302,13 @@ def _build_frame(
     path = strings[function.filename_index]
     if not path.startswith(root_prefix):
         return None
-    if _GO_EXCLUDED_DIR in path[len(root_prefix) :].split("/"):
+    if excluded_dir in path[len(root_prefix) :].split("/"):
         return None
     name = (
         strings[function.name_index] if 0 < function.name_index < len(strings) else ""
     )
     return FramePoint(
-        path=path, qualname=_bare_name(name), line=max(function.start_line, 0)
+        path=path, qualname=bare_name(name), line=max(function.start_line, 0)
     )
 
 
@@ -339,15 +343,16 @@ def convert_pprof_profile(
     output: Path,
     workload: str | None,
     *,
-    build_frame: Callable[[_Function | None, list[str], str], FramePoint | None],
+    excluded_dir: str,
+    bare_name: Callable[[str], str],
     language: str,
     tracer: str,
 ) -> int:
     """Decode a pprof profile and write its project call edges to ``output``.
 
-    Shared by the Go and Rust converters, which differ only in ``build_frame``
-    (symbol demangling and out-of-scope directories) and the header tags. pprof
-    profiles are sampled, so the header is always flagged ``sampled``.
+    Shared by the Go and Rust converters, which differ only in ``bare_name``
+    (symbol demangling), the out-of-scope ``excluded_dir`` and the header tags.
+    pprof profiles are sampled, so the header is always flagged ``sampled``.
     """
     raw = _decompress(profile_path.read_bytes(), profile_path)
     try:
@@ -362,8 +367,12 @@ def convert_pprof_profile(
 
     def _frame(function_id: int) -> FramePoint | None:
         if function_id not in frames:
-            frames[function_id] = build_frame(
-                functions.get(function_id), strings, root_prefix
+            frames[function_id] = _build_frame(
+                functions.get(function_id),
+                strings,
+                root_prefix,
+                excluded_dir,
+                bare_name,
             )
         return frames[function_id]
 
@@ -403,7 +412,8 @@ def convert_pprof(
         repo_root,
         output,
         workload,
-        build_frame=_build_frame,
+        excluded_dir=_GO_EXCLUDED_DIR,
+        bare_name=_bare_name,
         language=cs.TRACE_LANGUAGE_GO,
         tracer=cs.TRACE_TOOL_NAME_PPROF,
     )
