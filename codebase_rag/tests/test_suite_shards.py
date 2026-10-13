@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from codebase_rag import constants as cs
 from codebase_rag.tests.suite_shards import assign_files, parse_shard, split_items
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -97,8 +98,8 @@ class TestSplitItems:
         assert split_items(_suite(sizes), 2, 3) == ([], _suite(sizes))
 
 
-def _collected(*extra: str) -> set[str]:
-    result = subprocess.run(
+def _collect(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
         [
             sys.executable,
             "-m",
@@ -107,22 +108,29 @@ def _collected(*extra: str) -> set[str]:
             "-q",
             "-p",
             "no:cacheprovider",
-            "codebase_rag/tests/test_suite_shards.py",
-            "codebase_rag/tests/test_container_reaper.py",
-            *extra,
+            *args,
         ],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         timeout=300,
         check=False,
+    )
+
+
+def _collected(*extra: str) -> set[str]:
+    result = _collect(
+        "codebase_rag/tests/test_suite_shards.py",
+        "codebase_rag/tests/test_container_reaper.py",
+        *extra,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     return {line for line in result.stdout.splitlines() if "::" in line}
 
 
 def test_the_option_partitions_a_real_collection() -> None:
-    """End to end through conftest: the two halves are the whole, disjointly."""
+    """End to end through the plugin: the two halves are the whole, disjointly."""
     everything = _collected()
     first, second = _collected("--shard", "1/2"), _collected("--shard", "2/2")
     assert first and second
@@ -131,24 +139,6 @@ def test_the_option_partitions_a_real_collection() -> None:
 
 
 def test_a_malformed_shard_is_a_usage_error() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pytest",
-            "--collect-only",
-            "-q",
-            "-p",
-            "no:cacheprovider",
-            "codebase_rag/tests/test_suite_shards.py",
-            "--shard",
-            "3/2",
-        ],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=300,
-        check=False,
-    )
+    result = _collect("codebase_rag/tests/test_suite_shards.py", "--shard", "3/2")
     assert result.returncode == pytest.ExitCode.USAGE_ERROR
     assert "--shard expects" in result.stderr
