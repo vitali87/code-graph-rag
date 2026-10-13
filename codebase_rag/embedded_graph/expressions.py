@@ -758,7 +758,7 @@ def _f_rand(_c: ExprCompiler, _args: list[CE]) -> CE:
     return CE(sq.RANDOM_UNIT, ty.FLOAT)
 
 
-def _f_nodes_unsupported(c: ExprCompiler, args: list[CE]) -> CE:
+def _f_nodes_unsupported(_c: ExprCompiler, _args: list[CE]) -> CE:
     raise CompileError(EG_ERR_UNSUPPORTED.format(what=EG_WHAT_PATH_FUNCTIONS))
 
 
