@@ -4,7 +4,7 @@
 # A node's label-unique key (NODE_UNIQUE_CONSTRAINTS) is lifted into its own
 # column so MERGE and every `{qualified_name: $qn}` lookup are index seeks.
 
-from enum import StrEnum
+from enum import Enum, StrEnum
 
 EG_ENGINE_DISPLAY_NAME = "embedded SQLite"
 EG_DEFAULT_DB_FILENAME = "graph.sqlite"
@@ -14,6 +14,10 @@ EG_BUSY_TIMEOUT_MS = 60_000
 EG_CACHE_SIZE_KIB = 262_144
 EG_STATEMENT_CACHE_SIZE = 512
 EG_COMPILE_CACHE_SIZE = 2048
+# The parameter the ingestor's `UNWIND $batch AS row` writes bind their rows to.
+EG_BATCH_PARAM = "batch"
+# In a live-variable set: every variable is live (`WITH *` / `RETURN *`).
+EG_ALL_LIVE = "*"
 
 
 class EgDirection(StrEnum):
@@ -89,6 +93,47 @@ class EgTok(StrEnum):
     PARAM = "param"
     PUNCT = "punct"
     EOF = "eof"
+
+
+class EgKind(Enum):
+    """The static types the compiler tracks a value by."""
+
+    NODE = "node"
+    REL = "rel"
+    LIST = "list"
+    MAP = "map"
+    BOOL = "bool"
+    INT = "int"
+    FLOAT = "float"
+    STRING = "string"
+    ANY = "any"
+    NULL = "null"
+
+
+class EgDecode(StrEnum):
+    """How the executor turns one result column's SQL value into Python."""
+
+    RAW = "raw"
+    BOOL = "bool"
+    JSON = "json"
+    NULL = "null"
+
+
+class EgParamMode(StrEnum):
+    """How a parameter is bound: as-is, as JSON text, or as the exclusive
+    upper bound of a STARTS WITH prefix range."""
+
+    NATIVE = "native"
+    JSON = "json"
+    UPPER = "upper"
+
+
+class EgForm(StrEnum):
+    """The SQL form the write path evaluates an expression into."""
+
+    RAW = "raw"
+    NATIVE = "native"
+    JSON = "json"
 
 
 class EgKw(StrEnum):
@@ -269,11 +314,154 @@ EG_EXPECT_SET_ITEM = "a SET item"
 EG_EXPECT_SCHEMA = "an index or constraint statement"
 EG_END_OF_QUERY = "end of query"
 
-EG_FUNC_COUNT = "count"
-EG_FUNC_COLLECT = "collect"
+
+class EgFn(StrEnum):
+    """Cypher functions the engine compiles, by the lower-cased name the
+    parser records (Cypher function names are case-insensitive)."""
+
+    ID = "id"
+    ELEMENT_ID = "elementid"
+    LABELS = "labels"
+    TYPE = "type"
+    PROPERTIES = "properties"
+    KEYS = "keys"
+    START_NODE = "startnode"
+    END_NODE = "endnode"
+    COALESCE = "coalesce"
+    TO_LOWER = "tolower"
+    TO_UPPER = "toupper"
+    LOWER = "lower"
+    UPPER = "upper"
+    TRIM = "trim"
+    LTRIM = "ltrim"
+    RTRIM = "rtrim"
+    REPLACE = "replace"
+    SUBSTRING = "substring"
+    LEFT = "left"
+    RIGHT = "right"
+    SIZE = "size"
+    LENGTH = "length"
+    HEAD = "head"
+    LAST = "last"
+    TAIL = "tail"
+    RANGE = "range"
+    SPLIT = "split"
+    REVERSE = "reverse"
+    TO_STRING = "tostring"
+    TO_INTEGER = "tointeger"
+    TO_INT = "toint"
+    TO_FLOAT = "tofloat"
+    TO_BOOLEAN = "toboolean"
+    ABS = "abs"
+    CEIL = "ceil"
+    FLOOR = "floor"
+    ROUND = "round"
+    SQRT = "sqrt"
+    SIGN = "sign"
+    LOG = "log"
+    EXP = "exp"
+    EXISTS = "exists"
+    TIMESTAMP = "timestamp"
+    RAND = "rand"
+    NODES = "nodes"
+    RELATIONSHIPS = "relationships"
+    COUNT = "count"
+    COLLECT = "collect"
+    SUM = "sum"
+    MIN = "min"
+    MAX = "max"
+    AVG = "avg"
+
+
+EG_FUNC_COUNT = EgFn.COUNT
+EG_FUNC_COLLECT = EgFn.COLLECT
 EG_AGGREGATES: frozenset[str] = frozenset(
-    {"count", "collect", "sum", "min", "max", "avg"}
+    {EgFn.COUNT, EgFn.COLLECT, EgFn.SUM, EgFn.MIN, EgFn.MAX, EgFn.AVG}
 )
+# Functions whose value differs between calls, so never hoisted as constant.
+EG_VOLATILE_FUNCTIONS: frozenset[str] = frozenset({EgFn.RAND, EgFn.TIMESTAMP})
+
+
+class EgSqlFn(StrEnum):
+    """SQL functions compiled Cypher calls: SQLite builtins, and the `eg_`
+    functions `embedded_graph.functions` registers on every connection."""
+
+    LOWER = "lower"
+    UPPER = "upper"
+    TRIM = "trim"
+    LTRIM = "ltrim"
+    RTRIM = "rtrim"
+    REPLACE = "replace"
+    ABS = "abs"
+    COALESCE = "coalesce"
+    SUBSTR = "substr"
+    LENGTH = "length"
+    JSON_ARRAY_LENGTH = "json_array_length"
+    REGEX = "eg_regex"
+    LIST_ADD = "eg_list_add"
+    CONCAT = "eg_concat"
+    ADD = "eg_add"
+    POW = "eg_pow"
+    MOD = "eg_mod"
+    SIZE = "eg_size"
+    SLICE = "eg_slice"
+    STR_SLICE = "eg_str_slice"
+    RANGE = "eg_range"
+    SPLIT = "eg_split"
+    REVERSE_STR = "eg_reverse_str"
+    REVERSE_LIST = "eg_reverse_list"
+    TO_STRING = "eg_to_string"
+    TO_INTEGER = "eg_to_integer"
+    TO_FLOAT = "eg_to_float"
+    TO_BOOLEAN = "eg_to_boolean"
+    CEIL = "eg_ceil"
+    FLOOR = "eg_floor"
+    ROUND = "eg_round"
+    SQRT = "eg_sqrt"
+    LOG = "eg_log"
+    EXP = "eg_exp"
+    SIGN = "eg_sign"
+    TIMESTAMP = "eg_timestamp"
+
+
+# JSON's spelling of the booleans, which `eg_` functions read and write.
+EG_JSON_TRUE = "true"
+EG_JSON_FALSE = "false"
+# Compact JSON, as SQLite's own json functions write it.
+EG_JSON_SEPARATORS = (",", ":")
+
+
+class EgProcCol(StrEnum):
+    """Output columns of the procedures, named as MAGE names them."""
+
+    NODE = "node"
+    RANK = "rank"
+    DEGREE = "degree"
+    COMPONENT_ID = "component_id"
+    COMPONENTS = "components"
+    CYCLES = "cycles"
+    CYCLE = "cycle"
+    NODES = "nodes"
+    PATH = "path"
+    BETWEENNESS = "betweenness_centrality"
+    ANCESTORS = "ancestors"
+    DESCENDANTS = "descendants"
+
+
+# degree_centrality.get's default mode, which counts both directions.
+EG_DEGREE_UNDIRECTED = "undirected"
+# The optional Rust extension and the one function the engine calls in it.
+EG_RUST_MODULE = "cgr_graph_rs"
+EG_RUST_RUN_PROCEDURE = "run_procedure"
+# Property types as the node and relationship schemas declare them.
+EG_SCHEMA_STRING = "string"
+EG_SCHEMA_INT = "int"
+EG_SCHEMA_BOOLEAN = "boolean"
+EG_SCHEMA_FLOAT = "float"
+EG_SCHEMA_LIST_OPEN = "list["
+EG_SCHEMA_LIST_CLOSE = "]"
+# How SQLite's version prints, for the version error.
+EG_VERSION_SEPARATOR = "."
 
 # Procedures the engine serves to generated queries. Named after the MAGE
 # procedures the Memgraph prompt already teaches, so a model's habits carry
@@ -309,6 +497,15 @@ EG_PLAN_REMOVE = "RemoveProperties"
 EG_PLAN_DELETE = "Delete"
 EG_PLAN_FOREACH = "Foreach"
 EG_PLAN_SCHEMA = "SchemaChange"
+# One EXPLAIN row, as Memgraph prints an operator.
+EG_PLAN_ROW = " * {op}"
+EG_PLAN_CALL_OF = EG_PLAN_CALL + "<{procedure}>"
+# SHOW STORAGE INFO rows the health check reads, in Memgraph's names.
+EG_STORAGE_VERTEX_COUNT = "vertex_count"
+EG_STORAGE_EDGE_COUNT = "edge_count"
+# Appended to a STARTS WITH prefix, the exclusive upper bound of the range
+# of strings that start with it: no code point sorts after U+10FFFF.
+EG_PREFIX_UPPER_BOUND = "\U0010ffff"
 
 # ----------------------------------------------------------------- storage
 
@@ -407,6 +604,15 @@ EG_ERR_UNTERMINATED_STRING = "unterminated string literal"
 EG_ERR_UNTERMINATED_COMMENT = "unterminated block comment"
 EG_ERR_UNTERMINATED_IDENT = "unterminated backtick identifier"
 EG_ERR_UNSUPPORTED = "unsupported in the embedded graph engine: {what}"
+EG_WHAT_PATH_VARIABLES = "path variables"
+EG_WHAT_PARAM_PATTERN_PROPS = "parameter property maps in patterns"
+EG_WHAT_READ_WITHOUT_RETURN = "a read query without RETURN"
+EG_WHAT_UNION_UPDATES = "UNION with updating clauses"
+EG_WHAT_REMOVE_LABEL = "REMOVE of a label"
+EG_WHAT_MERGE_PATH = "MERGE of a path with unbound nodes"
+EG_WHAT_MERGE_REL = "MERGE of this relationship"
+EG_WHAT_CREATE_REL = "CREATE of this relationship"
+EG_WHAT_PATH_FUNCTIONS = "path functions"
 EG_ERR_UNBOUND = "variable `{name}` is not defined"
 EG_ERR_MISSING_PARAM = "parameter ${name} was not supplied"
 EG_ERR_UNKNOWN_FUNCTION = "unknown function {name}()"

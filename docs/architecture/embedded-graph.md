@@ -42,7 +42,9 @@ process. SQLite ships with Python, so there is nothing else to install.
   `WITH`/`RETURN` project, group and sort. Variable-length patterns are
   recursive CTEs that keep each path's relationships, so no relationship
   repeats in a path, as Cypher requires. Compiled plans are cached by query
-  text and parameter types.
+  text and parameter types. Every piece of SQL the engine emits is spelled
+  in one module, `embedded_graph/sql.py`, and values reach SQLite only as
+  bound parameters.
 - **Writes.** `CREATE`, `MERGE` (with `ON CREATE`/`ON MATCH`), `SET`,
   `REMOVE`, `DELETE`/`DETACH DELETE` and `FOREACH` run clause by clause inside
   one transaction, so a failed statement changes nothing.

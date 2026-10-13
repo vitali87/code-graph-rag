@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import threading
 import types
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from ..constants.embedded_graph import (
+    EG_BATCH_PARAM,
     EG_ERR_CLOSED,
     EG_ERR_PARAMS_MAPPING,
 )
@@ -19,18 +22,38 @@ from ..types_defs import (
     BatchParams,
     BatchWrapper,
     ColumnDescriptor,
+    CypherParams,
     PropertyValue,
     ResultValue,
 )
 from .executor import Executor, Result
 from .store import open_connection, supports_json_arrow
 
+if TYPE_CHECKING:
+    # Annotation-only: TypeIs reaches `typing` in 3.13.
+    from typing_extensions import TypeIs
 
+
+def _is_batch(
+    params: dict[str, PropertyValue] | BatchWrapper,
+) -> TypeIs[BatchWrapper]:
+    return len(params) == 1 and EG_BATCH_PARAM in params
+
+
+def _as_params(params: dict[str, PropertyValue] | BatchWrapper) -> CypherParams:
+    """The cursor's parameters as the plain mapping the engine binds from.
+
+    A TypedDict is no `Mapping[str, ...]` to the type checker, though it
+    is a dict at runtime, so the batch is re-wrapped under its own key.
+    """
+    if _is_batch(params):
+        return {EG_BATCH_PARAM: params[EG_BATCH_PARAM]}
+    return params
+
+
+@dataclass(frozen=True, slots=True)
 class _Column:
-    __slots__ = ("name",)
-
-    def __init__(self, name: str) -> None:
-        self.name = name
+    name: str
 
 
 class EmbeddedCursor:
@@ -53,9 +76,13 @@ class EmbeddedCursor:
     ) -> None:
         # The ingestor binds a mapping (`BatchWrapper` is one at runtime); a
         # bare sequence has no names to bind, as with the other engines.
-        if params is not None and not isinstance(params, Mapping):
+        if params is None:
+            plain = None
+        elif isinstance(params, dict):
+            plain = _as_params(params)
+        else:
             raise TypeError(EG_ERR_PARAMS_MAPPING.format(kind=type(params).__name__))
-        result = self._conn.run(query, params)
+        result = self._conn.run(query, plain)
         self._description = [_Column(c) for c in result.columns] or None
         self._rows = result.rows
 
@@ -75,8 +102,7 @@ class EmbeddedConnection:
         self.autocommit = True
         self.path = path
 
-    def run(self, query: str, params: Mapping[str, object] | None = None) -> Result:
-        # A mapping of anything JSON can hold; `bind_value` converts it.
+    def run(self, query: str, params: CypherParams | None = None) -> Result:
         if self._closed:
             raise ConnectionError(EG_ERR_CLOSED)
         with self._lock:

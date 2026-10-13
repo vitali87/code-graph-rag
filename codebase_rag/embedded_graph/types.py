@@ -12,21 +12,19 @@ from dataclasses import dataclass
 from enum import Enum
 from functools import cache
 
+from ..constants.embedded_graph import (
+    EG_SCHEMA_BOOLEAN,
+    EG_SCHEMA_FLOAT,
+    EG_SCHEMA_INT,
+    EG_SCHEMA_LIST_CLOSE,
+    EG_SCHEMA_LIST_OPEN,
+    EG_SCHEMA_STRING,
+)
+from ..constants.embedded_graph import (
+    EgKind as Kind,
+)
 from ..schema_parse import parse_properties, parsed_node_schemas
 from ..types_defs import RELATIONSHIP_PROPERTY_SCHEMAS
-
-
-class Kind(Enum):
-    NODE = "node"
-    REL = "rel"
-    LIST = "list"
-    MAP = "map"
-    BOOL = "bool"
-    INT = "int"
-    FLOAT = "float"
-    STRING = "string"
-    ANY = "any"
-    NULL = "null"
 
 
 @dataclass(frozen=True)
@@ -78,16 +76,19 @@ def unify(types: list[T]) -> T:
 
 
 _DECLARED: dict[str, T] = {
-    "string": STRING,
-    "int": INT,
-    "boolean": BOOL,
-    "float": FLOAT,
+    EG_SCHEMA_STRING: STRING,
+    EG_SCHEMA_INT: INT,
+    EG_SCHEMA_BOOLEAN: BOOL,
+    EG_SCHEMA_FLOAT: FLOAT,
 }
 
 
 def _declared_type(type_name: str) -> T:
-    if type_name.startswith("list[") and type_name.endswith("]"):
-        return list_of(_DECLARED.get(type_name[5:-1], ANY))
+    if type_name.startswith(EG_SCHEMA_LIST_OPEN) and type_name.endswith(
+        EG_SCHEMA_LIST_CLOSE
+    ):
+        inner = type_name[len(EG_SCHEMA_LIST_OPEN) : -len(EG_SCHEMA_LIST_CLOSE)]
+        return list_of(_DECLARED.get(inner, ANY))
     return _DECLARED.get(type_name, ANY)
 
 
@@ -108,7 +109,8 @@ def _rel_property_types() -> dict[str, dict[str, T]]:
             for spec in parse_properties(schema.properties)
         }
         for rel_type in schema.rel_types:
-            out.setdefault(str(getattr(rel_type, "value", rel_type)), {}).update(props)
+            name = rel_type.value if isinstance(rel_type, Enum) else str(rel_type)
+            out.setdefault(name, {}).update(props)
     return out
 
 

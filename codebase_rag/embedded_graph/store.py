@@ -25,6 +25,7 @@ from ..constants.embedded_graph import (
     EG_SQL_RELOAD_STATS,
     EG_STATEMENT_CACHE_SIZE,
     EG_URI_READ_ONLY,
+    EG_VERSION_SEPARATOR,
 )
 from . import functions
 
@@ -44,7 +45,8 @@ def check_sqlite() -> None:
     if have < MIN_SQLITE_VERSION:
         raise EmbeddedGraphUnsupported(
             EG_ERR_SQLITE_VERSION.format(
-                need=".".join(map(str, MIN_SQLITE_VERSION)), have=sqlite3.sqlite_version
+                need=EG_VERSION_SEPARATOR.join(map(str, MIN_SQLITE_VERSION)),
+                have=sqlite3.sqlite_version,
             )
         )
     probe = sqlite3.connect(EG_MEMORY_PATH)
@@ -53,7 +55,8 @@ def check_sqlite() -> None:
     except sqlite3.OperationalError as e:
         raise EmbeddedGraphUnsupported(
             EG_ERR_SQLITE_VERSION.format(
-                need=".".join(map(str, MIN_SQLITE_VERSION)), have=sqlite3.sqlite_version
+                need=EG_VERSION_SEPARATOR.join(map(str, MIN_SQLITE_VERSION)),
+                have=sqlite3.sqlite_version,
             )
         ) from e
     finally:

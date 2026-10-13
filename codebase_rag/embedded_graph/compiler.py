@@ -20,15 +20,20 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..constants.embedded_graph import (
+    EG_ALL_LIVE,
     EG_ERR_NOT_NODE,
     EG_ERR_NOT_REL,
     EG_ERR_UNSUPPORTED,
     EG_ERR_VARLEN_VAR,
+    EG_WHAT_PARAM_PATTERN_PROPS,
+    EG_WHAT_PATH_VARIABLES,
     EgBinary,
+    EgDecode,
     EgDirection,
 )
 from ..constants.graph import NODE_UNIQUE_CONSTRAINTS
 from . import cypher_ast as a
+from . import sql as sq
 from . import types as ty
 from .expressions import (
     CE,
@@ -39,22 +44,10 @@ from .expressions import (
     each_value_sql,
     free_vars,
     is_aggregate,
-    json_path,
-    sql_in_list,
 )
 from .types import Kind, T
 
-_INPUT_ALIAS = "p"
-_OPT_ALIAS = "o"
-_SEED_ALIAS = "s"
-_ONE_COLUMN = "1 AS c_one"
-# In a live set: every variable is live (a `WITH *` / `RETURN *` follows).
-ALL_LIVE = "*"
-
-DECODE_RAW = "raw"
-DECODE_BOOL = "bool"
-DECODE_JSON = "json"
-DECODE_NULL = "null"
+ALL_LIVE = EG_ALL_LIVE
 
 
 @dataclass
@@ -82,7 +75,7 @@ class Stage:
             if info.const_sql is not None:
                 ce = CE(info.const_sql, info.t, None, info.names, const=True)
             else:
-                ce = CE(f"{alias}.{info.col}", info.t, None, info.names)
+                ce = CE(sq.column(alias, info.col), info.t, None, info.names)
             scope = scope.with_var(var, ce)
         return scope
 
@@ -108,7 +101,7 @@ def _is_live(var: str, live: set[str]) -> bool:
 @dataclass
 class OutputColumn:
     name: str
-    decode: str
+    decode: EgDecode
 
 
 @dataclass
@@ -119,20 +112,17 @@ class Pipeline:
         self.ctes.append((name, sql))
 
     def with_clause(self) -> str:
-        if not self.ctes:
-            return ""
-        body = ",\n".join(f"{name} AS ({sql})" for name, sql in self.ctes)
-        return f"WITH RECURSIVE {body}\n"
+        return sq.with_ctes(sq.cte(name, sql) for name, sql in self.ctes)
 
 
-def decode_for(t: T) -> str:
+def decode_for(t: T) -> EgDecode:
     if t.kind == Kind.BOOL:
-        return DECODE_BOOL
+        return EgDecode.BOOL
     if t.kind == Kind.NULL:
-        return DECODE_NULL
+        return EgDecode.NULL
     if t.is_entity or t.is_json:
-        return DECODE_JSON
-    return DECODE_RAW
+        return EgDecode.JSON
+    return EgDecode.RAW
 
 
 # ------------------------------------------------------------------- liveness
@@ -236,12 +226,12 @@ class QueryCompiler:
         self.x = ExprCompiler(ctx)
 
     def start_stage(self, pipeline: Pipeline) -> Stage:
-        name = self.ctx.fresh("eg_s")
-        pipeline.add(name, f"SELECT {_ONE_COLUMN}")
+        name = self.ctx.fresh(sq.STAGE_PREFIX)
+        pipeline.add(name, sq.select_constant())
         return Stage(name, {}, [], single_row=True)
 
     def _new_col(self) -> str:
-        return self.ctx.fresh("c")
+        return self.ctx.fresh(sq.COLUMN_PREFIX)
 
     def clause(
         self, pipeline: Pipeline, stage: Stage, clause: a.Clause, live: set[str]
@@ -263,24 +253,22 @@ class QueryCompiler:
         live: set[str],
         source: str,
         added: list[tuple[str, str, VarInfo]],
-        tail: str = "",
+        tail: str = sq.NOTHING,
     ) -> Stage:
         """A stage of the live input variables plus `added` (var, sql, info)."""
-        name = self.ctx.fresh("eg_s")
+        name = self.ctx.fresh(sq.STAGE_PREFIX)
         out_vars = stage.consts(live)
         cols: list[str] = []
         select: list[str] = []
         for var, info in stage.carried(live):
             out_vars[var] = info
             cols.append(info.col)
-            select.append(f"{_INPUT_ALIAS}.{info.col}")
+            select.append(sq.column(sq.INPUT, info.col))
         for var, sql, info in added:
             out_vars[var] = info
             cols.append(info.col)
-            select.append(f"{sql} AS {info.col}")
-        pipeline.add(
-            name, f"SELECT {', '.join(select) or _ONE_COLUMN} FROM {source}{tail}"
-        )
+            select.append(sq.aliased(sql, info.col))
+        pipeline.add(name, sq.select(select, source, tail))
         return Stage(name, out_vars, cols)
 
     # ------------------------------------------------------------------ MATCH
@@ -301,9 +289,13 @@ class QueryCompiler:
             for var, ce in builder.new_vars.items()
             if _is_live(var, live)
         ]
-        where = f" WHERE {' AND '.join(f'({c})' for c in conds)}" if conds else ""
         return self._extend(
-            pipeline, stage, live, ", ".join(builder.from_items), added, where
+            pipeline,
+            stage,
+            live,
+            sq.commas(builder.from_items),
+            added,
+            sq.where(conds),
         )
 
     def _optional_match(
@@ -313,27 +305,29 @@ class QueryCompiler:
         consts = stage.consts(used)
         inputs = dict(stage.carried(used))
         used_cols = [info.col for info in inputs.values()]
-        inp = self.ctx.fresh("eg_s")
+        inp = self.ctx.fresh(sq.STAGE_PREFIX)
         if used_cols:
-            pipeline.add(
-                inp, f"SELECT DISTINCT {', '.join(used_cols)} FROM {stage.name}"
-            )
+            pipeline.add(inp, sq.select(used_cols, stage.name, distinct=True))
         else:
-            pipeline.add(inp, f"SELECT {_ONE_COLUMN}")
+            pipeline.add(inp, sq.select_constant())
         inner = Stage(inp, {**consts, **inputs}, used_cols)
         inner_live = live | set(inputs)
         matched = self._match(
             pipeline, inner, a.Match(False, m.patterns, m.where), inner_live
         )
-        on = " AND ".join(f"{_OPT_ALIAS}.{c} IS {_INPUT_ALIAS}.{c}" for c in used_cols)
+        on = sq.all_of(
+            sq.is_same(sq.column(sq.OPTIONAL, c), sq.column(sq.INPUT, c))
+            for c in used_cols
+        )
         added = [
-            (var, f"{_OPT_ALIAS}.{info.col}", info)
+            (var, sq.column(sq.OPTIONAL, info.col), info)
             for var, info in matched.vars.items()
             if var not in stage.vars and info.const_sql is None
         ]
-        source = (
-            f"{stage.name} AS {_INPUT_ALIAS} LEFT JOIN {matched.name} AS {_OPT_ALIAS} "
-            f"ON {on or '1'}"
+        source = sq.left_join(
+            sq.table(stage.name, sq.INPUT),
+            sq.table(matched.name, sq.OPTIONAL),
+            on or sq.ONE,
         )
         return self._extend(pipeline, stage, live, source, added)
 
@@ -342,24 +336,26 @@ class QueryCompiler:
     def _unwind(
         self, pipeline: Pipeline, stage: Stage, u: a.Unwind, live: set[str]
     ) -> Stage:
-        source = self.x.compile(u.expr, stage.scope(_INPUT_ALIAS))
-        alias = self.ctx.fresh("je")
+        source = self.x.compile(u.expr, stage.scope(sq.INPUT))
+        alias = self.ctx.fresh(sq.EACH_PREFIX)
         elem = (source.t.elem if source.t.kind == Kind.LIST else None) or ty.ANY
         if source.t.kind not in (Kind.LIST, Kind.ANY, Kind.NULL):
             elem = source.t
         added = [(u.var, each_value_sql(alias, elem), VarInfo(self._new_col(), elem))]
-        from_sql = f"{stage.name} AS {_INPUT_ALIAS}, json_each({self.x.jsonv(source)}) AS {alias}"
-        # LIMIT -1 keeps SQLite from flattening the unwound rows into the
-        # next MATCH: flattened, its planner put json_each innermost and
-        # scanned the whole label per row (6 s for 200 rows; 0.7 ms after).
-        return self._extend(pipeline, stage, live, from_sql, added, " LIMIT -1")
+        from_sql = sq.commas(
+            [sq.table(stage.name, sq.INPUT), sq.json_each(self.x.jsonv(source), alias)]
+        )
+        # Flattened into the next MATCH, the unwound rows had SQLite put
+        # json_each innermost and scan the whole label per row (6 s for 200
+        # rows; 0.7 ms kept apart).
+        return self._extend(pipeline, stage, live, from_sql, added, sq.UNFLATTENED)
 
     # --------------------------------------------------------- WITH / RETURN
 
     def _project(
         self, stage: Stage, proj: a.Projection, for_output: bool
     ) -> tuple[str, dict[str, VarInfo], list[str], list[OutputColumn], bool]:
-        scope = stage.scope(_INPUT_ALIAS)
+        scope = stage.scope(sq.INPUT)
         items: list[tuple[str, CE, bool]] = []
         if proj.star:
             items.extend((var, scope.get(var), False) for var in stage.vars)
@@ -377,7 +373,7 @@ class QueryCompiler:
         alias_scope = Scope(scope.binds)
         for alias, ce, agg in items:
             col = self._new_col()
-            select.append(f"{self.x.output(ce) if for_output else ce.sql} AS {col}")
+            select.append(sq.aliased(self.x.output(ce) if for_output else ce.sql, col))
             # A constant key is the same in every group: grouping by it
             # would only make SQLite compare a large value per row.
             if aggregating and not agg and not ce.const:
@@ -386,48 +382,48 @@ class QueryCompiler:
             cols.append(col)
             outputs.append(OutputColumn(alias, decode_for(ce.t)))
             alias_scope = alias_scope.with_var(alias, ce)
-        sql = (
-            f"SELECT {'DISTINCT ' if proj.distinct else ''}{', '.join(select)} "
-            f"FROM {stage.name} AS {_INPUT_ALIAS}"
-        )
+        sql = sq.select(select, sq.table(stage.name, sq.INPUT), distinct=proj.distinct)
         if group_by:
-            sql += f" GROUP BY {', '.join(group_by)}"
+            sql += sq.group_by(group_by)
         elif aggregating and has_keys:
             # Grouping keys over no rows give no groups, unlike a bare
             # aggregate, which gives one row.
-            sql += " HAVING count(*) > 0"
-        order = self._order_by(proj, alias_scope)
-        if order:
-            sql += f" ORDER BY {order}"
+            sql += sq.NONEMPTY_GROUPS
+        sql += sq.order_by(self._order_by(proj, alias_scope))
         sql += self._limit(proj, scope)
         single_row = (aggregating and not group_by) or (
             stage.single_row and not aggregating
         )
         return sql, new_vars, cols, outputs, single_row
 
-    def _order_by(self, proj: a.Projection, scope: Scope) -> str:
+    def _order_by(self, proj: a.Projection, scope: Scope) -> list[str]:
         parts = []
         for item in proj.order:
             ce = self.x.compile(item.expr, scope)
             key = ce.sql if ce.t.is_entity else self.x.native(ce)
-            if item.descending:
-                parts.append(f"{key} DESC NULLS FIRST")
-            else:
-                parts.append(f"{key} ASC NULLS LAST")
-        return ", ".join(parts)
+            parts.append(sq.descending(key) if item.descending else sq.ascending(key))
+        return parts
 
     def _limit(self, proj: a.Projection, scope: Scope) -> str:
         if proj.limit is None and proj.skip is None:
-            return ""
-        limit = self.x.native(self.x.compile(proj.limit, scope)) if proj.limit else "-1"
-        skip = self.x.native(self.x.compile(proj.skip, scope)) if proj.skip else "0"
-        return f" LIMIT {limit} OFFSET {skip}"
+            return sq.NOTHING
+        count = (
+            self.x.native(self.x.compile(proj.limit, scope))
+            if proj.limit
+            else sq.ALL_ROWS
+        )
+        skip = (
+            self.x.native(self.x.compile(proj.skip, scope))
+            if proj.skip
+            else sq.NO_ROWS_SKIPPED
+        )
+        return sq.limit(count, skip)
 
     def _with(self, pipeline: Pipeline, stage: Stage, proj: a.Projection) -> Stage:
         sql, new_vars, cols, _, single_row = self._project(
             stage, proj, for_output=False
         )
-        name = self.ctx.fresh("eg_s")
+        name = self.ctx.fresh(sq.STAGE_PREFIX)
         pipeline.add(name, sql)
         out = Stage(name, new_vars, cols, single_row)
         if single_row:
@@ -437,7 +433,7 @@ class QueryCompiler:
                 name,
                 {
                     var: VarInfo(
-                        info.col, info.t, info.names, f"(SELECT {info.col} FROM {name})"
+                        info.col, info.t, info.names, sq.scalar(info.col, name)
                     )
                     for var, info in new_vars.items()
                 },
@@ -446,11 +442,10 @@ class QueryCompiler:
             )
         if proj.where is None:
             return out
-        filtered = self.ctx.fresh("eg_s")
-        cond = self.x.boolean(self.x.compile(proj.where, out.scope(_INPUT_ALIAS)))
-        select = ", ".join(out.cols) or _ONE_COLUMN
+        filtered = self.ctx.fresh(sq.STAGE_PREFIX)
+        cond = self.x.boolean(self.x.compile(proj.where, out.scope(sq.INPUT)))
         pipeline.add(
-            filtered, f"SELECT {select} FROM {name} AS {_INPUT_ALIAS} WHERE ({cond})"
+            filtered, sq.select(out.cols, sq.table(name, sq.INPUT), sq.where([cond]))
         )
         return Stage(filtered, out.vars, out.cols, out.single_row)
 
@@ -462,13 +457,12 @@ class QueryCompiler:
 
     def project_rows(self, stage: Stage) -> tuple[str, list[str]]:
         """Every variable of a stage as a plain column, for materializing it."""
-        scope = stage.scope(_INPUT_ALIAS)
+        scope = stage.scope(sq.INPUT)
         parts = [
-            f"{scope.get(var).sql} AS {info.col}" for var, info in stage.vars.items()
+            sq.aliased(scope.get(var).sql, info.col) for var, info in stage.vars.items()
         ]
         cols = [info.col for info in stage.vars.values()]
-        select = ", ".join(parts) or _ONE_COLUMN
-        return f"SELECT {select} FROM {stage.name} AS {_INPUT_ALIAS}", cols
+        return sq.select(parts, sq.table(stage.name, sq.INPUT)), cols
 
 
 class _MatchBuilder:
@@ -485,8 +479,8 @@ class _MatchBuilder:
         self.ctx = qc.ctx
         self.pipeline = pipeline
         self.stage = stage
-        self.scope = stage.scope(_INPUT_ALIAS)
-        self.from_items = [f"{stage.name} AS {_INPUT_ALIAS}"]
+        self.scope = stage.scope(sq.INPUT)
+        self.from_items = [sq.table(stage.name, sq.INPUT)]
         self.conds: list[str] = []
         self.new_vars: dict[str, CE] = {}
         self.fixed_rels: list[str] = []
@@ -496,7 +490,7 @@ class _MatchBuilder:
 
     def add_pattern(self, pattern: a.PathPattern) -> None:
         if pattern.var is not None:
-            raise CompileError(EG_ERR_UNSUPPORTED.format(what="path variables"))
+            raise CompileError(EG_ERR_UNSUPPORTED.format(what=EG_WHAT_PATH_VARIABLES))
         nodes = [self._node(n) for n in pattern.nodes]
         for i, rel in enumerate(pattern.rels):
             if rel.var_length is not None:
@@ -511,18 +505,18 @@ class _MatchBuilder:
         self.scope = self.scope.with_var(var, ce)
 
     def _node(self, np: a.NodePattern) -> CE:
-        alias = self.ctx.fresh("n")
-        self.from_items.append(f"cgr_nodes AS {alias}")
+        alias = self.ctx.fresh(sq.NODE_PREFIX)
+        self.from_items.append(sq.table(sq.NODES, alias))
         bound = self.scope.get(np.var) if np.var and self.scope.has(np.var) else None
         if bound is not None:
             if bound.t.kind not in (Kind.NODE, Kind.ANY, Kind.NULL):
                 raise CompileError(EG_ERR_NOT_NODE.format(name=np.var))
-            self.conds.append(f"{alias}.id = {bound.sql}")
+            self.conds.append(sq.eq(sq.column(alias, sq.ID), bound.sql))
         labels = np.labels or self._labels_from_where(np.var)
         names = labels or (bound.names if bound is not None else ())
         if labels:
-            self.conds.append(f"{alias}.label IN {sql_in_list(labels)}")
-        ce = CE(f"{alias}.id", ty.NODE, alias, names)
+            self.conds.append(sq.is_in(sq.column(alias, sq.LABEL), labels))
+        ce = CE(sq.column(alias, sq.ID), ty.NODE, alias, names)
         self._prop_conditions(alias, np.props, names, is_node=True)
         if np.var and bound is None:
             self._bind(np.var, ce)
@@ -556,47 +550,42 @@ class _MatchBuilder:
             return
         if not isinstance(props, a.MapLit):
             raise CompileError(
-                EG_ERR_UNSUPPORTED.format(what="parameter property maps in patterns")
+                EG_ERR_UNSUPPORTED.format(what=EG_WHAT_PARAM_PATTERN_PROPS)
             )
         for key, value in props.items:
             rhs = self.x.native(self.x.compile(value, self.scope))
             if is_node and _is_key(names, key):
-                self.conds.append(f"{alias}.key = {rhs}")
+                self.conds.append(sq.eq(sq.column(alias, sq.KEY), rhs))
             else:
-                self.conds.append(
-                    f"json_extract({alias}.props, {json_path(key)}) = {rhs}"
-                )
+                self.conds.append(sq.eq(sq.prop_of(alias, key), rhs))
 
     def _rel(self, rp: a.RelPattern, left: CE, right: CE) -> None:
-        alias = self.ctx.fresh("r")
-        self.from_items.append(f"cgr_edges AS {alias}")
+        alias = self.ctx.fresh(sq.REL_PREFIX)
+        self.from_items.append(sq.table(sq.EDGES, alias))
         if rp.types:
-            self.conds.append(f"{alias}.type IN {sql_in_list(rp.types)}")
+            self.conds.append(sq.is_in(sq.column(alias, sq.TYPE), rp.types))
         lid, rid = left.sql, right.sql
         if rp.direction == EgDirection.OUT:
-            self.conds.append(f"{alias}.src = {lid} AND {alias}.dst = {rid}")
+            self.conds.append(sq.outgoing(alias, lid, rid))
         elif rp.direction == EgDirection.IN:
-            self.conds.append(f"{alias}.dst = {lid} AND {alias}.src = {rid}")
+            self.conds.append(sq.outgoing(alias, rid, lid))
         else:
-            self.conds.append(
-                f"(({alias}.src = {lid} AND {alias}.dst = {rid}) OR "
-                f"({alias}.dst = {lid} AND {alias}.src = {rid} AND {alias}.src <> {alias}.dst))"
-            )
+            self.conds.append(sq.either_way(alias, lid, rid))
         self._prop_conditions(alias, rp.props, rp.types, is_node=False)
         if rp.var:
             if self.scope.has(rp.var):
                 bound = self.scope.get(rp.var)
                 if bound.t.kind != Kind.REL:
                     raise CompileError(EG_ERR_NOT_REL.format(name=rp.var))
-                self.conds.append(f"{alias}.id = {bound.sql}")
+                self.conds.append(sq.eq(sq.column(alias, sq.ID), bound.sql))
             else:
-                self._bind(rp.var, CE(f"{alias}.id", ty.REL, alias, rp.types))
+                self._bind(rp.var, CE(sq.column(alias, sq.ID), ty.REL, alias, rp.types))
         self.fixed_rels.append(alias)
 
     def uniqueness(self) -> list[str]:
         rels = self.fixed_rels
         return [
-            f"{rels[i]}.id <> {rels[j]}.id"
+            sq.ne(sq.column(rels[i], sq.ID), sq.column(rels[j], sq.ID))
             for i in range(len(rels))
             for j in range(i + 1, len(rels))
         ]
@@ -607,8 +596,8 @@ class _MatchBuilder:
             return None
         info = self.stage.vars[np.var]
         if info.const_sql is not None:
-            return f"SELECT {info.const_sql} AS id"
-        return f"SELECT DISTINCT {info.col} AS id FROM {self.stage.name}"
+            return sq.input_seed(info.const_sql)
+        return sq.input_seeds(info.col, self.stage.name)
 
     def _static_seed(self, pattern: a.NodePattern) -> str | None:
         """Ids matching what a node pattern and the WHERE say of it alone.
@@ -621,28 +610,25 @@ class _MatchBuilder:
         np = a.NodePattern(pattern.var, labels, pattern.props)
         conds = []
         if np.labels:
-            conds.append(f"{_SEED_ALIAS}.label IN {sql_in_list(np.labels)}")
+            conds.append(sq.is_in(sq.column(sq.SEED, sq.LABEL), np.labels))
         if isinstance(np.props, a.MapLit):
             for key, value in np.props.items:
                 if free_vars(value):
                     continue
                 rhs = self.x.native(self.x.compile(value, Scope()))
                 if _is_key(np.labels, key):
-                    conds.append(f"{_SEED_ALIAS}.key = {rhs}")
+                    conds.append(sq.eq(sq.column(sq.SEED, sq.KEY), rhs))
                 else:
-                    conds.append(
-                        f"json_extract({_SEED_ALIAS}.props, {json_path(key)}) = {rhs}"
-                    )
+                    conds.append(sq.eq(sq.prop_of(sq.SEED, key), rhs))
         if np.var and np.var not in self.stage.vars:
-            node = CE(f"{_SEED_ALIAS}.id", ty.NODE, _SEED_ALIAS, np.labels)
+            node = CE(sq.column(sq.SEED, sq.ID), ty.NODE, sq.SEED, np.labels)
             scope = Scope().with_var(np.var, node)
             for cond in self.where:
                 if free_vars(cond) == {np.var}:
                     conds.append(self.x.boolean(self.x.compile(cond, scope)))
         if not conds:
             return None
-        where = " AND ".join(f"({c})" for c in conds)
-        return f"SELECT {_SEED_ALIAS}.id AS id FROM cgr_nodes AS {_SEED_ALIAS} WHERE {where}"
+        return sq.seed_ids(conds)
 
     def _var_length(
         self,
@@ -666,36 +652,23 @@ class _MatchBuilder:
             if left_seed is None and right_seed is not None:
                 seeds, forward = right_seed, False
             else:
-                seeds, forward = left_seed or "SELECT id FROM cgr_nodes", True
-        direction = rp.direction
-        if not forward and direction != EgDirection.BOTH:
-            direction = (
-                EgDirection.IN if direction == EgDirection.OUT else EgDirection.OUT
-            )
-        type_cond = f" AND e.type IN {sql_in_list(rp.types)}" if rp.types else ""
-        if direction == EgDirection.OUT:
-            join, far = f"e.src = v.node{type_cond}", "e.dst"
-        elif direction == EgDirection.IN:
-            join, far = f"e.dst = v.node{type_cond}", "e.src"
-        else:
-            join = f"(e.src = v.node OR e.dst = v.node){type_cond}"
-            far = "(CASE WHEN e.src = v.node THEN e.dst ELSE e.src END)"
-        depth_cond = f"v.depth < {high} AND " if high is not None else ""
-        name = self.ctx.fresh("eg_vl")
+                seeds, forward = left_seed or sq.all_node_ids(), True
+        # Walked from its far end, an outgoing pattern follows edges in.
+        direction_out: bool | None = None
+        if rp.direction != EgDirection.BOTH:
+            direction_out = (rp.direction == EgDirection.OUT) == forward
+        name = self.ctx.fresh(sq.WALK_PREFIX)
         self.pipeline.add(
-            f"{name}(seed, node, depth, path)",
-            f"SELECT id, id, 0, ',' FROM ({seeds}) "
-            f"UNION ALL SELECT v.seed, {far}, v.depth + 1, v.path || e.id || ',' "
-            f"FROM {name} AS v CROSS JOIN cgr_edges AS e ON {join} "
-            f"WHERE {depth_cond}instr(v.path, ',' || e.id || ',') = 0",
+            sq.walk_columns(name),
+            sq.walk(name, seeds, direction_out, rp.types, high),
         )
-        alias = self.ctx.fresh("v")
-        self.from_items.append(f"{name} AS {alias}")
+        alias = self.ctx.fresh(sq.WALK_ROW_PREFIX)
+        self.from_items.append(sq.table(name, alias))
         seed_side, node_side = (left, right) if forward else (right, left)
-        self.conds.append(f"{alias}.seed = {seed_side.sql}")
-        self.conds.append(f"{alias}.node = {node_side.sql}")
+        self.conds.append(sq.eq(sq.column(alias, sq.WALK_SEED), seed_side.sql))
+        self.conds.append(sq.eq(sq.column(alias, sq.WALK_NODE), node_side.sql))
         if low > 0:
-            self.conds.append(f"{alias}.depth >= {low}")
+            self.conds.append(sq.at_least(sq.column(alias, sq.WALK_DEPTH), str(low)))
 
 
 def _label_alternatives(e: a.Expr, var: str) -> set[str] | None:

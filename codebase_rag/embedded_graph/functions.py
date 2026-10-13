@@ -14,7 +14,13 @@ import time
 from collections.abc import Callable
 from functools import lru_cache
 
-from ..constants.embedded_graph import EG_COMPILE_CACHE_SIZE
+from ..constants.embedded_graph import (
+    EG_COMPILE_CACHE_SIZE,
+    EG_JSON_FALSE,
+    EG_JSON_SEPARATORS,
+    EG_JSON_TRUE,
+    EgSqlFn,
+)
 from ..types_defs import JsonValue
 from .types import SqlValue
 
@@ -31,7 +37,7 @@ def _load(text: str | None) -> JsonValue:
 def _dump(value: JsonValue) -> str | None:
     if value is None:
         return None
-    return json.dumps(value, separators=(",", ":"))
+    return json.dumps(value, separators=EG_JSON_SEPARATORS)
 
 
 @lru_cache(maxsize=EG_COMPILE_CACHE_SIZE)
@@ -56,7 +62,7 @@ def eg_list_add(left: str | None, right: str | None) -> str | None:
 
 def _text(value: JsonValue) -> str:
     if isinstance(value, bool):
-        return "true" if value else "false"
+        return EG_JSON_TRUE if value else EG_JSON_FALSE
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
     if isinstance(value, (list, dict)):
@@ -192,8 +198,8 @@ def eg_to_boolean(value: str | None) -> int | None:
     v = _load(value)
     if isinstance(v, bool):
         return int(v)
-    if isinstance(v, str) and v.lower() in ("true", "false"):
-        return int(v.lower() == "true")
+    if isinstance(v, str) and v.lower() in (EG_JSON_TRUE, EG_JSON_FALSE):
+        return int(v.lower() == EG_JSON_TRUE)
     return None
 
 
@@ -224,34 +230,34 @@ def eg_timestamp() -> int:
 
 
 _DETERMINISTIC: dict[str, tuple[int, Callable[..., SqlValue]]] = {
-    "eg_regex": (2, eg_regex),
-    "eg_list_add": (2, eg_list_add),
-    "eg_concat": (2, eg_concat),
-    "eg_add": (2, eg_add),
-    "eg_pow": (2, eg_pow),
-    "eg_mod": (2, eg_mod),
-    "eg_size": (1, eg_size),
-    "eg_slice": (3, eg_slice),
-    "eg_str_slice": (3, eg_str_slice),
-    "eg_range": (3, eg_range),
-    "eg_split": (2, eg_split),
-    "eg_reverse_str": (1, eg_reverse_str),
-    "eg_reverse_list": (1, eg_reverse_list),
-    "eg_to_string": (1, eg_to_string),
-    "eg_to_integer": (1, eg_to_integer),
-    "eg_to_float": (1, eg_to_float),
-    "eg_to_boolean": (1, eg_to_boolean),
-    "eg_ceil": (1, _num(math.ceil)),
-    "eg_floor": (1, _num(math.floor)),
-    "eg_round": (1, _num(_round_half_away)),
-    "eg_sqrt": (1, _num(math.sqrt)),
-    "eg_log": (1, _num(math.log)),
-    "eg_exp": (1, _num(math.exp)),
-    "eg_sign": (1, eg_sign),
+    EgSqlFn.REGEX: (2, eg_regex),
+    EgSqlFn.LIST_ADD: (2, eg_list_add),
+    EgSqlFn.CONCAT: (2, eg_concat),
+    EgSqlFn.ADD: (2, eg_add),
+    EgSqlFn.POW: (2, eg_pow),
+    EgSqlFn.MOD: (2, eg_mod),
+    EgSqlFn.SIZE: (1, eg_size),
+    EgSqlFn.SLICE: (3, eg_slice),
+    EgSqlFn.STR_SLICE: (3, eg_str_slice),
+    EgSqlFn.RANGE: (3, eg_range),
+    EgSqlFn.SPLIT: (2, eg_split),
+    EgSqlFn.REVERSE_STR: (1, eg_reverse_str),
+    EgSqlFn.REVERSE_LIST: (1, eg_reverse_list),
+    EgSqlFn.TO_STRING: (1, eg_to_string),
+    EgSqlFn.TO_INTEGER: (1, eg_to_integer),
+    EgSqlFn.TO_FLOAT: (1, eg_to_float),
+    EgSqlFn.TO_BOOLEAN: (1, eg_to_boolean),
+    EgSqlFn.CEIL: (1, _num(math.ceil)),
+    EgSqlFn.FLOOR: (1, _num(math.floor)),
+    EgSqlFn.ROUND: (1, _num(_round_half_away)),
+    EgSqlFn.SQRT: (1, _num(math.sqrt)),
+    EgSqlFn.LOG: (1, _num(math.log)),
+    EgSqlFn.EXP: (1, _num(math.exp)),
+    EgSqlFn.SIGN: (1, eg_sign),
 }
 
 
 def register(conn: sqlite3.Connection) -> None:
     for name, (arity, fn) in _DETERMINISTIC.items():
         conn.create_function(name, arity, fn, deterministic=True)
-    conn.create_function("eg_timestamp", 0, eg_timestamp)
+    conn.create_function(EgSqlFn.TIMESTAMP, 0, eg_timestamp)
