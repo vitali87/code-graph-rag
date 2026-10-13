@@ -146,7 +146,9 @@ A checkout builds the crate it carries: `uv sync` compiles it with the Rust
 toolchain on your `PATH` (uv takes it as a path source), so a change to the
 Python and Rust halves is tested together. `.github/workflows/rust-wheels.yml`
 builds the wheels; a release uploads a crate version PyPI does not have yet
-before code-graph-rag, which requires it.
+before code-graph-rag, which requires it. `make release`, which publishes from
+a workstation, cannot build every platform's wheel, so it stops until PyPI has
+them all (`scripts/check_cgr_graph_rs_on_pypi.py`).
 
 It runs PageRank, degree centrality, weakly and strongly connected
 components, betweenness centrality, ancestors and descendants, and returns

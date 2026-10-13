@@ -18,12 +18,25 @@ from packaging.markers import default_environment
 from packaging.requirements import Requirement
 
 from codebase_rag.constants.build import PYINSTALLER_PACKAGES
+from scripts import check_cgr_graph_rs_on_pypi as release_check
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CRATE_DIR = REPO_ROOT / "rust" / "cgr_graph_rs"
 WHEELS_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "rust-wheels.yml"
 DIST_NAME = "cgr-graph-rs"
 MODULE_NAME = "cgr_graph_rs"
+RELEASE_SCRIPT = REPO_ROOT / "scripts" / "release.sh"
+# What maturin names each wheel rust-wheels.yml builds, plus the sdist a
+# release could also carry.
+PUBLISHED_FILES = [
+    "cgr_graph_rs-0.1.0-cp312-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+    "cgr_graph_rs-0.1.0-cp312-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl",
+    "cgr_graph_rs-0.1.0-cp312-abi3-musllinux_1_2_x86_64.whl",
+    "cgr_graph_rs-0.1.0-cp312-abi3-musllinux_1_2_aarch64.whl",
+    "cgr_graph_rs-0.1.0-cp312-abi3-macosx_10_13_x86_64.macosx_11_0_arm64.macosx_10_13_universal2.whl",
+    "cgr_graph_rs-0.1.0-cp312-abi3-win_amd64.whl",
+    "cgr_graph_rs-0.1.0.tar.gz",
+]
 
 # What a Python on each wheel's platform reports to environment markers.
 TARGET_ENVIRONMENTS = {
@@ -148,3 +161,61 @@ def test_the_binaries_bundle_the_extension() -> None:
     """It is imported by name at run time, which PyInstaller cannot see."""
     (package,) = [p for p in PYINSTALLER_PACKAGES if p.name == MODULE_NAME]
     assert package.collect_all
+
+
+def test_the_release_check_knows_every_wheel() -> None:
+    assert set(release_check.WHEEL_TAGS) == _workflow_targets()
+
+
+def test_the_release_check_reads_the_crate_version() -> None:
+    assert release_check.crate_version() == _crate_version()
+
+
+def test_a_release_with_every_wheel_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(release_check, "released_filenames", lambda _: PUBLISHED_FILES)
+    assert release_check.main() == 0
+
+
+def test_a_missing_crate_release_stops_a_local_release(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Uploading code-graph-rag before its crate would publish a version no
+    supported platform can install."""
+    monkeypatch.setattr(release_check, "released_filenames", lambda _: None)
+    assert release_check.main() == 1
+    assert DIST_NAME in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("target", sorted(TARGET_ENVIRONMENTS))
+def test_a_missing_wheel_stops_a_local_release(
+    target: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    tag = release_check.WHEEL_TAGS[target]
+    files = [name for name in PUBLISHED_FILES if tag not in name]
+    monkeypatch.setattr(release_check, "released_filenames", lambda _: files)
+    assert release_check.main() == 1
+    assert target in capsys.readouterr().err
+
+
+def test_an_sdist_is_not_a_wheel() -> None:
+    sdist_only = [name for name in PUBLISHED_FILES if name.endswith(".tar.gz")]
+    assert release_check.missing_targets(sdist_only) == list(release_check.WHEEL_TAGS)
+
+
+def test_an_unreachable_pypi_stops_a_local_release(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unreachable(_: str) -> list[str]:
+        raise release_check.urllib.error.URLError("offline")
+
+    monkeypatch.setattr(release_check, "released_filenames", unreachable)
+    assert release_check.main() == 1
+
+
+def test_the_local_release_checks_before_it_commits_or_uploads() -> None:
+    script = RELEASE_SCRIPT.read_text(encoding="utf-8")
+    check = script.index("scripts/check_cgr_graph_rs_on_pypi.py")
+    assert check < script.index("git commit")
+    assert check < script.index("twine upload")
