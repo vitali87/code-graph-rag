@@ -70,6 +70,18 @@ _QUANTIFIERS: dict[str, EgQuantifier] = {
     EgKw.NONE: EgQuantifier.NONE,
     EgKw.SINGLE: EgQuantifier.SINGLE,
 }
+_WORD_LITERALS: dict[str, bool | None] = {
+    EgKw.TRUE: True,
+    EgKw.FALSE: False,
+    EgKw.NULL: None,
+}
+# Keyed by (CREATE rather than DROP, INDEX rather than CONSTRAINT).
+_SCHEMA_KINDS: dict[tuple[bool, bool], EgSchemaKind] = {
+    (True, True): EgSchemaKind.CREATE_INDEX,
+    (True, False): EgSchemaKind.CREATE_CONSTRAINT,
+    (False, True): EgSchemaKind.DROP_INDEX,
+    (False, False): EgSchemaKind.DROP_CONSTRAINT,
+}
 
 
 @lru_cache(maxsize=EG_COMPILE_CACHE_SIZE)
@@ -396,20 +408,30 @@ class _Parser:
 
     def schema_command(self) -> a.SchemaCommand:
         if self.accept_word(EgKw.SHOW):
-            words = []
-            while self.tok.kind == EgTok.IDENT:
-                words.append(self.advance().text.upper())
-            if EgKw.CONSTRAINT in words or EgKw.CONSTRAINTS in words:
-                return a.SchemaCommand(EgSchemaKind.SHOW_CONSTRAINTS)
-            if EgKw.STORAGE in words:
-                return a.SchemaCommand(EgSchemaKind.SHOW_STORAGE)
-            return a.SchemaCommand(EgSchemaKind.SHOW_INDEXES)
+            return self._show_command()
         create = self.accept_word(EgKw.CREATE)
         if not create:
             self.expect_word(EgKw.DROP)
         is_index = self.accept_word(EgKw.INDEX)
         if not is_index:
             self.expect_word(EgKw.CONSTRAINT)
+        label, props = self._schema_target()
+        if label is None and create:
+            raise self.error(EG_EXPECT_SCHEMA)
+        kind = _SCHEMA_KINDS[create, is_index]
+        return a.SchemaCommand(kind, label, tuple(props))
+
+    def _show_command(self) -> a.SchemaCommand:
+        words = []
+        while self.tok.kind == EgTok.IDENT:
+            words.append(self.advance().text.upper())
+        if EgKw.CONSTRAINT in words or EgKw.CONSTRAINTS in words:
+            return a.SchemaCommand(EgSchemaKind.SHOW_CONSTRAINTS)
+        if EgKw.STORAGE in words:
+            return a.SchemaCommand(EgSchemaKind.SHOW_STORAGE)
+        return a.SchemaCommand(EgSchemaKind.SHOW_INDEXES)
+
+    def _schema_target(self) -> tuple[str | None, list[str]]:
         # Memgraph (`ON :L(p)`, `ON (n:L) ASSERT n.p`) and Neo4j (`name IF NOT
         # EXISTS FOR (n:L) ON (n.p)` / `REQUIRE n.p`) spellings both reduce to
         # a label and its properties; index names are the store's own.
@@ -418,33 +440,27 @@ class _Parser:
         while self.tok.kind != EgTok.EOF and not self.at_punct(EgPunct.SEMICOLON):
             if self.accept_punct(EgPunct.COLON):
                 label = self.name()
-                if self.accept_punct(EgPunct.LPAREN):
-                    props.extend(self._name_list())
-                    self.expect_punct(EgPunct.RPAREN)
-                continue
-            if self.accept_punct(EgPunct.LPAREN):
+                props.extend(self._label_props())
+            elif self.accept_punct(EgPunct.LPAREN):
                 self.variable()
                 if self.accept_punct(EgPunct.COLON):
                     label = self.name()
                 else:
                     props.extend(self._dotted_props())
                 self.expect_punct(EgPunct.RPAREN)
-                continue
-            if label is not None and self.accept_punct(EgPunct.DOT):
+            elif label is not None and self.accept_punct(EgPunct.DOT):
                 props.append(self.name())
-                continue
-            self.advance()
-        if label is None and create:
-            raise self.error(EG_EXPECT_SCHEMA)
-        if create:
-            kind = (
-                EgSchemaKind.CREATE_INDEX
-                if is_index
-                else EgSchemaKind.CREATE_CONSTRAINT
-            )
-        else:
-            kind = EgSchemaKind.DROP_INDEX if is_index else EgSchemaKind.DROP_CONSTRAINT
-        return a.SchemaCommand(kind, label, tuple(props))
+            else:
+                self.advance()
+        return label, props
+
+    def _label_props(self) -> list[str]:
+        """The `(p, q)` that may follow `:L`."""
+        if not self.accept_punct(EgPunct.LPAREN):
+            return []
+        props = self._name_list()
+        self.expect_punct(EgPunct.RPAREN)
+        return props
 
     def _name_list(self) -> list[str]:
         names = [self.name()]
@@ -653,26 +669,28 @@ class _Parser:
             if self.at_punct(EgPunct.DOT) and not self.peek().is_punct(EgPunct.DOT):
                 self.advance()
                 expr = a.Prop(expr, self.name())
-            elif self.at_punct(EgPunct.LBRACKET):
-                self.advance()
-                if self.accept_punct(EgPunct.RANGE):
-                    end = None if self.at_punct(EgPunct.RBRACKET) else self.expression()
-                    self.expect_punct(EgPunct.RBRACKET)
-                    expr = a.Slice(expr, None, end)
-                    continue
-                index = self.expression()
-                if self.accept_punct(EgPunct.RANGE):
-                    end = None if self.at_punct(EgPunct.RBRACKET) else self.expression()
-                    self.expect_punct(EgPunct.RBRACKET)
-                    expr = a.Slice(expr, index, end)
-                    continue
-                self.expect_punct(EgPunct.RBRACKET)
-                expr = a.Index(expr, index)
+            elif self.accept_punct(EgPunct.LBRACKET):
+                expr = self._subscript(expr)
             elif self.at_punct(EgPunct.COLON) and isinstance(expr, a.Var):
                 labels = self._labels()
                 expr = a.LabelTest(expr, labels)
             else:
                 return expr
+
+    def _subscript(self, expr: a.Expr) -> a.Expr:
+        """`[i]`, `[i..j]`, `[i..]` or `[..j]` after `expr`, its `[` consumed."""
+        if self.accept_punct(EgPunct.RANGE):
+            return a.Slice(expr, None, self._slice_end())
+        index = self.expression()
+        if self.accept_punct(EgPunct.RANGE):
+            return a.Slice(expr, index, self._slice_end())
+        self.expect_punct(EgPunct.RBRACKET)
+        return a.Index(expr, index)
+
+    def _slice_end(self) -> a.Expr | None:
+        end = None if self.at_punct(EgPunct.RBRACKET) else self.expression()
+        self.expect_punct(EgPunct.RBRACKET)
+        return end
 
     def _atom(self) -> a.Expr:
         tok = self.tok
@@ -697,15 +715,9 @@ class _Parser:
         if tok.kind != EgTok.IDENT:
             raise self.error(EG_EXPECT_EXPRESSION)
         upper = tok.text.upper()
-        if upper == EgKw.TRUE:
+        if upper in _WORD_LITERALS:
             self.advance()
-            return a.Literal(True)
-        if upper == EgKw.FALSE:
-            self.advance()
-            return a.Literal(False)
-        if upper == EgKw.NULL:
-            self.advance()
-            return a.Literal(None)
+            return a.Literal(_WORD_LITERALS[upper])
         if upper == EgKw.CASE:
             return self._case()
         if (
@@ -714,14 +726,17 @@ class _Parser:
             and self.peek(3).is_word(EgKw.IN)
         ):
             return self._quantifier(_QUANTIFIERS[upper])
-        if self.peek().is_punct(EgPunct.LPAREN) or (
-            self.peek().is_punct(EgPunct.DOT) and self._is_namespaced_call()
-        ):
+        if self._at_call():
             return self._function()
         if upper in EG_EXPRESSION_STOP_WORDS:
             raise self.error(EG_EXPECT_EXPRESSION)
         self.advance()
         return a.Var(tok.text)
+
+    def _at_call(self) -> bool:
+        return self.peek().is_punct(EgPunct.LPAREN) or (
+            self.peek().is_punct(EgPunct.DOT) and self._is_namespaced_call()
+        )
 
     def _is_namespaced_call(self) -> bool:
         # `toLower(x)` vs `n.prop`: a call is name(.name)* followed by `(`.

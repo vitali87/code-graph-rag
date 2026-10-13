@@ -57,65 +57,66 @@ def tokenize(text: str) -> list[Token]:
     tokens: list[Token] = []
     i, n = 0, len(text)
     while i < n:
-        ch = text[i]
-        if ch.isspace():
+        if text[i].isspace():
             i += 1
             continue
-        if text.startswith(EG_LINE_COMMENT, i):
-            end = text.find(EG_NEWLINE, i)
-            i = n if end < 0 else end + 1
+        comment_end = _comment_end(text, i)
+        if comment_end is not None:
+            i = comment_end
             continue
-        if text.startswith(EG_BLOCK_COMMENT_OPEN, i):
-            end = text.find(EG_BLOCK_COMMENT_CLOSE, i + 2)
-            if end < 0:
-                raise CypherSyntaxError(i, EG_ERR_UNTERMINATED_COMMENT)
-            i = end + 2
-            continue
-        if ch in EG_QUOTES:
-            value, i_end = _read_string(text, i)
-            tokens.append(Token(EgTok.STRING, text[i:i_end], value, i))
-            i = i_end
-            continue
-        if ch == EG_BACKTICK:
-            value, i_end = _read_backtick(text, i)
-            tokens.append(Token(EgTok.QUOTED_IDENT, value, value, i))
-            i = i_end
-            continue
-        if ch == EG_PARAM_SIGIL:
-            j = i + 1
-            while j < n and (text[j].isalnum() or text[j] == EG_IDENT_EXTRA):
-                j += 1
-            tokens.append(Token(EgTok.PARAM, text[i:j], text[i + 1 : j], i))
-            i = j
-            continue
-        if ch.isdigit() or (
-            ch == EgPunct.DOT
-            and i + 1 < n
-            and text[i + 1].isdigit()
-            and not _after_value(tokens)
-        ):
-            token, i = _read_number(text, i)
-            tokens.append(token)
-            continue
-        if ch.isalpha() or ch == EG_IDENT_EXTRA:
-            j = i + 1
-            while j < n and (text[j].isalnum() or text[j] == EG_IDENT_EXTRA):
-                j += 1
-            tokens.append(Token(EgTok.IDENT, text[i:j], text[i:j], i))
-            i = j
-            continue
-        two = text[i : i + 2]
-        if two in EG_PUNCTUATION_2:
-            tokens.append(Token(EgTok.PUNCT, two, two, i))
-            i += 2
-            continue
-        if ch in EG_PUNCTUATION_1:
-            tokens.append(Token(EgTok.PUNCT, ch, ch, i))
-            i += 1
-            continue
-        raise CypherSyntaxError(i, repr(ch))
+        token, i = _read_token(text, i, tokens)
+        tokens.append(token)
     tokens.append(Token(EgTok.EOF, EG_EMPTY, None, n))
     return tokens
+
+
+def _comment_end(text: str, i: int) -> int | None:
+    """Where a comment starting at `i` ends; None if none starts there."""
+    if text.startswith(EG_LINE_COMMENT, i):
+        end = text.find(EG_NEWLINE, i)
+        return len(text) if end < 0 else end + 1
+    if text.startswith(EG_BLOCK_COMMENT_OPEN, i):
+        end = text.find(EG_BLOCK_COMMENT_CLOSE, i + 2)
+        if end < 0:
+            raise CypherSyntaxError(i, EG_ERR_UNTERMINATED_COMMENT)
+        return end + 2
+    return None
+
+
+def _read_token(text: str, i: int, tokens: list[Token]) -> tuple[Token, int]:
+    ch = text[i]
+    if ch in EG_QUOTES:
+        value, end = _read_string(text, i)
+        return Token(EgTok.STRING, text[i:end], value, i), end
+    if ch == EG_BACKTICK:
+        value, end = _read_backtick(text, i)
+        return Token(EgTok.QUOTED_IDENT, value, value, i), end
+    if ch == EG_PARAM_SIGIL:
+        end = _word_end(text, i + 1)
+        return Token(EgTok.PARAM, text[i:end], text[i + 1 : end], i), end
+    if ch.isdigit() or (
+        ch == EgPunct.DOT
+        and i + 1 < len(text)
+        and text[i + 1].isdigit()
+        and not _after_value(tokens)
+    ):
+        return _read_number(text, i)
+    if ch.isalpha() or ch == EG_IDENT_EXTRA:
+        end = _word_end(text, i + 1)
+        return Token(EgTok.IDENT, text[i:end], text[i:end], i), end
+    two = text[i : i + 2]
+    if two in EG_PUNCTUATION_2:
+        return Token(EgTok.PUNCT, two, two, i), i + 2
+    if ch in EG_PUNCTUATION_1:
+        return Token(EgTok.PUNCT, ch, ch, i), i + 1
+    raise CypherSyntaxError(i, repr(ch))
+
+
+def _word_end(text: str, i: int) -> int:
+    n = len(text)
+    while i < n and (text[i].isalnum() or text[i] == EG_IDENT_EXTRA):
+        i += 1
+    return i
 
 
 def _after_value(tokens: list[Token]) -> bool:
@@ -128,30 +129,44 @@ def _after_value(tokens: list[Token]) -> bool:
 
 
 def _read_number(text: str, i: int) -> tuple[Token, int]:
+    int_end = _digits_end(text, i)
+    end = _exponent_end(text, _fraction_end(text, int_end))
+    raw = text[i:end]
+    # Either a fraction or an exponent carries the number past its digits.
+    if end > int_end:
+        return Token(EgTok.FLOAT, raw, float(raw), i), end
+    return Token(EgTok.INT, raw, int(raw), i), end
+
+
+def _digits_end(text: str, i: int) -> int:
     n = len(text)
-    j = i
-    is_float = False
-    while j < n and text[j].isdigit():
-        j += 1
+    while i < n and text[i].isdigit():
+        i += 1
+    return i
+
+
+def _fraction_end(text: str, i: int) -> int:
     # `1..3` is a range, not the float `1.`
-    if j < n and text[j] == EgPunct.DOT and not text.startswith(EgPunct.RANGE, j):
-        is_float = True
-        j += 1
-        while j < n and text[j].isdigit():
-            j += 1
-    if j < n and text[j] in EG_EXPONENT:
-        k = j + 1
-        if k < n and text[k] in EG_SIGNS:
-            k += 1
-        if k < n and text[k].isdigit():
-            is_float = True
-            j = k
-            while j < n and text[j].isdigit():
-                j += 1
-    raw = text[i:j]
-    if is_float:
-        return Token(EgTok.FLOAT, raw, float(raw), i), j
-    return Token(EgTok.INT, raw, int(raw), i), j
+    if (
+        i < len(text)
+        and text[i] == EgPunct.DOT
+        and not text.startswith(EgPunct.RANGE, i)
+    ):
+        return _digits_end(text, i + 1)
+    return i
+
+
+def _exponent_end(text: str, i: int) -> int:
+    # `1e` and `1e+` keep the `e` out of the number; it lexes as a name.
+    n = len(text)
+    if i >= n or text[i] not in EG_EXPONENT:
+        return i
+    k = i + 1
+    if k < n and text[k] in EG_SIGNS:
+        k += 1
+    if k < n and text[k].isdigit():
+        return _digits_end(text, k)
+    return i
 
 
 def _read_string(text: str, start: int) -> tuple[str, int]:
