@@ -70,6 +70,8 @@ from ..cypher_queries import (
     wrap_with_unwind,
 )
 from ..embedded_graph.connection import EmbeddedConnection
+from ..embedded_graph.expressions import CompileError
+from ..embedded_graph.lexer import CypherSyntaxError
 from ..embedded_graph.store import EmbeddedGraphUnsupported
 from ..graph_dialects import (
     DIALECT_MEMGRAPH,
@@ -170,8 +172,11 @@ def is_query_rejection(error: BaseException) -> bool:
     failed login or a missing permission cannot, so those must not trigger a
     regeneration. In mgclient, `OperationalError` (connection) subclasses
     `DatabaseError`; in neo4j, `AuthError` and `Forbidden` subclass
-    `ClientError` (issue #2361).
+    `ClientError` (issue #2361). The embedded engine raises its own errors
+    for a query it cannot parse or compile, and none for a connection.
     """
+    if isinstance(error, (CypherSyntaxError, CompileError)):
+        return True
     if isinstance(error, _MgclientDatabaseError):
         return not isinstance(error, _MgclientOperationalError)
     try:
@@ -283,6 +288,7 @@ class MemgraphIngestor:
         "_driver",
         "_driver_lock",
         "_read_conn",
+        "_read_lock",
         "_rel_count",
         "_rel_groups",
         "_sqlite_path",
@@ -311,6 +317,10 @@ class MemgraphIngestor:
         # The embedded engine's file; None reads SQLITE_GRAPH_PATH at connect.
         self._sqlite_path = sqlite_path
         self._read_conn: EmbeddedConnection | None = None
+        # Guards opening the read connection only: the connection serializes
+        # its own statements, so a slow generated query need not hold the
+        # lock every write takes.
+        self._read_lock = threading.Lock()
         self._host = host
         self._port = port
         self._username = username.strip() if username and username.strip() else None
@@ -496,10 +506,12 @@ class MemgraphIngestor:
     def sqlite_graph_path(self) -> str:
         return self._sqlite_path or str(settings.sqlite_graph_path)
 
-    def _embedded_connection(self, read_only: bool) -> EmbeddedConnection:
+    def _embedded_connection(
+        self, read_only: bool, heap_limit_mb: int | None = None
+    ) -> EmbeddedConnection:
         path = self.sqlite_graph_path()
         try:
-            return EmbeddedConnection(path, read_only=read_only)
+            return EmbeddedConnection(path, read_only, heap_limit_mb)
         except (sqlite3.Error, OSError, EmbeddedGraphUnsupported) as e:
             raise GraphUnavailableError(
                 ex.EMBEDDED_GRAPH_UNAVAILABLE.format(path=path, error=e)
@@ -1100,18 +1112,22 @@ class MemgraphIngestor:
         opened `mode=ro`, so a write the plan check missed fails in SQLite.
         An in-memory graph has no file to reopen and uses the main
         connection, where the plan check is the guard.
+
+        The engine runs in this process, so the bounds the server enforces
+        for Memgraph are enforced here: the statement stops itself at
+        QUERY_TIMEOUT_S (the caller's own timeout only stops waiting), and
+        SQLite's heap is capped at QUERY_MEMORY_LIMIT_MB.
         """
         if self.sqlite_graph_path() == EG_MEMORY_PATH:
             return self._execute_query(query)
-        with self._conn_lock:
+        with self._read_lock:
             if self._read_conn is None:
-                self._read_conn = self._embedded_connection(read_only=True)
-            cursor = self._read_conn.cursor()
-            try:
-                cursor.execute(query)
-                return self._cursor_to_results(cursor)
-            finally:
-                cursor.close()
+                self._read_conn = self._embedded_connection(
+                    read_only=True, heap_limit_mb=settings.QUERY_MEMORY_LIMIT_MB
+                )
+            read_conn = self._read_conn
+        result = read_conn.run(query, timeout_s=settings.QUERY_TIMEOUT_S)
+        return [dict[str, ResultValue](zip(result.columns, row)) for row in result.rows]
 
     def execute_write(self, query: str, params: PropertyParams | None = None) -> None:
         logger.debug(ls.MG_WRITE_QUERY, query=query, params=params)

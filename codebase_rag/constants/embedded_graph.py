@@ -14,6 +14,11 @@ EG_BUSY_TIMEOUT_MS = 60_000
 EG_CACHE_SIZE_KIB = 262_144
 EG_STATEMENT_CACHE_SIZE = 512
 EG_COMPILE_CACHE_SIZE = 2048
+# SQLite virtual-machine steps between checks of a statement's deadline:
+# frequent enough to stop within milliseconds, rare enough to cost nothing.
+EG_PROGRESS_STEPS = 10_000
+EG_DEADLINE_VAR = "eg_deadline"
+EG_BYTES_PER_MB = 1024 * 1024
 # The parameter the ingestor's `UNWIND $batch AS row` writes bind their rows to.
 EG_BATCH_PARAM = "batch"
 # In a live-variable set: every variable is live (`WITH *` / `RETURN *`).
@@ -422,11 +427,14 @@ class EgSqlFn(StrEnum):
     EXP = "eg_exp"
     SIGN = "eg_sign"
     TIMESTAMP = "eg_timestamp"
+    PATHS_DISJOINT = "eg_paths_disjoint"
 
 
 # JSON's spelling of the booleans, which `eg_` functions read and write.
 EG_JSON_TRUE = "true"
 EG_JSON_FALSE = "false"
+# Separates the edge ids in a variable-length walk's path, as `,1,7,`.
+EG_PATH_SEPARATOR = ","
 # Compact JSON, as SQLite's own json functions write it.
 EG_JSON_SEPARATORS = (",", ":")
 
@@ -539,6 +547,9 @@ EG_PRAGMAS: tuple[str, ...] = (
 )
 EG_PRAGMA_BUSY = "PRAGMA busy_timeout={ms}"
 EG_PRAGMA_CACHE = "PRAGMA cache_size=-{kib}"
+# Process-wide: SQLite fails an allocation past it with SQLITE_NOMEM rather
+# than letting one runaway query take the machine's memory.
+EG_PRAGMA_HEAP_LIMIT = "PRAGMA hard_heap_limit={bytes}"
 # The planner's statistics are pinned, not measured. Measured on a graph
 # that is still being written, they describe it at its smallest: a sync's
 # first connection recorded a near-empty graph, after which every batch of
@@ -636,6 +647,7 @@ EG_ERR_NOT_JSON = "expected a JSON value, got {value!r}"
 EG_ERR_CLOSED = "the embedded graph connection is closed"
 EG_ERR_NOT_NODE = "expected a node for `{name}`"
 EG_ERR_NOT_REL = "expected a relationship for `{name}`"
+EG_ERR_TIMEOUT = "the query ran past its time limit and was stopped"
 EG_ERR_VARLEN_VAR = "a variable-length relationship cannot be bound to a variable"
 EG_ERR_LABEL_COUNT = "a node holds exactly one label; `{labels}` is not supported"
 EG_ERR_YIELD = "procedure {name} has no output column {column}"

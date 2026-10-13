@@ -484,6 +484,8 @@ class _MatchBuilder:
         self.conds: list[str] = []
         self.new_vars: dict[str, CE] = {}
         self.fixed_rels: list[str] = []
+        # Rows of the variable-length walks; each carries its path's edges.
+        self.walks: list[str] = []
         # The WHERE clause's conjuncts; those on one start node alone also
         # narrow where a variable-length walk begins.
         self.where = where
@@ -583,12 +585,30 @@ class _MatchBuilder:
         self.fixed_rels.append(alias)
 
     def uniqueness(self) -> list[str]:
-        rels = self.fixed_rels
-        return [
+        """No relationship twice in one MATCH, across all its patterns.
+
+        Fixed relationships compare ids; a walk's path must avoid every
+        fixed relationship and share none with another walk.
+        """
+        rels, walks = self.fixed_rels, self.walks
+        conds = [
             sq.ne(sq.column(rels[i], sq.ID), sq.column(rels[j], sq.ID))
             for i in range(len(rels))
             for j in range(i + 1, len(rels))
         ]
+        conds += [
+            sq.path_avoids(sq.column(w, sq.WALK_PATH), sq.column(r, sq.ID))
+            for w in walks
+            for r in rels
+        ]
+        conds += [
+            sq.paths_disjoint(
+                sq.column(walks[i], sq.WALK_PATH), sq.column(walks[j], sq.WALK_PATH)
+            )
+            for i in range(len(walks))
+            for j in range(i + 1, len(walks))
+        ]
+        return conds
 
     def _input_seed(self, np: a.NodePattern) -> str | None:
         """Start ids for a path whose end node the input already binds."""
@@ -664,6 +684,7 @@ class _MatchBuilder:
         )
         alias = self.ctx.fresh(sq.WALK_ROW_PREFIX)
         self.from_items.append(sq.table(name, alias))
+        self.walks.append(alias)
         seed_side, node_side = (left, right) if forward else (right, left)
         self.conds.append(sq.eq(sq.column(alias, sq.WALK_SEED), seed_side.sql))
         self.conds.append(sq.eq(sq.column(alias, sq.WALK_NODE), node_side.sql))

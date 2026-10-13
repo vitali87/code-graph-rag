@@ -307,8 +307,17 @@ def walk(
         f"{depth} + 1, {path} || {edge_id} || {WALK_PATH_SEP} "
         f"FROM {table(name, QUEUE)} CROSS JOIN {table(EDGES, EDGE)} "
         f"ON {walk_join(direction_out, types)} "
-        f"WHERE {bound}instr({path}, {WALK_PATH_SEP} || {edge_id} || {WALK_PATH_SEP}) = 0"
+        f"WHERE {bound}{path_avoids(path, edge_id)}"
     )
+
+
+def path_avoids(path: str, edge_id: str) -> str:
+    """Whether a walk's comma-delimited edge list leaves out `edge_id`."""
+    return f"instr({path}, {WALK_PATH_SEP} || {edge_id} || {WALK_PATH_SEP}) = 0"
+
+
+def paths_disjoint(left: str, right: str) -> str:
+    return call(EgSqlFn.PATHS_DISJOINT, left, right)
 
 
 def all_node_ids() -> str:
@@ -785,10 +794,12 @@ def entity_object(row_id: str, rel: bool) -> str:
     )
 
 
-def entity_objects(ids: str, rel: bool) -> str:
-    """A JSON array of node or relationship ids as an array of objects."""
-    alias = "je"
-    element = json_text(entity_object(column(alias, VALUE), rel))
+def map_list(items: str, alias: str, element: str) -> str:
+    """A JSON array with `element` (SQL over `alias.value`) for each item,
+    in list order."""
     return paren(
-        select([call("json_group_array", element)], f"json_each({ids}) {alias}")
+        select(
+            [call("json_group_array", json_text(element))],
+            f"json_each({items}) {alias}",
+        )
     )

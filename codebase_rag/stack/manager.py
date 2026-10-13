@@ -474,6 +474,25 @@ class StackManager:
                 )
             )
 
+    def serves_vectors(self) -> bool:
+        """Whether the app's embeddings go to this stack's Qdrant.
+
+        The choice `vector_store` makes: a QDRANT_URL naming where Compose
+        publishes Qdrant, or, with neither QDRANT_URL nor QDRANT_DB_PATH
+        chosen, a stack set up here. Then `cgr start` starts the stack even
+        for a graph backend that needs nothing from it.
+        """
+        if settings.VECTOR_STORE_BACKEND != root_cs.VectorStoreBackend.QDRANT:
+            return False
+        if settings.QDRANT_URL:
+            return _names_published_qdrant(
+                settings.QDRANT_URL, self._qdrant_bind, self.qdrant_port
+            )
+        return (
+            root_cs.SETTING_QDRANT_DB_PATH not in settings.model_fields_set
+            and self.compose_file.exists()
+        )
+
     def locate_published_qdrant(self) -> None:
         """Ask Compose where Qdrant is published before checking a running stack.
 

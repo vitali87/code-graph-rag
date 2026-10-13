@@ -16,9 +16,11 @@ from functools import lru_cache
 
 from ..constants.embedded_graph import (
     EG_COMPILE_CACHE_SIZE,
+    EG_EMPTY,
     EG_JSON_FALSE,
     EG_JSON_SEPARATORS,
     EG_JSON_TRUE,
+    EG_PATH_SEPARATOR,
     EgSqlFn,
 )
 from ..types_defs import JsonValue
@@ -225,6 +227,14 @@ def eg_sign(value: float | None) -> int | None:
     return (value > 0) - (value < 0)
 
 
+def eg_paths_disjoint(left: str | None, right: str | None) -> int | None:
+    """Whether two walks' edge lists (`,1,7,`) share no relationship."""
+    if left is None or right is None:
+        return None
+    ids = set(left.split(EG_PATH_SEPARATOR)) & set(right.split(EG_PATH_SEPARATOR))
+    return int(ids <= {EG_EMPTY})
+
+
 def eg_timestamp() -> int:
     return int(time.time() * _MS_PER_S)
 
@@ -254,6 +264,7 @@ _DETERMINISTIC: dict[str, tuple[int, Callable[..., SqlValue]]] = {
     EgSqlFn.LOG: (1, _num(math.log)),
     EgSqlFn.EXP: (1, _num(math.exp)),
     EgSqlFn.SIGN: (1, eg_sign),
+    EgSqlFn.PATHS_DISJOINT: (2, eg_paths_disjoint),
 }
 
 

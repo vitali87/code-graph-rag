@@ -17,6 +17,7 @@ import pytest
 from codebase_rag import cypher_queries as cq
 from codebase_rag.constants import EG_PLANNER_STATISTICS
 from codebase_rag.embedded_graph import cypher_ast as a
+from codebase_rag.embedded_graph import procedures
 from codebase_rag.embedded_graph.compiler import ALL_LIVE, live_after
 from codebase_rag.embedded_graph.connection import EmbeddedConnection
 from codebase_rag.embedded_graph.executor import compile_read, value_type
@@ -24,6 +25,7 @@ from codebase_rag.embedded_graph.expressions import (
     CompileError,
 )
 from codebase_rag.embedded_graph.lexer import CypherSyntaxError
+from codebase_rag.embedded_graph.limits import Deadline, QueryTimeout, running_until
 from codebase_rag.embedded_graph.parser import parse
 from codebase_rag.exceptions import ReadOnlyQueryError
 from codebase_rag.graph_dialects import (
@@ -167,6 +169,50 @@ class TestReadOnly:
         assert rows == [("b",), ("a",)]
 
 
+class TestLimits:
+    """A statement stops at its deadline instead of running on in a worker
+    thread after its caller gave up (CodeRabbit on #3377)."""
+
+    _CROSS_JOIN = "MATCH (a:N), (b:N), (c:N) RETURN count(*) AS n"
+
+    @pytest.fixture
+    def wide(self, conn) -> EmbeddedConnection:
+        conn.run("UNWIND range(1, 400) AS i CREATE (:N {i: i})")
+        return conn
+
+    def test_a_long_statement_stops_at_its_deadline(self, wide) -> None:
+        with pytest.raises(QueryTimeout):
+            wide.run(self._CROSS_JOIN, timeout_s=0.05)
+
+    def test_the_connection_is_usable_after_a_timeout(self, wide) -> None:
+        with pytest.raises(QueryTimeout):
+            wide.run(self._CROSS_JOIN, timeout_s=0.05)
+        # The handler is cleared: a statement without a limit runs to the end.
+        assert wide.run("MATCH (a:N) RETURN count(a) AS n").rows == [(400,)]
+
+    def test_a_python_procedure_stops_at_its_deadline(self, wide) -> None:
+        expired = Deadline(at=0.0)
+        with running_until(expired), pytest.raises(QueryTimeout):
+            list(
+                procedures.PROCEDURES["betweenness_centrality.get"].fn(wide._sqlite, [])
+            )
+
+    def test_generated_queries_run_with_the_query_timeout(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = str(tmp_path / "g.sqlite")
+        with EmbeddedConnection(path) as writer:
+            writer.run("UNWIND range(1, 400) AS i CREATE (:N {i: i})")
+        monkeypatch.setattr(
+            "codebase_rag.services.graph_service.settings.QUERY_TIMEOUT_S", 0.05
+        )
+        ingestor = MemgraphIngestor(
+            "", 0, dialect=get_dialect(DIALECT_SQLITE), sqlite_path=path
+        )
+        with ingestor, pytest.raises(TimeoutError):
+            ingestor.fetch_read_only(self._CROSS_JOIN)
+
+
 class TestProcedures:
     @pytest.fixture
     def cyclic(self, conn) -> EmbeddedConnection:
@@ -183,6 +229,28 @@ class TestProcedures:
             "UNWIND components AS comp RETURN size(comp) AS n ORDER BY n DESC",
         )
         assert rows == [(2,), (1,)]
+
+    def test_nested_node_lists_come_back_as_nodes(self, cyclic) -> None:
+        """Memgraph returns each component as a list of nodes, not ids."""
+        rows = _rows(
+            cyclic,
+            "CALL nxalg.strongly_connected_components() YIELD components "
+            "RETURN components",
+        )
+        [(components,)] = rows
+        keys = sorted(
+            sorted(node["properties"]["k"] for node in comp) for comp in components
+        )
+        assert keys == [["a", "b"], ["c"]]
+
+    def test_a_standalone_call_returns_nodes(self, cyclic) -> None:
+        result = cyclic.run("CALL pagerank.get()")
+        assert result.columns == ["node", "rank"]
+        assert sorted(row[0]["properties"]["k"] for row in result.rows) == [
+            "a",
+            "b",
+            "c",
+        ]
 
     def test_shortest_path_returns_its_nodes(self, cyclic) -> None:
         rows = _rows(

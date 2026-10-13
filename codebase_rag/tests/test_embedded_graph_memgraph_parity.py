@@ -195,6 +195,37 @@ MEMGRAPH_PROBES: list[tuple[str, list[str], list[list[object]]]] = [
         ["m", "v"],
         [[{"a": 1, "b": [1, "x"]}, 1]],
     ),
+    # single(): one true element is true whatever else is null; with none
+    # true, a null leaves the answer unknown.
+    (
+        "RETURN single(x IN [null, 1] WHERE x > 2) AS a, "
+        "single(x IN [null, 3] WHERE x > 2) AS b, "
+        "single(x IN [3, 4, null] WHERE x > 2) AS c, "
+        "single(x IN [] WHERE x > 2) AS d, single(x IN [null] WHERE x > 2) AS e",
+        ["a", "b", "c", "d", "e"],
+        [[None, True, False, False, None]],
+    ),
+    # A relationship is used once per MATCH, across fixed and
+    # variable-length parts and across patterns.
+    ("CREATE (x:U {k:'x'})-[:CALLS]->(y:U {k:'y'})-[:CALLS]->(x)", [], []),
+    (
+        "MATCH (a:U)-[r:CALLS]->(b)-[:CALLS*1..2]->(c) "
+        "RETURN a.k AS a, b.k AS b, c.k AS c ORDER BY a, b, c",
+        ["a", "b", "c"],
+        [["x", "y", "x"], ["y", "x", "y"]],
+    ),
+    (
+        "MATCH (a:U)-[:CALLS*1..2]->(b), (b)-[:CALLS*1..2]->(c) "
+        "RETURN a.k AS a, b.k AS b, c.k AS c ORDER BY a, b, c",
+        ["a", "b", "c"],
+        [["x", "y", "x"], ["y", "x", "y"]],
+    ),
+    (
+        "MATCH (a:U)-[:CALLS*2]->(c), (a)-[r:CALLS]->(b) "
+        "RETURN a.k AS a, b.k AS b, c.k AS c",
+        ["a", "b", "c"],
+        [],
+    ),
 ]
 
 

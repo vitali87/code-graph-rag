@@ -94,19 +94,27 @@ class EmbeddedCursor:
 
 
 class EmbeddedConnection:
-    def __init__(self, path: str, read_only: bool = False) -> None:
-        self._sqlite = open_connection(path, read_only=read_only)
+    def __init__(
+        self, path: str, read_only: bool = False, heap_limit_mb: int | None = None
+    ) -> None:
+        self._sqlite = open_connection(path, read_only, heap_limit_mb)
         self._executor = Executor(self._sqlite, supports_json_arrow(), read_only)
         self._lock = threading.Lock()
         self._closed = False
         self.autocommit = True
         self.path = path
 
-    def run(self, query: str, params: CypherParams | None = None) -> Result:
+    def run(
+        self,
+        query: str,
+        params: CypherParams | None = None,
+        timeout_s: float | None = None,
+    ) -> Result:
+        """Run one statement; past `timeout_s` it stops with QueryTimeout."""
         if self._closed:
             raise ConnectionError(EG_ERR_CLOSED)
         with self._lock:
-            return self._executor.execute(query, params)
+            return self._executor.execute(query, params, timeout_s)
 
     def cursor(self) -> EmbeddedCursor:
         return EmbeddedCursor(self)

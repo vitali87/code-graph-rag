@@ -138,7 +138,7 @@ This deployment is the embedded graph (Cypher over SQLite). For algorithmic ques
 - **Betweenness centrality**: `CALL betweenness_centrality.get() YIELD node, betweenness_centrality`
 - **Degree centrality**: `CALL degree_centrality.get() YIELD node, degree`
 
-These procedures ignore edge types. To restrict to one (e.g., only `CALLS`), filter their output with a pattern predicate such as `WHERE (a)-[:CALLS]->(b)`.
+These procedures run over every relationship type, and filtering their output cannot take back the edges they already counted. When a question concerns one relationship type (e.g., only `CALLS`), do not use them: write a bounded typed pattern such as `MATCH (a)-[:CALLS*1..5]->(b)` instead.
 
 Path variables (`MATCH p = ...`), `nodes(p)`, `relationships(p)` and `shortestPath(...)` are not available: return the properties of the matched end nodes instead, and use `nxalg.shortest_path` for a shortest path.
 

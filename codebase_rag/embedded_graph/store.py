@@ -7,6 +7,7 @@ from pathlib import Path
 
 from ..constants.embedded_graph import (
     EG_BUSY_TIMEOUT_MS,
+    EG_BYTES_PER_MB,
     EG_CACHE_SIZE_KIB,
     EG_ERR_SQLITE_VERSION,
     EG_MEMORY_PATH,
@@ -15,6 +16,7 @@ from ..constants.embedded_graph import (
     EG_PLANNER_STATISTICS,
     EG_PRAGMA_BUSY,
     EG_PRAGMA_CACHE,
+    EG_PRAGMA_HEAP_LIMIT,
     EG_PRAGMAS,
     EG_SCHEMA_SQL,
     EG_SCHEMA_VERSION,
@@ -80,7 +82,9 @@ def pin_planner_statistics(conn: sqlite3.Connection) -> None:
     conn.execute(EG_SQL_RELOAD_STATS)
 
 
-def open_connection(path: str, read_only: bool = False) -> sqlite3.Connection:
+def open_connection(
+    path: str, read_only: bool = False, heap_limit_mb: int | None = None
+) -> sqlite3.Connection:
     """One connection to the graph file, configured for the engine.
 
     Autocommit (`isolation_level=None`): the executor opens its own
@@ -111,6 +115,8 @@ def open_connection(path: str, read_only: bool = False) -> sqlite3.Connection:
         )
     conn.execute(EG_PRAGMA_BUSY.format(ms=EG_BUSY_TIMEOUT_MS))
     conn.execute(EG_PRAGMA_CACHE.format(kib=EG_CACHE_SIZE_KIB))
+    if heap_limit_mb is not None:
+        conn.execute(EG_PRAGMA_HEAP_LIMIT.format(bytes=heap_limit_mb * EG_BYTES_PER_MB))
     if not read_only:
         for pragma in EG_PRAGMAS:
             conn.execute(pragma)

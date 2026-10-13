@@ -741,11 +741,12 @@ def _resolve_active_projects(projects: str | None, default_project: str) -> list
 
 
 def _maybe_start_stack() -> None:
-    # The Docker stack serves Memgraph; the embedded graph is a file and
-    # Neo4j is the user's own server, so neither has anything to start.
-    if settings.GRAPH_BACKEND != DIALECT_MEMGRAPH:
-        return
     mgr = StackManager()
+    # The Docker stack serves Memgraph, and Qdrant when the vector settings
+    # pick the bundled one. The embedded graph is a file and Neo4j is the
+    # user's own server, so for them the stack runs only for the vectors.
+    if settings.GRAPH_BACKEND != DIALECT_MEMGRAPH and not mgr.serves_vectors():
+        return
     try:
         mgr.locate_published_qdrant()
         if mgr.status().state == StackState.RUNNING:

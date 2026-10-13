@@ -220,9 +220,9 @@ class SqliteDialect(MemgraphDialect):
     """The embedded engine (`codebase_rag.embedded_graph`), a SQLite file.
 
     Its Cypher front end accepts Memgraph's DDL and reports constraints in
-    Memgraph's row shape, so only the memory bound differs: the store has
-    no per-query limit, and a read runs inside this process, where the
-    operating system already bounds it.
+    Memgraph's row shape, so only the memory bound differs: it is no query
+    clause here but SQLite's heap limit, which the ingestor sets on the
+    connection generated queries run on.
     """
 
     name = DIALECT_SQLITE

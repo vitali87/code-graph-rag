@@ -36,6 +36,7 @@ from ..constants.embedded_graph import (
 )
 from . import sql as sq
 from . import types as ty
+from .limits import check_deadline
 from .types import SqlValue, T
 
 # A record field: a node (its id), a number, or nodes in a list or lists.
@@ -100,6 +101,7 @@ def _pagerank(conn: sqlite3.Connection, args: Sequence[SqlValue]) -> Iterable[Re
         return []
     rank = dict.fromkeys(nodes, 1.0 / n)
     for _ in range(iterations):
+        check_deadline()
         nxt = dict.fromkeys(nodes, 0.0)
         # A plain running sum, not sum(): Python's compensates rounding,
         # and the Rust path must produce the same ranks bit for bit.
@@ -169,6 +171,7 @@ def _tarjan(nodes: list[int], out: dict[int, list[int]]) -> list[list[int]]:
     for root in nodes:
         if root in index:
             continue
+        check_deadline()
         work = [(root, 0)]
         while work:
             v, i = work.pop()
@@ -220,6 +223,7 @@ def _simple_cycles(
             # is reported once, from its smallest node.
             stack = [(start, [start])]
             while stack and len(cycles) < _MAX_CYCLES:
+                check_deadline()
                 v, path = stack.pop()
                 for w in out.get(v, []):
                     if w == start:
@@ -249,6 +253,7 @@ def _toposort(conn: sqlite3.Connection, args: Sequence[SqlValue]) -> Iterable[Re
     queue = deque(v for v in nodes if indegree[v] == 0)
     order: list[int] = []
     while queue:
+        check_deadline()
         v = queue.popleft()
         order.append(v)
         for w in out.get(v, []):
@@ -268,6 +273,7 @@ def _shortest_path(
     prev: dict[int, int | None] = {source: None}
     queue = deque([source])
     while queue:
+        check_deadline()
         v = queue.popleft()
         if v == target:
             break
@@ -291,6 +297,7 @@ def _betweenness(
     nodes, out, _ = _graph(conn)
     score = dict.fromkeys(nodes, 0.0)
     for s in nodes:
+        check_deadline()
         stack: list[int] = []
         preds: dict[int, list[int]] = defaultdict(list)
         sigma = dict.fromkeys(nodes, 0.0)
@@ -328,6 +335,7 @@ def _reach(
     seen: set[int] = set()
     queue = deque([node])
     while queue:
+        check_deadline()
         v = queue.popleft()
         for (w,) in conn.execute(sql, (v,)):
             if w not in seen and w != node:

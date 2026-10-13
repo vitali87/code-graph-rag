@@ -215,17 +215,19 @@ class ExprCompiler:
 
     def output(self, ce: CE) -> str:
         """SQL whose value the executor decodes into the Python result."""
-        kind = ce.t.kind
-        if kind in (Kind.NODE, Kind.REL):
-            return sq.entity_object(ce.sql, rel=kind == Kind.REL)
-        elem = ce.t.elem
-        if (
-            kind == Kind.LIST
-            and elem is not None
-            and elem.kind in (Kind.NODE, Kind.REL)
-        ):
-            return sq.entity_objects(ce.sql, rel=elem.kind == Kind.REL)
-        return ce.sql
+        return self._output(ce.sql, ce.t)
+
+    def _output(self, sql: str, t: T) -> str:
+        # Nodes and relationships travel as ids; a result shows them whole,
+        # at any depth: `nxalg.strongly_connected_components` yields lists
+        # of lists of nodes.
+        if t.kind in (Kind.NODE, Kind.REL):
+            return sq.entity_object(sql, rel=t.kind == Kind.REL)
+        if t.kind == Kind.LIST and t.elem is not None and _holds_entities(t.elem):
+            alias = self.ctx.fresh(sq.EACH_PREFIX)
+            element = self._output(sq.column(alias, sq.VALUE), t.elem)
+            return sq.null_if_null(sql, sq.map_list(sql, alias, element))
+        return sql
 
     def props_of(self, ce: CE) -> str:
         return self.column_of(ce, sq.PROPS)
@@ -364,7 +366,17 @@ class ExprCompiler:
         elif e.kind == EgQuantifier.NONE:
             body = sq.case(None, [(some_true, sq.FALSE), (some_null, sq.NULL)], sq.TRUE)
         else:
-            body = sq.paren(sq.eq(sq.count_where(each, cond), sq.ONE))
+            # Memgraph: one true element is true whatever else is null; with
+            # none true, a null leaves it unknown.
+            matches = sq.count_where(each, cond)
+            body = sq.case(
+                None,
+                [
+                    (sq.eq(matches, sq.ONE), sq.TRUE),
+                    (sq.all_of([sq.eq(matches, sq.ZERO), some_null]), sq.NULL),
+                ],
+                sq.FALSE,
+            )
         return CE(sq.null_if_null(self.jsonv(source), body), ty.BOOL)
 
     def _each(self, source: CE, var: str, scope: Scope) -> tuple[str, str, Scope]:
@@ -557,6 +569,12 @@ class ExprCompiler:
             number = ty.INT if arg.t.kind == Kind.INT else ty.FLOAT
             return CE(sq.sum_or_zero(native, e.distinct), number)
         return CE(sq.aggregate(e.name, native, e.distinct), arg.t)
+
+
+def _holds_entities(t: T) -> bool:
+    if t.kind in (Kind.NODE, Kind.REL):
+        return True
+    return t.kind == Kind.LIST and t.elem is not None and _holds_entities(t.elem)
 
 
 def _is_constant(e: a.Expr, scope: Scope) -> bool:

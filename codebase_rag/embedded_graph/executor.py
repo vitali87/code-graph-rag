@@ -31,6 +31,7 @@ from ..constants.embedded_graph import (
     EG_ERR_NOT_ENTITY,
     EG_ERR_NOT_JSON,
     EG_ERR_READ_ONLY,
+    EG_ERR_TIMEOUT,
     EG_ERR_UNKNOWN_PROCEDURE,
     EG_ERR_UNSUPPORTED,
     EG_ERR_YIELD,
@@ -53,6 +54,7 @@ from ..constants.embedded_graph import (
     EG_PLAN_UNION,
     EG_PLAN_UNWIND,
     EG_PREFIX_UPPER_BOUND,
+    EG_PROGRESS_STEPS,
     EG_PROP_INDEX_NAME,
     EG_PROP_INDEX_SQL,
     EG_STORAGE_EDGE_COUNT,
@@ -84,10 +86,10 @@ from .compiler import (
     QueryCompiler,
     Stage,
     VarInfo,
-    decode_for,
     live_after,
 )
 from .expressions import CE, CompileError, Ctx, ParamSpec
+from .limits import Deadline, QueryTimeout, running_until
 from .parser import parse
 from .procedures import PROCEDURES, ProcValue, run_procedure
 from .types import Kind, SqlValue, T
@@ -99,6 +101,7 @@ class Result:
     rows: list[tuple[ResultValue, ...]]
 
 
+_RETURN_ALL = a.Projection(is_return=True, distinct=False, star=True, items=())
 _READ_CLAUSES = (a.Match, a.Unwind)
 _WRITE_CLAUSES = (a.Create, a.Merge, a.SetClause, a.Remove, a.Delete, a.Foreach, a.Call)
 
@@ -286,7 +289,12 @@ class Executor:
         self.read_only = read_only
         self._temp_counter = 0
 
-    def execute(self, text: str, params: CypherParams | None = None) -> Result:
+    def execute(
+        self,
+        text: str,
+        params: CypherParams | None = None,
+        timeout_s: float | None = None,
+    ) -> Result:
         params = dict(params or {})
         stmt = parse(text)
         if isinstance(stmt, a.SchemaCommand):
@@ -305,11 +313,20 @@ class Executor:
         if mutates and self.read_only:
             raise CompileError(EG_ERR_READ_ONLY)
         self.conn.execute(sq.BEGIN_WRITE if mutates else sq.BEGIN_READ)
+        deadline = Deadline.after(timeout_s)
+        if timeout_s is not None:
+            self.conn.set_progress_handler(deadline.passed, EG_PROGRESS_STEPS)
         try:
-            result = self._run(stmt, text, sig, params, writes)
-        except BaseException:
+            with running_until(deadline):
+                result = self._run(stmt, text, sig, params, writes)
+        except BaseException as error:
+            self.conn.set_progress_handler(None, 0)
             self.conn.execute(sq.ROLLBACK)
+            # The progress handler aborts a statement as "interrupted".
+            if isinstance(error, sqlite3.OperationalError) and deadline.passed():
+                raise QueryTimeout(EG_ERR_TIMEOUT) from error
             raise
+        self.conn.set_progress_handler(None, 0)
         self.conn.execute(sq.COMMIT)
         return result
 
@@ -896,22 +913,15 @@ class _Run:
         return Stage(sq.temp_table(name), out.vars, out.cols)
 
     def _standalone_call(self, clause: a.Call) -> Result:
-        spec = PROCEDURES.get(clause.procedure)
-        if spec is None:
-            raise CompileError(EG_ERR_UNKNOWN_PROCEDURE.format(name=clause.procedure))
-        args = self._eval(
-            self._store({}, [[]]), [(arg, EgForm.RAW) for arg in clause.args]
-        )[0]
-        names = [c for c, _ in spec.columns]
-        out = []
-        for record in run_procedure(self.conn, clause.procedure, args):
-            out.append(
-                tuple(
-                    decode(decode_for(t), _to_column(t, record[c]))
-                    for c, t in spec.columns
-                )
-            )
-        return Result(names, out)
+        # `CALL p()` alone returns what `CALL p() YIELD * RETURN *` would,
+        # so nodes come back whole rather than as ids.
+        stage = self._call(self._store({}, [[]]), clause)
+        sql, outputs, _ = self.qc.returning(stage, _RETURN_ALL)
+        rows = self.conn.execute(sql, self._binds()).fetchall()
+        return Result(
+            [c.name for c in outputs],
+            [tuple(decode(c.decode, v) for c, v in zip(outputs, row)) for row in rows],
+        )
 
 
 def _entities(t: T, value: SqlValue) -> list[tuple[Kind, int]]:
