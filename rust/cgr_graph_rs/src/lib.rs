@@ -17,6 +17,8 @@ use std::collections::{HashMap, VecDeque};
 
 use rusqlite::{Connection, OpenFlags};
 
+pub mod cypher;
+
 const DEFAULT_ITERATIONS: u32 = 100;
 const DEFAULT_DAMPING: f64 = 0.85;
 const DEFAULT_EPSILON: f64 = 1e-5;
@@ -446,6 +448,7 @@ mod python {
     #[pymodule]
     fn cgr_graph_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_function(wrap_pyfunction!(run_procedure, m)?)?;
+        crate::cypher::python::register(m)?;
         Ok(())
     }
 }
