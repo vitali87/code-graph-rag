@@ -131,12 +131,12 @@ def is_aggregate(e: a.Expr) -> bool:
 
 
 def children(e: a.Expr) -> list[a.Expr]:
-    if isinstance(e, a.Prop):
+    if isinstance(e, (a.Prop, a.LabelTest)):
         return [e.subject]
     if isinstance(e, (a.Index,)):
         return [e.subject, e.index]
     if isinstance(e, a.Slice):
-        return [x for x in (e.subject, e.start, e.end) if x is not None]
+        return _present((e.subject, e.start, e.end))
     if isinstance(e, a.MapLit):
         return [v for _, v in e.items]
     if isinstance(e, a.ListLit):
@@ -148,19 +148,16 @@ def children(e: a.Expr) -> list[a.Expr]:
         # aggregates; only the source can hold one.
         return [e.source]
     if isinstance(e, a.Case):
-        out = [x for pair in e.whens for x in pair]
-        if e.subject is not None:
-            out.append(e.subject)
-        if e.default is not None:
-            out.append(e.default)
-        return out
+        return [x for pair in e.whens for x in pair] + _present((e.subject, e.default))
     if isinstance(e, a.BinOp):
         return [e.left, e.right]
     if isinstance(e, (a.UnaryOp, a.IsNull)):
         return [e.operand]
-    if isinstance(e, a.LabelTest):
-        return [e.subject]
     return []
+
+
+def _present(exprs: tuple[a.Expr | None, ...]) -> list[a.Expr]:
+    return [x for x in exprs if x is not None]
 
 
 def free_vars(e: a.Expr, bound: frozenset[str] = frozenset()) -> set[str]:
@@ -212,9 +209,9 @@ class ExprCompiler:
         return ce.sql
 
     def boolean(self, ce: CE) -> str:
-        if ce.t.is_json:
-            return sq.json_value(ce.sql)
-        return ce.sql
+        # SQLite reads JSON true/false back as 1/0, so a condition is just
+        # the native value; callers still name which use they mean.
+        return self.native(ce)
 
     def output(self, ce: CE) -> str:
         """SQL whose value the executor decodes into the Python result."""
@@ -261,7 +258,7 @@ class ExprCompiler:
             return replace(ce, const=True)
         return ce
 
-    def _literal(self, e: a.Literal, scope: Scope) -> CE:
+    def _literal(self, e: a.Literal, _scope: Scope) -> CE:
         v = e.value
         if v is None:
             return CE(sq.NULL, ty.NULL)
@@ -273,7 +270,7 @@ class ExprCompiler:
             return CE(repr(v), ty.FLOAT)
         return CE(sq.sql_str(str(v)), ty.STRING)
 
-    def _param(self, e: a.Param, scope: Scope) -> CE:
+    def _param(self, e: a.Param, _scope: Scope) -> CE:
         t = self.ctx.param_types.get(e.name, ty.ANY)
         if t.is_json:
             return CE(self.ctx.param(e.name, EgParamMode.JSON), t)
@@ -506,36 +503,42 @@ class ExprCompiler:
         return CE(exact, ty.BOOL)
 
     def _arithmetic(self, op: EgBinary, left: CE, right: CE) -> CE:
-        lk, rk = left.t.kind, right.t.kind
         if op == EgBinary.ADD:
-            if Kind.LIST in (lk, rk):
-                elems = [
-                    (side.t.elem or ty.ANY) if side.t.kind == Kind.LIST else side.t
-                    for side in (left, right)
-                ]
-                return CE(
-                    sq.call(EgSqlFn.LIST_ADD, self.jsonv(left), self.jsonv(right)),
-                    ty.list_of(ty.unify(elems)),
-                )
-            if lk == Kind.STRING and rk == Kind.STRING:
-                return CE(sq.concat(left.sql, right.sql), ty.STRING)
-            if Kind.STRING in (lk, rk):
-                return CE(
-                    sq.call(EgSqlFn.CONCAT, self.jsonv(left), self.jsonv(right)),
-                    ty.STRING,
-                )
-            if left.t.is_json or right.t.is_json:
-                return CE(
-                    sq.call(EgSqlFn.ADD, self.jsonv(left), self.jsonv(right)), ty.ANY
-                )
+            return self._add(left, right)
         if op == EgBinary.POW:
             return CE(
                 sq.call(EgSqlFn.POW, self.native(left), self.native(right)), ty.FLOAT
             )
+        return self._numeric(op, left, right)
+
+    def _add(self, left: CE, right: CE) -> CE:
+        lk, rk = left.t.kind, right.t.kind
+        if Kind.LIST in (lk, rk):
+            elems = [
+                (side.t.elem or ty.ANY) if side.t.kind == Kind.LIST else side.t
+                for side in (left, right)
+            ]
+            return CE(
+                sq.call(EgSqlFn.LIST_ADD, self.jsonv(left), self.jsonv(right)),
+                ty.list_of(ty.unify(elems)),
+            )
+        if lk == Kind.STRING and rk == Kind.STRING:
+            return CE(sq.concat(left.sql, right.sql), ty.STRING)
+        if Kind.STRING in (lk, rk):
+            return CE(
+                sq.call(EgSqlFn.CONCAT, self.jsonv(left), self.jsonv(right)),
+                ty.STRING,
+            )
+        if left.t.is_json or right.t.is_json:
+            return CE(sq.call(EgSqlFn.ADD, self.jsonv(left), self.jsonv(right)), ty.ANY)
+        return self._numeric(EgBinary.ADD, left, right)
+
+    def _numeric(self, op: EgBinary, left: CE, right: CE) -> CE:
         # SQLite's own operators already match Cypher's numeric semantics:
         # integer `/` truncates toward zero, either float operand makes a
         # float. The result is a native number either way.
-        number = ty.INT if lk == Kind.INT and rk == Kind.INT else ty.FLOAT
+        both_int = left.t.kind == Kind.INT and right.t.kind == Kind.INT
+        number = ty.INT if both_int else ty.FLOAT
         if op == EgBinary.MOD:
             return CE(
                 sq.call(EgSqlFn.MOD, self.native(left), self.native(right)), number
@@ -612,7 +615,7 @@ def each_value_sql(alias: str, elem: T) -> str:
 # --------------------------------------------------------------- scalar library
 
 
-def _f_id(c: ExprCompiler, args: list[CE]) -> CE:
+def _f_id(_c: ExprCompiler, args: list[CE]) -> CE:
     return CE(args[0].sql, ty.INT)
 
 
@@ -743,15 +746,15 @@ def _math(
     return handler
 
 
-def _f_exists(c: ExprCompiler, args: list[CE]) -> CE:
+def _f_exists(_c: ExprCompiler, args: list[CE]) -> CE:
     return CE(sq.is_null(args[0].sql, negated=True), ty.BOOL)
 
 
-def _f_timestamp(c: ExprCompiler, args: list[CE]) -> CE:
+def _f_timestamp(_c: ExprCompiler, _args: list[CE]) -> CE:
     return CE(sq.call(EgSqlFn.TIMESTAMP), ty.INT)
 
 
-def _f_rand(c: ExprCompiler, args: list[CE]) -> CE:
+def _f_rand(_c: ExprCompiler, _args: list[CE]) -> CE:
     return CE(sq.RANDOM_UNIT, ty.FLOAT)
 
 

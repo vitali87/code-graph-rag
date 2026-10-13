@@ -116,9 +116,16 @@ def eg_size(value: str | None) -> int | None:
     return None
 
 
+def _offset(index: int | None, n: int, default: int) -> int:
+    """`index` into a length-`n` sequence, counting from the end if negative."""
+    if index is None:
+        return default
+    return index + n if index < 0 else index
+
+
 def _bounds(n: int, start: int | None, end: int | None) -> tuple[int, int]:
-    s = 0 if start is None else (start + n if start < 0 else start)
-    e = n if end is None else (end + n if end < 0 else end)
+    s = _offset(start, n, 0)
+    e = _offset(end, n, n)
     return max(0, min(s, n)), max(0, min(e, n))
 
 

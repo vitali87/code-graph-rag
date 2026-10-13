@@ -131,41 +131,61 @@ def decode_for(t: T) -> EgDecode:
 def clause_refs(clause: a.Clause) -> set[str]:
     """Variables a clause reads; ALL_LIVE for a `*` projection."""
     if isinstance(clause, (a.Match, a.Create)):
-        out: set[str] = set()
-        for pattern in clause.patterns:
-            out |= _pattern_refs(pattern)
-        if isinstance(clause, a.Match) and clause.where is not None:
-            out |= free_vars(clause.where)
-        return out
+        return _match_refs(clause)
     if isinstance(clause, a.Unwind):
         return free_vars(clause.expr)
     if isinstance(clause, a.Projection):
         return _projection_refs(clause)
     if isinstance(clause, a.Merge):
-        out = _pattern_refs(clause.pattern)
-        for item in (*clause.on_create, *clause.on_match):
-            out |= _set_refs(item)
-        return out
+        return _merge_refs(clause)
     if isinstance(clause, a.SetClause):
-        out = set()
-        for item in clause.items:
-            out |= _set_refs(item)
-        return out
+        return _set_clause_refs(clause)
     if isinstance(clause, a.Remove):
         return {item.var for item in clause.items}
     if isinstance(clause, a.Delete):
         return _union_vars(clause.exprs)
     if isinstance(clause, a.Foreach):
-        out = free_vars(clause.source)
-        for inner in clause.clauses:
-            out |= clause_refs(inner) - {clause.var}
-        return out
+        return _foreach_refs(clause)
     if isinstance(clause, a.Call):
-        out = _union_vars(clause.args)
-        if clause.where is not None:
-            out |= free_vars(clause.where) - {y.alias for y in clause.yields}
-        return out
+        return _call_refs(clause)
     return set()
+
+
+def _match_refs(clause: a.Match | a.Create) -> set[str]:
+    out: set[str] = set()
+    for pattern in clause.patterns:
+        out |= _pattern_refs(pattern)
+    if isinstance(clause, a.Match) and clause.where is not None:
+        out |= free_vars(clause.where)
+    return out
+
+
+def _merge_refs(clause: a.Merge) -> set[str]:
+    out = _pattern_refs(clause.pattern)
+    for item in (*clause.on_create, *clause.on_match):
+        out |= _set_refs(item)
+    return out
+
+
+def _set_clause_refs(clause: a.SetClause) -> set[str]:
+    out: set[str] = set()
+    for item in clause.items:
+        out |= _set_refs(item)
+    return out
+
+
+def _foreach_refs(clause: a.Foreach) -> set[str]:
+    out = free_vars(clause.source)
+    for inner in clause.clauses:
+        out |= clause_refs(inner) - {clause.var}
+    return out
+
+
+def _call_refs(clause: a.Call) -> set[str]:
+    out = _union_vars(clause.args)
+    if clause.where is not None:
+        out |= free_vars(clause.where) - {y.alias for y in clause.yields}
+    return out
 
 
 def _union_vars(exprs: tuple[a.Expr, ...]) -> set[str]:
@@ -356,13 +376,7 @@ class QueryCompiler:
         self, stage: Stage, proj: a.Projection, for_output: bool
     ) -> tuple[str, dict[str, VarInfo], list[str], list[OutputColumn], bool]:
         scope = stage.scope(sq.INPUT)
-        items: list[tuple[str, CE, bool]] = []
-        if proj.star:
-            items.extend((var, scope.get(var), False) for var in stage.vars)
-        for item in proj.items:
-            items.append(
-                (item.alias, self.x.compile(item.expr, scope), is_aggregate(item.expr))
-            )
+        items = self._projection_items(stage, proj, scope)
         aggregating = any(agg for _, _, agg in items)
         has_keys = any(not agg for _, _, agg in items)
         select: list[str] = []
@@ -383,18 +397,26 @@ class QueryCompiler:
             outputs.append(OutputColumn(alias, decode_for(ce.t)))
             alias_scope = alias_scope.with_var(alias, ce)
         sql = sq.select(select, sq.table(stage.name, sq.INPUT), distinct=proj.distinct)
-        if group_by:
-            sql += sq.group_by(group_by)
-        elif aggregating and has_keys:
-            # Grouping keys over no rows give no groups, unlike a bare
-            # aggregate, which gives one row.
-            sql += sq.NONEMPTY_GROUPS
+        sql += _grouping(group_by, aggregating and has_keys)
         sql += sq.order_by(self._order_by(proj, alias_scope))
         sql += self._limit(proj, scope)
         single_row = (aggregating and not group_by) or (
             stage.single_row and not aggregating
         )
         return sql, new_vars, cols, outputs, single_row
+
+    def _projection_items(
+        self, stage: Stage, proj: a.Projection, scope: Scope
+    ) -> list[tuple[str, CE, bool]]:
+        """Each projected (alias, value, is_aggregate), `*` first."""
+        items: list[tuple[str, CE, bool]] = []
+        if proj.star:
+            items.extend((var, scope.get(var), False) for var in stage.vars)
+        for item in proj.items:
+            items.append(
+                (item.alias, self.x.compile(item.expr, scope), is_aggregate(item.expr))
+            )
+        return items
 
     def _order_by(self, proj: a.Projection, scope: Scope) -> list[str]:
         parts = []
@@ -631,24 +653,38 @@ class _MatchBuilder:
         conds = []
         if np.labels:
             conds.append(sq.is_in(sq.column(sq.SEED, sq.LABEL), np.labels))
-        if isinstance(np.props, a.MapLit):
-            for key, value in np.props.items:
-                if free_vars(value):
-                    continue
-                rhs = self.x.native(self.x.compile(value, Scope()))
-                if _is_key(np.labels, key):
-                    conds.append(sq.eq(sq.column(sq.SEED, sq.KEY), rhs))
-                else:
-                    conds.append(sq.eq(sq.prop_of(sq.SEED, key), rhs))
-        if np.var and np.var not in self.stage.vars:
-            node = CE(sq.column(sq.SEED, sq.ID), ty.NODE, sq.SEED, np.labels)
-            scope = Scope().with_var(np.var, node)
-            for cond in self.where:
-                if free_vars(cond) == {np.var}:
-                    conds.append(self.x.boolean(self.x.compile(cond, scope)))
+        conds += self._seed_prop_conditions(np)
+        conds += self._seed_where_conditions(np)
         if not conds:
             return None
         return sq.seed_ids(conds)
+
+    def _seed_prop_conditions(self, np: a.NodePattern) -> list[str]:
+        """The pattern's property tests that read no variable."""
+        if not isinstance(np.props, a.MapLit):
+            return []
+        conds: list[str] = []
+        for key, value in np.props.items:
+            if free_vars(value):
+                continue
+            rhs = self.x.native(self.x.compile(value, Scope()))
+            if _is_key(np.labels, key):
+                conds.append(sq.eq(sq.column(sq.SEED, sq.KEY), rhs))
+            else:
+                conds.append(sq.eq(sq.prop_of(sq.SEED, key), rhs))
+        return conds
+
+    def _seed_where_conditions(self, np: a.NodePattern) -> list[str]:
+        """The WHERE conjuncts on this node alone, read against the seed row."""
+        if not np.var or np.var in self.stage.vars:
+            return []
+        node = CE(sq.column(sq.SEED, sq.ID), ty.NODE, sq.SEED, np.labels)
+        scope = Scope().with_var(np.var, node)
+        return [
+            self.x.boolean(self.x.compile(cond, scope))
+            for cond in self.where
+            if free_vars(cond) == {np.var}
+        ]
 
     def _var_length(
         self,
@@ -661,29 +697,14 @@ class _MatchBuilder:
         if rp.var is not None:
             raise CompileError(EG_ERR_VARLEN_VAR)
         low, high = rp.var_length or (1, None)
-        forward = True
-        seeds = self._input_seed(left_np)
-        if seeds is None:
-            seeds = self._input_seed(right_np)
-            forward = seeds is None
-        if seeds is None:
-            left_seed = self._static_seed(left_np)
-            right_seed = self._static_seed(right_np)
-            if left_seed is None and right_seed is not None:
-                seeds, forward = right_seed, False
-            else:
-                seeds, forward = left_seed or sq.all_node_ids(), True
+        seeds, forward = self._walk_seeds(left_np, right_np)
         # Walked from its far end, an outgoing pattern follows edges in.
         direction_out: bool | None = None
         if rp.direction != EgDirection.BOTH:
             direction_out = (rp.direction == EgDirection.OUT) == forward
         name = self.ctx.fresh(sq.WALK_PREFIX)
-        # The Rust extension walks from node ids only (native.py); a seed of
-        # another type keeps the CTE, which compares it as SQL would.
         seed_np = left_np if forward else right_np
-        seed_var = self.stage.vars.get(seed_np.var) if seed_np.var else None
-        native = self.ctx.native_walks and (seed_var is None or seed_var.t == ty.NODE)
-        walk = sq.native_walk if native else sq.walk
+        walk = sq.native_walk if self._walks_natively(seed_np) else sq.walk
         self.pipeline.add(
             sq.walk_columns(name),
             walk(name, seeds, direction_out, rp.types, high),
@@ -696,6 +717,28 @@ class _MatchBuilder:
         self.conds.append(sq.eq(sq.column(alias, sq.WALK_NODE), node_side.sql))
         if low > 0:
             self.conds.append(sq.at_least(sq.column(alias, sq.WALK_DEPTH), str(low)))
+
+    def _walk_seeds(
+        self, left_np: a.NodePattern, right_np: a.NodePattern
+    ) -> tuple[str, bool]:
+        """A walk's start ids, and whether it starts from the left end."""
+        seeds = self._input_seed(left_np)
+        if seeds is not None:
+            return seeds, True
+        seeds = self._input_seed(right_np)
+        if seeds is not None:
+            return seeds, False
+        left_seed = self._static_seed(left_np)
+        right_seed = self._static_seed(right_np)
+        if left_seed is None and right_seed is not None:
+            return right_seed, False
+        return left_seed or sq.all_node_ids(), True
+
+    def _walks_natively(self, seed_np: a.NodePattern) -> bool:
+        # The Rust extension walks from node ids only (native.py); a seed of
+        # another type keeps the CTE, which compares it as SQL would.
+        seed_var = self.stage.vars.get(seed_np.var) if seed_np.var else None
+        return self.ctx.native_walks and (seed_var is None or seed_var.t == ty.NODE)
 
 
 def _label_alternatives(e: a.Expr, var: str) -> set[str] | None:
@@ -724,3 +767,13 @@ def _conjuncts(e: a.Expr) -> list[a.Expr]:
 def _is_key(labels: tuple[str, ...], key: str) -> bool:
     """Whether `key` is the unique-constraint property of every label."""
     return bool(labels) and all(NODE_UNIQUE_CONSTRAINTS.get(n) == key for n in labels)
+
+
+def _grouping(group_by: list[str], keyed_aggregate: bool) -> str:
+    if group_by:
+        return sq.group_by(group_by)
+    if keyed_aggregate:
+        # Grouping keys over no rows give no groups, unlike a bare
+        # aggregate, which gives one row.
+        return sq.NONEMPTY_GROUPS
+    return sq.NOTHING
