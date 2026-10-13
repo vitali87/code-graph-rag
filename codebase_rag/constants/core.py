@@ -253,8 +253,9 @@ EMBEDDINGS_PENDING_FILENAME = ".cgr-embeddings-pending"
 PARSER_FINGERPRINT_FILENAME = ".cgr-parser-fingerprint"
 # The parser fingerprint asks each active toolchain for its version (`go
 # version`, `javac -version`, `dotnet --version`) on every sync. A probe that
-# misses the first timeout is asked once more, for longer, unless an earlier
-# process already got an answer from the same binary under the same pins.
+# misses the first timeout, or whose process the OS could not start for want
+# of a resource, is asked once more, for longer, unless an earlier process
+# already got an answer from the same binary under the same pins.
 TOOL_VERSION_PROBE_TIMEOUT = 10.0
 TOOL_VERSION_PROBE_RETRY_TIMEOUT = 30.0
 # A toolchain that could not be asked in either attempt. It is not `absent`

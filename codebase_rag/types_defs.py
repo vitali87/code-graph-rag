@@ -672,14 +672,6 @@ class LanguageQueries(TypedDict):
     parser: Parser
 
 
-class FunctionNodeProps(TypedDict, total=False):
-    qualified_name: str
-    name: str | None
-    start_line: int
-    end_line: int
-    docstring: str | None
-
-
 # float admits find_duplicate_code's 0-1 similarity threshold (issue #1342).
 # bool is listed for documentation only, being already a subtype of int, and
 # structural_replace's dry_run default has relied on that since it was added.

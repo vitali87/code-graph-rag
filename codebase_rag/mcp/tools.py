@@ -1290,12 +1290,6 @@ class MCPToolsRegistry:
         # vectors, which the prefix-scoped node-id read also names.
         return nested_project_names(project_name, self.ingestor.list_projects())
 
-    def _cleanup_project_embeddings(self, project_name: str) -> None:
-        node_ids = self._get_project_node_ids(project_name)
-        delete_project_embeddings(
-            project_name, node_ids, self._nested_projects(project_name)
-        )
-
     def _delete_project_sync(self, project_name: str) -> DeleteProjectResult:
         projects = self.ingestor.list_projects()
         if project_name not in projects:

@@ -1944,27 +1944,18 @@ class GraphUpdater:
         # csharp_call_sites is mutated in place because the type-inference
         # engine holds a reference.
         self._reset_semantic_facts()
-        if settings.CSHARP_FRONTEND == cs.CSharpFrontend.TREESITTER:
-            return
-        frontend = FRONTENDS.get(cs.SupportedLanguage.CSHARP)
-        if frontend is None or not frontend.applies(self.repo_path):
-            # Skip silently when the frontend has nothing to augment (no C#
-            # project): applicability is the frontend's own rule (issue #1178), so
-            # a registered replacement can define its own.
-            return
-        if not frontend.available():
-            # AUTO promises hybrid only where the toolchain exists, so a
-            # missing dotnet is the expected fallback (info); an EXPLICIT
-            # hybrid/roslyn request that cannot run stays a warning.
-            if settings.CSHARP_FRONTEND == cs.CSharpFrontend.AUTO:
-                logger.info(ls.CSHARP_FRONTEND_AUTO_FALLBACK)
-            else:
-                logger.warning(ls.CSHARP_FRONTEND_UNAVAILABLE)
-            return
-        logger.info(
-            ls.CSHARP_FRONTEND_RUNNING.format(path=find_csharp_project(self.repo_path))
+        mode = settings.CSHARP_FRONTEND
+        facts = self._run_semantic_frontend(
+            cs.SupportedLanguage.CSHARP,
+            off=mode == cs.CSharpFrontend.TREESITTER,
+            auto=mode == cs.CSharpFrontend.AUTO,
+            find_root=find_csharp_project,
+            auto_fallback_log=ls.CSHARP_FRONTEND_AUTO_FALLBACK,
+            unavailable_log=ls.CSHARP_FRONTEND_UNAVAILABLE,
+            running_log=ls.CSHARP_FRONTEND_RUNNING,
         )
-        facts = frontend.run(self.repo_path, (), rescued_files=self._rescued_files())
+        if facts is None:
+            return
         self._apply_semantic_facts(facts)
         logger.info(ls.CSHARP_FRONTEND_TYPES.format(count=len(facts.base_kinds)))
         logger.info(
@@ -1975,6 +1966,39 @@ class GraphUpdater:
                 externals=len(facts.external_sites),
             )
         )
+
+    def _run_semantic_frontend(
+        self,
+        language: cs.SupportedLanguage,
+        *,
+        off: bool,
+        auto: bool,
+        find_root: Callable[[Path], Path | None],
+        auto_fallback_log: str,
+        unavailable_log: str,
+        running_log: str,
+    ) -> SemanticFacts | None:
+        # The facts of a registered LanguageFrontend pre-pass, or None when it
+        # is off, has nothing to augment, or cannot run.
+        if off:
+            return None
+        frontend = FRONTENDS.get(language)
+        if frontend is None or not frontend.applies(self.repo_path):
+            # Skip silently when the frontend has nothing to augment (no C#
+            # project, no go.mod): applicability is the frontend's own rule
+            # (issue #1178), so a registered replacement can define its own.
+            return None
+        if not frontend.available():
+            # AUTO promises the compiler only where the toolchain exists, so a
+            # missing toolchain is the expected fallback (info); an EXPLICIT
+            # request that cannot run stays a warning.
+            if auto:
+                logger.info(auto_fallback_log)
+            else:
+                logger.warning(unavailable_log)
+            return None
+        logger.info(running_log.format(path=find_root(self.repo_path)))
+        return frontend.run(self.repo_path, (), rescued_files=self._rescued_files())
 
     def _rescued_files(self) -> frozenset[str]:
         # The compiler tools skip the default-excluded names on their own; the
@@ -2019,19 +2043,18 @@ class GraphUpdater:
         # a later run with it off; the maps are mutated in place because the
         # type-inference engine holds a reference.
         self._reset_go_semantic_facts()
-        if settings.GO_FRONTEND == cs.GoFrontend.TREESITTER:
+        mode = settings.GO_FRONTEND
+        facts = self._run_semantic_frontend(
+            cs.SupportedLanguage.GO,
+            off=mode == cs.GoFrontend.TREESITTER,
+            auto=mode == cs.GoFrontend.AUTO,
+            find_root=find_go_module,
+            auto_fallback_log=ls.GO_FRONTEND_AUTO_FALLBACK,
+            unavailable_log=ls.GO_FRONTEND_UNAVAILABLE,
+            running_log=ls.GO_FRONTEND_RUNNING,
+        )
+        if facts is None:
             return
-        frontend = FRONTENDS.get(cs.SupportedLanguage.GO)
-        if frontend is None or not frontend.applies(self.repo_path):
-            return
-        if not frontend.available():
-            if settings.GO_FRONTEND == cs.GoFrontend.AUTO:
-                logger.info(ls.GO_FRONTEND_AUTO_FALLBACK)
-            else:
-                logger.warning(ls.GO_FRONTEND_UNAVAILABLE)
-            return
-        logger.info(ls.GO_FRONTEND_RUNNING.format(path=find_go_module(self.repo_path)))
-        facts = frontend.run(self.repo_path, (), rescued_files=self._rescued_files())
         self._apply_go_semantic_facts(facts)
         logger.info(
             ls.GO_FRONTEND_FACTS.format(
@@ -3252,19 +3275,21 @@ class GraphUpdater:
         # Re-emitted handlers drop their previous EXPOSES first, so a
         # template that changed prefix loses its stale anchor and the orphan
         # cleanup prunes the outdated endpoint node.
+        self._drop_stale_exposes(CYPHER_DELETE_HANDLER_EXPOSES, {"qns": handler_qns})
+
+    def _drop_stale_exposes(self, query: str, params: PropertyParams) -> None:
         if not isinstance(self.ingestor, QueryProtocol):
             return
         # With the registry unread, ownership degrades to the prefix rule and
-        # `svc.v2`'s handlers can pass as `svc`'s, so no delete runs at all;
+        # `svc.v2`'s handlers can pass as `svc`'s (a seeded module map can hold
+        # a sibling project's modules the same way), so no delete runs at all;
         # emission only MERGEs, and the next healthy run cleans up
         # (CodeRabbit, PR #2129).
         if self._registry_unread:
             self._exposes_cleanup_skipped = True
             return
         try:
-            self.ingestor.execute_write(
-                CYPHER_DELETE_HANDLER_EXPOSES, {"qns": handler_qns}
-            )
+            self.ingestor.execute_write(query, params)
         except Exception:
             # A delete that failed is owed exactly like one that was skipped.
             self._exposes_cleanup_skipped = True
@@ -3415,20 +3440,9 @@ class GraphUpdater:
     def _drop_stale_module_exposes(self, module_qns: list[str]) -> None:
         # Ownership is the DEFINES containment closure from each Module
         # node, so prefix-sharing sibling modules keep their endpoints.
-        if not isinstance(self.ingestor, QueryProtocol):
-            return
-        # Same reason as the handler cleanup: a seeded module map can hold a
-        # sibling project's modules when the registry could not be read.
-        if self._registry_unread:
-            self._exposes_cleanup_skipped = True
-            return
-        try:
-            self.ingestor.execute_write(
-                CYPHER_DELETE_MODULE_EXPOSES, {"module_qns": module_qns}
-            )
-        except Exception:
-            self._exposes_cleanup_skipped = True
-            logger.debug("Stale EXPOSES cleanup unavailable; emission continues")
+        self._drop_stale_exposes(
+            CYPHER_DELETE_MODULE_EXPOSES, {"module_qns": module_qns}
+        )
 
     def _route_source(
         self,
@@ -3727,18 +3741,25 @@ class GraphUpdater:
             )
         )
 
-    def _requeue_parameter_types(self, project_params: PropertyParams) -> None:
-        # OF_TYPE for the Parameter nodes of files this run does not re-parse:
-        # their owners never re-emit them, so the pending list is rebuilt from
-        # the graph exactly as _requeue_type_facts rebuilds RETURNS/ACCEPTS
-        # (issue #1527). Without this, re-parsing only the TYPE's file detaches
-        # every OF_TYPE into it and nothing puts them back. The key is the
-        # FILE: a Parameter whose file is being re-parsed this run is
-        # re-emitted by ingest and queues its own (a requeue here would carry
-        # the OLD annotation); one whose file is not needs rebuilding. Neither
-        # registry membership nor "what the rehydration loop restored" can
-        # tell the two apart -- a reused updater already holds every unchanged
-        # definition, a fresh one holds none -- and both were tried first.
+    def _requeue_member_types[P: (PendingParameterType, PendingFieldType)](
+        self,
+        query: str,
+        project_params: PropertyParams,
+        pending: list[P],
+        make: Callable[[str, str, str, str], P],
+    ) -> None:
+        # OF_TYPE for the Parameter and Field nodes of files this run does not
+        # re-parse: their owners never re-emit them, so the pending list is
+        # rebuilt from the graph exactly as _requeue_type_facts rebuilds
+        # RETURNS/ACCEPTS (issue #1527). Without this, re-parsing only the
+        # TYPE's file detaches every OF_TYPE into it and nothing puts them
+        # back. The key is the FILE: a member whose file is being re-parsed
+        # this run is re-emitted by ingest and queues its own (a requeue here
+        # would carry the OLD annotation); one whose file is not needs
+        # rebuilding. Neither registry membership nor "what the rehydration
+        # loop restored" can tell the two apart -- a reused updater already
+        # holds every unchanged definition, a fresh one holds none -- and both
+        # were tried first.
         if (
             self._is_full_build
             or not self.capture.rel_enabled(cs.RelationshipType.OF_TYPE)
@@ -3746,53 +3767,10 @@ class GraphUpdater:
         ):
             # A full build re-parses every file: ingest queues everything.
             return
-        try:
-            rows = self._owned_rows(
-                self.ingestor.fetch_all(
-                    cs.CYPHER_PROJECT_PARAMETER_TYPES, project_params
-                ),
-                cs.KEY_QUALIFIED_NAME,
-            )
-        except Exception:
-            if not self._is_full_build:
-                raise
-            return
-        pending = self.factory.definition_processor.pending_parameter_types
-        for row in rows:
-            qn = row.get(cs.KEY_QUALIFIED_NAME)
-            type_name = row.get(cs.KEY_TYPE_NAME)
-            path = row.get(cs.KEY_PATH)
-            if not (
-                isinstance(qn, str)
-                and isinstance(type_name, str)
-                and isinstance(path, str)
-            ):
-                continue
-            if path in self._reparsed_file_keys:
-                continue
-            pending.append(
-                PendingParameterType(
-                    qn, self._recorded_module_qn(path), type_name, path
-                )
-            )
-
-    def _requeue_field_types(self, project_params: PropertyParams) -> None:
-        # The Field counterpart of _requeue_parameter_types, keyed on the FILE
-        # for the same reason: a Field whose file is being re-parsed this run
-        # is re-emitted by ingest and queues its own type; one whose file is
-        # not needs rebuilding from the graph. A full build re-parses every
-        # file, so ingest queues everything and there is nothing to rebuild.
-        if (
-            self._is_full_build
-            or not self.capture.rel_enabled(cs.RelationshipType.OF_TYPE)
-            or not isinstance(self.ingestor, QueryProtocol)
-        ):
-            return
         rows = self._owned_rows(
-            self.ingestor.fetch_all(cs.CYPHER_PROJECT_FIELD_TYPES, project_params),
+            self.ingestor.fetch_all(query, project_params),
             cs.KEY_QUALIFIED_NAME,
         )
-        pending = self.factory.definition_processor.pending_field_types
         for row in rows:
             qn = row.get(cs.KEY_QUALIFIED_NAME)
             type_name = row.get(cs.KEY_TYPE_NAME)
@@ -3805,9 +3783,7 @@ class GraphUpdater:
                 continue
             if path in self._reparsed_file_keys:
                 continue
-            pending.append(
-                PendingFieldType(qn, self._recorded_module_qn(path), type_name, path)
-            )
+            pending.append(make(qn, self._recorded_module_qn(path), type_name, path))
 
     def _graph_rows(self, query: str, params: PropertyParams | None) -> list[ResultRow]:
         # A write-only sink (the protobuf exporter) has no graph to read, and
@@ -3936,8 +3912,19 @@ class GraphUpdater:
         self._rehydrate_module_qns(module_rows)
         self._rehydrate_class_inheritance_from_graph()
         self._rehydrate_interface_implementers(project_params)
-        self._requeue_parameter_types(project_params)
-        self._requeue_field_types(project_params)
+        dp = self.factory.definition_processor
+        self._requeue_member_types(
+            cs.CYPHER_PROJECT_PARAMETER_TYPES,
+            project_params,
+            dp.pending_parameter_types,
+            PendingParameterType,
+        )
+        self._requeue_member_types(
+            cs.CYPHER_PROJECT_FIELD_TYPES,
+            project_params,
+            dp.pending_field_types,
+            PendingFieldType,
+        )
 
     def _rehydrate_interface_implementers(
         self, project_params: PropertyParams, carried: Iterable[ResultRow] = ()
@@ -6886,6 +6873,7 @@ class GraphUpdater:
     def _process_files(self, force: bool = False) -> None:
         self.factory.import_processor.reset_rust_path_caches()
         self.factory.import_processor.reset_java_path_caches()
+        self.factory.import_processor.reset_julia_path_caches()
         cache_path = self.state_dir / cs.HASH_CACHE_FILENAME
         dir_mtimes_path = self.state_dir / cs.DIR_MTIMES_FILENAME
         baseline = self._hash_baseline(force, cache_path, dir_mtimes_path)
@@ -8874,9 +8862,16 @@ class GraphUpdater:
             import_processor.refresh_rust_path_caches_for(
                 path, created=key not in hashes
             )
+            # Julia's stem/declared-module indices are the same kind of
+            # per-layout cache: any .jl change invalidates the whole set.
+            if path.suffix == cs.EXT_JL:
+                import_processor.reset_julia_path_caches()
         for key, path in gone.items():
             self.remove_file_from_state(path)
             self._delete_module_entities(key)
+            # A deleted .jl file invalidates the same path caches reparse does.
+            if path.suffix == cs.EXT_JL:
+                import_processor.reset_julia_path_caches()
             if isinstance(self.ingestor, QueryProtocol):
                 # Keyed on the absolute path: a sibling project's File node
                 # can share the relative path (issue #897). The entry's own

@@ -8,7 +8,7 @@ from tree_sitter import Node
 from ... import constants as cs
 from ...types_defs import FunctionRegistryTrieProtocol, NodeType
 from ...utils.path_utils import cached_relative_path
-from ..utils import safe_decode_text
+from ..utils import safe_decode_text, unparenthesized
 
 # What a Go type name can declare: a struct (Class), a named or alias type,
 # or an interface. Receiver and constructor-return types name one of them.
@@ -443,9 +443,9 @@ def _value_receiver(operand: Node | None) -> Node | None:
     # A call or a composite literal under any parentheses. A unary operand
     # counts only around a literal, where `&Box{}` is Go's pointer to a fresh
     # value; `(*p).M()` and `(&x).M()` start from a variable instead.
-    node = _unparenthesized(operand)
+    node = unparenthesized(operand)
     if node is not None and node.type == cs.TS_GO_UNARY_EXPRESSION:
-        inner = _unparenthesized(node.child_by_field_name(cs.FIELD_OPERAND))
+        inner = unparenthesized(node.child_by_field_name(cs.FIELD_OPERAND))
         if inner is not None and inner.type == cs.TS_GO_COMPOSITE_LITERAL:
             return inner
         return None
@@ -455,12 +455,6 @@ def _value_receiver(operand: Node | None) -> Node | None:
     ):
         return node
     return None
-
-
-def _unparenthesized(node: Node | None) -> Node | None:
-    while node is not None and node.type == cs.TS_PARENTHESIZED_EXPRESSION:
-        node = next(iter(node.named_children), None)
-    return node
 
 
 def _type_parameter_names(node: Node) -> frozenset[str]:

@@ -343,7 +343,7 @@ class MiniMaxProvider(ApiKeyProvider):
     def create_model(
         self, model_id: str, **kwargs: str | int | None
     ) -> OpenAIChatModel | AnthropicModel:
-        from pydantic_ai.models.anthropic import AnthropicModel
+        from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
         from pydantic_ai.models.openai import OpenAIChatModel
         from pydantic_ai.providers.anthropic import (
             AnthropicProvider as PydanticAnthropicProvider,
@@ -359,7 +359,16 @@ class MiniMaxProvider(ApiKeyProvider):
             anthropic_provider = PydanticAnthropicProvider(
                 api_key=self.api_key, base_url=self.endpoint
             )
-            return AnthropicModel(model_id, provider=anthropic_provider)
+            # The Messages protocol falls back to the provider default exactly
+            # as AnthropicProvider did before issue #1498, so the budget is set
+            # here too. The cache flags stay with AnthropicProvider: they ask
+            # for Anthropic's prompt caching, which a compatible endpoint need
+            # not implement.
+            return AnthropicModel(
+                model_id,
+                provider=anthropic_provider,
+                settings=AnthropicModelSettings(max_tokens=_output_budget(model_id)),
+            )
         provider = PydanticOpenAIProvider(api_key=self.api_key, base_url=self.endpoint)
         return OpenAIChatModel(model_id, provider=provider)
 
