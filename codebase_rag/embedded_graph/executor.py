@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -105,6 +105,18 @@ class Result:
 _RETURN_ALL = a.Projection(is_return=True, distinct=False, star=True, items=())
 _READ_CLAUSES = (a.Match, a.Unwind)
 _WRITE_CLAUSES = (a.Create, a.Merge, a.SetClause, a.Remove, a.Delete, a.Foreach, a.Call)
+
+# The one operator each clause other than MATCH and CALL plans as.
+_PLAN_OPS: tuple[tuple[type[a.Clause], str], ...] = (
+    (a.Unwind, EG_PLAN_UNWIND),
+    (a.Projection, EG_PLAN_PRODUCE),
+    (a.Create, EG_PLAN_CREATE),
+    (a.Merge, EG_PLAN_MERGE),
+    (a.SetClause, EG_PLAN_SET),
+    (a.Remove, EG_PLAN_REMOVE),
+    (a.Delete, EG_PLAN_DELETE),
+    (a.Foreach, EG_PLAN_FOREACH),
+)
 
 _SQL_REFRESH_KEY = sq.refresh_key(NODE_UNIQUE_CONSTRAINTS)
 
@@ -208,6 +220,11 @@ class ReadPlan:
     columns: tuple[OutputColumn, ...]
 
 
+# One part of a UNION as QueryCompiler.returning gives it: the SQL, its
+# output columns and the SQL column behind each.
+type _ReturnPart = tuple[str, list[OutputColumn], list[str]]
+
+
 def _has_updates(query: a.Query) -> bool:
     """Whether the query runs clause by clause (writes, or CALL)."""
     return any(
@@ -237,7 +254,7 @@ def compile_read(
     ctx = Ctx(dict(param_sig), json_arrow, native_walks)
     qc = QueryCompiler(ctx)
     pipeline = Pipeline()
-    parts: list[tuple[str, list[OutputColumn], list[str]]] = []
+    parts: list[_ReturnPart] = []
     for part in query.parts:
         stage = qc.start_stage(pipeline)
         *body, last = part.clauses
@@ -254,31 +271,48 @@ def compile_read(
 
 
 def _union(
-    parts: list[tuple[str, list[OutputColumn], list[str]]], union_all: tuple[bool, ...]
+    parts: list[_ReturnPart], union_all: tuple[bool, ...]
 ) -> tuple[str, list[OutputColumn]]:
     if len(parts) == 1:
         return parts[0][0], parts[0][1]
     names = [c.name for c in parts[0][1]]
+    kinds = _union_kinds(parts)
+    selects = [_union_select(part, names, kinds) for part in parts]
+    return sq.union(selects, union_all), [OutputColumn(n, kinds[n]) for n in names]
+
+
+def _union_kinds(parts: list[_ReturnPart]) -> dict[str, EgDecode]:
+    """Each column's decode; JSON where the parts disagree on it."""
     kinds: dict[str, EgDecode] = {}
     for _, outs, _ in parts:
         for out in outs:
             prior = kinds.setdefault(out.name, out.decode)
             if prior != out.decode:
                 kinds[out.name] = EgDecode.JSON
-    selects = []
-    for sql, outs, cols in parts:
-        by_name = {out.name: (out, col) for out, col in zip(outs, cols)}
-        exprs = []
-        for i, name in enumerate(names):
-            out, col = by_name[name]
-            value = col
-            if kinds[name] == EgDecode.JSON and out.decode == EgDecode.RAW:
-                value = sq.json_of_scalar(col)
-            elif kinds[name] == EgDecode.JSON and out.decode == EgDecode.BOOL:
-                value = sq.json_of_bool(col)
-            exprs.append(sq.aliased(value, f"{sq.UNION_PREFIX}{i}"))
-        selects.append(sq.select(exprs, sq.paren(sql)))
-    return sq.union(selects, union_all), [OutputColumn(n, kinds[n]) for n in names]
+    return kinds
+
+
+def _union_select(
+    part: _ReturnPart, names: list[str], kinds: dict[str, EgDecode]
+) -> str:
+    sql, outs, cols = part
+    by_name = {out.name: (out, col) for out, col in zip(outs, cols)}
+    exprs = []
+    for i, name in enumerate(names):
+        out, col = by_name[name]
+        value = _union_value(col, out.decode, kinds[name])
+        exprs.append(sq.aliased(value, f"{sq.UNION_PREFIX}{i}"))
+    return sq.select(exprs, sq.paren(sql))
+
+
+def _union_value(col: str, decode: EgDecode, kind: EgDecode) -> str:
+    # A scalar or boolean column decodes as JSON once another part's column
+    # of the same name does, so it has to read as JSON text too.
+    if kind == EgDecode.JSON and decode == EgDecode.RAW:
+        return sq.json_of_scalar(col)
+    if kind == EgDecode.JSON and decode == EgDecode.BOOL:
+        return sq.json_of_bool(col)
+    return col
 
 
 # ------------------------------------------------------------------ executor
@@ -309,18 +343,23 @@ class Executor:
         if isinstance(stmt, a.SchemaCommand):
             return self._schema(stmt)
         if isinstance(stmt, a.Explain):
-            return Result(
-                [EG_COL_QUERY_PLAN],
-                [
-                    (EG_PLAN_ROW.format(op=op),)
-                    for op in plan_operator_names(stmt.query)
-                ],
-            )
+            return _explain(stmt.query)
         sig = tuple(sorted((k, value_type(v)) for k, v in params.items()))
         writes = _has_updates(stmt)
         mutates = _mutates(stmt)
         if mutates and self.read_only:
             raise CompileError(EG_ERR_READ_ONLY)
+        return self._transaction(
+            mutates,
+            timeout_s,
+            lambda walks: self._run(stmt, text, sig, params, writes, walks),
+        )
+
+    def _transaction(
+        self, mutates: bool, timeout_s: float | None, run: Callable[[bool], Result]
+    ) -> Result:
+        """`run` in one transaction: committed if it returns, rolled back if
+        it raises."""
         self.conn.execute(sq.BEGIN_WRITE if mutates else sq.BEGIN_READ)
         deadline = Deadline.after(timeout_s)
         if timeout_s is not None:
@@ -330,10 +369,7 @@ class Executor:
                 # Once per transaction that changes the graph (native.py).
                 self.conn.execute(sq.BUMP_GRAPH_VERSION)
             with running_until(deadline):
-                result = with_walks(
-                    None if mutates else self.native,
-                    lambda walks: self._run(stmt, text, sig, params, writes, walks),
-                )
+                result = with_walks(None if mutates else self.native, run)
         except BaseException as error:
             self.conn.set_progress_handler(None, 0)
             self.conn.execute(sq.ROLLBACK)
@@ -380,28 +416,34 @@ class Executor:
                 [(label, [prop]) for label, prop in NODE_UNIQUE_CONSTRAINTS.items()],
             )
         if cmd.kind == EgSchemaKind.SHOW_STORAGE:
-            nodes = self.conn.execute(sq.COUNT_NODES).fetchone()[0]
-            edges = self.conn.execute(sq.COUNT_EDGES).fetchone()[0]
-            return Result(
-                [EG_COL_STORAGE_NAME, EG_COL_STORAGE_VALUE],
-                [(EG_STORAGE_VERTEX_COUNT, nodes), (EG_STORAGE_EDGE_COUNT, edges)],
-            )
+            return self._storage_info()
         if cmd.kind == EgSchemaKind.SHOW_INDEXES:
             rows = self.conn.execute(sq.LIST_NODE_INDEXES).fetchall()
             return Result([EG_COL_LABEL, EG_COL_COUNT], [(r[0], None) for r in rows])
         if cmd.kind == EgSchemaKind.CREATE_INDEX and cmd.label:
-            for prop in cmd.props:
-                if NODE_UNIQUE_CONSTRAINTS.get(cmd.label) == prop:
-                    continue
-                if not prop.replace(EG_IDENT_EXTRA, sq.NOTHING).isalnum():
-                    continue
-                self.conn.execute(
-                    EG_PROP_INDEX_SQL.format(
-                        name=EG_PROP_INDEX_NAME.format(prop=prop),
-                        path=sq.json_path(prop),
-                    )
-                )
+            self._create_indexes(cmd.label, cmd.props)
         return Result([], [])
+
+    def _storage_info(self) -> Result:
+        nodes = self.conn.execute(sq.COUNT_NODES).fetchone()[0]
+        edges = self.conn.execute(sq.COUNT_EDGES).fetchone()[0]
+        return Result(
+            [EG_COL_STORAGE_NAME, EG_COL_STORAGE_VALUE],
+            [(EG_STORAGE_VERTEX_COUNT, nodes), (EG_STORAGE_EDGE_COUNT, edges)],
+        )
+
+    def _create_indexes(self, label: str, props: Sequence[str]) -> None:
+        for prop in props:
+            if NODE_UNIQUE_CONSTRAINTS.get(label) == prop:
+                continue
+            if not prop.replace(EG_IDENT_EXTRA, sq.NOTHING).isalnum():
+                continue
+            self.conn.execute(
+                EG_PROP_INDEX_SQL.format(
+                    name=EG_PROP_INDEX_NAME.format(prop=prop),
+                    path=sq.json_path(prop),
+                )
+            )
 
 
 class _Run:
@@ -421,35 +463,39 @@ class _Run:
     def single(self, part: a.SingleQuery) -> Result:
         self.mutates = _mutates(a.Query((part,)))
         try:
-            pipeline = Pipeline()
-            stage = self.qc.start_stage(pipeline)
-            live = live_after(part.clauses)
-            for clause, after in zip(part.clauses, live):
-                if isinstance(clause, a.Projection) and clause.is_return:
-                    sql, outputs, _ = self.qc.returning(stage, clause)
-                    rows = self.conn.execute(
-                        pipeline.with_clause() + sql, self._binds()
-                    ).fetchall()
-                    return Result(
-                        [c.name for c in outputs],
-                        decode_rows([c.decode for c in outputs], rows, decode),
-                    )
-                if isinstance(clause, (*_READ_CLAUSES, a.Projection)):
-                    stage = self.qc.clause(pipeline, stage, clause, after)
-                    continue
-                stage = self._materialize(pipeline, stage)
-                pipeline = Pipeline()
-                if (
-                    isinstance(clause, a.Call)
-                    and not clause.yields
-                    and len(part.clauses) == 1
-                ):
-                    return self._standalone_call(clause)
-                stage = self._update(stage, clause)
-            return Result([], [])
+            return self._clauses(part)
         finally:
             for name in self.temps:
                 self.conn.execute(sq.drop_temp(name))
+
+    def _clauses(self, part: a.SingleQuery) -> Result:
+        pipeline = Pipeline()
+        stage = self.qc.start_stage(pipeline)
+        live = live_after(part.clauses)
+        for clause, after in zip(part.clauses, live):
+            if isinstance(clause, a.Projection) and clause.is_return:
+                return self._return(pipeline, stage, clause)
+            if isinstance(clause, (*_READ_CLAUSES, a.Projection)):
+                stage = self.qc.clause(pipeline, stage, clause, after)
+                continue
+            stage = self._materialize(pipeline, stage)
+            pipeline = Pipeline()
+            if (
+                isinstance(clause, a.Call)
+                and not clause.yields
+                and len(part.clauses) == 1
+            ):
+                return self._standalone_call(clause)
+            stage = self._update(stage, clause)
+        return Result([], [])
+
+    def _return(self, pipeline: Pipeline, stage: Stage, clause: a.Projection) -> Result:
+        sql, outputs, _ = self.qc.returning(stage, clause)
+        rows = self.conn.execute(pipeline.with_clause() + sql, self._binds()).fetchall()
+        return Result(
+            [c.name for c in outputs],
+            decode_rows([c.decode for c in outputs], rows, decode),
+        )
 
     def _binds(self) -> dict[str, SqlValue]:
         return _binds(self.ctx, self.params)
@@ -670,13 +716,7 @@ class _Run:
             bound.append(node_id)
             if was_created:
                 created.add(i)
-        new_vars = dict(stage.vars)
-        out_rows = rows
-        if np.var and np.var not in stage.vars:
-            col = self._new_col()
-            new_vars[np.var] = VarInfo(col, ty.NODE, (label,))
-            out_rows = [row + [node_id] for row, node_id in zip(rows, bound)]
-        out = self._store(new_vars, out_rows)
+        out = self._with_merged(stage, rows, np.var, ty.NODE, label, bound)
         self._on_merge(out, clause, created, len(rows))
         return out
 
@@ -689,14 +729,7 @@ class _Run:
             ).fetchone()
         else:
             structured = [isinstance(v, (list, dict)) for v in doc.values()]
-            args = [
-                json.dumps(v)
-                if isinstance(v, (list, dict))
-                else int(v)
-                if isinstance(v, bool)
-                else v
-                for v in doc.values()
-            ]
+            args = [_node_match_arg(v) for v in doc.values()]
             found = self.conn.execute(
                 sq.find_node(list(doc), structured), (label, *args)
             ).fetchone()
@@ -724,38 +757,57 @@ class _Run:
             if left is None or right is None:
                 bound.append(None)
                 continue
-            src, dst = (
-                (right, left) if rp.direction == EgDirection.IN else (left, right)
-            )
-            doc = {
-                key: _json(raw) if raw is not None else None
-                for (key, _), raw in zip(props, row_values[2:])
-            }
-            args = [int(v) if isinstance(v, bool) else v for v in doc.values()]
-            either_way = rp.direction == EgDirection.BOTH
-            ends = (src, dst, dst, src) if either_way else (src, dst)
-            found = self.conn.execute(
-                sq.find_edge(list(doc), either_way), (*ends, rel_type, *args)
-            ).fetchone()
-            if found:
-                bound.append(int(found[0]))
-                continue
-            clean = {k: v for k, v in doc.items() if v is not None}
-            cur = self.conn.execute(
-                sq.INSERT_EDGE,
-                (src, dst, rel_type, json.dumps(clean, default=_json_default)),
-            )
-            bound.append(int(cur.lastrowid or 0))
-            created.add(i)
-        new_vars = dict(stage.vars)
-        out_rows = rows
-        if rp.var and rp.var not in stage.vars:
-            col = self._new_col()
-            new_vars[rp.var] = VarInfo(col, ty.REL, (rel_type,))
-            out_rows = [row + [rel] for row, rel in zip(rows, bound)]
-        out = self._store(new_vars, out_rows)
+            doc = _rel_doc(props, row_values[2:])
+            rel_id, was_created = self._find_or_create_edge(rp, left, right, doc)
+            bound.append(rel_id)
+            if was_created:
+                created.add(i)
+        out = self._with_merged(stage, rows, rp.var, ty.REL, rel_type, bound)
         self._on_merge(out, clause, created, len(rows))
         return out
+
+    def _find_or_create_edge(
+        self,
+        rp: a.RelPattern,
+        left: SqlValue,
+        right: SqlValue,
+        doc: dict[str, JsonValue],
+    ) -> tuple[int, bool]:
+        rel_type = rp.types[0]
+        src, dst = (right, left) if rp.direction == EgDirection.IN else (left, right)
+        args = [int(v) if isinstance(v, bool) else v for v in doc.values()]
+        either_way = rp.direction == EgDirection.BOTH
+        ends = (src, dst, dst, src) if either_way else (src, dst)
+        found = self.conn.execute(
+            sq.find_edge(list(doc), either_way), (*ends, rel_type, *args)
+        ).fetchone()
+        if found:
+            return int(found[0]), False
+        clean = {k: v for k, v in doc.items() if v is not None}
+        cur = self.conn.execute(
+            sq.INSERT_EDGE,
+            (src, dst, rel_type, json.dumps(clean, default=_json_default)),
+        )
+        return int(cur.lastrowid or 0), True
+
+    def _with_merged(
+        self,
+        stage: Stage,
+        rows: list[list[SqlValue]],
+        var: str | None,
+        t: T,
+        name: str,
+        bound: Sequence[int | None],
+    ) -> Stage:
+        """The merge's input rows, plus the entity each row bound when the
+        pattern names a variable the input does not have yet."""
+        new_vars = dict(stage.vars)
+        out_rows = rows
+        if var and var not in stage.vars:
+            col = self._new_col()
+            new_vars[var] = VarInfo(col, t, (name,))
+            out_rows = [row + [entity] for row, entity in zip(rows, bound)]
+        return self._store(new_vars, out_rows)
 
     def _on_merge(
         self, stage: Stage, clause: a.Merge, created: set[int], total: int
@@ -767,92 +819,93 @@ class _Run:
 
     def _create(self, stage: Stage, clause: a.Create) -> Stage:
         rows = self._rows(stage)
+        values = self._eval(stage, _create_props(clause, stage.vars))
+        order = self._created_vars(clause, stage.vars)
+        out_rows: list[list[SqlValue]] = []
+        for row, row_values in zip(rows, values):
+            # The property maps are consumed in pattern order, as
+            # _create_props listed them.
+            local = self._create_row(clause, stage.vars, row, iter(row_values))
+            out_rows.append(row + [local.get(var) for var, _ in order])
         new_vars = dict(stage.vars)
-        # Every property map, evaluated against the incoming rows.
-        exprs: list[tuple[a.Expr, EgForm]] = []
-        for pattern in clause.patterns:
-            for node in pattern.nodes:
-                if node.props is not None and not (node.var and node.var in stage.vars):
-                    exprs.append((node.props, EgForm.JSON))
-            for rel in pattern.rels:
-                if rel.props is not None:
-                    exprs.append((rel.props, EgForm.JSON))
-        values = self._eval(stage, exprs)
-        new_cols: dict[str, list[SqlValue]] = {}
-        order: list[tuple[str, VarInfo]] = []
-        seen: set[str] = set(stage.vars)
-        for pattern in clause.patterns:
-            for node in pattern.nodes:
-                if node.var and node.var not in seen:
-                    seen.add(node.var)
-                    order.append(
-                        (node.var, VarInfo(self._new_col(), ty.NODE, node.labels))
-                    )
-            for rel in pattern.rels:
-                if rel.var and rel.var not in seen:
-                    seen.add(rel.var)
-                    order.append((rel.var, VarInfo(self._new_col(), ty.REL, rel.types)))
-        for i, row in enumerate(rows):
-            k = 0
-            local: dict[str, int] = {}
-            for pattern in clause.patterns:
-                ids: list[int] = []
-                for node in pattern.nodes:
-                    if node.var and node.var in stage.vars:
-                        ids.append(_entity_id(row[list(stage.vars).index(node.var)]))
-                        continue
-                    if node.var and node.var in local:
-                        ids.append(local[node.var])
-                        continue
-                    doc = {}
-                    if node.props is not None:
-                        doc = _json_map(values[i][k])
-                        k += 1
-                    if len(node.labels) > 1:
-                        raise CompileError(
-                            EG_ERR_LABEL_COUNT.format(
-                                labels=EgPunct.COLON.join(node.labels)
-                            )
-                        )
-                    label = node.labels[0] if node.labels else sq.NOTHING
-                    node_id = self._create_node(label, doc)
-                    ids.append(node_id)
-                    if node.var:
-                        local[node.var] = node_id
-                for j, rel in enumerate(pattern.rels):
-                    doc = {}
-                    if rel.props is not None:
-                        doc = _json_map(values[i][k])
-                        k += 1
-                    if len(rel.types) != 1 or rel.direction == EgDirection.BOTH:
-                        raise CompileError(
-                            EG_ERR_UNSUPPORTED.format(what=EG_WHAT_CREATE_REL)
-                        )
-                    src, dst = ids[j], ids[j + 1]
-                    if rel.direction == EgDirection.IN:
-                        src, dst = dst, src
-                    cur = self.conn.execute(
-                        sq.INSERT_EDGE,
-                        (
-                            src,
-                            dst,
-                            rel.types[0],
-                            json.dumps(
-                                {k2: v for k2, v in doc.items() if v is not None},
-                                default=_json_default,
-                            ),
-                        ),
-                    )
-                    if rel.var:
-                        local[rel.var] = int(cur.lastrowid or 0)
-            for var, _ in order:
-                new_cols.setdefault(var, []).append(local.get(var))
-        for var, info in order:
-            new_vars[var] = info
-        out_rows = [
-            row + [new_cols[var][i] for var, _ in order] for i, row in enumerate(rows)
-        ]
+        new_vars.update(order)
         return self._store(new_vars, out_rows)
+
+    def _created_vars(
+        self, clause: a.Create, bound: Mapping[str, VarInfo]
+    ) -> list[tuple[str, VarInfo]]:
+        """The variables the patterns introduce, in order, each in a new column."""
+        order: list[tuple[str, VarInfo]] = []
+        seen: set[str] = set(bound)
+        for var, t, names in _pattern_vars(clause):
+            if var not in seen:
+                seen.add(var)
+                order.append((var, VarInfo(self._new_col(), t, names)))
+        return order
+
+    def _create_row(
+        self,
+        clause: a.Create,
+        bound: Mapping[str, VarInfo],
+        row: list[SqlValue],
+        props: Iterator[SqlValue],
+    ) -> dict[str, int]:
+        """Creates the patterns for one input row; the ids its variables got."""
+        local: dict[str, int] = {}
+        for pattern in clause.patterns:
+            ids: list[int] = []
+            for node in pattern.nodes:
+                ids.append(self._pattern_node(node, bound, row, props, local))
+            for j, rel in enumerate(pattern.rels):
+                rel_id = self._create_rel(rel, ids[j], ids[j + 1], props)
+                if rel.var:
+                    local[rel.var] = rel_id
+        return local
+
+    def _pattern_node(
+        self,
+        node: a.NodePattern,
+        bound: Mapping[str, VarInfo],
+        row: list[SqlValue],
+        props: Iterator[SqlValue],
+        local: dict[str, int],
+    ) -> int:
+        """The id of a pattern's node: the one its variable holds, or a new one."""
+        if node.var and node.var in bound:
+            return _entity_id(row[list(bound).index(node.var)])
+        if node.var and node.var in local:
+            return local[node.var]
+        doc = _json_map(next(props)) if node.props is not None else {}
+        if len(node.labels) > 1:
+            raise CompileError(
+                EG_ERR_LABEL_COUNT.format(labels=EgPunct.COLON.join(node.labels))
+            )
+        label = node.labels[0] if node.labels else sq.NOTHING
+        node_id = self._create_node(label, doc)
+        if node.var:
+            local[node.var] = node_id
+        return node_id
+
+    def _create_rel(
+        self, rel: a.RelPattern, left: int, right: int, props: Iterator[SqlValue]
+    ) -> int:
+        doc = _json_map(next(props)) if rel.props is not None else {}
+        if len(rel.types) != 1 or rel.direction == EgDirection.BOTH:
+            raise CompileError(EG_ERR_UNSUPPORTED.format(what=EG_WHAT_CREATE_REL))
+        src, dst = (right, left) if rel.direction == EgDirection.IN else (left, right)
+        cur = self.conn.execute(
+            sq.INSERT_EDGE,
+            (
+                src,
+                dst,
+                rel.types[0],
+                json.dumps(
+                    {k: v for k, v in doc.items() if v is not None},
+                    default=_json_default,
+                ),
+            ),
+        )
+        return int(cur.lastrowid or 0)
 
     def _create_node(self, label: str, doc: Mapping[str, JsonValue]) -> int:
         clean = {k: v for k, v in doc.items() if v is not None}
@@ -934,6 +987,51 @@ class _Run:
         )
 
 
+def _create_props(
+    clause: a.Create, bound: Mapping[str, VarInfo]
+) -> list[tuple[a.Expr, EgForm]]:
+    """Every property map a CREATE writes, to evaluate against the incoming
+    rows; a node its input already binds is not created, so has none."""
+    exprs: list[tuple[a.Expr, EgForm]] = []
+    for pattern in clause.patterns:
+        for node in pattern.nodes:
+            if node.props is not None and not (node.var and node.var in bound):
+                exprs.append((node.props, EgForm.JSON))
+        for rel in pattern.rels:
+            if rel.props is not None:
+                exprs.append((rel.props, EgForm.JSON))
+    return exprs
+
+
+def _pattern_vars(clause: a.Create) -> list[tuple[str, T, tuple[str, ...]]]:
+    """Each variable a CREATE's patterns name, as often as they name it."""
+    found: list[tuple[str, T, tuple[str, ...]]] = []
+    for pattern in clause.patterns:
+        found.extend((n.var, ty.NODE, n.labels) for n in pattern.nodes if n.var)
+        found.extend((r.var, ty.REL, r.types) for r in pattern.rels if r.var)
+    return found
+
+
+def _rel_doc(
+    props: Sequence[tuple[str, a.Expr]], raws: Sequence[SqlValue]
+) -> dict[str, JsonValue]:
+    # A null value stays in: sq.find_edge matches it to an absent property.
+    return {
+        key: _json(raw) if raw is not None else None
+        for (key, _), raw in zip(props, raws)
+    }
+
+
+def _node_match_arg(value: JsonValue) -> JsonValue:
+    """A property value as sq.find_node binds it: a list or map as JSON
+    text, a boolean as the integer json_extract reads it as."""
+    if isinstance(value, (list, dict)):
+        return json.dumps(value)
+    if isinstance(value, bool):
+        return int(value)
+    return value
+
+
 def _entities(t: T, value: SqlValue) -> list[tuple[Kind, int]]:
     if value is None:
         return []
@@ -963,6 +1061,13 @@ def _to_column(t: T, value: JsonValue | ProcValue) -> SqlValue:
     return json.dumps(value, default=_json_default)
 
 
+def _explain(query: a.Query) -> Result:
+    return Result(
+        [EG_COL_QUERY_PLAN],
+        [(EG_PLAN_ROW.format(op=op),) for op in plan_operator_names(query)],
+    )
+
+
 def plan_operator_names(query: a.Query) -> list[str]:
     """Operator names for the read-only guard, in Memgraph's vocabulary."""
     ops: list[str] = []
@@ -976,32 +1081,23 @@ def plan_operator_names(query: a.Query) -> list[str]:
 
 def _clause_ops(clause: a.Clause) -> list[str]:
     if isinstance(clause, a.Match):
-        ops = [EG_PLAN_SCAN]
-        if any(r.var_length for p in clause.patterns for r in p.rels):
-            ops.append(EG_PLAN_EXPAND_VARIABLE)
-        if any(p.rels for p in clause.patterns):
-            ops.append(EG_PLAN_EXPAND)
-        if clause.where is not None:
-            ops.append(EG_PLAN_FILTER)
-        if clause.optional:
-            ops.append(EG_PLAN_OPTIONAL)
-        return ops
-    if isinstance(clause, a.Unwind):
-        return [EG_PLAN_UNWIND]
-    if isinstance(clause, a.Projection):
-        return [EG_PLAN_PRODUCE]
+        return _match_ops(clause)
     if isinstance(clause, a.Call):
         return [EG_PLAN_CALL_OF.format(procedure=clause.procedure)]
-    if isinstance(clause, a.Create):
-        return [EG_PLAN_CREATE]
-    if isinstance(clause, a.Merge):
-        return [EG_PLAN_MERGE]
-    if isinstance(clause, a.SetClause):
-        return [EG_PLAN_SET]
-    if isinstance(clause, a.Remove):
-        return [EG_PLAN_REMOVE]
-    if isinstance(clause, a.Delete):
-        return [EG_PLAN_DELETE]
-    if isinstance(clause, a.Foreach):
-        return [EG_PLAN_FOREACH]
+    for kind, op in _PLAN_OPS:
+        if isinstance(clause, kind):
+            return [op]
     return [EG_PLAN_SCHEMA]
+
+
+def _match_ops(clause: a.Match) -> list[str]:
+    ops = [EG_PLAN_SCAN]
+    if any(r.var_length for p in clause.patterns for r in p.rels):
+        ops.append(EG_PLAN_EXPAND_VARIABLE)
+    if any(p.rels for p in clause.patterns):
+        ops.append(EG_PLAN_EXPAND)
+    if clause.where is not None:
+        ops.append(EG_PLAN_FILTER)
+    if clause.optional:
+        ops.append(EG_PLAN_OPTIONAL)
+    return ops
