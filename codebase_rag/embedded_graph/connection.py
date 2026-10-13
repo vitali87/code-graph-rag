@@ -26,6 +26,7 @@ from ..types_defs import (
     PropertyValue,
     ResultValue,
 )
+from . import native
 from .executor import Executor, Result
 from .store import open_connection, supports_json_arrow
 
@@ -98,6 +99,8 @@ class EmbeddedConnection:
         self, path: str, read_only: bool = False, heap_limit_mb: int | None = None
     ) -> None:
         self._sqlite = open_connection(path, read_only, heap_limit_mb)
+        # The Rust extension's handles on this file, if it is installed.
+        self.native = native.attach(self._sqlite, path)
         self._executor = Executor(self._sqlite, supports_json_arrow(), read_only)
         self._lock = threading.Lock()
         self._closed = False
@@ -113,7 +116,7 @@ class EmbeddedConnection:
         """Run one statement; past `timeout_s` it stops with QueryTimeout."""
         if self._closed:
             raise ConnectionError(EG_ERR_CLOSED)
-        with self._lock:
+        with self._lock, native.turn(self.native):
             return self._executor.execute(query, params, timeout_s)
 
     def cursor(self) -> EmbeddedCursor:
@@ -124,6 +127,7 @@ class EmbeddedConnection:
             return
         self._closed = True
         self._sqlite.close()
+        native.release(self.native)
 
     def __enter__(self) -> EmbeddedConnection:
         return self

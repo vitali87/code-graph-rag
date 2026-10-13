@@ -3,7 +3,7 @@
 Named after the MAGE procedures cgr's Memgraph prompt already teaches, so a
 model's queries carry over. Each loads the adjacency it needs from SQLite and
 runs in Python; when the optional Rust extension (`cgr_graph_rs`, see
-rust/cgr_graph) is importable, the heavy ones run there instead.
+rust/cgr_graph_rs and native.py) is importable, the heavy ones run there.
 """
 
 from __future__ import annotations
@@ -26,13 +26,12 @@ from ..constants.embedded_graph import (
     EG_PROC_SHORTEST_PATH,
     EG_PROC_TOPOSORT,
     EG_PROC_WCC,
-    EG_RUST_RUN_PROCEDURE,
     EgDirection,
     EgProcCol,
 )
+from . import native
 from . import sql as sq
 from . import types as ty
-from .extension import rust_extension
 from .limits import check_deadline
 from .types import SqlValue, T
 
@@ -386,23 +385,14 @@ def run_procedure(
 ) -> Iterable[Record]:
     """A procedure's records, from the Rust extension when it can serve them.
 
-    The extension opens the file on its own connection, which cannot see
+    The extension reads the file on its own connection, which cannot see
     writes this statement made before its CALL, so a statement that writes
-    keeps to the Python implementation (`external_reads_ok=False`). The
-    extension answers None for a procedure it does not implement or for an
-    in-memory graph it cannot open.
+    keeps to the Python implementation (`external_reads_ok=False`). It reads
+    at this statement's snapshot or not at all (native.py), and declines a
+    procedure it does not implement and an in-memory graph it cannot open.
     """
-    rust = rust_extension() if external_reads_ok else None
-    accelerated = (
-        getattr(rust, EG_RUST_RUN_PROCEDURE, None) if rust is not None else None
-    )
-    if accelerated is not None:
-        result = accelerated(_db_path(conn), name, list(args))
-        if result is not None:
-            return result
+    if external_reads_ok:
+        records = native.run_procedure(conn, name, args)
+        if records is not None:
+            return records
     return PROCEDURES[name].fn(conn, args)
-
-
-def _db_path(conn: sqlite3.Connection) -> str:
-    row = conn.execute(sq.DATABASE_LIST).fetchone()
-    return str(row[2]) if row else sq.NOTHING

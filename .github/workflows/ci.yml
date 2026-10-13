@@ -510,7 +510,7 @@ jobs:
 
       - name: Check it against the Python procedures and parser
         run: |
-          uv run --no-sync pytest codebase_rag/tests/test_embedded_graph_rust.py codebase_rag/tests/test_embedded_graph_rust_parser.py --tb=short
+          uv run --no-sync pytest codebase_rag/tests/test_embedded_graph_rust.py codebase_rag/tests/test_embedded_graph_rust_parser.py codebase_rag/tests/test_embedded_graph_native.py --tb=short
 
       - name: Run the engine's tests on the Rust parser
         run: |

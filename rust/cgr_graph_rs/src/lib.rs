@@ -11,13 +11,20 @@
 //!
 //! The file is opened read-only on a connection of its own, which sees
 //! committed data only; the engine therefore keeps statements that write
-//! before their CALL on the Python path.
+//! before their CALL on the Python path. The `_until` variants stop at the
+//! statement's deadline where the Python ones call `check_deadline()`.
 
 use std::collections::{HashMap, VecDeque};
 
 use rusqlite::{Connection, OpenFlags};
 
+use deadline::{Deadline, TimedOut};
+
 pub mod cypher;
+pub mod deadline;
+#[cfg(feature = "python")]
+mod reader;
+pub mod snapshot;
 
 const DEFAULT_ITERATIONS: u32 = 100;
 const DEFAULT_DAMPING: f64 = 0.85;
@@ -120,17 +127,32 @@ fn float_arg(args: &[Arg], i: usize) -> Option<f64> {
     }
 }
 
+/// A run without a deadline, which cannot time out.
+fn unlimited<T>(result: Result<T, TimedOut>) -> T {
+    result.expect("no deadline to pass")
+}
+
 pub fn pagerank(g: &Graph, args: &[Arg]) -> Vec<Record> {
+    unlimited(pagerank_until(g, args, &Deadline::Never))
+}
+
+/// `pagerank`, checking `deadline` before each iteration.
+pub fn pagerank_until(
+    g: &Graph,
+    args: &[Arg],
+    deadline: &Deadline,
+) -> Result<Vec<Record>, TimedOut> {
     let iterations = int_arg(args, 0).map_or(DEFAULT_ITERATIONS, |v| v.max(0) as u32);
     let damping = float_arg(args, 1).unwrap_or(DEFAULT_DAMPING);
     let epsilon = float_arg(args, 2).unwrap_or(DEFAULT_EPSILON);
     let n = g.ids.len();
     if n == 0 {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let mut rank = vec![1.0 / n as f64; n];
     let mut next = vec![0.0; n];
     for _ in 0..iterations {
+        deadline.check()?;
         next.iter_mut().for_each(|x| *x = 0.0);
         let mut dangling = 0.0;
         for v in 0..n {
@@ -157,9 +179,9 @@ pub fn pagerank(g: &Graph, args: &[Arg]) -> Vec<Record> {
             break;
         }
     }
-    (0..n)
+    Ok((0..n)
         .map(|v| vec![("node", Value::Int(g.ids[v])), ("rank", Value::Float(rank[v]))])
-        .collect()
+        .collect())
 }
 
 pub fn degree(g: &Graph, args: &[Arg]) -> Vec<Record> {
@@ -212,6 +234,11 @@ pub fn wcc(g: &Graph) -> Vec<Record> {
 /// Python `_tarjan`, so components and their members come out in the
 /// same order.
 pub fn tarjan(g: &Graph) -> Vec<Vec<usize>> {
+    unlimited(tarjan_until(g, &Deadline::Never))
+}
+
+/// `tarjan`, checking `deadline` before each new root.
+pub fn tarjan_until(g: &Graph, deadline: &Deadline) -> Result<Vec<Vec<usize>>, TimedOut> {
     const UNSEEN: usize = usize::MAX;
     let n = g.ids.len();
     let mut index = vec![UNSEEN; n];
@@ -224,6 +251,7 @@ pub fn tarjan(g: &Graph) -> Vec<Vec<usize>> {
         if index[root] != UNSEEN {
             continue;
         }
+        deadline.check()?;
         let mut work: Vec<(usize, usize)> = vec![(root, 0)];
         while let Some((v, i)) = work.pop() {
             if i == 0 {
@@ -261,19 +289,29 @@ pub fn tarjan(g: &Graph) -> Vec<Vec<usize>> {
             }
         }
     }
-    comps
+    Ok(comps)
 }
 
 pub fn scc(g: &Graph) -> Vec<Record> {
-    let comps = tarjan(g)
+    unlimited(scc_until(g, &Deadline::Never))
+}
+
+/// `scc`, checking `deadline` as `tarjan_until` does.
+pub fn scc_until(g: &Graph, deadline: &Deadline) -> Result<Vec<Record>, TimedOut> {
+    let comps = tarjan_until(g, deadline)?
         .into_iter()
         .map(|c| c.into_iter().map(|v| g.ids[v]).collect())
         .collect();
-    vec![vec![("components", Value::IdLists(comps))]]
+    Ok(vec![vec![("components", Value::IdLists(comps))]])
 }
 
 /// Brandes' algorithm over directed edges, unweighted.
 pub fn betweenness(g: &Graph) -> Vec<Record> {
+    unlimited(betweenness_until(g, &Deadline::Never))
+}
+
+/// `betweenness`, checking `deadline` before each source.
+pub fn betweenness_until(g: &Graph, deadline: &Deadline) -> Result<Vec<Record>, TimedOut> {
     let n = g.ids.len();
     let mut score = vec![0.0f64; n];
     let mut sigma = vec![0.0f64; n];
@@ -283,6 +321,7 @@ pub fn betweenness(g: &Graph) -> Vec<Record> {
     let mut order: Vec<usize> = Vec::with_capacity(n);
     let mut queue: VecDeque<usize> = VecDeque::new();
     for s in 0..n {
+        deadline.check()?;
         sigma.iter_mut().for_each(|x| *x = 0.0);
         dist.iter_mut().for_each(|x| *x = -1);
         delta.iter_mut().for_each(|x| *x = 0.0);
@@ -314,24 +353,35 @@ pub fn betweenness(g: &Graph) -> Vec<Record> {
         }
     }
     let scale = if n > 2 { 1.0 / ((n - 1) * (n - 2)) as f64 } else { 1.0 };
-    (0..n)
+    Ok((0..n)
         .map(|v| {
             vec![
                 ("node", Value::Int(g.ids[v])),
                 ("betweenness_centrality", Value::Float(score[v] * scale)),
             ]
         })
-        .collect()
+        .collect())
 }
 
 /// Every node reachable from `start` (forwards, or backwards when
 /// `reverse`), without `start` itself, in ascending id order.
 pub fn reach(g: &Graph, start: Option<i64>, reverse: bool, column: &'static str) -> Vec<Record> {
+    unlimited(reach_until(g, start, reverse, column, &Deadline::Never))
+}
+
+/// `reach`, checking `deadline` before each step of the search.
+pub fn reach_until(
+    g: &Graph,
+    start: Option<i64>,
+    reverse: bool,
+    column: &'static str,
+    deadline: &Deadline,
+) -> Result<Vec<Record>, TimedOut> {
     let Some(start_id) = start else {
-        return vec![vec![(column, Value::Ids(Vec::new()))]];
+        return Ok(vec![vec![(column, Value::Ids(Vec::new()))]]);
     };
     let Some(origin) = g.position(start_id) else {
-        return vec![vec![(column, Value::Ids(Vec::new()))]];
+        return Ok(vec![vec![(column, Value::Ids(Vec::new()))]]);
     };
     let mut adjacency: Vec<Vec<usize>> = vec![Vec::new(); g.ids.len()];
     for &(s, d) in &g.edges {
@@ -344,6 +394,7 @@ pub fn reach(g: &Graph, start: Option<i64>, reverse: bool, column: &'static str)
     let mut seen = vec![false; g.ids.len()];
     let mut queue = VecDeque::from([origin]);
     while let Some(v) = queue.pop_front() {
+        deadline.check()?;
         for &w in &adjacency[v] {
             if !seen[w] && w != origin {
                 seen[w] = true;
@@ -352,7 +403,7 @@ pub fn reach(g: &Graph, start: Option<i64>, reverse: bool, column: &'static str)
         }
     }
     let ids = (0..g.ids.len()).filter(|&v| seen[v]).map(|v| g.ids[v]).collect();
-    vec![vec![(column, Value::Ids(ids))]]
+    Ok(vec![vec![(column, Value::Ids(ids))]])
 }
 
 /// Whether this module implements `name`; the engine keeps the rest.
@@ -361,16 +412,26 @@ pub fn implements(name: &str) -> bool {
 }
 
 pub fn run(g: &Graph, name: &str, args: &[Arg]) -> Option<Vec<Record>> {
-    Some(match name {
-        PAGERANK => pagerank(g, args),
+    unlimited(run_until(g, name, args, &Deadline::Never))
+}
+
+/// `run`, stopping at `deadline` where the Python procedures stop.
+pub fn run_until(
+    g: &Graph,
+    name: &str,
+    args: &[Arg],
+    deadline: &Deadline,
+) -> Result<Option<Vec<Record>>, TimedOut> {
+    Ok(Some(match name {
+        PAGERANK => pagerank_until(g, args, deadline)?,
         DEGREE => degree(g, args),
         WCC => wcc(g),
-        SCC => scc(g),
-        BETWEENNESS => betweenness(g),
-        ANCESTORS => reach(g, int_arg(args, 0), true, "ancestors"),
-        DESCENDANTS => reach(g, int_arg(args, 0), false, "descendants"),
-        _ => return None,
-    })
+        SCC => scc_until(g, deadline)?,
+        BETWEENNESS => betweenness_until(g, deadline)?,
+        ANCESTORS => reach_until(g, int_arg(args, 0), true, "ancestors", deadline)?,
+        DESCENDANTS => reach_until(g, int_arg(args, 0), false, "descendants", deadline)?,
+        _ => return Ok(None),
+    }))
 }
 
 pub fn open(path: &str) -> rusqlite::Result<Connection> {
@@ -381,13 +442,29 @@ pub fn open(path: &str) -> rusqlite::Result<Connection> {
 }
 
 #[cfg(feature = "python")]
-mod python {
-    use super::{implements, open, run, Arg, Graph, Value};
-    use pyo3::exceptions::PyRuntimeError;
+pub(crate) mod python {
+    use super::{implements, open, run_until, Arg, Deadline, Graph, Record, Value};
+    use crate::deadline::Stopped;
+    use pyo3::exceptions::{PyRuntimeError, PyTimeoutError};
     use pyo3::prelude::*;
     use pyo3::types::{PyDict, PyList};
 
-    fn to_arg(value: &Bound<'_, PyAny>) -> Arg {
+    pyo3::create_exception!(
+        cgr_graph_rs,
+        Timeout,
+        PyTimeoutError,
+        "The statement's deadline passed while the extension worked for it."
+    );
+
+    /// A stopped read as the Python exception the engine expects.
+    pub(crate) fn stopped_error(stopped: Stopped) -> PyErr {
+        match stopped {
+            Stopped::Sql(error) => PyRuntimeError::new_err(error.to_string()),
+            Stopped::TimedOut => Timeout::new_err(()),
+        }
+    }
+
+    pub(crate) fn to_arg(value: &Bound<'_, PyAny>) -> Arg {
         if value.is_none() {
             Arg::Null
         } else if let Ok(v) = value.extract::<bool>() {
@@ -405,13 +482,16 @@ mod python {
 
     /// The procedure's records as dicts, or None when the engine should run
     /// its own implementation: a procedure not ported here, or a graph with
-    /// no file (`:memory:`) to open.
+    /// no file (`:memory:`) to open. With `seconds_left`, it raises `Timeout`
+    /// once they run out.
     #[pyfunction]
+    #[pyo3(signature = (db_path, name, args, seconds_left=None))]
     fn run_procedure<'py>(
         py: Python<'py>,
         db_path: &str,
         name: &str,
         args: Vec<Bound<'py, PyAny>>,
+        seconds_left: Option<f64>,
     ) -> PyResult<Option<Bound<'py, PyList>>> {
         if db_path.is_empty() || !implements(name) {
             return Ok(None);
@@ -419,16 +499,26 @@ mod python {
         let args: Vec<Arg> = args.iter().map(to_arg).collect();
         let path = db_path.to_string();
         let name = name.to_string();
+        let deadline = Deadline::after(seconds_left);
         let records = py
-            .detach(move || -> rusqlite::Result<_> {
+            .detach(move || -> Result<_, Stopped> {
+                deadline.check()?;
                 let conn = open(&path)?;
                 let graph = Graph::load(&conn)?;
-                Ok(run(&graph, &name, &args))
+                Ok(run_until(&graph, &name, &args, &deadline)?)
             })
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+            .map_err(stopped_error)?;
         let Some(records) = records else {
             return Ok(None);
         };
+        records_to_list(py, records).map(Some)
+    }
+
+    /// Records as the list of dicts the Python procedures return.
+    pub(crate) fn records_to_list(
+        py: Python<'_>,
+        records: Vec<Record>,
+    ) -> PyResult<Bound<'_, PyList>> {
         let out = PyList::empty(py);
         for record in records {
             let dict = PyDict::new(py);
@@ -442,13 +532,15 @@ mod python {
             }
             out.append(dict)?;
         }
-        Ok(Some(out))
+        Ok(out)
     }
 
     #[pymodule]
     fn cgr_graph_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_function(wrap_pyfunction!(run_procedure, m)?)?;
+        m.add("Timeout", m.py().get_type::<Timeout>())?;
         crate::cypher::python::register(m)?;
+        crate::reader::register(m)?;
         Ok(())
     }
 }

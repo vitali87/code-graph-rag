@@ -25,6 +25,7 @@ from ..constants.embedded_graph import (
     EG_SQL_INSERT_STAT,
     EG_SQL_JSON_PROBE,
     EG_SQL_RELOAD_STATS,
+    EG_SQL_SEED_GRAPH_VERSION,
     EG_STATEMENT_CACHE_SIZE,
     EG_URI_READ_ONLY,
     EG_VERSION_SEPARATOR,
@@ -122,6 +123,7 @@ def open_connection(
             conn.execute(pragma)
         conn.executescript(EG_SCHEMA_SQL)
         conn.execute(EG_META_UPSERT, (EG_META_SCHEMA_VERSION, EG_SCHEMA_VERSION))
+        conn.execute(EG_SQL_SEED_GRAPH_VERSION)
         pin_planner_statistics(conn)
     functions.register(conn)
     return conn

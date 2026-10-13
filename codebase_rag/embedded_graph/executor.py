@@ -317,6 +317,9 @@ class Executor:
         if timeout_s is not None:
             self.conn.set_progress_handler(deadline.passed, EG_PROGRESS_STEPS)
         try:
+            if mutates:
+                # Once per transaction that changes the graph (native.py).
+                self.conn.execute(sq.BUMP_GRAPH_VERSION)
             with running_until(deadline):
                 result = self._run(stmt, text, sig, params, writes)
         except BaseException as error:

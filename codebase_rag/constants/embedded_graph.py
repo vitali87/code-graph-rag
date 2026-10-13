@@ -460,8 +460,9 @@ class EgProcCol(StrEnum):
 EG_DEGREE_UNDIRECTED = "undirected"
 # The optional Rust extension and the one function the engine calls in it.
 EG_RUST_MODULE = "cgr_graph_rs"
-EG_RUST_RUN_PROCEDURE = "run_procedure"
 EG_RUST_PARSE_CYPHER = "parse_cypher"
+# The part native.py uses: the long-lived reader of a graph file.
+EG_RUST_READER = "Reader"
 # Property types as the node and relationship schemas declare them.
 EG_SCHEMA_STRING = "string"
 EG_SCHEMA_INT = "int"
@@ -583,6 +584,16 @@ EG_SCHEMA_VERSION = "1"
 EG_META_UPSERT = (
     "INSERT INTO cgr_meta(name, value) VALUES (?, ?) "
     "ON CONFLICT(name) DO UPDATE SET value = excluded.value"
+)
+# A counter every transaction that changes the graph bumps once (the
+# executor's writes; sql.BUMP_GRAPH_VERSION). The Rust extension reads on its
+# own connection, which another process's commit can leave on a newer graph
+# than the calling statement's; it reads only where the counter equals the
+# one the statement's own transaction sees (native.py).
+# The seed spells the row's name out; a test pins it to this one.
+EG_META_GRAPH_VERSION = "graph_version"
+EG_SQL_SEED_GRAPH_VERSION = (
+    "INSERT OR IGNORE INTO cgr_meta(name, value) VALUES ('graph_version', '0')"
 )
 EG_ALIAS_SPACE_TEMP = "temp"
 EG_SQLITE_TEMP_DATABASE = "temp"

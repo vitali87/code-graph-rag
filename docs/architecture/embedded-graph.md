@@ -135,7 +135,11 @@ pip install ./rust/cgr_graph_rs   # needs a Rust toolchain
 
 The other procedures, and any statement that writes before its `CALL`, stay
 in Python: the extension reads the file on its own connection, which only sees
-committed data.
+committed data. So that it reads the graph its statement reads, every
+statement that writes bumps a counter in `cgr_meta` (`graph_version`), and the
+extension answers only at the version the statement sees; when another process
+has committed since, the engine runs the procedure itself. Procedures stop at
+the query's timeout where the Python ones check it.
 
 The extension also carries a port of the engine's Cypher lexer and parser,
 which the engine uses when it is installed: it builds the very syntax tree the

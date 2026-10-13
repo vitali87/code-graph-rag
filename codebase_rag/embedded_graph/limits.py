@@ -47,6 +47,16 @@ def running_until(deadline: Deadline) -> Iterator[None]:
         _current.reset(token)
 
 
+def seconds_left() -> float | None:
+    """What remains of the running statement's time (None: no limit).
+
+    For code that keeps its own clock, as the Rust extension does: a
+    monotonic reading means nothing outside this process's Python.
+    """
+    at = _current.get().at
+    return None if at is None else at - time.monotonic()
+
+
 def check_deadline() -> None:
     """Stop a long-running procedure once its statement's time is up."""
     if _current.get().passed():

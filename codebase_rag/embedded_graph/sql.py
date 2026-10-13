@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from ..constants.embedded_graph import (
+    EG_META_GRAPH_VERSION,
     EG_NODE_ID,
     EG_NODE_LABELS,
     EG_NODE_PROPERTIES,
@@ -368,6 +369,17 @@ BEGIN_READ = "BEGIN"
 COMMIT = "COMMIT"
 ROLLBACK = "ROLLBACK"
 
+# A counter every transaction that changes the graph bumps once; the Rust
+# extension reads only where it equals what the calling statement's own
+# transaction reads (native.py).
+GRAPH_VERSION = (
+    f"SELECT CAST(value AS TEXT) FROM cgr_meta WHERE name = '{EG_META_GRAPH_VERSION}'"
+)
+BUMP_GRAPH_VERSION = (
+    f"INSERT INTO cgr_meta(name, value) VALUES ('{EG_META_GRAPH_VERSION}', '1') "
+    "ON CONFLICT(name) DO UPDATE SET value = CAST(value AS INTEGER) + 1"
+)
+
 # ------------------------------------------------------------ temp tables
 
 
@@ -438,8 +450,6 @@ EDGES_IN_ORDER = f"SELECT {ID}, {SRC}, {DST} FROM {EDGES} ORDER BY {ID}"
 EDGE_ENDS = f"SELECT {SRC}, {DST} FROM {EDGES}"
 SOURCES_OF = f"SELECT {SRC} FROM {EDGES} WHERE {DST} = ?"
 TARGETS_OF = f"SELECT {DST} FROM {EDGES} WHERE {SRC} = ?"
-# The file behind a connection: column 2 of its first row.
-DATABASE_LIST = "PRAGMA database_list"
 
 
 def refresh_key(constraints: dict[str, str]) -> str:
