@@ -123,16 +123,35 @@ instead of a pool of workers.
 
 ## The Rust extension
 
-`rust/cgr_graph_rs` is an optional extension that runs PageRank, degree
-centrality, weakly and strongly connected components, betweenness centrality,
-ancestors and descendants in Rust. When it is installed the engine uses it
-for those procedures, and it returns the same records as the Python
-implementations, floats included (the suite checks this on random graphs).
-Install it into cgr's environment with:
+`rust/cgr_graph_rs`, published as `cgr-graph-rs`, is the engine's native
+half, written with [PyO3](https://pyo3.rs) and built with
+[maturin](https://www.maturin.rs), the way uv and ruff are shipped. It is a
+dependency of code-graph-rag, installed as a prebuilt wheel, so no Rust
+toolchain is needed, on:
 
-```bash
-pip install ./rust/cgr_graph_rs   # needs a Rust toolchain
-```
+| Platform | Wheel |
+|---|---|
+| Linux x86_64 and aarch64, glibc 2.17+ | `manylinux2014` |
+| Linux x86_64 and aarch64, musl (Alpine) | `musllinux_1_2` |
+| macOS 10.13+, Intel and Apple silicon | `universal2` |
+| Windows x64 | `win_amd64` |
+
+Each wheel is built against Python's stable ABI, so one per platform serves
+every CPython from 3.12 on. Anywhere else (PyPy, 32-bit or other
+architectures) code-graph-rag installs without it and the engine runs the
+Python twin of every part, which stays the reference: each Rust path is
+tested against it, and gives the same answers.
+
+A checkout builds the crate it carries: `uv sync` compiles it with the Rust
+toolchain on your `PATH` (uv takes it as a path source), so a change to the
+Python and Rust halves is tested together. `.github/workflows/rust-wheels.yml`
+builds the wheels; a release uploads a crate version PyPI does not have yet
+before code-graph-rag, which requires it.
+
+It runs PageRank, degree centrality, weakly and strongly connected
+components, betweenness centrality, ancestors and descendants, and returns
+the same records as the Python implementations, floats included (the suite
+checks this on random graphs).
 
 The other procedures, and any statement that writes before its `CALL`, stay
 in Python: the extension reads the file on its own connection, which only sees
@@ -179,6 +198,11 @@ CTE does, but the engine does not use it: handing the rows back to SQLite
 costs about what the walk saves, so on cgr's own graph its shipped walks ran
 0.8 to 1.3 times as fast as SQLite's, and wider model-style walks 0.9 to 1.9
 times.
+
+Writing to the graph is now 1% to 4% of an index run; the rest is the
+indexer's own analysis, embedding inference and start-up. Which of those Rust
+could speed up, measured stage by stage, is in
+[the indexer's Rust plan](../reports/INDEXER_RUST_PLAN.md).
 
 ## Switching backends
 

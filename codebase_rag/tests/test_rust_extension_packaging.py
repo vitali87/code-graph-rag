@@ -1,0 +1,150 @@
+"""cgr-graph-rs ships as wheels that code-graph-rag requires (issue #386).
+
+The Rust half of the embedded graph is published to PyPI and installed with
+code-graph-rag on the platforms it has wheels for. These pin the pieces that
+must agree for that to hold: the requirement and the crate's version, the
+platforms the requirement names and the wheels the workflow builds, and the
+licences and bundling that go with a compiled dependency.
+"""
+
+from __future__ import annotations
+
+import tomllib
+from pathlib import Path
+
+import pytest
+import yaml
+from packaging.markers import default_environment
+from packaging.requirements import Requirement
+
+from codebase_rag.constants.build import PYINSTALLER_PACKAGES
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CRATE_DIR = REPO_ROOT / "rust" / "cgr_graph_rs"
+WHEELS_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "rust-wheels.yml"
+DIST_NAME = "cgr-graph-rs"
+MODULE_NAME = "cgr_graph_rs"
+
+# What a Python on each wheel's platform reports to environment markers.
+TARGET_ENVIRONMENTS = {
+    "x86_64-unknown-linux-gnu": [("linux", "x86_64")],
+    "aarch64-unknown-linux-gnu": [("linux", "aarch64")],
+    "x86_64-unknown-linux-musl": [("linux", "x86_64")],
+    "aarch64-unknown-linux-musl": [("linux", "aarch64")],
+    "universal2-apple-darwin": [("darwin", "arm64"), ("darwin", "x86_64")],
+    "x86_64-pc-windows-msvc": [("win32", "AMD64")],
+}
+# Platforms with no wheel, where installing must skip the extension rather
+# than try to compile it.
+WITHOUT_WHEELS = [
+    ("linux", "armv7l", "CPython"),
+    ("linux", "s390x", "CPython"),
+    ("linux", "ppc64le", "CPython"),
+    ("win32", "ARM64", "CPython"),
+    ("win32", "x86", "CPython"),
+    ("linux", "x86_64", "PyPy"),
+    ("darwin", "arm64", "PyPy"),
+]
+
+
+def _toml(path: Path) -> dict:
+    with path.open("rb") as handle:
+        return tomllib.load(handle)
+
+
+def _requirement() -> Requirement:
+    deps = _toml(REPO_ROOT / "pyproject.toml")["project"]["dependencies"]
+    (spec,) = [d for d in deps if Requirement(d).name == DIST_NAME]
+    return Requirement(spec)
+
+
+def _crate_version() -> str:
+    return _toml(CRATE_DIR / "pyproject.toml")["project"]["version"]
+
+
+def _environment(platform: str, machine: str, implementation: str) -> dict[str, str]:
+    env = dict(default_environment())
+    env.update(
+        sys_platform=platform,
+        platform_machine=machine,
+        platform_python_implementation=implementation,
+    )
+    return env
+
+
+def _workflow_targets() -> set[str]:
+    jobs = yaml.safe_load(WHEELS_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
+    linux = {
+        entry["target"] for entry in jobs["linux"]["strategy"]["matrix"]["include"]
+    }
+    names = {jobs[job]["name"].removeprefix("Wheel ") for job in ("macos", "windows")}
+    return linux | names
+
+
+def test_the_requirement_floor_is_the_crate_version() -> None:
+    """Python code written against a crate release requires at least it, so
+    an install never pairs it with an older library from PyPI."""
+    requirement = _requirement()
+    version = _crate_version()
+    assert f">={version}" in {str(s) for s in requirement.specifier}
+    assert requirement.specifier.contains(version)
+
+
+def test_the_crate_has_one_version() -> None:
+    cargo = _toml(CRATE_DIR / "Cargo.toml")["package"]["version"]
+    assert cargo == _crate_version()
+
+
+def test_the_workflow_builds_the_wheels_this_test_knows() -> None:
+    """A wheel target added or dropped must be reflected in the requirement's
+    platforms, which the tests below check against this map."""
+    assert _workflow_targets() == set(TARGET_ENVIRONMENTS)
+
+
+@pytest.mark.parametrize(
+    ("target", "platform", "machine"),
+    [
+        (target, platform, machine)
+        for target, envs in TARGET_ENVIRONMENTS.items()
+        for platform, machine in envs
+    ],
+)
+def test_every_platform_with_a_wheel_installs_it(
+    target: str, platform: str, machine: str
+) -> None:
+    marker = _requirement().marker
+    assert marker is not None
+    assert marker.evaluate(_environment(platform, machine, "CPython")), target
+
+
+@pytest.mark.parametrize(("platform", "machine", "implementation"), WITHOUT_WHEELS)
+def test_a_platform_without_a_wheel_skips_it(
+    platform: str, machine: str, implementation: str
+) -> None:
+    """No sdist is published, so requiring it where no wheel exists would make
+    code-graph-rag uninstallable there instead of running the Python twin."""
+    marker = _requirement().marker
+    assert marker is not None
+    assert not marker.evaluate(_environment(platform, machine, implementation))
+
+
+def test_a_checkout_builds_the_crate_it_carries() -> None:
+    sources = _toml(REPO_ROOT / "pyproject.toml")["tool"]["uv"]["sources"]
+    source = REPO_ROOT / sources[DIST_NAME]["path"]
+    assert source.resolve() == CRATE_DIR.resolve()
+    assert _toml(source / "pyproject.toml")["project"]["name"] == DIST_NAME
+
+
+def test_the_wheel_carries_the_crates_licences() -> None:
+    """The library has every crate it uses compiled in, so the wheel owes
+    their notices; the binaries' notice generator reads them from it."""
+    project = _toml(CRATE_DIR / "pyproject.toml")["project"]
+    assert project["license-files"] == ["LICENSE", "THIRD_PARTY_LICENSES.md"]
+    for name in project["license-files"]:
+        assert (CRATE_DIR / name).is_file(), name
+
+
+def test_the_binaries_bundle_the_extension() -> None:
+    """It is imported by name at run time, which PyInstaller cannot see."""
+    (package,) = [p for p in PYINSTALLER_PACKAGES if p.name == MODULE_NAME]
+    assert package.collect_all

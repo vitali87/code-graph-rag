@@ -20,6 +20,7 @@ on:
       - "**.spec"
       - "pyproject.toml"
       - "uv.lock"
+      - "rust/cgr_graph_rs/**"
   schedule:
     - cron: "17 5 * * 1"
   workflow_dispatch:

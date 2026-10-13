@@ -376,12 +376,18 @@ jobs:
       - name: Build wheel
         run: uv build --wheel
 
+      # code-graph-rag requires cgr-graph-rs, which publish.yml uploads
+      # first; this commit's own build stands in for it, so the PR is
+      # tested against the crate it carries.
+      - name: Build the cgr-graph-rs wheel
+        run: uv build --wheel rust/cgr_graph_rs --out-dir dist-rust
+
       # Deliberately plain venv + pip: uv.lock must not participate.
       - name: Install the wheel with unlocked resolution
         run: |
           python -m venv .fresh-venv
           ./.fresh-venv/bin/python -m pip install --upgrade pip
-          ./.fresh-venv/bin/python -m pip install dist/*.whl
+          ./.fresh-venv/bin/python -m pip install --find-links dist-rust dist/*.whl
 
       - name: Record resolved dependency versions
         run: ./.fresh-venv/bin/python -m pip list
@@ -476,12 +482,13 @@ jobs:
   rust-graph-core:
     name: Rust Graph Core
     runs-on: ubuntu-latest
-    # rust/cgr_graph_rs is an optional extension the embedded graph uses
-    # for its whole-graph procedures, its Cypher parser, the ingestor's
-    # batch writes and result decoding (issue #386). Its own tests check the
-    # algorithms and the grammar; the Python tests check it returns and
-    # writes exactly what the Python implementations it replaces do, and run
-    # the engine's suites with it installed.
+    # rust/cgr_graph_rs (published as cgr-graph-rs, a default dependency on
+    # the platforms it has wheels for) runs the embedded graph's whole-graph
+    # procedures, its Cypher parser, the ingestor's batch writes and result
+    # decoding (issue #386). Its own tests check the algorithms and the
+    # grammar; the Python tests check it returns and writes exactly what
+    # the Python implementations it replaces do, and run the engine's
+    # suites with it installed. rust-wheels.yml builds and tests the wheels.
     timeout-minutes: 20
 
     steps:
@@ -504,10 +511,14 @@ jobs:
       - name: Test the crate
         run: cargo test --release --manifest-path rust/cgr_graph_rs/Cargo.toml
 
-      - name: Install the extension beside cgr
-        run: |
-          uv sync --extra test --group dev
-          uv pip install ./rust/cgr_graph_rs
+      # The checkout's crate is a path source, so the sync builds it.
+      - name: Install cgr with the extension
+        run: uv sync --extra test --group dev
+
+      # The wheel carries every linked crate's licence; a dependency change
+      # must regenerate the file before it can ship.
+      - name: Check the crates' licences are listed
+        run: uv run --no-sync python scripts/generate_rust_licenses.py --check
 
       - name: Check it against the Python procedures and parser
         run: |

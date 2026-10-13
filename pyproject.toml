@@ -60,6 +60,11 @@ dependencies = [
     "huggingface-hub[hf-xet]>=1.7.2",
     "pathspec>=1.0.4",
     "pygments>=2.20.0",
+    # The embedded graph's Rust acceleration (rust/cgr_graph_rs), shipped as
+    # abi3 wheels for exactly these platforms; elsewhere the engine runs its
+    # Python twin of every part. The floor is the crate version this code
+    # was written against, raised with each crate release.
+    "cgr-graph-rs>=0.1.0,<0.2; platform_python_implementation == 'CPython' and ((sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')) or sys_platform == 'darwin' or (sys_platform == 'win32' and platform_machine == 'AMD64'))",
 ]
 
 [project.scripts]
@@ -80,6 +85,10 @@ override-dependencies = ["pyjwt[crypto]>=2.14.0"]
 # #define whose value embeds a block comment (issue #555). Our forks carry
 # the repeat(preproc_arg) fix; drop these overrides once upstream releases it.
 [tool.uv.sources]
+# A checkout builds the crate it carries (with a Rust toolchain), so the
+# Python and Rust halves of a change are tested together; installs from
+# PyPI get the published wheels.
+cgr-graph-rs = { path = "rust/cgr_graph_rs" }
 tree-sitter-c = { git = "https://github.com/vitali87/tree-sitter-c", rev = "fa327ad98f847f8173fc46926be4165c7971f960" }
 tree-sitter-cpp = { git = "https://github.com/vitali87/tree-sitter-cpp", rev = "b4a7be2f62f36dd460a14b2d1728d42d81d2c486" }
 
@@ -299,6 +308,13 @@ docs = [
 ]
 fuzz = [
     "atheris>=2.3.0",
+]
+# Builds the cgr-graph-rs wheels (.github/workflows/rust-wheels.yml): zig
+# links each Linux wheel against the oldest glibc or musl its tag promises.
+rust-wheels = [
+    "maturin==1.15.0",
+    # Only the Linux wheels are linked with zig, and it ships no Windows build.
+    "ziglang==0.17.0; sys_platform == 'linux'",
 ]
 
 [tool.bandit]

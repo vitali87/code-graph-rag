@@ -91,4 +91,7 @@ PYINSTALLER_PACKAGES: list["PyInstallerPackage"] = [
     PyInstallerPackage(name="tomli_w", collect_all=True),
     PyInstallerPackage(name="protobuf", collect_all=True),
     PyInstallerPackage(name="genai_prices", collect_all=True),
+    # The embedded graph's Rust half, loaded by name (embedded_graph/
+    # extension.py), so PyInstaller never sees an import of it.
+    PyInstallerPackage(name="cgr_graph_rs", collect_all=True),
 ]
