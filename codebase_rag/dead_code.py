@@ -5,6 +5,8 @@
 # memgraph's 600s timeout on big projects (django: 31k roots, 101k CALLS
 # edges), whereas a multi-source walk over the fetched edges is linear and
 # finishes in milliseconds.
+from __future__ import annotations
+
 import re
 from collections import defaultdict
 from collections.abc import Callable
@@ -688,9 +690,7 @@ def _is_root(
     declaration_roots: set[str],
     method_to_class: dict[str, str],
     class_decorators_norm: dict[str, frozenset[str]],
-    nest_factory_classes: set[str],
-    react_component_classes: set[str],
-    ast_visitor_classes: set[str],
+    structural: _StructuralRels,
     rust_test_modules: set[str],
     rust_test_spans: dict[str, list[tuple[int, int]]],
     project_prefix: str,
@@ -787,13 +787,18 @@ def _is_root(
             path,
             method_to_class,
             class_decorators_norm,
-            nest_factory_classes,
+            structural.nest_factory_classes,
         ),
         lambda: _is_react_root(
-            qn, bare_leaf, is_method, path, method_to_class, react_component_classes
+            qn,
+            bare_leaf,
+            is_method,
+            path,
+            method_to_class,
+            structural.react_component_classes,
         ),
         lambda: _is_py_ast_visitor_root(
-            qn, leaf, is_method, path, method_to_class, ast_visitor_classes
+            qn, leaf, is_method, path, method_to_class, structural.ast_visitor_classes
         ),
         lambda: _is_pytest_hook_root(leaf, path, props),
         lambda: (
@@ -952,6 +957,16 @@ def _is_external_nest_options_factory(to_qn: str, project_prefix: str) -> bool:
     ].endswith(cs.NEST_OPTIONS_FACTORY_SUFFIX)
 
 
+def _record_inherits(found: _StructuralRels, from_qn: str, to_qn: str) -> None:
+    found.inherits_subclasses[to_qn].add(from_qn)
+    if to_qn in cs.PROTOCOL_BASE_QNS:
+        found.protocol_classes.add(from_qn)
+    elif to_qn in cs.PY_AST_VISITOR_BASE_QNS:
+        found.ast_visitor_classes.add(from_qn)
+    elif _is_react_base_qn(to_qn):
+        found.react_component_classes.add(from_qn)
+
+
 def _scan_structural_rels(
     rels: list[_RelTuple], project_prefix: str
 ) -> _StructuralRels:
@@ -963,13 +978,7 @@ def _scan_structural_rels(
             if to_label == _CLASS:
                 found.nested_class_pairs.append((from_qn, to_qn))
         elif rel_type == _INHERITS:
-            found.inherits_subclasses[to_qn].add(from_qn)
-            if to_qn in cs.PROTOCOL_BASE_QNS:
-                found.protocol_classes.add(from_qn)
-            elif to_qn in cs.PY_AST_VISITOR_BASE_QNS:
-                found.ast_visitor_classes.add(from_qn)
-            elif _is_react_base_qn(to_qn):
-                found.react_component_classes.add(from_qn)
+            _record_inherits(found, from_qn, to_qn)
         elif rel_type == _DEFINES_METHOD:
             found.class_methods.append((from_qn, to_qn))
         elif rel_type == _IMPLEMENTS and _is_external_nest_options_factory(
@@ -1331,9 +1340,7 @@ def dead_code_from_graph(
             declaration_roots,
             method_to_class,
             scan.class_decorators_norm,
-            structural.nest_factory_classes,
-            structural.react_component_classes,
-            structural.ast_visitor_classes,
+            structural,
             rust_test_modules,
             rust_test_spans,
             project_prefix,
