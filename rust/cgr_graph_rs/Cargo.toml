@@ -17,7 +17,7 @@ python = ["dep:pyo3", "pyo3/extension-module"]
 default = []
 
 [dependencies]
-pyo3 = { version = "0.27", features = ["abi3-py312"], optional = true }
+pyo3 = { version = "0.29", features = ["abi3-py312"], optional = true }
 rusqlite = { version = "0.37", features = ["bundled"] }
 
 [profile.release]
