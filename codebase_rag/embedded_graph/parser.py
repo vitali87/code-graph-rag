@@ -10,11 +10,22 @@ from __future__ import annotations
 from functools import lru_cache
 
 from ..constants.embedded_graph import (
+    EG_BACKTICK,
     EG_COMPILE_CACHE_SIZE,
+    EG_END_OF_QUERY,
     EG_ERR_UNEXPECTED,
+    EG_EXPECT_CLAUSE,
+    EG_EXPECT_EXPRESSION,
+    EG_EXPECT_INT,
+    EG_EXPECT_NAME,
+    EG_EXPECT_PATTERN,
+    EG_EXPECT_SCHEMA,
+    EG_EXPECT_SET_ITEM,
     EG_EXPRESSION_STOP_WORDS,
     EgBinary,
     EgDirection,
+    EgKw,
+    EgPunct,
     EgQuantifier,
     EgRemoveKind,
     EgSchemaKind,
@@ -26,34 +37,30 @@ from . import cypher_ast as a
 from .lexer import CypherSyntaxError, Token, tokenize
 
 _COMPARISON_OPS: dict[str, EgBinary] = {
-    "=": EgBinary.EQ,
-    "<>": EgBinary.NE,
-    "!=": EgBinary.NE,
-    "<": EgBinary.LT,
-    ">": EgBinary.GT,
-    "<=": EgBinary.LE,
-    ">=": EgBinary.GE,
-    "=~": EgBinary.REGEX,
+    EgPunct.EQ: EgBinary.EQ,
+    EgPunct.NE: EgBinary.NE,
+    EgPunct.BANG_EQ: EgBinary.NE,
+    EgPunct.LT: EgBinary.LT,
+    EgPunct.GT: EgBinary.GT,
+    EgPunct.LE: EgBinary.LE,
+    EgPunct.GE: EgBinary.GE,
+    EgPunct.REGEX: EgBinary.REGEX,
 }
-_ADDITIVE_OPS: dict[str, EgBinary] = {"+": EgBinary.ADD, "-": EgBinary.SUB}
+_ADDITIVE_OPS: dict[str, EgBinary] = {
+    EgPunct.PLUS: EgBinary.ADD,
+    EgPunct.MINUS: EgBinary.SUB,
+}
 _MULTIPLICATIVE_OPS: dict[str, EgBinary] = {
-    "*": EgBinary.MUL,
-    "/": EgBinary.DIV,
-    "%": EgBinary.MOD,
+    EgPunct.STAR: EgBinary.MUL,
+    EgPunct.SLASH: EgBinary.DIV,
+    EgPunct.PERCENT: EgBinary.MOD,
 }
 _QUANTIFIERS: dict[str, EgQuantifier] = {
-    "ANY": EgQuantifier.ANY,
-    "ALL": EgQuantifier.ALL,
-    "NONE": EgQuantifier.NONE,
-    "SINGLE": EgQuantifier.SINGLE,
+    EgKw.ANY: EgQuantifier.ANY,
+    EgKw.ALL: EgQuantifier.ALL,
+    EgKw.NONE: EgQuantifier.NONE,
+    EgKw.SINGLE: EgQuantifier.SINGLE,
 }
-_EXPECT_EXPRESSION = "an expression"
-_EXPECT_NAME = "a name"
-_EXPECT_INT = "an integer"
-_EXPECT_CLAUSE = "a clause"
-_EXPECT_PATTERN = "a pattern"
-_EXPECT_SET_ITEM = "a SET item"
-_EXPECT_SCHEMA = "an index or constraint statement"
 
 
 @lru_cache(maxsize=EG_COMPILE_CACHE_SIZE)
@@ -84,7 +91,7 @@ class _Parser:
 
     def error(self, expected: str) -> CypherSyntaxError:
         tok = self.tok
-        found = tok.text or "end of query"
+        found = tok.text or EG_END_OF_QUERY
         return CypherSyntaxError(
             tok.pos, EG_ERR_UNEXPECTED.format(found=found, expected=expected)
         )
@@ -121,7 +128,7 @@ class _Parser:
         if tok.kind in (EgTok.IDENT, EgTok.QUOTED_IDENT):
             self.advance()
             return tok.text
-        raise self.error(_EXPECT_NAME)
+        raise self.error(EG_EXPECT_NAME)
 
     def variable(self) -> str:
         tok = self.tok
@@ -130,27 +137,27 @@ class _Parser:
         ):
             self.advance()
             return tok.text
-        raise self.error(_EXPECT_NAME)
+        raise self.error(EG_EXPECT_NAME)
 
     # ------------------------------------------------------------ statements
 
     def statement(self) -> a.Query | a.Explain | a.SchemaCommand:
-        if self.accept_word("EXPLAIN") or self.accept_word("PROFILE"):
+        if self.accept_word(EgKw.EXPLAIN) or self.accept_word(EgKw.PROFILE):
             result: a.Query | a.Explain | a.SchemaCommand = a.Explain(self.query())
         elif self._at_schema_command():
             result = self.schema_command()
         else:
             result = self.query()
-        self.accept_punct(";")
+        self.accept_punct(EgPunct.SEMICOLON)
         if self.tok.kind != EgTok.EOF:
-            raise self.error(_EXPECT_CLAUSE)
+            raise self.error(EG_EXPECT_CLAUSE)
         return result
 
     def query(self) -> a.Query:
         parts = [self.single_query()]
         union_all: list[bool] = []
-        while self.accept_word("UNION"):
-            union_all.append(self.accept_word("ALL"))
+        while self.accept_word(EgKw.UNION):
+            union_all.append(self.accept_word(EgKw.ALL))
             parts.append(self.single_query())
         return a.Query(tuple(parts), tuple(union_all))
 
@@ -162,66 +169,66 @@ class _Parser:
                 break
             clauses.append(clause)
         if not clauses:
-            raise self.error(_EXPECT_CLAUSE)
+            raise self.error(EG_EXPECT_CLAUSE)
         return a.SingleQuery(tuple(clauses))
 
     def clause(self) -> a.Clause | None:
-        if self.at_word("OPTIONAL"):
+        if self.at_word(EgKw.OPTIONAL):
             self.advance()
-            self.expect_word("MATCH")
+            self.expect_word(EgKw.MATCH)
             return self.match(optional=True)
-        if self.accept_word("MATCH"):
+        if self.accept_word(EgKw.MATCH):
             return self.match(optional=False)
-        if self.accept_word("UNWIND"):
+        if self.accept_word(EgKw.UNWIND):
             expr = self.expression()
-            self.expect_word("AS")
+            self.expect_word(EgKw.AS)
             return a.Unwind(expr, self.variable())
-        if self.accept_word("WITH"):
+        if self.accept_word(EgKw.WITH):
             return self.projection(is_return=False)
-        if self.accept_word("RETURN"):
+        if self.accept_word(EgKw.RETURN):
             return self.projection(is_return=True)
-        if self.accept_word("CREATE"):
+        if self.accept_word(EgKw.CREATE):
             return a.Create(self.pattern_list())
-        if self.accept_word("MERGE"):
+        if self.accept_word(EgKw.MERGE):
             return self.merge()
-        if self.accept_word("SET"):
+        if self.accept_word(EgKw.SET):
             return a.SetClause(self.set_items())
-        if self.accept_word("REMOVE"):
+        if self.accept_word(EgKw.REMOVE):
             return self.remove()
-        if self.at_word("DETACH"):
+        if self.at_word(EgKw.DETACH):
             self.advance()
-            self.expect_word("DELETE")
+            self.expect_word(EgKw.DELETE)
             return a.Delete(True, self.expression_list())
-        if self.accept_word("DELETE"):
+        if self.accept_word(EgKw.DELETE):
             return a.Delete(False, self.expression_list())
-        if self.accept_word("FOREACH"):
+        if self.accept_word(EgKw.FOREACH):
             return self.foreach()
-        if self.accept_word("CALL"):
+        if self.accept_word(EgKw.CALL):
             return self.call()
         return None
 
     def match(self, optional: bool) -> a.Match:
         patterns = self.pattern_list()
-        where = self.expression() if self.accept_word("WHERE") else None
+        where = self.expression() if self.accept_word(EgKw.WHERE) else None
         return a.Match(optional, patterns, where)
 
     def projection(self, is_return: bool) -> a.Projection:
-        distinct = self.accept_word("DISTINCT")
+        distinct = self.accept_word(EgKw.DISTINCT)
         star = False
         items: list[a.ProjectionItem] = []
-        if self.accept_punct("*"):
+        if self.accept_punct(EgPunct.STAR):
             star = True
-            if not self.accept_punct(","):
+            if not self.accept_punct(EgPunct.COMMA):
                 return self._projection_tail(is_return, distinct, star, items)
         while True:
             start = self.tok.pos
             expr = self.expression()
-            if self.accept_word("AS"):
+            if self.accept_word(EgKw.AS):
                 alias = self.name()
             else:
                 alias = self._source_text(start)
             items.append(a.ProjectionItem(expr, alias))
-            if not self.accept_punct(","):
+            if not self.accept_punct(EgPunct.COMMA):
                 break
         return self._projection_tail(is_return, distinct, star, items)
 
@@ -233,22 +240,22 @@ class _Parser:
         items: list[a.ProjectionItem],
     ) -> a.Projection:
         order: list[a.SortItem] = []
-        if self.accept_word("ORDER"):
-            self.expect_word("BY")
+        if self.accept_word(EgKw.ORDER):
+            self.expect_word(EgKw.BY)
             while True:
                 expr = self.expression()
                 desc = False
-                if self.accept_word("DESC", "DESCENDING"):
+                if self.accept_word(EgKw.DESC, EgKw.DESCENDING):
                     desc = True
                 else:
-                    self.accept_word("ASC", "ASCENDING")
+                    self.accept_word(EgKw.ASC, EgKw.ASCENDING)
                 order.append(a.SortItem(expr, desc))
-                if not self.accept_punct(","):
+                if not self.accept_punct(EgPunct.COMMA):
                     break
-        skip = self.expression() if self.accept_word("SKIP") else None
-        limit = self.expression() if self.accept_word("LIMIT") else None
+        skip = self.expression() if self.accept_word(EgKw.SKIP) else None
+        limit = self.expression() if self.accept_word(EgKw.LIMIT) else None
         where = None
-        if not is_return and self.accept_word("WHERE"):
+        if not is_return and self.accept_word(EgKw.WHERE):
             where = self.expression()
         return a.Projection(
             is_return, distinct, star, tuple(items), tuple(order), skip, limit, where
@@ -265,14 +272,14 @@ class _Parser:
         pattern = self.path_pattern()
         on_create: list[a.SetItem] = []
         on_match: list[a.SetItem] = []
-        while self.at_word("ON"):
+        while self.at_word(EgKw.ON):
             self.advance()
-            if self.accept_word("CREATE"):
-                self.expect_word("SET")
+            if self.accept_word(EgKw.CREATE):
+                self.expect_word(EgKw.SET)
                 on_create.extend(self.set_items())
             else:
-                self.expect_word("MATCH")
-                self.expect_word("SET")
+                self.expect_word(EgKw.MATCH)
+                self.expect_word(EgKw.SET)
                 on_match.extend(self.set_items())
         return a.Merge(pattern, tuple(on_create), tuple(on_match))
 
@@ -280,73 +287,73 @@ class _Parser:
         items: list[a.SetItem] = []
         while True:
             var = self.variable()
-            if self.accept_punct("."):
+            if self.accept_punct(EgPunct.DOT):
                 key = self.name()
-                self.expect_punct("=")
+                self.expect_punct(EgPunct.EQ)
                 items.append(a.SetItem(EgSetKind.PROP, var, key, self.expression()))
-            elif self.accept_punct("+="):
+            elif self.accept_punct(EgPunct.PLUS_EQ):
                 items.append(a.SetItem(EgSetKind.MERGE, var, None, self.expression()))
-            elif self.accept_punct("="):
+            elif self.accept_punct(EgPunct.EQ):
                 items.append(a.SetItem(EgSetKind.REPLACE, var, None, self.expression()))
-            elif self.accept_punct(":"):
+            elif self.accept_punct(EgPunct.COLON):
                 items.append(a.SetItem(EgSetKind.LABEL, var, self.name(), None))
             else:
-                raise self.error(_EXPECT_SET_ITEM)
-            if not self.accept_punct(","):
+                raise self.error(EG_EXPECT_SET_ITEM)
+            if not self.accept_punct(EgPunct.COMMA):
                 return tuple(items)
 
     def remove(self) -> a.Remove:
         items: list[a.RemoveItem] = []
         while True:
             var = self.variable()
-            if self.accept_punct("."):
+            if self.accept_punct(EgPunct.DOT):
                 items.append(a.RemoveItem(EgRemoveKind.PROP, var, self.name()))
             else:
-                self.expect_punct(":")
+                self.expect_punct(EgPunct.COLON)
                 items.append(a.RemoveItem(EgRemoveKind.LABEL, var, self.name()))
-            if not self.accept_punct(","):
+            if not self.accept_punct(EgPunct.COMMA):
                 return a.Remove(tuple(items))
 
     def foreach(self) -> a.Foreach:
-        self.expect_punct("(")
+        self.expect_punct(EgPunct.LPAREN)
         var = self.variable()
-        self.expect_word("IN")
+        self.expect_word(EgKw.IN)
         source = self.expression()
-        self.expect_punct("|")
+        self.expect_punct(EgPunct.PIPE)
         clauses: list[a.Clause] = []
-        while not self.at_punct(")"):
+        while not self.at_punct(EgPunct.RPAREN):
             clause = self.clause()
             if clause is None:
-                raise self.error(_EXPECT_CLAUSE)
+                raise self.error(EG_EXPECT_CLAUSE)
             clauses.append(clause)
-        self.expect_punct(")")
+        self.expect_punct(EgPunct.RPAREN)
         return a.Foreach(var, source, tuple(clauses))
 
     def call(self) -> a.Call:
         parts = [self.name()]
-        while self.accept_punct("."):
+        while self.accept_punct(EgPunct.DOT):
             parts.append(self.name())
         args: list[a.Expr] = []
-        self.expect_punct("(")
-        if not self.at_punct(")"):
+        self.expect_punct(EgPunct.LPAREN)
+        if not self.at_punct(EgPunct.RPAREN):
             args = list(self.expression_list())
-        self.expect_punct(")")
+        self.expect_punct(EgPunct.RPAREN)
         yields: list[a.YieldItem] = []
         where = None
-        if self.accept_word("YIELD"):
+        if self.accept_word(EgKw.YIELD):
             while True:
                 column = self.name()
-                alias = self.name() if self.accept_word("AS") else column
+                alias = self.name() if self.accept_word(EgKw.AS) else column
                 yields.append(a.YieldItem(column, alias))
-                if not self.accept_punct(","):
+                if not self.accept_punct(EgPunct.COMMA):
                     break
-            if self.accept_word("WHERE"):
+            if self.accept_word(EgKw.WHERE):
                 where = self.expression()
-        return a.Call(".".join(parts), tuple(args), tuple(yields), where)
+        return a.Call(EgPunct.DOT.join(parts), tuple(args), tuple(yields), where)
 
     def expression_list(self) -> tuple[a.Expr, ...]:
         exprs = [self.expression()]
-        while self.accept_punct(","):
+        while self.accept_punct(EgPunct.COMMA):
             exprs.append(self.expression())
         return tuple(exprs)
 
@@ -354,54 +361,54 @@ class _Parser:
 
     def _at_schema_command(self) -> bool:
         tok, nxt = self.tok, self.peek()
-        if tok.is_word("SHOW"):
+        if tok.is_word(EgKw.SHOW):
             return True
-        if tok.is_word("CREATE") or tok.is_word("DROP"):
-            return nxt.is_word("INDEX") or nxt.is_word("CONSTRAINT")
+        if tok.is_word(EgKw.CREATE) or tok.is_word(EgKw.DROP):
+            return nxt.is_word(EgKw.INDEX) or nxt.is_word(EgKw.CONSTRAINT)
         return False
 
     def schema_command(self) -> a.SchemaCommand:
-        if self.accept_word("SHOW"):
+        if self.accept_word(EgKw.SHOW):
             words = []
             while self.tok.kind == EgTok.IDENT:
                 words.append(self.advance().text.upper())
-            if "CONSTRAINT" in words or "CONSTRAINTS" in words:
+            if EgKw.CONSTRAINT in words or EgKw.CONSTRAINTS in words:
                 return a.SchemaCommand(EgSchemaKind.SHOW_CONSTRAINTS)
-            if "STORAGE" in words:
+            if EgKw.STORAGE in words:
                 return a.SchemaCommand(EgSchemaKind.SHOW_STORAGE)
             return a.SchemaCommand(EgSchemaKind.SHOW_INDEXES)
-        create = self.accept_word("CREATE")
+        create = self.accept_word(EgKw.CREATE)
         if not create:
-            self.expect_word("DROP")
-        is_index = self.accept_word("INDEX")
+            self.expect_word(EgKw.DROP)
+        is_index = self.accept_word(EgKw.INDEX)
         if not is_index:
-            self.expect_word("CONSTRAINT")
+            self.expect_word(EgKw.CONSTRAINT)
         # Memgraph (`ON :L(p)`, `ON (n:L) ASSERT n.p`) and Neo4j (`name IF NOT
         # EXISTS FOR (n:L) ON (n.p)` / `REQUIRE n.p`) spellings both reduce to
         # a label and its properties; index names are the store's own.
         label: str | None = None
         props: list[str] = []
-        while self.tok.kind != EgTok.EOF and not self.at_punct(";"):
-            if self.accept_punct(":"):
+        while self.tok.kind != EgTok.EOF and not self.at_punct(EgPunct.SEMICOLON):
+            if self.accept_punct(EgPunct.COLON):
                 label = self.name()
-                if self.accept_punct("("):
+                if self.accept_punct(EgPunct.LPAREN):
                     props.extend(self._name_list())
-                    self.expect_punct(")")
+                    self.expect_punct(EgPunct.RPAREN)
                 continue
-            if self.accept_punct("("):
+            if self.accept_punct(EgPunct.LPAREN):
                 self.variable()
-                if self.accept_punct(":"):
+                if self.accept_punct(EgPunct.COLON):
                     label = self.name()
                 else:
                     props.extend(self._dotted_props())
-                self.expect_punct(")")
+                self.expect_punct(EgPunct.RPAREN)
                 continue
-            if label is not None and self.accept_punct("."):
+            if label is not None and self.accept_punct(EgPunct.DOT):
                 props.append(self.name())
                 continue
             self.advance()
         if label is None and create:
-            raise self.error(_EXPECT_SCHEMA)
+            raise self.error(EG_EXPECT_SCHEMA)
         if create:
             kind = (
                 EgSchemaKind.CREATE_INDEX
@@ -414,17 +421,17 @@ class _Parser:
 
     def _name_list(self) -> list[str]:
         names = [self.name()]
-        while self.accept_punct(","):
+        while self.accept_punct(EgPunct.COMMA):
             names.append(self.name())
         return names
 
     def _dotted_props(self) -> list[str]:
         """`.p` after a consumed variable, then any `, n.q` that follow."""
-        self.expect_punct(".")
+        self.expect_punct(EgPunct.DOT)
         props = [self.name()]
-        while self.accept_punct(","):
+        while self.accept_punct(EgPunct.COMMA):
             self.variable()
-            self.expect_punct(".")
+            self.expect_punct(EgPunct.DOT)
             props.append(self.name())
         return props
 
@@ -432,76 +439,76 @@ class _Parser:
 
     def pattern_list(self) -> tuple[a.PathPattern, ...]:
         patterns = [self.path_pattern()]
-        while self.accept_punct(","):
+        while self.accept_punct(EgPunct.COMMA):
             patterns.append(self.path_pattern())
         return tuple(patterns)
 
     def path_pattern(self) -> a.PathPattern:
         var = None
         if self.tok.kind in (EgTok.IDENT, EgTok.QUOTED_IDENT) and self.peek().is_punct(
-            "="
+            EgPunct.EQ
         ):
             var = self.variable()
             self.advance()
-        if self.at_word("SHORTESTPATH") or self.at_word("ALLSHORTESTPATHS"):
+        if self.at_word(EgKw.SHORTESTPATH) or self.at_word(EgKw.ALLSHORTESTPATHS):
             raise CypherSyntaxError(self.tok.pos, self.tok.text)
         nodes = [self.node_pattern()]
         rels: list[a.RelPattern] = []
-        while self.at_punct("-") or self.at_punct("<"):
+        while self.at_punct(EgPunct.MINUS) or self.at_punct(EgPunct.LT):
             rels.append(self.rel_pattern())
             nodes.append(self.node_pattern())
         return a.PathPattern(var, tuple(nodes), tuple(rels))
 
     def node_pattern(self) -> a.NodePattern:
-        if not self.accept_punct("("):
-            raise self.error(_EXPECT_PATTERN)
+        if not self.accept_punct(EgPunct.LPAREN):
+            raise self.error(EG_EXPECT_PATTERN)
         var = None
         if self.tok.kind in (EgTok.IDENT, EgTok.QUOTED_IDENT) and not self.at_punct(
-            ":"
+            EgPunct.COLON
         ):
             var = self.variable()
         labels = self._labels()
         props = self._pattern_props()
-        self.expect_punct(")")
+        self.expect_punct(EgPunct.RPAREN)
         return a.NodePattern(var, labels, props)
 
     def _labels(self) -> tuple[str, ...]:
         labels: list[str] = []
-        if self.accept_punct(":"):
+        if self.accept_punct(EgPunct.COLON):
             labels.append(self.name())
-            while self.accept_punct("|") or self.accept_punct(":"):
+            while self.accept_punct(EgPunct.PIPE) or self.accept_punct(EgPunct.COLON):
                 labels.append(self.name())
         return tuple(labels)
 
     def _pattern_props(self) -> a.Expr | None:
-        if self.at_punct("{"):
+        if self.at_punct(EgPunct.LBRACE):
             return self.map_literal()
         if self.tok.kind == EgTok.PARAM:
             return a.Param(str(self.advance().value))
         return None
 
     def rel_pattern(self) -> a.RelPattern:
-        left_arrow = self.accept_punct("<")
-        self.expect_punct("-")
+        left_arrow = self.accept_punct(EgPunct.LT)
+        self.expect_punct(EgPunct.MINUS)
         var = None
         types: tuple[str, ...] = ()
         props = None
         var_length: tuple[int, int | None] | None = None
-        if self.accept_punct("["):
+        if self.accept_punct(EgPunct.LBRACKET):
             if self.tok.kind in (EgTok.IDENT, EgTok.QUOTED_IDENT):
                 var = self.variable()
-            if self.accept_punct(":"):
+            if self.accept_punct(EgPunct.COLON):
                 names = [self.name()]
-                while self.accept_punct("|"):
-                    self.accept_punct(":")
+                while self.accept_punct(EgPunct.PIPE):
+                    self.accept_punct(EgPunct.COLON)
                     names.append(self.name())
                 types = tuple(names)
-            if self.accept_punct("*"):
+            if self.accept_punct(EgPunct.STAR):
                 var_length = self._var_length()
             props = self._pattern_props()
-            self.expect_punct("]")
-        self.expect_punct("-")
-        right_arrow = self.accept_punct(">")
+            self.expect_punct(EgPunct.RBRACKET)
+        self.expect_punct(EgPunct.MINUS)
+        right_arrow = self.accept_punct(EgPunct.GT)
         if left_arrow and not right_arrow:
             direction = EgDirection.IN
         elif right_arrow and not left_arrow:
@@ -513,7 +520,7 @@ class _Parser:
     def _int_token(self) -> int:
         token = self.advance()
         if not isinstance(token.value, int):
-            raise self.error(_EXPECT_INT)
+            raise self.error(EG_EXPECT_INT)
         return token.value
 
     def _var_length(self) -> tuple[int, int | None]:
@@ -521,7 +528,7 @@ class _Parser:
         high: int | None = None
         if self.tok.kind == EgTok.INT:
             low = self._int_token()
-        if self.accept_punct(".."):
+        if self.accept_punct(EgPunct.RANGE):
             if self.tok.kind == EgTok.INT:
                 high = self._int_token()
             return (1 if low is None else low, high)
@@ -536,24 +543,24 @@ class _Parser:
 
     def _or(self) -> a.Expr:
         left = self._xor()
-        while self.accept_word("OR"):
+        while self.accept_word(EgKw.OR):
             left = a.BinOp(EgBinary.OR, left, self._xor())
         return left
 
     def _xor(self) -> a.Expr:
         left = self._and()
-        while self.accept_word("XOR"):
+        while self.accept_word(EgKw.XOR):
             left = a.BinOp(EgBinary.XOR, left, self._and())
         return left
 
     def _and(self) -> a.Expr:
         left = self._not()
-        while self.accept_word("AND"):
+        while self.accept_word(EgKw.AND):
             left = a.BinOp(EgBinary.AND, left, self._not())
         return left
 
     def _not(self) -> a.Expr:
-        if self.accept_word("NOT"):
+        if self.accept_word(EgKw.NOT):
             return a.UnaryOp(EgUnary.NOT, self._not())
         return self._comparison()
 
@@ -564,24 +571,24 @@ class _Parser:
             if tok.kind == EgTok.PUNCT and tok.text in _COMPARISON_OPS:
                 self.advance()
                 left = a.BinOp(_COMPARISON_OPS[tok.text], left, self._additive())
-            elif tok.is_word("IN"):
+            elif tok.is_word(EgKw.IN):
                 self.advance()
                 left = a.BinOp(EgBinary.IN, left, self._additive())
-            elif tok.is_word("STARTS"):
+            elif tok.is_word(EgKw.STARTS):
                 self.advance()
-                self.expect_word("WITH")
+                self.expect_word(EgKw.WITH)
                 left = a.BinOp(EgBinary.STARTS_WITH, left, self._additive())
-            elif tok.is_word("ENDS"):
+            elif tok.is_word(EgKw.ENDS):
                 self.advance()
-                self.expect_word("WITH")
+                self.expect_word(EgKw.WITH)
                 left = a.BinOp(EgBinary.ENDS_WITH, left, self._additive())
-            elif tok.is_word("CONTAINS"):
+            elif tok.is_word(EgKw.CONTAINS):
                 self.advance()
                 left = a.BinOp(EgBinary.CONTAINS, left, self._additive())
-            elif tok.is_word("IS"):
+            elif tok.is_word(EgKw.IS):
                 self.advance()
-                negated = self.accept_word("NOT")
-                self.expect_word("NULL")
+                negated = self.accept_word(EgKw.NOT)
+                self.expect_word(EgKw.NULL)
                 left = a.IsNull(left, negated)
             else:
                 return left
@@ -602,39 +609,39 @@ class _Parser:
 
     def _power(self) -> a.Expr:
         left = self._unary()
-        while self.accept_punct("^"):
+        while self.accept_punct(EgPunct.CARET):
             left = a.BinOp(EgBinary.POW, left, self._unary())
         return left
 
     def _unary(self) -> a.Expr:
-        if self.accept_punct("-"):
+        if self.accept_punct(EgPunct.MINUS):
             return a.UnaryOp(EgUnary.NEG, self._unary())
-        if self.accept_punct("+"):
+        if self.accept_punct(EgPunct.PLUS):
             return self._unary()
         return self._postfix()
 
     def _postfix(self) -> a.Expr:
         expr = self._atom()
         while True:
-            if self.at_punct(".") and not self.peek().is_punct("."):
+            if self.at_punct(EgPunct.DOT) and not self.peek().is_punct(EgPunct.DOT):
                 self.advance()
                 expr = a.Prop(expr, self.name())
-            elif self.at_punct("["):
+            elif self.at_punct(EgPunct.LBRACKET):
                 self.advance()
-                if self.accept_punct(".."):
-                    end = None if self.at_punct("]") else self.expression()
-                    self.expect_punct("]")
+                if self.accept_punct(EgPunct.RANGE):
+                    end = None if self.at_punct(EgPunct.RBRACKET) else self.expression()
+                    self.expect_punct(EgPunct.RBRACKET)
                     expr = a.Slice(expr, None, end)
                     continue
                 index = self.expression()
-                if self.accept_punct(".."):
-                    end = None if self.at_punct("]") else self.expression()
-                    self.expect_punct("]")
+                if self.accept_punct(EgPunct.RANGE):
+                    end = None if self.at_punct(EgPunct.RBRACKET) else self.expression()
+                    self.expect_punct(EgPunct.RBRACKET)
                     expr = a.Slice(expr, index, end)
                     continue
-                self.expect_punct("]")
+                self.expect_punct(EgPunct.RBRACKET)
                 expr = a.Index(expr, index)
-            elif self.at_punct(":") and isinstance(expr, a.Var):
+            elif self.at_punct(EgPunct.COLON) and isinstance(expr, a.Var):
                 labels = self._labels()
                 expr = a.LabelTest(expr, labels)
             else:
@@ -648,44 +655,44 @@ class _Parser:
         if tok.kind == EgTok.PARAM:
             self.advance()
             return a.Param(str(tok.value))
-        if tok.is_punct("("):
+        if tok.is_punct(EgPunct.LPAREN):
             self.advance()
             expr = self.expression()
-            self.expect_punct(")")
+            self.expect_punct(EgPunct.RPAREN)
             return expr
-        if tok.is_punct("["):
+        if tok.is_punct(EgPunct.LBRACKET):
             return self._list()
-        if tok.is_punct("{"):
+        if tok.is_punct(EgPunct.LBRACE):
             return self.map_literal()
         if tok.kind == EgTok.QUOTED_IDENT:
             self.advance()
             return a.Var(tok.text)
         if tok.kind != EgTok.IDENT:
-            raise self.error(_EXPECT_EXPRESSION)
+            raise self.error(EG_EXPECT_EXPRESSION)
         upper = tok.text.upper()
-        if upper == "TRUE":
+        if upper == EgKw.TRUE:
             self.advance()
             return a.Literal(True)
-        if upper == "FALSE":
+        if upper == EgKw.FALSE:
             self.advance()
             return a.Literal(False)
-        if upper == "NULL":
+        if upper == EgKw.NULL:
             self.advance()
             return a.Literal(None)
-        if upper == "CASE":
+        if upper == EgKw.CASE:
             return self._case()
         if (
             upper in _QUANTIFIERS
-            and self.peek().is_punct("(")
-            and self.peek(3).is_word("IN")
+            and self.peek().is_punct(EgPunct.LPAREN)
+            and self.peek(3).is_word(EgKw.IN)
         ):
             return self._quantifier(_QUANTIFIERS[upper])
-        if self.peek().is_punct("(") or (
-            self.peek().is_punct(".") and self._is_namespaced_call()
+        if self.peek().is_punct(EgPunct.LPAREN) or (
+            self.peek().is_punct(EgPunct.DOT) and self._is_namespaced_call()
         ):
             return self._function()
         if upper in EG_EXPRESSION_STOP_WORDS:
-            raise self.error(_EXPECT_EXPRESSION)
+            raise self.error(EG_EXPECT_EXPRESSION)
         self.advance()
         return a.Var(tok.text)
 
@@ -694,85 +701,88 @@ class _Parser:
         j = self.i
         while (
             self.tokens[j].kind == EgTok.IDENT
-            and self.tokens[j + 1].is_punct(".")
+            and self.tokens[j + 1].is_punct(EgPunct.DOT)
             and self.tokens[j + 2].kind == EgTok.IDENT
         ):
             j += 2
-        return self.tokens[j].kind == EgTok.IDENT and self.tokens[j + 1].is_punct("(")
+        return self.tokens[j].kind == EgTok.IDENT and self.tokens[j + 1].is_punct(
+            EgPunct.LPAREN
+        )
 
     def _function(self) -> a.Expr:
         parts = [self.advance().text]
-        while self.accept_punct("."):
+        while self.accept_punct(EgPunct.DOT):
             parts.append(self.name())
-        name = ".".join(parts).lower()
-        self.expect_punct("(")
-        if self.accept_punct("*"):
-            self.expect_punct(")")
+        name = EgPunct.DOT.join(parts).lower()
+        self.expect_punct(EgPunct.LPAREN)
+        if self.accept_punct(EgPunct.STAR):
+            self.expect_punct(EgPunct.RPAREN)
             return a.FuncCall(name, (), star=True)
-        distinct = self.accept_word("DISTINCT")
+        distinct = self.accept_word(EgKw.DISTINCT)
         args: tuple[a.Expr, ...] = ()
-        if not self.at_punct(")"):
+        if not self.at_punct(EgPunct.RPAREN):
             args = self.expression_list()
-        self.expect_punct(")")
+        self.expect_punct(EgPunct.RPAREN)
         return a.FuncCall(name, args, distinct=distinct)
 
     def _quantifier(self, kind: EgQuantifier) -> a.Expr:
         self.advance()
-        self.expect_punct("(")
+        self.expect_punct(EgPunct.LPAREN)
         var = self.variable()
-        self.expect_word("IN")
+        self.expect_word(EgKw.IN)
         source = self.expression()
         where: a.Expr = a.Literal(True)
-        if self.accept_word("WHERE"):
+        if self.accept_word(EgKw.WHERE):
             where = self.expression()
-        self.expect_punct(")")
+        self.expect_punct(EgPunct.RPAREN)
         return a.Quantifier(kind, var, source, where)
 
     def _list(self) -> a.Expr:
-        self.expect_punct("[")
+        self.expect_punct(EgPunct.LBRACKET)
         if self.tok.kind in (EgTok.IDENT, EgTok.QUOTED_IDENT) and self.peek().is_word(
-            "IN"
+            EgKw.IN
         ):
             var = self.variable()
-            self.expect_word("IN")
+            self.expect_word(EgKw.IN)
             source = self.expression()
-            where = self.expression() if self.accept_word("WHERE") else None
-            projection = self.expression() if self.accept_punct("|") else None
-            self.expect_punct("]")
+            where = self.expression() if self.accept_word(EgKw.WHERE) else None
+            projection = self.expression() if self.accept_punct(EgPunct.PIPE) else None
+            self.expect_punct(EgPunct.RBRACKET)
             return a.ListComp(var, source, where, projection)
         items: list[a.Expr] = []
-        if not self.at_punct("]"):
+        if not self.at_punct(EgPunct.RBRACKET):
             items = list(self.expression_list())
-        self.expect_punct("]")
+        self.expect_punct(EgPunct.RBRACKET)
         return a.ListLit(tuple(items))
 
     def map_literal(self) -> a.MapLit:
-        self.expect_punct("{")
+        self.expect_punct(EgPunct.LBRACE)
         items: list[tuple[str, a.Expr]] = []
-        if not self.at_punct("}"):
+        if not self.at_punct(EgPunct.RBRACE):
             while True:
                 key = self.name()
-                self.expect_punct(":")
+                self.expect_punct(EgPunct.COLON)
                 items.append((key, self.expression()))
-                if not self.accept_punct(","):
+                if not self.accept_punct(EgPunct.COMMA):
                     break
-        self.expect_punct("}")
+        self.expect_punct(EgPunct.RBRACE)
         return a.MapLit(tuple(items))
 
     def _case(self) -> a.Expr:
-        self.expect_word("CASE")
-        subject = None if self.at_word("WHEN") else self.expression()
+        self.expect_word(EgKw.CASE)
+        subject = None if self.at_word(EgKw.WHEN) else self.expression()
         whens: list[tuple[a.Expr, a.Expr]] = []
-        while self.accept_word("WHEN"):
+        while self.accept_word(EgKw.WHEN):
             cond = self.expression()
-            self.expect_word("THEN")
+            self.expect_word(EgKw.THEN)
             whens.append((cond, self.expression()))
-        default = self.expression() if self.accept_word("ELSE") else None
-        self.expect_word("END")
+        default = self.expression() if self.accept_word(EgKw.ELSE) else None
+        self.expect_word(EgKw.END)
         return a.Case(subject, tuple(whens), default)
 
 
 def _token_source(tok: Token) -> str:
     if tok.kind == EgTok.QUOTED_IDENT:
-        return "`" + tok.text.replace("`", "``") + "`"
+        doubled = EG_BACKTICK * 2
+        return EG_BACKTICK + tok.text.replace(EG_BACKTICK, doubled) + EG_BACKTICK
     return tok.text

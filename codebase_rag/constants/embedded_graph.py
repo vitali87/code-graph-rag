@@ -91,11 +91,121 @@ class EgTok(StrEnum):
     EOF = "eof"
 
 
-EG_PUNCTUATION_2: tuple[str, ...] = ("<=", ">=", "<>", "!=", "=~", "+=", "..")
-EG_PUNCTUATION_1 = "()[]{},.:|;=<>+-*/%^"
+class EgKw(StrEnum):
+    """Cypher keywords, in the upper case the parser compares them in."""
+
+    MATCH = "MATCH"
+    OPTIONAL = "OPTIONAL"
+    WHERE = "WHERE"
+    WITH = "WITH"
+    RETURN = "RETURN"
+    UNWIND = "UNWIND"
+    UNION = "UNION"
+    ALL = "ALL"
+    CREATE = "CREATE"
+    MERGE = "MERGE"
+    SET = "SET"
+    REMOVE = "REMOVE"
+    DELETE = "DELETE"
+    DETACH = "DETACH"
+    FOREACH = "FOREACH"
+    CALL = "CALL"
+    YIELD = "YIELD"
+    ORDER = "ORDER"
+    BY = "BY"
+    SKIP = "SKIP"
+    LIMIT = "LIMIT"
+    ON = "ON"
+    AS = "AS"
+    DISTINCT = "DISTINCT"
+    ASC = "ASC"
+    ASCENDING = "ASCENDING"
+    DESC = "DESC"
+    DESCENDING = "DESCENDING"
+    EXPLAIN = "EXPLAIN"
+    PROFILE = "PROFILE"
+    SHOW = "SHOW"
+    DROP = "DROP"
+    INDEX = "INDEX"
+    CONSTRAINT = "CONSTRAINT"
+    CONSTRAINTS = "CONSTRAINTS"
+    STORAGE = "STORAGE"
+    IN = "IN"
+    STARTS = "STARTS"
+    ENDS = "ENDS"
+    CONTAINS = "CONTAINS"
+    IS = "IS"
+    NOT = "NOT"
+    NULL = "NULL"
+    OR = "OR"
+    XOR = "XOR"
+    AND = "AND"
+    TRUE = "TRUE"
+    FALSE = "FALSE"
+    CASE = "CASE"
+    WHEN = "WHEN"
+    THEN = "THEN"
+    ELSE = "ELSE"
+    END = "END"
+    ANY = "ANY"
+    NONE = "NONE"
+    SINGLE = "SINGLE"
+    SHORTESTPATH = "SHORTESTPATH"
+    ALLSHORTESTPATHS = "ALLSHORTESTPATHS"
+
+
+class EgPunct(StrEnum):
+    LPAREN = "("
+    RPAREN = ")"
+    LBRACKET = "["
+    RBRACKET = "]"
+    LBRACE = "{"
+    RBRACE = "}"
+    COMMA = ","
+    DOT = "."
+    COLON = ":"
+    PIPE = "|"
+    SEMICOLON = ";"
+    EQ = "="
+    LT = "<"
+    GT = ">"
+    PLUS = "+"
+    MINUS = "-"
+    STAR = "*"
+    SLASH = "/"
+    PERCENT = "%"
+    CARET = "^"
+    LE = "<="
+    GE = ">="
+    NE = "<>"
+    BANG_EQ = "!="
+    REGEX = "=~"
+    PLUS_EQ = "+="
+    RANGE = ".."
+
+
+EG_PUNCTUATION_2: tuple[str, ...] = tuple(p.value for p in EgPunct if len(p.value) == 2)
+EG_PUNCTUATION_1 = "".join(p.value for p in EgPunct if len(p.value) == 1)
+# A `.` after one of these continues a value (`f(x).y`, `l[0].y`), so it is
+# an accessor, never the start of a number such as `.5`.
+EG_VALUE_CLOSERS: frozenset[str] = frozenset(
+    {EgPunct.RPAREN, EgPunct.RBRACKET, EgPunct.RBRACE}
+)
 EG_LINE_COMMENT = "//"
 EG_BLOCK_COMMENT_OPEN = "/*"
 EG_BLOCK_COMMENT_CLOSE = "*/"
+EG_NEWLINE = "\n"
+EG_EMPTY = ""
+EG_IDENT_EXTRA = "_"
+EG_BACKTICK = "`"
+EG_QUOTES = "'\""
+EG_BACKSLASH = "\\"
+EG_UNICODE_ESCAPE = "u"
+EG_UNICODE_ESCAPE_LEN = 4
+EG_HEX_BASE = 16
+EG_PARAM_SIGIL = "$"
+EG_EXPONENT = "eE"
+EG_SIGNS = "+-"
 EG_STRING_ESCAPES: dict[str, str] = {
     "n": "\n",
     "t": "\t",
@@ -113,42 +223,51 @@ EG_STRING_ESCAPES: dict[str, str] = {
 # where an expression or clause is expected.
 EG_CLAUSE_KEYWORDS: frozenset[str] = frozenset(
     {
-        "MATCH",
-        "OPTIONAL",
-        "WHERE",
-        "WITH",
-        "RETURN",
-        "UNWIND",
-        "UNION",
-        "CREATE",
-        "MERGE",
-        "SET",
-        "REMOVE",
-        "DELETE",
-        "DETACH",
-        "FOREACH",
-        "CALL",
-        "YIELD",
-        "ORDER",
-        "SKIP",
-        "LIMIT",
-        "ON",
+        EgKw.MATCH,
+        EgKw.OPTIONAL,
+        EgKw.WHERE,
+        EgKw.WITH,
+        EgKw.RETURN,
+        EgKw.UNWIND,
+        EgKw.UNION,
+        EgKw.CREATE,
+        EgKw.MERGE,
+        EgKw.SET,
+        EgKw.REMOVE,
+        EgKw.DELETE,
+        EgKw.DETACH,
+        EgKw.FOREACH,
+        EgKw.CALL,
+        EgKw.YIELD,
+        EgKw.ORDER,
+        EgKw.SKIP,
+        EgKw.LIMIT,
+        EgKw.ON,
     }
 )
 EG_EXPRESSION_STOP_WORDS: frozenset[str] = EG_CLAUSE_KEYWORDS | frozenset(
     {
-        "AS",
-        "THEN",
-        "ELSE",
-        "END",
-        "WHEN",
-        "ASC",
-        "ASCENDING",
-        "DESC",
-        "DESCENDING",
-        "BY",
+        EgKw.AS,
+        EgKw.THEN,
+        EgKw.ELSE,
+        EgKw.END,
+        EgKw.WHEN,
+        EgKw.ASC,
+        EgKw.ASCENDING,
+        EgKw.DESC,
+        EgKw.DESCENDING,
+        EgKw.BY,
     }
 )
+# What the parser says it expected, in its syntax errors.
+EG_EXPECT_EXPRESSION = "an expression"
+EG_EXPECT_NAME = "a name"
+EG_EXPECT_INT = "an integer"
+EG_EXPECT_CLAUSE = "a clause"
+EG_EXPECT_PATTERN = "a pattern"
+EG_EXPECT_SET_ITEM = "a SET item"
+EG_EXPECT_SCHEMA = "an index or constraint statement"
+EG_END_OF_QUERY = "end of query"
 
 EG_FUNC_COUNT = "count"
 EG_FUNC_COLLECT = "collect"
