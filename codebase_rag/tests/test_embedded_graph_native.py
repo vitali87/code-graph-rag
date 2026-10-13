@@ -850,6 +850,29 @@ class TestHandles:
         second.close()
         assert file not in native._FILES.values()
 
+    def test_they_close_before_the_engines_own_sqlite_connection(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The last engine connection's close checkpoints and deletes the WAL,
+        # which must not happen while the extension's SQLite has it open.
+        conn = EmbeddedConnection(str(tmp_path / "g.sqlite"))
+        assert conn.native is not None
+        release = native.release
+        open_at_release: list[bool] = []
+
+        def watched(graph: native.NativeGraph | None) -> None:
+            try:
+                conn._sqlite.execute("SELECT 1")
+                open_at_release.append(True)
+            except sqlite3.ProgrammingError:
+                open_at_release.append(False)
+            release(graph)
+
+        monkeypatch.setattr(native, "release", watched)
+        conn.close()
+        assert open_at_release == [True]
+        assert conn.native.lock.acquire(blocking=False)
+
     def test_an_in_memory_graph_has_none(self) -> None:
         with EmbeddedConnection(":memory:") as conn:
             assert conn.native is None

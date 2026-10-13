@@ -128,8 +128,12 @@ class EmbeddedConnection:
         if self._closed:
             return
         self._closed = True
-        self._sqlite.close()
-        native.release(self.native)
+        # The extension's handles go first: closing the file's last engine
+        # connection checkpoints and deletes the WAL, which must not happen
+        # while the extension's own SQLite still has the file open (native.py).
+        with self._lock, native.turn(self.native):
+            native.release(self.native)
+            self._sqlite.close()
 
     def __enter__(self) -> EmbeddedConnection:
         return self
