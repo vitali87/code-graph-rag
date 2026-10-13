@@ -82,15 +82,16 @@ is named by its source text.
 
 Measured against Memgraph 3.3:
 
-- **Semantics.** 48 probe queries covering the differences above (null
+- **Semantics.** 53 probe queries covering the differences above (null
   ordering, three-valued logic, path uniqueness, `MERGE` behaviour, ...) return
   exactly what Memgraph returned. They run in the unit suite
   (`test_embedded_graph_memgraph_parity.py`).
 - **Every read query cgr ships.** On a real graph of 38,183 nodes and 166,107
   relationships, loaded through cgr's own batch writes, all **154 of 154**
   read queries in the package return the same rows as Memgraph. Their total
-  run time was **36.6 s embedded, 221.5 s on Memgraph**. Loading that graph
-  took 2.9 s for nodes and 6.5 s for relationships.
+  run time was **39.9 s embedded (33.0 s with the Rust extension below),
+  221.5 s on Memgraph**. Loading that graph took 3.1 s for nodes and 6.9 s for
+  relationships.
 
 - **Writes, end to end.** Indexing the same repositories with
   `cgr start --update-graph` into Memgraph and into the embedded graph gave the
