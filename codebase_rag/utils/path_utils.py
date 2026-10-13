@@ -648,6 +648,25 @@ def project_root_for_qualified_name(
     return Path(root).resolve() if root is not None else None
 
 
+def projects_sharing_root(project_name: str, roots: dict[str, str | None]) -> list[str]:
+    """Other projects indexed from the same directory as `project_name`.
+
+    Folder and File nodes are keyed by absolute path, so such projects hold
+    the same ones (issue #2665).
+    """
+    root = roots.get(project_name)
+    if root is None:
+        return []
+    resolved = Path(root).resolve()
+    return [
+        name
+        for name, other in roots.items()
+        if name != project_name
+        and other is not None
+        and Path(other).resolve() == resolved
+    ]
+
+
 def absolute_path_within_project_root(
     qualified_name: str, absolute_path: str, roots: dict[str, str | None]
 ) -> bool:

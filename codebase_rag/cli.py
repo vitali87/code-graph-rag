@@ -84,6 +84,7 @@ from .utils.path_utils import (
     derive_project_name,
     project_name_error,
     project_roots_from_rows,
+    projects_sharing_root,
     resolve_repo_path,
     unwritable_output_reason,
 )
@@ -2887,17 +2888,31 @@ def delete_project(
 
     try:
         with connect_memgraph(effective_batch_size) as ingestor:
-            projects = ingestor.list_projects()
-            if project_name not in projects:
+            roots = ingestor.list_project_roots()
+            if project_name not in roots:
                 app_context.console.print(
                     style(
                         cs.CLI_ERR_PROJECT_NOT_FOUND.format(
-                            project_name=project_name, projects=projects
+                            project_name=project_name, projects=list(roots)
                         ),
                         cs.Color.RED,
                     )
                 )
                 raise typer.Exit(1)
+
+            # A directory indexed under two names used to lose both on delete
+            # (#2665). The delete is ownership-scoped now; say so before it runs.
+            if sharing := projects_sharing_root(project_name, roots):
+                app_context.console.print(
+                    style(
+                        cs.CLI_WARN_DELETE_PROJECT_SHARED_ROOT.format(
+                            projects=", ".join(sharing),
+                            project_name=project_name,
+                            root_path=roots[project_name],
+                        ),
+                        cs.Color.YELLOW,
+                    )
+                )
 
             _info(
                 style(
