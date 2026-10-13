@@ -1,10 +1,9 @@
-"""Issue #2395: the go/types helper builds on the Go most machines have.
+"""The go/types helper's Go floor, and how an older Go is handled (issue #2395).
 
-A Dependabot bump of golang.org/x/tools raised the helper's `go` directive to
-1.26.0. The helper builds with GOTOOLCHAIN=local, so every machine on Go 1.25
-or older lost the go/types frontend for every repository, logged the build
-failure twice (the second time with an empty stderr), and retried the build
-on every sync.
+The helper builds with GOTOOLCHAIN=local, so its `go` directive is the oldest
+Go that gets go/types facts. An older Go is named in one warning and falls
+back to Tree-sitter, a failed build is logged once, and it is not retried on
+every sync.
 """
 
 from __future__ import annotations
@@ -28,11 +27,14 @@ from codebase_rag.parsers.go_frontend import frontend as fe
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HELPER = REPO_ROOT / "codebase_rag" / "parsers" / "go_frontend" / "gotypes"
-# The oldest Go the helper asks for. It parses the repositories it indexes
-# with go/parser, so the floor is the first release carrying the stdlib fixes
-# OSV reports as reachable from it: GO-2024-3105 and GO-2024-3107 (1.22.7),
-# GO-2025-3750 (1.23.10) and GO-2025-3956 (1.23.12).
-SUPPORTED_FLOOR = (1, 23, 12)
+# The oldest Go the helper asks for: the first release with no open advisory
+# against the stdlib it links or the cmd/go that go/packages drives to load
+# the indexed repository. GO-2026-6179 and GO-2026-6180 (sumdb bypasses in
+# cmd/go and in golang.org/x/mod, which x/mod v0.40.0 fixes and which needs
+# go 1.25.0) and GO-2026-6601 and GO-2026-6602 (checksum bypasses in cmd/go)
+# are fixed on the newest line only in 1.27.2; 1.27.0 and 1.27.1 lack them,
+# so no lower floor admits only fixed toolchains.
+SUPPORTED_FLOOR = (1, 27, 2)
 # Bounds every wait in the two-worker tests, so a regression fails them
 # instead of hanging the run.
 _RACE_TIMEOUT_S = 30.0
@@ -193,7 +195,7 @@ def test_parallel_syncs_share_one_failed_build(
     # Both syncs pass the marker check before the first build fails; the one
     # queued on the lock must find the marker that build dated instead of
     # running another failing build (PR #2417 review).
-    fake = _GatedFakeGo("go1.26.0", build_ok=False)
+    fake = _GatedFakeGo("go1.27.2", build_ok=False)
 
     results, warnings = _race_two_workers(monkeypatch, fake)
 
@@ -201,7 +203,7 @@ def test_parallel_syncs_share_one_failed_build(
     assert results == {"first": None, "second": None}
     assert len(warnings) == 2
     assert sum("go.mod requires go" in w for w in warnings) == 1
-    assert sum("go1.26.0" in w for w in warnings) == 1
+    assert sum("go1.27.2" in w for w in warnings) == 1
 
 
 def test_parallel_syncs_retry_an_expired_failure_once(
@@ -209,9 +211,9 @@ def test_parallel_syncs_retry_an_expired_failure_once(
 ) -> None:
     # Past the TTL the queued sync still defers to the retry the first one
     # just made and failed, so an expired marker costs one build, not one each.
-    _run(monkeypatch, go_repo, _FakeGo("go1.26.0", build_ok=False))
+    _run(monkeypatch, go_repo, _FakeGo("go1.27.2", build_ok=False))
     clock.now += cs.GO_FRONTEND_BUILD_FAILURE_TTL_S + 1
-    fake = _GatedFakeGo("go1.26.0", build_ok=False)
+    fake = _GatedFakeGo("go1.27.2", build_ok=False)
 
     results, _warnings = _race_two_workers(monkeypatch, fake)
 
@@ -222,7 +224,7 @@ def test_parallel_syncs_retry_an_expired_failure_once(
 def test_a_queued_sync_reuses_the_helper_just_built(
     monkeypatch: pytest.MonkeyPatch, cgr_home: Path
 ) -> None:
-    fake = _GatedFakeGo("go1.26.0", build_ok=True)
+    fake = _GatedFakeGo("go1.27.2", build_ok=True)
 
     results, warnings = _race_two_workers(monkeypatch, fake)
 
@@ -239,10 +241,10 @@ def test_the_helper_asks_for_no_newer_go_than_the_floor() -> None:
 
 
 def test_the_helper_asks_for_a_go_with_the_stdlib_fixes() -> None:
-    # The helper links the stdlib of whichever Go builds it, so a floor below
-    # these fixes lets it build against a go/parser with the known
-    # stack-exhaustion bug (review of PR 2417). This test is the only check:
-    # since osv-scanner 2.4.0 the CI scan skips the stdlib version in go.mod.
+    # The helper links the stdlib of whichever Go builds it and runs that Go's
+    # cmd/go, so a floor below these fixes lets it build and load packages
+    # with known-vulnerable code. This test is the only check: since
+    # osv-scanner 2.4.0 the CI scan skips the stdlib version in go.mod.
     directive = _directive("go")
     assert directive is not None
     assert _version(directive) >= SUPPORTED_FLOOR
@@ -279,7 +281,7 @@ def test_dependabot_holds_x_tools_to_patch_releases() -> None:
     )
 
 
-@pytest.mark.parametrize("found", ["1.21.9", "1.22.6", "1.23.11"])
+@pytest.mark.parametrize("found", ["1.23.12", "1.26.9", "1.27.1"])
 def test_an_old_go_is_named_once_and_never_built(
     monkeypatch: pytest.MonkeyPatch, go_repo: Path, cgr_home: Path, found: str
 ) -> None:
@@ -291,13 +293,13 @@ def test_an_old_go_is_named_once_and_never_built(
     assert not facts.call_sites
     assert len(warnings) == 1
     assert found in warnings[0]
-    assert "1.23.12" in warnings[0]
+    assert "1.27.2" in warnings[0]
 
 
 def test_a_failed_build_is_logged_once(
     monkeypatch: pytest.MonkeyPatch, go_repo: Path, cgr_home: Path
 ) -> None:
-    _facts, warnings = _run(monkeypatch, go_repo, _FakeGo("go1.26.0", build_ok=False))
+    _facts, warnings = _run(monkeypatch, go_repo, _FakeGo("go1.27.2", build_ok=False))
 
     assert len(warnings) == 1
     assert "go.mod requires go" in warnings[0]
@@ -306,7 +308,7 @@ def test_a_failed_build_is_logged_once(
 def test_a_failed_build_is_not_retried_on_the_next_sync(
     monkeypatch: pytest.MonkeyPatch, go_repo: Path, cgr_home: Path
 ) -> None:
-    fake = _FakeGo("go1.26.0", build_ok=False)
+    fake = _FakeGo("go1.27.2", build_ok=False)
     _run(monkeypatch, go_repo, fake)
 
     _facts, warnings = _run(monkeypatch, go_repo, fake)
@@ -320,7 +322,7 @@ def test_a_timed_out_build_is_retried_on_the_next_sync(
 ) -> None:
     # A wedged toolchain or a slow module fetch says nothing about whether the
     # helper builds, so it is not remembered (PR #2417 review).
-    fake = _FakeGo("go1.26.0", build_ok=True, time_out_first=True)
+    fake = _FakeGo("go1.27.2", build_ok=True, time_out_first=True)
     _run(monkeypatch, go_repo, fake)
 
     _facts, warnings = _run(monkeypatch, go_repo, fake)
@@ -336,7 +338,7 @@ def test_a_failure_older_than_the_ttl_is_rebuilt(
     # clears without Go or the helper changing, and the marker sits in a cache
     # every repository shares, so it must not keep go/types facts off for long
     # after (PR #2417 review).
-    fake = _FakeGo("go1.26.0", build_ok=False)
+    fake = _FakeGo("go1.27.2", build_ok=False)
     _run(monkeypatch, go_repo, fake)
     fake.build_ok = True
     clock.now += cs.GO_FRONTEND_BUILD_FAILURE_TTL_S + 1
@@ -350,7 +352,7 @@ def test_a_failure_older_than_the_ttl_is_rebuilt(
 def test_a_failure_within_the_ttl_skips_the_build_and_warns_once(
     monkeypatch: pytest.MonkeyPatch, go_repo: Path, cgr_home: Path, clock: _Clock
 ) -> None:
-    fake = _FakeGo("go1.26.0", build_ok=False)
+    fake = _FakeGo("go1.27.2", build_ok=False)
     _run(monkeypatch, go_repo, fake)
     clock.now += cs.GO_FRONTEND_BUILD_FAILURE_TTL_S - 1
 
@@ -358,7 +360,7 @@ def test_a_failure_within_the_ttl_skips_the_build_and_warns_once(
 
     assert fake.builds == 1
     assert len(warnings) == 1
-    assert "go1.26.0" in warnings[0]
+    assert "go1.27.2" in warnings[0]
 
 
 def test_the_failure_time_comes_from_the_marker_not_its_mtime(
@@ -366,7 +368,7 @@ def test_the_failure_time_comes_from_the_marker_not_its_mtime(
 ) -> None:
     # Copying or restoring the cache can give the marker a fresh mtime, but the
     # failure is still as old as the marker records.
-    fake = _FakeGo("go1.26.0", build_ok=False)
+    fake = _FakeGo("go1.27.2", build_ok=False)
     _run(monkeypatch, go_repo, fake)
     [marker] = cgr_home.rglob(fe._BUILD_FAILED_MARKER)
     clock.now += cs.GO_FRONTEND_BUILD_FAILURE_TTL_S + 1
@@ -383,7 +385,7 @@ def test_a_failure_dated_after_now_is_rebuilt(
 ) -> None:
     # After the clock moves back, a marker dated ahead of it would otherwise
     # hold until real time caught up, plus the TTL.
-    fake = _FakeGo("go1.26.0", build_ok=False)
+    fake = _FakeGo("go1.27.2", build_ok=False)
     _run(monkeypatch, go_repo, fake)
     fake.build_ok = True
     clock.now -= 24 * cs.GO_FRONTEND_BUILD_FAILURE_TTL_S
@@ -396,8 +398,8 @@ def test_a_failure_dated_after_now_is_rebuilt(
 def test_a_new_toolchain_retries_a_remembered_failure(
     monkeypatch: pytest.MonkeyPatch, go_repo: Path, cgr_home: Path
 ) -> None:
-    _run(monkeypatch, go_repo, _FakeGo("go1.26.0", build_ok=False))
-    upgraded = _FakeGo("go1.26.1", build_ok=True)
+    _run(monkeypatch, go_repo, _FakeGo("go1.27.2", build_ok=False))
+    upgraded = _FakeGo("go1.27.3", build_ok=True)
 
     _run(monkeypatch, go_repo, upgraded)
 
@@ -407,7 +409,7 @@ def test_a_new_toolchain_retries_a_remembered_failure(
 def test_changed_helper_sources_retry_a_remembered_failure(
     monkeypatch: pytest.MonkeyPatch, go_repo: Path, cgr_home: Path
 ) -> None:
-    fake = _FakeGo("go1.26.0", build_ok=False)
+    fake = _FakeGo("go1.27.2", build_ok=False)
     _run(monkeypatch, go_repo, fake)
     monkeypatch.setattr(fe, "_newest_source_mtime", lambda: 4102444800.0)
 
@@ -419,7 +421,7 @@ def test_changed_helper_sources_retry_a_remembered_failure(
 def test_a_new_enough_go_builds_the_helper(
     monkeypatch: pytest.MonkeyPatch, go_repo: Path, cgr_home: Path
 ) -> None:
-    fake = _FakeGo("go1.23.12", build_ok=True)
+    fake = _FakeGo("go1.27.2", build_ok=True)
 
     _facts, warnings = _run(monkeypatch, go_repo, fake)
 
@@ -449,13 +451,13 @@ def test_a_helper_built_under_a_lower_floor_is_not_reused(
     assert binary is None
     assert old_go.builds == 1
     assert len(warnings) == 1
-    assert "1.23.12" in warnings[0]
+    assert "1.27.2" in warnings[0]
 
 
 def test_a_helper_built_under_the_current_floor_is_reused(
     monkeypatch: pytest.MonkeyPatch, cgr_home: Path
 ) -> None:
-    fake = _FakeGo("go1.23.12", build_ok=True)
+    fake = _FakeGo("go1.27.2", build_ok=True)
     monkeypatch.setattr(fe.subprocess, "run", fake)
 
     first = fe._build_tool("/usr/bin/go")
