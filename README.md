@@ -61,9 +61,8 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **Improved Logging & Error Handling**: Logging has been refined to provide more context, including per-symbol indexing and connection lifecycle details. Error messages are clearer, and the CLI handles unreachable or login-refusing Memgraph instances gracefully.
-- **Expanded Language Support & Features**: Julia is now a fully supported language, and new features include context-slice queries, isolated check capture/restore, and improved support for various language-specific constructs.
-- **Refined Data Flow & Graph Representation**: Improvements to how data flow and graph relationships are represented, including better handling of re-exports, overrides, and project dependencies.
+- **Contextual Queries**: Support for more detailed context queries has been added, including reasons and evaluation ingestor reads, enhancing the understanding of code interactions.
+- **Graph Improvements**: The graph analysis capabilities have been expanded to follow cross-service links and implementors/overrides, providing a more comprehensive view of code dependencies.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.

@@ -11,10 +11,12 @@ the README. The release workflow prepends feature entries via
 (dropping non-feature themes), and moves the marker below the block it
 inserted; hand edits remain welcome between releases and render too.
 
+- **Contextual Queries**: Support for more detailed context queries has been added, including reasons and evaluation ingestor reads, enhancing the understanding of code interactions.
+- **Graph Improvements**: The graph analysis capabilities have been expanded to follow cross-service links and implementors/overrides, providing a more comprehensive view of code dependencies.
+<!-- latest-release-end -->
 - **Improved Logging & Error Handling**: Logging has been refined to provide more context, including per-symbol indexing and connection lifecycle details. Error messages are clearer, and the CLI handles unreachable or login-refusing Memgraph instances gracefully.
 - **Expanded Language Support & Features**: Julia is now a fully supported language, and new features include context-slice queries, isolated check capture/restore, and improved support for various language-specific constructs.
 - **Refined Data Flow & Graph Representation**: Improvements to how data flow and graph relationships are represented, including better handling of re-exports, overrides, and project dependencies.
-<!-- latest-release-end -->
 - **Enhanced CLI Scope**: `cgr stats` and `cgr export` now support scoping to specific projects or workspaces, and offer improved error handling.
 - **Improved Logging**: Logging has been refined to provide more informative messages, including per-symbol indexing and connection lifecycle details, and reduced unnecessary output.
 - **Expanded Language Support**: Added support for Julia as a supported language.
