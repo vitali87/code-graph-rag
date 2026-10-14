@@ -54,7 +54,7 @@ cd code-graph-rag
 uv sync
 
 # 2. Start Memgraph (the pinned 3.x server, bound to localhost)
-cgr daemon up
+uv run cgr daemon up
 ```
 
 ## Usage
