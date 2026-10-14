@@ -51,6 +51,20 @@ def dart_get_name(node: Node) -> str | None:
     return None
 
 
+def dart_is_top_level_main(node: Node) -> bool:
+    """Whether `node` declares the program's entry: `main` at library level.
+
+    A local function registers under its module too, so a `main` declared
+    inside another function would otherwise read as the entry (issue #2527).
+    """
+    return (
+        node.type == cs.TS_DART_FUNCTION_SIGNATURE
+        and node.parent is not None
+        and node.parent.type == cs.TS_DART_PROGRAM
+        and dart_get_name(node) == cs.PROGRAM_MAIN_NAME
+    )
+
+
 def dart_definition_end_point(node: Node) -> tuple[int, int]:
     """End point of a captured Dart function/method, including its body.
 

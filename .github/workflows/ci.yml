@@ -122,17 +122,21 @@ jobs:
           uv run ty check codebase_rag --exclude codebase_rag/tests/
 
   test-unit:
-    name: Unit Tests (${{ matrix.os }}, py${{ matrix.python-version }})
+    name: Unit Tests (${{ matrix.os }}, py${{ matrix.python-version }}, shard ${{ matrix.shard }})
     runs-on: ${{ matrix.os }}
-    # The full -n auto suite now takes 25-30 min on Windows and on macOS with
-    # coverage, so a 30 min cap cancelled healthy runs mid-suite (a spurious
-    # CANCELLED); 45 min absorbs slow runners while still bounding a hang.
+    # The whole -n auto suite outgrew one job: it reached 38-43 min on Windows
+    # and 39 min on macOS with coverage, so the 45 min cap cancelled
+    # healthy runs at 99% and turned main red with no test failing. Raising
+    # the cap only moves the cliff as the suite grows, so each cell runs half
+    # of it (`--shard`, split by file in codebase_rag/tests/suite_shards.py);
+    # the cap stays to bound a hang.
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ["3.12", "3.13"]
+        shard: ["1/2", "2/2"]
 
     steps:
       - name: Checkout code
@@ -195,12 +199,12 @@ jobs:
       - name: Run unit tests (parallel, with coverage)
         if: matrix.os == 'macos-latest' && matrix.python-version == '3.12'
         run: |
-          uv run --no-sync pytest -n auto -m "not integration" --tb=short --cov=codebase_rag --cov-report=xml --cov-report=term
+          uv run --no-sync pytest -n auto -m "not integration" --tb=short --shard ${{ matrix.shard }} --cov=codebase_rag --cov-report=xml --cov-report=term
 
       - name: Run unit tests (parallel, no coverage)
         if: matrix.os != 'macos-latest' || matrix.python-version != '3.12'
         run: |
-          uv run --no-sync pytest -n auto -m "not integration" --tb=short
+          uv run --no-sync pytest -n auto -m "not integration" --tb=short --shard ${{ matrix.shard }}
 
       - name: Upload coverage to Codecov
         if: always() && matrix.os == 'macos-latest' && matrix.python-version == '3.12'
