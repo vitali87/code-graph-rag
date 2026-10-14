@@ -11,6 +11,7 @@ from check_isolation_helpers import (
 )
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from evals.cgr_graph import _StatefulIngestor
 
 pytest_plugins = ("check_isolation_helpers",)
@@ -71,7 +72,7 @@ def test_an_isolated_check_restores_the_hash_cache(
     cache; a later full run would then skip them and keep the base graph
     for files the working tree changed."""
     root, store = indexed
-    cache = root / cs.HASH_CACHE_FILENAME
+    cache = state_file(root, cs.HASH_CACHE_FILENAME)
     assert cache.is_file()
     _edit(root)
     content = cache.read_bytes()
@@ -87,7 +88,7 @@ def test_an_applied_check_rewrites_the_hash_cache(
     indexed: tuple[Path, _StatefulIngestor],
 ) -> None:
     root, store = indexed
-    cache = root / cs.HASH_CACHE_FILENAME
+    cache = state_file(root, cs.HASH_CACHE_FILENAME)
     _edit(root)
     content = cache.read_bytes()
 
