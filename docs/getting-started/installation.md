@@ -66,7 +66,7 @@ as failed; it is the interpreter version, not a problem with the package.
 Pin the interpreter explicitly on those systems. For a tool install, `uv` downloads
 Python 3.12 itself:
 
-    uv tool install --python 3.12 "code-graph-rag[treesitter-full,semantic]"
+    uv tool install --python 3.12 "code-graph-rag[treesitter-full,ast-grep,semantic]"
 
 To work in a virtual environment instead, create it with the pinned interpreter so
 `pip` inside it actually uses 3.12:
@@ -75,7 +75,7 @@ To work in a virtual environment instead, create it with the pinned interpreter 
 
 Without `uv`, install CPython 3.12 yourself and call it directly:
 
-    python3.12 -m pip install "code-graph-rag[treesitter-full,semantic]"
+    python3.12 -m pip install "code-graph-rag[treesitter-full,ast-grep,semantic]"
 
 Dependencies may still need platform wheels or build tools, such as `cmake` for
 `pymgclient`.
@@ -96,6 +96,12 @@ With all Tree-sitter grammars (Python, JS, TS, Rust, Go, Java, Scala, C, C++, Lu
 pip install 'code-graph-rag[treesitter-full]'
 ```
 
+Ruby, Kotlin, Swift, Elixir, Haskell, Solidity, Bash and Nix are parsed by the [ast-grep tier](../architecture/language-support.md#structural-support-ast-grep-tier), which is its own `ast-grep` extra. Without it their files are indexed as bare `File` nodes, and a sync that meets them says so in a warning:
+
+```bash
+pip install 'code-graph-rag[treesitter-full,ast-grep]'
+```
+
 With semantic code search (UniXcoder embeddings):
 
 ```bash
@@ -105,7 +111,7 @@ pip install 'code-graph-rag[semantic]'
 With both full language support and semantic search:
 
 ```bash
-pip install 'code-graph-rag[treesitter-full,semantic]'
+pip install 'code-graph-rag[treesitter-full,ast-grep,semantic]'
 ```
 
 With compiler-backed C/C++ facts:
@@ -119,7 +125,7 @@ The `cpp` extra installs libclang. Semantic C/C++ indexing also needs a `compile
 `uv tool install` does not precompile bytecode by default, so the first `cgr` run after an install or upgrade compiles every module it imports and takes several seconds. Pass `--compile-bytecode` to do that work at install time instead:
 
 ```bash
-uv tool install --compile-bytecode "code-graph-rag[treesitter-full,semantic]"
+uv tool install --compile-bytecode "code-graph-rag[treesitter-full,ast-grep,semantic]"
 ```
 
 ## Install from git
@@ -127,7 +133,7 @@ uv tool install --compile-bytecode "code-graph-rag[treesitter-full,semantic]"
 PyPI and GitHub Releases only receive every 50th version, plus any security fix, so they usually trail `main` by tens of versions. To run the newest code, install straight from the repository:
 
 ```bash
-uv tool install "code-graph-rag[treesitter-full,semantic] @ git+https://github.com/vitali87/code-graph-rag@main"
+uv tool install "code-graph-rag[treesitter-full,ast-grep,semantic] @ git+https://github.com/vitali87/code-graph-rag@main"
 ```
 
 Replace `@main` with a tag such as `@v0.1.8` to pin an exact version.
@@ -150,13 +156,13 @@ uv sync
 For full multi-language support:
 
 ```bash
-uv sync --extra treesitter-full
+uv sync --extra treesitter-full --extra ast-grep
 ```
 
 For full multi-language support with compiler-backed C/C++ facts:
 
 ```bash
-uv sync --extra treesitter-full --extra cpp
+uv sync --extra treesitter-full --extra ast-grep --extra cpp
 ```
 
 For development (including tests and pre-commit hooks):
@@ -176,10 +182,10 @@ This installs all dependencies and sets up pre-commit hooks automatically.
 | `uv tool install` (PyPI or git) | `uv tool upgrade code-graph-rag` |
 | `pipx install` from PyPI | `pipx upgrade code-graph-rag` |
 | `pipx install` from git | `pipx reinstall code-graph-rag` |
-| `pip install` | `pip install --upgrade 'code-graph-rag[treesitter-full,semantic]'` |
+| `pip install` | `pip install --upgrade 'code-graph-rag[treesitter-full,ast-grep,semantic]'` |
 | Source checkout | `git pull`, then rerun your `uv sync` command |
 
-The `uv` and `pipx` commands keep the extras you installed with; with `pip`, repeat them. A `uv` git install moves to the newest commit on the branch it was installed from. For a git install, `pipx upgrade` skips any new commit that did not change the version number, so `pipx reinstall` is the reliable choice there. `uv tool upgrade --all` upgrades every tool `uv` manages in one go.
+The `uv` and `pipx` commands keep the extras you installed with; with `pip`, repeat them. An upgrade never adds an extra, so an install made without `ast-grep` gains it only by installing again with it, as under [Install from PyPI](#install-from-pypi). A `uv` git install moves to the newest commit on the branch it was installed from. For a git install, `pipx upgrade` skips any new commit that did not change the version number, so `pipx reinstall` is the reliable choice there. `uv tool upgrade --all` upgrades every tool `uv` manages in one go.
 
 Check the result with:
 

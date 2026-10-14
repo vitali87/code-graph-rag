@@ -10,6 +10,8 @@ Set a role's `*_PROVIDER` and `*_MODEL` together. If neither is set, that role u
 
 ![A .env with ORCHESTRATOR_PROVIDER but no ORCHESTRATOR_MODEL: cgr doctor fails the check and cgr start exits naming the missing variable](../assets/demos/configuration-provider-model-pair.gif)
 
+A value cgr cannot use (a port that is not a number, `MEMGRAPH_BATCH_SIZE=0`) stops every command before it runs, with one line per variable naming the value and whether it came from `./.env` or the environment, and exit status 2. `cgr --version`, `cgr --help` and `cgr help <command>` still work, so you can find the fix. A variable set to an empty value (`MEMGRAPH_HOST=`) counts as unset and takes its default. A `./.env` value the operating system will not hold in a variable (one with a NUL byte, or longer than the 32,767 characters Windows allows) is reported the same way, naming the variable but not the value, and the rest of the file still loads.
+
 ## Provider Examples
 
 ### All Ollama (Local Models)
@@ -117,19 +119,21 @@ Get your MiniMax API key from the [MiniMax Platform](https://platform.minimax.io
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GRAPH_BACKEND` | `memgraph` | Graph engine: `memgraph` or `neo4j`. Neo4j needs the `neo4j` extra (`uv pip install 'code-graph-rag[neo4j]'`) and is configured with the `NEO4J_*` variables below; the bundled `cgr stack` only launches Memgraph, so a Neo4j server is yours to run. |
+| `GRAPH_BACKEND` | `memgraph` | Graph engine: `memgraph` or `neo4j`. Neo4j needs the `neo4j` extra (`uv pip install 'code-graph-rag[neo4j]'`) and is configured with the `NEO4J_*` variables below; the bundled stack (`cgr daemon`) only launches Memgraph, so a Neo4j server is yours to run. |
 | `MEMGRAPH_HOST` | `localhost` | Memgraph hostname |
 | `MEMGRAPH_PORT` | `7687` | Memgraph port |
 | `MEMGRAPH_HTTP_PORT` | `7444` | Memgraph HTTP port |
 | `LAB_PORT` | `3000` | Memgraph Lab port |
-| `MEMGRAPH_BATCH_SIZE` | `1000` | Batch size for Memgraph operations |
+| `MEMGRAPH_BATCH_SIZE` | `1000` | Batch size for Memgraph operations; at least 1, as for `--batch-size` |
 | `NEO4J_URI` | `bolt://localhost:7687` | Neo4j connection URI. The scheme selects routing (`neo4j://` for a cluster, `bolt://` for a single instance) and TLS (`+s`/`+ssc`). |
 | `NEO4J_USERNAME` | _(unset)_ | Neo4j username; leave unset for an unauthenticated server |
 | `NEO4J_PASSWORD` | _(unset)_ | Neo4j password |
 | `NEO4J_DATABASE` | `neo4j` | Neo4j database name |
 | `TARGET_REPO_PATH` | `.` | Default repository path |
+| `CGR_HOME` | `~/.cgr` | cgr's own directory: the bundled stack, workspaces, and each checkout's sync and edit state under `state/` (hash cache, exclusion stamp, parser fingerprint, edit history), which is kept out of the indexed repository. See [cgr's own state](../advanced/ignore-patterns.md#cgrs-own-state). |
 | `CPP_FRONTEND` | `hybrid` | C/C++ frontend mode: `treesitter`, `libclang`, or `hybrid`. The libclang-backed modes require the [`cpp` extra and a compilation database](../guide/cpp-semantic-mode.md). |
 | `CSHARP_FRONTEND` | `treesitter` | C# frontend mode: `treesitter`, `auto`, `hybrid`, or `roslyn`. With `dotnet` on `PATH`, `auto` resolves to `hybrid`, and `hybrid`/`roslyn` run the Roslyn path: `dotnet restore` evaluates the analysed repository's MSBuild files, and its source generators execute. Without `dotnet`, all three fall back to `treesitter` (`auto` logs an info message; an explicit `hybrid` or `roslyn` logs a warning). Select a Roslyn-backed mode only for repositories you trust. See the [graph schema documentation](../architecture/graph-schema.md). |
+| `GO_FRONTEND` | `auto` | Go frontend mode: `auto`, `treesitter`, or `gotypes`. With Go 1.23.12 or newer on `PATH`, `auto` and `gotypes` add `go/types` call and `IMPLEMENTS` facts on top of Tree-sitter. An older Go logs one warning naming the version it found and falls back to `treesitter`; a helper that failed to build is not rebuilt on every sync, only an hour later or as soon as Go or the helper changes. |
 | `WEB_SEARCH_PROVIDER` | `duckduckgo` | Web-search backend: keyless `duckduckgo` or `serpdive`. The web-search tool is registered by default, so searches can send query text to the selected external provider even when this variable is unset. |
 | `SERPDIVE_API_KEY` | _(unset)_ | API key used when `WEB_SEARCH_PROVIDER=serpdive`; without one, web search falls back to DuckDuckGo. |
 | `CGR_CAPTURE` | _(unset)_ | What an index writes to the graph, as capture group tokens separated by commas, semicolons or spaces: a group or relationship type adds (`io`, `+HAS_PARAMETER`), `-NAME` drops (`-calls`), and `all` or `none` replaces the selection (`none,structure`). Unset, an index holds only the default groups. Read by every indexing run; `--capture` on `cgr start` and `cgr index` applies after it. The groups, their defaults and what each adds: [Capture Groups](../architecture/graph-schema.md#capture-groups). |
