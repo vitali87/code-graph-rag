@@ -21,6 +21,7 @@ from typer.testing import CliRunner
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.capture import resolve_capture
+from codebase_rag.checkout_state import state_file
 from codebase_rag.cli import app
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -121,7 +122,7 @@ def test_an_isolated_check_reports_the_delta_and_leaves_graph_and_cache(
     root, store = indexed
     _edit(root)
     before = _state(store)
-    cache = root / cs.HASH_CACHE_FILENAME
+    cache = state_file(root, cs.HASH_CACHE_FILENAME)
     cache_before = cache.read_bytes() if cache.exists() else None
 
     first = _delta(root, store, isolated=True)
@@ -217,7 +218,7 @@ def test_an_unreadable_hash_cache_refuses_the_isolated_check(
     """A cache that cannot be read cannot be put back after the re-ingest
     rewrites it, so the run refuses before writing anything."""
     root, store = indexed
-    cache = root / cs.HASH_CACHE_FILENAME
+    cache = state_file(root, cs.HASH_CACHE_FILENAME)
     cache.unlink(missing_ok=True)
     cache.mkdir()
     _edit(root)
