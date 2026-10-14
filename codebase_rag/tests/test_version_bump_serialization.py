@@ -56,15 +56,18 @@ def _run(
         pytest.skip("the Ubuntu workflow requires bash")
     output = tmp_path / "output"
     output.touch()
+    # Run from a file, not `bash -c`: Git Bash on Windows cuts a `-c` script
+    # off at 8192 characters, and the stubs plus the "Decide" step outgrew
+    # that, so bash saw a truncated script and failed to parse it. LF only,
+    # as on the Ubuntu runner: a CR would stay inside each line's last word.
+    script = tmp_path / "step.sh"
+    script.write_text(
+        CRLF_SAFE_JQ + stubs + "\n" + _step(name)["run"],
+        encoding=cs.ENCODING_UTF8,
+        newline="\n",
+    )
     result = subprocess.run(
-        [
-            bash,
-            "--noprofile",
-            "--norc",
-            "-e",
-            "-c",
-            CRLF_SAFE_JQ + stubs + "\n" + _step(name)["run"],
-        ],
+        [bash, "--noprofile", "--norc", "-e", "./step.sh"],
         cwd=tmp_path,
         env={
             **os.environ,
