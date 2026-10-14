@@ -1267,9 +1267,9 @@ def _node_text(node: Node) -> str:
     return (node.text or b"").decode(cs.ENCODING_UTF8, errors="replace")
 
 
-def _parameters_of(root: Node, name: str, start_line: int) -> Node | None:
-    """The `parameters` node of the def named `name` starting on `start_line`
-    (its decorators' line, for a decorated def)."""
+def _function_at(root: Node, name: str, start_line: int) -> Node | None:
+    """The def named `name` starting on `start_line` (its decorators' line,
+    for a decorated def)."""
     stack = [root]
     while stack:
         node = stack.pop()
@@ -1286,9 +1286,16 @@ def _parameters_of(root: Node, name: str, start_line: int) -> Node | None:
                 and _node_text(name_node) == name
                 and start_line in starts
             ):
-                return node.child_by_field_name(cs.TS_FIELD_PARAMETERS)
+                return node
         stack.extend(node.named_children)
     return None
+
+
+def _definition_node(definition: Definition, repo_root: Path) -> Node | None:
+    tree = _python_source_tree(repo_root / definition.path)
+    if tree is None:
+        return None
+    return _function_at(tree.root_node, definition.name, definition.start_line)
 
 
 def _is_star_args(parameter: Node) -> bool:
@@ -1313,10 +1320,10 @@ def _is_variadic(definition: Definition, repo_root: Path | None) -> bool:
     """
     if repo_root is None or not definition.path or definition.start_line < 1:
         return False
-    tree = _python_source_tree(repo_root / definition.path)
-    if tree is None:
-        return False
-    parameters = _parameters_of(tree.root_node, definition.name, definition.start_line)
+    node = _definition_node(definition, repo_root)
+    parameters = (
+        node.child_by_field_name(cs.TS_FIELD_PARAMETERS) if node is not None else None
+    )
     return parameters is not None and any(
         _is_star_args(parameter) for parameter in parameters.named_children
     )
@@ -1376,6 +1383,27 @@ def _passes_self_explicitly(
         first is not None
         and first.type == cs.TS_PY_IDENTIFIER
         and _node_text(first) == cs.PY_KEYWORD_SELF
+        and not _is_classmethod(definition, repo_root)
+    )
+
+
+def _is_classmethod(definition: Definition, repo_root: Path) -> bool:
+    # `@classmethod` binds `cls` even through the class, so `Base.m(self,
+    # x)` passes it on top of `self` (Greptile, PR #2946).
+    node = _definition_node(definition, repo_root)
+    decorated = node.parent if node is not None else None
+    return (
+        decorated is not None
+        and decorated.type == cs.TS_PY_DECORATED_DEFINITION
+        and any(
+            child.type == cs.TS_PY_DECORATOR
+            and _node_text(child)
+            .lstrip(cs.DECORATOR_AT)
+            .strip()
+            .rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            in cs.CLASSMETHOD_DECORATORS
+            for child in decorated.children
+        )
     )
 
 

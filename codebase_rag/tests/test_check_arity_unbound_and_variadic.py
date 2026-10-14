@@ -50,7 +50,13 @@ LIB = (
     "    def m(self, x):\n        return x\n\n\n"
     "def bound_with_self(self, x):\n"
     "    tool = Tool()\n"
-    "    return tool.m(self, x)\n"
+    "    return tool.m(self, x)\n\n\n"
+    # A class method binds `cls` even through its class, so a written
+    # `self` is one argument too many (Greptile, PR #2946).
+    "class Factory:\n"
+    "    @classmethod\n"
+    "    def make(cls, x):\n        return x\n\n"
+    "    def build(self, x):\n        return Factory.make(self, x)\n"
 )
 # A function defined only in a stub, as a typed package ships it.
 STUB = "def variadic(a, *rest): ...\n"
@@ -139,6 +145,7 @@ def test_a_call_that_supplies_what_the_callee_takes_is_not_too_many(
         (("lib.py", 43), "Base.m(self, x, x): one too many, written unbound"),
         (("lib.py", 46), "self.helper(x, x): one too many, bound"),
         (("lib.py", 59), "tool.m(self, x): bound, with self written too"),
+        (("lib.py", 68), "Factory.make(self, x): a classmethod binds cls"),
     ],
 )
 def test_a_call_that_passes_too_many_is_still_too_many(
