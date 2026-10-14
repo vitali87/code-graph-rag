@@ -114,6 +114,12 @@ def _site_key(site: Mapping[str, object]) -> str:
     return f"{site.get(cs.KEY_PATH)}:{site.get(cs.KEY_LINE)}"
 
 
+def _dangling_key(site: Mapping[str, object]) -> str:
+    """`path:line`, saying so when the line is the base ref's (issue #3171)."""
+    line_from = site.get(cs.KEY_LINE_FROM)
+    return f"{_site_key(site)} ({line_from})" if line_from else _site_key(site)
+
+
 def _call_key(site: Mapping[str, object]) -> str:
     """A call's identity for the signature checks.
 
@@ -232,7 +238,7 @@ def _check_callers(expectation: Expectation, delta: StructuralDelta) -> list[str
     if expectation.no_dangling and delta["dangling_callers"]:
         failures.append(
             cs.CONTRACT_DANGLING.format(
-                sites=", ".join(_site_key(d) for d in delta["dangling_callers"])
+                sites=", ".join(_dangling_key(d) for d in delta["dangling_callers"])
             )
         )
     return failures

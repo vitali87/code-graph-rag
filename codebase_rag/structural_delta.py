@@ -22,7 +22,7 @@ import re
 import time
 from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
-from typing import NamedTuple, TypedDict
+from typing import NamedTuple, NotRequired, TypedDict
 
 from . import constants as cs
 from . import cypher_queries as cq
@@ -124,6 +124,11 @@ class DanglingCaller(TypedDict):
     col: int | None
     target: str
     renamed_to: str | None
+    # Set to "base" when `line` is the call's line in the base ref because
+    # the site could not be moved to its working-tree line: the edit changed
+    # the caller's body, or the shifted line does not read the call (issue
+    # #3171).
+    line_from: NotRequired[str]
 
 
 class DanglingImporter(TypedDict):
@@ -638,11 +643,12 @@ def _symbols(
 
 
 def _dangling(
-    before: Snapshot, after: Snapshot, symbols: SymbolDelta
+    before: Snapshot, after: Snapshot, symbols: SymbolDelta, repo_root: Path | None
 ) -> list[DanglingCaller]:
     gone = set(symbols["removed"]) | {r["old"] for r in symbols["renamed"]}
     renamed_to = {r["old"]: r["new"] for r in symbols["renamed"]}
     after_pairs = {(site.caller, site.callee) for site in after.sites}
+    rows: dict[str, list[str] | None] = {}
     out: list[DanglingCaller] = []
     seen: set[tuple[str, str, int | None, int | None]] = set()
     for site in before.sites:
@@ -660,19 +666,72 @@ def _dangling(
         if key in seen:
             continue
         seen.add(key)
-        out.append(
-            DanglingCaller(
-                caller=site.caller,
-                path=site.caller_path,
-                line=site.line,
-                col=site.col,
-                target=site.callee,
-                renamed_to=new_name,
-            )
+        dangling = DanglingCaller(
+            caller=site.caller,
+            path=site.caller_path,
+            line=site.line,
+            col=site.col,
+            target=site.callee,
+            renamed_to=new_name,
         )
+        if site.caller_path in after.paths:
+            if site.caller_path not in rows:
+                text = _read_source(repo_root, site.caller_path) if repo_root else None
+                rows[site.caller_path] = None if text is None else text.split("\n")
+            _move_to_working_tree(dangling, before, after, rows[site.caller_path])
+        out.append(dangling)
     return sorted(
         out, key=lambda d: (d["path"], d["line"] or 0, d["col"] or 0, d["caller"])
     )
+
+
+def _move_to_working_tree(
+    dangling: DanglingCaller,
+    before: Snapshot,
+    after: Snapshot,
+    rows: list[str] | None,
+) -> None:
+    """Report a re-parsed caller's dangling call where it is now.
+
+    The site comes from the base graph, so it carried the base line: a
+    deletion above the caller reported the call past the end of the file
+    or at another function's line (issue #3171). A caller whose body the
+    edit left alone moved as a whole, so its call moved by the same
+    lines; one whose body changed keeps the base line, marked as such.
+    The skeleton drops names, comments and blank lines, so swapping two
+    calls or moving a comment past one leaves it equal: the shifted line
+    is taken only when the working tree reads the call there.
+    """
+    old = before.definitions.get(dangling["caller"])
+    new = after.definitions.get(dangling["caller"])
+    if old is None or new is None or dangling["line"] is None:
+        return
+    line = dangling["line"] + new.start_line - old.start_line
+    target = before.definitions.get(dangling["target"])
+    name = target.name if target else dangling["target"].rpartition(cs.SEPARATOR_DOT)[2]
+    if (old.fingerprint, old.end_line - old.start_line) == (
+        new.fingerprint,
+        new.end_line - new.start_line,
+    ) and _reads_call(rows, line, dangling["col"], name):
+        dangling["line"] = line
+        return
+    dangling["line_from"] = cs.DANGLING_LINE_FROM_BASE
+
+
+def _reads_call(rows: list[str] | None, line: int, col: int | None, name: str) -> bool:
+    """Whether the text at 1-based `line`, byte `col`, names `name` first.
+
+    Plainly or through a qualifier: `helper(`, `self.helper(`,
+    `util::helper(`, `new Helper(`.
+    """
+    if rows is None or col is None or not 0 < line <= len(rows):
+        return False
+    try:
+        rest = rows[line - 1].encode(cs.ENCODING_UTF8)[col:].decode(cs.ENCODING_UTF8)
+    except UnicodeDecodeError:
+        return False
+    pattern = cs.DANGLING_CALL_QUALIFIER_PATTERN + re.escape(name)
+    return re.match(pattern + cs.DANGLING_CALL_NAME_END_PATTERN, rest) is not None
 
 
 # --- dangling importers ------------------------------------------------------
@@ -1106,6 +1165,10 @@ def _dunder_all_entries(text: str, name: str) -> list[tuple[int, int]]:
 def _python_source(repo_root: Path, path: str) -> str | None:
     if get_language_for_extension(Path(path).suffix) != cs.SupportedLanguage.PYTHON:
         return None
+    return _read_source(repo_root, path)
+
+
+def _read_source(repo_root: Path, path: str) -> str | None:
     try:
         return (repo_root / path).read_text(encoding=cs.ENCODING_UTF8)
     except (OSError, UnicodeDecodeError):
@@ -1963,7 +2026,7 @@ def structural_delta(
         affected=list(report.affected) if report else [],
         removed_files=list(report.removed) if report else [],
         symbols=symbols,
-        dangling_callers=_dangling(before, after, symbols),
+        dangling_callers=_dangling(before, after, symbols, repo_root),
         dangling_importers=_dangling_importers(
             before,
             after,

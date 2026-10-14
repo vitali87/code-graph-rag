@@ -1070,6 +1070,14 @@ CONTRACT_RENAME_UNEXPECTED = "unexpected rename: {pairs}"
 CONTRACT_SYMBOLS_MOVED = "symbol set changed: added {added}; removed {removed}"
 CONTRACT_CALLERS_MOVED = "call site count changed: {before} before, {after} after"
 CONTRACT_DANGLING = "dangling callers: {sites}"
+# A dangling caller's `line_from` when its line is the base ref's: the call
+# could not be moved to where it is in the working tree (issue #3171).
+DANGLING_LINE_FROM_BASE = "base"
+KEY_LINE_FROM = "line_from"
+# What a dangling call's text starts with before the callee's name: a `new`
+# and any qualifier chain (`self.`, `util::`, `obj->`, `a?.`, Lua's `t:`).
+DANGLING_CALL_QUALIFIER_PATTERN = r"(?:new\s+)?(?:[\w$]+(?:\.|::|->|\?\.|:))*"
+DANGLING_CALL_NAME_END_PATTERN = r"(?![\w$])"
 CONTRACT_SITES_UNMAPPED = "call sites neither mapped nor listed as unmapped: {sites}"
 CONTRACT_HEURISTIC_REWRITTEN = "sites resolved by guesswork were rewritten: {sites}"
 CONTRACT_NEW_CYCLE = "new import cycle: {cycles}"
