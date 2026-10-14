@@ -408,16 +408,18 @@ FOREACH (n IN gone | DETACH DELETE n)
 """
 
 
-# Two projects indexed from ONE directory share Folder/File nodes by design
-# of the absolute_path key, and delete/stats walk them per project (issue
-# #2665). That is not the #897 damage, which merged projects rooted in
-# DIFFERENT directories: a shared node counts as damage unless every project
-# holding it records the same root_path.
+# Two projects indexed from ONE directory, or one from a subdirectory of the
+# other's, share Folder/File nodes by design of the absolute_path key, and
+# delete/stats walk them per project (issue #2665). That is not the #897
+# damage, which merged projects rooted in DIFFERENT directories: a shared
+# node counts as damage when it lies outside the root_path of a project
+# holding it, or a holder records none. root_path is written with the
+# platform's separator, absolute_path in POSIX form.
 _LEGACY_SHARED = (
-    "WITH n, count(DISTINCT p) AS owners, "
-    "collect(DISTINCT p.root_path) AS roots, "
-    "count(DISTINCT CASE WHEN p.root_path IS NULL THEN p END) AS rootless "
-    "WHERE owners > 1 AND (size(roots) > 1 OR rootless > 0) "
+    "WITH n, count(DISTINCT p) AS owners, collect(DISTINCT p) AS holders "
+    "WHERE owners > 1 AND any(h IN holders WHERE h.root_path IS NULL "
+    "OR n.absolute_path IS NULL OR NOT (n.absolute_path + '/') STARTS WITH "
+    "(replace(h.root_path, '\\\\', '/') + '/')) "
 )
 
 # Damage detectors for the issue #897 migration. Sharing always leaves a

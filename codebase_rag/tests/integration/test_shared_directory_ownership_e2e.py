@@ -190,6 +190,55 @@ def test_a_later_sync_does_not_purge_the_shared_directory_nodes(
     assert _snapshot(memgraph_ingestor) == before
 
 
+@pytest.mark.parametrize("outer_first", [True, False])
+def test_a_later_sync_keeps_what_a_nested_root_shares(
+    memgraph_ingestor: MemgraphIngestor, tmp_path: Path, outer_first: bool
+) -> None:
+    # One project at the repository root, one at a subdirectory of it: the
+    # files under the subdirectory are one File node for both, but the
+    # projects record different root_paths. That is not the #897 damage,
+    # which shared nodes between projects in DIFFERENT directories.
+    repo = _repo(tmp_path)
+    order = [(repo, "mono"), (repo / "src", "svc")]
+    for path, project in order if outer_first else reversed(order):
+        _index(memgraph_ingestor, path, project)
+    before = _snapshot(memgraph_ingestor)
+
+    memgraph_ingestor.ensure_constraints()
+
+    assert _snapshot(memgraph_ingestor) == before
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "node", "damaged"),
+    [
+        # One layout in two directories: what the old relative key merged.
+        ("/w/a", "/w/b", "/w/a/app/lib", True),
+        # A repository and its subdirectory, recorded with Windows separators.
+        ("C:\\w\\a", "C:\\w\\a\\app", "C:/w/a/app/lib", False),
+    ],
+)
+def test_a_sync_reads_each_root_against_the_shared_node(
+    memgraph_ingestor: MemgraphIngestor,
+    first: str,
+    second: str,
+    node: str,
+    damaged: bool,
+) -> None:
+    memgraph_ingestor._execute_query(
+        "CREATE (a:Project {name: 'a', root_path: $first}), "
+        "(b:Project {name: 'b', root_path: $second}), "
+        "(n:Folder {absolute_path: $node}), "
+        "(a)-[:CONTAINS_FOLDER]->(n), (b)-[:CONTAINS_FOLDER]->(n)",
+        {"first": first, "second": second, "node": node},
+    )
+
+    memgraph_ingestor.ensure_constraints()
+
+    (row,) = memgraph_ingestor.fetch_all("MATCH (n:Folder) RETURN count(n) AS c")
+    assert row["c"] == (0 if damaged else 1)
+
+
 def test_a_tree_already_cut_off_from_its_project_goes_with_it(
     memgraph_ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
