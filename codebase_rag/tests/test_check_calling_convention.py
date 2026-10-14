@@ -203,6 +203,52 @@ def test_a_property_made_a_method_breaks_its_reads(temp_repo: Path) -> None:
     assert has_findings(delta)
 
 
+CART_READS_PY = (
+    "class Cart:\n"
+    "    def __init__(self):\n        self.items = [1, 2]\n\n"
+    "    def doubled(self):\n        return self.total * 2\n\n"
+    "    @property\n    def total(self):\n        return sum(self.items)\n\n\n"
+    "def bump():\n    return Cart().total + 1\n"
+)
+
+
+def test_a_read_in_the_edited_file_is_judged_where_it_now_stands(
+    temp_repo: Path,
+) -> None:
+    # Bot review on PR #3311: a read of `total` is a call edge only while it
+    # is a property, so the re-ingested file draws none for the reads beside
+    # it. The site drawn before the edit is judged where it now stands, one
+    # line up for `bump` below the removed decorator.
+    delta = _edit(
+        temp_repo,
+        {"cart.py": CART_READS_PY},
+        "cart.py",
+        CART_READS_PY.replace("    @property\n", ""),
+    )
+
+    assert _verdicts(delta, "total") == {
+        "doubled": cs.DELTA_CONVENTION_READS_METHOD,
+        "bump": cs.DELTA_CONVENTION_READS_METHOD,
+    }
+    assert has_findings(delta)
+
+
+def test_a_read_the_edit_made_a_call_is_judged_once(temp_repo: Path) -> None:
+    # Negative: `bump` now calls `total()`; the read drawn before the edit is
+    # gone from its source and is not judged beside the call.
+    edited = CART_READS_PY.replace("    @property\n", "").replace(
+        "Cart().total + 1", "Cart().total() + 1"
+    )
+
+    delta = _edit(temp_repo, {"cart.py": CART_READS_PY}, "cart.py", edited)
+
+    assert [
+        site["verdict"]
+        for site in _change(delta, "total")["sites"]
+        if site["caller"].endswith(".bump")
+    ] == [cs.DELTA_ARITY_UNKNOWN]
+
+
 def test_a_static_method_that_drops_its_self_keeps_its_callers(
     temp_repo: Path,
 ) -> None:
@@ -691,6 +737,30 @@ def test_typescript_static_added_breaks_instance_calls(temp_repo: Path) -> None:
     assert _change(delta, "scale")["changes"] == [cs.DELTA_CONVENTION_BECAME_STATIC]
     assert _verdicts(delta, "scale") == {"scaled": cs.DELTA_CONVENTION_NEEDS_CLASS}
     assert has_findings(delta)
+    assert "TS2576" in _tsc(temp_repo)
+
+
+@needs_tsc
+def test_this_in_an_unchanged_subclass_is_judged(temp_repo: Path) -> None:
+    # Bot review on PR #3311: what `this` is in `Sub.viaScale` is read from
+    # its definition, which the edit of cart.ts leaves out of the files the
+    # delta re-reads.
+    shop = SHOP_TS.replace(
+        "    return this.shared();\n  }\n",
+        "    return this.shared();\n  }\n\n"
+        "  viaScale(): number {\n    return this.scale(2);\n  }\n",
+    )
+    edited = CART_TS.replace(
+        "  scale(x: number): number {\n    return x * this.total();",
+        "  static scale(x: number): number {\n    return x * 2;",
+    )
+
+    delta = _edit(temp_repo, {"cart.ts": CART_TS, "shop.ts": shop}, "cart.ts", edited)
+
+    assert _verdicts(delta, "scale") == {
+        "scaled": cs.DELTA_CONVENTION_NEEDS_CLASS,
+        "viaScale": cs.DELTA_CONVENTION_NEEDS_CLASS,
+    }
     assert "TS2576" in _tsc(temp_repo)
 
 

@@ -168,9 +168,12 @@ instance is `Cart()`, `new Cart()`, Python's `self` or `this` in an instance
 method; the class is its own name, Python's `cls`, or `this` in a static
 method (and a Java call with no receiver there). A variable, a parameter or
 a factory's result may hold either, so a site written through one is
-`unknown`. A caller the edit did not touch is judged from the call it
-makes, whether the re-bound graph still draws it or not: a Python property
-read is a call edge only while it is a property.
+`unknown`. `this` in a caller in a file the edit did not touch is read
+from that caller's definition. A caller is judged from the call it makes,
+whether the re-bound graph still draws it or not: a Python property read
+is a call edge only while it is a property. A site the graph drew before
+the edit of its own file is moved with its caller, when the caller kept
+its shape and the edited source still accesses the member there.
 
 | Verdict          | When |
 |------------------|------|
