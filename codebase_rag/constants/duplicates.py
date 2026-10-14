@@ -131,10 +131,26 @@ DELTA_ARITY_UNKNOWN = "unknown"
 # #2845): a keyword the new signature does not accept, with no `**kwargs`,
 # and a required parameter no argument fills, with no splat to supply it.
 DELTA_ARITY_UNEXPECTED_KEYWORD = "unexpected_keyword"
-# The verdicts that fail `--fail-on-found`: each is a certain `TypeError`.
+# A Python callee turned `async def` or back (issue #2860): a call written
+# for the old kind gets a coroutine that never runs, or awaits a value.
+DELTA_ARITY_ASYNC_CHANGED = "async_changed"
+# The verdicts that fail `--fail-on-found`: each is a certain failure.
 DELTA_ARITY_DEFINITE = frozenset(
-    {DELTA_ARITY_TOO_MANY, DELTA_ARITY_UNEXPECTED_KEYWORD, DELTA_ARITY_TOO_FEW}
+    {
+        DELTA_ARITY_TOO_MANY,
+        DELTA_ARITY_UNEXPECTED_KEYWORD,
+        DELTA_ARITY_TOO_FEW,
+        DELTA_ARITY_ASYNC_CHANGED,
+    }
 )
+# Edges whose callee is a guess, by name or by fan-out: an arity verdict
+# against one judges a function the site may not call, so it reads
+# `unknown` and never fails `--fail-on-found` (issue #2639).
+DELTA_GUESSED_RESOLUTIONS = frozenset({"heuristic", "overload"})
+# A signature change's `async_change`: the definition became async, or
+# stopped being so (issue #2860).
+DELTA_ASYNC_ADDED = "added"
+DELTA_ASYNC_REMOVED = "removed"
 # Decorators that hand the call to the def as written; any other may change
 # what a caller must pass, so the header alone settles nothing.
 PY_STATICMETHOD = "staticmethod"
