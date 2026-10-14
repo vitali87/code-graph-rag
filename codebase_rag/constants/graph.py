@@ -850,6 +850,10 @@ KEY_PARAM_TYPES = "param_types"
 # Dart, a top-level `main` (a local one registers under its module too). Set
 # only when true.
 KEY_IS_PROGRAM_MAIN = "is_program_main"
+# A Python class declared in the body of an `if TYPE_CHECKING:` block: it
+# never exists at runtime, so dead code reads it as a declaration (like a
+# `.pyi` stub), and no edge in the graph says so otherwise. Set only when true.
+KEY_TYPE_CHECKING_ONLY = "type_checking_only"
 # A C++ member's overload identity, `(int,double) const` (issue #2455): what
 # tells `Sep.g` from `Sep.g@4`, and what an incremental run reads back so a
 # re-parsed out-of-class definition lands on the overload it defines.

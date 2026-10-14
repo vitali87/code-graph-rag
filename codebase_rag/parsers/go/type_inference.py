@@ -9,7 +9,7 @@ from ... import constants as cs
 from ...types_defs import FunctionLocation, FunctionSpanKey
 from ..csharp_frontend import CallSiteKey
 from ..frontends.protocol import ResolvedCallSite
-from ..semantic_call_join import call_site_key, declared_location
+from ..semantic_call_join import call_site_key, resolve_call_site
 from ..utils import safe_decode_text
 from . import utils as go_utils
 from .utils import type_identifier_text, written_type_text
@@ -289,25 +289,18 @@ class GoTypeInferenceEngine:
         # promotion, scope shadowing) the walker cannot type, or the external
         # sentinel for a call the compiler proved leaves the module. Any miss
         # returns None so the caller falls back to the tree-sitter heuristics.
-        if not (self.go_call_sites or self.go_external_sites):
-            return None
-        key = self._call_site_key(call_node, module_qn)
-        if key is None:
-            return None
-        fact = self.go_call_sites.get(key)
-        if fact is not None:
-            return declared_location(
-                fact.target_file,
-                fact.target_line,
-                fact.target_col,
-                self.function_locations,
-                self.module_qn_to_file_path,
-                self.repo_path,
-                self._rel_to_module,
-            )
-        if key in self.go_external_sites:
-            return GO_EXTERNAL_TARGET
-        return None
+        return resolve_call_site(
+            call_node,
+            module_qn,
+            self._call_site_key,
+            self.go_call_sites,
+            self.go_external_sites,
+            GO_EXTERNAL_TARGET,
+            self.function_locations,
+            self.module_qn_to_file_path,
+            self.repo_path,
+            self._rel_to_module,
+        )
 
     def _call_site_key(self, call_node: Node, module_qn: str) -> CallSiteKey | None:
         name_node = self._callee_name_node(call_node)
