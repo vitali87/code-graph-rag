@@ -11,7 +11,7 @@ so neither helper has to carry a flag that changes its meaning.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, NamedTuple
+from typing import NamedTuple
 
 from tree_sitter import Node
 
@@ -19,9 +19,6 @@ from .. import constants as cs
 from ..services import IngestorProtocol
 from ..types_defs import CSharpCallShape
 from .utils import safe_decode_text
-
-if TYPE_CHECKING:
-    from .type_facts import TypeReferenceResolver
 
 
 class DeclaredParameter(NamedTuple):
@@ -793,44 +790,3 @@ def emit_declared_parameters(
                 PendingParameterType(param_qn, module_qn, param.type_name, path)
             )
     return len(declared)
-
-
-def emit_parameter_type_edges(
-    pending: list[PendingParameterType],
-    resolver: TypeReferenceResolver,
-    ingestor: IngestorProtocol,
-) -> int:
-    """OF_TYPE edges for every queued parameter, after Pass 2.
-
-    One resolve per DISTINCT (annotation, module) rather than per parameter:
-    measured on this repo, 7,868 annotated parameters carry 575 distinct
-    annotation strings, so the memo is where the cost goes, not the dedup
-    `_emit_accepts` does per function (which saves 13%).
-    """
-    memo: dict[tuple[str, str], list[str]] = {}
-    emitted = 0
-    for fact in pending:
-        key = (fact.type_name, fact.module_qn)
-        targets = memo.get(key)
-        if targets is None:
-            targets = memo[key] = resolver.resolve_annotation(
-                fact.type_name, fact.module_qn
-            )
-        source = (
-            cs.NodeLabel.PARAMETER.value,
-            cs.KEY_QUALIFIED_NAME,
-            fact.parameter_qn,
-        )
-        for target_qn in targets:
-            ingestor.ensure_relationship_batch(
-                source,
-                cs.RelationshipType.OF_TYPE,
-                (
-                    resolver.label_for(target_qn),
-                    cs.KEY_QUALIFIED_NAME,
-                    target_qn,
-                ),
-            )
-            emitted += 1
-    pending.clear()
-    return emitted
