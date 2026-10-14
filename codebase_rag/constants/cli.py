@@ -328,6 +328,11 @@ CHECK_SCOPE_OF_OTHER_PROJECT = (
     "The exclusion scope stamped in this repository belongs to project {other}, "
     "not {project}; re-index {project} (or check {other}) before running the check"
 )
+CHECK_SCOPE_OF_UNNAMED_RUN = (
+    "The exclusion scope stamped in this repository was written by a run that "
+    "named no project, so it cannot stand for project {project}; re-index with "
+    "--project-name {project}, or run the check without --project"
+)
 CHECK_NOT_INDEXED = (
     "Project {project} is not indexed; run 'cgr start --update-graph' at the "
     "base ref first."
@@ -740,6 +745,15 @@ INTERACTIVE_BFS_MAX_DEPTH = 10
 INTERACTIVE_DEFAULT_GROUP = "."
 
 MSG_SURGICAL_SUCCESS = "Successfully applied surgical code replacement in: {path}"
+MSG_SURGICAL_AMBIGUOUS = (
+    "Failed to apply surgical replacement in {path}: the target code occurs "
+    "{count} times, starting on lines {lines}. The file was not changed; "
+    "include enough surrounding code for the target to match once."
+)
+# An empty or one-character target can match on every line; the refusal
+# names this many of them.
+SURGICAL_MATCH_LINES_SHOWN = 10
+SURGICAL_MORE_LINES = ", ..."
 # Appended to a chat write tool's result by its re-ingest (issue #2916).
 MSG_CHAT_GRAPH_UPDATED = (
     " The knowledge graph now reflects this change: re-ingested {files} "
@@ -761,6 +775,9 @@ PATCH_IDENTIFIER_MISMATCH = (
 )
 PATCH_NOT_AN_IDENTIFIER = "{path}:{line}:{col} is not a whole identifier"
 PATCH_PARSE_FAILED = "{path} no longer parses after the patch"
+PATCH_UNENCODABLE = (
+    "{path} declares the {codec} encoding, which cannot hold the new text"
+)
 PATCH_FORMAT_DRIFT = "{path} applied, but {tool} would reformat it"
 PATCH_OK = "{path}: {count} edit(s) applied"
 # `parses is None` means no grammar was available, so the patch was checked
@@ -1075,6 +1092,10 @@ DICT_KEY_APPLIED = "applied"
 DICT_KEY_SUCCESS = "success"
 DICT_KEY_QUERY_USED = "query_used"
 TIKTOKEN_ENCODING = "cl100k_base"
+# Without the encoding's BPE file, which tiktoken downloads on first use, a
+# token is estimated as this many bytes of UTF-8: about what cl100k_base
+# averages on code and JSON (issue #2914).
+TOKEN_ESTIMATE_BYTES_PER_TOKEN = 4
 QUERY_SUMMARY_SUCCESS = "Successfully retrieved {count} item(s) from the graph."
 QUERY_SUMMARY_TRUNCATED = (
     "Results truncated: showing {kept} of {total} items (~{tokens} tokens, limit {max_tokens}). "

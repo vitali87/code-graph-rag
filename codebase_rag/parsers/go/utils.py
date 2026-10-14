@@ -8,7 +8,7 @@ from tree_sitter import Node
 from ... import constants as cs
 from ...types_defs import FunctionRegistryTrieProtocol, NodeType
 from ...utils.path_utils import cached_relative_path
-from ..utils import safe_decode_text
+from ..utils import safe_decode_text, unparenthesized
 
 # What a Go type name can declare: a struct (Class), a named or alias type,
 # or an interface. Receiver and constructor-return types name one of them.
@@ -416,8 +416,9 @@ def call_receiver_chain(call_node: Node) -> tuple[Node, list[str]] | None:
     """`NewBox().With(1).Bump()` -> (the `NewBox()` call, ["With", "Bump"]).
 
     The method names called along a receiver chain, innermost first, and the
-    node the chain starts from: a call, or a composite literal with its
-    parentheses and `&` taken off (`(&Box{}).Bump()`). None when the callee
+    node the chain starts from: a call, a type assertion (`a.(Dog).Fetch()`),
+    or a composite literal with its parentheses and `&` taken off
+    (`(&Box{}).Bump()`). None when the callee
     is not a method on such a value; a variable, field or package receiver
     (`b.Bump()`, `pkg.F()`) is what the name-based resolver types already.
     """
@@ -443,24 +444,19 @@ def _value_receiver(operand: Node | None) -> Node | None:
     # A call or a composite literal under any parentheses. A unary operand
     # counts only around a literal, where `&Box{}` is Go's pointer to a fresh
     # value; `(*p).M()` and `(&x).M()` start from a variable instead.
-    node = _unparenthesized(operand)
+    node = unparenthesized(operand)
     if node is not None and node.type == cs.TS_GO_UNARY_EXPRESSION:
-        inner = _unparenthesized(node.child_by_field_name(cs.FIELD_OPERAND))
+        inner = unparenthesized(node.child_by_field_name(cs.FIELD_OPERAND))
         if inner is not None and inner.type == cs.TS_GO_COMPOSITE_LITERAL:
             return inner
         return None
     if node is not None and node.type in (
         cs.TS_GO_CALL_EXPRESSION,
         cs.TS_GO_COMPOSITE_LITERAL,
+        cs.TS_GO_TYPE_ASSERTION_EXPRESSION,
     ):
         return node
     return None
-
-
-def _unparenthesized(node: Node | None) -> Node | None:
-    while node is not None and node.type == cs.TS_PARENTHESIZED_EXPRESSION:
-        node = next(iter(node.named_children), None)
-    return node
 
 
 def _type_parameter_names(node: Node) -> frozenset[str]:

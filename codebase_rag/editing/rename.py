@@ -307,17 +307,6 @@ def _go_declaration_place(
     return go_utils.declaration_scope(path, package), owner
 
 
-def _longer_project_prefixes(fetch_all: QueryFn, project_name: str) -> tuple[str, ...]:
-    requested_prefix = f"{project_name}{cs.SEPARATOR_DOT}"
-    names = {
-        name
-        for row in fetch_all(cq.CYPHER_LIST_PROJECTS, None)
-        if isinstance(name := row.get(cs.KEY_NAME), str)
-        and name.startswith(requested_prefix)
-    }
-    return tuple(sorted(names))
-
-
 def _csharp_partial_parts(fetch_all: QueryFn, project: str, qn: str) -> list[str]:
     """The other parts of the C# `partial` type `qn`; [] for anything else.
 
@@ -1732,7 +1721,12 @@ class Renamer:
             if offsets:
                 self._all_rewrites[path] = offsets
         tx = EditTransaction(self.repo_root)
-        results = patcher.stage_into(tx)
+        try:
+            results = patcher.stage_into(tx)
+        except PatcherError as error:
+            # A new name the file's declared encoding cannot hold (#2901).
+            tx.rollback()
+            raise RenameRefused(str(error), [], []) from error
         broken = [key for key, result in results.items() if result.parses is False]
         return tx, dict(results), broken
 
@@ -2052,7 +2046,9 @@ class Renamer:
             for member in (*report.hierarchy, *report.companions)
         ]
         pairs = list(parents)
-        longer_project_prefixes = _longer_project_prefixes(self.fetch_all, self.project)
+        longer_project_prefixes = graph_query._longer_project_prefixes(
+            self.fetch_all, self.project
+        )
         for row in self.fetch_all(
             cq.CYPHER_DELTA_DEFINITIONS,
             {

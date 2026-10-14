@@ -11,7 +11,7 @@ from tree_sitter import Node, QueryCursor
 from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import ASTNode, FunctionRegistryTrieProtocol, NodeType
-from ..utils import get_cached_query, safe_decode_text
+from ..utils import get_cached_query, safe_decode_text, unparenthesized
 from . import utils as ut
 
 # Callable node types whose bodies own their locals and returns; the shared
@@ -159,20 +159,14 @@ def _own_return_values(callable_node: ASTNode) -> list[ASTNode | None]:
     if body is None:
         return []
     if body.type != cs.TS_STATEMENT_BLOCK:
-        return [_unparenthesized(body)]
+        return [unparenthesized(body)]
     returns: list[ASTNode] = []
     ut.find_return_statements(body, returns)
     return [
-        _unparenthesized(next(iter(node.named_children), None))
+        unparenthesized(next(iter(node.named_children), None))
         for node in returns
         if JsTypeInferenceEngine._return_belongs_to(node, callable_node)
     ]
-
-
-def _unparenthesized(node: ASTNode | None) -> ASTNode | None:
-    while node is not None and node.type == cs.TS_PARENTHESIZED_EXPRESSION:
-        node = next(iter(node.named_children), None)
-    return node
 
 
 def _overload_signatures(callable_node: ASTNode) -> list[ASTNode]:

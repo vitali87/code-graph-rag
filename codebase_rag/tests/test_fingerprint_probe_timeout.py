@@ -14,6 +14,7 @@
 # unchanged. The negative half pins what must still change the fingerprint.
 from __future__ import annotations
 
+import errno
 import os
 import subprocess
 from collections.abc import Iterator
@@ -35,6 +36,11 @@ GO_1_26 = "go version go1.26.6 linux/amd64"
 GO_1_27 = "go version go1.27.0 linux/amd64"
 # Outcomes a scripted probe can give besides a version banner.
 TIMED_OUT = "<timed out>"
+# The OS could not start the process for want of a resource, as
+# CreateProcess does on a loaded Windows runner.
+NOT_STARTED = "<not started>"
+# The OS could not start the process and never will: a corrupt binary.
+CANNOT_EXECUTE = "<cannot execute>"
 EXIT_FAILURE = 1
 
 _ONLY_GO_ACTIVE = {"GO_VERSION": True, "JAVAC_VERSION": False, "DOTNET_VERSION": False}
@@ -66,6 +72,10 @@ class ScriptedRun:
         outcome = self.outcomes.pop(0) if len(self.outcomes) > 1 else self.outcomes[0]
         if outcome == TIMED_OUT:
             raise subprocess.TimeoutExpired(cmd, timeout)
+        if outcome == NOT_STARTED:
+            raise OSError(errno.ENOMEM, os.strerror(errno.ENOMEM))
+        if outcome == CANNOT_EXECUTE:
+            raise OSError(errno.ENOEXEC, os.strerror(errno.ENOEXEC))
         if isinstance(outcome, int):
             return subprocess.CompletedProcess(cmd, outcome, stdout="", stderr="boom")
         return subprocess.CompletedProcess(cmd, 0, stdout=f"{outcome}\n", stderr="")
@@ -232,6 +242,50 @@ class TestATimedOutProbeIsNotAMissingTool:
         assert answer == cs.TOOL_VERSION_UNKNOWN
         assert len(go_probe.timeouts) == 2
 
+    def test_a_probe_that_did_not_start_before_answering_keeps_the_fingerprint(
+        self, go_probe: ScriptedRun
+    ) -> None:
+        """The shape both #2634 CI failures had: `absent`, then the version.
+
+        Their digests reproduce with `GO_VERSION=absent` in the first
+        computation and the real `go version` in the second, and the old code
+        gave `absent` for a process that could not be started as well as for a
+        timeout. A first attempt the OS refused is asked again.
+        """
+        go_probe.script(NOT_STARTED, GO_1_26)
+
+        first = pf.compute_parser_fingerprint()
+        second = pf.compute_parser_fingerprint()
+
+        assert second == first
+        assert f"GO_VERSION={GO_1_26}" in pf._tool_versions()
+
+    def test_a_probe_that_did_not_start_after_answering_keeps_the_fingerprint(
+        self, go_probe: ScriptedRun
+    ) -> None:
+        go_probe.script(GO_1_26, NOT_STARTED)
+
+        first = pf.compute_parser_fingerprint()
+        second = pf.compute_parser_fingerprint()
+
+        assert second == first
+        # The refused attempt was answered from this process's memo, with no
+        # retry.
+        assert go_probe.timeouts == [
+            cs.TOOL_VERSION_PROBE_TIMEOUT,
+            cs.TOOL_VERSION_PROBE_TIMEOUT,
+        ]
+
+    def test_a_probe_that_never_starts_is_unknown_not_absent(
+        self, go_probe: ScriptedRun, repo: Path
+    ) -> None:
+        go_probe.script(NOT_STARTED)
+
+        answer = pf._probe_version("go", "version", repo)
+
+        assert answer == cs.TOOL_VERSION_UNKNOWN
+        assert len(go_probe.timeouts) == 2
+
     def test_an_unanswered_probe_compares_as_unchanged(
         self,
         go_probe: ScriptedRun,
@@ -377,6 +431,25 @@ class TestRealChangesStillChangeTheFingerprint:
 
         assert answer == GO_1_26
 
+    def test_a_binary_that_cannot_execute_is_absent_not_remembered(
+        self, go_probe: ScriptedRun
+    ) -> None:
+        """A permanent start failure is a real change, not a starved probe.
+
+        A corrupt replacement leaves a binary `which` still finds, but neither
+        the probe nor the frontend can run it, so the remembered version must
+        not stand in for it (Codex review of PR 3371).
+        """
+        go_probe.script(GO_1_26, CANNOT_EXECUTE)
+
+        first = pf.compute_parser_fingerprint()
+        second = pf.compute_parser_fingerprint()
+
+        assert second != first
+        assert "GO_VERSION=absent" in pf._tool_versions()
+        # Answered absent at once: no retry for a failure that cannot pass.
+        assert go_probe.timeouts.count(cs.TOOL_VERSION_PROBE_RETRY_TIMEOUT) == 0
+
     def test_inactive_tools_are_not_probed_and_stay_inactive(
         self,
         go_probe: ScriptedRun,
@@ -419,3 +492,36 @@ class TestRealChangesStillChangeTheFingerprint:
 
         assert later._parser_changed is True
         assert len(_mismatch_warnings(warnings_sink)) == 1
+
+
+class _WindowsStartError(OSError):
+    """An OSError carrying a Windows code, on any platform the suite runs on."""
+
+    winerror = 0
+
+
+def _windows_start_error(code: int) -> OSError:
+    exc = _WindowsStartError()
+    exc.winerror = code
+    return exc
+
+
+@pytest.mark.parametrize(
+    ("exc", "transient"),
+    [
+        (OSError(errno.ENOMEM, "out of memory"), True),
+        (OSError(errno.EAGAIN, "try again"), True),
+        (OSError(errno.EMFILE, "too many open files"), True),
+        (_windows_start_error(1455), True),
+        (_windows_start_error(8), True),
+        (OSError(errno.ENOEXEC, "exec format error"), False),
+        (OSError(errno.ENOENT, "interpreter missing"), False),
+        (OSError(errno.EACCES, "permission denied"), False),
+        (_windows_start_error(193), False),
+        (OSError("no errno at all"), False),
+    ],
+)
+def test_only_resource_exhaustion_counts_as_a_probe_never_asked(
+    exc: OSError, transient: bool
+) -> None:
+    assert pf._is_transient_start_failure(exc) is transient
