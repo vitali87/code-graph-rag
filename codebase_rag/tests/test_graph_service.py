@@ -7,7 +7,11 @@ import pytest
 from loguru import logger
 
 from codebase_rag import logs as ls
-from codebase_rag.constants import NODE_NAME_INDEXES, NODE_UNIQUE_CONSTRAINTS
+from codebase_rag.constants import (
+    NODE_NAME_INDEXES,
+    NODE_PATH_INDEXES,
+    NODE_UNIQUE_CONSTRAINTS,
+)
 from codebase_rag.cypher_queries import (
     build_create_node_query,
     build_create_relationship_query,
@@ -407,8 +411,14 @@ class TestEnsureConstraints:
             ingestor.ensure_constraints()
 
         # One SHOW, two damage probes, a create-constraint and a
-        # create-index per label, plus a name index per non-name-keyed label.
-        expected_queries = 3 + len(NODE_UNIQUE_CONSTRAINTS) * 2 + len(NODE_NAME_INDEXES)
+        # create-index per label, plus a name index per non-name-keyed label
+        # and a path index per path-read label.
+        expected_queries = (
+            3
+            + len(NODE_UNIQUE_CONSTRAINTS) * 2
+            + len(NODE_NAME_INDEXES)
+            + len(NODE_PATH_INDEXES)
+        )
         assert call_count == expected_queries
 
     def test_continues_on_name_index_error(self) -> None:
@@ -451,6 +461,44 @@ class TestEnsureConstraints:
             assert f"CREATE INDEX ON :{label}({prop});" in executed_queries
         for label in NODE_NAME_INDEXES:
             assert f"CREATE INDEX ON :{label}(name);" in executed_queries
+
+    def test_creates_path_index_for_each_path_read_label(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        executed_queries: list[str] = []
+
+        def capture_query(query: str) -> list[dict]:
+            executed_queries.append(query)
+            return []
+
+        with patch.object(
+            MemgraphIngestor, "_execute_query", side_effect=capture_query
+        ):
+            ingestor.ensure_constraints()
+
+        assert "CREATE INDEX ON :Module(path);" in executed_queries
+
+    def test_continues_on_path_index_error(self) -> None:
+        # A failing path-index CREATE (e.g. the index already exists) must not
+        # stop ingestion: ensure_constraints returns and every path index is
+        # still attempted.
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        path_index_queries = {
+            f"CREATE INDEX ON :{label}(path);" for label in NODE_PATH_INDEXES
+        }
+        executed_queries: list[str] = []
+
+        def fail_path_indexes(query: str) -> list[dict]:
+            executed_queries.append(query)
+            if query in path_index_queries:
+                raise RuntimeError("Index already exists")
+            return []
+
+        with patch.object(
+            MemgraphIngestor, "_execute_query", side_effect=fail_path_indexes
+        ):
+            ingestor.ensure_constraints()
+
+        assert path_index_queries <= set(executed_queries)
 
 
 class TestLegacyPathKeyMigration:
