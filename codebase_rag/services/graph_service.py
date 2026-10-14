@@ -10,7 +10,7 @@ from collections.abc import Callable, Generator, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
-from functools import partial
+from functools import cache, partial
 from typing import TYPE_CHECKING, cast
 
 import click
@@ -150,6 +150,13 @@ def _group_by_merge_keys(
 def _native_graph(conn: ConnectionProtocol) -> NativeGraph | None:
     """The Rust extension's handle on an embedded connection's file, if any."""
     return conn.native if isinstance(conn, EmbeddedConnection) else None
+
+
+@cache
+def _note_memgraph_set_without_backend() -> None:
+    # Once per process: a server opens an ingestor per request, and the
+    # setting cannot change under it.
+    logger.warning(ls.MG_SET_WITHOUT_BACKEND.format(path=settings.graph_db_file))
 
 
 def _created_count(results: Sequence[ResultRow]) -> int:
@@ -318,6 +325,15 @@ class MemgraphIngestor:
         # each call site, so a single ingestor cannot straddle two dialects
         # mid-run if configuration changes underneath it.
         self._dialect = dialect or get_dialect(settings.GRAPH_BACKEND)
+        # Only the engine the settings chose: a caller naming its own dialect
+        # or file picked it on purpose.
+        if (
+            dialect is None
+            and sqlite_path is None
+            and self._dialect.name == DIALECT_SQLITE
+            and settings.memgraph_set_without_backend
+        ):
+            _note_memgraph_set_without_backend()
         self._driver: object | None = None
         self._driver_lock = threading.Lock()
         # The embedded engine's file; None reads SQLITE_GRAPH_PATH at connect.

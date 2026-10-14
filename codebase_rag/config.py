@@ -350,6 +350,18 @@ class AppConfig(BaseSettings):
             return self.SQLITE_GRAPH_PATH.expanduser()
         return self.CGR_HOME.expanduser() / cs.EG_DEFAULT_DB_FILENAME
 
+    @property
+    def memgraph_set_without_backend(self) -> bool:
+        """Whether Memgraph is configured but the engine was left to default.
+
+        Memgraph was the default engine before the embedded graph replaced
+        it, so this is how an install upgraded in place looks: its graph
+        lives in Memgraph while cgr now opens an empty file.
+        """
+        return cs.GRAPH_BACKEND_SETTING not in self.model_fields_set and any(
+            name in self.model_fields_set for name in cs.MEMGRAPH_CONNECTION_SETTINGS
+        )
+
     # Editor integration for clickable report locations (OSC 8 hyperlinks)
     # and `cgr duplicates --open`. AUTO sniffs the hosting app (Cursor,
     # Windsurf, Zed, VS Code's terminal) and falls back to VS Code; the

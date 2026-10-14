@@ -9,15 +9,21 @@ driver installed says what to install instead of failing on an import.
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from loguru import logger
 
 from codebase_rag import cli
 from codebase_rag import exceptions as ex
-from codebase_rag.config import settings
-from codebase_rag.constants import SETTING_QDRANT_DB_PATH
+from codebase_rag.config import AppConfig, settings
+from codebase_rag.constants import (
+    GRAPH_BACKEND_SETTING,
+    MEMGRAPH_CONNECTION_SETTINGS,
+    SETTING_QDRANT_DB_PATH,
+)
 from codebase_rag.graph_dialects import DIALECT_MEMGRAPH, DIALECT_SQLITE, get_dialect
 from codebase_rag.mgclient_compat import _absent_driver
 from codebase_rag.schemas import HealthCheckResult
@@ -227,3 +233,80 @@ def test_the_absent_driver_fails_where_a_connection_would() -> None:
     absent = _absent_driver()
     with pytest.raises(absent.Error, match="memgraph"):
         absent.connect(host="localhost", port=7687)
+
+
+class TestMemgraphSetWithoutBackend:
+    """An install upgraded in place from when Memgraph was the default keeps
+    its MEMGRAPH_* settings and never set GRAPH_BACKEND. Its graph is still in
+    Memgraph while cgr now opens an empty file, so it is told so, once."""
+
+    @pytest.fixture
+    def notes(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> Iterator[list[str]]:
+        for name in (GRAPH_BACKEND_SETTING, *MEMGRAPH_CONNECTION_SETTINGS):
+            monkeypatch.delenv(name, raising=False)
+        # AppConfig reads `.env` from the working directory.
+        monkeypatch.chdir(tmp_path)
+        graph_service._note_memgraph_set_without_backend.cache_clear()
+        messages: list[str] = []
+        sink = logger.add(
+            lambda message: messages.append(message.record["message"]),
+            level="WARNING",
+        )
+        yield messages
+        logger.remove(sink)
+        graph_service._note_memgraph_set_without_backend.cache_clear()
+
+    @staticmethod
+    def _open(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sqlite_path: str | None = None
+    ) -> None:
+        monkeypatch.setattr(graph_service, "settings", AppConfig(CGR_HOME=tmp_path))
+        MemgraphIngestor(host="unused", port=0, sqlite_path=sqlite_path)
+
+    def test_memgraph_settings_without_a_backend_are_noted_once(
+        self, notes: list[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("MEMGRAPH_HOST", "db.internal")
+        self._open(monkeypatch, tmp_path)
+        self._open(monkeypatch, tmp_path)
+        assert len(notes) == 1
+        assert str(tmp_path / "graph.sqlite") in notes[0]
+        assert "GRAPH_BACKEND=memgraph" in notes[0]
+
+    @pytest.mark.parametrize(
+        "env",
+        [
+            # Nothing chosen: a first install, nothing to warn about.
+            {},
+            # Either explicit choice settles it.
+            {"MEMGRAPH_HOST": "db.internal", "GRAPH_BACKEND": "sqlite"},
+            {"MEMGRAPH_PORT": "7688", "GRAPH_BACKEND": "SQLite"},
+        ],
+    )
+    def test_a_settled_choice_is_not_noted(
+        self,
+        notes: list[str],
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        env: dict[str, str],
+    ) -> None:
+        for name, value in env.items():
+            monkeypatch.setenv(name, value)
+        self._open(monkeypatch, tmp_path)
+        assert notes == []
+
+    def test_a_blank_host_copied_from_the_example_is_not_a_setting(
+        self, notes: list[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        (tmp_path / ".env").write_text("MEMGRAPH_HOST=\n", encoding="utf-8")
+        self._open(monkeypatch, tmp_path)
+        assert notes == []
+
+    def test_a_graph_file_chosen_by_the_caller_is_not_noted(
+        self, notes: list[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("MEMGRAPH_HOST", "db.internal")
+        self._open(monkeypatch, tmp_path, sqlite_path=str(tmp_path / "own.sqlite"))
+        assert notes == []

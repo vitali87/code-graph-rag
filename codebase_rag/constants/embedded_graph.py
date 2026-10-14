@@ -8,6 +8,15 @@ from enum import Enum, StrEnum
 
 EG_ENGINE_DISPLAY_NAME = "embedded SQLite"
 EG_DEFAULT_DB_FILENAME = "graph.sqlite"
+# Settings whose presence, with GRAPH_BACKEND left unset, marks an install that
+# ran on Memgraph when Memgraph was the default engine.
+GRAPH_BACKEND_SETTING = "GRAPH_BACKEND"
+MEMGRAPH_CONNECTION_SETTINGS = (
+    "MEMGRAPH_HOST",
+    "MEMGRAPH_PORT",
+    "MEMGRAPH_USERNAME",
+    "MEMGRAPH_PASSWORD",
+)
 EG_MEMORY_PATH = ":memory:"
 # A writer waits this long for another process's write before failing.
 EG_BUSY_TIMEOUT_MS = 60_000

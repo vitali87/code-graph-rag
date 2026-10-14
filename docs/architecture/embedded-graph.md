@@ -221,3 +221,9 @@ cgr daemon up
 
 To move to the embedded graph instead, leave `GRAPH_BACKEND` unset and
 re-index each project with `cgr start --repo-path <repo> --update-graph`.
+
+An install upgraded from a version where Memgraph was the default often still
+sets `MEMGRAPH_HOST` (or another `MEMGRAPH_*` connection setting) without
+`GRAPH_BACKEND`. cgr then opens the embedded graph, where nothing is indexed
+yet, and logs a warning once per process saying so. Setting `GRAPH_BACKEND`
+to either `memgraph` or `sqlite` settles the choice and silences it.
