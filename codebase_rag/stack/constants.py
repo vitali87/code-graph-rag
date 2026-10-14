@@ -203,6 +203,9 @@ QDRANT_ROOT_MAX_BYTES = 65536
 # A stopped stack refuses the connection at once; a running one answers well
 # inside this, so the check costs nothing noticeable when the vector store opens.
 BUNDLED_QDRANT_PROBE_TIMEOUT_S = 1.0
+# How long the check of MEMGRAPH_HOST waits on one of its addresses the
+# stack's Memgraph is not published on, for another server answering there.
+MEMGRAPH_ADDRESS_PROBE_TIMEOUT_S = 1.0
 QDRANT_API_KEY_HEADER = "api-key"
 ERR_COMPOSE_AUTH_MISMATCH = (
     "Compose would start {variables} with a value that does not come from "

@@ -9,12 +9,14 @@ dropped the whole collection the stack graph's projects use (issue #2878).
 
 from __future__ import annotations
 
+import socket
 from pathlib import Path
 
 import pytest
 
 from codebase_rag.config import settings
 from codebase_rag.stack import constants as stack_cs
+from codebase_rag.stack import manager
 from codebase_rag.tests.test_bundled_qdrant_default import (
     _bundled,
     _client_kwargs,
@@ -113,6 +115,92 @@ def test_a_wildcard_bind_serves_the_loopback_address(
     compose.memgraph_published = [("0.0.0.0", 7687)]  # noqa: S104 - a published bind
     monkeypatch.setattr(settings, "MEMGRAPH_HOST", "127.0.0.1")
     monkeypatch.setattr(settings, "MEMGRAPH_PORT", 7687)
+    assert _client_kwargs() == _bundled(open_qdrant.port)
+
+
+_V6 = (socket.AF_INET6, ("::1", 7687, 0, 0))
+_V4 = (socket.AF_INET, (stack_cs.LOOPBACK_HOST, 7687))
+
+
+def _machine(
+    monkeypatch: pytest.MonkeyPatch,
+    order: list[tuple[int, tuple[str, int] | tuple[str, int, int, int]]],
+    listening: set[str],
+) -> None:
+    # A machine with IPv6 loopback, MEMGRAPH_HOST resolving in `order`, and
+    # a server answering on each address in `listening`.
+    monkeypatch.setattr(manager, "_addresses_to_try", lambda _host, _port: order)
+    monkeypatch.setattr(
+        manager, "_is_local_address", lambda host: host in {"::1", "127.0.0.1"}
+    )
+    monkeypatch.setattr(
+        manager,
+        "_takes_connections",
+        lambda _family, address: address[0] in listening,
+    )
+
+
+@pytest.mark.usefixtures("stack_home")
+@pytest.mark.parametrize(
+    ("host", "order", "published"),
+    [
+        # `0.0.0.0` publishes on no IPv6 address.
+        pytest.param("::1", [_V6], [("0.0.0.0", 7687)], id="ipv4-wildcard"),  # noqa: S104 - a published bind
+        # The client keeps `::1`, which answers first, and never tries the
+        # stack's `127.0.0.1`.
+        pytest.param(
+            "localhost", [_V6, _V4], [_STACK_BOLT], id="earlier-address-answers"
+        ),
+    ],
+)
+def test_a_memgraph_on_an_address_the_stack_leaves_free_is_another_graph(
+    open_qdrant: _Server,
+    compose: _Compose,
+    monkeypatch: pytest.MonkeyPatch,
+    host: str,
+    order: list[tuple[int, tuple[str, int] | tuple[str, int, int, int]]],
+    published: list[tuple[str, int]],
+) -> None:
+    # Another Memgraph on `[::1]:7687`, where the stack's is not published.
+    _stack_on(open_qdrant.port, compose, monkeypatch)
+    compose.memgraph_published = published
+    _machine(monkeypatch, order, listening={"::1", stack_cs.LOOPBACK_HOST})
+    monkeypatch.setattr(settings, "MEMGRAPH_HOST", host)
+    monkeypatch.setattr(settings, "MEMGRAPH_PORT", 7687)
+
+    assert _client_kwargs() == _embedded()
+    assert open_qdrant.paths == []
+
+
+@pytest.mark.usefixtures("stack_home")
+@pytest.mark.parametrize(
+    ("host", "published"),
+    [
+        # Nothing answers on `::1`, so the client goes on to `127.0.0.1`.
+        pytest.param("localhost", [_STACK_BOLT], id="free-address-skipped"),
+        # Docker publishing on both wildcards serves `::1` too.
+        pytest.param(
+            "::1",
+            [("0.0.0.0", 7687), ("::", 7687)],  # noqa: S104 - published binds
+            id="ipv6-wildcard",
+        ),
+    ],
+)
+def test_the_stack_memgraph_behind_every_address_tried_shares_the_qdrant(
+    open_qdrant: _Server,
+    compose: _Compose,
+    monkeypatch: pytest.MonkeyPatch,
+    host: str,
+    published: list[tuple[str, int]],
+) -> None:
+    # Negative: whichever address the client keeps is the stack's Memgraph.
+    _stack_on(open_qdrant.port, compose, monkeypatch)
+    compose.memgraph_published = published
+    listening = {"::1"} if host == "::1" else {stack_cs.LOOPBACK_HOST}
+    _machine(monkeypatch, [_V6, _V4] if host == "localhost" else [_V6], listening)
+    monkeypatch.setattr(settings, "MEMGRAPH_HOST", host)
+    monkeypatch.setattr(settings, "MEMGRAPH_PORT", 7687)
+
     assert _client_kwargs() == _bundled(open_qdrant.port)
 
 

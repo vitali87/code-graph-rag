@@ -191,17 +191,61 @@ def _published_bolt(ps_output: str) -> list[tuple[str, int]]:
     return endpoints
 
 
-def _names_published(host: str, port: int, bind: str, published: int) -> bool:
-    """Whether `host:port` reaches a port published on `bind:published`.
+# Where a socket connects: (host, port) for IPv4, with flow and scope for IPv6.
+_SocketAddress = tuple[str, int] | tuple[str, int, int, int] | tuple[int, bytes]
 
-    A wildcard bind publishes on every address of this machine; any other
-    bind publishes on that address alone.
+
+def _addresses_to_try(host: str, port: int) -> list[tuple[int, _SocketAddress]]:
+    """The addresses a client of `host:port` tries, in its order: getaddrinfo's."""
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError:
+        return []
+    return [(family, address) for family, _, _, _, address in infos]
+
+
+def _publishes_on(bind: str, family: int, address: str) -> bool:
+    """Whether a port published on `bind` is the one at `address`.
+
+    A wildcard bind publishes on this machine's addresses of its own family
+    alone: beside `0.0.0.0`, another server can hold the port on `[::1]`.
     """
-    if port != published:
+    if not bind:
+        return _is_local_address(address)
+    if bind in cs.WILDCARD_BIND_HOSTS:
+        own_family = socket.AF_INET6 if ":" in bind else socket.AF_INET
+        return family == own_family and _is_local_address(address)
+    return bind == address
+
+
+def _takes_connections(family: int, address: _SocketAddress) -> bool:
+    """Whether a server accepts connections at `address`. One that does not
+    answer in time may well, so it counts as one that does."""
+    try:
+        with socket.socket(family, socket.SOCK_STREAM) as probe:
+            probe.settimeout(cs.MEMGRAPH_ADDRESS_PROBE_TIMEOUT_S)
+            probe.connect(address)
+    except TimeoutError:
+        return True
+    except OSError:
         return False
-    if not bind or bind in cs.WILDCARD_BIND_HOSTS:
-        return _is_local_address(host)
-    return bind in _addresses_of(host)
+    return True
+
+
+def _reaches_published(host: str, port: int, binds: list[str]) -> bool:
+    """Whether a client of `host:port` reaches the port published on `binds`.
+
+    The client keeps the first of the host's addresses that takes the
+    connection, so one address the port is published on is not enough: an
+    earlier one another server answers on wins (`localhost` as `::1` ahead
+    of `127.0.0.1`).
+    """
+    for family, address in _addresses_to_try(host, port):
+        if any(_publishes_on(bind, family, str(address[0])) for bind in binds):
+            return True
+        if _takes_connections(family, address):
+            return False
+    return False
 
 
 def _bundled_qdrant_api_key(bind: str, port: int) -> str | None:
@@ -670,9 +714,13 @@ class StackManager:
             raise StackError(cs.ERR_COMPOSE_PS_FAILED) from e
         if result.returncode != 0:
             raise StackError(cs.ERR_COMPOSE_PS_FAILED)
-        return any(
-            _names_published(self.memgraph_host, self.memgraph_port, bind, port)
+        binds = [
+            bind
             for bind, port in _published_bolt(result.stdout)
+            if port == self.memgraph_port
+        ]
+        return bool(binds) and _reaches_published(
+            self.memgraph_host, self.memgraph_port, binds
         )
 
     def raise_if_auth_not_enforced(self) -> None:
