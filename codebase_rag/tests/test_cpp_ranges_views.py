@@ -303,8 +303,10 @@ void demonstrateBasicRanges() {
         f"{project_name}.basic_ranges.demonstrateBasicRanges",
     ]
 
+    # NumberSequence is written inside testCustomRangeConcepts, so it is
+    # scoped under that function (issue #2555).
     expected_classes = [
-        f"{project_name}.basic_ranges.NumberSequence",
+        f"{project_name}.basic_ranges.testCustomRangeConcepts.NumberSequence",
     ]
 
     created_functions = get_node_names(mock_ingestor, "Function")
