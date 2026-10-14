@@ -27,9 +27,8 @@ from watchdog.events import (
     FileSystemEvent,
 )
 
-import realtime_updater
-from codebase_rag import logs
-from realtime_updater import CodeChangeEventHandler
+from codebase_rag import logs, watch
+from codebase_rag.watch import CodeChangeEventHandler
 
 DEBOUNCE_SECONDS = 5.0
 MAX_WAIT_SECONDS = 30.0
@@ -206,7 +205,7 @@ class TestInotifyWriteReachesTheGraph:
         # the flush through the zero-delay timer instead of a fresh debounce.
         now = [1000.0]
         clock = SimpleNamespace(time=lambda: now[0])
-        monkeypatch.setattr(realtime_updater, "time", clock)
+        monkeypatch.setattr(watch, "time", clock)
 
         _feed(handler, source, INOTIFY_OVERWRITE)
         now[0] += MAX_WAIT_SECONDS

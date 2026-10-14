@@ -57,48 +57,50 @@ def engine(
     )
 
 
-class TestCalculateMatchScore:
-    def test_exact_match_returns_100(self, engine: PythonTypeInferenceEngine) -> None:
-        score = engine._calculate_match_score("user", "user")
-        assert score == cs.PY_SCORE_EXACT_MATCH
-
-    def test_exact_match_case_insensitive(
-        self, engine: PythonTypeInferenceEngine
-    ) -> None:
-        score = engine._calculate_match_score("user", "user")
-        assert score == cs.PY_SCORE_EXACT_MATCH
-
-    def test_suffix_match_class_ends_with_param(
-        self, engine: PythonTypeInferenceEngine
-    ) -> None:
-        score = engine._calculate_match_score("user", "appuser")
-        assert score == cs.PY_SCORE_SUFFIX_MATCH
-
-    def test_suffix_match_param_ends_with_class(
-        self, engine: PythonTypeInferenceEngine
-    ) -> None:
-        score = engine._calculate_match_score("userservice", "service")
-        assert score == cs.PY_SCORE_SUFFIX_MATCH
-
-    def test_contains_match_returns_scaled_score(
-        self, engine: PythonTypeInferenceEngine
-    ) -> None:
-        score = engine._calculate_match_score("myuserhandler", "user")
-        assert 0 < score < cs.PY_SCORE_SUFFIX_MATCH
-
-    def test_no_match_returns_zero(self, engine: PythonTypeInferenceEngine) -> None:
-        score = engine._calculate_match_score("foo", "bar")
-        assert score == 0
-
-
 class TestFindBestClassMatch:
     def test_finds_exact_match(self, engine: PythonTypeInferenceEngine) -> None:
         result = engine._find_best_class_match("User", ["User", "Account", "Service"])
         assert result == "User"
 
-    def test_finds_suffix_match(self, engine: PythonTypeInferenceEngine) -> None:
-        result = engine._find_best_class_match("user", ["AppUser", "Account"])
-        assert result == "AppUser"
+    def test_match_is_case_insensitive(self, engine: PythonTypeInferenceEngine) -> None:
+        result = engine._find_best_class_match("payload", ["Payload", "Account"])
+        assert result == "Payload"
+
+    def test_snake_case_name_spells_camel_case_class(
+        self, engine: PythonTypeInferenceEngine
+    ) -> None:
+        result = engine._find_best_class_match("user_repo", ["UserRepo", "User"])
+        assert result == "UserRepo"
+
+    # Issue #2608: a suffix or substring of the name typed `data` as `A`,
+    # `self` as `F` and `user` as `AppUser`.
+    @pytest.mark.parametrize(
+        ("param", "classes"),
+        [
+            ("user", ["AppUser", "Account"]),
+            ("userservice", ["Service"]),
+            ("myuserhandler", ["User"]),
+            ("data", ["A"]),
+            ("self", ["F", "S", "Elf"]),
+            ("cls", ["S", "C", "Ls"]),
+        ],
+    )
+    def test_suffix_or_substring_is_not_a_match(
+        self, engine: PythonTypeInferenceEngine, param: str, classes: list[str]
+    ) -> None:
+        assert engine._find_best_class_match(param, classes) is None
+
+    @pytest.mark.parametrize(("param", "class_name"), [("a", "A"), ("db", "DB")])
+    def test_short_class_name_is_never_a_match(
+        self, engine: PythonTypeInferenceEngine, param: str, class_name: str
+    ) -> None:
+        assert engine._find_best_class_match(param, [class_name]) is None
+
+    def test_classes_spelled_alike_are_no_answer(
+        self, engine: PythonTypeInferenceEngine
+    ) -> None:
+        result = engine._find_best_class_match("user_repo", ["UserRepo", "Userrepo"])
+        assert result is None
 
     def test_returns_none_for_no_match(self, engine: PythonTypeInferenceEngine) -> None:
         result = engine._find_best_class_match("xyz", ["Foo", "Bar"])
@@ -110,9 +112,30 @@ class TestFindBestClassMatch:
         result = engine._find_best_class_match("user", [])
         assert result is None
 
-    def test_prefers_exact_over_suffix(self, engine: PythonTypeInferenceEngine) -> None:
-        result = engine._find_best_class_match("user", ["AppUser", "User"])
-        assert result == "User"
+
+class TestInferTypeFromParameterName:
+    @pytest.mark.parametrize("receiver", ["self", "cls"])
+    def test_receiver_is_never_typed_by_name(
+        self,
+        engine: PythonTypeInferenceEngine,
+        mock_function_registry: MagicMock,
+        receiver: str,
+    ) -> None:
+        # Even a class spelled exactly like the receiver: `self` IS the
+        # enclosing class.
+        mock_function_registry.find_with_prefix.return_value = [
+            (f"test.module.{receiver.title()}", NodeType.CLASS)
+        ]
+        assert engine._infer_type_from_parameter_name(receiver, "test.module") is None
+
+    def test_whole_name_types_the_parameter(
+        self, engine: PythonTypeInferenceEngine, mock_function_registry: MagicMock
+    ) -> None:
+        mock_function_registry.find_with_prefix.return_value = [
+            ("test.module.Payload", NodeType.CLASS)
+        ]
+        result = engine._infer_type_from_parameter_name("payload", "test.module")
+        assert result == "Payload"
 
 
 class TestExtractVariableName:
@@ -178,13 +201,13 @@ class TestProcessTypedParameter:
 
 
 class TestProcessParameter:
-    def test_routes_identifier_to_untyped(
+    def test_leaves_untyped_identifier_to_name_guess(
         self, engine: PythonTypeInferenceEngine
     ) -> None:
         param = create_mock_node(cs.TS_PY_IDENTIFIER, "user")
         local_var_types: dict[str, str] = {}
 
-        engine._process_parameter(param, local_var_types, "test.module")
+        engine._process_parameter(param, local_var_types)
 
         assert local_var_types == {}
 
@@ -198,7 +221,7 @@ class TestProcessParameter:
         )
         local_var_types: dict[str, str] = {}
 
-        engine._process_parameter(param, local_var_types, "test.module")
+        engine._process_parameter(param, local_var_types)
 
         assert local_var_types["count"] == "int"
 
@@ -213,7 +236,7 @@ class TestProcessParameter:
         )
         local_var_types: dict[str, str] = {}
 
-        engine._process_parameter(param, local_var_types, "test.module")
+        engine._process_parameter(param, local_var_types)
 
         assert local_var_types["count"] == "int"
 
