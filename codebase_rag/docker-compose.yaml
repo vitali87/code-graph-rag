@@ -9,7 +9,7 @@ services:
     # #1257, Memgraph 3.x dropped pattern-in-WHERE), and memgraph-mage has no
     # patch-level tags, so even `3.3` can float to a rebuilt image. Bump
     # deliberately and run the integration suite against the new digest.
-    image: memgraph/memgraph-mage:3.3@sha256:4579a70a2a095026d2e4039a5b0a4756e8e0e8a37ea0350f71240346efe343e8
+    image: memgraph/memgraph-mage:3.7@sha256:91ab47cfee0eb0fa87d04bbd5b0352ef46374eef7dc4dbe676dbeec7d2facc72
     # Memgraph reports the host's CPU and memory and the graph's vertex and
     # edge counts to its vendor by default; a local index of private code
     # stays local (issue #2675). Delete this line to share them.
