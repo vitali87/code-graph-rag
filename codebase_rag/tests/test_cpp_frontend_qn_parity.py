@@ -163,9 +163,10 @@ def test_frontend_recovers_macro_mangled_class(temp_repo: Path) -> None:
     fe_class_nodes = get_nodes(fe_ingestor, "Class")
     fe_classes = get_qualified_names(fe_class_nodes)
 
-    # tree-sitter loses Widget to the macro; the frontend recovers it.
-    assert not any(q.endswith(".ui.Widget") for q in ts_classes), (
-        f"expected tree-sitter to mis-parse Widget, got {ts_classes}"
+    # Both paths name the class Widget: the frontend through the
+    # preprocessor, tree-sitter by blanking the macro (issue #2840).
+    assert any(q.endswith(".ui.Widget") for q in ts_classes), (
+        f"tree-sitter did not recover Widget: {ts_classes}"
     )
     assert any(q.endswith(".ui.Widget") for q in fe_classes), (
         f"frontend did not recover Widget: {fe_classes}"

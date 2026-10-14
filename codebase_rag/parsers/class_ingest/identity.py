@@ -96,7 +96,9 @@ def extract_cpp_class_name(class_node: Node) -> str | None:
             return safe_decode_text(child)
 
     name_node = class_node.child_by_field_name(cs.KEY_NAME)
-    return safe_decode_text(name_node) if name_node and name_node.text else None
+    if name_node is None or not name_node.text:
+        return None
+    return cpp_utils.type_name_text(name_node)
 
 
 def extract_class_name(class_node: Node) -> str | None:
