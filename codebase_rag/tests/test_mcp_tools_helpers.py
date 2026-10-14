@@ -13,9 +13,11 @@ def _make_registry(mock_ingestor: MagicMock) -> MagicMock:
     registry._get_project_node_ids = MCPToolsRegistry._get_project_node_ids.__get__(
         registry
     )
-    registry._cleanup_project_embeddings = (
-        MCPToolsRegistry._cleanup_project_embeddings.__get__(registry)
+    registry._nested_projects = MCPToolsRegistry._nested_projects.__get__(registry)
+    registry._cleanup_embeddings_then_begin_writing = (
+        MCPToolsRegistry._cleanup_embeddings_then_begin_writing.__get__(registry)
     )
+    registry._require_writing.return_value = None
     return registry
 
 
@@ -73,7 +75,7 @@ class TestGetProjectNodeIds:
         assert result == [5]
 
 
-class TestCleanupProjectEmbeddings:
+class TestCleanupEmbeddingsThenBeginWriting:
     def test_calls_delete_with_node_ids(self) -> None:
         mock_ingestor = MagicMock()
         mock_ingestor.fetch_all.return_value = [
@@ -83,9 +85,26 @@ class TestCleanupProjectEmbeddings:
         registry = _make_registry(mock_ingestor)
 
         with patch(_PATCH_DELETE) as mock_delete:
-            registry._cleanup_project_embeddings("myproject")
+            registry._cleanup_embeddings_then_begin_writing("myproject")
 
-        mock_delete.assert_called_once_with("myproject", [10, 20])
+        mock_delete.assert_called_once_with("myproject", [10, 20], [])
+
+    def test_leaves_a_nested_project_to_itself(self) -> None:
+        # `myproject.` also prefixes `myproject.v2`, a project of its own,
+        # but not `myproject2`.
+        mock_ingestor = MagicMock()
+        mock_ingestor.fetch_all.return_value = [{cs.KEY_NODE_ID: 10}]
+        mock_ingestor.list_projects.return_value = [
+            "myproject",
+            "myproject.v2",
+            "myproject2",
+        ]
+        registry = _make_registry(mock_ingestor)
+
+        with patch(_PATCH_DELETE) as mock_delete:
+            registry._cleanup_embeddings_then_begin_writing("myproject")
+
+        mock_delete.assert_called_once_with("myproject", [10], ["myproject.v2"])
 
     def test_calls_delete_with_empty_list_when_no_nodes(self) -> None:
         mock_ingestor = MagicMock()
@@ -93,6 +112,6 @@ class TestCleanupProjectEmbeddings:
         registry = _make_registry(mock_ingestor)
 
         with patch(_PATCH_DELETE) as mock_delete:
-            registry._cleanup_project_embeddings("empty_proj")
+            registry._cleanup_embeddings_then_begin_writing("empty_proj")
 
-        mock_delete.assert_called_once_with("empty_proj", [])
+        mock_delete.assert_called_once_with("empty_proj", [], [])
