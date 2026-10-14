@@ -22,6 +22,7 @@ import re
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from pathlib import Path
+from types import MappingProxyType
 from typing import NamedTuple, TypedDict
 
 from tree_sitter import Node, Parser
@@ -107,7 +108,8 @@ class Snapshot(NamedTuple):
 
     `definitions` are the symbols defined in the touched files; `callees`
     the definitions elsewhere that the touched files' sites resolve to;
-    `bindings` the by-name imports into and out of the touched files.
+    `bindings` the by-name imports into and out of the touched files;
+    `callers` the definitions elsewhere that make sites into them.
     """
 
     paths: frozenset[str]
@@ -117,6 +119,7 @@ class Snapshot(NamedTuple):
     imports: dict[str, frozenset[str]]
     module_paths: dict[str, str]
     bindings: tuple[ImportBinding, ...] = ()
+    callers: Mapping[str, Definition] = MappingProxyType({})
 
 
 class RenameFinding(TypedDict):
@@ -405,8 +408,13 @@ def snapshot(
         for site in (_site(row) for row in fetch_all(cq.CYPHER_DELTA_SITES, params))
         if site.caller and site.callee
     )
-    missing = sorted({s.callee for s in sites} - set(definitions))
+    # A caller in another file is read too: what `this` is in it decides
+    # how its call into a touched file binds (bot review on PR #3311).
+    missing_callees = {s.callee for s in sites} - set(definitions)
+    missing_callers = {s.caller for s in sites} - set(definitions)
+    missing = sorted(missing_callees | missing_callers)
     callees: dict[str, Definition] = {}
+    callers: dict[str, Definition] = {}
     if missing:
         for row in fetch_all(
             cq.CYPHER_DELTA_DEFINITIONS_BY_QN,
@@ -417,8 +425,11 @@ def snapshot(
             },
         ):
             definition = _definition(row)
-            if definition.qualified_name:
-                callees[definition.qualified_name] = definition
+            qn = definition.qualified_name
+            if qn in missing_callees:
+                callees[qn] = definition
+            if qn in missing_callers:
+                callers[qn] = definition
     imports: dict[str, set[str]] = {}
     module_paths: dict[str, str] = {}
     for row in fetch_all(cq.CYPHER_DELTA_MODULE_IMPORTS, params):
@@ -437,6 +448,7 @@ def snapshot(
         imports={qn: frozenset(targets) for qn, targets in imports.items()},
         module_paths=module_paths,
         bindings=_named_import_bindings(fetch_all, params),
+        callers=callers,
     )
 
 
@@ -1897,7 +1909,7 @@ def _site_form(
             access,
             _declaring_type(definition),
             language,
-            after.definitions.get(site.caller),
+            after.definitions.get(site.caller) or after.callers.get(site.caller),
         ),
     )
 
@@ -2054,13 +2066,50 @@ def _attributes(definition: Definition) -> list[str]:
     return [*(definition.decorators or ()), *(definition.modifiers or ())]
 
 
-def _calls_into(qn: str, before: Snapshot, after: Snapshot) -> list[CallSite]:
+def _moved_site(
+    site: CallSite,
+    name: str,
+    before: Snapshot,
+    after: Snapshot,
+    trees: _SourceTrees,
+) -> CallSite | None:
+    """A site drawn before the edit of its file, where it now stands.
+
+    Its caller kept its shape, so the site moved with the caller's first
+    line; it still stands only if the edited source accesses `name` there.
+    """
+    old_caller = before.definitions.get(site.caller)
+    new_caller = after.definitions.get(site.caller)
+    language = _language(site.caller_path)
+    fields = _MEMBER_FIELDS.get(language) if language is not None else None
+    if (
+        old_caller is None
+        or new_caller is None
+        or old_caller.fingerprint != new_caller.fingerprint
+        or fields is None
+        or site.line is None
+        or site.col is None
+    ):
+        return None
+    moved = site._replace(
+        line=site.line + new_caller.start_line - old_caller.start_line
+    )
+    root = trees.root(site.caller_path)
+    if root is None or _member_access(root, moved, name, fields) is None:
+        return None
+    return moved
+
+
+def _calls_into(
+    qn: str, before: Snapshot, after: Snapshot, trees: _SourceTrees
+) -> list[CallSite]:
     """The call sites of `qn`, after the edit and before it.
 
-    A caller the edit did not touch still makes the call it made, though the
-    re-bound graph may no longer draw it: a Python property read is a call
-    edge only while it is a property. A site in an edited file is read
-    after the edit only, where its recorded position is current.
+    A caller still makes the call it made, though the re-bound graph may no
+    longer draw it: a Python property read is a call edge only while it is
+    a property. A site in an edited file is recorded where it stood before
+    the edit, so it is moved to where it stands now, also in the file that
+    defines `qn` (bot review on PR #3311).
     """
     sites = [
         site
@@ -2068,14 +2117,21 @@ def _calls_into(qn: str, before: Snapshot, after: Snapshot) -> list[CallSite]:
         if site.callee == qn and site.rel == cs.RelationshipType.CALLS.value
     ]
     seen = {(site.caller, site.caller_path, site.line, site.col) for site in sites}
-    sites.extend(
-        site
-        for site in before.sites
-        if site.callee == qn
-        and site.rel == cs.RelationshipType.CALLS.value
-        and site.caller_path not in after.paths
-        and (site.caller, site.caller_path, site.line, site.col) not in seen
-    )
+    name = after.definitions[qn].name
+    for site in before.sites:
+        if site.callee != qn or site.rel != cs.RelationshipType.CALLS.value:
+            continue
+        current = (
+            _moved_site(site, name, before, after, trees)
+            if site.caller_path in after.paths
+            else site
+        )
+        if current is None:
+            continue
+        key = (current.caller, current.caller_path, current.line, current.col)
+        if key not in seen:
+            seen.add(key)
+            sites.append(current)
     return sites
 
 
@@ -2110,7 +2166,7 @@ def _convention_changes(
                     _site_form(trees, site, new_def, after),
                 ),
             )
-            for site in _calls_into(qn, before, after)
+            for site in _calls_into(qn, before, after, trees)
         ]
         out.append(
             ConventionChange(
