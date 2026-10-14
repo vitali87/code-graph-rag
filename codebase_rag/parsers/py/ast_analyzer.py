@@ -723,7 +723,7 @@ def _is_type_checking_guard(condition: Node | None) -> bool:
     )
 
 
-def _under_type_checking(node: Node) -> bool:
+def under_type_checking(node: Node) -> bool:
     """Whether `node` sits in the body of an `if TYPE_CHECKING:` block."""
     current = node.parent
     while current is not None:
@@ -912,7 +912,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         for binder, identifier in _bindings_in(entry[0]):
             if (
                 safe_decode_text(identifier) == name
-                and not _under_type_checking(binder)
+                and not under_type_checking(binder)
                 and (last is None or identifier.start_byte > last[0])
             ):
                 last = (identifier.start_byte, binder.type)
