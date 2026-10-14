@@ -304,6 +304,20 @@ def queue_type_facts(
     )
 
 
+def _resolved_by(name: str, resolved_targets: frozenset[str]) -> list[str]:
+    # The targets a name was already bound to through its file's imports at
+    # the last parse; see PendingTypeFact.resolved_targets (issue #3007). A
+    # bare `Match` is one binding in its file, so a target of that name is
+    # it; a qualified `crate::later::Match` is bound only by a target it
+    # spells the tail of, never by an edge to `matcher::Match`.
+    tail = name.removeprefix(_RUST_CRATE_ROOT)
+    return [
+        target
+        for target in resolved_targets
+        if target == tail or target.endswith(f"{cs.SEPARATOR_DOT}{tail}")
+    ]
+
+
 class TypeReferenceResolver:
     """Resolve the names an annotation mentions to project type nodes."""
 
@@ -453,7 +467,11 @@ class TypeReferenceResolver:
         return ranked[0]
 
     def resolve_annotation(
-        self, annotation: str, module_qn: str, path: str | None = None
+        self,
+        annotation: str,
+        module_qn: str,
+        path: str | None = None,
+        resolved_targets: frozenset[str] = frozenset(),
     ) -> list[str]:
         # A C# annotation's type arguments decide which of two same-named
         # types it means; elsewhere the name alone is looked up, as ever.
@@ -464,6 +482,17 @@ class TypeReferenceResolver:
         )
         found: dict[str, None] = {}
         for name, arity in written:
+            if bound := _resolved_by(name, resolved_targets):
+                # The binding stands, but a partial type's parts come and go
+                # with their files: `_every_part` names the ones there are now.
+                found.update(
+                    dict.fromkeys(
+                        qn
+                        for qn in bound
+                        if qn in self._partial_groups and self._is_type(qn)
+                    )
+                )
+                continue
             qn = self.resolve(name, module_qn, arity)
             if qn is not None:
                 found.setdefault(qn, None)
@@ -487,7 +516,9 @@ def _emit_returns(
 ) -> int:
     if fact.return_type is None:
         return 0
-    targets = resolver.resolve_annotation(fact.return_type, fact.module_qn, fact.path)
+    targets = resolver.resolve_annotation(
+        fact.return_type, fact.module_qn, fact.path, fact.resolved_targets
+    )
     for target_qn in targets:
         ingestor.ensure_relationship_batch(
             source, cs.RelationshipType.RETURNS, _target_spec(resolver, target_qn)
@@ -506,7 +537,7 @@ def _emit_accepts(
         if not annotation:
             continue
         for target_qn in resolver.resolve_annotation(
-            annotation, fact.module_qn, fact.path
+            annotation, fact.module_qn, fact.path, fact.resolved_targets
         ):
             accepted.setdefault(target_qn, None)
     for target_qn in accepted:
