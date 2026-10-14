@@ -133,6 +133,23 @@ def test_a_project_with_no_route_handlers_runs_as_before() -> None:
     ]
 
 
+def test_route_handlers_only_in_test_files_need_no_endpoint_data() -> None:
+    # Negative: the io group records no endpoint for a route spun up in a
+    # test (#910), so an empty map is all `--capture io` can produce here;
+    # refusing would block the production scan for good.
+    test_route = _row(
+        f"{PROJECT}.tests.test_api.get_user",
+        "tests/test_api.py",
+        ['@app.get("/users/{uid}")'],
+    )
+    nodes = [test_route, _row(f"{PROJECT}.lib._orphan", "lib.py", [])]
+    result = _run(_ingestor(nodes), "--no-endpoint-roots", "--format", "json")
+    assert result.exit_code == 0, result.output
+    assert [row["qualified_name"] for row in json.loads(result.stdout)] == [
+        f"{PROJECT}.lib._orphan"
+    ]
+
+
 def test_endpoint_roots_on_needs_no_endpoint_data() -> None:
     # Negative: the default keeps rooting handlers by their decorator.
     result = _run(_ingestor(HANDLERS), "--format", "json")

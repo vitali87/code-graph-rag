@@ -1473,6 +1473,10 @@ def _route_handler_count(nodes: dict[_NodeId, PropertyDict]) -> int:
 
     count = 0
     for props in nodes.values():
+        # The io group writes no endpoint for a route in a test file (#910),
+        # so one there is no sign the group was left out.
+        if matches_test_path(str(props.get(cs.KEY_PATH) or "")):
+            continue
         decorators = props.get(cs.KEY_DECORATORS)
         if isinstance(decorators, list) and any(
             parse_route_decorator(str(d)) for d in decorators
