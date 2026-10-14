@@ -37,6 +37,7 @@ from collections.abc import Callable
 from tree_sitter import Node
 
 from .. import constants as cs
+from .js_ts.overloads import implementation_signatures
 from .utils import safe_decode_text
 
 
@@ -94,7 +95,10 @@ _JS_TS_SIGNATURES = frozenset(
 
 
 def _js_ts(node: Node) -> list[str] | None:
-    if node.type in _JS_TS_SIGNATURES:
+    # An overloaded implementation's own list is hidden from its callers,
+    # who see only the signatures above it (issue #2457), and tsc lets it
+    # declare fewer parameters than they do.
+    if node.type in _JS_TS_SIGNATURES or implementation_signatures(node):
         return None
     params = _parameter_list(node, cs.TS_JS_FORMAL_PARAMETERS)
     if params is None:
