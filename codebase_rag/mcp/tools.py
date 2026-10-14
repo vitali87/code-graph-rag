@@ -3316,7 +3316,7 @@ class MCPToolsRegistry:
         """Whether the graph holds the legacy Folder/File structure the
         constraint migration purges (issue #897)."""
         return any(
-            self.ingestor.fetch_all(query)
+            self.ingestor.fetch_all(query, None)
             for query in (
                 cq.CYPHER_ANY_SHARED_STRUCTURE,
                 cq.CYPHER_ANY_KEYLESS_STRUCTURE,
