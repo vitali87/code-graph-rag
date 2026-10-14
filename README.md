@@ -61,7 +61,11 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **Incremental Indexing**: Improved handling of same-stem sibling matches and skipped EXPOSES cleanups during incremental updates.
+- **Enhanced CLI Scope**: `cgr stats` and `cgr export` now support scoping to specific projects or workspaces, and offer improved error handling.
+- **Improved Logging**: Logging has been refined to provide more informative messages, including per-symbol indexing and connection lifecycle details, and reduced unnecessary output.
+- **Expanded Language Support**: Added support for Julia as a supported language.
+- **Refined Graph Navigation**: Improved handling of cross-service links in flow verdicts and signature deltas, and enhanced the ability to follow re-exports.
+- **Contextual Improvements**: Added support for context-slice queries, reasons, and the necessary ingestor reads.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
@@ -95,18 +99,18 @@ See the [Architecture Overview](docs/architecture/overview.md) and [Graph Schema
 
 ## Supported Languages
 
-Python, TypeScript, TSX, JavaScript, Rust, Go, Java, C, C++, C#, PHP, Lua, and Dart are fully supported. Scala is in development, and Ruby, Kotlin, Swift, Elixir, Haskell, Solidity, Bash, and Nix have structural support (modules, functions, classes where the language has them, and imports) through the pluggable ast-grep tier. See the [Language Support](docs/architecture/language-support.md) matrix for per-language capabilities.
+Python, TypeScript, TSX, JavaScript, Rust, Go, Java, C, C++, C#, PHP, Lua, Dart, and Julia are fully supported. Scala is in development, and Ruby, Kotlin, Swift, Elixir, Haskell, Solidity, Bash, and Nix have structural support (modules, functions, classes where the language has them, and imports) through the pluggable ast-grep tier. See the [Language Support](docs/architecture/language-support.md) matrix for per-language capabilities.
 
 ## Installation
 
-`cgr` is published to PyPI. Install it system-wide with the `treesitter-full` (all languages) and `semantic` (vector search) extras:
+`cgr` is published to PyPI. Install it system-wide with the `treesitter-full` (tree-sitter grammars), `ast-grep` (Ruby, Kotlin, Swift, Elixir, Haskell, Solidity, Bash, Nix) and `semantic` (vector search) extras:
 
 ```bash
 # with uv (recommended)
-uv tool install "code-graph-rag[treesitter-full,semantic]"
+uv tool install "code-graph-rag[treesitter-full,ast-grep,semantic]"
 
 # or with pipx
-pipx install "code-graph-rag[treesitter-full,semantic]"
+pipx install "code-graph-rag[treesitter-full,ast-grep,semantic]"
 ```
 
 ### Which version am I getting?
@@ -131,7 +135,7 @@ addressable; binaries and PyPI uploads follow the cadence above.
 To run code newer than the latest release, install from git:
 
 ```bash
-uv tool install "code-graph-rag[treesitter-full,semantic] @ git+https://github.com/vitali87/code-graph-rag@main"
+uv tool install "code-graph-rag[treesitter-full,ast-grep,semantic] @ git+https://github.com/vitali87/code-graph-rag@main"
 ```
 
 To upgrade an existing install, run `uv tool upgrade code-graph-rag` (with pipx, `pipx upgrade code-graph-rag`, or `pipx reinstall code-graph-rag` for a git install). [Upgrade](docs/getting-started/installation.md#upgrade) covers the other install methods.
