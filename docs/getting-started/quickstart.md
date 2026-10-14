@@ -94,7 +94,7 @@ cgr start --repo-path /path/to/repo --update-graph -o my_graph.json
 
 ```bash
 cgr export -o my_graph.json
-cgr export -o my_project.json --project-name my-project
+cgr export -o my_project.json --project my-project
 ```
 
 ![cgr start --update-graph -o my_graph.json exporting one project, then cgr export for the whole graph and for one project](../assets/demos/quickstart-export.gif)
