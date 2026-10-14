@@ -247,6 +247,13 @@ jobs:
                 { [ "$BREAKING" = "true" ] || [ "$COUNTING" = "false" ]; }; then
               break
             fi
+            # One lookup per commit: "#pull-request" marks each pull request
+            # the commit belongs to, followed by that pull request's labels.
+            if ! PULLS=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}/pulls" \
+                --jq '.[] | "#pull-request", .labels[].name'); then
+              echo "::error::could not read the pull request labels of ${SHA}; refusing to decide the release"
+              exit 1
+            fi
             PARENT=""
             if [ "$COUNTING" = "true" ]; then
               if [ -n "$RANGE" ]; then
@@ -257,8 +264,15 @@ jobs:
               else
                 SUBJECT=$(printf '%s\n' "$MESSAGE" | head -n 1)
               fi
+              # The bump step pushes its commit straight to main, so it
+              # belongs to no pull request; a squash-merged pull request
+              # titled like one changed no version and is not a boundary.
               case "$SUBJECT" in
-                "chore: bump version to "*) COUNTING=false ;;
+                "chore: bump version to "*)
+                  if ! printf '%s\n' "$PULLS" | grep -qxF '#pull-request'; then
+                    COUNTING=false
+                  fi
+                  ;;
               esac
             fi
             if [ "$COUNTING" = "true" ] && [ "$TAG_STATUS" -eq 2 ] && [ -n "$PARENT" ]; then
@@ -274,16 +288,11 @@ jobs:
                 COUNTING=false
               fi
             fi
-            if ! LABELS=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}/pulls" \
-                --jq '.[].labels[].name'); then
-              echo "::error::could not read the pull request labels of ${SHA}; refusing to decide the release"
-              exit 1
-            fi
-            if printf '%s\n' "$LABELS" | grep -qx security; then
+            if printf '%s\n' "$PULLS" | grep -qx security; then
               SECURITY=true
             fi
             if [ "$COUNTING" = "true" ] &&
-                printf '%s\n' "$LABELS" | grep -qxF 'breaking change'; then
+                printf '%s\n' "$PULLS" | grep -qxF 'breaking change'; then
               BREAKING=true
             fi
           done

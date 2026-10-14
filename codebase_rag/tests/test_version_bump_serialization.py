@@ -1,4 +1,6 @@
+import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -736,6 +738,8 @@ def test_an_unreadable_annotation_fails_instead_of_narrowing_the_scan(
 # The commit a bump run pushes, and a merge that set the version by hand.
 BUMP_COMMIT = "f" * 40
 HAND_SET = "9" * 40
+# What the label query prints for each pull request a commit belongs to.
+PULL_REQUEST = "#pull-request"
 
 
 def _versions(tmp_path: Path, versions: dict[str, str]) -> None:
@@ -854,4 +858,59 @@ def test_the_breaking_scan_stops_at_the_commit_a_bump_makes() -> None:
     commit = _step("Commit version bump")["run"]
     decide = _step("Decide whether this tag ships a release")["run"]
     assert 'git commit -m "chore: bump version to ${NEW_VERSION}"' in commit
-    assert '"chore: bump version to "*) COUNTING=false' in decide
+    assert '"chore: bump version to "*)' in decide
+
+
+def test_a_pull_request_titled_like_a_bump_is_no_boundary(tmp_path: Path) -> None:
+    # A squash merge takes its pull request's title; only the bump step's
+    # own commit, pushed straight to main, belongs to no pull request.
+    _commits(
+        tmp_path,
+        {
+            OLDER: "Merge pull request #1",
+            NEWER: "chore: bump version to 9.9.9 (#2)",
+            SHA: "Merge pull request #3",
+        },
+        {
+            OLDER: f"{PULL_REQUEST}\nbreaking change",
+            NEWER: PULL_REQUEST,
+            SHA: PULL_REQUEST,
+        },
+    )
+    out = _decide(tmp_path, f"{OLDER}\\n{NEWER}\\n{SHA}\\n")
+    assert out["breaking"] == "true"
+
+
+def _pulls_query() -> str:
+    decide = _step("Decide whether this tag ships a release")["run"]
+    match = re.search(r"/pulls\" \\\n\s*--jq '([^']*)'", decide)
+    assert match, "the scan reads labels with one --jq query"
+    return match.group(1)
+
+
+@pytest.mark.parametrize(
+    ("pulls", "expected"),
+    [
+        # The bump step's own commit: no pull request at all.
+        ([], []),
+        (
+            [{"labels": [{"name": "security"}, {"name": "breaking change"}]}],
+            [PULL_REQUEST, "security", "breaking change"],
+        ),
+        ([{"labels": []}], [PULL_REQUEST]),
+    ],
+)
+def test_the_label_query_marks_each_pull_request(
+    pulls: list[dict[str, list[dict[str, str]]]], expected: list[str]
+) -> None:
+    if shutil.which("jq") is None:
+        pytest.skip("the Ubuntu workflow requires jq")
+    result = subprocess.run(
+        ["jq", "-r", _pulls_query()],
+        input=json.dumps(pulls),
+        capture_output=True,
+        text=True,
+        encoding=cs.ENCODING_UTF8,
+        check=True,
+    )
+    assert result.stdout.splitlines() == expected
