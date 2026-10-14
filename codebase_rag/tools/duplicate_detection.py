@@ -14,6 +14,7 @@ from pydantic_ai import Tool
 
 from .. import constants as cs
 from .. import logs as ls
+from .. import tool_errors as te
 from ..cypher_queries import CYPHER_LIST_PROJECTS
 from ..duplicates import collect_duplicates_with_coverage, default_duplicates_config
 from ..types_defs import DuplicateGroup, DuplicatesReport
@@ -123,19 +124,21 @@ async def _find_duplicates(
     min_size: int,
     limit: int,
 ) -> str:
+    # Every refusal is a ToolFailure, so the MCP server reports it with
+    # `isError: true`; an agent reads the same text (issue #2785).
     error = _validation_error(threshold, min_size, limit)
     if error is not None:
-        return error
+        return te.ToolFailure(error)
     projects = await asyncio.to_thread(_project_names, ingestor)
     if not projects:
-        return cs.MSG_DUPLICATES_NO_PROJECTS
+        return te.ToolFailure(cs.MSG_DUPLICATES_NO_PROJECTS)
     if project is not None and project not in projects:
-        return cs.MSG_DUPLICATES_UNKNOWN_PROJECT.format(
-            project=project, projects=projects
+        return te.ToolFailure(
+            cs.MSG_DUPLICATES_UNKNOWN_PROJECT.format(project=project, projects=projects)
         )
     resolved = project or (projects[0] if len(projects) == 1 else None)
     if resolved is None:
-        return cs.MSG_DUPLICATES_AMBIGUOUS.format(projects=projects)
+        return te.ToolFailure(cs.MSG_DUPLICATES_AMBIGUOUS.format(projects=projects))
 
     logger.info(ls.DUPLICATES_SCANNING.format(project_name=resolved))
     config = default_duplicates_config(threshold=threshold, min_nodes=min_size)
