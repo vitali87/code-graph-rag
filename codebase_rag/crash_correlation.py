@@ -612,10 +612,14 @@ def _rebase_for(
 
 
 def _every_frame(parsed: ParsedTraceback) -> list[FramePoint]:
-    return [
-        *parsed.frames,
-        *(frame for member in parsed.members for frame in _every_frame(member)),
-    ]
+    # Depth-first, as printed: a section's own frames, then its members'.
+    frames: list[FramePoint] = []
+    pending = [parsed]
+    while pending:
+        section = pending.pop()
+        frames.extend(section.frames)
+        pending.extend(reversed(section.members))
+    return frames
 
 
 def _resolve_stack(
