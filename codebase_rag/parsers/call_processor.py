@@ -1791,6 +1791,50 @@ def _truthiness_operands(node: Node) -> list[Node | None]:
     return []
 
 
+def _go_written_type(value: Node) -> Node | None:
+    # The type a composite literal (`Box{}`) or a type assertion (`a.(*Dog)`)
+    # writes for its value. An asserted pointer is peeled to its pointee,
+    # whose methods a call on it binds.
+    type_node = value.child_by_field_name(cs.FIELD_TYPE)
+    if value.type != cs.TS_GO_TYPE_ASSERTION_EXPRESSION:
+        return type_node
+    while type_node is not None and type_node.type == cs.TS_GO_POINTER_TYPE:
+        type_node = type_node.named_child(0)
+    return type_node
+
+
+def _go_asserted_receiver_call_name(selector: Node) -> str | None:
+    # `a.(Dog).Fetch()` and `x.(*Cat).Purr()` name the receiver's concrete
+    # type at the call site, so the call is `Dog.Fetch`, which the resolver
+    # binds as it binds a typed receiver (and as it already did once the
+    # assertion was hoisted into a local); the selector's own text was a call
+    # name it could not read (issue #2891).
+    operand = selector.child_by_field_name(cs.FIELD_OPERAND)
+    method = selector.child_by_field_name(cs.FIELD_FIELD)
+    while operand is not None and operand.type == cs.TS_PARENTHESIZED_EXPRESSION:
+        operand = operand.named_child(0)
+    if (
+        operand is None
+        or operand.type != cs.TS_GO_TYPE_ASSERTION_EXPRESSION
+        or method is None
+        or method.text is None
+    ):
+        return None
+    type_node = _go_written_type(operand)
+    if type_node is None:
+        return None
+    # `other.Dog` keeps its package: read as `Dog` alone it named the
+    # caller's own `Dog` (Greptile, PR #2961).
+    type_name = (
+        decode_node_text(type_node.text)
+        if type_node.type == cs.TS_GO_QUALIFIED_TYPE and type_node.text
+        else go_utils.type_identifier_text(type_node)
+    )
+    if not type_name:
+        return None
+    return f"{type_name}{cs.SEPARATOR_DOT}{decode_node_text(method.text)}"
+
+
 def _peel_ts_getter_receiver(recv: Node | None) -> tuple[Node | None, str | None]:
     """Peel type-transparent wrappers off a getter read's receiver.
 
@@ -4335,12 +4379,48 @@ class CallProcessor:
                 return name
         return self._node_shaped_call_name(call_node, language)
 
+    @staticmethod
+    def _prefixed_generic_callee(func_child: Node) -> Node | None:
+        # `await client.call<number>(x)` and `!isKind<string>(v)` parse as a
+        # call of `await client.call` / `!isKind`: the grammar binds the
+        # operator tighter than a call with type arguments, and the call is
+        # what the operator applies to (issue #2930). Only that misparse puts
+        # an operator in the `function` field, so the call must carry type
+        # arguments; the operand is the callee, possibly under another
+        # operator (`!await f<T>()`).
+        call = func_child.parent
+        if (
+            call is None
+            or call.child_by_field_name(cs.TS_JS_FIELD_TYPE_ARGUMENTS) is None
+        ):
+            return None
+        operand: Node | None = func_child
+        while operand is not None and operand.type in cs.TS_JS_PREFIXED_CALLEES:
+            operand = (
+                operand.child_by_field_name(cs.TS_JS_FIELD_ARGUMENT)
+                if operand.type == cs.TS_JS_UNARY_EXPRESSION
+                else next(reversed(operand.named_children), None)
+            )
+        return operand
+
+    def _prefixed_generic_call_name(
+        self, func_child: Node, language: cs.SupportedLanguage | None
+    ) -> str | None:
+        operand = self._prefixed_generic_callee(func_child)
+        if operand is None:
+            return None
+        return self._function_field_call_name(operand, language)
+
     def _function_field_call_name(
         self, func_child: Node, language: cs.SupportedLanguage | None
     ) -> str | None:
         # The callee name a call's `function` field spells; None means no case
         # named it and the caller falls back to the call node's own shape.
         match func_child.type:
+            case cs.TS_SELECTOR_EXPRESSION if language == cs.SupportedLanguage.GO and (
+                asserted_call := _go_asserted_receiver_call_name(func_child)
+            ):
+                return asserted_call
             case (
                 cs.TS_IDENTIFIER
                 | cs.TS_ATTRIBUTE
@@ -4395,6 +4475,11 @@ class CallProcessor:
                 # `recv.Method` chain as the unconditional form so the
                 # resolver (or its exact Roslyn call fact) can bind it.
                 return self._csharp_conditional_access_call_name(func_child)
+            case callee_type if (
+                callee_type in cs.TS_JS_PREFIXED_CALLEES
+                and language in _JS_TS_LANGUAGES
+            ):
+                return self._prefixed_generic_call_name(func_child, language)
             case cs.TS_CALL_EXPRESSION if language in _JS_TS_LANGUAGES:
                 # A bound function that is itself invoked (`fn.bind(ctx)()`)
                 # has a nested `fn.bind(ctx)` call_expression as its callee, so
@@ -5908,6 +5993,9 @@ class CallProcessor:
         if self._resolver.last_resolution != cs.EdgeResolution.HEURISTIC:
             return callee_info
         func = call_node.child_by_field_name(cs.FIELD_FUNCTION)
+        if func is not None and func.type in cs.TS_JS_PREFIXED_CALLEES:
+            # `await recv.m<T>(x)`: the receiver sits under the operator.
+            func = self._prefixed_generic_callee(func)
         if func is None or func.type != cs.TS_MEMBER_EXPRESSION:
             return callee_info
         declared = self._js_receiver_declaration(
@@ -6604,8 +6692,16 @@ class CallProcessor:
         if chain is None:
             return undecided
         root, methods = chain
-        if root.type == cs.TS_GO_COMPOSITE_LITERAL:
-            class_qn, owned = self._go_literal_receiver_class(root, ctx.module_qn)
+        if root.type in (
+            cs.TS_GO_COMPOSITE_LITERAL,
+            cs.TS_GO_TYPE_ASSERTION_EXPRESSION,
+        ):
+            # A literal or a type assertion writes the receiver's type, read in
+            # this file's imports: `a.(other.Dog).Fetch()` binds the imported
+            # package's Dog, never this package's (Greptile, PR #2961).
+            class_qn, owned = self._go_literal_receiver_class(
+                _go_written_type(root), ctx.module_qn
+            )
         else:
             owned, class_qn = self._go_package_function_root(root, ctx.module_qn)
             if not owned:
@@ -6802,14 +6898,15 @@ class CallProcessor:
         )
 
     def _go_literal_receiver_class(
-        self, literal: Node, module_qn: str
+        self, type_node: Node | None, module_qn: str
     ) -> tuple[str | None, bool]:
-        # (first-party struct, owned) for a composite literal receiver. A
-        # type of an EXTERNAL package (`bytes.Buffer{}`) is owned with no
-        # struct: its methods are that package's, never a first-party one
-        # sharing the name. Any other miss (a named slice type, an unknown
-        # name) is not owned.
-        type_name = _go_composite_type_name(literal.child_by_field_name(cs.FIELD_TYPE))
+        # (first-party struct, owned) for a receiver of the written type
+        # `type_node`: a composite literal's, or a type assertion's. A type
+        # of an EXTERNAL package (`bytes.Buffer{}`) is owned with no struct:
+        # its methods are that package's, never a first-party one sharing
+        # the name. Any other miss (a named slice type, an unknown name) is
+        # not owned.
+        type_name = _go_composite_type_name(type_node)
         if not type_name:
             return None, False
         if class_qn := self._go_struct_class(type_name, module_qn):

@@ -644,6 +644,11 @@ TOOL_QUERY_REPAIRING = (
 TOOL_QUERY_TIMEOUT = (
     "[Tool:QueryGraph] Query exceeded {timeout:.1f}s and was cancelled: {query}"
 )
+TIKTOKEN_UNAVAILABLE = (
+    "Cannot load the {encoding} token encoding ({error}); token counts are "
+    "estimated from text length. Set TIKTOKEN_CACHE_DIR to a directory "
+    "holding the encoding for exact counts offline."
+)
 QUERY_RESULTS_TRUNCATED = (
     "[Tool:QueryGraph] Results truncated: showing {kept} of {total} rows "
     "({tokens} tokens, limit {max_tokens})"
@@ -686,7 +691,7 @@ EDITOR_FILE_NOT_FOUND = "File not found: {path}"
 EDITOR_BLOCK_NOT_FOUND = "Target block not found in {path}"
 EDITOR_LOOKING_FOR = "Looking for: {block}"
 EDITOR_MULTIPLE_OCCURRENCES = (
-    "Multiple occurrences of target block found. Only replacing first occurrence."
+    "Target block occurs {count} times in {path}; nothing was replaced"
 )
 EDITOR_NO_CHANGES_IDENTICAL = (
     "No changes detected - target and replacement are identical"

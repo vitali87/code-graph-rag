@@ -736,7 +736,8 @@ RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name,
        n.rust_cfg_test_mods AS rust_cfg_test_mods,
        n.rust_ungated_mods AS rust_ungated_mods,
        n.modifiers AS modifiers, n.return_type AS return_type,
-       n.param_types AS param_types"""
+       n.param_types AS param_types,
+       n.type_checking_only AS type_checking_only"""
 
 CYPHER_DEAD_CODE_RELS = f"""MATCH (a)-[r:{_DEAD_CODE_REL_TYPES}]->(b)
 WHERE {_any_label("a", _DEAD_CODE_NODE_LABELS)}

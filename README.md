@@ -61,8 +61,11 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **Incremental Indexing**: Improved handling of same-stem sibling matches and skipped EXPOSES cleanups during incremental updates.
-- **Real-Time Watcher**: `cgr watch` ships the file watcher with the package, so an installed cgr keeps a repository's graph in sync while you edit, in the same project `cgr start` syncs.
+- **Enhanced CLI Scope**: `cgr stats` and `cgr export` now support scoping to specific projects or workspaces, and offer improved error handling.
+- **Improved Logging**: Logging has been refined to provide more informative messages, including per-symbol indexing and connection lifecycle details, and reduced unnecessary output.
+- **Expanded Language Support**: Added support for Julia as a supported language.
+- **Refined Graph Navigation**: Improved handling of cross-service links in flow verdicts and signature deltas, and enhanced the ability to follow re-exports.
+- **Contextual Improvements**: Added support for context-slice queries, reasons, and the necessary ingestor reads.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
