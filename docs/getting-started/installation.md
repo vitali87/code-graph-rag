@@ -291,5 +291,6 @@ This checks that all required dependencies and services are available.
 - **huggingface-hub**: Client library to download and publish models, datasets and other repos on the huggingface.co hub
 - **pathspec**: Utility library for gitignore style pattern matching of file paths.
 - **pygments**: Pygments is a syntax highlighting package written in Python.
+- **regex**: Alternative regular expression module, to replace re.
 - **cgr-graph-rs**
 <!-- /SECTION:dependencies -->

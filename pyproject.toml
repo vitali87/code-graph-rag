@@ -60,6 +60,10 @@ dependencies = [
     "huggingface-hub[hf-xet]>=1.7.2",
     "pathspec>=1.0.4",
     "pygments>=2.20.0",
+    # The embedded graph's `=~`: unlike `re`, a match takes a timeout, so a
+    # backtracking pattern stops at the query's deadline. tiktoken already
+    # installs it.
+    "regex>=2024.11.6",
     # The embedded graph's Rust acceleration (rust/cgr_graph_rs), shipped as
     # abi3 wheels for exactly these platforms; elsewhere the engine runs its
     # Python twin of every part. The floor is the crate version this code

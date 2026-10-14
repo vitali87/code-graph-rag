@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
-"""Refuse a local release until PyPI has the cgr-graph-rs wheels it requires.
+"""Refuse a release until PyPI has the cgr-graph-rs wheels it requires.
 
 code-graph-rag requires the cgr-graph-rs version in rust/cgr_graph_rs on
-every platform .github/workflows/rust-wheels.yml builds a wheel for. The
-publish workflow uploads that crate first; `make release` (scripts/release.sh)
-cannot, since one machine cannot build every platform's wheel, so it runs this
-before uploading anything and stops while any of those wheels is missing.
+every platform .github/workflows/rust-wheels.yml builds a wheel for, and the
+crate has no sdist to fall back on. publish.yml runs this twice: to decide
+whether to build and upload the crate (a release an earlier run left partial
+counts as missing), then again before uploading code-graph-rag. `make
+release` (scripts/release.sh) cannot build every platform's wheel, so it runs
+this before uploading anything and stops while any of those wheels is missing.
+
+Exit status: 0 when every wheel is there, INCOMPLETE when the release or any
+wheel is missing, 1 when PyPI could not be asked.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import sys
 import tomllib
 import urllib.error
@@ -23,6 +29,9 @@ CRATE_PYPROJECT = REPO_ROOT / "rust" / "cgr_graph_rs" / "pyproject.toml"
 DIST_NAME = "cgr-graph-rs"
 RELEASE_URL = "https://pypi.org/pypi/{name}/{version}/json"
 TIMEOUT_S = 15
+INCOMPLETE = 2
+# The version goes into a URL; a release version is plain MAJOR.MINOR.PATCH.
+VERSION_PATTERN = re.compile(r"\d+\.\d+\.\d+")
 WHEEL_SUFFIX = ".whl"
 # The platform part of each wheel's tag, by the target rust-wheels.yml builds;
 # a test keeps the two lists the same.
@@ -41,6 +50,7 @@ MISSING_RELEASE = (
 )
 MISSING_WHEELS = "{name} {version} on PyPI has no wheel for: {targets}."
 UNREACHABLE = "Could not ask PyPI about {name} {version}: {error}"
+MALFORMED = "Refusing malformed {name} version {version!r}."
 FOUND = "{name} {version} has a wheel on PyPI for every platform it is required on."
 
 
@@ -73,6 +83,9 @@ def released_filenames(version: str) -> list[str] | None:
 
 def main() -> int:
     version = crate_version()
+    if not VERSION_PATTERN.fullmatch(version):
+        print(MALFORMED.format(name=DIST_NAME, version=version), file=sys.stderr)  # noqa: T201
+        return 1
     try:
         filenames = released_filenames(version)
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
@@ -83,7 +96,7 @@ def main() -> int:
         return 1
     if filenames is None:
         print(MISSING_RELEASE.format(name=DIST_NAME, version=version), file=sys.stderr)  # noqa: T201
-        return 1
+        return INCOMPLETE
     if missing := missing_targets(filenames):
         print(  # noqa: T201
             MISSING_WHEELS.format(
@@ -91,7 +104,7 @@ def main() -> int:
             ),
             file=sys.stderr,
         )
-        return 1
+        return INCOMPLETE
     print(FOUND.format(name=DIST_NAME, version=version))  # noqa: T201
     return 0
 

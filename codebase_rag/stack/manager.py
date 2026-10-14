@@ -491,6 +491,7 @@ class StackManager:
         if settings.VECTOR_STORE_BACKEND != root_cs.VectorStoreBackend.QDRANT:
             return False
         if settings.QDRANT_URL:
+            self._try_locating_published_qdrant()
             return _names_published_qdrant(
                 settings.QDRANT_URL, self._qdrant_bind, self.qdrant_port
             )
@@ -498,6 +499,22 @@ class StackManager:
             root_cs.SETTING_QDRANT_DB_PATH not in settings.model_fields_set
             and self.compose_file.exists()
         )
+
+    def _try_locating_published_qdrant(self) -> None:
+        """Where Compose publishes Qdrant, before QDRANT_URL is compared to it.
+
+        A stack published on another port than the default is still the one
+        a QDRANT_URL with that port names, and only Compose knows the port.
+        Without a compose file or Docker there is no stack to ask about. A
+        project Compose cannot render, or that publishes Qdrant on no fixed
+        port, leaves the default to compare against, as before this check.
+        """
+        if not self.compose_file.exists() or shutil.which(cs.DOCKER_BIN) is None:
+            return
+        try:
+            self._adopt_published_qdrant(self._resolved_config())
+        except StackError:
+            return
 
     def locate_published_qdrant(self) -> None:
         """Ask Compose where Qdrant is published before checking a running stack.

@@ -272,7 +272,9 @@ def walk_far_end(direction_out: bool | None) -> str:
     )
 
 
-def walk_join(direction_out: bool | None, types: tuple[str, ...]) -> str:
+def walk_join(
+    direction_out: bool | None, types: tuple[str, ...], edge_conds: list[str]
+) -> str:
     here = column(QUEUE, WALK_NODE)
     if direction_out is True:
         join = eq(column(EDGE, SRC), here)
@@ -282,6 +284,8 @@ def walk_join(direction_out: bool | None, types: tuple[str, ...]) -> str:
         join = f"({eq(column(EDGE, SRC), here)} OR {eq(column(EDGE, DST), here)})"
     if types:
         join += f" AND {is_in(column(EDGE, TYPE), types)}"
+    for cond in edge_conds:
+        join += f" AND {cond}"
     return join
 
 
@@ -291,11 +295,13 @@ def walk(
     direction_out: bool | None,
     types: tuple[str, ...],
     high: int | None,
+    edge_conds: list[str],
 ) -> str:
     """A recursive CTE of every path from `seeds`, one row per path.
 
-    Each row keeps the ids of the edges it took, so no edge repeats in a
-    path, as Cypher requires. The queue row is CROSS JOINed first: SQLite
+    `edge_conds` read the stepped edge as `EDGE`; every edge of a path must
+    pass them. Each row keeps the ids of the edges it took, so no edge
+    repeats in a path, as Cypher requires. The queue row is CROSS JOINed first: SQLite
     then looks up the edges leaving that one node instead of scanning every
     edge of the type for it, a plan it otherwise picked without statistics.
     """
@@ -308,7 +314,7 @@ def walk(
         f"UNION ALL SELECT {column(QUEUE, WALK_SEED)}, {walk_far_end(direction_out)}, "
         f"{depth} + 1, {path} || {edge_id} || {WALK_PATH_SEP} "
         f"FROM {table(name, QUEUE)} CROSS JOIN {table(EDGES, EDGE)} "
-        f"ON {walk_join(direction_out, types)} "
+        f"ON {walk_join(direction_out, types, edge_conds)} "
         f"WHERE {bound}{path_avoids(path, edge_id)}"
     )
 

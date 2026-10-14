@@ -9,15 +9,20 @@ and the compiler rewrites that keep big intermediate values off every row.
 from __future__ import annotations
 
 import sqlite3
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
 from codebase_rag import cypher_queries as cq
-from codebase_rag.constants import EG_PLANNER_STATISTICS
+from codebase_rag.constants import (
+    EG_BYTES_PER_MB,
+    EG_PLANNER_STATISTICS,
+    EG_RANGE_ITEM_BYTES,
+)
 from codebase_rag.embedded_graph import cypher_ast as a
-from codebase_rag.embedded_graph import procedures
+from codebase_rag.embedded_graph import functions, procedures
 from codebase_rag.embedded_graph.compiler import ALL_LIVE, live_after
 from codebase_rag.embedded_graph.connection import EmbeddedConnection
 from codebase_rag.embedded_graph.executor import compile_read, value_type
@@ -50,6 +55,10 @@ _QUERY_NAMES = sorted(
     and isinstance(getattr(cq, n), str)
     and n not in _QUERY_FRAGMENTS
 )
+
+
+# Well past the 0.05 s deadline, far short of the unbounded match.
+_REGEX_STOP_S = 5.0
 
 
 @pytest.fixture
@@ -210,6 +219,31 @@ class TestLimits:
         assert wide.run("MATCH (w:W) RETURN count(w) AS n").rows == [(0,)]
         assert wide.run("MATCH (a:N) RETURN count(a) AS n").rows == [(400,)]
 
+    def test_a_backtracking_regex_stops_at_its_deadline(self, conn) -> None:
+        # SQLite's progress handler cannot interrupt a function mid-call; the
+        # match keeps the deadline itself. Unbounded, this one runs for hours.
+        started = time.monotonic()
+        with pytest.raises(QueryTimeout):
+            conn.run("RETURN $s =~ '(a|aa)+c' AS m", {"s": "a" * 60}, timeout_s=0.05)
+        assert time.monotonic() - started < _REGEX_STOP_S
+        assert conn.run("RETURN 'abc' =~ 'a.c' AS m").rows == [(True,)]
+
+    def test_a_range_the_memory_limit_cannot_hold_is_refused(self) -> None:
+        # Its list is Python's memory, which SQLite's heap limit never sees.
+        # Each connection gets its own limit; registering directly keeps the
+        # process-wide SQLite heap limit out of this test.
+        raw = sqlite3.connect(":memory:")
+        functions.register(raw, heap_limit_mb=1)
+        items = EG_BYTES_PER_MB // EG_RANGE_ITEM_BYTES
+        assert raw.execute(
+            "SELECT json_array_length(eg_range(1, ?, 1))", (items,)
+        ).fetchone() == (items,)
+        with pytest.raises(MemoryError):
+            raw.execute("SELECT eg_range(1, ?, 1)", (items + 1,)).fetchone()
+        with pytest.raises(MemoryError):
+            raw.execute("SELECT eg_range(?, ?, 1)", (-(2**63), 2**63 - 2)).fetchone()
+        raw.close()
+
     def test_a_python_procedure_stops_at_its_deadline(self, wide) -> None:
         expired = Deadline(at=0.0)
         with running_until(expired), pytest.raises(QueryTimeout):
@@ -357,6 +391,108 @@ class TestCompiler:
 
     def test_an_aggregate_over_no_rows_gives_one_row(self, conn) -> None:
         assert _rows(conn, "MATCH (n:Nope) RETURN count(n) AS c") == [(0,)]
+
+
+class TestWalkProperties:
+    # A property map on a variable-length relationship tests every edge of
+    # the path, as on a single one; it used to be dropped, so the walk took
+    # every CALLS edge.
+    _GRAPH = (
+        "CREATE (a:F {name: 'a'}), (b:F {name: 'b'}), (c:F {name: 'c'}), "
+        "(d:F {name: 'd'}), (e:F {name: 'e'}), "
+        "(a)-[:CALLS {resolution: 'exact'}]->(b), "
+        "(b)-[:CALLS {resolution: 'fuzzy'}]->(c), "
+        "(a)-[:CALLS]->(d), "
+        "(b)-[:CALLS {resolution: 'exact'}]->(e)"
+    )
+
+    def test_every_walked_edge_passes_the_property_tests(self, conn) -> None:
+        _rows(conn, self._GRAPH)
+        rows = _rows(
+            conn,
+            "MATCH (a:F {name: 'a'})-[:CALLS*1..2 {resolution: 'exact'}]->(b) "
+            "RETURN b.name AS name ORDER BY name",
+        )
+        assert rows == [("b",), ("e",)]
+
+    def test_a_parameter_can_set_the_tested_value(self, conn) -> None:
+        _rows(conn, self._GRAPH)
+        rows = _rows(
+            conn,
+            "MATCH (a:F {name: 'a'})-[:CALLS*1..2 {resolution: $r}]->(b) "
+            "RETURN count(*) AS n",
+            r="fuzzy",
+        )
+        assert rows == [(0,)]
+
+    def test_a_value_read_from_the_row_is_refused(self, conn) -> None:
+        _rows(conn, self._GRAPH)
+        with pytest.raises(CompileError):
+            _rows(
+                conn,
+                "MATCH (a:F) MATCH (a)-[:CALLS*1..2 {resolution: a.name}]->(b) "
+                "RETURN b AS b",
+            )
+
+
+_SCHEMA_1_NODES = (
+    "CREATE TABLE cgr_nodes(id INTEGER PRIMARY KEY, label TEXT NOT NULL, "
+    "key TEXT, props TEXT NOT NULL DEFAULT '{}');"
+    "CREATE UNIQUE INDEX cgr_nodes_label_key ON cgr_nodes(label, key) "
+    "WHERE key IS NOT NULL;"
+    "CREATE INDEX cgr_nodes_prop_name ON cgr_nodes(label, json_extract(props, '$.name'));"
+    "INSERT INTO cgr_nodes(id, label, key, props) VALUES "
+    "(1, 'Function', 'm.a', '{\"name\": \"a\"}'), "
+    "(2, 'Function', 'm.b', '{\"name\": \"b\"}');"
+)
+
+
+class TestNodeIds:
+    # Vector stores key embeddings by node id, and a sync without embeddings
+    # leaves a deleted function's vector behind. A reused id would make that
+    # vector find whichever node took the id.
+    def test_a_deleted_node_id_is_never_handed_out_again(self, conn) -> None:
+        _rows(conn, "CREATE (:Function {qualified_name: 'm.a'})")
+        _rows(conn, "CREATE (:Function {qualified_name: 'm.b'})")
+        ((old,),) = _rows(
+            conn, "MATCH (f:Function {qualified_name: 'm.b'}) RETURN id(f) AS id"
+        )
+        _rows(conn, "MATCH (f:Function {qualified_name: 'm.b'}) DETACH DELETE f")
+        ((new,),) = _rows(
+            conn, "CREATE (f:Function {qualified_name: 'm.c'}) RETURN id(f) AS id"
+        )
+        assert isinstance(old, int)
+        assert isinstance(new, int)
+        assert new > old
+
+    def test_an_older_graph_file_stops_reusing_ids(self, tmp_path: Path) -> None:
+        path = tmp_path / "g.sqlite"
+        with sqlite3.connect(path) as raw:
+            raw.executescript(_SCHEMA_1_NODES)
+        with EmbeddedConnection(str(path)) as conn:
+            kept = _rows(
+                conn,
+                "MATCH (f:Function) RETURN id(f) AS id, f.name AS name ORDER BY id",
+            )
+            _rows(conn, "MATCH (f:Function {name: 'b'}) DETACH DELETE f")
+            ((new,),) = _rows(
+                conn, "CREATE (f:Function {name: 'c'}) RETURN id(f) AS id"
+            )
+        assert kept == [(1, "a"), (2, "b")]
+        assert new == 3
+        with sqlite3.connect(path) as raw:
+            indexes = {
+                name
+                for (name,) in raw.execute(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type = 'index' AND tbl_name = 'cgr_nodes'"
+                )
+            }
+            (ddl,) = raw.execute(
+                "SELECT sql FROM sqlite_master WHERE name = 'cgr_nodes'"
+            ).fetchone()
+        assert "AUTOINCREMENT" in ddl
+        assert {"cgr_nodes_label_key", "cgr_nodes_prop_name"} <= indexes
 
 
 class TestStatistics:

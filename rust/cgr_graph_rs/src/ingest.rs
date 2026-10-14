@@ -717,7 +717,7 @@ pub mod python {
 mod tests {
     use super::*;
 
-    const SCHEMA: &str = "CREATE TABLE cgr_nodes(id INTEGER PRIMARY KEY, label TEXT NOT NULL, key TEXT, \
+    const SCHEMA: &str = "CREATE TABLE cgr_nodes(id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT NOT NULL, key TEXT, \
          props TEXT NOT NULL DEFAULT '{}');
          CREATE UNIQUE INDEX cgr_nodes_label_key ON cgr_nodes(label, key) WHERE key IS NOT NULL;
          CREATE TABLE cgr_edges(id INTEGER PRIMARY KEY, src INTEGER NOT NULL, dst INTEGER NOT NULL, \

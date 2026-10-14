@@ -26,6 +26,7 @@ WHEELS_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "rust-wheels.yml"
 DIST_NAME = "cgr-graph-rs"
 MODULE_NAME = "cgr_graph_rs"
 RELEASE_SCRIPT = REPO_ROOT / "scripts" / "release.sh"
+PUBLISH_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "publish.yml"
 # What maturin names each wheel rust-wheels.yml builds, plus the sdist a
 # release could also carry.
 PUBLISHED_FILES = [
@@ -182,7 +183,7 @@ def test_a_missing_crate_release_stops_a_local_release(
     """Uploading code-graph-rag before its crate would publish a version no
     supported platform can install."""
     monkeypatch.setattr(release_check, "released_filenames", lambda _: None)
-    assert release_check.main() == 1
+    assert release_check.main() == release_check.INCOMPLETE
     assert DIST_NAME in capsys.readouterr().err
 
 
@@ -195,7 +196,7 @@ def test_a_missing_wheel_stops_a_local_release(
     tag = release_check.WHEEL_TAGS[target]
     files = [name for name in PUBLISHED_FILES if tag not in name]
     monkeypatch.setattr(release_check, "released_filenames", lambda _: files)
-    assert release_check.main() == 1
+    assert release_check.main() == release_check.INCOMPLETE
     assert target in capsys.readouterr().err
 
 
@@ -212,6 +213,45 @@ def test_an_unreachable_pypi_stops_a_local_release(
 
     monkeypatch.setattr(release_check, "released_filenames", unreachable)
     assert release_check.main() == 1
+
+
+def test_a_malformed_crate_version_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The version goes into PyPI's URL."""
+    monkeypatch.setattr(release_check, "crate_version", lambda: "1.0/../x")
+    assert release_check.main() == 1
+
+
+def _publish_steps(job: str) -> list[dict[str, str]]:
+    jobs = yaml.safe_load(PUBLISH_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
+    return jobs[job]["steps"]
+
+
+def test_a_partial_crate_release_is_built_and_uploaded_again() -> None:
+    """A run that stopped after uploading some wheels must not leave the
+    rest missing: only a complete release skips the crate's jobs."""
+    (check,) = [
+        step for step in _publish_steps("rust-version") if step.get("id") == "check"
+    ]
+    assert "python3 scripts/check_cgr_graph_rs_on_pypi.py" in check["run"]
+    assert '0) echo "publish=false"' in check["run"]
+    assert f'{release_check.INCOMPLETE}) echo "publish=true"' in check["run"]
+
+
+def test_code_graph_rag_waits_for_every_crate_wheel() -> None:
+    """The crate has no sdist: a platform without its wheel cannot install
+    the code-graph-rag that requires it."""
+    steps = _publish_steps("publish")
+    runs = [step.get("run", "") for step in steps]
+    uses = [step.get("uses", "") for step in steps]
+    check = next(
+        i
+        for i, run in enumerate(runs)
+        if "scripts/check_cgr_graph_rs_on_pypi.py" in run
+    )
+    upload = next(i for i, use in enumerate(uses) if "gh-action-pypi-publish" in use)
+    assert check < upload
 
 
 def test_the_local_release_checks_before_it_commits_or_uploads() -> None:

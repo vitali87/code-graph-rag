@@ -27,6 +27,7 @@ from ..constants.embedded_graph import (
     EG_ERR_VARLEN_VAR,
     EG_WHAT_PARAM_PATTERN_PROPS,
     EG_WHAT_PATH_VARIABLES,
+    EG_WHAT_VARLEN_ROW_PROPS,
     EgBinary,
     EgDecode,
     EgDirection,
@@ -704,11 +705,13 @@ class _MatchBuilder:
             direction_out = (rp.direction == EgDirection.OUT) == forward
         name = self.ctx.fresh(sq.WALK_PREFIX)
         seed_np = left_np if forward else right_np
-        walk = sq.native_walk if self._walks_natively(seed_np) else sq.walk
-        self.pipeline.add(
-            sq.walk_columns(name),
-            walk(name, seeds, direction_out, rp.types, high),
-        )
+        edge_conds = self._walk_edge_conditions(rp)
+        # The Rust walk filters edges by type alone.
+        if edge_conds or not self._walks_natively(seed_np):
+            body = sq.walk(name, seeds, direction_out, rp.types, high, edge_conds)
+        else:
+            body = sq.native_walk(name, seeds, direction_out, rp.types, high)
+        self.pipeline.add(sq.walk_columns(name), body)
         alias = self.ctx.fresh(sq.WALK_ROW_PREFIX)
         self.from_items.append(sq.table(name, alias))
         self.walks.append(alias)
@@ -717,6 +720,28 @@ class _MatchBuilder:
         self.conds.append(sq.eq(sq.column(alias, sq.WALK_NODE), node_side.sql))
         if low > 0:
             self.conds.append(sq.at_least(sq.column(alias, sq.WALK_DEPTH), str(low)))
+
+    def _walk_edge_conditions(self, rp: a.RelPattern) -> list[str]:
+        """The pattern's property tests, which every walked edge must pass.
+
+        The walk is its own stage, run before this MATCH binds anything, so
+        a value that reads a variable has no row to read it from.
+        """
+        if rp.props is None:
+            return []
+        if not isinstance(rp.props, a.MapLit):
+            raise CompileError(
+                EG_ERR_UNSUPPORTED.format(what=EG_WHAT_PARAM_PATTERN_PROPS)
+            )
+        conds: list[str] = []
+        for key, value in rp.props.items:
+            if free_vars(value):
+                raise CompileError(
+                    EG_ERR_UNSUPPORTED.format(what=EG_WHAT_VARLEN_ROW_PROPS)
+                )
+            rhs = self.x.native(self.x.compile(value, Scope()))
+            conds.append(sq.eq(sq.prop_of(sq.EDGE, key), rhs))
+        return conds
 
     def _walk_seeds(
         self, left_np: a.NodePattern, right_np: a.NodePattern

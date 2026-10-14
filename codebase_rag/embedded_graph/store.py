@@ -6,6 +6,7 @@ import sqlite3
 from pathlib import Path
 
 from ..constants.embedded_graph import (
+    EG_AUTOINCREMENT,
     EG_BUSY_TIMEOUT_MS,
     EG_BYTES_PER_MB,
     EG_CACHE_SIZE_KIB,
@@ -13,6 +14,9 @@ from ..constants.embedded_graph import (
     EG_MEMORY_PATH,
     EG_META_SCHEMA_VERSION,
     EG_META_UPSERT,
+    EG_NODES_REBUILD_TABLE,
+    EG_NODES_TABLE,
+    EG_NODES_TABLE_SQL,
     EG_PLANNER_STATISTICS,
     EG_PRAGMA_BUSY,
     EG_PRAGMA_CACHE,
@@ -21,16 +25,22 @@ from ..constants.embedded_graph import (
     EG_SCHEMA_SQL,
     EG_SCHEMA_VERSION,
     EG_SQL_CLEAR_STATS,
+    EG_SQL_COPY_NODES,
     EG_SQL_CREATE_STATS,
+    EG_SQL_DROP_TABLE,
     EG_SQL_INSERT_STAT,
     EG_SQL_JSON_PROBE,
     EG_SQL_RELOAD_STATS,
+    EG_SQL_RENAME_TABLE,
     EG_SQL_SEED_GRAPH_VERSION,
+    EG_SQL_TABLE_DDL,
+    EG_SQL_TABLE_INDEXES,
     EG_STATEMENT_CACHE_SIZE,
     EG_URI_READ_ONLY,
     EG_VERSION_SEPARATOR,
 )
 from . import functions
+from .sql import BEGIN_WRITE, COMMIT, ROLLBACK
 
 # FILTER on aggregates and NULLS FIRST/LAST arrived in 3.30; json_each and
 # friends must be compiled in (they are by default since 3.38, and in every
@@ -83,6 +93,44 @@ def pin_planner_statistics(conn: sqlite3.Connection) -> None:
     conn.execute(EG_SQL_RELOAD_STATS)
 
 
+def _reuses_node_ids(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(EG_SQL_TABLE_DDL, (EG_NODES_TABLE,)).fetchone()
+    return row is not None and EG_AUTOINCREMENT not in str(row[0]).upper()
+
+
+def stop_node_id_reuse(conn: sqlite3.Connection) -> None:
+    """Rebuild a schema-1 node table with AUTOINCREMENT (see EG_NODES_TABLE_SQL).
+
+    SQLite cannot add AUTOINCREMENT to an existing table, so the rows move to
+    a new one. The check repeats inside the write lock, so two processes
+    opening the same old file rebuild it once.
+    """
+    if not _reuses_node_ids(conn):
+        return
+    conn.execute(BEGIN_WRITE)
+    try:
+        if _reuses_node_ids(conn):
+            indexes = [
+                row[0] for row in conn.execute(EG_SQL_TABLE_INDEXES, (EG_NODES_TABLE,))
+            ]
+            conn.execute(EG_NODES_TABLE_SQL.format(table=EG_NODES_REBUILD_TABLE))
+            conn.execute(
+                EG_SQL_COPY_NODES.format(dst=EG_NODES_REBUILD_TABLE, src=EG_NODES_TABLE)
+            )
+            conn.execute(EG_SQL_DROP_TABLE.format(table=EG_NODES_TABLE))
+            conn.execute(
+                EG_SQL_RENAME_TABLE.format(
+                    src=EG_NODES_REBUILD_TABLE, dst=EG_NODES_TABLE
+                )
+            )
+            for index in indexes:
+                conn.execute(index)
+        conn.execute(COMMIT)
+    except BaseException:
+        conn.execute(ROLLBACK)
+        raise
+
+
 def open_connection(
     path: str, read_only: bool = False, heap_limit_mb: int | None = None
 ) -> sqlite3.Connection:
@@ -121,9 +169,10 @@ def open_connection(
     if not read_only:
         for pragma in EG_PRAGMAS:
             conn.execute(pragma)
+        stop_node_id_reuse(conn)
         conn.executescript(EG_SCHEMA_SQL)
         conn.execute(EG_META_UPSERT, (EG_META_SCHEMA_VERSION, EG_SCHEMA_VERSION))
         conn.execute(EG_SQL_SEED_GRAPH_VERSION)
         pin_planner_statistics(conn)
-    functions.register(conn)
+    functions.register(conn, heap_limit_mb)
     return conn

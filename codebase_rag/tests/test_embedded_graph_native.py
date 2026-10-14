@@ -450,6 +450,14 @@ class TestWalks:
         )
         assert "eg_walk" not in plan.sql
 
+    def test_a_walk_with_property_tests_keeps_the_cte(self) -> None:
+        # The Rust walk filters edges by type alone.
+        plan = compile_read(
+            "MATCH (a:N {k: 1})-[:A*1..2 {w: 1}]->(b) RETURN b AS b", (), True, True
+        )
+        assert "eg_walk" not in plan.sql
+        assert "json_extract(e.props" in plan.sql
+
     def test_a_walk_that_meets_a_newer_graph_answers_from_its_statements(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

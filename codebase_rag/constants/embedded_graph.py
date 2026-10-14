@@ -525,13 +525,20 @@ EG_PREFIX_UPPER_BOUND = "\U0010ffff"
 
 # ----------------------------------------------------------------- storage
 
-EG_SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS cgr_nodes(
-    id INTEGER PRIMARY KEY,
+# AUTOINCREMENT, so a deleted node's id is never handed out again, as
+# Memgraph never reuses one. Vector stores key embeddings by node id, and an
+# incremental run without embeddings leaves a deleted function's vector in
+# place: a reused id would make that vector find whatever node took the id.
+EG_NODES_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS {table}(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     label TEXT NOT NULL,
     key TEXT,
-    props TEXT NOT NULL DEFAULT '{}'
-);
+    props TEXT NOT NULL DEFAULT '{{}}'
+);"""
+EG_SCHEMA_SQL = (
+    EG_NODES_TABLE_SQL.format(table="cgr_nodes")
+    + """
 CREATE UNIQUE INDEX IF NOT EXISTS cgr_nodes_label_key ON cgr_nodes(label, key) WHERE key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS cgr_nodes_key ON cgr_nodes(key);
 CREATE INDEX IF NOT EXISTS cgr_nodes_label ON cgr_nodes(label);
@@ -547,6 +554,7 @@ CREATE INDEX IF NOT EXISTS cgr_edges_dst ON cgr_edges(dst, type);
 CREATE INDEX IF NOT EXISTS cgr_edges_type ON cgr_edges(type);
 CREATE TABLE IF NOT EXISTS cgr_meta(name TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
+)
 # Its node and relationship tables, as sqlite_stat1 rows name them.
 EG_NODES_TABLE = "cgr_nodes"
 EG_EDGES_TABLE = "cgr_edges"
@@ -561,6 +569,9 @@ EG_PRAGMA_CACHE = "PRAGMA cache_size=-{kib}"
 # Process-wide: SQLite fails an allocation past it with SQLITE_NOMEM rather
 # than letting one runaway query take the machine's memory.
 EG_PRAGMA_HEAP_LIMIT = "PRAGMA hard_heap_limit={bytes}"
+# Peak bytes per item while range() builds and serializes its list: 47
+# measured for small ints, rounded up for large ones and their longer text.
+EG_RANGE_ITEM_BYTES = 64
 # The planner's statistics are pinned, not measured. Measured on a graph
 # that is still being written, they describe it at its smallest: a sync's
 # first connection recorded a near-empty graph, after which every batch of
@@ -589,7 +600,23 @@ EG_PROP_INDEX_SQL = (
     "CREATE INDEX IF NOT EXISTS {name} ON cgr_nodes(label, json_extract(props, {path}))"
 )
 EG_META_SCHEMA_VERSION = "schema_version"
-EG_SCHEMA_VERSION = "1"
+EG_SCHEMA_VERSION = "2"
+# Rebuilding a node table created before AUTOINCREMENT (schema 1): the new
+# table is filled under a scratch name, then takes the old one's name and
+# indexes. Copying the ids keeps every edge and stored vector pointing where
+# it did; SQLite then starts the sequence after the largest copied id.
+EG_AUTOINCREMENT = "AUTOINCREMENT"
+EG_NODES_REBUILD_TABLE = "cgr_nodes_rebuild"
+EG_SQL_TABLE_DDL = "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?"
+EG_SQL_TABLE_INDEXES = (
+    "SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? "
+    "AND sql IS NOT NULL"
+)
+EG_SQL_COPY_NODES = (
+    "INSERT INTO {dst}(id, label, key, props) SELECT id, label, key, props FROM {src}"
+)
+EG_SQL_DROP_TABLE = "DROP TABLE {table}"
+EG_SQL_RENAME_TABLE = "ALTER TABLE {src} RENAME TO {dst}"
 EG_META_UPSERT = (
     "INSERT INTO cgr_meta(name, value) VALUES (?, ?) "
     "ON CONFLICT(name) DO UPDATE SET value = excluded.value"
@@ -631,6 +658,7 @@ EG_PATH_RELATIONSHIPS = "relationships"
 # ----------------------------------------------------------------- errors
 
 EG_ERR_SYNTAX = "Cypher syntax error at offset {pos}: {message}"
+EG_ERR_RANGE_TOO_LARGE = "range() of {count} items exceeds the query memory limit"
 EG_ERR_UNEXPECTED = "unexpected {found!r}, expected {expected}"
 EG_ERR_UNTERMINATED_STRING = "unterminated string literal"
 EG_ERR_UNTERMINATED_COMMENT = "unterminated block comment"
@@ -638,6 +666,9 @@ EG_ERR_UNTERMINATED_IDENT = "unterminated backtick identifier"
 EG_ERR_UNSUPPORTED = "unsupported in the embedded graph engine: {what}"
 EG_WHAT_PATH_VARIABLES = "path variables"
 EG_WHAT_PARAM_PATTERN_PROPS = "parameter property maps in patterns"
+EG_WHAT_VARLEN_ROW_PROPS = (
+    "variable-length relationship properties that read a variable"
+)
 EG_WHAT_READ_WITHOUT_RETURN = "a read query without RETURN"
 EG_WHAT_UNION_UPDATES = "UNION with updating clauses"
 EG_WHAT_REMOVE_LABEL = "REMOVE of a label"

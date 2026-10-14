@@ -16,7 +16,8 @@ permissions: read-all
 
 jobs:
   # code-graph-rag requires cgr-graph-rs (rust/cgr_graph_rs), so a crate
-  # version PyPI lacks is built, tested and uploaded first.
+  # version PyPI lacks, or holds only some wheels of, is built, tested and
+  # uploaded first.
   rust-version:
     name: Is this cgr-graph-rs on PyPI?
     runs-on: ubuntu-latest
@@ -42,17 +43,15 @@ jobs:
 
       - name: Look the version up
         id: check
+        # A release an earlier run uploaded only part of counts as missing:
+        # the upload below skips the wheels PyPI already has.
         run: |
-          VERSION=$(grep -E '^version\s*=' rust/cgr_graph_rs/pyproject.toml | sed 's/version = "\(.*\)"/\1/')
-          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::refusing malformed cgr-graph-rs version '$VERSION'"
-            exit 1
-          fi
-          STATUS=$(curl -s -o /dev/null -w '%{http_code}' "https://pypi.org/pypi/cgr-graph-rs/$VERSION/json")
+          STATUS=0
+          python3 scripts/check_cgr_graph_rs_on_pypi.py || STATUS=$?
           case "$STATUS" in
-            200) echo "publish=false" >> "$GITHUB_OUTPUT"; echo "cgr-graph-rs $VERSION is on PyPI." ;;
-            404) echo "publish=true" >> "$GITHUB_OUTPUT"; echo "cgr-graph-rs $VERSION is new." ;;
-            *) echo "::error::PyPI answered $STATUS for cgr-graph-rs $VERSION"; exit 1 ;;
+            0) echo "publish=false" >> "$GITHUB_OUTPUT" ;;
+            2) echo "publish=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::could not tell whether PyPI has cgr-graph-rs"; exit 1 ;;
           esac
 
   rust-wheels:
@@ -120,6 +119,17 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+
+      # The jobs above decide from one look at PyPI; this one refuses to
+      # publish a code-graph-rag some platform cannot install. PyPI's JSON
+      # API can lag an upload by a minute or so.
+      - name: Require every cgr-graph-rs wheel on PyPI
+        run: |
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            python3 scripts/check_cgr_graph_rs_on_pypi.py && exit 0
+            sleep 30
+          done
+          exit 1
 
       - name: Build package
         run: uv build

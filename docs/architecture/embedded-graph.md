@@ -145,10 +145,12 @@ tested against it, and gives the same answers.
 A checkout builds the crate it carries: `uv sync` compiles it with the Rust
 toolchain on your `PATH` (uv takes it as a path source), so a change to the
 Python and Rust halves is tested together. `.github/workflows/rust-wheels.yml`
-builds the wheels; a release uploads a crate version PyPI does not have yet
-before code-graph-rag, which requires it. `make release`, which publishes from
-a workstation, cannot build every platform's wheel, so it stops until PyPI has
-them all (`scripts/check_cgr_graph_rs_on_pypi.py`).
+builds the wheels. A release uploads any of the crate version's wheels PyPI
+does not have yet, then publishes code-graph-rag only once PyPI has every one
+of them (`scripts/check_cgr_graph_rs_on_pypi.py`). The crate has no sdist, so
+a platform without its wheel could not install that code-graph-rag. `make
+release`, which publishes from a workstation, cannot build every platform's
+wheel, so it stops until PyPI has them all.
 
 It runs PageRank, degree centrality, weakly and strongly connected
 components, betweenness centrality, ancestors and descendants, and returns

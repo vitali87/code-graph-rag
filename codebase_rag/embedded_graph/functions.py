@@ -8,26 +8,31 @@ from __future__ import annotations
 
 import json
 import math
-import re
 import sqlite3
 import time
 from collections.abc import Callable
-from functools import lru_cache
+from functools import partial
+
+import regex
 
 from ..constants.embedded_graph import (
-    EG_COMPILE_CACHE_SIZE,
+    EG_BYTES_PER_MB,
     EG_EMPTY,
+    EG_ERR_RANGE_TOO_LARGE,
     EG_JSON_FALSE,
     EG_JSON_SEPARATORS,
     EG_JSON_TRUE,
     EG_PATH_SEPARATOR,
+    EG_RANGE_ITEM_BYTES,
     EgSqlFn,
 )
 from ..types_defs import JsonValue
+from .limits import seconds_left
 from .types import SqlValue
 
 _MS_PER_S = 1000
 _HALF = 0.5
+_UNCOUNTABLE = 1 << 64
 
 
 def _load(text: str | None) -> JsonValue:
@@ -42,15 +47,29 @@ def _dump(value: JsonValue) -> str | None:
     return json.dumps(value, separators=EG_JSON_SEPARATORS)
 
 
-@lru_cache(maxsize=EG_COMPILE_CACHE_SIZE)
-def _regex(pattern: str) -> re.Pattern[str]:
-    return re.compile(pattern)
-
-
 def eg_regex(value: SqlValue, pattern: SqlValue) -> int | None:
+    """`value =~ pattern`, stopped at the statement's deadline.
+
+    SQLite's progress handler cannot interrupt a function while it runs, so
+    a backtracking pattern would otherwise hold the statement past its time.
+    """
     if not isinstance(value, str) or not isinstance(pattern, str):
         return None
-    return 1 if _regex(pattern).fullmatch(value) else 0
+    left = seconds_left()
+    try:
+        # A negative timeout means none to `regex`, which caches the
+        # compiled pattern itself.
+        matched = regex.fullmatch(
+            pattern, value, timeout=None if left is None else max(left, 0.0)
+        )
+    except TimeoutError:
+        # `regex` keeps its own clock; the executor reports a timeout once
+        # the deadline's clock has passed too, which may be a tick later.
+        rest = seconds_left()
+        if rest is not None and rest > 0:
+            time.sleep(rest)
+        raise
+    return 1 if matched else 0
 
 
 def eg_list_add(left: str | None, right: str | None) -> str | None:
@@ -144,11 +163,31 @@ def eg_str_slice(value: str | None, start: int | None, end: int | None) -> str |
     return value[s:e]
 
 
-def eg_range(start: int | None, end: int | None, step: int | None) -> str | None:
+def _length(items: range) -> int:
+    try:
+        return len(items)
+    except OverflowError:
+        # Longer than an index can count, so longer than any limit.
+        return _UNCOUNTABLE
+
+
+def eg_range(
+    start: int | None, end: int | None, step: int | None, max_items: int | None = None
+) -> str | None:
+    """`range(start, end, step)`, refused past `max_items` before it is built.
+
+    Its list is Python's memory, outside the statement's SQLite heap limit;
+    `register` derives `max_items` from that limit. MemoryError is what
+    SQLite's own limit raises.
+    """
     if start is None or end is None or not step:
         return None
     stop = end + (1 if step > 0 else -1)
-    return _dump(list(range(int(start), int(stop), int(step))))
+    items = range(int(start), int(stop), int(step))
+    count = _length(items)
+    if max_items is not None and count > max_items:
+        raise MemoryError(EG_ERR_RANGE_TOO_LARGE.format(count=count))
+    return _dump(list(items))
 
 
 def eg_split(value: str | None, sep: str | None) -> str | None:
@@ -256,7 +295,6 @@ _DETERMINISTIC: dict[str, tuple[int, Callable[..., SqlValue]]] = {
     EgSqlFn.SIZE: (1, eg_size),
     EgSqlFn.SLICE: (3, eg_slice),
     EgSqlFn.STR_SLICE: (3, eg_str_slice),
-    EgSqlFn.RANGE: (3, eg_range),
     EgSqlFn.SPLIT: (2, eg_split),
     EgSqlFn.REVERSE_STR: (1, eg_reverse_str),
     EgSqlFn.REVERSE_LIST: (1, eg_reverse_list),
@@ -275,7 +313,15 @@ _DETERMINISTIC: dict[str, tuple[int, Callable[..., SqlValue]]] = {
 }
 
 
-def register(conn: sqlite3.Connection) -> None:
+def register(conn: sqlite3.Connection, heap_limit_mb: int | None = None) -> None:
     for name, (arity, fn) in _DETERMINISTIC.items():
         conn.create_function(name, arity, fn, deterministic=True)
+    max_items = (
+        None
+        if heap_limit_mb is None
+        else heap_limit_mb * EG_BYTES_PER_MB // EG_RANGE_ITEM_BYTES
+    )
+    conn.create_function(
+        EgSqlFn.RANGE, 3, partial(eg_range, max_items=max_items), deterministic=True
+    )
     conn.create_function(EgSqlFn.TIMESTAMP, 0, eg_timestamp)

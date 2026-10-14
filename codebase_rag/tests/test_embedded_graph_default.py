@@ -22,10 +22,12 @@ from codebase_rag.mgclient_compat import _absent_driver
 from codebase_rag.schemas import HealthCheckResult
 from codebase_rag.services import graph_service
 from codebase_rag.services.graph_service import GraphUnavailableError, MemgraphIngestor
+from codebase_rag.stack import manager as manager_module
 from codebase_rag.stack.constants import SERVICE_QDRANT
-from codebase_rag.stack.manager import StackManager
+from codebase_rag.stack.manager import StackError, StackManager
 from codebase_rag.tools import health_checker
 from codebase_rag.tools.health_checker import HealthChecker
+from codebase_rag.types_defs import JsonValue
 
 _PASS = HealthCheckResult(name="ok", passed=True, message="ok")
 # Bound at import, before conftest's autouse fixture swaps the function for
@@ -83,10 +85,58 @@ def test_serves_vectors_follows_the_vector_settings(
         "__pydantic_fields_set__",
         settings.model_fields_set - {SETTING_QDRANT_DB_PATH},
     )
+    # Without Docker the default port stands; asking Compose is tested below.
+    monkeypatch.setattr(manager_module.shutil, "which", lambda _: None)
     manager = StackManager(home=tmp_path)
     if compose_exists:
         manager.compose_file.write_text("services: {}\n")
     assert manager.serves_vectors() is expected
+
+
+def _published_on(port: str) -> dict[str, JsonValue]:
+    """`docker compose config` for a stack publishing Qdrant on `port`."""
+    entry: dict[str, JsonValue] = {"target": 6333, "published": port}
+    return {"services": {SERVICE_QDRANT: {"ports": [entry]}}}
+
+
+@pytest.mark.parametrize(
+    ("qdrant_url", "published", "expected"),
+    [
+        # Greptile on #3377: Compose publishes the stack's Qdrant on 16333,
+        # and QDRANT_URL says so; compared with the default 6333 instead,
+        # the stack was never started and every embedding write failed.
+        ("http://localhost:16333", "16333", True),
+        ("http://localhost:6333", "16333", False),
+        ("http://localhost:6333", "6333", True),
+    ],
+)
+def test_serves_vectors_asks_compose_where_qdrant_is_published(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    qdrant_url: str,
+    published: str,
+    expected: bool,
+) -> None:
+    monkeypatch.setattr(settings, "QDRANT_URL", qdrant_url)
+    monkeypatch.setattr(settings, "QDRANT_API_KEY", None)
+    monkeypatch.setattr(manager_module.shutil, "which", lambda _: "/usr/bin/docker")
+    manager = StackManager(home=tmp_path)
+    manager.compose_file.write_text("services: {}\n")
+    with patch.object(
+        manager, "_resolved_config", return_value=_published_on(published)
+    ):
+        assert manager.serves_vectors() is expected
+
+
+def test_serves_vectors_keeps_the_default_when_compose_cannot_say(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "QDRANT_URL", "http://localhost:6333")
+    monkeypatch.setattr(manager_module.shutil, "which", lambda _: "/usr/bin/docker")
+    manager = StackManager(home=tmp_path)
+    manager.compose_file.write_text("services: {}\n")
+    with patch.object(manager, "_resolved_config", side_effect=StackError("no config")):
+        assert manager.serves_vectors() is True
 
 
 def test_the_stack_is_still_started_for_memgraph(monkeypatch) -> None:
