@@ -36,6 +36,7 @@ import atheris
 from loguru import logger
 
 with atheris.instrument_imports():
+    from codebase_rag import constants as cs
     from codebase_rag.graph_updater import GraphUpdater
     from codebase_rag.parser_loader import load_parsers
     from evals.cgr_graph import _StatefulIngestor
