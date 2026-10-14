@@ -611,9 +611,19 @@ def _identifier_names(node: Node) -> list[str]:
 
 def _java_exported(node: Node) -> bool:
     modifiers = next((c for c in node.children if c.type == cs.TS_MODIFIERS), None)
-    if modifiers is None:
-        return False
-    return any(c.type in _JAVA_PUBLIC_MODIFIERS for c in modifiers.children)
+    if modifiers is not None:
+        if any(c.type == cs.JAVA_MODIFIER_PRIVATE for c in modifiers.children):
+            return False
+        if any(c.type in _JAVA_PUBLIC_MODIFIERS for c in modifiers.children):
+            return True
+    # Interface methods are public without a visibility modifier (JLS 9.4).
+    parent = node.parent
+    return (
+        parent is not None
+        and parent.type == cs.TS_JAVA_INTERFACE_BODY
+        and parent.parent is not None
+        and parent.parent.type == cs.TS_INTERFACE_DECLARATION
+    )
 
 
 def _csharp_exported(node: Node) -> bool:
