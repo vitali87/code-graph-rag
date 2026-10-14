@@ -172,6 +172,72 @@ def test_a_plain_rename_still_leaves_its_callers_dangling(temp_repo: Path) -> No
     assert _callers(delta) == [("page", "util")]
 
 
+@pytest.mark.parametrize(
+    "util_after",
+    [
+        pytest.param("slug = None\n", id="none"),
+        pytest.param('slug: str = "slug"\n', id="annotated-string"),
+    ],
+)
+def test_a_function_replaced_by_a_value_leaves_its_callers_dangling(
+    temp_repo: Path, util_after: str
+) -> None:
+    # Negative (Greptile, PR #3312): the name still imports, but `slug(t)`
+    # raises TypeError, so binding it to a literal serves no caller.
+    store, updater = _index(temp_repo, FILES)
+    (temp_repo / "py/util.py").write_text(util_after, encoding="utf-8")
+
+    delta = observe(
+        store.fetch_all,
+        PROJECT,
+        ["py/util.py"],
+        lambda: updater.reingest(["py/util.py"]),
+        repo_root=temp_repo,
+    )
+
+    assert _callers(delta) == [("page", "util")]
+    assert "TypeError" in _runs(temp_repo)
+
+
+@pytest.mark.parametrize(
+    "guard",
+    [
+        pytest.param(
+            "from typing import TYPE_CHECKING\n\nif TYPE_CHECKING:", id="bare"
+        ),
+        pytest.param("import typing\n\nif typing.TYPE_CHECKING:", id="qualified"),
+    ],
+)
+def test_a_re_export_only_type_checkers_see_leaves_its_callers_dangling(
+    temp_repo: Path, guard: str
+) -> None:
+    # Negative (PR #3312 review): an import under `if TYPE_CHECKING:` never
+    # runs, so `from py.util import slug` fails and nothing still binds it.
+    delta = _move(temp_repo, f"{guard}\n    {REEXPORT}")
+
+    assert _callers(delta) == [("page", "util")]
+    assert [(d["importer"], d["name"]) for d in delta["dangling_importers"]] == [
+        (f"{PROJECT}.py.app", "slug")
+    ]
+    assert "ImportError" in _runs(temp_repo)
+
+
+def test_a_re_export_in_the_else_of_a_type_checking_guard_is_not_dangling(
+    temp_repo: Path,
+) -> None:
+    # The `else` of `if TYPE_CHECKING:` is the branch that runs.
+    util = (
+        "from typing import TYPE_CHECKING\n\nif TYPE_CHECKING:\n    pass\n"
+        f"else:\n    {REEXPORT}"
+    )
+
+    delta = _move(temp_repo, util)
+
+    assert delta["dangling_callers"] == []
+    assert delta["dangling_importers"] == []
+    assert _runs(temp_repo) == "hello-world"
+
+
 def test_a_removed_method_is_dangling_whatever_its_module_binds(
     temp_repo: Path,
 ) -> None:
@@ -216,6 +282,14 @@ def test_a_caller_through_the_module_name_is_not_dangling(temp_repo: Path) -> No
     ("util_after", "dangling"),
     [
         pytest.param('export { slug } from "./text";\n', [], id="re-exported"),
+        # Negative (Codex, PR #3312): an import the module does not export
+        # leaves `import { slug } from "./util"` failing.
+        pytest.param(
+            'import { slug } from "./text";\n\n'
+            'export function other(): string {\n  return slug("A");\n}\n',
+            [("page", "util")],
+            id="imported-only",
+        ),
         # Negative: nothing left behind, so `import { slug } from "./util"`
         # binds nothing.
         pytest.param("", [("page", "util")], id="nothing-left"),

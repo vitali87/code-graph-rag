@@ -652,7 +652,7 @@ def _still_bound(before: Snapshot, still: _AfterBindings) -> Callable[[str], boo
         if qn not in answers:
             module, _sep, name = qn.rpartition(cs.SEPARATOR_DOT)
             answers[qn] = module not in before.definitions and still.binds(
-                module, before.definitions[qn].path, name
+                module, before.definitions[qn].path, name, for_callers=True
             )
         return answers[qn]
 
@@ -716,11 +716,32 @@ class _SourceNames(NamedTuple):
     # with one built at run time, which `star_unknown` tells apart.
     star: frozenset[str] | None = None
     star_unknown: bool = False
+    # Names only ever assigned a value no call can run on (`slug = None`):
+    # importable, but a caller of the function they replace fails.
+    inert: frozenset[str] = frozenset()
+    # The (first, last) lines of each `if TYPE_CHECKING:` body, whose
+    # imports bind nothing at run time.
+    typing_only: tuple[tuple[int, int], ...] = ()
 
 
 # The statement lists of a compound statement, walked as the module's own
 # top level; every other field is an expression that may bind a name.
 _PY_BLOCK_FIELDS = frozenset({"body", "orelse", "finalbody", "handlers", "cases"})
+
+# Values that are never callable: a literal, an f-string, a display or a
+# comprehension.
+_PY_INERT_VALUES = (
+    ast.Constant,
+    ast.JoinedStr,
+    ast.List,
+    ast.Tuple,
+    ast.Set,
+    ast.Dict,
+    ast.ListComp,
+    ast.SetComp,
+    ast.DictComp,
+    ast.GeneratorExp,
+)
 
 
 def _stored_names(node: ast.AST) -> Iterator[str]:
@@ -812,6 +833,10 @@ def _names_bound_by(node: ast.AST, pending: list[ast.AST]) -> Iterator[str]:
     if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
         yield from _definition_bindings(node)
         return
+    if isinstance(node, ast.If) and _is_type_checking(node.test):
+        # Its body runs for type checkers only; its `else` runs instead.
+        pending.extend(node.orelse)
+        return
     if isinstance(node, ast.Import):
         for alias in node.names:
             yield alias.asname or alias.name.partition(cs.SEPARATOR_DOT)[0]
@@ -856,20 +881,56 @@ def _python_top_level_names(text: str) -> _SourceNames | None:
         return None
     own: set[str] = set()
     imported: set[str] = set()
+    inert: set[str] = set()
+    live: set[str] = set()
+    typing_only: list[tuple[int, int]] = []
     pending: list[ast.AST] = list(tree.body)
     while pending:
         node = pending.pop()
         if isinstance(node, ast.ImportFrom):
             imported.update(alias.asname or alias.name for alias in node.names)
-        else:
-            own.update(_names_bound_by(node, pending))
+            continue
+        if isinstance(node, ast.If) and _is_type_checking(node.test):
+            last = node.body[-1]
+            typing_only.append((node.body[0].lineno, last.end_lineno or last.lineno))
+        bound = set(_names_bound_by(node, pending))
+        assigned_inert = _inert_targets(node)
+        own.update(bound)
+        inert.update(assigned_inert)
+        live.update(bound - assigned_inert)
     star, star_unknown = _star_names(tree.body)
     return _SourceNames(
         own=frozenset(own),
         imported=frozenset(imported),
         star=star,
         star_unknown=star_unknown,
+        inert=frozenset(inert - live - imported),
+        typing_only=tuple(typing_only),
     )
+
+
+def _is_type_checking(test: ast.expr) -> bool:
+    """`TYPE_CHECKING` or `typing.TYPE_CHECKING`, true for type checkers only."""
+    match test:
+        case ast.Name(id=cs.PY_TYPE_CHECKING) | ast.Attribute(attr=cs.PY_TYPE_CHECKING):
+            return True
+    return False
+
+
+def _inert_targets(node: ast.AST) -> frozenset[str]:
+    """The names `name = <literal>` binds to a value no call can run on."""
+    match node:
+        case ast.Assign(targets=targets, value=value) if isinstance(
+            value, _PY_INERT_VALUES
+        ) and all(isinstance(target, ast.Name) for target in targets):
+            return frozenset(
+                target.id for target in targets if isinstance(target, ast.Name)
+            )
+        case ast.AnnAssign(target=ast.Name(id=name), value=value) if isinstance(
+            value, _PY_INERT_VALUES
+        ):
+            return frozenset({name})
+    return frozenset()
 
 
 def _in_source_order(
@@ -985,6 +1046,7 @@ class _AfterBindings:
         }
         self._sources: dict[str, str | None] = {}
         self._names: dict[str, _SourceNames | None] = {}
+        self._rows: dict[str, list[str] | None] = {}
 
     def source(self, path: str) -> str | None:
         if path not in self._sources:
@@ -1010,6 +1072,8 @@ class _AfterBindings:
         path: str,
         name: str,
         seen: frozenset[tuple[str, str]] = frozenset(),
+        *,
+        for_callers: bool = False,
     ) -> bool:
         """Whether `module` (in file `path`) still binds `name` to something.
 
@@ -1018,7 +1082,13 @@ class _AfterBindings:
         `app.core` keeps every `from app.core import helper` working, while
         `from app.empty import helper` keeps nothing when `app.empty` has no
         `helper`. A chain of re-exports is followed, into modules the edit
-        left alone too; a cycle in it binds nothing.
+        left alone too; a cycle in it binds nothing. An import under `if
+        TYPE_CHECKING:` never runs, so it binds nothing.
+
+        `for_callers` asks for a binding a call from another module still
+        works through: a name only assigned a literal (`helper = None`)
+        cannot be called, and a JS/TS module shares an imported name only
+        by exporting it.
         """
         if (module, name) in seen:
             return False
@@ -1031,34 +1101,97 @@ class _AfterBindings:
             return qn not in self._gone
         definitions, bindings = self._facts(path)
         names = self._source_names(path)
-        if qn in definitions or (names is not None and _binds_itself(names, name)):
+        if qn in definitions or (
+            names is not None and _binds_itself(names, name, for_callers)
+        ):
             return True
-        own = [binding for binding in bindings if binding.importer == module]
-        if any(self._resolves(binding, name, seen) for binding in own):
+        own = [
+            binding
+            for binding in bindings
+            if binding.importer == module
+            and not _typing_only(names, binding.line)
+            and (not for_callers or self._shares(binding))
+        ]
+        if any(self._resolves(binding, name, seen, for_callers) for binding in own):
             return True
         return names is not None and _unfollowed_import(names, name, own)
 
     def _resolves(
-        self, binding: ImportBinding, name: str, seen: frozenset[tuple[str, str]]
+        self,
+        binding: ImportBinding,
+        name: str,
+        seen: frozenset[tuple[str, str]],
+        for_callers: bool,
     ) -> bool:
         if binding.imported_name == cs.IMPORTED_NAME_WILDCARD:
             return _star_takes(
                 self._source_names(binding.module_path), name
-            ) and self.binds(binding.module, binding.module_path, name, seen)
+            ) and self.binds(
+                binding.module,
+                binding.module_path,
+                name,
+                seen,
+                for_callers=for_callers,
+            )
         return binding.bound == name and (
             _imports_the_module_itself(binding, self._gone)
             or self.binds(
-                binding.module, binding.module_path, binding.imported_name, seen
+                binding.module,
+                binding.module_path,
+                binding.imported_name,
+                seen,
+                for_callers=for_callers,
             )
         )
+
+    def _shares(self, binding: ImportBinding) -> bool:
+        """Whether another module can reach the name an import binds here.
+
+        Any module-level name of a Python module can be imported. A JS/TS
+        module shares only what it exports: `export { slug } from "./text"`
+        shares `slug`, `import { slug } from "./text"` keeps it to itself.
+        The IMPORTS edge starts where its statement does, so the statement's
+        first word tells them apart. Another language's import is not taken
+        to re-export anything.
+        """
+        language = _language(binding.importer_path)
+        if language == cs.SupportedLanguage.PYTHON:
+            return True
+        if language not in cs.JS_TS_LANGUAGES or self._repo_root is None:
+            return False
+        path = binding.importer_path
+        if path not in self._rows:
+            text = _read_source(self._repo_root, path)
+            self._rows[path] = None if text is None else text.split("\n")
+        rows = self._rows[path]
+        return rows is not None and _opens_export(rows, binding.line, binding.col)
 
 
 # A module-level `__getattr__` (PEP 562) can answer for any name.
 _PY_MODULE_GETATTR = "__getattr__"
 
 
-def _binds_itself(names: _SourceNames, name: str) -> bool:
-    return name in names.own or _PY_MODULE_GETATTR in names.own
+def _binds_itself(names: _SourceNames, name: str, for_callers: bool = False) -> bool:
+    if _PY_MODULE_GETATTR in names.own:
+        return True
+    return name in names.own and not (for_callers and name in names.inert)
+
+
+def _typing_only(names: _SourceNames | None, line: int | None) -> bool:
+    """Whether a statement at `line` sits in an `if TYPE_CHECKING:` body."""
+    return (
+        names is not None
+        and line is not None
+        and any(first <= line <= last for first, last in names.typing_only)
+    )
+
+
+def _opens_export(rows: list[str], line: int | None, col: int | None) -> bool:
+    """Whether the statement at 1-based `line`, byte `col`, is an `export`."""
+    if line is None or col is None or not 0 < line <= len(rows):
+        return False
+    rest = rows[line - 1].encode(cs.ENCODING_UTF8)[col:]
+    return re.match(cs.JS_EXPORT_STATEMENT_PATTERN, rest) is not None
 
 
 def _unfollowed_import(
@@ -1132,6 +1265,10 @@ def _dunder_all_entries(text: str, name: str) -> list[tuple[int, int]]:
 def _python_source(repo_root: Path, path: str) -> str | None:
     if get_language_for_extension(Path(path).suffix) != cs.SupportedLanguage.PYTHON:
         return None
+    return _read_source(repo_root, path)
+
+
+def _read_source(repo_root: Path, path: str) -> str | None:
     try:
         return (repo_root / path).read_text(encoding=cs.ENCODING_UTF8)
     except (OSError, UnicodeDecodeError):

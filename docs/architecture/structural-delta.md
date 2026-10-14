@@ -91,9 +91,13 @@ keeps `from new_home import name` behind, or a rename that keeps
 `old = new`, still serves every caller reaching the name through that
 module, whether it imported the name, imported the module, or sits in the
 module itself. The binding is read as for `dangling_importers`, following
-re-exports into modules the edit left alone. A method is reached through
-its class, which no module binding stands in for, so its callers are
-listed as before.
+re-exports into modules the edit left alone. An import under `if
+TYPE_CHECKING:` never runs, so it binds nothing for either check. A
+caller needs more than an importable name: a name only assigned a literal
+(`name = None`) cannot be called, and a JS/TS module serves a name it
+imports only through an `export`. A method is reached through its class,
+which no module binding stands in for, so its callers are listed as
+before.
 
 ### Arity verdicts
 
