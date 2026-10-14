@@ -55,6 +55,7 @@ EXT_LUA = ".lua"
 EXT_CS = ".cs"
 EXT_DART = ".dart"
 EXT_SQL = ".sql"
+EXT_JL = ".jl"
 # Data file extensions
 EXT_JSON = ".json"
 
@@ -106,6 +107,7 @@ LUA_EXTENSIONS = (EXT_LUA,)
 CS_EXTENSIONS = (EXT_CS,)
 DART_EXTENSIONS = (EXT_DART,)
 SQL_EXTENSIONS = (EXT_SQL,)
+JULIA_EXTENSIONS = (EXT_JL,)
 
 # Package indicator files
 PKG_INIT_PY = "__init__.py"
@@ -287,6 +289,7 @@ class SupportedLanguage(StrEnum):
     CSHARP = "c_sharp"
     DART = "dart"
     SQL = "sql"
+    JULIA = "julia"
 
 
 # The languages the C/C++ frontends cover (issue #1524 re-runs them per file).
@@ -401,6 +404,11 @@ LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
         "Stored functions (CREATE FUNCTION), schema-qualified names, invocations between routines. CREATE PROCEDURE and in-depth PL/pgSQL bodies await upstream grammar support: the published grammar parses plain SQL statements only",
         "SQL (PostgreSQL)",
     ),
+    SupportedLanguage.JULIA: LanguageMetadata(
+        LanguageStatus.FULL,
+        "Modules, struct/abstract/primitive types with single-supertype <: inheritance (the grammar error-recovers a comma supertype list), concise methods, inner constructors, macros (separate @ namespace), arrow functions, using/import, broadcast calls",
+        "Julia",
+    ),
 }
 
 # Index file names
@@ -449,6 +457,7 @@ class TreeSitterModule(StrEnum):
     CSHARP = "tree_sitter_c_sharp"
     DART = "tree_sitter_dart"
     SQL = "tree_sitter_sql"
+    JULIA = "tree_sitter_julia"
 
 
 # Directory names with a context-dependent ignore: `bin` is build output

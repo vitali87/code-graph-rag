@@ -46,7 +46,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .. import constants as cs
-from .endpoint_prefixes import UNKNOWN_LEAD
+from .endpoint_prefixes import UNKNOWN_LEAD, _decode
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -187,12 +187,6 @@ class _ModuleEvidence:
     wrapper_bindings: frozenset[tuple[str, str, tuple[int, int] | None]]
     # (receiver type name, method name) for every module method declaration.
     module_methods: frozenset[tuple[str, str]]
-
-
-def _decode(node: Node | None) -> str | None:
-    if node is None or node.text is None:
-        return None
-    return node.text.decode(cs.ENCODING_UTF8)
 
 
 def _literal_path(

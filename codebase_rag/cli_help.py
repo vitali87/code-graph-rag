@@ -255,8 +255,9 @@ DESC_DEAD_CODE = (
     "Roots are program entry points (main, Main), module-level code such as an "
     'if __name__ == "__main__" block, tests (unless --no-include-tests), '
     "decorated handlers (routes, tasks, CLI commands), runtime hooks such as "
-    "dunder and lifecycle methods, and every --entry-point and "
-    "--decorator-root.\n\n"
+    "dunder and lifecycle methods, type-checker declarations (typing.Protocol "
+    "classes and classes under if TYPE_CHECKING:, with their members), and "
+    "every --entry-point and --decorator-root.\n\n"
     "By default every public or exported symbol is a root as well, which "
     "suits a library whose API is called from outside the repository. In an "
     "application or service that rule hides unused public code; pass "
