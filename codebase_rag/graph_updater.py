@@ -6874,6 +6874,7 @@ class GraphUpdater:
         self.factory.import_processor.reset_rust_path_caches()
         self.factory.import_processor.reset_java_path_caches()
         self.factory.import_processor.reset_julia_path_caches()
+        self.factory.import_processor.reset_dart_path_caches()
         cache_path = self.state_dir / cs.HASH_CACHE_FILENAME
         dir_mtimes_path = self.state_dir / cs.DIR_MTIMES_FILENAME
         baseline = self._hash_baseline(force, cache_path, dir_mtimes_path)
@@ -8866,12 +8867,17 @@ class GraphUpdater:
             # per-layout cache: any .jl change invalidates the whole set.
             if path.suffix == cs.EXT_JL:
                 import_processor.reset_julia_path_caches()
+            # A pubspec's `name:` is what Dart `package:` imports resolve by.
+            if path.name == cs.DEP_FILE_PUBSPEC:
+                import_processor.reset_dart_path_caches()
         for key, path in gone.items():
             self.remove_file_from_state(path)
             self._delete_module_entities(key)
             # A deleted .jl file invalidates the same path caches reparse does.
             if path.suffix == cs.EXT_JL:
                 import_processor.reset_julia_path_caches()
+            if path.name == cs.DEP_FILE_PUBSPEC:
+                import_processor.reset_dart_path_caches()
             if isinstance(self.ingestor, QueryProtocol):
                 # Keyed on the absolute path: a sibling project's File node
                 # can share the relative path (issue #897). The entry's own

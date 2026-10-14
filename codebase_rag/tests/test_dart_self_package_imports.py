@@ -16,6 +16,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.tests.conftest import create_and_run_updater
 
 _SHAPES = {
@@ -58,11 +59,23 @@ _MONOREPO = {
 }
 
 
-def _index(repo: Path, mock: MagicMock, files: dict[str, str]) -> None:
+def _write(repo: Path, files: dict[str, str]) -> None:
     for rel, text in files.items():
         (repo / rel).parent.mkdir(parents=True, exist_ok=True)
         (repo / rel).write_text(text, encoding="utf-8")
-    create_and_run_updater(repo, mock)
+
+
+def _index(
+    repo: Path,
+    mock: MagicMock,
+    files: dict[str, str],
+    exclude_paths: frozenset[str] | None = None,
+    unignore_paths: frozenset[str] | None = None,
+) -> GraphUpdater:
+    _write(repo, files)
+    return create_and_run_updater(
+        repo, mock, exclude_paths=exclude_paths, unignore_paths=unignore_paths
+    )
 
 
 def _edges(repo: Path, mock: MagicMock, rel: str) -> set[tuple[str, str, str]]:
@@ -169,3 +182,90 @@ def test_a_name_two_pubspecs_claim_goes_to_the_shallower_package(
     imports = _edges(temp_repo, mock_ingestor, cs.RelationshipType.IMPORTS.value)
     targets = {to for frm, _l, to in imports if frm == "test.circle_test"}
     assert targets == {"lib.src.circle"}, targets
+
+
+# An app importing a package by name, with that package placed where the
+# indexer's filters decide whether it is part of the project.
+def _app_importing(package_dir: str) -> dict[str, str]:
+    return {
+        "pubspec.yaml": "name: app\n",
+        "lib/main.dart": "import 'package:a/a.dart';\n\nint two() => one() + 1;\n",
+        f"{package_dir}/pubspec.yaml": "name: a\n",
+        f"{package_dir}/lib/a.dart": "int one() => 1;\n",
+    }
+
+
+def test_an_excluded_package_stays_external(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The excluded package's modules are not in the graph, so its name must
+    # not claim the import: the edge stays on the external target instead of
+    # pointing at (and being dropped for) a module that was never indexed.
+    _index(
+        temp_repo,
+        mock_ingestor,
+        _app_importing("third_party/a"),
+        exclude_paths=frozenset({"third_party"}),
+    )
+
+    imports = _edges(temp_repo, mock_ingestor, cs.RelationshipType.IMPORTS.value)
+    assert (
+        "lib.main",
+        cs.NodeLabel.EXTERNAL_MODULE.value,
+        "package:a/a.dart",
+    ) in imports, sorted(imports)
+
+
+def test_an_unignored_package_under_an_ignored_dir_is_resolved(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `vendor/` is skipped by default; unignoring it indexes the package, so
+    # its name must reach the indexed module like any other package's.
+    _index(
+        temp_repo,
+        mock_ingestor,
+        _app_importing("vendor/a"),
+        unignore_paths=frozenset({"vendor"}),
+    )
+
+    imports = _edges(temp_repo, mock_ingestor, cs.RelationshipType.IMPORTS.value)
+    edge = ("lib.main", cs.NodeLabel.MODULE.value, "vendor.a.lib.a")
+    assert edge in imports, sorted(imports)
+
+
+def test_a_renamed_package_is_seen_by_the_next_run(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The package map is per run: renaming a pubspec's `name:` and
+    # re-indexing with the same updater must resolve against the new name.
+    files = {k: v for k, v in _SHAPES.items() if k != "pubspec.yaml"}
+    updater = _index(
+        temp_repo, mock_ingestor, {**files, "pubspec.yaml": "name: old_shapes\n"}
+    )
+    edge = ("test.circle_test", cs.NodeLabel.MODULE.value, "lib.src.circle")
+    imports = _edges(temp_repo, mock_ingestor, cs.RelationshipType.IMPORTS.value)
+    assert edge not in imports, sorted(imports)
+
+    _write(temp_repo, {"pubspec.yaml": "name: shapes\n"})
+    mock_ingestor.reset_mock()
+    updater.run(force=True)
+
+    imports = _edges(temp_repo, mock_ingestor, cs.RelationshipType.IMPORTS.value)
+    assert edge in imports, sorted(imports)
+
+
+def test_a_reingested_pubspec_rename_reaches_the_reparsed_importer(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The watcher path: no full run in between, only the edited files.
+    files = {k: v for k, v in _SHAPES.items() if k != "pubspec.yaml"}
+    updater = _index(
+        temp_repo, mock_ingestor, {**files, "pubspec.yaml": "name: old_shapes\n"}
+    )
+    _write(temp_repo, {"pubspec.yaml": "name: shapes\n"})
+    mock_ingestor.reset_mock()
+    updater.reingest(["pubspec.yaml", "test/circle_test.dart"], deleted=[])
+
+    imports = _edges(temp_repo, mock_ingestor, cs.RelationshipType.IMPORTS.value)
+    edge = ("test.circle_test", cs.NodeLabel.MODULE.value, "lib.src.circle")
+    assert edge in imports, sorted(imports)

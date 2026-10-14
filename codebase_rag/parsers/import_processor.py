@@ -5537,6 +5537,11 @@ class ImportProcessor:
         self._julia_scope_declared = None
         self._julia_scope_map_keys = {}
 
+    def reset_dart_path_caches(self) -> None:
+        # Same contract as reset_rust_path_caches: a pubspec added, removed
+        # or renamed since the package map was built must be re-read.
+        self._dart_packages = None
+
     def reset_rust_path_caches(self) -> None:
         # The filesystem may have gained or lost files since the caches
         # were filled; called per run by GraphUpdater._process_files.
@@ -6671,7 +6676,9 @@ class ImportProcessor:
         if self._dart_packages is None:
             self._dart_packages = {
                 name: f"{self.project_name}{cs.SEPARATOR_DOT}{lib}"
-                for name, lib in discover_dart_packages(self.repo_path).items()
+                for name, lib in discover_dart_packages(
+                    self.repo_path, self.exclude_paths, self.unignore_paths
+                ).items()
             }
         return self._dart_packages
 
