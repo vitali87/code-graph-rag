@@ -239,9 +239,10 @@ def test_a_private_name_is_not_taken_through_a_star(graph: RecordedGraph) -> Non
 # How `__all__` is read. Each package below stars `_b` and then `_a`, both
 # defining `Client`; `_a`'s later star wins exactly when it binds `Client`.
 # An `__all__` grown by `.append("x")`, `.extend([...])` or `+=` is read as
-# the names it ends up listing; one changed by any other call, or grown by a
-# value the source does not spell, falls back to binding every public name,
-# and statements that do not touch `__all__` leave it readable.
+# the names it ends up listing, and a plain reassignment replaces it; one
+# changed by any other call, or grown by a value the source does not spell,
+# falls back to binding every public name, and statements that do not touch
+# `__all__` leave it readable.
 OTHER = "class Other:\n    pass\n\n\n"
 ALL_FORMS = {
     "appended": '__all__ = ["Other"]\n__all__.append("Client")\n',
@@ -252,6 +253,8 @@ ALL_FORMS = {
     "inserted": '__all__ = ["Other"]\n__all__.insert(0, "Client")\n',
     "appended_name": 'NAME = "Client"\n__all__ = ["Other"]\n__all__.append(NAME)\n',
     "computed": '__all__ = list(("Other", "Client"))\n',
+    "reassigned": '__all__ = ["Client"]\n__all__ = ["Other"]\n',
+    "recomputed": '__all__ = list(("Other",))\n__all__ = ["Other"]\n',
     "untouched": (
         '"""Implementation details."""\n\n'
         "import warnings\n\n"
@@ -347,6 +350,8 @@ def all_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
         ("via_inserted", "inserted._a.Client.send"),
         ("via_appended_name", "appended_name._a.Client.send"),
         ("via_computed", "computed._a.Client.send"),
+        ("via_reassigned", "reassigned._b.Client.send"),
+        ("via_recomputed", "recomputed._b.Client.send"),
         ("via_untouched", "untouched._b.Client.send"),
         ("via_later_named", "later_named._impl.Client.send"),
         ("via_bare_with", "pooled._pool.Connection.execute"),
@@ -360,6 +365,8 @@ def all_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
         "another-list-method-falls-back-to-every-public-name",
         "append-of-a-non-literal-falls-back-to-every-public-name",
         "a-computed-all-falls-back-to-every-public-name",
+        "a-reassignment-replaces-the-earlier-list",
+        "a-literal-reassignment-replaces-a-computed-all",
         "unrelated-statements-keep-all-readable",
         "a-later-by-name-import-of-another-name-keeps-the-star",
         "with-on-a-bare-name-imported-through-a-star",

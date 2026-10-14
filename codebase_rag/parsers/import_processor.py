@@ -1132,19 +1132,27 @@ def _python_dunder_all(root: Node) -> frozenset[str] | None:
     name, as it does for a module without one. An empty `__all__` binds
     nothing.
     """
-    names: list[str] = []
+    # None once the source no longer spells what `__all__` holds.
+    names: list[str] | None = []
     defined = False
-    try:
-        for statement in root.named_children:
-            if statement.type != cs.TS_PY_EXPRESSION_STATEMENT:
-                continue
+    for statement in root.named_children:
+        if statement.type != cs.TS_PY_EXPRESSION_STATEMENT:
+            continue
+        try:
             part = _python_dunder_all_part(statement)
-            if part is not None:
-                defined = True
-                names += part
-    except _UnreadableDunderAll:
-        return None
-    return frozenset(names) if defined else None
+        except _UnreadableDunderAll:
+            defined, names = True, None
+            continue
+        if part is None:
+            continue
+        defined = True
+        # A plain assignment replaces what earlier statements listed; only
+        # `+=`, `.append` and `.extend` add to it (Greptile, PR #2989).
+        if statement.named_children[0].type == cs.TS_PY_ASSIGNMENT:
+            names = list(part)
+        elif names is not None:
+            names += part
+    return frozenset(names) if defined and names is not None else None
 
 
 class ImportProcessor:
