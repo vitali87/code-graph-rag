@@ -6107,7 +6107,7 @@ class CallProcessor:
         obj = receiver.child_by_field_name(cs.FIELD_OBJECT)
         if obj is None or obj.type != cs.TS_IDENTIFIER:
             return None
-        annotation = self._js_identifier_annotation(ctx, obj)
+        annotation = self._js_identifier_annotation(obj)
         inner = next(iter(annotation.named_children), None) if annotation else None
         return (
             self._ts_element_declaration(inner, ctx.module_qn, _NO_TS_SCOPE)
@@ -6115,9 +6115,7 @@ class CallProcessor:
             else None
         )
 
-    def _js_identifier_annotation(
-        self, ctx: _CallScanContext, ident: Node
-    ) -> Node | None:
+    def _js_identifier_annotation(self, ident: Node) -> Node | None:
         """The type annotation `ident` was introduced with, if any."""
         name = safe_decode_text(ident)
         intro = self._js_innermost_introduction(ident, name) if name else None
