@@ -18,6 +18,10 @@ from codebase_rag.editing.rename import RenameRefused, rename
 from codebase_rag.tests.conftest import create_and_run_updater
 from codebase_rag.types_defs import PropertyDict, ResultRow
 
+# Every index here reads the fingerprint's tool and grammar versions once
+# per session (conftest).
+pytestmark = pytest.mark.usefixtures("fingerprint_inputs_once_per_session")
+
 
 class RecordedGraph:
     """The fixed queries answered from what the indexer emitted."""
@@ -146,7 +150,7 @@ class RecordedGraph:
             ]
         if query == cq.CYPHER_GRAPH_OVERRIDES:
             out = []
-            for src, rel, dst, _props in self.edges:
+            for src, rel, dst, props in self.edges:
                 if rel != "OVERRIDES":
                     continue
                 for a, b in ((src, dst), (dst, src)):
@@ -157,6 +161,7 @@ class RecordedGraph:
                                 cs.KEY_QUALIFIED_NAME: a,
                                 cs.KEY_PATH: self.nodes[a].get(cs.KEY_PATH),
                                 cs.KEY_REL_TYPE: rel,
+                                cs.KEY_RESOLUTION: props.get(cs.KEY_RESOLUTION),
                             }
                         )
             return out
@@ -183,6 +188,29 @@ class RecordedGraph:
                     }
                 )
             return out
+        if query == cq.CYPHER_GRAPH_GO_IMPLEMENTERS_UNKNOWN:
+            prefix = str(p.get(cs.KEY_PROJECT_PREFIX, ""))
+            marked = sorted(
+                {
+                    src
+                    for src, rel, dst, _props in self.edges
+                    if rel == "DEFINES_METHOD"
+                    and self.nodes.get(dst, {}).get(cs.KEY_NAME) == p.get(cs.KEY_NAME)
+                    and src.startswith(prefix)
+                    and "Interface" in self.labels.get(src, set())
+                    and self.nodes[src].get(cs.KEY_IMPLEMENTERS_UNKNOWN)
+                }
+            )
+            return [
+                {
+                    cs.KEY_QUALIFIED_NAME: src,
+                    cs.KEY_PATH: self.nodes[src].get(cs.KEY_PATH),
+                    cs.KEY_IMPLEMENTERS_UNKNOWN: self.nodes[src].get(
+                        cs.KEY_IMPLEMENTERS_UNKNOWN
+                    ),
+                }
+                for src in marked
+            ]
         if query == cq.CYPHER_GRAPH_CALLBACK_SITES:
             return [
                 {
@@ -573,6 +601,7 @@ def test_typescript_rename(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     assert "h(1, 2) + assist(3, 4)" in app
 
 
+@pytest.mark.usefixtures("one_go_helper_per_session")
 def test_go_rename(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     _write(temp_repo, "go.mod", "module app\n\ngo 1.21\n")
     _write(

@@ -27,6 +27,7 @@ from codebase_rag.services.gloss_cleanup import prune_orphaned_glosses
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.services.llm import CypherQueryGenerator, create_rag_orchestrator
 from codebase_rag.services.provenance import head_commit
+from codebase_rag.sync_lock import repo_sync_lock
 from codebase_rag.tools import tool_descriptions as td
 from codebase_rag.tools.ast_grep_service import AstGrepService
 from codebase_rag.tools.code_retrieval import (
@@ -1164,6 +1165,13 @@ class MCPToolsRegistry:
                 self._incomplete_refusal, project, cs.MCPToolName.FLOW_VERDICT
             ):
                 return {cs.DICT_KEY_ERROR: refusal}
+            if refusal := await _run_in_thread(
+                self._flow_endpoint_refusal,
+                project,
+                source_qualified_name,
+                sink_qualified_name,
+            ):
+                return {cs.DICT_KEY_ERROR: refusal}
             result = await _run_in_thread(
                 flow_reachability_verdict,
                 self.ingestor.fetch_all,
@@ -1288,12 +1296,6 @@ class MCPToolsRegistry:
         # A project nested under this one (`svc.v2` under `svc`) keeps its
         # vectors, which the prefix-scoped node-id read also names.
         return nested_project_names(project_name, self.ingestor.list_projects())
-
-    def _cleanup_project_embeddings(self, project_name: str) -> None:
-        node_ids = self._get_project_node_ids(project_name)
-        delete_project_embeddings(
-            project_name, node_ids, self._nested_projects(project_name)
-        )
 
     def _delete_project_sync(self, project_name: str) -> DeleteProjectResult:
         projects = self.ingestor.list_projects()
@@ -1494,10 +1496,19 @@ class MCPToolsRegistry:
         logger.info(start_log.format(path=self.project_root))
         try:
             async with self._ingestor_lock:
-                return await _run_in_thread(sync_fn)
+                return await _run_in_thread(self._under_sync_lock, sync_fn)
         except Exception as e:
             logger.error(error_log.format(error=e))
             return error_message.format(error=e)
+
+    def _under_sync_lock(self, sync_fn: Callable[[], str]) -> str:
+        # Taken before the `:IncompleteRun` marker and the project delete, so
+        # a sync refused because another writer holds the checkout changes
+        # nothing, not even the marker (issue #2441). `GraphUpdater.run`
+        # re-enters it on this thread.
+        root = Path(self.project_root)
+        with repo_sync_lock(root, derive_project_name(root)):
+            return sync_fn()
 
     async def index_repository(self) -> str:
         return await self._run_ingest(
@@ -2808,6 +2819,43 @@ class MCPToolsRegistry:
         return cs.MCP_ROOT_NOT_INDEXED.format(
             path=root.resolve()
         ) + graph_query.did_you_mean(list(dict.fromkeys([*rooted, *close])))
+
+    def _flow_endpoint_refusal(
+        self, project_name: str, source: str, sink: str
+    ) -> str | None:
+        """Why `flow_verdict` cannot answer for these names (issue #2939).
+
+        A name that is no node has no flow edges, so the walk found no path
+        and, on a fully covered project, answered NO_FLOW: the verified
+        absence a taint question reads as safe, for a typo. The source must
+        also be this project's own, or a resource no project owns: only this
+        project's flow edges are walked from it. A sink may sit across a
+        service boundary, in another project.
+        """
+        problems = [
+            cs.MCP_FLOW_ENDPOINT.format(side=side, problem=problem)
+            for side, qualified_name in (
+                (cs.MCP_FLOW_SOURCE, source),
+                (cs.MCP_FLOW_SINK, sink),
+            )
+            if (problem := self._unknown_target_error(project_name, qualified_name))
+        ]
+        if not problems and (owner := self._other_owner(project_name, source)):
+            problems.append(
+                cs.MCP_FLOW_SOURCE_ELSEWHERE.format(
+                    qualified_name=source, owner=owner, project=project_name
+                )
+            )
+        return " ".join(problems) or None
+
+    def _other_owner(self, project_name: str, qualified_name: str) -> str | None:
+        # The longest registered project the name sits under, when it is not
+        # this one: project names may contain dots, so a name under this
+        # project's prefix can still belong to `<project>.v2`.
+        owner = self._name_owner(
+            qualified_name, [*self.ingestor.list_projects(), project_name]
+        )
+        return owner if owner != project_name else None
 
     def _unknown_target_error(self, project_name: str, target: str) -> str | None:
         fetch_all = self.ingestor.fetch_all

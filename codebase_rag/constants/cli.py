@@ -44,6 +44,7 @@ CLI_ERR_OUTPUT_REQUIRES_UPDATE = (
     "Error: --output/-o option requires --update-graph to be specified."
 )
 CLI_OPT_CLEAN = "--clean"
+CLI_OPT_REPO_PATH = "--repo-path"
 CLI_OPT_OUTPUT = "--output"
 CLI_OPT_INTERACTIVE_SETUP = "--interactive-setup"
 CLI_ERR_WORKSPACE_UPDATE_OPTION = (
@@ -77,11 +78,8 @@ CLI_ERR_OUTPUT_PARENT_NOT_DIR = (
 CLI_ERR_OUTPUT_NOT_WRITABLE = "Error: --output cannot be written here: {target}"
 # `cgr export` scope and retired options (issue #2410).
 CLI_EXPORT_SCOPE = "Scoped to: {projects}"
-CLI_ERR_EXPORT_UNKNOWN_PROJECTS = (
-    "Not indexed: {missing}. Indexed projects: {projects}."
-)
 CLI_ERR_EXPORT_EMPTY_SCOPE = (
-    "Error: --project-name/--workspace named no project. "
+    "Error: --project/--workspace named no project. "
     "Leave both out to export the whole graph."
 )
 CLI_WARN_EXPORT_BATCH_SIZE = (
@@ -147,6 +145,13 @@ CLI_OPT_ASK_AGENT = "--ask-agent"
 CLI_OPT_OUTPUT_FORMAT_JSON = "--output-format json"
 CLI_OPT_NO_SYNC = "--no-sync"
 CLI_OPT_PROJECTS = "--projects"
+# The spellings `--project` replaced on the commands that read or delete one
+# project (issue #2415); still accepted, hidden from --help.
+CLI_OPT_PROJECT_NAME = "--project-name"
+CLI_OPT_NAME = "--name"
+CLI_ERR_PROJECT_GIVEN_TWICE = (
+    "--project {project} and {alias} {other} name different projects; pass one."
+)
 
 CLI_MSG_UPDATING_GRAPH = "Updating knowledge graph for: {path}"
 CLI_MSG_SYNCING_GRAPH = "Syncing knowledge graph for: {path} (use --no-sync to skip)"
@@ -187,10 +192,28 @@ CLI_SYNC_RUN_ID = "cli-sync"
 PROCESS_BOOT_ID_PATH = "/proc/sys/kernel/random/boot_id"
 PROCESS_PID_NAMESPACE_PATH = "/proc/self/ns/pid"
 PROCESS_HOST_SEPARATOR = "|"
+# Windows' process probe, which reads a process's exit code through a query
+# handle instead of signalling it: `os.kill` terminates the process there.
+WINDOWS_KERNEL32 = "kernel32"
+WINDOWS_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+# What OpenProcess fails with when no process has the pid.
+WINDOWS_ERROR_INVALID_PARAMETER = 87
+# GetExitCodeProcess' exit code while the process runs.
+WINDOWS_STILL_ACTIVE = 259
+# Windows pids are DWORDs; ctypes would truncate a larger one to another pid.
+WINDOWS_MAX_PID = 0xFFFFFFFF
 CLI_ERR_SYNC_MARKER_FAILED = (
     "Refusing to sync '{project}': the incomplete-run marker could not be "
     "written, so an interrupted sync would leave a partial graph that looks "
     "complete. Check the graph connection and retry."
+)
+# `cgr watch` ensures the graph's constraints before its first scan, under the
+# marker, as `cgr start` does (review of PR 3365).
+CLI_ERR_GRAPH_CONSTRAINTS_FAILED = (
+    "Error: could not ensure the graph's constraints and indexes before "
+    "watching '{project}' ({error}). Nothing was scanned, and the project stays "
+    "marked as an unfinished sync until one finishes. Check the graph "
+    "connection and retry."
 )
 CLI_STATUS_SYNC_INCOMPLETE = (
     "sync interrupted or in progress -- re-run if no sync is active"
@@ -226,11 +249,9 @@ CLI_ERR_CLEAN_UNKNOWN_PROJECTS = (
 CLI_MSG_CLEAN_ABORTED = "Aborted: the graph was left untouched."
 CLI_MSG_DELETING_PROJECT = "Deleting project '{project_name}' from the graph..."
 CLI_MSG_PROJECT_DELETED = "Project '{project_name}' deleted successfully."
-CLI_ERR_PROJECT_NOT_FOUND = (
-    "Project '{project_name}' not found. Available projects: {projects}"
-)
+# Deleting never defaults to the current directory (issue #2415).
 CLI_ERR_PROJECT_NAME_REQUIRED = (
-    "Error: --name is required and must be a non-empty project name."
+    "Error: name the project with --project, or pass --repo-path."
 )
 CLI_ERR_DELETE_PROJECT_FAILED = "Failed to delete project '{project_name}': {error}"
 CLI_MSG_EXPORTING_TO = "Exporting project '{project}' to: {path}"
@@ -285,15 +306,16 @@ CLI_STATS_PER_PROJECT_TITLE = "Per project:"
 CLI_STATS_PER_PROJECT_ROW = (
     "  {project}: {nodes:,} nodes / {relationships:,} relationships"
 )
-CLI_ERR_STATS_UNKNOWN_PROJECTS = "Not indexed: {missing}. Indexed projects: {projects}."
+# A `cgr stats`/`cgr export` scope naming projects the graph does not hold.
+CLI_ERR_PROJECTS_NOT_INDEXED = "Not indexed: {missing}."
 CLI_ERR_STATS_EMPTY_WORKSPACE = (
     "Workspace '{name}' has no repositories, so there is nothing to count. Add "
     "one with `cgr workspace add-repo {name} PATH`, or leave out --workspace to "
     "count every project."
 )
 CLI_ERR_STATS_EMPTY_PROJECT_NAME = (
-    "--project-name was given without a project name. Name a project, or leave "
-    "out -n to count every project."
+    "--project was given without a project name. Name a project, or leave "
+    "out -p to count every project."
 )
 # `cgr check` (issue #1525).
 CHECK_GIT_FAILED = "Cannot diff the working tree against {base}: {error}"
@@ -305,6 +327,11 @@ CHECK_BASE_NOT_A_COMMIT = (
 CHECK_SCOPE_OF_OTHER_PROJECT = (
     "The exclusion scope stamped in this repository belongs to project {other}, "
     "not {project}; re-index {project} (or check {other}) before running the check"
+)
+CHECK_SCOPE_OF_UNNAMED_RUN = (
+    "The exclusion scope stamped in this repository was written by a run that "
+    "named no project, so it cannot stand for project {project}; re-index with "
+    "--project-name {project}, or run the check without --project"
 )
 CHECK_NOT_INDEXED = (
     "Project {project} is not indexed; run 'cgr start --update-graph' at the "
@@ -349,21 +376,18 @@ CLI_DEADCODE_COL_LINES = "Lines"
 CLI_DEADCODE_LINE_RANGE = "{start}-{end}"
 CLI_DEADCODE_SUMMARY = "{count} candidate(s) for review."
 CLI_DEADCODE_NONE = "No unreachable functions or methods found."
+# Printed under a clean report, naming the root rule that produced it
+# (issue #2527).
+CLI_DEADCODE_RULE_PUBLIC_ROOTS = (
+    "(public symbols treated as roots; use --no-public-roots for application code)"
+)
+CLI_DEADCODE_RULE_NO_PUBLIC_ROOTS = "(public symbols not treated as roots)"
 CLI_DEADCODE_WRITTEN = "Wrote {count} candidate(s) to {path}"
 CLI_DEADCODE_STRUCTURAL_TIER_SKIPPED = (
     "{count} symbol(s) in structural-tier languages were not analyzed "
     "(no call graph for these languages)."
 )
 CLI_ERR_DEADCODE_FAILED = "Failed to scan for dead code: {error}"
-CLI_ERR_DEADCODE_NO_PROJECTS = (
-    "No projects found in the graph. Index a repository first with 'cgr start'."
-)
-CLI_ERR_DEADCODE_AMBIGUOUS_PROJECT = (
-    "Multiple projects found: {projects}. Specify which one with --project-name/-n."
-)
-CLI_ERR_DEADCODE_UNKNOWN_PROJECT = (
-    "Project '{project}' is not indexed. Indexed projects: {projects}."
-)
 
 CLI_DUPLICATES_CONNECTING = "Scanning for structurally duplicated functions..."
 CLI_DUPLICATES_TABLE_TITLE = "Duplicate Code Groups ({project_name})"
@@ -396,12 +420,10 @@ CLI_DUPLICATES_TRUNCATED_NOTICE = (
     "be missing. Raise --threshold or --min-size to narrow the scan."
 )
 CLI_ERR_DUPLICATES_FAILED = "Failed to scan for duplicates: {error}"
-CLI_ERR_DUPLICATES_UNKNOWN_PROJECT = (
-    "Project '{project}' is not indexed. Indexed projects: {projects}."
-)
 
 # `cgr graph` refuses a project or a name the graph does not hold (issue
-# #2461). Both used to answer `[]` with exit 0, the same as "exists, nothing
+# #2461); every command that reads one project refuses it the same way
+# (issue #2415). Both used to answer `[]` with exit 0, the same as "exists, nothing
 # matches", and scripts and agents act on that answer: a function nobody
 # calls is safe to delete, a change no test reaches needs no test run. The
 # statuses sit above click's 1 (error) and 2 (usage) so a caller can tell
@@ -753,6 +775,15 @@ INTERACTIVE_BFS_MAX_DEPTH = 10
 INTERACTIVE_DEFAULT_GROUP = "."
 
 MSG_SURGICAL_SUCCESS = "Successfully applied surgical code replacement in: {path}"
+MSG_SURGICAL_AMBIGUOUS = (
+    "Failed to apply surgical replacement in {path}: the target code occurs "
+    "{count} times, starting on lines {lines}. The file was not changed; "
+    "include enough surrounding code for the target to match once."
+)
+# An empty or one-character target can match on every line; the refusal
+# names this many of them.
+SURGICAL_MATCH_LINES_SHOWN = 10
+SURGICAL_MORE_LINES = ", ..."
 # Appended to a chat write tool's result by its re-ingest (issue #2916).
 MSG_CHAT_GRAPH_UPDATED = (
     " The knowledge graph now reflects this change: re-ingested {files} "
@@ -774,6 +805,9 @@ PATCH_IDENTIFIER_MISMATCH = (
 )
 PATCH_NOT_AN_IDENTIFIER = "{path}:{line}:{col} is not a whole identifier"
 PATCH_PARSE_FAILED = "{path} no longer parses after the patch"
+PATCH_UNENCODABLE = (
+    "{path} declares the {codec} encoding, which cannot hold the new text"
+)
 PATCH_FORMAT_DRIFT = "{path} applied, but {tool} would reformat it"
 PATCH_OK = "{path}: {count} edit(s) applied"
 # `parses is None` means no grammar was available, so the patch was checked
@@ -883,6 +917,20 @@ RENAME_WRONG_ROOT = (
     "Project {project} was not indexed from this server's repository; "
     "rename it from the MCP server rooted at its source tree"
 )
+RENAME_GO_IMPLEMENTERS_UNKNOWN = (
+    "Refusing to rename {qn}: Go interface {interface} declares {name}, and cgr "
+    "cannot tell which types implement it ({why}). A type that satisfies it "
+    "through {name}, or the interface itself, could be left under the old name "
+    "and stop compiling. Rename it by hand and run `go build ./...` and "
+    "`go vet ./...` for each build"
+)
+RENAME_GO_IMPLEMENTERS_UNKNOWN_WHY = {
+    "builds": "its method set differs between builds in more ways than cgr tells apart",
+    "embeds": "it embeds an interface cgr cannot resolve",
+    "constraint": "whether a type implements it rests on a build constraint "
+    "cgr cannot read or decide",
+}
+RENAME_GO_IMPLEMENTERS_UNKNOWN_WHY_OTHER = "its implementers are unknown"
 RENAME_STRUCTURAL_UNLOCATABLE = (
     "Cannot rename {qn}: {count} structural edge(s) (inherits, accepts, returns) "
     "carry no rewrite site, so the rename would leave them pointing at the old name"
@@ -1021,6 +1069,11 @@ SIGNATURE_ROLLBACK_REFUSED = (
     "edit was recorded on top of it, so it was not rolled back; undo the later "
     "edit and rerun"
 )
+SIGNATURE_ROLLBACK_FAILED = (
+    "Signature change failed its postcondition ({reasons}) and its rollback "
+    "raised ({error}); its files may remain modified, so check the working "
+    "tree and rebuild the graph before the next graph-backed operation"
+)
 SIGNATURE_ROLLBACK_UNMEASURED = (
     "Signature change rolled back after its postcondition failed ({reasons}), "
     "but the graph could not be re-ingested afterwards ({error}); rebuild the "
@@ -1069,6 +1122,10 @@ DICT_KEY_APPLIED = "applied"
 DICT_KEY_SUCCESS = "success"
 DICT_KEY_QUERY_USED = "query_used"
 TIKTOKEN_ENCODING = "cl100k_base"
+# Without the encoding's BPE file, which tiktoken downloads on first use, a
+# token is estimated as this many bytes of UTF-8: about what cl100k_base
+# averages on code and JSON (issue #2914).
+TOKEN_ESTIMATE_BYTES_PER_TOKEN = 4
 QUERY_SUMMARY_SUCCESS = "Successfully retrieved {count} item(s) from the graph."
 QUERY_SUMMARY_TRUNCATED = (
     "Results truncated: showing {kept} of {total} items (~{tokens} tokens, limit {max_tokens}). "

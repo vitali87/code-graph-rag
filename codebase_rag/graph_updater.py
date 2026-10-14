@@ -32,6 +32,11 @@ from .config import settings
 from .function_registry import FunctionRegistryTrie
 from .gloss_anchor import ParsedSource, parse_source
 from .gloss_repair import repair_unanchored
+from .interface_skip import (
+    callers_to_reparse,
+    stable_interface_modules,
+    without_flow_sources,
+)
 from .language_spec import (
     LANGUAGE_FQN_SPECS,
     csharp_namespaced_from_graph,
@@ -86,8 +91,12 @@ from .parsers.frontends import (
     SemanticFacts,
 )
 from .parsers.frontends.protocol import QueryCall
+from .parsers.go import interfaces as go_ifaces
 from .parsers.go import read_package_clause
+from .parsers.go import utils as go_utils
+from .parsers.go.interfaces import GoInterfaceDecl, GoMethodSpec, GoSignature
 from .parsers.go_frontend import find_go_module
+from .parsers.interface_fingerprint import INTERFACE_LANGUAGES, interface_fingerprint
 from .parsers.java_generated import (
     discover_generated_source_roots,
     generated_prefixes_for,
@@ -111,6 +120,7 @@ from .services import (
     QueryProtocol,
 )
 from .services.resource_cleanup import prune_unanchored_resources
+from .sync_lock import holds_sync_lock
 from .trace.carry import CapturedTraceEdge, capture_trace_edges, carry_trace_edges
 from .types_defs import (
     CppDefinitionSpan,
@@ -145,6 +155,7 @@ from .utils.path_utils import (
     normalize_project_name,
     project_roots_from_rows,
     python_stub_has_implementation,
+    rescued_files,
     should_keep_dir,
     should_skip_path,
     should_skip_rel_file,
@@ -259,9 +270,13 @@ def _flush_embedding_batch(
     # Embeds and stores the pending batch, then empties it in place so the
     # caller keeps appending to the same list. `stored_ids` gains the nodes
     # whose points the store confirmed, which `expected` cannot vouch for: it
-    # is filled before the store is asked.
+    # is filled before the embeddings are even computed, so the check after
+    # the pass counts a batch the model failed on as missing, and the sync
+    # owes it to the next one like a batch the store refused.
     if not pending:
         return 0
+    for node_id, symbol, _src in pending:
+        expected[node_id] = symbol
     snippets = [item[2] for item in pending]
     try:
         embeddings = embed_code_batch(snippets)
@@ -276,8 +291,6 @@ def _flush_embedding_batch(
     points: list[EmbeddingPoint] = [
         (node_id, emb, symbol) for (node_id, symbol, _), emb in zip(pending, embeddings)
     ]
-    for node_id, symbol, _src in pending:
-        expected[node_id] = symbol
     stored = store_embedding_batch(points)
     if stored:
         stored_ids.update(node_id for node_id, _emb, _symbol in points)
@@ -867,6 +880,55 @@ def _save_parser_fingerprint(stamp_path: Path, fingerprint: str) -> None:
         logger.warning(ls.PARSER_FINGERPRINT_SAVE_FAILED, path=stamp_path, error=e)
 
 
+def _embeddings_marker(state_dir: Path, project_name: str) -> Path:
+    """The file whose presence says `project_name` owes an embeddings pass.
+
+    One per project, named by a digest because a project name may hold any
+    character: each sync creates and removes only its own, so two projects
+    syncing one checkout at once cannot erase each other's debt, as they
+    could while one file listed them all (review of PR #3358).
+    """
+    digest = hashlib.sha256(project_name.encode(cs.ENCODING_UTF8)).hexdigest()
+    return state_dir / cs.EMBEDDINGS_PENDING_PROJECT_TEMPLATE.format(digest=digest)
+
+
+def _save_embeddings_owed(marker: Path, project_name: str, owed: bool) -> bool:
+    """Create or remove `project_name`'s marker; say whether that went through."""
+    try:
+        if owed:
+            # The name is for whoever lists the state directory; the file's
+            # presence is what the sync reads.
+            marker.write_text(project_name, encoding=cs.ENCODING_UTF8)
+        else:
+            marker.unlink(missing_ok=True)
+    except OSError:
+        # Best effort, like the other markers: a read-only state directory
+        # must not lose the run to a marker it could not write.
+        logger.debug(ls.EMBEDDINGS_PENDING_NOT_UPDATED)
+        return False
+    return True
+
+
+def _load_shared_embeddings_owed(marker: Path) -> frozenset[str] | None:
+    """The projects a marker shared by every project says owe a pass.
+
+    An earlier build kept one marker for all projects: a JSON list of their
+    names, and before that an empty file. Empty without one. None for one
+    that names no project, the empty file included, since which project
+    failed cannot be told then and every project owes.
+    """
+    try:
+        loaded = loads_json(marker.read_text(encoding=cs.ENCODING_UTF8))
+    except FileNotFoundError:
+        return frozenset()
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(loaded, list):
+        return None
+    names = [name for name in loaded if isinstance(name, str)]
+    return frozenset(names) if len(names) == len(loaded) else None
+
+
 class ReingestAborted(RuntimeError):
     """`reingest()` gave up before its first delete or content write.
 
@@ -1200,6 +1262,38 @@ def _read_bytes(path: Path) -> bytes:
         return b""
 
 
+def _read_source(path: Path) -> bytes | None:
+    try:
+        return path.read_bytes()
+    except OSError:
+        return None
+
+
+def _interface_sources(
+    changed_entries: list[tuple[Path, str, bool, bytes]], excluded: Collection[str]
+) -> list[tuple[Path, str, bytes]]:
+    """The re-indexed files whose interface may have held, with the bytes the
+    parse will read: a file added by the run has no stored interface, and a
+    flux-stem or package-flip sibling's module qn itself may move."""
+    return [
+        (path, key, data)
+        for path, key, is_new, data in changed_entries
+        if not is_new and key not in excluded
+    ]
+
+
+def _semantic_frontend_languages() -> frozenset[cs.SupportedLanguage]:
+    # A semantic frontend binds calls with its own model of the callee (Jedi
+    # infers from bodies the fingerprint leaves out), so its languages'
+    # callers re-parse as before.
+    languages: set[cs.SupportedLanguage] = set()
+    if settings.PYTHON_FRONTEND != cs.PythonFrontend.HEURISTIC:
+        languages.add(cs.SupportedLanguage.PYTHON)
+    if settings.JAVA_FRONTEND != cs.JavaFrontend.HEURISTIC:
+        languages.add(cs.SupportedLanguage.JAVA)
+    return frozenset(languages)
+
+
 def _direct_children(keys: Iterable[str], prefix: str) -> set[str]:
     children: set[str] = set()
     for key in keys:
@@ -1399,6 +1493,111 @@ def _drop_class_keyed_entry(
     owner_module.pop(qn, None)
 
 
+def _drop_implementers(
+    implementers_by_interface: dict[str, set[str]], removed: set[str]
+) -> None:
+    """Forget the parsed implementer pairs of classes a removed file declared."""
+    # A class that stopped implementing an interface kept its pair on a
+    # reused updater, and a call typed to the interface still reached its
+    # method as the sole implementer's (#2403 review). The re-parse records
+    # the pairs the class still has. In place: the call resolver holds the
+    # map by reference.
+    if not removed:
+        return
+    emptied = []
+    for interface_qn, implementers in implementers_by_interface.items():
+        implementers -= removed
+        if not implementers:
+            emptied.append(interface_qn)
+    for interface_qn in emptied:
+        del implementers_by_interface[interface_qn]
+
+
+def _pop_owned(owner_module: dict[str, str], module_qns: Collection[str]) -> set[str]:
+    """Remove and return the qns `owner_module` attributes to `module_qns`."""
+    owned = {qn for qn, module_qn in owner_module.items() if module_qn in module_qns}
+    for qn in owned:
+        del owner_module[qn]
+    return owned
+
+
+def _carried_pair_rows(
+    captured: Iterable[ResultRow],
+) -> tuple[list[ResultRow], list[ResultRow]]:
+    """Captured inbound IMPLEMENTS and Rust OVERRIDES edges, as read-back rows."""
+    # Spelled as CYPHER_ALL_IMPLEMENTS and CYPHER_ALL_RUST_OVERRIDES return
+    # them, so the read-back treats an edge it will restore like one it read.
+    implements: list[ResultRow] = []
+    overrides: list[ResultRow] = []
+    for row in captured:
+        rel = row.get(cs.KEY_REL)
+        source, target = row.get(cs.KEY_CALLER_QN), row.get(cs.KEY_TARGET_QN)
+        if rel == cs.RelationshipType.IMPLEMENTS.value:
+            implements.append({cs.KEY_CHILD_QN: source, cs.KEY_BASE_QN: target})
+        elif rel == cs.RelationshipType.OVERRIDES.value and _is_rust_method_edge(row):
+            overrides.append({cs.KEY_FROM_QN: source, cs.KEY_TO_QN: target})
+    return implements, overrides
+
+
+def _go_package_dirs(keys: Iterable[str]) -> set[str]:
+    return {
+        PurePosixPath(key).parent.as_posix() for key in keys if key.endswith(cs.EXT_GO)
+    }
+
+
+def _go_package_siblings(
+    keys: Iterable[str], eligible_by_key: Mapping[str, Path]
+) -> list[str]:
+    """The walked Go files beside a Go file the sync re-parses or deletes.
+
+    A Go method hangs off its receiver type, which another file of the
+    package may declare, so re-parsing the type's file deleted the methods
+    of every file beside it that the sync did not re-parse, and re-parsing a
+    method's file alone could not find its type and filed the method under
+    a second name beside the stale one. Package files re-parse together,
+    and the type's methods, a build's declarations of one among them, come
+    back as a clean index has them (issue #2483).
+    """
+    keys = set(keys)
+    dirs = _go_package_dirs(keys)
+    return sorted(
+        key
+        for key in eligible_by_key
+        if key not in keys
+        and key.endswith(cs.EXT_GO)
+        and PurePosixPath(key).parent.as_posix() in dirs
+    )
+
+
+def _relinked_go_edge(row: ResultRow) -> bool:
+    """A captured IMPLEMENTS or OVERRIDES edge out of a Go file."""
+    # Go's are recomputed every run from every method set, read-back ones
+    # included (issue #2483), so a pair that still holds comes back without
+    # this edge. Restored, one an edit took away stayed: a method in a file
+    # the sync never re-parsed kept its OVERRIDES into an interface that had
+    # gained a method its type lacks, and a pair that changed source kept
+    # the label it had before.
+    path = row.get(cs.KEY_CALLER_PATH)
+    return (
+        row.get(cs.KEY_REL)
+        in (cs.RelationshipType.IMPLEMENTS.value, cs.RelationshipType.OVERRIDES.value)
+        and isinstance(path, str)
+        and path.endswith(cs.EXT_GO)
+    )
+
+
+def _is_rust_method_edge(row: ResultRow) -> bool:
+    """A captured edge between two Methods out of a Rust file."""
+    method = cs.NodeLabel.METHOD.value
+    path = row.get(cs.KEY_CALLER_PATH)
+    return (
+        row.get(cs.KEY_CALLER_LABEL) == method
+        and row.get(cs.KEY_TARGET_LABEL) == method
+        and isinstance(path, str)
+        and path.endswith(cs.EXT_RS)
+    )
+
+
 def _advance_past_settled(progress: Progress, task: TaskID, scan: _FileScan) -> None:
     """Advance the bar past the files the hash pass settled without a parse."""
     if scan.skipped_count or scan.unreadable_count:
@@ -1523,6 +1722,9 @@ class GraphUpdater:
         # Files (re)parsed by Pass 2 this run: the only files whose
         # definition spans exist for hybrid macro-call attribution.
         self._reparsed_file_keys: set[str] = set()
+        # The bytes a scoped re-ingest judged a file's interface on, which its
+        # re-parse then reads instead of the disk (issue #2531).
+        self._reingest_pinned_sources: dict[str, bytes] = {}
         # The trace-derived CALLS edges `run()` read before deleting the
         # re-parsed subtrees, re-applied once Pass 3 has rebuilt the static
         # edges (issue #2429), and the files the run deleted, whose edges must
@@ -1742,27 +1944,18 @@ class GraphUpdater:
         # csharp_call_sites is mutated in place because the type-inference
         # engine holds a reference.
         self._reset_semantic_facts()
-        if settings.CSHARP_FRONTEND == cs.CSharpFrontend.TREESITTER:
-            return
-        frontend = FRONTENDS.get(cs.SupportedLanguage.CSHARP)
-        if frontend is None or not frontend.applies(self.repo_path):
-            # Skip silently when the frontend has nothing to augment (no C#
-            # project): applicability is the frontend's own rule (issue #1178), so
-            # a registered replacement can define its own.
-            return
-        if not frontend.available():
-            # AUTO promises hybrid only where the toolchain exists, so a
-            # missing dotnet is the expected fallback (info); an EXPLICIT
-            # hybrid/roslyn request that cannot run stays a warning.
-            if settings.CSHARP_FRONTEND == cs.CSharpFrontend.AUTO:
-                logger.info(ls.CSHARP_FRONTEND_AUTO_FALLBACK)
-            else:
-                logger.warning(ls.CSHARP_FRONTEND_UNAVAILABLE)
-            return
-        logger.info(
-            ls.CSHARP_FRONTEND_RUNNING.format(path=find_csharp_project(self.repo_path))
+        mode = settings.CSHARP_FRONTEND
+        facts = self._run_semantic_frontend(
+            cs.SupportedLanguage.CSHARP,
+            off=mode == cs.CSharpFrontend.TREESITTER,
+            auto=mode == cs.CSharpFrontend.AUTO,
+            find_root=find_csharp_project,
+            auto_fallback_log=ls.CSHARP_FRONTEND_AUTO_FALLBACK,
+            unavailable_log=ls.CSHARP_FRONTEND_UNAVAILABLE,
+            running_log=ls.CSHARP_FRONTEND_RUNNING,
         )
-        facts = frontend.run(self.repo_path, ())
+        if facts is None:
+            return
         self._apply_semantic_facts(facts)
         logger.info(ls.CSHARP_FRONTEND_TYPES.format(count=len(facts.base_kinds)))
         logger.info(
@@ -1773,6 +1966,45 @@ class GraphUpdater:
                 externals=len(facts.external_sites),
             )
         )
+
+    def _run_semantic_frontend(
+        self,
+        language: cs.SupportedLanguage,
+        *,
+        off: bool,
+        auto: bool,
+        find_root: Callable[[Path], Path | None],
+        auto_fallback_log: str,
+        unavailable_log: str,
+        running_log: str,
+    ) -> SemanticFacts | None:
+        # The facts of a registered LanguageFrontend pre-pass, or None when it
+        # is off, has nothing to augment, or cannot run.
+        if off:
+            return None
+        frontend = FRONTENDS.get(language)
+        if frontend is None or not frontend.applies(self.repo_path):
+            # Skip silently when the frontend has nothing to augment (no C#
+            # project, no go.mod): applicability is the frontend's own rule
+            # (issue #1178), so a registered replacement can define its own.
+            return None
+        if not frontend.available():
+            # AUTO promises the compiler only where the toolchain exists, so a
+            # missing toolchain is the expected fallback (info); an EXPLICIT
+            # request that cannot run stays a warning.
+            if auto:
+                logger.info(auto_fallback_log)
+            else:
+                logger.warning(unavailable_log)
+            return None
+        logger.info(running_log.format(path=find_root(self.repo_path)))
+        return frontend.run(self.repo_path, (), rescued_files=self._rescued_files())
+
+    def _rescued_files(self) -> frozenset[str]:
+        # The compiler tools skip the default-excluded names on their own; the
+        # files this walk keeps under one (a tracked `pkg/out/out.go`, a `!`
+        # line) must reach them, or they are parsed without their facts.
+        return rescued_files(self.repo_path, self.exclude_paths, self.unignore_paths)
 
     def _reset_semantic_facts(self) -> None:
         # A reused updater (watch mode) that previously ran a frontend must not
@@ -1811,19 +2043,18 @@ class GraphUpdater:
         # a later run with it off; the maps are mutated in place because the
         # type-inference engine holds a reference.
         self._reset_go_semantic_facts()
-        if settings.GO_FRONTEND == cs.GoFrontend.TREESITTER:
+        mode = settings.GO_FRONTEND
+        facts = self._run_semantic_frontend(
+            cs.SupportedLanguage.GO,
+            off=mode == cs.GoFrontend.TREESITTER,
+            auto=mode == cs.GoFrontend.AUTO,
+            find_root=find_go_module,
+            auto_fallback_log=ls.GO_FRONTEND_AUTO_FALLBACK,
+            unavailable_log=ls.GO_FRONTEND_UNAVAILABLE,
+            running_log=ls.GO_FRONTEND_RUNNING,
+        )
+        if facts is None:
             return
-        frontend = FRONTENDS.get(cs.SupportedLanguage.GO)
-        if frontend is None or not frontend.applies(self.repo_path):
-            return
-        if not frontend.available():
-            if settings.GO_FRONTEND == cs.GoFrontend.AUTO:
-                logger.info(ls.GO_FRONTEND_AUTO_FALLBACK)
-            else:
-                logger.warning(ls.GO_FRONTEND_UNAVAILABLE)
-            return
-        logger.info(ls.GO_FRONTEND_RUNNING.format(path=find_go_module(self.repo_path)))
-        facts = frontend.run(self.repo_path, ())
         self._apply_go_semantic_facts(facts)
         logger.info(
             ls.GO_FRONTEND_FACTS.format(
@@ -1851,7 +2082,7 @@ class GraphUpdater:
         if not frontend.available():
             logger.warning(ls.JAVA_FRONTEND_UNAVAILABLE)
             return
-        facts = frontend.run(self.repo_path, ())
+        facts = frontend.run(self.repo_path, (), rescued_files=self._rescued_files())
         dp.java_call_sites.update(facts.resolved_call_sites)
         dp.java_external_sites.update(facts.external_sites)
         logger.info(
@@ -1897,12 +2128,18 @@ class GraphUpdater:
         dp.go_call_sites.clear()
         dp.go_external_sites.clear()
         dp.go_implements.clear()
+        dp.go_analysed_roots.clear()
+        dp.go_checked_files.clear()
+        dp.go_compared_types.clear()
 
     def _apply_go_semantic_facts(self, facts: SemanticFacts) -> None:
         dp = self.factory.definition_processor
         dp.go_call_sites.update(facts.resolved_call_sites)
         dp.go_external_sites.update(facts.external_sites)
         dp.go_implements.extend(facts.implements_pairs)
+        dp.go_analysed_roots.update(facts.analysed_roots)
+        dp.go_checked_files.update(facts.checked_files)
+        dp.go_compared_types.update(facts.compared_types)
 
     def _join_go_implements(self) -> None:
         # go/types proved each implementer->interface pair structurally; both
@@ -1911,11 +2148,11 @@ class GraphUpdater:
         # IMPLEMENTS edge and record the implementer so a call through the
         # interface with a SOLE implementer also edges to the concrete method
         # (resolver.interface_sole_impl_targets, no extra wiring). A miss on
-        # either end drops the pair rather than risk a dangling edge.
+        # either end drops the pair rather than risk a dangling edge. The
+        # pairs replace the previous pass's, so a reused updater forgets one
+        # the compiler no longer proves.
         dp = self.factory.definition_processor
-        if not dp.go_implements:
-            return
-        emitted = 0
+        proven: list[tuple[str, str]] = []
         for pair in dp.go_implements:
             impl = dp.go_type_locations.get(
                 (pair.impl_file, pair.impl_line, pair.impl_col)
@@ -1935,10 +2172,26 @@ class GraphUpdater:
                 cs.RelationshipType.IMPLEMENTS,
                 (iface_label, cs.KEY_QUALIFIED_NAME, iface_qn),
             )
-            dp.interface_implementers.setdefault(iface_qn, set()).add(impl_qn)
-            emitted += 1
-        if emitted:
-            logger.info(ls.GO_FRONTEND_IMPLEMENTS_JOINED.format(count=emitted))
+            proven.append((iface_qn, impl_qn))
+        dp.replace_go_implementers(dp.go_proven_pairs, proven, keep=dp.go_guessed_pairs)
+        if proven:
+            logger.info(ls.GO_FRONTEND_IMPLEMENTS_JOINED.format(count=len(proven)))
+
+    def _link_go_interfaces(self) -> None:
+        # Where go/types analysed a module it already proved which of its
+        # types implement which of its interfaces (_join_go_implements), even
+        # when it proved none; names and arities decide only elsewhere. Keyed
+        # on the modules it analysed, not on whether it returned any facts.
+        dp = self.factory.definition_processor
+        dp.link_go_interfaces(
+            frozenset(dp.go_analysed_roots),
+            frozenset(dp.go_checked_files),
+            frozenset(
+                located[0]
+                for position in dp.go_compared_types
+                if (located := dp.go_type_locations.get(position)) is not None
+            ),
+        )
 
     def _join_csharp_partials(self) -> None:
         # Replace the directory-keyed syntactic partial grouping with the
@@ -2285,6 +2538,10 @@ class GraphUpdater:
                 generic_inherits,
             )
 
+        # Every Go type and method is registered by now, rehydrated ones
+        # included, so method sets are complete (issue #2483).
+        self._link_go_interfaces()
+
         module_impls = (
             self.factory.definition_processor.resolve_deferred_cpp_module_impls()
         )
@@ -2425,19 +2682,41 @@ class GraphUpdater:
             self._state_dir = prepare_state_dir(self.repo_path)
         return self._state_dir
 
+    def _require_repo_dir(self) -> None:
+        """Raise `FileNotFoundError` unless `self.repo_path` is a directory.
+
+        `run` checks this before `holds_sync_lock` takes the lock, so a
+        missing root is reported as missing, and no state directory is made
+        for it under CGR_HOME (issues #1651, #2441).
+        """
+        if not self.repo_path.is_dir():
+            raise FileNotFoundError(ls.REPO_PATH_MISSING.format(path=self.repo_path))
+
+    @holds_sync_lock(require=_require_repo_dir)
     def run(self, force: bool = False) -> None:
         """Ingest the repository; ``force`` rebuilds instead of updating incrementally.
 
         Raises `FileNotFoundError` when `self.repo_path` -- the target
-        directory, or the parent of a single-file target -- is not a
+        directory, or the project root of a single-file target -- is not a
         directory. The constructor recognises a single-file target only
         while the file exists, so a deleted or mistyped path fell through as
         a directory run rooted at a non-directory: the walk yielded nothing
         and the run reported success having indexed nothing (issue #1651).
         Raising here rather than in the constructor keeps construction cheap
         and side-effect free for callers that never run. A single-file
-        target deleted AFTER construction passes this check (its parent
-        exists) and is a separate decision (#1737).
+        target deleted AFTER construction passes this check (its root
+        exists) and is a separate decision (#1737). `holds_sync_lock` runs
+        the check (`_require_repo_dir`) before it opens the lock, so the
+        missing path is what the caller is told about.
+
+        Raises `SyncInProgressError`, before anything is written, while
+        another writer holds the checkout's sync lock, which
+        `holds_sync_lock` takes around the whole run (issue #2441),
+        `UnsafeSyncLockError` when that lock file is a symbolic link, and
+        `SyncLockUnavailableError` when it is there but cannot be opened
+        even read-only. The lock lives in the checkout's state directory;
+        when there is none and CGR_HOME cannot be written to create it, the
+        run goes ahead without it, after a warning.
 
         `committed` turns True once the run has nothing left that could leave
         the graph partial: at the commit point, or on the in-sync fast path.
@@ -2447,8 +2726,6 @@ class GraphUpdater:
         # First, so an interrupt anywhere below reads this run's answer, not
         # a reused updater's previous one.
         self.committed = False
-        if not self.repo_path.is_dir():
-            raise FileNotFoundError(ls.REPO_PATH_MISSING.format(path=self.repo_path))
         self._clear_python_inference_caches()
         # Reset per-run parse tracking so a reused updater does not reprocess
         # a previous run's files in Pass 3.
@@ -2659,7 +2936,9 @@ class GraphUpdater:
         self._emit_csharp_query_calls()
         self._write_unresolved_references()
 
-        self.factory.definition_processor.process_all_method_overrides()
+        self.factory.definition_processor.process_all_method_overrides(
+            self.known_module_paths()
+        )
 
         # Deferred endpoint emission: every module is parsed now, so router
         # mount prefixes (possibly cross-module) can resolve (issue #877).
@@ -2996,19 +3275,21 @@ class GraphUpdater:
         # Re-emitted handlers drop their previous EXPOSES first, so a
         # template that changed prefix loses its stale anchor and the orphan
         # cleanup prunes the outdated endpoint node.
+        self._drop_stale_exposes(CYPHER_DELETE_HANDLER_EXPOSES, {"qns": handler_qns})
+
+    def _drop_stale_exposes(self, query: str, params: PropertyParams) -> None:
         if not isinstance(self.ingestor, QueryProtocol):
             return
         # With the registry unread, ownership degrades to the prefix rule and
-        # `svc.v2`'s handlers can pass as `svc`'s, so no delete runs at all;
+        # `svc.v2`'s handlers can pass as `svc`'s (a seeded module map can hold
+        # a sibling project's modules the same way), so no delete runs at all;
         # emission only MERGEs, and the next healthy run cleans up
         # (CodeRabbit, PR #2129).
         if self._registry_unread:
             self._exposes_cleanup_skipped = True
             return
         try:
-            self.ingestor.execute_write(
-                CYPHER_DELETE_HANDLER_EXPOSES, {"qns": handler_qns}
-            )
+            self.ingestor.execute_write(query, params)
         except Exception:
             # A delete that failed is owed exactly like one that was skipped.
             self._exposes_cleanup_skipped = True
@@ -3159,20 +3440,9 @@ class GraphUpdater:
     def _drop_stale_module_exposes(self, module_qns: list[str]) -> None:
         # Ownership is the DEFINES containment closure from each Module
         # node, so prefix-sharing sibling modules keep their endpoints.
-        if not isinstance(self.ingestor, QueryProtocol):
-            return
-        # Same reason as the handler cleanup: a seeded module map can hold a
-        # sibling project's modules when the registry could not be read.
-        if self._registry_unread:
-            self._exposes_cleanup_skipped = True
-            return
-        try:
-            self.ingestor.execute_write(
-                CYPHER_DELETE_MODULE_EXPOSES, {"module_qns": module_qns}
-            )
-        except Exception:
-            self._exposes_cleanup_skipped = True
-            logger.debug("Stale EXPOSES cleanup unavailable; emission continues")
+        self._drop_stale_exposes(
+            CYPHER_DELETE_MODULE_EXPOSES, {"module_qns": module_qns}
+        )
 
     def _route_source(
         self,
@@ -3471,18 +3741,25 @@ class GraphUpdater:
             )
         )
 
-    def _requeue_parameter_types(self, project_params: PropertyParams) -> None:
-        # OF_TYPE for the Parameter nodes of files this run does not re-parse:
-        # their owners never re-emit them, so the pending list is rebuilt from
-        # the graph exactly as _requeue_type_facts rebuilds RETURNS/ACCEPTS
-        # (issue #1527). Without this, re-parsing only the TYPE's file detaches
-        # every OF_TYPE into it and nothing puts them back. The key is the
-        # FILE: a Parameter whose file is being re-parsed this run is
-        # re-emitted by ingest and queues its own (a requeue here would carry
-        # the OLD annotation); one whose file is not needs rebuilding. Neither
-        # registry membership nor "what the rehydration loop restored" can
-        # tell the two apart -- a reused updater already holds every unchanged
-        # definition, a fresh one holds none -- and both were tried first.
+    def _requeue_member_types[P: (PendingParameterType, PendingFieldType)](
+        self,
+        query: str,
+        project_params: PropertyParams,
+        pending: list[P],
+        make: Callable[[str, str, str, str], P],
+    ) -> None:
+        # OF_TYPE for the Parameter and Field nodes of files this run does not
+        # re-parse: their owners never re-emit them, so the pending list is
+        # rebuilt from the graph exactly as _requeue_type_facts rebuilds
+        # RETURNS/ACCEPTS (issue #1527). Without this, re-parsing only the
+        # TYPE's file detaches every OF_TYPE into it and nothing puts them
+        # back. The key is the FILE: a member whose file is being re-parsed
+        # this run is re-emitted by ingest and queues its own (a requeue here
+        # would carry the OLD annotation); one whose file is not needs
+        # rebuilding. Neither registry membership nor "what the rehydration
+        # loop restored" can tell the two apart -- a reused updater already
+        # holds every unchanged definition, a fresh one holds none -- and both
+        # were tried first.
         if (
             self._is_full_build
             or not self.capture.rel_enabled(cs.RelationshipType.OF_TYPE)
@@ -3490,53 +3767,10 @@ class GraphUpdater:
         ):
             # A full build re-parses every file: ingest queues everything.
             return
-        try:
-            rows = self._owned_rows(
-                self.ingestor.fetch_all(
-                    cs.CYPHER_PROJECT_PARAMETER_TYPES, project_params
-                ),
-                cs.KEY_QUALIFIED_NAME,
-            )
-        except Exception:
-            if not self._is_full_build:
-                raise
-            return
-        pending = self.factory.definition_processor.pending_parameter_types
-        for row in rows:
-            qn = row.get(cs.KEY_QUALIFIED_NAME)
-            type_name = row.get(cs.KEY_TYPE_NAME)
-            path = row.get(cs.KEY_PATH)
-            if not (
-                isinstance(qn, str)
-                and isinstance(type_name, str)
-                and isinstance(path, str)
-            ):
-                continue
-            if path in self._reparsed_file_keys:
-                continue
-            pending.append(
-                PendingParameterType(
-                    qn, self._recorded_module_qn(path), type_name, path
-                )
-            )
-
-    def _requeue_field_types(self, project_params: PropertyParams) -> None:
-        # The Field counterpart of _requeue_parameter_types, keyed on the FILE
-        # for the same reason: a Field whose file is being re-parsed this run
-        # is re-emitted by ingest and queues its own type; one whose file is
-        # not needs rebuilding from the graph. A full build re-parses every
-        # file, so ingest queues everything and there is nothing to rebuild.
-        if (
-            self._is_full_build
-            or not self.capture.rel_enabled(cs.RelationshipType.OF_TYPE)
-            or not isinstance(self.ingestor, QueryProtocol)
-        ):
-            return
         rows = self._owned_rows(
-            self.ingestor.fetch_all(cs.CYPHER_PROJECT_FIELD_TYPES, project_params),
+            self.ingestor.fetch_all(query, project_params),
             cs.KEY_QUALIFIED_NAME,
         )
-        pending = self.factory.definition_processor.pending_field_types
         for row in rows:
             qn = row.get(cs.KEY_QUALIFIED_NAME)
             type_name = row.get(cs.KEY_TYPE_NAME)
@@ -3549,9 +3783,7 @@ class GraphUpdater:
                 continue
             if path in self._reparsed_file_keys:
                 continue
-            pending.append(
-                PendingFieldType(qn, self._recorded_module_qn(path), type_name, path)
-            )
+            pending.append(make(qn, self._recorded_module_qn(path), type_name, path))
 
     def _graph_rows(self, query: str, params: PropertyParams | None) -> list[ResultRow]:
         # A write-only sink (the protobuf exporter) has no graph to read, and
@@ -3663,6 +3895,7 @@ class GraphUpdater:
         # After the loop: whether a method's owner is a trait needs the whole
         # registry, and its rows arrive in no particular order.
         self._rehydrate_rust_return_types(restored)
+        self._rehydrate_go_method_sets(restored)
         # Module qns from unchanged files: deferred import verification and
         # C++20 module-impl resolution must count them as real targets, or
         # an incremental run would drop edges a clean index emits.
@@ -3678,8 +3911,110 @@ class GraphUpdater:
             return
         self._rehydrate_module_qns(module_rows)
         self._rehydrate_class_inheritance_from_graph()
-        self._requeue_parameter_types(project_params)
-        self._requeue_field_types(project_params)
+        self._rehydrate_interface_implementers(project_params)
+        dp = self.factory.definition_processor
+        self._requeue_member_types(
+            cs.CYPHER_PROJECT_PARAMETER_TYPES,
+            project_params,
+            dp.pending_parameter_types,
+            PendingParameterType,
+        )
+        self._requeue_member_types(
+            cs.CYPHER_PROJECT_FIELD_TYPES,
+            project_params,
+            dp.pending_field_types,
+            PendingFieldType,
+        )
+
+    def _rehydrate_interface_implementers(
+        self, project_params: PropertyParams, carried: Iterable[ResultRow] = ()
+    ) -> None:
+        # Parsing records implementer -> interface pairs only for the files it
+        # reads. A call typed to an interface with ONE implementer also reaches
+        # that implementer's method, so a run that re-parsed only the caller
+        # saw no implementer and dropped the edge a clean index emits: gson's
+        # getFieldNames into FieldNamingPolicy, serde_json's
+        # u64::error_halfscale() (issue #2403).
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        try:
+            implements = self._owned_rows(
+                self.ingestor.fetch_all(cs.CYPHER_ALL_IMPLEMENTS, project_params),
+                cs.KEY_CHILD_QN,
+            )
+            rust_overrides = self._owned_rows(
+                self.ingestor.fetch_all(cs.CYPHER_ALL_RUST_OVERRIDES, project_params),
+                cs.KEY_FROM_QN,
+            )
+            required = self._owned_rows(
+                self.ingestor.fetch_all(
+                    cs.CYPHER_RUST_TRAITS_WITH_REQUIRED_METHODS, project_params
+                ),
+                cs.KEY_QUALIFIED_NAME,
+            )
+        except Exception:
+            if not self._is_full_build:
+                raise
+            logger.warning(ls.REHYDRATE_QUERY_FAILED)
+            return
+        carried_implements, carried_overrides = _carried_pair_rows(carried)
+        implements += self._owned_rows(carried_implements, cs.KEY_CHILD_QN)
+        rust_overrides += self._owned_rows(carried_overrides, cs.KEY_FROM_QN)
+        pairs = [
+            (child, base)
+            for row in implements
+            if isinstance(child := row.get(cs.KEY_CHILD_QN), str)
+            and isinstance(base := row.get(cs.KEY_BASE_QN), str)
+        ]
+        pairs.extend(self._nodeless_rust_impls(rust_overrides))
+        closed = {
+            qn
+            for row in required
+            if isinstance(qn := row.get(cs.KEY_QUALIFIED_NAME), str)
+        }
+        # Rebuilt, not accumulated, and cleared only once the rows are in
+        # hand: the _rehydrate_module_qns posture.
+        rehydrated = self.factory.definition_processor.rehydrated_interface_implementers
+        rehydrated.clear()
+        for implementer, interface in pairs:
+            if not self._may_hide_rust_impls(interface, closed):
+                rehydrated.setdefault(interface, set()).add(implementer)
+
+    def _may_hide_rust_impls(self, interface_qn: str, closed: set[str]) -> bool:
+        # An impl of a Rust trait whose every method has a default body may
+        # define nothing, and one for a type with no node (`impl Visit for ()
+        # {}`) then leaves no trace in the graph: the pairs read back would
+        # count one implementer short and invent a sole-implementer edge a
+        # clean index does not emit. Such a trait, read back rather than
+        # parsed, keeps to its parsed pairs as before. A trait parsed this run
+        # has every implementer that left a trace re-parsed beside it.
+        dp = self.factory.definition_processor
+        path = dp.rehydrated_definition_paths.get(interface_qn)
+        return (
+            path is not None and path.endswith(cs.EXT_RS) and interface_qn not in closed
+        )
+
+    def _nodeless_rust_impls(
+        self, override_rows: list[ResultRow]
+    ) -> Iterable[tuple[str, str]]:
+        """(implementer, trait) for each Rust impl whose type has no node."""
+        # `impl FloatErrors for u64` has no node to hang an IMPLEMENTS edge
+        # on, so its methods' OVERRIDES name the pair. Only such a type: one
+        # with a node has its IMPLEMENTS edge, and a trait's default method
+        # overriding a supertrait's names no implementer at all.
+        for row in override_rows:
+            method = row.get(cs.KEY_FROM_QN)
+            base = row.get(cs.KEY_TO_QN)
+            if not isinstance(method, str) or not isinstance(base, str):
+                continue
+            implementer = method.rpartition(cs.SEPARATOR_DOT)[0]
+            trait = base.rpartition(cs.SEPARATOR_DOT)[0]
+            if (
+                implementer
+                and implementer not in self.function_registry
+                and self.function_registry.get(trait) == NodeType.INTERFACE
+            ):
+                yield implementer, trait
 
     def _rehydrate_module_qns(self, module_rows: list[ResultRow]) -> None:
         """Rebuild the module and interface qn sets from the graph's rows."""
@@ -3721,6 +4056,8 @@ class GraphUpdater:
         label = row.get(cs.KEY_LABEL)
         if not isinstance(qn, str) or not isinstance(label, str):
             return False
+        if self._is_reread_cpp_definition(row):
+            return False
         try:
             node_type = NodeType(label)
         except ValueError:
@@ -3734,9 +4071,15 @@ class GraphUpdater:
         ):
             return False
         self.function_registry[qn] = node_type
+        # A `@line` variant rejoins its natural qn's duplicate list: a call
+        # into the name fans out to every same-named definition, and one read
+        # back as a plain entry left the incremental graph with a single edge
+        # where a clean index has one per definition (issue #2403).
+        self.function_registry.restore_variant(qn)
         # Parsing indexes a definition under its name as well as its qn's
-        # last segment, which for `ILog.Info(string)` is not `Info`; without
-        # it a re-parsed caller's name lookup misses the method (#3261).
+        # last segment, which for `ILog.Info(string)` is not `Info` and for
+        # the variant `Limb@6` is not `Limb`; without it a re-parsed caller's
+        # name lookup misses the definition (#3261, #2403).
         if isinstance(name := row.get(cs.KEY_NAME), str) and name:
             self.function_registry.index_name(qn, name)
         # Restore the property-name set for unchanged files: property-dispatch
@@ -3759,6 +4102,13 @@ class GraphUpdater:
         # value that only its object reaches (issue #2435).
         if row.get(cs.KEY_IS_OBJECT_MEMBER):
             self.function_registry.mark_object_member(qn)
+        # Restore a C++ member's overload signature for unchanged headers, or
+        # a re-parsed out-of-class definition cannot tell which overload it
+        # defines and lands every one on the plain-named node (issue #2455).
+        if isinstance(signature := row.get(cs.KEY_SIGNATURE), str):
+            self.function_registry.restore_overload(
+                qn, signature, bool(row.get(cs.KEY_DECLARED_IN_CLASS))
+            )
         # Restore the class-body aliases of an unchanged method (`run =
         # _plain`), or a re-parsed file's `obj.run()` binds to nothing
         # (issue #2620).
@@ -3803,6 +4153,65 @@ class GraphUpdater:
         if isinstance(path := row.get(cs.KEY_PATH), str):
             self._rehydrate_definition_path(node_type, qn, path, row)
         return True
+
+    def _rehydrate_go_method_sets(self, rows: list[ResultRow]) -> None:
+        # An unchanged Go file's methods and interfaces still count toward
+        # implicit satisfaction (issue #2483): a re-parsed type implements an
+        # interface it does not touch. The signature is what the parse
+        # records, `param_types` and `return_type` (its result list parsed
+        # again, as the file's parse read it), and the embedded types are
+        # the interface's own `embeds`. An interface stored without that list
+        # (an older or imported graph) has a method set nobody recorded, so it
+        # is left out rather than read as embedding nothing.
+        dp = self.factory.definition_processor
+        for row in rows:
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            if not isinstance(qn, str) or (
+                _stored_language(row.get(cs.KEY_PATH)) != cs.SupportedLanguage.GO
+            ):
+                continue
+            path = str(row.get(cs.KEY_PATH))
+            package = go_utils.package_key(
+                path, dp.go_package_names.get(self._recorded_module_qn(path))
+            )
+            label = row.get(cs.KEY_LABEL)
+            if label == cs.NodeLabel.METHOD and isinstance(
+                param_types := row.get(cs.KEY_PARAM_TYPES), list
+            ):
+                result = row.get(cs.KEY_RETURN_TYPE)
+                dp.go_methods[qn] = GoMethodSpec(
+                    GoSignature(
+                        tuple(_stored_strings(param_types)),
+                        go_ifaces.stored_result_types(
+                            result if isinstance(result, str) else "",
+                            self.parsers.get(cs.SupportedLanguage.GO),
+                        ),
+                    ),
+                    package,
+                    path,
+                )
+            elif label == cs.NodeLabel.INTERFACE and isinstance(
+                embeds := row.get(cs.KEY_EMBEDS), list
+            ):
+                dp.go_interfaces[qn] = GoInterfaceDecl(
+                    tuple(_stored_strings(embeds)), package, path
+                )
+
+    def _is_reread_cpp_definition(self, row: ResultRow) -> bool:
+        """A C++ member known only from a definition this run re-parses.
+
+        Its node hangs off a class in an unchanged header, so the graph still
+        holds it, but its definition is being read again and will register
+        whatever it is now. Read back as well, it would be the name a changed
+        or newly added overload is measured against, and a clean index has
+        no such stale entry (issue #2455). A member its class body declared
+        stays: that declaration is not re-read.
+        """
+        return (
+            isinstance(row.get(cs.KEY_SIGNATURE), str)
+            and not row.get(cs.KEY_DECLARED_IN_CLASS)
+            and row.get(cs.KEY_PATH) in self._reparsed_file_keys
+        )
 
     def _rehydrate_rust_return_types(self, rows: list[ResultRow]) -> None:
         # Pass 2 records a Rust fn's return type only while it parses the
@@ -3946,11 +4355,18 @@ class GraphUpdater:
             namespace if isinstance(namespace, str) else None,
         )
         processor = self.factory.definition_processor
+        # The arity a parse records, so `new PB<int>()` in a re-parsed file
+        # finds the generic twin in an unchanged one (issue #2579).
+        arity = row.get(cs.KEY_GENERIC_ARITY)
+        arity = arity if isinstance(arity, int) else 0
+        if arity:
+            processor.csharp_class_generic_arity[qn] = arity
+            processor.csharp_class_owner_module[qn] = self._recorded_module_qn(path)
         # Rejoin the partial group parsing would have given it,
         # under the same key, so a declared name spanning
         # unchanged parts stays one type; a lone type's group of
         # one reads exactly as no group (bot review).
-        if key := csharp_partial_key_from_graph(qn, path, self.project_name):
+        if key := csharp_partial_key_from_graph(qn, path, self.project_name, arity):
             group = processor._csharp_partial_index.setdefault(key, [])
             group.append(qn)
             processor.csharp_partial_groups[qn] = group
@@ -4397,13 +4813,12 @@ class GraphUpdater:
         if restored:
             logger.info(ls.FUNCTION_LOCATIONS_REHYDRATED.format(count=restored))
 
-    @staticmethod
     def _restore_function_rows(
-        rows: list[ResultRow], locations: FunctionLocations
+        self, rows: list[ResultRow], locations: FunctionLocations
     ) -> int:
         restored = 0
         for row in rows:
-            module_qn = row.get(cs.KEY_MODULE_QN)
+            module_qn = self._declaring_module_qn(row)
             qn = row.get(cs.KEY_QUALIFIED_NAME)
             label = row.get(cs.KEY_LABEL)
             container = row.get(cs.KEY_CONTAINER_QN)
@@ -4436,6 +4851,17 @@ class GraphUpdater:
                     restored += 1
         return restored
 
+    def _declaring_module_qn(self, row: ResultRow) -> object:
+        # Pass 2 keys a definition by the file declaring it. A Go method in
+        # another file than its receiver type hangs off the type's Module, so
+        # the row's module named the wrong file: two files' methods at one
+        # line and column collided on one key, and the one left out was
+        # owned by no file and outlived its file's re-parse (issue #2483).
+        path = row.get(cs.KEY_PATH)
+        if isinstance(path, str) and path.endswith(cs.EXT_GO):
+            return self._recorded_module_qn(path)
+        return row.get(cs.KEY_MODULE_QN)
+
     def _affected_caller_keys(self, reindexed_keys: list[str]) -> list[str]:
         """Relative paths of files whose code depends on a re-indexed file.
 
@@ -4464,6 +4890,150 @@ class GraphUpdater:
             }
             | self._linking_document_keys(reindexed_keys)
         )
+
+    def _dependent_keys(
+        self,
+        target_keys: list[str],
+        stable: Mapping[str, str],
+        waiters: Collection[str] = (),
+    ) -> list[str]:
+        """The dependents of `target_keys` the run must re-parse (issue #2531).
+
+        All of them, except a caller of a file whose interface held (`stable`,
+        file to module qn) that depends on nothing else re-indexed and holds
+        only edges the inbound capture restores by name: it would bind
+        exactly as it does now, so it keeps its edges, as an unchanged file
+        that is no dependent at all does. `waiters` are the files this run
+        re-parses because a file it adds, or a definition it gains, is what
+        they were waiting for. They are targets too: unchanged on disk, but
+        what they resolve against is not, so what their callers see through
+        them can move (`make()` returning what a new `build()` builds).
+        """
+        targets = sorted({*target_keys, *waiters})
+        if not stable:
+            return self._affected_caller_keys(targets)
+        required, settled = self._settle_stable(targets, stable, waiters)
+        candidates = set(self._affected_caller_keys(sorted(settled))) - required
+        reparsed = self._callers_holding_unrestorable_edges(settled, candidates)
+        if kept := len(candidates) - len(reparsed):
+            logger.info(ls.INCREMENTAL_INTERFACE_KEPT, count=kept)
+        return sorted(required | reparsed)
+
+    def _settle_stable(
+        self,
+        target_keys: list[str],
+        stable: Mapping[str, str],
+        waiters: Collection[str],
+    ) -> tuple[set[str], dict[str, str]]:
+        """The dependents the unstable targets force, and what is left of
+        `stable` once every stable file among them counts as unstable too.
+
+        A stable file's own source keeps its fingerprint, but what its callers
+        see through it can still move: `make()` returns whatever `build()`
+        returns, so a `build()` changed in the same run changes
+        `make().method()` in every caller of `make`, none of which calls
+        `build`. A stable file re-parsed because of another file of the run
+        (a dependent of an unstable target, a waiter) is therefore unstable
+        for its own callers, and so on down the chain until nothing moves.
+        """
+        settled = dict(stable)
+        required = set(waiters)
+        frontier = [key for key in target_keys if key not in settled]
+        while frontier or required & settled.keys():
+            required.update(self._affected_caller_keys(frontier))
+            frontier = sorted(required & settled.keys())
+            for key in frontier:
+                del settled[key]
+        return required, settled
+
+    def _callers_holding_unrestorable_edges(
+        self, stable: Mapping[str, str], candidates: set[str]
+    ) -> set[str]:
+        """The `candidates` that must re-parse anyway; all of them when the
+        edges between them and the stable files cannot be read."""
+        if not candidates or not isinstance(self.ingestor, QueryProtocol):
+            return candidates
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_INTERFACE_BOUNDARY_EDGES,
+                {
+                    cs.CYPHER_PARAM_PATHS: sorted(stable),
+                    cs.CYPHER_PARAM_CALLERS: sorted(candidates),
+                },
+            )
+        except Exception:
+            logger.warning(ls.INTERFACE_BOUNDARY_UNREAD)
+            return candidates
+        return callers_to_reparse(rows, candidates, stable)
+
+    def _interface_stable_modules(
+        self, sources: Iterable[tuple[Path, str, bytes]]
+    ) -> dict[str, str]:
+        """{file key: module qn} of the re-indexed `sources` whose new bytes
+        keep the interface fingerprint the graph stored for them.
+
+        Empty on a full build (every file re-parses anyway) and while a
+        capture group outside the ones the fingerprint models is enabled.
+        """
+        if self._is_full_build or (self.capture.enabled_rels - cs.INTERFACE_SKIP_RELS):
+            return {}
+        fresh = {
+            key: fingerprint
+            for path, key, data in sources
+            if (fingerprint := self._source_interface_fingerprint(path, data))
+        }
+        if not fresh or not isinstance(self.ingestor, QueryProtocol):
+            return {}
+        prefix = self.project_name + cs.SEPARATOR_DOT
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_INTERFACE_FINGERPRINTS,
+                {
+                    cs.CYPHER_PARAM_PATHS: sorted(fresh),
+                    cs.KEY_PROJECT_PREFIX: prefix,
+                    cs.KEY_PROJECT_NAME: self.project_name,
+                },
+            )
+        except Exception:
+            logger.warning(ls.INTERFACE_FINGERPRINTS_UNREAD)
+            return {}
+        longer_projects = [
+            name for name in self._registered_project_names() if name.startswith(prefix)
+        ]
+        return self._without_flow_sources(
+            stable_interface_modules(rows, fresh, longer_projects)
+        )
+
+    def _without_flow_sources(self, stable: dict[str, str]) -> dict[str, str]:
+        """`stable` less the files whose callback flow edges other files'
+        parses write; none at all when that cannot be read."""
+        if not stable or not isinstance(self.ingestor, QueryProtocol):
+            return stable
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_INTERFACE_FLOW_SOURCE_PATHS,
+                {cs.CYPHER_PARAM_PATHS: sorted(stable)},
+            )
+        except Exception:
+            logger.warning(ls.INTERFACE_FLOW_SOURCES_UNREAD)
+            return {}
+        return without_flow_sources(stable, rows)
+
+    def _source_interface_fingerprint(self, path: Path, data: bytes) -> str | None:
+        """The interface fingerprint of `data` parsed as the run will parse
+        it, or None when its language has none."""
+        language = self._tree_sitter_language(path)
+        if (
+            language not in INTERFACE_LANGUAGES
+            or language in _semantic_frontend_languages()
+            or (language_queries := self.queries.get(language)) is None
+            or (parser := language_queries.get(cs.KEY_PARSER)) is None
+        ):
+            return None
+        tree = parse_with_preproc_recovery(
+            parser, grammar_bytes(data, language, path), language
+        )
+        return interface_fingerprint(tree.root_node, language)
 
     def _linking_document_keys(self, reindexed_keys: list[str]) -> set[str]:
         """Documents whose links end in a re-indexed or deleted file.
@@ -4993,8 +5563,12 @@ class GraphUpdater:
 
         None for a malformed row, a target the re-index did not recreate (a
         renamed or removed definition is correctly left without its stale
-        inbound edge, matching a clean re-index), or a label without a key.
+        inbound edge, matching a clean re-index), a label without a key, or
+        a Go type's IMPLEMENTS or OVERRIDES edge, which `_link_go_interfaces`
+        writes again for every pair that still holds.
         """
+        if _relinked_go_edge(row):
+            return None
         caller_label = row.get(cs.KEY_CALLER_LABEL)
         caller_qn = row.get(cs.KEY_CALLER_QN)
         rel = row.get(cs.KEY_REL)
@@ -5608,7 +6182,8 @@ class GraphUpdater:
         self, module_qn_prefixes: set[str], file_path: Path
     ) -> None:
         """Drop a removed file's entries from `class_inheritance`,
-        `class_field_types` and the C# partial groups.
+        `class_field_types`, the C# partial groups and the parsed implementer
+        pairs.
 
         All three are keyed by a CLASS qn; the first two were never mentioned
         in `remove_file_from_state`, so a deleted file's rows outlived it on a
@@ -5656,8 +6231,10 @@ class GraphUpdater:
             for qn, path in processor.rehydrated_definition_paths.items()
             if path == relative_posix
         }
-        if not stale:
-            return
+        # A Rust impl target with no class node is attributed by its own
+        # record; it keys no class map, so it only leaves the pairs.
+        impl_targets = _pop_owned(processor.rust_impl_owner_module, module_qn_prefixes)
+        _drop_implementers(processor.interface_implementers, stale | impl_targets)
         # Mutated in place: TypeInference and the lazily built per-language
         # engines share these same dict objects by reference, so rebinding
         # any of them would leave those readers on the pre-prune state.
@@ -6054,9 +6631,11 @@ class GraphUpdater:
         )
         # A missing stamp on an existing graph means it was built by an
         # unknown (pre-fingerprint) parser: treat it as stale too, without
-        # paying for a fingerprint computation that cannot match.
+        # paying for a fingerprint computation that cannot match. The state
+        # directory lets a toolchain probe that times out reuse an earlier
+        # run's answer instead of reading as a missing toolchain.
         if stored is None or stored != compute_parser_fingerprint(
-            repo_path=self.repo_path, capture=self.capture
+            repo_path=self.repo_path, capture=self.capture, state_dir=self.state_dir
         ):
             self._parser_changed = True
             logger.warning(ls.PARSER_FINGERPRINT_MISMATCH)
@@ -6146,6 +6725,8 @@ class GraphUpdater:
         if (self.state_dir / cs.EXPOSES_CLEANUP_PENDING_FILENAME).exists():
             return True
         if (self.state_dir / cs.PRUNE_PENDING_FILENAME).exists():
+            return True
+        if self._embeddings_owed():
             return True
         # Nothing on disk changes when only the exclusion set does, so no
         # hash or directory mtime below can see it: a file excluded by a CLI
@@ -6292,11 +6873,15 @@ class GraphUpdater:
     def _process_files(self, force: bool = False) -> None:
         self.factory.import_processor.reset_rust_path_caches()
         self.factory.import_processor.reset_java_path_caches()
+        self.factory.import_processor.reset_julia_path_caches()
         cache_path = self.state_dir / cs.HASH_CACHE_FILENAME
         dir_mtimes_path = self.state_dir / cs.DIR_MTIMES_FILENAME
         baseline = self._hash_baseline(force, cache_path, dir_mtimes_path)
         old_hashes = baseline.old_hashes
         is_full_build = baseline.is_full_build
+        # Before the parse, which re-records every pair a full build holds.
+        if is_full_build:
+            self.factory.definition_processor.reset_interface_implementers()
 
         eligible_files = self._collect_eligible_files()
 
@@ -6372,20 +6957,43 @@ class GraphUpdater:
             scan.changed_entries, is_full_build
         )
         added_keys = [key for key, _b in added_entries]
+        stable = self._interface_stable_modules(
+            _interface_sources(scan.changed_entries, {*deleted_before_parse, *siblings})
+        )
+        waiters = {
+            *self._unresolved_importer_keys(added_keys),
+            *self._unresolved_reference_waiters(added_entries, modified_entries),
+        }
+        # A foreign definer's definitions are rebuilt with the module it
+        # defines into, so their callers are its dependents as a re-indexed
+        # file's are.
         reindexed_keys = self._queue_affected_callers(
             sorted(
                 {
-                    *self._affected_caller_keys(
-                        sorted({*reindexed_keys, *deleted_before_parse, *siblings})
+                    *self._dependent_keys(
+                        sorted(
+                            {
+                                *reindexed_keys,
+                                *deleted_before_parse,
+                                *siblings,
+                                *foreign_definers,
+                            }
+                        ),
+                        stable,
+                        waiters,
                     ),
                     *siblings,
                     *foreign_definers,
-                    *self._unresolved_importer_keys(added_keys),
-                    *self._unresolved_reference_waiters(
-                        added_entries, modified_entries
-                    ),
+                    *waiters,
                 }
             ),
+            present,
+            eligible_by_key,
+            scan,
+            reindexed_keys,
+        )
+        reindexed_keys = self._queue_affected_callers(
+            _go_package_siblings({*present, *deleted_before_parse}, eligible_by_key),
             present,
             eligible_by_key,
             scan,
@@ -7258,7 +7866,7 @@ class GraphUpdater:
             is_full_build or (self._parser_changed and self._single_file is None)
         ):
             self._pending_parser_fingerprint = compute_parser_fingerprint(
-                repo_path=self.repo_path, capture=self.capture
+                repo_path=self.repo_path, capture=self.capture, state_dir=self.state_dir
             )
 
     def _pre_parse_changed_files(
@@ -7796,6 +8404,29 @@ class GraphUpdater:
 
         return flipped, self._flip_sibling_files(flipped, present, gone)
 
+    def _reingest_go_package_files(self, keys: set[str]) -> dict[str, Path]:
+        """On-disk Go files beside one this call re-parses, for the re-parse.
+
+        `run()` takes the same files (`_go_package_siblings`), for the same
+        reason.
+        """
+        files: dict[str, Path] = {}
+        for rel in _go_package_dirs(keys):
+            directory = self.repo_path / rel if rel != "." else self.repo_path
+            if not directory.is_dir():
+                continue
+            for candidate in sorted(directory.glob(f"*{cs.EXT_GO}")):
+                key = cached_relative_path(candidate, self.repo_path).as_posix()
+                if (
+                    key in keys
+                    or not candidate.is_file()
+                    or path_utils.is_symlink_entry(candidate)
+                    or self._reingest_ignored(candidate)
+                ):
+                    continue
+                files[key] = candidate
+        return files
+
     def _flip_sibling_files(
         self, flipped: set[str], present: dict[str, Path], gone: dict[str, Path]
     ) -> dict[str, Path]:
@@ -8097,6 +8728,7 @@ class GraphUpdater:
         present: dict[str, Path],
         gone: dict[str, Path],
         created: set[str] | None = None,
+        stable: Mapping[str, str] | None = None,
     ) -> dict[str, Path]:
         # Files whose bindings the change can move (one level, from the
         # graph's own edges) plus any file whose delombok overlay changed.
@@ -8105,8 +8737,7 @@ class GraphUpdater:
         # Inbound edges find dependents of files that already existed; the
         # unresolved-import lookup finds importers of files this call CREATED,
         # which by construction have no inbound edges yet (issue #1682).
-        for caller_key in (
-            *self._affected_caller_keys(keys),
+        waiters = {
             *self._unresolved_importer_keys(sorted(present)),
             # Created files offer everything; modified files offer only the
             # definitions they gained (bot review on PR #1979).
@@ -8122,6 +8753,10 @@ class GraphUpdater:
                     if created is None or key not in created
                 ],
             ),
+        }
+        for caller_key in (
+            *self._dependent_keys(keys, stable or {}, waiters),
+            *waiters,
         ):
             caller_path = self.repo_path / caller_key
             if (
@@ -8138,6 +8773,43 @@ class GraphUpdater:
             ):
                 affected[key] = self.repo_path / key
         return affected
+
+    def _reingest_interface_stable(
+        self,
+        present: dict[str, Path],
+        hashes: FileHashCache,
+        flux_stems: set[str],
+        flipped_dirs: set[str],
+    ) -> dict[str, str]:
+        """`_interface_stable_modules` for a scoped re-ingest.
+
+        A created file, a file on a stem in flux and a file under a directory
+        whose package-ness flipped are left out, as the batch path leaves out
+        its added files and siblings. The bytes judged are the bytes the
+        re-parse reads: a save landing in between would otherwise be parsed,
+        and its fingerprint stored, without its callers ever being judged
+        against it.
+        """
+        judged = {
+            key: data
+            for key, path in sorted(present.items())
+            if key in hashes
+            and not _flux_stems_of(key) & flux_stems
+            and Path(key).parent.as_posix() not in flipped_dirs
+            and (data := _read_source(path)) is not None
+        }
+        stable = self._interface_stable_modules(
+            (present[key], key, self._delombok_overlay.get(key, data))
+            for key, data in judged.items()
+        )
+        self._reingest_pinned_sources = {key: judged[key] for key in stable}
+        return stable
+
+    def _reingest_source(self, key: str, path: Path) -> bytes:
+        """The bytes to re-parse `key` from: those its interface was judged
+        on, when it was."""
+        pinned = self._reingest_pinned_sources.pop(key, None)
+        return path.read_bytes() if pinned is None else pinned
 
     def _reingest_delete(
         self, reparse: dict[str, Path], gone: dict[str, Path], hashes: FileHashCache
@@ -8190,9 +8862,16 @@ class GraphUpdater:
             import_processor.refresh_rust_path_caches_for(
                 path, created=key not in hashes
             )
+            # Julia's stem/declared-module indices are the same kind of
+            # per-layout cache: any .jl change invalidates the whole set.
+            if path.suffix == cs.EXT_JL:
+                import_processor.reset_julia_path_caches()
         for key, path in gone.items():
             self.remove_file_from_state(path)
             self._delete_module_entities(key)
+            # A deleted .jl file invalidates the same path caches reparse does.
+            if path.suffix == cs.EXT_JL:
+                import_processor.reset_julia_path_caches()
             if isinstance(self.ingestor, QueryProtocol):
                 # Keyed on the absolute path: a sibling project's File node
                 # can share the relative path (issue #897). The entry's own
@@ -8226,7 +8905,7 @@ class GraphUpdater:
             # between the parse and a second read would otherwise be
             # recorded in the cache as already indexed.
             try:
-                parsed[key] = path.read_bytes()
+                parsed[key] = self._reingest_source(key, path)
             except OSError as exc:
                 # The file was classified from disk and has since become
                 # unreadable -- deleted, or replaced by a directory, between
@@ -8253,8 +8932,22 @@ class GraphUpdater:
         # (C/C++ macros and includes, containment, forward declarations,
         # inheritance, Rust inline-mod arbitration): the deleted subtrees
         # held those relationships too. The registry is already live or was
-        # hydrated above, so no graph read-back here.
+        # hydrated above, so no registry read-back here.
         known_module_paths = self._resolve_deferred_definitions(rehydrate=False)
+        # A fresh updater read the implementer pairs back BEFORE the delete,
+        # so a class the edit stopped implementing still counted as the sole
+        # implementer and the re-parsed caller kept its edge (#2403 review).
+        # Read back again now that the re-parse registered the traits, as
+        # run() does. The inbound edges are not restored yet, and an
+        # unchanged impl of a re-parsed trait that no edge makes a dependent
+        # (`impl crate::Trait for u64`) is recorded only by its OVERRIDES
+        # edge, so the captured ones count as read. The parsed pairs stay:
+        # the re-parse records the deleted files' pairs, and the unchanged
+        # files' include impls the graph cannot show.
+        self._rehydrate_interface_implementers(
+            {cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT},
+            carried=captured,
+        )
         # The re-parsed files' own CALLS edges went with their Module
         # subtrees; a moved use must not serve last pass's cached answer.
         self.factory.call_processor.reset_resolution_caches()
@@ -8267,7 +8960,9 @@ class GraphUpdater:
         import_processor.flush_deferred_import_edges(known_module_paths)
         self._emit_csharp_query_calls()
         self._write_unresolved_references()
-        self.factory.definition_processor.process_all_method_overrides()
+        self.factory.definition_processor.process_all_method_overrides(
+            self.known_module_paths()
+        )
         # Endpoints and route registrations, scoped to the re-parsed modules:
         # the project-wide passes would load every route-capable module's
         # AST, which on a fresh updater means re-parsing most of the repo.
@@ -8375,6 +9070,7 @@ class GraphUpdater:
             if key.startswith(prefix + "/")
         ]
 
+    @holds_sync_lock(wait=True)
     def reingest(
         self,
         paths: Iterable[Path | str],
@@ -8412,6 +9108,10 @@ class GraphUpdater:
         describing what is on disk (issue #1799). Paths the project's ignore
         rules exclude are reported as ``skipped`` and left out of the graph,
         as the walk would leave them.
+
+        Waits while another writer holds the checkout's sync lock, then
+        applies the change to the graph that sync finished; the lock is
+        taken by `holds_sync_lock` (issue #2441).
         """
         started = time.perf_counter()
         # A scoped re-ingest is never a full build, whatever the previous
@@ -8428,6 +9128,7 @@ class GraphUpdater:
         # THIS call's answer, not the last one's.
         self.reingest_mutated = False
         self.reingest_scope = ()
+        self._reingest_pinned_sources = {}
         self.ast_grep_tier.reset_unparsed()
         present, gone, skipped = self._reingest_split(paths, deleted)
         if skipped:
@@ -8479,6 +9180,14 @@ class GraphUpdater:
                 {**present, **survivors},
                 gone,
                 created={key for key in present if key not in hashes},
+                stable=self._reingest_interface_stable(
+                    present, hashes, flux_stems, flipped_dirs
+                ),
+            )
+            affected.update(
+                self._reingest_go_package_files(
+                    {*present, *gone, *survivors, *affected}
+                )
             )
             all_keys = sorted({*present, *gone, *survivors, *affected})
             captured = self._capture_inbound_edges(all_keys)
@@ -9139,13 +9848,93 @@ class GraphUpdater:
             return None
         return parsed[cs.KEY_NODE_ID], _embedding_symbol(parsed), source_code
 
-    def _generate_semantic_embeddings(self) -> None:
+    def _embeddings_off_reason(self) -> str | None:
+        """Why this run is set up to generate no embeddings, or None."""
         if self.skip_embeddings:
-            logger.info(ls.EMBEDDINGS_SKIPPED)
-            return
-
+            return ls.EMBEDDINGS_SKIPPED
         if not has_semantic_dependencies():
-            logger.info(ls.SEMANTIC_NOT_AVAILABLE)
+            return ls.SEMANTIC_NOT_AVAILABLE
+        return None
+
+    def _embeddings_owed(self) -> bool:
+        if not self._owes_embeddings():
+            return False
+        # Only a run that embeds can pay what an earlier one owes, so a run
+        # without embeddings keeps the fast path and leaves the marker for
+        # the next run that has them.
+        return self._embeddings_off_reason() is None and isinstance(
+            self.ingestor, QueryProtocol
+        )
+
+    def _owes_embeddings(self) -> bool:
+        if _embeddings_marker(self.state_dir, self.project_name).exists():
+            return True
+        shared = _load_shared_embeddings_owed(
+            self.state_dir / cs.EMBEDDINGS_PENDING_FILENAME
+        )
+        return shared is None or self.project_name in shared
+
+    def _record_embeddings_pending(self, pending: bool) -> None:
+        """Owe the embeddings pass to the next sync, or settle what was owed.
+
+        The run publishes its hash cache whatever the pass did, so after a
+        pass that left a symbol without its point, or a stale point behind,
+        an unchanged checkout took the in-sync fast path, which never
+        embeds: an edited function whose new point the store refused stayed
+        unsearchable until another file changed (review of PR #2550). The
+        marker makes that fast path refuse. Each pass covers every function
+        of the project, so one that stores, verifies and prunes them all
+        settles whatever an earlier run of it owed, and only that: one
+        checkout can be indexed under several projects, each with a marker
+        of its own (review of PR #3358).
+        """
+        if pending:
+            logger.warning(ls.EMBEDDINGS_PENDING.format(project=self.project_name))
+        recorded = _save_embeddings_owed(
+            _embeddings_marker(self.state_dir, self.project_name),
+            self.project_name,
+            pending,
+        )
+        self._split_shared_embeddings_marker(recorded)
+
+    def _split_shared_embeddings_marker(self, recorded: bool) -> None:
+        """Hand each project a shared marker names a marker of its own.
+
+        Only created, never removed, for the others: a project that syncs
+        at the same time and settles its debt in between owes one more pass
+        at worst. This run's own debt is what its pass decided, `recorded`
+        whether its marker took that. The shared marker goes only once every
+        debt it holds is in a file of its own: a write that failed (a full
+        disk refuses a new file but not a removal) leaves it for the next
+        sync to split again (review of PR #3358).
+        """
+        shared = self.state_dir / cs.EMBEDDINGS_PENDING_FILENAME
+        owed = _load_shared_embeddings_owed(shared)
+        if owed == frozenset():
+            return
+        if owed is None:
+            # Naming no one, it is every project's debt: each one indexed
+            # from this tree still retries once.
+            owed = frozenset(
+                _load_project_stamps(self.state_dir / cs.EXCLUSION_STATE_FILENAME)
+            )
+        failed = [
+            project
+            for project in sorted(owed - {self.project_name})
+            if not _save_embeddings_owed(
+                _embeddings_marker(self.state_dir, project), project, True
+            )
+        ]
+        if failed or not recorded:
+            return
+        try:
+            shared.unlink(missing_ok=True)
+        except OSError:
+            logger.debug(ls.EMBEDDINGS_PENDING_NOT_UPDATED)
+
+    def _generate_semantic_embeddings(self) -> None:
+        if (off_reason := self._embeddings_off_reason()) is not None:
+            logger.info(off_reason)
             return
 
         if not isinstance(self.ingestor, QueryProtocol):
@@ -9180,9 +9969,10 @@ class GraphUpdater:
                 logger.info(ls.NO_FUNCTIONS_FOR_EMBEDDING)
                 # The project's last function may just have gone; its point
                 # must go with it.
-                self._delete_stale_embeddings(
+                pruned = self._delete_stale_embeddings(
                     current, stored_ids, delete_stale_embeddings
                 )
+                self._record_embeddings_pending(not pruned)
                 close_qdrant_client()
                 return
 
@@ -9216,8 +10006,15 @@ class GraphUpdater:
             logger.info(ls.EMBEDDINGS_COMPLETE, count=embedded_count)
 
             # Before the check, so it reads the store as the sync leaves it.
-            self._delete_stale_embeddings(current, stored_ids, delete_stale_embeddings)
-            self._reconcile_embeddings(expected, verify_stored_ids)
+            # The prune still drops the point of a symbol whose replacement
+            # was refused: search answers with the node a point names, and
+            # this one names the node the re-parse deleted. The symbol is
+            # owed to the next sync instead.
+            pruned = self._delete_stale_embeddings(
+                current, stored_ids, delete_stale_embeddings
+            )
+            verified = self._reconcile_embeddings(expected, verify_stored_ids)
+            self._record_embeddings_pending(not (pruned and verified))
 
             get_embedding_cache().save()
             close_qdrant_client()
@@ -9226,6 +10023,7 @@ class GraphUpdater:
             self._stop_interrupted_embeddings()
         except Exception as e:
             logger.warning(ls.EMBEDDING_GENERATION_FAILED, error=e)
+            self._record_embeddings_pending(True)
 
     def _current_symbols(self, rows: list[ResultRow]) -> dict[int, EmbeddingSymbol]:
         """Every function and method the graph holds for the project now,
@@ -9244,8 +10042,9 @@ class GraphUpdater:
         delete_fn: Callable[
             [str, Mapping[int, EmbeddingSymbol], Collection[int], Sequence[str]], int
         ],
-    ) -> None:
-        """Drop the project's vectors of symbols `current` no longer holds.
+    ) -> bool:
+        """Drop the project's vectors of symbols `current` no longer holds,
+        and say whether the delete ran.
 
         A re-parse re-creates a file's nodes, and a deleted function leaves
         nothing to overwrite its vector, so without this the store kept a
@@ -9258,20 +10057,21 @@ class GraphUpdater:
         nested = self._nested_project_names()
         if self._registry_unread:
             logger.warning(ls.EMBEDDING_STALE_SKIPPED.format(project=self.project_name))
-            return
+            return False
         try:
             removed = delete_fn(self.project_name, current, stored_ids, nested)
         except Exception as e:
             logger.warning(
                 ls.EMBEDDING_STALE_FAILED.format(project=self.project_name, error=e)
             )
-            return
+            return False
         if removed:
             logger.info(
                 ls.EMBEDDING_STALE_REMOVED.format(
                     count=removed, project=self.project_name
                 )
             )
+        return True
 
     def _stop_interrupted_embeddings(self) -> None:
         """Hold a Ctrl+C in the embeddings pass until `run` has committed.
@@ -9279,14 +10079,18 @@ class GraphUpdater:
         The graph writes are flushed before this pass, so letting the
         interrupt escape here would only skip `_commit_run_state`: with no
         hash cache the next sync re-parses the whole repository, and after
-        `--clean` there is not even the old cache to fall back on. The next
-        sync that re-indexes embeds every function again, so saving the
+        `--clean` there is not even the old cache to fall back on. The run
+        publishes its hash cache, so the pass is owed before that: otherwise
+        an unchanged checkout took the in-sync fast path and the functions
+        this pass had not reached stayed out of search (review of PR
+        #3358). The next sync embeds every function again, and saving the
         embedding cache lets it reuse the vectors this pass already computed.
         """
         from .embedder import get_embedding_cache
         from .vector_store import close_qdrant_client
 
         logger.warning(ls.EMBEDDINGS_INTERRUPTED)
+        self._record_embeddings_pending(True)
         get_embedding_cache().save()
         close_qdrant_client()
         self._embeddings_interrupted = True
@@ -9295,25 +10099,29 @@ class GraphUpdater:
         self,
         expected: Mapping[int, EmbeddingSymbol],
         verify_fn: Callable[[str, Mapping[int, EmbeddingSymbol]], set[int]],
-    ) -> None:
+    ) -> bool:
+        """Check the store holds a point for each node in `expected`, and say
+        whether it does; a check that failed proves nothing."""
         if not expected:
-            return
+            return True
         try:
             stored_ids = verify_fn(self.project_name, expected)
-            missing = set(expected) - stored_ids
-            if missing:
-                sample = sorted(missing)[:10]
-                logger.warning(
-                    ls.EMBEDDING_RECONCILE_MISSING.format(
-                        missing=len(missing),
-                        expected=len(expected),
-                        sample_ids=sample,
-                    )
-                )
-            else:
-                logger.info(ls.EMBEDDING_RECONCILE_OK.format(count=len(expected)))
         except Exception as e:
             logger.warning(ls.EMBEDDING_RECONCILE_FAILED.format(error=e))
+            return False
+        missing = set(expected) - stored_ids
+        if missing:
+            sample = sorted(missing)[:10]
+            logger.warning(
+                ls.EMBEDDING_RECONCILE_MISSING.format(
+                    missing=len(missing),
+                    expected=len(expected),
+                    sample_ids=sample,
+                )
+            )
+            return False
+        logger.info(ls.EMBEDDING_RECONCILE_OK.format(count=len(expected)))
+        return True
 
     def _extract_source_code(
         self, qualified_name: str, file_path: str, start_line: int, end_line: int

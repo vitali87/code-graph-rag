@@ -275,6 +275,17 @@ def _pin_csharp_frontend_treesitter(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _forget_toolchain_probe_answers(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The parser fingerprint remembers each toolchain's version answer for the
+    # life of the process, so one test's real or scripted `go version` would
+    # answer the next test's probe in the same worker. Each test starts as a
+    # new process does, remembering nothing.
+    from codebase_rag import parser_fingerprint
+
+    monkeypatch.setattr(parser_fingerprint, "_PROBE_ANSWERS", {})
+
+
+@pytest.fixture(autouse=True)
 def _isolate_vector_store(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -307,6 +318,78 @@ def _isolate_cgr_home(
     home = tmp_path_factory.mktemp("cgr-home-iso")
     monkeypatch.setattr(settings, "CGR_HOME", home)
     return home
+
+
+def shared_session_dir(tmp_path_factory: pytest.TempPathFactory, name: str) -> Path:
+    """A directory every xdist worker of this test session shares (the
+    session's own base temp without xdist)."""
+    base = tmp_path_factory.getbasetemp()
+    shared = (base.parent if os.environ.get("PYTEST_XDIST_WORKER") else base) / name
+    shared.mkdir(exist_ok=True)
+    return shared
+
+
+@pytest.fixture(scope="session")
+def _shared_go_helper_cache(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return shared_session_dir(tmp_path_factory, "go-helper-shared")
+
+
+@pytest.fixture
+def one_go_helper_per_session(
+    _shared_go_helper_cache: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """The go/types helper built once per test session, shared by every xdist
+    worker (its build takes a lock), for the tests that use it: each test's
+    fresh CGR_HOME (above) made each one rebuild it, a `go env`, a `go build`
+    and a link apiece, slowest on Windows. Tests of the helper's own build
+    and cache keep their isolation by not using this."""
+    from codebase_rag.parsers.go_frontend import frontend
+
+    monkeypatch.setattr(frontend, "_cache_dir", lambda: _shared_go_helper_cache)
+    return _shared_go_helper_cache
+
+
+# The parser fingerprint's inputs from the environment, once read: each
+# tool's version by (executable, argument), and the grammar packages.
+_TOOL_VERSIONS: dict[tuple[str, str], str] = {}
+_GRAMMAR_VERSIONS: list[list[str]] = []
+
+
+@pytest.fixture
+def fingerprint_inputs_once_per_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    """What the parser fingerprint reads from the environment, read once per
+    test session (per xdist worker) for the tests that use this, which index
+    many small repositories. Each index asked every tool's version again,
+    since the probe's key holds the repository's directory and pin files
+    (`go version` a process apiece, slowest on Windows), and read every
+    installed distribution's metadata for the grammar packages' versions
+    (about 0.2 s an index). Nothing installs a tool or a grammar in a
+    session, and none of their repositories pins a toolchain, so every
+    answer is the same. Tests of the fingerprint itself read afresh by not
+    using this."""
+    from codebase_rag import parser_fingerprint
+
+    probe = parser_fingerprint._probe_version
+    grammars = parser_fingerprint._grammar_versions
+
+    def tool_version(
+        executable: str,
+        argument: str,
+        cwd: Path | None = None,
+        state_dir: Path | None = None,
+    ) -> str:
+        key = (executable, argument)
+        if key not in _TOOL_VERSIONS:
+            _TOOL_VERSIONS[key] = probe(executable, argument, cwd, state_dir)
+        return _TOOL_VERSIONS[key]
+
+    def grammar_versions() -> list[str]:
+        if not _GRAMMAR_VERSIONS:
+            _GRAMMAR_VERSIONS.append(grammars())
+        return list(_GRAMMAR_VERSIONS[0])
+
+    monkeypatch.setattr(parser_fingerprint, "_probe_version", tool_version)
+    monkeypatch.setattr(parser_fingerprint, "_grammar_versions", grammar_versions)
 
 
 # What `shutil.rmtree` passes to `onexc` besides the removals. None of these
@@ -785,6 +868,13 @@ def create_and_run_updater(
         unignore_paths=unignore_paths,
         capture=capture,
     )
+    # The autouse `_skip_when_grammar_missing` wraps `run` per test, so a
+    # module-scoped fixture, set up before it, ran over a repo of a missing
+    # grammar on a base install and failed on an empty graph instead of
+    # skipping. The check is made here too, where every caller passes.
+    if missing := _grammars_missing_for(updater):
+        names = ", ".join(sorted(str(lang.value) for lang in missing))
+        pytest.skip(f"{names} parser not available")
     updater.run()
     _audit_recorded_graph(mock_ingestor)
     return updater

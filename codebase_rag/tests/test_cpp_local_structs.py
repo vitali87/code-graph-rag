@@ -640,7 +640,9 @@ def test_invoked_functor_still_calls_its_operator(
 
 
 # Two out-of-class overloads each write a local `L` (#2631 re-review): each
-# overload's calls bind its own `L`, never the first overload's.
+# overload is its own Method node (#2455), the one its class body declares,
+# and its `L` hangs off that node's name. The first declared overload keeps
+# `Widget.run`; the second is `Widget.run@8`, after the line declaring it.
 _OUT_OF_CLASS_OVERLOADS = """\
 int g1(int x) { return x; }
 int g2(int x) { return x; }
@@ -668,33 +670,201 @@ int Widget::run(double d) {
 def test_out_of_class_overloads_keep_their_own_local_structs(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # Out-of-class overloads share one `Widget.run` Method node; the second
-    # one's local `L` sits under `run@16`, the line it starts on, and its
-    # `l.a(1)` binds that `L`, not the first overload's.
+    # Each overload's `l.a(...)` binds its own `L`, and only from its own
+    # node: the second's local type is `run@8.L`, not one named after the
+    # line its definition starts on (`run@16`), which no Method node has.
     _index(temp_repo, mock_ingestor, ooc=_OUT_OF_CLASS_OVERLOADS)
 
-    run = f"{_PROJECT}.ooc.ui.Widget.run"
-    first_l, second_l = f"{run}.L", f"{run}@16.L"
-    assert {first_l, second_l} <= get_node_names(mock_ingestor, NodeLabel.CLASS)
+    module = f"{_PROJECT}.ooc"
+    first, second = f"{module}.ui.Widget.run", f"{module}.ui.Widget.run@8"
+    first_l, second_l = f"{first}.L", f"{second}.L"
+    classes = get_node_names(mock_ingestor, NodeLabel.CLASS)
+    assert {first_l, second_l} <= classes
+    assert {first, second} <= get_node_names(mock_ingestor, NodeLabel.METHOD)
+    assert not {qn for qn in classes if "@16" in qn}, classes
     calls = _edges(mock_ingestor, RelationshipType.CALLS)
-    assert (f"{first_l}.a", f"{_PROJECT}.ooc.g1") in calls
-    assert (f"{second_l}.a", f"{_PROJECT}.ooc.g2") in calls
-    assert (run, f"{first_l}.a") in calls
-    assert (run, f"{second_l}.a") in calls
+    assert (f"{first_l}.a", f"{module}.g1") in calls
+    assert (f"{second_l}.a", f"{module}.g2") in calls
+    assert (first, f"{first_l}.a") in calls
+    assert (second, f"{second_l}.a") in calls
+    assert (first, f"{second_l}.a") not in calls
+    assert (second, f"{first_l}.a") not in calls
 
 
 def test_out_of_class_overload_local_struct_is_defined_by_its_method(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
-    # Negative: both local `L`s still hang off the one `Widget.run` node, and
-    # a single out-of-class definition keeps its unmarked name (asserted by
-    # test_local_struct_in_out_of_class_method_is_scoped_under_the_method).
+    # Negative: each `L` hangs off its own overload's node and never the
+    # other's. A single out-of-class definition keeps its unmarked name
+    # (test_local_struct_in_out_of_class_method_is_scoped_under_the_method).
     _index(temp_repo, mock_ingestor, ooc=_OUT_OF_CLASS_OVERLOADS)
 
-    run = f"{_PROJECT}.ooc.ui.Widget.run"
+    first = f"{_PROJECT}.ooc.ui.Widget.run"
+    second = f"{first}@8"
     defines = _labelled_edges(mock_ingestor, RelationshipType.DEFINES)
-    assert (NodeLabel.METHOD, run, NodeLabel.CLASS, f"{run}.L") in defines
-    assert (NodeLabel.METHOD, run, NodeLabel.CLASS, f"{run}@16.L") in defines
+    assert (NodeLabel.METHOD, first, NodeLabel.CLASS, f"{first}.L") in defines
+    assert (NodeLabel.METHOD, second, NodeLabel.CLASS, f"{second}.L") in defines
+    assert (NodeLabel.METHOD, first, NodeLabel.CLASS, f"{second}.L") not in defines
+    assert (NodeLabel.METHOD, second, NodeLabel.CLASS, f"{first}.L") not in defines
+
+
+# The definitions in the other order: which overload a definition is decides
+# its node, and so its local type's name, not where the definition sits.
+_REORDERED_OVERLOADS = """\
+int g1(int x) { return x; }
+int g2(int x) { return x; }
+
+namespace ui {
+class Widget {
+public:
+  int run(int n);
+  int run(double d);
+};
+
+int Widget::run(double d) {
+  struct L { int a(int v) { return g2(v); } } l;
+  return l.a(1);
+}
+
+int Widget::run(int n) {
+  struct L { int a(int v) { return g1(v); } } l;
+  return l.a(n);
+}
+}
+"""
+
+
+def test_reordered_out_of_class_overloads_name_local_structs_by_their_node(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `run(double)` is defined first but is still `Widget.run@8`: its `L` is
+    # `run@8.L`, and `Widget.run.L` stays `run(int)`'s.
+    _index(temp_repo, mock_ingestor, reord=_REORDERED_OVERLOADS)
+
+    module = f"{_PROJECT}.reord"
+    first, second = f"{module}.ui.Widget.run", f"{module}.ui.Widget.run@8"
+    first_l, second_l = f"{first}.L", f"{second}.L"
+    defines = _labelled_edges(mock_ingestor, RelationshipType.DEFINES)
+    assert (NodeLabel.METHOD, first, NodeLabel.CLASS, first_l) in defines
+    assert (NodeLabel.METHOD, second, NodeLabel.CLASS, second_l) in defines
+    calls = _edges(mock_ingestor, RelationshipType.CALLS)
+    assert (f"{first_l}.a", f"{module}.g1") in calls
+    assert (f"{second_l}.a", f"{module}.g2") in calls
+    assert (first, f"{first_l}.a") in calls
+    assert (second, f"{second_l}.a") in calls
+    assert (second, f"{first_l}.a") not in calls
+
+
+# One overload defined in its class body, the other out of it: both bodies
+# write an `L`, and they must not be read as one type.
+_INLINE_AND_OUT_OF_CLASS_OVERLOADS = """\
+int g1(int x) { return x; }
+int g2(int x) { return x; }
+
+namespace ui {
+class Widget {
+public:
+  int run(int n) { struct L { int a(int v) { return g1(v); } } l; return l.a(n); }
+  int run(double d);
+};
+
+int Widget::run(double d) {
+  struct L { int a(int v) { return g2(v); } } l;
+  return l.a(1);
+}
+}
+"""
+
+
+def test_out_of_class_overload_local_struct_stays_apart_from_an_inline_one(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The out-of-class `run(double)` is the first definition of `Widget::run`
+    # written out of the class, but its node is `run@8`: its `L` is
+    # `run@8.L`, not a second `Widget.run.L` that collides with the inline
+    # overload's and whose `l.a(1)` binds the inline `L`.
+    _index(temp_repo, mock_ingestor, mixed=_INLINE_AND_OUT_OF_CLASS_OVERLOADS)
+
+    module = f"{_PROJECT}.mixed"
+    inline, outside = f"{module}.ui.Widget.run", f"{module}.ui.Widget.run@8"
+    inline_l, outside_l = f"{inline}.L", f"{outside}.L"
+    classes = get_node_names(mock_ingestor, NodeLabel.CLASS)
+    assert {inline_l, outside_l} <= classes
+    assert not {qn for qn in classes if qn.startswith(f"{inline_l}@")}, classes
+    defines = _labelled_edges(mock_ingestor, RelationshipType.DEFINES)
+    assert (NodeLabel.METHOD, inline, NodeLabel.CLASS, inline_l) in defines
+    assert (NodeLabel.METHOD, outside, NodeLabel.CLASS, outside_l) in defines
+    calls = _edges(mock_ingestor, RelationshipType.CALLS)
+    assert (f"{inline_l}.a", f"{module}.g1") in calls
+    assert (f"{outside_l}.a", f"{module}.g2") in calls
+    assert (inline, f"{inline_l}.a") in calls
+    assert (outside, f"{outside_l}.a") in calls
+    assert (outside, f"{inline_l}.a") not in calls
+    assert (inline, f"{outside_l}.a") not in calls
+
+
+# The class in a header: the definition file cannot see which line declares
+# each overload, so its local types are named from that file alone, as
+# before, under its own module. Each still belongs to its own overload.
+_HEADER_OVERLOADS_H = """\
+namespace ui {
+class Widget {
+public:
+  int run(int n);
+  int run(double d);
+};
+}
+"""
+_HEADER_OVERLOADS_CPP = """\
+#include "widget.h"
+int g1(int x) { return x; }
+int g2(int x) { return x; }
+
+namespace ui {
+int Widget::run(double d) {
+  struct L { int a(int v) { return g2(v); } } l;
+  return l.a(1);
+}
+
+int Widget::run(int n) {
+  struct L { int a(int v) { return g1(v); } } l;
+  return l.a(n);
+}
+}
+"""
+
+
+def test_header_declared_overloads_keep_their_own_local_structs(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    project = temp_repo / _PROJECT
+    project.mkdir(exist_ok=True)
+    (project / "widget.h").write_text(_HEADER_OVERLOADS_H, encoding="utf-8")
+    (project / "widget.cpp").write_text(_HEADER_OVERLOADS_CPP, encoding="utf-8")
+    run_updater(project, mock_ingestor)
+
+    run = f"{_PROJECT}.widget.h.ui.Widget.run"
+    owners = {run: f"{_PROJECT}.widget.g1", f"{run}@5": f"{_PROJECT}.widget.g2"}
+    calls = _edges(mock_ingestor, RelationshipType.CALLS)
+    defines = _labelled_edges(mock_ingestor, RelationshipType.DEFINES)
+    local_ls = {
+        child
+        for (_, parent, label, child) in defines
+        if parent in owners and label == NodeLabel.CLASS
+    }
+    assert len(local_ls) == 2, local_ls
+    for method, helper in owners.items():
+        # The one `L` this overload defines is the one it calls, and that
+        # `L`'s method calls this overload's helper.
+        (own_l,) = {
+            child
+            for (_, parent, label, child) in defines
+            if parent == method and label == NodeLabel.CLASS
+        }
+        assert (f"{own_l}.a", helper) in calls
+        assert {(method, f"{other}.a") for other in local_ls} & calls == {
+            (method, f"{own_l}.a")
+        }
 
 
 # A receiver whose type is spelled qualified names that type, not the local
@@ -750,8 +920,9 @@ def test_unqualified_receiver_type_still_binds_the_local_class(
     assert (f"{module}.f.A.local_b", f"{module}.B.ping") not in calls
 
 
-# The overloads may sit in two blocks of one reopened namespace (#2631
-# re-review): the second is still the second.
+# The overloads may sit in two blocks of one reopened namespace, apart from
+# their class (#2631 re-review): the second is still `run@8`, the overload
+# the class body declares on line 8.
 _REOPENED_OVERLOADS = """\
 int g1(int x) { return x; }
 int g2(int x) { return x; }
@@ -786,11 +957,18 @@ def test_overloads_in_reopened_namespace_blocks_keep_their_own_local_structs(
     _index(temp_repo, mock_ingestor, reopen=_REOPENED_OVERLOADS)
 
     run = f"{_PROJECT}.reopen.ui.Widget.run"
-    second_l = f"{run}@20.L"
-    assert second_l in get_node_names(mock_ingestor, NodeLabel.CLASS)
+    second = f"{run}@8"
+    first_l, second_l = f"{run}.L", f"{second}.L"
+    classes = get_node_names(mock_ingestor, NodeLabel.CLASS)
+    assert {first_l, second_l} <= classes
+    assert not {qn for qn in classes if "@20" in qn}, classes
+    defines = _labelled_edges(mock_ingestor, RelationshipType.DEFINES)
+    assert (NodeLabel.METHOD, second, NodeLabel.CLASS, second_l) in defines
     calls = _edges(mock_ingestor, RelationshipType.CALLS)
     assert (f"{second_l}.a", f"{_PROJECT}.reopen.g2") in calls
-    assert (run, f"{second_l}.a") in calls
+    assert (second, f"{second_l}.a") in calls
+    assert (second, f"{first_l}.a") not in calls
+    assert (run, f"{second_l}.a") not in calls
 
 
 def test_first_overload_in_a_reopened_namespace_keeps_its_unmarked_name(

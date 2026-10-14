@@ -19,6 +19,7 @@ from ..types_defs import (
     FunctionSpanKey,
     LanguageQueries,
     NodeType,
+    OverloadSignature,
     PropertyDict,
     SimpleNameLookup,
     TreeSitterNodeProtocol,
@@ -53,66 +54,86 @@ def follow_reexports(
     # module (pkg.sym), not the real definition (pkg.mod.sym), so an unregistered
     # qn may be a re-export. Follow the module's import map one hop at a time
     # until a registered symbol is reached, guarding against cycles.
-    return _follow_reexports(qn, import_mapping, function_registry, set())
+    if qn in function_registry:
+        return qn
+    return _ImportMapWalk(import_mapping, function_registry).follow(qn)[0]
 
 
-def _follow_reexports(
-    qn: str,
-    import_mapping: dict[str, dict[str, str]],
-    function_registry: FunctionRegistryTrieProtocol,
-    seen: set[str],
-) -> str:
-    current = qn
-    while (
-        current
-        and current not in seen
-        and current not in function_registry
-        and cs.SEPARATOR_DOT in current
-    ):
-        seen.add(current)
+class _ImportMapWalk:
+    """One `follow_reexports` lookup.
+
+    A module two star paths reach is walked on each: the first path can end
+    ambiguous where the second does not, so marking the module visited for
+    the whole lookup lost the export the second path provides. Only a qn on
+    the current path stops a walk, which still ends every cycle; a qn settled
+    without meeting one is remembered, so a module shared by many paths is
+    still walked once.
+    """
+
+    __slots__ = ("_imports", "_registry", "_path", "_settled")
+
+    def __init__(
+        self,
+        import_mapping: Mapping[str, Mapping[str, str]],
+        function_registry: FunctionRegistryTrieProtocol,
+    ) -> None:
+        self._imports = import_mapping
+        self._registry = function_registry
+        self._path: set[str] = set()
+        self._settled: dict[str, str] = {}
+
+    def follow(self, qn: str) -> tuple[str, bool]:
+        # Where `qn` leads, and whether a cycle cut the walk short. A cut walk
+        # depends on the path that reached it, so it is never settled.
+        current = qn
+        entered: list[str] = []
+        cut = False
+        while current and current not in self._registry and cs.SEPARATOR_DOT in current:
+            if current in self._settled:
+                current = self._settled[current]
+                break
+            if current in self._path:
+                cut = True
+                break
+            self._path.add(current)
+            entered.append(current)
+            following, star_cut = self._step(current)
+            cut = cut or star_cut
+            if not following or following == current:
+                break
+            current = following
+        self._path.difference_update(entered)
+        if not cut:
+            self._settled.update(dict.fromkeys(entered, current))
+        return current, cut
+
+    def _step(self, current: str) -> tuple[str | None, bool]:
         module_qn, _, name = current.rpartition(cs.SEPARATOR_DOT)
-        following = import_mapping.get(module_qn, {}).get(name)
-        if not following:
-            following = _star_reexport_target(
-                module_qn, name, import_mapping, function_registry, seen
-            )
-        if not following or following == current:
-            break
-        current = following
-    return current
+        if following := self._imports.get(module_qn, {}).get(name):
+            return following, False
+        return self._star_target(module_qn, name)
 
-
-def _star_reexport_target(
-    module_qn: str,
-    name: str,
-    import_mapping: dict[str, dict[str, str]],
-    function_registry: FunctionRegistryTrieProtocol,
-    seen: set[str],
-) -> str | None:
-    # A star re-export (`export * from './router'`, `from .mod import *`)
-    # binds no name of its own, so a barrel's member is whichever star source
-    # exports it, possibly through further stars. Only a source that reaches
-    # a registered definition its module exports counts: a private one is
-    # never re-exported, so it neither stands in for the name nor makes an
-    # exported one ambiguous. Two exported ones are ambiguous (TypeScript
-    # exports neither), so nothing is guessed. `seen` is shared so a cycle of
-    # stars ends.
-    reached = {
-        target
-        for key, source in import_mapping.get(module_qn, {}).items()
-        if key.startswith(cs.GLOB_ALL)
-        and (
-            target := _follow_reexports(
-                f"{source}{cs.SEPARATOR_DOT}{name}",
-                import_mapping,
-                function_registry,
-                seen,
-            )
-        )
-        in function_registry
-        and not function_registry.is_module_private(target)
-    }
-    return reached.pop() if len(reached) == 1 else None
+    def _star_target(self, module_qn: str, name: str) -> tuple[str | None, bool]:
+        # A star re-export (`export * from './router'`, `from .mod import *`)
+        # binds no name of its own, so a barrel's member is whichever star
+        # source exports it, possibly through further stars. Only a source
+        # that reaches a registered definition its module exports counts: a
+        # private one is never re-exported, so it neither stands in for the
+        # name nor makes an exported one ambiguous. Two exported ones are
+        # ambiguous (TypeScript exports neither), so nothing is guessed; one
+        # reached along two paths is one binding, not two.
+        reached: set[str] = set()
+        cut = False
+        for key, source in self._imports.get(module_qn, {}).items():
+            if not key.startswith(cs.GLOB_ALL):
+                continue
+            target, branch_cut = self.follow(f"{source}{cs.SEPARATOR_DOT}{name}")
+            cut = cut or branch_cut
+            if target in self._registry and not self._registry.is_module_private(
+                target
+            ):
+                reached.add(target)
+        return (reached.pop() if len(reached) == 1 else None), cut
 
 
 def mark_js_ts_module_private(
@@ -394,6 +415,19 @@ def contains_node(parent: ASTNode, target: ASTNode) -> bool:
     return parent == target or any(
         contains_node(child, target) for child in parent.children
     )
+
+
+def unparenthesized(node: Node | None) -> Node | None:
+    """The expression under any parentheses: `(fn)()` still calls `fn`.
+
+    Without the unwrap a stored computed lookup invoked as `(fn)()` was not
+    recognised as a call, and `(registry[name])()` was not recognised as a
+    computed dispatch, so an unrelated invoked literal in the same body could
+    be recorded as the dynamic-trace site (#1543 review).
+    """
+    while node is not None and node.type == cs.TS_PARENTHESIZED_EXPRESSION:
+        node = next(iter(node.named_children), None)
+    return node
 
 
 def _decorator_tail_names(decorators: list[str]) -> set[str]:
@@ -1584,21 +1618,79 @@ def _record_method_overrides(
         )
 
 
-def _register_method_qn(
+class _CppMember(NamedTuple):
+    qualified_name: str
+    signature: OverloadSignature | None
+    declared_in_class: bool
+
+
+def _register_cpp_member_qn(
+    method_node: ASTNode,
+    natural_qn: str,
     function_registry: FunctionRegistryTrieProtocol,
-    method_qn: str,
-    language: cs.SupportedLanguage,
     start_line: int,
     start_col: int,
-) -> str:
-    if language == cs.SupportedLanguage.CPP:
-        return method_qn
-    return function_registry.register_unique_qn(
-        method_qn,
+) -> _CppMember:
+    # A C++ member is seen twice, in-class and out of it, so the plain
+    # `@line` dedup would split one member in two; the signature keeps one
+    # node per overload instead (issue #2455). Without a readable parameter
+    # list the plain name stands, as it did for every member before.
+    # Local import: cpp.overloads imports this module for its decode helper.
+    from .cpp.overloads import cpp_overload_signature, declared_in_class_body
+
+    declared = declared_in_class_body(method_node)
+    signature = cpp_overload_signature(method_node)
+    if signature is None:
+        return _CppMember(natural_qn, None, declared)
+    qualified_name = function_registry.register_overload_qn(
+        natural_qn,
+        signature,
         start_line,
         start_col,
-        kind=NodeType.METHOD if language in cs.JS_TS_LANGUAGES else None,
+        declared_in_class=declared,
     )
+    return _CppMember(qualified_name, signature, declared)
+
+
+def _register_method_qn(
+    method_node: ASTNode,
+    method_qn: str,
+    language: cs.SupportedLanguage,
+    function_registry: FunctionRegistryTrieProtocol,
+    start_line: int,
+    start_col: int,
+    file_path: Path | None = None,
+) -> tuple[str, _CppMember | None]:
+    # The registered qn, and for C++ the member it names (issue #2455).
+    if language == cs.SupportedLanguage.CPP:
+        cpp_member = _register_cpp_member_qn(
+            method_node, method_qn, function_registry, start_line, start_col
+        )
+        return cpp_member.qualified_name, cpp_member
+    # TypeScript keeps a type and a same-named value as two nodes (#2520).
+    kind = NodeType.METHOD if language in cs.JS_TS_LANGUAGES else None
+    # A Go method's natural qn is its receiver type's, which each build file
+    # declaring the method again shares (#3360 review).
+    origin = (
+        str(file_path)
+        if language == cs.SupportedLanguage.GO and file_path is not None
+        else None
+    )
+    registered = function_registry.register_unique_qn(
+        method_qn, start_line, start_col, kind=kind, origin=origin
+    )
+    return registered, None
+
+
+def _cpp_member_props(cpp_member: _CppMember | None) -> PropertyDict:
+    if cpp_member is None or cpp_member.signature is None:
+        return {}
+    props: PropertyDict = {cs.KEY_SIGNATURE: cpp_member.signature.text}
+    # Written only by the class body, never as False: node writes merge,
+    # so the definition written after its declaration leaves it standing.
+    if cpp_member.declared_in_class:
+        props[cs.KEY_DECLARED_IN_CLASS] = True
+    return props
 
 
 def _record_member_aliases(
@@ -1641,6 +1733,24 @@ def _method_positional_params_props(
     return {} if declared is None else {cs.KEY_POSITIONAL_PARAMS: declared}
 
 
+def _language_method_props(
+    method_node: ASTNode, language: cs.SupportedLanguage
+) -> PropertyDict:
+    """The Method properties only one language records."""
+    if language == cs.SupportedLanguage.CSHARP:
+        # Local import: the C# helpers import this module.
+        from .csharp import utils as csharp_utils
+
+        return csharp_utils.extension_method_props(method_node)
+    if language == cs.SupportedLanguage.JAVA:
+        # Local import: the Java helpers import this module.
+        from .java import utils as java_utils
+
+        if java_utils.is_main_declaration(method_node):
+            return {cs.KEY_IS_PROGRAM_MAIN: True}
+    return {}
+
+
 def ingest_method(
     method_node: ASTNode,
     container_qn: str,
@@ -1678,12 +1788,15 @@ def ingest_method(
     # function and class sites are guarded at their own extraction points.
     warn_if_name_truncated(method_node, method_name, file_path)
 
-    method_qn = _register_method_qn(
-        function_registry,
-        method_qualified_name or f"{container_qn}.{method_name}",
+    method_qn = method_qualified_name or f"{container_qn}.{method_name}"
+    method_qn, cpp_member = _register_method_qn(
+        method_node,
+        method_qn,
         language,
+        function_registry,
         method_start_line,
         method_start_col,
+        file_path,
     )
 
     decorators = []
@@ -1718,17 +1831,14 @@ def ingest_method(
             file_path, repo_path
         ).as_posix()
         method_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
+    method_props.update(_cpp_member_props(cpp_member))
     method_props.update(_method_positional_params_props(method_node, language))
     # Local import: type_facts imports this module for safe_decode_with_fallback.
     from .type_facts import extract_type_facts, queue_type_facts, type_facts_props
 
     type_facts = extract_type_facts(method_node, language)
     method_props.update(type_facts_props(type_facts))
-    if language == cs.SupportedLanguage.CSHARP:
-        # Local import: the C# helpers import this module.
-        from .csharp import utils as csharp_utils
-
-        method_props.update(csharp_utils.extension_method_props(method_node))
+    method_props.update(_language_method_props(method_node, language))
     method_path = method_props.get(cs.KEY_PATH)
     queue_type_facts(
         type_fact_sink,
@@ -1953,6 +2063,9 @@ def ingest_exported_function(
 
 
 def is_method_node(func_node: ASTNode, lang_config: LanguageSpec) -> bool:
+    if lang_config.language == cs.SupportedLanguage.JULIA:
+        return False
+
     current = func_node.parent
     if not isinstance(current, Node):
         return False
@@ -2191,3 +2304,26 @@ def written_simple_name(name: str) -> str:
     return name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT).rsplit(
         cs.SEPARATOR_DOT, 1
     )[-1]
+
+
+def method_signature_arity(method_name: str) -> int | None:
+    # Number of top-level parameters in a signatured method name
+    # (`readField(A,JsonReader,BoundField)` -> 3, `create()` -> 0); None when the
+    # name carries no signature (Python/JS methods). Commas inside generics
+    # (`Map<K, V>`) are nested, so only depth-0 commas separate parameters.
+    open_idx = method_name.find(cs.CHAR_PAREN_OPEN)
+    if open_idx < 0:
+        return None
+    inner = method_name[open_idx + 1 : method_name.rfind(cs.CHAR_PAREN_CLOSE)]
+    if not inner.strip():
+        return 0
+    depth = 0
+    count = 1
+    for ch in inner:
+        if ch in "<([":
+            depth += 1
+        elif ch in ">)]":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            count += 1
+    return count

@@ -26,6 +26,13 @@ def _first_attribute_list(node: Node) -> Node | None:
 def definition_start_point(node: Node) -> tuple[int, int]:
     """The 1-based line and 0-based column a declaration truly starts at.
 
+    When its attributes are wrapped in a conditional-compilation block
+    (`#if SYMBOL [Attr] #endif`), tree-sitter nests a leading
+    preproc_if_in_attribute_list child, so the declaration's own start_point
+    is the `#if` directive line. Roslyn treats the directives as trivia and
+    starts the span at the conditional attribute, so that attribute's point
+    is returned (else the first non-directive child's).
+
     The line alone is not enough for a caller that pairs the two: taking the
     line from a nested attribute and the column from the outer node names a
     point that is nowhere in the source (issue #1071).
@@ -37,24 +44,6 @@ def definition_start_point(node: Node) -> tuple[int, int]:
             continue
         return child.start_point[0] + 1, child.start_point[1]
     return node.start_point[0] + 1, node.start_point[1]
-
-
-def definition_start_line(node: Node) -> int:
-    # The 1-based line a declaration truly starts on. When its attributes are
-    # wrapped in a conditional-compilation block (`#if SYMBOL [Attr] #endif`),
-    # tree-sitter nests a leading preproc_if_in_attribute_list child, so the
-    # declaration's own start_point is the `#if` directive line. Roslyn treats
-    # the directives as trivia and starts the span at the conditional
-    # attribute, so return that attribute's line (else the first non-directive
-    # child's line). Falls back to the node's own start for the common case
-    # with no leading directive.
-    for child in node.children:
-        if child.type == cs.TS_CSHARP_PREPROC_IF_IN_ATTR_LIST:
-            if (attr_list := _first_attribute_list(child)) is not None:
-                return attr_list.start_point[0] + 1
-            continue
-        return child.start_point[0] + 1
-    return node.start_point[0] + 1
 
 
 def _normalize_type_name(text: str) -> str:
@@ -161,7 +150,16 @@ def _count_top_level_type_args(args_text: str) -> int:
     return count
 
 
-GENERIC_ARITY_MARKER = "`"
+def type_argument_count(text_after_name: str) -> int:
+    """The type arguments written right after a type name: `<int, T>` -> 2,
+    anything not opening with `<` -> 0."""
+    text = text_after_name.lstrip()
+    if not text.startswith(cs.CHAR_ANGLE_OPEN):
+        return 0
+    return _count_top_level_type_args(text[1:])
+
+
+GENERIC_ARITY_MARKER = cs.CSHARP_GENERIC_ARITY_MARKER
 
 
 def annotate_type_ref(text: str) -> str:
@@ -288,6 +286,87 @@ def namespace_qualified_name(type_node: Node) -> str | None:
         return None
     namespaces, types = _enclosing_scopes(type_node)
     return cs.SEPARATOR_DOT.join([*namespaces, *types, own])
+
+
+def type_parameter_count(type_node: Node) -> int:
+    """How many type parameters a type declares: `Builder<TResult>` -> 1.
+
+    A type's type_parameter_list carries no field name (unlike a method's),
+    so the children are scanned.
+    """
+    for child in type_node.children:
+        if child.type == cs.TS_CSHARP_TYPE_PARAMETER_LIST:
+            return len(child.named_children)
+    return 0
+
+
+def arity_qualified_name(type_node: Node, name: str) -> str:
+    """The qualified-name segment of a type declaration written as `name`.
+
+    C# overloads a type name by generic arity: `PB` and `PB<TResult>` are two
+    types, `PB` and ``PB`1`` in CLR metadata. A generic declaration whose
+    scope also declares its name at another arity takes that CLR spelling,
+    so each twin has a name of its own that an edit moving lines cannot
+    change (issue #2579). Every other declaration keeps the written name, so
+    a type with no such twin is named as it always was.
+    """
+    arity = type_parameter_count(type_node)
+    if not arity:
+        return name
+    root = type_node
+    while root.parent is not None:
+        root = root.parent
+    return type_ref(name, arity) if type_node.id in _arity_twin_ids(root) else name
+
+
+@lru_cache(maxsize=cs.CSHARP_ARITY_TWIN_CACHE_SIZE)
+def _arity_twin_ids(root: Node) -> frozenset[int]:
+    # The generic type declarations of one file whose scope declares their
+    # name at another arity too. A scope is keyed by what the qualified name
+    # is built from, namespaces segment by segment and each enclosing type by
+    # its CLR name, so two blocks of one namespace are one scope exactly when
+    # their types' qualified names would collide.
+    by_name: dict[tuple[tuple[str, ...], str], dict[int, list[int]]] = {}
+    file_namespace = _file_scoped_namespace(root)
+    top = tuple(file_namespace.split(cs.SEPARATOR_DOT)) if file_namespace else ()
+    stack: list[tuple[Node, tuple[str, ...]]] = [(root, top)]
+    while stack:
+        node, scope = stack.pop()
+        for child in node.children:
+            child_scope = _declaration_scope(child, scope, by_name)
+            if child_scope is not None:
+                stack.append((child, child_scope))
+    return frozenset(
+        node_id
+        for arities in by_name.values()
+        if len(arities) > 1
+        for arity, node_ids in arities.items()
+        if arity
+        for node_id in node_ids
+    )
+
+
+def _declaration_scope(
+    child: Node,
+    scope: tuple[str, ...],
+    by_name: dict[tuple[tuple[str, ...], str], dict[int, list[int]]],
+) -> tuple[str, ...] | None:
+    # The scope the declarations inside `child` sit in, or None when it holds
+    # none. A type declaration is first recorded in `by_name` under its scope,
+    # name and arity.
+    if child.type in _CSHARP_TYPE_DECLARATIONS:
+        name = _declared_name(child)
+        if not name:
+            return None
+        arity = type_parameter_count(child)
+        by_name.setdefault((scope, name), {}).setdefault(arity, []).append(child.id)
+        return (*scope, type_ref(name, arity))
+    if child.type == cs.TS_CSHARP_NAMESPACE_DECLARATION:
+        name = _declared_name(child)
+        return (*scope, *name.split(cs.SEPARATOR_DOT)) if name else None
+    if child.type in cs.CSHARP_TYPE_DECLARATION_HOLDERS:
+        return scope
+    return None
 
 
 def unique_carrier(

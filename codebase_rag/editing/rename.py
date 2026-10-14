@@ -43,8 +43,13 @@ from ..function_registry import TYPE_SPACE_KINDS
 from ..graph_updater import ReingestAborted
 from ..language_spec import csharp_partial_key_from_graph, get_language_for_extension
 from ..parser_loader import load_parsers
+from ..parsers.go import utils as go_utils
+from ..parsers.go.builds import GoBuilds
+from ..parsers.go.module_paths import read_package_clause
+from ..parsers.js_ts.overloads import overload_signatures
 from ..parsers.py.overloads import overload_stub_names
 from ..types_defs import PropertyParams, ResultRow
+from ..utils import qn_markers
 from ..utils.path_utils import (
     base_module_qn,
     declaration_implementations,
@@ -60,7 +65,7 @@ from .occurrences import (
     find_occurrences,
 )
 from .patcher import Patcher, PatcherError, byte_to_line_col, line_col_to_byte
-from .sites import AMBIGUOUS, call_node_at, calls_starting_at, hierarchy
+from .sites import AMBIGUOUS, Hierarchy, call_node_at, calls_starting_at, hierarchy
 from .transaction import (
     EditTransaction,
     StagedTree,
@@ -175,23 +180,131 @@ class RenameReport(NamedTuple):
 # --- site collection -----------------------------------------------------------
 
 
-def _hierarchy(fetch_all: QueryFn, project: str, qn: str) -> list[str]:
+def _hierarchy(
+    fetch_all: QueryFn, project: str, qn: str, repo_root: Path | None = None
+) -> Hierarchy:
     """`qn`, every other part of the C# partial type `qn` is a part of, and
-    every method `qn` overrides or is overridden by, transitively."""
-    seen: list[str] = [qn, *_csharp_partial_parts(fetch_all, project, qn)]
-    seen += [m for m in hierarchy(fetch_all, project, qn) if m not in seen]
-    return seen
+    every method `qn` overrides or is overridden by, transitively, with the
+    members only a guessed OVERRIDES edge reaches."""
+    parts = _csharp_partial_parts(fetch_all, project, qn)
+    found = hierarchy(
+        fetch_all,
+        project,
+        qn,
+        lambda member: (
+            _go_build_variants(fetch_all, project, member, repo_root)
+            if repo_root is not None
+            else []
+        ),
+    )
+    members = list(dict.fromkeys([qn, *parts, *found.members]))
+    return Hierarchy(members, found.guessed - set(parts))
 
 
-def _longer_project_prefixes(fetch_all: QueryFn, project_name: str) -> tuple[str, ...]:
-    requested_prefix = f"{project_name}{cs.SEPARATOR_DOT}"
-    names = {
-        name
-        for row in fetch_all(cq.CYPHER_LIST_PROJECTS, None)
-        if isinstance(name := row.get(cs.KEY_NAME), str)
-        and name.startswith(requested_prefix)
-    }
-    return tuple(sorted(names))
+def _go_build_variants(
+    fetch_all: QueryFn, project: str, qn: str, repo_root: Path
+) -> list[str]:
+    """The other builds' declarations of Go method or function `qn`.
+
+    A package declares a name once per build (`func (T) M()` in `t_linux.go`
+    and in `t_windows.go`, `M()` in `i_linux.go`'s and `i_windows.go`'s
+    `I`), and a caller every build compiles calls each build's. Renaming
+    one left the others, and the builds holding them no longer compiled
+    (#3360 review). A variant is a Go declaration of the same kind and name
+    (a method of the same-named receiver, or a function) in the same
+    package: its directory and `package` clause (`p_test` beside `p` is
+    another), seen from the same files (a `_test.go` file's from test files
+    alone), in a file no build compiles with `qn`'s. A Python `helper`
+    beside a Go one, another package's, or a twin a build could compile
+    together with it (which would not compile) is none."""
+    definition = graph_query.definition(fetch_all, project, qn, None)
+    path, name, label = definition["path"], definition["name"], definition["label"]
+    if (
+        not path
+        or not name
+        or label not in (cs.NodeLabel.METHOD, cs.NodeLabel.FUNCTION)
+        or not _is_go_path(path)
+    ):
+        return []
+    place = _go_declaration_place(repo_root, path, qn, label)
+    if place is None:
+        return []
+    builds = GoBuilds(repo_root)
+    return sorted(
+        other
+        for symbol in graph_query.resolve(fetch_all, project, name)
+        if (other := symbol["qualified_name"]) != qn
+        and symbol["label"] == label
+        and (other_path := symbol["path"])
+        and other_path != path
+        and _is_go_path(other_path)
+        and _go_declaration_place(repo_root, other_path, other, label) == place
+        and builds.apart((path, other_path))
+    )
+
+
+def _go_implementers_unknown(
+    fetch_all: QueryFn, project: str, members: list[str]
+) -> tuple[str, str, str] | None:
+    """A Go interface whose implementers cgr cannot tell that declares the
+    name the Go methods among `members` share, where they could satisfy it,
+    as (interface, why, name); None when there is none.
+
+    Such an interface gets no IMPLEMENTS or OVERRIDES edge by name (#3360),
+    so the hierarchy cannot show what renaming the name must take along:
+    renaming one of its implementations leaves it and any other behind, and
+    renaming its own method leaves every implementation. Any type, in any
+    package, may satisfy it through an exported name; an unexported one only
+    in the interface's own package, which shares its directory."""
+    definitions = [
+        graph_query.definition(fetch_all, project, member, None) for member in members
+    ]
+    methods = [
+        found
+        for found in definitions
+        if found["label"] == cs.NodeLabel.METHOD
+        and found["path"]
+        and _is_go_path(found["path"])
+    ]
+    name = methods[0]["name"] if methods else None
+    if not name:
+        return None
+    directories = {PurePosixPath(str(found["path"])).parent for found in methods}
+    owns = graph_query._owner_check(fetch_all, project)
+    rows = fetch_all(
+        cq.CYPHER_GRAPH_GO_IMPLEMENTERS_UNKNOWN,
+        {cs.KEY_PROJECT_PREFIX: f"{project}{cs.SEPARATOR_DOT}", cs.KEY_NAME: name},
+    )
+    for row in sorted(rows, key=lambda row: str(row.get(cs.KEY_QUALIFIED_NAME))):
+        interface = str(row.get(cs.KEY_QUALIFIED_NAME) or "")
+        directory = PurePosixPath(str(row.get(cs.KEY_PATH) or "")).parent
+        if owns(interface) and (name[:1].isupper() or directory in directories):
+            return interface, str(row.get(cs.KEY_IMPLEMENTERS_UNKNOWN) or ""), name
+    return None
+
+
+def _is_go_path(path: str) -> bool:
+    return get_language_for_extension(Path(path).suffix) == cs.SupportedLanguage.GO
+
+
+def _go_declaration_place(
+    repo_root: Path, path: str, qn: str, label: str
+) -> tuple[str, str] | None:
+    # The files that see it (its package, `dir:clause`, or that package's
+    # test files) and the name of its receiver type (a method's) or "" (a
+    # function's). None when its `package` clause cannot be read.
+    clause = read_package_clause(repo_root / path)
+    if clause is None:
+        return None
+    owner = (
+        qn_markers.natural_qn(qn)
+        .rpartition(cs.SEPARATOR_DOT)[0]
+        .rpartition(cs.SEPARATOR_DOT)[2]
+        if label == cs.NodeLabel.METHOD
+        else ""
+    )
+    package = go_utils.package_key(path, clause)
+    return go_utils.declaration_scope(path, package), owner
 
 
 def _csharp_partial_parts(fetch_all: QueryFn, project: str, qn: str) -> list[str]:
@@ -213,27 +326,41 @@ def _csharp_partial_parts(fetch_all: QueryFn, project: str, qn: str) -> list[str
         or get_language_for_extension(Path(path).suffix) != cs.SupportedLanguage.CSHARP
     ):
         return []
-    key = csharp_partial_key_from_graph(qn, path, project)
     owns = graph_query._owner_check(fetch_all, project)
+    rows = fetch_all(
+        cs.CYPHER_SAME_NAMED_CSHARP_TYPES,
+        {cs.KEY_PROJECT_PREFIX: f"{project}{cs.SEPARATOR_DOT}", cs.KEY_NAME: name},
+    )
+    # `Box` and `Box<T>` are two types (issue #2579): the key spells the
+    # arity, so a partial twin of another arity is not one of the parts.
+    arity = next(
+        (_generic_arity(row) for row in rows if row.get(cs.KEY_QUALIFIED_NAME) == qn),
+        0,
+    )
+    key = csharp_partial_key_from_graph(qn, path, project, arity)
     parts = {
         part
-        for row in fetch_all(
-            cs.CYPHER_SAME_NAMED_CSHARP_TYPES,
-            {cs.KEY_PROJECT_PREFIX: f"{project}{cs.SEPARATOR_DOT}", cs.KEY_NAME: name},
-        )
+        for row in rows
         if isinstance(part := row.get(cs.KEY_QUALIFIED_NAME), str)
         and isinstance(part_path := row.get(cs.KEY_PATH), str)
         and isinstance(modifiers := row.get(cs.KEY_MODIFIERS), list)
         and cs.TS_CSHARP_MODIFIER_PARTIAL in modifiers
         and row.get(cs.KEY_LABEL) == label
         and owns(part)
-        and csharp_partial_key_from_graph(part, part_path, project) == key
+        and csharp_partial_key_from_graph(part, part_path, project, _generic_arity(row))
+        == key
     }
     # `qn` is among them only when it is declared `partial` itself; a type
     # that is not has no other parts, whatever shares its name.
     if key is None or qn not in parts:
         return []
     return sorted(parts - {qn})
+
+
+def _generic_arity(row: ResultRow) -> int:
+    """A C# type row's stored generic arity; 0 for a non-generic type."""
+    arity = row.get(cs.KEY_GENERIC_ARITY)
+    return arity if isinstance(arity, int) else 0
 
 
 def _name_token(
@@ -506,14 +633,15 @@ def _last_identifier(
 
 
 def _overload_stub_sites(definition: RenameSite, patcher: Patcher) -> list[RenameSite]:
-    """The name tokens of the `@overload` stubs a Python definition owns.
+    """The name tokens of the overload declarations a definition owns.
 
-    The graph folds the stubs into their implementation (issue #2590), so no
-    node names them; renaming only the implementation would strand them
-    under the old name with no implementation to describe.
+    The graph folds Python's `@overload` stubs (issue #2590) and TypeScript's
+    overload signatures (issue #2457) into their implementation, so no node
+    names them; renaming only the implementation would strand them under the
+    old name, which for TypeScript is a type error (TS2389).
     """
     language = get_language_for_extension(Path(definition.path).suffix)
-    if language != cs.SupportedLanguage.PYTHON:
+    if language != cs.SupportedLanguage.PYTHON and language not in _TS_LANGUAGES:
         return []
     parsers, _queries = load_parsers()
     parser = parsers.get(language)
@@ -523,11 +651,21 @@ def _overload_stub_sites(definition: RenameSite, patcher: Patcher) -> list[Renam
     point = (definition.line - 1, definition.col)
     token = root.descendant_for_point_range(point, point)
     function = token.parent if token is not None else None
-    if function is None or function.type != cs.TS_PY_FUNCTION_DEFINITION:
+    if function is None:
+        return []
+    if language in _TS_LANGUAGES:
+        names = [
+            name
+            for signature in overload_signatures(function)
+            if (name := signature.child_by_field_name(cs.FIELD_NAME)) is not None
+        ]
+    elif function.type == cs.TS_PY_FUNCTION_DEFINITION:
+        names = overload_stub_names(function, root)
+    else:
         return []
     return [
         definition._replace(line=name.start_point[0] + 1, col=name.start_point[1])
-        for name in overload_stub_names(function, root)
+        for name in names
     ]
 
 
@@ -559,6 +697,9 @@ class Renamer:
         # How the caller spells the opt-in the heuristic refusal tells the
         # user to pass: a CLI flag is not an MCP parameter (issue #2886).
         self.heuristic_opt_in = heuristic_opt_in
+        # The members of the hierarchy being planned that only a guessed
+        # OVERRIDES edge reaches: their declarations are guessed sites.
+        self._guessed_members: frozenset[str] = frozenset()
 
     def _module_of(self, qn: str) -> tuple[str, str | None]:
         # The defining module's qn and path, from the definition's own path:
@@ -791,9 +932,12 @@ class Renamer:
             raise RenameRefused(
                 cs.RENAME_NO_DEFINITION_TOKEN.format(qn=qn, path=path), [], []
             )
-        return RenameSite(
-            "definition", path, token[0], token[1], qn, cs.EdgeResolution.EXACT
+        resolution = (
+            cs.EdgeResolution.HEURISTIC
+            if qn in self._guessed_members
+            else cs.EdgeResolution.EXACT
         )
+        return RenameSite("definition", path, token[0], token[1], qn, resolution)
 
     def _add_type_edge_sites(
         self,
@@ -1198,7 +1342,24 @@ class Renamer:
         """Collect everything a rename touches; refuse on ambiguity."""
         if not re.fullmatch(r"[A-Za-z_]\w*", new_name):
             raise RenameRefused(cs.RENAME_BAD_NAME.format(name=new_name), [], [])
-        members = _hierarchy(self.fetch_all, self.project, qn)
+        found = _hierarchy(self.fetch_all, self.project, qn, self.repo_root)
+        members = found.members
+        self._guessed_members = found.guessed
+        unknown = _go_implementers_unknown(self.fetch_all, self.project, members)
+        if unknown is not None:
+            interface, why, name = unknown
+            raise RenameRefused(
+                cs.RENAME_GO_IMPLEMENTERS_UNKNOWN.format(
+                    qn=qn,
+                    interface=interface,
+                    name=name,
+                    why=cs.RENAME_GO_IMPLEMENTERS_UNKNOWN_WHY.get(
+                        why, cs.RENAME_GO_IMPLEMENTERS_UNKNOWN_WHY_OTHER
+                    ),
+                ),
+                [],
+                [],
+            )
         sites: list[RenameSite] = []
         unlocatable: list[str] = []
         old_name: str | None = None
@@ -1560,7 +1721,12 @@ class Renamer:
             if offsets:
                 self._all_rewrites[path] = offsets
         tx = EditTransaction(self.repo_root)
-        results = patcher.stage_into(tx)
+        try:
+            results = patcher.stage_into(tx)
+        except PatcherError as error:
+            # A new name the file's declared encoding cannot hold (#2901).
+            tx.rollback()
+            raise RenameRefused(str(error), [], []) from error
         broken = [key for key, result in results.items() if result.parses is False]
         return tx, dict(results), broken
 
@@ -1880,7 +2046,9 @@ class Renamer:
             for member in (*report.hierarchy, *report.companions)
         ]
         pairs = list(parents)
-        longer_project_prefixes = _longer_project_prefixes(self.fetch_all, self.project)
+        longer_project_prefixes = graph_query._longer_project_prefixes(
+            self.fetch_all, self.project
+        )
         for row in self.fetch_all(
             cq.CYPHER_DELTA_DEFINITIONS,
             {

@@ -111,6 +111,10 @@ GO_FRONTEND_FACTS = (
 GO_FRONTEND_IMPLEMENTS_JOINED = (
     "Go go/types frontend: {count} IMPLEMENTS edge(s) joined to Pass-2 type nodes"
 )
+GO_IMPLICIT_IMPLEMENTS_LINKED = (
+    "Go: {count} type(s) implement an interface by method name and arity "
+    "(IMPLEMENTS, heuristic)"
+)
 GO_FRONTEND_BUILD_FAILED = (
     "Go frontend tool failed to build; using tree-sitter.\nstderr: {stderr}"
 )
@@ -234,7 +238,7 @@ EMBEDDINGS_COMPLETE = "Successfully generated {count} semantic embeddings"
 EMBEDDING_GENERATION_FAILED = "Failed to generate semantic embeddings: {error}"
 EMBEDDINGS_INTERRUPTED = (
     "Semantic embedding generation interrupted; the graph is saved without the"
-    " remaining embeddings, which the next sync that finds a code change generates"
+    " remaining embeddings"
 )
 EMBEDDING_STORE_FAILED = "Failed to store embedding for {name}: {error}"
 EMBEDDING_STORE_RETRY = "Vector store upsert failed (attempt {attempt}/{max_attempts}), retrying in {delay:.1f}s: {error}"
@@ -258,6 +262,11 @@ EMBEDDING_STALE_SKIPPED = (
     "registry could not be read, so a nested project's vectors cannot be told "
     "from this one's; the next sync removes them"
 )
+EMBEDDINGS_PENDING = (
+    "Embeddings of project '{project}' are incomplete; the next sync retries "
+    "them even if no file changed"
+)
+EMBEDDINGS_PENDING_NOT_UPDATED = "Embeddings pending marker not updated"
 VECTOR_STORE_REKEYED = (
     "Removed {count} {backend} vectors of project '{project}' that were keyed "
     "by Memgraph node id; its vectors are keyed by symbol now"
@@ -367,6 +376,10 @@ LANG_LIST_AST_GREP_UNREADABLE = (
 )
 
 # Ignore pattern logs
+TRACKED_SOURCE_DIRS_KEPT = (
+    "Indexing git-tracked source under default-excluded directory names: {dirs} "
+    "(add them to .cgrignore to skip them)"
+)
 CGRIGNORE_LOADED = (
     "Loaded {exclude_count} exclude and {unignore_count} unignore patterns from {path}"
 )
@@ -454,14 +467,29 @@ WATCHER_REBUILDING_AFTER_FAILURE = (
     "Re-indexing the whole repository before this change, because the last "
     "re-ingest failed part way through."
 )
+WATCHER_FULL_RUN_OVER_UNFINISHED_SYNC = (
+    "A sync of project {project} did not finish, so its graph may be partial. "
+    "Re-indexing the whole repository instead of only what changed."
+)
+WATCHER_SYNC_UNFINISHED = (
+    "A sync of project {project} did not finish, so its graph may be partial. "
+    "Re-indexing the whole repository instead of re-ingesting this change."
+)
 WATCHER_EXPANSION_FAILED = (
     "Could not list the files a directory event covers: {error}. Re-indexing "
     "the whole repository instead."
 )
+WATCHER_IGNORE_RULES_CHANGED = (
+    "Ignore rules changed (.cgrignore, .gitignore or the files git tracks); "
+    "re-syncing the graph under the new rules."
+)
+WATCHER_IGNORE_RULES_SYNC_FAILED = (
+    "Re-sync under the new ignore rules FAILED: {error}. The next change "
+    "triggers a full re-index first."
+)
 INITIAL_SCAN = "Performing initial full codebase scan..."
 INITIAL_SCAN_DONE = "Initial scan complete. Starting real-time watcher."
-WATCHING = "Watching for changes in: {path}"
-LOGGER_CONFIGURED = "Logger configured for Real-Time Updater."
+WATCHING = "Watching for changes in: {path} (project {project})"
 
 # Build logs
 BUILD_BINARY = "Building binary: {name}"
@@ -520,6 +548,10 @@ MG_CYPHER_QUERY = "    Query: {query}"
 MG_CYPHER_PARAMS = "    Params: {params}"
 MG_BATCH_ERROR = "!!! Batch Cypher Error: {error}"
 MG_BATCH_PARAMS_TRUNCATED = "    Params (first 10 of {count}): {params}..."
+MG_TRANSIENT_RETRY = (
+    "Memgraph reported a conflicting transaction; retrying in {delay:.1f}s "
+    "(attempt {attempt} of {attempts}): {error}"
+)
 MG_CLEANING_DB = "--- Cleaning database... ---"
 MG_DB_CLEANED = "--- Database cleaned. ---"
 MG_LIST_PROJECTS_FAILED = (
@@ -612,6 +644,11 @@ TOOL_QUERY_REPAIRING = (
 TOOL_QUERY_TIMEOUT = (
     "[Tool:QueryGraph] Query exceeded {timeout:.1f}s and was cancelled: {query}"
 )
+TIKTOKEN_UNAVAILABLE = (
+    "Cannot load the {encoding} token encoding ({error}); token counts are "
+    "estimated from text length. Set TIKTOKEN_CACHE_DIR to a directory "
+    "holding the encoding for exact counts offline."
+)
 QUERY_RESULTS_TRUNCATED = (
     "[Tool:QueryGraph] Results truncated: showing {kept} of {total} rows "
     "({tokens} tokens, limit {max_tokens})"
@@ -654,7 +691,7 @@ EDITOR_FILE_NOT_FOUND = "File not found: {path}"
 EDITOR_BLOCK_NOT_FOUND = "Target block not found in {path}"
 EDITOR_LOOKING_FOR = "Looking for: {block}"
 EDITOR_MULTIPLE_OCCURRENCES = (
-    "Multiple occurrences of target block found. Only replacing first occurrence."
+    "Target block occurs {count} times in {path}; nothing was replaced"
 )
 EDITOR_NO_CHANGES_IDENTICAL = (
     "No changes detected - target and replacement are identical"
@@ -1197,6 +1234,22 @@ INCREMENTAL_CHANGED = "Re-indexing {count} changed files"
 INCREMENTAL_AFFECTED_CALLERS = (
     "Re-parsing {count} dependent caller file(s) of re-indexed targets"
 )
+INCREMENTAL_INTERFACE_KEPT = (
+    "Kept the edges of {count} dependent caller file(s): nothing they resolve "
+    "against changed"
+)
+INTERFACE_FINGERPRINTS_UNREAD = (
+    "Could not read the stored interface fingerprints; every dependent caller "
+    "is re-parsed."
+)
+INTERFACE_BOUNDARY_UNREAD = (
+    "Could not read the edges between re-indexed files and their callers; "
+    "every dependent caller is re-parsed."
+)
+INTERFACE_FLOW_SOURCES_UNREAD = (
+    "Could not read which re-indexed files invoke callables other files pass "
+    "in; every dependent caller is re-parsed."
+)
 INCREMENTAL_DELETED = "Removed state for {count} deleted files"
 DEPENDENCIES_RESYNC = (
     "A dependency manifest changed; rebuilding the external dependencies of "
@@ -1446,6 +1499,11 @@ FINGERPRINT_DIST_UNREADABLE = (
     "Skipping a distribution whose metadata could not be read while computing "
     "the parser fingerprint"
 )
+FINGERPRINT_TOOL_UNANSWERED = (
+    "{tool} could not be asked for its version (timed out, or not started for "
+    "want of a resource), twice; the parser fingerprint treats its version as "
+    "unchanged"
+)
 JAVA_FRONTEND_RUNNING = "javac frontend: attributing Java sources"
 JAVA_FRONTEND_BUILD_FAILED = (
     "javac frontend tool build failed ({stderr}); using tree-sitter"
@@ -1459,6 +1517,14 @@ JAVA_FRONTEND_UNAVAILABLE = (
 )
 JAVA_FRONTEND_FACTS = (
     "javac facts: {calls} resolved call sites, {externals} external sites"
+)
+
+# Sync lock (issue #2441)
+SYNC_LOCK_WAITING = "Waiting for the running sync of {repo} ({holder}) to finish"
+SYNC_LOCK_UNGUARDED = (
+    "Cannot create the sync lock {path} ({error}); this sync of {repo} runs "
+    "without it, so concurrent syncs of this checkout are not excluded. Point "
+    "CGR_HOME at a writable directory to keep the lock."
 )
 
 # Checkout state kept under CGR_HOME (issue #2427)

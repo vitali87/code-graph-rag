@@ -36,6 +36,13 @@ KEY_MEMBER_ALIASES = "member_aliases"
 # The member names a Python class body binds to a value that is no method
 # (`run = None`), which hide a base class's `run` (issue #2620).
 KEY_NON_METHOD_MEMBERS = "non_method_members"
+# The types a Go interface embeds, as written (`Reader`, `io.Writer`): its
+# method set includes theirs, so satisfying it needs them too (issue #2483).
+KEY_EMBEDS = "embeds"
+# Why cgr cannot tell which types implement a Go interface (a
+# GoImplementersUnknown), or "" when it can (#3360). Written for every Go
+# interface at each link, so a sync clears a mark that no longer holds.
+KEY_IMPLEMENTERS_UNKNOWN = "implementers_unknown"
 # A JS/TS function that is an object literal's property value, reached only
 # through its object (issue #2435).
 KEY_IS_OBJECT_MEMBER = "is_object_member"
@@ -137,6 +144,22 @@ class EdgeResolution(StrEnum):
     DYNAMIC = "dynamic"
 
 
+class GoImplementersUnknown(StrEnum):
+    """Why cgr cannot tell which types implement a Go interface, so it links
+    none by name and a rename of a method of its name refuses (#3360).
+
+    `builds`: its method set differs between builds in more ways than cgr
+    tells apart (past 64 alternatives, or a combination it cannot decide).
+    `embeds`: it embeds an interface cgr cannot resolve (another module's, or
+    a name it cannot find). `constraint`: whether some type implements it
+    rests on a build constraint cgr cannot read or decide.
+    """
+
+    BUILDS = "builds"
+    EMBEDS = "embeds"
+    CONSTRAINT = "constraint"
+
+
 # Ordering for `--min-resolution`: an edge with no label is a legacy static
 # edge and ranks as exact; a trace-only edge ranks with the confirmed ones,
 # a runtime having observed it.
@@ -191,6 +214,12 @@ KEY_ABSOLUTE_PATH = "absolute_path"
 # registry AND the FLOWS_TO capture group was enabled at indexing. Read by
 # the three-verdict flow reachability query (issue #1050).
 KEY_FLOW_COVERED = "flow_covered"
+# What a Module's callers can see of it, hashed (issue #2531): its
+# definitions, signatures and module-level statements, and the parts of
+# function bodies cross-file inference reads. A sync that re-parses the file
+# compares the stored value with the new source's, and leaves the callers'
+# edges as they are when the two agree.
+KEY_INTERFACE_FINGERPRINT = "interface_fingerprint"
 KEY_GENERATED = "generated"
 KEY_GENERATOR = "generator"
 KEY_EXTENSION = "extension"
@@ -263,6 +292,11 @@ KEY_AST_FINGERPRINT_NODES = "ast_fingerprint_nodes"
 KEY_AST_BRANCH_FINGERPRINTS = "ast_branch_fingerprints"
 
 ERR_SUBSTR_ALREADY_EXISTS = "already exists"
+# A statement Memgraph rejects as a transient conflict (another transaction
+# holds what it writes) is sent again after a doubling wait: 0.2 s, 0.4 s,
+# 0.8 s, 1.6 s, then the error stands (issue #2441).
+MG_TRANSIENT_RETRY_ATTEMPTS = 5
+MG_TRANSIENT_RETRY_BASE_DELAY_S = 0.2
 ERR_SUBSTR_CONSTRAINT = "constraint"
 
 PROTOBUF_INDEX_FILE = "index.bin"
@@ -645,6 +679,35 @@ DEFAULT_CAPTURE_GROUPS: frozenset[CaptureGroup] = frozenset(
     }
 )
 
+# What a dependent of a re-parsed file may hold into it and still keep its
+# edges without a re-parse (issue #2531): the relationships CYPHER_INBOUND_EDGES
+# captures for source-derived edges and the restore re-emits by qualified
+# name, onto targets the restore can find again (a Module, or a definition
+# the function registry holds once the file is re-parsed).
+INTERFACE_RESTORED_RELS: frozenset[RelationshipType] = frozenset(
+    {
+        RelationshipType.CALLS,
+        RelationshipType.REFERENCES,
+        RelationshipType.INSTANTIATES,
+        RelationshipType.IMPORTS,
+        RelationshipType.INHERITS,
+        RelationshipType.IMPLEMENTS,
+        RelationshipType.OVERRIDES,
+        RelationshipType.RETURNS,
+        RelationshipType.ACCEPTS,
+    }
+)
+INTERFACE_RESTORED_TARGET_LABELS: frozenset[NodeLabel] = DEFINITION_NODE_LABELS
+# The capture groups whose cross-file readers the interface fingerprint was
+# written against. Any other group enabled (data flow, parameters, fields,
+# ...) brings readers it does not model, so every dependent is re-parsed.
+INTERFACE_SKIP_RELS: frozenset[RelationshipType] = frozenset().union(
+    *(
+        CAPTURE_GROUP_RELS[group]
+        for group in (*DEFAULT_CAPTURE_GROUPS, CaptureGroup.GLOSSES)
+    )
+)
+
 # What each group adds, for the generated Capture Groups table in
 # docs/architecture/graph-schema.md; its labels and relationships come from
 # the maps above. Keyed by group so a new group without a line fails
@@ -780,6 +843,25 @@ KEY_DECORATORS = "decorators"
 # languages the extractor does not read (the positional_params rule).
 KEY_RETURN_TYPE = "return_type"
 KEY_PARAM_TYPES = "param_types"
+# A `main` the language's launcher starts, judged by the parser because the
+# graph cannot say it otherwise (issue #2527). For Java, the method the JVM
+# launch protocol would pick from its class body (JLS 12.1.4, JEP 512);
+# `param_types` records `String args[]` and a scalar `String arg` alike. For
+# Dart, a top-level `main` (a local one registers under its module too). Set
+# only when true.
+KEY_IS_PROGRAM_MAIN = "is_program_main"
+# A Python class declared in the body of an `if TYPE_CHECKING:` block: it
+# never exists at runtime, so dead code reads it as a declaration (like a
+# `.pyi` stub), and no edge in the graph says so otherwise. Set only when true.
+KEY_TYPE_CHECKING_ONLY = "type_checking_only"
+# A C++ member's overload identity, `(int,double) const` (issue #2455): what
+# tells `Sep.g` from `Sep.g@4`, and what an incremental run reads back so a
+# re-parsed out-of-class definition lands on the overload it defines.
+KEY_SIGNATURE = "signature"
+# True on a C++ member whose declaration was read from its class body. An
+# incremental run restores only these as declarations: a member known only
+# from its definition is re-read with that definition, not paired with it.
+KEY_DECLARED_IN_CLASS = "declared_in_class"
 # A C# extension method's index entry (`static string Describe(this Box b)`):
 # the receiver type a `b.Describe()` call binds against, the declaring
 # namespace, and the receiver's written generic arity (`this Builder<T>` ->
@@ -832,6 +914,11 @@ KEY_MODIFIERS = "modifiers"
 # name because the qn leaves out a namespace the module's directory already
 # spells (issue #1629).
 KEY_NAMESPACE = "namespace"
+# How many type parameters a C# type declares, stored only when it is
+# generic. C# overloads a type name by arity (`PB`, `PB<T>`), so a reference
+# binds by it, and an incremental run reads it back for the types of files it
+# does not re-parse (issue #2579).
+KEY_GENERIC_ARITY = "generic_arity"
 # Depth of a document heading, 1-6 (issue #1426). Kept distinct from the
 # nesting a Section's CONTAINS_SECTION edges describe: skipped levels mean a
 # level-3 heading can be the direct child of a level-1 one.
@@ -1138,10 +1225,13 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.modifiers AS modifiers, n.decorators AS decorators, "
     "n.return_type AS return_type, n.param_types AS param_types, "
     "n.namespace AS namespace, n.is_object_member AS is_object_member, "
+    "n.signature AS signature, n.declared_in_class AS declared_in_class, "
+    "n.generic_arity AS generic_arity, "
     "n.is_exported AS is_exported, "
     "n.extension_receiver AS extension_receiver, "
     "n.extension_namespace AS extension_namespace, "
-    "n.extension_receiver_arity AS extension_receiver_arity"
+    "n.extension_receiver_arity AS extension_receiver_arity, "
+    "n.embeds AS embeds"
 )
 
 # Module-level qns (plus C++20 module interfaces) for incremental runs:
@@ -1238,6 +1328,45 @@ CYPHER_LINKING_DOCUMENT_PATHS = (
     "RETURN DISTINCT source.path AS caller_path, "
     "head(labels(target)) AS target_label, target.path AS target_path"
 )
+# The stored interface fingerprint of each Module a sync is about to re-parse
+# (issue #2531), read while the old subtree is still there. When the new
+# source reproduces it, nothing the module's callers resolve against moved,
+# and their edges are kept rather than re-derived by re-parsing them. The
+# root module's qn IS the bare project name, as CYPHER_DELETE_MODULE notes.
+CYPHER_INTERFACE_FINGERPRINTS = (
+    "MATCH (m:Module) WHERE m.path IN $paths "
+    "AND (m.qualified_name = $project_name "
+    "OR m.qualified_name STARTS WITH $project_prefix) "
+    "RETURN m.path AS path, m.qualified_name AS qualified_name, "
+    "m.interface_fingerprint AS interface_fingerprint"
+)
+# Every relationship between a file whose interface held and a file that
+# depends on it, in either direction (issue #2531). The dependent keeps its
+# edges only when each one is an edge the inbound capture brings back by
+# qualified name; anything else -- an edge kind the capture leaves behind,
+# or any edge from the re-parsed file INTO the dependent, which the
+# dependent's own parse may have written (a callable it passes in) -- would
+# be lost with the subtree, so that dependent is re-parsed as before.
+CYPHER_INTERFACE_BOUNDARY_EDGES = (
+    "MATCH (inner)-[r]-(outer) "
+    "WHERE inner.path IN $paths AND outer.path IN $callers "
+    "RETURN outer.path AS caller_path, head(labels(outer)) AS caller_label, "
+    "type(r) AS rel, startNode(r) = outer AS inbound, "
+    "inner.path AS target_path, head(labels(inner)) AS target_label, "
+    "inner.qualified_name AS target_qn"
+)
+CYPHER_PARAM_CALLERS = "callers"
+# The re-indexed files that hold a function invoking a callable another file
+# hands it (issue #2531). The flow edge `run -> on_done` starts in such a
+# file, so its re-parse drops the edge, and only the parse of the file that
+# passed `on_done` (directly, or through functions that forward it) writes
+# it back: whatever its fingerprint says, every dependent re-parses.
+CYPHER_INTERFACE_FLOW_SOURCE_PATHS = (
+    "MATCH (fn)-[flow:CALLS]->() "
+    "WHERE fn.path IN $paths AND flow.via_param IS NOT NULL "
+    "RETURN DISTINCT fn.path AS path"
+)
+KEY_INBOUND = "inbound"
 # Documents holding a link to a file that did not exist when they were parsed
 # (issue #2458), with those links as written. Read when a sync creates files,
 # so a document waiting on one is re-parsed and gains the edge a clean index
@@ -1329,6 +1458,33 @@ CYPHER_ALL_INHERITS = (
     "r.base_index AS base_index "
     "ORDER BY child_qn, base_index"
 )
+# Implementer -> interface/trait pairs for incremental runs (issue #2403):
+# parsing records them only for the files it reads, and the sole-implementer
+# dispatch and the override walk need every implementer.
+CYPHER_ALL_IMPLEMENTS = (
+    "MATCH (child)-[:IMPLEMENTS]->(base) "
+    "WHERE child.qualified_name IS NOT NULL AND base.qualified_name IS NOT NULL "
+    "AND child.qualified_name STARTS WITH $project_prefix "
+    "RETURN child.qualified_name AS child_qn, base.qualified_name AS base_qn"
+)
+# OVERRIDES out of Rust methods: a trait impl for a type with no node (a
+# primitive, a foreign type) writes no IMPLEMENTS edge, so its methods'
+# OVERRIDES edges are the only record of the pair (issue #2403).
+CYPHER_ALL_RUST_OVERRIDES = (
+    "MATCH (method:Method)-[:OVERRIDES]->(base:Method) "
+    "WHERE method.qualified_name STARTS WITH $project_prefix "
+    "AND method.path ENDS WITH '.rs' "
+    "RETURN method.qualified_name AS from_qn, base.qualified_name AS to_qn"
+)
+# Rust traits that declare a method without a default body (no body, so no
+# fingerprint): every impl of one defines that method and leaves an OVERRIDES
+# edge. An impl of any other trait may define nothing and leave no trace.
+CYPHER_RUST_TRAITS_WITH_REQUIRED_METHODS = (
+    "MATCH (trait:Interface)-[:DEFINES_METHOD]->(method:Method) "
+    "WHERE trait.qualified_name STARTS WITH $project_prefix "
+    "AND trait.path ENDS WITH '.rs' AND method.ast_fingerprint IS NULL "
+    "RETURN DISTINCT trait.qualified_name AS qualified_name"
+)
 
 # C# type declaration locations for incremental runs: _join_csharp_partials
 # resolves each Roslyn partial-declaration location against csharp_type_locations,
@@ -1349,9 +1505,10 @@ CYPHER_ALL_CSHARP_TYPE_LOCATIONS = (
 CSHARP_PARTIAL_TYPE_LABELS: frozenset[NodeLabel] = frozenset(
     {NodeLabel.CLASS, NodeLabel.INTERFACE}
 )
-# A project's types of those labels under one name, with their modifiers: a
-# rename reads which of them are the parts of one `partial` type by the key
-# parsing groups them under (`csharp_partial_key_from_graph`).
+# A project's types of those labels under one name, with their modifiers and
+# generic arity: a rename reads which of them are the parts of one `partial`
+# type by the key parsing groups them under (`csharp_partial_key_from_graph`),
+# which spells the arity (issue #2579).
 _CSHARP_PARTIAL_LABELS = "|".join(
     sorted(label.value for label in CSHARP_PARTIAL_TYPE_LABELS)
 )
@@ -1359,7 +1516,7 @@ CYPHER_SAME_NAMED_CSHARP_TYPES = (
     f"MATCH (n:{_CSHARP_PARTIAL_LABELS}) "
     "WHERE n.name = $name AND n.qualified_name STARTS WITH $project_prefix "
     "RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, "
-    "n.path AS path, n.modifiers AS modifiers"
+    "n.path AS path, n.modifiers AS modifiers, n.generic_arity AS generic_arity"
 )
 
 # Col-keyed location rehydration fetches (issue #1240). Both guard for
@@ -1379,6 +1536,8 @@ CYPHER_ALL_FUNCTION_LOCATIONS = (
     "f.start_col AS start_col, f.name_start_line AS name_start_line, "
     "f.name_start_col AS name_start_col"
 )
+# `path` is the method's own file: a Go method can sit in another file than
+# its receiver type, whose Module is the one DEFINES reaches (issue #2483).
 CYPHER_ALL_METHOD_LOCATIONS = (
     "MATCH (m:Module)-[:DEFINES]->(c)-[:DEFINES_METHOD]->(f:Method) "
     "WHERE m.qualified_name STARTS WITH $project_prefix "
@@ -1386,7 +1545,7 @@ CYPHER_ALL_METHOD_LOCATIONS = (
     "c.qualified_name AS container_qn, "
     "m.qualified_name AS module_qn, f.start_line AS start_line, "
     "f.start_col AS start_col, f.name_start_line AS name_start_line, "
-    "f.name_start_col AS name_start_col"
+    "f.name_start_col AS name_start_col, f.path AS path"
 )
 KEY_CHILD_QN = "child_qn"
 KEY_BASE_QN = "base_qn"

@@ -61,7 +61,11 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **Incremental Indexing**: Improved handling of same-stem sibling matches and skipped EXPOSES cleanups during incremental updates.
+- **Enhanced CLI Scope**: `cgr stats` and `cgr export` now support scoping to specific projects or workspaces, and offer improved error handling.
+- **Improved Logging**: Logging has been refined to provide more informative messages, including per-symbol indexing and connection lifecycle details, and reduced unnecessary output.
+- **Expanded Language Support**: Added support for Julia as a supported language.
+- **Refined Graph Navigation**: Improved handling of cross-service links in flow verdicts and signature deltas, and enhanced the ability to follow re-exports.
+- **Contextual Improvements**: Added support for context-slice queries, reasons, and the necessary ingestor reads.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
@@ -95,7 +99,7 @@ See the [Architecture Overview](docs/architecture/overview.md) and [Graph Schema
 
 ## Supported Languages
 
-Python, TypeScript, TSX, JavaScript, Rust, Go, Java, C, C++, C#, PHP, Lua, and Dart are fully supported. Scala is in development, and Ruby, Kotlin, Swift, Elixir, Haskell, Solidity, Bash, and Nix have structural support (modules, functions, classes where the language has them, and imports) through the pluggable ast-grep tier. See the [Language Support](docs/architecture/language-support.md) matrix for per-language capabilities.
+Python, TypeScript, TSX, JavaScript, Rust, Go, Java, C, C++, C#, PHP, Lua, Dart, and Julia are fully supported. Scala is in development, and Ruby, Kotlin, Swift, Elixir, Haskell, Solidity, Bash, and Nix have structural support (modules, functions, classes where the language has them, and imports) through the pluggable ast-grep tier. See the [Language Support](docs/architecture/language-support.md) matrix for per-language capabilities.
 
 ## Installation
 

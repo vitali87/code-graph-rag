@@ -1799,7 +1799,7 @@ class IOAccessProcessor:
             is not None
         ):
             return self._resolve_handle_value(
-                self._first_positional_arg(node),
+                positional_arg_node(node, 0, None),
                 in_scope,
                 import_map,
                 descriptor,
@@ -1851,7 +1851,7 @@ class IOAccessProcessor:
         type_name = type_node.text.decode(cs.ENCODING_UTF8)
         if type_name in lean_handles.new_wrappers:
             inner = self._resolve_handle_value(
-                self._first_positional_arg(node),
+                positional_arg_node(node, 0, None),
                 in_scope,
                 import_map,
                 descriptor,
@@ -1939,13 +1939,6 @@ class IOAccessProcessor:
                 )
         return DYNAMIC_TARGET
 
-    @staticmethod
-    def _first_positional_arg(call_node: Node) -> Node | None:
-        args = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
-        if args is None:
-            return None
-        return next((c for c in args.named_children if c.type != cs.TS_COMMENT), None)
-
     def _ctor_identity(
         self,
         call_node: Node,
@@ -1974,7 +1967,7 @@ class IOAccessProcessor:
         # Identity one level down: `Files.newBufferedReader(Path.of("cfg"))` and
         # `new Scanner(new File("x"))` carry the literal in the factory call / File
         # constructor at the target position.
-        arg = self._first_positional_arg(call_node)
+        arg = positional_arg_node(call_node, 0, None)
         if arg is None:
             return identity
         if lean_handles.identity_calls and arg.type == descriptor.call_type:

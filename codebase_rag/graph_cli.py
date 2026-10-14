@@ -13,6 +13,7 @@ import click
 from . import cli_help as ch
 from . import constants as cs
 from . import graph_query
+from .project_selection import repo_not_indexed, unknown_project
 
 if TYPE_CHECKING:
     from .services.graph_service import MemgraphIngestor
@@ -50,30 +51,12 @@ def _unknown_project(
     roots = graph_query.indexed_projects(fetch_all)
     if name in roots:
         return None
-    close = graph_query.close_project_names(name, roots)
-    if project is None:
-        # The name was derived from --repo-path, so the directory is what
-        # was never indexed; a project indexed from it under a name of its
-        # own is the likeliest thing meant.
-        rooted = graph_query.projects_rooted_at(roots, repo_path)
-        message = cs.CLI_ERR_GRAPH_REPO_NOT_INDEXED.format(
-            path=repo_path.resolve()
-        ) + graph_query.did_you_mean(list(dict.fromkeys([*rooted, *close])))
-    elif close:
-        message = cs.CLI_ERR_GRAPH_UNKNOWN_PROJECT.format(
-            project=name
-        ) + graph_query.did_you_mean(close)
-    elif roots:
-        message = cs.CLI_ERR_GRAPH_UNKNOWN_PROJECT.format(
-            project=name
-        ) + cs.CLI_ERR_GRAPH_INDEXED_PROJECTS.format(
-            projects=cs.SEPARATOR_COMMA_SPACE.join(sorted(roots))
-        )
-    else:
-        message = (
-            cs.CLI_ERR_GRAPH_UNKNOWN_PROJECT.format(project=name)
-            + cs.CLI_ERR_GRAPH_NOTHING_INDEXED
-        )
+    # The same refusal every command that reads one project gives (#2415).
+    message = (
+        repo_not_indexed(repo_path, name, list(roots), roots)
+        if project is None
+        else unknown_project(name, list(roots))
+    )
     return _Refusal(message, cs.GRAPH_EXIT_UNKNOWN_PROJECT)
 
 
@@ -129,7 +112,7 @@ def _run_query_and_emit(
 
 
 def _graph_options[F: Callable[..., None]](fn: F) -> F:
-    fn = click.option("--project", default=None, help=ch.HELP_GRAPH_PROJECT)(fn)
+    fn = click.option("--project", "-p", default=None, help=ch.HELP_GRAPH_PROJECT)(fn)
     return click.option(
         "--repo-path",
         type=click.Path(exists=True, file_okay=False, path_type=Path),

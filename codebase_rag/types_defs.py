@@ -149,6 +149,15 @@ type TrieNode = dict[str, TrieNode | QualifiedName | NodeType]
 type FunctionRegistry = dict[QualifiedName, NodeType]
 
 
+class OverloadSignature(NamedTuple):
+    # What tells one C++ member overload from another: the parameter types
+    # plus the cv/ref qualifiers (`(const std::string&) const`), and the
+    # parameter count for pairing a definition spelled differently from its
+    # declaration.
+    text: str
+    arity: int
+
+
 class FunctionRegistryTrieProtocol(Protocol):
     def __contains__(self, qualified_name: QualifiedName) -> bool: ...
     def __getitem__(self, qualified_name: QualifiedName) -> NodeType: ...
@@ -176,6 +185,7 @@ class FunctionRegistryTrieProtocol(Protocol):
         start_line: int,
         start_col: int = 0,
         kind: NodeType | None = None,
+        origin: str | None = None,
     ) -> QualifiedName: ...
 
     def claim_other_space(self, natural_qn: QualifiedName, kind: NodeType) -> bool: ...
@@ -183,6 +193,26 @@ class FunctionRegistryTrieProtocol(Protocol):
     def type_kind(self, qualified_name: QualifiedName) -> NodeType | None: ...
 
     def variants(self, qualified_name: QualifiedName) -> list[QualifiedName]: ...
+
+    def register_overload_qn(
+        self,
+        natural_qn: QualifiedName,
+        signature: OverloadSignature,
+        start_line: int,
+        start_col: int = 0,
+        declared_in_class: bool = False,
+    ) -> QualifiedName: ...
+
+    def overload_signature(
+        self, qualified_name: QualifiedName
+    ) -> OverloadSignature | None: ...
+
+    def restore_overload(
+        self,
+        qualified_name: QualifiedName,
+        signature_text: str,
+        declared_in_class: bool,
+    ) -> None: ...
 
     def add_member_alias(
         self, alias_qn: QualifiedName, target_qn: QualifiedName
@@ -625,14 +655,6 @@ class LanguageQueries(TypedDict):
     parser: Parser
 
 
-class FunctionNodeProps(TypedDict, total=False):
-    qualified_name: str
-    name: str | None
-    start_line: int
-    end_line: int
-    docstring: str | None
-
-
 # float admits find_duplicate_code's 0-1 similarity threshold (issue #1342).
 # bool is listed for documentation only, being already a subtype of int, and
 # structural_replace's dry_run default has relied on that since it was added.
@@ -707,6 +729,11 @@ class DeadCodeConfig(NamedTuple):
     # exposing an endpoint is live only if an indexed call site reaches that
     # endpoint, so an endpoint nobody calls is reported (issue #1603).
     endpoint_roots: bool = True
+    # Every public or exported symbol is a root (the default, right for a
+    # library, whose API is called from outside the repository). Off, a
+    # symbol roots only as an entry point, test, decorated handler or runtime
+    # hook, so an application's unused public code is reported (issue #2527).
+    public_roots: bool = True
 
 
 class ProjectSync(NamedTuple):
@@ -1065,9 +1092,11 @@ class DeferredInherit(NamedTuple):
     still point at a module that only RE-EXPORTS the parent, where the
     name-anchored guess is what finds the declaring one.
 
-    `written_ref` is a C# base as written (`NotificationHandler`1`): the
-    parse-time qn cannot say which name was written, and C# binds that
-    name by scope (namespace, enclosing namespaces, usings), issue #2534.
+    `written_ref` is a C# base as written, with its type-argument count in
+    CLR style (`NotificationHandler`1`): the parse-time qn cannot say which
+    name was written, and C# binds that name by scope (namespace, enclosing
+    namespaces, usings), issue #2534; `PB` and `PB<T>` are two types, so the
+    written arity picks between them (issue #2579).
     """
 
     rel_type: RelationshipType
@@ -1347,23 +1376,23 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.MODULE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, broken_links: list[string]?, unresolved_specifiers: list[string]?, unresolved_references: list[string]?}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, broken_links: list[string]?, unresolved_specifiers: list[string]?, unresolved_references: list[string]?, interface_fingerprint: string?}",
     ),
     NodeSchema(
         NodeLabel.CLASS,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, non_method_members: list[string]?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, generic_arity: int?, non_method_members: list[string]?, type_checking_only: boolean?}",
     ),
     NodeSchema(
         NodeLabel.FUNCTION,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, is_object_member: boolean?, is_body_scoped_name: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, is_object_member: boolean?, is_body_scoped_name: boolean?, is_program_main: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
     ),
     NodeSchema(
         NodeLabel.METHOD,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, member_aliases: list[string]?, overrides_external: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, extension_receiver: string?, extension_namespace: string?, extension_receiver_arity: int?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, member_aliases: list[string]?, overrides_external: boolean?, is_program_main: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, signature: string?, declared_in_class: boolean?, extension_receiver: string?, extension_namespace: string?, extension_receiver_arity: int?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
     ),
     NodeSchema(
         NodeLabel.INTERFACE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, generic_arity: int?, embeds: list[string]?, implementers_unknown: string?}",
     ),
     NodeSchema(
         NodeLabel.ENUM,
@@ -1571,6 +1600,13 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.CLASS,),
         RelationshipType.IMPLEMENTS,
         (NodeLabel.TYPE,),
+    ),
+    # A Go defined type that is no struct (`type HandlerFunc func(...)`)
+    # carries methods too, and implements an interface by having them.
+    RelationshipSchema(
+        (NodeLabel.TYPE,),
+        RelationshipType.IMPLEMENTS,
+        (NodeLabel.INTERFACE,),
     ),
     RelationshipSchema(
         # A method-body anonymous-class override is a Function node, so it

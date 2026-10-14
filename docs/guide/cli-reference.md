@@ -33,6 +33,7 @@ Every top-level command, from the CLI's own help registry:
 | `cgr optimize` | Run a language-focused code optimisation session |
 | `cgr mcp-server` | Serve cgr tools over stdio or HTTP |
 | `cgr index` | Write an offline protobuf index for a repository |
+| `cgr watch` | Keep a repository's graph in sync while you edit it |
 | `cgr export` | Export the shared graph, or chosen projects, to JSON |
 | `cgr graph-loader` | Summarise an exported graph JSON file |
 | `cgr stats` | Show graph node and relationship counts |
@@ -55,6 +56,28 @@ Every top-level command, from the CLI's own help registry:
 | `cgr verify-index` | Verify a protobuf index against its provenance manifest |
 | `cgr diff-index` | Structural diff between two protobuf index snapshots |
 <!-- /SECTION:cli_commands -->
+
+## Choosing the Project
+
+Indexed projects are named `<dir>__<hash>` (for example `click__d1899da0`),
+so the commands that read or delete one project choose it the same way:
+
+- `-p`/`--project NAME` names it; `cgr status` lists the names.
+- Without it, the project `--repo-path` (default: the current directory) was
+  indexed as. Run from inside an indexed checkout, `cgr dead-code`,
+  `cgr duplicates` and `cgr graph` need no option.
+- `cgr dead-code` and `cgr duplicates`, run outside any indexed checkout with
+  no option, still use the graph's only project when there is just one.
+- `cgr stats` and `cgr export` cover the whole graph unless `--project`,
+  `--repo-path` or `--workspace` scopes them.
+- `cgr delete-project` never defaults to the current directory: it takes
+  `--project`, or an explicit `--repo-path` (`--repo-path .` deletes this
+  repository's project and its local hash cache).
+
+A name or directory that is not indexed is refused with its close matches,
+and with the indexed projects only when nothing is close. The spellings this
+replaced (`-n`/`--project-name`, and `--name` on `delete-project`) still work.
+`cgr start --project-name` is different: it names the project a sync writes.
 
 ## Core Commands
 
@@ -99,9 +122,39 @@ non-interactively and other projects would be destroyed, or when the existing
 projects cannot be listed, it stops unless `--yes` is given.
 
 `-o` writes only this repository's project, scoped the way
-`cgr export --project-name` scopes it: what the project owns, the
+`cgr export --project` scopes it: what the project owns, the
 relationships that start there, the nodes they reach and the links between
 the resources it holds.
+
+### `cgr watch`
+
+Keep a repository's graph in sync while you edit it. The watcher first syncs
+the repository as `cgr start --update-graph` does, then re-ingests each file
+you save, with the files that depend on it, until you stop it with Ctrl+C.
+See [Real-Time Updates](realtime-updates.md).
+
+```bash
+cgr watch --repo-path /path/to/repo [OPTIONS]
+```
+
+<!-- SECTION:cli_options_watch -->
+| Option | Description |
+|------|-----------|
+| `--repo-path` | Repository to watch. Defaults to the current directory. |
+| `--project-name` | Project name to store in the graph. Defaults to the name `cgr start --repo-path` gives the same repository, so both update one project; if you passed `cgr start --project-name`, pass the same name here. |
+| `--debounce`, `-d` | Seconds to wait after a file's last change before updating the graph, so a burst of saves becomes one update. 0 applies every change at once. [default: 5; x>=0] |
+| `--max-wait`, `-m` | Longest a file that keeps changing waits before the graph is updated anyway. Raised to --debounce when lower. [default: 30; x>=0] |
+| `--batch-size` | Flush to Memgraph after this many buffered nodes or relationships. [x>=1] |
+| `--no-start-stack` | Do not start the shared stack automatically. |
+| `--yes`, `-y` | Watch even a home directory or the filesystem root, and take over a --project-name another repository already indexes, as cgr start --yes does. |
+<!-- /SECTION:cli_options_watch -->
+
+The repository, the project name and the stack are resolved as `cgr start`
+resolves them, so both commands update one project. Like `cgr start`, it
+refuses a home directory, the filesystem root and a project name another
+repository indexes unless `--yes` is given. The Memgraph connection
+comes from `MEMGRAPH_HOST` and `MEMGRAPH_PORT` (the environment or `.env`),
+as for every `cgr` command.
 
 ### `cgr export`
 
@@ -116,12 +169,14 @@ cgr export -o OUTPUT [OPTIONS]
 | Option | Description |
 |------|-----------|
 | `--output`, `-o` | Write the exported graph to PATH. [required] |
-| `--project-name`, `-n` | Export only this project: what it owns, the relationships that start there, the nodes they reach, and the links between the resources it holds (RESOLVES_TO, FLOWS_TO). Repeatable; without it the whole shared graph is exported. |
+| `--project`, `-p` | Export only this project: what it owns, the relationships that start there, the nodes they reach, and the links between the resources it holds (RESOLVES_TO, FLOWS_TO). Repeatable; without it the whole shared graph is exported. |
+| `--repo-path` | Export the project this repository was indexed as, alongside any --project. |
 | `--workspace` | Export only the projects defined in workspace NAME. |
 <!-- /SECTION:cli_options_export -->
 
-A name that is not indexed is an error that lists the projects that are. A
-scoped file records its projects under `metadata.projects`. `--batch-size` and
+A name that is not indexed is an error that names its close matches, or lists
+the indexed projects when none is close. A scoped file records its projects
+under `metadata.projects`. `--batch-size` and
 `--json` are deprecated and ignored with a warning; `--no-json` is an error.
 
 ![cgr export writing the whole graph and one project, then refusing a directory as --output and an unindexed project name](../assets/demos/cli-export.gif)
@@ -161,13 +216,14 @@ cgr stats [OPTIONS]
 <!-- SECTION:cli_options_stats -->
 | Option | Description |
 |------|-----------|
-| `--project-name`, `-n` | Count only this project's nodes and relationships. Repeatable; without it the totals cover every project in the shared graph. |
+| `--project`, `-p` | Count only this project's nodes and relationships. Repeatable; without it the totals cover every project in the shared graph. |
+| `--repo-path` | Count the project this repository was indexed as, alongside any --project. |
 | `--workspace` | Count only the projects defined in workspace NAME. |
 <!-- /SECTION:cli_options_stats -->
 
 A project's count covers its containment tree, what it defines, and the
 relationships that start there. A name that is not indexed is an error that
-lists the projects that are.
+names its close matches, or lists the indexed projects when none is close.
 
 ![cgr stats totals with one line per project, then cgr stats --project-name with a name that is not indexed](../assets/demos/cli-stats.gif)
 
@@ -183,7 +239,8 @@ cgr dead-code [OPTIONS]
 <!-- SECTION:cli_options_dead_code -->
 | Option | Description |
 |------|-----------|
-| `--project-name`, `-n` | Project to scan. If omitted, cgr uses the only indexed project. |
+| `--project`, `-p` | Project to scan (default: the one --repo-path was indexed as; outside any indexed checkout, the only indexed project). |
+| `--repo-path` | Repository whose project to scan when --project is not given (default: the current directory). |
 | `--entry-point`, `-e` | Mark symbols ending with this qualified-name suffix as entry points. Repeatable. |
 | `--decorator-root` | Mark symbols with this decorator as entry points. Extends the built-in set. |
 | `--exclude` | Exclude symbols whose file path matches GLOB. The glob must cover the whole repo-relative path ('\*' spans directories) and be quoted ('tests/\*' for a root-level tests directory, '\*/tests/\*' for nested ones) so the shell cannot expand it first. Repeatable. |
@@ -194,6 +251,7 @@ cgr dead-code [OPTIONS]
 | `--fail-on-found` | Exit with status 1 when any candidate is found. Useful in CI. |
 | `--min-resolution` | Ignore call edges below this confidence when deciding liveness: heuristic &lt; overload &lt; exact &lt; trace_confirmed (dynamic counts as confirmed). |
 | `--endpoint-roots` / `--no-endpoint-roots` | Treat a decorator-routed handler (FastAPI, Flask) as reachable by its route decorator alone (default). With --no-endpoint-roots, such a handler is live only if some indexed call site resolves to its endpoint (RESOLVES_TO into it, or a direct READS_FROM/WRITES_TO for RPC and dispatch resources), so an endpoint nobody calls is reported. A handler registered by a call (Go HandleFunc, Express app.get) stays live through that call. [default: endpoint-roots] |
+| `--public-roots` / `--no-public-roots` | Treat every public or exported symbol as a root (default), as suits a library whose API is called from outside the repository. With --no-public-roots, for an application or service, a symbol is a root only as an entry point, test, decorated handler or runtime hook, so unused public code is reported. Symbols in structural-tier languages stay roots, having no call graph. [default: public-roots] |
 <!-- /SECTION:cli_options_dead_code -->
 
 ![cgr dead-code --project-name listing unreachable C functions in pallets/markupsafe](../assets/demos/cli-dead-code.gif)
@@ -211,7 +269,8 @@ cgr duplicates [OPTIONS]
 <!-- SECTION:cli_options_duplicates -->
 | Option | Description |
 |------|-----------|
-| `--project-name`, `-n` | Project to scan. If omitted, cgr uses the only indexed project. |
+| `--project`, `-p` | Project to scan (default: the one --repo-path was indexed as; outside any indexed checkout, the only indexed project). |
+| `--repo-path` | Repository whose project to scan when --project is not given (default: the current directory). |
 | `--threshold` | Minimum branch-overlap similarity for a near-duplicate pair, 0-1. [default: 0.8; 0.0&lt;=x&lt;=1.0] |
 | `--min-size` | Minimum skeleton size (tree nodes) for a function to be considered. Filters trivial getters and one-liners. [default: 15; x>=1] |
 | `--exact-only` | Report only identical-fingerprint clone groups; skip similarity scoring. |

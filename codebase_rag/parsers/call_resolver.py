@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict, deque
-from collections.abc import Collection, Iterator, Mapping
-from pathlib import PurePath
+from collections.abc import Collection, Iterable, Iterator, Mapping
+from pathlib import Path, PurePath
 from typing import NamedTuple
 
 from loguru import logger
@@ -15,7 +15,11 @@ from ..language_spec import get_language_for_extension
 from ..types_defs import CppOperatorSignature, FunctionRegistryTrieProtocol, NodeType
 from ..utils import qn_markers
 from .cpp import utils as cpp_utils
+from .go import interfaces as go_ifaces
 from .go import utils as go_utils
+from .go.builds import ALWAYS, Expr, all_of, holds_wherever, possible
+from .go.interfaces import GoMethodSpec
+from .go.link_state import GoLinkState
 from .import_processor import ImportProcessor
 from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
@@ -27,7 +31,7 @@ from .py import resolve_class_name
 from .rs import utils as rs_utils
 from .semantic_call_join import call_site_key, declared_location
 from .type_inference import TypeInferenceEngine
-from .utils import follow_reexports, safe_decode_text
+from .utils import safe_decode_text
 
 _SEPARATOR_PATTERN = re.compile(r"[.:]|::")
 # One initializer block's scope record, as held per module by
@@ -43,6 +47,29 @@ _RustBlockScope = tuple[
 ]
 _SEARCH_NAME_CACHE: dict[str, str] = {}
 _CHAINED_METHOD_PATTERN = re.compile(r"\.([^.()]+)$")
+# Chain bases whose value depends on the member they are written in.
+_JS_THIS_RECEIVERS = frozenset({cs.TS_THIS, cs.KEYWORD_SUPER})
+_JS_RECEIVER_MARKERS = frozenset({cs.JS_RECEIVER_INSTANCE, cs.JS_RECEIVER_CLASS})
+
+
+def _class_value_of(type_name: str) -> str | None:
+    # The class qn a hop's value is the class itself of (`typeof C`), else
+    # None for an instance type.
+    if type_name.startswith(cs.JS_CLASS_VALUE_PREFIX):
+        return type_name[len(cs.JS_CLASS_VALUE_PREFIX) :]
+    return None
+
+
+def _bind_receiver(returned: str | None, receiver: str | None) -> str | None:
+    # A `this` return is the class the call went through: an instance of
+    # it, or the class itself. With no such class there is nothing to name.
+    if returned == cs.JS_RECEIVER_INSTANCE:
+        return receiver
+    if returned == cs.JS_RECEIVER_CLASS:
+        return f"{cs.JS_CLASS_VALUE_PREFIX}{receiver}" if receiver else None
+    return returned
+
+
 _QN_SPLIT_CACHE: dict[str, tuple[list[str], int]] = {}
 _CHAIN_OPEN_BRACKETS = "([{"
 _CHAIN_CLOSE_BRACKETS = ")]}"
@@ -280,6 +307,15 @@ class CallResolver:
         "class_inheritance",
         "type_aliases",
         "interface_implementers",
+        "rehydrated_interface_implementers",
+        "guessed_implementations",
+        "go_methods",
+        "go_checked_files",
+        "go_builtin_shadows",
+        "go_variant_methods",
+        "go_declaration_variants",
+        "go_pair_builds",
+        "go_builds",
         "_interface_impl_cache",
         "_simple_resolution_cache",
         "last_resolution",
@@ -302,6 +338,7 @@ class CallResolver:
         "go_package_names",
         "_php_class_namespaces",
         "_php_cased_index",
+        "_js_return_class_cache",
     )
 
     def __init__(
@@ -315,7 +352,9 @@ class CallResolver:
         rehydrated_definition_paths: dict[str, str] | None = None,
         rust_function_modules: dict[str, str] | None = None,
         declared_module_qns: set[str] | None = None,
+        rehydrated_interface_implementers: dict[str, set[str]] | None = None,
         go_package_names: Mapping[str, str] | None = None,
+        go_links: GoLinkState | None = None,
     ) -> None:
         self.function_registry = function_registry
         self.import_processor = import_processor
@@ -350,6 +389,34 @@ class CallResolver:
         self.interface_implementers = (
             interface_implementers if interface_implementers is not None else {}
         )
+        # The pairs of implementers an incremental run did not re-parse, read
+        # back from the graph (shared ref). A sole implementer is one across
+        # both, or re-parsing only a caller loses its edge (issue #2403).
+        self.rehydrated_interface_implementers = (
+            rehydrated_interface_implementers
+            if rehydrated_interface_implementers is not None
+            else {}
+        )
+        # What the Go interface link shares, each container by reference
+        # (#2483): the pairs above it matched by name, so what dispatch
+        # through them reaches is a guess; each method's signature; the
+        # files go/types type-checked; the predeclared names each package
+        # declares; the declarations a type's build variants hold for it; each
+        # interface's build variants; the builds holding each pair; and each
+        # file's build constraint.
+        links = go_links if go_links is not None else GoLinkState()
+        self.guessed_implementations = links.guessed_implementations
+        self.go_methods: Mapping[str, GoMethodSpec] = links.methods
+        self.go_checked_files = links.checked_files
+        self.go_builtin_shadows: Mapping[str, frozenset[str]] = links.builtin_shadows
+        self.go_variant_methods: Mapping[str, Mapping[str, list[str]]] = (
+            links.variant_methods
+        )
+        self.go_declaration_variants: Mapping[str, tuple[str, ...]] = (
+            links.declaration_variants
+        )
+        self.go_pair_builds: Mapping[tuple[str, str], Expr] = links.pair_builds
+        self.go_builds = links.builds
         self._interface_impl_cache: dict[str, str] | None = None
         # C++ typedef/using alias -> underlying bare type, consulted when a
         # receiver type name is mapped to a class (empty for other languages).
@@ -386,6 +453,9 @@ class CallResolver:
         # read off each file's declarations on first use (issue #2466).
         self._php_class_namespaces: dict[str, dict[str, PhpClassPath]] = {}
         self._php_cased_index: _PhpCasedIndex | None = None
+        # {JS/TS callable qn: the class a call to it returns}, read off its
+        # declaration on first use (issue #2468).
+        self._js_return_class_cache: dict[tuple[str, bool], str | None] = {}
         # {definition qn: recorded file path} for definitions an incremental
         # run rehydrated from the graph instead of re-parsing (shared ref).
         self.rehydrated_definition_paths = (
@@ -548,8 +618,14 @@ class CallResolver:
         return non_none[0] if len(non_none) == 1 else var_type
 
     def _follow_reexports(self, class_qn: str) -> str:
-        followed = follow_reexports(
-            class_qn, self.import_processor.import_mapping, self.function_registry
+        if class_qn in self.function_registry:
+            return class_qn
+        # A JS/TS barrel passes on only what it exports: a type it imports
+        # for its own use must not type a receiver through it (#2560).
+        followed = self.import_processor.follow_module_reexports(
+            class_qn,
+            self.type_inference.module_qn_to_file_path,
+            self.function_registry,
         )
         if (
             followed in self.function_registry
@@ -598,6 +674,8 @@ class CallResolver:
         # A re-parsed PHP file may have moved a class between namespaces.
         self._php_class_namespaces.clear()
         self._php_cased_index = None
+        # A re-parsed TS file may declare a different return.
+        self._js_return_class_cache.clear()
         # The rel-path -> module qn inverse rebuilds only when its size
         # differs from `module_qn_to_file_path`; a rename removes one entry
         # and adds one, so the size is unchanged and the memo would keep the
@@ -611,6 +689,10 @@ class CallResolver:
         # just to clear an empty dict.
         if (csharp := self.type_inference._csharp_type_inference) is not None:
             csharp._call_memo.clear()
+        # The Java class headers (issue #2470) were read off the trees the
+        # last pass saw; a re-parsed superclass must be walked again.
+        if (java := self.type_inference._java_type_inference) is not None:
+            java.reset_resolution_memos()
 
     def resolve_function_call(
         self,
@@ -1376,7 +1458,7 @@ class CallResolver:
                 continue
             label = self.function_registry.get(qn)
             if label in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD):
-                twins.add((label, qn))
+                twins.add((str(label), qn))
         return twins
 
     def go_package_sibling_targets(self, callee_qn: str) -> set[tuple[str, str]]:
@@ -1539,16 +1621,41 @@ class CallResolver:
         # `helper()` in `a.go` naming `func helper()` in `b.go` of the same
         # package is as certain as a same-file call: Go shares one namespace
         # across the package's files and rejects a duplicate (#2571). Two
-        # candidates are mutually exclusive build-tag variants, which the
-        # heuristic fallback and its sibling fan-out already cover.
-        candidates = self._go_package_scope(
-            call_name, module_qn, _GO_PACKAGE_FUNCTION_TYPES
+        # candidates are build variants (`h_linux.go`, `h_windows.go`) only
+        # when no build compiles them together: the caller then binds the
+        # first its builds may hold, labelled by the builds it reaches
+        # (`_go_build_targets`), and its sibling fan-out reaches the rest.
+        # The name-only fallback took another package's same-named function
+        # there, `p_test`'s even, and no variant (#3360 review).
+        candidates = self._go_build_variant_candidates(
+            self._go_package_scope(call_name, module_qn, _GO_PACKAGE_FUNCTION_TYPES),
+            module_qn,
         )
-        if len(candidates) != 1:
+        if not candidates:
             return None
         qn = candidates[0]
         logger.debug(ls.CALL_GO_SAME_PACKAGE, call_name=call_name, qn=qn)
         return self.function_registry[qn], qn
+
+    def _go_build_variant_candidates(
+        self, candidates: list[str], module_qn: str
+    ) -> list[str]:
+        # The one candidate, or, of several, those a build compiling the
+        # caller may hold when no build compiles two of them together; []
+        # for any other several.
+        if len(candidates) <= 1 or self.go_builds is None:
+            return candidates
+        caller = self.go_caller_rel(module_qn)
+        files = {qn: self.go_declaring_rel(qn) for qn in candidates}
+        reachable = sorted(
+            qn for qn in candidates if not self.go_builds.apart((caller, files[qn]))
+        )
+        apart = all(
+            self.go_builds.apart((files[first], files[second]))
+            for index, first in enumerate(reachable)
+            for second in reachable[index + 1 :]
+        )
+        return reachable if apart else []
 
     def _go_package_type(self, name: str, module_qn: str) -> str | None:
         # A bare Go type name (`var m Mux`, `q *Mux`, the `*Mux` a same-package
@@ -1572,14 +1679,15 @@ class CallResolver:
                 if qn.rpartition(cs.SEPARATOR_DOT)[0] == module_qn
             ]
             candidates = own if own else candidates
-        if len(candidates) != 1:
-            return None
+        # An interface each build declares again is the first of its
+        # variants; a call through it binds per build at emission.
+        found = go_utils.one_declaration(candidates, self.go_declaration_variants)
         # The Go type walker reduces a declared `*aaa.Mux` to `Mux` as well,
         # so a name that a package this file imports also declares may be
         # that one; it keeps the lookup it had before.
-        if self._go_imports_declare_type(name, module_qn):
+        if found is None or self._go_imports_declare_type(name, module_qn):
             return None
-        return candidates[0]
+        return found
 
     def _go_imports_declare_type(self, name: str, module_qn: str) -> bool:
         imported = set(
@@ -1602,8 +1710,11 @@ class CallResolver:
         # class's constructor has an extra qn segment and is excluded).
         # A duplicate-suffixed class (`Box@8` for `class Box<T>` beside `class
         # Box`) declares its constructor under its natural name, so the
-        # marker is not part of the name to match (issue #2007).
-        simple = qn_markers.strip_dup_marker(class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+        # marker is not part of the name to match (issue #2007), and nor is a
+        # generic twin's CLR arity (`PB`1` declares `PB(...)`, issue #2579).
+        simple = qn_markers.strip_arity_marker(
+            qn_markers.strip_dup_marker(class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+        )
         targets: set[tuple[str, str]] = set()
         for qn, node_type in self.function_registry.find_with_prefix(class_qn):
             head = qn.split(cs.CHAR_PAREN_OPEN, 1)[0]
@@ -1703,9 +1814,16 @@ class CallResolver:
         # >1 implementer is ambiguous -> not mapped -> the call stays on the
         # interface method alone (no precision risk, recall preserved).
         if self._interface_impl_cache is None:
+            implementers_of: dict[str, set[str]] = {}
+            for source in (
+                self.interface_implementers,
+                self.rehydrated_interface_implementers,
+            ):
+                for interface_qn, implementers in source.items():
+                    implementers_of.setdefault(interface_qn, set()).update(implementers)
             self._interface_impl_cache = {
                 interface_qn: next(iter(implementers))
-                for interface_qn, implementers in self.interface_implementers.items()
+                for interface_qn, implementers in implementers_of.items()
                 if len(implementers) == 1
             }
         return self._interface_impl_cache
@@ -1727,6 +1845,154 @@ class CallResolver:
         if result := self._try_resolve_method(impl_qn, method_name):
             return {result}
         return set()
+
+    def interface_dispatch_targets(
+        self, callee_qn: str
+    ) -> dict[tuple[str, str], dict[str, bool]]:
+        # A Go call through an interface runs whichever implementation the
+        # value holds, and the types implement it implicitly, so a sole
+        # implementer is no likelier than one of many: every implementer's
+        # method is a target (issue #2483). Each maps to the implementers it
+        # runs for, each with whether only a guess ties it to the interface
+        # (a pair matched by name and arity), which its edge then says rather
+        # than borrowing the call's own label.
+        class_qn, sep, method_name = callee_qn.rpartition(cs.SEPARATOR_DOT)
+        if not sep or self.function_registry.get(class_qn) != NodeType.INTERFACE:
+            return {}
+        targets: dict[tuple[str, str], dict[str, bool]] = {}
+        for implementer in self.interface_implementers.get(class_qn, ()):
+            guessed = (class_qn, implementer) in self.guessed_implementations
+            found = [
+                (cs.NodeLabel.METHOD.value, qn)
+                for qn in self.go_variant_methods.get(implementer, {}).get(
+                    method_name, ()
+                )
+            ]
+            if result := self._try_resolve_method(implementer, method_name):
+                found.append(result)
+            for target in found:
+                targets.setdefault(target, {})[implementer] = guessed
+        return targets
+
+    def go_declaration_satisfies(
+        self, method_qn: str, interface_method_qn: str
+    ) -> bool:
+        # A build that declares the method again declares its own copy
+        # (`T.M@5`), and one whose signature cannot be the interface
+        # method's never runs for a call through the interface: in that
+        # build the type is no implementer.
+        have = self.go_methods.get(method_qn)
+        want = self.go_methods.get(interface_method_qn)
+        return (
+            have is None
+            or want is None
+            or go_ifaces.compatible(
+                go_ifaces.in_package(have, self.go_builtin_shadows),
+                go_ifaces.in_package(want, self.go_builtin_shadows),
+            )
+        )
+
+    def go_declaration_read(self, method_qn: str) -> bool:
+        spec = self.go_methods.get(method_qn)
+        return spec is None or spec.file in self.go_checked_files
+
+    def _with_go_variants(self, bases: Iterable[str]) -> list[str]:
+        # A Go interface embedding a name each build declares again embeds
+        # the one its build holds, so a method only one build's declares is
+        # still reached through it (#3360 review).
+        found: list[str] = []
+        for base in bases:
+            found.append(base)
+            found.extend(
+                variant
+                for variant in self.go_declaration_variants.get(base, ())
+                if variant != base
+            )
+        return found
+
+    def go_variant_callees(
+        self, callee_qn: str, module_qn: str
+    ) -> list[tuple[str, bool]] | None:
+        """For a Go call bound to `callee_qn`, a method of an interface each
+        build declares again, the method of every declaration a build
+        compiling the caller's file may hold, each with whether every such
+        build holds it. None when the interface has no build variants.
+
+        `J` embedding `p.I` reached `i_linux.go`'s `M` for a caller every
+        build compiles: an exact edge true on Linux alone, and Windows'
+        `M` never reached (#3360 review)."""
+        owner, dot, name = callee_qn.rpartition(cs.SEPARATOR_DOT)
+        group = self.go_declaration_variants.get(owner)
+        if not dot or not group or self.go_builds is None:
+            return None
+        caller = self.go_caller_rel(module_qn)
+        reached = [
+            (method_qn, file)
+            for variant in group
+            if (method_qn := f"{variant}{cs.SEPARATOR_DOT}{name}")
+            in self.function_registry
+            and self.go_builds.together(
+                (caller, file := self.go_declaring_rel(variant))
+            )
+        ]
+        exact = len(reached) == 1 and self.go_builds.covered(caller, [reached[0][1]])
+        return [(method_qn, exact) for method_qn, _ in reached]
+
+    def go_reaches_everywhere(
+        self, module_qn: str, declarations: Iterable[str]
+    ) -> bool:
+        """Whether every build compiling Go file `module_qn` compiles every
+        one of `declarations`: an edge to one only some of them hold is no
+        exact edge."""
+        if self.go_builds is None:
+            return True
+        return self.go_builds.everywhere(
+            self.go_caller_rel(module_qn),
+            [self.go_declaring_rel(qn) for qn in declarations],
+        )
+
+    def go_dispatch_builds(
+        self,
+        module_qn: str,
+        interface_qn: str,
+        implementer: str,
+        declaration: str,
+    ) -> tuple[bool, bool]:
+        """Whether `declaration` runs for `implementer` through a call through
+        `interface_qn` from Go file `module_qn` in some build compiling the
+        caller, and whether in every one."""
+        if self.go_builds is None:
+            return True, True
+        caller = self.go_builds.constraint(self.go_caller_rel(module_qn))
+        runs = all_of(
+            (
+                self.go_pair_builds.get((interface_qn, implementer), ALWAYS),
+                self.go_builds.constraint(self.go_declaring_rel(declaration)),
+            )
+        )
+        return possible((caller, runs)), holds_wherever(caller, runs)
+
+    def go_apart_from_caller(self, module_qn: str, declaration: str) -> bool:
+        """Whether no build compiles Go file `module_qn` with `declaration`:
+        its call never reaches that one."""
+        return self.go_builds is not None and self.go_builds.apart(
+            (self.go_caller_rel(module_qn), self.go_declaring_rel(declaration))
+        )
+
+    def go_caller_rel(self, module_qn: str) -> str:
+        return go_utils.rel_file(
+            self.type_inference.module_qn_to_file_path.get(module_qn),
+            self.type_inference.repo_path,
+        )
+
+    def go_declaring_rel(self, qn: str) -> str:
+        # The repo-relative file declaring Go method or package-level `qn`.
+        if (spec := self.go_methods.get(qn)) is not None:
+            return spec.file
+        path = self._go_declaring_path(qn)
+        return (
+            go_utils.rel_file(Path(path), self.type_inference.repo_path) if path else ""
+        )
 
     def _redirect_protocol_method(
         self, result: tuple[str, str] | None
@@ -2146,7 +2412,14 @@ class CallResolver:
         # file-keyed cache would serve it another caller's answer. A file
         # holding initializer-block uses resolves SITE-dependently (the
         # block's use answers only calls inside its span), so no caller in
-        # it may share cached answers either.
+        # it may share cached answers either. A Julia caller inside a nested
+        # `module` block is caller-dependent for the same reason (the block's
+        # own `using` shadows the file-level bindings).
+        nested_caller = (
+            caller_qn is not None
+            and caller_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
+            and cs.SEPARATOR_DOT in caller_qn[len(module_qn) + 1 :]
+        )
         if (
             call.language == cs.SupportedLanguage.RUST
             and caller_qn
@@ -2161,7 +2434,7 @@ class CallResolver:
                     )
                 )
             )
-        ):
+        ) or (call.language == cs.SupportedLanguage.JULIA and nested_caller):
             use_cache = False
         if not use_cache:
             return None
@@ -2176,7 +2449,12 @@ class CallResolver:
         if result := self._try_resolve_iife(call_name, module_qn):
             return True, result
 
-        if self._is_super_call(call_name):
+        # A JS/TS chain off `super.m()` is typed hop by hop like one off
+        # `this.m()`; the super lookup reads only a single member name.
+        if self._is_super_call(call_name) and not (
+            call.language in cs.JS_TS_LANGUAGES
+            and self._is_method_chain(call_name, call.language)
+        ):
             return True, self._resolve_super_call(call_name, call.class_context)
 
         if cs.SEPARATOR_DOT in call_name and self._is_method_chain(
@@ -2354,7 +2632,7 @@ class CallResolver:
     ) -> tuple[bool, tuple[str, str] | None]:
         call_name, module_qn = call.call_name, call.module_qn
         if result := self._try_resolve_via_imports(
-            call_name, module_qn, call.local_var_types, call.language
+            call_name, module_qn, call.local_var_types, call.language, call.caller_qn
         ):
             self._remember_cacheable(cache_key, result)
             return True, result
@@ -2651,9 +2929,17 @@ class CallResolver:
         owner = method_qn.rpartition(cs.SEPARATOR_DOT)[0]
         if self._rust_owner_is(owner, owners, names, method_qn, self_type):
             return True
-        return self.function_registry.get(owner) == NodeType.INTERFACE and any(
+        if self.function_registry.get(owner) != NodeType.INTERFACE:
+            return False
+        # The read-back pairs too: a run that re-parsed only the caller has
+        # `impl FloatErrors for u64` in them alone, and `u64::error_halfscale()`
+        # lost the trait method a clean index binds (issue #2403).
+        implementers = self.interface_implementers.get(
+            owner, set()
+        ) | self.rehydrated_interface_implementers.get(owner, set())
+        return any(
             self._rust_owner_is(implementer, owners, names, self_type=self_type)
-            for implementer in self.interface_implementers.get(owner, ())
+            for implementer in implementers
         )
 
     def _rust_owner_is(
@@ -3359,7 +3645,20 @@ class CallResolver:
         module_qn: str,
         local_var_types: dict[str, str] | None,
         language: cs.SupportedLanguage | None = None,
+        caller_qn: str | None = None,
     ) -> tuple[str, str] | None:
+        if language == cs.SupportedLanguage.JULIA and caller_qn:
+            # A `using` inside a Julia `module` block binds only that block,
+            # so a nested module's imports shadow the file-level ones: walk
+            # the caller's module scopes innermost first.
+            for scope in self._julia_caller_scopes(caller_qn, module_qn):
+                import_map = self.import_processor.import_mapping.get(scope)
+                if not import_map:
+                    continue
+                if result := self._try_resolve_direct_import(
+                    call_name, import_map, language, scope
+                ):
+                    return result
         import_map = self.import_processor.import_mapping.get(module_qn)
         if import_map is None:
             # A module with no `use`/import statements can still resolve a member
@@ -3680,6 +3979,19 @@ class CallResolver:
         matches = [key for key in import_map if _php_fold(key) == folded]
         return matches[0] if len(matches) == 1 else None
 
+    @staticmethod
+    def _julia_caller_scopes(caller_qn: str, module_qn: str) -> list[str]:
+        # The caller's module scopes innermost first (the file module last).
+        if not caller_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}"):
+            return [module_qn]
+        parts = caller_qn[len(module_qn) + 1 :].split(cs.SEPARATOR_DOT)
+        scopes = [module_qn]
+        prefix = module_qn
+        for part in parts[:-1]:
+            prefix = f"{prefix}{cs.SEPARATOR_DOT}{part}"
+            scopes.insert(0, prefix)
+        return scopes
+
     def _try_resolve_direct_import(
         self,
         call_name: str,
@@ -3733,6 +4045,16 @@ class CallResolver:
         if imported_qn in self.function_registry:
             logger.debug(ls.CALL_DIRECT_IMPORT, call_name=call_name, qn=imported_qn)
             return self.function_registry[imported_qn], imported_qn
+        if language == cs.SupportedLanguage.JULIA:
+            # A Julia selected import (`using .api: alpha`) binds the local
+            # name to the source MODULE; resolve the member exactly before
+            # the name trie, or a same-named function soaks the edge.
+            for member in self.import_processor.julia_member_qn_candidates(
+                imported_qn, call_name
+            ):
+                if member in self.function_registry:
+                    logger.debug(ls.CALL_DIRECT_IMPORT, call_name=call_name, qn=member)
+                    return self.function_registry[member], member
         # A whole-module require alias (`const f = require('./m'); f(x)`)
         # maps to the MODULE qn; when that module's entire export is one
         # function (`module.exports = function ... `), the call is a call to
@@ -5808,6 +6130,18 @@ class CallResolver:
             # chain before the construction hop is seen (issue #2033). Fold
             # the prefix into the next hop and type that hop instead.
             current_type, parts = folded
+        elif (
+            folded := self._fold_js_call_hop(
+                parts,
+                module_qn,
+                local_var_types,
+                class_context,
+                caller_qn,
+                language,
+                call_point,
+            )
+        ) is not None:
+            current_type, parts = folded
         elif local_var_types:
             current_type = local_var_types.get(base)
         else:
@@ -5823,13 +6157,266 @@ class CallResolver:
                     module_qn,
                 )
                 continue
-            class_qn = self._chain_class_qn(
-                current_type, module_qn, _rust_caller(language, caller_qn)
-            )
-            current_type = self.type_inference.method_return_types.get(
-                f"{class_qn}{cs.SEPARATOR_DOT}{method}"
+            current_type = self._member_hop_type(
+                current_type, method, module_qn, language, caller_qn
             )
         return current_type
+
+    def _member_hop_type(
+        self,
+        receiver_type: str,
+        method: str,
+        module_qn: str,
+        language: cs.SupportedLanguage | None,
+        caller_qn: str | None,
+    ) -> str | None:
+        # What `receiver.method()` hands the next hop. A receiver that is a
+        # JS/TS class itself (`C.self()` from a static `return this`) reaches
+        # only its static members, its ancestors' included.
+        if (class_value := _class_value_of(receiver_type)) is not None:
+            found = self._js_static_member(class_value, method)
+            if found is None:
+                return None
+            return self._hop_return_type(found[0], language, True, class_value)
+        class_qn = self._chain_class_qn(
+            receiver_type, module_qn, _rust_caller(language, caller_qn)
+        )
+        return self._hop_return_type(
+            f"{class_qn}{cs.SEPARATOR_DOT}{method}", language, False, class_qn
+        )
+
+    def _hop_return_type(
+        self,
+        callable_qn: str,
+        language: cs.SupportedLanguage | None,
+        static: bool = False,
+        receiver: str | None = None,
+    ) -> str | None:
+        # The type a call to `callable_qn` hands the next hop. Most languages
+        # record it as they ingest; a JS/TS return is read off the callee's
+        # declaration on demand (issue #2468), and a `this` return names the
+        # class it is called through (`receiver`). A hop's receiver is an
+        # instance, so it reaches the instance member unless told otherwise.
+        recorded = self.type_inference.method_return_types.get(callable_qn)
+        if recorded is None and language in cs.JS_TS_LANGUAGES:
+            return _bind_receiver(self._js_return_class(callable_qn, static), receiver)
+        return recorded
+
+    def _js_static_member(self, class_qn: str, method: str) -> tuple[str, int] | None:
+        """`(member qn, line)` of the static `method` the class reaches: its
+        own, else the nearest ancestor's. The walk stops at the first class
+        declaring a static of that name, field or accessor included, which
+        hides every parent's; one with no method body answers nothing.
+        Instance members are a different namespace and never answer."""
+        for owner in self._mro(class_qn):
+            declared, line = self.type_inference.js_static_member(owner, method)
+            if declared:
+                return (
+                    (f"{owner}{cs.SEPARATOR_DOT}{method}", line)
+                    if line is not None
+                    else None
+                )
+        return None
+
+    def _js_static_member_target(
+        self, class_qn: str, method: str
+    ) -> tuple[str, str] | None:
+        # A static and an instance member of one name register as `m` and
+        # `m@<line>`, the first in the source taking the plain name; the
+        # static one's line says which it is.
+        found = self._js_static_member(class_qn, method)
+        if found is None:
+            return None
+        member_qn, line = found
+        marked = {
+            marker: variant
+            for variant in self.function_registry.variants(member_qn)
+            if (marker := qn_markers.marker_line(variant)) is not None
+        }
+        if line in marked:
+            variant = marked[line]
+        elif member_qn in self.function_registry and all(
+            marker > line for marker in marked
+        ):
+            variant = member_qn
+        else:
+            return None
+        return self.function_registry[variant], variant
+
+    def _callee_return_type(
+        self, callee_qn: str, language: cs.SupportedLanguage | None
+    ) -> str | None:
+        # Read right after the callee resolved. A JS/TS callee bound only by
+        # name is a guess, and typing the rest of the chain from its return
+        # would build every later hop on that guess.
+        if (
+            language in cs.JS_TS_LANGUAGES
+            and self.last_resolution != cs.EdgeResolution.EXACT
+        ):
+            return None
+        return self._hop_return_type(callee_qn, language)
+
+    def _js_return_class(self, callable_qn: str, static: bool) -> str | None:
+        # Only a class registered under the qn the declaring module resolved
+        # counts: a name that module could not place is not looked up again
+        # from the caller, where a same-named class may answer.
+        key = (callable_qn, static)
+        if key in self._js_return_class_cache:
+            return self._js_return_class_cache[key]
+        returned = self.type_inference.js_callable_return_type(callable_qn, static)
+        if returned in _JS_RECEIVER_MARKERS:
+            self._js_return_class_cache[key] = returned
+            return returned
+        class_qn = (
+            self._follow_reexports(returned)
+            if returned and cs.SEPARATOR_DOT in returned
+            else None
+        )
+        if class_qn is not None and self.function_registry.get(class_qn) != (
+            NodeType.CLASS
+        ):
+            class_qn = None
+        self._js_return_class_cache[key] = class_qn
+        return class_qn
+
+    def _fold_js_call_hop(
+        self,
+        parts: list[str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+        caller_qn: str | None,
+        language: cs.SupportedLanguage | None,
+        call_point: int | None,
+    ) -> tuple[str, list[str]] | None:
+        # `TBox.create().with(1)`, `this.with(1).bump()`: the base is no typed
+        # local, but its first hop binds the way that call written alone
+        # does. Its return types the rest of the chain (issue #2468).
+        if language not in cs.JS_TS_LANGUAGES or len(parts) < 2:
+            return None
+        base, hop = parts[0], parts[1]
+        if (
+            cs.CHAR_PAREN_OPEN in base
+            or cs.CHAR_PAREN_OPEN not in hop
+            or (local_var_types and base in local_var_types)
+        ):
+            return None
+        # What `this` / `super` name is settled before anything resolves: an
+        # object literal's or a plain function's own `this` is no class, so
+        # neither the resolver nor the class-anchored fallback below may
+        # answer for it with the class around it.
+        is_this = base in _JS_THIS_RECEIVERS
+        this_static = (
+            self._js_this_names_class(module_qn, call_point) if is_this else False
+        )
+        if this_static is None:
+            return None
+        method = hop.split(cs.CHAR_PAREN_OPEN, 1)[0]
+        # `D.make()` names a class, so it reaches the static `make` D has or
+        # inherits along its `extends` chain, and a `this` that `make`
+        # returns is D. `this` / `super` stand for the enclosing class; any
+        # other base is a value, reaching an instance member.
+        named = (
+            None
+            if is_this
+            else self._named_class(base, module_qn, language, call_point)
+        )
+        callee_qn = self._first_hop_callee(
+            base,
+            method,
+            named,
+            _CallSite(
+                f"{base}{cs.SEPARATOR_DOT}{method}",
+                module_qn,
+                local_var_types,
+                class_context,
+                caller_qn,
+                language,
+                call_point,
+                False,
+            ),
+        )
+        if callee_qn is None:
+            return None
+        receiver = class_context if is_this else named
+        static = this_static or named is not None
+        returned = self._hop_return_type(callee_qn, language, static, receiver)
+        return (returned, parts[1:]) if returned else None
+
+    def _first_hop_callee(
+        self, base: str, method: str, named: str | None, call: _CallSite
+    ) -> str | None:
+        if named is not None:
+            found = self._js_static_member(named, method)
+            return found[0] if found else None
+        return self._exact_first_hop(base, method, call)
+
+    def _named_class(
+        self,
+        name: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        call_point: int | None,
+    ) -> str | None:
+        # The class a base name is at the call: declared in this module or
+        # imported, and not rebound by a parameter or local around the call.
+        # A same-named class elsewhere in the project is never it.
+        root = self._cached_module_root(module_qn)
+        site = (
+            root.named_descendant_for_byte_range(call_point, call_point)
+            if root is not None and call_point is not None
+            else None
+        )
+        if site is None or safe_decode_text(site) != name:
+            return None
+        class_qn = self.type_inference.js_type_inference.visible_class(
+            site, name, module_qn, language
+        )
+        if class_qn is None:
+            return None
+        class_qn = self._follow_reexports(class_qn)
+        return (
+            class_qn if self.function_registry.get(class_qn) == NodeType.CLASS else None
+        )
+
+    def _exact_first_hop(self, base: str, method: str, call: _CallSite) -> str | None:
+        # The callee of the chain's first hop, bound exactly or not at all: a
+        # callee bound only by name is a guess, and typing the rest of the
+        # chain from its return would build every later hop on that guess.
+        resolved = self.resolve_function_call(
+            call.call_name,
+            call.module_qn,
+            call.local_var_types,
+            call.class_context,
+            call.caller_qn,
+            call.language,
+            call.call_point,
+        )
+        if resolved is not None:
+            return (
+                resolved[1] if self.last_resolution == cs.EdgeResolution.EXACT else None
+            )
+        # `this.m()` in an arrow: name resolution climbs from the arrow to its
+        # method, not the class, so the call processor anchors such a call on
+        # the enclosing class instead (#971). The hop is typed the same way.
+        if base != cs.TS_THIS or not call.class_context:
+            return None
+        own_qn = f"{call.class_context}{cs.SEPARATOR_DOT}{method}"
+        if own_qn in self.function_registry:
+            return own_qn
+        inherited = self._resolve_inherited_method(call.class_context, method)
+        return inherited[1] if inherited else None
+
+    def _js_this_names_class(
+        self, module_qn: str, call_point: int | None
+    ) -> bool | None:
+        # `this` / `super` at the call: the class inside a static member, an
+        # instance inside an instance member, and neither (None) inside a
+        # plain function or an object literal's method.
+        root = self._cached_module_root(module_qn)
+        if root is None or call_point is None:
+            return None
+        return js_ts_utils.this_names_class_at(root, call_point)
 
     def _dart_member_return_type(
         self, class_qn: str, member: str, module_qn: str
@@ -6282,7 +6869,7 @@ class CallResolver:
             call_point,
         )
         if resolved is not None:
-            return_type = self.type_inference.method_return_types.get(resolved[1])
+            return_type = self._callee_return_type(resolved[1], language)
             if return_type:
                 return self._resolve_type_to_class_qn(return_type, module_qn)
         if language in (cs.SupportedLanguage.CPP, cs.SupportedLanguage.DART):
@@ -6445,6 +7032,9 @@ class CallResolver:
                 call_point,
             )
         )
+        if object_type and (class_value := _class_value_of(object_type)):
+            # The class itself, not an instance: only a static member binds.
+            return self._js_static_member_target(class_value, final_method)
         if object_type:
             full_object_type = self._qualify_chained_object_type(
                 object_type, module_qn, _rust_caller(language, caller_qn)
@@ -6793,6 +7383,8 @@ class CallResolver:
                 return alias
             if self.function_registry.binds_non_method(class_qn, method_name):
                 return None
+        if found := self._go_variant_method(class_qn, method_name):
+            return found
         if class_qn not in self.class_inheritance:
             return None
         # Which class binds the name first decides whether a value hides
@@ -6802,6 +7394,22 @@ class CallResolver:
         if (order := self._binding_aware_mro(class_qn, method_name)) is not None:
             return self._resolve_inherited_along_mro(order, method_name)
         return self._resolve_inherited_breadth_first(class_qn, method_name)
+
+    def _go_variant_method(
+        self, class_qn: str, method_name: str
+    ) -> tuple[str, str] | None:
+        # A Go interface each build declares again has the methods of every
+        # build's declaration, its own and embedded; the call binds to the
+        # caller's builds at emission (`go_variant_callees`).
+        for variant in self.go_declaration_variants.get(class_qn, ()):
+            if variant == class_qn:
+                continue
+            variant_qn = f"{variant}{cs.SEPARATOR_DOT}{method_name}"
+            if variant_qn in self.function_registry:
+                return self.function_registry[variant_qn], variant_qn
+            if found := self._resolve_inherited_breadth_first(variant, method_name):
+                return found
+        return None
 
     def _resolve_inherited_along_mro(
         self, order: list[str], method_name: str
@@ -6819,7 +7427,9 @@ class CallResolver:
     def _resolve_inherited_breadth_first(
         self, class_qn: str, method_name: str
     ) -> tuple[str, str] | None:
-        bfs_queue = deque(self.class_inheritance.get(class_qn, []))
+        bfs_queue = deque(
+            self._with_go_variants(self.class_inheritance.get(class_qn, []))
+        )
         visited = set(bfs_queue)
 
         while bfs_queue:
@@ -6839,7 +7449,9 @@ class CallResolver:
                 )
 
             if parent_class_qn in self.class_inheritance:
-                for grandparent_qn in self.class_inheritance[parent_class_qn]:
+                for grandparent_qn in self._with_go_variants(
+                    self.class_inheritance[parent_class_qn]
+                ):
                     if grandparent_qn not in visited:
                         visited.add(grandparent_qn)
                         bfs_queue.append(grandparent_qn)

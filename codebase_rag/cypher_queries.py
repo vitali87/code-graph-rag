@@ -204,7 +204,9 @@ CYPHER_CLI_SYNC_MARKER_OWNER = (
     "m.owner_token AS owner_token"
 )
 # Compare-and-delete on the owner token read above: a sync that started
-# after that read re-marked the node under its own token and keeps it.
+# after that read re-marked the node under its own token and keeps it. `cgr
+# watch` takes its own marker off the same way, so a marker another writer
+# has put down since its mark is left to that writer (review of PR 3365).
 CYPHER_CLEAR_STOPPED_CLI_SYNC_MARKER = (
     "MATCH (m:IncompleteRun {project: $project_name, run_id: $run_id}) "
     "WHERE m.owner_token = $owner_token DELETE m"
@@ -713,10 +715,12 @@ RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name,
        n.start_line AS start_line, n.end_line AS end_line,
        n.decorators AS decorators, n.is_exported AS is_exported,
        n.overrides_external AS overrides_external,
+       n.is_program_main AS is_program_main,
        n.rust_cfg_test_mods AS rust_cfg_test_mods,
        n.rust_ungated_mods AS rust_ungated_mods,
        n.modifiers AS modifiers, n.return_type AS return_type,
-       n.param_types AS param_types"""
+       n.param_types AS param_types,
+       n.type_checking_only AS type_checking_only"""
 
 CYPHER_DEAD_CODE_RELS = f"""MATCH (a:{_DEAD_CODE_NODE_LABELS})-[r:{_DEAD_CODE_REL_TYPES}]->(b)
 WHERE a.qualified_name STARTS WITH $project_prefix
@@ -1261,7 +1265,15 @@ RETURN labels(impl)[0] AS label, impl.qualified_name AS qualified_name,
 CYPHER_GRAPH_OVERRIDES = """MATCH (a)-[r:OVERRIDES]-(b)
 WHERE b.qualified_name = $qn AND a.qualified_name STARTS WITH $project_prefix
 RETURN labels(a)[0] AS label, a.qualified_name AS qualified_name, a.path AS path,
-       type(r) AS rel_type"""
+       type(r) AS rel_type, r.resolution AS resolution"""
+# The Go interfaces declaring a method `$name` whose implementers cgr cannot
+# tell (#3360), and why: a rename of a method of that name could leave one
+# of their implementers, or the interface, under the old name.
+CYPHER_GRAPH_GO_IMPLEMENTERS_UNKNOWN = """MATCH (i:Interface)-[:DEFINES_METHOD]->(m:Method)
+WHERE m.name = $name AND i.qualified_name STARTS WITH $project_prefix
+  AND i.implementers_unknown IS NOT NULL AND i.implementers_unknown <> ''
+RETURN DISTINCT i.qualified_name AS qualified_name, i.path AS path,
+       i.implementers_unknown AS implementers_unknown"""
 # One hop of the `depth` walks (issue #2624): the neighbours of a whole
 # frontier at once, each row naming the frontier node it hangs off as
 # `through`. OVERRIDES is read one direction per query so a walk that went
@@ -1569,12 +1581,26 @@ DETACH DELETE n"""
 # Only the static edge(s) of the pair are confirmed: a trace-only edge from
 # an earlier run can sit beside a static one on the same pair and must keep
 # its `dynamic` label.
-CYPHER_TRACE_CONFIRM_CALLS = """
-MATCH (a)-[r:CALLS]->(b)
-WHERE a.qualified_name = $from_qn AND b.qualified_name = $to_qn
-  AND coalesce(r.static_missed, false) = false
-SET r.resolution = $resolution
-"""
+# Both endpoints are labelled, so each confirmation is two label + property
+# index lookups: unlabelled, every one scanned every node of the whole shared
+# graph (issue #3187). A label cannot be a parameter, so only the labels a
+# trace frame resolves to (CYPHER_TRACE_CALLABLES) are formatted in.
+_TRACE_CALLABLE_LABELS = frozenset(
+    {NodeLabel.FUNCTION.value, NodeLabel.METHOD.value, NodeLabel.MODULE.value}
+)
+
+
+def build_trace_confirm_calls_query(from_label: str, to_label: str) -> str:
+    for label in (from_label, to_label):
+        if label not in _TRACE_CALLABLE_LABELS:
+            raise ValueError(f"not a callable label: {label!r}")
+    return (
+        f"MATCH (a:{from_label} {{qualified_name: $from_qn}})"
+        f"-[r:CALLS]->(b:{to_label} {{qualified_name: $to_qn}})\n"
+        "WHERE coalesce(r.static_missed, false) = false\n"
+        "SET r.resolution = $resolution"
+    )
+
 
 # Reference and construction sites of a definition (issue #1532): everything
 # but CALLS that names the symbol, with the site and its resolution.
