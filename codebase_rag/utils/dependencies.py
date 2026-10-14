@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib.util
-from collections.abc import Sequence
 
 from codebase_rag.constants import (
     MODULE_AST_GREP,
@@ -90,11 +89,3 @@ def has_local_embedding_weights() -> bool:
     except Exception:
         return False
     return True
-
-
-def check_dependencies(required_modules: Sequence[str]) -> bool:
-    return all(_check_dependency(module) for module in required_modules)
-
-
-def get_missing_dependencies(required_modules: Sequence[str]) -> list[str]:
-    return [module for module in required_modules if not _check_dependency(module)]
