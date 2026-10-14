@@ -108,7 +108,7 @@ from .types_defs import (
     ToolArgs,
 )
 from .utils.interruptible_thread import run_in_interruptible_thread
-from .utils.path_utils import derive_project_name
+from .utils.path_utils import derive_project_name, is_symlink_entry
 from .utils.rich_markdown import LeftAlignedMarkdown
 from .utils.token_utils import estimate_message_tokens
 
@@ -1712,7 +1712,11 @@ async def _run_interactive_loop(
 
             initial_question = None
 
-        except KeyboardInterrupt:
+        # Ctrl+D on an empty prompt, or the terminal's input closing, raises
+        # EOFError: leave as Ctrl+C does. Reported as an unexpected error, it
+        # printed a traceback and re-prompted, forever once input had closed
+        # (issue #2917).
+        except (KeyboardInterrupt, EOFError):
             break
         except Exception as e:
             logger.exception(ls.UNEXPECTED.format(error=e))
@@ -1811,7 +1815,9 @@ def detect_excludable_directories(repo_path: Path) -> set[str]:
         except PermissionError:
             continue
         for path in entries:
-            if not path.is_dir():
+            # Only directories the walk can reach are offered: it follows no
+            # link (issue #2451).
+            if not path.is_dir() or is_symlink_entry(path):
                 continue
             if path.name in cs.IGNORE_PATTERNS:
                 detected.add(path.relative_to(repo_path).as_posix())
@@ -2029,6 +2035,12 @@ def _initialize_services_and_agent(
     search is deliberately absent from the orchestrator: it belongs to the
     research sub-agent instead (issue #1128).
     """
+    # Fail closed: `None` is a session with no scope at all (`cgr optimize`),
+    # but an empty list is a scope that came out empty, such as a workspace
+    # with no repositories, and the prompts and the query tool below would
+    # read it as every project in the graph (Greptile review of PR 2507).
+    if active_projects is not None and not active_projects:
+        raise ValueError(ex.EMPTY_PROJECT_SCOPE)
     _validate_provider_config(
         cs.ModelRole.ORCHESTRATOR, settings.active_orchestrator_config
     )

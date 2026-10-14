@@ -24,7 +24,7 @@ from loguru import logger
 from ... import constants as cs
 from ... import logs as ls
 from ...config import settings
-from ..build_lock import build_cached_artifact
+from ..build_lock import artifact_fresh, build_cached_artifact, newest_source_mtime
 from ..frontend_mode import resolve_frontend_mode
 
 # Base-classification join key: (rel_file, type_start_line) -> {base_simple_name: kind}.
@@ -206,11 +206,7 @@ def _cache_dir() -> Path:
 
 
 def _newest_source_mtime() -> float:
-    return max((_TOOL_SRC / name).stat().st_mtime for name in _TOOL_SOURCES)
-
-
-def _dll_fresh(dll: Path) -> bool:
-    return dll.is_file() and dll.stat().st_mtime >= _newest_source_mtime()
+    return newest_source_mtime(_TOOL_SRC, _TOOL_SOURCES)
 
 
 def _compile_tool(dotnet: str, src: Path, out: Path) -> bool:
@@ -256,7 +252,7 @@ def _build_tool(dotnet: str) -> Path | None:
     return build_cached_artifact(
         cache,
         dll,
-        lambda: _dll_fresh(dll),
+        lambda: artifact_fresh(dll, _newest_source_mtime),
         lambda: _compile_tool(dotnet, src, out),
         _BUILD_LOCK,
         _LOCK_TRIES,
@@ -435,7 +431,9 @@ def _base_kinds(bases: list[dict[str, str]]) -> dict[str, str]:
     return kinds
 
 
-def run_csharp_frontend(repo_path: Path) -> CSharpSemanticFacts:
+def run_csharp_frontend(
+    repo_path: Path, ignored_dirs: frozenset[str] = cs.IGNORE_PATTERNS
+) -> CSharpSemanticFacts:
     dotnet = shutil.which(_DOTNET)
     if dotnet is None:
         return _empty_facts()
@@ -461,7 +459,7 @@ def run_csharp_frontend(repo_path: Path) -> CSharpSemanticFacts:
             env={
                 **os.environ,
                 **_DOTNET_ENV,
-                "CGR_IGNORE_DIRS": ",".join(sorted(cs.IGNORE_PATTERNS)),
+                "CGR_IGNORE_DIRS": ",".join(sorted(ignored_dirs)),
             },
         )
     except (subprocess.SubprocessError, OSError) as error:
