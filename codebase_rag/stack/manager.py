@@ -117,6 +117,14 @@ def _is_local_address(host: str) -> bool:
     return False
 
 
+def _names_this_machine(url: str) -> bool:
+    try:
+        host = urlsplit(url).hostname
+    except ValueError:
+        return False
+    return host is not None and _is_local_address(host)
+
+
 def _addresses_of(host: str) -> set[str]:
     try:
         infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
@@ -491,7 +499,10 @@ class StackManager:
         if settings.VECTOR_STORE_BACKEND != root_cs.VectorStoreBackend.QDRANT:
             return False
         if settings.QDRANT_URL:
-            self._try_locating_published_qdrant()
+            # Only an address of this machine can be where the stack publishes
+            # Qdrant, so a remote server needs no word from Docker.
+            if _names_this_machine(settings.QDRANT_URL):
+                self._try_locating_published_qdrant()
             return _names_published_qdrant(
                 settings.QDRANT_URL, self._qdrant_bind, self.qdrant_port
             )
@@ -506,14 +517,15 @@ class StackManager:
         A stack published on another port than the default is still the one
         a QDRANT_URL with that port names, and only Compose knows the port.
         Without a compose file or Docker there is no stack to ask about. A
-        project Compose cannot render, or that publishes Qdrant on no fixed
-        port, leaves the default to compare against, as before this check.
+        project Compose cannot render or answer for in time, or that
+        publishes Qdrant on no fixed port, leaves the default to compare
+        against, as before this check.
         """
         if not self.compose_file.exists() or shutil.which(cs.DOCKER_BIN) is None:
             return
         try:
             self._adopt_published_qdrant(self._resolved_config())
-        except StackError:
+        except (StackError, subprocess.TimeoutExpired, OSError):
             return
 
     def locate_published_qdrant(self) -> None:

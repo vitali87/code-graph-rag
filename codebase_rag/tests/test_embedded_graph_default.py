@@ -8,6 +8,7 @@ driver installed says what to install instead of failing on an import.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
@@ -128,15 +129,38 @@ def test_serves_vectors_asks_compose_where_qdrant_is_published(
         assert manager.serves_vectors() is expected
 
 
+@pytest.mark.parametrize(
+    "failure",
+    [
+        StackError("no config"),
+        # Greptile on #3377: a Compose slower than its status timeout must
+        # not stop `cgr start`.
+        subprocess.TimeoutExpired(["docker", "compose", "config"], 10),
+        OSError("docker vanished"),
+    ],
+)
 def test_serves_vectors_keeps_the_default_when_compose_cannot_say(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception
 ) -> None:
     monkeypatch.setattr(settings, "QDRANT_URL", "http://localhost:6333")
     monkeypatch.setattr(manager_module.shutil, "which", lambda _: "/usr/bin/docker")
     manager = StackManager(home=tmp_path)
     manager.compose_file.write_text("services: {}\n")
-    with patch.object(manager, "_resolved_config", side_effect=StackError("no config")):
+    with patch.object(manager, "_resolved_config", side_effect=failure):
         assert manager.serves_vectors() is True
+
+
+def test_serves_vectors_does_not_ask_compose_about_a_remote_qdrant(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The stack can publish only on this machine's addresses.
+    monkeypatch.setattr(settings, "QDRANT_URL", "http://qdrant.example.invalid:16333")
+    monkeypatch.setattr(manager_module.shutil, "which", lambda _: "/usr/bin/docker")
+    manager = StackManager(home=tmp_path)
+    manager.compose_file.write_text("services: {}\n")
+    with patch.object(manager, "_resolved_config") as resolved:
+        assert manager.serves_vectors() is False
+    resolved.assert_not_called()
 
 
 def test_the_stack_is_still_started_for_memgraph(monkeypatch) -> None:
