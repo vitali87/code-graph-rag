@@ -83,9 +83,12 @@ All pull requests are validated by CI, which runs in parallel:
 
 ### Which number a merge bumps
 
-Every bump raises the patch number unless a pull request merged since the last
-tag carries the `breaking change` label. Then the minor number goes up while the
-version is below 1.0, and the major number from 1.0 on. Nothing rolls over: the
+Every bump raises the patch number unless a pull request merged since the
+version last changed carries the `breaking change` label. Then the minor number
+goes up while the version is below 1.0, and the major number from 1.0 on. A
+breaking change counts once: a later bump does not count it again, even when
+the release that carried it was deferred, and a version set by hand already
+accounts for every pull request merged up to it. Nothing rolls over: the
 patch number keeps counting past 999, because a carry into the minor number
 would announce a breaking change that never happened. To pick a type by hand,
 run the workflow with its `bump_type` input or change the version in the pull

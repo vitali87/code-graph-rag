@@ -231,12 +231,49 @@ jobs:
           if [ -n "$GHSA" ]; then
             SECURITY=true
           fi
-          # The same labels decide the bump: a pull request labelled
-          # "breaking change" anywhere in the range makes this a breaking
-          # release, so the scan stops early only once both are known.
+          # The same labels pick the bump, but a breaking change counts once:
+          # only a pull request merged since the version last changed. This
+          # range starts behind deferred tags on purpose, for security fixes,
+          # so the breaking scan stops at the newest bump commit instead,
+          # which every bump leaves on main's first-parent line whether its
+          # release went out or not. A version set by hand leaves no tag
+          # (TAG_STATUS 2) and no bump commit: the commit that set it is the
+          # one whose parent held another version, and the number chosen
+          # there already accounts for it and for everything before it.
           BREAKING=false
+          COUNTING=true
           for SHA in $COMMITS; do
-            [ "$SECURITY" = "true" ] && [ "$BREAKING" = "true" ] && break
+            if [ "$SECURITY" = "true" ] &&
+                { [ "$BREAKING" = "true" ] || [ "$COUNTING" = "false" ]; }; then
+              break
+            fi
+            PARENT=""
+            if [ "$COUNTING" = "true" ]; then
+              if [ -n "$RANGE" ]; then
+                SUBJECT=$(printf '%s\n' "$RANGE" \
+                  | jq -r --arg sha "$SHA" 'select(.sha == $sha) | .message' | head -n 1)
+                PARENT=$(printf '%s\n' "$RANGE" \
+                  | jq -r --arg sha "$SHA" 'select(.sha == $sha) | .parent // empty')
+              else
+                SUBJECT=$(printf '%s\n' "$MESSAGE" | head -n 1)
+              fi
+              case "$SUBJECT" in
+                "chore: bump version to "*) COUNTING=false ;;
+              esac
+            fi
+            if [ "$COUNTING" = "true" ] && [ "$TAG_STATUS" -eq 2 ] && [ -n "$PARENT" ]; then
+              if [[ ! "$PARENT" =~ ^[0-9a-f]{40}$ ]] || ! PARENT_TOML=$(gh api \
+                  -H "Accept: application/vnd.github.raw+json" \
+                  "repos/${GITHUB_REPOSITORY}/contents/pyproject.toml?ref=${PARENT}"); then
+                echo "::error::could not read the version at ${PARENT}; refusing to decide the bump"
+                exit 1
+              fi
+              PARENT_VERSION=$(printf '%s\n' "$PARENT_TOML" \
+                | grep -m1 -E '^version\s*=' | sed 's/version = "\(.*\)"/\1/')
+              if [ "$PARENT_VERSION" != "$CURRENT" ]; then
+                COUNTING=false
+              fi
+            fi
             if ! LABELS=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}/pulls" \
                 --jq '.[].labels[].name'); then
               echo "::error::could not read the pull request labels of ${SHA}; refusing to decide the release"
@@ -245,7 +282,8 @@ jobs:
             if printf '%s\n' "$LABELS" | grep -qx security; then
               SECURITY=true
             fi
-            if printf '%s\n' "$LABELS" | grep -qxF 'breaking change'; then
+            if [ "$COUNTING" = "true" ] &&
+                printf '%s\n' "$LABELS" | grep -qxF 'breaking change'; then
               BREAKING=true
             fi
           done

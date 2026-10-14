@@ -259,6 +259,11 @@ gh() {
       basename "$url" >> annotation_calls
       cat "annotations/$(basename "$url")" 2> /dev/null
       ;;
+    */contents/pyproject.toml\?ref=*)
+      printf '%s\n' "${url##*ref=}" >> contents_calls
+      [ "$CONTENTS_FAIL" = true ] && return 1
+      cat "versions/${url##*ref=}" 2> /dev/null
+      ;;
     *) return 1 ;;
   esac
 }
@@ -317,6 +322,7 @@ def _decide_run(
             "TAG_LIST": "",
             "TAG_LIST_FAILS": "false",
             "STATUS_FAILS": "false",
+            "CONTENTS_FAIL": "false",
             "DEFERRED_RELEASE_MARKER": MARKER,
             **env,
         },
@@ -567,6 +573,7 @@ def test_an_untagged_version_scans_from_the_newest_release_tag(
     tmp_path: Path,
 ) -> None:
     _commits(tmp_path, {OLDER: "fix: patch [security]", SHA: "chore: set version"})
+    _versions(tmp_path, {OLDER: "0.0.0"})
     tags = (
         f"{OLDER}\\trefs/tags/v0.0.9\\n"
         f"{OLDER}\\trefs/tags/v0.1.10\\n"
@@ -596,6 +603,7 @@ def test_an_untagged_version_skips_a_newer_tag_main_never_reached(
     tmp_path: Path,
 ) -> None:
     _commits(tmp_path, {OLDER: "fix: patch [security]", SHA: "chore: set version"})
+    _versions(tmp_path, {OLDER: "0.0.0"})
     (tmp_path / "status").mkdir()
     (tmp_path / "status" / "v0.2.0").write_text("behind\n", encoding="utf-8")
     (tmp_path / "status" / "v0.1.11").write_text("diverged\n", encoding="utf-8")
@@ -723,3 +731,127 @@ def test_an_unreadable_annotation_fails_instead_of_narrowing_the_scan(
     assert "could not read the annotation of v0.1.12" in result.stdout
     assert not (tmp_path / "compare_call").exists()
     assert "release" not in out
+
+
+# The commit a bump run pushes, and a merge that set the version by hand.
+BUMP_COMMIT = "f" * 40
+HAND_SET = "9" * 40
+
+
+def _versions(tmp_path: Path, versions: dict[str, str]) -> None:
+    (tmp_path / "versions").mkdir()
+    for sha, version in versions.items():
+        (tmp_path / "versions" / sha).write_text(
+            f'[project]\nname = "x"\nversion = "{version}"\n', encoding="utf-8"
+        )
+
+
+def _deferred_breaking_bump(tmp_path: Path, labels: dict[str, str]) -> dict[str, str]:
+    # A breaking merge bumped 0.1.11 to 0.2.0, but its release was deferred,
+    # so this run's range starts back at v0.1.11 and holds that merge again.
+    _commits(
+        tmp_path,
+        {OLDER: "Merge pull request #1", BUMP_COMMIT: "chore: bump version to 0.2.0"}
+        | {SHA: "Merge pull request #2"},
+        labels,
+    )
+    tags = f"{OLDER}\\trefs/tags/v0.1.11\\n" + _annotated(
+        tmp_path, "v0.2.0", f"{MARKER}: CI is not proven", "1" * 40
+    )
+    result, out = _decide_run(
+        tmp_path,
+        f"{OLDER}\\n{BUMP_COMMIT}\\n{SHA}\\n",
+        CURRENT="0.2.0",
+        TAG_LIST=tags,
+    )
+    assert result.returncode == 0, result.stderr
+    assert f"compare/v0.1.11...{SHA}" in (tmp_path / "compare_call").read_text(
+        encoding="utf-8"
+    )
+    return out
+
+
+def test_a_breaking_change_behind_a_deferred_bump_is_not_counted_again(
+    tmp_path: Path,
+) -> None:
+    out = _deferred_breaking_bump(tmp_path, {OLDER: "breaking change"})
+    assert out["breaking"] == "false"
+
+
+def test_the_security_scan_still_reads_past_the_last_bump(tmp_path: Path) -> None:
+    out = _deferred_breaking_bump(tmp_path, {OLDER: "security\nbreaking change"})
+    assert out["security"] == "true"
+    assert out["breaking"] == "false"
+    assert _lines(tmp_path / "pulls_calls") == [SHA, BUMP_COMMIT, OLDER]
+
+
+def test_a_breaking_change_after_a_deferred_bump_counts(tmp_path: Path) -> None:
+    out = _deferred_breaking_bump(tmp_path, {SHA: "breaking change"})
+    assert out["breaking"] == "true"
+
+
+def _hand_set_version(tmp_path: Path, labels: dict[str, str]) -> dict[str, str]:
+    # HAND_SET changed the version from 0.1.89 to 0.2.0 itself, so no bump
+    # ran for it and no tag names 0.2.0.
+    _commits(
+        tmp_path,
+        {HAND_SET: "Merge pull request #1", SHA: "Merge pull request #2"},
+        labels,
+        parents={HAND_SET: OUTSIDE, SHA: HAND_SET},
+    )
+    _versions(tmp_path, {OUTSIDE: "0.1.89", HAND_SET: "0.2.0"})
+    result, out = _decide_run(
+        tmp_path,
+        f"{HAND_SET}\\n{SHA}\\n",
+        CURRENT="0.2.0",
+        LS_REMOTE_EXIT="2",
+        TAG_LIST=f"{OLDER}\\trefs/tags/v0.1.89\\n",
+    )
+    assert result.returncode == 0, result.stderr
+    return out
+
+
+def test_a_hand_set_version_already_accounts_for_its_breaking_change(
+    tmp_path: Path,
+) -> None:
+    out = _hand_set_version(tmp_path, {HAND_SET: "breaking change"})
+    assert out["breaking"] == "false"
+    assert _lines(tmp_path / "contents_calls") == [HAND_SET, OUTSIDE]
+
+
+def test_a_breaking_change_after_a_hand_set_version_counts(tmp_path: Path) -> None:
+    out = _hand_set_version(tmp_path, {SHA: "breaking change"})
+    assert out["breaking"] == "true"
+
+
+def test_a_tagged_version_reads_no_earlier_version(tmp_path: Path) -> None:
+    _commits(tmp_path, {OLDER: "fix: a", SHA: "feat: x"}, {OLDER: "breaking change"})
+    out = _decide(tmp_path, f"{OLDER}\\n{SHA}\\n")
+    assert out["breaking"] == "true"
+    assert not (tmp_path / "contents_calls").exists()
+
+
+def test_an_unreadable_earlier_version_fails_the_run(tmp_path: Path) -> None:
+    _commits(
+        tmp_path,
+        {HAND_SET: "Merge pull request #1", SHA: "Merge pull request #2"},
+        parents={HAND_SET: OUTSIDE, SHA: HAND_SET},
+    )
+    result, out = _decide_run(
+        tmp_path,
+        f"{HAND_SET}\\n{SHA}\\n",
+        CURRENT="0.2.0",
+        LS_REMOTE_EXIT="2",
+        TAG_LIST=f"{OLDER}\\trefs/tags/v0.1.89\\n",
+        CONTENTS_FAIL="true",
+    )
+    assert result.returncode != 0
+    assert f"could not read the version at {HAND_SET}" in result.stdout
+    assert "breaking" not in out
+
+
+def test_the_breaking_scan_stops_at_the_commit_a_bump_makes() -> None:
+    commit = _step("Commit version bump")["run"]
+    decide = _step("Decide whether this tag ships a release")["run"]
+    assert 'git commit -m "chore: bump version to ${NEW_VERSION}"' in commit
+    assert '"chore: bump version to "*) COUNTING=false' in decide
