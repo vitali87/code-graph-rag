@@ -294,10 +294,10 @@ class TestCSharpBaseScopeOrder:
             assert one_parent == f"{project.name}.src.Base1.Acme.Base"
             assert two_parent == f"{project.name}.src.Base2.Acme.Base"
         else:
-            # The second same-scope declaration registers under a
-            # duplicate-marked qn (`Base@3`).
-            assert one_parent == f"{project.name}.src.Base.Acme.Base"
-            assert two_parent.startswith(f"{project.name}.src.Base.Acme.Base@")
+            # Same-scope declarations of one name at two arities carry their
+            # CLR arity in the qn (`Base`1`, `Base`2`, issue #2579).
+            assert one_parent == f"{project.name}.src.Base.Acme.Base`1"
+            assert two_parent == f"{project.name}.src.Base.Acme.Base`2"
 
     def test_using_alias_of_a_generic_base_resolves_first_party(
         self, project: Path, mock_ingestor: MagicMock
