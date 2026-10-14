@@ -62,6 +62,7 @@ def _run(args: list[str], ingestor: MagicMock) -> tuple[int, str, str]:
 
 FAILURES = [
     pytest.param(["stats", "-n", "nope"], _ingestor(), "nope", id="stats-unknown"),
+    pytest.param(["stats", "-n", " "], _ingestor(), "--project", id="stats-blank-name"),
     pytest.param(
         ["stats", "-n", "alpha"],
         _ingestor(failing_query=True),

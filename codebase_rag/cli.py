@@ -2510,7 +2510,7 @@ def stats(
     # scope that was asked for and came out empty would report the whole
     # shared graph as if it were that scope's (review of PR 2436).
     if not requested and (names or workspace_config is not None):
-        app_context.console.print(
+        app_context.err_console.print(
             style(
                 cs.CLI_ERR_STATS_EMPTY_WORKSPACE.format(name=workspace)
                 if workspace_config is not None
