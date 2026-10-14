@@ -26,9 +26,7 @@ from .php_oracle import (
     run_php_oracle,
 )
 from .ruby_oracle import (
-    ruby_oracle_available,
     ruby_oracle_skip_reason,
-    run_ruby_call_oracle,
     run_ruby_oracle,
 )
 from .rust_oracle import run_rust_call_oracle, run_rust_oracle, rust_available
@@ -60,9 +58,7 @@ __all__ = [
     "run_java_oracle",
     "lua_oracle_available",
     "lua_oracle_skip_reason",
-    "ruby_oracle_available",
     "ruby_oracle_skip_reason",
-    "run_ruby_call_oracle",
     "run_ruby_oracle",
     "run_lua_call_oracle",
     "run_lua_oracle",
