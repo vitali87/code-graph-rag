@@ -21,8 +21,10 @@ from ...utils import qn_markers
 from ..csharp_frontend import CallSiteKey
 from ..frontends.protocol import ResolvedCallSite
 from ..import_processor import ImportProcessor
-from ..semantic_call_join import call_site_key, declared_location
+from ..semantic_call_join import call_site_key, resolve_call_site
 from ..utils import safe_decode_text
+from .arity import CSharpArityIndex
+from .arity import spellings as arity_spellings
 from .utils import (
     _normalize_type_name,
     annotate_type_ref,
@@ -89,6 +91,16 @@ def _param_types(leaf: str) -> list[str]:
             start = idx + 1
     types.append(inner[start:].strip())
     return types
+
+
+def _parameter_type_at(method_qn: str, position: int) -> str | None:
+    # The declared type of one parameter from the qn's signature, which
+    # spells types generic-free; an array (a `params` tail) is not a class
+    # a `new(...)` argument could construct.
+    types = _param_types(method_qn)
+    if position >= len(types) or types[position].endswith(cs.CSHARP_ARRAY_SUFFIX):
+        return None
+    return types[position] or None
 
 
 def _accepts_arg_count(
@@ -235,6 +247,7 @@ class CSharpTypeInferenceEngine:
         "function_locations",
         "_rel_to_module",
         "_call_memo",
+        "_methods_by_name",
     )
 
     def __init__(
@@ -280,6 +293,9 @@ class CSharpTypeInferenceEngine:
         # to one; `caller_qn` is included because the same node resolves
         # differently per enclosing method (`this`, locals, imports).
         self._call_memo: dict[tuple[str, str | None, int, int], _MemoEntry] = {}
+        # class qn -> method name -> the methods the class itself declares
+        # under that name, in registry order; see `_direct_same_name_methods`.
+        self._methods_by_name: dict[str, dict[str, tuple[str, ...]]] = {}
         self.import_processor = import_processor
         self.function_registry = function_registry
         self.repo_path = repo_path
@@ -1174,29 +1190,22 @@ class CSharpTypeInferenceEngine:
     def _semantic_call_target(
         self, call_node: Node, module_qn: str
     ) -> tuple[str, str] | None:
-        if not (self.csharp_call_sites or self.csharp_external_sites):
-            return None
-        key = self._call_site_key(call_node, module_qn)
-        if key is None:
-            return None
-        fact = self.csharp_call_sites.get(key)
-        if fact is not None:
-            return declared_location(
-                fact.target_file,
-                fact.target_line,
-                fact.target_col,
-                self.function_locations,
-                self.module_qn_to_file_path,
-                self.repo_path,
-                self._rel_to_module,
-            )
-        if key in self.csharp_external_sites:
-            # Roslyn resolved this site to a METADATA method: the call
-            # provably leaves the repo, so return the external sentinel and
-            # keep the name trie from fabricating a first-party edge (the
-            # untypeable-receiver fp class the pure frontend cannot see).
-            return CSHARP_EXTERNAL_TARGET
-        return None
+        # A site Roslyn resolved to a METADATA method provably leaves the repo,
+        # so the external sentinel keeps the name trie from fabricating a
+        # first-party edge (the untypeable-receiver fp class the pure frontend
+        # cannot see).
+        return resolve_call_site(
+            call_node,
+            module_qn,
+            self._call_site_key,
+            self.csharp_call_sites,
+            self.csharp_external_sites,
+            CSHARP_EXTERNAL_TARGET,
+            self.function_locations,
+            self.module_qn_to_file_path,
+            self.repo_path,
+            self._rel_to_module,
+        )
 
     def _call_site_key(self, call_node: Node, module_qn: str) -> CallSiteKey | None:
         name_node = self._callee_name_node(call_node)
@@ -1533,14 +1542,21 @@ class CSharpTypeInferenceEngine:
             return self._identifier_receiver_qn(
                 receiver, local_var_types, module_qn, caller_qn
             )
+        # `PB<int>.Make()`: a generic name in receiver position is a type, and
+        # its written arity picks it from a same-named twin (issue #2579).
+        if receiver.type == cs.TS_CSHARP_GENERIC_NAME:
+            return self._written_type_qn(receiver, module_qn)
         return None
 
     def _cast_receiver_qn(self, receiver: Node, module_qn: str) -> str | None:
         type_node = receiver.child_by_field_name(cs.FIELD_TYPE)
-        raw = safe_decode_text(type_node) if type_node else None
+        return self._written_type_qn(type_node, module_qn) if type_node else None
+
+    def _written_type_qn(self, type_node: Node, module_qn: str) -> str | None:
+        raw = safe_decode_text(type_node)
         if raw:
-            # The cast's WRITTEN arity picks between simple-name twins
-            # (`(Opt<int>)o` names the generic Opt<T>, never plain Opt).
+            # The WRITTEN arity picks between simple-name twins (`(Opt<int>)o`
+            # names the generic Opt<T>, never plain Opt).
             return self._type_name_to_qn(
                 _normalize_type_name(raw),
                 module_qn,
@@ -1665,7 +1681,7 @@ class CSharpTypeInferenceEngine:
             expanded = f"{mapped}{separator}{rest}" if separator else mapped
 
         if self.function_registry.get(expanded) in _TYPE_DECLS:
-            return expanded
+            return self.arity_twin(expanded, generic_arity)
         # The written path names the DECLARED form (`Zeta.Widget`), which a
         # folded qn no longer ends with, so it is looked up in the
         # declared-form index; the leading alias was expanded above, so
@@ -1685,7 +1701,8 @@ class CSharpTypeInferenceEngine:
         leaf = expanded.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         candidates = [
             qn
-            for qn in self.simple_name_lookup.get(leaf, set())
+            for spelled in arity_spellings(leaf, generic_arity)
+            for qn in self.simple_name_lookup.get(spelled, set())
             if self.function_registry.get(qn) in _TYPE_DECLS
             and self._csharp_qualified_qn_matches(qn, expanded, module_qn)
         ]
@@ -1695,7 +1712,8 @@ class CSharpTypeInferenceEngine:
         self, candidate_qn: str, expanded: str, module_qn: str
     ) -> bool:
         """Accept a complete type path rooted at a known repository module."""
-        natural_qn = qn_markers.natural_qn(candidate_qn)
+        # The written path never spells a generic twin's CLR arity.
+        natural_qn = qn_markers.strip_arity_marker(qn_markers.natural_qn(candidate_qn))
         if natural_qn == expanded:
             return True
         suffix = f"{cs.SEPARATOR_DOT}{expanded}"
@@ -1737,7 +1755,7 @@ class CSharpTypeInferenceEngine:
         import_map = self.import_processor.import_mapping.get(module_qn)
         if import_map and (mapped := import_map.get(simple)):
             if self.function_registry.get(mapped) in _TYPE_DECLS:
-                return mapped
+                return self.arity_twin(mapped, generic_arity)
             # A type alias (`using W = Zeta.Widget;`) maps to a WRITTEN path,
             # not a qn: resolve it as one (issue #2002).
             if mapped != simple and (
@@ -1748,10 +1766,25 @@ class CSharpTypeInferenceEngine:
                 return aliased
         candidates = [
             qn
-            for qn in self.simple_name_lookup.get(simple, set())
+            for spelled in arity_spellings(simple, generic_arity)
+            for qn in self.simple_name_lookup.get(spelled, set())
             if self.function_registry.get(qn) in _TYPE_DECLS
         ]
         return self._disambiguate_type_candidates(candidates, generic_arity, module_qn)
+
+    def arity_index(self) -> CSharpArityIndex:
+        return CSharpArityIndex(
+            self.function_registry,
+            self.csharp_class_generic_arity,
+            self.csharp_class_namespaced,
+            self.csharp_namespaced_qns,
+            self.csharp_partial_groups,
+        )
+
+    def arity_twin(self, type_qn: str, generic_arity: int) -> str:
+        """The declaration a reference written with `generic_arity` type
+        arguments means, given the type its name resolved to (issue #2579)."""
+        return self.arity_index().twin(type_qn, generic_arity)
 
     def _disambiguate_type_candidates(
         self,
@@ -1931,6 +1964,53 @@ class CSharpTypeInferenceEngine:
             if qn != method_qn
         ]
 
+    def argument_parameter_type(
+        self,
+        argument: Node,
+        local_var_types: dict[str, str] | None,
+        module_qn: str,
+        caller_qn: str | None,
+    ) -> str | None:
+        """The declared type of the parameter a positional argument binds.
+
+        C# types a target-typed `new(...)` passed as an argument from the
+        parameter of the overload the call resolves to (issue #2579). Only a
+        type every same-arity overload agrees on is an answer. A named
+        argument, an extension method (whose receiver shifts the positions)
+        or an unresolved call gives None.
+        """
+        arg_list = argument.parent
+        invocation = arg_list.parent if arg_list is not None else None
+        if (
+            argument.child_by_field_name(cs.FIELD_NAME) is not None
+            or arg_list is None
+            or arg_list.type != cs.TS_CSHARP_ARGUMENT_LIST
+            or invocation is None
+            or invocation.type != cs.TS_CSHARP_INVOCATION_EXPRESSION
+        ):
+            return None
+        arguments = [c for c in arg_list.children if c.type == cs.TS_CSHARP_ARGUMENT]
+        position = next(
+            (i for i, arg in enumerate(arguments) if arg.id == argument.id), None
+        )
+        callee = self.resolve_csharp_method_call(
+            invocation, local_var_types, module_qn, caller_qn
+        )
+        if position is None or callee is None or callee == CSHARP_EXTERNAL_TARGET:
+            return None
+        method_qn = callee[1]
+        if any(
+            entry[0] == method_qn
+            for entries in self.csharp_extension_methods.values()
+            for entry in entries
+        ):
+            return None
+        declared = {
+            _parameter_type_at(qn, position)
+            for qn in (method_qn, *self.csharp_same_arity_family(method_qn))
+        }
+        return declared.pop() if len(declared) == 1 else None
+
     def csharp_method_group_family(self, name: str, caller_qn: str | None) -> list[str]:
         # Every same-name METHOD of the caller's enclosing type (across
         # partial parts and base classes): a bare method-group pass binds
@@ -2049,9 +2129,23 @@ class CSharpTypeInferenceEngine:
                 return resolved
         return None
 
+    def reset_member_index(self) -> None:
+        # Read off the registry, so it expires when a re-parse changes that.
+        self._methods_by_name.clear()
+
     def _direct_same_name_methods(self, class_qn: str, method_name: str) -> list[str]:
+        # Every bare call asked this, and answering it enumerated every member
+        # of the class through the registry trie before filtering on the
+        # name, so a class's calls cost O(calls x members) (issue #2453). The
+        # class is enumerated once per pass and grouped by name instead.
+        by_name = self._methods_by_name.get(class_qn)
+        if by_name is None:
+            by_name = self._methods_by_name[class_qn] = self._index_methods(class_qn)
+        return list(by_name.get(method_name, ()))
+
+    def _index_methods(self, class_qn: str) -> dict[str, tuple[str, ...]]:
         prefix = f"{class_qn}{cs.SEPARATOR_DOT}"
-        matches: list[str] = []
+        grouped: dict[str, list[str]] = {}
         for qn, node_type in self.function_registry.find_with_prefix(class_qn):
             if node_type != NodeType.METHOD or not qn.startswith(prefix):
                 continue
@@ -2059,10 +2153,10 @@ class CSharpTypeInferenceEngine:
             base = leaf.split(cs.CHAR_PAREN_OPEN, 1)[0]
             # Directly on this class only (a nested class's method has an extra
             # dot in its name portion).
-            if cs.SEPARATOR_DOT in base or base != method_name:
+            if cs.SEPARATOR_DOT in base:
                 continue
-            matches.append(qn)
-        return matches
+            grouped.setdefault(base, []).append(qn)
+        return {name: tuple(qns) for name, qns in grouped.items()}
 
     def _find_method_by_arity(
         self, class_qn: str, method_name: str, arg_count: int, seen: set[str]
