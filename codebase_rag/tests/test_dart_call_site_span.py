@@ -43,7 +43,8 @@ class Box {
 """
 
 # A callee whose arguments name the same symbol, and a repeated selector
-# (bot review on PR #2782): each site must start at its own callee name.
+# (bot review on PR #2782): each site must start at its own callee name. The
+# last call's argument holds a `(` in a string, which no paren count may read.
 CHAIN = """int grow(int n) {
   return n;
 }
@@ -68,6 +69,7 @@ void use(Box box, Other other) {
   box.grow(grow(1));
   box.grow(1).grow(2);
   f(other.f(1));
+  f(other.f("("));
 }
 """
 
@@ -173,8 +175,13 @@ def test_an_applied_dart_rename_rewrites_the_callers(
             ["  box.expand(grow(1));", "  box.expand(1).expand(2);"],
         ),
         ("chain.f", "g", ["  g(other.f(1));"]),
+        ("chain.f", "g", ['  g(other.f("("));']),
     ],
-    ids=["method-named-in-its-argument", "function-named-in-its-argument"],
+    ids=[
+        "method-named-in-its-argument",
+        "function-named-in-its-argument",
+        "paren-in-a-string-argument",
+    ],
 )
 def test_an_applied_dart_rename_rewrites_the_callee_not_its_arguments(
     dart_repo: tuple[Path, RecordedGraph], target: str, new: str, lines: list[str]
