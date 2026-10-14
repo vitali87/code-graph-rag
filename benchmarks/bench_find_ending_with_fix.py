@@ -46,26 +46,6 @@ def bench_indexed_lookup(lookup: SimpleNameLookup, suffix: str) -> float:
     return time.perf_counter() - start
 
 
-def bench_trie_find_ending_with_index_hit(
-    trie: FunctionRegistryTrie, suffixes: list[str], indexed_suffixes: set[str]
-) -> float:
-    start = time.perf_counter()
-    for suffix in suffixes:
-        if suffix in indexed_suffixes:
-            _ = trie.find_ending_with(suffix)
-    return time.perf_counter() - start
-
-
-def bench_trie_find_ending_with_index_miss(
-    trie: FunctionRegistryTrie, suffixes: list[str], indexed_suffixes: set[str]
-) -> float:
-    start = time.perf_counter()
-    for suffix in suffixes:
-        if suffix not in indexed_suffixes:
-            _ = trie.find_ending_with(suffix)
-    return time.perf_counter() - start
-
-
 def bench_trie_find_ending_with_all(
     trie: FunctionRegistryTrie, suffixes: list[str]
 ) -> float:
@@ -79,13 +59,6 @@ def bench_linear_scan_batch(entries: dict[str, NodeType], suffixes: list[str]) -
     start = time.perf_counter()
     for suffix in suffixes:
         _ = [qn for qn in entries.keys() if qn.endswith(f".{suffix}")]
-    return time.perf_counter() - start
-
-
-def bench_indexed_lookup_batch(lookup: SimpleNameLookup, suffixes: list[str]) -> float:
-    start = time.perf_counter()
-    for suffix in suffixes:
-        _ = list(lookup.get(suffix, set()))
     return time.perf_counter() - start
 
 
@@ -139,9 +112,6 @@ def main() -> None:
             simple_lookup[simple_name].add(qn)
 
         full_suffix_index = build_full_suffix_index(qualified_names)
-
-        partially_indexed_suffixes = set(list(simple_lookup.keys())[:len(simple_lookup) // 5])
-        miss_suffixes = [s for s in lookup_suffixes if s not in partially_indexed_suffixes]
 
         results = []
 
