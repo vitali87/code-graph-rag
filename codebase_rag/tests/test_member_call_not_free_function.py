@@ -69,6 +69,18 @@ void use(Holder* h, Holder obj, int x, int y) {
     ns::helper();
 }
 """,
+    # C++ calls a free function through a callable data member just as C
+    # does: a function-pointer field or a `std::function`.
+    "cb.cpp": """\
+#include <functional>
+
+int open_dev() { return 37; }
+int on_close() { return 0; }
+struct Ops { int (*open_dev)(); std::function<int()> on_close; };
+
+int start(Ops* o) { return o->open_dev(); }
+int stop(Ops& o) { return o.on_close(); }
+""",
     "ops.c": """\
 int open_dev(void) { return 0; }
 struct ops { int (*open_dev)(void); };
@@ -137,12 +149,22 @@ def test_rust_calls_that_can_reach_their_target_still_do(
 
 @pytest.mark.parametrize(
     ("caller", "callee"),
-    [("a.use", "a.ns.helper"), ("ops.start", "ops.open_dev")],
-    ids=["qualified-free-fn", "c-function-pointer-table"],
+    [
+        ("a.use", "a.ns.helper"),
+        ("ops.start", "ops.open_dev"),
+        ("cb.start", "cb.open_dev"),
+        ("cb.stop", "cb.on_close"),
+    ],
+    ids=[
+        "qualified-free-fn",
+        "c-function-pointer-table",
+        "cpp-function-pointer-field",
+        "cpp-std-function-field",
+    ],
 )
 def test_cpp_and_c_calls_that_can_reach_a_free_function_still_do(
     cpp: _Calls, caller: str, callee: str
 ) -> None:
-    # Negatives: `ns::helper()` names a free function, and C is left alone:
-    # `o->open_dev()` through a function-pointer table names one too.
+    # Negatives: `ns::helper()` names a free function, and `o->open_dev()`
+    # through a function-pointer table names one too, in C and in C++.
     assert (caller, callee) in cpp, cpp

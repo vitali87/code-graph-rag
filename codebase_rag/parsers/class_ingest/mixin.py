@@ -38,7 +38,11 @@ from ..csharp.arity import CSharpArityIndex
 from ..dart import utils as dart_utils
 from ..dart.type_inference import DartTypeInferenceEngine
 from ..enum_variants import emit_declared_variants, is_python_enum
-from ..field_nodes import PendingFieldType, emit_declared_fields
+from ..field_nodes import (
+    PendingFieldType,
+    cpp_callable_field_names,
+    emit_declared_fields,
+)
 from ..go import GoTypeInferenceEngine
 from ..go import interfaces as go_ifaces
 from ..java import utils as java_utils
@@ -363,6 +367,7 @@ class ClassIngestMixin:
     dart_constructor_qns: set[str]
     dart_extension_on_types: dict[str, str]
     class_field_types: dict[str, dict[str, str]]
+    cpp_callable_fields: set[str]
     java_anon_overrides: list[tuple[str, str, str, str]]
     csharp_methods: set[str]
     csharp_override_methods: set[str]
@@ -1855,6 +1860,7 @@ class ClassIngestMixin:
                 member_node
             ):
                 self.class_field_types[class_qn] = field_types
+            self.cpp_callable_fields.update(cpp_callable_field_names(member_node))
         elif language == cs.SupportedLanguage.GO:
             # Record Go struct field types so a field-hop receiver
             # (`engine.trees.get()`) resolves, and a local bound from such a call
