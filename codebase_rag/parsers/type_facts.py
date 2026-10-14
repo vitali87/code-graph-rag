@@ -304,6 +304,19 @@ def queue_type_facts(
     )
 
 
+def _already_resolved(name: str, resolved_targets: frozenset[str]) -> bool:
+    # Names already bound through the file's imports at its last parse; see
+    # PendingTypeFact.resolved_targets (issue #3007). A bare `Match` is one
+    # binding in its file, so a target of that name is it; a qualified
+    # `crate::later::Match` is bound only by a target it spells the tail of,
+    # never by an edge to `matcher::Match`.
+    tail = name.removeprefix(_RUST_CRATE_ROOT)
+    return any(
+        target == tail or target.endswith(f"{cs.SEPARATOR_DOT}{tail}")
+        for target in resolved_targets
+    )
+
+
 class TypeReferenceResolver:
     """Resolve the names an annotation mentions to project type nodes."""
 
@@ -466,12 +479,9 @@ class TypeReferenceResolver:
             if path is not None and path.endswith(cs.EXT_CS)
             else [(name, None) for name in type_reference_names(annotation)]
         )
-        # Names already bound through the file's imports at its last parse;
-        # see PendingTypeFact.resolved_targets (issue #3007).
-        bound = {t.rpartition(cs.SEPARATOR_DOT)[2] for t in resolved_targets}
         found: dict[str, None] = {}
         for name, arity in written:
-            if name.rpartition(cs.SEPARATOR_DOT)[2] in bound:
+            if _already_resolved(name, resolved_targets):
                 continue
             qn = self.resolve(name, module_qn, arity)
             if qn is not None:

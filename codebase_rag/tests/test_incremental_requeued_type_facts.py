@@ -135,3 +135,40 @@ def test_a_partly_bound_annotation_keeps_its_bound_name(tmp_path: Path) -> None:
 
     accepts = {dst for src, dst in after if src == "printer.util.pair ACCEPTS"}
     assert accepts == {"matcher.core.Match", "printer.later.Later"}, after
+
+
+def test_a_qualified_name_is_not_bound_by_a_same_named_target(
+    tmp_path: Path,
+) -> None:
+    # `route` accepts `crate::matcher::Match` and returns `crate::later::Match`,
+    # which no file defines yet. The ACCEPTS edge to `matcher::Match` must not
+    # count the other path as bound: adding `later.rs` gives `route` the
+    # RETURNS edge a fresh index of the same files has.
+    if "rust" not in load_parsers()[0]:
+        pytest.skip("rust parser not available")
+    files = {
+        **_RUST,
+        "src/printer/util.rs": (
+            "pub fn route(m: crate::matcher::Match) -> crate::later::Match {\n"
+            "    todo!()\n}\n"
+        ),
+    }
+    root = tmp_path / "repo"
+    _write(root, files)
+    store = _StatefulIngestor()
+    _sync(root, store, force=True)
+
+    added = {
+        "src/lib.rs": "pub mod later;\npub mod matcher;\npub mod printer;\n",
+        "src/later.rs": "pub struct Match;\n",
+    }
+    _write(root, added)
+    after = _sync(root, store, force=False)
+
+    fresh_root = tmp_path / "fresh"
+    _write(fresh_root, {**files, **added})
+    fresh = _sync(fresh_root, _StatefulIngestor(), force=True)
+    assert ("src.printer.util.route RETURNS", "src.later.Match") in fresh, fresh
+    assert {e for e in after if "route" in e[0]} == {
+        e for e in fresh if "route" in e[0]
+    }, after
