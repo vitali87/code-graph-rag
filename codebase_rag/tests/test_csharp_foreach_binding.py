@@ -74,6 +74,21 @@ namespace Acme
             foreach (var sink in items) sink.Emit(m);
         }
         Other[] Wrap(List<ISink> sinks) { return new Other[0]; }
+
+        // Bot review on PR #2990: an enclosing loop's binding and a `params`
+        // parameter hide the `ISink[] _sinks` field as a local does.
+        public void OuterLoopHidesField(Other[][] groups, string m)
+        {
+            foreach (Other[] _sinks in groups) { foreach (var sink in _sinks) sink.Emit(m); }
+        }
+        public void ImplicitOuterLoopHidesField(List<Other[]> groups, string m)
+        {
+            foreach (var _sinks in groups) { foreach (var sink in _sinks) sink.Emit(m); }
+        }
+        public void ParamsHidesField(string m, params Other[] _sinks)
+        {
+            foreach (var sink in _sinks) sink.Emit(m);
+        }
     }
 }
 """
@@ -133,6 +148,20 @@ def test_an_unread_binding_of_the_name_is_not_typed_by_another(
     assert _callees(graph, caller).get(EMIT) != "exact"
 
 
+@pytest.mark.parametrize(
+    "caller",
+    ["OuterLoopHidesField", "ImplicitOuterLoopHidesField", "ParamsHidesField"],
+)
+def test_a_binding_that_hides_the_field_types_the_loop(
+    graph: RecordedGraph, caller: str
+) -> None:
+    # The loop reads the enclosing loop's `Other[]` binding or the `params
+    # Other[]` parameter, not the `ISink[]` field of the same name.
+    callees = _callees(graph, caller)
+    assert callees.get(OTHER_EMIT) == "exact", callees
+    assert EMIT not in callees
+
+
 def test_a_local_in_another_block_does_not_type_the_loop(
     graph: RecordedGraph,
 ) -> None:
@@ -161,6 +190,16 @@ namespace Mine
         readonly List<ISink> _items;
         public void Run(string m) { foreach (var sink in _items) sink.Emit(m); }
     }
+
+    // Bot review on PR #2990: a path rooted at `System` names the BCL list,
+    // whatever project type shares its simple name.
+    public class QualifiedUser
+    {
+        readonly System.Collections.Generic.List<ISink> _items;
+        readonly global::System.Collections.Generic.List<ISink> _global;
+        public void Run(string m) { foreach (var sink in _items) sink.Emit(m); }
+        public void RunGlobal(string m) { foreach (var sink in _global) sink.Emit(m); }
+    }
 }
 """
 
@@ -172,17 +211,29 @@ def own_list_graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
     return _index(root, MagicMock())
 
 
+def _own_list_callees(graph: RecordedGraph, caller: str) -> dict[str, str]:
+    prefix = f"{graph.project}."
+    return {
+        dst.removeprefix(prefix): str(props.get("resolution"))
+        for src, rel, dst, props in graph.edges
+        if rel == "CALLS"
+        and src.removeprefix(prefix).startswith(f"src.Mine.Mine.{caller}(")
+    }
+
+
 def test_a_project_type_named_like_a_collection_is_not_read_as_one(
     own_list_graph: RecordedGraph,
 ) -> None:
-    prefix = f"{own_list_graph.project}."
-    callees = {
-        dst.removeprefix(prefix): str(props.get("resolution"))
-        for src, rel, dst, props in own_list_graph.edges
-        if rel == "CALLS"
-        and src.removeprefix(prefix).startswith("src.Mine.Mine.User.Run(")
-    }
+    callees = _own_list_callees(own_list_graph, "User.Run")
     assert callees.get("src.Mine.Mine.ISink.Emit(string)") != "exact", callees
+
+
+@pytest.mark.parametrize("caller", ["QualifiedUser.Run", "QualifiedUser.RunGlobal"])
+def test_a_system_qualified_collection_is_read_beside_a_same_named_type(
+    own_list_graph: RecordedGraph, caller: str
+) -> None:
+    callees = _own_list_callees(own_list_graph, caller)
+    assert callees.get("src.Mine.Mine.ISink.Emit(string)") == "exact", callees
 
 
 # Negative: what must not change.

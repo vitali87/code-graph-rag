@@ -221,6 +221,30 @@ def _extension_receiver_matches(
     return not ambiguous_unqualified
 
 
+def _parameter_texts(scope_node: Node) -> Iterator[tuple[str, str | None]]:
+    # Each parameter's name and written type (None when it has none).
+    param_list = scope_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if param_list is None:
+        return
+    prev_loose_type: str | None = None
+    for child in param_list.children:
+        # A `params string[] xs` tail is not wrapped in a `parameter`
+        # node (grammar quirk, same as extract_parameter_type_names):
+        # its array_type and identifier sit loose under the list.
+        if child.type == cs.TS_CSHARP_ARRAY_TYPE:
+            prev_loose_type = safe_decode_text(child)
+            continue
+        if child.type == cs.TS_CSHARP_IDENTIFIER and prev_loose_type:
+            if name := safe_decode_text(child):
+                yield name, prev_loose_type
+            prev_loose_type = None
+            continue
+        if child.type != cs.TS_CSHARP_PARAMETER:
+            continue
+        if name := safe_decode_text(child.child_by_field_name(cs.FIELD_NAME)):
+            yield name, safe_decode_text(child.child_by_field_name(cs.FIELD_TYPE))
+
+
 def _declaration_visible_at(decl: Node, at: Node) -> bool:
     """Whether the local `decl` declares is in scope at `at`: declared before
     it, in a block that encloses it. A `for`/`using` declaration is scoped to
@@ -415,27 +439,8 @@ class CSharpTypeInferenceEngine:
         return types
 
     def _collect_parameters(self, scope_node: Node, types: dict[str, str]) -> None:
-        param_list = scope_node.child_by_field_name(cs.FIELD_PARAMETERS)
-        if param_list is None:
-            return
-        prev_loose_type: str | None = None
-        for child in param_list.children:
-            # A `params string[] xs` tail is not wrapped in a `parameter`
-            # node (grammar quirk, same as extract_parameter_type_names):
-            # its array_type and identifier sit loose under the list.
-            if child.type == cs.TS_CSHARP_ARRAY_TYPE:
-                prev_loose_type = safe_decode_text(child)
-                continue
-            if child.type == cs.TS_CSHARP_IDENTIFIER and prev_loose_type:
-                if name := safe_decode_text(child):
-                    types[name] = annotate_type_ref(prev_loose_type)
-                prev_loose_type = None
-                continue
-            if child.type != cs.TS_CSHARP_PARAMETER:
-                continue
-            name = safe_decode_text(child.child_by_field_name(cs.FIELD_NAME))
-            type_text = safe_decode_text(child.child_by_field_name(cs.FIELD_TYPE))
-            if name and type_text:
+        for name, type_text in _parameter_texts(scope_node):
+            if type_text:
                 types[name] = annotate_type_ref(type_text)
 
     def _collect_locals(self, scope_node: Node, types: dict[str, str]) -> None:
@@ -494,13 +499,12 @@ class CSharpTypeInferenceEngine:
             name = safe_decode_text(collection)
             if not name:
                 return None
-            # A parameter or a local in scope of that name shadows the field,
-            # even when its own type is not read (bot review on PR #2990).
-            declared = self._parameter_type_text(scope_node, name)
-            if declared is None:
-                found, declared = self._local_type_text(scope_node, name, loop)
-                if not found:
-                    declared = self._field_type_text(scope_node, name)
+            # A parameter, a local or an enclosing loop's variable in scope of
+            # that name shadows the field, even when its own type is not read
+            # (bot review on PR #2990).
+            found, declared = self._binding_type_text(scope_node, name, loop)
+            if not found:
+                declared = self._field_type_text(scope_node, name)
         elif (
             collection.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION
             and (
@@ -525,24 +529,63 @@ class CSharpTypeInferenceEngine:
         # registered type shares is read as the BCL one (bot review on PR
         # #2990). An array's element type is the array's own.
         head, angle, _rest = declared.partition(cs.CHAR_ANGLE_OPEN)
-        simple = head.strip().rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        if angle and any(
-            self.function_registry.get(qn) in _TYPE_DECLS
-            for qn in self.simple_name_lookup.get(simple, set())
-        ):
+        if angle and self._may_name_project_type(head.strip()):
             return None
         return collection_element_text(declared)
 
-    @staticmethod
-    def _parameter_type_text(scope_node: Node, name: str) -> str | None:
-        param_list = scope_node.child_by_field_name(cs.FIELD_PARAMETERS)
-        for param in param_list.named_children if param_list is not None else ():
+    def _may_name_project_type(self, written: str) -> bool:
+        # A path rooted at `System` (`System.Collections.Generic.List`)
+        # names the BCL type unless a project type is declared under that
+        # very path: a same-named type elsewhere does not hide it (bot review
+        # on PR #2990). A bare name, an alias or a project namespace may name
+        # any registered type of that simple name.
+        path = written.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
+        path = path.removeprefix(f"{cs.TS_CSHARP_GLOBAL}{cs.SEPARATOR_DOT}")
+        types = [
+            qn
+            for qn in self.simple_name_lookup.get(
+                path.rsplit(cs.SEPARATOR_DOT, 1)[-1], set()
+            )
+            if self.function_registry.get(qn) in _TYPE_DECLS
+        ]
+        if not path.startswith(cs.CSHARP_SYSTEM_PREFIX):
+            return bool(types)
+        return any(self.csharp_class_namespaced.get(qn) == path for qn in types)
+
+    def _binding_type_text(
+        self, scope_node: Node, name: str, at: Node
+    ) -> tuple[bool, str | None]:
+        """Whether a parameter, a local or an enclosing `foreach` variable
+        named `name` is in scope at `at`, and its type text (None when not
+        read)."""
+        for param_name, type_text in _parameter_texts(scope_node):
+            if param_name == name:
+                return True, type_text
+        found, declared = self._local_type_text(scope_node, name, at)
+        if found:
+            return found, declared
+        return self._enclosing_loop_type_text(scope_node, name, at)
+
+    def _enclosing_loop_type_text(
+        self, scope_node: Node, name: str, at: Node
+    ) -> tuple[bool, str | None]:
+        # `foreach (Other[] items in groups) { foreach (var x in items) }`:
+        # the inner loop reads the outer binding, not an `items` field (bot
+        # review on PR #2990).
+        child, current = at, at.parent
+        while current is not None:
             if (
-                param.type == cs.TS_CSHARP_PARAMETER
-                and safe_decode_text(param.child_by_field_name(cs.FIELD_NAME)) == name
+                current.type == cs.TS_CSHARP_FOREACH_STATEMENT
+                and (body := current.child_by_field_name(cs.FIELD_BODY)) is not None
+                and body.id == child.id
+                and safe_decode_text(current.child_by_field_name(cs.FIELD_LEFT)) == name
             ):
-                return safe_decode_text(param.child_by_field_name(cs.FIELD_TYPE))
-        return None
+                declared = current.child_by_field_name(cs.FIELD_TYPE)
+                if declared is not None and declared.type != cs.TS_CSHARP_IMPLICIT_TYPE:
+                    return True, safe_decode_text(declared)
+                return True, self._foreach_element_text(current, scope_node)
+            child, current = current, current.parent
+        return False, None
 
     def _local_type_text(
         self, scope_node: Node, name: str, at: Node
