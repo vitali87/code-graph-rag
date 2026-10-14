@@ -21,6 +21,7 @@ permissions: read-all
 env:
   RELEASE_EVERY: 50
   VERSION_COMPONENT_CAP: 1000
+  DEFERRED_RELEASE_MARKER: release-deferred
 
 jobs:
   bump-version:
@@ -199,18 +200,48 @@ jobs:
             echo "::error::could not look up tag v${CURRENT} (git ls-remote exit ${TAG_STATUS}); refusing to decide the release"
             exit 1
           fi
-          if [ "$TAG_STATUS" -eq 0 ]; then
-            BASE_TAG="v${CURRENT}"
-          else
-            if ! TAGS=$(git ls-remote --tags --refs origin "refs/tags/v*"); then
-              echo "::error::could not list release tags; refusing to decide the release"
+          if ! TAGS=$(git ls-remote --tags origin "refs/tags/v*"); then
+            echo "::error::could not list release tags; refusing to decide the release"
+            exit 1
+          fi
+          # A deferred release stays due until one is published. "Create git
+          # tag" annotates the tag of a bump whose release it deferred, and
+          # such a tag is never where the scan starts: the commits it covered
+          # are scanned again, so a security fix among them still releases on
+          # this bump instead of waiting for RELEASE_EVERY. Only annotated tags
+          # after the latest release are read, one call each, so the count
+          # stays at the current deferral streak however old the repository.
+          # A tag that cannot be read fails the run: skipping it could leave a
+          # security fix unreleased.
+          DEFERRED=" "
+          for TAG in $(printf '%s\n' "$TAGS" \
+              | awk -F'refs/tags/' 'NF > 1 { n = index($2, "^{}"); if (n) print substr($2, 1, n - 1) }' \
+              | grep -xE 'v[0-9]+\.[0-9]+\.[0-9]+' || true); do
+            if [ -n "$LATEST" ] &&
+                [ "$(printf '%s\n%s\n' "$TAG" "$LATEST" | sort -V | tail -1)" = "$LATEST" ]; then
+              continue
+            fi
+            OBJECT=$(printf '%s\n' "$TAGS" | awk -F'\t' -v ref="refs/tags/${TAG}" '$2 == ref {print $1}')
+            if [[ ! "$OBJECT" =~ ^[0-9a-f]{40}$ ]] ||
+                ! TAG_MESSAGE=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${OBJECT}" --jq .message); then
+              echo "::error::could not read the annotation of ${TAG}; refusing to decide the release"
               exit 1
             fi
+            case "$TAG_MESSAGE" in
+              "${DEFERRED_RELEASE_MARKER}:"*) DEFERRED="${DEFERRED}${TAG} " ;;
+            esac
+          done
+          if [ "$TAG_STATUS" -eq 0 ] && [[ "$DEFERRED" != *" v${CURRENT} "* ]]; then
+            BASE_TAG="v${CURRENT}"
+          else
             # The newest one main's history holds: a higher tag cut on
             # another branch has nothing in common with this range, and its
             # compare would come back empty.
             for TAG in $(printf '%s\n' "$TAGS" | awk -F'refs/tags/' 'NF > 1 {print $2}' \
                 | grep -xE 'v[0-9]+\.[0-9]+\.[0-9]+' | sort -rV || true); do
+              if [[ "$DEFERRED" == *" ${TAG} "* ]]; then
+                continue
+              fi
               if ! AHEAD=$(gh api \
                   "repos/${GITHUB_REPOSITORY}/compare/${TAG}...${GITHUB_SHA}?per_page=1" \
                   --jq .status); then
@@ -612,7 +643,18 @@ jobs:
           exit 1
 
       - name: Require successful CI for the release source
+        id: ci_gate
         if: steps.decide.outputs.release == 'true' && steps.commit.outputs.pushed == 'true'
+        # A gate that does not pass defers the release, not the tag. The bump
+        # is already on main, so a tag held back here leaves that version
+        # untagged for good, and an untagged bump does not count toward
+        # RELEASE_EVERY: every later run is then another release run behind the
+        # same wait, and no tag lands for as long as CI on main runs behind
+        # (v0.1.88). "Create git tag" reads this step's outcome instead and
+        # pushes a tag annotated as a deferred release over GITHUB_TOKEN, which
+        # triggers no publish, so the release moves to the next bump whose CI
+        # is proven.
+        continue-on-error: true
         timeout-minutes: 50
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -689,16 +731,27 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NEW_VERSION: ${{ steps.bump_version.outputs.new }}
           RELEASE: ${{ steps.decide.outputs.release }}
+          CI_GATE: ${{ steps.ci_gate.outcome }}
         run: |
-          git tag "v${NEW_VERSION}"
-          if [ "$RELEASE" = "true" ]; then
+          if [ "$RELEASE" = "true" ] && [ "$CI_GATE" != "success" ]; then
+            # Annotated with DEFERRED_RELEASE_MARKER so the next run's
+            # "Decide" step keeps the release due and scans this bump's
+            # commits again; a lightweight tag would end the scan here and a
+            # security fix in them would wait for RELEASE_EVERY.
+            git tag -a "v${NEW_VERSION}" -m "${DEFERRED_RELEASE_MARKER}: CI is not proven for ${GITHUB_SHA}"
+            echo "::warning::CI is not proven for ${GITHUB_SHA}; v${NEW_VERSION} is tagged without a release, which moves to the next bump"
+            echo "- **Release:** deferred, CI is not proven for ${GITHUB_SHA}; v${NEW_VERSION} is tagged without publishing" >> "$GITHUB_STEP_SUMMARY"
+          else
+            git tag "v${NEW_VERSION}"
+          fi
+          if [ "$RELEASE" = "true" ] && [ "$CI_GATE" = "success" ]; then
             git push origin "v${NEW_VERSION}"
           else
             git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "v${NEW_VERSION}"
           fi
 
       - name: Create release
-        if: steps.decide.outputs.release == 'true' && steps.commit.outputs.pushed == 'true'
+        if: steps.decide.outputs.release == 'true' && steps.commit.outputs.pushed == 'true' && steps.ci_gate.outcome == 'success'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NEW_VERSION: ${{ steps.bump_version.outputs.new }}
