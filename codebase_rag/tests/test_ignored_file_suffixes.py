@@ -8,7 +8,7 @@ node names are whatever the minifier left behind (`v`, `y`, `ce`, `fe`), so
 they are unsearchable and they outnumber the real symbols.
 
 `IGNORE_SUFFIXES` is the list that already exists for this category, but it was
-consumed under two different rules. `realtime_updater._is_relevant` tests
+consumed under two different rules. `watch.CodeChangeEventHandler._is_relevant` tests
 `path.name.endswith(suffix)`, which honours a compound ending; both
 `path_utils` sites tested `path.suffix`, and `Path("jquery.min.js").suffix` is
 `".js"`, never `".min.js"`. Two consequences, both covered below:
@@ -28,7 +28,7 @@ from watchdog.events import FileModifiedEvent
 
 import codebase_rag.constants.languages as cs
 from codebase_rag.utils.path_utils import should_skip_rel_file, walk_eligible_files
-from realtime_updater import CodeChangeEventHandler
+from codebase_rag.watch import CodeChangeEventHandler
 
 # Kept out of the graph: machine-generated, never hand-edited.
 SKIPPED = (
