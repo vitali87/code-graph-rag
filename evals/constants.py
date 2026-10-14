@@ -133,82 +133,58 @@ GO_DEFAULT_TARGET = "."
 GO_SCORES_FILENAME = "go_scores.csv"
 GO_DIFF_FILENAME = "go_diff.json"
 
-# Multi-language retrieval (Go): file-level call localization for a second
-# language, cgr's Go CALLS vs go/ast call sites over the same name universe.
-# The go/ast oracle is independent of cgr's tree-sitter parser.
+# Multi-language retrieval (evals/retrieval_eval.py): file-level call
+# localization per language, cgr's CALLS edges vs an independent parser's call
+# sites over the same first-party name universe. The languages differ only in
+# the spec each one registers; outputs and labels derive from its stem.
 ORACLE_KEY_CALLS = "calls"
 ORACLE_KEY_COVERED = "covered"
-GO_RETRIEVAL_SCORES_FILENAME = "go_retrieval_scores.csv"
-GO_RETRIEVAL_DIFF_FILENAME = "go_retrieval_diff.json"
-GO_RETRIEVAL_DIFF_PREFIX = "go-retrieval:"
-GO_RETRIEVAL_LABEL = "graph"
-GO_RETRIEVAL_TITLE = "cgr multi-language retrieval: Go CALLS vs go/ast oracle"
-GO_CALL_EDGE_REPR = "{file} -> {name}"
+LANG_RETRIEVAL_DEFAULT_TARGET = "."
+LANG_RETRIEVAL_SCORES_FILENAME = "{lang}_retrieval_scores.csv"
+LANG_RETRIEVAL_DIFF_FILENAME = "{lang}_retrieval_diff.json"
+LANG_RETRIEVAL_DIFF_PREFIX = "{lang}-retrieval:"
+LANG_RETRIEVAL_TITLE = (
+    "cgr multi-language retrieval: {language} CALLS vs {oracle} oracle"
+)
+CALL_EDGE_REPR = "{file} -> {name}"
 
-RUST_DEFAULT_TARGET = "."
-RUST_RETRIEVAL_SCORES_FILENAME = "rust_retrieval_scores.csv"
-RUST_RETRIEVAL_DIFF_FILENAME = "rust_retrieval_diff.json"
-RUST_RETRIEVAL_DIFF_PREFIX = "rust-retrieval:"
-RUST_RETRIEVAL_LABEL = "graph"
-RUST_RETRIEVAL_TITLE = "cgr multi-language retrieval: Rust CALLS vs syn oracle"
-RUST_CALL_EDGE_REPR = "{file} -> {name}"
 
-JAVA_DEFAULT_TARGET = "."
-JAVA_RETRIEVAL_SCORES_FILENAME = "java_retrieval_scores.csv"
-JAVA_RETRIEVAL_DIFF_FILENAME = "java_retrieval_diff.json"
-JAVA_RETRIEVAL_DIFF_PREFIX = "java-retrieval:"
-JAVA_RETRIEVAL_LABEL = "graph"
-JAVA_RETRIEVAL_TITLE = "cgr multi-language retrieval: Java CALLS vs javac oracle"
-JAVA_CALL_EDGE_REPR = "{file} -> {name}"
+class RetrievalLanguage(StrEnum):
+    C = "c"
+    CPP = "cpp"
+    CSHARP = "csharp"
+    GO = "go"
+    JAVA = "java"
+    JS = "js"
+    LUA = "lua"
+    PHP = "php"
+    RUST = "rust"
+    SCALA = "scala"
+    TS = "ts"
 
-CSHARP_RETRIEVAL_SCORES_FILENAME = "csharp_retrieval_scores.csv"
-CSHARP_RETRIEVAL_DIFF_FILENAME = "csharp_retrieval_diff.json"
-CSHARP_RETRIEVAL_DIFF_PREFIX = "csharp-retrieval:"
-CSHARP_RETRIEVAL_LABEL = "graph"
-CSHARP_RETRIEVAL_TITLE = "cgr multi-language retrieval: C# CALLS vs Roslyn oracle"
-CSHARP_CALL_EDGE_REPR = "{file} -> {name}"
 
-SCALA_DEFAULT_TARGET = "."
-SCALA_RETRIEVAL_SCORES_FILENAME = "scala_retrieval_scores.csv"
-SCALA_RETRIEVAL_DIFF_FILENAME = "scala_retrieval_diff.json"
-SCALA_RETRIEVAL_DIFF_PREFIX = "scala-retrieval:"
-SCALA_RETRIEVAL_LABEL = "graph"
-SCALA_RETRIEVAL_TITLE = "cgr multi-language retrieval: Scala CALLS vs scalameta oracle"
-SCALA_CALL_EDGE_REPR = "{file} -> {name}"
+# Display names for the retrieval titles and log lines.
+C_LANGUAGE_NAME = "C"
+CPP_LANGUAGE_NAME = "C++"
+CSHARP_LANGUAGE_NAME = "C#"
+GO_LANGUAGE_NAME = "Go"
+JAVA_LANGUAGE_NAME = "Java"
+JS_LANGUAGE_NAME = "JavaScript"
+LUA_LANGUAGE_NAME = "Lua"
+PHP_LANGUAGE_NAME = "PHP"
+RUST_LANGUAGE_NAME = "Rust"
+SCALA_LANGUAGE_NAME = "Scala"
+TS_LANGUAGE_NAME = "TypeScript"
+GO_AST_ORACLE_NAME = "go/ast"
+JAVAC_ORACLE_NAME = "javac"
+LIBCLANG_ORACLE_NAME = "libclang"
+LUAPARSE_ORACLE_NAME = "luaparse"
+PHP_PARSER_ORACLE_NAME = "php-parser"
+ROSLYN_ORACLE_NAME = "Roslyn"
+SCALAMETA_ORACLE_NAME = "scalameta"
+SYN_ORACLE_NAME = "syn"
+TSC_ORACLE_NAME = "tsc"
 
-TS_DEFAULT_TARGET = "."
-TS_RETRIEVAL_SCORES_FILENAME = "ts_retrieval_scores.csv"
-TS_RETRIEVAL_DIFF_FILENAME = "ts_retrieval_diff.json"
-TS_RETRIEVAL_DIFF_PREFIX = "ts-retrieval:"
-TS_RETRIEVAL_LABEL = "graph"
-TS_RETRIEVAL_TITLE = "cgr multi-language retrieval: TypeScript CALLS vs tsc oracle"
-TS_CALL_EDGE_REPR = "{file} -> {name}"
-
-JS_DEFAULT_TARGET = "."
-JS_RETRIEVAL_SCORES_FILENAME = "js_retrieval_scores.csv"
-JS_RETRIEVAL_DIFF_FILENAME = "js_retrieval_diff.json"
-JS_RETRIEVAL_DIFF_PREFIX = "js-retrieval:"
-JS_RETRIEVAL_LABEL = "graph"
-JS_RETRIEVAL_TITLE = "cgr multi-language retrieval: JavaScript CALLS vs tsc oracle"
-JS_CALL_EDGE_REPR = "{file} -> {name}"
-
-PHP_DEFAULT_TARGET = "."
-PHP_RETRIEVAL_SCORES_FILENAME = "php_retrieval_scores.csv"
-PHP_RETRIEVAL_DIFF_FILENAME = "php_retrieval_diff.json"
-PHP_RETRIEVAL_DIFF_PREFIX = "php-retrieval:"
-PHP_RETRIEVAL_LABEL = "graph"
-PHP_RETRIEVAL_TITLE = "cgr multi-language retrieval: PHP CALLS vs php-parser oracle"
-PHP_CALL_EDGE_REPR = "{file} -> {name}"
-
-LUA_DEFAULT_TARGET = "."
-LUA_RETRIEVAL_SCORES_FILENAME = "lua_retrieval_scores.csv"
-LUA_RETRIEVAL_DIFF_FILENAME = "lua_retrieval_diff.json"
-LUA_RETRIEVAL_DIFF_PREFIX = "lua-retrieval:"
-LUA_RETRIEVAL_LABEL = "graph"
-LUA_RETRIEVAL_TITLE = "cgr multi-language retrieval: Lua CALLS vs luaparse oracle"
-LUA_CALL_EDGE_REPR = "{file} -> {name}"
-
-C_DEFAULT_TARGET = "."
 C_SOURCE_GLOB = "*.c"
 C_HEADER_GLOB = "*.h"
 C_SUFFIXES: tuple[str, ...] = (".c", ".h")
@@ -220,12 +196,6 @@ CLANG_INCLUDE_DIR = "include"
 CLANG_SEVERITY_ERROR = 3
 XCRUN_SDK_PATH_CMD: tuple[str, ...] = ("xcrun", "--show-sdk-path")
 CLANG_RESOURCE_DIR_CMD: tuple[str, ...] = ("clang", "-print-resource-dir")
-C_RETRIEVAL_SCORES_FILENAME = "c_retrieval_scores.csv"
-C_RETRIEVAL_DIFF_FILENAME = "c_retrieval_diff.json"
-C_RETRIEVAL_DIFF_PREFIX = "c-retrieval:"
-C_RETRIEVAL_LABEL = "graph"
-C_RETRIEVAL_TITLE = "cgr multi-language retrieval: C CALLS vs libclang oracle"
-C_CALL_EDGE_REPR = "{file} -> {name}"
 
 CPP_SOURCE_GLOBS: tuple[str, ...] = ("*.cc", "*.cpp", "*.cxx")
 CPP_HEADER_GLOBS: tuple[str, ...] = ("*.h", "*.hpp", "*.hh", "*.hxx")
@@ -242,12 +212,6 @@ LIBCLANG_CANDIDATES: tuple[str, ...] = (
 # libc++ headers live under <sdk>/usr/include/c++/v1 and MUST precede the clang
 # builtin resource headers, else libc++'s <cstddef> finds the C <stddef.h> first.
 CLANG_LIBCXX_SUBPATH = "usr/include/c++/v1"
-CPP_RETRIEVAL_SCORES_FILENAME = "cpp_retrieval_scores.csv"
-CPP_RETRIEVAL_DIFF_FILENAME = "cpp_retrieval_diff.json"
-CPP_RETRIEVAL_DIFF_PREFIX = "cpp-retrieval:"
-CPP_RETRIEVAL_LABEL = "graph"
-CPP_RETRIEVAL_TITLE = "cgr multi-language retrieval: C++ CALLS vs libclang oracle"
-CPP_CALL_EDGE_REPR = "{file} -> {name}"
 
 # Semantic-search relevance eval: does cgr's embedding ranking retrieve the
 # right function for a natural-language query? Uses cgr's own embedder over

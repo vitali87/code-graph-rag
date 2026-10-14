@@ -575,9 +575,11 @@ class DefinitionProcessor(
         Runs once the registry holds every file's types (issue #1527); the
         queue empties, so a watch-mode re-parse only re-resolves its own.
         """
-        from .field_nodes import emit_field_type_edges
-        from .parameter_nodes import emit_parameter_type_edges
-        from .type_facts import TypeReferenceResolver, emit_type_edges
+        from .type_facts import (
+            TypeReferenceResolver,
+            emit_of_type_edges,
+            emit_type_edges,
+        )
 
         # Every queue, not just the first: a Parameter or Field fact with no
         # RETURNS/ACCEPTS fact beside it would otherwise be skipped outright,
@@ -599,11 +601,14 @@ class DefinitionProcessor(
         emitted = emit_type_edges(self.pending_type_facts, resolver, self.ingestor)
         # Parameter OF_TYPE edges resolve in the same pass, for the same
         # reason: the annotation may name a type from a later file.
-        emitted += emit_parameter_type_edges(
-            self.pending_parameter_types, resolver, self.ingestor
+        emitted += emit_of_type_edges(
+            cs.NodeLabel.PARAMETER,
+            self.pending_parameter_types,
+            resolver,
+            self.ingestor,
         )
-        emitted += emit_field_type_edges(
-            self.pending_field_types, resolver, self.ingestor
+        emitted += emit_of_type_edges(
+            cs.NodeLabel.FIELD, self.pending_field_types, resolver, self.ingestor
         )
         return emitted
 
@@ -715,27 +720,50 @@ class DefinitionProcessor(
             self._fold_overloads(
                 root_node, module_qn, language, queries, combined_captures
             )
-            self._ingest_inline_modules(
-                root_node,
-                module_qn,
-                language,
-                queries,
-                combined_captures=combined_captures,
-            )
-            self._ingest_all_functions(
-                root_node,
-                module_qn,
-                language,
-                queries,
-                combined_captures=combined_captures,
-            )
-            self._ingest_classes_and_methods(
-                root_node,
-                module_qn,
-                language,
-                queries,
-                combined_captures=combined_captures,
-            )
+            if language == cs.SupportedLanguage.JULIA:
+                # Julia ingests types BEFORE functions: a struct and a free
+                # function may share a name (separate namespaces), and the
+                # TYPE is the primary owner of it (issue #1882 review).
+                # The inline-module pass is skipped: a Julia `module` block
+                # is the file's declared module (an import index), not a
+                # nested module node, so a synthetic `fileqn.Module` node
+                # would clobber that model.
+                self._ingest_classes_and_methods(
+                    root_node,
+                    module_qn,
+                    language,
+                    queries,
+                    combined_captures=combined_captures,
+                )
+                self._ingest_all_functions(
+                    root_node,
+                    module_qn,
+                    language,
+                    queries,
+                    combined_captures=combined_captures,
+                )
+            else:
+                self._ingest_inline_modules(
+                    root_node,
+                    module_qn,
+                    language,
+                    queries,
+                    combined_captures=combined_captures,
+                )
+                self._ingest_all_functions(
+                    root_node,
+                    module_qn,
+                    language,
+                    queries,
+                    combined_captures=combined_captures,
+                )
+                self._ingest_classes_and_methods(
+                    root_node,
+                    module_qn,
+                    language,
+                    queries,
+                    combined_captures=combined_captures,
+                )
             if language == cs.SupportedLanguage.RUST:
                 self._finalise_rust_file(module_qn, root_node)
             if language in cs.JS_TS_LANGUAGES:

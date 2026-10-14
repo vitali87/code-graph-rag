@@ -35,7 +35,7 @@ from ..csharp.overloads import (
     written_bindings,
 )
 from ..csharp.overloads import TypeScopes as CSharpScopes
-from ..utils import direct_methods_by_name
+from ..utils import direct_methods_by_name, method_signature_arity
 
 # The graph's type nodes. Every one but a Type alias is a distinct type.
 _TYPE_KINDS = frozenset(
@@ -493,29 +493,6 @@ def _invert_implementers(
     return inverted
 
 
-def _signature_arity(method_name: str) -> int | None:
-    # Number of top-level parameters in a signatured method name
-    # (`readField(A,JsonReader,BoundField)` -> 3, `create()` -> 0); None when the
-    # name carries no signature (Python/JS methods). Commas inside generics
-    # (`Map<K, V>`) are nested, so only depth-0 commas separate parameters.
-    open_idx = method_name.find(cs.CHAR_PAREN_OPEN)
-    if open_idx < 0:
-        return None
-    inner = method_name[open_idx + 1 : method_name.rfind(cs.CHAR_PAREN_CLOSE)]
-    if not inner.strip():
-        return 0
-    depth = 0
-    count = 1
-    for ch in inner:
-        if ch in "<([":
-            depth += 1
-        elif ch in ">)]":
-            depth -= 1
-        elif ch == "," and depth == 0:
-            count += 1
-    return count
-
-
 def _find_override_by_arity(
     parent_class: str,
     method_name: str,
@@ -527,7 +504,7 @@ def _find_override_by_arity(
     # is a distinct qn. Java overriding is by name + erased parameter types, so fall
     # back to a UNIQUE parent method with the same simple name and arity; ambiguous
     # overloads (>1 candidate) are left unmatched rather than guessed.
-    arity = _signature_arity(method_name)
+    arity = method_signature_arity(method_name)
     if arity is None:
         return None
     base_name = method_name.split(cs.CHAR_PAREN_OPEN, 1)[0]
@@ -535,7 +512,7 @@ def _find_override_by_arity(
     matches = [
         qn
         for qn in named(parent_class, base_name)
-        if _signature_arity(qn[len(parent_class) + 1 :]) == arity
+        if method_signature_arity(qn[len(parent_class) + 1 :]) == arity
     ]
     return matches[0] if len(matches) == 1 else None
 

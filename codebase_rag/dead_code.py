@@ -5,6 +5,8 @@
 # memgraph's 600s timeout on big projects (django: 31k roots, 101k CALLS
 # edges), whereas a multi-source walk over the fetched edges is linear and
 # finishes in milliseconds.
+from __future__ import annotations
+
 import re
 from collections import defaultdict
 from collections.abc import Callable
@@ -628,6 +630,41 @@ def _is_react_root(
     return cls is not None and cls in react_component_classes
 
 
+def _is_py_ast_visitor_root(
+    qn: str,
+    member: str,
+    is_method: bool,
+    path: str,
+    method_to_class: dict[str, str],
+    ast_visitor_classes: set[str],
+) -> bool:
+    # NodeVisitor.visit reaches a `visit_<NodeClass>` handler, or the
+    # generic_visit fallback, by name, never by a call the graph sees, so
+    # they are roots on a class reaching ast.NodeVisitor. The helpers they
+    # call expand from them; a same-named method on any other class is
+    # ordinary code.
+    if not is_method or not path.endswith(cs.EXT_PY):
+        return False
+    if member != cs.PY_AST_GENERIC_VISIT_METHOD and not member.startswith(
+        cs.PY_AST_VISIT_METHOD_PREFIX
+    ):
+        return False
+    cls = method_to_class.get(qn)
+    return cls is not None and cls in ast_visitor_classes
+
+
+def _is_pytest_hook_root(name: str, path: str, props: PropertyDict) -> bool:
+    # A conftest.py is test code, rooted (or left out) with the tests; a
+    # plugin module or object is production code that only pytest calls.
+    # Being a plugin attribute needs module or class scope, which the export
+    # mark gives: a function nested in another is neither.
+    return (
+        name.startswith(cs.PYTEST_HOOK_PREFIX)
+        and path.endswith(cs.EXT_PY)
+        and props.get(cs.KEY_IS_EXPORTED) is True
+    )
+
+
 def _walk(
     frontier: set[str],
     adjacency: dict[str, set[str]],
@@ -650,11 +687,10 @@ def _is_root(
     props: PropertyDict,
     config: DeadCodeConfig,
     method_qns: set[str],
-    protocol_stubs: set[str],
+    declaration_roots: set[str],
     method_to_class: dict[str, str],
     class_decorators_norm: dict[str, frozenset[str]],
-    nest_factory_classes: set[str],
-    react_component_classes: set[str],
+    structural: _StructuralRels,
     rust_test_modules: set[str],
     rust_test_spans: dict[str, list[tuple[int, int]]],
     project_prefix: str,
@@ -708,7 +744,7 @@ def _is_root(
         # textwrap.TextWrapper subclass) is invoked by the base's machinery,
         # never by a first-party call, so it is a root.
         lambda: props.get(cs.KEY_OVERRIDES_EXTERNAL) is True,
-        lambda: qn in protocol_stubs,
+        lambda: qn in declaration_roots,
         # A `.pyi` definition declares an API whose body lives elsewhere,
         # usually in a compiled extension that is not source; no first-party
         # call is needed for it to be used, and deleting it from the stub
@@ -751,11 +787,20 @@ def _is_root(
             path,
             method_to_class,
             class_decorators_norm,
-            nest_factory_classes,
+            structural.nest_factory_classes,
         ),
         lambda: _is_react_root(
-            qn, bare_leaf, is_method, path, method_to_class, react_component_classes
+            qn,
+            bare_leaf,
+            is_method,
+            path,
+            method_to_class,
+            structural.react_component_classes,
         ),
+        lambda: _is_py_ast_visitor_root(
+            qn, leaf, is_method, path, method_to_class, structural.ast_visitor_classes
+        ),
+        lambda: _is_pytest_hook_root(leaf, path, props),
         lambda: (
             is_well_known_symbol_member(qn)
             and str(props.get(cs.KEY_PATH, "")).endswith(cs.JS_TS_ALL_EXTENSIONS)
@@ -851,6 +896,9 @@ class _StructuralRels:
     # React drives at runtime (issue #978). Seeds are direct extenders; the
     # transitive closure over INHERITS is computed after the scan.
     react_component_classes: set[str] = field(default_factory=set)
+    # Likewise a class reaching ast.NodeVisitor, whose handlers `visit`
+    # dispatches by name; seeds are direct subclasses, closed the same way.
+    ast_visitor_classes: set[str] = field(default_factory=set)
     inherits_subclasses: dict[str, set[str]] = field(
         default_factory=lambda: defaultdict(set)
     )
@@ -909,6 +957,16 @@ def _is_external_nest_options_factory(to_qn: str, project_prefix: str) -> bool:
     ].endswith(cs.NEST_OPTIONS_FACTORY_SUFFIX)
 
 
+def _record_inherits(found: _StructuralRels, from_qn: str, to_qn: str) -> None:
+    found.inherits_subclasses[to_qn].add(from_qn)
+    if to_qn in cs.PROTOCOL_BASE_QNS:
+        found.protocol_classes.add(from_qn)
+    elif to_qn in cs.PY_AST_VISITOR_BASE_QNS:
+        found.ast_visitor_classes.add(from_qn)
+    elif _is_react_base_qn(to_qn):
+        found.react_component_classes.add(from_qn)
+
+
 def _scan_structural_rels(
     rels: list[_RelTuple], project_prefix: str
 ) -> _StructuralRels:
@@ -920,11 +978,7 @@ def _scan_structural_rels(
             if to_label == _CLASS:
                 found.nested_class_pairs.append((from_qn, to_qn))
         elif rel_type == _INHERITS:
-            found.inherits_subclasses[to_qn].add(from_qn)
-            if to_qn in cs.PROTOCOL_BASE_QNS:
-                found.protocol_classes.add(from_qn)
-            elif _is_react_base_qn(to_qn):
-                found.react_component_classes.add(from_qn)
+            _record_inherits(found, from_qn, to_qn)
         elif rel_type == _DEFINES_METHOD:
             found.class_methods.append((from_qn, to_qn))
         elif rel_type == _IMPLEMENTS and _is_external_nest_options_factory(
@@ -932,6 +986,23 @@ def _scan_structural_rels(
         ):
             found.nest_factory_classes.add(from_qn)
     return found
+
+
+def _declaration_roots(
+    nodes: dict[_NodeId, PropertyDict], structural: _StructuralRels
+) -> set[str]:
+    """What the type checker reads as a declaration: a typing.Protocol and a
+    class declared under `if TYPE_CHECKING:`, with their members. A stub
+    there types a receiver (`self` in a mixin) whose calls resolve to the
+    implementation, and the class itself is named only in annotations, which
+    the walk does not follow; like a `.pyi` definition each is a root, never
+    dead code on its own."""
+    declarations = structural.protocol_classes | {
+        str(uid)
+        for (label, uid), props in nodes.items()
+        if label == _CLASS and props.get(cs.KEY_TYPE_CHECKING_ONLY) is True
+    }
+    return declarations | {m for c, m in structural.class_methods if c in declarations}
 
 
 def _module_roots(
@@ -1237,9 +1308,7 @@ def dead_code_from_graph(
         scan.candidates -= php_tests
         roots -= php_tests
 
-    protocol_stubs = {
-        m for c, m in structural.class_methods if c in structural.protocol_classes
-    }
+    declaration_roots = _declaration_roots(nodes, structural)
     method_to_class = {m: c for c, m in structural.class_methods}
     # Expand React components down the inheritance tree: a class extending a
     # first-party base that (transitively) extends react.Component is itself a
@@ -1248,6 +1317,13 @@ def dead_code_from_graph(
         set(structural.react_component_classes),
         structural.inherits_subclasses,
         structural.react_component_classes,
+    )
+    # Visitors the same way: `visit` dispatches on a subclass of a project
+    # visitor base exactly as on the base.
+    _walk(
+        set(structural.ast_visitor_classes),
+        structural.inherits_subclasses,
+        structural.ast_visitor_classes,
     )
 
     # Every rule in _is_root makes `qn` a root; they are alternatives, not a
@@ -1261,11 +1337,10 @@ def dead_code_from_graph(
             scan.props_by_qn[qn],
             config,
             scan.method_qns,
-            protocol_stubs,
+            declaration_roots,
             method_to_class,
             scan.class_decorators_norm,
-            structural.nest_factory_classes,
-            structural.react_component_classes,
+            structural,
             rust_test_modules,
             rust_test_spans,
             project_prefix,
@@ -1339,6 +1414,9 @@ def _node_props(row: ResultRow) -> PropertyDict:
         cs.KEY_MODIFIERS: _as_str_list(row.get(cs.KEY_MODIFIERS)),
         cs.KEY_RETURN_TYPE: str(row.get(cs.KEY_RETURN_TYPE) or ""),
         cs.KEY_PARAM_TYPES: _as_str_list(row.get(cs.KEY_PARAM_TYPES)),
+        # The parse-time mark the declaration roots read: no edge says a
+        # class exists for the type checker only.
+        cs.KEY_TYPE_CHECKING_ONLY: row.get(cs.KEY_TYPE_CHECKING_ONLY) is True,
     }
 
 

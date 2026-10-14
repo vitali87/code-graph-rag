@@ -31,6 +31,13 @@ def _first_attribute_list(node: Node) -> Node | None:
 def definition_start_point(node: Node) -> tuple[int, int]:
     """The 1-based line and 0-based column a declaration truly starts at.
 
+    When its attributes are wrapped in a conditional-compilation block
+    (`#if SYMBOL [Attr] #endif`), tree-sitter nests a leading
+    preproc_if_in_attribute_list child, so the declaration's own start_point
+    is the `#if` directive line. Roslyn treats the directives as trivia and
+    starts the span at the conditional attribute, so that attribute's point
+    is returned (else the first non-directive child's).
+
     The line alone is not enough for a caller that pairs the two: taking the
     line from a nested attribute and the column from the outer node names a
     point that is nowhere in the source (issue #1071).
@@ -42,24 +49,6 @@ def definition_start_point(node: Node) -> tuple[int, int]:
             continue
         return child.start_point[0] + 1, child.start_point[1]
     return node.start_point[0] + 1, node.start_point[1]
-
-
-def definition_start_line(node: Node) -> int:
-    # The 1-based line a declaration truly starts on. When its attributes are
-    # wrapped in a conditional-compilation block (`#if SYMBOL [Attr] #endif`),
-    # tree-sitter nests a leading preproc_if_in_attribute_list child, so the
-    # declaration's own start_point is the `#if` directive line. Roslyn treats
-    # the directives as trivia and starts the span at the conditional
-    # attribute, so return that attribute's line (else the first non-directive
-    # child's line). Falls back to the node's own start for the common case
-    # with no leading directive.
-    for child in node.children:
-        if child.type == cs.TS_CSHARP_PREPROC_IF_IN_ATTR_LIST:
-            if (attr_list := _first_attribute_list(child)) is not None:
-                return attr_list.start_point[0] + 1
-            continue
-        return child.start_point[0] + 1
-    return node.start_point[0] + 1
 
 
 def _normalize_type_name(text: str) -> str:
