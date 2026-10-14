@@ -102,7 +102,7 @@ public class Box<T> {
     # has no `name` field (synthesize `operator_<symbol>` + signature so
     # overloaded operators stay distinct); the destructor's identifier
     # collides with the ctor unless prefixed with `~`.
-    assert _endswith_any(members, "N.Box.operator_+(Box, Box)")
+    assert _endswith_any(members, "N.Box.operator_+(Box<T>, Box<T>)")
     assert _endswith_any(members, "N.Box.~Box")
 
 

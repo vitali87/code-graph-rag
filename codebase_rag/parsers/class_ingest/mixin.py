@@ -18,6 +18,7 @@ from ...types_defs import (
     ASTNode,
     CppDefinitionSpan,
     CSharpCallShape,
+    CSharpGenericShape,
     DeferredCppInherit,
     DeferredInherit,
     FunctionLocation,
@@ -33,6 +34,7 @@ from ..anchor_hash import anchor_hash_props
 from ..cpp import CppTypeInferenceEngine
 from ..cpp import local_types as cpp_local_types
 from ..cpp import utils as cpp_utils
+from ..csharp import graph_facts as csharp_graph_facts
 from ..csharp import utils as csharp_utils
 from ..csharp.arity import CSharpArityIndex
 from ..dart import utils as dart_utils
@@ -259,25 +261,6 @@ def _class_start_point(
     return class_node.start_point[0] + 1, class_node.start_point[1]
 
 
-def _csharp_record_parameter_types(
-    member_node: Node, field_types: dict[str, str]
-) -> None:
-    # A record's positional parameters ARE public properties of
-    # the record type; record them as members so receiver typing
-    # and the delegate-invoke gate see them (`Callback();` on a
-    # record param is Action.Invoke, not a first-party call).
-    for pl in member_node.children:
-        if pl.type != cs.TS_CSHARP_PARAMETER_LIST:
-            continue
-        for prm in pl.children:
-            if prm.type != cs.TS_CSHARP_PARAMETER:
-                continue
-            pname = safe_decode_text(prm.child_by_field_name(cs.FIELD_NAME))
-            ptype = safe_decode_text(prm.child_by_field_name(cs.FIELD_TYPE))
-            if pname and ptype:
-                field_types.setdefault(pname, csharp_utils.annotate_type_ref(ptype))
-
-
 def _enclosing_rust_mod(module_node: Node) -> Node | None:
     enclosing_module_node = module_node.parent
     while (
@@ -303,10 +286,8 @@ def _signatured_method_qn(
         # (without it two `Widget(...)` ctors collide and the second
         # gets an `@line` suffix). Zero-arg members stay bare so their
         # qn is stable and matches an unsignatured call site.
-        cs_name, cs_params = csharp_utils.extract_method_signature(method_node)
-        if cs_name and cs_params:
-            param_sig = cs.SEPARATOR_COMMA_SPACE.join(cs_params)
-            return f"{class_qn}.{cs_name}({param_sig})"
+        if leaf := csharp_utils.member_qn_leaf(method_node):
+            return f"{class_qn}.{leaf}"
     return None
 
 
@@ -371,6 +352,8 @@ class ClassIngestMixin:
     csharp_call_shapes: dict[str, CSharpCallShape]
     csharp_class_generic_arity: dict[str, int]
     csharp_class_owner_module: dict[str, str]
+    csharp_generic_shapes: dict[str, CSharpGenericShape]
+    csharp_implicit_conversions: dict[str, list[tuple[str, str]]]
     csharp_class_namespaced: dict[str, str]
     csharp_namespaced_qns: dict[str, set[str]]
     csharp_method_return_types: dict[str, tuple[str, int]]
@@ -1705,6 +1688,7 @@ class ClassIngestMixin:
             self._record_php_namespace(class_node, class_props)
         elif language == cs.SupportedLanguage.CSHARP:
             self._record_csharp_namespace(class_node, class_qn, class_props)
+            class_props.update(csharp_graph_facts.type_props(class_node))
             self._record_csharp_arity(class_node, class_name, class_props)
         elif language == cs.SupportedLanguage.GO and node_type == NodeType.INTERFACE:
             # Stored so an incremental run that does not re-parse the
@@ -1875,6 +1859,8 @@ class ClassIngestMixin:
             self._record_csharp_class_members(
                 member_node, class_qn, module_qn, modifiers, file_path
             )
+            if shape := csharp_utils.generic_shape(member_node):
+                self.csharp_generic_shapes[class_qn] = shape
 
     def _record_rust_class_field_types(self, class_node: Node, class_qn: str) -> None:
         # Record Rust struct field types so a field-hop receiver
@@ -1901,20 +1887,18 @@ class ClassIngestMixin:
         # (`_w.M()`, `this._w.M()`) resolves, including a field inherited
         # from a base class in another file (the resolver walks
         # class_inheritance over these per-class maps).
-        field_types = csharp_utils.build_field_type_map(member_node) or {}
-        if member_node.type == cs.TS_CSHARP_RECORD_DECLARATION:
-            _csharp_record_parameter_types(member_node, field_types)
+        field_types = csharp_utils.member_type_map(member_node)
         if field_types:
             self.class_field_types[class_qn] = field_types
+        # The declaring module, recorded because the class qn cannot yield
+        # it: a namespace pushes the qn under a sibling module's qn (#1769
+        # review). Every type's, since its members' written types resolve
+        # in that file (PR 2814 review).
+        self.csharp_class_owner_module[class_qn] = module_qn
         # Declared type-parameter count: `Builder<TResult>` -> 1;
         # unrecorded means 0, so only generics are stored.
-        arity = csharp_utils.type_parameter_count(member_node)
-        if arity:
+        if arity := csharp_utils.type_parameter_count(member_node):
             self.csharp_class_generic_arity[class_qn] = arity
-            # The declaring module, recorded because the class qn
-            # cannot yield it: a namespace pushes the qn under a
-            # sibling module's qn (#1769 review).
-            self.csharp_class_owner_module[class_qn] = module_qn
         # A `partial` type is split across files into N path-distinct
         # nodes; group the parts into one shared list so a typed receiver
         # resolves members and bases from any part. The key is the
@@ -2358,6 +2342,10 @@ class ClassIngestMixin:
         module_qn = scope.module_qn
         if language == cs.SupportedLanguage.CSHARP:
             self.csharp_call_shapes[ingested_qn] = csharp_call_shape(method_node)
+            if conversion := csharp_utils.implicit_conversion(method_node):
+                self.csharp_implicit_conversions.setdefault(scope.class_qn, []).append(
+                    conversion
+                )
             if (
                 method_node.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE_PARAMETERS)
                 is not None
@@ -2765,7 +2753,11 @@ class ClassIngestMixin:
             else cs.SEPARATOR_DOT.join([self.project_name, *parts])
         )
 
-    def process_all_method_overrides(self, module_qns: Collection[str] = ()) -> None:
+    def process_all_method_overrides(
+        self,
+        csharp_type_scopes: mo.ScopeOf | None = None,
+        module_qns: Collection[str] = (),
+    ) -> None:
         # Every module the graph holds, read-back ones included: a C++ type
         # name is looked up by its path within its module (issue #2455).
         mo.process_all_method_overrides(
@@ -2773,8 +2765,15 @@ class ClassIngestMixin:
             self.class_inheritance,
             self.ingestor,
             self._override_walk_implementers(),
-            self.csharp_methods,
-            self.csharp_override_methods,
+            mo.CSharpOverrideFacts(
+                methods=self.csharp_methods,
+                override_methods=self.csharp_override_methods,
+                class_generic_arity=self.csharp_class_generic_arity,
+                generic_shapes=self.csharp_generic_shapes,
+                class_namespaced=self.csharp_class_namespaced,
+                call_shapes=self.csharp_call_shapes,
+                type_scopes=csharp_type_scopes,
+            ),
             self.rust_impl_method_traits,
             self.rust_inherent_impl_methods,
             module_qns={*self.module_qn_to_file_path, *module_qns},

@@ -728,6 +728,6 @@ class TestAWrittenPathPicksByArity:
             "proj.src.Zeta.Widget.Widget.M",
         ) in calls, sorted(calls)
         assert (
-            "proj.src.App.Use.Use.Generic(Zeta.Widget)",
+            "proj.src.App.Use.Use.Generic(Zeta.Widget<int>)",
             "proj.src.Zeta.GenericWidget.Widget.M",
         ) in calls, sorted(calls)
