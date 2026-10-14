@@ -133,7 +133,8 @@ def test_the_option_partitions_a_real_collection() -> None:
     """End to end through the plugin: the two halves are the whole, disjointly."""
     everything = _collected()
     first, second = _collected("--shard", "1/2"), _collected("--shard", "2/2")
-    assert first and second
+    assert first
+    assert second
     assert first.isdisjoint(second)
     assert first | second == everything
 
