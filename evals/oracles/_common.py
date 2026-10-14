@@ -10,6 +10,7 @@ from codebase_rag import constants as cs
 
 from .. import constants as ec
 from ..types_defs import (
+    CallOracle,
     DefNode,
     EdgeKey,
     GraphData,
@@ -363,3 +364,44 @@ def payload_to_graph(payload: OraclePayload) -> GraphData:
         edges=records_to_edges(payload.get(ec.ORACLE_KEY_EDGES, [])),
         name_edges=records_to_name_edges(payload.get(ec.ORACLE_KEY_NAME_EDGES, [])),
     )
+
+
+# A callee is first-party when its simple name is a declared function or
+# method; oracles whose language admits other callables pass their own set.
+FUNCTIONS_AND_METHODS = frozenset(
+    {cs.NodeLabel.FUNCTION.value, cs.NodeLabel.METHOD.value}
+)
+
+
+def payload_call_edges(
+    payload: OraclePayload,
+    callable_kinds: frozenset[str] = FUNCTIONS_AND_METHODS,
+    *,
+    use_covered: bool = False,
+) -> CallOracle:
+    """File-level call sites restricted to first-party callees.
+
+    With `use_covered`, grading is also held to the files the oracle reports
+    it parsed cleanly, for an oracle that silently skips what it cannot parse
+    (scalameta on Scala 3 syntax): those files then stay out of both sides.
+    """
+    declared = frozenset(
+        rec[ec.ORACLE_KEY_NAME]
+        for rec in payload.get(ec.ORACLE_KEY_NODES, [])
+        if rec.get(ec.ORACLE_KEY_KIND) in callable_kinds
+    )
+    covered = (
+        frozenset(
+            rel for rel in payload.get(ec.ORACLE_KEY_COVERED, []) if not is_ignored(rel)
+        )
+        if use_covered
+        else None
+    )
+    edges = {
+        (call[ec.ORACLE_KEY_FILE], call[ec.ORACLE_KEY_NAME])
+        for call in payload.get(ec.ORACLE_KEY_CALLS, [])
+        if call[ec.ORACLE_KEY_NAME] in declared
+        and not is_ignored(call[ec.ORACLE_KEY_FILE])
+        and (covered is None or call[ec.ORACLE_KEY_FILE] in covered)
+    }
+    return CallOracle(edges, declared, covered)

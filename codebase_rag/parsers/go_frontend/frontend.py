@@ -24,7 +24,7 @@ from loguru import logger
 from ... import constants as cs
 from ... import logs as ls
 from ...config import settings
-from ..build_lock import build_cached_artifact
+from ..build_lock import artifact_fresh, build_cached_artifact, newest_source_mtime
 from ..frontend_mode import resolve_frontend_mode
 from ..go.module_paths import discover_go_module_paths
 
@@ -191,11 +191,7 @@ def _cache_dir() -> Path:
 def _newest_source_mtime() -> float:
     # go.mod/go.sum pin the resolved deps, so the three tracked sources are the
     # complete build input; a bump to any of them re-triggers the compile.
-    return max((_TOOL_SRC / name).stat().st_mtime for name in _TOOL_SOURCES)
-
-
-def _binary_fresh(binary: Path) -> bool:
-    return binary.is_file() and binary.stat().st_mtime >= _newest_source_mtime()
+    return newest_source_mtime(_TOOL_SRC, _TOOL_SOURCES)
 
 
 def _compile_tool(go: str, src: Path, out: Path) -> bool | None:
@@ -383,7 +379,7 @@ def _build_tool(go: str) -> Path | None:
     src = cache / "src"
     out = cache / "out"
     binary = out / _BINARY_NAME
-    if _binary_fresh(binary):
+    if artifact_fresh(binary, _newest_source_mtime):
         return binary
     version = _toolchain_version(go)
     if (required := _too_old(version)) is not None:
@@ -401,7 +397,7 @@ def _build_tool(go: str) -> Path | None:
     return build_cached_artifact(
         cache,
         binary,
-        lambda: _binary_fresh(binary),
+        lambda: artifact_fresh(binary, _newest_source_mtime),
         lambda: _compile_and_remember(go, src, out, marker, version),
         _BUILD_LOCK,
         _LOCK_TRIES,
