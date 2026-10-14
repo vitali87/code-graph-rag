@@ -188,6 +188,89 @@ def test_a_caller_that_still_names_the_removed_symbol_is_dangling(
     assert set(dangling) <= set(_dangling(delta))
 
 
+# Each edit removes the callee and touches the caller's file, but the call
+# stays, written under a name other than the callee's own: the body no
+# longer naming the callee proves nothing.
+@pytest.mark.parametrize(
+    ("files", "edits", "dangling"),
+    [
+        pytest.param(
+            {
+                "lib.py": "def helper(x):\n    return x + 1\n",
+                "m.py": "from lib import helper as h\n\n\ndef run(x):\n    return h(x)\n",
+            },
+            {
+                "lib.py": "def other():\n    return 0\n",
+                "m.py": "from lib import helper as h\n\n\ndef run(x):\n    return h(x)\n"
+                "\n\ndef extra():\n    return 0\n",
+            },
+            ("run", "helper"),
+            id="python-import-alias",
+        ),
+        pytest.param(
+            {
+                "util.js": "export default function compute(x) {\n  return x + 1;\n}\n",
+                "app.js": 'import calc from "./util.js";\n\n'
+                "export function run(x) {\n  return calc(x);\n}\n",
+            },
+            {
+                "util.js": "export function other(x) {\n  return x;\n}\n",
+                "app.js": 'import calc from "./util.js";\n\n'
+                "export function run(x) {\n  return calc(x);\n}\n\n"
+                "export function extra() {\n  return 0;\n}\n",
+            },
+            ("run", "compute"),
+            id="js-default-import",
+        ),
+        pytest.param(
+            {
+                "ser.js": "module.exports = function toText(v) {\n  return String(v);\n};\n",
+                "app.js": 'const serialize = require("./ser");\n\n'
+                "function run() {\n  return serialize(1);\n}\n"
+                "module.exports = { run };\n",
+            },
+            {
+                "ser.js": "module.exports = {};\n",
+                "app.js": 'const serialize = require("./ser");\n\n'
+                "function run() {\n  return serialize(2);\n}\n"
+                "module.exports = { run };\n",
+            },
+            ("run", "toText"),
+            id="commonjs-whole-module-require",
+        ),
+        pytest.param(
+            {
+                "m.py": "class Widget:\n    def __init__(self, x):\n        self.x = x\n\n\n"
+                "def run():\n    return Widget(1)\n",
+            },
+            {
+                "m.py": "class Widget:\n    pass\n\n\ndef run():\n    return Widget(2)\n",
+            },
+            ("run", "__init__"),
+            id="python-implicit-constructor",
+        ),
+        pytest.param(
+            {
+                "m.py": "def helper(x):\n    return x + 1\n\n\n"
+                "def run(x):\n    h = helper\n    return h(x)\n",
+            },
+            {"m.py": "def run(x):\n    return h(x)\n"},
+            ("run", "helper"),
+            id="python-local-alias",
+        ),
+    ],
+)
+def test_a_call_made_under_another_name_stays_dangling(
+    temp_repo: Path,
+    files: dict[str, str],
+    edits: dict[str, str],
+    dangling: tuple[str, str],
+) -> None:
+    delta = _edit(temp_repo, files, edits)
+
+    assert dangling in _dangling(delta)
+
+
 def test_cgr_check_passes_a_callback_replaced_by_a_loop(temp_repo: Path) -> None:
     root = temp_repo
     before = "export function total(xs) { return xs.reduce((a, b) => a + b, 0); }\n"

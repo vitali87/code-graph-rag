@@ -637,6 +637,29 @@ def _symbols(
 # --- dangling callers ---------------------------------------------------------
 
 
+# A site's line and column.
+_Position = tuple[int | None, int | None]
+
+
+def _named_only_as_itself(
+    site: CallSite, callee: Definition, held: dict[str, set[_Position]]
+) -> bool:
+    """Whether the call can only have been written as the callee's own name.
+
+    An import binds a function under any name (`from lib import helper as
+    h`, a default import, `const serialize = require('./ser')`), so only one
+    of the caller's own file qualifies. A method runs under names it does
+    not carry (`Widget(1)` calls `Widget.__init__`). A function taken as a
+    value anywhere but this site can be called through what holds it
+    (`h = helper; h(x)`).
+    """
+    return (
+        callee.label == cs.NodeLabel.FUNCTION
+        and callee.path == site.caller_path
+        and held.get(site.callee, set()) <= {(site.line, site.col)}
+    )
+
+
 def _still_names(
     site: CallSite, callee: Definition, after: Snapshot, repo_root: Path | None
 ) -> bool:
@@ -674,13 +697,20 @@ def _dangling(
     gone = set(symbols["removed"]) | {r["old"] for r in symbols["renamed"]}
     renamed_to = {r["old"]: r["new"] for r in symbols["renamed"]}
     after_pairs = {(site.caller, site.callee) for site in after.sites}
+    held: dict[str, set[_Position]] = {}
+    for site in before.sites:
+        if site.rel == cs.RelationshipType.REFERENCES:
+            held.setdefault(site.callee, set()).add((site.line, site.col))
     out: list[DanglingCaller] = []
     seen: set[tuple[str, str, int | None, int | None]] = set()
     for site in before.sites:
         if site.callee not in gone:
             continue
+        callee = before.definitions[site.callee]
         # Only a caller the edit touched is in the after-snapshot to read.
-        if not _still_names(site, before.definitions[site.callee], after, repo_root):
+        if _named_only_as_itself(site, callee, held) and not _still_names(
+            site, callee, after, repo_root
+        ):
             continue
         new_name = renamed_to.get(site.callee)
         # A caller re-parsed in this pass that now binds to the renamed
