@@ -47,6 +47,35 @@ def receiver_rebinding(call: Node, receiver: str) -> ReceiverRebinding:
     return ReceiverRebinding(always=always, sometimes=sometimes)
 
 
+def annotates_receiver(call: Node, receiver: str) -> bool:
+    """Whether the def enclosing `call` declares `receiver` with an annotation.
+
+    `def typed(self: Other)` types the receiver from the def's entry, so that
+    type holds for a call no rebinding precedes, unlike the one a body
+    `self = Other()` puts in the method-wide map.
+    """
+    function = _enclosing_function(call)
+    params = (
+        function.child_by_field_name(cs.TS_FIELD_PARAMETERS)
+        if function is not None
+        else None
+    )
+    if params is None:
+        return False
+    for param in params.named_children:
+        if param.type == cs.TS_PY_TYPED_PARAMETER:
+            name = next(
+                (c for c in param.children if c.type == cs.TS_PY_IDENTIFIER), None
+            )
+        elif param.type == cs.TS_PY_TYPED_DEFAULT_PARAMETER:
+            name = param.child_by_field_name(cs.TS_FIELD_NAME)
+        else:
+            continue
+        if name is not None and safe_decode_text(name) == receiver:
+            return True
+    return False
+
+
 def _enclosing_function(node: Node) -> Node | None:
     current = node.parent
     while current is not None:
