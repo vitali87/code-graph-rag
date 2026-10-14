@@ -103,6 +103,19 @@ class OracleCall(TypedDict):
     name: str
 
 
+# One first-party call site at file granularity: (caller_file, callee_simple_name).
+CallEdge = tuple[str, str]
+
+
+class CallOracle(NamedTuple):
+    edges: set[CallEdge]
+    # The first-party name universe, so the cgr side is held to the same names.
+    declared: frozenset[str]
+    # The files the oracle parsed cleanly, for oracles that silently skip what
+    # they cannot parse; None when it covers every file.
+    covered: frozenset[str] | None = None
+
+
 class OraclePayload(TypedDict):
     nodes: list[OracleRecord]
     edges: list[OracleEdge]
@@ -110,6 +123,9 @@ class OraclePayload(TypedDict):
     # Optional: only call-aware oracles (Go multi-language retrieval) emit call
     # sites; structure-only oracles omit this key.
     calls: NotRequired[list[OracleCall]]
+    # Optional: only an oracle that skips unparseable files (scalameta) lists
+    # the ones it parsed cleanly.
+    covered: NotRequired[list[str]]
 
 
 class IndexingStats(TypedDict):
