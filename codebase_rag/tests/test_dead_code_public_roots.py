@@ -394,8 +394,10 @@ _JAVA_ENTRY_CLASSES = (
 )
 _JAVA_MAIN_DECLARATIONS = _JAVA_ENTRY_CLASSES
 # Not exported, so library mode does not root them: the exported rule reads
-# a Java member written without `public` or `protected` as not public.
-_JAVA_NOT_EXPORTED = ("PackagePrivate", "PrivateMain", "InterfaceDefault")
+# a class member written without `public` or `protected` as not public. An
+# interface member is public without a modifier (JLS 9.4, #2749), so
+# `InterfaceDefault` roots as public code.
+_JAVA_NOT_EXPORTED = ("PackagePrivate", "PrivateMain")
 
 
 def _java_main_source(name: str, signature: str) -> str:
