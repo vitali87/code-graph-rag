@@ -38,7 +38,7 @@ from .dead_code import (
     _rust_test_modules_from_nodes,
 )
 from .duplicates import _jaccard
-from .graph_query import QueryFn, _prefix
+from .graph_query import QueryFn, _longer_project_prefixes, _opt_int, _prefix
 from .language_spec import get_language_for_extension
 from .types_defs import PropertyDict, ReingestReport, ResultRow
 
@@ -263,10 +263,6 @@ def _int(value: object, default: int = 0) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else default
 
 
-def _opt_int(value: object) -> int | None:
-    return value if isinstance(value, int) and not isinstance(value, bool) else None
-
-
 def _strings(value: object) -> tuple[str, ...]:
     if isinstance(value, list):
         return tuple(str(item) for item in value)
@@ -350,18 +346,6 @@ def _named_import_bindings(
         )
         if binding.importer and binding.module and binding.imported_name
     )
-
-
-def _longer_project_prefixes(fetch_all: QueryFn, project_name: str) -> tuple[str, ...]:
-    """Return registered project names that can own a longer qualified name."""
-    requested_prefix = f"{project_name}{cs.SEPARATOR_DOT}"
-    names = {
-        name
-        for row in fetch_all(cq.CYPHER_LIST_PROJECTS, None)
-        if isinstance(name := row.get(cs.KEY_NAME), str)
-        and name.startswith(requested_prefix)
-    }
-    return tuple(sorted(names))
 
 
 def _has_longer_project_owner(
@@ -1438,6 +1422,27 @@ def _python_signature(
     decorators = _decorators(function)
     if any(d not in cs.PY_SIGNATURE_PRESERVING_DECORATORS for d in decorators):
         return None
+    return _signature_of(
+        parameters,
+        receiver=_defined_in_class(function) and cs.PY_STATICMETHOD not in decorators,
+    )
+
+
+def _defined_in_class(function: Node) -> bool:
+    """Whether the def sits directly in a class body (decorated or not)."""
+    container = function.parent
+    if container is not None and container.type == cs.TS_PY_DECORATED_DEFINITION:
+        container = container.parent
+    return (
+        container is not None
+        and container.type == cs.TS_PY_BLOCK
+        and container.parent is not None
+        and container.parent.type == cs.TS_PY_CLASS_DEFINITION
+    )
+
+
+def _signature_of(parameters: Node, receiver: bool) -> _PySignature:
+    """The `_PySignature` a def's `parameters` node spells out."""
     positional: list[str] = []
     keyword_only: list[str] = []
     positional_only: set[str] = set()
@@ -1457,15 +1462,6 @@ def _python_signature(
             (keyword_only if after_star else positional).append(name)
             if not has_default:
                 required.add(name)
-    container = function.parent
-    if container is not None and container.type == cs.TS_PY_DECORATED_DEFINITION:
-        container = container.parent
-    in_class = (
-        container is not None
-        and container.type == cs.TS_PY_BLOCK
-        and container.parent is not None
-        and container.parent.type == cs.TS_PY_CLASS_DEFINITION
-    )
     return _PySignature(
         positional=tuple(positional),
         positional_only=frozenset(positional_only),
@@ -1473,7 +1469,7 @@ def _python_signature(
         required=frozenset(required),
         var_positional=var_positional,
         var_keyword=var_keyword,
-        receiver=in_class and cs.PY_STATICMETHOD not in decorators,
+        receiver=receiver,
     )
 
 
@@ -2240,11 +2236,6 @@ def _cycles(graph: dict[str, frozenset[str]]) -> set[frozenset[str]]:
         if len(component) > 1
         or any(member in graph.get(member, ()) for member in component)
     }
-
-
-def import_cycles(graph: dict[str, frozenset[str]]) -> set[frozenset[str]]:
-    """The cyclic strongly connected components of a module import graph."""
-    return _cycles(graph)
 
 
 def _new_import_cycles(before: Snapshot, after: Snapshot) -> list[list[str]]:

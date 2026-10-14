@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ... import constants as cs
 from .constants import (
     MODE_READ_CHAR,
     MODE_UPDATE_CHAR,
     MODE_WRITE_CHARS,
     IODirection,
     ResourceKind,
+    UrlSyntax,
 )
 
 
@@ -81,3 +83,45 @@ class HandleBinding:
 
     kind: ResourceKind
     identity: str
+
+
+@dataclass(frozen=True)
+class RenderedText:
+    """A string-shaped expression rendered as resource identity text.
+
+    `literal` says whether any literal text was seen (placeholders alone
+    carry no identity); `static` whether nothing was left as a placeholder.
+    """
+
+    text: str
+    literal: bool
+    static: bool
+
+
+@dataclass(frozen=True)
+class UrlGrammar:
+    """The node types a request-URL expression is folded from (issue #2521)."""
+
+    syntax: UrlSyntax
+    string_type: str
+    content_type: str
+    # `+` between a literal prefix and the rest of the URL.
+    concat_type: str
+    template_type: str | None = None
+    substitution_type: str | None = None
+
+
+PYTHON_URL_GRAMMAR = UrlGrammar(
+    syntax=UrlSyntax.PYTHON,
+    string_type=cs.TS_PY_STRING,
+    content_type=cs.TS_PY_STRING_CONTENT,
+    concat_type=cs.TS_PY_BINARY_OPERATOR,
+)
+JS_TS_URL_GRAMMAR = UrlGrammar(
+    syntax=UrlSyntax.JS_TS,
+    string_type=cs.TS_STRING,
+    content_type=cs.TS_STRING_FRAGMENT,
+    concat_type=cs.TS_BINARY_EXPRESSION,
+    template_type=cs.TS_TEMPLATE_STRING,
+    substitution_type=cs.TS_TEMPLATE_SUBSTITUTION,
+)
