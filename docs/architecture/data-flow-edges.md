@@ -117,11 +117,17 @@ def leak():
     print(r)  # shape 3
 ```
 
-The three `FLOWS_TO` edges that body produces:
+The four `FLOWS_TO` edges that body produces. Shape 1 appears twice: once
+inside `leak`, and once through the call to `forward`:
 
 <div class="cgr-flow">
   <div class="edge">
     <span class="node res">ENV::K</span>
+    <span class="arrow flows"><span class="rel">FLOWS_TO · resource</span></span>
+    <span class="node res">STDOUT::&lt;dynamic&gt;</span>
+  </div>
+  <div class="edge">
+    <span class="node res">ENV::T</span>
     <span class="arrow flows"><span class="rel">FLOWS_TO · resource</span></span>
     <span class="node res">STDOUT::&lt;dynamic&gt;</span>
   </div>
@@ -154,6 +160,18 @@ Resource(ENV::K) -FLOWS_TO {kind: resource}-> Resource(STDOUT::<dynamic>)
 `x` is read from `ENV::K`, then passed to `print(x)`, which writes `STDOUT`. Both
 endpoints are **resource** nodes. This is the leak/provenance answer: a value
 from the environment reached standard output.
+
+The source and the sink need not share a body. `t` carries `ENV::T` into
+`forward`, whose `print(v)` writes `STDOUT`, so the same body also records
+
+```
+Resource(ENV::T) -FLOWS_TO {kind: resource}-> Resource(STDOUT::<dynamic>)
+```
+
+beside the shape 2 edge for the call itself (see the forward argument taint
+under [Scope of the current phase](#scope-of-the-current-phase)). `print(r)`
+adds no fifth edge: `r` carries `ENV::K` back from `build`, the same
+`ENV::K → STDOUT` pair as `print(x)`, and an edge is recorded once per pair.
 
 ### Shape 2 — caller to callee (`kind = arg`)
 
@@ -274,6 +292,19 @@ Within a function body, taint moves and disappears by these rules:
   `isinstance`, `issubclass`, `callable`, `hasattr`, `any`, `all`, the
   `hashlib` / `hmac` digests and `compare_digest`, and the `str` predicate and
   lookup methods (`startswith`, `endswith`, `is*`, `count`, `find`, `index`).
+  Those methods clear only on a receiver known to be a string: a literal or
+  f-string, or a name every binding of which in its scope is a string. That
+  is a `str` annotation, or a plain `name = value` whose value is a string:
+  an env read such as `os.getenv(...)` or `os.environ[...]` with no default
+  or a string default, an unshadowed `str(...)` / `repr(...)` / `input()`,
+  or a str method such as `.strip()` on a string. Any other binding form
+  (unpacking, `+=`, a walrus, a for / with / except target, a match capture,
+  an import, a nested def or class, `del`, a type parameter or alias, a
+  `global` / `nonlocal` declaration), a name read inside a lambda or
+  comprehension, and a name whose own bindings refer back to it
+  (`t = t.strip()`) leave the name unknown. On any receiver not known to be
+  a string, such as `client.find(secret)` or a `str` parameter rebound to a
+  client, the receiver and the arguments keep their taint.
   A comparison (`t == "x"`) or `not t` yields a bool and is clean too.
   Escaping and quoting (`html.escape`, `shlex.quote`) deliberately stay
   transforms: `FLOWS_TO` tracks where a value came from, and an escaped secret
@@ -353,6 +384,9 @@ RETURN p;
 MATCH (fn)-[:READS_FROM]->(r:Resource {qualified_name: 'resource::ENV::K'})
 RETURN fn.qualified_name;
 ```
+
+On the example body above, the first query returns two rows: `resource::ENV::K`
+and `resource::ENV::T`, each to `resource::STDOUT::<dynamic>`.
 
 ![The snippet above saved as flow.py, indexed with cgr start --update-graph --capture io, then the first and third example queries run in mgconsole](../assets/demos/data-flow-edges.gif)
 

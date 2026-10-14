@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag import cypher_queries as cq
 from codebase_rag.graph_dialects import DIALECT_MEMGRAPH, get_dialect
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.types_defs import BatchWrapper, PropertyValue
@@ -119,7 +120,8 @@ def test_relationship_auto_flush_retries_nodes_before_writing_edges(
     relationship_counts: list[int] = []
 
     def execute(query: str, params: BatchWrapper) -> None:
-        if "RETURN count(r)" in query:
+        # The relationship write ends in the count of rows it wrote.
+        if cq.CYPHER_RETURN_COUNT in query:
             count = sum(
                 row["from_val"] in written and row["to_val"] in written
                 for row in params["batch"]
