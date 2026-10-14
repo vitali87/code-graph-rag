@@ -33,6 +33,13 @@ SYNTHETIC_NAME_PREFIXES = "~"
 # What `errors="replace"` substitutes for an undecodable byte. Its presence
 # in an extracted symbol name means the name is damaged.
 UNICODE_REPLACEMENT_CHAR = "\ufffd"
+# Line endings a text file can use. Text-mode reading maps each one to "\n",
+# so an editor that writes back what it read must read and write with
+# newline="" (no translation) to keep the file's own endings.
+LINE_FEED = "\n"
+CARRIAGE_RETURN = "\r"
+CRLF = "\r\n"
+NEWLINE_UNTRANSLATED = ""
 
 ARG_TARGET_CODE = "target_code"
 ARG_REPLACEMENT_CODE = "replacement_code"
@@ -253,8 +260,9 @@ EMBEDDINGS_PENDING_FILENAME = ".cgr-embeddings-pending"
 PARSER_FINGERPRINT_FILENAME = ".cgr-parser-fingerprint"
 # The parser fingerprint asks each active toolchain for its version (`go
 # version`, `javac -version`, `dotnet --version`) on every sync. A probe that
-# misses the first timeout is asked once more, for longer, unless an earlier
-# process already got an answer from the same binary under the same pins.
+# misses the first timeout, or whose process the OS could not start for want
+# of a resource, is asked once more, for longer, unless an earlier process
+# already got an answer from the same binary under the same pins.
 TOOL_VERSION_PROBE_TIMEOUT = 10.0
 TOOL_VERSION_PROBE_RETRY_TIMEOUT = 30.0
 # A toolchain that could not be asked in either attempt. It is not `absent`

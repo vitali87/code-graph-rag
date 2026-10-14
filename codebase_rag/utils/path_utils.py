@@ -1,5 +1,6 @@
 import hashlib
 import os
+import posixpath
 import re
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
@@ -138,6 +139,19 @@ def cached_file_identity_posix(file_path: Path) -> str:
     inside the repository for a link whose target points outside it.
     """
     return (file_path.parent.resolve() / file_path.name).as_posix()
+
+
+def portable_posix(path: str) -> str:
+    """A path in normalised POSIX form, whichever OS recorded it.
+
+    Nodes store `as_posix()` of the path relative to the root, so `\\`
+    separators, `./` and doubled slashes are spellings of the same file.
+    ``Path.as_posix`` converts only the running host's separator, so a
+    Windows path read on Linux kept its backslashes and never matched a graph
+    path. No real source path contains a backslash on POSIX, so treating one
+    as a separator loses nothing.
+    """
+    return posixpath.normpath(path.replace(cs.SEPARATOR_BACKSLASH, cs.SEPARATOR_SLASH))
 
 
 # #495: .cgrignore lines and --exclude values are interpreted with

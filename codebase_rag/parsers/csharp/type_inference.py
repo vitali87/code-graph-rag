@@ -21,7 +21,7 @@ from ...utils import qn_markers
 from ..csharp_frontend import CallSiteKey
 from ..frontends.protocol import ResolvedCallSite
 from ..import_processor import ImportProcessor
-from ..semantic_call_join import call_site_key, declared_location
+from ..semantic_call_join import call_site_key, resolve_call_site
 from ..utils import safe_decode_text
 from .arity import CSharpArityIndex
 from .arity import spellings as arity_spellings
@@ -1190,29 +1190,22 @@ class CSharpTypeInferenceEngine:
     def _semantic_call_target(
         self, call_node: Node, module_qn: str
     ) -> tuple[str, str] | None:
-        if not (self.csharp_call_sites or self.csharp_external_sites):
-            return None
-        key = self._call_site_key(call_node, module_qn)
-        if key is None:
-            return None
-        fact = self.csharp_call_sites.get(key)
-        if fact is not None:
-            return declared_location(
-                fact.target_file,
-                fact.target_line,
-                fact.target_col,
-                self.function_locations,
-                self.module_qn_to_file_path,
-                self.repo_path,
-                self._rel_to_module,
-            )
-        if key in self.csharp_external_sites:
-            # Roslyn resolved this site to a METADATA method: the call
-            # provably leaves the repo, so return the external sentinel and
-            # keep the name trie from fabricating a first-party edge (the
-            # untypeable-receiver fp class the pure frontend cannot see).
-            return CSHARP_EXTERNAL_TARGET
-        return None
+        # A site Roslyn resolved to a METADATA method provably leaves the repo,
+        # so the external sentinel keeps the name trie from fabricating a
+        # first-party edge (the untypeable-receiver fp class the pure frontend
+        # cannot see).
+        return resolve_call_site(
+            call_node,
+            module_qn,
+            self._call_site_key,
+            self.csharp_call_sites,
+            self.csharp_external_sites,
+            CSHARP_EXTERNAL_TARGET,
+            self.function_locations,
+            self.module_qn_to_file_path,
+            self.repo_path,
+            self._rel_to_module,
+        )
 
     def _call_site_key(self, call_node: Node, module_qn: str) -> CallSiteKey | None:
         name_node = self._callee_name_node(call_node)
