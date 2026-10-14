@@ -197,10 +197,11 @@ class _CgrGroup(TyperGroup):
         # Every command reaches the graph through the ingestor, which raises
         # this at connect time with the fix in its message; printing it here
         # covers them all, the delegated groups and the chat included (#2443).
+        # On stderr, where a report command's stdout is its report (#2642).
         try:
             return super().invoke(ctx)
         except GraphUnavailableError as e:
-            app_context.console.print(style(str(e), cs.Color.RED))
+            app_context.err_console.print(style(str(e), cs.Color.RED))
             raise typer.Exit(1) from e
 
 

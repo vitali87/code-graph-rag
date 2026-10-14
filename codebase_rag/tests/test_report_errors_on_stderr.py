@@ -17,6 +17,7 @@ from typer.testing import CliRunner
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.cli import app
+from codebase_rag.services.graph_service import GraphUnavailableError
 from codebase_rag.types_defs import PropertyValue, ResultRow
 
 PROJECTS = ["alpha", "beta"]
@@ -119,6 +120,26 @@ def test_a_failure_leaves_stdout_empty_and_explains_on_stderr(
     assert stdout == ""
     assert stderr.strip()
     assert named in stderr
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        pytest.param(["stats", "-n", "alpha"], id="stats"),
+        pytest.param(["dead-code", "-n", "alpha", "--format", "json"], id="dead-code"),
+        pytest.param(
+            ["duplicates", "-n", "alpha", "--format", "json"], id="duplicates"
+        ),
+    ],
+)
+def test_an_unreachable_graph_leaves_stdout_empty(args: list[str]) -> None:
+    unreachable = GraphUnavailableError("graph down at 127.0.0.1:7687")
+    with patch("codebase_rag.cli.connect_memgraph", side_effect=unreachable):
+        result = CliRunner().invoke(app, args)
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "graph down" in result.stderr
 
 
 def test_stats_status_line_goes_to_stderr() -> None:
