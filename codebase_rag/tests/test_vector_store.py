@@ -14,10 +14,15 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.constants import VectorStoreBackend
+from codebase_rag.types_defs import EmbeddingSymbol
 from codebase_rag.utils.dependencies import has_pymilvus, has_qdrant_client
 
 if TYPE_CHECKING:
     from qdrant_client import QdrantClient
+
+
+def _fn(qualified_name: str) -> EmbeddingSymbol:
+    return EmbeddingSymbol(cs.NodeLabel.FUNCTION, qualified_name)
 
 
 @pytest.fixture(autouse=True)
@@ -303,27 +308,28 @@ def test_a_failed_clear_does_not_leave_its_unvalidated_client_cached(
 def test_store_embedding_calls_upsert(
     mock_qdrant_client: MagicMock, reset_global_client: None
 ) -> None:
-    from codebase_rag.vector_store import store_embedding
+    from codebase_rag.vector_store import embedding_point_id, store_embedding
 
     node_id = 123
     embedding = [0.1] * 768
-    qualified_name = "myproject.module.function"
+    symbol = _fn("myproject.module.function")
 
     with patch(
         "codebase_rag.vector_store.get_qdrant_client",
         return_value=mock_qdrant_client,
     ):
-        store_embedding(node_id, embedding, qualified_name)
+        store_embedding("myproject", node_id, embedding, symbol)
 
     mock_qdrant_client.upsert.assert_called_once()
     call_kwargs = mock_qdrant_client.upsert.call_args[1]
     assert call_kwargs["collection_name"] == "code_embeddings"
     points = call_kwargs["points"]
     assert len(points) == 1
-    assert points[0].id == node_id
+    assert points[0].id == embedding_point_id("myproject", symbol)
     assert points[0].vector == embedding
     assert points[0].payload["node_id"] == node_id
-    assert points[0].payload["qualified_name"] == qualified_name
+    assert points[0].payload["qualified_name"] == symbol.qualified_name
+    assert points[0].payload["project"] == "myproject"
 
 
 @pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")
@@ -338,7 +344,7 @@ def test_store_embedding_handles_exception(
         "codebase_rag.vector_store.get_qdrant_client",
         return_value=mock_qdrant_client,
     ):
-        store_embedding(123, [0.1] * 768, "test.func")
+        store_embedding("test", 123, [0.1] * 768, _fn("test.func"))
 
 
 @pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")
@@ -446,9 +452,9 @@ def test_store_and_search_roundtrip(integration_client: QdrantClient) -> None:
     embedding2 = [0.0, 1.0] + [0.0] * 766
     embedding3 = [0.9, 0.1] + [0.0] * 766
 
-    store_embedding(1, embedding1, "project.module1.func1")
-    store_embedding(2, embedding2, "project.module2.func2")
-    store_embedding(3, embedding3, "project.module3.func3")
+    store_embedding("project", 1, embedding1, _fn("project.module1.func1"))
+    store_embedding("project", 2, embedding2, _fn("project.module2.func2"))
+    store_embedding("project", 3, embedding3, _fn("project.module3.func3"))
 
     query = [0.95, 0.05] + [0.0] * 766
     results = search_embeddings(query, top_k=3)
@@ -466,14 +472,15 @@ def test_upsert_updates_existing(integration_client: QdrantClient) -> None:
     embedding_v1 = [1.0] + [0.0] * 767
     embedding_v2 = [0.0, 1.0] + [0.0] * 766
 
-    store_embedding(1, embedding_v1, "project.func")
-    store_embedding(1, embedding_v2, "project.func_updated")
+    # The same function, re-parsed under a new node id with a new body.
+    store_embedding("project", 1, embedding_v1, _fn("project.func"))
+    store_embedding("project", 2, embedding_v2, _fn("project.func"))
 
     query = [0.0, 1.0] + [0.0] * 766
-    results = search_embeddings(query, top_k=1)
+    results = search_embeddings(query, top_k=5)
 
     assert len(results) == 1
-    assert results[0][0] == 1
+    assert results[0][0] == 2
     assert results[0][1] > 0.99
 
 
@@ -585,18 +592,29 @@ def test_milvus_store_search_verify_delete_roundtrip(
         patch.object(vs.settings, "MILVUS_COLLECTION_NAME", collection_name),
         patch.object(vs.settings, "MILVUS_VECTOR_DIM", 4),
     ):
+        symbols = {
+            101: _fn("pkg.auth.login"),
+            102: _fn("pkg.billing.charge"),
+            103: _fn("pkg.auth.refresh"),
+            999: _fn("pkg.gone"),
+        }
         stored = vs.store_embedding_batch(
+            "pkg",
             [
-                (101, [1.0, 0.0, 0.0, 0.0], "pkg.auth.login"),
-                (102, [0.0, 1.0, 0.0, 0.0], "pkg.billing.charge"),
-                (103, [0.9, 0.1, 0.0, 0.0], "pkg.auth.refresh"),
-            ]
+                (101, [1.0, 0.0, 0.0, 0.0], symbols[101]),
+                (102, [0.0, 1.0, 0.0, 0.0], symbols[102]),
+                (103, [0.9, 0.1, 0.0, 0.0], symbols[103]),
+            ],
         )
         vs.close_vector_store_client()
         results = vs.search_embeddings([0.95, 0.05, 0.0, 0.0], top_k=2)
-        found_ids = vs.verify_stored_ids({101, 102, 999})
+        found_ids = vs.verify_stored_ids(
+            "pkg", {n: symbols[n] for n in (101, 102, 999)}
+        )
         vs.delete_project_embeddings("pkg", [101, 102])
-        remaining_ids = vs.verify_stored_ids({101, 102, 103})
+        remaining_ids = vs.verify_stored_ids(
+            "pkg", {n: symbols[n] for n in (101, 102, 103)}
+        )
 
     assert stored == 3
     assert [node_id for node_id, _score in results] == [101, 103]
@@ -632,8 +650,10 @@ def test_milvus_clean_rebuilds_a_collection_of_the_wrong_size(
             with pytest.raises(ValueError, match="dimension 8"):
                 vs.get_milvus_client()
             vs.MilvusVectorStore().clear_all_embeddings()
-            stored = vs.store_embedding_batch([(2, [1.0, 0.0, 0.0, 0.0], "pkg.b")])
-            found = vs.verify_stored_ids({1, 2})
+            stored = vs.store_embedding_batch(
+                "pkg", [(2, [1.0, 0.0, 0.0, 0.0], _fn("pkg.b"))]
+            )
+            found = vs.verify_stored_ids("pkg", {1: _fn("pkg.a"), 2: _fn("pkg.b")})
 
     assert stored == 1
     assert found == {2}
@@ -786,12 +806,13 @@ def test_storing_vectors_of_the_wrong_size_names_the_setting_to_change(
 
     store = MagicMock()
     store.backend = backend
+    batch = [(1, [0.1, 0.2, 0.3], _fn("pkg.a"))]
     with (
         patch.object(vs.settings, setting, 4),
         patch.object(vs, "_get_vector_store", return_value=store),
     ):
         with pytest.raises(ValueError, match=f"3-dimensional.*{setting}"):
-            vs.store_embedding_batch([(1, [0.1, 0.2, 0.3], "pkg.a")])
+            vs.store_embedding_batch("pkg", batch)
 
     store.store_embedding_batch.assert_not_called()
 
@@ -802,14 +823,14 @@ def test_vectors_of_the_configured_size_reach_the_store() -> None:
     store = MagicMock()
     store.backend = VectorStoreBackend.QDRANT
     store.store_embedding_batch.return_value = 1
-    points = [(1, [0.1, 0.2, 0.3, 0.4], "pkg.a")]
+    points = [(1, [0.1, 0.2, 0.3, 0.4], _fn("pkg.a"))]
     with (
         patch.object(vs.settings, "QDRANT_VECTOR_DIM", 4),
         patch.object(vs, "_get_vector_store", return_value=store),
     ):
-        assert vs.store_embedding_batch(points) == 1
+        assert vs.store_embedding_batch("pkg", points) == 1
 
-    store.store_embedding_batch.assert_called_once_with(points)
+    store.store_embedding_batch.assert_called_once_with("pkg", points)
 
 
 def test_a_query_of_the_wrong_size_names_the_setting_to_change() -> None:

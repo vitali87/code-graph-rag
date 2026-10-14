@@ -7,6 +7,7 @@
 # (counted, never dropped), so it stays independent of cgr.
 import ast
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, NamedTuple
 
@@ -25,15 +26,21 @@ from .oracles.cpp_oracle import cpp_available, run_cpp_oracle
 
 if TYPE_CHECKING:
     from clang.cindex import Cursor
+from .oracle_guard import oracle_unavailable_exits, require_oracle
 from .oracles.csharp_oracle import (
     csharp_oracle_available,
+    csharp_oracle_skip_reason,
     run_csharp_oracle,
 )
 from .oracles.java_oracle import java_available, run_java_oracle
-from .oracles.typescript_oracle import run_typescript_oracle, typescript_available
+from .oracles.typescript_oracle import (
+    run_typescript_oracle,
+    typescript_available,
+    typescript_skip_reason,
+)
 from .score import _prf
 from .structure_report import render, write_outputs
-from .types_defs import DiffBucket, LocationStats, ScoreResult, ScoreRow
+from .types_defs import DiffBucket, GraphData, LocationStats, ScoreResult, ScoreRow
 
 console_target = Path(ec.INHERITANCE_DEFAULT_TARGET)
 
@@ -43,6 +50,9 @@ _INHERITS = cs.RelationshipType.INHERITS.value
 _IMPLEMENTS = cs.RelationshipType.IMPLEMENTS.value
 _OVERRIDES = cs.RelationshipType.OVERRIDES.value
 _EMPTY_LOCATION = LocationStats(0, 0, 0, 0.0, 0)
+# Java, C# and TypeScript fold class and interface supertypes into one
+# relation, as cgr's own edges are graded.
+_SUPERTYPE_RELS = (_INHERITS, _IMPLEMENTS)
 
 InheritEdge = tuple[str, str]
 OverrideEdge = tuple[str, str, str]
@@ -224,16 +234,49 @@ def _location_key(file: str, line: int) -> str:
     return f"{file}{ec.LOCATION_KEY_SEPARATOR}{line}"
 
 
-def java_oracle_inheritance(target: Path) -> OracleResult:
-    # The javac oracle already emits extends/implements as `name_edges`; no
-    # oracle-side work is needed (issue #1190). It emits no OVERRIDES, so that
-    # category stays empty and _prf omits the row rather than scoring a
-    # category the oracle cannot adjudicate.
-    graph = run_java_oracle(target)
+def _indexed_file_filter(target: Path) -> Callable[[str], bool]:
+    """Whether cgr indexes a target-relative file, under the target's own rules.
+
+    The located-supertype oracles walk the target themselves, so the
+    configured exclusions have to be applied to their OUTPUT: the cgr side
+    captures through `_capture`, which passes the merged ignore rules to
+    `GraphUpdater` (issue #1520), and grading a wider set on the oracle side
+    than the graph can contain scores every edge in an excluded directory as
+    a miss (Greptile P1, PR #1519). Filtered through the indexer's own
+    predicate rather than a second copy of the rule, for the same reason
+    `_iter_py_files` is.
+    """
+    exclude_paths, unignore_paths = ignore_rules(target)
+    eligible: dict[str, bool] = {}
+
+    def _keep(rel_file: str) -> bool:
+        if rel_file not in eligible:
+            eligible[rel_file] = not should_skip_path(
+                target / rel_file, target, exclude_paths, unignore_paths, is_file=True
+            )
+        return eligible[rel_file]
+
+    return _keep
+
+
+def _located_oracle_inheritance(
+    graph: GraphData,
+    target: Path,
+    rel_types: tuple[str, ...] = _SUPERTYPE_RELS,
+) -> OracleResult:
+    """Supertype edges a located-subclass oracle already emits as name_edges.
+
+    The javac, libclang, Roslyn and tsc oracles all pin the subclass to a file
+    and line and name the supertype by SIMPLE name, so no oracle-side work is
+    needed (issue #1190). None of them emits OVERRIDES, so that category
+    stays empty and _prf omits the row rather than scoring a category the
+    oracle cannot adjudicate.
+    """
+    keep = _indexed_file_filter(target)
     inherits: set[InheritEdge] = set()
     subclasses: set[str] = set()
     for edge in graph.name_edges:
-        if edge.rel_type not in (_INHERITS, _IMPLEMENTS):
+        if edge.rel_type not in rel_types or not keep(edge.source.file):
             continue
         key = _location_key(edge.source.file, edge.source.start_line)
         subclasses.add(key)
@@ -246,18 +289,26 @@ def java_oracle_inheritance(target: Path) -> OracleResult:
     )
 
 
-def java_cgr_inheritance(target: Path, project: str) -> CgrResult:
+def _located_cgr_inheritance(
+    target: Path,
+    project: str,
+    suffixes: str | tuple[str, ...],
+    rel_types: tuple[str, ...] = _SUPERTYPE_RELS,
+    skip_suffix: str | None = None,
+) -> CgrResult:
     ingestor = _capture(target, project)
     props_by_node = {
         (label, str(uid)): props for (label, uid), props in ingestor.nodes.items()
     }
     inherits: set[InheritEdge] = set()
     for from_label, from_val, rel_type, _to_label, to_val in ingestor.rels:
-        if rel_type not in (_INHERITS, _IMPLEMENTS):
+        if rel_type not in rel_types:
             continue
         props = props_by_node.get((from_label, str(from_val)))
         path = str(props.get(cs.KEY_PATH, "")) if props else ""
-        if not path.endswith(ec.JAVA_SUFFIX):
+        if not path.endswith(suffixes) or (
+            skip_suffix is not None and path.endswith(skip_suffix)
+        ):
             continue
         line = props.get(cs.KEY_START_LINE) if props else None
         # Node properties are a heterogeneous union; a non-integer start_line
@@ -269,6 +320,14 @@ def java_cgr_inheritance(target: Path, project: str) -> CgrResult:
         base = str(to_val).rsplit(cs.SEPARATOR_DOT, 1)[-1]
         inherits.add((_location_key(path, line), base))
     return CgrResult(inherits=inherits, overrides=set())
+
+
+def java_oracle_inheritance(target: Path) -> OracleResult:
+    return _located_oracle_inheritance(run_java_oracle(target), target)
+
+
+def java_cgr_inheritance(target: Path, project: str) -> CgrResult:
+    return _located_cgr_inheritance(target, project, ec.JAVA_SUFFIX)
 
 
 def _resolves_inside(path: str, target: Path) -> bool:
@@ -410,194 +469,63 @@ def _cpp_compile_db_units(target: Path) -> int | None:
 
 
 def cpp_oracle_inheritance(target: Path) -> OracleResult:
-    # The libclang oracle emits base-specifiers as `name_edges` keyed the same
-    # way javac's are: the subclass pinned to a file and line, the base by
-    # SIMPLE name (`_base_simple_name` already collapses `::` and keeps the
-    # last component, mirroring cgr's normalisation). So no oracle-side work is
-    # needed here either (issue #1190).
+    # `_base_simple_name` already collapses `::` and keeps the last component,
+    # mirroring cgr's normalisation. C++ has no interfaces, so every
+    # inheritance edge arrives as INHERITS with no IMPLEMENTS counterpart to
+    # fold in; a virtual override is not distinguishable from a shadowing
+    # redeclaration without more analysis than the oracle does.
     #
-    # C++ has no interfaces, so every inheritance edge arrives as INHERITS and
-    # there is no IMPLEMENTS counterpart to fold in. The oracle emits no
-    # OVERRIDES -- a virtual override is not distinguishable from a shadowing
-    # redeclaration without more analysis than the oracle does -- so that
-    # category stays empty and _prf omits the row rather than scoring a
-    # category the oracle cannot adjudicate.
-    graph = run_cpp_oracle(target)
-    inherits: set[InheritEdge] = set()
-    subclasses: set[str] = set()
-    for edge in graph.name_edges:
-        # Defensive rather than load-bearing today: the C++ oracle has a single
-        # name-edge construction site and it is hard-coded to INHERITS, so this
-        # filter currently rejects nothing and no test can distinguish its
-        # removal. It stays because the oracle gaining a second edge kind must
-        # not silently start scoring that kind as inheritance; the guard in
-        # test_cpp_inheritance_eval.py fails if that assumption stops holding.
-        if edge.rel_type != _INHERITS:
-            continue
-        key = _location_key(edge.source.file, edge.source.start_line)
-        subclasses.add(key)
-        inherits.add((key, edge.target_name))
-    return OracleResult(
-        inherits=inherits,
-        overrides=set(),
-        top_classes=frozenset(subclasses),
-        override_scope=frozenset(),
-    )
+    # The INHERITS-only filter is defensive rather than load-bearing today:
+    # the C++ oracle has a single name-edge construction site and it is
+    # hard-coded to INHERITS, so the filter currently rejects nothing and no
+    # test can distinguish its removal. It stays because the oracle gaining a
+    # second edge kind must not silently start scoring that kind as
+    # inheritance; the guard in test_cpp_inheritance_eval.py fails if that
+    # assumption stops holding.
+    return _located_oracle_inheritance(run_cpp_oracle(target), target, (_INHERITS,))
 
 
 def cpp_cgr_inheritance(target: Path, project: str) -> CgrResult:
-    ingestor = _capture(target, project)
-    props_by_node = {
-        (label, str(uid)): props for (label, uid), props in ingestor.nodes.items()
-    }
-    inherits: set[InheritEdge] = set()
-    for from_label, from_val, rel_type, _to_label, to_val in ingestor.rels:
-        if rel_type != _INHERITS:
-            continue
-        props = props_by_node.get((from_label, str(from_val)))
-        path = str(props.get(cs.KEY_PATH, "")) if props else ""
-        # A C++ class can be declared in any of the header or source suffixes,
-        # so the whole set is eligible rather than one extension.
-        if not path.endswith(ec.CPP_SUFFIXES):
-            continue
-        line = props.get(cs.KEY_START_LINE) if props else None
-        # Node properties are a heterogeneous union; a non-integer start_line
-        # is unusable as a location key, so skip rather than coerce it.
-        if not isinstance(line, int):
-            continue
-        # The oracle names the base simply, so the qn is reduced to its last
-        # segment to compare like with like.
-        base = str(to_val).rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        inherits.add((_location_key(path, line), base))
-    return CgrResult(inherits=inherits, overrides=set())
+    # A C++ class can be declared in any of the header or source suffixes, so
+    # the whole set is eligible rather than one extension.
+    return _located_cgr_inheritance(
+        target, project, ec.CPP_SUFFIXES, rel_types=(_INHERITS,)
+    )
 
 
 def csharp_oracle_inheritance(target: Path) -> OracleResult:
     # The Roslyn oracle emits base classes as INHERITS and base interfaces as
-    # IMPLEMENTS, both by SIMPLE name with the subtype pinned to a location --
-    # the same shape javac's oracle produces, so both kinds fold together here
-    # exactly as they do for Java (issue #1190).
-    #
-    # Unlike the C++ arm, the rel_type filter is load-bearing rather than
-    # defensive: this oracle really does emit two kinds, and the pair is
-    # deliberately kept rather than split, because cgr's own edges are graded
-    # as one supertype relation.
-    graph = run_csharp_oracle(target)
-    inherits: set[InheritEdge] = set()
-    subclasses: set[str] = set()
-    for edge in graph.name_edges:
-        if edge.rel_type not in (_INHERITS, _IMPLEMENTS):
-            continue
-        key = _location_key(edge.source.file, edge.source.start_line)
-        subclasses.add(key)
-        inherits.add((key, edge.target_name))
-    return OracleResult(
-        inherits=inherits,
-        overrides=set(),
-        top_classes=frozenset(subclasses),
-        override_scope=frozenset(),
-    )
+    # IMPLEMENTS -- the same shape javac's oracle produces, so both kinds fold
+    # together exactly as they do for Java. Unlike the C++ arm, the rel_type
+    # filter is load-bearing rather than defensive: this oracle really does
+    # emit two kinds, and the pair is deliberately kept rather than split,
+    # because cgr's own edges are graded as one supertype relation.
+    return _located_oracle_inheritance(run_csharp_oracle(target), target)
 
 
 def csharp_cgr_inheritance(target: Path, project: str) -> CgrResult:
-    ingestor = _capture(target, project)
-    props_by_node = {
-        (label, str(uid)): props for (label, uid), props in ingestor.nodes.items()
-    }
-    inherits: set[InheritEdge] = set()
-    for from_label, from_val, rel_type, _to_label, to_val in ingestor.rels:
-        if rel_type not in (_INHERITS, _IMPLEMENTS):
-            continue
-        props = props_by_node.get((from_label, str(from_val)))
-        path = str(props.get(cs.KEY_PATH, "")) if props else ""
-        if not path.endswith(ec.CS_SUFFIX):
-            continue
-        line = props.get(cs.KEY_START_LINE) if props else None
-        # Node properties are a heterogeneous union; a non-integer start_line
-        # is unusable as a location key, so skip rather than coerce it.
-        if not isinstance(line, int):
-            continue
-        # The oracle names the supertype simply, so the qn is reduced to its
-        # last segment to compare like with like.
-        base = str(to_val).rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        inherits.add((_location_key(path, line), base))
-    return CgrResult(inherits=inherits, overrides=set())
+    return _located_cgr_inheritance(target, project, ec.CS_SUFFIX)
 
 
 def ts_oracle_inheritance(target: Path) -> OracleResult:
     # The tsc oracle emits a class's `extends` as INHERITS and its `implements`
-    # as IMPLEMENTS, both by SIMPLE name with the subtype pinned to a location
-    # -- the same shape javac and Roslyn produce, so both kinds fold together
-    # here exactly as they do there (issue #1190).
+    # as IMPLEMENTS, folded together exactly as for javac and Roslyn.
     #
     # An interface's `extends` also arrives as INHERITS, because cgr models a
     # superinterface as inheritance rather than implementation. That is the
     # oracle agreeing with cgr on the unit, not a miscategorisation, and
     # test_ts_inheritance_eval.py pins it so a later oracle edit cannot
     # silently drop those rows from the graded set.
-    graph = run_typescript_oracle(target)
-    # The oracle walks the target itself, so the configured exclusions have to
-    # be applied to its OUTPUT: `ts_cgr_inheritance` captures through
-    # `_capture`, which passes the merged ignore rules to `GraphUpdater`
-    # (issue #1520), and grading a wider set on the oracle side than the graph
-    # can contain scores an excluded directory as a hit on both sides
-    # (Greptile P1, PR #1519). Filtered through the indexer's own predicate
-    # rather than a second copy of the rule, for the same reason
-    # `_iter_py_files` is.
-    exclude_paths, unignore_paths = ignore_rules(target)
-    eligible: dict[str, bool] = {}
-
-    def _keep(rel_file: str) -> bool:
-        if rel_file not in eligible:
-            eligible[rel_file] = not should_skip_path(
-                target / rel_file, target, exclude_paths, unignore_paths, is_file=True
-            )
-        return eligible[rel_file]
-
-    inherits: set[InheritEdge] = set()
-    subclasses: set[str] = set()
-    for edge in graph.name_edges:
-        if edge.rel_type not in (_INHERITS, _IMPLEMENTS):
-            continue
-        if not _keep(edge.source.file):
-            continue
-        key = _location_key(edge.source.file, edge.source.start_line)
-        subclasses.add(key)
-        inherits.add((key, edge.target_name))
-    return OracleResult(
-        inherits=inherits,
-        overrides=set(),
-        top_classes=frozenset(subclasses),
-        override_scope=frozenset(),
-    )
+    return _located_oracle_inheritance(run_typescript_oracle(target), target)
 
 
 def ts_cgr_inheritance(target: Path, project: str) -> CgrResult:
-    ingestor = _capture(target, project)
-    props_by_node = {
-        (label, str(uid)): props for (label, uid), props in ingestor.nodes.items()
-    }
-    inherits: set[InheritEdge] = set()
-    for from_label, from_val, rel_type, _to_label, to_val in ingestor.rels:
-        if rel_type not in (_INHERITS, _IMPLEMENTS):
-            continue
-        props = props_by_node.get((from_label, str(from_val)))
-        path = str(props.get(cs.KEY_PATH, "")) if props else ""
-        # `.d.ts` files declare types without defining them; the oracle skips
-        # them, so grading cgr's edges from them would score rows the oracle
-        # never had a chance to produce.
-        if not path.endswith(ec.TS_SUFFIXES) or path.endswith(ec.TS_DTS_SUFFIX):
-            continue
-        line = props.get(cs.KEY_START_LINE) if props else None
-        # Node properties are a heterogeneous union; a non-integer start_line
-        # is unusable as a location key, so skip rather than coerce it.
-        if not isinstance(line, int):
-            continue
-        # The oracle names the supertype simply, so the qn is reduced to its
-        # last segment to compare like with like.
-        base = str(to_val).rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        inherits.add((_location_key(path, line), base))
-    return CgrResult(inherits=inherits, overrides=set())
+    # `.d.ts` files declare types without defining them; the oracle skips
+    # them, so grading cgr's edges from them would score rows the oracle never
+    # had a chance to produce.
+    return _located_cgr_inheritance(
+        target, project, ec.TS_SUFFIXES, skip_suffix=ec.TS_DTS_SUFFIX
+    )
 
 
 def score_inheritance(
@@ -635,6 +563,90 @@ def score_inheritance(
     return ScoreResult(rows=rows, location=_EMPTY_LOCATION, diff=diff)
 
 
+def _require_cpp_compile_db(target: Path) -> None:
+    # A compilation database is as much a precondition as libclang itself.
+    # Absent, libclang raises; present but yielding no translation unit
+    # (empty, or naming files that no longer exist), the oracle returns an
+    # empty graph and the run scores 0 edges against 0 edges -- an UNGRADED
+    # target reported as a clean result. Same fail-open shape the toolchain
+    # check exists to prevent (Greptile, PR #1513).
+    units = _cpp_compile_db_units(target)
+    if units is None:
+        logger.error(ls.CPP_ORACLE_NO_COMPILE_DB.format(target=target))
+        raise typer.Exit(code=1)
+    if units == 0:
+        logger.error(ls.CPP_ORACLE_EMPTY_COMPILE_DB.format(target=target))
+        raise typer.Exit(code=1)
+    if units < 0:
+        # Partially readable: some in-target entries parsed and some did
+        # not. Grading the remainder scores 1.0 on a half-covered project,
+        # because score_inheritance filters the unread files out of BOTH
+        # sides via top_classes (Greptile, PR #1513).
+        count = -units
+        logger.error(
+            ls.CPP_ORACLE_PARTIAL_COMPILE_DB.format(
+                count=count, suffix="y" if count == 1 else "ies", target=target
+            )
+        )
+        raise typer.Exit(code=1)
+
+
+class _LocatedArm(NamedTuple):
+    available: Callable[[], bool]
+    oracle_missing: str
+    run_oracle: Callable[[Path], OracleResult]
+    run_cgr: Callable[[Path, str], CgrResult]
+    # These oracles name supertypes by SIMPLE name while they pin the subclass
+    # to a location, so each row carries its own label: a Java 1.0 is not
+    # measuring the same unit as the Python one (issue #1190).
+    inherits_label: str
+    binary: str = ""
+    skip_reason: Callable[[], str | None] | None = None
+    # A precondition beyond the toolchain, checked before the oracle runs.
+    preflight: Callable[[Path], None] | None = None
+
+
+def _located_arms() -> dict[ec.InheritanceLanguage, _LocatedArm]:
+    # Built when the command runs rather than frozen at import, so the probes
+    # consulted are whatever this module's globals hold at that moment.
+    return {
+        ec.InheritanceLanguage.JAVA: _LocatedArm(
+            available=java_available,
+            oracle_missing=ls.JAVA_ORACLE_MISSING,
+            run_oracle=java_oracle_inheritance,
+            run_cgr=java_cgr_inheritance,
+            inherits_label=ec.JAVA_SUPERTYPES_LABEL,
+            binary=ec.JAVAC_BIN,
+        ),
+        ec.InheritanceLanguage.CPP: _LocatedArm(
+            available=cpp_available,
+            oracle_missing=ls.CPP_ORACLE_MISSING,
+            run_oracle=cpp_oracle_inheritance,
+            run_cgr=cpp_cgr_inheritance,
+            inherits_label=ec.CPP_BASES_LABEL,
+            preflight=_require_cpp_compile_db,
+        ),
+        ec.InheritanceLanguage.CSHARP: _LocatedArm(
+            available=csharp_oracle_available,
+            oracle_missing=ls.CSHARP_ORACLE_MISSING,
+            run_oracle=csharp_oracle_inheritance,
+            run_cgr=csharp_cgr_inheritance,
+            inherits_label=ec.CSHARP_SUPERTYPES_LABEL,
+            binary=ec.DOTNET_BIN,
+            skip_reason=csharp_oracle_skip_reason,
+        ),
+        ec.InheritanceLanguage.TYPESCRIPT: _LocatedArm(
+            available=typescript_available,
+            oracle_missing=ls.TS_ORACLE_MISSING,
+            run_oracle=ts_oracle_inheritance,
+            run_cgr=ts_cgr_inheritance,
+            inherits_label=ec.TS_SUPERTYPES_LABEL,
+            binary=ec.NODE_BIN,
+            skip_reason=typescript_skip_reason,
+        ),
+    }
+
+
 def main(
     target: Annotated[
         Path, typer.Option(help="cgr source to evaluate inheritance for.")
@@ -653,136 +665,33 @@ def main(
     project = project_name or target.name
     logger.info(ls.INHERITANCE_TARGET.format(target=target, project=project))
 
-    if language == ec.InheritanceLanguage.CSHARP:
-        # Same reasoning as the Java and C++ branches: without the oracle this
-        # would write a header-only CSV and exit 0, reporting "no gradeable
-        # edges" when the truth is "the grader never ran".
-        if not csharp_oracle_available():
-            logger.error(ls.CSHARP_ORACLE_MISSING)
-            raise typer.Exit(code=1)
-        result = score_inheritance(
-            csharp_cgr_inheritance(target, project),
-            csharp_oracle_inheritance(target),
-            inherits_label=ec.CSHARP_SUPERTYPES_LABEL,
-        )
-        write_outputs(
-            result,
-            out_dir,
-            ec.INHERITANCE_SCORES_FILENAME,
-            ec.INHERITANCE_DIFF_FILENAME,
-        )
-        render(result, ec.INHERITANCE_TITLE)
-        return
-
-    if language == ec.InheritanceLanguage.TYPESCRIPT:
-        # Same reasoning as the Java, C# and C++ branches: without node and the
-        # vendored typescript the oracle yields nothing, and scoring that would
-        # write a header-only CSV and an empty diff while exiting 0 --
-        # reporting "no gradeable edges" when the truth is "the grader never
-        # ran".
-        if not typescript_available():
-            logger.error(ls.TS_ORACLE_MISSING)
-            raise typer.Exit(code=1)
-        result = score_inheritance(
-            ts_cgr_inheritance(target, project),
-            ts_oracle_inheritance(target),
-            inherits_label=ec.TS_SUPERTYPES_LABEL,
-        )
-        write_outputs(
-            result,
-            out_dir,
-            ec.INHERITANCE_SCORES_FILENAME,
-            ec.INHERITANCE_DIFF_FILENAME,
-        )
-        render(result, ec.INHERITANCE_TITLE)
-        return
-
-    if language == ec.InheritanceLanguage.CPP:
-        # Same reasoning as the Java branch: without libclang the oracle yields
-        # nothing, and scoring that would write a header-only CSV and an empty
-        # diff while exiting 0 -- reporting "no gradeable edges" when the truth
-        # is "the grader never ran".
-        if not cpp_available():
-            logger.error(ls.CPP_ORACLE_MISSING)
-            raise typer.Exit(code=1)
-        # A compilation database is as much a precondition as libclang itself.
-        # Absent, libclang raises; present but yielding no translation unit
-        # (empty, or naming files that no longer exist), the oracle returns an
-        # empty graph and the run scores 0 edges against 0 edges -- an UNGRADED
-        # target reported as a clean result. Same fail-open shape the
-        # cpp_available() check above exists to prevent (Greptile, PR #1513).
-        units = _cpp_compile_db_units(target)
-        if units is None:
-            logger.error(ls.CPP_ORACLE_NO_COMPILE_DB.format(target=target))
-            raise typer.Exit(code=1)
-        if units == 0:
-            logger.error(ls.CPP_ORACLE_EMPTY_COMPILE_DB.format(target=target))
-            raise typer.Exit(code=1)
-        if units < 0:
-            # Partially readable: some in-target entries parsed and some did
-            # not. Grading the remainder scores 1.0 on a half-covered project,
-            # because score_inheritance filters the unread files out of BOTH
-            # sides via top_classes (Greptile, PR #1513).
-            count = -units
-            logger.error(
-                ls.CPP_ORACLE_PARTIAL_COMPILE_DB.format(
-                    count=count, suffix="y" if count == 1 else "ies", target=target
-                )
+    arm = _located_arms().get(language)
+    if arm is None:
+        oracle = oracle_inheritance(target, project)
+        logger.success(
+            ls.INHERITANCE_ORACLE_DONE.format(
+                inherits=len(oracle.inherits), overrides=len(oracle.overrides)
             )
-            raise typer.Exit(code=1)
-        # The libclang oracle names bases by SIMPLE name while it pins the
-        # subclass to a location, so the row carries its own label: a C++ 1.0
-        # is not measuring the same unit as the Python one (issue #1190).
+        )
+        cgr = cgr_inheritance(target, project)
+        logger.success(
+            ls.INHERITANCE_CGR_DONE.format(
+                inherits=len(cgr.inherits), overrides=len(cgr.overrides)
+            )
+        )
+        result = score_inheritance(cgr, oracle)
+    else:
+        # Without the oracle this would write a header-only CSV and an empty
+        # diff while exiting 0 -- reporting "no gradeable edges" when the
+        # truth is "the grader never ran".
+        require_oracle(arm.available, arm.oracle_missing, arm.binary, arm.skip_reason)
+        if arm.preflight is not None:
+            arm.preflight(target)
+        with oracle_unavailable_exits():
+            oracle = arm.run_oracle(target)
         result = score_inheritance(
-            cpp_cgr_inheritance(target, project),
-            cpp_oracle_inheritance(target),
-            inherits_label=ec.CPP_BASES_LABEL,
+            arm.run_cgr(target, project), oracle, inherits_label=arm.inherits_label
         )
-        write_outputs(
-            result,
-            out_dir,
-            ec.INHERITANCE_SCORES_FILENAME,
-            ec.INHERITANCE_DIFF_FILENAME,
-        )
-        render(result, ec.INHERITANCE_TITLE)
-        return
-
-    if language == ec.InheritanceLanguage.JAVA:
-        # Without a JDK the oracle yields nothing, and scoring that would write
-        # a header-only CSV and an empty diff while exiting 0 -- reporting "no
-        # gradeable edges" when the truth is "the grader never ran".
-        if not java_available():
-            logger.error(ls.JAVA_ORACLE_MISSING)
-            raise typer.Exit(code=1)
-        # The javac oracle names supertypes by SIMPLE name while it pins the
-        # subclass to a location, so the row carries its own label: a Java 1.0
-        # is not measuring the same unit as the Python one (issue #1190).
-        result = score_inheritance(
-            java_cgr_inheritance(target, project),
-            java_oracle_inheritance(target),
-            inherits_label=ec.JAVA_SUPERTYPES_LABEL,
-        )
-        write_outputs(
-            result,
-            out_dir,
-            ec.INHERITANCE_SCORES_FILENAME,
-            ec.INHERITANCE_DIFF_FILENAME,
-        )
-        render(result, ec.INHERITANCE_TITLE)
-        return
-
-    oracle = oracle_inheritance(target, project)
-    logger.success(
-        ls.INHERITANCE_ORACLE_DONE.format(
-            inherits=len(oracle[0]), overrides=len(oracle[1])
-        )
-    )
-    cgr = cgr_inheritance(target, project)
-    logger.success(
-        ls.INHERITANCE_CGR_DONE.format(inherits=len(cgr[0]), overrides=len(cgr[1]))
-    )
-
-    result = score_inheritance(cgr, oracle)
     write_outputs(
         result, out_dir, ec.INHERITANCE_SCORES_FILENAME, ec.INHERITANCE_DIFF_FILENAME
     )

@@ -13,7 +13,7 @@ from codebase_rag.crash_correlation import (
     CYPHER_CRASH_CALLS,
     CYPHER_CRASH_POSITIONAL_PARAMS,
 )
-from codebase_rag.cypher_queries import CYPHER_TRACE_CALLABLES
+from codebase_rag.cypher_queries import CYPHER_GRAPH_NODE_EXISTS, CYPHER_TRACE_CALLABLES
 from codebase_rag.flow_verdict import (
     CYPHER_FLOW_COVERAGE_GAPS,
     CYPHER_FLOW_EDGES,
@@ -58,6 +58,12 @@ def _registry(
             ]
         if query == CYPHER_CRASH_CALLS:
             return [{"from_qn": f"{module}.dispatch", "to_qn": f"{module}.handle"}]
+        if query == CYPHER_GRAPH_NODE_EXISTS and params is not None:
+            # flow_verdict refuses a source or sink with no node (#2939).
+            known = {f"{module}.{name}" for name in ("dispatch", "handle", "net")}
+            known.update(target for _source, target in remote or [])
+            qn = params[cs.KEY_QN]
+            return [{cs.KEY_QUALIFIED_NAME: qn}] if qn in known else []
         if query == CYPHER_FLOW_EDGES and remote:
             return [{"source": f"{module}.dispatch", "target": f"{module}.net"}]
         if query == CYPHER_FLOW_REMOTE_EDGES and remote:
