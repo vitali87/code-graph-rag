@@ -19,7 +19,7 @@ all: ## Install everything for full development environment (deps, grammars, hoo
 	@echo "✓ Tests passed successfully"
 
 install: ## Install project dependencies with full language support
-	uv sync --extra treesitter-full
+	uv sync --extra treesitter-full --extra ast-grep
 
 python: ## Install project dependencies for Python only
 	uv sync
@@ -53,16 +53,16 @@ build-grammars: ## Build grammar submodules
 	git submodule update --init --recursive --depth 1
 	@echo "Grammars built!"
 
-# Without HOST/PORT the watcher reads MEMGRAPH_HOST/MEMGRAPH_PORT from the
-# environment or .env, as cgr start does (issue #2885).
+# HOST/PORT set MEMGRAPH_HOST/MEMGRAPH_PORT for this run only; without them
+# the watcher reads those from the environment or .env, as cgr start does
+# (issue #2885).
 watch: ## Watch repository for changes and update graph in real-time
 	@if [ -z "$(REPO_PATH)" ]; then \
 		echo "Error: REPO_PATH is required. Usage: make watch REPO_PATH=/path/to/repo"; \
 		exit 1; \
 	fi
-	.venv/bin/python realtime_updater.py $(REPO_PATH) \
-		$(if $(HOST),--host $(HOST),) \
-		$(if $(PORT),--port $(PORT),) \
+	$(if $(HOST),MEMGRAPH_HOST=$(HOST) )$(if $(PORT),MEMGRAPH_PORT=$(PORT) ).venv/bin/cgr watch \
+		--repo-path $(REPO_PATH) \
 		$(if $(BATCH_SIZE),--batch-size $(BATCH_SIZE),)
 
 readme: ## Regenerate README.md from codebase
