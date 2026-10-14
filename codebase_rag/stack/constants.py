@@ -96,6 +96,13 @@ WARN_OPEN_SERVICES_LEFT_RUNNING = (
 )
 # The running containers of one service, one ID per line.
 COMPOSE_PS_RUNNING_ARGS = ("ps", "--quiet", "--status", "running")
+# The running containers as JSON, with the addresses Docker publishes each
+# port on (`Publishers`): one object per line, or one array on older Compose.
+COMPOSE_PS_RUNNING_JSON_ARGS = ("ps", "--format", "json", "--status", "running")
+COMPOSE_PS_PUBLISHERS_KEY = "Publishers"
+COMPOSE_PS_PUBLISHER_HOST_KEY = "URL"
+COMPOSE_PS_PUBLISHER_TARGET_KEY = "TargetPort"
+COMPOSE_PS_PUBLISHER_PORT_KEY = "PublishedPort"
 # How long a start that did not finish waits for the services it started to
 # answer, so that one still initialising is checked too before it returns.
 STARTED_SERVICES_CHECK_TIMEOUT_S = 15.0
@@ -158,6 +165,7 @@ COMPOSE_PORT_TARGET_KEY = "target"
 COMPOSE_PORT_PUBLISHED_KEY = "published"
 COMPOSE_PORT_HOST_IP_KEY = "host_ip"
 QDRANT_CONTAINER_HTTP_PORT = 6333
+MEMGRAPH_CONTAINER_BOLT_PORT = 7687
 # The port qdrant-client connects to when QDRANT_URL names none.
 QDRANT_CLIENT_DEFAULT_PORT = 6333
 ENV_MEMGRAPH_USER = "MEMGRAPH_USER"
@@ -195,6 +203,9 @@ QDRANT_ROOT_MAX_BYTES = 65536
 # A stopped stack refuses the connection at once; a running one answers well
 # inside this, so the check costs nothing noticeable when the vector store opens.
 BUNDLED_QDRANT_PROBE_TIMEOUT_S = 1.0
+# How long the check of MEMGRAPH_HOST waits on one of its addresses the
+# stack's Memgraph is not published on, for another server answering there.
+MEMGRAPH_ADDRESS_PROBE_TIMEOUT_S = 1.0
 QDRANT_API_KEY_HEADER = "api-key"
 ERR_COMPOSE_AUTH_MISMATCH = (
     "Compose would start {variables} with a value that does not come from "
