@@ -13,12 +13,11 @@ from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.capture import CaptureSelection, resolve_capture
 from codebase_rag.check_isolation import IsolationGuard
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.structural_check import CheckError, _FileSnapshot, run_check
 from evals.cgr_graph import _StatefulIngestor
-
-pytest_plugins = ("check_isolation_helpers",)
 
 # --- refusals -----------------------------------------------------------------
 
@@ -175,7 +174,7 @@ def test_an_unreadable_hash_cache_is_left_alone(
     """Absent and unreadable are different states. Collapsing them made the
     restore DELETE a cache it merely could not read (Greptile, #1718)."""
     root, _store = indexed
-    cache = root / cs.HASH_CACHE_FILENAME
+    cache = state_file(root, cs.HASH_CACHE_FILENAME)
     assert cache.is_file()
     content = cache.read_bytes()
     real_read_bytes = Path.read_bytes
@@ -204,7 +203,7 @@ def test_a_missing_hash_cache_is_removed_again(
     when the snapshot was taken must still be removed if the check created
     one, or the distinction would be achieved by never unlinking at all."""
     root, _store = indexed
-    cache = root / cs.HASH_CACHE_FILENAME
+    cache = state_file(root, cs.HASH_CACHE_FILENAME)
     cache.unlink()
 
     snapshot = _FileSnapshot(cache)
@@ -246,7 +245,7 @@ def test_an_isolated_check_refuses_an_unreadable_hash_cache(
     0o200), so the re-ingest could rewrite it and `put_back` could not undo
     that. Refused before anything is written (bot review, #1718)."""
     root, store = indexed
-    cache = root / cs.HASH_CACHE_FILENAME
+    cache = state_file(root, cs.HASH_CACHE_FILENAME)
     content = cache.read_bytes()
     nodes_before = dict(store.nodes)
     _edit(root)
