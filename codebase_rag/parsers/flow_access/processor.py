@@ -1102,7 +1102,7 @@ class FlowProcessor:
                 caller_node,
                 descriptor,
                 member_reads,
-                lambda head: self._js_head_is_live(head, jc),
+                lambda head: not self._js_import_shadowed(head, jc),
             )
         )
         statements = self._lean_body_statements(caller_node, ctx, descriptor)

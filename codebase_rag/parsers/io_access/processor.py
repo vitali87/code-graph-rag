@@ -615,8 +615,13 @@ class IOAccessProcessor:
                 import_map.get(head), head
             )
 
+        # An alias's `process` is resolved where the alias is bound, so only
+        # the imports are judged here (bot review on PR #2767).
         self._env_aliases = EnvAliases(
-            caller_node, descriptor, member_reads, head_is_live
+            caller_node,
+            descriptor,
+            member_reads,
+            lambda head: head_is_genuine_module(import_map.get(head), head),
         )
         self._emit_param_env_reads(
             caller_node, caller_spec, member_reads, descriptor, head_is_live

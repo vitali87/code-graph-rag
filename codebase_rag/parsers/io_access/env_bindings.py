@@ -15,7 +15,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from .descriptor import LanguageDescriptor
-from .extract import DYNAMIC_TARGET
+from .extract import DYNAMIC_TARGET, is_require_alias
 from .models import ResourceKind
 
 # (value field, pattern field) of each binding that can destructure a value:
@@ -93,20 +93,22 @@ class EnvAliases:
     scope around the access that declares the name decides (bot review on PR
     #2767). It is an alias only when that declaration and every assignment to
     it is the mapping itself; a parameter, a `catch` binding or a declaration
-    of anything else is not."""
+    of anything else is not. `import_is_live` judges a mapping's head
+    (`process`) by the module's imports alone; its local bindings are read
+    where each alias is bound."""
 
     def __init__(
         self,
         caller_node: Node | None,
         descriptor: LanguageDescriptor,
         member_reads: tuple[tuple[str, ResourceKind], ...],
-        head_is_live: Callable[[str], bool],
+        import_is_live: Callable[[str], bool],
     ) -> None:
         self._descriptor = descriptor
         self._member_reads = member_reads
-        self._head_is_live = head_is_live
+        self._import_is_live = import_is_live
         self._names = (
-            _alias_candidates(caller_node, descriptor, member_reads, head_is_live)
+            _alias_candidates(caller_node, descriptor, self._mapping_kind)
             if caller_node is not None and member_reads
             else frozenset()
         )
@@ -155,12 +157,23 @@ class EnvAliases:
     def _kind(self, values: list[Node | None]) -> ResourceKind | None:
         # The one kind every value is, None when they are not all one mapping.
         kinds = {
-            None
-            if value is None
-            else env_mapping_kind(value, self._member_reads, self._head_is_live)
-            for value in values
+            None if value is None else self._mapping_kind(value) for value in values
         }
         return kinds.pop() if len(kinds) == 1 else None
+
+    def _mapping_kind(self, value: Node) -> ResourceKind | None:
+        # The mapping's head is resolved where the alias is bound, not where it
+        # is read (bot review on PR #2767): the reader's parameter `process`
+        # leaves a module alias alone, and a `const process = {..}` beside
+        # the alias makes it no env mapping.
+        return env_mapping_kind(
+            value,
+            self._member_reads,
+            lambda head: (
+                self._import_is_live(head)
+                and not _head_shadowed_at(value, head, self._descriptor)
+            ),
+        )
 
 
 # Statements that run their body again, so a rebinding later in it can run
@@ -201,8 +214,7 @@ def _may_run_before(
 def _alias_candidates(
     caller_node: Node,
     descriptor: LanguageDescriptor,
-    member_reads: tuple[tuple[str, ResourceKind], ...],
-    head_is_live: Callable[[str], bool],
+    mapping_kind: Callable[[Node], ResourceKind | None],
 ) -> frozenset[str]:
     # Names some binding in the caller or a scope around it sets to the env
     # mapping: the only names an access can resolve, found once per caller so
@@ -216,7 +228,7 @@ def _alias_candidates(
             else _scope_nodes(scope, descriptor)
         )
         for name, values in _bindings(nodes, descriptor).items():
-            if any(env_mapping_kind(v, member_reads, head_is_live) for v in values):
+            if any(mapping_kind(v) for v in values):
                 names.add(name)
         scope = scope.parent
         while (
@@ -240,12 +252,53 @@ def _declared_values(
     head = _head_names(scope, descriptor)
     if head is not None:
         return [None] if name in head else None
-    if scope.parent is not None and scope.type != descriptor.block_scope_type:
-        return None
     values: list[Node | None] = []
-    for stmt in scope.named_children:
+    for stmt in _declaring_statements(scope, descriptor):
         values.extend(_statement_values(stmt, name, descriptor))
     return values or None
+
+
+def _declaring_statements(scope: Node, descriptor: LanguageDescriptor) -> list[Node]:
+    # The statements whose declarations bind names in `scope`: a block's or
+    # the module's own, or a classic `for (let x = ..; ..; ..)` head's, which
+    # binds `x` for its condition, update and body (Greptile, PR #2767).
+    if scope.type == cs.TS_JS_FOR_STATEMENT:
+        initializer = scope.child_by_field_name(cs.TS_FIELD_INITIALIZER)
+        return [initializer] if initializer is not None else []
+    if scope.parent is None or scope.type == descriptor.block_scope_type:
+        return list(scope.named_children)
+    return []
+
+
+def _head_shadowed_at(node: Node, head: str, descriptor: LanguageDescriptor) -> bool:
+    # Whether a scope around `node` binds `head` itself: a parameter, a local,
+    # a `catch` or loop binding.
+    scope = node.parent
+    while scope is not None:
+        heads = _head_names(scope, descriptor)
+        if heads is not None:
+            if head in heads:
+                return True
+        elif any(
+            _declares_local(stmt, head, descriptor)
+            for stmt in _declaring_statements(scope, descriptor)
+        ):
+            return True
+        scope = scope.parent
+    return False
+
+
+def _declares_local(stmt: Node, name: str, descriptor: LanguageDescriptor) -> bool:
+    # An import or a `require` alias of `name` is left to the import map,
+    # which says whether it is the genuine module.
+    if stmt.type == cs.TS_IMPORT_STATEMENT:
+        return False
+    return any(
+        value is None
+        or value.parent is None
+        or not is_require_alias(value.parent, descriptor.call_type)
+        for value in _statement_values(stmt, name, descriptor)
+    )
 
 
 def _head_names(scope: Node, descriptor: LanguageDescriptor) -> set[str] | None:

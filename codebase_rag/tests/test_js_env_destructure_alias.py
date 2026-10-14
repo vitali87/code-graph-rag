@@ -179,6 +179,25 @@ function destructureOverHandle() {
   stream.write(process.env.JE_SECRET);
 }
 
+// Bot review on PR #2767: an alias's `process` resolves where the alias is
+// bound, and a classic `for` head binds its own names.
+function paramNamedProcess(process) {
+  console.log(moduleEnv.JE_PAST_PARAM);
+}
+
+function localProcess() {
+  const process = { env: { JE_LOCAL_PROCESS: "local" } };
+  const env = process.env;
+  console.log(env.JE_LOCAL_PROCESS);
+}
+
+function loopShadowsModuleAlias() {
+  for (let moduleEnv = { JE_LOOP_LOCAL: "local" }; moduleEnv.JE_LOOP_LOCAL; ) {
+    console.log(moduleEnv.JE_LOOP_LOCAL);
+    break;
+  }
+}
+
 module.exports = { dotted };
 """
 
@@ -265,6 +284,7 @@ CASES = [
     ("blockShadowsModuleAlias", "JE_BLOCK_OUTER"),
     ("blockShadowsOwnAlias", "JE_OWN_OUTER"),
     ("readBeforeRebind", "JE_BEFORE_REBIND"),
+    ("paramNamedProcess", "JE_PAST_PARAM"),
 ]
 
 
@@ -322,6 +342,8 @@ def test_member_reads_still_read_and_flow(
         "JE_AFTER_REBIND",
         "JE_LOOP_REBIND",
         "JE_CLOSURE_REBIND",
+        "JE_LOCAL_PROCESS",
+        "JE_LOOP_LOCAL",
     ],
 )
 def test_a_value_that_is_not_the_env_mapping_reads_nothing(
