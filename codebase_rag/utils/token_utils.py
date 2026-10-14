@@ -13,12 +13,26 @@ from ..types_defs import ResultRow
 
 
 @cache
-def _get_encoding() -> tiktoken.Encoding:
-    return tiktoken.get_encoding(cs.TIKTOKEN_ENCODING)
+def _get_encoding() -> tiktoken.Encoding | None:
+    # tiktoken downloads the encoding's BPE file on first use. Out of reach of
+    # that host (air-gapped, an egress allow-list, offline), every count, and
+    # with it every graph query, failed after the database had answered
+    # (issue #2914). A budget needs no exact count, so the miss is warned
+    # once (the cache keeps the None) and counts are estimated.
+    try:
+        return tiktoken.get_encoding(cs.TIKTOKEN_ENCODING)
+    except Exception as e:  # noqa: BLE001 - any load failure falls back alike
+        logger.warning(
+            ls.TIKTOKEN_UNAVAILABLE.format(encoding=cs.TIKTOKEN_ENCODING, error=e)
+        )
+        return None
 
 
 def count_tokens(text: str) -> int:
-    return len(_get_encoding().encode_ordinary(text))
+    if (encoding := _get_encoding()) is None:
+        # Rounded up, so a budget errs toward truncating.
+        return -(-len(text.encode()) // cs.TOKEN_ESTIMATE_BYTES_PER_TOKEN)
+    return len(encoding.encode_ordinary(text))
 
 
 def truncate_results_by_tokens(
