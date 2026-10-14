@@ -113,6 +113,43 @@ def test_windows_roots_keep_the_nodes_they_share(
 
 
 @pytest.mark.parametrize(
+    ("root", "nested", "app", "main"),
+    [
+        ("/", "/app", "/app", "/app/main.py"),
+        ("C:\\", "C:\\app", "C:/app", "C:/app/main.py"),
+    ],
+    ids=["posix", "windows"],
+)
+def test_filesystem_roots_keep_the_nodes_they_share(
+    memgraph_ingestor: MemgraphIngestor, root: str, nested: str, app: str, main: str
+) -> None:
+    # A project at `/` or a drive root records a root that already ends in
+    # the separator; with another one appended, `//` or `C://` prefixed no
+    # child path, so every node it shares read as outside its tree and was
+    # purged (review of PR 3216).
+    ing = memgraph_ingestor
+    ing.ensure_constraints()
+    ing._execute_query(
+        "CREATE (top:Project {name: 'top', root_path: $root}), "
+        "(copy:Project {name: 'top-copy', root_path: $root}), "
+        "(inner:Project {name: 'inner', root_path: $nested}), "
+        "(app:Folder {path: 'app', absolute_path: $app}), "
+        "(main:File {path: 'app/main.py', absolute_path: $main}), "
+        "(top)-[:CONTAINS_FOLDER]->(app), "
+        "(copy)-[:CONTAINS_FOLDER]->(app), "
+        "(inner)-[:CONTAINS_FILE]->(main), "
+        "(app)-[:CONTAINS_FILE]->(main)",
+        {"root": root, "nested": nested, "app": app, "main": main},
+    )
+
+    ing.ensure_constraints()
+
+    assert _structure(ing, "top") == 2
+    assert _structure(ing, "top-copy") == 2
+    assert _structure(ing, "inner") == 1
+
+
+@pytest.mark.parametrize(
     ("svc_root", "cli_root", "shared", "own"),
     [
         ("/repos/svc", "/repos/cli", "/repos/svc/app", "/repos/cli/lib"),

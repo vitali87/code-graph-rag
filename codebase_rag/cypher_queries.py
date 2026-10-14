@@ -323,14 +323,14 @@ DETACH DELETE p, container, defined
 # Project's root_path or a Folder's own absolute_path; a parent that records
 # neither predates both and counts as legacy. root_path is the resolved path as
 # the OS spells it, backslashes on Windows, while absolute_path is POSIX, so
-# both sides are compared with forward slashes (review of PR 3216).
+# both sides are compared with forward slashes (review of PR 3216). A
+# filesystem root (`/`, `C:\`) already ends in the separator, so the boundary
+# one is added only to a root that does not.
 def _outside_tree(root: str) -> str:
     node = "replace(n.absolute_path, '\\\\', '/')"
     tree = f"replace({root}, '\\\\', '/')"
-    return (
-        f"({root} IS NULL OR NOT ({node} = {tree} "
-        f"OR {node} STARTS WITH ({tree} + '/')))"
-    )
+    prefix = f"CASE WHEN {tree} ENDS WITH '/' THEN {tree} ELSE {tree} + '/' END"
+    return f"({root} IS NULL OR NOT ({node} = {tree} OR {node} STARTS WITH ({prefix})))"
 
 
 # Sharing always leaves a single-hop signature: the topmost merged node has
