@@ -6583,7 +6583,8 @@ class CallResolver:
         if prefixed:
             imported |= aliased
         else:
-            imported -= aliased
+            # `import 'a.dart'; import 'a.dart' as p;` still sees bare names.
+            imported -= aliased - set(processor.dart_bare_imports.get(module_qn, ()))
         visible = {module_qn, *imported}
         frontier = list(imported)
         while frontier:
@@ -6793,13 +6794,20 @@ class CallResolver:
         owner_module = module_qn_for_entity(
             owner_qn, self.type_inference.module_qn_to_file_path
         )
+        language = self._module_language(owner_module) if owner_module else None
         if (
             owner_module
-            and self._module_language(owner_module) == cs.SupportedLanguage.DART
+            and language == cs.SupportedLanguage.DART
             and (visible := self._dart_visible_type(field_type, owner_module))
         ):
             return visible
-        return self._chain_class_qn(field_type, owner_module or caller_module_qn)
+        # A Rust struct inside an inline `mod` reads that mod's `use` before
+        # the file's, so the owner stands where a caller would.
+        return self._chain_class_qn(
+            field_type,
+            owner_module or caller_module_qn,
+            _rust_caller(language, owner_qn),
+        )
 
     def _dart_visible_type(self, type_name: str, module_qn: str) -> str | None:
         # A Dart import brings in a LIBRARY, never a name, so the import map

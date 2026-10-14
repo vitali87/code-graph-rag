@@ -101,6 +101,29 @@ def test_the_callers_own_import_of_the_name_does_not_retype_the_field(
     }
 
 
+def test_a_struct_in_an_inline_mod_types_its_field_through_the_mods_use(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `garage`'s own `use` names the field's `Engine`, not the file's.
+    lib = (
+        "mod a_toy;\nmod motor;\n\nuse a_toy::Engine;\n\n"
+        "mod garage {\n    use crate::motor::Engine;\n\n"
+        "    pub struct Car {\n        pub engine: Engine,\n    }\n}\n\n"
+        "use garage::Car;\n\n"
+        "pub fn run(c: &Car) -> u8 {\n    c.engine.start()\n}\n\n"
+        "pub fn toy(e: &Engine) -> u8 {\n    e.start()\n}\n"
+    )
+    _index(temp_repo, mock_ingestor, {"src/lib.rs": lib})
+
+    assert _calls(temp_repo, mock_ingestor, "src.lib.run") == {
+        ("src.motor.Engine.start", cs.EdgeResolution.EXACT)
+    }
+    # Negative: the file's own `Engine` is still `a_toy`'s.
+    assert _calls(temp_repo, mock_ingestor, "src.lib.toy") == {
+        ("src.a_toy.Engine.start", cs.EdgeResolution.EXACT)
+    }
+
+
 def test_a_field_type_declared_beside_its_struct_still_resolves(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
@@ -155,6 +178,32 @@ def test_a_prefixed_dart_import_does_not_name_the_bare_type(
             "class Shop {\n  Cart cart = Cart();\n}\n"
         ),
         "lib/a_toy/toy_cart.dart": "class Cart {\n  int total() => 3;\n}\n",
+    }
+    for rel, text in files.items():
+        (temp_repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (temp_repo / rel).write_text(text, encoding="utf-8")
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    assert _calls(temp_repo, mock_ingestor, "lib.main.run") == {
+        ("lib.cart.Cart.total", cs.EdgeResolution.EXACT)
+    }
+
+
+@pytest.mark.parametrize(
+    "imports",
+    [
+        "import 'cart.dart';\nimport 'cart.dart' as p;\n",
+        "import 'cart.dart' as p;\nimport 'cart.dart';\n",
+    ],
+    ids=["bare-first", "prefixed-first"],
+)
+def test_a_dart_library_imported_bare_and_prefixed_still_names_the_bare_type(
+    temp_repo: Path, mock_ingestor: MagicMock, imports: str
+) -> None:
+    # The bare import keeps `Cart` visible whatever the prefixed one adds.
+    files = {
+        **_DART,
+        "lib/shop.dart": f"{imports}\nclass Shop {{\n  Cart cart = Cart();\n}}\n",
     }
     for rel, text in files.items():
         (temp_repo / rel).parent.mkdir(parents=True, exist_ok=True)

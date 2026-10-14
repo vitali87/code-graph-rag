@@ -1127,6 +1127,7 @@ class ImportProcessor:
         "rust_block_item_qns",
         "dart_prefix_shadows",
         "dart_import_aliases",
+        "dart_bare_imports",
         "dart_exposed_libraries",
         "rust_block_scope_imports",
         "rust_self_module_imports",
@@ -1383,6 +1384,11 @@ class ImportProcessor:
         # edge (those come from import_mapping's values) while the name the
         # source writes resolves to the aliased library (Greptile, #2033).
         self.dart_import_aliases: dict[str, dict[str, list[str]]] = {}
+        # {module qn: [libraries a directive brings in WITHOUT a prefix]}.
+        # The file-derived import_mapping key is written for a prefixed
+        # import too, so only this tells `import 'a.dart'; import 'a.dart'
+        # as p;` (bare `A` visible) from the prefixed import alone (#3286).
+        self.dart_bare_imports: dict[str, list[str]] = {}
         # {library module qn: [module qns it hands to ITS importers]}: the
         # targets of its `export` and `part` directives. import_mapping holds
         # those beside plain imports, which expose nothing, so an extension
@@ -1674,6 +1680,7 @@ class ImportProcessor:
         # PR #2040).
         self.dart_prefix_shadows.pop(module_qn, None)
         self.dart_import_aliases.pop(module_qn, None)
+        self.dart_bare_imports.pop(module_qn, None)
         self.dart_exposed_libraries.pop(module_qn, None)
         self._retract_import_sites(module_qn)
 
@@ -6644,6 +6651,8 @@ class ImportProcessor:
                         module_qn, prefix, full_name, import_node, uri
                     )
                     prefixes.add(prefix)
+                else:
+                    self.dart_bare_imports.setdefault(module_qn, []).append(full_name)
         # A local or parameter of the same name SHADOWS the prefix inside its
         # scope, and an UNTYPED one (`var p = 1`) never reaches the resolver's
         # local_var_types, so the type map cannot answer this. The binding is
