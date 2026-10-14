@@ -10,8 +10,11 @@ from .core import ENTITY_FUNCTION, ENTITY_METHOD
 # Tree-sitter Java node types for language_spec
 TS_JAVA_METHOD_INVOCATION = "method_invocation"
 TS_JAVA_ANNOTATION_TYPE_DECLARATION = "annotation_type_declaration"
+TS_JAVA_INTERFACE_BODY = "interface_body"
 # The bodies whose members are implicitly public (JLS 9.4, 9.6).
-JAVA_IMPLICITLY_PUBLIC_BODIES = frozenset({"interface_body", "annotation_type_body"})
+JAVA_IMPLICITLY_PUBLIC_BODIES = frozenset(
+    {TS_JAVA_INTERFACE_BODY, "annotation_type_body"}
+)
 
 # Java interface `extends A, B` clause (tree-sitter-java); holds a type_list.
 TS_JAVA_EXTENDS_INTERFACES = "extends_interfaces"
@@ -254,6 +257,17 @@ JAVA_MAIN_METHOD_NAME = "main"
 JAVA_MAIN_PARAM_ARRAY = "String[]"
 JAVA_MAIN_PARAM_VARARGS = "String..."
 JAVA_MAIN_PARAM_TYPE = "String"
+# The JVM launcher starts a `void main` taking nothing or one String array
+# (issue #2527). The array is read from the syntax: brackets on the type
+# (`String[] a`, `String [] a`) or on the name (`String a[]`), or varargs.
+JAVA_MAIN_PARAM_ELEMENT_TYPES = frozenset({JAVA_MAIN_PARAM_TYPE, "java.lang.String"})
+TS_JAVA_ARRAY_TYPE = "array_type"
+TS_JAVA_FIELD_DIMENSIONS = "dimensions"
+TS_JAVA_FIELD_ELEMENT = "element"
+TS_JAVA_DIMENSION_OPEN = "["
+# A body-less `main` (abstract, or an interface's) has nothing to launch; a
+# native one is implemented outside Java.
+TS_JAVA_NATIVE = "native"
 
 # Java path parsing constants
 JAVA_PATH_JAVA = "java"

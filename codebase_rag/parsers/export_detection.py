@@ -611,18 +611,17 @@ def _identifier_names(node: Node) -> list[str]:
 
 def _java_exported(node: Node) -> bool:
     modifiers = next((c for c in node.children if c.type == cs.TS_MODIFIERS), None)
-    declared = {c.type for c in modifiers.children} if modifiers is not None else set()
-    if declared & _JAVA_PUBLIC_MODIFIERS:
-        return True
+    if modifiers is not None:
+        if any(c.type == cs.JAVA_MODIFIER_PRIVATE for c in modifiers.children):
+            return False
+        if any(c.type in _JAVA_PUBLIC_MODIFIERS for c in modifiers.children):
+            return True
     # An interface's (or annotation type's) member is implicitly public unless
     # declared `private` (Java 9+), and is written without the keyword, so its
     # abstract, `default` and `static` methods are the interface's API
-    # (issues #2847, #2701).
-    return (
-        node.parent is not None
-        and node.parent.type in cs.JAVA_IMPLICITLY_PUBLIC_BODIES
-        and cs.JAVA_MODIFIER_PRIVATE not in declared
-    )
+    # (JLS 9.4, 9.6; issues #2847, #2701).
+    parent = node.parent
+    return parent is not None and parent.type in cs.JAVA_IMPLICITLY_PUBLIC_BODIES
 
 
 def _csharp_exported(node: Node) -> bool:
