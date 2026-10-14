@@ -1,4 +1,4 @@
-FROM ghcr.io/astral-sh/uv:0.12@sha256:a7aed3216253ee804de3e2d8afa5073baa1a177335345d43845cd4165e43b711 AS uv
+FROM ghcr.io/astral-sh/uv:0.13@sha256:cdc6093146eb3ff6a40107b38f008b789e050e77ad87865e381d9917da55a168 AS uv
 
 FROM python:3.14-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d AS builder
 
@@ -26,7 +26,11 @@ WORKDIR /app
 ENV UV_PYTHON_INSTALL_DIR=/app/.uv-python
 ENV UV_PYTHON_PREFERENCE=only-managed
 
-COPY pyproject.toml uv.lock ./
+# .python-version must arrive with the manifests: without it this first sync
+# falls back to the newest managed Python allowed by requires-python (which
+# moves with each uv release), and the later sync, once COPY . . brings in the
+# pin, rebuilds .venv on the pinned version.
+COPY pyproject.toml uv.lock .python-version ./
 RUN uv sync --frozen --no-dev --extra treesitter-full --no-install-project --no-binary-package pymgclient
 
 COPY . .

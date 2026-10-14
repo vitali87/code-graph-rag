@@ -89,5 +89,7 @@ def test_score_scala_retrieval_prf() -> None:
     result = score_scala_retrieval(
         {("A.scala", "f"), ("A.scala", "g")}, {("A.scala", "f"), ("B.scala", "h")}
     )
-    row = next(r for r in result.rows if r["label"] == ec.SCALA_RETRIEVAL_LABEL)
+    row = next(
+        r for r in result.rows if r["label"] == ec.RetrievalCondition.GRAPH.value
+    )
     assert (row["tp"], row["fp"], row["fn"]) == (1, 1, 1)
