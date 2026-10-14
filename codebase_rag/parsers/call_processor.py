@@ -7415,9 +7415,12 @@ class CallProcessor:
                 or call_name.startswith(cs.PY_CLS_PREFIX)
             )
             # A typed `self` (a static method's `self: Other`) names its own
-            # type, not the enclosing class (Greptile, PR #2908).
-            and call_name.partition(cs.SEPARATOR_DOT)[0]
-            not in (ctx.local_var_types or {})
+            # type, not the enclosing class (Greptile, PR #2908). Only the
+            # annotation says so: the method-wide map also holds a later
+            # `self = Other()`, which leaves an earlier call on the class.
+            and not annotates_receiver(
+                call_node, call_name.partition(cs.SEPARATOR_DOT)[0]
+            )
             # A call that runs after `self = Other()` on every path calls
             # through that value's type, which the resolved edge follows.
             and not (
