@@ -179,11 +179,93 @@ def _identifier_at(root: Node, start: int, end: int) -> Node | None:
     return None
 
 
-# The CommonJS export object, as written. Spelled here rather than imported:
-# the parsers package is not loaded at CLI startup.
-_JS_MODULE_EXPORTS = (
-    cs.JS_MODULE_KEYWORD + cs.SEPARATOR_DOT + cs.JS_EXPORTS_KEYWORD
-).encode()
+# What passes its operand's value on unchanged: `({ pad })`, `{ pad } as T`.
+_JS_VALUE_WRAPPERS = cs.TS_CAST_WRAPPER_TYPES | {cs.TS_PARENTHESIZED_EXPRESSION}
+_JS_MODULE = cs.JS_MODULE_KEYWORD.encode()
+_JS_EXPORTS = cs.JS_EXPORTS_KEYWORD.encode()
+_JS_OBJECT = cs.JS_OBJECT_NAME.encode()
+_JS_OBJECT_ASSIGN = cs.JS_OBJECT_ASSIGN_METHOD.encode()
+_JS_OBJECT_FREEZE = cs.JS_OBJECT_FREEZE_METHOD.encode()
+
+
+def _unwrapped(node: Node | None) -> Node | None:
+    while node is not None and node.type in _JS_VALUE_WRAPPERS:
+        node = next(iter(node.named_children), None)
+    return node
+
+
+def _is_module_exports(node: Node | None) -> bool:
+    """`module.exports`, read from its nodes however it is spaced."""
+    node = _unwrapped(node)
+    if node is None or node.type != cs.TS_MEMBER_EXPRESSION:
+        return False
+    owner = node.child_by_field_name(cs.FIELD_OBJECT)
+    field = node.child_by_field_name(cs.FIELD_PROPERTY)
+    return (
+        owner is not None
+        and owner.type == cs.TS_IDENTIFIER
+        and owner.text == _JS_MODULE
+        and field is not None
+        and field.text == _JS_EXPORTS
+    )
+
+
+def _is_export_object(node: Node | None) -> bool:
+    # `exports` is `module.exports` until it is reassigned.
+    bare = _unwrapped(node)
+    return _is_module_exports(bare) or (
+        bare is not None and bare.type == cs.TS_IDENTIFIER and bare.text == _JS_EXPORTS
+    )
+
+
+def _object_method(call: Node) -> bytes | None:
+    """`m` of a call to `Object.m(...)`; None for any other call."""
+    function = _unwrapped(call.child_by_field_name(cs.FIELD_FUNCTION))
+    if function is None or function.type != cs.TS_MEMBER_EXPRESSION:
+        return None
+    owner = function.child_by_field_name(cs.FIELD_OBJECT)
+    field = function.child_by_field_name(cs.FIELD_PROPERTY)
+    if owner is None or owner.text != _JS_OBJECT or field is None:
+        return None
+    return field.text
+
+
+def _is_the_export_object(node: Node) -> bool:
+    """Whether an object literal's keys become the CommonJS export object's.
+
+    Followed through whatever passes the object or its keys on: a wrapper
+    (`({ pad })`), an assignment chain (`module.exports = exports = {...}`),
+    `Object.freeze`, and `Object.assign`, which copies the keys onto its
+    target and returns it (`Object.assign(module.exports, {...})`).
+    """
+    while (parent := node.parent) is not None:
+        if parent.type in _JS_VALUE_WRAPPERS:
+            node = parent
+            continue
+        if parent.type == cs.TS_JS_ASSIGNMENT_EXPRESSION:
+            right = parent.child_by_field_name(cs.FIELD_RIGHT)
+            if right is None or right.id != node.id:
+                return False
+            if _is_module_exports(parent.child_by_field_name(cs.FIELD_LEFT)):
+                return True
+            node = parent
+            continue
+        call = parent.parent if parent.type == cs.TS_ARGUMENTS else None
+        if call is None:
+            return False
+        method = _object_method(call)
+        target = next((arg for arg in parent.named_children if not arg.is_extra), None)
+        if method == _JS_OBJECT_ASSIGN:
+            if (
+                target is not None
+                and target.id != node.id
+                and _is_export_object(target)
+            ):
+                return True
+        elif method != _JS_OBJECT_FREEZE:
+            return False
+        node = call
+    return False
 
 
 def _keeps_its_key(node: Node) -> bool:
@@ -192,16 +274,14 @@ def _keeps_its_key(node: Node) -> bool:
     `{ pad }` is `{ pad: pad }`: a key and a value, and the rename is about
     the value. Renaming the token moves the key too, which breaks every
     consumer that reads `obj.pad`, so the edit spells both out. The one
-    exception is `module.exports = { pad }`: that object is the module's
-    export list, its readers (`require("./u").pad`) are linked to the
-    function and renamed with it, so the key moves with them.
+    exception is the CommonJS export object (`module.exports = { pad }`):
+    its readers (`require("./u").pad`) are linked to the function and
+    renamed with it, so the key moves with them.
     """
     if node.type != cs.TS_SHORTHAND_PROPERTY_IDENTIFIER:
         return False
-    # identifier -> object -> `module.exports = <object>`, when that holds it.
-    holder = node.parent.parent if node.parent is not None else None
-    left = holder.child_by_field_name(cs.FIELD_LEFT) if holder is not None else None
-    return left is None or left.text != _JS_MODULE_EXPORTS
+    holder = node.parent
+    return holder is None or not _is_the_export_object(holder)
 
 
 @lru_cache(maxsize=8)

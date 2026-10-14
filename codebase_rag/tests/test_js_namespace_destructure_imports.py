@@ -110,3 +110,26 @@ def test_a_name_read_out_of_a_package_stays_the_packages(temp_repo: Path) -> Non
     calls = _calls(files, temp_repo / "proj")
 
     assert not any(callee.startswith("proj.lib") for _c, callee, _r in calls), calls
+
+
+def test_a_destructure_inside_a_function_binds_nothing_module_wide(
+    temp_repo: Path,
+) -> None:
+    # Negative: the module keeps one import map, so `run` read out of `A`
+    # in `f` and out of `B` in `g` cannot both live there; the later must
+    # not bind `f`'s call to `b.run`.
+    files = {
+        "package.json": '{"type": "module"}\n',
+        "a.js": 'export function run() { return "a"; }\n',
+        "b.js": 'export function run() { return "b"; }\n',
+        "main.js": (
+            'import * as A from "./a.js";\nimport * as B from "./b.js";\n'
+            "export function f() {\n  const { run } = A;\n  return run();\n}\n"
+            "export function g() {\n  const { run } = B;\n  return run();\n}\n"
+        ),
+    }
+
+    calls = _calls(files, temp_repo / "proj")
+
+    assert ("proj.main.f", "proj.b.run", cs.EdgeResolution.EXACT) not in calls, calls
+    assert ("proj.main.g", "proj.a.run", cs.EdgeResolution.EXACT) not in calls, calls

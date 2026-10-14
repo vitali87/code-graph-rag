@@ -408,8 +408,17 @@ _JSONC_TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
 def _js_destructured_names(pattern: Node) -> list[tuple[str, str]]:
     # (local, imported) name pairs bound by an object destructuring pattern:
     # `{ writeFileSync }` -> (writeFileSync, writeFileSync); `{ x: y }` -> (y, x).
+    # A default stands in only for a missing key, so `{ x = d }` reads `x`
+    # as `{ x }` does (issue #3252).
     out: list[tuple[str, str]] = []
-    for child in pattern.named_children:
+    for entry in pattern.named_children:
+        child = (
+            entry.child_by_field_name(cs.FIELD_LEFT)
+            if entry.type == cs.TS_OBJECT_ASSIGNMENT_PATTERN
+            else entry
+        )
+        if child is None:
+            continue
         if child.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN:
             if name := safe_decode_text(child):
                 out.append((name, name))
@@ -419,10 +428,12 @@ def _js_destructured_names(pattern: Node) -> list[tuple[str, str]]:
 
 
 def _js_pair_binding(pair: Node) -> tuple[str, str] | None:
-    # `{ x: y }` binds local `y` to imported `x`; any other value shape
-    # (a nested pattern, a default) binds nothing this reader tracks.
+    # `{ x: y }` and `{ x: y = d }` bind local `y` to imported `x`; any
+    # other value shape (a nested pattern) binds nothing this reader tracks.
     key = pair.child_by_field_name(cs.FIELD_KEY)
     value = pair.child_by_field_name(cs.FIELD_VALUE)
+    if value is not None and value.type == cs.TS_ASSIGNMENT_PATTERN:
+        value = value.child_by_field_name(cs.FIELD_LEFT)
     if key is None or value is None or value.type != cs.TS_IDENTIFIER:
         return None
     imported = safe_decode_text(key)
@@ -4847,6 +4858,14 @@ class ImportProcessor:
         # of what `U` names: out of a whole module (`import * as U`,
         # `const U = require(...)`) that is the export, as `import { pad }`
         # would bind it (issue #3252); out of an imported object, its member.
+        # Only at module level is `U` sure to be the import: in a function a
+        # parameter or local can shadow it (`function run(U) {...}`), and a
+        # function's locals would leak into the one map the module keeps.
+        holder = decl_node.parent
+        if holder is not None and holder.type == cs.TS_EXPORT_STATEMENT:
+            holder = holder.parent
+        if holder is None or holder.type != cs.TS_PROGRAM:
+            return
         bindings = self.import_mapping[current_module]
         for declarator in decl_node.children:
             if declarator.type != cs.TS_VARIABLE_DECLARATOR:

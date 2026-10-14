@@ -547,12 +547,44 @@ def test_a_destructure_renames_the_key_it_reads() -> None:
         _js_rewrite("let { helper } = U;", rename._replace(rebind=False), app)
         == "let { assist: helper } = U;"
     )
+    # A default or a comment beside the key is kept, as the key's only
+    # change.
+    assert (
+        _js_rewrite(
+            "const { helper = f, helper: h = null, /* c */ helper /* d */ } = U;",
+            rename,
+            app,
+        )
+        == "const { assist = f, assist: h = null, /* c */ assist /* d */ } = U;"
+    )
+
+
+def test_a_destructure_renames_only_the_entries_its_sites_bind() -> None:
+    # One declaration can destructure another object too: only the entry
+    # binding the import's local is the import's (`q` here, not `p`).
+    from pathlib import Path as _Path
+
+    from codebase_rag.editing.imports import ANY_MODULE, _js_rewrite
+
+    rename = SymbolMove(
+        symbol="helper",
+        old_module=ANY_MODULE,
+        new_module=ANY_MODULE,
+        new_name="assist",
+        rebind=True,
+    )
+    statement = "const { helper: p } = other, { helper: q } = U;"
+    assert (
+        _js_rewrite(statement, rename, _Path("src/app.js"), frozenset({"q"}))
+        == "const { helper: p } = other, { assist: q } = U;"
+    )
 
 
 def test_a_destructure_entry_the_index_never_binds_is_left_alone() -> None:
-    # Negative: a default (`{ helper = f }`) or another symbol's key is not
-    # the renamed import, and a move cannot retarget a namespace the
-    # statement does not name, so none of them is rewritten.
+    # Negative: a nested pattern (`{ helper: { x } }`), a quoted key or
+    # another symbol's key is not the renamed import, and a move cannot
+    # retarget a namespace the statement does not name, so none of them is
+    # rewritten.
     from pathlib import Path as _Path
 
     from codebase_rag.editing.imports import ANY_MODULE, _js_rewrite
@@ -565,7 +597,7 @@ def test_a_destructure_entry_the_index_never_binds_is_left_alone() -> None:
         rebind=True,
     )
     app = _Path("src/app.js")
-    statement = "const { helper = f, helperX, x: helper } = U;"
+    statement = 'const { helper: { x }, "helper": h, helperX, x: helper } = U;'
     assert _js_rewrite(statement, rename, app) == statement
     move = SymbolMove(
         symbol="helper", old_module="./util", new_module="./lib", new_name="assist"

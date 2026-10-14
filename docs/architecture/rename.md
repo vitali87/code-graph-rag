@@ -58,11 +58,19 @@ A destructure that reads the name out of the module is such an import:
 `const { pad } = U` after `import * as U from "./u"` (or
 `const U = require("./u")`) binds `pad` exactly, so the rename rewrites the
 key with its uses (`const { padLeft } = U`), and `{ pad: p }` keeps its own
-local (`{ padLeft: p }`). An object literal's shorthand property keeps its
-key: `export default { pad }` becomes `{ pad: padLeft }`, so every consumer
-reading `.pad` keeps working. The exception is `module.exports = { pad }`,
-the module's own export list, whose key moves with the `require("./u").pad`
-readers the rename rewrites (issue #3252).
+local (`{ padLeft: p }`). A default (`{ pad = f }`, `{ pad: p = f }`) or a
+comment beside the key changes nothing, and in a declaration that also
+destructures another object (`const { pad: p } = other, { pad: q } = U`)
+only the namespace's key moves. Only a module-level destructure binds: in a
+function, a parameter or local may shadow `U`. An object literal's
+shorthand property keeps its key: `export default { pad }` becomes
+`{ pad: padLeft }`, so every consumer reading `.pad` keeps working. The
+exception is the CommonJS export object, whose key moves with the
+`require("./u").pad` readers the rename rewrites (issue #3252). It is told
+by its syntax, however spaced: `module.exports = { pad }`, wrapped
+(`({ pad })`), chained (`module.exports = exports = { pad }`), frozen
+(`Object.freeze({ pad })`) or copied on (`Object.assign(module.exports,
+{ pad })`).
 
 ## Refusal
 

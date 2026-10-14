@@ -163,6 +163,145 @@ def test_a_namespace_destructure_renames_with_its_uses(
 
 
 @needs_node
+@pytest.mark.parametrize(
+    ("published", "renamed"),
+    [
+        pytest.param(
+            "module . exports = { pad };",
+            "module . exports = { padLeft };",
+            id="spaced",
+        ),
+        pytest.param(
+            "module.exports = ({ pad });",
+            "module.exports = ({ padLeft });",
+            id="wrapped",
+        ),
+        pytest.param(
+            "module.exports = exports = { pad };",
+            "module.exports = exports = { padLeft };",
+            id="chained",
+        ),
+        pytest.param(
+            "module.exports = Object.freeze({ pad });",
+            "module.exports = Object.freeze({ padLeft });",
+            id="frozen",
+        ),
+        pytest.param(
+            "Object.assign(module.exports, { pad });",
+            "Object.assign(module.exports, { padLeft });",
+            id="assigned",
+        ),
+    ],
+)
+def test_the_commonjs_export_object_renames_its_key_however_written(
+    temp_repo: Path, mock_ingestor: MagicMock, published: str, renamed: str
+) -> None:
+    # The export object is told apart by its syntax, not its spelling: each
+    # form publishes `{ pad }` as what `require("./u")` returns, so its
+    # key moves with the renamed readers.
+    files = {
+        "u.js": f'function pad(s) {{ return " " + s; }}\n{published}\n',
+        "main.js": 'const U = require("./u");\nconsole.log(U.pad("q"));\n',
+    }
+    for rel, text in files.items():
+        _write(temp_repo, rel, text)
+    before = _node(temp_repo, "main.js")
+
+    _rename_pad(temp_repo, mock_ingestor, "u")
+
+    assert renamed in (temp_repo / "u.js").read_text()
+    assert _node(temp_repo, "main.js") == before
+
+
+@needs_node
+@pytest.mark.parametrize(
+    ("destructures", "renamed"),
+    [
+        pytest.param(
+            "const { pad: p2 = null } = u;\nconst use = (s) => p2(s);\n",
+            "const { padLeft: p2 = null } = u;\n",
+            id="aliased-default",
+        ),
+        pytest.param(
+            "const { pad } = u;\nconst { pad: p2 = null } = u;\n"
+            "const use = (s) => pad(s) + p2(s);\n",
+            "const { padLeft } = u;\nconst { padLeft: p2 = null } = u;\n",
+            id="plain-beside-default",
+        ),
+        pytest.param(
+            "const { pad = null } = u;\nconst use = (s) => pad(s);\n",
+            "const { padLeft = null } = u;\n",
+            id="shorthand-default",
+        ),
+        pytest.param(
+            "const { pad /* public */ } = u;\nconst use = (s) => pad(s);\n",
+            "const { padLeft /* public */ } = u;\n",
+            id="commented",
+        ),
+        pytest.param(
+            'const other = { pad: (s) => "o" + s };\n'
+            "const { pad: p } = other, { pad: q } = u;\n"
+            "const use = (s) => p(s) + q(s);\n",
+            "const { pad: p } = other, { padLeft: q } = u;\n",
+            id="beside-another-object",
+        ),
+    ],
+)
+def test_every_destructure_of_the_namespace_follows_the_rename(
+    temp_repo: Path, mock_ingestor: MagicMock, destructures: str, renamed: str
+) -> None:
+    # A default or a comment beside the key, or a declaration that also
+    # destructures another object, still reads the export by its key: the
+    # key is renamed, and only the namespace's (issue #3252).
+    files = {
+        "package.json": '{"type": "module"}\n',
+        "u.js": 'export function pad(s) { return " " + s; }\n',
+        "main.js": (
+            f'import * as u from "./u.js";\n{destructures}console.log(use("b"));\n'
+        ),
+    }
+    for rel, text in files.items():
+        _write(temp_repo, rel, text)
+    before = _node(temp_repo, "main.js")
+
+    _rename_pad(temp_repo, mock_ingestor, "u")
+
+    assert renamed in (temp_repo / "main.js").read_text()
+    assert _node(temp_repo, "main.js") == before
+
+
+@needs_node
+def test_a_destructure_of_a_shadowing_parameter_keeps_its_key(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: inside `run(U)` the name `U` is the parameter, whatever the
+    # module imports as `U`, so its `pad` is the caller's object's key.
+    files = {
+        "package.json": '{"type": "module"}\n',
+        "u.js": 'export function pad(s) { return " " + s; }\n',
+        "lib.js": (
+            'import * as U from "./u.js";\nexport function run(U) {\n'
+            '  const { pad: p } = U;\n  return p("x");\n}\n'
+            'export const own = U.pad("w");\n'
+        ),
+        "main.js": (
+            'import { run, own } from "./lib.js";\n'
+            'console.log(run({ pad: (s) => "caller:" + s }) + own);\n'
+        ),
+    }
+    for rel, text in files.items():
+        _write(temp_repo, rel, text)
+    before = _node(temp_repo, "main.js")
+
+    _rename_pad(temp_repo, mock_ingestor, "u")
+
+    lib = (temp_repo / "lib.js").read_text()
+    assert "  const { pad: p } = U;\n" in lib, lib
+    assert 'export const own = U.padLeft("w");' in lib, lib
+    assert _node(temp_repo, "main.js") == before
+
+
+@needs_node
 def test_a_required_module_destructure_renames_its_key(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
