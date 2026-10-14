@@ -414,12 +414,14 @@ FOREACH (n IN gone | DETACH DELETE n)
 # damage, which merged projects rooted in DIFFERENT directories: a shared
 # node counts as damage when it lies outside the root_path of a project
 # holding it, or a holder records none. root_path is written with the
-# platform's separator, absolute_path in POSIX form.
+# platform's separator, absolute_path in POSIX form; a filesystem root
+# (`/`, `C:\`) already ends in the separator.
 _LEGACY_SHARED = (
     "WITH n, count(DISTINCT p) AS owners, collect(DISTINCT p) AS holders "
-    "WHERE owners > 1 AND any(h IN holders WHERE h.root_path IS NULL "
+    "WITH n, owners, [h IN holders | replace(h.root_path, '\\\\', '/')] AS roots "
+    "WHERE owners > 1 AND any(r IN roots WHERE r IS NULL "
     "OR n.absolute_path IS NULL OR NOT (n.absolute_path + '/') STARTS WITH "
-    "(replace(h.root_path, '\\\\', '/') + '/')) "
+    "(CASE WHEN r ENDS WITH '/' THEN r ELSE r + '/' END)) "
 )
 
 # Damage detectors for the issue #897 migration. Sharing always leaves a

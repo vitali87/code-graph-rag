@@ -216,6 +216,9 @@ def test_a_later_sync_keeps_what_a_nested_root_shares(
         ("/w/a", "/w/b", "/w/a/app/lib", True),
         # A repository and its subdirectory, recorded with Windows separators.
         ("C:\\w\\a", "C:\\w\\a\\app", "C:/w/a/app/lib", False),
+        # A filesystem root already ends in the separator.
+        ("/", "/w/a", "/w/a/lib", False),
+        ("C:\\", "C:\\w\\a", "C:/w/a/lib", False),
     ],
 )
 def test_a_sync_reads_each_root_against_the_shared_node(
