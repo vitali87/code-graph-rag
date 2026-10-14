@@ -400,6 +400,73 @@ def test_ordinary_range_does_not_ship(tmp_path: Path) -> None:
     out = _decide(tmp_path, f"{OLDER}\\n{SHA}\\n")
     assert out["security"] == "false"
     assert out["release"] == "false"
+    assert out["breaking"] == "false"
+
+
+def test_breaking_label_on_an_earlier_commit_of_the_range_is_reported(
+    tmp_path: Path,
+) -> None:
+    _commits(tmp_path, {OLDER: "feat: a", SHA: "fix: b"}, {OLDER: "breaking change"})
+    out = _decide(tmp_path, f"{OLDER}\\n{SHA}\\n")
+    assert out["breaking"] == "true"
+    # A breaking change waits for the cadence like any other release.
+    assert out["release"] == "false"
+
+
+def test_a_security_fix_does_not_hide_a_breaking_label(tmp_path: Path) -> None:
+    # The security marker is known before any label is read; the scan must
+    # still reach the earlier commit's pull request.
+    _commits(
+        tmp_path,
+        {OLDER: "feat: a", SHA: "fix: b [security]"},
+        {OLDER: "breaking change"},
+    )
+    out = _decide(tmp_path, f"{OLDER}\\n{SHA}\\n")
+    assert out["security"] == "true"
+    assert out["breaking"] == "true"
+
+
+def test_only_the_exact_breaking_change_label_counts(tmp_path: Path) -> None:
+    _commits(tmp_path, {SHA: "feat: x"}, {SHA: "breaking\nbreaking changes"})
+    assert _decide(tmp_path, f"{SHA}\\n")["breaking"] == "false"
+
+
+def test_the_labels_are_read_before_the_bump_type_is_chosen() -> None:
+    names = [s["name"] for s in _workflow()["jobs"]["bump-version"]["steps"]]
+    assert names.index("Decide whether this tag ships a release") < names.index(
+        "Determine bump type"
+    )
+    assert (
+        _step("Determine bump type")["env"]["BREAKING"]
+        == "${{ steps.decide.outputs.breaking }}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("event", "breaking", "dispatched", "expected"),
+    [
+        ("push", "false", "", "patch"),
+        ("push", "true", "", "breaking"),
+        # A dispatched type is an explicit choice and overrides the labels.
+        ("workflow_dispatch", "true", "patch", "patch"),
+        ("workflow_dispatch", "false", "minor", "minor"),
+    ],
+)
+def test_the_bump_type_follows_the_breaking_label_unless_dispatched(
+    tmp_path: Path, event: str, breaking: str, dispatched: str, expected: str
+) -> None:
+    result, out = _run(
+        "Determine bump type",
+        "",
+        tmp_path,
+        {
+            "GITHUB_EVENT_NAME": event,
+            "BREAKING": breaking,
+            "DISPATCH_BUMP_TYPE": dispatched,
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    assert out["type"] == expected
 
 
 def test_non_sha_range_entries_never_reach_git_or_a_url(tmp_path: Path) -> None:
@@ -465,9 +532,11 @@ def test_label_lookups_follow_mains_first_parent_line_only(tmp_path: Path) -> No
     assert len(_lines(tmp_path / "gh_calls")) == 4
 
 
-def test_security_marker_on_a_branch_commit_ships_without_extra_calls(
+def test_security_marker_on_a_branch_commit_ships_reading_main_labels_only(
     tmp_path: Path,
 ) -> None:
+    # The labels still decide the bump, so a security release reads them too,
+    # but only along main's first-parent line, as an ordinary scan does.
     _commits(
         tmp_path,
         {
@@ -482,8 +551,8 @@ def test_security_marker_on_a_branch_commit_ships_without_extra_calls(
     out = _decide(tmp_path, range_)
     assert out["security"] == "true"
     assert out["release"] == "true"
-    assert _lines(tmp_path / "pulls_calls") == []
-    assert len(_lines(tmp_path / "gh_calls")) == 2
+    assert _lines(tmp_path / "pulls_calls") == [SHA, OLDER]
+    assert len(_lines(tmp_path / "gh_calls")) == 4
 
 
 def test_unreadable_pull_request_labels_fail_the_run(tmp_path: Path) -> None:
