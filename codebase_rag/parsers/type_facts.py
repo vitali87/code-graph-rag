@@ -304,17 +304,18 @@ def queue_type_facts(
     )
 
 
-def _already_resolved(name: str, resolved_targets: frozenset[str]) -> bool:
-    # Names already bound through the file's imports at its last parse; see
-    # PendingTypeFact.resolved_targets (issue #3007). A bare `Match` is one
-    # binding in its file, so a target of that name is it; a qualified
-    # `crate::later::Match` is bound only by a target it spells the tail of,
-    # never by an edge to `matcher::Match`.
+def _resolved_by(name: str, resolved_targets: frozenset[str]) -> list[str]:
+    # The targets a name was already bound to through its file's imports at
+    # the last parse; see PendingTypeFact.resolved_targets (issue #3007). A
+    # bare `Match` is one binding in its file, so a target of that name is
+    # it; a qualified `crate::later::Match` is bound only by a target it
+    # spells the tail of, never by an edge to `matcher::Match`.
     tail = name.removeprefix(_RUST_CRATE_ROOT)
-    return any(
-        target == tail or target.endswith(f"{cs.SEPARATOR_DOT}{tail}")
+    return [
+        target
         for target in resolved_targets
-    )
+        if target == tail or target.endswith(f"{cs.SEPARATOR_DOT}{tail}")
+    ]
 
 
 class TypeReferenceResolver:
@@ -481,7 +482,16 @@ class TypeReferenceResolver:
         )
         found: dict[str, None] = {}
         for name, arity in written:
-            if _already_resolved(name, resolved_targets):
+            if bound := _resolved_by(name, resolved_targets):
+                # The binding stands, but a partial type's parts come and go
+                # with their files: `_every_part` names the ones there are now.
+                found.update(
+                    dict.fromkeys(
+                        qn
+                        for qn in bound
+                        if qn in self._partial_groups and self._is_type(qn)
+                    )
+                )
                 continue
             qn = self.resolve(name, module_qn, arity)
             if qn is not None:
