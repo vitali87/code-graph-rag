@@ -110,6 +110,27 @@ def test_pre_parse_retains_at_most_the_cache_bound(
     assert len(retained) == _BOUND, sorted(retained)
 
 
+def test_pre_parse_retains_at_most_the_cache_memory_bound(
+    tmp_path: Path,
+    python_parsers: _Parsers,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A low CACHE_MAX_MEMORY_MB must bound the retained trees too, not only
+    # CACHE_MAX_ENTRIES: three of these files overflow 1 MB, two fit.
+    monkeypatch.setattr(gu.settings, "CACHE_MAX_MEMORY_MB", 1)
+    root = _write_repo(tmp_path / "repo")
+    updater = _updater(root, *python_parsers)
+    padding = "#" * 400_000 + "\n"
+    entries = [
+        (root / f"mod{i}.py", f"mod{i}.py", True, (_source(i) + padding).encode())
+        for i in range(_FILES)
+    ]
+    retained = updater._pre_parse_changed_files(entries)
+    assert len(retained) == 2, sorted(retained)
+    held = sum(node.end_byte for node, _ in retained.values())
+    assert held <= updater.ast_cache.max_memory_bytes, held
+
+
 def test_files_beyond_the_bound_are_still_parsed_before_any_delete(
     tmp_path: Path,
     python_parsers: _Parsers,

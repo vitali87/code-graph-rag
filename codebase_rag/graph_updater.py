@@ -7883,13 +7883,15 @@ class GraphUpdater:
         changed_entries: list[tuple[Path, str, bool, bytes]],
     ) -> dict[Path, tuple[Node, dict[str, list] | None]]:
         # Every changed file parses here, before any stale subtree is
-        # deleted, so a parse failure leaves the old graph in place. Only the
-        # first AST-cache-bound's worth of trees are KEPT for the loop to
-        # consume: holding all of them pinned every tree of a first index for
-        # the whole pass (microsoft/vscode: OOM at 11.5 GB, issue #2926). The
+        # deleted, so a parse failure leaves the old graph in place. Only
+        # trees within the AST cache's bounds (entry count AND its memory
+        # measure, source bytes spanned) are KEPT for the loop to consume:
+        # holding all of them pinned every tree of a first index for the
+        # whole pass (microsoft/vscode: OOM at 11.5 GB, issue #2926). The
         # rest parse again when the loop reaches them.
         result: dict[Path, tuple[Node, dict[str, list] | None]] = {}
         retain = self.ast_cache.max_entries
+        retained_bytes = 0
         for filepath, _file_key, _is_new, file_bytes in changed_entries:
             language = self._tree_sitter_language(filepath)
             if language is None:
@@ -7905,9 +7907,14 @@ class GraphUpdater:
             tree = parse_with_preproc_recovery(
                 parser, grammar_bytes(file_bytes, language, filepath), language
             )
-            if len(result) >= retain:
-                continue
             root_node = tree.root_node
+            size = root_node.end_byte
+            if (
+                len(result) >= retain
+                or retained_bytes + size > self.ast_cache.max_memory_bytes
+            ):
+                continue
+            retained_bytes += size
             combined_query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language)
             combined_captures: dict[str, list] | None = None
             if combined_query:
