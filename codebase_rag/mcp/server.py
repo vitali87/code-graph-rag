@@ -343,10 +343,9 @@ async def serve_http(
 
     @contextlib.asynccontextmanager
     async def lifespan(app: Starlette):
-        with _service_lifecycle(ingestor):
-            async with session_manager.run():
-                logger.info(lg.MCP_HTTP_SERVER_READY.format(host=host, port=port))
-                yield
+        async with session_manager.run():
+            logger.info(lg.MCP_HTTP_SERVER_READY.format(host=host, port=port))
+            yield
 
     # With a token, bearer auth fronts the mount even on loopback
     # (defense in depth for shared hosts); without one the exposure
@@ -364,7 +363,11 @@ async def serve_http(
 
     config = uvicorn.Config(starlette_app, host=host, port=port, log_level="info")
     uvicorn_server = uvicorn.Server(config)
-    await uvicorn_server.serve()
+    # Connected before uvicorn starts, as stdio connects before its
+    # transport: uvicorn logs a failure inside the lifespan and returns, so
+    # the command exited 0 for a server that never started (PR 2504 review).
+    with _service_lifecycle(ingestor):
+        await uvicorn_server.serve()
 
 
 if __name__ == "__main__":
