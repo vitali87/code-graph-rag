@@ -63,6 +63,25 @@ class TestMaskLiteralsAndComments:
         # The engine rejects these anyway; masking them could hide a keyword.
         assert mask_literals_and_comments(query) == query
 
+    @pytest.mark.parametrize(
+        ("query", "expected"),
+        [
+            ("MATCH (a)-[`r]x`*]->(b)", "MATCH (a)-[_*]->(b)"),
+            ("MATCH (a)-[`*`:`T]`]->(b)", "MATCH (a)-[_:_]->(b)"),
+            ("RETURN `a``b`, 'x'", "RETURN _, ''"),
+        ],
+    )
+    def test_backtick_identifier_becomes_a_placeholder_when_kept_quoted(
+        self, query: str, expected: str
+    ) -> None:
+        assert mask_literals_and_comments(query, unquote_identifiers=False) == (
+            expected
+        )
+
+    def test_unterminated_backtick_is_left_visible_when_kept_quoted(self) -> None:
+        query = "MATCH (a)-[`r]*]->(b)"
+        assert mask_literals_and_comments(query, unquote_identifiers=False) == query
+
 
 class TestIsAllowedProcedure:
     @pytest.mark.parametrize(

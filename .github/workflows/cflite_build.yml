@@ -1,0 +1,39 @@
+# ClusterFuzzLite build of main.
+#
+# Uploads the fuzz build of every main commit as a workflow artifact. When
+# the PR job finds a crash, it fetches the build of a recent commit before
+# the PR's base and replays the crashing input against it: a crash that
+# reproduces there too is not the PR's doing and does not fail it. With no
+# build to fetch, every crash counts against whichever PR meets it first.
+
+name: ClusterFuzzLite Build
+
+on:
+  push:
+    branches: [ "main" ]
+
+permissions: read-all
+
+# The PR job tries several commits back from its base, so a build cancelled
+# by the next push leaves the one before it to compare against.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build fuzzers (${{ matrix.sanitizer }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [address]
+    steps:
+      - name: Build fuzzers (${{ matrix.sanitizer }})
+        uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          sanitizer: ${{ matrix.sanitizer }}
+          language: python
+          upload-build: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}

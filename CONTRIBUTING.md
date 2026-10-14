@@ -206,34 +206,77 @@ Now, `pre-commit` will run automatically on `git commit`.
 
 ## Fuzzing
 
-The harnesses under `fuzz/` run continuously in CI via
-[ClusterFuzzLite](https://google.github.io/clusterfuzzlite/): `cflite_pr.yml`
-gives each one 600 seconds on every pull request, and `cflite_batch.yml` runs
-them for an hour nightly. A crash fails the job with the reproducing input
-attached.
+The harnesses under `fuzz/` run in CI via
+[ClusterFuzzLite](https://google.github.io/clusterfuzzlite/), in four
+workflows:
 
-There are three targets:
+| Workflow | When | What it does |
+| --- | --- | --- |
+| `cflite_pr.yml` | every pull request | 600 seconds of fuzzing on every core, in a job capped at 30 minutes so it never holds a PR for long. It fuzzes only the targets the change can reach, judged by the latest coverage report, or all of them when there is no report |
+| `cflite_batch.yml` | nightly at 03:17 UTC, or by hand | one job per target, each fuzzing on every core for 7200 seconds (`fuzz-seconds` on a manual run) and growing the corpus the PR job starts from |
+| `cflite_cron.yml` | nightly at 06:17 UTC, or by hand | prunes each target's corpus to the inputs that still add coverage, then replays the pruned corpora under coverage.py and uploads the report as the `cifuzz-coverage-latest` artifact |
+| `cflite_build.yml` | every push to `main` | uploads the fuzz build, so a crash a PR meets that already happens on `main` is not blamed on the PR |
+
+A crash fails the job with the reproducing input attached as an artifact.
+The PR and batch jobs also upload a SARIF report to code scanning, so crashes
+appear in the Security tab. The batch report is written even when nothing
+crashed, so an alert closes on the first night its crash is gone.
+
+There are five targets:
 
 | Harness | What it drives | What it asserts |
 | --- | --- | --- |
-| `fuzz_parse_source.py` | a tree-sitter parser for a fuzzer-chosen language, then the queries and name extraction over the resulting tree | the pass never raises on any input |
-| `fuzz_incremental_update.py` | `GraphUpdater.reingest` over a fuzzer-chosen edit plan | the resulting graph equals a clean full index of the same tree |
-| `fuzz_shell_command.py` | the `EXECUTE_SHELL` allowlist and dangerous-command classifier | it never raises, never calls a never-allowlisted program safe, and never lets a prefix launder a dangerous trailing segment |
+| `fuzz_parse_source.py` | a tree-sitter parse for a fuzzer-chosen language (through preprocessor recovery for C, C++ and C#, as indexing does), then every query and the name extraction over the tree | no pass raises, and no extracted name is silently truncated by an invalid byte beside it |
+| `fuzz_incremental_update.py` | `GraphUpdater.reingest` over a fuzzer-chosen edit plan: truncate, splice, rewrite, delete, recreate, new file, rename, move | the resulting graph equals a clean full index of the same tree |
+| `fuzz_shell_command.py` | the production `EXECUTE_SHELL` gates: the pre-spawn screen in default and YOLO mode, the approval gate and the non-interactive confinement gate | no gate raises; an allowed command spawns only segments allowed on their own; no prefix launders a structurally refused suffix; `xargs` never makes a refused command allowed; re-quoting never changes a verdict; non-interactive runs stay read-only and inside the project root |
+| `fuzz_cypher_guard.py` | the read-only guard on generated Cypher: masking, validation and both plan parsers | write keywords, disallowed procedures and unbounded paths are refused wherever they hide, and a plan holding a write operator is refused |
+| `fuzz_dependency_manifest.py` | `parse_dependencies` over every manifest format | exactly the declared dependencies are reported, all as strings, and none is invented from a decoy or a wrong-typed section |
 
 To run one locally:
 
 ```bash
-uv run --extra fuzz python fuzz/fuzz_parse_source.py -max_total_time=60
+uv run --extra fuzz python fuzz/fuzz_parse_source.py -max_total_time=60 \
+  -dict=fuzz/fuzz_parse_source.dict
 ```
 
-Seed corpora live in `fuzz/corpus/<harness>/` and are regenerated with
-`uv run python fuzz/build_corpus.py`. Seeds matter: starting from valid
-programs is what gets the fuzzer past the grammar's error recovery and into
-the extraction code.
+Each target ships a libFuzzer dictionary, `fuzz/<harness>.dict`, holding the
+tokens its input language is built from. The build copies it next to the
+target and smoke-runs the target with it, so a malformed dictionary fails the
+build. `codebase_rag/tests/test_fuzz_build.py` checks every dictionary the way
+libFuzzer reads it, and caps each entry at 64 bytes, because libFuzzer skips
+any longer entry without saying so.
 
-**atheris does not build on macOS.** It needs libFuzzer, which Apple Clang does
-not ship, so `uv sync --extra fuzz` fails there with `Failed to find
-libFuzzer`. Fuzz on Linux, or let CI do it; the rest of the suite is unaffected
+Seed corpora live in `fuzz/corpus/<harness>/` and are regenerated with
+`uv run python fuzz/build_corpus.py`. Seeds matter: starting from valid inputs
+is what gets the fuzzer past the grammar's error recovery and into the
+extraction code.
+
+The fuzz image installs the locked dependency set (`uv export --frozen`) and
+pins atheris, PyInstaller and coverage, so a fuzzing run never tests a
+dependency set the project does not ship.
+
+Rules for a harness:
+
+* **No `from __future__` imports.** The coverage build prepends a coverage
+  stub to every harness, and a `__future__` import that is not the first
+  statement is a `SyntaxError`, which leaves that target out of the report.
+* **Silence logging** (`logger.disable("codebase_rag")`). One target's debug
+  output once filled a 364 MB nightly log and hid its own statistics.
+* **Assert a property, not just "does not raise"**, where the code under test
+  has one. A crash-only harness misses every bug that returns a wrong answer.
+
+**atheris on macOS.** Apple Clang ships no libFuzzer, so `uv sync --extra
+fuzz` fails with `Failed to find libFuzzer`. Homebrew's `llvm@21` has it,
+and atheris 3.0.0 is the last release with a source distribution:
+
+```bash
+L=/opt/homebrew/opt/llvm@21/bin; S=$(xcrun --show-sdk-path)
+SDKROOT=$S CFLAGS="-isysroot $S" CXXFLAGS="-isysroot $S" \
+  LDFLAGS="-isysroot $S -L$S/usr/lib" CC=$L/clang CXX=$L/clang++ \
+  CLANG_BIN=$L/clang uv pip install "atheris==3.0.0"
+```
+
+Otherwise fuzz on Linux, or let CI do it; the rest of the suite is unaffected
 either way.
 
 When fuzzing finds a crash: add a regression test under `codebase_rag/tests/`
