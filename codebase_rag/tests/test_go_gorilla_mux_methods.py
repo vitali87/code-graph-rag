@@ -30,6 +30,10 @@ func putUser(w http.ResponseWriter, r *http.Request)    {}
 func anyUser(w http.ResponseWriter, r *http.Request)    {}
 func health(w http.ResponseWriter, r *http.Request)     {}
 func dyn(w http.ResponseWriter, r *http.Request)        {}
+func traceUser(w http.ResponseWriter, r *http.Request)  {}
+func propfind(w http.ResponseWriter, r *http.Request)   {}
+func mixed(w http.ResponseWriter, r *http.Request)      {}
+func paren(w http.ResponseWriter, r *http.Request)      {}
 
 func main() {
 \tverb := pick()
@@ -41,6 +45,10 @@ func main() {
 \tr.HandleFunc("/users/{id}/put", putUser).Methods("put")
 \tr.HandleFunc("/users/{id}/any", anyUser)
 \tr.HandleFunc("/dyn", dyn).Methods(verb)
+\tr.HandleFunc("/users/{id}/trace", traceUser).Methods(http.MethodTrace)
+\tr.HandleFunc("/dav", propfind).Methods("PROPFIND")
+\tr.HandleFunc("/mixed", mixed).Methods("GET", "connect")
+\t(r.HandleFunc("/paren", paren)).Methods("GET")
 \tm := http.NewServeMux()
 \tm.HandleFunc("GET /health", health)
 }
@@ -66,6 +74,10 @@ def exposed(tmp_path_factory: pytest.TempPathFactory) -> dict[str, set[str]]:
         ("getUser", {"GET /users/{id}", "HEAD /users/{id}"}),
         ("deleteUser", {"DELETE /users/{id}"}),
         ("putUser", {"PUT /users/{id}/put"}),
+        ("traceUser", {"TRACE /users/{id}/trace"}),
+        ("propfind", {"PROPFIND /dav"}),
+        ("mixed", {"GET /mixed", "CONNECT /mixed"}),
+        ("paren", {"GET /paren"}),
     ],
     ids=[
         "string-verb",
@@ -73,6 +85,12 @@ def exposed(tmp_path_factory: pytest.TempPathFactory) -> dict[str, set[str]]:
         "several-verbs",
         "raw-string-after-another-link",
         "lowercase-verb",
+        # gorilla/mux takes any method token, net/http's TRACE and CONNECT
+        # constants included; a route using one must not vanish.
+        "trace-constant",
+        "extension-method",
+        "connect-beside-get",
+        "parenthesized-registration",
     ],
 )
 def test_a_methods_chain_sets_the_verb(

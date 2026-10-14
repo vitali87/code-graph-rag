@@ -129,6 +129,10 @@ _GO_HANDLE_METHODS = frozenset({"HandleFunc", "Handle"})
 _GO_METHODS_LINK = "Methods"
 _GO_HTTP_PACKAGE = "http"
 _GO_METHOD_CONST = "Method"
+# `.Methods` takes any method token and upper-cases it (WebDAV's PROPFIND
+# included), and net/http's constants name CONNECT and TRACE as well.
+_GO_HTTP_METHOD_CONSTS = frozenset({*_HTTP_METHODS, "CONNECT", "TRACE"})
+_HTTP_METHOD_TOKEN_RE = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
 _GO_FRAMEWORK_FACTORIES = frozenset(
     {
         "echo.New",
@@ -492,6 +496,13 @@ def _go_methods_chain(call: Node) -> list[str] | None:
     # the empty list then yields nothing, never a wrong ANY template.
     node = call
     for _ in range(_CHAIN_DEPTH_LIMIT):
+        # `(r.HandleFunc(p, h)).Methods("GET")`: the parentheses change
+        # nothing about the chain.
+        while (
+            node.parent is not None
+            and node.parent.type == cs.TS_PARENTHESIZED_EXPRESSION
+        ):
+            node = node.parent
         selector = node.parent
         outer = selector.parent if selector is not None else None
         if (
@@ -513,16 +524,16 @@ def _go_methods_chain(call: Node) -> list[str] | None:
 
 
 def _go_verb(node: Node) -> str | None:
-    # `"GET"`, `` `get` `` or `http.MethodGet`.
+    # `"GET"`, `` `get` ``, `"PROPFIND"` or `http.MethodGet`.
     if node.type == cs.TS_GO_SELECTOR_EXPRESSION:
         package = _decode(node.child_by_field_name(cs.FIELD_OPERAND))
         name = _decode(node.child_by_field_name(cs.FIELD_FIELD)) or ""
         if package != _GO_HTTP_PACKAGE or not name.startswith(_GO_METHOD_CONST):
             return None
         verb = name.removeprefix(_GO_METHOD_CONST).upper()
-    else:
-        verb = (_literal_path(node, _GO_PATH_LITERALS) or "").upper()
-    return verb if verb in _HTTP_METHODS else None
+        return verb if verb in _GO_HTTP_METHOD_CONSTS else None
+    verb = _literal_path(node, _GO_PATH_LITERALS) or ""
+    return verb.upper() if _HTTP_METHOD_TOKEN_RE.fullmatch(verb) else None
 
 
 def _wrapper_in_scope(
