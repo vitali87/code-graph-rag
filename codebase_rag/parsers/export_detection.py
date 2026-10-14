@@ -735,6 +735,13 @@ def _declared_static_before(definition: Node, *, cpp: bool = False) -> bool:
     if name is None:
         return False
     namespace = _cpp_namespace_path(definition) if cpp else ()
+    if cpp:
+        # `void N::helper() {}` defines `helper` of namespace `N` (Greptile,
+        # PR #2952).
+        *qualifier, name = (
+            part.strip() for part in name.split(cs.SEPARATOR_DOUBLE_COLON)
+        )
+        namespace += tuple(qualifier)
     parameters = _cpp_parameter_types(definition) if cpp else ()
     root = definition
     while root.parent is not None:
@@ -975,19 +982,25 @@ def _scala_exported(node: Node) -> bool:
     parent = node.parent
     if parent is None or parent.type not in cs.SCALA_API_SCOPES:
         return False
-    # Nor is a member of an object or class declared inside a def's body:
-    # nothing outside that body can name it (Greptile, PR #2952).
+    # Nor is a member of an object or class declared inside a def's body, or
+    # of a `private` one: nothing outside its owner can name it (Greptile,
+    # PR #2952).
     ancestor = parent.parent
     while ancestor is not None:
-        if ancestor.type in (cs.TS_SCALA_FUNCTION_DEFINITION, cs.TS_SCALA_BLOCK):
+        if ancestor.type in (
+            cs.TS_SCALA_FUNCTION_DEFINITION,
+            cs.TS_SCALA_BLOCK,
+        ) or _scala_private(ancestor):
             return False
         ancestor = ancestor.parent
+    return not _scala_private(node)
+
+
+def _scala_private(node: Node) -> bool:
     modifiers = next(
         (c for c in node.children if c.type == cs.TS_SCALA_MODIFIERS), None
     )
-    if modifiers is None:
-        return True
-    return not any(
+    return modifiers is not None and any(
         access.type == cs.TS_SCALA_ACCESS_MODIFIER
         and any(c.type == cs.TS_SCALA_PRIVATE for c in access.children)
         for access in modifiers.children

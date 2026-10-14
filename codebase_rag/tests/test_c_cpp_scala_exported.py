@@ -278,13 +278,27 @@ object Holder {
   }
 }
 """
+OWNER_SCALA = """\
+package own
+
+object Outer {
+  private object Hidden { def helper(): Int = 1 }
+  private class Inner { def work(): Int = 2 }
+  object Open { def shown(): Int = 3 }
+}
+"""
 
 
 @pytest.fixture
 def reviewed(tmp_path: Path) -> dict[str, bool]:
     return _run(
         tmp_path,
-        {"linkage.c": LINKAGE_C, "extra.cpp": EXTRA_CPP, "Local.scala": LOCAL_SCALA},
+        {
+            "linkage.c": LINKAGE_C,
+            "extra.cpp": EXTRA_CPP,
+            "Local.scala": LOCAL_SCALA,
+            "Owner.scala": OWNER_SCALA,
+        },
     )
 
 
@@ -298,6 +312,7 @@ def reviewed(tmp_path: Path) -> dict[str, bool]:
         "extra.lib.twice",
         "extra.guarded_cpp",
         "extra.Guarded.maybe",
+        "Outer.Open.shown",
     ],
     ids=[
         "c-function",
@@ -307,6 +322,7 @@ def reviewed(tmp_path: Path) -> dict[str, bool]:
         "cpp-namespace-template",
         "cpp-guarded-function",
         "cpp-guarded-member",
+        "scala-member-of-a-public-nested-object",
     ],
 )
 def test_reviewed_public_api_is_exported(
@@ -319,12 +335,21 @@ def test_reviewed_public_api_is_exported(
 
 @pytest.mark.parametrize(
     "symbol",
-    ["linkage.helper", "extra.Factory.hidden_static", "anon_tmpl", "Local.helper"],
+    [
+        "linkage.helper",
+        "extra.Factory.hidden_static",
+        "anon_tmpl",
+        "Local.helper",
+        "Outer.Hidden.helper",
+        "Outer.Inner.work",
+    ],
     ids=[
         "c-static-by-earlier-declaration",
         "cpp-private-static-member",
         "cpp-anonymous-namespace-template",
         "scala-object-local-to-a-def",
+        "scala-member-of-a-private-object",
+        "scala-member-of-a-private-class",
     ],
 )
 def test_reviewed_private_code_stays_private(
@@ -360,6 +385,11 @@ struct Box {
     int area();
 };
 int Box::area() { return 1; }
+
+namespace M {
+static void hidden();
+}
+void M::hidden() {}
 """
 
 
@@ -374,11 +404,13 @@ def linkage(tmp_path: Path) -> dict[str, bool]:
         ("link2.N.helper@3", False),
         ("link2.process@8", True),
         ("link2.V.f", True),
+        ("link2.M.hidden", False),
     ],
     ids=[
         "static-declared-in-its-namespace",
         "another-overload-than-the-static-one",
         "a-function-qualified-by-its-namespace",
+        "static-declared-in-the-qualifying-namespace",
     ],
 )
 def test_cpp_linkage_follows_namespace_and_signature(

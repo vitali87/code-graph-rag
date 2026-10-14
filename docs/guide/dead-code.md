@@ -230,7 +230,7 @@ so no name or path is cut to fit 80 columns.
      An out-of-line member definition (`int Box::f() {}`) takes its access
      from a class declaration in another file, so it is not counted.
    - **Scala:** a member or top-level `def` that is not `private` or
-     `private[pkg]`.
+     `private[pkg]`, in no `private` object or class.
 2. **Reachability**: a breadth-first walk over `CALLS` and `REFERENCES` edges
    from every root. With `--classes` the walk also follows `INSTANTIATES` and
    `INHERITS`, so a class counts as reachable when a reachable class
