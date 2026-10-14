@@ -402,6 +402,19 @@ def _exceeds_receiver_chain_cap(call_node: Node) -> bool:
     return False
 
 
+def _has_no_receiver(call_node: Node, language: cs.SupportedLanguage) -> bool:
+    # PHP and C/C++ name a member call by its bare method name too
+    # (`$bag->count()` and `count($xs)` both read `count`; `a.b.max()` reads
+    # `max`), so only the call's shape tells that it has no receiver and so
+    # names no method of another class (issue #2575).
+    if language == cs.SupportedLanguage.PHP:
+        return call_node.type == cs.TS_PHP_FUNCTION_CALL_EXPRESSION
+    if language in _C_FAMILY_LANGUAGES:
+        callee = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        return callee is not None and callee.type == cs.TS_IDENTIFIER
+    return False
+
+
 def _class_qn_for_calls(
     class_node: Node,
     module_qn: str,
@@ -5932,6 +5945,7 @@ class CallProcessor:
             # A Java/C#/Scala `new X(...)` names a type, never a method.
             constructing=ctx.language in _NEW_CONSTRUCTS_LANGUAGES
             and call_node.type in _OBJECT_CREATION_NODE_TYPES,
+            receiverless=_has_no_receiver(call_node, ctx.language),
         )
         return self._judge_resolved_callee(ctx, call_node, call_name, callee_info)
 
