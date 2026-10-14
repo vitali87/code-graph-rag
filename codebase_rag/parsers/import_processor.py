@@ -5046,10 +5046,13 @@ class ImportProcessor:
                 not _has_aliased_scheme(import_path)
                 and not self._js_base_url_names_file(import_path, current_module),
             )
+        parts = self._js_relative_target_parts(import_path, current_module)
+        # An explicit extension (`./fmt.js`) names a file, never a directory.
+        explicit_file = self._strip_js_extension(import_path) != import_path
         return JsImportTarget(
-            self._js_directory_index_qn(
-                self._js_relative_target_parts(import_path, current_module)
-            ),
+            cs.SEPARATOR_DOT.join(parts)
+            if explicit_file
+            else self._js_directory_index_qn(parts),
             False,
         )
 
@@ -5296,14 +5299,23 @@ class ImportProcessor:
             elif child.type == cs.TS_NAMESPACE_EXPORT and (
                 namespace := _js_namespace_export_name(child)
             ):
-                # `export * as math from "./math"` binds `math` to the whole
-                # module, as `import * as math` does, and publishes it. Only
-                # the coincidence of `lib` + `math` spelling the `lib/math`
-                # directory made `math.add()` resolve before (issue #3249).
-                self.import_mapping[current_module][namespace] = source_module
-                self._record_import_site(
-                    current_module, namespace, export_node, cs.IMPORTED_NAME_WILDCARD
+                # `export * as math from "./math"` publishes the whole module
+                # as `math`. Only the coincidence of `lib` + `math` spelling
+                # the `lib/math` directory made `math.add()` resolve before
+                # (issue #3249).
+                self.js_export_bindings.setdefault(current_module, {})[namespace] = (
+                    JsExport(source_module, local=False)
                 )
+                # It binds no local `math`, so the map entry only carries the
+                # IMPORTS edge and never displaces an import of that name.
+                if namespace not in self.import_mapping[current_module]:
+                    self.import_mapping[current_module][namespace] = source_module
+                    self._record_import_site(
+                        current_module,
+                        namespace,
+                        export_node,
+                        cs.IMPORTED_NAME_WILDCARD,
+                    )
 
     def _record_js_reexport_specifier(
         self,
@@ -5392,13 +5404,6 @@ class ImportProcessor:
                 )
         # `_parse_js_reexport` has just mapped this statement's re-exports.
         mapped = self.import_mapping.get(module_qn, {})
-        for child in statement.named_children:
-            if (
-                child.type == cs.TS_NAMESPACE_EXPORT
-                and (namespace := _js_namespace_export_name(child))
-                and (target := mapped.get(namespace)) is not None
-            ):
-                exported[namespace] = JsExport(target, local=False)
         for local, name in _js_export_specifiers(statement):
             if not reexport:
                 exported[name] = JsExport(

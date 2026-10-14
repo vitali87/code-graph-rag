@@ -170,3 +170,88 @@ def test_a_namespace_reexported_directory_binds_its_members_exactly(
     assert calls.get("src.app.run") == {
         ("src.lib.math.add.add", cs.EdgeResolution.EXACT)
     }, calls
+
+
+def test_an_explicit_extension_never_names_the_directory(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: `./fmt.js` names the file `fmt.js` (or `fmt.ts`), never the
+    # `fmt/` directory's index, so with no such file nothing is bound exactly.
+    _write(
+        temp_repo,
+        {
+            "js/fmt/index.js": _JS_INDEX,
+            "js/a.js": 'import { trim } from "./fmt.js";\n'
+            "export function viaExt(x) { return trim(x); }\n",
+        },
+    )
+    updater = create_and_run_updater(temp_repo, mock_ingestor)
+
+    mapping = updater.factory.import_processor.import_mapping
+    assert mapping[f"{temp_repo.name}.js.a"]["trim"] == f"{temp_repo.name}.js.fmt.trim"
+    calls = _calls(temp_repo, mock_ingestor)
+    assert ("js.fmt.index.trim", cs.EdgeResolution.EXACT) not in calls.get(
+        "js.a.viaExt", set()
+    ), calls
+
+
+_ADD = "export function add(a: number, b: number): number { return a + b; }\n"
+
+
+def test_a_local_shadowing_a_namespace_import_keeps_its_own_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `const math = new Local()` shadows `import * as math`, so `math.add()`
+    # is `Local.add`, not the barrel's re-exported `add`.
+    _write(
+        temp_repo,
+        {
+            "src/lib/ops.ts": _ADD,
+            "src/lib/index.ts": 'export * from "./ops";\n',
+            "src/app.ts": 'import * as math from "./lib";\n'
+            "class Local { add(a: number, b: number): number { return a - b; } }\n"
+            "export function run(): number {\n"
+            "  const math = new Local();\n  return math.add(1, 2);\n}\n",
+        },
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    calls = _calls(temp_repo, mock_ingestor)
+    assert calls.get("src.app.run") == {
+        ("src.app.Local.add", cs.EdgeResolution.EXACT)
+    }, calls
+
+
+@pytest.mark.parametrize(
+    "barrel",
+    [
+        'import * as math from "./local";\nexport * as math from "./remote";\n',
+        'export * as math from "./remote";\nimport * as math from "./local";\n',
+    ],
+    ids=["import-first", "export-first"],
+)
+def test_a_namespace_export_does_not_rebind_the_barrels_own_import(
+    temp_repo: Path, mock_ingestor: MagicMock, barrel: str
+) -> None:
+    # `export * as math` publishes `remote` without binding a local `math`:
+    # the barrel's own `math` is still its import of `local`.
+    _write(
+        temp_repo,
+        {
+            "src/local.ts": _ADD,
+            "src/remote.ts": _ADD,
+            "src/barrel.ts": f"{barrel}"
+            "export function run(): number { return math.add(1, 2); }\n",
+            "src/app.ts": 'import { math } from "./barrel";\n'
+            "export function use(): number { return math.add(1, 2); }\n",
+        },
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    calls = _calls(temp_repo, mock_ingestor)
+    assert calls.get("src.barrel.run") == {
+        ("src.local.add", cs.EdgeResolution.EXACT)
+    }, calls
+    assert calls.get("src.app.use") == {("src.remote.add", cs.EdgeResolution.EXACT)}, (
+        calls
+    )
