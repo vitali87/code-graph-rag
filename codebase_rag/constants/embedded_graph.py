@@ -18,6 +18,8 @@ EG_COMPILE_CACHE_SIZE = 2048
 # frequent enough to stop within milliseconds, rare enough to cost nothing.
 EG_PROGRESS_STEPS = 10_000
 EG_DEADLINE_VAR = "eg_deadline"
+# The shortest wait while a timed-out regex lets the deadline's clock catch up.
+EG_CLOCK_POLL_S = 0.001
 EG_BYTES_PER_MB = 1024 * 1024
 # The parameter the ingestor's `UNWIND $batch AS row` writes bind their rows to.
 EG_BATCH_PARAM = "batch"

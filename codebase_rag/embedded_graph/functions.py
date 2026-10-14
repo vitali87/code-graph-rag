@@ -17,6 +17,7 @@ import regex
 
 from ..constants.embedded_graph import (
     EG_BYTES_PER_MB,
+    EG_CLOCK_POLL_S,
     EG_EMPTY,
     EG_ERR_RANGE_TOO_LARGE,
     EG_JSON_FALSE,
@@ -63,11 +64,12 @@ def eg_regex(value: SqlValue, pattern: SqlValue) -> int | None:
             pattern, value, timeout=None if left is None else max(left, 0.0)
         )
     except TimeoutError:
-        # `regex` keeps its own clock; the executor reports a timeout once
-        # the deadline's clock has passed too, which may be a tick later.
-        rest = seconds_left()
-        if rest is not None and rest > 0:
-            time.sleep(rest)
+        # `regex` keeps its own clock; the executor reports a timeout only
+        # once the deadline's clock has passed too. That clock can sit a
+        # whole tick behind (15.6 ms on Windows before Python 3.13), so one
+        # sleep for the time it shows left can end before it moves on.
+        while (rest := seconds_left()) is not None and rest >= 0:
+            time.sleep(max(rest, EG_CLOCK_POLL_S))
         raise
     return 1 if matched else 0
 

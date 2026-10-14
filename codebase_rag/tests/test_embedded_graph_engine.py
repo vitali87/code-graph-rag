@@ -12,6 +12,7 @@ import sqlite3
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -22,7 +23,7 @@ from codebase_rag.constants import (
     EG_RANGE_ITEM_BYTES,
 )
 from codebase_rag.embedded_graph import cypher_ast as a
-from codebase_rag.embedded_graph import functions, procedures
+from codebase_rag.embedded_graph import functions, limits, procedures
 from codebase_rag.embedded_graph.compiler import ALL_LIVE, live_after
 from codebase_rag.embedded_graph.connection import EmbeddedConnection
 from codebase_rag.embedded_graph.executor import compile_read, value_type
@@ -59,6 +60,10 @@ _QUERY_NAMES = sorted(
 
 # Well past the 0.05 s deadline, far short of the unbounded match.
 _REGEX_STOP_S = 5.0
+# A deadline clock coarser than `regex`'s own, as Windows' monotonic clock
+# (15.6 ms) was before Python 3.13; wide enough that the 0.05 s deadline
+# falls inside its first tick on any runner.
+_COARSE_TICK_S = 0.2
 
 
 @pytest.fixture
@@ -228,6 +233,21 @@ class TestLimits:
         assert time.monotonic() - started < _REGEX_STOP_S
         assert conn.run("RETURN 'abc' =~ 'a.c' AS m").rows == [(True,)]
 
+    def test_a_regex_timeout_is_reported_on_a_coarse_clock(
+        self, conn, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # `regex` gives up on its own clock while the deadline's still reads
+        # inside its first tick; the timeout must not surface as a bare
+        # "user-defined function raised exception".
+        origin = time.monotonic()
+
+        def coarse() -> float:
+            return (time.monotonic() - origin) // _COARSE_TICK_S * _COARSE_TICK_S
+
+        monkeypatch.setattr(limits, "time", SimpleNamespace(monotonic=coarse))
+        with pytest.raises(QueryTimeout):
+            conn.run("RETURN $s =~ '(a|aa)+c' AS m", {"s": "a" * 60}, timeout_s=0.05)
+
     def test_a_range_the_memory_limit_cannot_hold_is_refused(self) -> None:
         # Its list is Python's memory, which SQLite's heap limit never sees.
         # Each connection gets its own limit; registering directly keeps the
@@ -238,10 +258,12 @@ class TestLimits:
         assert raw.execute(
             "SELECT json_array_length(eg_range(1, ?, 1))", (items,)
         ).fetchone() == (items,)
+        # A SELECT's execute() steps to its first row, so the refusal comes
+        # from the call itself.
         with pytest.raises(MemoryError):
-            raw.execute("SELECT eg_range(1, ?, 1)", (items + 1,)).fetchone()
+            raw.execute("SELECT eg_range(1, ?, 1)", (items + 1,))
         with pytest.raises(MemoryError):
-            raw.execute("SELECT eg_range(?, ?, 1)", (-(2**63), 2**63 - 2)).fetchone()
+            raw.execute("SELECT eg_range(?, ?, 1)", (-(2**63), 2**63 - 2))
         raw.close()
 
     def test_a_python_procedure_stops_at_its_deadline(self, wide) -> None:
