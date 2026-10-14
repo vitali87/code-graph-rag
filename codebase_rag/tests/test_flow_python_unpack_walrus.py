@@ -74,6 +74,24 @@ FUNCTIONS = {
         'if (token := "safe") and len(""):\n    pass\nprint(token)'
     ),
     "walrus_then_target": 't, y = "safe", (t := os.getenv("PB_WAFTER"))\nprint(t)',
+    # Second bot review on PR #2764: a later read in the same expression sees
+    # what a walrus bound; a walrus in a comprehension reads its loop
+    # variables; one in a lambda's body binds the lambda's own name, while a
+    # lambda's default runs here.
+    "walrus_read_later": 'x = str(len(t := os.getenv("PB_NREAD"))) + t\nprint(x)',
+    "walrus_in_comprehension": (
+        'secret = os.getenv("PB_COMP")\nout = [(last := c) for c in secret]\n'
+        "print(last)"
+    ),
+    "walrus_in_lambda": (
+        't = os.getenv("PB_LAMBDA")\nf = lambda: (t := "safe")\nprint(t)'
+    ),
+    "walrus_in_lambda_default": (
+        'f = lambda a=(t := os.getenv("PB_LDEFAULT")): a\nprint(t)'
+    ),
+    "comprehension_clean_walrus": (
+        's = os.getenv("PB_COMPCLEAN")\nout = [(last := 1) for c in s]\nprint(last)'
+    ),
 }
 
 
@@ -135,6 +153,10 @@ def _leaks(flows: set[tuple[str, str]], var: str) -> bool:
         "PB_CALLU",
         "PB_CALLW",
         "PB_CALLA",
+        "PB_NREAD",
+        "PB_COMP",
+        "PB_LAMBDA",
+        "PB_LDEFAULT",
     ],
 )
 def test_a_name_bound_by_unpacking_or_walrus_carries_its_value(
@@ -144,7 +166,8 @@ def test_a_name_bound_by_unpacking_or_walrus_carries_its_value(
 
 
 @pytest.mark.parametrize(
-    "var", ["PB_KILL", "PB_WKILL", "PB_SWAPK", "PB_LEFTOP", "PB_WAFTER"]
+    "var",
+    ["PB_KILL", "PB_WKILL", "PB_SWAPK", "PB_LEFTOP", "PB_WAFTER", "PB_COMPCLEAN"],
 )
 def test_a_name_rebound_to_a_clean_value_is_clean(
     flows: set[tuple[str, str]], var: str

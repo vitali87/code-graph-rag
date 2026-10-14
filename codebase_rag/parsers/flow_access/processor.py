@@ -429,6 +429,38 @@ def _py_walrus_may_not_run(node: Node) -> bool:
     return False
 
 
+def _py_in_lambda_body(node: Node) -> bool:
+    # A lambda's body runs, with names of its own, only when the lambda is
+    # called; its defaults run where it is defined.
+    child, parent = node, node.parent
+    while parent is not None and parent.type not in _PY_WALRUS_SCOPE_STOPS:
+        if parent.type == cs.TS_PY_LAMBDA:
+            body = parent.child_by_field_name(cs.FIELD_BODY)
+            if body is not None and body.id == child.id:
+                return True
+        child, parent = parent, parent.parent
+    return False
+
+
+def _py_binds_by_walrus(node: Node) -> bool:
+    # Whether a walrus in `node` binds a name of this scope; one in a
+    # lambda's body binds the lambda's own.
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if current.type == cs.TS_PY_NAMED_EXPRESSION:
+            return True
+        body = (
+            current.child_by_field_name(cs.FIELD_BODY)
+            if current.type == cs.TS_PY_LAMBDA
+            else None
+        )
+        stack.extend(
+            c for c in current.named_children if body is None or c.id != body.id
+        )
+    return False
+
+
 # Python values built out of every element they hold (issue #2588): string
 # pieces, container elements and dict keys and values, splats, the awaited
 # value. The result carries the union of their taints.
@@ -3912,8 +3944,18 @@ class FlowProcessor:
                 merged = _merge_optional_taints(merged, taints[element.id])
             taints[value.id] = merged
             return state
-        taints[value.id] = self._py_value_taint(value, state, ctx)
-        return self._walk_stmt(value, state, ctx)
+        taint = self._py_value_taint(value, state, ctx)
+        state = self._walk_stmt(value, state, ctx)
+        if _py_binds_by_walrus(value):
+            # A name a walrus binds may be read later in the same value
+            # (`str(len(t := secret())) + t`), so the value is read again
+            # with the binding in place, keeping what the earlier reads saw
+            # (bot review on PR #2764).
+            taint = _merge_optional_taints(
+                taint, self._py_value_taint(value, state, ctx)
+            )
+        taints[value.id] = taint
+        return state
 
     def _walk_py_named_expression(
         self, node: Node, state: _TaintMap, ctx: _FlowCtx
@@ -3927,12 +3969,21 @@ class FlowProcessor:
         self._note_capture_escapes_in(value)
         if value is None:
             return state
+        if _py_in_lambda_body(node):
+            # It binds the lambda's own name when the lambda runs, never this
+            # scope's (bot review on PR #2764).
+            return self._walk_stmt(value, state, ctx)
         taints: dict[int, Taint | None] = {}
         state = self._py_eval_in_order(value, state, ctx, taints)
         if name is None or name.text is None:
             return state
         bound = name.text.decode(cs.ENCODING_UTF8)
         taint = taints[value.id]
+        if (scope := self._py_comprehension_scope(node, state, ctx)) is not None:
+            # A walrus in a comprehension reads its loop variables and binds
+            # in the enclosing scope: after `[(last := c) for c in secret]`,
+            # `last` holds part of the secret (bot review on PR #2764).
+            taint = self._py_value_taint(value, scope, ctx)
         if _py_walrus_may_not_run(node):
             # Only the path that runs it rebinds the name (bot review on PR
             # #2764): after `flag and (t := "safe")`, `t` may still hold
@@ -4031,6 +4082,13 @@ class FlowProcessor:
         # `[len(c) for c in secret]` does not; an `if` filter only decides
         # which elements survive and never becomes one.
         scope = dict(tainted)
+        self._py_bind_comprehension_targets(node, scope, ctx)
+        body = node.child_by_field_name(cs.FIELD_BODY)
+        return self._py_value_taint(body, scope, ctx) if body is not None else None
+
+    def _py_bind_comprehension_targets(
+        self, node: Node, scope: _TaintMap, ctx: _FlowCtx
+    ) -> None:
         for clause in node.named_children:
             if clause.type != cs.TS_PY_FOR_IN_CLAUSE:
                 continue
@@ -4045,8 +4103,24 @@ class FlowProcessor:
                     scope.pop(name, None)
                 else:
                     scope[name] = taint
-        body = node.child_by_field_name(cs.FIELD_BODY)
-        return self._py_value_taint(body, scope, ctx) if body is not None else None
+
+    def _py_comprehension_scope(
+        self, node: Node, state: _TaintMap, ctx: _FlowCtx
+    ) -> _TaintMap | None:
+        # What `node` reads inside the comprehensions around it: each one's
+        # `for` targets, outermost first, over `state`. None outside any.
+        comprehensions: list[Node] = []
+        parent = node.parent
+        while parent is not None and parent.type not in _PY_WALRUS_SCOPE_STOPS:
+            if parent.type in _PY_COMPREHENSIONS:
+                comprehensions.append(parent)
+            parent = parent.parent
+        if not comprehensions:
+            return None
+        scope = dict(state)
+        for comprehension in reversed(comprehensions):
+            self._py_bind_comprehension_targets(comprehension, scope, ctx)
+        return scope
 
     def _py_call_step(
         self, node: Node, raw: str, ctx: _FlowCtx
