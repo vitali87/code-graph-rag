@@ -3295,14 +3295,19 @@ class ImportProcessor:
         # A deferred import (in a function, under TYPE_CHECKING) of a name an
         # import-time import bound takes the name's site, and the module's
         # IMPORTS edge is the final binding's. The import-time statement still
-        # runs, so it keeps an edge of its own (bot review on PR #2728).
+        # runs, so it keeps an edge of its own (bot review on PR #2728), but
+        # only when both bind the same symbol: the module's uses of the name
+        # resolve to the final binding, so an edge for another symbol's
+        # import would let rename rewrite that import and leave its uses.
         sites = self._import_sites.get(module_qn, {})
+        mapping = self.import_mapping.get(module_qn, {})
         for name, previous in sites_before.items():
             site = sites.get(name)
             if (
                 site is None
                 or site is previous
                 or name not in before
+                or mapping.get(name) != before[name]
                 or previous.get(cs.KEY_IMPORT_SCOPE) is not None
                 or site.get(cs.KEY_IMPORT_SCOPE) is None
             ):
