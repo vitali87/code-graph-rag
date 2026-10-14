@@ -157,11 +157,13 @@ signature change as above.
 Not read, so their edits never reach `signature_changes`: C and C++ (a
 default sits on the header declaration, which the definition need not
 repeat), Scala and Dart (named and curried parameter lists), Lua (any count
-is accepted) and bodiless TypeScript signatures (an overload, an interface
-or abstract member: a call matches one of possibly several). A definition
-indexed before these lists existed has none on the base side and is not
-compared; the first sync after upgrading re-parses every file, since the
-parser changed, and records the lists and every site's `spread_args`.
+is accepted), bodiless TypeScript signatures (an overload, an interface
+or abstract member: a call matches one of possibly several) and the
+implementation of a TypeScript overload set, which its callers never see.
+A definition indexed before these lists existed has none on the base side
+and is not compared; the first sync after upgrading re-parses every file,
+since the parser changed, and records the lists and every site's
+`spread_args`.
 
 ## `cgr check`
 

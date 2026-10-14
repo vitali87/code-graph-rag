@@ -38,7 +38,7 @@ from .dead_code import (
     _rust_test_modules_from_nodes,
 )
 from .duplicates import _jaccard
-from .graph_query import QueryFn, _prefix
+from .graph_query import QueryFn, _longer_project_prefixes, _opt_int, _prefix
 from .language_spec import get_language_for_extension
 from .types_defs import PropertyDict, ReingestReport, ResultRow
 
@@ -253,10 +253,6 @@ def _int(value: object, default: int = 0) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else default
 
 
-def _opt_int(value: object) -> int | None:
-    return value if isinstance(value, int) and not isinstance(value, bool) else None
-
-
 def _strings(value: object) -> tuple[str, ...]:
     if isinstance(value, list):
         return tuple(str(item) for item in value)
@@ -339,18 +335,6 @@ def _named_import_bindings(
         )
         if binding.importer and binding.module and binding.imported_name
     )
-
-
-def _longer_project_prefixes(fetch_all: QueryFn, project_name: str) -> tuple[str, ...]:
-    """Return registered project names that can own a longer qualified name."""
-    requested_prefix = f"{project_name}{cs.SEPARATOR_DOT}"
-    names = {
-        name
-        for row in fetch_all(cq.CYPHER_LIST_PROJECTS, None)
-        if isinstance(name := row.get(cs.KEY_NAME), str)
-        and name.startswith(requested_prefix)
-    }
-    return tuple(sorted(names))
 
 
 def _has_longer_project_owner(
@@ -2114,11 +2098,6 @@ def _cycles(graph: dict[str, frozenset[str]]) -> set[frozenset[str]]:
         if len(component) > 1
         or any(member in graph.get(member, ()) for member in component)
     }
-
-
-def import_cycles(graph: dict[str, frozenset[str]]) -> set[frozenset[str]]:
-    """The cyclic strongly connected components of a module import graph."""
-    return _cycles(graph)
 
 
 def _new_import_cycles(before: Snapshot, after: Snapshot) -> list[list[str]]:
