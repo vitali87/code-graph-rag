@@ -58,6 +58,18 @@ cgr start --workspace backend
 repository saved in the workspace. See `cgr help workspace` for the full
 workspace command set.
 
+`cgr start --workspace backend --update-graph` syncs each of the workspace's
+repositories under its own project name, then opens the assistant scoped to
+the workspace, which `-a`, `--output-format` and `--projects` reach as they
+do without `--update-graph`; `--no-sync` is refused. `--repo-path` and the
+current directory play no part in it.
+`--clean`, `-o` and `--interactive-setup` apply to one repository, so they are
+refused with `--workspace --update-graph`. A sync of your home directory or
+the filesystem root is refused unless you pass `--yes`. A workspace with no
+repositories is refused too, since it has nothing to sync and no project to
+scope the assistant to; without `--update-graph`, `--projects` can still name
+the projects to chat about.
+
 A workspace is saved as `~/.cgr/workspaces/<name>.toml`, so its name is an
 identifier, not a path: it starts with a letter or digit and uses only
 letters, digits, `.`, `_` and `-`. Any other name (empty, `a/b`, `../x`) is
@@ -106,15 +118,20 @@ What the route extractors recognise, and what the links can and cannot say:
 | Language | Routes recognised |
 |----------|-------------------|
 | Python | FastAPI and Flask style decorators (`@app.get`, `@router.post`, `@app.route`), with `include_router` mount prefixes resolved |
-| JavaScript / TypeScript | Express and `express.Router` handlers (`app.get(...)`, `router.post(...)`), including handlers registered as options |
+| JavaScript / TypeScript | Express and `express.Router` handlers (`app.get(...)`, `router.post(...)`), including handlers registered as options. The handler is the last argument after the path (earlier ones are middleware); an inline function or arrow is its own handler node |
 | Go | `http.HandleFunc` / `Handle`, and the `echo`, `gin`, `chi` and `mux` router factories |
 
-A client URL links to an endpoint only when it is a literal with a path
-the endpoint's template matches; an f-string, a concatenated path or a
-computed host stays unlinked and shows up as an unresolved dependency
-rather than as a wrong link. RPC and dispatch resources join their callers
-directly (`READS_FROM`/`WRITES_TO` on the resource itself) and need no
-`RESOLVES_TO`.
+A client URL links to an endpoint when its path matches the endpoint's
+template. Python and JS/TS URLs may be built: an f-string or template
+literal substitution, or any non-literal operand of a `+`, stands for one
+path segment (`"/orders/" + id` reads `/orders/{id}`), and a module-level
+string constant bound once (`BASE = "http://localhost:5000"`, a JS/TS
+`const`) folds in as literal text, so `f"{BASE}/users/{uid}"` and
+`BASE + "/users"` link. A URL whose base is a parameter, a local or any
+other computed value stays unlinked and shows up as an unresolved
+dependency rather than as a wrong link. RPC and dispatch resources join
+their callers directly (`READS_FROM`/`WRITES_TO` on the resource itself)
+and need no `RESOLVES_TO`.
 
 Three deterministic MCP tools read these edges, all project-scoped like the
 other graph tools: `endpoints` lists what a project exposes with how many
@@ -122,9 +139,16 @@ call sites in the whole graph reach each one; `endpoint_callers` lists the
 call sites in any project that reach one endpoint, by handler name or by
 identity (`GET /users/{id}`); `remote_dependencies` lists every network
 access a project makes with the handler it resolves to, keeping the
-unresolved ones. `cgr dead-code --no-endpoint-roots` stops rooting a
-decorator-routed handler (FastAPI, Flask) by its decorator alone: such a
-handler whose endpoint no indexed call site reaches is reported. A handler
+unresolved ones. These edges exist only where the `io` group was
+captured, and each sync records its capture on the Project node: on a
+project whose last sync left out an `io` relationship the tool needs
+(`endpoint_callers` needs `EXPOSES`, `READS_FROM`, `WRITES_TO` and
+`RESOLVES_TO`), an empty answer comes back as an error naming the group,
+the missing relationships and the re-index command rather than as `[]` (a
+graph synced before the record existed answers as before).
+`cgr dead-code --no-endpoint-roots` stops rooting a decorator-routed
+handler (FastAPI, Flask) by its decorator alone: such a handler whose
+endpoint no indexed call site reaches is reported. A handler
 registered by a call (Go `HandleFunc`, Express `app.get(path, handler)`)
 stays live through that registration, whatever the switch. On a graph
 holding one project the report reads as "no callers indexed", which the
@@ -146,7 +170,7 @@ name.
 
 ```bash
 # Remove one project without touching the others
-cgr delete-project --name user-service__a1b2c3d4
+cgr delete-project --project user-service__a1b2c3d4
 ```
 
 ![cgr delete-project removing user-service from the graph and its vectors, while order-service's fetch_user still resolves](../assets/demos/multi-project-delete.gif)

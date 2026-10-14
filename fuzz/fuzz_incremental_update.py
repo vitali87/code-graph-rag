@@ -86,6 +86,12 @@ def _freeze(value: object) -> object:
     return str(value)
 
 
+# When a run finished, not what the graph describes: a reingest and a clean
+# index of the same tree complete at different moments, so two equal graphs
+# differ in it (issue #2444).
+_RUN_TIME_PROPERTIES = frozenset({cs.KEY_LAST_SYNCED_AT})
+
+
 def _snapshot(store: _StatefulIngestor) -> tuple[frozenset, frozenset]:
     """Nodes and edges, both carrying their properties.
 
@@ -97,7 +103,13 @@ def _snapshot(store: _StatefulIngestor) -> tuple[frozenset, frozenset]:
     """
     nodes = frozenset(
         (str(label), str(uid))
-        + tuple(sorted((str(k), _freeze(v)) for k, v in (props or {}).items()))
+        + tuple(
+            sorted(
+                (str(k), _freeze(v))
+                for k, v in (props or {}).items()
+                if k not in _RUN_TIME_PROPERTIES
+            )
+        )
         for (label, uid), props in store.nodes.items()
     )
     edges = frozenset(

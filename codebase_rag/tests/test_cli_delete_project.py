@@ -4,12 +4,13 @@ import json
 import re
 from collections.abc import Generator
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.cli import app
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
@@ -60,7 +61,22 @@ def test_delete_project_cleans_embeddings_with_node_ids(
     result = runner.invoke(app, ["delete-project", "--name", "platform"])
 
     assert result.exit_code == 0, result.output
-    mock_delete_embeddings.assert_called_once_with("platform", [1, 2])
+    mock_delete_embeddings.assert_called_once_with("platform", [1, 2], [])
+
+
+@patch("codebase_rag.cli.delete_project_embeddings")
+def test_delete_project_leaves_a_nested_projects_embeddings(
+    mock_delete_embeddings: MagicMock,
+    mock_memgraph_connect: MagicMock,
+) -> None:
+    # `platform.` also prefixes `platform.v2`, a project of its own.
+    ingestor = _get_ingestor(mock_memgraph_connect)
+    ingestor.list_projects.return_value = ["platform", "platform.v2", "platform2"]
+
+    result = runner.invoke(app, ["delete-project", "--name", "platform"])
+
+    assert result.exit_code == 0, result.output
+    mock_delete_embeddings.assert_called_once_with("platform", [1, 2], ["platform.v2"])
 
 
 @patch("codebase_rag.cli.delete_project_embeddings")
@@ -96,7 +112,7 @@ def test_delete_project_removes_hash_cache_when_repo_path_given(
     mock_memgraph_connect: MagicMock,
     tmp_path: Path,
 ) -> None:
-    cache_path = tmp_path / cs.HASH_CACHE_FILENAME
+    cache_path = state_file(tmp_path, cs.HASH_CACHE_FILENAME)
     cache_path.write_text(json.dumps({"file.py": "abc123"}))
 
     result = runner.invoke(
@@ -114,7 +130,7 @@ def test_delete_project_without_repo_path_leaves_unrelated_hash_caches(
     mock_memgraph_connect: MagicMock,
     tmp_path: Path,
 ) -> None:
-    cache_path = tmp_path / cs.HASH_CACHE_FILENAME
+    cache_path = state_file(tmp_path, cs.HASH_CACHE_FILENAME)
     cache_path.write_text(json.dumps({"file.py": "abc123"}))
 
     result = runner.invoke(app, ["delete-project", "--name", "platform"])
@@ -162,14 +178,17 @@ def test_delete_project_sweeps_the_projects_glosses_after_the_delete(
 
     assert result.exit_code == 0, result.output
     ingestor = _get_ingestor(mock_memgraph_connect)
-    ingestor.execute_write.assert_called_once_with(
+    sweep = call.execute_write(
         CYPHER_DELETE_ORPHANED_GLOSSES,
         {cs.KEY_PROJECT_NAME: "platform", cs.KEY_PROJECT_PREFIX: "platform."},
     )
+    # The delete also clears the project's run markers with a write of its
+    # own, so the sweep is counted among the writes rather than alone.
+    assert ingestor.mock_calls.count(sweep) == 1
     # Before the delete every note is still attached, so a sweep then would
     # find nothing to remove.
-    names = [name for name, _args, _kwargs in ingestor.mock_calls]
-    assert names.index("delete_project") < names.index("execute_write")
+    calls = ingestor.mock_calls
+    assert calls.index(call.delete_project("platform")) < calls.index(sweep)
     warning = cs.CLI_WARN_GLOSSES_NOT_PRUNED.format(project_name="platform")
     assert warning not in " ".join(_strip_ansi(result.output).split())
 
