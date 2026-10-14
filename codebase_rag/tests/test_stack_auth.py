@@ -877,6 +877,7 @@ def test_restart_checks_the_restarted_stack_enforces_the_credentials(
     stop.assert_called_once_with(cs.SERVICE_MEMGRAPH)
 
 
+@pytest.mark.usefixtures("mgclient_in_this_process")
 def test_bolt_probe_passes_the_login_to_mgclient() -> None:
     with patch.object(health.mgclient, "connect") as connect:
         assert health._bolt_reachable("localhost", 7687, ("cgr", "s3cret"))
@@ -886,6 +887,7 @@ def test_bolt_probe_passes_the_login_to_mgclient() -> None:
     )
 
 
+@pytest.mark.usefixtures("mgclient_in_this_process")
 def test_bolt_probe_without_a_login_connects_anonymously() -> None:
     with patch.object(health.mgclient, "connect") as connect:
         assert health._bolt_reachable("localhost", 7687)
@@ -893,6 +895,7 @@ def test_bolt_probe_without_a_login_connects_anonymously() -> None:
     connect.assert_called_once_with(host="localhost", port=7687)
 
 
+@pytest.mark.usefixtures("mgclient_in_this_process")
 def test_memgraph_anonymous_probe_sends_no_login() -> None:
     with patch.object(health.mgclient, "connect") as connect:
         assert health.memgraph_accepts_anonymous("localhost", 7687)
@@ -900,6 +903,7 @@ def test_memgraph_anonymous_probe_sends_no_login() -> None:
     connect.assert_called_once_with(host="localhost", port=7687)
 
 
+@pytest.mark.usefixtures("mgclient_in_this_process")
 @pytest.mark.parametrize(
     ("error", "rejected"),
     [
@@ -920,6 +924,7 @@ def test_memgraph_rejected_login_is_told_apart_from_a_refused_connection(
         )
 
 
+@pytest.mark.usefixtures("mgclient_in_this_process")
 def test_memgraph_accepting_the_login_is_not_a_rejection() -> None:
     with patch.object(health.mgclient, "connect") as connect:
         assert not health.memgraph_rejects_credentials(
@@ -991,6 +996,7 @@ def test_qdrant_anonymous_probe_is_false_when_the_key_is_required() -> None:
         assert not health.qdrant_accepts_anonymous(6333)
 
 
+@pytest.mark.usefixtures("mgclient_in_this_process")
 @pytest.mark.parametrize(
     ("failure", "access"),
     [
@@ -1010,6 +1016,7 @@ def test_memgraph_anonymous_access_tells_a_refusal_from_no_answer(
         assert health.memgraph_anonymous_access("localhost", 7687) is access
 
 
+@pytest.mark.usefixtures("mgclient_in_this_process")
 def test_memgraph_anonymous_access_is_allowed_when_a_query_runs() -> None:
     with patch.object(health.mgclient, "connect") as connect:
         access = health.memgraph_anonymous_access("localhost", 7687)
