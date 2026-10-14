@@ -34,8 +34,12 @@ def _write(root: Path, rel: str, text: str) -> None:
 
 @pytest.fixture
 def indexed(tmp_path: Path) -> tuple[Path, _StatefulIngestor, GraphUpdater]:
+    return _index(tmp_path, _APP)
+
+
+def _index(tmp_path: Path, app: str) -> tuple[Path, _StatefulIngestor, GraphUpdater]:
     root = tmp_path / PROJECT
-    _write(root, "app.py", _APP)
+    _write(root, "app.py", app)
     _write(root, "far.py", _ELSEWHERE)
     store = _StatefulIngestor()
     parsers, queries = load_parsers()
@@ -106,3 +110,62 @@ def test_a_caller_whose_body_changed_says_its_line_is_the_base_one(
     _write(root, "app.py", edited)
     sites = _sites(_check(root, store, updater, ["app.py"]))
     assert sites["app.uses_helper"] == (10, 11, cs.DANGLING_LINE_FROM_BASE), sites
+
+
+_HELPER = "def helper():\n    return 1\n\n\n"
+
+
+@pytest.mark.parametrize(
+    ("body", "edited_body"),
+    [
+        # Greptile, PR #3245: the skeleton drops names, so swapping two
+        # calls keeps the fingerprint and the span.
+        pytest.param(
+            "    a = helper()\n    b = other()\n",
+            "    b = other()\n    a = helper()\n",
+            id="calls-swapped",
+        ),
+        # Codex and CodeRabbit, PR #3245: the skeleton drops comments and
+        # blank lines, so moving one past the call keeps both too.
+        pytest.param(
+            "    # first\n    a = helper()\n    b = other()\n",
+            "    a = helper()\n    # first\n    b = other()\n",
+            id="comment-moved",
+        ),
+        pytest.param(
+            "\n    a = helper()\n    b = other()\n",
+            "    a = helper()\n\n    b = other()\n",
+            id="blank-line-moved",
+        ),
+    ],
+)
+def test_a_call_moved_inside_an_unchanged_skeleton_says_its_line_is_the_base_one(
+    tmp_path: Path, body: str, edited_body: str
+) -> None:
+    # Negative: the caller's start moved by -4, but the call moved by -5
+    # within it, so the shifted line holds no `helper` call.
+    head = "def other():\n    return 2\n\n\ndef uses_helper():\n"
+    tail = "    return a + b\n"
+    root, store, updater = _index(tmp_path, _HELPER + head + body + tail)
+    _write(root, "app.py", head + edited_body + tail)
+
+    sites = _sites(_check(root, store, updater, ["app.py"]))
+
+    base_line = 10 + body.split("\n").index("    a = helper()")
+    assert sites["app.uses_helper"] == (base_line, 8, cs.DANGLING_LINE_FROM_BASE)
+
+
+def test_a_call_through_a_qualifier_is_moved_too(tmp_path: Path) -> None:
+    # `self.helper()` starts at `self`: the qualifier is read past.
+    app = (
+        "class Box:\n    def helper(self):\n        return 1\n\n"
+        "    def uses(self):\n        return self.helper()\n"
+    )
+    root, store, updater = _index(tmp_path, app)
+    _write(
+        root, "app.py", app.replace("    def helper(self):\n        return 1\n\n", "")
+    )
+
+    sites = _sites(_check(root, store, updater, ["app.py"]))
+
+    assert sites["app.Box.uses"] == (3, 15, ""), sites
