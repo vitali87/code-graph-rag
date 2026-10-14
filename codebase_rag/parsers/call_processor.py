@@ -411,27 +411,7 @@ def _has_no_receiver(call_node: Node, language: cs.SupportedLanguage) -> bool:
         return call_node.type == cs.TS_PHP_FUNCTION_CALL_EXPRESSION
     if language in _C_FAMILY_LANGUAGES:
         callee = call_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
-        return (
-            callee is not None
-            and callee.type == cs.TS_IDENTIFIER
-            and not _in_function_local_class(call_node)
-        )
-    return False
-
-
-def _in_function_local_class(node: Node) -> bool:
-    # A member of a class defined inside a function body has its calls
-    # attributed to that function (issue #2555), so the resolver cannot see
-    # the class a bare call there may reach; such a call keeps the name
-    # fallback it had.
-    in_class = False
-    current = node.parent
-    while current is not None:
-        if current.type in cs.CPP_TYPE_SPECIFIER_NODE_TYPES:
-            in_class = True
-        elif in_class and current.type == cs.TS_CPP_FUNCTION_DEFINITION:
-            return True
-        current = current.parent
+        return callee is not None and callee.type == cs.TS_IDENTIFIER
     return False
 
 

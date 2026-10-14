@@ -101,12 +101,14 @@ FILES = {
     # #2948); `flush()` is a global, never `M:flush`.
     "lua_m.lua": "local M = {}\nfunction M:flush() return 1 end\nreturn M\n",
     "lua_use.lua": "local function go() return flush() end\nreturn go\n",
-    # A class local to a function: its members' calls are the function's.
+    # Classes local to a function, scoped under it (issue #2555): a member's
+    # bare calls reach its own class and a local base, never `Stat::max`.
     "c/local.cpp": (
         "void work() {\n"
-        "  class Res {\n   public:\n"
+        "  struct LB { int helper() { return 0; } };\n"
+        "  class Res : public LB {\n   public:\n"
         "    Res() { acquire(); }\n"
-        "    void acquire() {}\n"
+        "    void acquire() { helper(); max(1, 2); }\n"
         "  };\n"
         "  Res r;\n"
         "}\n"
@@ -203,9 +205,14 @@ def test_a_receiver_call_a_function_or_an_own_member_still_binds(
 def test_a_function_local_class_keeps_its_members_bare_calls(
     graph: RecordedGraph,
 ) -> None:
-    # Its members' calls are attributed to `work` (issue #2555), so the bare
-    # `acquire()` keeps the name fallback that finds the class's method.
-    assert "c.local.Res.acquire" in _callees(graph, "c.local.work")
+    # Each member is its own caller and sees its class (issue #2555), so its
+    # bare calls get the same name lookup as any other class's member.
+    assert _callees(graph, "c.local.work.Res.Res") == {
+        "c.local.work.Res.acquire": "exact"
+    }
+    assert _callees(graph, "c.local.work.Res.acquire") == {
+        "c.local.work.LB.helper": "exact"
+    }
 
 
 def test_a_bare_go_call_still_reaches_a_package_function(graph: RecordedGraph) -> None:
