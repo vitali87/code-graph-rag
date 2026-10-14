@@ -150,7 +150,7 @@ def test_public_api_is_exported(exported: dict[str, bool], symbol: str) -> None:
         "kinds.anonymous_local",
         "kinds.Box.hidden",
         "kinds.Box.secret",
-        "kinds.Local.value",
+        "kinds.make.Local.value",
         "Geo.Geo.sq",
         "Kinds.Account.internal",
         "Kinds.Account.round",
