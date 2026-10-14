@@ -230,7 +230,9 @@ def test_the_help_lists_the_scope_and_hides_the_deprecated_options() -> None:
     help_text = click.unstyle(result.output)
 
     assert result.exit_code == 0
-    assert "--project-name" in help_text
+    assert "--project" in help_text
+    # The spelling before issue #2415 still works, out of sight.
+    assert "--project-name" not in help_text
     assert "--workspace" in help_text
     assert "--batch-size" not in help_text
     assert "--no-json" not in help_text
@@ -347,7 +349,6 @@ def test_a_failed_export_after_a_sync_exits_outside_the_connection(
         patch("codebase_rag.cli.connect_memgraph", return_value=connection),
         patch("codebase_rag.graph_updater.GraphUpdater"),
         patch("codebase_rag.cli.load_parsers", return_value=({}, {})),
-        patch("codebase_rag.cli.cgr_state.record_sync"),
         patch("codebase_rag.cli.export_graph_to_file", return_value=False),
         pytest.raises(typer.Exit),
     ):
