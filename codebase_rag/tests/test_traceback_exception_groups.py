@@ -10,6 +10,7 @@ the group, were dropped without a word (issue #3235).
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import traceback
@@ -495,19 +496,32 @@ def test_rank_anchors_each_member_on_its_own_failure(temp_repo: Path) -> None:
     assert "under members" in report.note
 
 
+_CI_ROOT = "/home/runner/work/eg/eg"
+
+
+def _recorded_on_ci(text: str) -> str:
+    """`text` as a CI runner checked out at `_CI_ROOT` would print it.
+
+    The local root is read back from the traceback, not taken from the
+    fixture: Windows prints it with backslashes, and macOS resolves the temp
+    dir's `/var` symlink to `/private/var`.
+    """
+    printed = re.search(r'File "(.*)app\.py"', text)
+    assert printed is not None, text
+    return text.replace(printed.group(1), f"{_CI_ROOT}/")
+
+
 def test_members_from_another_checkout_resolve_under_the_inferred_root(
     temp_repo: Path,
 ) -> None:
     # The root is inferred from every frame the traceback prints, members'
     # included, so a member resolves as the group's frames do.
-    text = _run(temp_repo, "app.py", APP).replace(
-        temp_repo.as_posix(), "/home/runner/work/eg/eg"
-    )
+    text = _recorded_on_ci(_run(temp_repo, "app.py", APP))
     project, store = _graph(temp_repo)
 
     report = explain_traceback(_fetch_all(store), project, temp_repo, text)
 
-    assert report.inferred_root == "/home/runner/work/eg/eg/"
+    assert report.inferred_root == f"{_CI_ROOT}/"
     assert [member.resolution.rate for member in report.members] == [1.0, 1.0]
 
 
@@ -522,9 +536,7 @@ def test_a_logged_group_resolves_its_members_from_another_checkout(
         '        traceback.print_exception(ExceptionGroup("invalid item", errors))\n'
         "        sys.exit(1)",
     )
-    text = _run(temp_repo, "app.py", logged).replace(
-        temp_repo.as_posix(), "/home/runner/work/eg/eg"
-    )
+    text = _recorded_on_ci(_run(temp_repo, "app.py", logged))
     project, store = _graph(temp_repo)
 
     report = explain_traceback(_fetch_all(store), project, temp_repo, text)
