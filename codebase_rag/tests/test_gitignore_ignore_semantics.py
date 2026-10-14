@@ -98,13 +98,32 @@ class TestGitignoreUnignoreSemantics:
         assert _skip("bin/other/x.py", unignore=frozenset({"bin/keep"}))
 
     def test_user_exclude_beats_unignore(self) -> None:
-        # existing precedence: unignore rescues only built-in ignores,
-        # never explicit user excludes.
+        # existing precedence: unignore rescues only built-in ignores, never
+        # an explicit user exclude of the path itself or of a directory a
+        # glob unignore reaches into.
+        assert _skip(
+            "gen/x.py", exclude=frozenset({"gen"}), unignore=frozenset({"gen"})
+        )
         assert _skip(
             "gen/x.py",
             exclude=frozenset({"gen"}),
-            unignore=frozenset({"gen/x.py"}),
+            unignore=frozenset({"gen/*.py"}),
         )
+        assert _skip(
+            "gen/x.js",
+            exclude=frozenset({"*.js"}),
+            unignore=frozenset({"gen/x.js"}),
+        )
+
+    def test_a_literal_keep_inside_an_excluded_directory_is_kept(self) -> None:
+        # Greptile review of PR 2510: a keep naming one path inside an
+        # excluded directory (what interactive setup saves) lifts only that
+        # directory's exclusion, and only for the kept path; its siblings
+        # stay excluded.
+        exclude = frozenset({"gen"})
+        unignore = frozenset({"gen/x.py"})
+        assert not _skip("gen/x.py", exclude=exclude, unignore=unignore)
+        assert _skip("gen/y.py", exclude=exclude, unignore=unignore)
 
 
 class TestDirPruning:
@@ -127,8 +146,17 @@ class TestDirPruning:
         )
 
     def test_excluded_dir_stays_pruned_despite_unignore(self) -> None:
-        updater = self._updater(frozenset({"gen"}), frozenset({"gen/keep.py"}))
+        # A glob names no single path, so it does not open the directory.
+        updater = self._updater(frozenset({"gen"}), frozenset({"gen/*.py"}))
         assert not updater._should_keep_dir("gen", "")
+
+    def test_excluded_dir_entered_only_on_the_way_to_a_literal_keep(self) -> None:
+        # The walk and the file decision agree (the point of #596): the
+        # directory enclosing a kept path is entered, its siblings are not.
+        updater = self._updater(frozenset({"gen"}), frozenset({"gen/sub/keep.py"}))
+        assert updater._should_keep_dir("gen", "")
+        assert updater._should_keep_dir("sub", "gen/")
+        assert not updater._should_keep_dir("other", "gen/")
 
     def test_builtin_pruned_dir_kept_when_unignore_targets_beneath(self) -> None:
         updater = self._updater(None, frozenset({"bin/keep.py"}))
