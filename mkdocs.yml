@@ -100,6 +100,7 @@ nav:
   - Architecture:
     - Overview: architecture/overview.md
     - Graph Schema: architecture/graph-schema.md
+    - Graph Backends: architecture/embedded-graph.md
     - I/O and Data-Flow Edges: architecture/data-flow-edges.md
     - Language Support: architecture/language-support.md
     - Structural Delta: architecture/structural-delta.md

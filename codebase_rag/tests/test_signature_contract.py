@@ -196,6 +196,22 @@ def test_rollback_refused_by_a_later_edit_keeps_the_change(
     assert harness.reingested == []
 
 
+def test_rollback_that_raises_is_reported_and_flags_the_graph(
+    harness: _Harness,
+) -> None:
+    harness.undo_error = OSError("disk full")
+    result = harness.run(_report(resolution="heuristic"))
+    reasons = cs.CONTRACT_HEURISTIC_REWRITTEN.format(sites="pkg/app.py:5:11")
+    assert result.applied
+    assert result.verdict is not None
+    assert not result.verdict.ok
+    assert result.graph_incomplete
+    assert result.message == cs.SIGNATURE_ROLLBACK_FAILED.format(
+        reasons=reasons, error="disk full"
+    )
+    assert harness.reingested == []
+
+
 def test_rollback_whose_reingest_fails_flags_the_graph(harness: _Harness) -> None:
     harness.reingest_error = RuntimeError("db gone")
     result = harness.run(_report(resolution="heuristic"))
