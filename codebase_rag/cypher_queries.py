@@ -512,6 +512,23 @@ _QUOTE_SPAN_LABELS = "|".join(
     )
 )
 
+
+def _any_label(var: str, labels: str) -> str:
+    """`(var:A OR var:B ...)` for a `|`-joined label list.
+
+    The label-alternation pattern `(n:A|B)` is shorter, but openCypher
+    engines without it reject the whole query, so the queries cgr runs
+    itself test labels in WHERE instead. On Memgraph 3.3 over a 38k-node
+    graph the two spellings plan the same index seeks for a key lookup and
+    return the same rows, with scans within a few percent either way in
+    interleaved runs; the embedded graph reads these labels back for its own
+    seeks (issue #386). Only for a list of two or more labels: a single
+    label stays in the pattern, where it picks the label scan. The prompt's
+    example queries keep the pattern form the model is taught to prefer.
+    """
+    return "(" + " OR ".join(f"{var}:{label}" for label in labels.split("|")) + ")"
+
+
 # A lookup keyed on qualified_name alone can match more than one node: identity
 # constraints are label-scoped, so a Method and a Field may share `<owner>.<name>`.
 # LIMIT 1 without an ORDER BY then picks by storage order. Ordering by label and
@@ -545,7 +562,7 @@ SNIPPET_MODULE_FALLBACK_MAX_DEPTH = 16
 _SNIPPET_CONTAINMENT = "|".join(rel.value for rel in SNIPPET_CONTAINMENT_RELATIONSHIPS)
 
 CYPHER_FIND_BY_QUALIFIED_NAME = f"""
-MATCH (n:{_SNIPPET_LABELS}) WHERE n.qualified_name = $qn
+MATCH (n) WHERE {_any_label("n", _SNIPPET_LABELS)} AND n.qualified_name = $qn
 OPTIONAL MATCH (m:Module)-[:{_SNIPPET_CONTAINMENT}*1..{SNIPPET_MODULE_FALLBACK_MAX_DEPTH}]->(n)
 RETURN n.name AS name, n.start_line AS start, n.end_line AS end, coalesce(n.path, m.path) AS path,
        n.absolute_path AS absolute_path, n.docstring AS docstring
@@ -708,8 +725,8 @@ _DEAD_CODE_REL_TYPES = "|".join(
     )
 )
 
-CYPHER_DEAD_CODE_NODES = f"""MATCH (n:{_DEAD_CODE_NODE_LABELS})
-WHERE n.qualified_name STARTS WITH $project_prefix
+CYPHER_DEAD_CODE_NODES = f"""MATCH (n)
+WHERE {_any_label("n", _DEAD_CODE_NODE_LABELS)} AND n.qualified_name STARTS WITH $project_prefix
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name,
        n.name AS name, n.path AS path, n.namespace AS namespace,
        n.start_line AS start_line, n.end_line AS end_line,
@@ -722,8 +739,9 @@ RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name,
        n.param_types AS param_types,
        n.type_checking_only AS type_checking_only"""
 
-CYPHER_DEAD_CODE_RELS = f"""MATCH (a:{_DEAD_CODE_NODE_LABELS})-[r:{_DEAD_CODE_REL_TYPES}]->(b)
-WHERE a.qualified_name STARTS WITH $project_prefix
+CYPHER_DEAD_CODE_RELS = f"""MATCH (a)-[r:{_DEAD_CODE_REL_TYPES}]->(b)
+WHERE {_any_label("a", _DEAD_CODE_NODE_LABELS)}
+  AND a.qualified_name STARTS WITH $project_prefix
 RETURN labels(a)[0] AS from_label, a.qualified_name AS from_qn,
        type(r) AS rel_type, labels(b)[0] AS to_label,
        b.qualified_name AS to_qn, r.resolution AS resolution"""
@@ -735,8 +753,8 @@ RETURN labels(a)[0] AS from_label, a.qualified_name AS from_qn,
 # excluded here; their count is reported separately as "not analyzed".
 _DUPLICATES_NODE_LABELS = "|".join((NodeLabel.FUNCTION.value, NodeLabel.METHOD.value))
 
-CYPHER_DUPLICATE_FINGERPRINTS = f"""MATCH (n:{_DUPLICATES_NODE_LABELS})
-WHERE n.qualified_name STARTS WITH $project_prefix
+CYPHER_DUPLICATE_FINGERPRINTS = f"""MATCH (n)
+WHERE {_any_label("n", _DUPLICATES_NODE_LABELS)} AND n.qualified_name STARTS WITH $project_prefix
   AND n.ast_fingerprint IS NOT NULL
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name,
        n.name AS name, n.path AS path,
@@ -746,8 +764,8 @@ RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name,
        n.ast_fingerprint_nodes AS ast_fingerprint_nodes,
        n.ast_branch_fingerprints AS ast_branch_fingerprints"""
 
-CYPHER_DUPLICATE_SKIPPED_COUNT = f"""MATCH (n:{_DUPLICATES_NODE_LABELS})
-WHERE n.qualified_name STARTS WITH $project_prefix
+CYPHER_DUPLICATE_SKIPPED_COUNT = f"""MATCH (n)
+WHERE {_any_label("n", _DUPLICATES_NODE_LABELS)} AND n.qualified_name STARTS WITH $project_prefix
   AND n.ast_fingerprint IS NULL
 RETURN count(n) AS skipped"""
 
@@ -871,8 +889,8 @@ def build_missing_rel_endpoints_query(
 # A C# type's natural name is `<namespace>.<name>`, which its qualified name
 # no longer spells when the namespace mirrors the directory (issue #1629), so
 # the namespace property answers that lookup.
-CYPHER_GRAPH_RESOLVE_NAME = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
-WHERE n.qualified_name STARTS WITH $project_prefix
+CYPHER_GRAPH_RESOLVE_NAME = f"""MATCH (n)
+WHERE {_any_label("n", _GRAPH_DEFINITION_LABELS)} AND n.qualified_name STARTS WITH $project_prefix
   AND (n.qualified_name = $qn OR n.qualified_name ENDS WITH $suffix OR n.name = $name
        OR (n.namespace IS NOT NULL AND n.namespace + '.' + n.name = $qn))
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.path AS path,
@@ -891,21 +909,21 @@ RETURN m.path AS path, m.qualified_name AS qualified_name"""
 # Every definition registered under one natural name: the name itself and
 # its `name@<line>` (and `@<line>_<col>`) variants, with the decorators that
 # tell a property's getter, setter and deleter apart (issue #1808).
-CYPHER_GLOSS_VARIANTS = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
-WHERE n.qualified_name STARTS WITH $project_prefix
+CYPHER_GLOSS_VARIANTS = f"""MATCH (n)
+WHERE {_any_label("n", _GRAPH_DEFINITION_LABELS)} AND n.qualified_name STARTS WITH $project_prefix
   AND (n.qualified_name = $qn OR n.qualified_name STARTS WITH $variant_prefix)
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.path AS path,
        n.start_line AS start_line, n.end_line AS end_line,
        n.decorators AS decorators"""
-CYPHER_GRAPH_RESOLVE_LOCATION = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
-WHERE n.qualified_name STARTS WITH $project_prefix AND n.path = $path
+CYPHER_GRAPH_RESOLVE_LOCATION = f"""MATCH (n)
+WHERE {_any_label("n", _GRAPH_DEFINITION_LABELS)} AND n.qualified_name STARTS WITH $project_prefix AND n.path = $path
   AND n.start_line <= $line AND $line <= n.end_line
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.path AS path,
        n.start_line AS start_line, n.end_line AS end_line"""
 # `decorated_start_line` is absent on a graph indexed before issue #2428 and
 # on undecorated definitions; the reader falls back to `start_line`.
-CYPHER_GRAPH_DEFINITION = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
-WHERE n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
+CYPHER_GRAPH_DEFINITION = f"""MATCH (n)
+WHERE {_any_label("n", _GRAPH_DEFINITION_LABELS)} AND n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.name AS name,
        n.path AS path, n.start_line AS start_line, n.end_line AS end_line,
        n.decorated_start_line AS decorated_start_line, n.decorators AS decorators,
@@ -936,8 +954,8 @@ _ANNOTATES = RelationshipType.ANNOTATES.value
 _MENTIONS = RelationshipType.MENTIONS.value
 # The hash the note records, plus what the text-quote anchor needs: the
 # subject's simple name (masked out of the quote) and its span in its file.
-CYPHER_GLOSS_TARGET = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
-WHERE n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
+CYPHER_GLOSS_TARGET = f"""MATCH (n)
+WHERE {_any_label("n", _GRAPH_DEFINITION_LABELS)} AND n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
 RETURN n.anchor_hash AS target_hash, n.name AS name, n.path AS path,
        n.start_line AS start_line, n.end_line AS end_line
 {_DEFINITION_TIEBREAK}
@@ -947,10 +965,10 @@ LIMIT 1"""
 # definition it followed. A fresh write against a name is EXACT at that
 # name: any other subject edge is dropped before the new one is merged, and
 # the repair state (`moved_from`, `candidate_qns`) is cleared (bot review).
-CYPHER_GLOSS_WRITE = f"""MATCH (t:{_GRAPH_DEFINITION_LABELS})
-WHERE t.qualified_name = $target_qn AND t.qualified_name STARTS WITH $project_prefix
-OPTIONAL MATCH (m:{_GRAPH_DEFINITION_LABELS})
-WHERE m.qualified_name IN $mention_qns AND m.qualified_name STARTS WITH $project_prefix
+CYPHER_GLOSS_WRITE = f"""MATCH (t)
+WHERE {_any_label("t", _GRAPH_DEFINITION_LABELS)} AND t.qualified_name = $target_qn AND t.qualified_name STARTS WITH $project_prefix
+OPTIONAL MATCH (m)
+WHERE {_any_label("m", _GRAPH_DEFINITION_LABELS)} AND m.qualified_name IN $mention_qns AND m.qualified_name STARTS WITH $project_prefix
 WITH t, collect(DISTINCT m) AS mentioned
 WHERE size(mentioned) = size($mention_qns)
 MERGE (g:{_GLOSS} {{qualified_name: $qn}})
@@ -995,7 +1013,8 @@ CYPHER_REANCHOR_GLOSSES = f"""MATCH (g:{_GLOSS})
 OPTIONAL MATCH (g)-[:{_ANNOTATES}]->(subject)
 WITH g, count(subject) AS subjects
 WHERE subjects = 0
-MATCH (t:{_GRAPH_DEFINITION_LABELS} {{qualified_name: g.target_qn}})
+MATCH (t {{qualified_name: g.target_qn}})
+WHERE {_any_label("t", _GRAPH_DEFINITION_LABELS)}
 MERGE (g)-[:{_ANNOTATES}]->(t)
 SET g.anchor_state = CASE WHEN g.moved_from IS NULL
     THEN '{_STATE_EXACT}' ELSE '{_STATE_MOVED}' END,
@@ -1016,8 +1035,8 @@ RETURN g.qualified_name AS qualified_name, g.target_qn AS target_qn,
        g.moved_from AS moved_from, g.candidate_qns AS candidate_qns,
        g.project AS project, g.anchor_quote AS anchor_quote,
        g.anchor_prefix AS anchor_prefix, g.anchor_suffix AS anchor_suffix"""
-CYPHER_DEFINITIONS_BY_ANCHOR_HASH = f"""MATCH (t:{_GRAPH_DEFINITION_LABELS})
-WHERE t.anchor_hash IN $hashes AND t.qualified_name STARTS WITH $project_prefix
+CYPHER_DEFINITIONS_BY_ANCHOR_HASH = f"""MATCH (t)
+WHERE {_any_label("t", _GRAPH_DEFINITION_LABELS)} AND t.anchor_hash IN $hashes AND t.qualified_name STARTS WITH $project_prefix
 RETURN t.qualified_name AS qualified_name, t.anchor_hash AS anchor_hash"""
 # The move re-validates its own precondition and binds the node it found:
 # the definitions carrying the note's hash in its project are collected
@@ -1035,8 +1054,8 @@ RETURN t.qualified_name AS qualified_name, t.anchor_hash AS anchor_hash"""
 # return home, not another move: the note is EXACT again with no `moved_from`.
 # Computed in a WITH so both SETs read the pre-update values.
 CYPHER_GLOSS_MOVE = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
-MATCH (t:{_GRAPH_DEFINITION_LABELS})
-WHERE t.anchor_hash = $target_hash AND t.qualified_name STARTS WITH $project_prefix
+MATCH (t)
+WHERE {_any_label("t", _GRAPH_DEFINITION_LABELS)} AND t.anchor_hash = $target_hash AND t.qualified_name STARTS WITH $project_prefix
 WITH g, collect(t) AS targets
 WHERE size(targets) = 1
 WITH g, targets[0] AS t, coalesce(g.moved_from, g.target_qn) AS origin
@@ -1052,8 +1071,8 @@ MERGE (g)-[:{_ANNOTATES}]->(t)"""
 # in a project, to digest each one's current text the way the note's quote
 # was digested when it was written. Read once per project per pass, and
 # only when a note has reached this tier.
-CYPHER_DEFINITION_SPANS = f"""MATCH (t:{_QUOTE_SPAN_LABELS})
-WHERE t.qualified_name STARTS WITH $project_prefix
+CYPHER_DEFINITION_SPANS = f"""MATCH (t)
+WHERE {_any_label("t", _QUOTE_SPAN_LABELS)} AND t.qualified_name STARTS WITH $project_prefix
   AND t.path IS NOT NULL AND t.start_line IS NOT NULL AND t.end_line IS NOT NULL
 RETURN t.qualified_name AS qualified_name, t.name AS name, t.path AS path,
        t.start_line AS start_line, t.end_line AS end_line,
@@ -1075,8 +1094,8 @@ RETURN t.qualified_name AS qualified_name, t.name AS name, t.path AS path,
 # cannot be re-validated and is never bound here: null on both sides read as
 # equal would have bound a rewritten body (bot review, PR #1966, twice).
 CYPHER_GLOSS_MOVE_TO_QN = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
-MATCH (t:{_GRAPH_DEFINITION_LABELS})
-WHERE t.qualified_name = $target_qn AND t.qualified_name STARTS WITH $project_prefix
+MATCH (t)
+WHERE {_any_label("t", _GRAPH_DEFINITION_LABELS)} AND t.qualified_name = $target_qn AND t.qualified_name STARTS WITH $project_prefix
   AND t.path = $path AND t.start_line = $start_line AND t.end_line = $end_line
   AND t.anchor_hash IS NOT NULL AND t.anchor_hash = $anchor_hash
 WITH g, collect(t) AS targets
@@ -1096,7 +1115,8 @@ SET g.anchor_state = $anchor_state, g.candidate_qns = $candidate_qns"""
 CYPHER_REANCHOR_GLOSS_MENTIONS = f"""MATCH (g:{_GLOSS})-[:{_ANNOTATES}]->()
 WHERE g.mention_qns IS NOT NULL
 UNWIND g.mention_qns AS mention_qn
-MATCH (m:{_GRAPH_DEFINITION_LABELS} {{qualified_name: mention_qn}})
+MATCH (m {{qualified_name: mention_qn}})
+WHERE {_any_label("m", _GRAPH_DEFINITION_LABELS)}
 MERGE (g)-[:{_MENTIONS}]->(m)"""
 # Staleness (issue #1808): a gloss recorded its subject's `anchor_hash` as
 # `target_hash` when it was written; after a sync the two are compared and the
@@ -1184,11 +1204,13 @@ _CALLEE_ROW = (
     "labels(callee)[0] AS label, callee.qualified_name AS qualified_name,\n       "
     + _CALL_SITE_FIELDS
 )
-CYPHER_GRAPH_CALLERS = f"""MATCH (callee:{_GRAPH_DEFINITION_LABELS} {{qualified_name: $qn}})
+CYPHER_GRAPH_CALLERS = f"""MATCH (callee {{qualified_name: $qn}})
+WHERE {_any_label("callee", _GRAPH_DEFINITION_LABELS)}
 MATCH (caller)-[r:CALLS]->(callee)
 WHERE caller.qualified_name STARTS WITH $project_prefix
 RETURN {_CALLER_ROW}"""
-CYPHER_GRAPH_CALLEES = f"""MATCH (caller:{_GRAPH_DEFINITION_LABELS} {{qualified_name: $qn}})
+CYPHER_GRAPH_CALLEES = f"""MATCH (caller {{qualified_name: $qn}})
+WHERE {_any_label("caller", _GRAPH_DEFINITION_LABELS)}
 MATCH (caller)-[r:CALLS]->(callee)
 WHERE callee.qualified_name STARTS WITH $project_prefix
 RETURN {_CALLEE_ROW}"""
@@ -1196,12 +1218,14 @@ RETURN {_CALLEE_ROW}"""
 # frontier, and `to_qn` / `from_qn` names the frontier node a row hangs off,
 # so a level is one round trip instead of one per node.
 CYPHER_GRAPH_CALLERS_OF = f"""UNWIND $qns AS qn
-MATCH (callee:{_GRAPH_DEFINITION_LABELS} {{qualified_name: qn}})
+MATCH (callee {{qualified_name: qn}})
+WHERE {_any_label("callee", _GRAPH_DEFINITION_LABELS)}
 MATCH (caller)-[r:CALLS]->(callee)
 WHERE caller.qualified_name STARTS WITH $project_prefix
 RETURN callee.qualified_name AS to_qn, {_CALLER_ROW}"""
 CYPHER_GRAPH_CALLEES_OF = f"""UNWIND $qns AS qn
-MATCH (caller:{_GRAPH_DEFINITION_LABELS} {{qualified_name: qn}})
+MATCH (caller {{qualified_name: qn}})
+WHERE {_any_label("caller", _GRAPH_DEFINITION_LABELS)}
 MATCH (caller)-[r:CALLS]->(callee)
 WHERE callee.qualified_name STARTS WITH $project_prefix
 RETURN caller.qualified_name AS from_qn, {_CALLEE_ROW}"""
@@ -1220,9 +1244,10 @@ WHERE h.qualified_name STARTS WITH $project_prefix
 OPTIONAL MATCH (c)-[:READS_FROM|WRITES_TO]->(n:Resource)-[:RESOLVES_TO]->(e)
 WITH h, e, count(DISTINCT c) AS resolved
 OPTIONAL MATCH (d)-[:READS_FROM|WRITES_TO]->(e)
+WITH h, e, resolved, count(DISTINCT d) AS direct
 RETURN e.name AS endpoint, e.kind AS kind, labels(h)[0] AS label,
        h.qualified_name AS handler, h.path AS path,
-       resolved + count(DISTINCT d) AS callers
+       resolved + direct AS callers
 ORDER BY endpoint, handler"""
 # `$qn` names the handler or the endpoint identity (`GET /users/{id}`).
 CYPHER_GRAPH_ENDPOINT_CALLERS = """MATCH (h)-[:EXPOSES]->(e:Resource)
@@ -1250,14 +1275,18 @@ RETURN labels(c)[0] AS label, c.qualified_name AS qualified_name, c.path AS path
        h.qualified_name AS handler, e.project AS handler_project
 ORDER BY qualified_name, url, handler"""
 # The dead-code walk's view of the same joins: per exposing handler, how many
-# call sites reach its resource (through RESOLVES_TO, or directly).
+# call sites reach its resource (through RESOLVES_TO, or directly). Each
+# count is finished in its own WITH: `resolved + count(DISTINCT d)` in one
+# RETURN mixes a variable with an aggregate, which Neo4j 5 rejects as an
+# ambiguous aggregation (Memgraph accepts it).
 CYPHER_DEAD_CODE_ENDPOINT_LINKS = """MATCH (h)-[:EXPOSES]->(e:Resource)
 WHERE h.qualified_name STARTS WITH $project_prefix
 OPTIONAL MATCH (c)-[:READS_FROM|WRITES_TO]->(n:Resource)-[:RESOLVES_TO]->(e)
 WITH h, e, count(DISTINCT c) AS resolved
 OPTIONAL MATCH (d)-[:READS_FROM|WRITES_TO]->(e)
+WITH h, e, resolved, count(DISTINCT d) AS direct
 RETURN h.qualified_name AS handler, e.name AS endpoint,
-       resolved + count(DISTINCT d) AS callers"""
+       resolved + direct AS callers"""
 CYPHER_GRAPH_IMPLEMENTORS = """MATCH (impl)-[r:INHERITS|IMPLEMENTS]->(base)
 WHERE base.qualified_name = $qn AND impl.qualified_name STARTS WITH $project_prefix
 RETURN labels(impl)[0] AS label, impl.qualified_name AS qualified_name,
@@ -1304,14 +1333,14 @@ _QUALIFIED_NAME_LABELS = "|".join(
         if key == UniqueKeyType.QUALIFIED_NAME
     )
 )
-CYPHER_GRAPH_NODE_EXISTS = f"""MATCH (n:{_QUALIFIED_NAME_LABELS})
-WHERE n.qualified_name = $qn
+CYPHER_GRAPH_NODE_EXISTS = f"""MATCH (n)
+WHERE {_any_label("n", _QUALIFIED_NAME_LABELS)} AND n.qualified_name = $qn
 RETURN n.qualified_name AS qualified_name
 LIMIT 1"""
 # The definitions under one dotted parent, which a name mistyped in its last
 # part is closest to.
-CYPHER_GRAPH_DEFINITIONS_UNDER = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
-WHERE n.qualified_name STARTS WITH $project_prefix
+CYPHER_GRAPH_DEFINITIONS_UNDER = f"""MATCH (n)
+WHERE {_any_label("n", _GRAPH_DEFINITION_LABELS)} AND n.qualified_name STARTS WITH $project_prefix
 RETURN n.qualified_name AS qualified_name"""
 # Structural delta after a write (issue #1525): the touched files' definitions
 # with the properties the delta compares, every call/reference site touching
@@ -1333,8 +1362,8 @@ _DELTA_DEFINITION_FIELDS = """RETURN labels(n)[0] AS label, n.qualified_name AS 
        n.ast_fingerprint AS ast_fingerprint,
        n.ast_fingerprint_nodes AS ast_fingerprint_nodes,
        n.ast_branch_fingerprints AS ast_branch_fingerprints"""
-CYPHER_DELTA_DEFINITIONS = f"""MATCH (n:{_DELTA_DEFINITION_LABELS})
-WHERE n.qualified_name STARTS WITH $project_prefix
+CYPHER_DELTA_DEFINITIONS = f"""MATCH (n)
+WHERE {_any_label("n", _DELTA_DEFINITION_LABELS)} AND n.qualified_name STARTS WITH $project_prefix
   AND ALL(longer_project IN $longer_project_prefixes
           WHERE n.qualified_name <> longer_project
             AND NOT n.qualified_name STARTS WITH (longer_project + '.'))
@@ -1346,8 +1375,8 @@ WHERE n.qualified_name STARTS WITH $project_prefix
 # is not prefix-scoped, so an unresolved or external target name can reach
 # this lookup, and a shared graph holding several projects would otherwise
 # let a same-named definition from another project decide the arity verdict.
-CYPHER_DELTA_DEFINITIONS_BY_QN = f"""MATCH (n:{_DELTA_DEFINITION_LABELS})
-WHERE n.qualified_name IN $qns
+CYPHER_DELTA_DEFINITIONS_BY_QN = f"""MATCH (n)
+WHERE {_any_label("n", _DELTA_DEFINITION_LABELS)} AND n.qualified_name IN $qns
   AND n.qualified_name STARTS WITH $project_prefix
   AND ALL(longer_project IN $longer_project_prefixes
           WHERE n.qualified_name <> longer_project
@@ -1406,8 +1435,8 @@ RETURN labels(m)[0] AS label, m.qualified_name AS qualified_name, m.name AS name
        m.path AS path, m.decorators AS decorators,
        m.rust_cfg_test_mods AS rust_cfg_test_mods,
        m.rust_ungated_mods AS rust_ungated_mods"""
-CYPHER_DELTA_RUST_TEST_FNS = """MATCH (n:Function|Method)
-WHERE n.qualified_name STARTS WITH $project_prefix
+CYPHER_DELTA_RUST_TEST_FNS = """MATCH (n)
+WHERE (n:Function OR n:Method) AND n.qualified_name STARTS WITH $project_prefix
   AND ALL(longer_project IN $longer_project_prefixes
           WHERE n.qualified_name <> longer_project
             AND NOT n.qualified_name STARTS WITH (longer_project + '.'))
@@ -1526,8 +1555,9 @@ RETURN labels(c)[0] AS label, c.qualified_name AS qualified_name,
 # path-only match would take the sibling project's findings with it
 # (greptile-local, #1718). A finding's qualified name starts with its
 # module qn, so the prefix test applies unchanged.
-CYPHER_CHECK_DELETE_FINDINGS = f"""MATCH (n:{NodeLabel.CODE_SMELL.value}|{NodeLabel.SECURITY_ISSUE.value}|{NodeLabel.PATTERN.value})
-WHERE n.path IN $paths AND NOT n.qualified_name IN $keep
+CYPHER_CHECK_DELETE_FINDINGS = f"""MATCH (n)
+WHERE (n:{NodeLabel.CODE_SMELL.value} OR n:{NodeLabel.SECURITY_ISSUE.value} OR n:{NodeLabel.PATTERN.value})
+  AND n.path IN $paths AND NOT n.qualified_name IN $keep
   AND (n.qualified_name = $project_name
        OR n.qualified_name STARTS WITH $project_prefix)
 DETACH DELETE n"""

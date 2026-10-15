@@ -1,5 +1,5 @@
 ---
-description: "Install Code-Graph-RAG and set up Memgraph for multi-language codebase analysis."
+description: "Install Code-Graph-RAG and choose a graph backend for multi-language codebase analysis."
 ---
 
 # Installation
@@ -7,14 +7,13 @@ description: "Install Code-Graph-RAG and set up Memgraph for multi-language code
 ## Prerequisites
 
 - Python 3.12+ (see [Older system interpreters](#older-system-interpreters) if your distribution ships an older Python)
-- Docker & Docker Compose (for Memgraph)
-- **cmake** (required for building pymgclient dependency)
 - **ripgrep** (`rg`) (required for shell command text searching)
+- Only for the optional Memgraph backend: Docker & Docker Compose, and **cmake** where no `pymgclient` wheel fits your platform
 - **For cloud models**: Google Gemini API key, OpenAI API key, or both
 - **For local models**: Ollama installed and running
 - `uv` package manager (recommended) or `pip`
 
-### Installing cmake and ripgrep
+### Installing ripgrep (and cmake for Memgraph)
 
 === "macOS"
 
@@ -78,7 +77,7 @@ Without `uv`, install CPython 3.12 yourself and call it directly:
     python3.12 -m pip install "code-graph-rag[treesitter-full,ast-grep,semantic]"
 
 Dependencies may still need platform wheels or build tools, such as `cmake` for
-`pymgclient`.
+`pymgclient`, which only the `memgraph` extra installs.
 
 ## Install from PyPI
 
@@ -107,6 +106,10 @@ With semantic code search (UniXcoder embeddings):
 ```bash
 pip install 'code-graph-rag[semantic]'
 ```
+
+Its vectors go to an embedded Qdrant by default. Add the `sqlite-vec` extra and
+set `CGR_VECTOR_STORE_BACKEND=sqlite` to keep them in a SQLite file beside the
+graph instead; see [Semantic Search](../sdk/semantic-search.md).
 
 With both full language support and semantic search:
 
@@ -221,7 +224,18 @@ cosign verify-blob \
 
 Substitute the binary name for your platform. Packages installed from PyPI are protected differently: `pip` and `uv` verify package hashes, which proves integrity in transit, and releases after v0.0.187 additionally carry a [PEP 740](https://peps.python.org/pep-0740/) attestation. That is a publish attestation — proof that the file was uploaded by this project's trusted publisher — rather than build provenance, and it can be queried through PyPI's [Integrity API](https://docs.pypi.org/api/integrity/).
 
-## Start Memgraph
+## Choose a Graph Backend
+
+Nothing to start by default: the graph is an embedded SQLite file,
+`~/.cgr/graph.sqlite` (`SQLITE_GRAPH_PATH` moves it), written and queried in
+process through the same Cypher the other backends run. How it works, and how
+it compares with Memgraph, is in [Graph Backends](../architecture/embedded-graph.md).
+
+### Memgraph (optional)
+
+Install the driver with the `memgraph` extra (for example
+`uv tool install "code-graph-rag[treesitter-full,memgraph]"`), set
+`GRAPH_BACKEND=memgraph`, and start the packaged stack:
 
 ```bash
 cgr daemon up
@@ -261,7 +275,6 @@ This checks that all required dependencies and services are available.
 - **mcp**: Model Context Protocol SDK
 - **pydantic-ai-slim**: AI Agent Framework, the Pydantic way, slim package
 - **pydantic-settings**: Settings management using Pydantic
-- **pymgclient**: Memgraph database adapter for Python language
 - **python-dotenv**: Read key-value pairs from a .env file and set them as environment variables
 - **tiktoken**: tiktoken is a fast BPE tokeniser for use with OpenAI's models
 - **tomli-w**: A lil' TOML writer
@@ -278,4 +291,6 @@ This checks that all required dependencies and services are available.
 - **huggingface-hub**: Client library to download and publish models, datasets and other repos on the huggingface.co hub
 - **pathspec**: Utility library for gitignore style pattern matching of file paths.
 - **pygments**: Pygments is a syntax highlighting package written in Python.
+- **regex**: Alternative regular expression module, to replace re.
+- **cgr-graph-rs**
 <!-- /SECTION:dependencies -->

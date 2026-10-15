@@ -57,6 +57,7 @@ from .editor_links import (
     url_template_problem,
 )
 from .graph_cli import cli as graph_cli
+from .graph_dialects import DIALECT_MEMGRAPH
 from .parser_loader import load_parsers
 from .project_selection import ProjectChoice, choose_project, scope_refusal
 from .services.graph_diff import DiffError, diff_indexes, diff_is_empty
@@ -70,7 +71,7 @@ from .services.provenance import (
 )
 from .stack import StackManager
 from .stack.cli import cli as daemon_cli
-from .stack.constants import StackState
+from .stack.constants import SERVICE_QDRANT, StackState
 from .stack.manager import StackError
 from .sync_guard import RUNNING_SYNC_TOKENS as _RUNNING_SYNC_TOKENS
 from .sync_guard import OwnerCheck as _OwnerCheck
@@ -740,7 +741,17 @@ def _resolve_active_projects(projects: str | None, default_project: str) -> list
 
 
 def _maybe_start_stack() -> None:
-    mgr = StackManager()
+    # The Docker stack serves Memgraph, and Qdrant when the vector settings
+    # pick the bundled one. The embedded graph is a file and Neo4j is the
+    # user's own server, so for them the stack runs only for the vectors:
+    # only its Qdrant is started and checked, since every Memgraph check
+    # needs a driver those installs need not have.
+    if settings.GRAPH_BACKEND == DIALECT_MEMGRAPH:
+        mgr = StackManager()
+    else:
+        mgr = StackManager(services=(SERVICE_QDRANT,))
+        if not mgr.serves_vectors():
+            return
     try:
         mgr.locate_published_qdrant()
         if mgr.status().state == StackState.RUNNING:

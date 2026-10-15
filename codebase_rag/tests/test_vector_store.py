@@ -797,6 +797,7 @@ def test_process_exit_closes_local_client_cleanly(temp_qdrant_path: Path) -> Non
     [
         (VectorStoreBackend.QDRANT, "QDRANT_VECTOR_DIM"),
         (VectorStoreBackend.MILVUS, "MILVUS_VECTOR_DIM"),
+        (VectorStoreBackend.SQLITE, "SQLITE_VECTOR_DIM"),
     ],
 )
 def test_storing_vectors_of_the_wrong_size_names_the_setting_to_change(
