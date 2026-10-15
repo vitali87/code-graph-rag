@@ -228,6 +228,34 @@ def _refuse_mentions(
 
 # --- call sites -----------------------------------------------------------------
 
+_INERT_VALUES = frozenset(
+    {
+        cs.TS_PY_IDENTIFIER,
+        cs.TS_PY_INTEGER,
+        cs.TS_PY_FLOAT,
+        cs.TS_PY_TRUE,
+        cs.TS_PY_FALSE,
+        cs.TS_PY_NONE,
+    }
+)
+_NUMBERS = frozenset({cs.TS_PY_INTEGER, cs.TS_PY_FLOAT})
+
+
+def _is_inert(node: Node) -> bool:
+    """A name or a plain literal: evaluating it runs no code.
+
+    An f-string runs its interpolations, so only a string without one
+    counts; `-1` is a unary operator over a number.
+    """
+    if node.type in _INERT_VALUES:
+        return True
+    if node.type == cs.TS_PY_STRING:
+        return all(child.type != cs.TS_PY_INTERPOLATION for child in node.children)
+    if node.type == cs.TS_PY_UNARY_OPERATOR:
+        operand = node.child_by_field_name(cs.TS_FIELD_ARGUMENT)
+        return operand is not None and operand.type in _NUMBERS
+    return False
+
 
 def _bind_arguments(
     args: Node, source: bytes, old: Sequence[ParamSpec]
@@ -267,11 +295,15 @@ def _bind_arguments(
             if index in bound:
                 raise _Unmapped(cs.SIGNATURE_SITE_DUPLICATE.format(name=name))
             bound[index] = _Binding(
-                _text(value, source), True, position, (value.start_byte, value.end_byte)
+                _text(value, source),
+                True,
+                position,
+                (value.start_byte, value.end_byte),
+                _is_inert(value),
             )
             continue
         bound[positional] = _Binding(
-            text, False, position, (child.start_byte, child.end_byte)
+            text, False, position, (child.start_byte, child.end_byte), _is_inert(child)
         )
         positional += 1
     return bound
@@ -323,20 +355,17 @@ def _render_arguments(
 ) -> str:
     """The site's new argument list, parenthesised.
 
-    Python evaluates a call's arguments left to right as written, so the
-    site's own values must come out in the order the site wrote them:
-    otherwise reordering `(a, b)` to `(b, a)` would run `second()` before
-    `first()` in `f(first(), second())`. A leading run of values stays
-    positional (see `_positional_run`); every other value is spelled by
-    keyword, in the order the site wrote it. A mapped literal is the same
-    text at every site: it keeps its slot inside the run and otherwise
-    follows the site's values, in the new parameter order.
+    A leading run of values stays positional (see `_positional_run`);
+    every other value is spelled by keyword, in the order the site wrote
+    it. A mapped literal is the same text at every site: it keeps its slot
+    inside the run and otherwise follows the site's values, in the new
+    parameter order.
     """
     values = [
         _value_at_site(spec, source, bound)
         for spec, source in zip(new, sources, strict=True)
     ]
-    run = _positional_run(values)
+    run = _positional_run(values, _order_matters(values))
     positional: list[str] = []
     keywords: list[tuple[tuple[int, int], str]] = []
     for order, (spec, found) in enumerate(zip(new, values, strict=True)):
@@ -362,13 +391,34 @@ def _written_at(found: tuple[str, _Binding | None] | None) -> int | None:
     return binding.position if binding is not None else None
 
 
-def _positional_run(values: Sequence[tuple[str, _Binding | None] | None]) -> int:
-    """How many leading values can stay positional without reordering the site.
+def _order_matters(values: Sequence[tuple[str, _Binding | None] | None]) -> bool:
+    """Whether evaluating the site's values in a new order could be observed.
 
-    The run ends at an omitted default, at a value that was a keyword, and
-    before a value the site wrote ahead of one already in the run. Keywords
-    follow the run, so it then ends before its first value written after
-    one of the values left for keywords.
+    Python evaluates a call's arguments left to right as written, so once
+    one of them runs code, reordering `(a, b)` to `(b, a)` positionally
+    would run `second()` before `first()` in `f(first(), second())`. Names
+    and plain literals read the same in any order while nothing runs
+    between them.
+    """
+    for found in values:
+        if found is None:
+            continue
+        _value, binding = found
+        if binding is not None and not binding.inert:
+            return True
+    return False
+
+
+def _positional_run(
+    values: Sequence[tuple[str, _Binding | None] | None], ordered: bool
+) -> int:
+    """How many leading values can stay positional.
+
+    The run ends at an omitted default and at a value that was a keyword.
+    When the site's order matters, it also ends before a value the site
+    wrote ahead of one already in the run, and, since keywords follow the
+    run, before its first value written after one of those left for
+    keywords.
     """
     run = 0
     last = -1
@@ -377,10 +427,12 @@ def _positional_run(values: Sequence[tuple[str, _Binding | None] | None]) -> int
             break
         _value, binding = found
         if binding is not None:
-            if binding.keyword or binding.position <= last:
+            if binding.keyword or (ordered and binding.position <= last):
                 break
             last = binding.position
         run += 1
+    if not ordered:
+        return run
     left = [
         at for at in (_written_at(found) for found in values[run:]) if at is not None
     ]
