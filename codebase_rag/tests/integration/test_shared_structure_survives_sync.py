@@ -211,3 +211,29 @@ def test_a_node_shared_with_a_rootless_project_is_purged(
     ing.ensure_constraints()
 
     assert ing.fetch_all("MATCH (n:Folder) RETURN count(n) AS n") == [{"n": 0}]
+
+
+def test_a_rootless_owner_is_found_behind_its_package(
+    memgraph_ingestor: MemgraphIngestor,
+) -> None:
+    # A Package records its directory as its own absolute_path, so a detector
+    # that read each immediate parent's tree from it saw a File two projects
+    # reach through their Packages as inside both, never reached the rootless
+    # Project behind one of them, and skipped the purge that counts that
+    # owner as legacy (review of PR 3216).
+    ing = memgraph_ingestor
+    ing.ensure_constraints()
+    ing._execute_query(
+        "CREATE (old:Project {name: 'old'}), "
+        "(new:Project {name: 'new', root_path: '/repos/svc'}), "
+        "(po:Package {qualified_name: 'old.pkg', absolute_path: $pkg}), "
+        "(pn:Package {qualified_name: 'new.pkg', absolute_path: $pkg}), "
+        "(f:File {path: 'pkg/x.py', absolute_path: $file}), "
+        "(old)-[:CONTAINS_PACKAGE]->(po), (new)-[:CONTAINS_PACKAGE]->(pn), "
+        "(po)-[:CONTAINS_FILE]->(f), (pn)-[:CONTAINS_FILE]->(f)",
+        {"pkg": "/repos/svc/pkg", "file": "/repos/svc/pkg/x.py"},
+    )
+
+    ing.ensure_constraints()
+
+    assert ing.fetch_all("MATCH (n:File) RETURN count(n) AS n") == [{"n": 0}]

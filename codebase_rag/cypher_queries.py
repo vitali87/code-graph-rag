@@ -319,13 +319,13 @@ DETACH DELETE p, container, defined
 # node lies outside one owner's tree. The current key (absolute_path) shares a
 # node only between projects over the SAME files -- one checkout under two
 # names, or a project nested in another -- and the node lies inside every
-# owner's tree, so it is not damage (issue #3025). A parent's tree is a
-# Project's root_path or a Folder's own absolute_path; a parent that records
-# neither predates both and counts as legacy. root_path is the resolved path as
-# the OS spells it, backslashes on Windows, while absolute_path is POSIX, so
-# both sides are compared with forward slashes (review of PR 3216). A
-# filesystem root (`/`, `C:\`) already ends in the separator, so the boundary
-# one is added only to a root that does not.
+# owner's tree, so it is not damage (issue #3025). An owner's tree is its
+# Project's root_path; a Project that records none predates it and counts as
+# legacy. root_path is the resolved path as the OS spells it, backslashes on
+# Windows, while absolute_path is POSIX, so both sides are compared with
+# forward slashes (review of PR 3216). A filesystem root (`/`, `C:\`) already
+# ends in the separator, so the boundary one is added only to a root that
+# does not.
 def _outside_tree(root: str) -> str:
     node = "replace(n.absolute_path, '\\\\', '/')"
     tree = f"replace({root}, '\\\\', '/')"
@@ -333,20 +333,35 @@ def _outside_tree(root: str) -> str:
     return f"({root} IS NULL OR NOT ({node} = {tree} OR {node} STARTS WITH ({prefix})))"
 
 
+# The Projects that reach a node, and the node kept when two or more do and
+# one of them does not hold it in its tree. The owners themselves are
+# collected, not their roots: collect() drops nulls, so an owner that records
+# no root would vanish from the list instead of counting as legacy (review of
+# PR 3216).
+_FROM_OWNERS = (
+    "MATCH (p:Project)"
+    "-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE*]->(n) "
+)
+_ACROSS_ROOTS = (
+    "WITH n, collect(DISTINCT p) AS owners "
+    "WHERE size(owners) > 1 "
+    f"AND any(owner IN owners WHERE {_outside_tree('owner.root_path')}) "
+)
+
 # Sharing always leaves a single-hop signature: the topmost merged node has
 # containment parents in two projects (Project roots are never merged, so the
-# parents are distinct nodes). Keyless rows match the second purge's predicate
-# directly. The parents themselves are collected, not their roots: collect()
-# drops nulls, so a parent that records no root would vanish from the list
-# instead of counting as legacy (review of PR 3216).
+# parents are distinct nodes). That cheap test runs on every sync and picks
+# the candidates; only they are walked up to their Projects and judged as the
+# purge judges them. A parent's own path cannot stand in for its Project's
+# root: a Package records its directory, so a File two projects reach through
+# their Packages read as inside both, hiding a rootless owner the purge counts
+# as legacy (review of PR 3216). Keyless rows match the second purge's
+# predicate directly.
 CYPHER_ANY_SHARED_STRUCTURE = (
     "MATCH (parent)-[:CONTAINS_FOLDER|CONTAINS_FILE]->(n) "
     "WHERE (n:Folder OR n:File) AND n.absolute_path IS NOT NULL "
-    "WITH n, collect(parent) AS parents "
-    "WHERE size(parents) > 1 "
-    "AND any(owner IN parents WHERE "
-    f"{_outside_tree('coalesce(owner.root_path, owner.absolute_path)')}) "
-    "RETURN 1 AS damaged LIMIT 1"
+    "WITH n, count(parent) AS parents "
+    "WHERE parents > 1 " + _FROM_OWNERS + _ACROSS_ROOTS + "RETURN 1 AS damaged LIMIT 1"
 )
 
 CYPHER_ANY_KEYLESS_STRUCTURE = (
@@ -371,13 +386,10 @@ CYPHER_PURGE_CROSS_PROJECT_STRUCTURE = (
 # only a node outside some owner's tree (or under an owner that records no
 # root) is the old key's merge.
 CYPHER_PURGE_CROSS_ROOT_STRUCTURE = (
-    "MATCH (p:Project)"
-    "-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE*]->(n) "
-    "WHERE (n:Folder OR n:File) AND n.absolute_path IS NOT NULL "
-    "WITH n, collect(DISTINCT p) AS owners "
-    "WHERE size(owners) > 1 "
-    f"AND any(owner IN owners WHERE {_outside_tree('owner.root_path')}) "
-    "DETACH DELETE n RETURN count(n) AS purged"
+    _FROM_OWNERS
+    + "WHERE (n:Folder OR n:File) AND n.absolute_path IS NOT NULL "
+    + _ACROSS_ROOTS
+    + "DETACH DELETE n RETURN count(n) AS purged"
 )
 
 # Rows written before absolute_path existed can never match the current
