@@ -241,7 +241,7 @@ cgr dead-code [OPTIONS]
 |------|-----------|
 | `--project`, `-p` | Project to scan (default: the one --repo-path was indexed as; outside any indexed checkout, the only indexed project). |
 | `--repo-path` | Repository whose project to scan when --project is not given (default: the current directory). |
-| `--entry-point`, `-e` | Mark symbols ending with this qualified-name suffix as entry points. Repeatable. |
+| `--entry-point`, `-e` | Mark symbols whose qualified name ends with these whole dotted segments (main, cli.run) as entry points. Repeatable. |
 | `--decorator-root` | Mark symbols with this decorator as entry points. Extends the built-in set. |
 | `--exclude` | Exclude symbols whose file path matches GLOB. The glob must cover the whole repo-relative path ('\*' spans directories) and be quoted ('tests/\*' for a root-level tests directory, '\*/tests/\*' for nested ones) so the shell cannot expand it first. Repeatable. |
 | `--include-tests` / `--no-include-tests` | Treat test code as reachable so exercised production code is not reported. [default: include-tests] |
