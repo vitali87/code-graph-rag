@@ -283,18 +283,37 @@ def _render(call: str, new: list[ParamSpec], sources: Sequence[_Source | None]) 
     return _render_arguments(new, sources, _candidate(call, OLD).bound)
 
 
-def test_reordered_values_go_by_keyword_in_the_order_written() -> None:
-    new = [_p("b"), _p("a")]
-    sources = [_Source(index=1), _Source(index=0)]
-    assert _render("g(1, 2)\n", new, sources) == "(a=1, b=2)"
+SWAP = [_p("b"), _p("a")]
+SWAP_SOURCES = [_Source(index=1), _Source(index=0)]
 
 
-def test_reordering_keeps_effectful_arguments_in_evaluation_order() -> None:
-    # Positional `(second(), first())` would run `second()` first.
-    new = [_p("b"), _p("a")]
-    sources = [_Source(index=1), _Source(index=0)]
-    rendered = _render("g(first(), second())\n", new, sources)
-    assert rendered == "(a=first(), b=second())"
+@pytest.mark.parametrize(
+    ("call", "rendered"),
+    [
+        ("g(1, 2)\n", "(2, 1)"),
+        ("g(x, 'y')\n", "('y', x)"),
+        ("g(-1, None)\n", "(None, -1)"),
+    ],
+)
+def test_reordered_names_and_literals_stay_positional(call: str, rendered: str) -> None:
+    assert _render(call, SWAP, SWAP_SOURCES) == rendered
+
+
+@pytest.mark.parametrize(
+    ("call", "rendered"),
+    [
+        # Positional `(second(), first())` would run `second()` first.
+        ("g(first(), second())\n", "(a=first(), b=second())"),
+        # `h()` could rebind `x`, so the name keeps its place too.
+        ("g(x, h())\n", "(a=x, b=h())"),
+        ("g(f'{x()}', 2)\n", "(a=f'{x()}', b=2)"),
+        ("g(o.attr, 2)\n", "(a=o.attr, b=2)"),
+    ],
+)
+def test_reordering_code_that_runs_keeps_the_written_order(
+    call: str, rendered: str
+) -> None:
+    assert _render(call, SWAP, SWAP_SOURCES) == rendered
 
 
 def test_positional_run_ends_before_a_value_written_after_a_keyword() -> None:
@@ -302,7 +321,7 @@ def test_positional_run_ends_before_a_value_written_after_a_keyword() -> None:
     # cannot: leaving `c` positional would run it before `b`.
     new = [_p("a"), _p("c"), _p("b")]
     sources = [_Source(index=0), _Source(index=2), _Source(index=1)]
-    assert _render("g(1, 2, 3)\n", new, sources) == "(1, b=2, c=3)"
+    assert _render("g(x(), y(), z())\n", new, sources) == "(x(), b=y(), c=z())"
 
 
 def test_values_in_written_order_stay_positional_around_a_literal() -> None:
@@ -356,11 +375,12 @@ def test_edit_nested_in_an_argument_is_folded_into_the_site() -> None:
     body_rename = _Edit(PATH, (2, 3), "z")
     inner_edit = _render_site(inner, new, sources, [])
     assert inner_edit is not None
-    assert inner_edit.text == "(a=1, b=2)"
+    assert inner_edit.text == "(2, 1)"
     edits = [body_rename, inner_edit]
     outer_edit = _render_site(outer, new, sources, edits)
     assert outer_edit is not None
-    assert outer_edit.text == "(a=z, b=g(a=1, b=2))"
+    # The outer site passes a call, so its values keep their written order.
+    assert outer_edit.text == "(a=z, b=g(2, 1))"
     assert edits == []  # both folded edits left the plan
 
 
@@ -379,10 +399,10 @@ def test_edit_in_another_file_is_not_folded() -> None:
     candidate = _candidate("g(1, 2)\n", OLD)
     elsewhere = _Edit("other.py", (2, 3), "x")
     edit = _render_site(candidate, [_p("b"), _p("a")], [_Source(1), _Source(0)], [])
-    assert edit == _Edit(PATH, candidate.span, "(a=1, b=2)")
+    assert edit == _Edit(PATH, candidate.span, "(2, 1)")
     assert _render_site(
         candidate, [_p("b"), _p("a")], [_Source(1), _Source(0)], [elsewhere]
-    ) == _Edit(PATH, candidate.span, "(a=1, b=2)")
+    ) == _Edit(PATH, candidate.span, "(2, 1)")
 
 
 # --- the definition and its hierarchy --------------------------------------------
