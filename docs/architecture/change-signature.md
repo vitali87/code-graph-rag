@@ -106,15 +106,12 @@ value before the enclosing site is rendered, so `helper(helper(1))` becomes
 | `call`       | `CALLS` edges into the definition or an override, using the per-site `line`/`col`/`end_line`/`end_col` recorded at ingest (see [graph schema](graph-schema.md#edge-site-properties)); the argument list is re-rendered. |
 
 At a call site the arguments are bound to the old parameters as Python
-would bind them, then re-rendered for the new list. Python evaluates
-arguments left to right as written, so the site's own values come out in
-the order the site wrote them, whatever the new parameter order. A leading
-run of values stays positional while it keeps that order; it ends at a
-defaulted parameter left out, at a value that was a keyword, and before any
-value written after one that must go by keyword. Every other value is
-spelled by keyword under its new name, in the order the site wrote it, and
-a mapped literal not in the run follows them. So with `helper(a, b='x')`
-becoming `helper(a, b='x', n=0)` and `n` mapped to `=1`:
+would bind them, then re-rendered for the new list. A leading run of
+values stays positional; it ends at a defaulted parameter left out or at a
+value that was a keyword. Every later value is spelled by keyword under its
+new name, in the order the site wrote it, and a mapped literal outside the
+run follows them. So with `helper(a, b='x')` becoming
+`helper(a, b='x', n=0)` and `n` mapped to `=1`:
 
 | Before               | After                     |
 |----------------------|---------------------------|
@@ -122,8 +119,16 @@ becoming `helper(a, b='x', n=0)` and `n` mapped to `=1`:
 | `helper(2, b='y')`   | `helper(2, b='y', n=1)`   |
 | `helper(3, 'z')`     | `helper(3, 'z', 1)`       |
 
-Reordering `helper(a, b)` to `helper(b, a)` turns `helper(x(), y())` into
-`helper(a=x(), b=y())`: positional `helper(y(), x())` would run `y()` first.
+Python evaluates arguments left to right as written. A site whose values
+are all names and plain literals (numbers, strings without interpolation,
+`True`, `False`, `None`) runs no code while they are read, so reordering
+`helper(a, b)` to `helper(b, a)` rewrites `helper(3, 'z')` positionally, as
+`helper('z', 3)`. Once any value runs code (a call, an attribute, an
+f-string), the site's values must come out in the order it wrote them: the
+positional run also ends before a value written ahead of one already in it,
+and before any value written after one left for keywords. So the same
+reorder turns `helper(x(), y())` into `helper(a=x(), b=y())`, since
+positional `helper(y(), x())` would run `y()` first.
 
 A site whose rendered text equals the original is counted but not edited.
 Every edit is a span-preserving [patcher](patchers.md) edit; a multi-line
