@@ -207,3 +207,13 @@ class UniXcoderMode(StrEnum):
 UNIXCODER_MASK_TOKEN = "<mask0>"
 UNIXCODER_BUFFER_BIAS = "bias"
 UNIXCODER_MAX_CONTEXT = 1024
+
+
+# An agent run with no operator settles every tool approval itself (the CLI's
+# `-a`, MCP's ask_agent; issue #2657). A model that asks again after every
+# answer would otherwise loop forever.
+NONINTERACTIVE_APPROVAL_ROUNDS = 10
+NONINTERACTIVE_APPROVAL_LOOP = (
+    "The agent still requested tool approval after {rounds} rounds of answers; "
+    "stopped without a text answer."
+)
