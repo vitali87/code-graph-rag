@@ -29,6 +29,7 @@ from collections.abc import Iterable
 from .constants import (
     ANCHOR_HASH_VERSION,
     CYPHER_DEFAULT_LIMIT,
+    CYPHER_DELETE_OWNED_WITH_RESOURCE_FLOWS,
     DEFINITION_NODE_LABELS,
     KEY_FROM_MISSING,
     KEY_FROM_VAL,
@@ -287,12 +288,15 @@ CYPHER_PROJECT_SYNC_TIMES = (
 # CodeSmell or SecurityIssue is keyed under its module's qualified name, so
 # no other project holds it, and left out it outlived the project as an
 # orphan (issue #2536).
-CYPHER_DELETE_PROJECT = """
+CYPHER_DELETE_PROJECT = (
+    """
 MATCH (p:Project {name: $project_name})
 OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
 OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT|IMPLEMENTS_PATTERN|HAS_SMELL|HAS_VULNERABILITY*]->(defined)
-DETACH DELETE p, container, defined
+WITH collect(DISTINCT p) + collect(DISTINCT container) + collect(DISTINCT defined) AS owned
 """
+    + CYPHER_DELETE_OWNED_WITH_RESOURCE_FLOWS
+)
 
 # Retires a project whose checkout was just re-indexed under another name
 # (issue #2412). Both projects index the same files, so they share every
@@ -304,14 +308,17 @@ DETACH DELETE p, container, defined
 # bare project name, so the prefix test alone would miss them (review of PR
 # 2497); the trailing dot of the prefix still keeps a project whose name only
 # starts with this one (`acme.webapp` beside `acme.web`).
-CYPHER_RETIRE_PROJECT = """
+CYPHER_RETIRE_PROJECT = (
+    """
 MATCH (p:Project {name: $project_name})
 OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
 WHERE container.qualified_name = $project_name
    OR container.qualified_name STARTS WITH $project_prefix
 OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT*]->(defined)
-DETACH DELETE p, container, defined
+WITH collect(DISTINCT p) + collect(DISTINCT container) + collect(DISTINCT defined) AS owned
 """
+    + CYPHER_DELETE_OWNED_WITH_RESOURCE_FLOWS
+)
 
 
 # Damage detectors for the issue #897 migration. Sharing always leaves a
