@@ -66,7 +66,11 @@ from .lua import utils as lua_utils
 from .php import class_names as php_class_names
 from .php import utils as php_utils
 from .py.class_aliases import scan_class_body_aliases
-from .py.receiver_rebinding import ReceiverRebinding, receiver_rebinding
+from .py.receiver_rebinding import (
+    ReceiverRebinding,
+    annotates_receiver,
+    receiver_rebinding,
+)
 from .rpc_exposure import GoRpcExposureProcessor
 from .rs import utils as rs_utils
 from .scala import utils as scala_utils
@@ -5789,14 +5793,17 @@ class CallProcessor:
             call_var_types = self._overlay_span_binding(
                 call_name, call_node, ctx.local_var_types, ctx.span_bindings
             )
+        receiver = call_name.partition(cs.SEPARATOR_DOT)[0]
         if (
             call_var_types
             and (rebinding := self._receiver_rebinding_at(ctx, call_node, call_name))
             and not rebinding.sometimes
+            # An annotated `self: Other` holds from the def's entry, so no
+            # rebinding is needed for the map's type to apply.
+            and not annotates_receiver(call_node, receiver)
         ):
             # No `self = Other()` can run before this call, so the method-wide
             # type of `self` does not apply to it (issue #2620).
-            receiver = call_name.partition(cs.SEPARATOR_DOT)[0]
             call_var_types = {
                 name: var_type
                 for name, var_type in call_var_types.items()
@@ -7406,6 +7413,13 @@ class CallProcessor:
             and (
                 call_name.startswith(cs.PY_SELF_PREFIX)
                 or call_name.startswith(cs.PY_CLS_PREFIX)
+            )
+            # A typed `self` (a static method's `self: Other`) names its own
+            # type, not the enclosing class (Greptile, PR #2908). Only the
+            # annotation says so: the method-wide map also holds a later
+            # `self = Other()`, which leaves an earlier call on the class.
+            and not annotates_receiver(
+                call_node, call_name.partition(cs.SEPARATOR_DOT)[0]
             )
             # A call that runs after `self = Other()` on every path calls
             # through that value's type, which the resolved edge follows.
