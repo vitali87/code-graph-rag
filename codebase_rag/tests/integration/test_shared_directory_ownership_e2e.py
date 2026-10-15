@@ -1,8 +1,10 @@
-# Real-Memgraph check of issue #2665: one directory indexed under two project
+# Real-database check of issue #2665: one directory indexed under two project
 # names shares its Folder and File nodes (they are keyed by absolute_path), so
 # the containment walk from either Project reached the other's packages.
 # `delete-project OLD` then wiped `shop` as well, and `stats -n` counted both.
-# Only a real database proves the ownership Cypher parses and filters.
+# Only a real database proves the ownership Cypher parses and filters, and it
+# runs on Memgraph and on the embedded engine, the default backend: written
+# with path variables, the walk ran on Memgraph alone.
 from __future__ import annotations
 
 from pathlib import Path
@@ -19,6 +21,12 @@ if TYPE_CHECKING:
     from codebase_rag.services.graph_service import MemgraphIngestor
 
 pytestmark = [pytest.mark.integration]
+
+
+@pytest.fixture(params=["memgraph_ingestor", "sqlite_ingestor"])
+def ingestor(request: pytest.FixtureRequest) -> MemgraphIngestor:
+    return request.getfixturevalue(request.param)
+
 
 CART = "def price(x):\n    return x * 2\n\n\ndef total(xs):\n    return sum(price(x) for x in xs)\n"
 LEGACY = "def old_price(x):\n    return x * 3\n"
@@ -113,60 +121,60 @@ def _alone(ingestor: MemgraphIngestor, repo: Path, project: str) -> Snapshot:
 
 @pytest.mark.parametrize(("keep", "drop"), [("shop", "old"), ("old", "shop")])
 def test_deleting_one_name_leaves_the_other_exactly_as_if_alone(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path, keep: str, drop: str
+    ingestor: MemgraphIngestor, tmp_path: Path, keep: str, drop: str
 ) -> None:
     repo = _repo(tmp_path)
-    expected = _alone(memgraph_ingestor, repo, keep)
-    _index(memgraph_ingestor, repo, "old")
-    _index(memgraph_ingestor, repo, "shop")
+    expected = _alone(ingestor, repo, keep)
+    _index(ingestor, repo, "old")
+    _index(ingestor, repo, "shop")
 
-    memgraph_ingestor.delete_project(drop)
+    ingestor.delete_project(drop)
 
-    assert _snapshot(memgraph_ingestor) == expected
+    assert _snapshot(ingestor) == expected
 
 
 def test_a_file_only_the_deleted_name_indexed_goes_with_it(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
     # `old` indexed legacy.py, which was removed before `shop` indexed the
     # same directory: that File hangs only off `old`'s package, so it must go
     # with `old` rather than stay behind as an orphan.
     repo = _repo(tmp_path, legacy=True)
     (repo / "src" / "shop" / "legacy.py").unlink()
-    expected = _alone(memgraph_ingestor, repo, "shop")
+    expected = _alone(ingestor, repo, "shop")
     (repo / "src" / "shop" / "legacy.py").write_text(LEGACY, encoding="utf-8")
-    _index(memgraph_ingestor, repo, "old")
+    _index(ingestor, repo, "old")
     (repo / "src" / "shop" / "legacy.py").unlink()
-    _index(memgraph_ingestor, repo, "shop")
+    _index(ingestor, repo, "shop")
 
-    memgraph_ingestor.delete_project("old")
+    ingestor.delete_project("old")
 
-    assert _snapshot(memgraph_ingestor) == expected
+    assert _snapshot(ingestor) == expected
 
 
 def test_scoped_stats_count_one_name_as_if_it_were_alone(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
     repo = _repo(tmp_path)
-    _index(memgraph_ingestor, repo, "shop")
-    alone = _scoped(memgraph_ingestor, "shop")
-    _index(memgraph_ingestor, repo, "old")
+    _index(ingestor, repo, "shop")
+    alone = _scoped(ingestor, "shop")
+    _index(ingestor, repo, "old")
 
-    assert _scoped(memgraph_ingestor, "shop") == alone
-    assert _scoped(memgraph_ingestor, "old") == alone
+    assert _scoped(ingestor, "shop") == alone
+    assert _scoped(ingestor, "old") == alone
 
 
 def test_per_project_breakdown_counts_each_name_once(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
     repo = _repo(tmp_path)
-    _index(memgraph_ingestor, repo, "shop")
-    (alone,) = memgraph_ingestor.fetch_all(cq.CYPHER_STATS_PER_PROJECT)
-    _index(memgraph_ingestor, repo, "old")
+    _index(ingestor, repo, "shop")
+    (alone,) = ingestor.fetch_all(cq.CYPHER_STATS_PER_PROJECT)
+    _index(ingestor, repo, "old")
 
     rows = {
         str(row["project"]): (row["nodes"], row["relationships"])
-        for row in memgraph_ingestor.fetch_all(cq.CYPHER_STATS_PER_PROJECT)
+        for row in ingestor.fetch_all(cq.CYPHER_STATS_PER_PROJECT)
     }
 
     expected = (alone["nodes"], alone["relationships"])
@@ -174,25 +182,25 @@ def test_per_project_breakdown_counts_each_name_once(
 
 
 def test_a_later_sync_does_not_purge_the_shared_directory_nodes(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
     # ensure_constraints runs on every sync. Its #897 repair read any
     # Folder/File with two project parents as legacy damage and purged it,
     # which cut `old`'s packages off from `old` and dropped File nodes `shop`
     # still needed. Both projects record the same root_path: not damage.
     repo = _repo(tmp_path)
-    _index(memgraph_ingestor, repo, "old")
-    _index(memgraph_ingestor, repo, "shop")
-    before = _snapshot(memgraph_ingestor)
+    _index(ingestor, repo, "old")
+    _index(ingestor, repo, "shop")
+    before = _snapshot(ingestor)
 
-    memgraph_ingestor.ensure_constraints()
+    ingestor.ensure_constraints()
 
-    assert _snapshot(memgraph_ingestor) == before
+    assert _snapshot(ingestor) == before
 
 
 @pytest.mark.parametrize("outer_first", [True, False])
 def test_a_later_sync_keeps_what_a_nested_root_shares(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path, outer_first: bool
+    ingestor: MemgraphIngestor, tmp_path: Path, outer_first: bool
 ) -> None:
     # One project at the repository root, one at a subdirectory of it: the
     # files under the subdirectory are one File node for both, but the
@@ -201,12 +209,12 @@ def test_a_later_sync_keeps_what_a_nested_root_shares(
     repo = _repo(tmp_path)
     order = [(repo, "mono"), (repo / "src", "svc")]
     for path, project in order if outer_first else reversed(order):
-        _index(memgraph_ingestor, path, project)
-    before = _snapshot(memgraph_ingestor)
+        _index(ingestor, path, project)
+    before = _snapshot(ingestor)
 
-    memgraph_ingestor.ensure_constraints()
+    ingestor.ensure_constraints()
 
-    assert _snapshot(memgraph_ingestor) == before
+    assert _snapshot(ingestor) == before
 
 
 @pytest.mark.parametrize(
@@ -222,13 +230,13 @@ def test_a_later_sync_keeps_what_a_nested_root_shares(
     ],
 )
 def test_a_sync_reads_each_root_against_the_shared_node(
-    memgraph_ingestor: MemgraphIngestor,
+    ingestor: MemgraphIngestor,
     first: str,
     second: str,
     node: str,
     damaged: bool,
 ) -> None:
-    memgraph_ingestor._execute_query(
+    ingestor._execute_query(
         "CREATE (a:Project {name: 'a', root_path: $first}), "
         "(b:Project {name: 'b', root_path: $second}), "
         "(n:Folder {absolute_path: $node}), "
@@ -236,53 +244,53 @@ def test_a_sync_reads_each_root_against_the_shared_node(
         {"first": first, "second": second, "node": node},
     )
 
-    memgraph_ingestor.ensure_constraints()
+    ingestor.ensure_constraints()
 
-    (row,) = memgraph_ingestor.fetch_all("MATCH (n:Folder) RETURN count(n) AS c")
+    (row,) = ingestor.fetch_all("MATCH (n:Folder) RETURN count(n) AS c")
     assert row["c"] == (0 if damaged else 1)
 
 
 def test_a_tree_already_cut_off_from_its_project_goes_with_it(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
     # A graph the old purge already repaired: `old`'s packages survive but no
     # containment path leads to them from `old` any more.
     repo = _repo(tmp_path)
-    expected = _alone(memgraph_ingestor, repo, "shop")
-    _index(memgraph_ingestor, repo, "old")
-    _index(memgraph_ingestor, repo, "shop")
-    memgraph_ingestor._execute_query("MATCH (:Project {name: 'old'})-[r]->() DELETE r")
+    expected = _alone(ingestor, repo, "shop")
+    _index(ingestor, repo, "old")
+    _index(ingestor, repo, "shop")
+    ingestor._execute_query("MATCH (:Project {name: 'old'})-[r]->() DELETE r")
 
-    memgraph_ingestor.delete_project("old")
+    ingestor.delete_project("old")
 
-    assert _snapshot(memgraph_ingestor) == expected
+    assert _snapshot(ingestor) == expected
 
 
 # Negative: what must not change.
 
 
 def test_a_lone_project_is_still_deleted_completely(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
-    _index(memgraph_ingestor, _repo(tmp_path), "shop")
+    _index(ingestor, _repo(tmp_path), "shop")
 
-    memgraph_ingestor.delete_project("shop")
+    ingestor.delete_project("shop")
 
-    nodes, rels = _snapshot(memgraph_ingestor)
+    nodes, rels = _snapshot(ingestor)
     structural = {"Project", "Folder", "File", "Package", "Module", "Function"}
     assert [n for n in nodes if structural & set(n)] == []
     assert rels == []
 
 
 def test_projects_in_separate_directories_are_untouched(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
     first = _repo(tmp_path / "a")
     second = _repo(tmp_path / "b")
-    expected = _alone(memgraph_ingestor, first, "shop")
-    _index(memgraph_ingestor, first, "shop")
-    _index(memgraph_ingestor, second, "other")
+    expected = _alone(ingestor, first, "shop")
+    _index(ingestor, first, "shop")
+    _index(ingestor, second, "other")
 
-    memgraph_ingestor.delete_project("other")
+    ingestor.delete_project("other")
 
-    assert _snapshot(memgraph_ingestor) == expected
+    assert _snapshot(ingestor) == expected
