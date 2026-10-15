@@ -283,9 +283,57 @@ def _render(call: str, new: list[ParamSpec], sources: Sequence[_Source | None]) 
     return _render_arguments(new, sources, _candidate(call, OLD).bound)
 
 
-def test_reordered_positional_values_stay_positional() -> None:
-    new = [_p("b"), _p("a")]
-    assert _render("g(1, 2)\n", new, [_Source(index=1), _Source(index=0)]) == "(2, 1)"
+SWAP = [_p("b"), _p("a")]
+SWAP_SOURCES = [_Source(index=1), _Source(index=0)]
+
+
+@pytest.mark.parametrize(
+    ("call", "rendered"),
+    [
+        ("g(1, 2)\n", "(2, 1)"),
+        ("g(x, 'y')\n", "('y', x)"),
+        ("g(-1, None)\n", "(None, -1)"),
+    ],
+)
+def test_reordered_names_and_literals_stay_positional(call: str, rendered: str) -> None:
+    assert _render(call, SWAP, SWAP_SOURCES) == rendered
+
+
+@pytest.mark.parametrize(
+    ("call", "rendered"),
+    [
+        # Positional `(second(), first())` would run `second()` first.
+        ("g(first(), second())\n", "(a=first(), b=second())"),
+        # `h()` could rebind `x`, so the name keeps its place too.
+        ("g(x, h())\n", "(a=x, b=h())"),
+        ("g(f'{x()}', 2)\n", "(a=f'{x()}', b=2)"),
+        ("g(o.attr, 2)\n", "(a=o.attr, b=2)"),
+    ],
+)
+def test_reordering_code_that_runs_keeps_the_written_order(
+    call: str, rendered: str
+) -> None:
+    assert _render(call, SWAP, SWAP_SOURCES) == rendered
+
+
+def test_positional_run_ends_before_a_value_written_after_a_keyword() -> None:
+    # `c` keeps its slot in new order but was written after `b`, which
+    # cannot: leaving `c` positional would run it before `b`.
+    new = [_p("a"), _p("c"), _p("b")]
+    sources = [_Source(index=0), _Source(index=2), _Source(index=1)]
+    assert _render("g(x(), y(), z())\n", new, sources) == "(x(), b=y(), c=z())"
+
+
+def test_values_in_written_order_stay_positional_around_a_literal() -> None:
+    new = [_p("a"), _p("n"), _p("b")]
+    sources = [_Source(index=0), _Source(literal="0"), _Source(index=1)]
+    assert _render("g(x(), y())\n", new, sources) == "(x(), 0, y())"
+
+
+def test_a_literal_left_for_keywords_follows_the_site_values() -> None:
+    new = [_p("n"), _p("b"), _p("a")]
+    sources = [_Source(literal="0"), _Source(index=1), _Source(index=0)]
+    assert _render("g(x(), y())\n", new, sources) == "(0, a=x(), b=y())"
 
 
 def test_values_after_an_omitted_default_go_by_keyword() -> None:
@@ -331,7 +379,8 @@ def test_edit_nested_in_an_argument_is_folded_into_the_site() -> None:
     edits = [body_rename, inner_edit]
     outer_edit = _render_site(outer, new, sources, edits)
     assert outer_edit is not None
-    assert outer_edit.text == "(g(2, 1), z)"
+    # The outer site passes a call, so its values keep their written order.
+    assert outer_edit.text == "(a=z, b=g(2, 1))"
     assert edits == []  # both folded edits left the plan
 
 
