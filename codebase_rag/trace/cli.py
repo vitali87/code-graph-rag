@@ -9,6 +9,7 @@ import click
 from loguru import logger
 
 from .. import cli_help as ch
+from .. import constants as cs
 
 
 @click.group(
@@ -528,3 +529,16 @@ def pull_cmd(
         click.secho(str(e), fg="red", err=True)
         sys.exit(1)
     click.echo(f"call records written: {count} -> {resolved_output}")
+
+
+@cli.command(
+    "agent",
+    help=ch.CMD_TRACE_AGENT,
+    short_help=ch.CMD_TRACE_AGENT,
+    epilog=ch.EXAMPLES_TRACE_AGENT,
+)
+@click.argument("language", type=click.Choice([agent.value for agent in cs.TraceAgent]))
+def agent_cmd(language: str) -> None:
+    from .agents import AGENT_PATHS
+
+    click.echo(AGENT_PATHS[cs.TraceAgent(language)])
