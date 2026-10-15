@@ -292,5 +292,5 @@ This checks that all required dependencies and services are available.
 - **pathspec**: Utility library for gitignore style pattern matching of file paths.
 - **pygments**: Pygments is a syntax highlighting package written in Python.
 - **regex**: Alternative regular expression module, to replace re.
-- **cgr-graph-rs**
+- **cgr-graph-rs**: Native acceleration for code-graph-rag's embedded graph
 <!-- /SECTION:dependencies -->

@@ -42,13 +42,13 @@
 
 # Code-Graph-RAG
 
-Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by compiler-grade frontends and runtime traces where available, builds a knowledge graph of its structure in Memgraph, and lets you query, edit, and optimise that code in plain English. It works across a monorepo of mixed languages under one unified graph schema.
+Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by compiler-grade frontends and runtime traces where available, builds a knowledge graph of its structure in an embedded graph database that needs no server, and lets you query, edit, and optimise that code in plain English. It works across a monorepo of mixed languages under one unified graph schema.
 
 <p align="center">
   <b>1. Index:</b> <code>cgr start --update-graph</code> parses a repository into a knowledge graph (sped up)
 </p>
 <p align="center">
-  <img src="./assets/demo-indexing.gif" alt="cgr parsing the code-graph-rag repository into a Memgraph knowledge graph, then printing node and relationship counts">
+  <img src="./assets/demo-indexing.gif" alt="cgr parsing the code-graph-rag repository into a knowledge graph, then printing node and relationship counts">
 </p>
 
 <p align="center">
@@ -83,14 +83,16 @@ Point Code-Graph-RAG at a repository and it reads every source file, extracts fu
 
 The system has two components:
 
-1. **Multi-language parser.** A Tree-sitter based parser reads the codebase and ingests functions, classes, methods, modules, and their relationships into Memgraph under a single language-agnostic schema. Where a toolchain is available, compiler-grade frontends layer exact facts on top (libclang for C/C++, `go/types` for Go, and opt-in Roslyn, `javac` and Jedi for C#, Java and Python), and [dynamic tracing](docs/guide/dynamic-tracing.md) merges calls observed at runtime. Tree-sitter stays the backbone: a trace only sees code that ran, and a compiler frontend only covers what its toolchain can build.
+1. **Multi-language parser.** A Tree-sitter based parser reads the codebase and ingests functions, classes, methods, modules, and their relationships into the graph under a single language-agnostic schema. Where a toolchain is available, compiler-grade frontends layer exact facts on top (libclang for C/C++, `go/types` for Go, and opt-in Roslyn, `javac` and Jedi for C#, Java and Python), and [dynamic tracing](docs/guide/dynamic-tracing.md) merges calls observed at runtime. Tree-sitter stays the backbone: a trace only sees code that ran, and a compiler frontend only covers what its toolchain can build.
 2. **RAG system** (`codebase_rag/`). An interactive CLI that turns natural language into Cypher queries, retrieves matching code, and drives AI-powered editing and optimisation.
 
 ```
-Source Code -> Tree-sitter Parser -> AST Analysis -> Memgraph Knowledge Graph
+Source Code -> Tree-sitter Parser -> AST Analysis -> Knowledge Graph
                                                              |
 User Query -> AI Model (Cypher Gen) -> Cypher Query -> Graph Results -> Response
 ```
+
+The graph is stored in an embedded SQLite file by default. Memgraph and Neo4j are opt-in backends that run the same Cypher; [Graph Backends](docs/architecture/embedded-graph.md) compares them.
 
 See the [Architecture Overview](docs/architecture/overview.md) and [Graph Schema](docs/architecture/graph-schema.md) for the full picture.
 
@@ -190,6 +192,7 @@ Code-Graph-RAG runs as an [MCP](https://modelcontextprotocol.io) server so Claud
 **Architecture**
 - [Overview](docs/architecture/overview.md)
 - [Graph Schema](docs/architecture/graph-schema.md)
+- [Graph Backends](docs/architecture/embedded-graph.md)
 - [Language Support](docs/architecture/language-support.md)
 - [Data-Flow Edges](docs/architecture/data-flow-edges.md)
 
