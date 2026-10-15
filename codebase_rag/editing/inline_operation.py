@@ -310,7 +310,7 @@ class Inliner:
         # A definition still used as a value (a callback, a registry entry)
         # is a REFERENCES edge, not a caller row: rewriting every call does
         # not make it dead (Copilot, PR #2060).
-        if rewritten_all and not self._referenced(qn):
+        if rewritten_all and not self._referenced(qn, label):
             removed = self._remove(patcher, qn, path, node, source, edits)
         report = InlineReport(
             qualified_name=qn,
@@ -367,10 +367,13 @@ class Inliner:
         )
         return c_path, line
 
-    def _referenced(self, qn: str) -> bool:
+    def _referenced(self, qn: str, label: str) -> bool:
+        # Scoped to the definition's label, as the query requires: a TS type
+        # and a function can share one qualified name (issue #2520).
         params = {
             cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
             cs.KEY_QN: qn,
+            cs.KEY_LABEL: label,
         }
         return bool(self.fetch_all(cq.CYPHER_GRAPH_REFERENCES, params))
 
