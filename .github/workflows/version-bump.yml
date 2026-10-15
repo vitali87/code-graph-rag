@@ -535,12 +535,20 @@ jobs:
           # when it matches nothing; echoing another splits the summary in two.
           note "generated $themes theme(s)"
 
+      - name: Key the uv cache on dependencies, not the project version
+        if: steps.decide.outputs.release == 'true'
+        shell: bash
+        run: |
+          awk 'skip && /^version = / { skip = 0; next }
+               { skip = /^name = "code-graph-rag"\r?$/; print }' \
+            uv.lock > "$RUNNER_TEMP/uv-deps.lock"
+
       - name: Install uv
         if: steps.decide.outputs.release == 'true'
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           enable-cache: true
-          cache-dependency-glob: "uv.lock"
+          cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
 
       - name: Update NEWS.md
         id: update_news
