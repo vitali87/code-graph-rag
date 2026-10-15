@@ -3138,6 +3138,14 @@ def _cycles(graph: dict[str, frozenset[str]]) -> set[frozenset[str]]:
     }
 
 
+def import_cycles(graph: dict[str, frozenset[str]]) -> set[frozenset[str]]:
+    """The cyclic strongly connected components of a module import graph.
+
+    `move` checks a planned move against these before touching a file.
+    """
+    return _cycles(graph)
+
+
 def _new_import_cycles(before: Snapshot, after: Snapshot) -> list[list[str]]:
     touched = {qn for qn, path in after.module_paths.items() if path in after.paths}
     touched |= {qn for qn, path in before.module_paths.items() if path in before.paths}
