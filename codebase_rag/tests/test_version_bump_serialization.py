@@ -1,4 +1,6 @@
+import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -16,6 +18,7 @@ SHA = "a" * 40
 NEWER = "b" * 40
 OLDER = "c" * 40
 PUSHED = "steps.commit.outputs.pushed == 'true'"
+TAG_OBJECT = "d" * 40
 # The workflow runs on Ubuntu, where jq ends lines with LF. A native jq.exe
 # ends them with CRLF, and Git Bash keeps the CR inside the last word of each
 # line, so `for SHA in $COMMITS` would build `commits/<sha>\r/pulls`. Strip it
@@ -38,6 +41,9 @@ def _workflow() -> dict:
     return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
 
 
+MARKER = _workflow()["env"]["DEFERRED_RELEASE_MARKER"]
+
+
 def _step(name: str) -> Step:
     return next(
         s for s in _workflow()["jobs"]["bump-version"]["steps"] if s["name"] == name
@@ -52,15 +58,18 @@ def _run(
         pytest.skip("the Ubuntu workflow requires bash")
     output = tmp_path / "output"
     output.touch()
+    # Run from a file, not `bash -c`: Git Bash on Windows cuts a `-c` script
+    # off at 8192 characters, and the stubs plus the "Decide" step outgrew
+    # that, so bash saw a truncated script and failed to parse it. LF only,
+    # as on the Ubuntu runner: a CR would stay inside each line's last word.
+    script = tmp_path / "step.sh"
+    script.write_text(
+        CRLF_SAFE_JQ + stubs + "\n" + _step(name)["run"],
+        encoding=cs.ENCODING_UTF8,
+        newline="\n",
+    )
     result = subprocess.run(
-        [
-            bash,
-            "--noprofile",
-            "--norc",
-            "-e",
-            "-c",
-            CRLF_SAFE_JQ + stubs + "\n" + _step(name)["run"],
-        ],
+        [bash, "--noprofile", "--norc", "-e", "./step.sh"],
         cwd=tmp_path,
         env={
             **os.environ,
@@ -248,6 +257,15 @@ gh() {
       [ "$PULLS_FAIL" = true ] && return 1
       cat "labels/$(basename "$(dirname "$url")")" 2> /dev/null || true
       ;;
+    */git/tags/*)
+      basename "$url" >> annotation_calls
+      cat "annotations/$(basename "$url")" 2> /dev/null
+      ;;
+    */contents/pyproject.toml\?ref=*)
+      printf '%s\n' "${url##*ref=}" >> contents_calls
+      [ "$CONTENTS_FAIL" = true ] && return 1
+      cat "versions/${url##*ref=}" 2> /dev/null
+      ;;
     *) return 1 ;;
   esac
 }
@@ -261,7 +279,7 @@ git() {
       if [ "$2" = --exit-code ]; then
         return "$LS_REMOTE_EXIT"
       fi
-      if [ "$3" = --refs ]; then
+      if [ "$2" = --tags ] && [ "$3" = origin ]; then
         [ "$TAG_LIST_FAILS" = true ] && return 128
         printf '%b' "$TAG_LIST"
       fi
@@ -306,6 +324,8 @@ def _decide_run(
             "TAG_LIST": "",
             "TAG_LIST_FAILS": "false",
             "STATUS_FAILS": "false",
+            "CONTENTS_FAIL": "false",
+            "DEFERRED_RELEASE_MARKER": MARKER,
             **env,
         },
     )
@@ -388,6 +408,73 @@ def test_ordinary_range_does_not_ship(tmp_path: Path) -> None:
     out = _decide(tmp_path, f"{OLDER}\\n{SHA}\\n")
     assert out["security"] == "false"
     assert out["release"] == "false"
+    assert out["breaking"] == "false"
+
+
+def test_breaking_label_on_an_earlier_commit_of_the_range_is_reported(
+    tmp_path: Path,
+) -> None:
+    _commits(tmp_path, {OLDER: "feat: a", SHA: "fix: b"}, {OLDER: "breaking change"})
+    out = _decide(tmp_path, f"{OLDER}\\n{SHA}\\n")
+    assert out["breaking"] == "true"
+    # A breaking change waits for the cadence like any other release.
+    assert out["release"] == "false"
+
+
+def test_a_security_fix_does_not_hide_a_breaking_label(tmp_path: Path) -> None:
+    # The security marker is known before any label is read; the scan must
+    # still reach the earlier commit's pull request.
+    _commits(
+        tmp_path,
+        {OLDER: "feat: a", SHA: "fix: b [security]"},
+        {OLDER: "breaking change"},
+    )
+    out = _decide(tmp_path, f"{OLDER}\\n{SHA}\\n")
+    assert out["security"] == "true"
+    assert out["breaking"] == "true"
+
+
+def test_only_the_exact_breaking_change_label_counts(tmp_path: Path) -> None:
+    _commits(tmp_path, {SHA: "feat: x"}, {SHA: "breaking\nbreaking changes"})
+    assert _decide(tmp_path, f"{SHA}\\n")["breaking"] == "false"
+
+
+def test_the_labels_are_read_before_the_bump_type_is_chosen() -> None:
+    names = [s["name"] for s in _workflow()["jobs"]["bump-version"]["steps"]]
+    assert names.index("Decide whether this tag ships a release") < names.index(
+        "Determine bump type"
+    )
+    assert (
+        _step("Determine bump type")["env"]["BREAKING"]
+        == "${{ steps.decide.outputs.breaking }}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("event", "breaking", "dispatched", "expected"),
+    [
+        ("push", "false", "", "patch"),
+        ("push", "true", "", "breaking"),
+        # A dispatched type is an explicit choice and overrides the labels.
+        ("workflow_dispatch", "true", "patch", "patch"),
+        ("workflow_dispatch", "false", "minor", "minor"),
+    ],
+)
+def test_the_bump_type_follows_the_breaking_label_unless_dispatched(
+    tmp_path: Path, event: str, breaking: str, dispatched: str, expected: str
+) -> None:
+    result, out = _run(
+        "Determine bump type",
+        "",
+        tmp_path,
+        {
+            "GITHUB_EVENT_NAME": event,
+            "BREAKING": breaking,
+            "DISPATCH_BUMP_TYPE": dispatched,
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    assert out["type"] == expected
 
 
 def test_non_sha_range_entries_never_reach_git_or_a_url(tmp_path: Path) -> None:
@@ -453,9 +540,11 @@ def test_label_lookups_follow_mains_first_parent_line_only(tmp_path: Path) -> No
     assert len(_lines(tmp_path / "gh_calls")) == 4
 
 
-def test_security_marker_on_a_branch_commit_ships_without_extra_calls(
+def test_security_marker_on_a_branch_commit_ships_reading_main_labels_only(
     tmp_path: Path,
 ) -> None:
+    # The labels still decide the bump, so a security release reads them too,
+    # but only along main's first-parent line, as an ordinary scan does.
     _commits(
         tmp_path,
         {
@@ -470,8 +559,8 @@ def test_security_marker_on_a_branch_commit_ships_without_extra_calls(
     out = _decide(tmp_path, range_)
     assert out["security"] == "true"
     assert out["release"] == "true"
-    assert _lines(tmp_path / "pulls_calls") == []
-    assert len(_lines(tmp_path / "gh_calls")) == 2
+    assert _lines(tmp_path / "pulls_calls") == [SHA, OLDER]
+    assert len(_lines(tmp_path / "gh_calls")) == 4
 
 
 def test_unreadable_pull_request_labels_fail_the_run(tmp_path: Path) -> None:
@@ -486,6 +575,7 @@ def test_an_untagged_version_scans_from_the_newest_release_tag(
     tmp_path: Path,
 ) -> None:
     _commits(tmp_path, {OLDER: "fix: patch [security]", SHA: "chore: set version"})
+    _versions(tmp_path, {OLDER: "0.0.0"})
     tags = (
         f"{OLDER}\\trefs/tags/v0.0.9\\n"
         f"{OLDER}\\trefs/tags/v0.1.10\\n"
@@ -515,6 +605,7 @@ def test_an_untagged_version_skips_a_newer_tag_main_never_reached(
     tmp_path: Path,
 ) -> None:
     _commits(tmp_path, {OLDER: "fix: patch [security]", SHA: "chore: set version"})
+    _versions(tmp_path, {OLDER: "0.0.0"})
     (tmp_path / "status").mkdir()
     (tmp_path / "status" / "v0.2.0").write_text("behind\n", encoding="utf-8")
     (tmp_path / "status" / "v0.1.11").write_text("diverged\n", encoding="utf-8")
@@ -570,3 +661,256 @@ def test_a_failed_ancestry_check_fails_instead_of_narrowing_the_scan(
     assert "could not compare v0.1.0" in result.stdout
     assert not (tmp_path / "compare_call").exists()
     assert "release" not in out
+
+
+def _annotated(tmp_path: Path, tag: str, message: str, obj: str) -> str:
+    annotations = tmp_path / "annotations"
+    annotations.mkdir(exist_ok=True)
+    (annotations / obj).write_text(message + "\n", encoding="utf-8")
+    return f"{obj}\\trefs/tags/{tag}\\n{NEWER}\\trefs/tags/{tag}" + "^{}\\n"
+
+
+def test_a_deferred_release_scans_its_commits_again(tmp_path: Path) -> None:
+    """A security fix whose release was deferred still ships on a later bump,
+    however long the streak of deferrals: their tags are never where the scan
+    starts, so the fix's commit is read again."""
+    _commits(tmp_path, {OLDER: "fix: patch [security]", SHA: "feat: x"})
+    deferred = f"{MARKER}: CI is not proven for {OLDER}"
+    tags = (
+        f"{OLDER}\\trefs/tags/v0.1.11\\n"
+        + _annotated(tmp_path, "v0.1.12", deferred, "1" * 40)
+        + _annotated(tmp_path, "v0.1.13", deferred, "2" * 40)
+    )
+    result, out = _decide_run(
+        tmp_path, f"{OLDER}\\n{SHA}\\n", CURRENT="0.1.13", TAG_LIST=tags
+    )
+    assert result.returncode == 0, result.stderr
+    assert _lines(tmp_path / "status_calls") == [
+        f"repos/vitali87/code-graph-rag/compare/v0.1.11...{SHA}?per_page=1"
+    ]
+    call = (tmp_path / "compare_call").read_text(encoding="utf-8")
+    assert f"compare/v0.1.11...{SHA}" in call
+    assert out["security"] == "true"
+    assert out["release"] == "true"
+
+
+def test_an_annotated_tag_that_deferred_nothing_still_bounds_the_scan(
+    tmp_path: Path,
+) -> None:
+    _commits(tmp_path, {SHA: "feat: x"})
+    tags = f"{OLDER}\\trefs/tags/v0.1.11\\n" + _annotated(
+        tmp_path, "v0.1.12", "v0.1.12", TAG_OBJECT
+    )
+    result, out = _decide_run(tmp_path, f"{SHA}\\n", CURRENT="0.1.12", TAG_LIST=tags)
+    assert result.returncode == 0, result.stderr
+    assert _lines(tmp_path / "annotation_calls") == [TAG_OBJECT]
+    call = (tmp_path / "compare_call").read_text(encoding="utf-8")
+    assert f"compare/v0.1.12...{SHA}" in call
+    assert out["release"] == "false"
+
+
+def test_annotations_up_to_the_latest_release_are_not_read(tmp_path: Path) -> None:
+    """The latest release resolved every deferral before it, and reading them
+    would make each run's cost grow with the repository's age."""
+    _commits(tmp_path, {SHA: "feat: x"})
+    tags = _annotated(tmp_path, "v0.0.0", f"{MARKER}: old", "1" * 40) + _annotated(
+        tmp_path, "v0.0.1", f"{MARKER}: old", "2" * 40
+    )
+    result, out = _decide_run(tmp_path, f"{SHA}\\n", TAG_LIST=tags)
+    assert result.returncode == 0, result.stderr
+    assert not (tmp_path / "annotation_calls").exists()
+    call = (tmp_path / "compare_call").read_text(encoding="utf-8")
+    assert f"compare/v0.0.1...{SHA}" in call
+
+
+def test_an_unreadable_annotation_fails_instead_of_narrowing_the_scan(
+    tmp_path: Path,
+) -> None:
+    _commits(tmp_path, {SHA: "feat: x"})
+    tags = f"{TAG_OBJECT}\\trefs/tags/v0.1.12\\n{NEWER}\\trefs/tags/v0.1.12" + "^{}\\n"
+    result, out = _decide_run(tmp_path, f"{SHA}\\n", CURRENT="0.1.12", TAG_LIST=tags)
+    assert result.returncode != 0
+    assert "could not read the annotation of v0.1.12" in result.stdout
+    assert not (tmp_path / "compare_call").exists()
+    assert "release" not in out
+
+
+# The commit a bump run pushes, and a merge that set the version by hand.
+BUMP_COMMIT = "f" * 40
+HAND_SET = "9" * 40
+# What the label query prints for each pull request a commit belongs to.
+PULL_REQUEST = "#pull-request"
+
+
+def _versions(tmp_path: Path, versions: dict[str, str]) -> None:
+    (tmp_path / "versions").mkdir()
+    for sha, version in versions.items():
+        (tmp_path / "versions" / sha).write_text(
+            f'[project]\nname = "x"\nversion = "{version}"\n', encoding="utf-8"
+        )
+
+
+def _deferred_breaking_bump(tmp_path: Path, labels: dict[str, str]) -> dict[str, str]:
+    # A breaking merge bumped 0.1.11 to 0.2.0, but its release was deferred,
+    # so this run's range starts back at v0.1.11 and holds that merge again.
+    _commits(
+        tmp_path,
+        {OLDER: "Merge pull request #1", BUMP_COMMIT: "chore: bump version to 0.2.0"}
+        | {SHA: "Merge pull request #2"},
+        labels,
+    )
+    tags = f"{OLDER}\\trefs/tags/v0.1.11\\n" + _annotated(
+        tmp_path, "v0.2.0", f"{MARKER}: CI is not proven", "1" * 40
+    )
+    result, out = _decide_run(
+        tmp_path,
+        f"{OLDER}\\n{BUMP_COMMIT}\\n{SHA}\\n",
+        CURRENT="0.2.0",
+        TAG_LIST=tags,
+    )
+    assert result.returncode == 0, result.stderr
+    assert f"compare/v0.1.11...{SHA}" in (tmp_path / "compare_call").read_text(
+        encoding="utf-8"
+    )
+    return out
+
+
+def test_a_breaking_change_behind_a_deferred_bump_is_not_counted_again(
+    tmp_path: Path,
+) -> None:
+    out = _deferred_breaking_bump(tmp_path, {OLDER: "breaking change"})
+    assert out["breaking"] == "false"
+
+
+def test_the_security_scan_still_reads_past_the_last_bump(tmp_path: Path) -> None:
+    out = _deferred_breaking_bump(tmp_path, {OLDER: "security\nbreaking change"})
+    assert out["security"] == "true"
+    assert out["breaking"] == "false"
+    assert _lines(tmp_path / "pulls_calls") == [SHA, BUMP_COMMIT, OLDER]
+
+
+def test_a_breaking_change_after_a_deferred_bump_counts(tmp_path: Path) -> None:
+    out = _deferred_breaking_bump(tmp_path, {SHA: "breaking change"})
+    assert out["breaking"] == "true"
+
+
+def _hand_set_version(tmp_path: Path, labels: dict[str, str]) -> dict[str, str]:
+    # HAND_SET changed the version from 0.1.89 to 0.2.0 itself, so no bump
+    # ran for it and no tag names 0.2.0.
+    _commits(
+        tmp_path,
+        {HAND_SET: "Merge pull request #1", SHA: "Merge pull request #2"},
+        labels,
+        parents={HAND_SET: OUTSIDE, SHA: HAND_SET},
+    )
+    _versions(tmp_path, {OUTSIDE: "0.1.89", HAND_SET: "0.2.0"})
+    result, out = _decide_run(
+        tmp_path,
+        f"{HAND_SET}\\n{SHA}\\n",
+        CURRENT="0.2.0",
+        LS_REMOTE_EXIT="2",
+        TAG_LIST=f"{OLDER}\\trefs/tags/v0.1.89\\n",
+    )
+    assert result.returncode == 0, result.stderr
+    return out
+
+
+def test_a_hand_set_version_already_accounts_for_its_breaking_change(
+    tmp_path: Path,
+) -> None:
+    out = _hand_set_version(tmp_path, {HAND_SET: "breaking change"})
+    assert out["breaking"] == "false"
+    assert _lines(tmp_path / "contents_calls") == [HAND_SET, OUTSIDE]
+
+
+def test_a_breaking_change_after_a_hand_set_version_counts(tmp_path: Path) -> None:
+    out = _hand_set_version(tmp_path, {SHA: "breaking change"})
+    assert out["breaking"] == "true"
+
+
+def test_a_tagged_version_reads_no_earlier_version(tmp_path: Path) -> None:
+    _commits(tmp_path, {OLDER: "fix: a", SHA: "feat: x"}, {OLDER: "breaking change"})
+    out = _decide(tmp_path, f"{OLDER}\\n{SHA}\\n")
+    assert out["breaking"] == "true"
+    assert not (tmp_path / "contents_calls").exists()
+
+
+def test_an_unreadable_earlier_version_fails_the_run(tmp_path: Path) -> None:
+    _commits(
+        tmp_path,
+        {HAND_SET: "Merge pull request #1", SHA: "Merge pull request #2"},
+        parents={HAND_SET: OUTSIDE, SHA: HAND_SET},
+    )
+    result, out = _decide_run(
+        tmp_path,
+        f"{HAND_SET}\\n{SHA}\\n",
+        CURRENT="0.2.0",
+        LS_REMOTE_EXIT="2",
+        TAG_LIST=f"{OLDER}\\trefs/tags/v0.1.89\\n",
+        CONTENTS_FAIL="true",
+    )
+    assert result.returncode != 0
+    assert f"could not read the version at {HAND_SET}" in result.stdout
+    assert "breaking" not in out
+
+
+def test_the_breaking_scan_stops_at_the_commit_a_bump_makes() -> None:
+    commit = _step("Commit version bump")["run"]
+    decide = _step("Decide whether this tag ships a release")["run"]
+    assert 'git commit -m "chore: bump version to ${NEW_VERSION}"' in commit
+    assert '"chore: bump version to "*)' in decide
+
+
+def test_a_pull_request_titled_like_a_bump_is_no_boundary(tmp_path: Path) -> None:
+    # A squash merge takes its pull request's title; only the bump step's
+    # own commit, pushed straight to main, belongs to no pull request.
+    _commits(
+        tmp_path,
+        {
+            OLDER: "Merge pull request #1",
+            NEWER: "chore: bump version to 9.9.9 (#2)",
+            SHA: "Merge pull request #3",
+        },
+        {
+            OLDER: f"{PULL_REQUEST}\nbreaking change",
+            NEWER: PULL_REQUEST,
+            SHA: PULL_REQUEST,
+        },
+    )
+    out = _decide(tmp_path, f"{OLDER}\\n{NEWER}\\n{SHA}\\n")
+    assert out["breaking"] == "true"
+
+
+def _pulls_query() -> str:
+    decide = _step("Decide whether this tag ships a release")["run"]
+    match = re.search(r"/pulls\" \\\n\s*--jq '([^']*)'", decide)
+    assert match, "the scan reads labels with one --jq query"
+    return match.group(1)
+
+
+@pytest.mark.parametrize(
+    ("pulls", "expected"),
+    [
+        # The bump step's own commit: no pull request at all.
+        ([], []),
+        (
+            [{"labels": [{"name": "security"}, {"name": "breaking change"}]}],
+            [PULL_REQUEST, "security", "breaking change"],
+        ),
+        ([{"labels": []}], [PULL_REQUEST]),
+    ],
+)
+def test_the_label_query_marks_each_pull_request(
+    pulls: list[dict[str, list[dict[str, str]]]], expected: list[str]
+) -> None:
+    if shutil.which("jq") is None:
+        pytest.skip("the Ubuntu workflow requires jq")
+    result = subprocess.run(
+        ["jq", "-r", _pulls_query()],
+        input=json.dumps(pulls),
+        capture_output=True,
+        text=True,
+        encoding=cs.ENCODING_UTF8,
+        check=True,
+    )
+    assert result.stdout.splitlines() == expected
