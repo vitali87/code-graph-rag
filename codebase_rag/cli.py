@@ -102,6 +102,7 @@ from .utils.path_utils import (
     normalize_project_name,
     project_name_error,
     project_roots_from_rows,
+    projects_sharing_root,
     resolve_repo_path,
     unwritable_output_reason,
 )
@@ -3462,6 +3463,21 @@ def delete_project(
             if choice.name is None:
                 app_context.console.print(style(choice.refusal, cs.Color.RED))
                 raise typer.Exit(1)
+
+            # A directory indexed under two names used to lose both on delete
+            # (#2665). The delete is ownership-scoped now; say so before it runs.
+            roots = ingestor.list_project_roots()
+            if sharing := projects_sharing_root(project_name, roots):
+                app_context.console.print(
+                    style(
+                        cs.CLI_WARN_DELETE_PROJECT_SHARED_ROOT.format(
+                            projects=", ".join(sharing),
+                            project_name=project_name,
+                            root_path=roots[project_name],
+                        ),
+                        cs.Color.YELLOW,
+                    )
+                )
 
             _info(
                 style(
