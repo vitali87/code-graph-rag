@@ -2,6 +2,7 @@
 
 import errno
 import hashlib
+import itertools
 import json
 import os
 import posixpath
@@ -3890,6 +3891,7 @@ class GraphUpdater:
         for row in rows:
             if self._rehydrate_definition_row(row):
                 restored.append(row)
+        self._rehydrate_same_definitions(restored)
         if restored:
             logger.info(ls.REGISTRY_REHYDRATED, count=len(restored))
         # After the loop: whether a method's owner is a trait needs the whole
@@ -4049,6 +4051,31 @@ class GraphUpdater:
                 self.factory.definition_processor.cpp_module_interfaces.add(qn)
             else:
                 self._rehydrated_module_qns.add(qn)
+
+    def _rehydrate_same_definitions(self, rows: list[ResultRow]) -> None:
+        """Re-pair the names an unchanged file registers one function under.
+
+        Only parsing marks `View.prototype.lookup = function lookup()` as one
+        definition with two names, and the call fan-out to the twin needs that
+        mark (issue #3174). Both nodes span the same lines of the same file
+        under the same leaf name, which no two separate definitions do.
+        """
+        spans: defaultdict[tuple[str, int, int, str], list[str]] = defaultdict(list)
+        for row in rows:
+            qn, path = row.get(cs.KEY_QUALIFIED_NAME), row.get(cs.KEY_PATH)
+            start, end = row.get(cs.KEY_START_LINE), row.get(cs.KEY_END_LINE)
+            if (
+                row.get(cs.KEY_LABEL) in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD)
+                and isinstance(qn, str)
+                and isinstance(path, str)
+                and isinstance(start, int)
+                and isinstance(end, int)
+            ):
+                leaf = qn.rpartition(cs.SEPARATOR_DOT)[2]
+                spans[(path, start, end, leaf)].append(qn)
+        for qns in spans.values():
+            for first, second in itertools.combinations(qns, 2):
+                self.function_registry.mark_same_definition(first, second)
 
     def _rehydrate_definition_row(self, row: ResultRow) -> bool:
         """Re-register one definition row missing locally; True when added."""
