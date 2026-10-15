@@ -24,6 +24,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from filelock import FileLock
 
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
@@ -2165,34 +2166,29 @@ def _one_real_go_run_per_tree(
             ).encode()
         ).hexdigest()
         kept = _REAL_RUNS[0] / f"{key}.json"
-        # Two workers that both missed run the helper and both publish. On
-        # Windows a file being replaced cannot be opened, and one held open
-        # cannot be replaced (PermissionError either way), so a copy this
-        # worker cannot read or publish is a miss: the helper runs again.
-        try:
-            stdout, stderr = json.loads(kept.read_text(encoding="utf-8"))
-        except (FileNotFoundError, PermissionError):
-            pass
-        else:
-            return frontend._parse_payload(stdout, stderr)
-        captured: list[tuple[str, str]] = []
-        parse = frontend._parse_payload
+        # One worker runs the helper for a tree while the others wait for its
+        # copy. Unserialised, two workers that both missed both published,
+        # and Windows refuses to open a file mid-replace or to replace one
+        # held open: whichever worker came second failed with PermissionError.
+        with FileLock(kept.with_suffix(".lock")):
+            if kept.is_file():
+                stdout, stderr = json.loads(kept.read_text(encoding="utf-8"))
+                return frontend._parse_payload(stdout, stderr)
+            captured: list[tuple[str, str]] = []
+            parse = frontend._parse_payload
 
-        def keep(stdout: str, stderr: str) -> GoSemanticFacts:
-            captured.append((stdout, stderr))
-            return parse(stdout, stderr)
+            def keep(stdout: str, stderr: str) -> GoSemanticFacts:
+                captured.append((stdout, stderr))
+                return parse(stdout, stderr)
 
-        with pytest.MonkeyPatch.context() as patch:
-            patch.setattr(frontend, "_parse_payload", keep)
-            facts = run(binary, module_root, ignored_dirs)
-        if facts is not None and captured:
-            partial = kept.with_suffix(f".{os.getpid()}.part")
-            partial.write_text(json.dumps(captured[0]), encoding="utf-8")
-            try:
+            with pytest.MonkeyPatch.context() as patch:
+                patch.setattr(frontend, "_parse_payload", keep)
+                facts = run(binary, module_root, ignored_dirs)
+            if facts is not None and captured:
+                partial = kept.with_suffix(f".{os.getpid()}.part")
+                partial.write_text(json.dumps(captured[0]), encoding="utf-8")
                 os.replace(partial, kept)
-            except PermissionError:
-                partial.unlink()
-        return facts
+            return facts
 
     monkeypatch.setattr(frontend, "_run_tool_once", once)
 
