@@ -243,14 +243,7 @@ gh() {
       esac
       printf '%s\n' "$*" > compare_call
       [ "$COMPARE_FAILS" = true ] && return 1
-      local prev="" sha parent
-      for sha in $(printf '%b' "$RANGE"); do
-        parent=$(cat "parents/$sha" 2> /dev/null || printf '%s' "$prev")
-        jq -nc --arg sha "$sha" --arg parent "$parent" \
-          --arg message "$(cat "messages/$sha" 2> /dev/null)" \
-          '{sha: $sha, parent: (if $parent == "" then null else $parent end), message: $message}'
-        prev="$sha"
-      done
+      cat compare_commits
       ;;
     */pulls)
       basename "$(dirname "$url")" >> pulls_calls
@@ -305,11 +298,42 @@ def _commits(
             (tmp_path / folder / sha).write_text(text + "\n", encoding="utf-8")
 
 
+def _read_or(path: Path, default: str) -> str:
+    if not path.is_file():
+        return default
+    return path.read_text(encoding="utf-8").rstrip("\n")
+
+
+def _compare_commits(tmp_path: Path, range_: str) -> str:
+    """The compare API's commits as the step's `--jq` prints them, a JSON line each.
+
+    Built here, not by the `gh` stub: a `cat` and a `jq` per commit cost
+    several process starts each, which Git Bash on Windows makes slow enough
+    that a 52-commit range ran past the step's timeout. A commit without a
+    `parents/` entry has the one listed before it as its parent.
+    """
+    lines = []
+    prev = ""
+    for sha in range_.replace("\\n", "\n").split():
+        parent = _read_or(tmp_path / "parents" / sha, prev)
+        commit = {
+            "sha": sha,
+            "parent": parent or None,
+            "message": _read_or(tmp_path / "messages" / sha, ""),
+        }
+        lines.append(json.dumps(commit, ensure_ascii=False, separators=(",", ":")))
+        prev = sha
+    return "".join(f"{line}\n" for line in lines)
+
+
 def _decide_run(
     tmp_path: Path, range_: str, **env: str
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, str]]:
     if shutil.which("jq") is None:
         pytest.skip("the Ubuntu workflow requires jq")
+    (tmp_path / "compare_commits").write_text(
+        _compare_commits(tmp_path, range_), encoding="utf-8", newline="\n"
+    )
     return _run(
         "Decide whether this tag ships a release",
         DECIDE_STUBS,
