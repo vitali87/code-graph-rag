@@ -309,27 +309,35 @@ def _belongs_to_named(var: str) -> str:
     )
 
 
-def _claimable_by_p(var: str) -> str:
-    # Folder and File carry no qualified name: they are keyed by
-    # absolute_path, so every project indexed from one directory MERGEs onto
-    # the same nodes (issue #2665). They may sit on p's path; a qualified
-    # node may only when it is p's own.
-    return f"({var}.qualified_name IS NULL OR ({_belongs_to_p(var)}))"
+# Folder and File carry no qualified name: they are keyed by absolute_path,
+# so every project indexed from one directory MERGEs onto the same nodes
+# (issue #2665). Only these two edge types lead to them, and from them a walk
+# reaches no other kind of node.
+_SHARED_ENTRY_RELS = "CONTAINS_FOLDER|CONTAINS_FILE"
 
 
 # The nodes project `p` claims: those a containment path from `p` reaches
-# without passing through another project's Package or Module, plus what
-# they define. Walking every containment path instead let two projects over
-# one directory reach each other's packages through their shared `src`
-# Folder, so each deleted and counted the other (issue #2665). Binds `p`,
-# `nested` and the per-project list `owned`.
+# without passing through another project's Package, Module or Section, plus
+# what they define. Walking every containment path instead let two projects
+# over one directory reach each other's packages through their shared `src`
+# Folder, so each deleted and counted the other (issue #2665). Such a path
+# runs through p's own qualified nodes and shared Folders/Files, so it is
+# taken in two walks rather than one path tested node by node, which the
+# embedded engine cannot express: p's own Packages, Modules and Sections that
+# p reaches, then the Folders and Files reached from p or one of those
+# through Folders and Files alone. Binds `p`, `nested` and the per-project
+# list `owned`.
 _CYPHER_PROJECT_CLAIMS = f"""
 OPTIONAL MATCH (longer:Project) WHERE longer.name STARTS WITH (p.name + '.')
 WITH p, collect(longer.name) AS nested
-OPTIONAL MATCH claim = (p)-[:{_CONTAINMENT_RELS}*]->(container)
-WHERE all(x IN tail(nodes(claim)) WHERE {_claimable_by_p("x")})
+OPTIONAL MATCH (p)-[:{_CONTAINMENT_RELS}*]->(unit) WHERE {_belongs_to_p("unit")}
+WITH p, nested, collect(DISTINCT unit) AS units
+UNWIND [p] + units AS holder
+OPTIONAL MATCH (holder)-[:{_SHARED_ENTRY_RELS}*]->(entry)
+WITH p, nested, collect(DISTINCT holder) + collect(DISTINCT entry) AS containers
+UNWIND containers AS container
 OPTIONAL MATCH (container)-[:{_DEFINITION_RELS}*]->(defined)
-WITH p, nested, [p] + collect(DISTINCT container) + collect(DISTINCT defined) AS owned
+WITH p, nested, collect(DISTINCT container) + collect(DISTINCT defined) AS owned
 """
 
 # When a sync of the project last completed (issue #2444). On the Project node
@@ -369,6 +377,9 @@ DETACH DELETE p, container, defined
 # too: that one only loses `p`'s edges. The named nodes go first, so the
 # check that follows walks up from each Folder/File over what is left; no
 # large list is ever a grouping key, which cost seconds per thousand nodes.
+# Another project `q` claims a Folder/File it reaches through Folders and
+# Files from itself or from one of its own Packages, the same two walks as
+# _CYPHER_PROJECT_CLAIMS taken upward.
 CYPHER_DELETE_PROJECT = f"""
 MATCH (p:Project {{name: $project_name}})
 {_CYPHER_PROJECT_CLAIMS}
@@ -377,10 +388,12 @@ WITH [c IN owned WHERE c:Folder OR c:File] AS shareable,
 FOREACH (n IN named | DETACH DELETE n)
 WITH shareable
 UNWIND shareable AS c
-OPTIONAL MATCH elsewhere = (c)<-[:{_CONTAINMENT_RELS}*]-(q:Project)
+OPTIONAL MATCH (c)<-[:{_SHARED_ENTRY_RELS}*]-(holder)
+WHERE NOT (holder:Folder OR holder:File)
+OPTIONAL MATCH (holder)<-[:{_CONTAINMENT_RELS}*0..]-(q:Project)
 WHERE q.name <> $project_name
-AND all(x IN nodes(elsewhere) WHERE x.qualified_name IS NULL
-OR x.qualified_name = q.name OR x.qualified_name STARTS WITH (q.name + '.'))
+AND (holder:Project OR holder.qualified_name = q.name
+OR holder.qualified_name STARTS WITH (q.name + '.'))
 WITH c, count(q) AS other_claims
 WHERE other_claims = 0
 DETACH DELETE c
