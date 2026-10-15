@@ -66,5 +66,7 @@ def test_score_c_retrieval_prf() -> None:
     result = score_c_retrieval(
         {("a.c", "f"), ("a.c", "g")}, {("a.c", "f"), ("b.c", "h")}
     )
-    row = next(r for r in result.rows if r["label"] == ec.C_RETRIEVAL_LABEL)
+    row = next(
+        r for r in result.rows if r["label"] == ec.RetrievalCondition.GRAPH.value
+    )
     assert (row["tp"], row["fp"], row["fn"]) == (1, 1, 1)
