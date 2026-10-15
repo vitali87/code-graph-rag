@@ -14,8 +14,13 @@
 # harnesses import touches pymgclient -- it is the Memgraph driver -- and a
 # fuzz target gets its instrumentation from atheris, not from these flags. So
 # install dependencies with a clean environment.
-env -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS \
-  python3 -m pip install --break-system-packages ".[treesitter-full]"
+#
+# The project requires cgr-graph-rs, built here from the crate in this checkout
+# (rust/cgr_graph_rs) in the same pip call, so the requirement is met by the
+# code under test rather than whatever PyPI has. RUSTFLAGS goes too: OSS-Fuzz
+# sets it to sanitizer flags for Rust fuzz targets, and this is a dependency.
+env -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS -u RUSTFLAGS \
+  python3 -m pip install --break-system-packages ./rust/cgr_graph_rs ".[treesitter-full]"
 
 # `evals` is NOT part of the installed wheel -- pyproject's package discovery
 # includes only codebase_rag*, codec* and cgr* -- but fuzz_incremental_update

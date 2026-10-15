@@ -323,32 +323,75 @@ def _render_arguments(
 ) -> str:
     """The site's new argument list, parenthesised.
 
-    Positional values keep positional form in the new order until a value
-    goes by keyword or a defaulted parameter is left out; from there every
-    later value is spelled by keyword, since it can no longer sit in its
-    slot. Values that were keywords keep their original relative order
-    under their new names; values forced to keyword form follow in the new
-    parameter order.
+    Python evaluates a call's arguments left to right as written, so the
+    site's own values must come out in the order the site wrote them:
+    otherwise reordering `(a, b)` to `(b, a)` would run `second()` before
+    `first()` in `f(first(), second())`. A leading run of values stays
+    positional (see `_positional_run`); every other value is spelled by
+    keyword, in the order the site wrote it. A mapped literal is the same
+    text at every site: it keeps its slot inside the run and otherwise
+    follows the site's values, in the new parameter order.
     """
+    values = [
+        _value_at_site(spec, source, bound)
+        for spec, source in zip(new, sources, strict=True)
+    ]
+    run = _positional_run(values)
     positional: list[str] = []
     keywords: list[tuple[tuple[int, int], str]] = []
-    forced = False
-    for order, (spec, source) in enumerate(zip(new, sources, strict=True)):
-        found = _value_at_site(spec, source, bound)
+    for order, (spec, found) in enumerate(zip(new, values, strict=True)):
         if found is None:
-            forced = True
             continue
         value, binding = found
-        if binding is not None and binding.keyword:
-            forced = True
-            keywords.append(((0, binding.position), f"{spec.name}={value}"))
-        elif forced:
-            keywords.append(((1, order), f"{spec.name}={value}"))
-        else:
+        if order < run:
             positional.append(value)
+        elif binding is not None:
+            keywords.append(((0, binding.position), f"{spec.name}={value}"))
+        else:
+            keywords.append(((1, order), f"{spec.name}={value}"))
     keywords.sort(key=lambda item: item[0])
     parts = positional + [text for _rank, text in keywords]
     return f"({cs.SEPARATOR_COMMA_SPACE.join(parts)})"
+
+
+def _written_at(found: tuple[str, _Binding | None] | None) -> int | None:
+    """Where the site wrote this value; None for a default or a literal."""
+    if found is None:
+        return None
+    _value, binding = found
+    return binding.position if binding is not None else None
+
+
+def _positional_run(values: Sequence[tuple[str, _Binding | None] | None]) -> int:
+    """How many leading values can stay positional without reordering the site.
+
+    The run ends at an omitted default, at a value that was a keyword, and
+    before a value the site wrote ahead of one already in the run. Keywords
+    follow the run, so it then ends before its first value written after
+    one of the values left for keywords.
+    """
+    run = 0
+    last = -1
+    for found in values:
+        if found is None:
+            break
+        _value, binding = found
+        if binding is not None:
+            if binding.keyword or binding.position <= last:
+                break
+            last = binding.position
+        run += 1
+    left = [
+        at for at in (_written_at(found) for found in values[run:]) if at is not None
+    ]
+    if not left:
+        return run
+    earliest = min(left)
+    for index, found in enumerate(values[:run]):
+        at = _written_at(found)
+        if at is not None and at > earliest:
+            return index
+    return run
 
 
 def _value_at_site(

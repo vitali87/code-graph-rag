@@ -124,7 +124,7 @@ class SignatureChanger:
         disk after planning may have moved under the recorded offsets.
         """
         patcher = Patcher(self.repo_root, parsers=self._parsers)
-        members = hierarchy(self.fetch_all, self.project, qn)
+        members = hierarchy(self.fetch_all, self.project, qn).members
         headers = [self._header(member, patcher) for member in members]
         old = headers[0].params
         old_names = [p.name for p in old]
