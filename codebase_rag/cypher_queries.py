@@ -408,35 +408,54 @@ FOREACH (n IN gone | DETACH DELETE n)
 """
 
 
-# Two projects indexed from ONE directory, or one from a subdirectory of the
-# other's, share Folder/File nodes by design of the absolute_path key, and
-# delete/stats walk them per project (issue #2665). That is not the #897
-# damage, which merged projects rooted in DIFFERENT directories: a shared
-# node counts as damage when it lies outside the root_path of a project
-# holding it, or a holder records none. root_path is written with the
-# platform's separator, absolute_path in POSIX form; a filesystem root
-# (`/`, `C:\`) already ends in the separator.
-_LEGACY_SHARED = (
-    "WITH n, count(DISTINCT p) AS owners, collect(DISTINCT p) AS holders "
-    "WITH n, owners, [h IN holders | replace(h.root_path, '\\\\', '/')] AS roots "
-    "WHERE owners > 1 AND any(r IN roots WHERE r IS NULL "
-    "OR n.absolute_path IS NULL OR NOT (n.absolute_path + '/') STARTS WITH "
-    "(CASE WHEN r ENDS WITH '/' THEN r ELSE r + '/' END)) "
-)
+# Damage detectors for the issue #897 migration. The superseded key merged
+# projects in DIFFERENT directories that share a relative layout, so a merged
+# node lies outside one owner's tree. The current key (absolute_path) shares a
+# node only between projects over the SAME files -- one checkout under two
+# names, or a project nested in another -- and the node lies inside every
+# owner's tree, so it is not damage (issues #2665, #3025). An owner's tree is its
+# Project's root_path; a Project that records none predates it and counts as
+# legacy. root_path is the resolved path as the OS spells it, backslashes on
+# Windows, while absolute_path is POSIX, so both sides are compared with
+# forward slashes (review of PR 3216). A filesystem root (`/`, `C:\`) already
+# ends in the separator, so the boundary one is added only to a root that
+# does not.
+def _outside_tree(root: str) -> str:
+    node = "replace(n.absolute_path, '\\\\', '/')"
+    tree = f"replace({root}, '\\\\', '/')"
+    prefix = f"CASE WHEN {tree} ENDS WITH '/' THEN {tree} ELSE {tree} + '/' END"
+    return f"({root} IS NULL OR NOT ({node} = {tree} OR {node} STARTS WITH ({prefix})))"
 
-# Damage detectors for the issue #897 migration. Sharing always leaves a
-# single-hop signature: the topmost merged node has containment parents in
-# two projects (Project roots are never merged, so the parents are distinct
-# nodes). Keyless rows match the second purge's predicate directly.
-CYPHER_ANY_SHARED_STRUCTURE = (
-    "MATCH (parent)-[:CONTAINS_FOLDER|CONTAINS_FILE]->(n) "
-    "WHERE (n:Folder OR n:File) "
-    "WITH n, count(parent) AS parents "
-    "WHERE parents > 1 "
+
+# The Projects that reach a node, and the node kept when two or more do and
+# one of them does not hold it in its tree. The owners themselves are
+# collected, not their roots: collect() drops nulls, so an owner that records
+# no root would vanish from the list instead of counting as legacy (review of
+# PR 3216).
+_FROM_OWNERS = (
     "MATCH (p:Project)"
     "-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE*]->(n) "
-    + _LEGACY_SHARED
-    + "RETURN 1 AS damaged LIMIT 1"
+)
+_ACROSS_ROOTS = (
+    "WITH n, collect(DISTINCT p) AS owners "
+    "WHERE size(owners) > 1 "
+    f"AND any(owner IN owners WHERE {_outside_tree('owner.root_path')}) "
+)
+
+# Sharing always leaves a single-hop signature: the topmost merged node has
+# containment parents in two projects (Project roots are never merged, so the
+# parents are distinct nodes). That cheap test runs on every sync and picks
+# the candidates; only they are walked up to their Projects and judged as the
+# purge judges them. A parent's own path cannot stand in for its Project's
+# root: a Package records its directory, so a File two projects reach through
+# their Packages read as inside both, hiding a rootless owner the purge counts
+# as legacy (review of PR 3216). Keyless rows match the second purge's
+# predicate directly.
+CYPHER_ANY_SHARED_STRUCTURE = (
+    "MATCH (parent)-[:CONTAINS_FOLDER|CONTAINS_FILE]->(n) "
+    "WHERE (n:Folder OR n:File) AND n.absolute_path IS NOT NULL "
+    "WITH n, count(parent) AS parents "
+    "WHERE parents > 1 " + _FROM_OWNERS + _ACROSS_ROOTS + "RETURN 1 AS damaged LIMIT 1"
 )
 
 CYPHER_ANY_KEYLESS_STRUCTURE = (
@@ -444,15 +463,26 @@ CYPHER_ANY_KEYLESS_STRUCTURE = (
     "RETURN 1 AS damaged LIMIT 1"
 )
 
-# The superseded relative-path key merged same-layout projects onto shared
-# Folder/File nodes (issue #897). A merged node cannot be split, so anything
-# the containment walk reaches from more than one Project is purged; the
-# next re-index rebuilds it with per-project identity.
+# While a legacy constraint is still in force, every node was written by the
+# old key: anything the containment walk reaches from more than one Project is
+# a merge, which cannot be split, so it is purged and the next re-index
+# rebuilds it with per-project identity.
 CYPHER_PURGE_CROSS_PROJECT_STRUCTURE = (
     "MATCH (p:Project)"
     "-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE*]->(n) "
     "WHERE (n:Folder OR n:File) "
-    + _LEGACY_SHARED
+    "WITH n, count(DISTINCT p) AS owners "
+    "WHERE owners > 1 "
+    "DETACH DELETE n RETURN count(n) AS purged"
+)
+
+# Once the constraints are gone, current data shares nodes legitimately, so
+# only a node outside some owner's tree (or under an owner that records no
+# root) is the old key's merge.
+CYPHER_PURGE_CROSS_ROOT_STRUCTURE = (
+    _FROM_OWNERS
+    + "WHERE (n:Folder OR n:File) AND n.absolute_path IS NOT NULL "
+    + _ACROSS_ROOTS
     + "DETACH DELETE n RETURN count(n) AS purged"
 )
 
