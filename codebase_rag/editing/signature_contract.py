@@ -82,6 +82,18 @@ def enforce_contract(
             verdict=verdict,
             message=cs.SIGNATURE_ROLLBACK_REFUSED.format(reasons=reasons),
         )
+    # A reversal that fails puts back what it wrote, so the change normally
+    # stays applied; but that restore logs rather than raises, so the tree
+    # may now match neither the history nor the graph `measure` re-ingested.
+    except Exception as error:  # noqa: BLE001
+        logger.warning(
+            cs.SIGNATURE_ROLLBACK_FAILED.format(reasons=reasons, error=error)
+        )
+        return report._replace(
+            verdict=verdict,
+            graph_incomplete=True,
+            message=cs.SIGNATURE_ROLLBACK_FAILED.format(reasons=reasons, error=error),
+        )
     try:
         reingest(list(report.files))
     # The files are restored; the graph may have lost the subtree the
