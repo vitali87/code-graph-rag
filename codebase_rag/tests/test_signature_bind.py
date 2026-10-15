@@ -283,9 +283,38 @@ def _render(call: str, new: list[ParamSpec], sources: Sequence[_Source | None]) 
     return _render_arguments(new, sources, _candidate(call, OLD).bound)
 
 
-def test_reordered_positional_values_stay_positional() -> None:
+def test_reordered_values_go_by_keyword_in_the_order_written() -> None:
     new = [_p("b"), _p("a")]
-    assert _render("g(1, 2)\n", new, [_Source(index=1), _Source(index=0)]) == "(2, 1)"
+    sources = [_Source(index=1), _Source(index=0)]
+    assert _render("g(1, 2)\n", new, sources) == "(a=1, b=2)"
+
+
+def test_reordering_keeps_effectful_arguments_in_evaluation_order() -> None:
+    # Positional `(second(), first())` would run `second()` first.
+    new = [_p("b"), _p("a")]
+    sources = [_Source(index=1), _Source(index=0)]
+    rendered = _render("g(first(), second())\n", new, sources)
+    assert rendered == "(a=first(), b=second())"
+
+
+def test_positional_run_ends_before_a_value_written_after_a_keyword() -> None:
+    # `c` keeps its slot in new order but was written after `b`, which
+    # cannot: leaving `c` positional would run it before `b`.
+    new = [_p("a"), _p("c"), _p("b")]
+    sources = [_Source(index=0), _Source(index=2), _Source(index=1)]
+    assert _render("g(1, 2, 3)\n", new, sources) == "(1, b=2, c=3)"
+
+
+def test_values_in_written_order_stay_positional_around_a_literal() -> None:
+    new = [_p("a"), _p("n"), _p("b")]
+    sources = [_Source(index=0), _Source(literal="0"), _Source(index=1)]
+    assert _render("g(x(), y())\n", new, sources) == "(x(), 0, y())"
+
+
+def test_a_literal_left_for_keywords_follows_the_site_values() -> None:
+    new = [_p("n"), _p("b"), _p("a")]
+    sources = [_Source(literal="0"), _Source(index=1), _Source(index=0)]
+    assert _render("g(x(), y())\n", new, sources) == "(0, a=x(), b=y())"
 
 
 def test_values_after_an_omitted_default_go_by_keyword() -> None:
@@ -327,11 +356,11 @@ def test_edit_nested_in_an_argument_is_folded_into_the_site() -> None:
     body_rename = _Edit(PATH, (2, 3), "z")
     inner_edit = _render_site(inner, new, sources, [])
     assert inner_edit is not None
-    assert inner_edit.text == "(2, 1)"
+    assert inner_edit.text == "(a=1, b=2)"
     edits = [body_rename, inner_edit]
     outer_edit = _render_site(outer, new, sources, edits)
     assert outer_edit is not None
-    assert outer_edit.text == "(g(2, 1), z)"
+    assert outer_edit.text == "(a=z, b=g(a=1, b=2))"
     assert edits == []  # both folded edits left the plan
 
 
@@ -350,10 +379,10 @@ def test_edit_in_another_file_is_not_folded() -> None:
     candidate = _candidate("g(1, 2)\n", OLD)
     elsewhere = _Edit("other.py", (2, 3), "x")
     edit = _render_site(candidate, [_p("b"), _p("a")], [_Source(1), _Source(0)], [])
-    assert edit == _Edit(PATH, candidate.span, "(2, 1)")
+    assert edit == _Edit(PATH, candidate.span, "(a=1, b=2)")
     assert _render_site(
         candidate, [_p("b"), _p("a")], [_Source(1), _Source(0)], [elsewhere]
-    ) == _Edit(PATH, candidate.span, "(2, 1)")
+    ) == _Edit(PATH, candidate.span, "(a=1, b=2)")
 
 
 # --- the definition and its hierarchy --------------------------------------------
