@@ -2165,8 +2165,15 @@ def _one_real_go_run_per_tree(
             ).encode()
         ).hexdigest()
         kept = _REAL_RUNS[0] / f"{key}.json"
-        if kept.is_file():
+        # Two workers that both missed run the helper and both publish. On
+        # Windows a file being replaced cannot be opened, and one held open
+        # cannot be replaced (PermissionError either way), so a copy this
+        # worker cannot read or publish is a miss: the helper runs again.
+        try:
             stdout, stderr = json.loads(kept.read_text(encoding="utf-8"))
+        except (FileNotFoundError, PermissionError):
+            pass
+        else:
             return frontend._parse_payload(stdout, stderr)
         captured: list[tuple[str, str]] = []
         parse = frontend._parse_payload
@@ -2181,7 +2188,10 @@ def _one_real_go_run_per_tree(
         if facts is not None and captured:
             partial = kept.with_suffix(f".{os.getpid()}.part")
             partial.write_text(json.dumps(captured[0]), encoding="utf-8")
-            os.replace(partial, kept)
+            try:
+                os.replace(partial, kept)
+            except PermissionError:
+                partial.unlink()
         return facts
 
     monkeypatch.setattr(frontend, "_run_tool_once", once)
