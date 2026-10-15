@@ -139,7 +139,7 @@ def test_dry_run_returns_the_diff_and_writes_nothing(
     assert report.files == (APP, UTIL)
     assert "+def helper(b: str, a: int) -> str:" in report.diff
     assert "-    return helper(3, 'z')" in report.diff
-    assert "+    return helper('z', 3)" in report.diff
+    assert "+    return helper(a=3, b='z')" in report.diff
     # `run` relied on the default `b` no longer has: left as written.
     assert [(site.owner, site.reason) for site in report.unmapped] == [
         (f"{PROJECT}.pkg.app.run", cs.SIGNATURE_SITE_NO_VALUE.format(name="b"))
