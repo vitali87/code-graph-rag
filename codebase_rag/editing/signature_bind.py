@@ -420,19 +420,30 @@ def _positional_run(
     run, before its first value written after one of those left for
     keywords.
     """
-    run = 0
+    run = _leading_run(values, ordered)
+    return _before_keywords(values, run) if ordered else run
+
+
+def _leading_run(
+    values: Sequence[tuple[str, _Binding | None] | None], ordered: bool
+) -> int:
     last = -1
-    for found in values:
+    for run, found in enumerate(values):
         if found is None:
-            break
+            return run
         _value, binding = found
-        if binding is not None:
-            if binding.keyword or (ordered and binding.position <= last):
-                break
-            last = binding.position
-        run += 1
-    if not ordered:
-        return run
+        if binding is None:
+            continue
+        if binding.keyword or (ordered and binding.position <= last):
+            return run
+        last = binding.position
+    return len(values)
+
+
+def _before_keywords(
+    values: Sequence[tuple[str, _Binding | None] | None], run: int
+) -> int:
+    """`run`, cut before its first value written after one left for keywords."""
     left = [
         at for at in (_written_at(found) for found in values[run:]) if at is not None
     ]
