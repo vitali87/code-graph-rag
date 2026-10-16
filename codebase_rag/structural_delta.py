@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import ast
 import re
+import textwrap
 import time
+import tokenize
 from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import NamedTuple, TypedDict
@@ -108,6 +110,10 @@ class Snapshot(NamedTuple):
     sites: tuple[CallSite, ...]
     imports: dict[str, frozenset[str]]
     module_paths: dict[str, str]
+    # (importer, target, imported name) per import statement; "" for a
+    # whole-module import. Tells an import of a name the module still binds
+    # (a constant the graph has no node for) from one of a moved symbol.
+    imported: frozenset[tuple[str, str, str]] = frozenset()
     bindings: tuple[ImportBinding, ...] = ()
 
 
@@ -386,12 +392,14 @@ def snapshot(
                 callees[definition.qualified_name] = definition
     imports: dict[str, set[str]] = {}
     module_paths: dict[str, str] = {}
+    imported: set[tuple[str, str, str]] = set()
     for row in fetch_all(cq.CYPHER_DELTA_MODULE_IMPORTS, params):
         source = _text(row.get(cs.KEY_FROM_QN))
         target = _text(row.get(cs.KEY_TO_QN))
         if not source or not target:
             continue
         imports.setdefault(source, set()).add(target)
+        imported.add((source, target, _text(row.get(cs.KEY_IMPORTED_NAME))))
         imports.setdefault(target, set())
         module_paths[source] = _text(row.get(cs.KEY_FROM_PATH))
     return Snapshot(
@@ -401,6 +409,7 @@ def snapshot(
         sites=sites,
         imports={qn: frozenset(targets) for qn, targets in imports.items()},
         module_paths=module_paths,
+        imported=frozenset(imported),
         bindings=_named_import_bindings(fetch_all, params),
     )
 
@@ -553,6 +562,7 @@ def _renames(
     before: Snapshot,
     after: Snapshot,
     declared: frozenset[tuple[str, str]] = frozenset(),
+    reshaped: frozenset[tuple[str, str]] = frozenset(),
 ) -> list[RenameFinding]:
     # A rename keeps the body: the same whole-skeleton fingerprint under a
     # new name in the same file. Paired one-to-one in sorted order so a
@@ -587,6 +597,22 @@ def _renames(
             still_unpaired, renames, paired_new, added, before, after, declared
         )
     )
+    # Pass 5: a pair whose body the operation itself rewrote (a move that
+    # respelled a relative import for its new package) changed shape by
+    # design, so only the operation's word can pair it.
+    paired_old = {r["old"] for r in renames}
+    for old, new in sorted(reshaped):
+        if (
+            old in still_unpaired
+            and old not in paired_old
+            and new in added
+            and new not in paired_new
+            and before.definitions[old].label == after.definitions[new].label
+        ):
+            renames.append(
+                RenameFinding(old=old, new=new, path=before.definitions[old].path)
+            )
+            paired_new.add(new)
     return renames
 
 
@@ -620,10 +646,11 @@ def _symbols(
     before: Snapshot,
     after: Snapshot,
     declared: frozenset[tuple[str, str]] = frozenset(),
+    reshaped: frozenset[tuple[str, str]] = frozenset(),
 ) -> SymbolDelta:
     added = sorted(set(after.definitions) - set(before.definitions))
     removed = sorted(set(before.definitions) - set(after.definitions))
-    renamed = _renames(removed, added, before, after, declared)
+    renamed = _renames(removed, added, before, after, declared, reshaped)
     renamed_old = {r["old"] for r in renamed}
     renamed_new = {r["new"] for r in renamed}
     return SymbolDelta(
@@ -1230,15 +1257,88 @@ def _dangling_importers(
 
 # `*name` only: a bare `*` (keyword-only marker) accepts no extra positionals
 # and `**name` accepts keywords, not positionals.
-_VARIADIC = re.compile(r"(?<!\*)\*(?!\*)\s*[A-Za-z_]")
+def _header_absorbs_extra_positionals(header: str) -> bool:
+    """Whether a `def` header declares `*args`.
+
+    Parsed, not scanned. Scanning got both directions wrong, and this is
+    the sole suppressor of a too-many-arguments verdict, so each costs
+    something different: a false positive hides a real arity error, and a
+    false negative makes a CORRECT edit fail its postcondition and roll
+    back.
+
+    A `*` inside a default (`b=2*3`) or a string (`doc='a*b'`) is not
+    `*args`, and a real `*rest` can follow a default that itself contains
+    a `)` -- which the old first-`)` cut discarded. `ast` is the right
+    oracle because it is the same parser that decides whether the call
+    raises at runtime.
+
+    Only `*args` absorbs a surplus POSITIONAL argument, which is the one
+    branch that consults this. Keyword-only parameters do not: CPython
+    rejects `helper(1, 2, b=3)` against `def helper(a, *, b=1)` with
+    "takes 1 positional argument but 2 ... were given". Treating them as
+    a suppressor silently dropped a real TOO_MANY verdict.
+
+    An unparseable header answers False, keeping the arity check ACTIVE:
+    for a suppressor, refusing to suppress is the safe direction.
+    """
+    body = textwrap.dedent(header).strip()
+    if not body:
+        return False
+    # A one-line definition (`def f(a, *rest): return a`) already has its
+    # suite, and an appended indented `pass` would make it unparseable; only
+    # a bare header needs the stand-in body (bot review).
+    try:
+        tree = ast.parse(body)
+    except SyntaxError:
+        try:
+            tree = ast.parse(body + "\n    pass\n")
+        except SyntaxError:
+            return False
+    node = tree.body[0] if tree.body else None
+    if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+        return False
+    return node.args.vararg is not None
 
 
-def _is_variadic(definition: Definition, repo_root: Path | None) -> bool:
+def _header_end_row(lines: list[str]) -> int | None:
+    """The 1-based row of the `:` that ends the `def` header, or None.
+
+    Tokenised rather than counted character by character: a bracket inside
+    a string or comment (`a=")"`, `# (`) is not a delimiter, and a raw count
+    ended the header early on one, dropping a `*rest` that followed (bot
+    review). The cut is the header's own colon, at bracket depth zero once
+    the parameter list has opened, not the `)` closing that list: a return
+    annotation can run on (`-> tuple[` over several rows), and a cut at the
+    `)` left it unfinished, so the fragment failed to parse and a `*rest`
+    callee was reported as receiving too many arguments (bot review). One
+    pass over the lines, stopping at the colon. Input that ends before it,
+    or does not tokenise, answers None.
+    """
+    source = iter(line + "\n" for line in lines)
+    depth = 0
+    seen_open = False
+    try:
+        for token in tokenize.generate_tokens(lambda: next(source, "")):
+            if token.type != tokenize.OP:
+                continue
+            if token.string in ("(", "[", "{"):
+                depth += 1
+                seen_open = True
+            elif token.string in (")", "]", "}"):
+                depth -= 1
+            elif token.string == ":" and seen_open and depth == 0:
+                return token.end[0]
+    except (tokenize.TokenError, SyntaxError):
+        return None
+    return None
+
+
+def _absorbs_extra_positionals(definition: Definition, repo_root: Path | None) -> bool:
     """Whether the Python definition's header declares `*args`.
 
     `positional_params` ends at the star (CPython counts nothing after it),
     so the stored list alone cannot tell `f(a)` from `f(a, *rest)`; the
-    header is read back so a variadic callee is never reported as
+    header is read back so a `*args` callee is never reported as
     receiving too many arguments.
     """
     if repo_root is None or not definition.path or definition.start_line < 1:
@@ -1251,17 +1351,16 @@ def _is_variadic(definition: Definition, repo_root: Path | None) -> bool:
         )
     except (OSError, UnicodeDecodeError):
         return False
-    header: list[str] = []
-    for line in lines[definition.start_line - 1 : definition.end_line or None]:
-        header.append(line)
-        if ")" in line:
-            break
-    text = "\n".join(header)
-    open_at = text.find("(")
-    close_at = text.find(")", open_at + 1)
-    if open_at < 0 or close_at < 0:
-        return False
-    return _VARIADIC.search(text[open_at:close_at]) is not None
+    # Stop at the header's colon, not at the first `)`. A default can
+    # contain one (`a=g()`, `a=(1, 2)`, `a=")"`), and cutting there drops a
+    # `*rest` that follows it -- the header then fails to parse and answers
+    # False, which suppresses nothing and reports a variadic callee as
+    # receiving too many arguments. A header that never ends keeps every
+    # line to `end_line`, which is the safe direction.
+    body = lines[definition.start_line - 1 : definition.end_line or None]
+    end_row = _header_end_row(body)
+    header = body[:end_row] if end_row is not None else body
+    return _header_absorbs_extra_positionals("\n".join(header))
 
 
 # The verdicts that name a call the language rejects; the rest are hints.
@@ -1441,7 +1540,7 @@ def _arity_verdict(
     )
     declared_count = verdict.declared_count - (1 if is_method else 0)
     if positional + (1 if is_method else 0) > verdict.declared_count:
-        if _is_variadic(definition, repo_root):
+        if _absorbs_extra_positionals(definition, repo_root):
             return declared_count, cs.DELTA_ARITY_OK
         return declared_count, cs.DELTA_ARITY_TOO_MANY
     # `*rest` adds positionals the graph cannot count, so the written ones
@@ -1778,6 +1877,14 @@ def _cycles(graph: dict[str, frozenset[str]]) -> set[frozenset[str]]:
     }
 
 
+def import_cycles(graph: dict[str, frozenset[str]]) -> set[frozenset[str]]:
+    """The cyclic strongly connected components of a module import graph.
+
+    `move` checks a planned move against these before touching a file.
+    """
+    return _cycles(graph)
+
+
 def _new_import_cycles(before: Snapshot, after: Snapshot) -> list[list[str]]:
     touched = {qn for qn, path in after.module_paths.items() if path in after.paths}
     touched |= {qn for qn, path in before.module_paths.items() if path in before.paths}
@@ -1935,12 +2042,15 @@ def structural_delta(
     declared_renames: frozenset[tuple[str, str]] = frozenset(),
     *,
     longer_project_prefixes: tuple[str, ...] | None = None,
+    reshaped_renames: frozenset[tuple[str, str]] = frozenset(),
 ) -> StructuralDelta:
     """Diff two snapshots of the same paths, then look up what they touch.
 
     `declared_renames` are pairs the CALLER applied and therefore knows. They
     are needed only where the snapshots cannot show identity -- an empty
     container -- and are empty for a plain write, which really is inferring.
+    `reshaped_renames` are pairs whose body the caller rewrote on purpose,
+    so their shapes no longer match.
     """
     started = time.perf_counter()
     longer_prefixes = (
@@ -1948,7 +2058,7 @@ def structural_delta(
         if longer_project_prefixes is None
         else longer_project_prefixes
     )
-    symbols = _symbols(before, after, declared_renames)
+    symbols = _symbols(before, after, declared_renames, reshaped_renames)
     fresh = set(symbols["added"]) | set(symbols["changed"])
     fresh |= {r["new"] for r in symbols["renamed"]}
     # A re-parsed file was edited: every symbol it defines may behave
@@ -2017,11 +2127,16 @@ def _stale_importers(after: Snapshot, symbols: SymbolDelta) -> list[StaleImporte
     report every importer of its remaining siblings.
     """
     vacated: set[str] = set()
+    moved_names: dict[str, set[str]] = {}
     for renamed in symbols["renamed"]:
-        old_module = _module_of(str(renamed["old"]))
+        old_qn = str(renamed["old"])
+        old_module = _module_of(old_qn)
         new_module = _module_of(str(renamed["new"]))
         if old_module and old_module != new_module:
             vacated.add(old_module)
+            moved_names.setdefault(old_module, set()).add(
+                old_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            )
     if not vacated:
         return []
     # Anything the graph still defines under a vacated module means the module
@@ -2037,7 +2152,10 @@ def _stale_importers(after: Snapshot, symbols: SymbolDelta) -> list[StaleImporte
         # One entry per IMPORTER, not per stale target: the finding is that
         # this module still points at somewhere the move emptied, and naming
         # the same importer once per vacated target would repeat it.
-        if not targets & vacated:
+        if not any(
+            _imports_what_left(after, importer, target, moved_names[target])
+            for target in targets & vacated
+        ):
             continue
         stale.append(
             StaleImporter(
@@ -2049,6 +2167,34 @@ def _stale_importers(after: Snapshot, symbols: SymbolDelta) -> list[StaleImporte
     return sorted(stale, key=lambda entry: (entry["path"], entry["importer"]))
 
 
+def _imports_what_left(
+    after: Snapshot, importer: str, target: str, moved: set[str]
+) -> bool:
+    """Whether `importer`'s import of the vacated `target` can reach a moved name.
+
+    The graph has no node for a module constant, so a module left holding
+    only `TAX_RATE = 0.2` reads as vacated; the moved function's own
+    `from old import TAX_RATE` then failed the move it was carried for.
+    Only a named import of something that did NOT move is cleared; a
+    whole-module import, or one the graph recorded without names, may still
+    reach the moved symbol and stays stale. So does a wildcard (`from old
+    import *`, recorded as `*`), unless the vacated module imports every
+    moved name back for the star to carry. A `from pkg import util` binds
+    the module itself under its last segment, so `util.helper()` still
+    reaches the moved name through it and that import stays stale too
+    (bot review).
+    """
+    names = {
+        name for (src, dst, name) in after.imported if src == importer and dst == target
+    }
+    if cs.IMPORTED_NAME_WILDCARD in names:
+        kept = {name for (src, _dst, name) in after.imported if src == target}
+        if not moved <= kept:
+            return True
+    leaf = target.rpartition(cs.SEPARATOR_DOT)[2]
+    return not names or "" in names or leaf in names or bool(names & moved)
+
+
 def observe(
     fetch_all: QueryFn,
     project_name: str,
@@ -2056,6 +2202,7 @@ def observe(
     apply: Callable[[], ReingestReport],
     repo_root: Path | None = None,
     declared_renames: frozenset[tuple[str, str]] = frozenset(),
+    reshaped_renames: frozenset[tuple[str, str]] = frozenset(),
 ) -> StructuralDelta:
     """Snapshot `paths`, run `apply` (the scoped re-ingest), snapshot, diff.
 
@@ -2089,6 +2236,7 @@ def observe(
         repo_root,
         declared_renames=declared_renames,
         longer_project_prefixes=longer_prefixes,
+        reshaped_renames=reshaped_renames,
     )
     # The re-ingest's own clock covers only its inner work; the caller sees
     # the wall time of the whole apply step, and `delta_ms` is everything
