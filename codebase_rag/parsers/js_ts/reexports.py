@@ -139,9 +139,20 @@ class _ReexportWalk:
 
     def _export(self, qn: str) -> tuple[_Step | None, bool]:
         module_qn, separator, name = qn.rpartition(cs.SEPARATOR_DOT)
-        barrel = js_ts_module_qn(module_qn, self._modules) if separator else None
-        if barrel is None:
+        if not separator:
             return None, False
+        barrel = js_ts_module_qn(module_qn, self._modules)
+        if barrel is None:
+            # `math.add` where `math` is a namespace a barrel re-exports
+            # (`export * as math from "./math"`): the member is looked up in
+            # the module the namespace names (issue #3249).
+            namespace, cut = self.follow(module_qn)
+            if (
+                namespace == module_qn
+                or js_ts_module_qn(namespace, self._modules) is None
+            ):
+                return None, cut
+            return _Step(f"{namespace}{cs.SEPARATOR_DOT}{name}", local=False), cut
         if (export := self._exports.get(barrel, {}).get(name)) is not None:
             return _Step(export.target, export.local), False
         # `export *` passes on every name a source exports except `default`.
