@@ -637,16 +637,80 @@ def _symbols(
 # --- dangling callers ---------------------------------------------------------
 
 
+# A site's line and column.
+_Position = tuple[int | None, int | None]
+
+
+def _named_only_as_itself(
+    site: CallSite, callee: Definition, held: dict[str, set[_Position]]
+) -> bool:
+    """Whether the call can only have been written as the callee's own name.
+
+    An import binds a function under any name (`from lib import helper as
+    h`, a default import, `const serialize = require('./ser')`), so only one
+    of the caller's own file qualifies. A method runs under names it does
+    not carry (`Widget(1)` calls `Widget.__init__`). A function taken as a
+    value anywhere but this site can be called through what holds it
+    (`h = helper; h(x)`).
+    """
+    return (
+        callee.label == cs.NodeLabel.FUNCTION
+        and callee.path == site.caller_path
+        and held.get(site.callee, set()) <= {(site.line, site.col)}
+    )
+
+
+def _still_names(
+    site: CallSite, callee: Definition, after: Snapshot, repo_root: Path | None
+) -> bool:
+    """Whether a re-parsed caller's new body still names `callee`.
+
+    A callback replaced by a loop, a named function expression swapped for
+    an arrow, a nested helper inlined: the edit removed the callee and the
+    caller's call to it together (issue #3246). An anonymous callee is never
+    named, so it went with the expression that held it. Where the body
+    cannot be read, the call is assumed to stand.
+    """
+    caller = after.definitions.get(site.caller)
+    if repo_root is None or caller is None or caller.start_line < 1:
+        return True
+    try:
+        lines = (repo_root / caller.path).read_text(encoding=cs.ENCODING_UTF8)
+    except (OSError, UnicodeDecodeError):
+        return True
+    body = "\n".join(
+        lines.splitlines()[caller.start_line - 1 : caller.end_line or None]
+    )
+    return re.search(_NAMED.format(name=re.escape(callee.name)), body) is not None
+
+
+# A name as a whole identifier: `$` is part of one in JavaScript.
+_NAMED = r"(?<![\w$]){name}(?![\w$])"
+
+
 def _dangling(
-    before: Snapshot, after: Snapshot, symbols: SymbolDelta
+    before: Snapshot,
+    after: Snapshot,
+    symbols: SymbolDelta,
+    repo_root: Path | None,
 ) -> list[DanglingCaller]:
     gone = set(symbols["removed"]) | {r["old"] for r in symbols["renamed"]}
     renamed_to = {r["old"]: r["new"] for r in symbols["renamed"]}
     after_pairs = {(site.caller, site.callee) for site in after.sites}
+    held: dict[str, set[_Position]] = {}
+    for site in before.sites:
+        if site.rel == cs.RelationshipType.REFERENCES:
+            held.setdefault(site.callee, set()).add((site.line, site.col))
     out: list[DanglingCaller] = []
     seen: set[tuple[str, str, int | None, int | None]] = set()
     for site in before.sites:
         if site.callee not in gone:
+            continue
+        callee = before.definitions[site.callee]
+        # Only a caller the edit touched is in the after-snapshot to read.
+        if _named_only_as_itself(site, callee, held) and not _still_names(
+            site, callee, after, repo_root
+        ):
             continue
         new_name = renamed_to.get(site.callee)
         # A caller re-parsed in this pass that now binds to the renamed
@@ -1963,7 +2027,7 @@ def structural_delta(
         affected=list(report.affected) if report else [],
         removed_files=list(report.removed) if report else [],
         symbols=symbols,
-        dangling_callers=_dangling(before, after, symbols),
+        dangling_callers=_dangling(before, after, symbols, repo_root),
         dangling_importers=_dangling_importers(
             before,
             after,

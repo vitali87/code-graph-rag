@@ -35,6 +35,19 @@ generation of the graph. Measured overhead on top of the re-ingest is
 reported per call as `delta_ms`; the benchmark (`benchmarks/bench_reingest.py`)
 records it next to the re-ingest itself.
 
+A caller the edit touched is judged by its new body (issue #3246). If that
+body no longer names a removed or renamed symbol, the call went with it: a
+callback replaced by a loop, a named function expression swapped for an
+arrow, a nested helper inlined. Such a caller is no dangling caller. An
+anonymous function is never named, so a caller re-parsed without it no
+longer calls it. A body that still names the symbol, or one that cannot be
+read, keeps the caller listed. So does a call that need not name its
+callee: one to a function of another file, which an import binds under any
+name (`from lib import helper as h`, a default import, a `require` of the
+whole module); one to a method, which runs under names it does not carry
+(`Widget(1)` calls `Widget.__init__`); and one to a function taken as a
+value elsewhere (`h = helper; h(x)`).
+
 ## What it reports
 
 ```json
