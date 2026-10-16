@@ -31,7 +31,7 @@ from .py import resolve_class_name
 from .rs import utils as rs_utils
 from .semantic_call_join import call_site_key, declared_location
 from .type_inference import TypeInferenceEngine
-from .utils import safe_decode_text
+from .utils import module_qn_for_entity, safe_decode_text
 
 _SEPARATOR_PATTERN = re.compile(r"[.:]|::")
 # One initializer block's scope record, as held per module by
@@ -5739,7 +5739,7 @@ class CallResolver:
             )
             if not field_type:
                 return None
-            class_qn = self._chain_class_qn(field_type, module_qn)
+            class_qn = self._field_type_class_qn(field_type, class_qn, module_qn)
         if not class_qn:
             return None
         method_name = parts[-1]
@@ -6564,15 +6564,27 @@ class CallResolver:
             frontier = list(parents)
         return levels
 
-    def _dart_visible_libraries(self, module_qn: str) -> set[str]:
+    def _dart_visible_libraries(
+        self, module_qn: str, *, prefixed: bool = True
+    ) -> set[str]:
         """The libraries whose top-level names `module_qn` can see: itself,
         every library it imports (prefixed or not), and whatever those hand
         on through `export` / `part`, transitively. A library a dependency
-        merely IMPORTS stays hidden (issue #2482)."""
+        merely IMPORTS stays hidden (issue #2482). Without `prefixed`, a
+        library imported only `as p` is left out: its names are `p.Name`,
+        never a bare `Name` (issue #3286)."""
         processor = self.import_processor
         imported = set(processor.import_mapping.get(module_qn, {}).values())
-        for libraries in processor.dart_import_aliases.get(module_qn, {}).values():
-            imported.update(libraries)
+        aliased = {
+            library
+            for libraries in processor.dart_import_aliases.get(module_qn, {}).values()
+            for library in libraries
+        }
+        if prefixed:
+            imported |= aliased
+        else:
+            # `import 'a.dart'; import 'a.dart' as p;` still sees bare names.
+            imported -= aliased - set(processor.dart_bare_imports.get(module_qn, ()))
         visible = {module_qn, *imported}
         frontier = list(imported)
         while frontier:
@@ -6771,6 +6783,45 @@ class CallResolver:
         # is a constructor and the receiver's type is the head.
         member = self._drop_named_constructor(name, target)
         return f"{target}{cs.SEPARATOR_DOT}{member}"
+
+    def _field_type_class_qn(
+        self, field_type: str, owner_qn: str, caller_module_qn: str
+    ) -> str:
+        # A field's type is written in the file declaring its class, so it
+        # names what THAT file imports: `car.rs`'s `use crate::motor::Engine`
+        # types `Car.engine` whatever the caller imports (issue #3286). The
+        # caller's module is the fallback for an owner no module is known for.
+        owner_module = module_qn_for_entity(
+            owner_qn, self.type_inference.module_qn_to_file_path
+        )
+        language = self._module_language(owner_module) if owner_module else None
+        if (
+            owner_module
+            and language == cs.SupportedLanguage.DART
+            and (visible := self._dart_visible_type(field_type, owner_module))
+        ):
+            return visible
+        # A Rust struct inside an inline `mod` reads that mod's `use` before
+        # the file's, so the owner stands where a caller would.
+        return self._chain_class_qn(
+            field_type,
+            owner_module or caller_module_qn,
+            _rust_caller(language, owner_qn),
+        )
+
+    def _dart_visible_type(self, type_name: str, module_qn: str) -> str | None:
+        # A Dart import brings in a LIBRARY, never a name, so the import map
+        # has no key for `Cart`: the type is the one the libraries visible
+        # from `module_qn` declare, when exactly one of them does.
+        found = {
+            qn
+            for library in self._dart_visible_libraries(module_qn, prefixed=False)
+            if self.function_registry.get(
+                qn := f"{library}{cs.SEPARATOR_DOT}{type_name}"
+            )
+            in _CONSTRUCTIBLE_NODE_TYPES
+        }
+        return next(iter(found)) if len(found) == 1 else None
 
     def _chain_class_qn(
         self, type_name: str, module_qn: str, rust_caller: str | None = None
