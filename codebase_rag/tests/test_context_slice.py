@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.context_slice import _doc_pieces, context
+from codebase_rag.context_slice import _doc_pieces, _piece_tokens, context
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.utils.token_utils import count_tokens
@@ -161,12 +161,22 @@ def test_token_count_never_exceeds_the_budget(
 ) -> None:
     root, store, _updater = repo
     full = context(store.fetch_all, PROJECT, _qn("pkg.util.helper"), 4000, root)
-    for budget in (full["used_tokens"] - 1, 60, 25, 5):
+    # A piece's fields count against the budget too (issue #3243): the
+    # target with an empty source is the floor any slice of it starts at.
+    target = full["pieces"][0]
+    floor = _piece_tokens(
+        target["qualified_name"],
+        target["file"],
+        target["span"],
+        target["why_included"],
+        "",
+    )
+    for budget in (full["used_tokens"] - 1, floor + 40, floor + 15, 5):
         slice_ = context(store.fetch_all, PROJECT, _qn("pkg.util.helper"), budget, root)
         assert slice_["used_tokens"] <= budget
         assert sum(count_tokens(p["source"]) for p in slice_["pieces"]) <= budget
         assert slice_["omitted"] or slice_["truncated"]
-    shrunk = context(store.fetch_all, PROJECT, _qn("pkg.util.helper"), 25, root)
+    shrunk = context(store.fetch_all, PROJECT, _qn("pkg.util.helper"), floor + 15, root)
     # The target keeps as many of its lines as fit and comes first.
     assert shrunk["truncated"]
     assert shrunk["pieces"][0]["why_included"] == cs.CONTEXT_WHY_TARGET
