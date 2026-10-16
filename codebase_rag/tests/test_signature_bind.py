@@ -206,6 +206,40 @@ def test_body_references_are_the_parameter_uses() -> None:
     )
 
 
+def test_body_references_skip_pattern_labels() -> None:
+    code = (
+        "def f(a):\n"
+        "    match g():\n"
+        "        case Point(a=a):\n"
+        "            return a\n"
+        "        case Color.a:\n"
+        "            return None\n"
+        "        case [a, *_]:\n"
+        "            return a\n"
+    )
+    header = _header(code)
+    spans = _body_references(header, "a", "z", ())
+    renamed = _apply(header.source, [_Edit(PATH, s, "z") for s in spans])
+    assert renamed == (
+        "def f(a):\n"
+        "    match g():\n"
+        "        case Point(a=z):\n"
+        "            return z\n"
+        "        case Color.a:\n"
+        "            return None\n"
+        "        case [z, *_]:\n"
+        "            return z\n"
+    )
+
+
+def test_body_reads_ignores_pattern_labels() -> None:
+    header = _header(
+        "def f(a):\n    match a:\n        case P(z=1) | C.z:\n            pass\n"
+    )
+    assert not _body_reads(header, "z")
+    assert _body_reads(header, "C")
+
+
 @pytest.mark.parametrize(
     "body",
     [

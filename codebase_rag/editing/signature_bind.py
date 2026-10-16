@@ -121,7 +121,13 @@ _OPAQUE_TO_THE_WALK = _OWN_SCOPES | _REBINDING_STATEMENTS
 
 
 def _is_a_reference(node: Node) -> bool:
-    """A bare identifier, not the `.attr` of an attribute or a keyword's name."""
+    """A bare identifier, not a label that merely shares the spelling.
+
+    The labels: the `.attr` of an attribute or of a dotted value pattern
+    (`case Color.a:`), a keyword argument's name, and a class pattern's
+    keyword (`case Point(a=a)`, whose first `a` names the subject's
+    attribute and whose second is a capture).
+    """
     parent = node.parent
     if parent is None:
         return True
@@ -129,6 +135,10 @@ def _is_a_reference(node: Node) -> bool:
         return parent.child_by_field_name(cs.TS_PY_FIELD_ATTRIBUTE) != node
     if parent.type == cs.TS_PY_KEYWORD_ARGUMENT:
         return parent.child_by_field_name(cs.FIELD_NAME) != node
+    if parent.type == cs.TS_PY_KEYWORD_PATTERN:
+        return parent.named_children[0] != node
+    if parent.type == cs.TS_PY_DOTTED_NAME:
+        return parent.named_children[0] == node
     return True
 
 
