@@ -23,7 +23,7 @@ verdict.affected_tests  # the delta's tests_reaching, for the caller to run
 
 | Operation          | Promise                                                                                                                 |
 |--------------------|-------------------------------------------------------------------------------------------------------------------------|
-| `rename`           | The delta reports exactly the requested `(old, new)` pairs as renamed; no other symbol appears or disappears; the call-site count into the touched definitions is unchanged; no caller is dangling; no site resolved by guesswork (`heuristic`, `overload`, `dynamic`) was rewritten unless `heuristic_allowed`. |
+| `rename`           | The delta reports exactly the requested `(old, new)` pairs as renamed; no other symbol appears or disappears; the count of call and reference sites into the touched definitions is unchanged (a site may move between the two: `{ pad }` references `pad`, `{ pad: padLeft }` calls `padLeft`); no caller is dangling; no site resolved by guesswork (`heuristic`, `overload`, `dynamic`) was rewritten unless `heuristic_allowed`. |
 | `change_signature` | Every call site of a changed signature reads `ok`, was rewritten by the operation (a rewritten site is mapped by construction), or is listed in `unmapped` as `path:line`; an `unknown` verdict is not accepted; no `too_many` arity finding remains unlisted. |
 | `move`             | The old name is reported renamed to its new home, importers are updated (no dangling callers), and no import cycle appeared. |
 | all                | No new duplicate group; every file parses.                                                                              |
