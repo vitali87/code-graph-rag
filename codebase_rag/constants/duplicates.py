@@ -131,10 +131,13 @@ DELTA_ARITY_UNKNOWN = "unknown"
 
 # What still names a removed or renamed symbol in a structural delta's
 # `dangling_importers` (issue #2516): an import statement binding it, or a
-# Python `__all__` string entry exporting it.
+# Python `__all__` string entry exporting it. `module` is an import of a
+# module the edit deleted or moved (issue #3266): `import pkg.signals`,
+# `from pkg import util`, `export * from "./util"`.
 class DanglingImportKind(StrEnum):
     IMPORT = "import"
     ALL = "__all__"
+    MODULE = "module"
 
 
 # Hops the backward test-reach walk follows before giving up.
