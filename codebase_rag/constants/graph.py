@@ -36,6 +36,13 @@ KEY_MEMBER_ALIASES = "member_aliases"
 # The member names a Python class body binds to a value that is no method
 # (`run = None`), which hide a base class's `run` (issue #2620).
 KEY_NON_METHOD_MEMBERS = "non_method_members"
+# The types a Go interface embeds, as written (`Reader`, `io.Writer`): its
+# method set includes theirs, so satisfying it needs them too (issue #2483).
+KEY_EMBEDS = "embeds"
+# Why cgr cannot tell which types implement a Go interface (a
+# GoImplementersUnknown), or "" when it can (#3360). Written for every Go
+# interface at each link, so a sync clears a mark that no longer holds.
+KEY_IMPLEMENTERS_UNKNOWN = "implementers_unknown"
 # A JS/TS function that is an object literal's property value, reached only
 # through its object (issue #2435).
 KEY_IS_OBJECT_MEMBER = "is_object_member"
@@ -135,6 +142,22 @@ class EdgeResolution(StrEnum):
     HEURISTIC = "heuristic"
     TRACE_CONFIRMED = "trace_confirmed"
     DYNAMIC = "dynamic"
+
+
+class GoImplementersUnknown(StrEnum):
+    """Why cgr cannot tell which types implement a Go interface, so it links
+    none by name and a rename of a method of its name refuses (#3360).
+
+    `builds`: its method set differs between builds in more ways than cgr
+    tells apart (past 64 alternatives, or a combination it cannot decide).
+    `embeds`: it embeds an interface cgr cannot resolve (another module's, or
+    a name it cannot find). `constraint`: whether some type implements it
+    rests on a build constraint cgr cannot read or decide.
+    """
+
+    BUILDS = "builds"
+    EMBEDS = "embeds"
+    CONSTRAINT = "constraint"
 
 
 # Ordering for `--min-resolution`: an edge with no label is a legacy static
@@ -827,6 +850,10 @@ KEY_PARAM_TYPES = "param_types"
 # Dart, a top-level `main` (a local one registers under its module too). Set
 # only when true.
 KEY_IS_PROGRAM_MAIN = "is_program_main"
+# A Python class declared in the body of an `if TYPE_CHECKING:` block: it
+# never exists at runtime, so dead code reads it as a declaration (like a
+# `.pyi` stub), and no edge in the graph says so otherwise. Set only when true.
+KEY_TYPE_CHECKING_ONLY = "type_checking_only"
 # A C++ member's overload identity, `(int,double) const` (issue #2455): what
 # tells `Sep.g` from `Sep.g@4`, and what an incremental run reads back so a
 # re-parsed out-of-class definition lands on the overload it defines.
@@ -1203,7 +1230,8 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.is_exported AS is_exported, "
     "n.extension_receiver AS extension_receiver, "
     "n.extension_namespace AS extension_namespace, "
-    "n.extension_receiver_arity AS extension_receiver_arity"
+    "n.extension_receiver_arity AS extension_receiver_arity, "
+    "n.embeds AS embeds"
 )
 
 # Module-level qns (plus C++20 module interfaces) for incremental runs:
@@ -1481,12 +1509,17 @@ CSHARP_PARTIAL_TYPE_LABELS: frozenset[NodeLabel] = frozenset(
 # generic arity: a rename reads which of them are the parts of one `partial`
 # type by the key parsing groups them under (`csharp_partial_key_from_graph`),
 # which spells the arity (issue #2579).
-_CSHARP_PARTIAL_LABELS = "|".join(
-    sorted(label.value for label in CSHARP_PARTIAL_TYPE_LABELS)
+# Spelled as a WHERE label test rather than `(n:A|B)` alternation, which
+# not every openCypher engine accepts (issue #386).
+_CSHARP_PARTIAL_LABEL_TEST = (
+    "("
+    + " OR ".join(f"n:{label.value}" for label in sorted(CSHARP_PARTIAL_TYPE_LABELS))
+    + ")"
 )
 CYPHER_SAME_NAMED_CSHARP_TYPES = (
-    f"MATCH (n:{_CSHARP_PARTIAL_LABELS}) "
-    "WHERE n.name = $name AND n.qualified_name STARTS WITH $project_prefix "
+    "MATCH (n) "
+    f"WHERE {_CSHARP_PARTIAL_LABEL_TEST} "
+    "AND n.name = $name AND n.qualified_name STARTS WITH $project_prefix "
     "RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, "
     "n.path AS path, n.modifiers AS modifiers, n.generic_arity AS generic_arity"
 )
@@ -1508,6 +1541,8 @@ CYPHER_ALL_FUNCTION_LOCATIONS = (
     "f.start_col AS start_col, f.name_start_line AS name_start_line, "
     "f.name_start_col AS name_start_col"
 )
+# `path` is the method's own file: a Go method can sit in another file than
+# its receiver type, whose Module is the one DEFINES reaches (issue #2483).
 CYPHER_ALL_METHOD_LOCATIONS = (
     "MATCH (m:Module)-[:DEFINES]->(c)-[:DEFINES_METHOD]->(f:Method) "
     "WHERE m.qualified_name STARTS WITH $project_prefix "
@@ -1515,7 +1550,7 @@ CYPHER_ALL_METHOD_LOCATIONS = (
     "c.qualified_name AS container_qn, "
     "m.qualified_name AS module_qn, f.start_line AS start_line, "
     "f.start_col AS start_col, f.name_start_line AS name_start_line, "
-    "f.name_start_col AS name_start_col"
+    "f.name_start_col AS name_start_col, f.path AS path"
 )
 KEY_CHILD_QN = "child_qn"
 KEY_BASE_QN = "base_qn"

@@ -108,6 +108,11 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     # them (and `member_aliases` with them), so until that file is parsed
     # again `Sub().run()` reaches the base's `def run` as it did before #2620.
     # Exporting it needs a proto field and protoc, which #1490 carries.
+    # `type_checking_only` marks a class declared under `if TYPE_CHECKING:`
+    # so dead-code roots its stubs. It degrades the same safe way: a graph
+    # round-tripped through protobuf reads as "not marked", so those stubs
+    # are reported again exactly as before the property existed, and the
+    # next parse writes the mark back.
     "Class": frozenset(
         {
             "anchor_hash",
@@ -117,6 +122,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "non_method_members",
             "path",
             "start_col",
+            "type_checking_only",
         }
     ),
     "Field": frozenset({"absolute_path"}),
@@ -186,12 +192,18 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "start_col",
         }
     ),
+    # `embeds` (issue #2483) is read back only by an incremental run's
+    # registry rehydration, to know an unchanged Go interface's method set
+    # whole. A graph round-tripped through protobuf loses it, and an absent
+    # list reads as unknown, so the interface gains no implementer by name
+    # until its file is parsed again; exporting it needs protoc (#1490).
     "Interface": frozenset(
         {
             "anchor_hash",
             "decorated_start_line",
             "decorators",
             "docstring",
+            "embeds",
             "end_line",
             "is_exported",
             "modifiers",

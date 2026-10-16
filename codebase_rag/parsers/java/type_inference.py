@@ -16,7 +16,7 @@ from ...types_defs import (
 )
 from ..frontends.protocol import CallSiteKey, ResolvedCallSite
 from ..import_processor import ImportProcessor
-from ..semantic_call_join import call_site_key, declared_location
+from ..semantic_call_join import call_site_key, resolve_call_site
 from ..utils import safe_decode_text
 from .method_resolver import JavaMethodResolverMixin
 from .type_resolver import JavaClassHeaders, JavaTypeResolverMixin
@@ -112,25 +112,18 @@ class JavaTypeInferenceEngine(
         # cannot), and the external sentinel is its proof that the call leaves
         # the repo. Any miss returns None so the caller falls back to the
         # tree-sitter heuristics.
-        if not (self.java_call_sites or self.java_external_sites):
-            return None
-        key = self._java_call_site_key(call_node, module_qn)
-        if key is None:
-            return None
-        fact = self.java_call_sites.get(key)
-        if fact is not None:
-            return declared_location(
-                fact.target_file,
-                fact.target_line,
-                fact.target_col,
-                self.function_locations,
-                self.module_qn_to_file_path,
-                self.repo_path,
-                self._rel_to_module,
-            )
-        if key in self.java_external_sites:
-            return JAVA_EXTERNAL_TARGET
-        return None
+        return resolve_call_site(
+            call_node,
+            module_qn,
+            self._java_call_site_key,
+            self.java_call_sites,
+            self.java_external_sites,
+            JAVA_EXTERNAL_TARGET,
+            self.function_locations,
+            self.module_qn_to_file_path,
+            self.repo_path,
+            self._rel_to_module,
+        )
 
     def _java_call_site_key(
         self, call_node: ASTNode, module_qn: str

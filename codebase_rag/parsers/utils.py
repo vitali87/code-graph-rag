@@ -417,6 +417,19 @@ def contains_node(parent: ASTNode, target: ASTNode) -> bool:
     )
 
 
+def unparenthesized(node: Node | None) -> Node | None:
+    """The expression under any parentheses: `(fn)()` still calls `fn`.
+
+    Without the unwrap a stored computed lookup invoked as `(fn)()` was not
+    recognised as a call, and `(registry[name])()` was not recognised as a
+    computed dispatch, so an unrelated invoked literal in the same body could
+    be recorded as the dynamic-trace site (#1543 review).
+    """
+    while node is not None and node.type == cs.TS_PARENTHESIZED_EXPRESSION:
+        node = next(iter(node.named_children), None)
+    return node
+
+
 def _decorator_tail_names(decorators: list[str]) -> set[str]:
     return {
         decorator.lstrip("@#[]() ")
@@ -1646,6 +1659,7 @@ def _register_method_qn(
     function_registry: FunctionRegistryTrieProtocol,
     start_line: int,
     start_col: int,
+    file_path: Path | None = None,
 ) -> tuple[str, _CppMember | None]:
     # The registered qn, and for C++ the member it names (issue #2455).
     if language == cs.SupportedLanguage.CPP:
@@ -1655,8 +1669,15 @@ def _register_method_qn(
         return cpp_member.qualified_name, cpp_member
     # TypeScript keeps a type and a same-named value as two nodes (#2520).
     kind = NodeType.METHOD if language in cs.JS_TS_LANGUAGES else None
+    # A Go method's natural qn is its receiver type's, which each build file
+    # declaring the method again shares (#3360 review).
+    origin = (
+        str(file_path)
+        if language == cs.SupportedLanguage.GO and file_path is not None
+        else None
+    )
     registered = function_registry.register_unique_qn(
-        method_qn, start_line, start_col, kind=kind
+        method_qn, start_line, start_col, kind=kind, origin=origin
     )
     return registered, None
 
@@ -1775,6 +1796,7 @@ def ingest_method(
         function_registry,
         method_start_line,
         method_start_col,
+        file_path,
     )
 
     decorators = []
@@ -2041,6 +2063,9 @@ def ingest_exported_function(
 
 
 def is_method_node(func_node: ASTNode, lang_config: LanguageSpec) -> bool:
+    if lang_config.language == cs.SupportedLanguage.JULIA:
+        return False
+
     current = func_node.parent
     if not isinstance(current, Node):
         return False
@@ -2279,3 +2304,26 @@ def written_simple_name(name: str) -> str:
     return name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT).rsplit(
         cs.SEPARATOR_DOT, 1
     )[-1]
+
+
+def method_signature_arity(method_name: str) -> int | None:
+    # Number of top-level parameters in a signatured method name
+    # (`readField(A,JsonReader,BoundField)` -> 3, `create()` -> 0); None when the
+    # name carries no signature (Python/JS methods). Commas inside generics
+    # (`Map<K, V>`) are nested, so only depth-0 commas separate parameters.
+    open_idx = method_name.find(cs.CHAR_PAREN_OPEN)
+    if open_idx < 0:
+        return None
+    inner = method_name[open_idx + 1 : method_name.rfind(cs.CHAR_PAREN_CLOSE)]
+    if not inner.strip():
+        return 0
+    depth = 0
+    count = 1
+    for ch in inner:
+        if ch in "<([":
+            depth += 1
+        elif ch in ">)]":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            count += 1
+    return count

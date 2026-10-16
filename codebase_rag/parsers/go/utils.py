@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Mapping
+from pathlib import Path, PurePosixPath
 
 from tree_sitter import Node
 
 from ... import constants as cs
 from ...types_defs import FunctionRegistryTrieProtocol, NodeType
-from ..utils import safe_decode_text
+from ...utils.path_utils import cached_relative_path
+from ..utils import safe_decode_text, unparenthesized
 
 # What a Go type name can declare: a struct (Class), a named or alias type,
 # or an interface. Receiver and constructor-return types name one of them.
@@ -31,6 +33,86 @@ def package_level_definitions(
         for qn in registry.find_ending_with(name)
         if registry.get(qn) in labels and in_package(qn)
     ]
+
+
+def one_declaration(
+    declared: list[str], variants: Mapping[str, tuple[str, ...]]
+) -> str | None:
+    """The declaration a Go name is, of the package-level `declared`: the
+    only one, or, for an interface each build declares again, the first of
+    its build variants. A call through it reaches the variant each build
+    holds (`CallResolver.go_variant_callees`). None for any other two."""
+    if len(declared) == 1:
+        return declared[0]
+    group = variants.get(declared[0], ()) if declared else ()
+    return min(declared) if declared and set(declared) <= set(group) else None
+
+
+def file_package_qn(
+    module_qn: str, path: Path | None, repo_path: Path, project_name: str
+) -> str:
+    """The package of Go file module `module_qn`, spelled the way the import
+    map spells one (`project.dir.sub`): its file's directory, whatever dots
+    the file's stem holds. `types.gen.go` is filed as `pkg.types.gen` but is
+    a file of `pkg` (#2616 review). A module with no recorded file (a mock
+    harness, or an unchanged file on an incremental run) falls back to the
+    qn above it."""
+    try:
+        parts = path.parent.relative_to(repo_path).parts if path else None
+    except ValueError:
+        parts = None
+    if parts is None:
+        return module_qn.rpartition(cs.SEPARATOR_DOT)[0]
+    return cs.SEPARATOR_DOT.join((project_name, *parts))
+
+
+def package_key(rel_path: str, clause: str | None) -> str:
+    """`dir:clause` for the Go file at repo-relative `rel_path`: a package is
+    its directory and `package` clause together, so `p` and its external
+    test package `p_test` in one directory stay apart."""
+    directory = PurePosixPath(rel_path).parent.as_posix()
+    return f"{directory}{cs.CHAR_COLON}{clause or ''}"
+
+
+def rel_file(file_path: Path | None, repo_path: Path) -> str:
+    # Spelled as a node's `path` and the go/types facts' files are.
+    return cached_relative_path(file_path, repo_path).as_posix() if file_path else ""
+
+
+def is_test_file(rel_path: str) -> bool:
+    # A `_test.go` file, compiled only under `go test`.
+    return PurePosixPath(rel_path).stem.endswith(cs.GO_TEST_FILE_SUFFIX)
+
+
+def declaration_scope(rel_path: str, package: str) -> str:
+    """The files of `package` (a `package_key`) that see a package-level
+    declaration in its Go file `rel_path`: all of them, or, for one in a
+    `_test.go` file, the test files alone. `go build` compiles none of
+    those, and the go/types helper answers a production file from the plain
+    package, built without them."""
+    return f"{package}{cs.GO_TEST_SCOPE_SUFFIX}" if is_test_file(rel_path) else package
+
+
+def package_key_dir(key: str) -> str:
+    return key.rpartition(cs.CHAR_COLON)[0]
+
+
+def module_root(
+    repo_path: Path, rel_dir: str, roots: dict[str, str | None]
+) -> str | None:
+    """The repo-relative directory of the nearest `go.mod` at or above
+    `rel_dir` (`.` for the repository root), memoised in `roots`, or None
+    outside any module."""
+    if rel_dir in roots:
+        return roots[rel_dir]
+    current = PurePosixPath(rel_dir)
+    found: str | None = None
+    for candidate in (current, *current.parents):
+        if (repo_path / candidate / cs.DEP_FILE_GOMOD).is_file():
+            found = candidate.as_posix()
+            break
+    roots[rel_dir] = found
+    return found
 
 
 def shares_package_clause(requester: str | None, other: str | None) -> bool:
@@ -112,16 +194,43 @@ def local_binding_scopes(func_node: Node) -> GoLocalScopes:
     local starts at the end of its declaration (`helper := helper()` reads
     the outer `helper`) and ends with the innermost block around it, an
     `if`/`for`/`switch` header's own implicit block included."""
-    scopes: dict[str, list[tuple[int, int]]] = {}
+    return {
+        name: tuple(span for span, _declaration in bindings)
+        for name, bindings in local_bindings(func_node).items()
+    }
+
+
+# A name a function binds for itself -> each declaration of it with the byte
+# span it is in scope over.
+GoLocalBindings = dict[str, list[tuple[tuple[int, int], Node]]]
+
+
+def local_bindings(func_node: Node) -> GoLocalBindings:
+    """`local_binding_scopes` with the declaring node of each span: a
+    parameter or variadic parameter declaration, a `var` or `const` spec, or
+    a statement binding a `left` list."""
+    bindings: GoLocalBindings = {}
     stack = [func_node]
     while stack:
         node = stack.pop()
         names = _bound_names(node)
         if names and (span := _binding_span(node)) is not None:
             for name in names:
-                scopes.setdefault(name, []).append(span)
+                bindings.setdefault(name, []).append((span, node))
         stack.extend(node.named_children)
-    return {name: tuple(spans) for name, spans in scopes.items()}
+    return bindings
+
+
+def declaration_at(bindings: GoLocalBindings, name: str, point: int) -> Node | None:
+    """The declaration local `name` refers to at byte `point`: of those in
+    scope there, the innermost, whose scope starts last since Go's scopes
+    nest. None when no local of that name is in scope."""
+    in_scope = [
+        (span[0], declaration)
+        for span, declaration in bindings.get(name, ())
+        if span[0] <= point < span[1]
+    ]
+    return max(in_scope, key=lambda entry: entry[0])[1] if in_scope else None
 
 
 def bound_at(scopes: GoLocalScopes, name: str, point: int) -> bool:
@@ -261,16 +370,20 @@ def _return_type_identifier(type_node: Node) -> str | None:
     if type_node.type == cs.TS_TYPE_IDENTIFIER and type_node.text:
         return safe_decode_text(type_node)
     if type_node.type == cs.TS_GO_QUALIFIED_TYPE:
-        package = type_node.child_by_field_name(cs.FIELD_GO_PACKAGE)
-        name = type_node.child_by_field_name(cs.FIELD_NAME)
-        if package is None or name is None:
-            return None
-        return f"{safe_decode_text(package)}{cs.SEPARATOR_DOT}{safe_decode_text(name)}"
+        return _qualified_type_text(type_node)
     if type_node.type in (cs.TS_GO_POINTER_TYPE, cs.TS_GENERIC_TYPE):
         for child in type_node.children:
             if name := _return_type_identifier(child):
                 return name
     return None
+
+
+def _qualified_type_text(type_node: Node) -> str | None:
+    package = type_node.child_by_field_name(cs.FIELD_GO_PACKAGE)
+    name = type_node.child_by_field_name(cs.FIELD_NAME)
+    if package is None or name is None:
+        return None
+    return f"{safe_decode_text(package)}{cs.SEPARATOR_DOT}{safe_decode_text(name)}"
 
 
 def type_identifier_text(type_node: Node) -> str | None:
@@ -283,12 +396,29 @@ def type_identifier_text(type_node: Node) -> str | None:
     return None
 
 
+def written_type_text(type_node: Node) -> str | None:
+    """`type_identifier_text` that keeps a package qualifier: `geo.Shape`
+    for `[]*geo.Shape`'s element, `Shape` for this package's. The bare name
+    of another package's type names whatever the reading package calls by
+    that name, so the reader resolves the qualifier through its imports
+    instead (issue #2483)."""
+    if type_node.type == cs.TS_GO_QUALIFIED_TYPE:
+        return _qualified_type_text(type_node)
+    if type_node.type == cs.TS_TYPE_IDENTIFIER and type_node.text:
+        return safe_decode_text(type_node)
+    for child in type_node.children:
+        if name := written_type_text(child):
+            return name
+    return None
+
+
 def call_receiver_chain(call_node: Node) -> tuple[Node, list[str]] | None:
     """`NewBox().With(1).Bump()` -> (the `NewBox()` call, ["With", "Bump"]).
 
     The method names called along a receiver chain, innermost first, and the
-    node the chain starts from: a call, or a composite literal with its
-    parentheses and `&` taken off (`(&Box{}).Bump()`). None when the callee
+    node the chain starts from: a call, a type assertion (`a.(Dog).Fetch()`),
+    or a composite literal with its parentheses and `&` taken off
+    (`(&Box{}).Bump()`). None when the callee
     is not a method on such a value; a variable, field or package receiver
     (`b.Bump()`, `pkg.F()`) is what the name-based resolver types already.
     """
@@ -314,24 +444,19 @@ def _value_receiver(operand: Node | None) -> Node | None:
     # A call or a composite literal under any parentheses. A unary operand
     # counts only around a literal, where `&Box{}` is Go's pointer to a fresh
     # value; `(*p).M()` and `(&x).M()` start from a variable instead.
-    node = _unparenthesized(operand)
+    node = unparenthesized(operand)
     if node is not None and node.type == cs.TS_GO_UNARY_EXPRESSION:
-        inner = _unparenthesized(node.child_by_field_name(cs.FIELD_OPERAND))
+        inner = unparenthesized(node.child_by_field_name(cs.FIELD_OPERAND))
         if inner is not None and inner.type == cs.TS_GO_COMPOSITE_LITERAL:
             return inner
         return None
     if node is not None and node.type in (
         cs.TS_GO_CALL_EXPRESSION,
         cs.TS_GO_COMPOSITE_LITERAL,
+        cs.TS_GO_TYPE_ASSERTION_EXPRESSION,
     ):
         return node
     return None
-
-
-def _unparenthesized(node: Node | None) -> Node | None:
-    while node is not None and node.type == cs.TS_PARENTHESIZED_EXPRESSION:
-        node = next(iter(node.named_children), None)
-    return node
 
 
 def _type_parameter_names(node: Node) -> frozenset[str]:

@@ -123,6 +123,23 @@ class BatchWrapper(TypedDict):
     batch: Sequence[BatchParams]
 
 
+# A Cypher parameter as the embedded engine is handed one: anything JSON can
+# hold, plus the ingestor's batch rows, named because a TypedDict is not a
+# Mapping[str, ...] subtype.
+type CypherParamValue = (
+    str
+    | int
+    | float
+    | bool
+    | None
+    | Sequence[CypherParamValue]
+    | Mapping[str, CypherParamValue]
+    | NodeBatchRow
+    | RelBatchRow
+)
+type CypherParams = Mapping[str, CypherParamValue]
+
+
 type SimpleName = str
 type QualifiedName = str
 type SimpleNameLookup = defaultdict[SimpleName, set[QualifiedName]]
@@ -185,6 +202,7 @@ class FunctionRegistryTrieProtocol(Protocol):
         start_line: int,
         start_col: int = 0,
         kind: NodeType | None = None,
+        origin: str | None = None,
     ) -> QualifiedName: ...
 
     def claim_other_space(self, natural_qn: QualifiedName, kind: NodeType) -> bool: ...
@@ -652,14 +670,6 @@ class LanguageQueries(TypedDict):
     config: LanguageSpec
     language: Language
     parser: Parser
-
-
-class FunctionNodeProps(TypedDict, total=False):
-    qualified_name: str
-    name: str | None
-    start_line: int
-    end_line: int
-    docstring: str | None
 
 
 # float admits find_duplicate_code's 0-1 similarity threshold (issue #1342).
@@ -1387,7 +1397,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.CLASS,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, generic_arity: int?, non_method_members: list[string]?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, generic_arity: int?, non_method_members: list[string]?, type_checking_only: boolean?}",
     ),
     NodeSchema(
         NodeLabel.FUNCTION,
@@ -1399,7 +1409,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.INTERFACE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, generic_arity: int?}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, generic_arity: int?, embeds: list[string]?, implementers_unknown: string?}",
     ),
     NodeSchema(
         NodeLabel.ENUM,
@@ -1607,6 +1617,13 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.CLASS,),
         RelationshipType.IMPLEMENTS,
         (NodeLabel.TYPE,),
+    ),
+    # A Go defined type that is no struct (`type HandlerFunc func(...)`)
+    # carries methods too, and implements an interface by having them.
+    RelationshipSchema(
+        (NodeLabel.TYPE,),
+        RelationshipType.IMPLEMENTS,
+        (NodeLabel.INTERFACE,),
     ),
     RelationshipSchema(
         # A method-body anonymous-class override is a Function node, so it

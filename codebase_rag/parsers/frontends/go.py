@@ -43,6 +43,9 @@ def _adapt_go_semantic_facts(facts: GoSemanticFacts) -> SemanticFacts:
             )
             for pair in facts.implements
         ],
+        analysed_roots=facts.analysed_modules,
+        checked_files=facts.checked_files,
+        compared_types=facts.compared_types,
     )
 
 

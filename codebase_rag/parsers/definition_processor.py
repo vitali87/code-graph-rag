@@ -43,6 +43,10 @@ from .field_nodes import PendingFieldType
 from .frontends.protocol import ImplementsPair, ResolvedCallSite
 from .function_ingest import FunctionIngestMixin
 from .go import utils as go_utils
+from .go.builds import Expr, GoBuilds
+from .go.interface_ingest import GoInterfaceMixin
+from .go.interfaces import GoInterfaceDecl, GoMethodSpec
+from .go.link_state import GoLinkState
 from .handlers import get_handler
 from .interface_fingerprint import interface_fingerprint
 from .java_generated import generator_hint
@@ -84,6 +88,9 @@ def _signature_docstring(node: ASTNode, language: cs.SupportedLanguage) -> str |
 
 class DefinitionProcessor(
     FunctionIngestMixin,
+    # Before ClassIngestMixin, whose abstract stub for the Go interface
+    # ingest would otherwise shadow the implementation.
+    GoInterfaceMixin,
     ClassIngestMixin,
     JsTsIngestMixin,
 ):
@@ -121,6 +128,10 @@ class DefinitionProcessor(
         # {go module qn: its `package` clause name}; Go package membership is
         # (directory, clause), so receiver binding needs both.
         self.go_package_names: dict[str, str] = {}
+        # Each Go file's build constraint, for telling a name each build
+        # declares again (`i_linux.go`, `i_windows.go`) from a redeclaration
+        # (shared with the call resolver and type inference).
+        self.go_builds = GoBuilds(repo_path)
         self.class_inheritance: dict[str, list[str]] = {}
         # {class qn: module qn of the file that DECLARED it}, written for
         # EVERY language at class ingest. `class_inheritance` and
@@ -293,6 +304,42 @@ class DefinitionProcessor(
         # for every ingested Go type. Go's type_spec start_point IS the name
         # token, so the frontend's pair positions join here directly (no alias).
         self.go_type_locations: dict[tuple[str, int, int], tuple[str, str]] = {}
+        # Go interfaces as method sets (issue #2483): each Go method's
+        # parameter count and package, each interface's embedded types as
+        # written, and the interfaces this run parsed, from which implicit
+        # satisfaction is computed once every type is registered.
+        self.go_methods: dict[str, GoMethodSpec] = {}
+        self.go_interfaces: dict[str, GoInterfaceDecl] = {}
+        self.go_interfaces_parsed: dict[str, str] = {}
+        # The Go pairs in interface_implementers by source, replaced each
+        # pass: go/types proofs, and name-and-arity matches (whose edges are
+        # labelled heuristic, and which the resolver reads to say so).
+        self.go_proven_pairs: set[tuple[str, str]] = set()
+        self.go_guessed_pairs: set[tuple[str, str]] = set()
+        # The module roots the go/types frontend analysed in this run (`.`
+        # for the repository's own): their pairs are the compiler's alone.
+        self.go_analysed_roots: set[str] = set()
+        # The repo-relative files those runs type-checked: a pair resting on
+        # a file the build left out was never compared by the compiler.
+        self.go_checked_files: set[str] = set()
+        # The declarations (file, line, col) of the types and interfaces
+        # those runs compared; a generic one in a checked file was not.
+        self.go_compared_types: set[tuple[str, int, int]] = set()
+        # Go package (`dir:clause`, or its test files' scope) -> the
+        # predeclared type names (`int`, `error`) it declares itself, refilled
+        # by each link (shared with the call resolver): there the name is the
+        # package's own type.
+        self.go_builtin_shadows: dict[str, frozenset[str]] = {}
+        # Go type -> method name -> the declarations its build variants hold
+        # in files its build compiles too, refilled by each link (shared with
+        # the call resolver).
+        self.go_variant_methods: dict[str, dict[str, list[str]]] = {}
+        # Go interface -> the declarations of its name each build makes
+        # (shared with the call resolver).
+        self.go_declaration_variants: dict[str, tuple[str, ...]] = {}
+        # (Go interface, implementer) -> the builds holding the pair (shared
+        # with the call resolver).
+        self.go_pair_builds: dict[tuple[str, str], Expr] = {}
         # (rel_file, type_start_line) -> class qn for every ingested C# type,
         # the reverse of the Roslyn fact keys, so partial declaration groups
         # join back to the Pass-2 Class nodes.
@@ -414,6 +461,20 @@ class DefinitionProcessor(
         self._handler = get_handler(cs.SupportedLanguage.PYTHON)
         self._func_class_captures_cache = func_class_captures_cache
 
+    def go_link_state(self) -> GoLinkState:
+        """The Go interface link's containers call resolution reads, by
+        reference: the link refills them in place."""
+        return GoLinkState(
+            guessed_implementations=self.go_guessed_pairs,
+            methods=self.go_methods,
+            checked_files=self.go_checked_files,
+            builtin_shadows=self.go_builtin_shadows,
+            variant_methods=self.go_variant_methods,
+            declaration_variants=self.go_declaration_variants,
+            pair_builds=self.go_pair_builds,
+            builds=self.go_builds,
+        )
+
     def reset_interface_implementers(self) -> None:
         """Forget every implementer pair, parsed or read back from the graph.
 
@@ -423,10 +484,13 @@ class DefinitionProcessor(
         a deleted implementer still counted: the remaining one lost the
         sole-implementer edge a fresh build emits.
         """
-        # In place: the call resolver holds both maps by reference.
+        # In place: the call resolver holds both maps by reference, and the
+        # guessed Go pairs too.
         self.interface_implementers.clear()
         self.rehydrated_interface_implementers.clear()
         self.rust_impl_owner_module.clear()
+        self.go_proven_pairs.clear()
+        self.go_guessed_pairs.clear()
 
     def _disambiguate_module_qn(self, module_qn: str, file_path: Path) -> str:
         # A notebook always carries its extension (`proj.analysis.ipynb`). No
@@ -499,9 +563,11 @@ class DefinitionProcessor(
         Runs once the registry holds every file's types (issue #1527); the
         queue empties, so a watch-mode re-parse only re-resolves its own.
         """
-        from .field_nodes import emit_field_type_edges
-        from .parameter_nodes import emit_parameter_type_edges
-        from .type_facts import TypeReferenceResolver, emit_type_edges
+        from .type_facts import (
+            TypeReferenceResolver,
+            emit_of_type_edges,
+            emit_type_edges,
+        )
 
         # Every queue, not just the first: a Parameter or Field fact with no
         # RETURNS/ACCEPTS fact beside it would otherwise be skipped outright,
@@ -523,11 +589,14 @@ class DefinitionProcessor(
         emitted = emit_type_edges(self.pending_type_facts, resolver, self.ingestor)
         # Parameter OF_TYPE edges resolve in the same pass, for the same
         # reason: the annotation may name a type from a later file.
-        emitted += emit_parameter_type_edges(
-            self.pending_parameter_types, resolver, self.ingestor
+        emitted += emit_of_type_edges(
+            cs.NodeLabel.PARAMETER,
+            self.pending_parameter_types,
+            resolver,
+            self.ingestor,
         )
-        emitted += emit_field_type_edges(
-            self.pending_field_types, resolver, self.ingestor
+        emitted += emit_of_type_edges(
+            cs.NodeLabel.FIELD, self.pending_field_types, resolver, self.ingestor
         )
         return emitted
 
@@ -639,27 +708,50 @@ class DefinitionProcessor(
             self._fold_overloads(
                 root_node, module_qn, language, queries, combined_captures
             )
-            self._ingest_inline_modules(
-                root_node,
-                module_qn,
-                language,
-                queries,
-                combined_captures=combined_captures,
-            )
-            self._ingest_all_functions(
-                root_node,
-                module_qn,
-                language,
-                queries,
-                combined_captures=combined_captures,
-            )
-            self._ingest_classes_and_methods(
-                root_node,
-                module_qn,
-                language,
-                queries,
-                combined_captures=combined_captures,
-            )
+            if language == cs.SupportedLanguage.JULIA:
+                # Julia ingests types BEFORE functions: a struct and a free
+                # function may share a name (separate namespaces), and the
+                # TYPE is the primary owner of it (issue #1882 review).
+                # The inline-module pass is skipped: a Julia `module` block
+                # is the file's declared module (an import index), not a
+                # nested module node, so a synthetic `fileqn.Module` node
+                # would clobber that model.
+                self._ingest_classes_and_methods(
+                    root_node,
+                    module_qn,
+                    language,
+                    queries,
+                    combined_captures=combined_captures,
+                )
+                self._ingest_all_functions(
+                    root_node,
+                    module_qn,
+                    language,
+                    queries,
+                    combined_captures=combined_captures,
+                )
+            else:
+                self._ingest_inline_modules(
+                    root_node,
+                    module_qn,
+                    language,
+                    queries,
+                    combined_captures=combined_captures,
+                )
+                self._ingest_all_functions(
+                    root_node,
+                    module_qn,
+                    language,
+                    queries,
+                    combined_captures=combined_captures,
+                )
+                self._ingest_classes_and_methods(
+                    root_node,
+                    module_qn,
+                    language,
+                    queries,
+                    combined_captures=combined_captures,
+                )
             if language == cs.SupportedLanguage.RUST:
                 self._finalise_rust_file(module_qn, root_node)
             if language in cs.JS_TS_LANGUAGES:

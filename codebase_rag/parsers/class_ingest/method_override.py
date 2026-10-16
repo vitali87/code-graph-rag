@@ -17,6 +17,7 @@ from ...utils.cpp_signatures import (
     parameter_types_may_match,
     pick_overload,
 )
+from ..utils import method_signature_arity
 
 # The graph's type nodes. Every one but a Type alias is a distinct type.
 _TYPE_KINDS = frozenset(
@@ -44,7 +45,11 @@ def process_all_method_overrides(
     impl_method_traits: dict[str, str] | None = None,
     inherent_impl_methods: set[str] | None = None,
     module_qns: Collection[str] = (),
+    linked_apart: Collection[str] = (),
 ) -> None:
+    # `linked_apart`: the types whose overrides another pass links (Go's
+    # interfaces, link_go_interfaces), which neither walk below visits. A
+    # walk per type up a chain of embeds was quadratic in its length.
     logger.info(logs.CLASS_PASS_4)
 
     implemented_interfaces = _invert_implementers(interface_implementers or {})
@@ -55,7 +60,7 @@ def process_all_method_overrides(
         # A dotless qn has no class to walk from; rpartition leaves class_qn
         # empty for it, which is the same set the membership test used to skip.
         class_qn, _, method_name = method_qn.rpartition(cs.SEPARATOR_DOT)
-        if not class_qn:
+        if not class_qn or class_qn in linked_apart:
             continue
         # Positive evidence first: a recorded trait binding names the parent
         # outright, so it outranks a classification drawn from absence,
@@ -86,13 +91,16 @@ def process_all_method_overrides(
             csharp_override_methods,
             type_scopes,
         )
-    _process_mro_shadow_overrides(function_registry, class_inheritance, ingestor)
+    _process_mro_shadow_overrides(
+        function_registry, class_inheritance, ingestor, linked_apart
+    )
 
 
 def _process_mro_shadow_overrides(
     function_registry: FunctionRegistryTrieProtocol,
     class_inheritance: dict[str, list[str]],
     ingestor: IngestorProtocol,
+    linked_apart: Collection[str] = (),
 ) -> None:
     # A mixin's method can shadow a same-name method from a SIBLING base
     # branch only in a combining subclass's MRO: django's
@@ -111,6 +119,8 @@ def _process_mro_shadow_overrides(
     ancestor_cache: dict[str, set[str]] = {}
     emitted: set[tuple[str, str]] = set()
     for class_qn in sorted(class_inheritance):
+        if class_qn in linked_apart:
+            continue
         providers = _mro_method_providers(
             class_qn, class_inheritance, function_registry, method_names_cache
         )
@@ -274,29 +284,6 @@ def _invert_implementers(
     return inverted
 
 
-def _signature_arity(method_name: str) -> int | None:
-    # Number of top-level parameters in a signatured method name
-    # (`readField(A,JsonReader,BoundField)` -> 3, `create()` -> 0); None when the
-    # name carries no signature (Python/JS methods). Commas inside generics
-    # (`Map<K, V>`) are nested, so only depth-0 commas separate parameters.
-    open_idx = method_name.find(cs.CHAR_PAREN_OPEN)
-    if open_idx < 0:
-        return None
-    inner = method_name[open_idx + 1 : method_name.rfind(cs.CHAR_PAREN_CLOSE)]
-    if not inner.strip():
-        return 0
-    depth = 0
-    count = 1
-    for ch in inner:
-        if ch in "<([":
-            depth += 1
-        elif ch in ">)]":
-            depth -= 1
-        elif ch == "," and depth == 0:
-            count += 1
-    return count
-
-
 def _find_override_by_arity(
     parent_class: str,
     method_name: str,
@@ -307,7 +294,7 @@ def _find_override_by_arity(
     # is a distinct qn. Java overriding is by name + erased parameter types, so fall
     # back to a UNIQUE parent method with the same simple name and arity; ambiguous
     # overloads (>1 candidate) are left unmatched rather than guessed.
-    arity = _signature_arity(method_name)
+    arity = method_signature_arity(method_name)
     if arity is None:
         return None
     base_name = method_name.split(cs.CHAR_PAREN_OPEN, 1)[0]
@@ -320,7 +307,7 @@ def _find_override_by_arity(
         if cs.SEPARATOR_DOT in leaf.split(cs.CHAR_PAREN_OPEN, 1)[0]:
             continue  # a method of a nested class, not directly on parent_class
         if leaf.split(cs.CHAR_PAREN_OPEN, 1)[0] == base_name and (
-            _signature_arity(leaf) == arity
+            method_signature_arity(leaf) == arity
         ):
             matches.append(qn)
     return matches[0] if len(matches) == 1 else None

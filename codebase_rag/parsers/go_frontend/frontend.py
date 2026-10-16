@@ -24,7 +24,7 @@ from loguru import logger
 from ... import constants as cs
 from ... import logs as ls
 from ...config import settings
-from ..build_lock import build_cached_artifact
+from ..build_lock import artifact_fresh, build_cached_artifact, newest_source_mtime
 from ..frontend_mode import resolve_frontend_mode
 from ..go.module_paths import discover_go_module_paths
 
@@ -67,7 +67,9 @@ class GoSemanticFacts(NamedTuple):
     # not fabricate a first-party edge there.
     external_sites: set[CallSiteKey]
     # First-party concrete-type -> first-party interface pairs the compiler
-    # proved; the only source of Go IMPLEMENTS edges (no syntactic base list).
+    # proved. With them loaded they are the only Go IMPLEMENTS edges; without
+    # them, the tree-sitter path matches method names and arities instead
+    # (issue #2483), since there is no syntactic base list to read.
     implements: list[GoImplements]
     # Module anchors whose tool run FAILED (timeout, crash, unparseable
     # output). A failed anchor drops only its own module to the heuristics,
@@ -83,6 +85,20 @@ class GoSemanticFacts(NamedTuple):
     # across every run that omitted it -- the aliasing `_empty_facts` exists to
     # avoid. An empty tuple is immutable and safe to share.
     degraded_modules: tuple[str, ...] = ()
+    # Module anchors whose tool run SUCCEEDED, spelled as `degraded_modules`
+    # is. Within one, the implements pairs above are the whole answer, even
+    # an empty one; the name-and-arity fallback keeps to the rest (#2483).
+    analysed_modules: tuple[str, ...] = ()
+    # The repo-relative files those runs type-checked. A run sees only the
+    # files the current build selects, so a file for another GOOS or build
+    # tag, or one of a package that failed to type-check, was never compared:
+    # the pairs above are the answer only where every file a pair rests on
+    # is here (PR #3360 review).
+    checked_files: frozenset[str] = frozenset()
+    # The declarations (file, line, col) of the types and interfaces the
+    # runs compared. A checked file can declare one they skip, a generic
+    # type or interface, and no pair says anything of it.
+    compared_types: frozenset[tuple[str, int, int]] = frozenset()
 
 
 def _empty_facts() -> GoSemanticFacts:
@@ -127,6 +143,8 @@ _RUN_TIMEOUT = 900
 # same restore-at-build posture as the C# frontend: an offline failure degrades
 # to tree-sitter, never worse.
 _GO_ENV = {"GOTOOLCHAIN": "local", "CGO_ENABLED": "0"}
+# Where a binary runs, which the helper's own build must leave to the host.
+_TARGET_ENV = frozenset({"GOOS", "GOARCH"})
 
 
 def go_frontend_available() -> bool:
@@ -173,11 +191,7 @@ def _cache_dir() -> Path:
 def _newest_source_mtime() -> float:
     # go.mod/go.sum pin the resolved deps, so the three tracked sources are the
     # complete build input; a bump to any of them re-triggers the compile.
-    return max((_TOOL_SRC / name).stat().st_mtime for name in _TOOL_SOURCES)
-
-
-def _binary_fresh(binary: Path) -> bool:
-    return binary.is_file() and binary.stat().st_mtime >= _newest_source_mtime()
+    return newest_source_mtime(_TOOL_SRC, _TOOL_SOURCES)
 
 
 def _compile_tool(go: str, src: Path, out: Path) -> bool | None:
@@ -199,7 +213,7 @@ def _compile_tool(go: str, src: Path, out: Path) -> bool | None:
             encoding=cs.ENCODING_UTF8,
             check=False,
             timeout=_BUILD_TIMEOUT,
-            env={**os.environ, **_GO_ENV},
+            env=_host_build_env(),
         )
     except subprocess.TimeoutExpired:
         # A wedged build degrades exactly like a failed one: the caller falls
@@ -214,6 +228,17 @@ def _compile_tool(go: str, src: Path, out: Path) -> bool | None:
     if proc.returncode != 0:
         logger.warning(ls.GO_FRONTEND_BUILD_FAILED.format(stderr=proc.stderr.strip()))
     return proc.returncode == 0
+
+
+def _host_build_env() -> dict[str, str]:
+    """The environment the helper is built in: the host's GOOS and GOARCH.
+
+    A GOOS or GOARCH set for the analysis (`GOOS=windows cgr ...` on Linux)
+    picks the build go/types reads, and the helper's run honours it; built
+    under it, the helper was a Windows binary this host cannot run, and the
+    index fell back to tree-sitter (#3360 review)."""
+    env = {key: value for key, value in os.environ.items() if key not in _TARGET_ENV}
+    return {**env, **_GO_ENV}
 
 
 def _dotted(version: tuple[int, ...]) -> str:
@@ -354,7 +379,7 @@ def _build_tool(go: str) -> Path | None:
     src = cache / "src"
     out = cache / "out"
     binary = out / _BINARY_NAME
-    if _binary_fresh(binary):
+    if artifact_fresh(binary, _newest_source_mtime):
         return binary
     version = _toolchain_version(go)
     if (required := _too_old(version)) is not None:
@@ -372,7 +397,7 @@ def _build_tool(go: str) -> Path | None:
     return build_cached_artifact(
         cache,
         binary,
-        lambda: _binary_fresh(binary),
+        lambda: artifact_fresh(binary, _newest_source_mtime),
         lambda: _compile_and_remember(go, src, out, marker, version),
         _BUILD_LOCK,
         _LOCK_TRIES,
@@ -431,6 +456,13 @@ def _parse_payload(stdout: str, stderr: str = "") -> GoSemanticFacts | None:
                 )
                 for pair in payload.get("implements", [])
             ],
+            checked_files=frozenset(
+                _checked_file(path) for path in payload.get("checked", [])
+            ),
+            compared_types=frozenset(
+                (str(_checked_file(fact["file"])), int(fact["line"]), int(fact["col"]))
+                for fact in payload.get("compared", [])
+            ),
         )
     except (KeyError, TypeError, ValueError, AttributeError):
         # A malformed fact entry (missing key, non-int position, non-object
@@ -456,6 +488,12 @@ def _module_anchors(repo_path: Path) -> list[Path]:
     # silently miss every nested module's local calls (issue #1227).
     anchors = {anchor for _, _, anchor in discover_go_module_paths(repo_path)}
     return sorted(anchors)
+
+
+def _checked_file(path: object) -> str:
+    if not isinstance(path, str):
+        raise TypeError(path)
+    return path
 
 
 def _prefix_facts(facts: GoSemanticFacts, prefix: str) -> GoSemanticFacts:
@@ -487,6 +525,10 @@ def _prefix_facts(facts: GoSemanticFacts, prefix: str) -> GoSemanticFacts:
             )
             for pair in facts.implements
         ],
+        checked_files=frozenset(_rel(path) for path in facts.checked_files),
+        compared_types=frozenset(
+            (_rel(file), line, col) for file, line, col in facts.compared_types
+        ),
     )
 
 
@@ -544,6 +586,9 @@ def run_go_frontend(
         return _empty_facts()
     merged = _empty_facts()
     degraded: list[str] = []
+    analysed: list[str] = []
+    checked: set[str] = set()
+    compared: set[tuple[str, int, int]] = set()
     for anchor in anchors:
         prefix = "" if anchor == repo_path else anchor.relative_to(repo_path).as_posix()
         raw = _run_tool_once(binary, anchor, ignored_dirs)
@@ -555,8 +600,16 @@ def run_go_frontend(
             degraded.append(prefix or ".")
             logger.warning(ls.GO_FRONTEND_ANCHOR_DEGRADED.format(anchor=anchor))
             continue
+        analysed.append(prefix or ".")
         facts = _prefix_facts(raw, prefix)
         merged.call_sites.update(facts.call_sites)
         merged.external_sites.update(facts.external_sites)
         merged.implements.extend(facts.implements)
-    return merged._replace(degraded_modules=tuple(degraded))
+        checked.update(facts.checked_files)
+        compared.update(facts.compared_types)
+    return merged._replace(
+        degraded_modules=tuple(degraded),
+        analysed_modules=tuple(analysed),
+        checked_files=frozenset(checked),
+        compared_types=frozenset(compared),
+    )

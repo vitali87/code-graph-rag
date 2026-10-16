@@ -41,7 +41,9 @@ from .dart import (
     dart_return_type_name,
 )
 from .endpoints import emit_endpoints, queue_endpoints
+from .go import interfaces as go_interfaces
 from .go import utils as go_utils
+from .go.builds import GoBuilds
 from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
 from .parameter_nodes import (
@@ -268,6 +270,7 @@ class FunctionIngestMixin:
     simple_name_lookup: SimpleNameLookup
     module_qn_to_file_path: dict[str, Path]
     go_package_names: dict[str, str]
+    go_builds: GoBuilds
     java_anon_overrides: list[tuple[str, str, str, str]]
     pending_endpoints: list[tuple[cs.NodeLabel, str, list[str], str | None]]
     pending_type_facts: list[PendingTypeFact]
@@ -279,6 +282,7 @@ class FunctionIngestMixin:
     _deferred_parent_links: list[DeferredParentLink]
     method_return_types: dict[str, str]
     go_function_return_types: dict[str, str]
+    go_methods: dict[str, go_interfaces.GoMethodSpec]
     cpp_out_of_class_methods: dict[tuple[str, int], tuple[str, str]]
     function_locations: FunctionLocations
     cpp_definition_spans: dict[str, list[CppDefinitionSpan]]
@@ -1222,13 +1226,33 @@ class FunctionIngestMixin:
         if self.function_registry.get(same_file) is not None:
             return same_file
         method_file = self.module_qn_to_file_path.get(module_qn)
-        for qn in self.simple_name_lookup.get(receiver_type, set()):
-            if self.function_registry.get(qn) not in _GO_TYPE_NODE_TYPES:
-                continue
-            type_module = qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-            if self._go_type_visible_from(type_module, module_qn, method_file):
-                return qn
-        return same_file
+        visible = sorted(
+            qn
+            for qn in self.simple_name_lookup.get(receiver_type, set())
+            if self.function_registry.get(qn) in _GO_TYPE_NODE_TYPES
+            and self._go_type_visible_from(
+                qn.rsplit(cs.SEPARATOR_DOT, 1)[0], module_qn, method_file
+            )
+        )
+        if len(visible) > 1:
+            # A type each build declares again (`t_linux.go`, `t_windows.go`):
+            # the one a build compiling this file holds, else the first by
+            # name, never whichever a set yields first, which changes with
+            # the process (#3360 review).
+            method_rel = go_utils.rel_file(method_file, self.repo_path)
+            building = [
+                qn
+                for qn in visible
+                if self.go_builds.together((method_rel, self._go_type_rel_file(qn)))
+            ]
+            visible = building or visible
+        return visible[0] if visible else same_file
+
+    def _go_type_rel_file(self, type_qn: str) -> str:
+        return go_utils.rel_file(
+            self.module_qn_to_file_path.get(type_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]),
+            self.repo_path,
+        )
 
     def _go_type_visible_from(
         self, type_module: str, method_module: str, method_file: Path | None
@@ -1314,6 +1338,14 @@ class FunctionIngestMixin:
                         qualified_name=method_qn,
                         container_qn=container_qn,
                     ),
+                )
+                rel_file = go_utils.rel_file(entry.file_path, self.repo_path)
+                self.go_methods[method_qn] = go_interfaces.GoMethodSpec(
+                    go_interfaces.signature(entry.method_node),
+                    go_utils.package_key(
+                        rel_file, self.go_package_names.get(entry.module_qn)
+                    ),
+                    rel_file,
                 )
             # Record the method's return type so a chained call `c.Root().Run()`
             # resolves `Run` on the type `Root()` returns.
@@ -1440,9 +1472,13 @@ class FunctionIngestMixin:
             self._mark_js_ts_name_scope(
                 func_node, resolution.qualified_name, func_props
             )
-        is_macro = func_node.type == cs.TS_RS_MACRO_DEFINITION
+        is_macro = func_node.type in (
+            cs.TS_RS_MACRO_DEFINITION,
+            cs.TS_JULIA_MACRO_DEFINITION,
+        )
         if is_macro:
-            # Rust macros live in a separate namespace from functions; Pass-3 gates
+            # Rust and Julia macros live in a separate namespace from
+            # functions (Julia's `@name` vs `name`); Pass-3 gates
             # macro-invocation vs fn-call binding on macro_qns, and the persisted
             # property lets incremental runs rehydrate the set for UNCHANGED files
             # (the is_property pattern).

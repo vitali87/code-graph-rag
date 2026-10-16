@@ -828,6 +828,7 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
     # A module's export table, CommonJS publications included, is the whole
     # API the re-export walk follows: a re-parse must not keep a stale one.
     processor.js_export_bindings = {"m": {"Svc": JsExport("m.svc.Svc", local=False)}}
+    processor._julia_scope_map_keys = {"m": {"m.Inner"}}
 
     processor._clear_module_import_state("m")
 
@@ -835,6 +836,7 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
     assert processor.dart_prefix_shadows.get("m") is None
     assert processor.dart_import_aliases.get("m") is None
     assert processor.dart_exposed_libraries.get("m") is None
+    assert processor._julia_scope_map_keys.get("m") is None
     # The control: the mapping it sits beside is emptied, not dropped, so
     # this is the documented reset rather than a wholesale delete.
     assert processor.import_mapping["m"] == {}

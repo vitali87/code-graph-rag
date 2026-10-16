@@ -32,6 +32,7 @@ LITELLM_NOT_RUNNING = (
     "Make sure LiteLLM proxy is running and API key is valid."
 )
 UNKNOWN_PROVIDER = "Unknown provider '{provider}'. Available providers: {available}"
+UNKNOWN_PROVIDER_SUGGESTION = ". Did you mean '{suggestion}'?"
 
 # Dependency errors
 SEMANTIC_EXTRA = "Semantic search requires 'semantic' extra: uv sync --extra semantic"
@@ -110,6 +111,22 @@ QDRANT_API_KEY_OVER_HTTP = (
     "key unencrypted. Use an https:// QDRANT_URL, or set "
     "QDRANT_ALLOW_INSECURE_API_KEY=true if the connection is protected another "
     "way (for example, it never leaves the machine)."
+)
+
+SQLITE_VECTOR_DIM_MISMATCH = (
+    "SQLite vector store '{path}' has vector dimension {dim}, expected "
+    "{expected}. Set SQLITE_VECTOR_DIM to the embedding model's output size, "
+    "or re-index with --clean to rebuild the store with the new size."
+)
+SQLITE_VEC_NOT_INSTALLED = (
+    "CGR_VECTOR_STORE_BACKEND=sqlite needs sqlite-vec, which is not installed. "
+    "Install it with `pip install 'code-graph-rag[sqlite-vec]'` (or "
+    "`uv sync --extra sqlite-vec`)."
+)
+SQLITE_VEC_EXTENSIONS_UNSUPPORTED = (
+    "CGR_VECTOR_STORE_BACKEND=sqlite loads the sqlite-vec extension, but this "
+    "Python's sqlite3 module was built without extension loading. Use a Python "
+    "that has it (uv-managed Pythons do), or set CGR_VECTOR_STORE_BACKEND=qdrant."
 )
 
 EMBEDDING_DIM_MISMATCH = (
@@ -195,6 +212,14 @@ ACCESS_DENIED = "Access denied: Cannot access files outside the project root."
 
 
 # Exception classes
+class UnknownProviderError(ValueError):
+    """A model role names a provider nothing serves (issue #2897).
+
+    Its own type so a caller that turns a missing key into advice does not
+    turn this into advice about a key no setting can supply.
+    """
+
+
 class LLMGenerationError(Exception):
     pass
 
@@ -212,6 +237,17 @@ GRAPH_UNREACHABLE = (
     "Error: cannot reach Memgraph at {address} ({error}). Start the stack with "
     "`cgr daemon up`, or set MEMGRAPH_HOST/MEMGRAPH_PORT. `cgr doctor` checks "
     "the setup."
+)
+MGCLIENT_MISSING = (
+    "Error: GRAPH_BACKEND=memgraph needs the Memgraph driver, which is not "
+    "installed. Install it with `pip install 'code-graph-rag[memgraph]'` (or "
+    "`uv sync --extra memgraph`), or unset GRAPH_BACKEND to use the embedded "
+    "graph, which needs no server."
+)
+EMBEDDED_GRAPH_UNAVAILABLE = (
+    "Error: cannot open the embedded graph at {path} ({error}). Set "
+    "SQLITE_GRAPH_PATH to a writable file, or GRAPH_BACKEND=memgraph to use "
+    "a server."
 )
 GRAPH_CREDENTIALS_REFUSED = (
     "Error: Memgraph at {address} refused the credentials ({error}). Set "

@@ -249,6 +249,11 @@ CLI_ERR_CLEAN_UNKNOWN_PROJECTS = (
 CLI_MSG_CLEAN_ABORTED = "Aborted: the graph was left untouched."
 CLI_MSG_DELETING_PROJECT = "Deleting project '{project_name}' from the graph..."
 CLI_MSG_PROJECT_DELETED = "Project '{project_name}' deleted successfully."
+CLI_WARN_DELETE_PROJECT_SHARED_ROOT = (
+    "Warning: project(s) {projects} were indexed from the same directory as "
+    "'{project_name}' ({root_path}). Only what '{project_name}' owns is "
+    "deleted; the Folder and File nodes they also hold are kept."
+)
 # Deleting never defaults to the current directory (issue #2415).
 CLI_ERR_PROJECT_NAME_REQUIRED = (
     "Error: name the project with --project, or pass --repo-path."
@@ -327,6 +332,11 @@ CHECK_BASE_NOT_A_COMMIT = (
 CHECK_SCOPE_OF_OTHER_PROJECT = (
     "The exclusion scope stamped in this repository belongs to project {other}, "
     "not {project}; re-index {project} (or check {other}) before running the check"
+)
+CHECK_SCOPE_OF_UNNAMED_RUN = (
+    "The exclusion scope stamped in this repository was written by a run that "
+    "named no project, so it cannot stand for project {project}; re-index with "
+    "--project-name {project}, or run the check without --project"
 )
 CHECK_NOT_INDEXED = (
     "Project {project} is not indexed; run 'cgr start --update-graph' at the "
@@ -740,6 +750,15 @@ INTERACTIVE_BFS_MAX_DEPTH = 10
 INTERACTIVE_DEFAULT_GROUP = "."
 
 MSG_SURGICAL_SUCCESS = "Successfully applied surgical code replacement in: {path}"
+MSG_SURGICAL_AMBIGUOUS = (
+    "Failed to apply surgical replacement in {path}: the target code occurs "
+    "{count} times, starting on lines {lines}. The file was not changed; "
+    "include enough surrounding code for the target to match once."
+)
+# An empty or one-character target can match on every line; the refusal
+# names this many of them.
+SURGICAL_MATCH_LINES_SHOWN = 10
+SURGICAL_MORE_LINES = ", ..."
 # Appended to a chat write tool's result by its re-ingest (issue #2916).
 MSG_CHAT_GRAPH_UPDATED = (
     " The knowledge graph now reflects this change: re-ingested {files} "
@@ -761,6 +780,9 @@ PATCH_IDENTIFIER_MISMATCH = (
 )
 PATCH_NOT_AN_IDENTIFIER = "{path}:{line}:{col} is not a whole identifier"
 PATCH_PARSE_FAILED = "{path} no longer parses after the patch"
+PATCH_UNENCODABLE = (
+    "{path} declares the {codec} encoding, which cannot hold the new text"
+)
 PATCH_FORMAT_DRIFT = "{path} applied, but {tool} would reformat it"
 PATCH_OK = "{path}: {count} edit(s) applied"
 # `parses is None` means no grammar was available, so the patch was checked
@@ -870,6 +892,20 @@ RENAME_WRONG_ROOT = (
     "Project {project} was not indexed from this server's repository; "
     "rename it from the MCP server rooted at its source tree"
 )
+RENAME_GO_IMPLEMENTERS_UNKNOWN = (
+    "Refusing to rename {qn}: Go interface {interface} declares {name}, and cgr "
+    "cannot tell which types implement it ({why}). A type that satisfies it "
+    "through {name}, or the interface itself, could be left under the old name "
+    "and stop compiling. Rename it by hand and run `go build ./...` and "
+    "`go vet ./...` for each build"
+)
+RENAME_GO_IMPLEMENTERS_UNKNOWN_WHY = {
+    "builds": "its method set differs between builds in more ways than cgr tells apart",
+    "embeds": "it embeds an interface cgr cannot resolve",
+    "constraint": "whether a type implements it rests on a build constraint "
+    "cgr cannot read or decide",
+}
+RENAME_GO_IMPLEMENTERS_UNKNOWN_WHY_OTHER = "its implementers are unknown"
 RENAME_STRUCTURAL_UNLOCATABLE = (
     "Cannot rename {qn}: {count} structural edge(s) (inherits, accepts, returns) "
     "carry no rewrite site, so the rename would leave them pointing at the old name"
@@ -1008,6 +1044,11 @@ SIGNATURE_ROLLBACK_REFUSED = (
     "edit was recorded on top of it, so it was not rolled back; undo the later "
     "edit and rerun"
 )
+SIGNATURE_ROLLBACK_FAILED = (
+    "Signature change failed its postcondition ({reasons}) and its rollback "
+    "raised ({error}); its files may remain modified, so check the working "
+    "tree and rebuild the graph before the next graph-backed operation"
+)
 SIGNATURE_ROLLBACK_UNMEASURED = (
     "Signature change rolled back after its postcondition failed ({reasons}), "
     "but the graph could not be re-ingested afterwards ({error}); rebuild the "
@@ -1056,6 +1097,10 @@ DICT_KEY_APPLIED = "applied"
 DICT_KEY_SUCCESS = "success"
 DICT_KEY_QUERY_USED = "query_used"
 TIKTOKEN_ENCODING = "cl100k_base"
+# Without the encoding's BPE file, which tiktoken downloads on first use, a
+# token is estimated as this many bytes of UTF-8: about what cl100k_base
+# averages on code and JSON (issue #2914).
+TOKEN_ESTIMATE_BYTES_PER_TOKEN = 4
 QUERY_SUMMARY_SUCCESS = "Successfully retrieved {count} item(s) from the graph."
 QUERY_SUMMARY_TRUNCATED = (
     "Results truncated: showing {kept} of {total} items (~{tokens} tokens, limit {max_tokens}). "

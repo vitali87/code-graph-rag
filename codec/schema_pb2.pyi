@@ -553,20 +553,22 @@ class Class(_message.Message):
     def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ..., is_exported: bool = ..., namespace: _Optional[str] = ..., generic_arity: _Optional[int] = ...) -> None: ...
 
 class Interface(_message.Message):
-    __slots__ = ("qualified_name", "name", "path", "absolute_path", "namespace", "generic_arity")
+    __slots__ = ("qualified_name", "name", "path", "absolute_path", "namespace", "generic_arity", "implementers_unknown")
     QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     PATH_FIELD_NUMBER: _ClassVar[int]
     ABSOLUTE_PATH_FIELD_NUMBER: _ClassVar[int]
     NAMESPACE_FIELD_NUMBER: _ClassVar[int]
     GENERIC_ARITY_FIELD_NUMBER: _ClassVar[int]
+    IMPLEMENTERS_UNKNOWN_FIELD_NUMBER: _ClassVar[int]
     qualified_name: str
     name: str
     path: str
     absolute_path: str
     namespace: str
     generic_arity: int
-    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ..., absolute_path: _Optional[str] = ..., namespace: _Optional[str] = ..., generic_arity: _Optional[int] = ...) -> None: ...
+    implementers_unknown: str
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ..., absolute_path: _Optional[str] = ..., namespace: _Optional[str] = ..., generic_arity: _Optional[int] = ..., implementers_unknown: _Optional[str] = ...) -> None: ...
 
 class Enum(_message.Message):
     __slots__ = ("qualified_name", "name", "path", "absolute_path", "namespace")
