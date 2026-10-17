@@ -610,6 +610,53 @@ def _import_does_not_redirect_construction(tmp_path: Path, source: str) -> None:
     assert not any("Helpers" in dst for _src, dst in instantiates)
 
 
+def test_stored_callable_without_calls_stays_live(tmp_path: Path) -> None:
+    # A file whose methods never call anything still has to reach the class
+    # caller pass. Otherwise a stored array or closure gets no REFERENCES
+    # edge and the private target is reported dead.
+    ingestor = _index(
+        tmp_path,
+        {
+            "src/Quiet.php": r"""<?php
+namespace App;
+
+class Quiet
+{
+    public function hold(): callable
+    {
+        $cb = [$this, 'normalize'];
+        $upper = function (string $value): string {
+            return $value;
+        };
+        return $cb;
+    }
+
+    private function normalize(string $value): string
+    {
+        return $value;
+    }
+
+    private function unused(): void
+    {
+    }
+}
+"""
+        },
+    )
+    quiet = f"{_PROJECT}.src.Quiet.Quiet"
+    refs = _edges(ingestor, cs.RelationshipType.REFERENCES.value)
+    closure = _one(
+        {qn for qn in _defined(ingestor, f"{quiet}.hold.") if ".anonymous_" in qn},
+        "closure assigned in hold",
+    )
+    assert (f"{quiet}.hold", f"{quiet}.normalize") in refs
+    assert (f"{quiet}.hold", closure) in refs
+    dead = _dead(ingestor)
+    assert f"{quiet}.normalize" not in dead, sorted(dead)
+    assert closure not in dead, sorted(dead)
+    assert f"{quiet}.unused" in dead, sorted(dead)
+
+
 def test_function_import_does_not_redirect_construction(tmp_path: Path) -> None:
     _import_does_not_redirect_construction(
         tmp_path,

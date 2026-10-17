@@ -2927,6 +2927,7 @@ class CallProcessor:
                     cs.SupportedLanguage.CSHARP,
                     cs.SupportedLanguage.CPP,
                     cs.SupportedLanguage.DART,
+                    cs.SupportedLanguage.PHP,
                 )
                 and language not in _JS_TS_LANGUAGES
             ):
@@ -2936,10 +2937,12 @@ class CallProcessor:
                 # member initializer list (`: buffer(g, 0)`) runs base
                 # ctors without any call_expression node, Dart, where
                 # a getter body can read another getter (`=> _wonders.length`,
-                # issue #873), and JS/TS, where a method's inline callback
+                # issue #873), JS/TS, where a method's inline callback
                 # (`run() { return () => 1; }`) gets its REFERENCES edge only
-                # when the class pass runs (issue #970); these passes run per
-                # caller inside class processing, so they proceed.
+                # when the class pass runs (issue #970), and PHP, where a
+                # method can store `[$this, 'm']` or a closure without any
+                # call node (issue #3117). These passes run per caller inside
+                # class processing, so they proceed.
                 return
             self._process_calls_in_classes(
                 root_node,
