@@ -100,7 +100,12 @@ every site was rewritten and nothing else still needs it: no reference to
 it as a value (a callback), and no import of it still used, re-exported or
 listed in `__all__`. It goes together with the import entries that bound
 its name and are no longer used (`from pkg.util import wrapper, other`
-keeps `other`; a statement binding only the name goes).
+keeps `other`). A statement binding only the name still loads its module,
+so the module's import-time work keeps running: `from pkg.util import
+wrapper` becomes `import pkg.util`, and `import { wrapper } from './util'`
+becomes `import './util'`. Only an import that loads nothing new goes: a
+type-only import, or `from . import wrapper`, whose package is loaded
+before the importer runs.
 
 ## Atomicity and contract
 
