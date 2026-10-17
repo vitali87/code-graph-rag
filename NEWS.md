@@ -11,10 +11,11 @@ the README. The release workflow prepends feature entries via
 (dropping non-feature themes), and moves the marker below the block it
 inserted; hand edits remain welcome between releases and render too.
 
+- **Signature**: Implemented header reading and argument binding for rewrite functionality.
+<!-- latest-release-end -->
 - **Migration**: Prevented unintended purging of shared Folder/File nodes.
 - **Engine Operations**: Restored `delete-project` and stats execution on the embedded engine.
 - **Dependencies**: Updated `mcp` to version 1.30.0 to address GHSA-84m7-p3x7-pcfv.
-<!-- latest-release-end -->
 - **Contextual Queries**: Support for more detailed context queries has been added, including reasons and evaluation ingestor reads, enhancing the understanding of code interactions.
 - **Graph Improvements**: The graph analysis capabilities have been expanded to follow cross-service links and implementors/overrides, providing a more comprehensive view of code dependencies.
 - **Improved Logging & Error Handling**: Logging has been refined to provide more context, including per-symbol indexing and connection lifecycle details. Error messages are clearer, and the CLI handles unreachable or login-refusing Memgraph instances gracefully.

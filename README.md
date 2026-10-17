@@ -61,9 +61,7 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **Migration**: Prevented unintended purging of shared Folder/File nodes.
-- **Engine Operations**: Restored `delete-project` and stats execution on the embedded engine.
-- **Dependencies**: Updated `mcp` to version 1.30.0 to address GHSA-84m7-p3x7-pcfv.
+- **Signature**: Implemented header reading and argument binding for rewrite functionality.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
