@@ -292,6 +292,13 @@ CREDITS_URL = "https://docs.code-graph-rag.com/credits/"
 CLI_MSG_CREDITS = "Third-party credits: {url}"
 CLI_MSG_CREDITS_NOTICES = "Third-party notices: {name}, beside this binary"
 THIRD_PARTY_NOTICES_SUFFIX = ".THIRD_PARTY_NOTICES.txt"
+# The project's GitHub Sponsors page, named beside the credits by `--version`
+# and, on a terminal, after most commands finish.
+SPONSOR_URL = "https://github.com/sponsors/vitali87"
+CLI_MSG_SPONSOR = "Sponsor development: {url}"
+CLI_MSG_SPONSOR_PLEDGE = (
+    "Find cgr useful? Pledge your support: {url} (CGR_SPONSOR_PLEDGE=false hides this)"
+)
 CLI_MSG_HINT_TARGET_REPO = (
     "\nHint: Make sure TARGET_REPO_PATH environment variable is set."
 )
