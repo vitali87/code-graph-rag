@@ -249,6 +249,11 @@ CLI_ERR_CLEAN_UNKNOWN_PROJECTS = (
 CLI_MSG_CLEAN_ABORTED = "Aborted: the graph was left untouched."
 CLI_MSG_DELETING_PROJECT = "Deleting project '{project_name}' from the graph..."
 CLI_MSG_PROJECT_DELETED = "Project '{project_name}' deleted successfully."
+CLI_WARN_DELETE_PROJECT_SHARED_ROOT = (
+    "Warning: project(s) {projects} were indexed from the same directory as "
+    "'{project_name}' ({root_path}). Only what '{project_name}' owns is "
+    "deleted; the Folder and File nodes they also hold are kept."
+)
 # Deleting never defaults to the current directory (issue #2415).
 CLI_ERR_PROJECT_NAME_REQUIRED = (
     "Error: name the project with --project, or pass --repo-path."
