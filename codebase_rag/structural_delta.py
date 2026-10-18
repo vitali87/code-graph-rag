@@ -2115,8 +2115,12 @@ def observe(
         longer_project_prefixes=longer_prefixes,
     )
     if base_source is not None and repo_root is not None:
+        # A path the re-ingest skipped under the project's exclusions is not
+        # in the graph, so its syntax is nothing the check measures.
+        skipped = set(report.skipped)
+        indexed = [path for path in path_list if path not in skipped]
         _report_parse_errors(
-            delta, before, new_parse_errors(repo_root, path_list, base_source)
+            delta, before, new_parse_errors(repo_root, indexed, base_source)
         )
     # The re-ingest's own clock covers only its inner work; the caller sees
     # the wall time of the whole apply step, and `delta_ms` is everything

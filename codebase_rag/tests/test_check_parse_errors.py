@@ -26,7 +26,9 @@ A = "def f(x):\n    return x + 1\n\n\ndef g():\n    return f(1)\n"
 B = "from a import g\n\n\ndef h():\n    return g()\n"
 
 
-def _index(root: Path, files: dict[str, str]) -> tuple[_StatefulIngestor, GraphUpdater]:
+def _index(
+    root: Path, files: dict[str, str], exclude_paths: frozenset[str] | None = None
+) -> tuple[_StatefulIngestor, GraphUpdater]:
     for rel, text in files.items():
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(text, encoding="utf-8")
@@ -38,6 +40,7 @@ def _index(root: Path, files: dict[str, str]) -> tuple[_StatefulIngestor, GraphU
         parsers=parsers,
         queries=queries,
         project_name=PROJECT,
+        exclude_paths=exclude_paths,
     )
     updater.run(force=True)
     return store, updater
@@ -179,6 +182,27 @@ def test_a_new_file_that_does_not_parse_is_a_parse_error(temp_repo: Path) -> Non
     )
 
     assert [e["path"] for e in delta["parse_errors"]] == ["c.py"]
+
+
+def test_a_file_the_index_excludes_is_not_a_parse_error(temp_repo: Path) -> None:
+    # Negative: the re-ingest skips an excluded file and leaves it out of
+    # the graph, so its syntax is nothing the edit broke there.
+    store, updater = _index(temp_repo, {"a.py": A}, frozenset({"generated_src"}))
+    rel = "generated_src/out.py"
+    (temp_repo / rel).parent.mkdir()
+    (temp_repo / rel).write_text("def broken(:\n", encoding="utf-8")
+
+    delta = observe(
+        store.fetch_all,
+        PROJECT,
+        [rel],
+        lambda: updater.reingest([rel]),
+        repo_root=temp_repo,
+        base_source=lambda _path: None,
+    )
+
+    assert delta["parse_errors"] == []
+    assert not has_findings(delta)
 
 
 def test_cgr_check_reports_the_parse_error_against_its_git_base(
