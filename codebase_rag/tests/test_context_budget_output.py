@@ -11,6 +11,7 @@ took 87 s to trim (issue #3243).
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 
@@ -259,3 +260,40 @@ def test_a_piece_is_charged_for_the_count_it_prints(temp_repo: Path) -> None:
     assert target["tokens"] >= 1000
     printed = count_tokens(json.dumps(target, indent=cs.MCP_JSON_INDENT))
     assert printed == target["tokens"]
+
+
+def test_a_replaced_file_is_quoted_afresh(temp_repo: Path) -> None:
+    # An atomic replacement that keeps the old size and modification time
+    # is still a different file: its new lines are quoted, not the cached.
+    store = _repo(
+        temp_repo,
+        {
+            "app.py": "def core(x):\n    return x + 1\n\n\ndef use():\n    return core(1)\n",
+        },
+    )
+    app = temp_repo / "app.py"
+    before = context(store.fetch_all, PROJECT, f"{PROJECT}.app.core", 4000, temp_repo)
+    old = app.stat()
+    replacement = temp_repo / "app.py.new"
+    replacement.write_text(
+        "def core(x):\n    return x + 1\n\n\ndef use():\n    return core(2)\n",
+        encoding="utf-8",
+    )
+    os.utime(replacement, ns=(old.st_atime_ns, old.st_mtime_ns))
+    os.replace(replacement, app)
+    assert (app.stat().st_mtime_ns, app.stat().st_size) == (
+        old.st_mtime_ns,
+        old.st_size,
+    )
+
+    after = context(store.fetch_all, PROJECT, f"{PROJECT}.app.core", 4000, temp_repo)
+
+    def caller_sources(slice_: context_slice.ContextSlice) -> list[str]:
+        return [
+            p["source"]
+            for p in slice_["pieces"]
+            if p["why_included"] == cs.CONTEXT_WHY_CALLER
+        ]
+
+    assert caller_sources(before) == ["return core(1)"]
+    assert caller_sources(after) == ["return core(2)"]
