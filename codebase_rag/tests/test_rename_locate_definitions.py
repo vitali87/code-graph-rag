@@ -17,6 +17,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag import constants as cs
+from codebase_rag.editing.occurrences import Target, find_occurrences
 from codebase_rag.editing.patcher import Patcher, PatcherError
 from codebase_rag.editing.rename import QueryFn, RenameReport, rename
 from codebase_rag.tests.test_rename_op import RecordedGraph, _index, _write
@@ -312,3 +314,58 @@ def test_a_php_variable_is_still_not_an_identifier(
 
     with pytest.raises(PatcherError, match="not a whole identifier"):
         patcher.replace_identifier_at("helpers.php", 2, 17, "$x", "$y")
+
+
+# A C/C++ parameter binds in the body of the function or lambda it belongs
+# to: a use of it there is not the renamed function, while a prototype's
+# parameter hides nothing past its own list.
+C_SHADOWS = {
+    "util.c": (
+        "int count(int count) {\n"
+        "    return count;\n"
+        "}\n"
+        "\n"
+        "int proto(int count);\n"
+        "\n"
+        "int caller(void) {\n"
+        "    return count(3);\n"
+        "}\n"
+    ),
+    "lam.cpp": (
+        "int count(int x);\n"
+        "\n"
+        "auto f = [](int count) { return count; };\n"
+        "\n"
+        "int g(void) {\n"
+        "    return count(1);\n"
+        "}\n"
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("path", "language", "expected"),
+    [
+        ("util.c", cs.SupportedLanguage.C, [("util.c", 8)]),
+        ("lam.cpp", cs.SupportedLanguage.CPP, [("lam.cpp", 6)]),
+    ],
+)
+def test_a_c_parameter_shadows_the_function_in_its_body_only(
+    tmp_path: Path,
+    path: str,
+    language: cs.SupportedLanguage,
+    expected: list[tuple[str, int]],
+) -> None:
+    (tmp_path / path).write_text(C_SHADOWS[path], encoding="utf-8")
+    target = Target(
+        "count",
+        language,
+        cs.RenameTargetKind.FUNCTION,
+        path,
+        frozenset(),
+        frozenset({path}),
+    )
+
+    found = find_occurrences(tmp_path, target)
+
+    assert [(o.path, o.line) for o in found] == expected
