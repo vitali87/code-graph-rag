@@ -161,6 +161,35 @@ def test_a_function_after_a_statement_the_grammar_cannot_read_is_indexed(
     assert {("db.two", "db.one"), ("db.three", "db.two")} <= _calls(store)
 
 
+def test_a_quoted_routine_name_survives_the_recovery(tmp_path: Path) -> None:
+    # Only a positional parameter the grammar reads as SQL is rewritten: the
+    # legal name `"$1"` keeps its text when a neighbour forces the re-parse.
+    quoted = 'CREATE FUNCTION "$1"() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;\n'
+    store = _index(
+        tmp_path / PROJECT,
+        {"db.sql": _ONE + quoted + _NEIGHBOURS["identifier-dollar"] + _AFTER},
+    )
+    functions = _functions(store)
+    assert "db.$1" in functions, functions
+    assert "db._1" not in functions
+
+
+def test_a_semicolon_in_a_quoted_routine_name_splits_no_statement(
+    tmp_path: Path,
+) -> None:
+    # PostgreSQL allows `;` in a quoted identifier; the statement split must
+    # not cut `"a;b"`'s definition there when a neighbour forces the re-parse.
+    quoted = (
+        'CREATE FUNCTION "a;b"() RETURNS integer LANGUAGE sql AS $$ SELECT one() $$;\n'
+    )
+    store = _index(
+        tmp_path / PROJECT,
+        {"db.sql": _ONE + quoted + _NEIGHBOURS["identifier-dollar"] + _AFTER},
+    )
+    assert "db.a;b" in _functions(store)
+    assert ("db.a;b", "db.one") in _calls(store)
+
+
 def test_a_function_whose_plpgsql_body_does_not_parse_keeps_its_node(
     tmp_path: Path,
 ) -> None:

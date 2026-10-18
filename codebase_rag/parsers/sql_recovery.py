@@ -16,7 +16,8 @@ which each statement stands alone. That copy has the same length, with
 every newline kept, so lines and columns are unchanged:
 
 - a positional parameter's `$` becomes `_` (`$1` -> `_1`), which no
-  grammar rule reads as a quote;
+  grammar rule reads as a quote; only where the grammar reads SQL, so a
+  comment, a string or a quoted name like `"$1"` keeps its text;
 - a `CREATE FUNCTION` that fails on its own is kept with its body blanked
   (its name, parameters and span survive; its body's calls were lost
   anyway), or blanked whole when even its header does not parse;
@@ -45,7 +46,7 @@ _POSITIONAL_PARAM = re.compile(rb"(?<![\w$\x80-\xff])\$(?=\d)")
 _CREATE_FUNCTION = re.compile(
     rb"\s*CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\b", re.IGNORECASE
 )
-_PARAM_PLACEHOLDER = b"_"
+_PARAM_PLACEHOLDER = 0x5F  # _
 _BLANK = 0x20
 _NEWLINE = 0x0A
 _QUOTE = 0x27
@@ -87,7 +88,7 @@ def parse_sql(parser: Parser, source: bytes) -> Tree:
     best, best_found = tree, _found(tree, expected)
     if best_found == len(expected):
         return tree
-    isolated = bytearray(_POSITIONAL_PARAM.sub(_PARAM_PLACEHOLDER, source))
+    isolated = _without_positional_params(source)
     isolation = _isolate(parser, statements, isolated)
     return _quietest(parser, isolated, isolation, expected, best, best_found)
 
@@ -202,6 +203,35 @@ def _blank(buffer: bytearray, lo: int, hi: int) -> None:
             buffer[i] = _BLANK
 
 
+def _without_positional_params(source: bytes) -> bytearray:
+    isolated = bytearray(source)
+    for lo, hi in _code_spans(source, 0, len(source)):
+        for param in _POSITIONAL_PARAM.finditer(source, lo, hi):
+            isolated[param.start()] = _PARAM_PLACEHOLDER
+    return isolated
+
+
+def _code_spans(source: bytes, lo: int, hi: int) -> list[tuple[int, int]]:
+    # The spans of `source[lo:hi]` the grammar reads as SQL: outside
+    # comments, strings and quoted identifiers, and inside each dollar-quoted
+    # body, which the grammar parses as statements.
+    spans: list[tuple[int, int]] = []
+    i = code_start = lo
+    while (lexical := _LEXICAL_START.search(source, i, hi)) is not None:
+        start = lexical.start()
+        end, blanked, is_body = _lexical_end(source, start)
+        i = min(end, hi)
+        if not blanked:
+            continue
+        spans.append((code_start, start))
+        code_start = i
+        if is_body and (tag := _DOLLAR_TAG.match(source, start)):
+            close = source.find(tag.group(), tag.end(), i)
+            spans.extend(_code_spans(source, tag.end(), i if close < 0 else close))
+    spans.append((code_start, hi))
+    return spans
+
+
 def _statements(source: bytes) -> list[_Statement]:
     # Top-level statements split on `;` outside comments, strings, quoted
     # identifiers and dollar quotes; each with the content spans of its
@@ -234,8 +264,9 @@ def _statements(source: bytes) -> list[_Statement]:
 
 
 def _lex(source: bytes) -> tuple[bytearray, list[tuple[int, int]]]:
-    # `source` with comments, strings and dollar quotes blanked, and the
-    # span of each dollar-quoted body, delimiters included.
+    # `source` with comments, strings, quoted identifiers and dollar quotes
+    # blanked, so a `;` inside any of them splits no statement, and the span
+    # of each dollar-quoted body, delimiters included.
     masked = bytearray(source)
     bodies: list[tuple[int, int]] = []
     i = 0
@@ -262,7 +293,7 @@ def _lexical_end(source: bytes, i: int) -> tuple[int, bool, bool]:
         escapes = _is_escape_string(source, i)
         return _skip_quoted(source, i, 0x27, escapes=escapes), True, False
     if source[i] == 0x22:  # "
-        return _skip_quoted(source, i, 0x22, escapes=False), False, False
+        return _skip_quoted(source, i, 0x22, escapes=False), True, False
     if (i == 0 or not _IDENT_BYTE.match(source, i - 1)) and (
         tag := _DOLLAR_TAG.match(source, i)
     ):
