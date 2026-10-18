@@ -9,8 +9,9 @@ as stderr, and nothing in it moves or closes a descriptor, so whatever
 mgclient prints reaches the parent, which logs it.
 
 The request arrives on stdin, so a login never appears on a command line, and
-the report leaves on stdout. Only the stdlib and mgclient are imported:
-importing `codebase_rag.stack` would cost each probe its settings and manager.
+the report leaves on stdout. Only the stdlib and mgclient (through its
+optional-driver shim) are imported: importing `codebase_rag.stack` would cost
+each probe its settings and manager.
 """
 
 from __future__ import annotations
@@ -19,13 +20,12 @@ import ctypes
 import json
 import sys
 
-import mgclient
-
+from .mgclient_compat import mgclient
 from .types_defs import MgclientProbeReport, MgclientProbeRequest
 
 # pymgclient 1.6 re-exports its C extension through `import *`, which a type
 # checker cannot see into, so the exception type is bound once here.
-_MgclientError: type[Exception] = mgclient.Error  # ty: ignore[unresolved-attribute]
+_MgclientError: type[Exception] = mgclient.Error
 
 
 def run(request: MgclientProbeRequest) -> MgclientProbeReport:

@@ -21,3 +21,4 @@ site
 CLAUDE.md
 AGENTS.md
 PROJECT.md
+rust/**/target
