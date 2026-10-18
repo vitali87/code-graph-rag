@@ -1070,6 +1070,28 @@ def _clear_deleted_project_markers(
         logger.warning(ls.CLI_DELETE_SYNC_MARKER_KEPT.format(project=project_name))
 
 
+def _sweep_glosses_after_failed_delete(
+    ingestor: MemgraphIngestor, project_name: str
+) -> None:
+    """Sweep the notes of a delete that raised after the project was removed.
+
+    The delete commits statement by statement, so a later cleanup can raise
+    once the project is already gone, and a retry then stops at "project not
+    found" before any sweep. A project still listed keeps its unattached
+    notes: they are LOST or AMBIGUOUS by design and readable on their old
+    names. Never raises, so the delete's own error is what is reported.
+    """
+    try:
+        still_listed = project_name in ingestor.list_projects()
+    except Exception as exc:
+        logger.warning(
+            ls.CLI_DELETE_GLOSS_SWEEP_SKIPPED.format(project=project_name, error=exc)
+        )
+        return
+    if not still_listed:
+        prune_orphaned_glosses(ingestor, project_name)
+
+
 def _run_updater_deferring_interrupt(
     updater: "GraphUpdater",
 ) -> KeyboardInterrupt | None:
@@ -3520,7 +3542,11 @@ def delete_project(
                 )
             )
             _cleanup_project_embeddings(ingestor, project_name, projects)
-            ingestor.delete_project(project_name)
+            try:
+                ingestor.delete_project(project_name)
+            except Exception:
+                _sweep_glosses_after_failed_delete(ingestor, project_name)
+                raise
             # A Gloss is out of the delete's reach by design, which is what
             # lets it survive an index's delete-then-rebuild, so the
             # deliberate delete sweeps the project's notes, as MCP

@@ -227,6 +227,52 @@ def test_a_missing_project_sweeps_nothing(
     _get_ingestor(mock_memgraph_connect).execute_write.assert_not_called()
 
 
+def _gloss_sweep(project_name: str) -> object:
+    from codebase_rag.services.gloss_cleanup import CYPHER_DELETE_ORPHANED_GLOSSES
+
+    return call.execute_write(
+        CYPHER_DELETE_ORPHANED_GLOSSES,
+        {
+            cs.KEY_PROJECT_NAME: project_name,
+            cs.KEY_PROJECT_PREFIX: f"{project_name}.",
+        },
+    )
+
+
+@patch("codebase_rag.cli.delete_project_embeddings")
+def test_a_delete_that_fails_after_removing_the_project_still_sweeps(
+    mock_delete_embeddings: MagicMock,
+    mock_memgraph_connect: MagicMock,
+) -> None:
+    # The delete's statements commit one by one: the project went, then a
+    # later cleanup raised. A retry stops at "project not found", so this
+    # run is the only one that can sweep the notes.
+    ingestor = _get_ingestor(mock_memgraph_connect)
+    ingestor.list_projects.side_effect = [["platform", "other"], ["other"]]
+    ingestor.delete_project.side_effect = RuntimeError("prune failed")
+
+    result = runner.invoke(app, ["delete-project", "--name", "platform"])
+
+    assert result.exit_code == 1
+    assert ingestor.mock_calls.count(_gloss_sweep("platform")) == 1
+
+
+@patch("codebase_rag.cli.delete_project_embeddings")
+def test_a_delete_that_fails_with_the_project_still_listed_sweeps_nothing(
+    mock_delete_embeddings: MagicMock,
+    mock_memgraph_connect: MagicMock,
+) -> None:
+    # Negative: the project is still there, and its unattached notes are
+    # LOST or AMBIGUOUS by design, readable on their old names.
+    ingestor = _get_ingestor(mock_memgraph_connect)
+    ingestor.delete_project.side_effect = RuntimeError("connection reset")
+
+    result = runner.invoke(app, ["delete-project", "--name", "platform"])
+
+    assert result.exit_code == 1
+    assert _gloss_sweep("platform") not in ingestor.mock_calls
+
+
 def _shared_root_warning(project_name: str, projects: str, root_path: str) -> str:
     return cs.CLI_WARN_DELETE_PROJECT_SHARED_ROOT.format(
         projects=projects, project_name=project_name, root_path=root_path
