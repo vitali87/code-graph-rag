@@ -44,7 +44,7 @@ from .capture import (
     unknown_tokens,
 )
 from .checkout_state import prepare_state_dir
-from .cli_runtime import app_context, connect_memgraph, style
+from .cli_runtime import app_context, connect_memgraph, dim, style
 from .config import load_ignore_patterns, settings, settings_errors
 from .console_marks import status_mark
 from .editing.cli import cli as edits_cli
@@ -200,10 +200,40 @@ class _CgrGroup(TyperGroup):
         # this at connect time with the fix in its message; printing it here
         # covers them all, the delegated groups and the chat included (#2443).
         try:
-            return super().invoke(ctx)
+            result = super().invoke(ctx)
         except GraphUnavailableError as e:
             app_context.console.print(style(str(e), cs.Color.RED))
             raise typer.Exit(1) from e
+        # Only a command that finished gets here: a failure exits by raising.
+        pledge = sponsor_pledge(ctx.invoked_subcommand, sys.stderr.isatty())
+        if pledge:
+            # Soft-wrapped so the terminal, not Rich, breaks the line, and
+            # the URL stays one clickable link.
+            terminal_aware_console(stderr=True).print(
+                dim(pledge), highlight=False, soft_wrap=True
+            )
+        return result
+
+
+# Help pages, and the MCP server, which speaks its protocol until the client
+# hangs up, are not runs that finished.
+_NO_SPONSOR_PLEDGE = frozenset({ch.CLICommandName.HELP, ch.CLICommandName.MCP_SERVER})
+
+
+def sponsor_pledge(command: str | None, terminal: bool) -> str | None:
+    """The GitHub Sponsors line a finished command ends on, or None where it
+    would be in the way: off a terminal (a script or a log reading stderr),
+    under `--quiet` or CGR_SPONSOR_PLEDGE=false, and after the commands in
+    `_NO_SPONSOR_PLEDGE`. On stderr, so it never mixes into a command's
+    output on stdout."""
+    if (
+        not terminal
+        or settings.QUIET
+        or not settings.SPONSOR_PLEDGE
+        or command in _NO_SPONSOR_PLEDGE
+    ):
+        return None
+    return cs.CLI_MSG_SPONSOR_PLEDGE.format(url=cs.SPONSOR_URL)
 
 
 app = typer.Typer(
@@ -226,6 +256,9 @@ def _version_callback(value: bool) -> None:
         )
         for line in credits_lines():
             app_context.console.print(line, highlight=False)
+        app_context.console.print(
+            cs.CLI_MSG_SPONSOR.format(url=cs.SPONSOR_URL), highlight=False
+        )
         raise typer.Exit()
 
 

@@ -226,6 +226,8 @@ Please see [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines. Good 
 
 For issues or questions, check the [Troubleshooting](docs/advanced/troubleshooting.md) guide first, then open an issue.
 
+If cgr is useful to you, please consider pledging support on [GitHub Sponsors](https://github.com/sponsors/vitali87). cgr links the page under `cgr --version` and, in a terminal, after most commands finish; set `CGR_SPONSOR_PLEDGE=false` to hide that line.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
