@@ -443,6 +443,14 @@ def _js_pair_binding(pair: Node) -> tuple[str, str] | None:
     return None
 
 
+def _js_at_module_level(declaration: Node) -> bool:
+    # A declaration at the program's top level, an exported one included.
+    holder = declaration.parent
+    if holder is not None and holder.type == cs.TS_EXPORT_STATEMENT:
+        holder = holder.parent
+    return holder is not None and holder.type == cs.TS_PROGRAM
+
+
 def _js_default_export_local(statement: Node) -> str | None:
     # The local name `export default` publishes: a named function or class
     # declaration, or a bare identifier. An anonymous function or any other
@@ -4861,10 +4869,7 @@ class ImportProcessor:
         # Only at module level is `U` sure to be the import: in a function a
         # parameter or local can shadow it (`function run(U) {...}`), and a
         # function's locals would leak into the one map the module keeps.
-        holder = decl_node.parent
-        if holder is not None and holder.type == cs.TS_EXPORT_STATEMENT:
-            holder = holder.parent
-        if holder is None or holder.type != cs.TS_PROGRAM:
+        if not _js_at_module_level(decl_node):
             return
         bindings = self.import_mapping[current_module]
         for declarator in decl_node.children:

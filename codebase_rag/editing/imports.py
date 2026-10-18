@@ -347,17 +347,48 @@ def _js_destructured_keys(pattern: Node) -> Iterator[tuple[Node, str, bool]]:
             continue
         if node.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN:
             yield node, _node_text(node), True
-        elif node.type == cs.TS_PAIR_PATTERN:
-            key = node.child_by_field_name(cs.FIELD_KEY)
-            value = node.child_by_field_name(cs.FIELD_VALUE)
-            if value is not None and value.type == cs.TS_ASSIGNMENT_PATTERN:
-                value = value.child_by_field_name(cs.FIELD_LEFT)
-            if key is not None and value is not None and value.type == cs.TS_IDENTIFIER:
-                yield key, _node_text(value), False
+        elif node.type == cs.TS_PAIR_PATTERN and (pair := _js_pair_key(node)):
+            key, local = pair
+            yield key, local, False
+
+
+def _js_pair_key(pair: Node) -> tuple[Node, str] | None:
+    """The key of `{ pad: p }` or `{ pad: p = d }` and the local `p` it binds;
+    any other value shape (a nested pattern) binds no local the index tracks."""
+    key = pair.child_by_field_name(cs.FIELD_KEY)
+    value = pair.child_by_field_name(cs.FIELD_VALUE)
+    if value is not None and value.type == cs.TS_ASSIGNMENT_PATTERN:
+        value = value.child_by_field_name(cs.FIELD_LEFT)
+    if key is None or value is None or value.type != cs.TS_IDENTIFIER:
+        return None
+    return key, _node_text(value)
 
 
 def _node_text(node: Node) -> str:
     return (node.text or b"").decode(cs.ENCODING_UTF8)
+
+
+def _js_object_patterns(source: bytes, importer_path: str) -> list[Node]:
+    """The object patterns a `const`/`let`/`var` statement destructures into;
+    none for any other statement or an importer no parser reads."""
+    language = get_language_for_extension(Path(importer_path).suffix)
+    parser = (
+        load_parsers()[0].get(language)
+        if isinstance(language, cs.SupportedLanguage)
+        else None
+    )
+    if parser is None:
+        return []
+    declaration = next(iter(parser.parse(source).root_node.named_children), None)
+    if declaration is None or declaration.type not in _JS_DECLARATIONS:
+        return []
+    return [
+        pattern
+        for declarator in declaration.named_children
+        if declarator.type == cs.TS_VARIABLE_DECLARATOR
+        and (pattern := declarator.child_by_field_name(cs.FIELD_NAME)) is not None
+        and pattern.type == cs.TS_OBJECT_PATTERN
+    ]
 
 
 def _js_destructure_rewrite(
@@ -379,25 +410,8 @@ def _js_destructure_rewrite(
     """
     if move.old_module != ANY_MODULE or move.new_name is None:
         return None
-    language = get_language_for_extension(Path(importer_path).suffix)
-    parser = (
-        load_parsers()[0].get(language)
-        if isinstance(language, cs.SupportedLanguage)
-        else None
-    )
-    if parser is None:
-        return None
     source = statement.encode(cs.ENCODING_UTF8)
-    declaration = next(iter(parser.parse(source).root_node.named_children), None)
-    if declaration is None or declaration.type not in _JS_DECLARATIONS:
-        return None
-    patterns = [
-        pattern
-        for declarator in declaration.named_children
-        if declarator.type == cs.TS_VARIABLE_DECLARATOR
-        and (pattern := declarator.child_by_field_name(cs.FIELD_NAME)) is not None
-        and pattern.type == cs.TS_OBJECT_PATTERN
-    ]
+    patterns = _js_object_patterns(source, importer_path)
     if not patterns:
         return None
     rewritten = source

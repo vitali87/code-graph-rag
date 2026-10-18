@@ -186,6 +186,7 @@ _JS_EXPORTS = cs.JS_EXPORTS_KEYWORD.encode()
 _JS_OBJECT = cs.JS_OBJECT_NAME.encode()
 _JS_OBJECT_ASSIGN = cs.JS_OBJECT_ASSIGN_METHOD.encode()
 _JS_OBJECT_FREEZE = cs.JS_OBJECT_FREEZE_METHOD.encode()
+_JS_KEY_PASSING_METHODS = frozenset({_JS_OBJECT_ASSIGN, _JS_OBJECT_FREEZE})
 
 
 def _unwrapped(node: Node | None) -> Node | None:
@@ -239,33 +240,47 @@ def _is_the_export_object(node: Node) -> bool:
     target and returns it (`Object.assign(module.exports, {...})`).
     """
     while (parent := node.parent) is not None:
-        if parent.type in _JS_VALUE_WRAPPERS:
-            node = parent
-            continue
-        if parent.type == cs.TS_JS_ASSIGNMENT_EXPRESSION:
-            right = parent.child_by_field_name(cs.FIELD_RIGHT)
-            if right is None or right.id != node.id:
-                return False
-            if _is_module_exports(parent.child_by_field_name(cs.FIELD_LEFT)):
-                return True
-            node = parent
-            continue
-        call = parent.parent if parent.type == cs.TS_ARGUMENTS else None
-        if call is None:
+        if _puts_keys_on_exports(node, parent):
+            return True
+        passed_on = _passed_on_by(node, parent)
+        if passed_on is None:
             return False
-        method = _object_method(call)
-        target = next((arg for arg in parent.named_children if not arg.is_extra), None)
-        if method == _JS_OBJECT_ASSIGN:
-            if (
-                target is not None
-                and target.id != node.id
-                and _is_export_object(target)
-            ):
-                return True
-        elif method != _JS_OBJECT_FREEZE:
-            return False
-        node = call
+        node = passed_on
     return False
+
+
+def _puts_keys_on_exports(node: Node, parent: Node) -> bool:
+    """Whether `parent` makes `node`'s keys the export object's:
+    `module.exports = node` or `Object.assign(module.exports, node)`."""
+    if parent.type == cs.TS_JS_ASSIGNMENT_EXPRESSION:
+        return _assigns(parent, node) and _is_module_exports(
+            parent.child_by_field_name(cs.FIELD_LEFT)
+        )
+    call = parent.parent if parent.type == cs.TS_ARGUMENTS else None
+    if call is None or _object_method(call) != _JS_OBJECT_ASSIGN:
+        return False
+    target = next((arg for arg in parent.named_children if not arg.is_extra), None)
+    return target is not None and target.id != node.id and _is_export_object(target)
+
+
+def _passed_on_by(node: Node, parent: Node) -> Node | None:
+    """The node `parent` passes `node`'s value or keys on through: itself
+    when it wraps or assigns `node`, the `Object.assign` or `Object.freeze`
+    call when `node` is one of its arguments, else None."""
+    if parent.type in _JS_VALUE_WRAPPERS:
+        return parent
+    if parent.type == cs.TS_JS_ASSIGNMENT_EXPRESSION:
+        return parent if _assigns(parent, node) else None
+    call = parent.parent if parent.type == cs.TS_ARGUMENTS else None
+    if call is not None and _object_method(call) in _JS_KEY_PASSING_METHODS:
+        return call
+    return None
+
+
+def _assigns(assignment: Node, node: Node) -> bool:
+    """Whether `node` is the value an assignment expression assigns."""
+    right = assignment.child_by_field_name(cs.FIELD_RIGHT)
+    return right is not None and right.id == node.id
 
 
 def _keeps_its_key(node: Node) -> bool:
