@@ -47,6 +47,31 @@ pub fn by_ref() -> u32 { let p = &Point { x: 1 }; p.render() }
 pub fn by_mut_ref() -> u32 { let p = &mut Pair(1, 2); p.render() }
 pub fn assoc() -> u32 { let p = Point::make(); p.render() }
 pub fn module_path() -> u32 { let c = shapes::Disk { r: 1 }; c.area() }
+pub struct Product;
+impl Product { pub fn render(&self) -> u32 { 3 } }
+pub struct Factory;
+impl Factory {
+    #[allow(non_snake_case)]
+    pub fn Build() -> Product { Product }
+    pub fn render(&self) -> u32 { 4 }
+}
+pub struct S { pub x: u32 }
+impl S { pub fn render(&self) -> u32 { 10 } }
+#[allow(non_camel_case_types)]
+pub struct lower { pub x: u32 }
+impl lower { pub fn render(&self) -> u32 { 11 } }
+pub struct Wrapper<T> { pub v: T }
+impl<T> Wrapper<T> { pub fn render(&self) -> u32 { 5 } }
+pub enum Tree<T> { Leaf(T), Empty }
+impl<T> Tree<T> { pub fn render(&self) -> u32 { 6 } }
+// Shares its name with the `Tree::Leaf` variant.
+pub struct Leaf;
+impl Leaf { pub fn render(&self) -> u32 { 8 } }
+pub fn pascal_fn() -> u32 { let p = Factory::Build(); p.render() }
+pub fn short_name() -> u32 { let s = S { x: 1 }; s.render() }
+pub fn lowercase_name() -> u32 { let l = lower { x: 1 }; l.render() }
+pub fn turbofish_literal() -> u32 { let w = Wrapper::<u8> { v: 1 }; w.render() }
+pub fn turbofish_variant() -> u32 { let t = Tree::<u8>::Leaf(1); t.render() }
 """
 _SHAPES = """\
 pub struct Disk { pub r: u32 }
@@ -94,6 +119,7 @@ def _callees(calls: _Calls, caller: str) -> dict[str, str]:
         ("lib.Point.new", "lib.Point.render"),
         ("lib.Point.copy_of", "lib.Point.render"),
         ("lib.Point.annotated", "lib.Point.render"),
+        ("lib.turbofish_variant", "lib.Tree.render"),
     ],
     ids=[
         "unit-struct",
@@ -106,6 +132,7 @@ def _callees(calls: _Calls, caller: str) -> dict[str, str]:
         "self-literal",
         "self-param",
         "self-annotation",
+        "turbofish-enum-variant",
     ],
 )
 def test_a_constructed_local_types_its_method_call(
@@ -120,8 +147,18 @@ def test_a_constructed_local_types_its_method_call(
         ("lib.brace", "lib.Point.render"),
         ("lib.assoc", "lib.Point.render"),
         ("lib.module_path", "shapes.Disk.area"),
+        ("lib.short_name", "lib.S.render"),
+        ("lib.lowercase_name", "lib.lower.render"),
+        ("lib.turbofish_literal", "lib.Wrapper.render"),
     ],
-    ids=["struct-literal", "associated-fn", "module-qualified-struct"],
+    ids=[
+        "struct-literal",
+        "associated-fn",
+        "module-qualified-struct",
+        "one-letter-struct-literal",
+        "lowercase-struct-literal",
+        "turbofish-struct-literal",
+    ],
 )
 def test_the_shapes_that_typed_before_still_do(
     calls: _Calls, caller: str, callee: str
@@ -130,3 +167,14 @@ def test_the_shapes_that_typed_before_still_do(
     # module-qualified struct literal keep their exact edges (and the
     # `Shape::Circle(1)` row above binds the enum, not the `Circle` struct).
     assert _callees(calls, caller).get(callee) == "exact", calls
+
+
+def test_a_pascal_case_associated_fn_types_its_local_by_its_return_type(
+    calls: _Calls,
+) -> None:
+    # Negative: `Factory::Build()` is spelled like the variant
+    # `Shape::Circle(1)`, but it is a function, and its declared return type
+    # says what `p` is.
+    callees = _callees(calls, "lib.pascal_fn")
+    assert callees.get("lib.Product.render") == "exact", calls
+    assert "lib.Factory.render" not in callees, calls

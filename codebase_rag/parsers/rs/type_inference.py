@@ -868,6 +868,12 @@ def _constructor_path_type(path: Node) -> str | None:
     if path.type in (cs.TS_IDENTIFIER, cs.TS_TYPE_IDENTIFIER):
         text = safe_decode_text(path)
         return text if text and _is_type_like(text) else None
+    if path.type in cs.RS_GENERIC_CONSTRUCTOR_PATHS:
+        # Type arguments do not change which type is built: `Tree::<u8>`.
+        inner = path.child_by_field_name(
+            cs.FIELD_FUNCTION if path.type == cs.TS_GENERIC_FUNCTION else cs.FIELD_TYPE
+        )
+        return _constructor_path_type(inner) if inner is not None else None
     if path.type not in (cs.TS_SCOPED_IDENTIFIER, cs.TS_RS_SCOPED_TYPE_IDENTIFIER):
         return None
     leaf = safe_decode_text(path.child_by_field_name(cs.FIELD_NAME))
@@ -876,6 +882,18 @@ def _constructor_path_type(path: Node) -> str | None:
     qualifier = path.child_by_field_name(cs.TS_RS_FIELD_PATH)
     owner = _constructor_path_type(qualifier) if qualifier is not None else None
     return owner or _rust_module_type_path(path) or leaf
+
+
+def is_constructor_guess(type_name: str, segments: list[str]) -> bool:
+    """Whether `type_name` is only what `let x = <segments>(..)` reads as a
+    constructor from its spelling (`Pair(..)`, `Shape::Circle(..)`): a
+    PascalCase function (`Factory::Build()`) is spelled the same, and its
+    declared return type, when known, outranks the guess."""
+    return (
+        0 < len(segments) <= 2
+        and type_name == segments[0]
+        and _is_type_like(segments[-1])
+    )
 
 
 def _is_type_like(name: str) -> bool:

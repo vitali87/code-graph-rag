@@ -113,6 +113,14 @@ TS_RS_LOOP_EXPRESSION = "loop_expression"
 # A Rust call node whose callee is descended for chain flattening: a plain call
 # or a turbofish generic_function (`f::<T>()`).
 RS_CALL_OR_GENERIC_FN = (TS_RS_CALL_EXPRESSION, TS_GENERIC_FUNCTION)
+TS_RS_GENERIC_TYPE_WITH_TURBOFISH = "generic_type_with_turbofish"
+# A constructor path with type arguments: `Tree::<u8>::Leaf`'s qualifier,
+# `Wrapper::<u8> { .. }`'s name, `Pair::<u8>(..)`'s callee.
+RS_GENERIC_CONSTRUCTOR_PATHS = (
+    TS_GENERIC_TYPE,
+    TS_RS_GENERIC_TYPE_WITH_TURBOFISH,
+    TS_GENERIC_FUNCTION,
+)
 TS_RS_TUPLE_STRUCT_PATTERN = "tuple_struct_pattern"
 TS_RS_TYPE_ARGUMENTS = "type_arguments"
 TS_RS_TRY_EXPRESSION = "try_expression"
