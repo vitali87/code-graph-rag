@@ -18,6 +18,8 @@
 //
 //	DEFINES        : Module(file, line 0) -> top-level Function / Class / Interface / Type
 //	DEFINES_METHOD : receiver type's node -> Method   (cross-file within a package)
+//	DEFINES_METHOD : Interface -> each method it declares (an interface method
+//	                 is a Method node, keyed at its name)
 //
 // cgr models a Go module per file, so a DEFINES parent is the file's module
 // keyed at line 0. A receiver method's parent is the node of its receiver type,
@@ -154,9 +156,40 @@ func collectNodes(pf parsedFile, defs *[]Def) {
 			line := pf.fset.Position(d.Name.Pos()).Line
 			end := pf.fset.Position(d.End()).Line
 			*defs = append(*defs, Def{typeSpecKind(d), pf.rel, line, end, d.Name.Name})
+			for _, m := range interfaceMethods(d) {
+				mline := pf.fset.Position(m.Names[0].Pos()).Line
+				mend := pf.fset.Position(m.End()).Line
+				*defs = append(*defs, Def{kindMethod, pf.rel, mline, mend, m.Names[0].Name})
+			}
 		}
 		return true
 	})
+}
+
+// interfaceMethods returns the methods an interface type declares itself; an
+// embedded interface (a field with no name) declares none here.
+func interfaceMethods(spec *ast.TypeSpec) []*ast.Field {
+	it, ok := spec.Type.(*ast.InterfaceType)
+	if !ok || it.Methods == nil {
+		return nil
+	}
+	var methods []*ast.Field
+	for _, field := range it.Methods.List {
+		if _, isFunc := field.Type.(*ast.FuncType); isFunc && len(field.Names) > 0 {
+			methods = append(methods, field)
+		}
+	}
+	return methods
+}
+
+// interfaceMethodEdges emits DEFINES_METHOD from an interface to each method
+// it declares.
+func interfaceMethodEdges(pf parsedFile, spec *ast.TypeSpec, edges *[]Edge) {
+	parent := NodeRef{kindInterface, pf.rel, pf.fset.Position(spec.Name.Pos()).Line}
+	for _, m := range interfaceMethods(spec) {
+		child := NodeRef{kindMethod, pf.rel, pf.fset.Position(m.Names[0].Pos()).Line}
+		*edges = append(*edges, Edge{relDefinesMeth, parent, child})
+	}
 }
 
 // typeKey scopes a type name to its package directory; methods resolve their
@@ -206,6 +239,7 @@ func collectEdges(pf parsedFile, types map[string]Def, edges *[]Edge) {
 					tline := pf.fset.Position(ts.Name.Pos()).Line
 					child := NodeRef{typeSpecKind(ts), pf.rel, tline}
 					*edges = append(*edges, Edge{relDefines, funcRef, child})
+					interfaceMethodEdges(pf, ts, edges)
 				}
 				return true
 			})
@@ -233,6 +267,7 @@ func collectEdges(pf parsedFile, types map[string]Def, edges *[]Edge) {
 				line := pf.fset.Position(ts.Name.Pos()).Line
 				child := NodeRef{typeSpecKind(ts), pf.rel, line}
 				*edges = append(*edges, Edge{relDefines, module, child})
+				interfaceMethodEdges(pf, ts, edges)
 			}
 		}
 	}
