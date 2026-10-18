@@ -114,7 +114,7 @@ def test_an_unchanged_files_call_into_a_reindexed_go_method_survives(
 def test_the_python_layout_still_keeps_its_inbound_call(temp_repo: Path) -> None:
     # Negative control: a Python method is registered during Pass 2, so the
     # restore always reached it; moving the restore must not lose it.
-    clean, after = _fresh_and_incremental(temp_repo, _PY, "util.py", "#")
+    clean, after = _fresh_and_incremental(temp_repo, _PY, "box.py", "#")
 
     assert _PY_MAIN_TO_SIZE in _calls(clean), "fixture must produce the call"
     assert _PY_MAIN_TO_SIZE in _calls(after)
@@ -133,9 +133,9 @@ def test_a_run_stopped_after_pass_2_still_restores_the_inbound_edges(
         (root / rel).write_text(text, encoding="utf-8")
     store = _StatefulIngestor()
     _index(store, root, force=True)
-    # box.py re-parses as a dependent; main.py does not, so only the restore
-    # can bring its edge into Box.size back.
-    _edit_after_cache(root / "util.py", root, "#")
+    # box.py re-parses; main.py does not (box.py's interface is unchanged), so
+    # only the restore can bring its edge into Box.size back.
+    _edit_after_cache(root / "box.py", root, "#")
 
     def fail(_self: GraphUpdater) -> None:
         raise RuntimeError("frontend failed")
@@ -158,6 +158,9 @@ def test_a_file_failing_in_pass_2_still_restores_the_inbound_edges(
         (root / rel).write_text(text, encoding="utf-8")
     store = _StatefulIngestor()
     _index(store, root, force=True)
+    # box.py re-parses cleanly and needs main.py's edge restored; util.py,
+    # edited too, is the one that fails.
+    _edit_after_cache(root / "box.py", root, "#")
     _edit_after_cache(root / "util.py", root, "#")
     original = GraphUpdater._process_single_file
 
