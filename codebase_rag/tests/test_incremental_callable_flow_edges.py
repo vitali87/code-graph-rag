@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from evals.cgr_graph import _StatefulIngestor
@@ -111,11 +112,22 @@ def _edges(store: _StatefulIngestor) -> _EdgeSet:
     )
 
 
-def _append_comment(path: Path, root: Path) -> None:
+def _rewrite(path: Path, root: Path, text: str) -> None:
     # Past the hash cache's mtime, so the incremental pass hashes the file.
-    cache_mtime = (root / cs.HASH_CACHE_FILENAME).stat().st_mtime
-    path.write_text(path.read_text(encoding="utf-8") + "# comment\n")
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
+    path.write_text(text, encoding="utf-8")
     os.utime(path, (cache_mtime + 1, cache_mtime + 1))
+
+
+def _append_comment(path: Path, root: Path) -> None:
+    _rewrite(path, root, path.read_text(encoding="utf-8") + "# comment\n")
+
+
+def _widen_log(root: Path) -> None:
+    # A new parameter changes util.py's interface, so its dependents
+    # re-parse; a comment alone keeps it and they keep their edges as they
+    # are (issue #2531). No edge moves: every caller still binds `log`.
+    _rewrite(root / "util.py", root, _UTIL.replace("(msg)", "(msg, level=0)", 1))
 
 
 _CALLBACK = ("proj.registry.run_callback", "CALLS", "proj.plugins._on_start")
@@ -142,7 +154,7 @@ def test_editing_an_import_of_the_receiver_keeps_the_callable_edges(
     assert _FORWARDED in clean, "fixture must produce the pass-through edge"
     assert _instantiates_tag(clean), "fixture must produce the register edge"
 
-    _append_comment(root / "util.py", root)
+    _widen_log(root)
     _index(store, root, force=False)
     after = _edges(store)
 
@@ -179,7 +191,7 @@ def test_a_dependent_without_callable_parameters_does_not_widen_the_reparse(
     store = _StatefulIngestor()
     _index(store, root, force=True)
 
-    _append_comment(root / "util.py", root)
+    _widen_log(root)
     updater = _index(store, root, force=False)
     reparsed = updater._reparsed_file_keys
     assert "plain.py" in reparsed, sorted(reparsed)
