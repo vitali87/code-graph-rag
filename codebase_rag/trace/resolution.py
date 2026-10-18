@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from .. import constants as cs
 from ..utils import qn_markers
+from ..utils.path_utils import portable_posix
 from .records import FramePoint
 
 if TYPE_CHECKING:
@@ -48,19 +49,6 @@ def _repo_relative(root_posix: str, frame_path: str) -> str | None:
     if not frame_posix.startswith(root_posix):
         return None
     return frame_posix[len(root_posix) :]
-
-
-def _portable_posix(frame_path: str) -> str:
-    """A frame path in POSIX form, whichever OS recorded it.
-
-    ``Path.as_posix`` converts only the running host's separator, so a
-    Windows traceback read on Linux kept its backslashes and never matched a
-    graph path. No real source path contains a backslash on POSIX, so
-    treating one as a separator loses nothing.
-    """
-    return posixpath.normpath(
-        frame_path.replace(cs.TRACE_WINDOWS_PATH_SEPARATOR, cs.SEPARATOR_SLASH)
-    )
 
 
 def _dir_prefix(path: str) -> str:
@@ -152,12 +140,12 @@ class PathRebase:
         local_root = _repo_root_posix(repo_root)
         rules = [
             (
-                _dir_prefix(_portable_posix(recorded)),
+                _dir_prefix(portable_posix(recorded)),
                 # normpath lets ``..`` walk out of the checkout, where the
                 # containment check then reports the frame as outside it.
                 _dir_prefix(
                     posixpath.normpath(
-                        posixpath.join(local_root, _portable_posix(target))
+                        posixpath.join(local_root, portable_posix(target))
                     )
                 ),
             )
@@ -189,13 +177,13 @@ class PathRebase:
 
     def matches(self, frame: FramePoint) -> bool:
         """Whether a rule, rather than the checkout root, anchors the frame."""
-        path = _portable_posix(frame.path)
+        path = portable_posix(frame.path)
         return _below_dir(path, self.local_root) is None and any(
             _below_dir(path, recorded) is not None for recorded, _ in self.rules
         )
 
     def apply(self, frame: FramePoint) -> FramePoint:
-        path = _portable_posix(frame.path)
+        path = portable_posix(frame.path)
         windows = _recorded_on_windows(path)
         # A Windows frame already under the checkout still goes through the
         # loop: its in-repo part may be spelled unlike the indexed path.
@@ -366,7 +354,7 @@ class FrameResolver:
 
     def _root_votes(self, frame: FramePoint) -> set[str]:
         """The roots whose removal leaves a graph path naming ``frame``."""
-        path = _portable_posix(frame.path)
+        path = portable_posix(frame.path)
         parts = path.split(cs.SEPARATOR_SLASH)
         if not cs.TRACE_INSTALLED_DIR_NAMES.isdisjoint(parts):
             return set()
