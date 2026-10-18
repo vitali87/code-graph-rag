@@ -88,6 +88,14 @@ TS_GO_GENERIC_TYPE = "generic_type"
 # Field names of a `qualified_type` (`pkg.Name`): the package identifier and
 # the type name; a `composite_literal` carries its constructed type in `type`.
 FIELD_GO_PACKAGE = "package"
+# `switch t := x.(type)` declares `t` in the type switch's `alias` list; a
+# select arm's `case v := <-ch` is a `receive_statement` with a `left` list.
+FIELD_GO_ALIAS = "alias"
+TS_GO_RECEIVE_STATEMENT = "receive_statement"
+# Statements whose header declares names scoped to the statement itself
+# (`if v := f(); v > 0 {}`, `for i := range xs {}`).
+TS_GO_IF_STATEMENT = "if_statement"
+TS_GO_FOR_STATEMENT = "for_statement"
 # Go composite types a method may return; a chained call lands on the CONTAINER,
 # not its element, so return-type inference must not unwrap these (a `[]Command`
 # return must not resolve `.Run()` to `Command.Run`).
@@ -95,6 +103,17 @@ TS_GO_CONTAINER_TYPES: frozenset[str] = frozenset(
     {"slice_type", "array_type", "map_type", "channel_type", "function_type"}
 )
 FIELD_OPERAND = "operand"
+# What `for k, v := range xs` binds depends on the container `xs` is declared
+# as: a slice or array yields (index, element), a map (key, value), a channel
+# its element alone. `element` names the element type of the first two.
+TS_GO_SLICE_TYPE = "slice_type"
+TS_GO_ARRAY_TYPE = "array_type"
+TS_GO_MAP_TYPE = "map_type"
+TS_GO_CHANNEL_TYPE = "channel_type"
+FIELD_GO_ELEMENT = "element"
+# `for k, v := range xs` declares its variables; `for k, v = range xs`
+# assigns ones declared before the loop.
+TS_GO_DECLARE_ASSIGN = ":="
 # A generic declaration's `[T any]` list (`type_parameter_declaration`s naming
 # the parameters) and a generic receiver's `Box[T]` arguments (`type_elem`s):
 # the names a result type can spell without naming any declared type.
@@ -102,6 +121,56 @@ FIELD_GO_TYPE_PARAMETERS = "type_parameters"
 TS_GO_TYPE_PARAMETER_DECLARATION = "type_parameter_declaration"
 FIELD_GO_TYPE_ARGUMENTS = "type_arguments"
 TS_GO_TYPE_ELEM = "type_elem"
+# The predeclared interfaces an interface can embed and the methods they add
+# (issue #2483), as (name, parameter types, result types): `any` adds none,
+# `error` adds `Error() string`. Any other embedded name must resolve to a
+# first-party interface for the method set to be known.
+GO_BUILTIN_INTERFACE_METHODS: dict[
+    str, tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...]
+] = {
+    "any": (),
+    "error": (("Error", (), ("string",)),),
+}
+# The predeclared types. A name of one is that type wherever the package does
+# not declare the name itself (`type int = string`), so a method spelling
+# another one in the same place has another signature. The aliases among
+# them name the type they stand for.
+GO_PREDECLARED_TYPES = frozenset(
+    {
+        "any",
+        "bool",
+        "complex64",
+        "complex128",
+        "error",
+        "float32",
+        "float64",
+        "int",
+        "int8",
+        "int16",
+        "int32",
+        "int64",
+        "string",
+        "uint",
+        "uint8",
+        "uint16",
+        "uint32",
+        "uint64",
+        "uintptr",
+    }
+)
+GO_PREDECLARED_ALIASES = {"byte": "uint8", "rune": "int32"}
+# Appended to a package key (`dir:clause`) for what the package's `_test.go`
+# files declare, which only `go test` compiles: no identifier holds a space.
+GO_TEST_SCOPE_SUFFIX = " [test]"
+# The type of a span-scoped Go binding whose type cannot be read (`x :=
+# f()` shadowing a range variable): inside its span the name is untyped, and
+# never the type an outer declaration of it has.
+GO_UNTYPED_BINDING = ""
+# `for _, s := range xs` declares `s` alone: `_` binds nothing.
+GO_BLANK_IDENTIFIER = "_"
+# A result list read back from the graph's `return_type` text is parsed again
+# in this stub, so it yields the declarations the file's own parse read.
+GO_RESULT_STUB = "package p\n\nfunc f() {result} {{}}\n"
 # Statements that bind the identifiers in their `left` list (`a, b := ...`,
 # `for k, v := range m`, a select arm's `case v := <-ch`), the declarations
 # whose specs bind names, and a `for` clause's `initializer` (`for i := ...`):
