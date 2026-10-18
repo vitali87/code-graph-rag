@@ -25,12 +25,15 @@ from evals.l1_eval import run_l1_eval
 
 # Every arm whose message carries a `{binary}` field, with the binary its
 # own module passes. `java_l1.py` is included because it hands over the bare
-# constant too, which the issue's list of call sites missed.
+# constant too, which the issue's list of call sites missed; `go_l1.py` and
+# `rust_l1.py` used to pre-format theirs and now hand over the bare constant.
 _ARMS = [
     ("TS_ORACLE_MISSING", ls.TS_ORACLE_MISSING, ec.NODE_BIN),
     ("LUA_ORACLE_MISSING", ls.LUA_ORACLE_MISSING, ec.NODE_BIN),
     ("PHP_ORACLE_MISSING", ls.PHP_ORACLE_MISSING, ec.NODE_BIN),
     ("JAVA_ORACLE_MISSING", ls.JAVA_ORACLE_MISSING, ec.JAVAC_BIN),
+    ("GO_ORACLE_MISSING", ls.GO_ORACLE_MISSING, ec.GO_BIN),
+    ("RS_ORACLE_MISSING", ls.RS_ORACLE_MISSING, ec.CARGO_BIN),
 ]
 
 

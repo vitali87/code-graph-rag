@@ -33,9 +33,10 @@ def test_search_language_filter_restricts_to_one_language(tmp_path: Path) -> Non
 
 
 def test_unsupported_language_file_is_skipped_not_crashed(tmp_path: Path) -> None:
-    # ast-grep ships no dart grammar; the dart file must be skipped rather
-    # than panicking the Rust binding.
-    (tmp_path / "a.dart").write_text("void main() { print(1); }\n")
+    # ast-grep ships no SQL grammar (it panics on one); the SQL file must be
+    # skipped rather than panicking the Rust binding. Dart, once the example
+    # here, now has a grammar and is searched (issue #2783).
+    (tmp_path / "a.sql").write_text("select print(1);\n")
     (tmp_path / "b.py").write_text("print(1)\n")
     svc = AstGrepService(str(tmp_path))
     res = svc.search("print($A)")
