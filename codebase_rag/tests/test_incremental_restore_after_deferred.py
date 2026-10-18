@@ -5,8 +5,9 @@ re-parses the file, and restores them. The restore ran at the end of Pass 2,
 before the deferred stages register a Go receiver method, so every captured
 edge into one was dropped as a target the re-index "did not recreate". A
 comment edit to `util.go` re-parses `box.go` (Box.Size calls clamp), and the
-unchanged `main.go`'s `main -> Box.Size` was gone for good: main.go is not
-re-parsed (dependents go one level deep), so only the restore could keep it.
+unchanged `cmd/app/main.go`'s `main -> Box.Size` was gone for good: main.go is
+not re-parsed (dependents go one level deep, and a sync re-parses only the
+edited package's Go files, issue #2483), so only the restore could keep it.
 """
 
 from __future__ import annotations
@@ -28,22 +29,25 @@ from codebase_rag.tests.test_incremental_inbound_deferred_targets import (
 )
 from evals.cgr_graph import _StatefulIngestor
 
+# The caller sits in another package: a sync re-parses every Go file of an
+# edited package (issue #2483), which would rebuild a same-package caller's
+# edge without the restore.
 _GO = {
     "go.mod": "module example.com/split\n\ngo 1.21\n",
     "util.go": (
-        "package main\n\nfunc clamp(n int) int {\n\tif n < 0 {\n\t\treturn 0\n\t}\n"
+        "package split\n\nfunc clamp(n int) int {\n\tif n < 0 {\n\t\treturn 0\n\t}\n"
         "\treturn n\n}\n"
     ),
     "box.go": (
-        "package main\n\ntype Box struct{ n int }\n\n"
-        "func (b *Box) Size() int { return clamp(b.n) }\n"
+        "package split\n\ntype Box struct{ N int }\n\n"
+        "func (b *Box) Size() int { return clamp(b.N) }\n"
     ),
-    "main.go": (
-        'package main\n\nimport "fmt"\n\nfunc main() {\n\tb := &Box{n: 1}\n'
-        "\tfmt.Println(b.Size())\n}\n"
+    "cmd/app/main.go": (
+        'package main\n\nimport (\n\t"fmt"\n\n\t"example.com/split"\n)\n\n'
+        "func main() {\n\tb := &split.Box{N: 1}\n\tfmt.Println(b.Size())\n}\n"
     ),
 }
-_MAIN_TO_SIZE = ("proj.main.main", "proj.box.Box.Size")
+_MAIN_TO_SIZE = ("proj.cmd.app.main.main", "proj.box.Box.Size")
 _SIZE_TO_CLAMP = ("proj.box.Box.Size", "proj.util.clamp")
 
 _PY = {
@@ -82,8 +86,8 @@ def _fresh_and_incremental(
     temp_repo: Path, files: dict[str, str], edited: str, marker: str
 ) -> tuple[Snapshot, Snapshot]:
     root = temp_repo / "proj"
-    root.mkdir()
     for rel, text in files.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(text, encoding="utf-8")
     store = _StatefulIngestor()
     _index(store, root, force=True)
@@ -102,7 +106,7 @@ def test_an_unchanged_files_call_into_a_reindexed_go_method_survives(
 
     assert _MAIN_TO_SIZE in _calls(clean), "fixture must produce the call"
     assert _SIZE_TO_CLAMP in _calls(clean)
-    # box.go was re-parsed as a dependent of util.go; main.go was not.
+    # box.go was re-parsed as a dependent of util.go; cmd/app/main.go was not.
     assert _MAIN_TO_SIZE in _calls(after), sorted(_calls(after))
     assert after == clean
 
