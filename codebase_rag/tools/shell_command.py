@@ -892,9 +892,7 @@ def _sed_script_skeleton(script: str) -> str:
             # the delimiters so the address still anchors the command.
             end = _delimited_end(script, index + 1, "/")
             if end < len(script):
-                out.append("/")
-                out.append(" " * (end - index - 1))
-                out.append("/")
+                out.extend(("/", " " * (end - index - 1), "/"))
                 index = end + 1
                 continue
         out.append(char)
