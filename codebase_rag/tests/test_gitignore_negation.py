@@ -227,3 +227,25 @@ def test_interactive_setup_offers_the_exclude_line(tmp_path: Path) -> None:
         kept = prompt_for_unignored_directories(root)
     assert "src/gen/*.py" in kept, kept
     assert not any(cs.IGNORE_BLOCK_SEPARATOR in pattern for pattern in kept), kept
+
+
+def test_one_block_however_many_excludes_precede_a_negation(tmp_path: Path) -> None:
+    # Each exclude before a `!` line was its own block holding every later
+    # `!` line, and each block was asked about every path and parent
+    # directory, so a long .gitignore with one late `!` line cost a match per
+    # exclude per level (CodeRabbit, PR 3088). The file is one block.
+    root = _repo(tmp_path, "out_a/\nout_b/\n*.log\n" + _ISSUE_GITIGNORE, [])
+    assert len(load_ignore_patterns(root).exclude) == 1
+    assert _cgr_skips(root, "out_b/x.py")
+    assert not _cgr_skips(root, "src/gen/handwritten.py")
+
+
+def test_interactive_setup_offers_every_exclude_of_the_block(tmp_path: Path) -> None:
+    root = _repo(tmp_path, "out_a/\n" + _ISSUE_GITIGNORE, [])
+    with (
+        patch("codebase_rag.main.Prompt.ask", return_value="all"),
+        patch("codebase_rag.main.app_context"),
+    ):
+        kept = prompt_for_unignored_directories(root)
+    assert {"out_a/", "src/gen/*.py"} <= kept, kept
+    assert "!src/gen/handwritten.py" not in kept, kept

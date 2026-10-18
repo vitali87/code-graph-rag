@@ -802,22 +802,26 @@ def _gitignore_excludes(lines: tuple[str, ...], cancelled: frozenset[str]) -> se
     """The root .gitignore's excludes, read the way git reads them.
 
     Git lets a later `!` line re-include what an earlier line excluded, the
-    last matching line deciding (issue #2835). An exclude no later `!` line
-    follows is its own pattern, as before; one that a negation follows joins
-    those negations in an ordered block, so `src/gen/*.py` then
-    `!src/gen/handwritten.py` keeps the hand-written file. An exclude a
-    negation of the same string undoes, or that .cgrignore re-includes, is
-    dropped.
+    last matching line deciding (issue #2835). With no `!` line left, each
+    exclude is its own pattern, as before; otherwise the file's lines form one
+    ordered block, so `src/gen/*.py` then `!src/gen/handwritten.py` keeps the
+    hand-written file. One block, not one per exclude, so a path is checked
+    once however many excludes precede a `!` line. An exclude a later `!` line
+    of the same string undoes, or that .cgrignore re-includes, is dropped, and
+    so is a `!` line no exclude precedes: neither changes what is ignored.
     """
-    excludes: set[str] = set()
+    kept: list[str] = []
+    seen_exclude = False
     for index, line in enumerate(lines):
-        if line.startswith("!") or line in cancelled:
-            continue
-        later = [n for n in lines[index + 1 :] if n.startswith("!")]
-        if f"!{line}" in later:
-            continue
-        excludes.add(ordered_ignore_block((line, *later)) if later else line)
-    return excludes
+        if line.startswith("!"):
+            if seen_exclude:
+                kept.append(line)
+        elif line not in cancelled and f"!{line}" not in lines[index + 1 :]:
+            kept.append(line)
+            seen_exclude = True
+    if all(not line.startswith("!") for line in kept):
+        return set(kept)
+    return {ordered_ignore_block(kept)}
 
 
 def load_ignore_patterns(repo_path: Path) -> CgrignorePatterns:

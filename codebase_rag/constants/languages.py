@@ -581,7 +581,7 @@ UNCONDITIONAL_IGNORE_FILENAME_ENDINGS = tuple(sorted(UNCONDITIONAL_IGNORE_SUFFIX
 
 # pathspec style for .cgrignore / --exclude patterns (#495).
 GITWILDMATCH_STYLE = "gitignore"
-# Joins a .gitignore exclude and the `!` lines after it into one exclude-set
+# Joins the lines of a .gitignore that has `!` lines into one exclude-set
 # entry evaluated in order (issue #2835); no pattern line can contain it.
 IGNORE_BLOCK_SEPARATOR = "\n"
 # How pathspec's gitignore regexes mark a match of a directory ABOVE the path

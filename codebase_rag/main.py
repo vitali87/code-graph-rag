@@ -1965,8 +1965,13 @@ def prompt_for_unignored_directories(
     detected = detect_excludable_directories(repo_path)
     cgrignore = load_ignore_patterns(repo_path)
     cli_patterns = frozenset(cli_excludes) if cli_excludes else frozenset()
-    # An ordered .gitignore block is offered by its exclude line, as before.
-    pre_excluded = cli_patterns | {ordered_block_lines(p)[0] for p in cgrignore.exclude}
+    # An ordered .gitignore block is offered by its exclude lines, as before.
+    pre_excluded = cli_patterns | {
+        line
+        for pattern in cgrignore.exclude
+        for line in ordered_block_lines(pattern)
+        if not line.startswith("!")
+    }
 
     if not detected and not pre_excluded:
         return cgrignore.unignore
