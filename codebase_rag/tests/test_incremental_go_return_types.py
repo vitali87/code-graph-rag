@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from evals.cgr_graph import _StatefulIngestor
@@ -102,7 +103,7 @@ def test_a_reparsed_test_file_still_types_locals_from_unchanged_helpers(
 
     # A comment changes the hash, not the AST; only box_test.go re-parses.
     test_file = go_root / "box_test.go"
-    cache_mtime = (go_root / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    cache_mtime = state_file(go_root, cs.HASH_CACHE_FILENAME).stat().st_mtime
     test_file.write_text(test_file.read_text(encoding="utf-8") + "// edited\n")
     os.utime(test_file, (cache_mtime + 1, cache_mtime + 1))
     _index(store, go_root, force=False)
@@ -117,7 +118,7 @@ def test_a_helper_whose_result_changed_types_its_callers_anew(go_root: Path) -> 
     store = _StatefulIngestor()
     _index(store, go_root, force=True)
     helpers = go_root / "helpers.go"
-    cache_mtime = (go_root / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    cache_mtime = state_file(go_root, cs.HASH_CACHE_FILENAME).stat().st_mtime
     helpers.write_text(
         helpers.read_text(encoding="utf-8")
         .replace(
