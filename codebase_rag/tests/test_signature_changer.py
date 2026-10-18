@@ -238,6 +238,39 @@ def test_literal_of_the_wrong_type_is_refused(
         )
 
 
+HIERARCHY_SOURCE = (
+    "class Base:\n"
+    "    def f(self, a, b=1, c=2):\n"
+    "        return a + b + c\n\n\n"
+    "class Sub(Base):\n"
+    "    def f(self, a, b, c=2):\n"
+    "        return a * b * c\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("new_params", "error"),
+    [
+        # Valid for `Base.f`, but `Sub.f` keeps its own `b` without a
+        # default and would read `(self, a, c=2, b)`.
+        (["a", "c", "b"], "parameter without a default follows"),
+        # The receiver is put back in front of the list.
+        (["a", "b", "c", "self=None"], "duplicate argument 'self'"),
+    ],
+)
+def test_a_header_python_would_reject_is_refused(
+    temp_repo: Path, new_params: list[str], error: str
+) -> None:
+    # Tree-sitter parses both headers, so the parse gate would have let them
+    # through and left a module that no longer loads (Greptile, #2166).
+    files = {"pkg/__init__.py": "", SHAPES: HIERARCHY_SOURCE}
+    root, store, _updater = _indexed(temp_repo, files)
+    with pytest.raises(SignatureRefused, match="is not valid Python") as refused:
+        change_signature(root, store.fetch_all, PROJECT, BASE_F, new_params)
+    assert error in str(refused.value)
+    assert _read(root, SHAPES) == HIERARCHY_SOURCE
+
+
 def test_edit_the_patcher_cannot_apply_is_a_refusal(
     repo: tuple[Path, _StatefulIngestor, GraphUpdater],
 ) -> None:
@@ -301,6 +334,34 @@ def test_a_call_passing_the_receiver_explicitly_is_unmapped(
     assert reasons["through_class"] == cs.SIGNATURE_SITE_EXPLICIT_RECEIVER.format(
         text="Base.f(obj, 5)"
     )
+
+
+def test_a_call_through_a_class_imported_under_an_alias_is_unmapped(
+    temp_repo: Path,
+) -> None:
+    # `base` is `Base`: rewriting `base.f(obj, 5)` as an instance call would
+    # write `base.f(obj, 9, 5)`, binding 5 to `n` (Greptile, #2166).
+    use = "pkg/use.py"
+    root, store, _updater = _indexed(
+        temp_repo,
+        {
+            "pkg/__init__.py": "",
+            SHAPES: "class Base:\n    def f(self, a, b=0):\n        return a - b\n",
+            use: (
+                "from pkg.shapes import Base as base\n\n\n"
+                "def through_alias(obj):\n    return base.f(obj, 5)\n"
+            ),
+        },
+    )
+    report = change_signature(
+        root, store.fetch_all, PROJECT, BASE_F, ["a", "n", "b"], {"n": "=9"}
+    )
+    assert report.applied, report.message
+    assert "def f(self, a, n, b=0):" in _read(root, SHAPES)
+    assert "return base.f(obj, 5)" in _read(root, use)
+    assert [site.reason for site in report.unmapped] == [
+        cs.SIGNATURE_SITE_EXPLICIT_RECEIVER.format(text="base.f(obj, 5)")
+    ]
 
 
 def test_a_classmethod_through_its_class_is_rewritten(temp_repo: Path) -> None:
@@ -425,6 +486,26 @@ def test_passes_receiver_reads_the_callee_object(
     call = root.named_children[0].named_children[0]
     assert call.type == "call"
     assert _passes_receiver(call, source, method_qn) is explicit
+
+
+@pytest.mark.parametrize(
+    ("imports", "name", "explicit"),
+    [
+        ("from pkg.shapes import Base as base", "base", True),
+        ("from pkg.shapes import Base as B", "B", True),
+        ("from pkg.shapes import widget as base", "base", False),
+        ("import pkg.shapes as base", "base", False),
+        ("from pkg.shapes import Base", "base", False),
+    ],
+)
+def test_passes_receiver_reads_an_import_alias_as_its_name(
+    imports: str, name: str, explicit: bool
+) -> None:
+    source = f"{imports}\n{name}.f(obj, 5)\n".encode()
+    root = _PY.parse(source).root_node
+    call = root.named_children[-1].named_children[0]
+    assert call.type == "call"
+    assert _passes_receiver(call, source, "p.m.Base.f") is explicit
 
 
 @pytest.mark.parametrize(

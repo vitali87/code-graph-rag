@@ -520,7 +520,9 @@ def _passes_receiver(call: Node, source: bytes, method_qn: str) -> bool:
     `obj.__class__.f(obj, a)` all pass the receiver as the first argument.
     The tree cannot tell a class from an instance by name alone, so a name
     counts as a class when it is the method's own class or is spelled the
-    way PEP 8 spells classes (`CapWords`, not `ALL_CAPS`). Erring towards a
+    way PEP 8 spells classes (`CapWords`, not `ALL_CAPS`). A name an import
+    binds is read as the name it imports: `from m import Base as base` makes
+    `base.f(obj, a)` a class call (Greptile, PR #2166). Erring towards a
     class leaves an instance call unmapped, which costs a hand edit; erring
     the other way shifts every argument one slot.
     """
@@ -540,6 +542,7 @@ def _passes_receiver(call: Node, source: bytes, method_qn: str) -> bool:
         name = _text(attribute, source) if attribute is not None else ""
     elif target.type == cs.TS_PY_IDENTIFIER:
         name = _text(target, source)
+        name = _imported_as(target, source, name) or name
     else:
         return False
     owner = method_qn.rsplit(cs.SEPARATOR_DOT, 2)
@@ -548,6 +551,32 @@ def _passes_receiver(call: Node, source: bytes, method_qn: str) -> bool:
         or (len(owner) == 3 and name == owner[1])
         or (name[:1].isupper() and not name.isupper())
     )
+
+
+def _imported_as(node: Node, source: bytes, alias: str) -> str | None:
+    """The name `from m import name as alias` binds to `alias` in the file."""
+    root = node
+    while root.parent is not None:
+        root = root.parent
+    pending = [root]
+    while pending:
+        current = pending.pop()
+        if (
+            current.type == cs.TS_PY_ALIASED_IMPORT
+            and current.parent is not None
+            and current.parent.type == cs.TS_PY_IMPORT_FROM_STATEMENT
+        ):
+            bound = current.child_by_field_name(cs.FIELD_ALIAS)
+            imported = current.child_by_field_name(cs.FIELD_NAME)
+            if (
+                bound is not None
+                and imported is not None
+                and _text(bound, source) == alias
+            ):
+                return _text(imported, source)
+            continue
+        pending.extend(current.named_children)
+    return None
 
 
 def change_signature(

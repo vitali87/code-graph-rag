@@ -989,6 +989,9 @@ SIGNATURE_DUPLICATE_NEW = "Parameter {name} is listed twice"
 SIGNATURE_REQUIRED_AFTER_DEFAULT = (
     "Parameter {name} has no default but comes after a defaulted parameter"
 )
+SIGNATURE_INVALID_HEADER = (
+    "The new parameter list of {qn} is not valid Python ({error}): `{text}`"
+)
 SIGNATURE_BODY_REBINDS = (
     "Cannot rename parameter {old} of {qn} to {new}: `{old}` is used inside a "
     "nested scope, or re-bound by a global, nonlocal or import statement, in "

@@ -6,6 +6,7 @@ new parameter list and rendering the rewritten text, for `change_signature`
 from __future__ import annotations
 
 import re
+import symtable
 from collections.abc import Iterable, Mapping, Sequence
 
 from tree_sitter import Node
@@ -534,9 +535,9 @@ def _definition_edits(
     texts = [own[spec.name].text if spec.name in carried else spec.text for spec in new]
     if header.receiver is not None:
         texts.insert(0, header.receiver)
-    edits = [
-        _Edit(header.path, header.span, f"({cs.SEPARATOR_COMMA_SPACE.join(texts)})")
-    ]
+    params = f"({cs.SEPARATOR_COMMA_SPACE.join(texts)})"
+    _refuse_invalid_header(header, params)
+    edits = [_Edit(header.path, header.span, params)]
     renamed_away = {old for old, _new in renamed}
     for old_name, new_name in renamed:
         # A default is evaluated at DEFINITION time, in the enclosing scope,
@@ -549,6 +550,26 @@ def _definition_edits(
             for span in _body_references(header, old_name, new_name, renamed_away)
         )
     return edits
+
+
+def _refuse_invalid_header(header: _Header, params: str) -> None:
+    """Refuse a parameter list Python would reject when loading the module.
+
+    `_new_specs` orders the PRIMARY's parameters, but an override keeps its
+    own defaults and the receiver is put back here: `Sub.f(self, a, b, c=2)`
+    reordered to `a, c, b` reads `(self, a, c=2, b)`, and a new `self=None`
+    repeats the receiver. Tree-sitter parses both, so the parse gate passes
+    them (Greptile, PR #2166). The symbol table pass is the compiler's own
+    check, and it neither builds nor runs any code.
+    """
+    try:
+        symtable.symtable(f"def _{params}: pass", header.path, "exec")
+    except SyntaxError as error:
+        raise SignatureRefused(
+            cs.SIGNATURE_INVALID_HEADER.format(
+                qn=header.qn, error=error.msg, text=params
+            )
+        ) from error
 
 
 def _refuse_default_reading(
