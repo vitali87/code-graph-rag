@@ -14,17 +14,17 @@ from contextlib import contextmanager
 from http.client import HTTPMessage
 from typing import IO, NamedTuple, Protocol
 
-import mgclient
 from loguru import logger
 
 from .. import constants as root_cs
 from .. import mgclient_probe
+from ..mgclient_compat import mgclient
 from ..types_defs import MgclientProbeReport, MgclientProbeRequest
 from . import constants as cs
 
 # pymgclient 1.6 re-exports its C extension through `import *`, which a type
 # checker cannot see into, so the exception type is bound once here.
-_MgclientError: type[Exception] = mgclient.Error  # ty: ignore[unresolved-attribute]
+_MgclientError: type[Exception] = mgclient.Error
 
 
 class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
