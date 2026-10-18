@@ -25,7 +25,11 @@ from codebase_rag.config import (
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.main import prompt_for_unignored_directories
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.utils.path_utils import should_skip_path, should_skip_rel_file
+from codebase_rag.utils.path_utils import (
+    should_keep_dir,
+    should_skip_path,
+    should_skip_rel_file,
+)
 from evals.cgr_graph import _StatefulIngestor
 
 _ISSUE_GITIGNORE = "src/gen/*.py\n!src/gen/handwritten.py\n"
@@ -55,6 +59,27 @@ _CASES = {
     "last_match_wins": (
         "*.py\n!keep.py\nkeep.py\n!src/keep.py\n",
         ["keep.py", "src/keep.py", "lib/keep.py", "other.py"],
+    ),
+    # `src/**` excludes what is inside `src`, not `src`, so `!src/gen/`
+    # re-includes that directory and `!src/gen/keep.py` the file in it.
+    "contents_glob": (
+        "src/**\n!src/gen/\n!src/gen/keep.py\n",
+        ["src/gen/keep.py", "src/gen/auto.py", "src/app.py"],
+    ),
+    # Git's idiom for "only Python": every directory is re-included.
+    "only_python": (
+        "*\n!*/\n!*.py\n",
+        ["app.py", "src/app.py", "src/gen/keep.py", "src/notes.txt"],
+    ),
+    "directories_inside": (
+        "docs/**\n!docs/**/\n!docs/**/*.py\n",
+        ["docs/api/conf.py", "docs/api/index.md"],
+    ),
+    # Negative: a `!` line naming a directory re-includes that directory
+    # only, never an excluded directory further down.
+    "nested_exclude_survives": (
+        "gen/\n!pkgs/\n",
+        ["pkgs/a/gen/out.py", "pkgs/a/app.py"],
     ),
 }
 
@@ -94,12 +119,36 @@ def _cgr_skips(root: Path, rel: str) -> bool:
     )
 
 
+def _cgr_walk_skips(root: Path, rel: str) -> bool:
+    # The repository walk: a directory it does not enter hides its files.
+    patterns = load_ignore_patterns(root)
+    parts = rel.split("/")
+    for depth in range(1, len(parts)):
+        prefix = "".join(f"{part}/" for part in parts[: depth - 1])
+        if not should_keep_dir(
+            parts[depth - 1],
+            prefix,
+            patterns.exclude or None,
+            patterns.unignore or None,
+        ):
+            return True
+    return _cgr_skips(root, rel)
+
+
 @pytest.mark.parametrize("case", sorted(_CASES))
 def test_cgr_ignores_exactly_what_git_ignores(tmp_path: Path, case: str) -> None:
     gitignore, files = _CASES[case]
     root = _repo(tmp_path, gitignore, files)
     expected = {rel: _git_ignored(root, rel) for rel in files}
     assert {rel: _cgr_skips(root, rel) for rel in files} == expected
+
+
+@pytest.mark.parametrize("case", sorted(_CASES))
+def test_the_walk_keeps_exactly_what_git_keeps(tmp_path: Path, case: str) -> None:
+    gitignore, files = _CASES[case]
+    root = _repo(tmp_path, gitignore, files)
+    expected = {rel: _git_ignored(root, rel) for rel in files}
+    assert {rel: _cgr_walk_skips(root, rel) for rel in files} == expected
 
 
 def test_the_rel_file_check_agrees(tmp_path: Path) -> None:

@@ -584,6 +584,15 @@ GITWILDMATCH_STYLE = "gitignore"
 # Joins a .gitignore exclude and the `!` lines after it into one exclude-set
 # entry evaluated in order (issue #2835); no pattern line can contain it.
 IGNORE_BLOCK_SEPARATOR = "\n"
+# How pathspec's gitignore regexes mark a match of a directory ABOVE the path
+# rather than of the path itself, and the regex it gives `*/` and `**/`
+# (every directory). An ordered block reads them to judge each level of a
+# path on its own, as git does (issue #2835).
+PATHSPEC_DIR_MARK_GROUP = "ps_d"
+PATHSPEC_ANY_DIR_REGEX = "(?P<ps_d>/)"
+GITIGNORE_NEGATION = "!"
+# `x/**/`: the directories inside x, which pathspec reads as `x/`.
+GITIGNORE_DIRS_INSIDE_SUFFIX = "/**/"
 
 # JDK binaries the Java frontend probes and runs (issue #1181).
 JAVAC_BIN = "javac"

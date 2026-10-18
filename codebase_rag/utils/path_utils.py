@@ -9,7 +9,7 @@ from functools import lru_cache
 from pathlib import Path, PurePath
 from typing import NamedTuple
 
-from pathspec import GitIgnoreSpec, PathSpec
+from pathspec import GitIgnoreSpec, PathSpec, RegexPattern
 
 from .. import constants as cs
 
@@ -170,9 +170,21 @@ def ordered_block_lines(pattern: str) -> list[str]:
     return pattern.split(cs.IGNORE_BLOCK_SEPARATOR)
 
 
+class _BlockLine(NamedTuple):
+    line: str
+    pattern: RegexPattern
+
+
+class _OrderedBlock(NamedTuple):
+    lines: tuple[_BlockLine, ...]
+    # The block's excludes alone: a path none of them reaches is kept, so
+    # most paths cost one match, not one per line and directory level.
+    excludes: GitIgnoreSpec
+
+
 class _IgnoreMatcher(NamedTuple):
     patterns: PathSpec
-    ordered_blocks: tuple[GitIgnoreSpec, ...]
+    ordered_blocks: tuple[_OrderedBlock, ...]
 
     def match_file(self, rel_path_str: str) -> bool:
         return self.patterns.match_file(rel_path_str) or any(
@@ -180,15 +192,66 @@ class _IgnoreMatcher(NamedTuple):
         )
 
 
-def _git_ignores(block: GitIgnoreSpec, rel_path_str: str) -> bool:
-    # Git cannot re-include a path whose parent directory is excluded, so a
-    # `!gen/keep.py` under `gen/` keeps nothing: test each ancestor first.
+def _ordered_block(lines: list[str]) -> _OrderedBlock:
+    spec = GitIgnoreSpec.from_lines(lines)
+    return _OrderedBlock(
+        lines=tuple(
+            _BlockLine(line, pattern)
+            for line, pattern in zip(lines, spec.patterns, strict=True)
+        ),
+        excludes=GitIgnoreSpec.from_lines(
+            line for line in lines if not line.startswith(cs.GITIGNORE_NEGATION)
+        ),
+    )
+
+
+def _git_ignores(block: _OrderedBlock, rel_path_str: str) -> bool:
+    """Whether git ignores the path: at the path itself or at one of its
+    parent directories, the last line matching that level is an exclude.
+
+    So an excluded directory keeps everything beneath it excluded (`gen/`
+    then `!gen/keep.py` keeps nothing), and a `!` line re-includes only what
+    it matches itself: `!pkgs/` leaves `pkgs/a/gen/` excluded by `gen/`,
+    while `src/**` then `!src/gen/` and `!src/gen/keep.py` keeps that file,
+    since `src/**` excludes what is inside `src`, not `src`.
+    """
+    if not block.excludes.match_file(rel_path_str):
+        return False
+    is_dir = rel_path_str.endswith(cs.SEPARATOR_SLASH)
     parts = rel_path_str.rstrip(cs.SEPARATOR_SLASH).split(cs.SEPARATOR_SLASH)
-    for depth in range(1, len(parts)):
-        ancestor = cs.SEPARATOR_SLASH.join(parts[:depth])
-        if block.match_file(f"{ancestor}{cs.SEPARATOR_SLASH}"):
+    for depth in range(1, len(parts) + 1):
+        level = cs.SEPARATOR_SLASH.join(parts[:depth])
+        level_is_dir = is_dir or depth < len(parts)
+        ignored = False
+        for entry in block.lines:
+            if entry.pattern.include is not None and _matches_level(
+                entry, level, level_is_dir
+            ):
+                ignored = entry.pattern.include
+        if ignored:
             return True
-    return block.match_file(rel_path_str)
+    return False
+
+
+def _matches_level(entry: _BlockLine, level: str, is_dir: bool) -> bool:
+    # Whether the line matches `level` itself. pathspec's regexes also match
+    # every path beneath a matched directory, marking where that directory
+    # ends, and git judges a path beneath it by its own lines.
+    probe = f"{level}{cs.SEPARATOR_SLASH}" if is_dir else level
+    found = entry.pattern.match_file(probe)
+    if found is None:
+        return False
+    match = found.match
+    if match.re.pattern == cs.PATHSPEC_ANY_DIR_REGEX:
+        return is_dir
+    mark = cs.PATHSPEC_DIR_MARK_GROUP
+    start = match.start(mark) if mark in match.re.groupindex else -1
+    if entry.line.endswith(cs.GITIGNORE_DIRS_INSIDE_SUFFIX):
+        return is_dir and 0 <= start < len(level)
+    if start >= 0:
+        return start == len(level)
+    # `x/**` matches what is inside x, which the probe `x/` is not.
+    return not (is_dir and match.end() == len(probe))
 
 
 # #495: .cgrignore lines and --exclude values are interpreted with
@@ -201,7 +264,7 @@ def compiled_ignore_spec(patterns: frozenset[str]) -> _IgnoreMatcher:
     return _IgnoreMatcher(
         patterns=PathSpec.from_lines(cs.GITWILDMATCH_STYLE, sorted(patterns - blocks)),
         ordered_blocks=tuple(
-            GitIgnoreSpec.from_lines(ordered_block_lines(b)) for b in sorted(blocks)
+            _ordered_block(ordered_block_lines(b)) for b in sorted(blocks)
         ),
     )
 
