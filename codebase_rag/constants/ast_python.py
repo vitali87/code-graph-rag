@@ -163,6 +163,13 @@ TS_FIELD_CONSEQUENCE = "consequence"
 TS_FIELD_ARGUMENT = "argument"
 TS_PY_UNARY_OPERATOR = "unary_operator"
 TS_PY_CONCATENATED_STRING = "concatenated_string"
+# Argument values that run no code when evaluated, so `change_signature` may
+# reorder a call site made only of them (issue #1533).
+TS_PY_INTEGER = "integer"
+TS_PY_FLOAT = "float"
+TS_PY_TRUE = "true"
+TS_PY_FALSE = "false"
+TS_PY_NONE = "none"
 # Read positions the binding scan of `python_name_binding_sites` recognises.
 TS_PY_SLICE = "slice"
 TS_PY_ASSERT_STATEMENT = "assert_statement"
