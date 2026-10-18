@@ -28,6 +28,10 @@ def mock_memgraph_connect() -> Generator[MagicMock, None, None]:
     with patch("codebase_rag.cli.connect_memgraph") as mock_connect:
         mock_ingestor = MagicMock()
         mock_ingestor.list_projects.return_value = ["platform", "other"]
+        mock_ingestor.list_project_roots.return_value = {
+            "other": "/repos/other",
+            "platform": "/repos/platform",
+        }
         mock_ingestor.fetch_all.return_value = [
             {cs.KEY_NODE_ID: 1},
             {cs.KEY_NODE_ID: 2},
@@ -221,3 +225,57 @@ def test_a_missing_project_sweeps_nothing(
 
     assert result.exit_code == 1
     _get_ingestor(mock_memgraph_connect).execute_write.assert_not_called()
+
+
+def _shared_root_warning(project_name: str, projects: str, root_path: str) -> str:
+    return cs.CLI_WARN_DELETE_PROJECT_SHARED_ROOT.format(
+        projects=projects, project_name=project_name, root_path=root_path
+    )
+
+
+@patch("codebase_rag.cli.delete_project_embeddings")
+def test_delete_project_warns_about_projects_indexed_from_the_same_directory(
+    mock_delete_embeddings: MagicMock,
+    mock_memgraph_connect: MagicMock,
+) -> None:
+    ingestor = _get_ingestor(mock_memgraph_connect)
+    ingestor.list_project_roots.return_value = {
+        "other": "/repos/other",
+        "platform": "/repos/shop",
+        "shop": "/repos/shop/",
+        "shop-old": "/repos/shop",
+    }
+
+    result = runner.invoke(app, ["delete-project", "--name", "platform"])
+
+    assert result.exit_code == 0, result.output
+    stripped = " ".join(_strip_ansi(result.output).split())
+    expected = _shared_root_warning("platform", "shop, shop-old", "/repos/shop")
+    assert expected in stripped
+    ingestor.delete_project.assert_called_once_with("platform")
+
+
+@patch("codebase_rag.cli.delete_project_embeddings")
+def test_delete_project_does_not_warn_when_the_directory_is_its_own(
+    mock_delete_embeddings: MagicMock,
+    mock_memgraph_connect: MagicMock,
+) -> None:
+    result = runner.invoke(app, ["delete-project", "--name", "platform"])
+
+    assert result.exit_code == 0, result.output
+    assert "same directory" not in _strip_ansi(result.output)
+
+
+@patch("codebase_rag.cli.delete_project_embeddings")
+def test_delete_project_does_not_count_projects_without_a_root_as_sharing(
+    mock_delete_embeddings: MagicMock,
+    mock_memgraph_connect: MagicMock,
+) -> None:
+    ingestor = _get_ingestor(mock_memgraph_connect)
+    ingestor.list_project_roots.return_value = {"legacy": None, "platform": None}
+
+    result = runner.invoke(app, ["delete-project", "--name", "platform"])
+
+    assert result.exit_code == 0, result.output
+    assert "same directory" not in _strip_ansi(result.output)
+    ingestor.delete_project.assert_called_once_with("platform")

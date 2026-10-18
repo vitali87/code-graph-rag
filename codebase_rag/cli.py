@@ -44,7 +44,7 @@ from .capture import (
     unknown_tokens,
 )
 from .checkout_state import prepare_state_dir
-from .cli_runtime import app_context, connect_memgraph, style
+from .cli_runtime import app_context, connect_memgraph, dim, style
 from .config import load_ignore_patterns, settings, settings_errors
 from .console_marks import status_mark
 from .editing.cli import cli as edits_cli
@@ -57,6 +57,7 @@ from .editor_links import (
     url_template_problem,
 )
 from .graph_cli import cli as graph_cli
+from .graph_dialects import DIALECT_MEMGRAPH
 from .parser_loader import load_parsers
 from .project_selection import ProjectChoice, choose_project, scope_refusal
 from .services.gloss_cleanup import prune_orphaned_glosses
@@ -71,7 +72,7 @@ from .services.provenance import (
 )
 from .stack import StackManager
 from .stack.cli import cli as daemon_cli
-from .stack.constants import StackState
+from .stack.constants import SERVICE_QDRANT, StackState
 from .stack.manager import StackError
 from .sync_guard import RUNNING_SYNC_TOKENS as _RUNNING_SYNC_TOKENS
 from .sync_guard import OwnerCheck as _OwnerCheck
@@ -102,6 +103,7 @@ from .utils.path_utils import (
     normalize_project_name,
     project_name_error,
     project_roots_from_rows,
+    projects_sharing_root,
     resolve_repo_path,
     unwritable_output_reason,
 )
@@ -199,10 +201,40 @@ class _CgrGroup(TyperGroup):
         # this at connect time with the fix in its message; printing it here
         # covers them all, the delegated groups and the chat included (#2443).
         try:
-            return super().invoke(ctx)
+            result = super().invoke(ctx)
         except GraphUnavailableError as e:
             app_context.console.print(style(str(e), cs.Color.RED))
             raise typer.Exit(1) from e
+        # Only a command that finished gets here: a failure exits by raising.
+        pledge = sponsor_pledge(ctx.invoked_subcommand, sys.stderr.isatty())
+        if pledge:
+            # Soft-wrapped so the terminal, not Rich, breaks the line, and
+            # the URL stays one clickable link.
+            terminal_aware_console(stderr=True).print(
+                dim(pledge), highlight=False, soft_wrap=True
+            )
+        return result
+
+
+# Help pages, and the MCP server, which speaks its protocol until the client
+# hangs up, are not runs that finished.
+_NO_SPONSOR_PLEDGE = frozenset({ch.CLICommandName.HELP, ch.CLICommandName.MCP_SERVER})
+
+
+def sponsor_pledge(command: str | None, terminal: bool) -> str | None:
+    """The GitHub Sponsors line a finished command ends on, or None where it
+    would be in the way: off a terminal (a script or a log reading stderr),
+    under `--quiet` or CGR_SPONSOR_PLEDGE=false, and after the commands in
+    `_NO_SPONSOR_PLEDGE`. On stderr, so it never mixes into a command's
+    output on stdout."""
+    if (
+        not terminal
+        or settings.QUIET
+        or not settings.SPONSOR_PLEDGE
+        or command in _NO_SPONSOR_PLEDGE
+    ):
+        return None
+    return cs.CLI_MSG_SPONSOR_PLEDGE.format(url=cs.SPONSOR_URL)
 
 
 app = typer.Typer(
@@ -225,6 +257,9 @@ def _version_callback(value: bool) -> None:
         )
         for line in credits_lines():
             app_context.console.print(line, highlight=False)
+        app_context.console.print(
+            cs.CLI_MSG_SPONSOR.format(url=cs.SPONSOR_URL), highlight=False
+        )
         raise typer.Exit()
 
 
@@ -741,7 +776,17 @@ def _resolve_active_projects(projects: str | None, default_project: str) -> list
 
 
 def _maybe_start_stack() -> None:
-    mgr = StackManager()
+    # The Docker stack serves Memgraph, and Qdrant when the vector settings
+    # pick the bundled one. The embedded graph is a file and Neo4j is the
+    # user's own server, so for them the stack runs only for the vectors:
+    # only its Qdrant is started and checked, since every Memgraph check
+    # needs a driver those installs need not have.
+    if settings.GRAPH_BACKEND == DIALECT_MEMGRAPH:
+        mgr = StackManager()
+    else:
+        mgr = StackManager(services=(SERVICE_QDRANT,))
+        if not mgr.serves_vectors():
+            return
     try:
         mgr.locate_published_qdrant()
         if mgr.status().state == StackState.RUNNING:
@@ -3452,6 +3497,21 @@ def delete_project(
             if choice.name is None:
                 app_context.console.print(style(choice.refusal, cs.Color.RED))
                 raise typer.Exit(1)
+
+            # A directory indexed under two names used to lose both on delete
+            # (#2665). The delete is ownership-scoped now; say so before it runs.
+            roots = ingestor.list_project_roots()
+            if sharing := projects_sharing_root(project_name, roots):
+                app_context.console.print(
+                    style(
+                        cs.CLI_WARN_DELETE_PROJECT_SHARED_ROOT.format(
+                            projects=", ".join(sharing),
+                            project_name=project_name,
+                            root_path=roots[project_name],
+                        ),
+                        cs.Color.YELLOW,
+                    )
+                )
 
             _info(
                 style(

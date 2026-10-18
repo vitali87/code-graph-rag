@@ -119,7 +119,10 @@ Get your MiniMax API key from the [MiniMax Platform](https://platform.minimax.io
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GRAPH_BACKEND` | `memgraph` | Graph engine: `memgraph` or `neo4j`. Neo4j needs the `neo4j` extra (`uv pip install 'code-graph-rag[neo4j]'`) and is configured with the `NEO4J_*` variables below; the bundled stack (`cgr daemon`) only launches Memgraph, so a Neo4j server is yours to run. |
+| `GRAPH_BACKEND` | `sqlite` | Graph engine: `sqlite` (embedded, no server), `memgraph` or `neo4j`. Memgraph needs the `memgraph` extra (`uv pip install 'code-graph-rag[memgraph]'`) and the bundled stack (`cgr daemon up`); Neo4j needs the `neo4j` extra and is configured with the `NEO4J_*` variables below, and a Neo4j server is yours to run. See [Graph Backends](../architecture/embedded-graph.md). |
+| `SQLITE_GRAPH_PATH` | `$CGR_HOME/graph.sqlite` | The embedded graph's file, shared by every indexed project as one Memgraph instance is |
+| `CGR_VECTOR_STORE_BACKEND` | `qdrant` | Where semantic search keeps its vectors: `qdrant`, `milvus` (the `milvus` extra) or `sqlite`, a file needing no server (the `sqlite-vec` extra). See [Semantic Search](../sdk/semantic-search.md). |
+| `SQLITE_VECTOR_PATH` | `$CGR_HOME/vectors.sqlite` | The `sqlite` vector store's file, beside the embedded graph's |
 | `MEMGRAPH_HOST` | `localhost` | Memgraph hostname |
 | `MEMGRAPH_PORT` | `7687` | Memgraph port |
 | `MEMGRAPH_HTTP_PORT` | `7444` | Memgraph HTTP port |
@@ -139,6 +142,7 @@ Get your MiniMax API key from the [MiniMax Platform](https://platform.minimax.io
 | `CGR_CAPTURE` | _(unset)_ | What an index writes to the graph, as capture group tokens separated by commas, semicolons or spaces: a group or relationship type adds (`io`, `+HAS_PARAMETER`), `-NAME` drops (`-calls`), and `all` or `none` replaces the selection (`none,structure`). Unset, an index holds only the default groups. Read by every indexing run; `--capture` on `cgr start` and `cgr index` applies after it. The groups, their defaults and what each adds: [Capture Groups](../architecture/graph-schema.md#capture-groups). |
 | `CGR_CAPTURE_LOCAL_DEFINITIONS` | `true` | Capture methods of classes defined inside function bodies (function-local definitions). On by default for exhaustive structure capture; set to `false` to keep the graph free of throwaway helpers and test mocks. |
 | `CGR_CONTEXT_COMPACTION_ENABLED` | `true` | Drop old tool output once the context passes the critical threshold, keeping a long session inside the model's window. Set to `false` to keep every tool result and accept the ceiling instead; the agent prints a notice whenever it compacts. |
+| `CGR_SPONSOR_PLEDGE` | `true` | After a command finishes in a terminal, print one dimmed line on stderr pointing to the project's [GitHub Sponsors](https://github.com/sponsors/vitali87) page. It never appears when stderr is not a terminal, after `cgr help` or `cgr mcp-server`, or under `--quiet`; set to `false` to drop it while keeping the rest of the output. |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Base URL for the local Ollama server (`/v1` is appended for the OpenAI-compatible endpoint) |
 
 ## Setting Up Ollama
