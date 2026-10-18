@@ -89,6 +89,15 @@ class TestWorkflowJob:
             "the smoke must run on the fresh venv's interpreter"
         )
 
+    def test_job_installs_the_crate_it_carries(self) -> None:
+        # code-graph-rag requires cgr-graph-rs, so the job builds the crate in
+        # this checkout and offers its wheel to the unlocked install: a PR is
+        # smoked with the library it changes, not whatever PyPI has.
+        script = _job_run_script(_workflow()["jobs"][JOB_ID])
+
+        assert "uv build --wheel rust/cgr_graph_rs --out-dir dist-rust" in script
+        assert "--find-links dist-rust" in script
+
     def test_job_runs_the_smoke_script(self) -> None:
         script = _job_run_script(_workflow()["jobs"][JOB_ID])
 
