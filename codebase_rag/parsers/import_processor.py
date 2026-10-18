@@ -5296,26 +5296,38 @@ class ImportProcessor:
                         self._record_js_reexport_specifier(
                             grandchild, export_node, current_module, source_module
                         )
-            elif child.type == cs.TS_NAMESPACE_EXPORT and (
-                namespace := _js_namespace_export_name(child)
-            ):
-                # `export * as math from "./math"` publishes the whole module
-                # as `math`. Only the coincidence of `lib` + `math` spelling
-                # the `lib/math` directory made `math.add()` resolve before
-                # (issue #3249).
-                self.js_export_bindings.setdefault(current_module, {})[namespace] = (
-                    JsExport(source_module, local=False)
+            elif child.type == cs.TS_NAMESPACE_EXPORT:
+                self._record_js_namespace_reexport(
+                    child, export_node, current_module, source_module
                 )
-                # It binds no local `math`, so the map entry only carries the
-                # IMPORTS edge and never displaces an import of that name.
-                if namespace not in self.import_mapping[current_module]:
-                    self.import_mapping[current_module][namespace] = source_module
-                    self._record_import_site(
-                        current_module,
-                        namespace,
-                        export_node,
-                        cs.IMPORTED_NAME_WILDCARD,
-                    )
+
+    def _record_js_namespace_reexport(
+        self,
+        namespace_export: Node,
+        export_node: Node,
+        current_module: str,
+        source_module: str,
+    ) -> None:
+        namespace = _js_namespace_export_name(namespace_export)
+        if not namespace:
+            return
+        # `export * as math from "./math"` publishes the whole module
+        # as `math`. Only the coincidence of `lib` + `math` spelling
+        # the `lib/math` directory made `math.add()` resolve before
+        # (issue #3249).
+        self.js_export_bindings.setdefault(current_module, {})[namespace] = JsExport(
+            source_module, local=False
+        )
+        # It binds no local `math`, so the map entry only carries the
+        # IMPORTS edge and never displaces an import of that name.
+        if namespace not in self.import_mapping[current_module]:
+            self.import_mapping[current_module][namespace] = source_module
+            self._record_import_site(
+                current_module,
+                namespace,
+                export_node,
+                cs.IMPORTED_NAME_WILDCARD,
+            )
 
     def _record_js_reexport_specifier(
         self,
