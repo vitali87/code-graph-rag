@@ -345,6 +345,12 @@ class _MethodScope(NamedTuple):
     module_qn: str | None
 
 
+def _field_type_entry(name: str, type_name: str, guard_inner: str | None) -> str:
+    # `name<TAB>type`, plus `<TAB>inner` for a Rust guard field (#3004).
+    parts = (name, type_name, guard_inner) if guard_inner else (name, type_name)
+    return cs.FIELD_TYPE_SEPARATOR.join(parts)
+
+
 class ClassIngestMixin:
     # No __slots__: this mixin lazily creates _deferred_* registries on the
     # host instance, which requires the host to provide a __dict__.
@@ -1881,17 +1887,19 @@ class ClassIngestMixin:
         # Only parsing fills `class_field_types`, so an incremental run that
         # re-parses `defs.rs` but not `lowargs.rs` lost `LowArgs.mode: Mode`
         # and `args.mode.update()` fell to a by-name guess (issue #3004).
-        # Store the map on the class node for the rehydration to read back.
-        if node_type != NodeType.CLASS or not (
-            fields := self.class_field_types.get(class_qn)
-        ):
+        # Store the map on the type's node for the rehydration to read back:
+        # a C# interface's properties and a union's fields type a field hop
+        # as a class's fields do, and a Rust guard field's inner type
+        # (`state: Mutex<State>` -> State) is what a `.lock()` hop reaches.
+        if not (fields := self.class_field_types.get(class_qn)):
             return
+        guard_inner = self.class_field_guard_inner.get(class_qn, {})
         self.ingestor.ensure_node_batch(
             node_type,
             {
                 cs.KEY_QUALIFIED_NAME: class_qn,
                 cs.KEY_FIELD_TYPES: [
-                    f"{name}{cs.FIELD_TYPE_SEPARATOR}{type_name}"
+                    _field_type_entry(name, type_name, guard_inner.get(name))
                     for name, type_name in sorted(fields.items())
                 ],
             },

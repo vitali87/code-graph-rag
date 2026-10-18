@@ -49,6 +49,37 @@ _CSHARP = {
         "{ args.mode.Update(1); } }\n"
     ),
 }
+# A C# interface's property types a field hop as a class's field does.
+_CSHARP_INTERFACE = {
+    "src/Args.cs": (
+        "public class Mode { public void Update(int n) {} }\n"
+        "public interface IArgs { Mode mode { get; } }\n"
+    ),
+    "src/Defs.cs": (
+        "public class Defs { public void Update(IArgs args) "
+        "{ args.mode.Update(1); } }\n"
+    ),
+}
+# A guard field (`state: Mutex<State>`) unwraps to its inner type at a
+# `.lock()` hop; `Aaa` is the by-name decoy a lost inner type falls to.
+_RUST_GUARD = {
+    "Cargo.toml": '[package]\nname = "rsguardinc"\nversion = "0.1.0"\nedition = "2021"\n',
+    "src/main.rs": "mod db;\nmod shared;\nfn main() {}\n",
+    "src/shared.rs": (
+        "use std::sync::Mutex;\n\n"
+        "pub struct Aaa {}\n\nimpl Aaa {\n"
+        "    pub fn next_expiration(&self) -> i32 { 2 }\n}\n\n"
+        "pub struct State {}\n\nimpl State {\n"
+        "    pub fn next_expiration(&self) -> i32 { 1 }\n}\n\n"
+        "pub struct Shared {\n    pub state: Mutex<State>,\n}\n"
+    ),
+    "src/db.rs": (
+        "use crate::shared::Shared;\n\n"
+        "pub fn update(s: &Shared) -> i32 {\n"
+        "    let state = s.state.lock().unwrap();\n"
+        "    state.next_expiration()\n}\n"
+    ),
+}
 
 _Calls = dict[tuple[str, str], str]
 
@@ -79,8 +110,13 @@ def _append(root: Path, rel: str, text: str) -> None:
 
 @pytest.mark.parametrize(
     ("files", "caller_file", "grammar"),
-    [(_RUST, "src/flags/defs.rs", "rust"), (_CSHARP, "src/Defs.cs", "c_sharp")],
-    ids=["rust", "csharp"],
+    [
+        (_RUST, "src/flags/defs.rs", "rust"),
+        (_CSHARP, "src/Defs.cs", "c_sharp"),
+        (_CSHARP_INTERFACE, "src/Defs.cs", "c_sharp"),
+        (_RUST_GUARD, "src/db.rs", "rust"),
+    ],
+    ids=["rust", "csharp", "csharp-interface", "rust-guard"],
 )
 def test_editing_the_caller_keeps_the_field_typed_call(
     tmp_path: Path, files: dict[str, str], caller_file: str, grammar: str

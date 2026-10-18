@@ -555,7 +555,7 @@ class Class(_message.Message):
     def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., docstring: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., decorators: _Optional[_Iterable[str]] = ..., is_exported: bool = ..., namespace: _Optional[str] = ..., generic_arity: _Optional[int] = ..., field_types: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class Interface(_message.Message):
-    __slots__ = ("qualified_name", "name", "path", "absolute_path", "namespace", "generic_arity", "implementers_unknown")
+    __slots__ = ("qualified_name", "name", "path", "absolute_path", "namespace", "generic_arity", "implementers_unknown", "field_types")
     QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     PATH_FIELD_NUMBER: _ClassVar[int]
@@ -563,6 +563,7 @@ class Interface(_message.Message):
     NAMESPACE_FIELD_NUMBER: _ClassVar[int]
     GENERIC_ARITY_FIELD_NUMBER: _ClassVar[int]
     IMPLEMENTERS_UNKNOWN_FIELD_NUMBER: _ClassVar[int]
+    FIELD_TYPES_FIELD_NUMBER: _ClassVar[int]
     qualified_name: str
     name: str
     path: str
@@ -570,7 +571,8 @@ class Interface(_message.Message):
     namespace: str
     generic_arity: int
     implementers_unknown: str
-    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ..., absolute_path: _Optional[str] = ..., namespace: _Optional[str] = ..., generic_arity: _Optional[int] = ..., implementers_unknown: _Optional[str] = ...) -> None: ...
+    field_types: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ..., absolute_path: _Optional[str] = ..., namespace: _Optional[str] = ..., generic_arity: _Optional[int] = ..., implementers_unknown: _Optional[str] = ..., field_types: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class Enum(_message.Message):
     __slots__ = ("qualified_name", "name", "path", "absolute_path", "namespace")
@@ -595,9 +597,11 @@ class Type(_message.Message):
     def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ...) -> None: ...
 
 class Union(_message.Message):
-    __slots__ = ("qualified_name", "name")
+    __slots__ = ("qualified_name", "name", "field_types")
     QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
+    FIELD_TYPES_FIELD_NUMBER: _ClassVar[int]
     qualified_name: str
     name: str
-    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ...) -> None: ...
+    field_types: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., field_types: _Optional[_Iterable[str]] = ...) -> None: ...

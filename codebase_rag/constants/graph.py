@@ -908,8 +908,9 @@ KEY_CALL_QUALIFIER = "call_qualifier"
 # file module win over another target's gate (src/lib.rs gating what
 # src/main.rs compiles for real).
 KEY_RUST_CFG_TEST_MODS = "rust_cfg_test_mods"
-# A class's field types (`mode\tMode`), read back on an incremental run so a
-# re-parsed file's `args.mode.update()` still types the field (issue #3004).
+# A type's field types (`mode\tMode`; a Rust guard field adds its inner type,
+# `state\tMutex\tState`), read back on an incremental run so a re-parsed
+# file's `args.mode.update()` still types the field (issue #3004).
 KEY_FIELD_TYPES = "field_types"
 FIELD_TYPE_SEPARATOR = "\t"
 KEY_RUST_UNGATED_MODS = "rust_ungated_mods"

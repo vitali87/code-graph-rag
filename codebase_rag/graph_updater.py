@@ -4161,14 +4161,22 @@ class GraphUpdater:
 
     def _rehydrate_class_field_types(self, qn: str, fields: Sequence[object]) -> None:
         field_types: dict[str, str] = {}
+        guard_inner: dict[str, str] = {}
         for entry in fields:
-            name, sep, type_name = str(entry).partition(cs.FIELD_TYPE_SEPARATOR)
-            if sep and name and type_name:
+            # `name<TAB>type`, plus `<TAB>inner` for a Rust guard field.
+            name, _, rest = str(entry).partition(cs.FIELD_TYPE_SEPARATOR)
+            type_name, _, inner = rest.partition(cs.FIELD_TYPE_SEPARATOR)
+            if name and type_name:
                 field_types[name] = type_name
-        if field_types:
-            self.factory.definition_processor.class_field_types.setdefault(
-                qn, field_types
-            )
+                if inner:
+                    guard_inner[name] = inner
+        dp = self.factory.definition_processor
+        # A re-parsed class's fresh maps win, its guard inner types included.
+        if not field_types or qn in dp.class_field_types:
+            return
+        dp.class_field_types[qn] = field_types
+        if guard_inner:
+            dp.class_field_guard_inner[qn] = guard_inner
 
     def _rehydrate_go_method_sets(self, rows: list[ResultRow]) -> None:
         # An unchanged Go file's methods and interfaces still count toward
