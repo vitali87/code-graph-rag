@@ -17,6 +17,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.checkout_state import state_file
+from codebase_rag.config import settings
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from evals.cgr_graph import _StatefulIngestor
@@ -136,3 +137,54 @@ def test_a_helper_whose_result_changed_types_its_callers_anew(go_root: Path) -> 
     assert calls["TestPair"] == {bag}, calls
     assert calls["TestChain"] == {bag}, calls
     assert calls["TestNamed"] == {_BOX_SIZE}, calls
+
+
+_CROSS_PACKAGE = {
+    "go.mod": "module example.com/ret\n\ngo 1.21\n",
+    "lib/types.go": (
+        "package lib\n\ntype Box struct{ n int }\n\n"
+        "func (b *Box) Size() int { return b.n }\n\n"
+        "func (b *Box) Self() *Box { return b }\n"
+    ),
+    "lib/helpers.go": (
+        "package lib\n\nfunc MakeBox(n int) *Box { return &Box{n: n} }\n"
+    ),
+    "other/bag.go": "package other\n\ntype Bag struct{}\n\nfunc (g *Bag) Size() int { return 0 }\n",
+    "app/app.go": "package app\n",
+    "app/app_test.go": (
+        'package app\n\nimport (\n\t"testing"\n\n\t"example.com/ret/lib"\n)\n\n'
+        "func TestChain(t *testing.T) {\n\t_ = lib.MakeBox(2).Size()\n}\n\n"
+        "func TestMethodChain(t *testing.T) {\n\tb := lib.MakeBox(2)\n"
+        "\t_ = b.Self().Size()\n}\n"
+    ),
+}
+
+
+def test_a_caller_in_another_package_keeps_its_chained_result_types(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An edit re-parses the whole package it is in, so the unchanged
+    # helpers that need reading back sit in another one. Pinned to the
+    # tree-sitter path, where these maps type the receiver: go/types, when
+    # its helper builds, types the calls itself.
+    if cs.SupportedLanguage.GO not in load_parsers()[0]:
+        pytest.skip("go parser not available")
+    monkeypatch.setattr(settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    root = temp_repo / "proj"
+    for rel, text in _CROSS_PACKAGE.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text, encoding="utf-8")
+    store = _StatefulIngestor()
+    _index(store, root, force=True)
+    expected = {
+        name: {"proj.lib.types.Box.Size"} for name in ("TestChain", "TestMethodChain")
+    }
+    assert _size_calls(store) == expected
+
+    test_file = root / "app" / "app_test.go"
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
+    test_file.write_text(test_file.read_text(encoding="utf-8") + "// edited\n")
+    os.utime(test_file, (cache_mtime + 1, cache_mtime + 1))
+    _index(store, root, force=False)
+
+    assert _size_calls(store) == expected
