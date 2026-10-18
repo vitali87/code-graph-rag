@@ -129,6 +129,44 @@ _CAPTURED = {
         "c.outer.b",
         "c.Range.reset",
     ),
+    "js-sibling-block-declares-the-name-too": (
+        # A `const` holds in its block: the one in the sibling block is
+        # another variable, whichever comes last.
+        "c.js",
+        _JS_CLASSES + "function outer() {\n  const r = new Range();\n"
+        "  function inner() { return r.reset(); }\n  { const r = new Other(); }\n"
+        "  return inner;\n}\nmodule.exports = { outer };\n",
+        "c.outer.inner",
+        "c.Range.reset",
+    ),
+    "ts-sibling-block-declares-the-name-too": (
+        "b.ts",
+        _TS_CLASSES
+        + "export function outer(): () => number {\n  const r = new Range();\n"
+        "  if (r) {\n    const r = new Other();\n  }\n"
+        "  function inner(): number {\n    return r.reset();\n  }\n  return inner;\n}\n",
+        "b.outer.inner",
+        "b.Range.reset",
+    ),
+    "js-block-around-the-nested-function": (
+        # The block around `cb` declares the `r` it reads, though the
+        # function's own `r` comes later.
+        "c.js",
+        _JS_CLASSES + "function outer(o) {\n  if (o) {\n    const r = new Other();\n"
+        "    const cb = () => r.reset();\n    return cb;\n  }\n"
+        "  const r = new Range();\n  return r;\n}\nmodule.exports = { outer };\n",
+        "c.outer.cb",
+        "c.Other.reset",
+    ),
+    "js-var-in-a-block": (
+        # A `var` holds in the whole function, block or not.
+        "c.js",
+        _JS_CLASSES + "function outer(o) {\n  if (o) {\n    var r = new Range();\n  }\n"
+        "  function inner() { return r.reset(); }\n  return inner;\n}\n"
+        "module.exports = { outer };\n",
+        "c.outer.inner",
+        "c.Range.reset",
+    ),
 }
 
 
@@ -215,6 +253,22 @@ _HIDDEN = {
         "c.outer.inner",
         None,
     ),
+    "js-untyped-let-in-the-block-around": (
+        "c.js",
+        _JS_CLASSES + "function outer(o) {\n  const r = new Range();\n"
+        "  if (o) {\n    let r = o;\n    const cb = () => r.reset();\n    return cb;\n  }\n"
+        "  return r;\n}\nmodule.exports = { outer };\n",
+        "c.outer.cb",
+        None,
+    ),
+    "js-loop-variable-around": (
+        "c.js",
+        _JS_CLASSES + "function outer(items) {\n  const r = new Range();\n"
+        "  for (const r of items) {\n    const cb = () => r.reset();\n    cb();\n  }\n"
+        "  return r;\n}\nmodule.exports = { outer };\n",
+        "c.outer.cb",
+        None,
+    ),
 }
 
 
@@ -222,8 +276,8 @@ _HIDDEN = {
 def test_a_name_the_nested_function_binds_is_not_captured(
     temp_repo: Path, mock_ingestor: MagicMock, case: str
 ) -> None:
-    # Negatives: a name bound by the nested function, or by a function
-    # between it and the binding, is a different variable, and never takes
+    # Negatives: a name bound by the nested function, or by a function or
+    # block between it and the binding, is a different variable, and never takes
     # the captured `Range`. Where that variable has a type of its own, the
     # call binds it; otherwise whatever resolution it had before stands.
     rel, text, caller, expected = _HIDDEN[case]
