@@ -66,6 +66,8 @@ _TB_EXCEPTION = re.compile(r"^(?P<type>[^\W\d][\w.]*)(?::\s?(?P<message>.*))?$")
 # level sits two columns further right (issue #3235).
 _TB_BOX_MEMBER = re.compile(r"^(?P<indent> *)(?P<first>\+-)?\+-+ (?P<title>\S+) -+$")
 _TB_BOX_LINE = re.compile(r"^(?P<indent> *)[+|](?: (?P<text>.*))?$")
+# ``    +------------------------------------`` closes a group's members.
+_TB_BOX_RULE = re.compile(r"^ *\+-+$")
 _TB_BOX_STEP = 2
 # CPython lists at most `max_group_width` members and nests at most
 # `max_group_depth` groups, and says what it left out.
@@ -404,12 +406,11 @@ def _traceback_lines(text: str) -> list[_TracebackLine]:
     such as ``| flag`` is code, not a margin.
     """
     lines = [line for line in text.splitlines() if line.strip()]
+    separators = _separators(lines)
     # The margin column of each box the text opens: a separator's group sits
     # one step left of its members, and a boxed header at its own margin.
     margins = [
-        _member_column(match) - _TB_BOX_STEP
-        for line in lines
-        if (match := _TB_BOX_MEMBER.match(line))
+        _member_column(match) - _TB_BOX_STEP for match in separators.values()
     ] + [
         len(match["indent"])
         for line in lines
@@ -424,8 +425,8 @@ def _traceback_lines(text: str) -> list[_TracebackLine]:
         return (column - base) // _TB_BOX_STEP
 
     parsed: list[_TracebackLine] = []
-    for line in lines:
-        if match := _TB_BOX_MEMBER.match(line):
+    for index, line in enumerate(lines):
+        if match := separators.get(index):
             parsed.append(
                 _TracebackLine(level(_member_column(match)), "", match["title"])
             )
@@ -436,6 +437,26 @@ def _traceback_lines(text: str) -> list[_TracebackLine]:
         else:
             parsed.append(_TracebackLine(0, line))
     return parsed
+
+
+def _separators(lines: list[str]) -> dict[int, re.Match[str]]:
+    """The member separators of `lines`, by index.
+
+    A separator follows a line of the box it is drawn in: a boxed line, or
+    the rule closing a nested group's members. Unboxed text of its shape,
+    such as a plain error's note, opens no member; a fragment may start at
+    one.
+    """
+    return {
+        index: match
+        for index, line in enumerate(lines)
+        if (match := _TB_BOX_MEMBER.match(line))
+        and (
+            index == 0
+            or _TB_BOX_LINE.match(lines[index - 1])
+            or _TB_BOX_RULE.match(lines[index - 1])
+        )
+    }
 
 
 def _member_column(separator: re.Match[str]) -> int:

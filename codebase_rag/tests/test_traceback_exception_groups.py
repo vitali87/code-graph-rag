@@ -389,6 +389,38 @@ def test_a_source_line_starting_with_a_bar_is_not_a_group_margin() -> None:
     assert [frame.qualname for frame in parsed.frames] == ["<module>", "flags"]
 
 
+def test_a_note_shaped_like_a_separator_opens_no_member() -> None:
+    # Negative: outside a group's box, a plain error's note can have a member
+    # separator's shape; it made the error a group of one empty member.
+    error = _raised(ValueError, "x")
+    error.add_note("+---------------- 1 ----------------")
+
+    parsed = parse_python_traceback(_format(error))
+
+    assert (parsed.exception_type, parsed.exception_message) == ("ValueError", "x")
+    assert (parsed.members, parsed.omitted_members) == ((), 0)
+
+
+def test_a_note_shaped_like_a_separator_leaves_a_later_group_whole() -> None:
+    # Taken for a box, the cause's note shifted every margin after it, and
+    # the group raised from that cause lost its stack and its member.
+    cause = _raised(ValueError, "x")
+    cause.add_note("+---------------- 1 ----------------")
+    try:
+        raise ExceptionGroup("late", [_raised(TypeError, "t")]) from cause
+    except ExceptionGroup as group:
+        text = _format(group)
+
+    parsed = parse_python_traceback(text)
+
+    assert _outline(parsed) == (
+        "ExceptionGroup",
+        "late (1 sub-exception)",
+        ["test_a_note_shaped_like_a_separator_leaves_a_later_group_whole"],
+        [("TypeError", "t", ["_raised"], [])],
+    )
+
+
 # --- explain_traceback and rank_root_causes -----------------------------------
 
 
