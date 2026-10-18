@@ -2860,8 +2860,8 @@ class GraphUpdater:
         self._run_go_frontend()
 
         logger.info(ls.PASS_2_FILES)
-        self._process_files(force=force)
         try:
+            self._process_files(force=force)
             # Before the partial join on an incremental run: rebuild the type
             # locations for unchanged .cs files so a partial part living in one
             # still joins its group (issue #1229). Pass-2 entries for re-parsed
@@ -2910,8 +2910,11 @@ class GraphUpdater:
         finally:
             # After the deferred stages, as `_reingest_resolve` does, so an
             # edge into a re-parsed Go receiver method finds it registered
-            # (#3270). In `finally`: a run stopped by a failing stage cannot
-            # capture these edges again, so it keeps what the registry places.
+            # (#3270). In `finally`, with Pass 2 inside the `try`: a run
+            # stopped by a failing file, by the cache stash that closes Pass 2
+            # or by a later stage cannot capture these edges again, since
+            # their targets' subtrees are already gone, so it keeps what the
+            # registry places.
             self._restore_pending_inbound_edges()
 
         logger.info(ls.FOUND_FUNCTIONS, count=len(self.function_registry))
@@ -7124,10 +7127,6 @@ class GraphUpdater:
         self._log_process_counts(scan, changed_count)
         self._log_unparsable_manifests()
         if first_failure is not None:
-            # The run stops here, and the next one cannot capture these edges
-            # again: their targets' subtrees are already gone. Keep what the
-            # registry can place now.
-            self._restore_pending_inbound_edges()
             raise first_failure
 
         # Deferred to the post-flush commit point in `run` (issue #1615). The

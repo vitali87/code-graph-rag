@@ -179,3 +179,27 @@ def test_a_file_failing_in_pass_2_still_restores_the_inbound_edges(
         _index(store, root, force=False)
 
     assert _PY_MAIN_TO_SIZE in _calls(_snapshot(store))
+
+
+def test_a_run_failing_after_pass_2_bookkeeping_still_restores_the_inbound_edges(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Negative: the cache stash that closes Pass 2 runs after the captured
+    # edges are held for the deferred restore. A failure there (the parser
+    # fingerprint reads files) must not take them with it either.
+    root = temp_repo / "proj"
+    root.mkdir()
+    for rel, text in _PY.items():
+        (root / rel).write_text(text, encoding="utf-8")
+    store = _StatefulIngestor()
+    _index(store, root, force=True)
+    _edit_after_cache(root / "box.py", root, "#")
+
+    def fail(_self: GraphUpdater, *_args: object) -> None:
+        raise OSError("fingerprint input unreadable")
+
+    monkeypatch.setattr(GraphUpdater, "_stash_parser_fingerprint", fail)
+    with pytest.raises(OSError, match="fingerprint input unreadable"):
+        _index(store, root, force=False)
+
+    assert _PY_MAIN_TO_SIZE in _calls(_snapshot(store))
