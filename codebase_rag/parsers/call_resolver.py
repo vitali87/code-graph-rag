@@ -693,8 +693,10 @@ class CallResolver:
         # A re-parsed PHP file may have moved a class between namespaces.
         self._php_class_namespaces.clear()
         self._php_cased_index = None
-        # A re-parsed TS file may declare a different return.
+        # A re-parsed TS file may declare a different return, or alias a
+        # different class (issue #3276).
         self._js_return_class_cache.clear()
+        self._ts_alias_targets.clear()
         # The rel-path -> module qn inverse rebuilds only when its size
         # differs from `module_qn_to_file_path`; a rename removes one entry
         # and adds one, so the size is unchanged and the memo would keep the

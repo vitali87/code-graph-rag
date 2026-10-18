@@ -72,19 +72,28 @@ export function genericFirst(xs: Array<Box>, i: number): number {
 """
 
 
-def _size_calls(files: dict[str, str], root: Path) -> dict[str, set[tuple[str, str]]]:
+def _index(files: dict[str, str], root: Path) -> tuple[_StatefulIngestor, GraphUpdater]:
     for rel, text in files.items():
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(text, encoding="utf-8")
     store = _StatefulIngestor()
     parsers, queries = load_parsers()
-    GraphUpdater(
+    updater = GraphUpdater(
         ingestor=store,
         repo_path=root,
         parsers=parsers,
         queries=queries,
         project_name="proj",
-    ).run(force=True)
+    )
+    updater.run(force=True)
+    return store, updater
+
+
+def _size_calls(files: dict[str, str], root: Path) -> dict[str, set[tuple[str, str]]]:
+    return _size_edges(_index(files, root)[0])
+
+
+def _size_edges(store: _StatefulIngestor) -> dict[str, set[tuple[str, str]]]:
     calls: dict[str, set[tuple[str, str]]] = {}
     for edge, props in store.edge_props.items():
         callee = str(edge[4])
@@ -135,6 +144,28 @@ def test_only_the_alias_imported_still_binds_exactly(
     calls = _size_calls({"src/types.ts": TYPES, "src/use.ts": use}, temp_repo / "proj")
 
     assert calls.get("viaAlias") == {("Box", cs.EdgeResolution.EXACT)}, calls
+
+
+def test_an_alias_given_another_class_is_typed_afresh_on_reingest(
+    temp_repo: Path,
+) -> None:
+    # The alias -> class memo outlived the resolver's reset: once `type
+    # Handler = Box` became `= Bag`, the reused updater kept `Box.size`.
+    root = temp_repo / "proj"
+    use = (
+        'import { Handler } from "./types";\n\n'
+        "export function viaAlias(h: Handler): number {\n  return h.size();\n}\n"
+    )
+    store, updater = _index({"src/types.ts": TYPES, "src/use.ts": use}, root)
+    (root / "src/types.ts").write_text(
+        TYPES.replace("export type Handler = Box;", "export type Handler = Bag;"),
+        encoding="utf-8",
+    )
+
+    updater.reingest(["src/types.ts"])
+
+    calls = _size_edges(store)
+    assert calls.get("viaAlias") == {("Bag", cs.EdgeResolution.EXACT)}, calls
 
 
 def test_an_element_of_an_aliased_array_is_typed(temp_repo: Path) -> None:
