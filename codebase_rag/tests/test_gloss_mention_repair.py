@@ -226,3 +226,53 @@ def test_the_set_statement_applies_while_the_note_is_as_read() -> None:
             _set_params("w-read", [_OTHER], [_OTHER], []),
         )
         assert conn.run(_NOTE_EDGES).rows == [([_OTHER], None, [_OTHER])]
+
+
+def test_a_followed_target_replaced_since_the_read_changes_nothing() -> None:
+    # The pass followed the lost RUN to _MOVED by its hash; before the write,
+    # another sync replaced _MOVED with unrelated code. Saving the new name
+    # anyway would let the next pass read that code as an in-place edit and
+    # bind the mention to it, so the whole result is dropped instead.
+    with EmbeddedConnection(":memory:") as conn:
+        conn.run(
+            "CREATE (:Function {qualified_name: $moved, anchor_hash: 'replaced'})",
+            {"moved": _MOVED},
+        )
+        conn.run(
+            "CREATE (:Gloss {qualified_name: 'gloss:n', write_id: 'w-read', "
+            "mention_qns: [$run], mentions_lost: [$run]})",
+            {"run": RUN},
+        )
+        conn.run(
+            cq.CYPHER_GLOSS_SET_MENTIONS,
+            _set_params(
+                "w-read",
+                [_MOVED],
+                [],
+                [f"{_MOVED}{cs.GLOSS_MENTION_KEY_SEPARATOR}{RUN_HASH}"],
+            ),
+        )
+        assert conn.run(_NOTE_EDGES).rows == [([RUN], [RUN], [])]
+
+
+def test_a_followed_target_still_carrying_the_hash_is_bound() -> None:
+    with EmbeddedConnection(":memory:") as conn:
+        conn.run(
+            "CREATE (:Function {qualified_name: $moved, anchor_hash: $h})",
+            {"moved": _MOVED, "h": RUN_HASH},
+        )
+        conn.run(
+            "CREATE (:Gloss {qualified_name: 'gloss:n', write_id: 'w-read', "
+            "mention_qns: [$run], mentions_lost: [$run]})",
+            {"run": RUN},
+        )
+        conn.run(
+            cq.CYPHER_GLOSS_SET_MENTIONS,
+            _set_params(
+                "w-read",
+                [_MOVED],
+                [],
+                [f"{_MOVED}{cs.GLOSS_MENTION_KEY_SEPARATOR}{RUN_HASH}"],
+            ),
+        )
+        assert conn.run(_NOTE_EDGES).rows == [([_MOVED], None, [_MOVED])]
