@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from statistics import fmean
 
 from codebase_rag import constants as cs
@@ -48,8 +49,8 @@ def score(cgr: GraphData, oracle: GraphData) -> ScoreResult:
         row = _prf(ec.Category.EDGE.value, edge_type.value, cgr_set_e, oracle_set_e)
         if row is not None:
             rows.append(row)
-            diff[ec.DIFF_EDGE_PREFIX + edge_type.value] = _edge_bucket(
-                cgr_set_e, oracle_set_e
+            diff[ec.DIFF_EDGE_PREFIX + edge_type.value] = _diff_bucket(
+                cgr_set_e, oracle_set_e, _fmt_edge
             )
     edge_aggregate = _prf(
         ec.Category.EDGE.value, ec.AGGREGATE_LABEL, cgr_edges_all, oracle_edges_all
@@ -67,8 +68,8 @@ def score(cgr: GraphData, oracle: GraphData) -> ScoreResult:
         )
         if row is not None:
             rows.append(row)
-            diff[ec.DIFF_NAME_EDGE_PREFIX + name_edge_type.value] = _name_edge_bucket(
-                cgr_set_n, oracle_set_n
+            diff[ec.DIFF_NAME_EDGE_PREFIX + name_edge_type.value] = _diff_bucket(
+                cgr_set_n, oracle_set_n, _fmt_name_edge
             )
 
     # The Python ast oracle records real end_lineno, so spans are graded like
@@ -107,25 +108,9 @@ def score_node_kinds(
 def score_edge_types(
     cgr: GraphData, oracle: GraphData, edge_types: tuple[cs.RelationshipType, ...]
 ) -> ScoreResult:
-    rows: list[ScoreRow] = []
-    diff: dict[str, DiffBucket] = {}
-    cgr_all: set[EdgeKey] = set()
-    oracle_all: set[EdgeKey] = set()
-    for edge_type in edge_types:
-        cgr_set = {e for e in cgr.edges if e.rel_type == edge_type.value}
-        oracle_set = {e for e in oracle.edges if e.rel_type == edge_type.value}
-        cgr_all |= cgr_set
-        oracle_all |= oracle_set
-        row = _prf(ec.Category.EDGE.value, edge_type.value, cgr_set, oracle_set)
-        if row is not None:
-            rows.append(row)
-            diff[ec.DIFF_EDGE_PREFIX + edge_type.value] = _edge_bucket(
-                cgr_set, oracle_set
-            )
-    aggregate = _prf(ec.Category.EDGE.value, ec.AGGREGATE_LABEL, cgr_all, oracle_all)
-    if aggregate is not None:
-        rows.append(aggregate)
-    return ScoreResult(rows=rows, location=LocationStats(0, 0, 0, 0.0, 0), diff=diff)
+    return _score_rel_types(
+        cgr.edges, oracle.edges, edge_types, ec.DIFF_EDGE_PREFIX, _fmt_edge
+    )
 
 
 def score_name_edge_types(
@@ -133,21 +118,35 @@ def score_name_edge_types(
     oracle: GraphData,
     name_edge_types: tuple[cs.RelationshipType, ...],
 ) -> ScoreResult:
+    return _score_rel_types(
+        cgr.name_edges,
+        oracle.name_edges,
+        name_edge_types,
+        ec.DIFF_NAME_EDGE_PREFIX,
+        _fmt_name_edge,
+    )
+
+
+def _score_rel_types[E: (EdgeKey, NameEdge)](
+    cgr_edges: set[E],
+    oracle_edges: set[E],
+    rel_types: tuple[cs.RelationshipType, ...],
+    diff_prefix: str,
+    fmt: Callable[[E], str],
+) -> ScoreResult:
     rows: list[ScoreRow] = []
     diff: dict[str, DiffBucket] = {}
-    cgr_all: set[NameEdge] = set()
-    oracle_all: set[NameEdge] = set()
-    for edge_type in name_edge_types:
-        cgr_set = {e for e in cgr.name_edges if e.rel_type == edge_type.value}
-        oracle_set = {e for e in oracle.name_edges if e.rel_type == edge_type.value}
+    cgr_all: set[E] = set()
+    oracle_all: set[E] = set()
+    for rel_type in rel_types:
+        cgr_set = {e for e in cgr_edges if e.rel_type == rel_type.value}
+        oracle_set = {e for e in oracle_edges if e.rel_type == rel_type.value}
         cgr_all |= cgr_set
         oracle_all |= oracle_set
-        row = _prf(ec.Category.EDGE.value, edge_type.value, cgr_set, oracle_set)
+        row = _prf(ec.Category.EDGE.value, rel_type.value, cgr_set, oracle_set)
         if row is not None:
             rows.append(row)
-            diff[ec.DIFF_NAME_EDGE_PREFIX + edge_type.value] = _name_edge_bucket(
-                cgr_set, oracle_set
-            )
+            diff[diff_prefix + rel_type.value] = _diff_bucket(cgr_set, oracle_set, fmt)
     aggregate = _prf(ec.Category.EDGE.value, ec.AGGREGATE_LABEL, cgr_all, oracle_all)
     if aggregate is not None:
         rows.append(aggregate)
@@ -180,7 +179,9 @@ def score_span(
         row = _prf(ec.Category.SPAN.value, kind.value, cgr_set, oracle_set)
         if row is not None:
             rows.append(row)
-            diff[ec.DIFF_SPAN_PREFIX + kind.value] = _span_bucket(cgr_set, oracle_set)
+            diff[ec.DIFF_SPAN_PREFIX + kind.value] = _diff_bucket(
+                cgr_set, oracle_set, _fmt_span
+            )
     aggregate = _prf(ec.Category.SPAN.value, ec.AGGREGATE_LABEL, cgr_all, oracle_all)
     if aggregate is not None:
         rows.append(aggregate)
@@ -190,12 +191,6 @@ def score_span(
 def _fmt_span(span: _SpanKey) -> str:
     kind, file, start, end = span
     return ec.SPAN_REPR.format(kind=kind, file=file, start=start, end=end)
-
-
-def _span_bucket(cgr_set: set[_SpanKey], oracle_set: set[_SpanKey]) -> DiffBucket:
-    missing = [_fmt_span(s) for s in sorted(oracle_set - cgr_set)]
-    extra = [_fmt_span(s) for s in sorted(cgr_set - oracle_set)]
-    return DiffBucket(missing=missing, extra=extra)
 
 
 def score_structure(
@@ -236,12 +231,6 @@ def _fmt_name_edge(edge: NameEdge) -> str:
         sstart=edge.source.start_line,
         target=edge.target_name,
     )
-
-
-def _name_edge_bucket(cgr_set: set[NameEdge], oracle_set: set[NameEdge]) -> DiffBucket:
-    missing = [_fmt_name_edge(e) for e in sorted(oracle_set - cgr_set)]
-    extra = [_fmt_name_edge(e) for e in sorted(cgr_set - oracle_set)]
-    return DiffBucket(missing=missing, extra=extra)
 
 
 def _prf[T](category: str, label: str, cgr: set[T], oracle: set[T]) -> ScoreRow | None:
@@ -292,10 +281,13 @@ def _node_bucket(
     return DiffBucket(missing=missing, extra=extra)
 
 
-def _edge_bucket(cgr_set: set[EdgeKey], oracle_set: set[EdgeKey]) -> DiffBucket:
-    missing = [_fmt_edge(e) for e in sorted(oracle_set - cgr_set)]
-    extra = [_fmt_edge(e) for e in sorted(cgr_set - oracle_set)]
-    return DiffBucket(missing=missing, extra=extra)
+def _diff_bucket[K: (_SpanKey, EdgeKey, NameEdge)](
+    cgr_set: set[K], oracle_set: set[K], fmt: Callable[[K], str]
+) -> DiffBucket:
+    return DiffBucket(
+        missing=[fmt(k) for k in sorted(oracle_set - cgr_set)],
+        extra=[fmt(k) for k in sorted(cgr_set - oracle_set)],
+    )
 
 
 def _location_stats(cgr: GraphData, oracle: GraphData) -> LocationStats:

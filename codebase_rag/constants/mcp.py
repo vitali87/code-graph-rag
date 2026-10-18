@@ -120,6 +120,7 @@ class MCPParamName(StrEnum):
     MENTIONS = "mentions"
     AUTHOR = "author"
     MODULE_QN = "module_qualified_name"
+    THROUGH_REEXPORTS = "through_reexports"
     NEW_NAME = "new_name"
     ALLOW_HEURISTIC = "allow_heuristic"
     BUDGET_TOKENS = "budget_tokens"
@@ -185,10 +186,39 @@ MCP_QUERY_AFTER_FAILED_RUN = (
     "graph is incomplete; {tool} would answer from a partial graph. Run "
     "update_repository before reading it"
 )
+# An empty endpoint answer from a project whose last sync left out the
+# group the tool reads is not "none": nothing could have been recorded
+# (issue #2521). The capture is part of the parser fingerprint, so the
+# re-index re-parses the whole repository.
+MCP_CAPTURE_GROUP_MISSING = (
+    "{tool} has nothing to read for project {project!r}: its last sync did "
+    "not capture the `{groups}` group ({relationships}), so an empty list "
+    "here would not mean there are none. Re-index with `cgr start "
+    "--repo-path {root} --update-graph --capture {groups}`, or run "
+    "update_repository on a server started with CGR_CAPTURE={groups}."
+)
 REINGEST_OUTSIDE_REPO = "Path is outside the repository: {path}"
 REINGEST_IS_DIRECTORY = "Path is a directory, not a file: {path}"
 MCP_GRAPH_QUERY_ERROR = "Error running {tool}: {error}"
 GRAPH_QUERY_MAX_DEPTH = 5
+# A `path:line` target whose file the project does not hold (issue #2611).
+# Answered with `[]`, it read as "no definition spans that line", and an
+# agent holding an absolute path concluded nothing was defined there. A file
+# is held when the project has a Module at its path (source or document);
+# File nodes are shared by projects indexed from one root, so they cannot
+# say whose a file is.
+GRAPH_LOCATION_UNKNOWN_FILE = (
+    "No source file {path!r} in project {project!r}. A path:line target takes "
+    "the file's path relative to the root the project was indexed from, or an "
+    "absolute path inside that root."
+)
+# `x:a:b` when the project holds both `x` and `x:a`: either reading may be
+# the one meant, so neither is answered.
+GRAPH_LOCATION_AMBIGUOUS = (
+    "{target!r} is line {line} of {path!r} or line {other_line} of "
+    "{other_path!r}, and project {project!r} holds both files. Write "
+    "'{path}:{line}' for the first or '{other_path}:{other_line}:1' for the second."
+)
 MCP_SEMANTIC_NOT_AVAILABLE_RESPONSE = (
     "Semantic search is not available. Install with: uv sync --extra semantic"
 )
@@ -199,6 +229,15 @@ MCP_UNKNOWN_PROJECT = "Unknown project {project!r}. Indexed projects: {known}"
 # With a close match the full list is noise: a shared graph holds dozens of
 # `<dir>__<hash>` names, and the one meant is the one to name (issue #2461).
 MCP_UNKNOWN_PROJECT_NAMED = "Unknown project {project!r}."
+# Under a workspace the list is the workspace's own indexed projects: the
+# graph is shared, and a project outside the workspace is not this server's
+# to name (CodeRabbit, PR #2562).
+MCP_UNKNOWN_WORKSPACE_PROJECT = (
+    "Unknown project {project!r}. Indexed projects of workspace {workspace!r}: {known}"
+)
+MCP_UNKNOWN_WORKSPACE_PROJECT_NONE_INDEXED = (
+    "Unknown project {project!r}. No project of workspace {workspace!r} is indexed."
+)
 MCP_ROOT_NOT_INDEXED = (
     "No project is indexed for this server's root {path}; run "
     "index_repository or update_repository first, or pass `project`."
@@ -207,6 +246,14 @@ MCP_ROOT_NOT_INDEXED = (
 # it" / "no test reaches it" (issue #2461).
 MCP_UNKNOWN_TARGET = "{qualified_name!r} is not in the graph."
 MCP_UNKNOWN_TARGET_HINT = " `resolve` lists the qualified names a name matches."
+# `flow_verdict` with a source or sink it cannot walk from (issue #2939).
+MCP_FLOW_SOURCE = "source"
+MCP_FLOW_SINK = "sink"
+MCP_FLOW_ENDPOINT = "The {side}: {problem}"
+MCP_FLOW_SOURCE_ELSEWHERE = (
+    "The source {qualified_name!r} belongs to project {owner!r}; flow_verdict "
+    "walks the flow edges of {project!r}, this server's project."
+)
 GRAPH_DID_YOU_MEAN = " Did you mean: {names}?"
 # How many close matches a refusal names, and how close a spelling must be
 # (difflib's ratio) to be offered at all.
