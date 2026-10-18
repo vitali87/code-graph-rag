@@ -61,7 +61,8 @@ A central symbol has thousands of callers and tests, nearly all of which a
 budget leaves out. Their sources are read only for a candidate whose
 fields still fit, each file the slice quotes is decoded once, and a test's
 span comes from the reach index already built, never from a graph query
-per test.
+per test. That span starts at a decorated test's first decorator, as
+`definition` quotes it.
 
 ## Output
 
