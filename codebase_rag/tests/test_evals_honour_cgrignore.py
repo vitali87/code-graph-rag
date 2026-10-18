@@ -14,9 +14,21 @@ reason: the fixture returned `[]` with and without `.cgrignore`.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from evals.inheritance import cgr_inheritance, oracle_inheritance
+import pytest
+
+from evals.inheritance import (
+    cgr_inheritance,
+    cpp_cgr_inheritance,
+    cpp_oracle_inheritance,
+    java_cgr_inheritance,
+    java_oracle_inheritance,
+    oracle_inheritance,
+    score_inheritance,
+)
+from evals.oracles import cpp_available, java_available
 
 _VISIBLE = "class Base2:\n    pass\n\n\nclass Vis(Base2):\n    pass\n"
 _HIDDEN = "class B3:\n    pass\n\n\nclass Hid2(B3):\n    pass\n"
@@ -126,3 +138,68 @@ def test_an_unignored_file_under_a_built_in_ignored_dir_reaches_both(
     assert _VISIBLE_EDGE in oracle, "the fixture stopped producing any row"
     assert _RESCUED_EDGE in oracle, f"the oracle dropped the rescued file: {oracle}"
     assert _RESCUED_EDGE in cgr, f"cgr dropped the rescued file: {cgr}"
+
+
+# The located-supertype arms (Java, C#, C++, TypeScript) key a subclass by
+# `file:line`, so one class per file at a fixed line gives a known key.
+_JAVA_VISIBLE = "class Base2 {}\n\nclass Vis extends Base2 {}\n"
+_JAVA_HIDDEN = "class B3 {}\n\nclass Hid extends B3 {}\n"
+_CPP_VISIBLE = "class Base2 {};\n\nclass Vis : public Base2 {};\n"
+_CPP_HIDDEN = "class B3 {};\n\nclass Hid : public B3 {};\n"
+
+
+def _located_repo(root: Path, visible: str, hidden: str, suffix: str) -> None:
+    (root / "ignored").mkdir(parents=True)
+    (root / f"vis{suffix}").write_text(visible, encoding="utf-8")
+    (root / "ignored" / f"hid{suffix}").write_text(hidden, encoding="utf-8")
+    (root / ".cgrignore").write_text("ignored/\n", encoding="utf-8")
+
+
+@pytest.mark.skipif(not java_available(), reason="java oracle needs a working JDK")
+def test_the_java_oracle_honours_cgrignore(tmp_path: Path) -> None:
+    """Only the TypeScript arm filtered its oracle; javac walked every file.
+
+    So every edge in an excluded directory scored as a MISS: cgr never
+    indexed the file, the oracle still emitted it.
+    """
+    src = tmp_path / "proj"
+    _located_repo(src, _JAVA_VISIBLE, _JAVA_HIDDEN, ".java")
+
+    oracle = java_oracle_inheritance(src)
+    result = score_inheritance(java_cgr_inheritance(src, "proj"), oracle)
+
+    assert ("vis.java:3", "Base2") in oracle.inherits, (
+        "the fixture stopped producing any row"
+    )
+    assert ("ignored/hid.java:3", "B3") not in oracle.inherits, oracle.inherits
+    assert all(not bucket["missing"] for bucket in result.diff.values()), result.diff
+
+
+@pytest.mark.skipif(not cpp_available(), reason="libclang not available")
+def test_the_cpp_oracle_honours_cgrignore(tmp_path: Path) -> None:
+    src = tmp_path / "proj"
+    _located_repo(src, _CPP_VISIBLE, _CPP_HIDDEN, ".cpp")
+    # Absolute source paths: libclang parses from the process cwd, and a
+    # relative one yields zero nodes silently.
+    (src / "compile_commands.json").write_text(
+        json.dumps(
+            [
+                {
+                    "directory": str(src),
+                    "command": f"clang++ -std=c++17 -c {source}",
+                    "file": str(source),
+                }
+                for source in (src / "vis.cpp", src / "ignored" / "hid.cpp")
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    oracle = cpp_oracle_inheritance(src)
+    result = score_inheritance(cpp_cgr_inheritance(src, "proj"), oracle)
+
+    assert ("vis.cpp:3", "Base2") in oracle.inherits, (
+        "the fixture stopped producing any row"
+    )
+    assert ("ignored/hid.cpp:3", "B3") not in oracle.inherits, oracle.inherits
+    assert all(not bucket["missing"] for bucket in result.diff.values()), result.diff

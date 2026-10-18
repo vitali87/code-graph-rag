@@ -71,6 +71,10 @@ if TYPE_CHECKING:
 
         def _get_method_return_type_from_ast(self, method_qn: str) -> str | None: ...
 
+        def name_typed_parameters(
+            self, caller_node: ASTNode, module_qn: str
+        ) -> dict[str, str]: ...
+
     _VarBase: type = _VariableAnalyzerDeps
 else:
     _VarBase = object
@@ -102,6 +106,11 @@ def _reflected_dunder(dunder: str) -> str:
     return f"__r{dunder[2:]}"
 
 
+def _name_spelling(name: str) -> str:
+    """`user_repo`, `UserRepo` and `_UserRepo` all spell `userrepo`."""
+    return name.replace(cs.CHAR_UNDERSCORE, "").lower()
+
+
 def _container_element_type(type_str: str | None) -> str | None:
     """The element inside a canonical ``list[<element>]`` marker, else ``None``."""
     if (
@@ -130,34 +139,22 @@ class PythonVariableAnalyzerMixin(_VarBase):
             return
 
         for param in params_node.children:
-            self._process_parameter(param, local_var_types, module_qn)
+            self._process_parameter(param, local_var_types)
+        # An untyped parameter's name guess comes from the one list the call
+        # resolver labels heuristic, so no guess binds a call exactly (#2608).
+        guessed = self.name_typed_parameters(caller_node, module_qn)
+        for param_name, class_name in guessed.items():
+            local_var_types[param_name] = class_name
+            logger.debug(lg.PY_PARAM_TYPE_INFERRED, param=param_name, type=class_name)
 
     def _process_parameter(
-        self, param: ASTNode, local_var_types: dict[str, str], module_qn: str
+        self, param: ASTNode, local_var_types: dict[str, str]
     ) -> None:
         match param.type:
-            case cs.TS_PY_IDENTIFIER:
-                self._process_untyped_parameter(param, local_var_types, module_qn)
             case cs.TS_PY_TYPED_PARAMETER:
                 self._process_typed_parameter(param, local_var_types)
             case cs.TS_PY_TYPED_DEFAULT_PARAMETER:
                 self._process_typed_default_parameter(param, local_var_types)
-
-    def _process_untyped_parameter(
-        self, param: ASTNode, local_var_types: dict[str, str], module_qn: str
-    ) -> None:
-        if (
-            param.text is None
-            or (param_name := safe_decode_text(param)) is None
-            or not (
-                inferred_type := self._infer_type_from_parameter_name(
-                    param_name, module_qn
-                )
-            )
-        ):
-            return
-        local_var_types[param_name] = inferred_type
-        logger.debug(lg.PY_PARAM_TYPE_INFERRED, param=param_name, type=inferred_type)
 
     def _process_typed_parameter(
         self, param: ASTNode, local_var_types: dict[str, str]
@@ -196,6 +193,11 @@ class PythonVariableAnalyzerMixin(_VarBase):
     def _infer_type_from_parameter_name(
         self, param_name: str, module_qn: str
     ) -> str | None:
+        # `self` / `cls` ARE the enclosing class, which the type-map builder
+        # seeds from the class itself; matched by name, an imported `F`
+        # ("self".endswith("f")) took every receiver in the module (#2608).
+        if param_name in cs.PY_RECEIVER_PARAM_NAMES:
+            return None
         logger.debug(lg.PY_TYPE_INFER_ATTEMPT, param=param_name, module=module_qn)
         available_class_names = self._collect_available_classes(module_qn)
         logger.debug(lg.PY_AVAILABLE_CLASSES, classes=available_class_names)
@@ -227,31 +229,22 @@ class PythonVariableAnalyzerMixin(_VarBase):
     def _find_best_class_match(
         self, param_name: str, available_class_names: list[str]
     ) -> str | None:
-        param_lower = param_name.lower()
-        best_match = None
-        highest_score = 0
-
-        for class_name in available_class_names:
-            score = self._calculate_match_score(param_lower, class_name.lower())
-            if score > highest_score:
-                highest_score = score
-                best_match = class_name
-
-        logger.debug(
-            lg.PY_BEST_MATCH, param=param_name, match=best_match, score=highest_score
-        )
-        return best_match
-
-    def _calculate_match_score(self, param_lower: str, class_lower: str) -> int:
-        if param_lower == class_lower:
-            return cs.PY_SCORE_EXACT_MATCH
-        if class_lower.endswith(param_lower) or param_lower.endswith(class_lower):
-            return cs.PY_SCORE_SUFFIX_MATCH
-        if class_lower in param_lower:
-            return int(
-                cs.PY_SCORE_CONTAINS_BASE * (len(class_lower) / len(param_lower))
-            )
-        return 0
+        # Only the parameter's WHOLE name spelling a class names it: `payload`
+        # a `Payload`, `user_repo` a `UserRepo`. A suffix or substring does not
+        # (`data` is no `A`, `user` no `AppUser`), nor does a class name too
+        # short to tell from an ordinary variable, and two classes spelled
+        # alike leave the parameter untyped rather than pick one (#2608).
+        spelled = _name_spelling(param_name)
+        matches = {
+            class_name
+            for class_name in available_class_names
+            if len(class_spelling := _name_spelling(class_name))
+            >= cs.PY_PARAM_NAME_MIN_CLASS_LEN
+            and class_spelling == spelled
+        }
+        match = next(iter(matches)) if len(matches) == 1 else None
+        logger.debug(lg.PY_NAME_MATCH, param=param_name, match=match)
+        return match
 
     def _analyze_comprehension(
         self, comp_node: ASTNode, local_var_types: dict[str, str], module_qn: str
