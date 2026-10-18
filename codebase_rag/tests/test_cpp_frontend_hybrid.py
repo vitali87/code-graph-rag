@@ -770,3 +770,25 @@ def test_hybrid_incremental_run_keeps_one_edge_for_unchanged_file(
         "hybdupincr.calc.h.DOUBLE",
     )
     assert len(calls) == 1, calls
+
+
+def test_hybrid_continued_include_is_one_located_edge(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A backslash puts the filename on the next line: libclang locates the
+    # inclusion there, tree-sitter at the directive's `#`, and the edge
+    # still lands on the `#`.
+    root = temp_repo / "hybcont"
+    root.mkdir()
+    (root / "base.h").write_text(_DUP_BASE_H, encoding="utf-8")
+    (root / "calc.cpp").write_text(
+        '#include \\\n  "base.h"\nint cap(int n) { return n > LIMIT ? LIMIT : n; }\n',
+        encoding="utf-8",
+    )
+    (root / "compile_commands.json").write_text(
+        json.dumps([_compdb_entry(root, root / "calc.cpp")]), encoding="utf-8"
+    )
+    store = _StatefulIngestor()
+    _index_dup(root, monkeypatch, store)
+    sites = _sites(store, cs.RelationshipType.IMPORTS, "hybcont.calc", "hybcont.base")
+    assert sites == [{cs.KEY_LINE: 1, cs.KEY_COL: 0, cs.KEY_ALIAS: "base"}], sites

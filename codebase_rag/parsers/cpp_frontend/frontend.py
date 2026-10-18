@@ -183,11 +183,13 @@ class _Collector:
         # enclosing caller is only recoverable by span once ALL definitions are
         # collected; resolved at flush.
         self._pending_macro_calls: set[tuple[str, _Span, str, str]] = set()
-        # {(including file, directive line): (`#` column, written path)} for
-        # the TU being walked: FileInclusion locates the FILENAME token and
-        # knows no spelling, so the IMPORTS site and alias come from the
-        # INCLUSION_DIRECTIVE cursor, matching tree-sitter's (issue #2944).
-        self._include_directives: dict[tuple[str, int], tuple[int, str]] = {}
+        # {(including file, any line of the directive): (`#` line, `#`
+        # column, written path)} for the TU being walked: FileInclusion
+        # locates the FILENAME token, which a backslash continuation puts on
+        # a later line, and knows no spelling, so the IMPORTS site and alias
+        # come from the INCLUSION_DIRECTIVE cursor, matching tree-sitter's
+        # (issue #2944).
+        self._include_directives: dict[tuple[str, int], tuple[int, int, str]] = {}
         # (including module qn, included module qn, line, col, alias, written
         # path): one IMPORTS edge per located `#include`.
         self._include_sites: set[tuple[str, str, int, int, str, str]] = set()
@@ -604,10 +606,10 @@ class _Collector:
     def _record_include_directive(self, cursor: Cursor) -> None:
         if cursor.location.file is None:
             return
-        self._include_directives[(cursor.location.file.name, cursor.location.line)] = (
-            cursor.location.column - 1,
-            cursor.spelling,
-        )
+        start = cursor.location.line
+        directive = (start, cursor.location.column - 1, cursor.spelling)
+        for line in range(start, max(start, cursor.extent.end.line) + 1):
+            self._include_directives[(cursor.location.file.name, line)] = directive
 
     def _resolve_macro_calls(self) -> None:
         # Attribute each macro use to the tightest enclosing
@@ -675,8 +677,9 @@ class _Collector:
             inc_rel, inc_qn = inc
             self._add_module(src_qn, src_rel, source.name)
             self._add_module(inc_qn, inc_rel, included.name)
-            line = inclusion.location.line
-            directive = self._include_directives.get((source.name, line))
+            directive = self._include_directives.get(
+                (source.name, inclusion.location.line)
+            )
             if directive is None:
                 self._add_edge(
                     cs.RelationshipType.IMPORTS,
@@ -686,7 +689,7 @@ class _Collector:
                     inc_qn,
                 )
                 continue
-            col, written = directive
+            line, col, written = directive
             self._include_sites.add(
                 (src_qn, inc_qn, line, col, cpp_include_local_name(written), written)
             )
