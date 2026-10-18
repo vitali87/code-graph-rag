@@ -1,4 +1,4 @@
-from .ast_analyzer import PythonAstAnalyzerMixin
+from .ast_analyzer import PythonAstAnalyzerMixin, under_type_checking
 from .expression_analyzer import PythonExpressionAnalyzerMixin
 from .type_inference import PythonTypeInferenceEngine
 from .utils import (
@@ -16,4 +16,5 @@ __all__ = [
     "external_stdlib_base_method_names",
     "python_literal_text_type",
     "resolve_class_name",
+    "under_type_checking",
 ]

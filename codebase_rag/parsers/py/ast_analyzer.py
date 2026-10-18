@@ -442,6 +442,40 @@ def _inner_scope_only_names(caller: Node) -> frozenset[str]:
     return frozenset(bound - read_outside)
 
 
+def local_names(caller: Node, import_map: dict[str, str]) -> frozenset[str]:
+    """Every name a function's body reads as its own rather than the
+    module's or the class's: parameters, what its statements bind, what an
+    enclosing def binds, and what only its comprehensions and lambdas bind.
+    `apply(key, item)` calling `key(item)` calls the argument, not a module
+    function named `key` (issue #2666). The import map only tells a
+    body-level re-import from a shadow."""
+    return _locally_bound_names(caller, import_map) | _inner_scope_only_names(caller)
+
+
+def names_bound_within(node: Node) -> frozenset[str]:
+    """Every name anything under `node` binds: its statements' targets and,
+    unlike `local_names`, everything its nested defs, lambdas and
+    comprehensions bind, their parameters included."""
+    names: set[str] = set()
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        names.update(_names_bound_by(current))
+        stack.extend(current.children)
+    return frozenset(names)
+
+
+def _names_bound_by(node: Node) -> Iterator[str]:
+    for target in _binding_targets(node):
+        for identifier in _identifiers_in(target):
+            if name := safe_decode_text(identifier):
+                yield name
+    if node.type == cs.TS_PY_FUNCTION_DEFINITION:
+        yield from _parameter_names(node)
+    elif node.type == cs.TS_PY_LAMBDA or node.type in _PY_COMPREHENSION_TYPES:
+        yield from _inner_scope_bindings(node)
+
+
 def _call_bound_by(binder: Node) -> Node | None:
     """The call a plain `p = call()` binds to its WHOLE target, else None:
     `p, q = fw()`, `p += x`, `for p in xs`, `with cm as p`, `(p := x)` and
@@ -690,7 +724,7 @@ def _is_type_checking_guard(condition: Node | None) -> bool:
     )
 
 
-def _under_type_checking(node: Node) -> bool:
+def under_type_checking(node: Node) -> bool:
     """Whether `node` sits in the body of an `if TYPE_CHECKING:` block."""
     current = node.parent
     while current is not None:
@@ -855,15 +889,9 @@ class PythonAstAnalyzerMixin(_AstBase):
     __slots__ = ()
 
     def locally_bound_names(self, caller: Node, module_qn: str) -> frozenset[str]:
-        """Every name a function's body reads as its own rather than the
-        module's or the class's: parameters, what its statements bind, what
-        an enclosing def binds, and what only its comprehensions and lambdas
-        bind. `apply(key, item)` calling `key(item)` calls the argument, not
-        a module function named `key` (issue #2666)."""
+        """`local_names` under the caller's module's import map."""
         import_map = self.import_processor.import_mapping.get(module_qn) or {}
-        return _locally_bound_names(caller, import_map) | _inner_scope_only_names(
-            caller
-        )
+        return local_names(caller, import_map)
 
     def own_class_rebinds_import(
         self, module_qn: str, name: str, scope: Node | None = None
@@ -895,7 +923,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         for binder, identifier in _bindings_in(entry[0]):
             if (
                 safe_decode_text(identifier) == name
-                and not _under_type_checking(binder)
+                and not under_type_checking(binder)
                 and (last is None or identifier.start_byte > last[0])
             ):
                 last = (identifier.start_byte, binder.type)
