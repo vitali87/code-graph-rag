@@ -446,9 +446,11 @@ def test_a_called_property_made_a_method_is_not_judged(temp_repo: Path) -> None:
 def test_a_binding_change_that_moves_the_parameters_too_is_left_to_the_count(
     temp_repo: Path,
 ) -> None:
-    # Negative: `tax(self, x)` becoming `@staticmethod tax(x, rate)` changes
-    # what `Cart().tax(3)` fills, but whether `rate` has a default is the
-    # signature change's question, where it stays a hint.
+    # Negative for the convention check: `tax(self, x)` becoming
+    # `@staticmethod tax(x, rate)` changes what `Cart().tax(3)` fills, but
+    # whether `rate` has a default is the signature change's question. The
+    # header read back answers it (#2845): `rate` has none, so both calls
+    # are `too_few` there, and reported once.
     cart = CART_PY.replace(
         "    @staticmethod\n    def tax(x):", "    def tax(self, x):"
     )
@@ -461,10 +463,10 @@ def test_a_binding_change_that_moves_the_parameters_too_is_left_to_the_count(
     )
 
     assert _verdicts(delta, "tax")["vat"] == cs.DELTA_ARITY_UNKNOWN
-    assert [c["qualified_name"] for c in delta["signature_changes"]] == [
-        f"{PROJECT}.cart.Cart.tax"
-    ]
-    assert not has_findings(delta)
+    (change,) = delta["signature_changes"]
+    assert change["qualified_name"] == f"{PROJECT}.cart.Cart.tax"
+    assert {site["verdict"] for site in change["sites"]} == {cs.DELTA_ARITY_TOO_FEW}
+    assert has_findings(delta)
 
 
 def _method(name: str, path: str, params: tuple[str, ...]) -> Definition:
