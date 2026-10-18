@@ -3,6 +3,7 @@ from .expression_analyzer import PythonExpressionAnalyzerMixin
 from .type_inference import PythonTypeInferenceEngine
 from .utils import (
     external_stdlib_base_method_names,
+    module_binds_name,
     python_literal_text_type,
     resolve_class_name,
 )
@@ -14,6 +15,7 @@ __all__ = [
     "PythonTypeInferenceEngine",
     "PythonVariableAnalyzerMixin",
     "external_stdlib_base_method_names",
+    "module_binds_name",
     "python_literal_text_type",
     "resolve_class_name",
     "under_type_checking",

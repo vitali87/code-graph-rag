@@ -13,7 +13,7 @@ from ... import logs as lg
 from ...types_defs import FunctionRegistryTrieProtocol, LanguageQueries, NodeType
 from ..js_ts.utils import find_method_in_ast as find_js_method_in_ast
 from ..utils import get_cached_query, safe_decode_text, sorted_captures
-from .utils import python_literal_type
+from .utils import python_literal_type, unshadowed_literal_type
 from .with_analyzer import WithTarget
 
 _PY_SCOPE_TYPES = frozenset(
@@ -867,16 +867,6 @@ else:
     _AstBase = object
 
 
-def _unannotated_literal_type(assignment: Node, value: Node) -> str | None:
-    """`d = {}`: the builtin the literal is, so `d.get(k)` is `dict.get` and
-    not a first-party `get` that shares the name (issue #2859). An annotated
-    assignment (`q: tuple[W, B] = (...)`) is left to its annotation, which
-    says more than the literal does."""
-    if assignment.child_by_field_name(cs.TS_FIELD_TYPE) is not None:
-        return None
-    return python_literal_type(value)
-
-
 def _node_name(node: Node) -> str | None:
     # The decoded `name` field of a definition, or None when it has no text.
     name_node = node.child_by_field_name(cs.TS_FIELD_NAME)
@@ -1201,10 +1191,23 @@ class PythonAstAnalyzerMixin(_AstBase):
         ) or (
             None
             if rebound is not None and var_name in rebound
-            else _unannotated_literal_type(assignment_node, right_node)
+            else self._unannotated_literal_type(assignment_node, right_node, module_qn)
         ):
             local_var_types[var_name] = inferred_type
             logger.debug(lg.PY_TYPE_SIMPLE, var=var_name, type=inferred_type)
+
+    def _unannotated_literal_type(
+        self, assignment: Node, value: Node, module_qn: str
+    ) -> str | None:
+        """`d = {}`: the builtin the literal is, so `d.get(k)` is `dict.get` and
+        not a first-party `get` that shares the name (issue #2859). An annotated
+        assignment (`q: tuple[W, B] = (...)`) is left to its annotation, which
+        says more than the literal does."""
+        if assignment.child_by_field_name(cs.TS_FIELD_TYPE) is not None:
+            return None
+        return unshadowed_literal_type(
+            value, module_qn, self.import_processor, self.function_registry
+        )
 
     def _process_assignment_complex(
         self, assignment_node: Node, local_var_types: dict[str, str], module_qn: str

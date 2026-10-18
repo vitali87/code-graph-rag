@@ -27,7 +27,7 @@ from .parameter_nodes import c_family_parameter_list
 from .php import class_names as php_class_names
 from .php.class_names import ClassPath as PhpClassPath
 from .php.class_names import ascii_fold as _php_fold
-from .py import python_literal_text_type, resolve_class_name
+from .py import module_binds_name, python_literal_text_type, resolve_class_name
 from .rs import utils as rs_utils
 from .semantic_call_join import call_site_key, declared_location
 from .type_inference import TypeInferenceEngine
@@ -3509,9 +3509,8 @@ class CallResolver:
         return python_literal_text_type(receiver) is not None
 
     def _module_binds(self, module_qn: str, name: str) -> bool:
-        return (
-            name in self.import_processor.import_mapping.get(module_qn, {})
-            or f"{module_qn}{cs.SEPARATOR_DOT}{name}" in self.function_registry
+        return module_binds_name(
+            module_qn, name, self.import_processor, self.function_registry
         )
 
     def _receiver_is_external_python_module(self, call: _CallSite) -> bool:

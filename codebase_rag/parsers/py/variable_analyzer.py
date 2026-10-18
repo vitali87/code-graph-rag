@@ -17,7 +17,7 @@ from ...types_defs import (
 from ..import_processor import ImportProcessor
 from ..utils import get_cached_query, safe_decode_text
 from .forward_refs import unquote_forward_refs
-from .utils import python_literal_type, resolve_class_name
+from .utils import resolve_class_name, unshadowed_literal_type
 
 # Deepest operand chain `_value_leaves` will walk. Each term of `a or b or c`
 # or `x + y + z` is one level. Measured over every assignment in this repo the
@@ -422,7 +422,9 @@ class PythonVariableAnalyzerMixin(_VarBase):
             # (CodeRabbit, PR #2912), and any other annotation is no builtin.
             annotation = assignment.child_by_field_name(cs.TS_FIELD_TYPE)
             assigned_type = (
-                python_literal_type(right_node)
+                unshadowed_literal_type(
+                    right_node, module_qn, self.import_processor, self.function_registry
+                )
                 if annotation is None
                 else _builtin_annotation(annotation)
             )

@@ -55,6 +55,43 @@ def python_literal_type(
     )
 
 
+def module_binds_name(
+    module_qn: str,
+    name: str,
+    import_processor: ImportProcessor,
+    function_registry: FunctionRegistryTrieProtocol,
+) -> bool:
+    """Whether a module binds `name` itself, by an import or a definition, so
+    the name there is that binding and not a builtin it shadows
+    (`from lib import Bag as dict`; Greptile, PR #2912)."""
+    return (
+        name in import_processor.import_mapping.get(module_qn, {})
+        or f"{module_qn}{SEPARATOR_DOT}{name}" in function_registry
+    )
+
+
+def unshadowed_literal_type(
+    node: Node,
+    module_qn: str,
+    import_processor: ImportProcessor,
+    function_registry: FunctionRegistryTrieProtocol,
+) -> str | None:
+    """The builtin a literal node evaluates to, unless the module binds that
+    builtin's name itself.
+
+    The type map holds a name, and a name the module binds is read as the
+    binding: under `from lib import Bag as dict`, typing `d = {}` as `dict`
+    made `d.get` an exact `Bag.get`. Such a literal types nothing, as before
+    literals were typed (CodeRabbit, PR #2912).
+    """
+    builtin = python_literal_type(node)
+    if builtin is None or module_binds_name(
+        module_qn, builtin, import_processor, function_registry
+    ):
+        return None
+    return builtin
+
+
 @lru_cache(maxsize=4096)
 def python_literal_text_type(text: str) -> str | None:
     """The builtin a receiver written as a literal evaluates to.

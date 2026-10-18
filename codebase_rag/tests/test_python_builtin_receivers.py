@@ -78,7 +78,15 @@ APP = (
     "def local_neg_name(x):\n    n = -x\n    return n.bit_length()\n"
 )
 # A first-party class imported under a builtin's name is that class.
-ALIASED = "from lib import Bag as dict\n\n\ndef fetch(x: dict):\n    return x.get(1)\n"
+ALIASED = (
+    "from lib import Bag as dict\n\n\n"
+    "def fetch(x: dict):\n    return x.get(1)\n\n\n"
+    # CodeRabbit, PR #2912: a literal is the builtin whatever the name binds.
+    "def literal_get():\n    d = {}\n    return d.get(1)\n\n\n"
+    "class Cache:\n"
+    "    def __init__(self):\n        self.data = {}\n\n"
+    "    def lookup(self, k):\n        return self.data.get(k)\n"
+)
 
 
 @pytest.fixture(scope="module")
@@ -90,12 +98,12 @@ def graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
     return _index(root, MagicMock())
 
 
-def _callees(graph: RecordedGraph, caller: str) -> dict[str, str]:
+def _callees(graph: RecordedGraph, caller: str, module: str = "app") -> dict[str, str]:
     prefix = f"{graph.project}."
     return {
         dst.removeprefix(prefix): str(props.get("resolution"))
         for src, rel, dst, props in graph.edges
-        if rel == "CALLS" and src == f"{prefix}app.{caller}"
+        if rel == "CALLS" and src == f"{prefix}{module}.{caller}"
     }
 
 
@@ -148,6 +156,16 @@ def test_a_class_imported_under_a_builtins_name_is_that_class(
         if rel == "CALLS" and src == f"{prefix}aliased.fetch"
     }
     assert "lib.Bag.get" in callees
+
+
+@pytest.mark.parametrize("caller", ["literal_get", "Cache.lookup"])
+def test_a_literal_under_a_shadowed_builtins_name_binds_that_class_inexactly(
+    graph: RecordedGraph, caller: str
+) -> None:
+    # `{}` is a dict whatever the module binds `dict` to, so typing `d` by
+    # the name `dict` made `d.get` an exact `Bag.get` (CodeRabbit, PR #2912).
+    # The receiver stays untyped there, as it was before literals were typed.
+    assert _callees(graph, caller, "aliased").get("lib.Bag.get") != "exact"
 
 
 # Negative: what must not change.
