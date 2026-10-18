@@ -11,8 +11,9 @@ the README. The release workflow prepends feature entries via
 (dropping non-feature themes), and moves the marker below the block it
 inserted; hand edits remain welcome between releases and render too.
 
-- **Signature**: Implemented header reading and argument binding for rewrite functionality.
+- **GitHub Sponsors**: Added support for GitHub Sponsors via the command line.
 <!-- latest-release-end -->
+- **Signature**: Implemented header reading and argument binding for rewrite functionality.
 - **Migration**: Prevented unintended purging of shared Folder/File nodes.
 - **Engine Operations**: Restored `delete-project` and stats execution on the embedded engine.
 - **Dependencies**: Updated `mcp` to version 1.30.0 to address GHSA-84m7-p3x7-pcfv.

@@ -61,7 +61,7 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **Signature**: Implemented header reading and argument binding for rewrite functionality.
+- **GitHub Sponsors**: Added support for GitHub Sponsors via the command line.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
