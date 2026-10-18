@@ -232,6 +232,57 @@ def test_up_verifies_then_starts_compose_with_the_credentials(
         assert call.kwargs["env"][cs.ENV_QDRANT_API_KEY] == "qdrant-key"
 
 
+def _memgraph_probed(*_: str | int | tuple[str, str], **__: float) -> bool:
+    raise AssertionError("a Qdrant-only stack probed Memgraph")
+
+
+@pytest.mark.usefixtures("credentials")
+def test_a_qdrant_only_start_never_asks_memgraph(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The embedded graph and Neo4j start the stack only for its Qdrant.
+
+    Every Memgraph check needs the driver, an optional extra those installs
+    need not have, and would fail until the health wait timed out (Greptile
+    on #3377). Compose starts only Qdrant, and Memgraph's credentials are
+    neither compared nor tried.
+    """
+    for probe in (
+        "wait_for_memgraph",
+        "memgraph_accepts_anonymous",
+        "memgraph_anonymous_access",
+        "memgraph_rejects_credentials",
+    ):
+        monkeypatch.setattr(manager_module, probe, _memgraph_probed)
+    qdrant_up = iter([False, True, True])
+    mgr = StackManager(
+        home=tmp_path / "cgr-home",
+        package_compose=COMPOSE_PATH,
+        services=(cs.SERVICE_QDRANT,),
+    )
+    qdrant_only = {cs.SERVICE_QDRANT: MATCHING_ENV[cs.SERVICE_QDRANT]}
+    with (
+        patch.object(mgr, "check_docker"),
+        patch.object(mgr, "locate_published_qdrant"),
+        patch.object(mgr, "_adopt_published_qdrant", return_value=False),
+        patch(
+            "codebase_rag.stack.manager.wait_for_qdrant",
+            side_effect=lambda *_, **__: next(qdrant_up),
+        ),
+        patch(
+            "codebase_rag.stack.manager.subprocess.run",
+            side_effect=[
+                _compose_config(qdrant_only),
+                subprocess.CompletedProcess(args=[], returncode=0),
+            ],
+        ) as run,
+    ):
+        status = mgr.ensure_running()
+
+    assert status.state == cs.StackState.RUNNING
+    assert run.call_args_list[-1].args[0][-3:] == ["up", "-d", cs.SERVICE_QDRANT]
+
+
 @pytest.mark.usefixtures("credentials")
 def test_up_does_not_start_when_compose_resolves_other_credentials(
     tmp_path: Path,

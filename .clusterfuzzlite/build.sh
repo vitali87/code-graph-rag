@@ -15,6 +15,12 @@ cd "$SRC/code-graph-rag"
 # install. The export pins tree-sitter-c and -cpp to git commits, and pip
 # refuses a hashed requirements file that holds a VCS requirement, so uv
 # installs it; the project itself then goes in with --no-deps on top.
+#
+# The project requires cgr-graph-rs, which the lockfile takes from the crate
+# in this checkout (rust/cgr_graph_rs): the export names it as
+# `./rust/cgr_graph_rs`, resolved against this directory, so it is built here
+# and the requirement is met by the code under test rather than whatever
+# PyPI has.
 LOCKED_REQUIREMENTS="$(mktemp)"
 uv export --frozen --no-dev --no-emit-project --extra treesitter-full \
   --no-header --output-file "$LOCKED_REQUIREMENTS"
@@ -25,17 +31,19 @@ uv export --frozen --no-dev --no-emit-project --extra treesitter-full \
 # omit-frame-pointer ...'", because -O1 and the rest arrive as one token).
 # Nothing the harnesses import touches pymgclient -- it is the Memgraph
 # driver -- and a fuzz target gets its instrumentation from atheris, not from
-# these flags. So install dependencies with a clean environment.
+# these flags. So install dependencies with a clean environment. RUSTFLAGS
+# goes too: OSS-Fuzz sets it to sanitizer flags for Rust fuzz targets, and
+# cgr-graph-rs is a dependency.
 #
 # `--python` gets the interpreter's path, not the name `python3`: given a
 # name, uv looks only for a virtual environment of that version and stops
 # with "No virtual environment found" in this image, which has none. A path
 # names the very interpreter compile_python_fuzzer freezes the targets with.
 TARGET_PYTHON="$(command -v python3)"
-env -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS \
+env -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS -u RUSTFLAGS \
   uv pip install --python "$TARGET_PYTHON" --break-system-packages \
   -r "$LOCKED_REQUIREMENTS"
-env -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS \
+env -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS -u RUSTFLAGS \
   uv pip install --python "$TARGET_PYTHON" --break-system-packages --no-deps .
 
 # `evals` is NOT part of the installed wheel -- pyproject's package discovery
