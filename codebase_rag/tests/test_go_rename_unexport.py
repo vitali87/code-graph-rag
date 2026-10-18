@@ -99,6 +99,30 @@ def test_an_unexported_method_used_by_another_package_is_refused(
         _rename(root, "shape.shape.Box.Area", "area")
 
 
+# A block comment before the package clause can hold a line that reads like
+# one; only the real clause names the package.
+_COMMENTED_STRS = "/*\npackage strs_test\n*/\n" + _STRS
+
+
+def test_a_commented_out_package_line_does_not_hide_the_external_test(
+    temp_repo: Path,
+) -> None:
+    root = _repo(
+        temp_repo,
+        {
+            "strs/strs.go": _COMMENTED_STRS,
+            "strs/strs_test.go": (
+                "package strs_test\n\n"
+                'import (\n\t"testing"\n\n\t"example.com/goren/strs"\n)\n\n'
+                'func TestSlug(t *testing.T) { _ = strs.Slug("a") }\n'
+            ),
+        },
+    )
+    with pytest.raises(RenameRefused) as refused:
+        _rename(root, "strs.strs.Slug", "slug")
+    assert {s.path for s in refused.value.ambiguous} == {"strs/strs_test.go"}
+
+
 @pytest.mark.parametrize(
     ("files", "qn_tail", "new_name", "rewritten"),
     [
@@ -135,8 +159,19 @@ def test_an_unexported_method_used_by_another_package_is_refused(
             "Slug",
             ("strs/strs.go", "return Slug(s)"),
         ),
+        (
+            {
+                "strs/strs.go": "/*\npackage other\n*/\n" + _STRS,
+                "strs/title.go": (
+                    "package strs\n\nfunc Title(s string) string { return Slug(s) }\n"
+                ),
+            },
+            "strs.strs.Slug",
+            "slug",
+            ("strs/title.go", "return slug(s)"),
+        ),
     ],
-    ids=["same_package", "stays_exported", "exports"],
+    ids=["same_package", "stays_exported", "exports", "commented_package_line"],
 )
 def test_a_rename_go_accepts_still_applies(
     temp_repo: Path,

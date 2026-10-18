@@ -1505,16 +1505,10 @@ class Renamer:
             s for s in sites if _is_go_path(s.path) and self._go_package(s.path) != home
         ]
 
-    def _go_package(self, rel_path: str) -> tuple[str, str | None]:
-        directory = Path(rel_path).parent.as_posix()
-        try:
-            text = (self.repo_root / rel_path).read_text(
-                encoding=cs.ENCODING_UTF8, errors="replace"
-            )
-        except OSError:
-            return directory, None
-        clause = re.search(cs.GO_PACKAGE_CLAUSE_PATTERN, text, re.MULTILINE)
-        return directory, clause.group(1) if clause else None
+    def _go_package(self, rel_path: str) -> str:
+        return go_utils.package_key(
+            rel_path, read_package_clause(self.repo_root / rel_path)
+        )
 
     def _unplanned(
         self,
