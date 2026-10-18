@@ -28,6 +28,7 @@ from codebase_rag.tests.test_graph_unknown_targets import (
     NODES,
     REPORT_TOTAL,
     SHAPE,
+    SHAPES,
     TARGET_COMMANDS,
     TEST_TOTAL,
     TOTAL,
@@ -52,12 +53,26 @@ SPANS: dict[str, tuple[int, int]] = {
 SPANNED_PATHS = ("app/shapes.py", f"{P}.py")
 
 
+# The module each spanned file holds, for the held-file lookup a location
+# with no definition on its line is checked against.
+SPANNED_MODULES = {"app/shapes.py": SHAPES, f"{P}.py": f"{P}.{P}"}
+
+
 class SpannedGraph(FakeGraph):
     """FakeGraph that also answers a `path:line` lookup from SPANS."""
 
     def __call__(
         self, query: str, params: PropertyParams | None = None
     ) -> list[ResultRow]:
+        if query == cq.CYPHER_GRAPH_LOCATION_FILES:
+            self.queries.append(query)
+            wanted = (params or {})[cs.CYPHER_PARAM_PATHS]
+            assert isinstance(wanted, list)
+            return [
+                {cs.KEY_PATH: path, cs.KEY_QUALIFIED_NAME: qn}
+                for path, qn in SPANNED_MODULES.items()
+                if path in wanted
+            ]
         if query != cq.CYPHER_GRAPH_RESOLVE_LOCATION:
             return super().__call__(query, params)
         self.queries.append(query)
@@ -220,6 +235,18 @@ def test_a_name_naming_no_definition_is_still_refused(
     assert code == cs.GRAPH_EXIT_UNKNOWN_TARGET
     assert out == ""
     assert f"'{target}' is not in the graph" in err
+
+
+def test_a_location_in_a_file_the_project_does_not_hold_is_refused(
+    connected: SpannedGraph, tmp_path: Path
+) -> None:
+    # The refusal `cgr graph resolve` gives such a location (issue #2611),
+    # not a name lookup of `nope.py:1`.
+    code, out, err = _graph(tmp_path, "callers", "app/nope.py:1")
+
+    assert code == cs.GRAPH_EXIT_UNKNOWN_TARGET
+    assert out == ""
+    assert "No source file 'app/nope.py'" in err
 
 
 def test_resolve_still_lists_every_match(
