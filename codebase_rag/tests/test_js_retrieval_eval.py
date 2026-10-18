@@ -87,5 +87,7 @@ def test_score_js_retrieval_prf() -> None:
     result = score_js_retrieval(
         {("a.js", "f"), ("a.js", "g")}, {("a.js", "f"), ("b.js", "h")}
     )
-    row = next(r for r in result.rows if r["label"] == ec.JS_RETRIEVAL_LABEL)
+    row = next(
+        r for r in result.rows if r["label"] == ec.RetrievalCondition.GRAPH.value
+    )
     assert (row["tp"], row["fp"], row["fn"]) == (1, 1, 1)

@@ -46,17 +46,86 @@ rules:
     # words and digits (SECRET_KEY, secret_key_base, AWS_SECRET_ACCESS_KEY,
     # password2): `tokenizer`, `token_count` and `password_prompt` only
     # contain one, and name no credential (issue #2870).
+    # A name is bound to a literal by a declarator, an assignment to a
+    # variable, member or subscript (the member's own name decides:
+    # `token.value = ...` sets a value), an object property or a class
+    # field; matching only the declarator missed `this.token = "..."`
+    # and `{ password: "..." }` (issue #2866).
     message: "Hardcoded secret assigned to a credential-named variable"
     rule:
-      kind: variable_declarator
-      all:
-        - has: { field: name, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
-        - has:
-            field: value
-            all:
-              - kind: string
-              - regex: '^.{10,}$'
-              - not:
-                  any:
-                    - regex: '\{[^{}]*\}'
-                    - regex: '%[sdrifeEgGxXoc(]'
+      any:
+        - kind: variable_declarator
+          all:
+            - has: { field: name, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
+            - has:
+                field: value
+                all:
+                  - any:
+                      - kind: string
+                      # A backtick literal with no `${...}` is as constant
+                      # as a quoted one (issue #2779).
+                      - kind: template_string
+                        not: { has: { kind: template_substitution } }
+                  - regex: '^.{10,}$'
+                  - not:
+                      any:
+                        - regex: '\{[^{}]*\}'
+                        - regex: '%[sdrifeEgGxXoc(]'
+        - kind: assignment_expression
+          all:
+            - has:
+                field: left
+                any:
+                  - { kind: identifier, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
+                  - kind: member_expression
+                    has: { field: property, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
+                  - kind: subscript_expression
+                    has: { field: index, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
+            - has:
+                field: right
+                all:
+                  - any:
+                      - kind: string
+                      # A backtick literal with no `${...}` is as constant
+                      # as a quoted one (issue #2779).
+                      - kind: template_string
+                        not: { has: { kind: template_substitution } }
+                  - regex: '^.{10,}$'
+                  - not:
+                      any:
+                        - regex: '\{[^{}]*\}'
+                        - regex: '%[sdrifeEgGxXoc(]'
+        - kind: pair
+          all:
+            - has: { field: key, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
+            - has:
+                field: value
+                all:
+                  - any:
+                      - kind: string
+                      # A backtick literal with no `${...}` is as constant
+                      # as a quoted one (issue #2779).
+                      - kind: template_string
+                        not: { has: { kind: template_substitution } }
+                  - regex: '^.{10,}$'
+                  - not:
+                      any:
+                        - regex: '\{[^{}]*\}'
+                        - regex: '%[sdrifeEgGxXoc(]'
+        - kind: public_field_definition
+          all:
+            - has: { field: name, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
+            - has:
+                field: value
+                all:
+                  - any:
+                      - kind: string
+                      # A backtick literal with no `${...}` is as constant
+                      # as a quoted one (issue #2779).
+                      - kind: template_string
+                        not: { has: { kind: template_substitution } }
+                  - regex: '^.{10,}$'
+                  - not:
+                      any:
+                        - regex: '\{[^{}]*\}'
+                        - regex: '%[sdrifeEgGxXoc(]'
