@@ -641,6 +641,15 @@ def _symbols(
 _Position = tuple[int | None, int | None]
 
 
+def _held(sites: Iterable[CallSite]) -> dict[str, set[_Position]]:
+    """Where each symbol is taken as a value, by its qualified name."""
+    held: dict[str, set[_Position]] = {}
+    for site in sites:
+        if site.rel == cs.RelationshipType.REFERENCES:
+            held.setdefault(site.callee, set()).add((site.line, site.col))
+    return held
+
+
 def _named_only_as_itself(
     site: CallSite, callee: Definition, held: dict[str, set[_Position]]
 ) -> bool:
@@ -697,10 +706,7 @@ def _dangling(
     gone = set(symbols["removed"]) | {r["old"] for r in symbols["renamed"]}
     renamed_to = {r["old"]: r["new"] for r in symbols["renamed"]}
     after_pairs = {(site.caller, site.callee) for site in after.sites}
-    held: dict[str, set[_Position]] = {}
-    for site in before.sites:
-        if site.rel == cs.RelationshipType.REFERENCES:
-            held.setdefault(site.callee, set()).add((site.line, site.col))
+    held = _held(before.sites)
     out: list[DanglingCaller] = []
     seen: set[tuple[str, str, int | None, int | None]] = set()
     for site in before.sites:
