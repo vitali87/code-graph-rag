@@ -241,6 +241,11 @@ NATIVE_COMPONENTS: tuple[NativeComponent, ...] = (
     NativeComponent("Expat", "MIT", (r"^libexpat[.-]",), "expat.txt"),
     NativeComponent("zlib", "Zlib", (r"^libz\.", r"^zlib1?\.dll$"), "zlib.txt"),
     NativeComponent("bzip2", "bzip2-1.0.6", (r"^libbz2[.-]",), "bzip2.txt"),
+    # The embedded graph's storage. A distro interpreter links the system
+    # library; python.org's Windows build ships `sqlite3.dll`.
+    NativeComponent(
+        "SQLite", "blessing", (r"^libsqlite3[.-]", r"^sqlite3\.dll$"), "sqlite.txt"
+    ),
     # 0BSD from XZ Utils 5.6; earlier releases put liblzma in the public
     # domain, which asks for nothing, so the stricter text covers both.
     NativeComponent("liblzma (XZ Utils)", "0BSD", (r"^liblzma[.-]",), "liblzma.txt"),
