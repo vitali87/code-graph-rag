@@ -29,11 +29,13 @@ def extract_source_lines(
         raw_bytes = file_path.read_bytes()
         # The indexer parsed a Python source in the encoding it declares, and
         # the lines it recorded are lines of that text (issue #2445).
-        # A UTF-16/32 source with a BOM was parsed as its decoded text too
-        # (issue #3153).
-        declared = decode_wide_source(raw_bytes, file_path)
-        if declared is None and file_path.suffix in PY_EXTENSIONS:
-            declared = decode_python_source(raw_bytes, file_path)
+        # Any other UTF-16/32 source with a BOM was parsed as its decoded text
+        # too (issue #3153).
+        declared = (
+            decode_python_source(raw_bytes, file_path)
+            if file_path.suffix in PY_EXTENSIONS
+            else decode_wide_source(raw_bytes, file_path)
+        )
         text = raw_bytes.decode(encoding) if declared is None else declared
         lines = text.splitlines(keepends=True)
 

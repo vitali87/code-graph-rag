@@ -13,6 +13,12 @@ ENCODING_UTF8_SIG = "utf-8-sig"
 # BOM-aware: decoding picks the byte order from the mark and drops it.
 ENCODING_UTF16 = "utf-16"
 ENCODING_UTF32 = "utf-32"
+# One byte order each, for the text after a BOM: writing that text back in
+# one of these, behind the same mark, gives the file's own bytes.
+ENCODING_UTF16_LE = "utf-16-le"
+ENCODING_UTF16_BE = "utf-16-be"
+ENCODING_UTF32_LE = "utf-32-le"
+ENCODING_UTF32_BE = "utf-32-be"
 ENCODING_ASCII = "ascii"
 # Codec names (as `codecs.lookup` normalises them) whose bytes the grammar
 # already reads as they are, so a source declaring one needs no transcoding.

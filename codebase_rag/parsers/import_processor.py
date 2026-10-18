@@ -47,6 +47,7 @@ from ..utils.path_utils import (
     should_skip_rel_file,
     walk_eligible_files,
 )
+from ..utils.source_encoding import grammar_bytes
 from .cpp_frontend.qn import build_module_qn_map
 from .dart import (
     dart_binding_spans,
@@ -2140,7 +2141,11 @@ class ImportProcessor:
                 self._csharp_module_namespaces[module_qn] = {}
                 self._csharp_module_identifiers[module_qn] = frozenset()
                 continue
-            tree = parser.parse(source)
+            # Parsed as the indexer parses it: a UTF-16 file's raw bytes read
+            # as no declarations at all (#3153 review).
+            tree = parser.parse(
+                grammar_bytes(source, cs.SupportedLanguage.CSHARP, Path(path))
+            )
             self._csharp_module_namespaces[module_qn] = self._collect_csharp_namespaces(
                 tree.root_node
             )
