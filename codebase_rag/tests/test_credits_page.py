@@ -82,6 +82,23 @@ def test_licence_text_is_escaped_inside_its_block(page_module: ModuleType) -> No
     assert "<pre>&lt;b&gt;&amp;&lt;/b&gt;</pre>" in text
 
 
+def test_a_markdown_licence_text_cannot_add_entries(page_module: ModuleType) -> None:
+    # cgr-graph-rs ships its crates' licences as Markdown, one `## crate`
+    # heading each; inside the block they must not read as this page's entries.
+    class _Notice:
+        name, version = "cgr-graph-rs", "0.1.0"
+        texts = ("# Third-party licences\n\n## bitflags 2.13.2\n\nMIT",)
+
+        @staticmethod
+        def license_line() -> str:
+            return "MIT"
+
+    text = page_module.render([(_Notice(), "https://x.example")])
+    assert re.findall(r"^## (.+)$", text, flags=re.MULTILINE) == ["cgr-graph-rs"]
+    assert "&#35;# bitflags 2.13.2" in text
+    assert "&#35; Third-party licences" in text
+
+
 def test_notice_metadata_is_escaped(page_module: ModuleType) -> None:
     # Name, version and licence are third-party metadata too, and render
     # outside the <pre> block (CodeRabbit, PR #2225).

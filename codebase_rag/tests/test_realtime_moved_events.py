@@ -15,9 +15,9 @@ from watchdog.events import (
     FileMovedEvent,
 )
 
-import realtime_updater
+from codebase_rag import watch
 from codebase_rag.tests.conftest import create_and_run_updater
-from realtime_updater import CodeChangeEventHandler
+from codebase_rag.watch import CodeChangeEventHandler
 
 # A move is a deletion of its source plus a creation of its destination, and a
 # directory event stands for every file beneath it. Before these were handled
@@ -170,7 +170,7 @@ class TestDirectoryEvents:
         _write(temp_repo / "new" / "node_modules" / "dep" / "index.js")
         mock_updater.indexed_files_under.return_value = []
         walked: list[str] = []
-        real_walk = realtime_updater.os.walk
+        real_walk = watch.os.walk
 
         def recording_walk(
             top: str, *args: bool, **kwargs: bool
@@ -181,7 +181,7 @@ class TestDirectoryEvents:
 
         # Patched only around the dispatch: `os` is shared, and on Windows the
         # temp_repo teardown's rmtree walks with `os.walk` too.
-        with patch.object(realtime_updater.os, "walk", recording_walk):
+        with patch.object(watch.os, "walk", recording_walk):
             handler.dispatch(
                 DirMovedEvent(str(temp_repo / "old"), str(temp_repo / "new"))
             )
@@ -193,7 +193,7 @@ class TestDirectoryEvents:
     ) -> None:
         _write(temp_repo / "node_modules" / "pkg" / "a.py")
         mock_updater.indexed_files_under.return_value = []
-        with patch.object(realtime_updater.os, "walk") as walk:
+        with patch.object(watch.os, "walk") as walk:
             handler.dispatch(
                 DirMovedEvent(
                     str(temp_repo / "pkg"), str(temp_repo / "node_modules" / "pkg")
@@ -243,7 +243,7 @@ class TestExpansionFailures:
         _write(temp_repo / "new" / "a.py")
         _write(temp_repo / "new" / "locked" / "b.py")
         mock_updater.indexed_files_under.return_value = []
-        real_scandir = realtime_updater.os.scandir
+        real_scandir = watch.os.scandir
 
         def scandir(path: str) -> Iterator[os.DirEntry[str]]:
             if Path(path).name == "locked":
@@ -251,7 +251,7 @@ class TestExpansionFailures:
             return real_scandir(path)
 
         # Scoped for the same reason as the walk patches above.
-        with patch.object(realtime_updater.os, "scandir", scandir):
+        with patch.object(watch.os, "scandir", scandir):
             handler.dispatch(
                 DirMovedEvent(str(temp_repo / "old"), str(temp_repo / "new"))
             )
