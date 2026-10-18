@@ -47,6 +47,12 @@ _CLOSURE_LANGUAGES = frozenset(
 )
 
 
+# One function's own variables by the byte span each holds in, innermost
+# spans nested in outer ones; a name mapped to None is declared there
+# without a type (issue #3200).
+type _ScopeBindings = Mapping[tuple[int, int], Mapping[str, str | None]]
+
+
 def _enclosing_function(
     node: ASTNode, language: cs.SupportedLanguage
 ) -> ASTNode | None:
@@ -234,7 +240,7 @@ class TypeInferenceEngine:
         # The own-scope types of each enclosing function, for the module
         # whose callers are being walked: every nested caller of a function
         # reads the same map, which would otherwise be rebuilt per caller.
-        self._scope_types_memo: dict[tuple[int, int, int], dict[str, str]] = {}
+        self._scope_types_memo: dict[tuple[int, int, int], _ScopeBindings] = {}
         self._scope_types_module: str | None = None
         # Shared reference (as with class_field_types): C# partial-class part
         # groups, populated during ingestion and read by the C# resolver to
@@ -506,15 +512,28 @@ class TypeInferenceEngine:
             return {}
         hidden = set(self._own_scope_names(caller_node, language))
         captured: dict[str, str] = {}
+        pos = caller_node.start_byte
         while scope is not None:
             # Both builders type only what `scope` itself binds, so every
             # entry is the enclosing scope's own variable (or `self.<attr>`).
-            types = self._scope_variable_types(
+            bindings = self._scope_variable_types(
                 scope, module_qn, language, class_context
             )
-            for name, type_name in types.items():
-                if name.split(cs.SEPARATOR_DOT, 1)[0] not in hidden:
-                    captured.setdefault(name, type_name)
+            # Only the spans around the caller, innermost first: a block's
+            # `let r` hides the `r` of the block around it, and one in a
+            # sibling block is another variable the caller never reads.
+            around = sorted(
+                (span for span in bindings if span[0] <= pos < span[1]),
+                key=lambda span: (-span[0], span[1]),
+            )
+            for span in around:
+                for name, type_name in bindings[span].items():
+                    if (
+                        type_name is not None
+                        and name.split(cs.SEPARATOR_DOT, 1)[0] not in hidden
+                    ):
+                        captured.setdefault(name, type_name)
+                hidden.update(bindings[span])
             hidden |= self._own_scope_names(scope, language)
             scope = _enclosing_function(scope, language)
         return captured
@@ -533,25 +552,31 @@ class TypeInferenceEngine:
         module_qn: str,
         language: cs.SupportedLanguage,
         class_context: str | None,
-    ) -> dict[str, str]:
+    ) -> _ScopeBindings:
         if module_qn != self._scope_types_module:
             self._scope_types_memo.clear()
             self._scope_types_module = module_qn
         key = (scope.id, scope.start_byte, scope.end_byte)
         if (cached := self._scope_types_memo.get(key)) is not None:
             return cached
+        bindings: _ScopeBindings
         if language == cs.SupportedLanguage.PYTHON:
             # The Python map is already this body's own: names a nested def
-            # binds are left out of it (#1922).
-            types = self.python_type_inference.build_local_variable_type_map(
-                scope, module_qn, class_context
-            )
+            # binds are left out of it (#1922). A Python local holds in the
+            # whole def, blocks or not.
+            bindings = {
+                (scope.start_byte, scope.end_byte): (
+                    self.python_type_inference.build_local_variable_type_map(
+                        scope, module_qn, class_context
+                    )
+                )
+            }
         else:
-            types = self.js_type_inference.own_scope_variable_types(
+            bindings = self.js_type_inference.own_scope_variable_types(
                 scope, module_qn, language
             )
-        self._scope_types_memo[key] = types
-        return types
+        self._scope_types_memo[key] = bindings
+        return bindings
 
     def collect_go_span_bindings(
         self,
