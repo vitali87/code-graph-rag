@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from pathlib import Path
 
@@ -19,10 +20,12 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import context_slice
+from codebase_rag import cypher_queries as cq
 from codebase_rag.context_slice import context
 from codebase_rag.graph_query import DefinitionRow, QueryFn
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.types_defs import PropertyParams, ResultRow
 from codebase_rag.utils.token_utils import count_tokens
 from evals.cgr_graph import _StatefulIngestor
 
@@ -297,3 +300,56 @@ def test_a_replaced_file_is_quoted_afresh(temp_repo: Path) -> None:
 
     assert caller_sources(before) == ["return core(1)"]
     assert caller_sources(after) == ["return core(2)"]
+
+
+_COLUMN = re.compile(r"\bn\.(\w+) AS (\w+)")
+
+
+def _as_memgraph_answers(store: _StatefulIngestor) -> QueryFn:
+    # The stand-in answers the dead-code node query with a fixed key set;
+    # Memgraph answers with every column its RETURN names.
+    def fetch(query: str, params: PropertyParams | None) -> list[ResultRow]:
+        rows = store.fetch_all(query, dict(params) if params is not None else None)
+        if query != cq.CYPHER_DEAD_CODE_NODES:
+            return rows
+        columns = _COLUMN.findall(query)
+        out: list[ResultRow] = []
+        for row in rows:
+            node = (str(row[cs.KEY_LABEL]), str(row[cs.KEY_QUALIFIED_NAME]))
+            props = store.nodes[node]
+            out.append(
+                {cs.KEY_LABEL: row[cs.KEY_LABEL]}
+                | {alias: props.get(prop) for prop, alias in columns}
+            )
+        return out
+
+    return fetch
+
+
+def test_a_decorated_test_is_quoted_with_its_decorators(temp_repo: Path) -> None:
+    # The reach index read the def line alone, so a decorated test lost its
+    # decorators; it is quoted from the first one, as `definition()` quotes
+    # a decorated def (issue #2428).
+    store = _repo(
+        temp_repo,
+        {
+            "app.py": "def core(x):\n    return x + 1\n",
+            "tests/__init__.py": "",
+            "tests/test_app.py": (
+                "import pytest\n\nfrom app import core\n\n\n"
+                "@pytest.mark.slow\n"
+                "def test_core():\n    assert core(1) == 2\n"
+            ),
+        },
+    )
+
+    slice_ = context(
+        _as_memgraph_answers(store), PROJECT, f"{PROJECT}.app.core", 4000, temp_repo
+    )
+
+    why = cs.CONTEXT_WHY_TEST.format(depth=1, through=f"{PROJECT}.app.core")
+    (test,) = [p for p in slice_["pieces"] if p["why_included"] == why]
+    assert test["span"] == [6, 8]
+    assert test["source"] == (
+        "@pytest.mark.slow\ndef test_core():\n    assert core(1) == 2"
+    )

@@ -1408,6 +1408,9 @@ def _node_props(row: ResultRow) -> PropertyDict:
         # non-int values coalesce to 0 so the containment checks skip them.
         cs.KEY_START_LINE: _as_line(row.get(cs.KEY_START_LINE)),
         cs.KEY_END_LINE: _as_line(row.get(cs.KEY_END_LINE)),
+        # The first decorator's line: a reaching test is quoted from it, as
+        # `definition()` quotes a decorated def (issue #2428).
+        cs.KEY_DECORATED_START_LINE: _as_line(row.get(cs.KEY_DECORATED_START_LINE)),
         cs.KEY_RUST_CFG_TEST_MODS: _as_str_list(row.get(cs.KEY_RUST_CFG_TEST_MODS)),
         cs.KEY_RUST_UNGATED_MODS: _as_str_list(row.get(cs.KEY_RUST_UNGATED_MODS)),
         # The signature the C# entry-point rule checks (issue #2471).
