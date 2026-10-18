@@ -1199,6 +1199,12 @@ class FlowProcessor:
             inner.handles.pop(name, None)
         shadows = set(jc.local_names)
         jc.local_names.update(params)
+        # A JS/TS callback's own declarations shadow throughout it, as a
+        # caller's do (`const console = {...}` in it is not the console); the
+        # caller's seed skipped the callback's body as a nested scope.
+        jc.local_names.update(
+            self._js_local_names(node, jc.descriptor, jc.flow.language)
+        )
         self._inline_callback_depth += 1
         try:
             for stmt in self._lean_body_statements(node, jc.flow, jc.descriptor):

@@ -63,7 +63,26 @@ function shadowTaint(items) {
   items.forEach((x) => console.error(x));
 }
 
-module.exports = { jsCb, jsRead, jsLeak, handler, outer, shadow, usePick, shadowTaint };
+function localConsole(items) {
+  const s = process.env.LOCAL;
+  items.forEach((x) => { const console = { log(v) {} }; console.log(s); });
+}
+
+function outerHandle(items, data) {
+  const out = fs.createWriteStream("outer.txt");
+  items.forEach((x) => { const out = {}; });
+  out.write(data);
+}
+
+function paramHandle(items) {
+  const out = fs.createWriteStream("param.txt");
+  items.forEach((out) => out.write(1));
+}
+
+module.exports = {
+  jsCb, jsRead, jsLeak, handler, outer, shadow, usePick, shadowTaint,
+  localConsole, outerHandle, paramHandle,
+};
 """,
     "cb.ts": """\
 export function tsCb(items: string[]) {
@@ -262,6 +281,24 @@ def test_a_callback_parameter_shadows_the_outer_name(
     assert ("resource::ENV::OTHER", "resource::STDERR::<dynamic>") not in _flows(
         edges
     ), edges
+
+
+def test_a_callback_local_shadows_the_global_in_the_flow_walk(
+    edges: set[tuple[str, str, str]],
+) -> None:
+    # Negative: a `console` declared inside the callback is a local object,
+    # so the env value logged through it reaches no stdout.
+    assert ("WRITES_TO", _STDOUT) not in _io(edges, "localConsole"), edges
+    assert ("resource::ENV::LOCAL", _STDOUT) not in _flows(edges), edges
+
+
+def test_a_callback_does_not_rebind_the_callers_handles(
+    edges: set[tuple[str, str, str]],
+) -> None:
+    # A callback's own `const out` does not kill the caller's file handle, and
+    # a callback parameter named `out` is not that handle.
+    assert ("WRITES_TO", "resource::FILE::outer.txt") in _io(edges, "outerHandle")
+    assert _io(edges, "paramHandle") == set(), edges
 
 
 def test_a_return_in_a_callback_does_not_return_from_the_caller(
