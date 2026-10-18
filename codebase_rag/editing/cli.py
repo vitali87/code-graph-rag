@@ -92,7 +92,7 @@ def show_cmd(count: int, show_diff: bool, repo_path: Path) -> None:
     help=ch.HELP_EDITS_COUNT,
 )
 @_repo_option
-@click.option("--project", default=None, help=ch.HELP_GRAPH_PROJECT)
+@click.option("--project", "-p", default=None, help=ch.HELP_GRAPH_PROJECT)
 def undo_cmd(count: int, repo_path: Path, project: str | None) -> None:
     root = repo_path.resolve()
     restored: set[str] = set()
