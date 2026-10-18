@@ -7,7 +7,6 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 import httpx
-import mgclient
 from loguru import logger
 
 from .. import constants as cs
@@ -15,9 +14,11 @@ from .. import cypher_queries as cq
 from .. import exceptions as ex
 from .. import graph_audit
 from ..config import PROVIDER_ENV_KEYS, ModelConfig, settings
-from ..graph_dialects import DIALECT_NEO4J
+from ..graph_dialects import DIALECT_MEMGRAPH, DIALECT_NEO4J, DIALECT_SQLITE
+from ..mgclient_compat import mgclient
 from ..schemas import HealthCheckResult
 from ..services.graph_service import (
+    GraphUnavailableError,
     MemgraphIngestor,
     memgraph_version,
     unsupported_memgraph_version,
@@ -27,7 +28,7 @@ from ..utils.endpoints import join_endpoint_path, strip_v1_suffix
 
 # pymgclient 1.6 re-exports its C extension through `import *`, which a type
 # checker cannot see into, so the exception type is bound once here.
-_MgclientError: type[Exception] = mgclient.Error  # ty: ignore[unresolved-attribute]
+_MgclientError: type[Exception] = mgclient.Error
 
 
 @contextmanager
@@ -76,7 +77,9 @@ def _connection_error_types() -> tuple[type[BaseException], ...]:
     # Accumulated rather than returned as differently-shaped tuples: this
     # is a variadic `except` argument, not a fixed-arity value, and the
     # list makes that intent explicit (python:S8495).
-    types: list[type[BaseException]] = [_MgclientError]
+    # GraphUnavailableError is how the ingestor reports an embedded graph
+    # file it cannot open, or a Memgraph backend with no driver installed.
+    types: list[type[BaseException]] = [_MgclientError, GraphUnavailableError]
     if settings.GRAPH_BACKEND == DIALECT_NEO4J:
         # Imported by name, as `services.neo4j_driver` does, so the check
         # reads the same with or without the extra installed.
@@ -105,6 +108,8 @@ def _backend_endpoint() -> str:
     """The address health output should name, for the configured engine."""
     if settings.GRAPH_BACKEND == DIALECT_NEO4J:
         return settings.NEO4J_URI
+    if settings.GRAPH_BACKEND == DIALECT_SQLITE:
+        return str(settings.graph_db_file)
     return f"{settings.MEMGRAPH_HOST}:{settings.MEMGRAPH_PORT}"
 
 
@@ -504,7 +509,10 @@ class HealthChecker:
 
     def run_all_checks(self) -> list[HealthCheckResult]:
         self.results = []
-        self.results.append(self.check_docker())
+        # Docker only runs the bundled Memgraph; reporting it missing to
+        # someone on the embedded graph would fail a working setup.
+        if settings.GRAPH_BACKEND == DIALECT_MEMGRAPH:
+            self.results.append(self.check_docker())
         self.results.append(self.check_memgraph_connection())
         self.results.extend(self.check_graph_integrity())
         self.results.extend(self.check_model_roles())
