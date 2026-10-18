@@ -978,6 +978,14 @@ def _body_function_nodes(
     return captures.get(cs.CAPTURE_FUNCTION, [])
 
 
+def _next_macro_token(token: Node) -> Node | None:
+    # The token after `token` in a macro's stream, comments skipped.
+    following = token.next_sibling
+    while following is not None and following.type in cs.RS_COMMENT_TYPES:
+        following = following.next_sibling
+    return following
+
+
 def _macro_turbofish_reaches_args(ident: Node) -> bool:
     """Whether a macro-token identifier is a call, through any turbofish.
 
@@ -985,19 +993,20 @@ def _macro_turbofish_reaches_args(ident: Node) -> bool:
     the query's identifier-then-`(` shape missed it and every turbofish call
     inside `assert!`/`println!` lost its edge (issue #3212). An identifier
     followed by `::<` is a call only when the generic arguments close straight
-    into an argument group; `a::<B>::c()` continues the path instead.
+    into an argument group; `a::<B>::c()` continues the path instead. A
+    comment between them (`make::<u64> /* type */ ()`) is a token too.
     """
-    scope = ident.next_sibling
+    scope = _next_macro_token(ident)
     if scope is None or scope.type != cs.TS_RS_TOKEN_SCOPE:
         return True
     depth = 0
-    token = scope.next_sibling
+    token = _next_macro_token(scope)
     while token is not None:
         depth += cs.RS_MACRO_ANGLE_DEPTH.get(token.type, 0)
         if depth <= 0:
             break
-        token = token.next_sibling
-    if token is None or depth != 0 or (args := token.next_sibling) is None:
+        token = _next_macro_token(token)
+    if token is None or depth != 0 or (args := _next_macro_token(token)) is None:
         return False
     return (
         args.type == cs.TS_RS_TOKEN_TREE

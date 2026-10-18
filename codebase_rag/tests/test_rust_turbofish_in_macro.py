@@ -40,6 +40,7 @@ pub fn in_macro_plain() { assert!(plain_fn() == 0); }
 pub fn assoc_in_macro() { assert_eq!(Ext::assoc(), 0); }
 pub fn path_turbofish() { assert_eq!(Holder::<u8>::build(), 1); }
 pub fn outside() -> u64 { make::<u64>() }
+pub fn commented() { assert!(make::<u64> /* type */ () == 0); }
 """
 
 _Sites = list[tuple[str, str, int]]
@@ -83,8 +84,11 @@ def test_turbofish_calls_inside_macros_get_their_edges(sites: _Sites) -> None:
     [
         ("method_turbo_in_macro", "Ext.into_float"),
         ("nested_generics", "parse"),
+        # Codex, PR #3238: a comment between the generics and the arguments
+        # is the `>` token's next sibling.
+        ("commented", "make"),
     ],
-    ids=["method", "nested-generics-closing-with-shift-token"],
+    ids=["method", "nested-generics-closing-with-shift-token", "comment-before-args"],
 )
 def test_a_turbofish_method_or_nested_generic_call_resolves(
     sites: _Sites, caller: str, callee: str
