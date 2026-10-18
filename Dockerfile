@@ -6,7 +6,7 @@ COPY --from=uv /uv /uvx /bin/
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        cmake build-essential git libssl-dev zlib1g-dev libzstd-dev && \
+        cmake build-essential git libssl-dev zlib1g-dev libzstd-dev cargo && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -29,12 +29,14 @@ ENV UV_PYTHON_PREFERENCE=only-managed
 # .python-version must arrive with the manifests: without it this first sync
 # falls back to the newest managed Python allowed by requires-python (which
 # moves with each uv release), and the later sync, once COPY . . brings in the
-# pin, rebuilds .venv on the pinned version.
+# pin, rebuilds .venv on the pinned version. --no-install-local leaves out
+# the project and cgr-graph-rs, a path dependency built from rust/ (with the
+# cargo above), as neither source is here until COPY . . brings it.
 COPY pyproject.toml uv.lock .python-version ./
-RUN uv sync --frozen --no-dev --extra treesitter-full --no-install-project --no-binary-package pymgclient
+RUN uv sync --frozen --no-dev --extra treesitter-full --extra memgraph --no-install-local --no-binary-package pymgclient
 
 COPY . .
-RUN uv sync --frozen --no-dev --extra treesitter-full --no-binary-package pymgclient
+RUN uv sync --frozen --no-dev --extra treesitter-full --extra memgraph --no-binary-package pymgclient
 
 FROM python:3.14-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d
 
