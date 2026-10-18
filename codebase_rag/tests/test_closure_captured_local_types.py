@@ -28,6 +28,11 @@ _TS_CLASSES = (
     "class Range { reset(): number { return 1; } }\n"
     "class Other { reset(): number { return 2; } }\n"
 )
+_TS_INTERFACE_CLASSES = (
+    "interface IRange { reset(): number; }\n"
+    "class Range implements IRange { reset(): number { return 1; } }\n"
+    "class Other { reset(): number { return 2; } }\n"
+)
 
 
 def _reset_calls(repo: Path, files: dict[str, str], mock: MagicMock) -> dict[str, set]:
@@ -305,3 +310,17 @@ def test_the_enclosing_functions_own_call_is_unchanged(
     text = _PY_CLASSES + "def outer():\n    r = Range()\n    return r.reset()\n"
     calls = _reset_calls(temp_repo, {"a.py": text}, mock_ingestor)
     assert calls == {"a.outer": {("a.Range.reset", _EXACT)}}, calls
+
+
+def test_a_nested_function_types_a_captured_interface_parameter(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `outer(r: IRange)` types `r` by its interface (#2524); a callback that
+    # captures `r` dispatches on it exactly as `outer` itself does.
+    text = _TS_INTERFACE_CLASSES + (
+        "export function outer(r: IRange): () => number {\n"
+        "  const cb = (): number => r.reset();\n  r.reset();\n  return cb;\n}\n"
+    )
+    calls = _reset_calls(temp_repo, {"b.ts": text}, mock_ingestor)
+    assert calls.get("b.outer.cb") == calls.get("b.outer"), calls
+    assert ("b.IRange.reset", _EXACT) in calls.get("b.outer.cb", set()), calls

@@ -378,6 +378,13 @@ class JsTypeInferenceEngine:
         for name, spans in self._js_binding_index(func_node, root, language).items():
             for span in spans:
                 scopes.setdefault(span, {})[name] = None
+        # A first-party interface parameter types as it does in the
+        # function's own map (#2524); a `var` redeclaring it wins below.
+        parameters: dict[str, str] = {}
+        self._seed_interface_parameters(func_node, parameters, module_qn)
+        if parameters:
+            whole = (func_node.start_byte, func_node.end_byte)
+            scopes.setdefault(whole, {}).update(parameters)
         body = func_node.child_by_field_name(cs.FIELD_BODY)
         stack: list[ASTNode] = list(reversed(body.children)) if body else []
         while stack:
