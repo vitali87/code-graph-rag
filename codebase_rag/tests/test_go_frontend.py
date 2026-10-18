@@ -90,23 +90,40 @@ def test_parse_payload_reads_call_and_external_sections() -> None:
                     "iname": "Greeter",
                 }
             ],
+            "checked": ["a.go", "b.go"],
+            "compared": [{"file": "a.go", "line": 9, "col": 5}],
         }
     )
     facts = _parse_payload(payload)
+    assert facts is not None
     assert facts.call_sites[("a.go", 5, 8, "Handle")] == GoCallSite(
         "Handle", "b.go", 3, 4
     )
     assert facts.external_sites == {("a.go", 11, 8, "Println")}
     assert facts.implements == [GoImplements("a.go", 9, 5, "b.go", 5, 5)]
+    assert facts.checked_files == {"a.go", "b.go"}
+    assert facts.compared_types == {("a.go", 9, 5)}
 
 
 def test_parse_payload_without_sections_yields_empty_facts() -> None:
     # An older tool build (stale cached binary) may emit no section; all three
     # families must default to empty instead of raising.
     facts = _parse_payload(json.dumps({}))
+    assert facts is not None
     assert facts.call_sites == {}
     assert facts.external_sites == set()
     assert facts.implements == []
+    # No file listed is no file type-checked: every pair keeps the fallback.
+    assert facts.checked_files == frozenset()
+    assert facts.compared_types == frozenset()
+
+
+def test_parse_payload_with_a_malformed_checked_file_signals_failure() -> None:
+    assert _parse_payload(json.dumps({"checked": ["a.go", 7]})) is None
+
+
+def test_parse_payload_with_a_malformed_compared_type_signals_failure() -> None:
+    assert _parse_payload(json.dumps({"compared": [{"file": "a.go"}]})) is None
 
 
 def test_parse_payload_non_json_signals_failure() -> None:
@@ -146,6 +163,8 @@ def test_adapter_maps_go_facts_to_semantic_facts() -> None:
         call_sites={("a.go", 5, 8, "Handle"): GoCallSite("Handle", "b.go", 3, 4)},
         external_sites={("a.go", 11, 8, "Println")},
         implements=[GoImplements("a.go", 9, 5, "b.go", 5, 5)],
+        checked_files=frozenset({"a.go", "b.go"}),
+        compared_types=frozenset({("a.go", 9, 5)}),
     )
     adapted = _adapt_go_semantic_facts(facts)
     assert isinstance(adapted, SemanticFacts)
@@ -155,6 +174,8 @@ def test_adapter_maps_go_facts_to_semantic_facts() -> None:
     assert adapted.external_sites == {("a.go", 11, 8, "Println")}
     # GoImplements maps 1:1 onto the generic implements_pairs family.
     assert adapted.implements_pairs == [ImplementsPair("a.go", 9, 5, "b.go", 5, 5)]
+    assert adapted.checked_files == {"a.go", "b.go"}
+    assert adapted.compared_types == {("a.go", 9, 5)}
     # The Go frontend leaves the C#-specific families empty.
     assert adapted.base_kinds == {}
     assert adapted.partial_groups == []
@@ -165,6 +186,9 @@ def test_adapter_of_empty_facts_is_empty() -> None:
     assert _adapt_go_semantic_facts(GoSemanticFacts({}, set(), [])).is_empty()
 
 
+@pytest.mark.usefixtures(
+    "one_go_helper_per_session", "fingerprint_inputs_once_per_session"
+)
 def test_gotypes_tool_emits_call_and_external_facts(tmp_path: Path) -> None:
     # End-to-end against the real bundled tool: the compiled gotypes frontend
     # must resolve an embedded-struct PROMOTED method call to its exact
@@ -220,6 +244,9 @@ func main() {
 """
 
 
+@pytest.mark.usefixtures(
+    "one_go_helper_per_session", "fingerprint_inputs_once_per_session"
+)
 def test_gotypes_tool_emits_implements_and_skips_generics(tmp_path: Path) -> None:
     # End-to-end: the tool must emit the Dog -> Speaker pair proven by
     # types.Implements, keyed on both declaring NAME tokens, AND must SKIP the
@@ -297,6 +324,7 @@ def test_nested_modules_each_get_a_tool_run_with_reanchored_paths(
                     }
                 ],
                 "externals": [],
+                "checked": ["main.go", "lib.go"],
             },
             "sub/tool": {
                 "calls": [
@@ -323,6 +351,8 @@ def test_nested_modules_each_get_a_tool_run_with_reanchored_paths(
                         "icol": 5,
                     }
                 ],
+                "checked": ["cmd.go", "iface.go"],
+                "compared": [{"file": "cmd.go", "line": 12, "col": 5}],
             },
         },
     )
@@ -341,6 +371,13 @@ def test_nested_modules_each_get_a_tool_run_with_reanchored_paths(
     assert facts.implements == [
         GoImplements("sub/tool/cmd.go", 12, 5, "sub/tool/iface.go", 4, 5)
     ]
+    assert facts.checked_files == {
+        "main.go",
+        "lib.go",
+        "sub/tool/cmd.go",
+        "sub/tool/iface.go",
+    }
+    assert facts.compared_types == {("sub/tool/cmd.go", 12, 5)}
 
 
 def test_ignored_directories_never_get_a_tool_run(
@@ -417,3 +454,18 @@ def test_one_failing_module_degrades_only_itself(
     assert facts.external_sites == set()
     assert facts.implements == []
     assert invoked == [repo, repo / "sub"]
+
+
+def test_the_helper_is_built_for_the_host_whatever_goos_the_analysis_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # GOOS=windows on Linux picks the build go/types reads; built under it,
+    # the helper was a Windows binary this host cannot run (#3360 review).
+    from codebase_rag.parsers.go_frontend import frontend
+
+    monkeypatch.setenv("GOOS", "windows")
+    monkeypatch.setenv("GOARCH", "arm64")
+    env = frontend._host_build_env()
+    assert "GOOS" not in env
+    assert "GOARCH" not in env
+    assert env["CGO_ENABLED"] == "0"
