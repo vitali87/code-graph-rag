@@ -4912,7 +4912,15 @@ class ImportProcessor:
         base = self._js_governing_base_url(current_module)
         if base is None:
             return None
-        module_rel = self._js_module_rel_on_disk(f"{base}{import_path}")
+        # `"baseUrl": "./src"` or a nested config's `"../shared"` spell dot
+        # segments a module qn must not keep (#2808 review); a path that
+        # leaves the repo names no project file.
+        joined = posixpath.normpath(f"{base}{import_path}")
+        if joined == cs.PATH_PARENT_DIR or joined.startswith(
+            f"{cs.PATH_PARENT_DIR}{cs.SEPARATOR_SLASH}"
+        ):
+            return None
+        module_rel = self._js_module_rel_on_disk(joined)
         if module_rel is None:
             return None
         dotted = module_rel.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)

@@ -115,3 +115,31 @@ def test_a_package_no_file_backs_stays_external(tmp_path: Path) -> None:
     assert not any(
         target.startswith("tsb.") for _, _, target in imports if "lib" in target
     ), imports
+
+
+def test_a_dot_slash_base_url_names_the_module(tmp_path: Path) -> None:
+    # `./src` names the same directory as `src`; the dot segment is not part
+    # of any module qn (#2808 review).
+    imports = _edges(_index(tmp_path / "tsb", _issue(base="./src")), _IMPORTS)
+    assert (
+        "tsb.src.components.PriceTag",
+        "Module",
+        "tsb.src.lib.format",
+    ) in imports, imports
+
+
+def test_a_nested_parent_base_url_names_the_module(tmp_path: Path) -> None:
+    # A nested config's `../src` resolves against its own directory.
+    files = _issue(config="app/tsconfig.json", base="../src")
+    files["app/main.ts"] = (
+        'import { formatPrice } from "lib/format";\n'
+        "export function main() { return formatPrice(1); }\n"
+    )
+    store = _index(tmp_path / "tsb", files)
+    imports = _edges(store, _IMPORTS)
+    assert ("tsb.app.main", "Module", "tsb.src.lib.format") in imports, imports
+    assert (
+        "tsb.app.main.main",
+        "Function",
+        "tsb.src.lib.format.formatPrice",
+    ) in _edges(store, _CALLS)
