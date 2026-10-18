@@ -7,6 +7,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.java.type_inference import JavaTypeInferenceEngine
+from codebase_rag.parsers.java.type_resolver import collect_java_class_headers
 from codebase_rag.tests.conftest import create_mock_node
 from codebase_rag.types_defs import NodeType
 
@@ -602,9 +603,10 @@ class TestJavaTypeResolverAstMethods:
         result = type_inference_engine._get_superclass_name("MyClass")
         assert result is None
 
-    def test_find_superclass_using_ast_nested_class(
+    def test_get_superclass_name_nested_class(
         self,
         type_inference_engine: JavaTypeInferenceEngine,
+        mock_ast_cache: MagicMock,
     ) -> None:
         inner_name = create_mock_node(cs.TS_TYPE_IDENTIFIER, "InnerClass")
         inner_superclass_type = create_mock_node(cs.TS_TYPE_IDENTIFIER, "BaseClass")
@@ -629,14 +631,18 @@ class TestJavaTypeResolverAstMethods:
         )
         root_node = create_mock_node("program", children=[outer_class])
 
-        result = type_inference_engine._find_superclass_using_ast(
-            root_node, "InnerClass", "com.example"
-        )
+        file_path = Path("/test/OuterClass.java")
+        type_inference_engine.module_qn_to_file_path = {"com.example": file_path}
+        mock_ast_cache.__contains__ = MagicMock(side_effect=lambda x: x == file_path)
+        mock_ast_cache.__getitem__ = MagicMock(return_value=(root_node, None))
+
+        result = type_inference_engine._get_superclass_name("com.example.InnerClass")
         assert result == "BaseClass"
 
-    def test_find_superclass_using_ast_class_not_found(
+    def test_get_superclass_name_class_not_in_file(
         self,
         type_inference_engine: JavaTypeInferenceEngine,
+        mock_ast_cache: MagicMock,
     ) -> None:
         name_node = create_mock_node(cs.TS_TYPE_IDENTIFIER, "OtherClass")
         class_node = create_mock_node(
@@ -645,9 +651,12 @@ class TestJavaTypeResolverAstMethods:
         )
         root_node = create_mock_node("program", children=[class_node])
 
-        result = type_inference_engine._find_superclass_using_ast(
-            root_node, "TargetClass", "com.example"
-        )
+        file_path = Path("/test/OtherClass.java")
+        type_inference_engine.module_qn_to_file_path = {"com.example": file_path}
+        mock_ast_cache.__contains__ = MagicMock(side_effect=lambda x: x == file_path)
+        mock_ast_cache.__getitem__ = MagicMock(return_value=(root_node, None))
+
+        result = type_inference_engine._get_superclass_name("com.example.TargetClass")
         assert result is None
 
     def test_get_implemented_interfaces_single_interface(
@@ -790,10 +799,7 @@ class TestJavaTypeResolverAstMethods:
         result = type_inference_engine._get_current_class_name("example")
         assert result is None
 
-    def test_traverse_for_class_declarations_multiple_classes(
-        self,
-        type_inference_engine: JavaTypeInferenceEngine,
-    ) -> None:
+    def test_collect_class_headers_multiple_classes(self) -> None:
         class1_name = create_mock_node(cs.TS_TYPE_IDENTIFIER, "ClassA")
         class1 = create_mock_node(
             cs.TS_CLASS_DECLARATION,
@@ -808,15 +814,10 @@ class TestJavaTypeResolverAstMethods:
 
         root_node = create_mock_node("program", children=[class1, class2])
 
-        class_names: list[str] = []
-        type_inference_engine._traverse_for_class_declarations(root_node, class_names)
-        assert "ClassA" in class_names
-        assert "ClassB" in class_names
+        class_names = collect_java_class_headers(root_node).type_names
+        assert class_names == ("ClassA", "ClassB")
 
-    def test_traverse_for_class_declarations_mixed_types(
-        self,
-        type_inference_engine: JavaTypeInferenceEngine,
-    ) -> None:
+    def test_collect_class_headers_mixed_types(self) -> None:
         class_name = create_mock_node(cs.TS_TYPE_IDENTIFIER, "MyClass")
         class_node = create_mock_node(
             cs.TS_CLASS_DECLARATION,
@@ -839,12 +840,8 @@ class TestJavaTypeResolverAstMethods:
             "program", children=[class_node, interface_node, enum_node]
         )
 
-        class_names: list[str] = []
-        type_inference_engine._traverse_for_class_declarations(root_node, class_names)
-        assert len(class_names) == 3
-        assert "MyClass" in class_names
-        assert "MyInterface" in class_names
-        assert "MyEnum" in class_names
+        class_names = collect_java_class_headers(root_node).type_names
+        assert class_names == ("MyClass", "MyInterface", "MyEnum")
 
     def test_rank_module_candidates_prefers_exact_match(
         self,
