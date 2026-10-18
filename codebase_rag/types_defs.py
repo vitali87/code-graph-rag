@@ -123,6 +123,23 @@ class BatchWrapper(TypedDict):
     batch: Sequence[BatchParams]
 
 
+# A Cypher parameter as the embedded engine is handed one: anything JSON can
+# hold, plus the ingestor's batch rows, named because a TypedDict is not a
+# Mapping[str, ...] subtype.
+type CypherParamValue = (
+    str
+    | int
+    | float
+    | bool
+    | None
+    | Sequence[CypherParamValue]
+    | Mapping[str, CypherParamValue]
+    | NodeBatchRow
+    | RelBatchRow
+)
+type CypherParams = Mapping[str, CypherParamValue]
+
+
 type SimpleName = str
 type QualifiedName = str
 type SimpleNameLookup = defaultdict[SimpleName, set[QualifiedName]]
