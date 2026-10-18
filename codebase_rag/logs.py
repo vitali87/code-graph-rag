@@ -111,8 +111,20 @@ GO_FRONTEND_FACTS = (
 GO_FRONTEND_IMPLEMENTS_JOINED = (
     "Go go/types frontend: {count} IMPLEMENTS edge(s) joined to Pass-2 type nodes"
 )
+GO_IMPLICIT_IMPLEMENTS_LINKED = (
+    "Go: {count} type(s) implement an interface by method name and arity "
+    "(IMPLEMENTS, heuristic)"
+)
 GO_FRONTEND_BUILD_FAILED = (
     "Go frontend tool failed to build; using tree-sitter.\nstderr: {stderr}"
+)
+GO_FRONTEND_TOOLCHAIN_TOO_OLD = (
+    "go/types frontend needs Go >= {required} (found {found}); using tree-sitter for Go"
+)
+GO_FRONTEND_BUILD_FAILED_EARLIER = (
+    "Go frontend tool failed to build with {version} on an earlier sync; using "
+    "tree-sitter. It is retried in {minutes} min, or sooner when Go or the "
+    "helper changes or {marker} is deleted"
 )
 GO_FRONTEND_PARSE_FAILED = (
     "Go frontend produced no parseable JSON; using tree-sitter.\n"
@@ -160,7 +172,14 @@ EXCLUSION_STATE_NOT_RECORDED = (
 # Analysis logs
 FOUND_FUNCTIONS = "\n--- Found {count} functions/methods in codebase ---"
 REGISTRY_REHYDRATED = "Rehydrated {count} definitions from the graph for resolution"
+IMPORT_STATE_RESTORED = (
+    "Restored the imports of {count} unchanged modules the re-parsed files reach"
+)
 INCREMENTAL_REBUILD_INBOUND = "Rebuilding inbound edges from {count} dependent files"
+MARKDOWN_BROKEN_LINKS = (
+    "{count} relative Markdown link(s) in {documents} document(s) point at files "
+    "that do not exist; each document lists them in its Module's broken_links"
+)
 ANALYSIS_COMPLETE = "\n--- Analysis complete. Flushing all data to database... ---"
 REMOVING_STATE = "Removing in-memory state for: {path}"
 REMOVED_FROM_CACHE = "  - Removed from ast_cache"
@@ -180,6 +199,13 @@ DEF_NO_PARSER = "No parser available for {language}"
 DEF_PARSE_FAILED = "Failed to parse or ingest {path}: {error}"
 DEF_PARSING_DEPENDENCY = "  Parsing dependency file: {path}"
 DEF_FOUND_DEPENDENCY = "    Found dependency: {name} (spec: {spec})"
+# A notebook with no Python cells to parse keeps its File node (issue #2480).
+NOTEBOOK_NOT_PYTHON = (
+    "{path}: the notebook's kernel language is {language!r}, not Python; its "
+    "cells are not indexed"
+)
+NOTEBOOK_UNREADABLE = "{path}: {reason}; its cells are not indexed"
+NOTEBOOK_INDEXED = "Indexed {cells} code cells of notebook {path}"
 
 # Semantic/embedding logs
 SEMANTIC_NOT_AVAILABLE = (
@@ -212,7 +238,7 @@ EMBEDDINGS_COMPLETE = "Successfully generated {count} semantic embeddings"
 EMBEDDING_GENERATION_FAILED = "Failed to generate semantic embeddings: {error}"
 EMBEDDINGS_INTERRUPTED = (
     "Semantic embedding generation interrupted; the graph is saved without the"
-    " remaining embeddings, which the next sync that finds a code change generates"
+    " remaining embeddings"
 )
 EMBEDDING_STORE_FAILED = "Failed to store embedding for {name}: {error}"
 EMBEDDING_STORE_RETRY = "Vector store upsert failed (attempt {attempt}/{max_attempts}), retrying in {delay:.1f}s: {error}"
@@ -224,6 +250,27 @@ EMBEDDING_RECONCILE_OK = (
 )
 EMBEDDING_RECONCILE_MISSING = "Vector store reconciliation: {missing} of {expected} embeddings missing (IDs: {sample_ids})"
 EMBEDDING_RECONCILE_FAILED = "Vector store reconciliation check failed: {error}"
+EMBEDDING_STALE_REMOVED = (
+    "Removed {count} stale embeddings of project '{project}' (functions/methods "
+    "deleted or re-created since they were stored)"
+)
+EMBEDDING_STALE_FAILED = (
+    "Failed to remove stale embeddings for project '{project}': {error}"
+)
+EMBEDDING_STALE_SKIPPED = (
+    "Skipped removing stale embeddings for project '{project}': the project "
+    "registry could not be read, so a nested project's vectors cannot be told "
+    "from this one's; the next sync removes them"
+)
+EMBEDDINGS_PENDING = (
+    "Embeddings of project '{project}' are incomplete; the next sync retries "
+    "them even if no file changed"
+)
+EMBEDDINGS_PENDING_NOT_UPDATED = "Embeddings pending marker not updated"
+VECTOR_STORE_REKEYED = (
+    "Removed {count} {backend} vectors of project '{project}' that were keyed "
+    "by Memgraph node id; its vectors are keyed by symbol now"
+)
 VECTOR_STORE_BACKEND_UNAVAILABLE = (
     "Vector store backend '{backend}' dependencies are not available"
 )
@@ -329,6 +376,10 @@ LANG_LIST_AST_GREP_UNREADABLE = (
 )
 
 # Ignore pattern logs
+TRACKED_SOURCE_DIRS_KEPT = (
+    "Indexing git-tracked source under default-excluded directory names: {dirs} "
+    "(add them to .cgrignore to skip them)"
+)
 CGRIGNORE_LOADED = (
     "Loaded {exclude_count} exclude and {unignore_count} unignore patterns from {path}"
 )
@@ -363,6 +414,10 @@ EDIT_TX_APPLIED = "Edit transaction {tx} applied {count} file(s)"
 EDIT_TX_RESTORE_FAILED = "Edit transaction could not restore {path}: {error}"
 REINGEST_DONE = "Re-ingested {reparsed} file(s) (+{affected} dependent, -{removed} removed) in {ms} ms"
 REINGEST_SKIPPED_IGNORED = "Re-ingest skipped path(s) the ignore rules exclude: {paths}"
+CHAT_REINGEST_FAILED = (
+    "Re-ingesting the chat agent's write failed ({error}); the next write "
+    "runs a full sync first"
+)
 TRUNCATED_SYMBOL_NAME = (
     "{path}: the name {name!r} was extracted from bytes that are not valid "
     "UTF-8; the grammar splits the token at the bad byte, so this symbol is "
@@ -395,6 +450,7 @@ REINGEST_UNREADABLE = (
 TYPE_EDGES_EMITTED = "Emitted {count} RETURNS/ACCEPTS edges from type annotations"
 GRAPH_UPDATED = "Graph updated successfully for change in: {name}"
 WATCHER_REINGEST_REFUSED = "Re-ingest refused for {path}: {error}"
+WATCHER_SYMLINK_IGNORED = "Ignoring a change to symlink {path}: links are not followed"
 # A refusal and an abort leave the graph untouched; anything else may have
 # deleted the affected subtrees without rebuilding them, so the retained
 # updater describes a graph that no longer exists (issue #1681).
@@ -411,14 +467,29 @@ WATCHER_REBUILDING_AFTER_FAILURE = (
     "Re-indexing the whole repository before this change, because the last "
     "re-ingest failed part way through."
 )
+WATCHER_FULL_RUN_OVER_UNFINISHED_SYNC = (
+    "A sync of project {project} did not finish, so its graph may be partial. "
+    "Re-indexing the whole repository instead of only what changed."
+)
+WATCHER_SYNC_UNFINISHED = (
+    "A sync of project {project} did not finish, so its graph may be partial. "
+    "Re-indexing the whole repository instead of re-ingesting this change."
+)
 WATCHER_EXPANSION_FAILED = (
     "Could not list the files a directory event covers: {error}. Re-indexing "
     "the whole repository instead."
 )
+WATCHER_IGNORE_RULES_CHANGED = (
+    "Ignore rules changed (.cgrignore, .gitignore or the files git tracks); "
+    "re-syncing the graph under the new rules."
+)
+WATCHER_IGNORE_RULES_SYNC_FAILED = (
+    "Re-sync under the new ignore rules FAILED: {error}. The next change "
+    "triggers a full re-index first."
+)
 INITIAL_SCAN = "Performing initial full codebase scan..."
 INITIAL_SCAN_DONE = "Initial scan complete. Starting real-time watcher."
-WATCHING = "Watching for changes in: {path}"
-LOGGER_CONFIGURED = "Logger configured for Real-Time Updater."
+WATCHING = "Watching for changes in: {path} (project {project})"
 
 # Build logs
 BUILD_BINARY = "Building binary: {name}"
@@ -462,9 +533,17 @@ SOURCE_EXTRACT_FAILED = "Failed to extract source from {path}: {error}"
 SOURCE_AST_FAILED = "AST extraction failed for {name}: {error}"
 
 # Memgraph logs
+MG_SET_WITHOUT_BACKEND = (
+    "Memgraph settings are set but GRAPH_BACKEND is not, so cgr is using the "
+    "embedded SQLite graph at {path}, now the default engine instead of "
+    "Memgraph. A graph indexed into Memgraph is not visible here. To keep "
+    "using Memgraph, set GRAPH_BACKEND=memgraph and install "
+    "'code-graph-rag[memgraph]'; to keep the embedded graph, set "
+    "GRAPH_BACKEND=sqlite. Either one silences this notice."
+)
 MG_CONNECTING = "Connecting to Memgraph at {host}:{port}..."
-MG_CONNECTED = "Successfully connected to Memgraph."
 MG_CONNECT_FAILED = "Could not connect to Memgraph at {host}:{port}: {error}"
+MG_CONNECTED = "Successfully connected to Memgraph."
 MG_EXCEPTION = "An exception occurred: {error}. Attempting best-effort flush..."
 MG_DELIBERATE_EXIT = (
     "Command ended with {kind} inside the graph connection; closing it normally"
@@ -477,6 +556,10 @@ MG_CYPHER_QUERY = "    Query: {query}"
 MG_CYPHER_PARAMS = "    Params: {params}"
 MG_BATCH_ERROR = "!!! Batch Cypher Error: {error}"
 MG_BATCH_PARAMS_TRUNCATED = "    Params (first 10 of {count}): {params}..."
+MG_TRANSIENT_RETRY = (
+    "Memgraph reported a conflicting transaction; retrying in {delay:.1f}s "
+    "(attempt {attempt} of {attempts}): {error}"
+)
 MG_CLEANING_DB = "--- Cleaning database... ---"
 MG_DB_CLEANED = "--- Database cleaned. ---"
 MG_LIST_PROJECTS_FAILED = (
@@ -569,6 +652,11 @@ TOOL_QUERY_REPAIRING = (
 TOOL_QUERY_TIMEOUT = (
     "[Tool:QueryGraph] Query exceeded {timeout:.1f}s and was cancelled: {query}"
 )
+TIKTOKEN_UNAVAILABLE = (
+    "Cannot load the {encoding} token encoding ({error}); token counts are "
+    "estimated from text length. Set TIKTOKEN_CACHE_DIR to a directory "
+    "holding the encoding for exact counts offline."
+)
 QUERY_RESULTS_TRUNCATED = (
     "[Tool:QueryGraph] Results truncated: showing {kept} of {total} rows "
     "({tokens} tokens, limit {max_tokens})"
@@ -611,7 +699,7 @@ EDITOR_FILE_NOT_FOUND = "File not found: {path}"
 EDITOR_BLOCK_NOT_FOUND = "Target block not found in {path}"
 EDITOR_LOOKING_FOR = "Looking for: {block}"
 EDITOR_MULTIPLE_OCCURRENCES = (
-    "Multiple occurrences of target block found. Only replacing first occurrence."
+    "Target block occurs {count} times in {path}; nothing was replaced"
 )
 EDITOR_NO_CHANGES_IDENTICAL = (
     "No changes detected - target and replacement are identical"
@@ -722,6 +810,7 @@ CALL_SAME_MODULE = "Same-module resolution: {call_name} -> {qn}"
 CALL_LUA_TABLE_MEMBER = "Lua table-member resolution: {call_name} -> {qn}"
 CALL_TRIE_FALLBACK = "Trie-based fallback resolution: {call_name} -> {qn}"
 CALL_PACKAGE_MEMBER = "Package-member resolved call: {member} -> {qn}"
+CALL_GO_SAME_PACKAGE = "Go same-package resolution: {call_name} -> {qn}"
 CALL_UNRESOLVED = "Could not resolve call: {call_name}"
 CALL_RUST_OWNER_UNRESOLVED = (
     "No method of the type a Rust call names matches: {call_name}"
@@ -738,6 +827,10 @@ CALL_CHAINED = (
 )
 CALL_CHAINED_INHERITED = "Resolved chained inherited call: {call_name} -> {method_qn} (via {obj_expr}:{obj_type})"
 CALL_SUPER_NO_CONTEXT = "No class context provided for super() call: {call_name}"
+CALL_RUST_OUTSIDE_CRATE = (
+    "Dropped Rust call into a crate outside the caller's dependencies: "
+    "{call_name} -> {qn}"
+)
 CALL_SUPER_NO_INHERITANCE = "No inheritance info for class {class_qn}"
 CALL_SUPER_NO_PARENTS = "No parent classes found for {class_qn}"
 CALL_SUPER_RESOLVED = "Resolved super() call: {call_name} -> {method_qn}"
@@ -817,6 +910,30 @@ IMP_PY_SOURCE_ROOT = "Python source root: {name} -> {path}"
 STRUCT_IDENTIFIED_PACKAGE = "  Identified Package: {package_qn}"
 STRUCT_IDENTIFIED_FOLDER = "  Identified Folder: '{relative_root}'"
 
+# ast-grep tier and finding analyzer logs. Without the extra the tier speaks
+# up only once it has met a file it would have parsed (issue #2634): a line
+# at construction named no file and printed for every repository.
+AST_GREP_TIER_UNAVAILABLE = (
+    "ast-grep-py is not installed; the ast-grep language tier is disabled"
+)
+AST_GREP_TIER_FILES_UNPARSED = (
+    "{count} file(s) ({languages}) were indexed as plain File nodes, with no "
+    "modules, functions, classes or imports: the ast-grep tier parses these "
+    "languages and needs the ast-grep extra. Install it, e.g. "
+    'uv tool install "code-graph-rag[treesitter-full,ast-grep,semantic]" or '
+    'pip install "code-graph-rag[ast-grep]", then sync again.'
+)
+AST_GREP_TIER_LANGUAGE_COUNT = "{language}: {count}"
+AST_GREP_TIER_DISABLED = "ast-grep language tier disabled: {error}"
+AST_GREP_PARSE_FAILED = "ast-grep failed to parse {path}: {error}"
+AST_GREP_BAD_RULE = "bad ast-grep rule {rule} for {path}: {error}"
+AST_GREP_FINDINGS_UNAVAILABLE = (
+    "The findings capture group needs the ast-grep extra, which is not "
+    "installed; no Pattern, CodeSmell or SecurityIssue nodes are written. "
+    'Install it with: pip install "code-graph-rag[ast-grep]"'
+)
+AST_GREP_FINDINGS_DISABLED = "ast-grep finding analyzer disabled: {error}"
+
 # Class ingest logs
 CLASS_CPP_MODULE_INTERFACE = "  Found C++ Module Interface: {qn}"
 CLASS_CPP_MODULE_IMPL = "  Found C++ Module Implementation: {qn}"
@@ -850,6 +967,10 @@ JAVA_RESOLVING_CALL = "Resolving Java method call: method={method}, object={obje
 JAVA_RESOLVING_STATIC = "Resolving static/local method: {method}"
 JAVA_FOUND_STATIC = "Found static/local method: {result}"
 JAVA_STATIC_NOT_FOUND = "Static/local method not found: {method}"
+JAVA_FOUND_STATIC_IMPORT = "Found statically imported method: {result}"
+JAVA_STATIC_IMPORT_EXTERNAL = (
+    "Statically imported {method} from {classes} is not in the repo: no edge"
+)
 JAVA_RESOLVING_OBJ_TYPE = "Resolving object type for: {object}"
 JAVA_OBJ_TYPE_UNKNOWN = "Could not determine type of object: {object}"
 JAVA_OBJ_TYPE_RESOLVED = "Object type resolved to: {type}"
@@ -903,7 +1024,7 @@ PY_TYPE_INFER_ATTEMPT = (
     "Attempting to infer type for parameter '{param}' in module '{module}'"
 )
 PY_AVAILABLE_CLASSES = "Available classes in scope: {classes}"
-PY_BEST_MATCH = "Best match for '{param}' is '{match}' with score {score}"
+PY_NAME_MATCH = "Class named by parameter '{param}': {match}"
 PY_INSTANCE_VAR_INFERRED = "Inferred instance variable: {attr} -> {type}"
 PY_LOOP_VAR_INFERRED = "Inferred loop variable type: {var} -> {type}"
 PY_TYPE_SIMPLE = "Inferred type (simple): {var} -> {type}"
@@ -1058,8 +1179,22 @@ CLI_SYNC_MARKER_NOT_CLEARED = (
     "The sync of {project} finished, but its incomplete-run marker could not "
     "be cleared: {error}. The graph is complete; the next sync clears it."
 )
-CLI_SYNC_MARKERS_UNREADABLE = (
-    "Could not read incomplete-run markers for cgr status: {error}"
+CLI_DELETE_MARKER_NOT_CLEARED = (
+    "Project {project} was deleted, but its incomplete-run marker could not be "
+    "cleared: {error}. cgr status may list it as interrupted until it is synced "
+    "again."
+)
+CLI_DELETE_SYNC_MARKER_KEPT = (
+    "Project {project} was deleted, but a cgr sync of it may still be running, "
+    "so its incomplete-run marker was kept: cgr status lists it as interrupted "
+    "until a sync of it completes."
+)
+CLI_SYNC_STATE_UNREADABLE = (
+    "Could not read the graph's projects and sync markers for cgr status: {error}"
+)
+SYNC_TIME_NOT_RECORDED = (
+    "The sync of {project} completed, but its sync time could not be recorded "
+    "in the graph: {error}. The next sync records it."
 )
 MCP_SERVER_SHUTDOWN = "[GraphCode MCP] Shutting down server..."
 MCP_HTTP_SERVER_STARTING = "[GraphCode MCP] Starting HTTP server on {host}:{port}..."
@@ -1107,6 +1242,22 @@ INCREMENTAL_CHANGED = "Re-indexing {count} changed files"
 INCREMENTAL_AFFECTED_CALLERS = (
     "Re-parsing {count} dependent caller file(s) of re-indexed targets"
 )
+INCREMENTAL_INTERFACE_KEPT = (
+    "Kept the edges of {count} dependent caller file(s): nothing they resolve "
+    "against changed"
+)
+INTERFACE_FINGERPRINTS_UNREAD = (
+    "Could not read the stored interface fingerprints; every dependent caller "
+    "is re-parsed."
+)
+INTERFACE_BOUNDARY_UNREAD = (
+    "Could not read the edges between re-indexed files and their callers; "
+    "every dependent caller is re-parsed."
+)
+INTERFACE_FLOW_SOURCES_UNREAD = (
+    "Could not read which re-indexed files invoke callables other files pass "
+    "in; every dependent caller is re-parsed."
+)
 INCREMENTAL_DELETED = "Removed state for {count} deleted files"
 DEPENDENCIES_RESYNC = (
     "A dependency manifest changed; rebuilding the external dependencies of "
@@ -1133,6 +1284,22 @@ HASH_CACHE_ORPHANED = (
     "Hash cache exists but project '{project}' has no modules in the graph; "
     "the database was likely wiped since the last sync. Discarding the cache "
     "and rebuilding fully."
+)
+MG_PROJECT_ROOT_READ_FAILED = (
+    "Could not read which repository the project was indexed from: {error}"
+)
+PROJECT_OWNER_REPLACED = (
+    "Project '{project_name}' indexed {root}; --yes given, replacing it with "
+    "this repository."
+)
+PROJECT_CLAIM_RELEASE_FAILED = (
+    "Could not release the claim on project '{project_name}' that this failed "
+    "sync made: {error}. Another repository syncing under that name will "
+    "need --yes."
+)
+HASH_CACHE_OTHER_ROOT = (
+    "Project '{project}' in the graph was last indexed from {root}, not this "
+    "repository; discarding the hash cache and rebuilding fully."
 )
 PREVIOUS_SYNC_UNFINISHED = (
     "The previous sync of '{project}' did not finish; re-indexing the whole repository."
@@ -1193,6 +1360,10 @@ GO_TYPE_LOCATIONS_REHYDRATED = (
 FUNCTION_LOCATIONS_REHYDRATED = (
     "Rehydrated {count} function location(s) from the persisted graph"
 )
+ROUTE_HANDLER_STARTS_UNREADABLE = (
+    "Could not read inline route handler positions from the graph; those "
+    "routes are exposed by their registering function or module this run."
+)
 INBOUND_CAPTURE_FAILED = (
     "Could not read inbound edges from the graph; this full rebuild re-parses "
     "every caller, so source-derived edges are re-resolved, and Gloss notes "
@@ -1249,13 +1420,25 @@ HASH_CACHE_SKIPPED_SINGLE_FILE = (
 FILE_HASH_UNCHANGED = "File unchanged (hash match): {path}"
 FILE_HASH_CHANGED = "File changed (hash mismatch): {path}"
 FILE_HASH_NEW = "New file detected: {path}"
-FILE_UNREADABLE = (
-    "Skipping unreadable file (broken symlink or removed): {path} ({error})"
-)
-INCREMENTAL_UNREADABLE = "Skipped {count} unreadable files (broken symlinks or removed)"
+FILE_UNREADABLE = "Skipping unreadable file (removed or not readable): {path} ({error})"
+INCREMENTAL_UNREADABLE = "Skipped {count} unreadable files (removed or not readable)"
 INCREMENTAL_UNREADABLE_RETRY = (
     "{count} unreadable file(s) are marked in the cache, so the next update "
     "retries them whatever their directories' mtimes say"
+)
+# Symlinks are never followed by a repository walk (issue #2451).
+SYMLINK_SKIPPED_OUTSIDE = (
+    "Skipping symlink {path}: its target {target} is outside the repository "
+    "and is never read"
+)
+SYMLINK_SKIPPED_INSIDE = (
+    "Skipping symlink {path}: its target {target} is in the repository and is "
+    "indexed only under its own path"
+)
+SYMLINKS_SKIPPED = (
+    "Skipped {count} symlink(s): links are not followed, so a target outside "
+    "the repository is never read and one inside it is indexed only under its "
+    "own path (each is logged at DEBUG)"
 )
 
 # Exclude prompt logs
@@ -1324,6 +1507,11 @@ FINGERPRINT_DIST_UNREADABLE = (
     "Skipping a distribution whose metadata could not be read while computing "
     "the parser fingerprint"
 )
+FINGERPRINT_TOOL_UNANSWERED = (
+    "{tool} could not be asked for its version (timed out, or not started for "
+    "want of a resource), twice; the parser fingerprint treats its version as "
+    "unchanged"
+)
 JAVA_FRONTEND_RUNNING = "javac frontend: attributing Java sources"
 JAVA_FRONTEND_BUILD_FAILED = (
     "javac frontend tool build failed ({stderr}); using tree-sitter"
@@ -1337,4 +1525,45 @@ JAVA_FRONTEND_UNAVAILABLE = (
 )
 JAVA_FRONTEND_FACTS = (
     "javac facts: {calls} resolved call sites, {externals} external sites"
+)
+
+# Sync lock (issue #2441)
+SYNC_LOCK_WAITING = "Waiting for the running sync of {repo} ({holder}) to finish"
+SYNC_LOCK_UNGUARDED = (
+    "Cannot create the sync lock {path} ({error}); this sync of {repo} runs "
+    "without it, so concurrent syncs of this checkout are not excluded. Point "
+    "CGR_HOME at a writable directory to keep the lock."
+)
+
+# Checkout state kept under CGR_HOME (issue #2427)
+CHECKOUT_STATE_DIR_UNAVAILABLE = (
+    "Cannot create the sync state directory {path} ({error}); this checkout's "
+    "incremental state is not kept, so every sync re-parses it. Point CGR_HOME "
+    "at a writable directory to keep it."
+)
+CHECKOUT_STATE_ADOPTED = (
+    "Moved cgr's state for {repo} out of the working tree into {path}: {names}"
+)
+CHECKOUT_STATE_ADOPT_FAILED = "Could not move {legacy} to {target}: {error}"
+CHECKOUT_STATE_LEGACY_LEFT = "Could not remove {legacy} from the working tree: {error}"
+CHECKOUT_STATE_HISTORY_MERGED = (
+    "Added {count} edit history entries an older cgr recorded in {legacy} to {target}"
+)
+CHECKOUT_STATE_HISTORY_PENDING = (
+    "Cannot add the edits an older cgr recorded in {legacy} to {target} "
+    "({reason}). Edits of this checkout wait for them, so that undo keeps "
+    "their order: fix the cause, or remove {legacy} if those edits need no undo."
+)
+CHECKOUT_STATE_HISTORY_NOT_CGRS = "{target} is not an edit history cgr wrote"
+CHECKOUT_STATE_TREE_LOCK_UNAVAILABLE = (
+    "Cannot take the edit lock an older cgr left at {path} ({error}). Edits of "
+    "this checkout wait for it, so as never to run beside that cgr: fix the "
+    "cause, or remove {path} once no older cgr runs against the checkout."
+)
+CHECKOUT_STATE_HISTORY_DROPPED = (
+    "Removed {legacy} from the working tree: it is not an edit history cgr wrote"
+)
+# The embedded graph's Rust extension (embedded_graph/native.py).
+EG_NATIVE_WRITE_FAILED = (
+    "The Rust extension could not write a batch ({error}); the engine writes it"
 )
