@@ -156,3 +156,43 @@ def test_a_removed_side_effect_import_loses_its_edge(temp_repo: Path) -> None:
     (root / "src/main.ts").write_text("export const x = 1;\n")
     updater.reingest(["src/main.ts"], deleted=[])
     assert importers() == set()
+
+
+@pytest.mark.parametrize(
+    "specifier", ["@scope/pkg", "zone.js", "pkg/subpath", "node:fs", "reflect-metadata"]
+)
+@pytest.mark.parametrize(
+    "statement",
+    [
+        'import "{}";\n',
+        'require("{}");\n',
+        'import * as ns from "{}";\n',
+        'export * from "{}";\n',
+    ],
+    ids=[
+        "side-effect-import",
+        "require-statement",
+        "namespace-import",
+        "star-reexport",
+    ],
+)
+def test_a_whole_module_import_of_a_package_names_the_package_a_named_one_does(
+    temp_repo: Path, mock_ingestor: MagicMock, statement: str, specifier: str
+) -> None:
+    # The specifier names the package itself, so the edge reaches the
+    # ExternalModule `import x from` the same specifier reaches. The
+    # resolution read its last segment as an imported name, and
+    # `import "@scope/pkg"` imported `@scope`, `import "zone.js"` `zone`.
+    files = {
+        "named.ts": f'import x from "{specifier}";\nexport const a = x;\n',
+        "whole.js": statement.format(specifier) + "export const b = 1;\n",
+    }
+    for rel, text in files.items():
+        (temp_repo / rel).write_text(text, encoding="utf-8")
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    edges = _imports(temp_repo, mock_ingestor)
+    named = {to for frm, to in edges if frm == "named"}
+    whole = {to for frm, to in edges if frm == "whole"}
+    assert len(named) == 1, edges
+    assert whole == named, edges

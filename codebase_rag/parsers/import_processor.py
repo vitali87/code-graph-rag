@@ -2527,6 +2527,20 @@ class ImportProcessor:
         module_aliases: dict[str, str],
         siblings: StemSiblingModules,
     ) -> int:
+        whole_module = entry.language in cs.JS_TS_LANGUAGES and (
+            _is_js_whole_module_import(entry.site)
+        )
+        if (
+            whole_module
+            and self._module_label(entry.full_name) == cs.NodeLabel.EXTERNAL_MODULE
+        ):
+            # `import "@scope/pkg"`, `export * from "zone.js"`: the package
+            # itself, every segment of its name. The resolution below reads
+            # the last one as an imported name (`@scope`, `zone`), where
+            # `import x from` the same specifier reaches the package.
+            self._ensure_external_module_node(entry.full_name, entry.full_name)
+            self._emit_import_edge(entry, cs.NodeLabel.EXTERNAL_MODULE, entry.full_name)
+            return 1
         module_path = self._resolve_module_path(
             entry.full_name, entry.language, known_module_paths, entry.site
         )
@@ -2564,9 +2578,7 @@ class ImportProcessor:
                 self.note_unresolved(entry.module_qn, entry.full_name)
                 return 0
             module_path = verified
-        if entry.language in cs.JS_TS_LANGUAGES and _is_js_whole_module_import(
-            entry.site
-        ):
+        if whole_module:
             # `export * from "./add"` in `math/index.ts` stores the module
             # `math.add`, which the resolution above reads as the name `add`
             # of the `math` barrel: the barrel itself (issue #2464). A
