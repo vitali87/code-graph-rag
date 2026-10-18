@@ -3924,7 +3924,14 @@ class GraphUpdater:
             return
         self._rehydrate_module_qns(module_rows)
         self._rehydrate_class_inheritance_from_graph()
-        self._rehydrate_interface_implementers(project_params)
+        # run() holds the inbound edges for the restore after the deferred
+        # stages (#3270), so an unchanged impl of a re-parsed trait that only
+        # its OVERRIDES edge records (`impl crate::Trait for u64`) is not in
+        # the graph yet: the held rows count as read, as reingest's captured
+        # ones do.
+        self._rehydrate_interface_implementers(
+            project_params, carried=self._pending_inbound_edges
+        )
         dp = self.factory.definition_processor
         self._requeue_member_types(
             cs.CYPHER_PROJECT_PARAMETER_TYPES,
