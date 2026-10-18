@@ -619,6 +619,15 @@ def _own_scope(node: Node) -> Node | None:
     return current
 
 
+def _returns_for(return_node: Node, function_node: Node) -> bool:
+    """Whether a `return` under a Python def returns for that def rather than
+    for a def or class nested in it; a JS/TS method is not filtered."""
+    if function_node.type != cs.TS_PY_FUNCTION_DEFINITION:
+        return True
+    own = _own_scope(return_node)
+    return own is not None and own.id == function_node.id
+
+
 def _nonlocal_names(binding: Node, scope: Node) -> frozenset[str]:
     """The names `binding` rebinds in `scope` through a `nonlocal`.
 
@@ -1676,6 +1685,10 @@ class PythonAstAnalyzerMixin(_AstBase):
         self._find_return_statements(method_node, return_nodes)
 
         for return_node in return_nodes:
+            # A nested helper's `return A()` comes first in document order
+            # and would type the outer call as `A`.
+            if not _returns_for(return_node, method_node):
+                continue
             return_value = next(
                 (
                     child

@@ -63,6 +63,21 @@ def use_pick():
     return pick(True).first()
 
 
+def make_nested():
+    def helper():
+        return Lines()
+
+    class Maker:
+        def make(self):
+            return Lines()
+
+    return Other()
+
+
+def use_nested():
+    return make_nested().first()
+
+
 class Holder:
     def __init__(self):
         self.box = Lines()
@@ -135,6 +150,8 @@ def runs(tmp_path_factory: pytest.TempPathFactory) -> dict[bool, _Calls]:
 DOCUMENT_ORDER = [
     ("m.use", "m.Lines.first"),
     ("m.use_pick", "m.Lines.first"),
+    # A def or class nested in the function returns for itself, not for it.
+    ("m.use_nested", "m.Other.first"),
     ("m.Holder.run", "m.Other.first"),
     ("j.useJs", "j.B.go"),
 ]
