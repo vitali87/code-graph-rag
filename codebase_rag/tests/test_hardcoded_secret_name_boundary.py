@@ -89,3 +89,28 @@ def test_a_name_containing_a_credential_word_is_not_one(
 def test_a_credential_name_is_still_flagged(tmp_path: Path, language: str) -> None:
     # Negative: every credential spelling the old substring caught still fires.
     assert _flagged_names(tmp_path, language, _CREDENTIALS) == _CREDENTIALS
+
+
+@pytest.mark.parametrize("file_name", ["s.js", "s.ts", "s.tsx"])
+def test_js_members_properties_and_fields_take_the_boundary_too(
+    tmp_path: Path, file_name: str
+) -> None:
+    # JS/TS also bind a name to a literal by assignment, object property and
+    # class field (issue #2866); each of those names is held to the same
+    # end-of-name boundary as a declarator.
+    lines = [
+        f'this.tokenizer = "{_VALUE}";',
+        f'settings["password_prompt"] = "{_VALUE}";',
+        f'const config = {{ token_count: "{_VALUE}" }};',
+        f'class C {{ secret_santa_name = "{_VALUE}"; }}',
+        f'this.authToken = "{_VALUE}";',
+        f'settings["db_password"] = "{_VALUE}";',
+        f'const headers = {{ API_SECRET: "{_VALUE}" }};',
+        f'class K {{ SECRET_KEY = "{_VALUE}"; }}',
+    ]
+    flagged = {
+        int(p[cs.KEY_START_LINE])
+        for p in _fire(tmp_path, file_name, "\n".join(lines) + "\n")
+        if p[cs.KEY_NAME] == HARDCODED_SECRET
+    }
+    assert flagged == {5, 6, 7, 8}
