@@ -201,8 +201,16 @@ def test_a_call_the_new_signature_rejects_is_a_definite_finding(
         ),
         ("kwo(1, flag=True)", "kwo(1)", 21, cs.DELTA_ARITY_TOO_FEW),
         ("posonly(1, 2)", "posonly(1, b=2)", 25, cs.DELTA_ARITY_UNEXPECTED_KEYWORD),
+        # A `*rest` at the site fills positionals only, never a keyword-only
+        # parameter (CodeRabbit, PR #2947).
+        ("kwo(1, flag=True)", "kwo(*(1,))", 21, cs.DELTA_ARITY_TOO_FEW),
     ],
-    ids=["misspelled-keyword", "missing-keyword-only", "positional-only-by-keyword"],
+    ids=[
+        "misspelled-keyword",
+        "missing-keyword-only",
+        "positional-only-by-keyword",
+        "star-args-cannot-fill-keyword-only",
+    ],
 )
 def test_an_edited_call_the_signature_rejects_is_an_arity_finding(
     indexed: Indexed, old: str, new: str, line: int, verdict: str
@@ -227,10 +235,19 @@ def test_a_keyword_naming_a_positional_only_parameter_does_not_fill_it(
 # Negative: what must not change.
 
 
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("opts(1, anything=2)", "opts(1, anything=3)"),
+        # `*rest` may carry the positional `a`; `flag` is written by name.
+        ("kwo(1, flag=True)", "kwo(*(1,), flag=True)"),
+    ],
+    ids=["keyword-the-kwargs-takes", "star-args-with-the-keyword-only-named"],
+)
 def test_an_edited_caller_that_calls_correctly_has_no_finding(
-    indexed: Indexed,
+    indexed: Indexed, old: str, new: str
 ) -> None:
-    delta = _edit_app(indexed, "opts(1, anything=2)", "opts(1, anything=3)")
+    delta = _edit_app(indexed, old, new)
 
     assert delta["arity_findings"] == []
 

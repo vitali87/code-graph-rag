@@ -1469,7 +1469,8 @@ def _signature_verdict(
     keyword (a positional-only name included), with no `**kwargs` to take
     it, is a certain `TypeError` (issue #2853). `too_few`: a required
     parameter no positional and no keyword fills is one too, unless a
-    `*rest` or `**opts` at the site may carry it (issue #2845).
+    `**opts` at the site may carry it, or a `*rest` a positional one (issue
+    #2845).
     """
     positional = (
         signature.positional[1:]
@@ -1483,7 +1484,7 @@ def _signature_verdict(
         name not in by_keyword for name in site.kwarg_names
     ):
         return cs.DELTA_ARITY_UNEXPECTED_KEYWORD
-    if site.star_args or site.star_kwargs or site.arg_count is None:
+    if site.star_kwargs or site.arg_count is None:
         return None
     written = site.arg_count - len(site.kwarg_names)
     # Only a keyword the def accepts by name fills a parameter: one naming a
@@ -1491,6 +1492,10 @@ def _signature_verdict(
     # (Greptile, PR #2947).
     supplied = set(positional[:written]) | (set(site.kwarg_names) & by_keyword)
     expected = (set(positional) | set(signature.keyword_only)) & signature.required
+    if site.star_args:
+        # A `*rest` may fill any positional, but never a keyword-only
+        # parameter (CodeRabbit, PR #2947).
+        expected &= set(signature.keyword_only)
     return cs.DELTA_ARITY_TOO_FEW if expected - supplied else None
 
 
