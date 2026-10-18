@@ -201,3 +201,103 @@ def test_a_java_override_of_a_project_method_still_renames(
         f"{java_graph.project}.Task.Sub.plain()",
         f"{java_graph.project}.Task.Task.plain()",
     }
+
+
+# `Task.run()` overrides the project's `Base.run()`, and `Worker.run()` the
+# project interface's `Local.run()`; both classes also implement Runnable,
+# whose `run()` the rename would leave unimplemented.
+_JAVA_MIXED = {
+    "Local.java": "public interface Local {\n    void run();\n}\n",
+    "Base.java": "public class Base {\n    public void run() {}\n}\n",
+    "Task.java": (
+        "public class Task extends Base implements Runnable {\n"
+        "    @Override\n    public void run() {}\n}\n"
+    ),
+    "Worker.java": (
+        "public class Worker implements Local, Runnable {\n"
+        "    @Override\n    public void run() {}\n}\n"
+    ),
+    "Plain.java": (
+        "public class Plain extends Base {\n    @Override\n    public void run() {}\n}\n"
+    ),
+}
+
+
+@pytest.fixture
+def java_mixed(temp_repo: Path, mock_ingestor: MagicMock) -> RecordedGraph:
+    if cs.SupportedLanguage.JAVA not in load_parsers()[0]:
+        pytest.skip("java parser not available")
+    for rel, text in _JAVA_MIXED.items():
+        _write(temp_repo, rel, text)
+    return _index(temp_repo, mock_ingestor)
+
+
+@pytest.mark.parametrize(
+    "member",
+    ["Task.Task.run()", "Base.Base.run()", "Worker.Worker.run()", "Local.Local.run()"],
+    ids=["override", "its-project-base", "implementation", "its-project-interface"],
+)
+def test_a_project_base_does_not_hide_an_outside_contract(
+    temp_repo: Path, java_mixed: RecordedGraph, member: str
+) -> None:
+    with pytest.raises(RenameRefused) as refused:
+        _plan(temp_repo, java_mixed, member, "execute")
+    assert "java.lang.Runnable" in str(refused.value), refused.value
+
+
+def test_an_override_whose_class_has_no_outside_supertype_still_renames(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: `Plain` extends only the project's `Base`, so its @Override
+    # is the project base's and the hierarchy renames together.
+    if cs.SupportedLanguage.JAVA not in load_parsers()[0]:
+        pytest.skip("java parser not available")
+    for rel in ("Base.java", "Plain.java"):
+        _write(temp_repo, rel, _JAVA_MIXED[rel])
+    graph = _index(temp_repo, mock_ingestor)
+    report = _plan(temp_repo, graph, "Plain.Plain.run()", "execute")
+    assert "public void execute()" in report.diff, report.diff
+
+
+_PY_DUNDER_NAMES = """\
+class __Widget__:
+    pass
+
+
+def __str__():
+    return "module function"
+
+
+def __getattr__(name):
+    return name
+
+
+def use():
+    return __str__() + str(__Widget__())
+"""
+
+
+@pytest.mark.parametrize(
+    "member", ["d.__Widget__", "d.__str__"], ids=["class", "module-function"]
+)
+def test_a_dunder_name_that_python_never_dispatches_still_renames(
+    temp_repo: Path, mock_ingestor: MagicMock, member: str
+) -> None:
+    # Negative: only a method (or a module hook) is called by the
+    # interpreter under its dunder name.
+    _write(temp_repo, "d.py", _PY_DUNDER_NAMES)
+    graph = _index(temp_repo, mock_ingestor)
+    report = _plan(temp_repo, graph, member, "renamed")
+    assert report.diff, report
+
+
+def test_a_module_getattr_hook_is_refused(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # PEP 562: the interpreter calls a module's `__getattr__` for a missing
+    # attribute, so it stays a protocol name at module level.
+    _write(temp_repo, "d.py", _PY_DUNDER_NAMES)
+    graph = _index(temp_repo, mock_ingestor)
+    with pytest.raises(RenameRefused) as refused:
+        _plan(temp_repo, graph, "d.__getattr__", "lookup")
+    assert "is the Python protocol method __getattr__" in str(refused.value)

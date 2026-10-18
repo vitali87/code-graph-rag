@@ -899,6 +899,13 @@ RENAME_PROTOCOL_METHOD = "{qn} is the Python protocol method {name}"
 RENAME_UNMATCHED_OVERRIDE = (
     "{qn} is marked {marker} but overrides no method in the project"
 )
+RENAME_OVERRIDE_ALSO_OUTSIDE = (
+    "{qn} is marked {marker} and its class also extends or implements "
+    "{supertypes}, outside the project, which may declare it"
+)
+# The columns of CYPHER_RENAME_OVERRIDE_FACTS that are no node property.
+RENAME_FACT_BASES = "bases"
+RENAME_FACT_OUTSIDE_SUPERTYPES = "outside_supertypes"
 RENAME_UNLOCATABLE_SITE = "{owner}: site cannot be located ({resolution})"
 RENAME_RESOLUTION_BAD_POSITION = "position outside its file"
 RENAME_RESOLUTION_CLASS_VIA_PARAM = (

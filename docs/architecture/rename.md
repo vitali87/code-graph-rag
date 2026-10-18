@@ -78,8 +78,11 @@ refuses too, naming why: code the project does not contain calls it by its
 old name, so after the rename the override silently stops, and no call site
 shows it. That covers a method the graph marks `overrides_external`
 (`Worker(threading.Thread).run`, `TestCase.setUp`), a Python `__dunder__`
-method, and a method carrying `@Override` or the `override` modifier (Java,
-C#, TypeScript, Dart) that overrides no method in the project. Pass
+method (or a module's `__getattr__`/`__dir__` hook), and a method carrying
+`@Override` or the `override` modifier (Java, C#, TypeScript, Dart) that
+overrides no method in the project, or whose class also extends or
+implements a type outside the project that may declare it
+(`Task extends Base implements Runnable`). Pass
 `--allow-external-override` (`allow_external_override: true`) when renaming
 it is the intent (issue #3226).
 

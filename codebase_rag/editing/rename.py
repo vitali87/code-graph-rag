@@ -100,6 +100,9 @@ _MEMBER_NAME_TYPES = frozenset(
 # A Python `__name__` method is called by the interpreter (`str()`, `with`,
 # `len()`), never by a site the graph records.
 _PY_PROTOCOL_NAME = re.compile(r"__\w+__")
+# The module-level functions the interpreter calls by name (PEP 562); any
+# other module-level `__name__` function or class is an ordinary name.
+_PY_MODULE_HOOKS = frozenset({"__getattr__", "__dir__"})
 # `@Override` / `@java.lang.Override` (Java, Kotlin, Scala, Dart `@override`)
 # and the `override` modifier (Kotlin, C#, TypeScript, Swift).
 _OVERRIDE_MARKER = "override"
@@ -2232,18 +2235,41 @@ def _external_override_reason(qn: str, row: ResultRow) -> str | None:
         isinstance(path, str)
         and get_language_for_extension(Path(path).suffix) == cs.SupportedLanguage.PYTHON
         and _PY_PROTOCOL_NAME.fullmatch(name)
+        and (
+            row.get(cs.KEY_LABEL) == cs.NodeLabel.METHOD
+            or (
+                row.get(cs.KEY_LABEL) == cs.NodeLabel.FUNCTION
+                and name in _PY_MODULE_HOOKS
+            )
+        )
     ):
         return cs.RENAME_PROTOCOL_METHOD.format(qn=qn, name=name)
-    if row.get("bases"):
+    outside = row.get(cs.RENAME_FACT_OUTSIDE_SUPERTYPES)
+    supertypes = sorted(str(s) for s in outside) if isinstance(outside, list) else []
+    # A project base explains an override marker only when the class has no
+    # supertype outside the project that may declare the method as well
+    # (`Task extends Base implements Runnable`).
+    if row.get(cs.RENAME_FACT_BASES) and not supertypes:
         return None
+    marker = _override_marker(row)
+    if marker is None:
+        return None
+    if row.get(cs.RENAME_FACT_BASES):
+        return cs.RENAME_OVERRIDE_ALSO_OUTSIDE.format(
+            qn=qn, marker=marker, supertypes=cs.SEPARATOR_COMMA_SPACE.join(supertypes)
+        )
+    return cs.RENAME_UNMATCHED_OVERRIDE.format(qn=qn, marker=marker)
+
+
+def _override_marker(row: ResultRow) -> str | None:
     decorators = row.get(cs.KEY_DECORATORS)
     for decorator in decorators if isinstance(decorators, list) else ():
         text = str(decorator).lstrip("@").split("(", 1)[0].strip()
         if text.rsplit(cs.SEPARATOR_DOT, 1)[-1].lower() == _OVERRIDE_MARKER:
-            return cs.RENAME_UNMATCHED_OVERRIDE.format(qn=qn, marker=decorator)
+            return str(decorator)
     modifiers = row.get(cs.KEY_MODIFIERS)
     if isinstance(modifiers, list) and _OVERRIDE_MARKER in modifiers:
-        return cs.RENAME_UNMATCHED_OVERRIDE.format(qn=qn, marker=_OVERRIDE_MARKER)
+        return _OVERRIDE_MARKER
     return None
 
 
