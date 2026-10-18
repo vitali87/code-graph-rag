@@ -249,6 +249,11 @@ CLI_ERR_CLEAN_UNKNOWN_PROJECTS = (
 CLI_MSG_CLEAN_ABORTED = "Aborted: the graph was left untouched."
 CLI_MSG_DELETING_PROJECT = "Deleting project '{project_name}' from the graph..."
 CLI_MSG_PROJECT_DELETED = "Project '{project_name}' deleted successfully."
+CLI_WARN_DELETE_PROJECT_SHARED_ROOT = (
+    "Warning: project(s) {projects} were indexed from the same directory as "
+    "'{project_name}' ({root_path}). Only what '{project_name}' owns is "
+    "deleted; the Folder and File nodes they also hold are kept."
+)
 # Deleting never defaults to the current directory (issue #2415).
 CLI_ERR_PROJECT_NAME_REQUIRED = (
     "Error: name the project with --project, or pass --repo-path."
@@ -287,6 +292,13 @@ CREDITS_URL = "https://docs.code-graph-rag.com/credits/"
 CLI_MSG_CREDITS = "Third-party credits: {url}"
 CLI_MSG_CREDITS_NOTICES = "Third-party notices: {name}, beside this binary"
 THIRD_PARTY_NOTICES_SUFFIX = ".THIRD_PARTY_NOTICES.txt"
+# The project's GitHub Sponsors page, named beside the credits by `--version`
+# and, on a terminal, after most commands finish.
+SPONSOR_URL = "https://github.com/sponsors/vitali87"
+CLI_MSG_SPONSOR = "Sponsor development: {url}"
+CLI_MSG_SPONSOR_PLEDGE = (
+    "Find cgr useful? Pledge your support: {url} (CGR_SPONSOR_PLEDGE=false hides this)"
+)
 CLI_MSG_HINT_TARGET_REPO = (
     "\nHint: Make sure TARGET_REPO_PATH environment variable is set."
 )
