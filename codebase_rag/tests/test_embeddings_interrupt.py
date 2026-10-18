@@ -19,6 +19,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag import exceptions as ex
+from codebase_rag.checkout_state import state_dir
 from codebase_rag.cli import _run_graph_sync
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -85,12 +86,49 @@ def test_an_interrupted_embeddings_pass_commits_the_run_before_stopping(
     with pytest.raises(KeyboardInterrupt) as stopped:
         updater.run()
 
-    hashes = json.loads((py_project / cs.HASH_CACHE_FILENAME).read_text())
+    hashes = json.loads((state_dir(py_project) / cs.HASH_CACHE_FILENAME).read_text())
     assert {"module_a.py", "module_b.py"} <= set(hashes)
     assert isinstance(stopped.value, ex.EmbeddingsInterrupted)
     rerun = _updater(py_project, mock_ingestor, skip_embeddings=True)
     rerun.run()
     assert rerun.skipped_because_in_sync
+
+
+def _recorded_sync(ingestor: MagicMock) -> bool:
+    return any(
+        c.args and c.args[0] == cq.CYPHER_RECORD_PROJECT_SYNC
+        for c in ingestor.execute_write.call_args_list
+    )
+
+
+def test_an_interrupted_embeddings_pass_still_records_the_sync_time(
+    py_project: Path,
+    mock_ingestor: MagicMock,
+    embedding_io: tuple[MagicMock, MagicMock],
+) -> None:
+    # The run committed, so `cgr status` must show it like any finished sync.
+    _interrupt_embeddings_query(mock_ingestor)
+    updater = _updater(py_project, mock_ingestor)
+
+    with pytest.raises(KeyboardInterrupt):
+        updater.run()
+
+    assert _recorded_sync(mock_ingestor)
+
+
+def test_an_interrupt_before_the_embeddings_pass_records_no_sync_time(
+    py_project: Path, mock_ingestor: MagicMock
+) -> None:
+    updater = _updater(py_project, mock_ingestor)
+    with (
+        patch.object(
+            GraphUpdater, "_prune_orphan_nodes", side_effect=KeyboardInterrupt
+        ),
+        pytest.raises(KeyboardInterrupt),
+    ):
+        updater.run()
+
+    assert not _recorded_sync(mock_ingestor)
 
 
 def test_an_interrupted_embeddings_pass_keeps_the_vectors_it_computed(
@@ -125,7 +163,9 @@ def test_an_interrupt_before_the_embeddings_pass_commits_nothing(
 
     assert type(stopped.value) is KeyboardInterrupt
     # The walk leaves an empty placeholder; only a committed run fills it.
-    assert json.loads((py_project / cs.HASH_CACHE_FILENAME).read_text()) == {}
+    assert (
+        json.loads((state_dir(py_project) / cs.HASH_CACHE_FILENAME).read_text()) == {}
+    )
 
 
 def test_a_failed_embeddings_pass_still_ends_the_run_normally(
@@ -146,7 +186,7 @@ def test_a_failed_embeddings_pass_still_ends_the_run_normally(
 
     _updater(py_project, mock_ingestor).run()
 
-    hashes = json.loads((py_project / cs.HASH_CACHE_FILENAME).read_text())
+    hashes = json.loads((state_dir(py_project) / cs.HASH_CACHE_FILENAME).read_text())
     assert {"module_a.py", "module_b.py"} <= set(hashes)
 
 
@@ -192,10 +232,6 @@ def cli_sync() -> Generator[_CliSync, None, None]:
         patch("codebase_rag.cli.connect_memgraph", return_value=connection),
         patch("codebase_rag.graph_updater.GraphUpdater", return_value=updater),
         patch("codebase_rag.cli.load_parsers", return_value=({}, {})),
-        patch(
-            "codebase_rag.cli.cgr_state.record_sync",
-            side_effect=lambda _project: events.append("record"),
-        ),
         patch("codebase_rag.cli.export_graph_to_file") as export,
     ):
         yield _CliSync(events, connection, updater, export)
@@ -221,11 +257,10 @@ def test_the_cli_sync_records_an_interrupted_run_before_stopping(
     with pytest.raises(KeyboardInterrupt):
         _sync(tmp_path)
 
-    # The graph is whole, so it is recorded and loses its incomplete marker
-    # like any finished sync (#2219); only then does the interrupt end it.
+    # The graph is whole, so it loses its incomplete marker like any
+    # finished sync (#2219); only then does the interrupt end it.
     assert cli_sync.events == [
-        cq.CYPHER_MARK_PROJECT_INCOMPLETE,
-        "record",
+        cq.CYPHER_MARK_CLI_SYNC_INCOMPLETE,
         cq.CYPHER_CLEAR_PROJECT_INCOMPLETE,
     ]
     # Raised after the connection closed cleanly, not through it, where it
