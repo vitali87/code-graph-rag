@@ -146,3 +146,72 @@ def test_genuine_recursion_keeps_its_self_edge(tmp_path: Path) -> None:
     )
     assert summary.unresolved == 0
     assert _pairs(graph) == {(_FACT, _FACT), (_MAIN, _GREET)}
+
+
+def test_recursion_on_a_span_resolved_node_of_its_own_stays(tmp_path: Path) -> None:
+    # An anonymous class's method is indexed under the method declaring the
+    # class, and its frame resolves to it by span; it is that frame's own
+    # node, so `run -> run` is recursion, not a fold (#2709 review).
+    run = f"{_PROJECT}.src.com.acme.Main.Main.main(String[]).run()"
+    graph = _FakeGraph(
+        [
+            _callable_row(cs.NodeLabel.METHOD, _MAIN, _JAVA, 6, 9),
+            _callable_row(cs.NodeLabel.METHOD, run, _JAVA, 8, 8),
+        ],
+        [],
+    )
+    summary = _ingest(
+        tmp_path,
+        cs.TRACE_LANGUAGE_JVM,
+        [_record(("Main$1.run", 8), ("Main$1.run", 8))],
+        graph,
+    )
+    assert summary.resolution.unresolved == {}
+    assert _pairs(graph) == {(run, run)}
+
+
+def test_a_recursive_php_closure_keeps_its_self_edge(tmp_path: Path) -> None:
+    # The static tier indexes a closure as its own node (`outer.anonymous_3_9`)
+    # starting at its line, which its frame resolves to.
+    outer = f"{_PROJECT}.a.outer"
+    closure = f"{_PROJECT}.a.outer.anonymous_3_9"
+    graph = _FakeGraph(
+        [
+            _callable_row(cs.NodeLabel.FUNCTION, outer, "a.php", 2, 8),
+            _callable_row(cs.NodeLabel.FUNCTION, closure, "a.php", 3, 5),
+        ],
+        [],
+    )
+    repo = tmp_path / "repo"
+    frame = f"{{closure:{repo}/a.php:3-5}}"
+    summary = _ingest(
+        tmp_path,
+        cs.TRACE_LANGUAGE_PHP,
+        [
+            _record(("outer", 7), (frame, 3), path=f"{repo}/a.php"),
+            _record((frame, 4), (frame, 3), path=f"{repo}/a.php"),
+        ],
+        graph,
+    )
+    assert summary.resolution.unresolved == {}
+    assert _pairs(graph) == {(outer, closure), (closure, closure)}
+
+
+def test_a_recursive_captured_local_function_keeps_its_self_edge(
+    tmp_path: Path,
+) -> None:
+    # A captured local function sits on a display class like a lambda body,
+    # but keeps a node of its own (`Run.Local`).
+    local = f"{_PROJECT}.src.Worker.Ns.Worker.Run.Local()"
+    graph = _FakeGraph(
+        [_callable_row(cs.NodeLabel.FUNCTION, local, "src/Worker.cs", 4, 6)], []
+    )
+    frame = "Ns.Worker+<>c__DisplayClass0_0.<Run>g__Local|0"
+    summary = _ingest(
+        tmp_path,
+        cs.TRACE_LANGUAGE_DOTNET,
+        [_record((frame, 0), (frame, 0), path="")],
+        graph,
+    )
+    assert summary.resolution.unresolved == {}
+    assert _pairs(graph) == {(local, local)}

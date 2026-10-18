@@ -675,8 +675,10 @@ does not know are counted per reason instead of being silently dropped.
   It is counted as unresolved (`intra_node`) rather than written as
   `main → main`; the lambda's own calls (`main → greet`) are kept. The same
   holds for Scala `$anonfun$`, C# lambda bodies, JS anonymous functions and
-  PHP closures. Real recursion, where both frames name the method, is still
-  a self-edge. An anonymous-class
+  PHP closures the static graph did not index. Real recursion, where both
+  frames name the method, is still a self-edge, and so is recursion in a
+  frame that resolves to a node of its own (an anonymous-class method, an
+  indexed PHP closure, a C# local function). An anonymous-class
   method resolves to its own node — the innermost source span containing the
   frame line, threaded under the enclosing method — rather than to the
   enclosing method itself. Frames the static graph cannot account for

@@ -11,7 +11,7 @@ from __future__ import annotations
 import posixpath
 import re
 from collections import Counter
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING
 
@@ -312,7 +312,7 @@ class FrameResolver:
         return ResolvedFrame(
             label=chosen.label,
             qualified_name=chosen.qualified_name,
-            folded=not by_name,
+            folded=not by_name and parts[-1:] != [_node_leaf(chosen)],
         )
 
     @staticmethod
@@ -402,6 +402,13 @@ def _named_by(candidates: list[CallableNode], parts: list[str]) -> list[Callable
         for n in candidates
         if _natural_qualified_name(n.qualified_name).endswith(suffix)
     ]
+
+
+def _node_leaf(node: CallableNode) -> str:
+    # The last segment of a node's name, as a runtime frame spells it.
+    return _signatureless(_natural_qualified_name(node.qualified_name)).rsplit(
+        cs.SEPARATOR_DOT, 1
+    )[-1]
 
 
 def _innermost_span_containing_line(
@@ -529,12 +536,19 @@ class PhpFrameResolver:
     ) -> ResolvedFrame | None:
         closure = _PHP_CLOSURE.match(frame.qualname)
         if closure:
-            # A closure is named by its own position, never a node of its
-            # own: it folds into the function that defines it.
-            resolved = self._resolve_position(
-                closure.group("path"), int(closure.group("start")), stats
+            # A closure is named by its own position. The static tier indexes
+            # it as a node starting there (`outer.anonymous_3_9`), which its
+            # own frame resolves to; only one it did not index folds into the
+            # function that defines it (#2709 review).
+            start = int(closure.group("start"))
+            node = self._node_at(closure.group("path"), start, stats)
+            if node is None:
+                return None
+            return ResolvedFrame(
+                label=node.label,
+                qualified_name=node.qualified_name,
+                folded=node.start_line != start,
             )
-            return None if resolved is None else replace(resolved, folded=True)
         if frame.path:
             if frame.qualname == cs.TRACE_XDEBUG_MAIN:
                 return self._resolve_module(frame.path, stats)
@@ -560,6 +574,14 @@ class PhpFrameResolver:
     def _resolve_position(
         self, path: str, line: int, stats: ResolutionStats
     ) -> ResolvedFrame | None:
+        chosen = self._node_at(path, line, stats)
+        if chosen is None:
+            return None
+        return ResolvedFrame(label=chosen.label, qualified_name=chosen.qualified_name)
+
+    def _node_at(
+        self, path: str, line: int, stats: ResolutionStats
+    ) -> CallableNode | None:
         rel_path = self._relative(path)
         if rel_path is None:
             stats.record(cs.TraceUnresolvedReason.OUTSIDE_REPO)
@@ -571,8 +593,7 @@ class PhpFrameResolver:
         chosen = _innermost_span_containing_line(candidates, line)
         if chosen is None:
             stats.record(cs.TraceUnresolvedReason.NO_MATCH)
-            return None
-        return ResolvedFrame(label=chosen.label, qualified_name=chosen.qualified_name)
+        return chosen
 
     def _resolve_by_name_tail(
         self, qualname: str, stats: ResolutionStats
@@ -650,6 +671,10 @@ def _dotnet_lambda_body(name: str) -> bool:
     of its own and is not one.
     """
     owner, _, method = name.rpartition(cs.SEPARATOR_DOT)
+    # A captured local function sits on the display class too, yet resolves
+    # to a node of its own (#2709 review).
+    if _DOTNET_LOCAL_FUNCTION.match(method):
+        return False
     return bool(_DOTNET_LAMBDA_BODY.match(method)) or any(
         _DOTNET_DISPLAY_CLASS.match(part)
         for part in owner.split(cs.TRACE_DOTNET_NESTED_MARKER)
@@ -822,10 +847,14 @@ class JvmFrameResolver:
         if chosen is None:
             stats.record(cs.TraceUnresolvedReason.NO_MATCH)
             return None
+        # Span-resolved onto a node of the frame's own name (an anonymous
+        # class's `run`, indexed under the method declaring the class) is the
+        # frame's own node, not a fold into its host, so `run -> run` is real
+        # recursion (#2709 review).
         return ResolvedFrame(
             label=chosen.label,
             qualified_name=chosen.qualified_name,
-            folded=not by_name,
+            folded=not by_name and _node_leaf(chosen) != method,
         )
 
     @staticmethod
