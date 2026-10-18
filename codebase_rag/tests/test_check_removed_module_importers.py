@@ -390,6 +390,133 @@ def test_check_fail_on_found_passes_a_move_that_updates_its_importer(
     assert result.exit_code == 0, result.output
 
 
+def test_a_package_left_as_a_namespace_package_passes(py_root: Path) -> None:
+    # Deleting `pkg/__init__.py` with `pkg/` still there: Python imports
+    # `pkg` as a namespace package (PEP 420), so `import pkg` still loads.
+    _write(py_root, {"main.py": "import pkg\n"})
+    store, updater = _index(py_root)
+    (py_root / "pkg/__init__.py").unlink()
+
+    delta = _observe(py_root, store, updater, [], deleted=["pkg/__init__.py"])
+
+    assert [e for e in _entries(delta) if e[0] == "main.py"] == []
+
+
+def test_a_package_deleted_with_its_directory_is_a_finding(py_root: Path) -> None:
+    _write(py_root, {"lone/__init__.py": "", "main.py": "import lone\n"})
+    store, updater = _index(py_root)
+    (py_root / "lone/__init__.py").unlink()
+    (py_root / "lone").rmdir()
+
+    delta = _observe(py_root, store, updater, [], deleted=["lone/__init__.py"])
+
+    assert _entries(delta) == [("main.py", 1, "module", "lone", "lone")]
+
+
+def test_a_moved_rust_file_pairs_each_inline_module_with_its_own_destination(
+    temp_repo: Path,
+) -> None:
+    # `src/geo.rs` holds `geo` and its inline `mod inner`, both Modules at
+    # that one path; each import of either is paired with its own new home.
+    root = temp_repo / PROJECT
+    _write(
+        root,
+        {
+            "Cargo.toml": f'[package]\nname = "{PROJECT}"\nversion = "0.1.0"\n',
+            "src/lib.rs": "pub mod geo;\npub mod user;\n",
+            "src/geo.rs": "pub fn area() -> i32 { 1 }\n"
+            "pub mod inner {\n    pub fn depth() -> i32 { 2 }\n}\n",
+            "src/user.rs": "use crate::geo;\nuse crate::geo::inner;\n"
+            "pub fn f() -> i32 { geo::area() + inner::depth() }\n",
+        },
+    )
+    store, updater = _index(root)
+    _move(root, "src/geo.rs", "src/shapes/geo.rs")
+    _write(
+        root,
+        {
+            "src/lib.rs": "pub mod shapes;\npub mod user;\n",
+            "src/shapes.rs": "pub mod geo;\n",
+        },
+    )
+
+    delta = _observe(
+        root,
+        store,
+        updater,
+        ["src/shapes/geo.rs", "src/lib.rs", "src/shapes.rs"],
+        deleted=["src/geo.rs"],
+    )
+
+    renamed = {e["target"]: e["renamed_to"] for e in delta["dangling_importers"]}
+    assert renamed == {
+        _qn("src.geo"): _qn("src.shapes.geo"),
+        _qn("src.geo.inner"): _qn("src.shapes.geo.inner"),
+    }
+
+
+@pytest.mark.parametrize("extension", [".ts", ".js"])
+def test_an_explicit_file_import_of_a_module_turned_into_a_directory_is_a_finding(
+    ts_root: Path, extension: str
+) -> None:
+    # `"../src/util.ts"` names the file alone; `src/util/index.ts` does not
+    # answer it, as it answers the extensionless `"../src/util"`.
+    _write(
+        ts_root,
+        {
+            "app/ext.ts": f'import * as u from "../src/util{extension}";\n'
+            'export const w = u.up("b");\n'
+        },
+    )
+    store, updater = _index(ts_root)
+    _move(ts_root, "src/util.ts", "src/util/index.ts")
+
+    delta = _observe(
+        ts_root, store, updater, ["src/util/index.ts"], deleted=["src/util.ts"]
+    )
+
+    assert [e[:4] for e in _entries(delta) if e[2] == "module"] == [
+        ("app/ext.ts", 1, "module", "u")
+    ]
+
+
+def test_a_package_reexporting_a_moved_module_keeps_from_imports(
+    py_root: Path,
+) -> None:
+    # `pkg/__init__.py` re-exports the moved module, so `from pkg import
+    # util` still works; `import pkg.util` needs the submodule and does not.
+    store, updater = _index(py_root)
+    _move(py_root, "pkg/util.py", "pkg/text/util.py")
+    _write(py_root, {"pkg/__init__.py": "from .text import util\n"})
+
+    delta = _observe(
+        py_root,
+        store,
+        updater,
+        ["pkg/text/util.py", "pkg/__init__.py"],
+        deleted=["pkg/util.py"],
+    )
+
+    assert _entries(delta) == [
+        ("pkg/conf.py", 2, "module", "pkg", "pkg.util"),
+        ("pkg/conf.py", 3, "import", "title", "pkg.util.title"),
+        ("pkg/conf.py", 4, "module", "pu", "pkg.util"),
+    ]
+
+
+def test_a_package_whose_own_import_broke_keeps_nothing(py_root: Path) -> None:
+    # Negative: `pkg/__init__.py` imports the deleted module itself, so it
+    # binds no `util` for `from pkg import util` either.
+    _write(py_root, {"pkg/__init__.py": "from . import util\n"})
+    store, updater = _index(py_root)
+    (py_root / "pkg/util.py").unlink()
+
+    delta = _observe(py_root, store, updater, [], deleted=["pkg/util.py"])
+
+    module_lines = {(e[0], e[1]) for e in _entries(delta) if e[2] == "module"}
+    assert {("pkg/__init__.py", 1), ("pkg/conf.py", 1)} <= module_lines, module_lines
+
+
 # --- helpers ------------------------------------------------------------------
 
 

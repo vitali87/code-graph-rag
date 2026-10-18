@@ -1222,23 +1222,119 @@ def _all_findings(
     return out
 
 
-def _gone_modules(before: Snapshot, after: Snapshot) -> dict[str, str]:
+def _gone_modules(
+    before: Snapshot, after: Snapshot, repo_root: Path | None
+) -> dict[str, str]:
     """The modules at the touched paths the edit took away: qn -> old path.
 
     A Python module turned into a package keeps its qualified name, so it is
-    not gone; neither is a JS/TS file turned into a directory whose `index`
-    the same specifier now resolves to (`./util` -> `util/index.ts`).
+    not gone; nor is a package whose `__init__.py` went while its directory
+    stayed, which Python still imports as a namespace package (PEP 420).
     """
     now = {qn for qn, _path in after.modules}
     return {
         qn: path
         for qn, path in before.modules
-        if qn not in now
-        and not (
-            _language(path) in cs.JS_TS_LANGUAGES
-            and f"{qn}{cs.SEPARATOR_DOT}{cs.JS_INDEX_STEM}" in now
-        )
+        if qn not in now and not _namespace_package_left(repo_root, path)
     }
+
+
+def _namespace_package_left(repo_root: Path | None, path: str) -> bool:
+    module = Path(path)
+    return (
+        repo_root is not None
+        and module.name == cs.INIT_PY
+        and (repo_root / module.parent).is_dir()
+    )
+
+
+def _index_took_over(qn: str, path: str, now: set[str]) -> bool:
+    """A JS/TS file turned into a directory whose `index` the same
+    extensionless specifier now resolves to (`./util` -> `util/index.ts`)."""
+    return (
+        _language(path) in cs.JS_TS_LANGUAGES
+        and f"{qn}{cs.SEPARATOR_DOT}{cs.JS_INDEX_STEM}" in now
+    )
+
+
+# The module specifier of the JS/TS statement a search starts at: `from
+# "./x"`, a bare `import "./x"`, `require("./x")` or `import("./x")`.
+_JS_SPECIFIER = re.compile(
+    r"""(?:\bfrom|\bimport|\brequire\s*\(|\bimport\s*\()\s*(['"])([^'"\n]*)\1"""
+)
+
+
+def _names_a_file(repo_root: Path | None, binding: ImportBinding) -> bool:
+    """Whether the JS/TS statement behind `binding` spells a file extension.
+
+    `"./util.js"` or `"./util.ts"` names the file alone, never a directory's
+    `index`, but the graph records it without the extension, so the
+    statement itself is read.
+    """
+    if repo_root is None or binding.line is None:
+        return False
+    try:
+        text = (repo_root / binding.importer_path).read_text(encoding=cs.ENCODING_UTF8)
+    except (OSError, UnicodeDecodeError):
+        return False
+    lines = text.splitlines(keepends=True)
+    if not 0 < binding.line <= len(lines):
+        return False
+    row = lines[binding.line - 1]
+    # The edge's column counts bytes.
+    col = len(
+        row.encode(cs.ENCODING_UTF8)[: binding.col or 0].decode(
+            cs.ENCODING_UTF8, errors="ignore"
+        )
+    )
+    start = sum(len(line) for line in lines[: binding.line - 1]) + col
+    match = _JS_SPECIFIER.search(text, start)
+    return match is not None and Path(match.group(2)).suffix in cs.JS_TS_ALL_EXTENSIONS
+
+
+def _package_still_binds(
+    binding: ImportBinding,
+    path: str,
+    still: _AfterBindings,
+    broken: set[tuple[str, str]],
+) -> bool:
+    """`from pkg import util` still works when `pkg` itself binds `util`.
+
+    Python takes the name from the package before it looks for the
+    submodule, so a package that re-exports the moved module (`from .text
+    import util`) keeps the import working. `import pkg.util` needs the
+    submodule itself. A package whose own import of the module is broken
+    binds nothing, whatever its source still says.
+    """
+    package, _dot, name = binding.module.rpartition(cs.SEPARATOR_DOT)
+    if (
+        not package
+        or binding.imported_name != name
+        or binding.importer == package
+        or (package, name) in broken
+        or _language(path) != cs.SupportedLanguage.PYTHON
+    ):
+        return False
+    module = Path(path)
+    directory = module.parent.parent if module.name == cs.INIT_PY else module.parent
+    return still.binds(package, (directory / cs.INIT_PY).as_posix(), name)
+
+
+def _modules_by_path(modules: frozenset[tuple[str, str]]) -> dict[str, set[str]]:
+    # A Rust file holds its inline `mod` blocks too, each a Module carrying
+    # the file's path.
+    out: dict[str, set[str]] = {}
+    for qn, path in modules:
+        out.setdefault(path, set()).add(qn)
+    return out
+
+
+def _owning_module(qn: str, modules: set[str]) -> str | None:
+    """The innermost of a file's modules that `qn` is defined in."""
+    owners = [m for m in modules if qn.startswith(f"{m}{cs.SEPARATOR_DOT}")]
+    if owners:
+        return max(owners, key=len)
+    return next(iter(modules)) if len(modules) == 1 else None
 
 
 def _module_destinations(
@@ -1248,28 +1344,33 @@ def _module_destinations(
 
     The rename pass already paired the definitions that moved with it; a
     module defining nothing (top-level statements only) is paired with the
-    one new module that has its file name.
+    one new module that has its file name, or, among a file's several
+    modules, the one with its own name.
     """
-    module_before = {path: qn for qn, path in before.modules}
-    module_after = {path: qn for qn, path in after.modules}
+    module_before = _modules_by_path(before.modules)
+    module_after = _modules_by_path(after.modules)
     targets: dict[str, set[str]] = {}
     for renamed in symbols["renamed"]:
         old = before.definitions.get(renamed["old"])
         new = after.definitions.get(renamed["new"])
         if old is None or new is None:
             continue
-        source = module_before.get(old.path, "")
-        if source in gone and (target := module_after.get(new.path)):
+        source = _owning_module(renamed["old"], module_before.get(old.path, set()))
+        target = _owning_module(renamed["new"], module_after.get(new.path, set()))
+        if source in gone and target:
             targets.setdefault(source, set()).add(target)
     existing = {qn for qn, _path in before.modules}
-    added = {path: qn for path, qn in module_after.items() if qn not in existing}
+    added = [(path, qn) for qn, path in after.modules if qn not in existing]
     out: dict[str, str] = {}
     for qn, path in gone.items():
         found = targets.get(qn) or {
             new_qn
-            for new_path, new_qn in added.items()
+            for new_path, new_qn in added
             if Path(new_path).name == Path(path).name
         }
+        if len(found) > 1:
+            own = qn.rpartition(cs.SEPARATOR_DOT)[2]
+            found = {f for f in found if f.rpartition(cs.SEPARATOR_DOT)[2] == own}
         if len(found) == 1:
             out[qn] = next(iter(found))
     return out
@@ -1280,6 +1381,8 @@ def _module_findings(
     after: Snapshot,
     symbols: SymbolDelta,
     found: list[DanglingImporter],
+    still: _AfterBindings,
+    repo_root: Path | None,
 ) -> list[DanglingImporter]:
     """Import statements naming a module the edit deleted or moved.
 
@@ -1288,11 +1391,13 @@ def _module_findings(
     removed symbol leads to them (issue #3266). As with a symbol, an importer
     the edit left alone still holds the statement the base graph recorded,
     and one it touched is read after the edit. A statement already listed
-    for a gone name it imports is not listed again.
+    for a gone name it imports is not listed again. An extensionless JS/TS
+    specifier the file's new directory `index` answers still resolves.
     """
-    gone = _gone_modules(before, after)
+    gone = _gone_modules(before, after, repo_root)
     if not gone:
         return []
+    now = {qn for qn, _path in after.modules}
     moved_to = _module_destinations(before, after, symbols, gone)
     listed = {
         (d["path"], d["line"], d["col"])
@@ -1300,9 +1405,14 @@ def _module_findings(
         if d["kind"] == cs.DanglingImportKind.IMPORT
     }
     candidates = [
-        *(b for b in before.module_bindings if b.importer_path not in after.paths),
-        *(b for b in after.module_bindings if b.importer_path in after.paths),
+        b
+        for b in (
+            *(b for b in before.module_bindings if b.importer_path not in after.paths),
+            *(b for b in after.module_bindings if b.importer_path in after.paths),
+        )
+        if b.module in gone and (b.importer_path, b.line, b.col) not in listed
     ]
+    broken = {(b.importer, b.bound) for b in candidates}
     return [
         DanglingImporter(
             importer=binding.importer,
@@ -1315,8 +1425,11 @@ def _module_findings(
             renamed_to=moved_to.get(binding.module),
         )
         for binding in candidates
-        if binding.module in gone
-        and (binding.importer_path, binding.line, binding.col) not in listed
+        if not (
+            _index_took_over(binding.module, gone[binding.module], now)
+            and not _names_a_file(repo_root, binding)
+        )
+        and not _package_still_binds(binding, gone[binding.module], still, broken)
     ]
 
 
@@ -1338,14 +1451,14 @@ def _dangling_importers(
     import of a module the edit deleted or moved is listed as well (#3266).
     """
     gone = set(symbols["removed"]) | {r["old"] for r in symbols["renamed"]}
+    still = _AfterBindings(after, gone, load, repo_root)
     found: list[DanglingImporter] = []
     if gone:
         renamed_to = {r["old"]: r["new"] for r in symbols["renamed"]}
-        still = _AfterBindings(after, gone, load, repo_root)
         found = _import_findings(before, after, gone, renamed_to, still)
         if repo_root is not None:
             found.extend(_all_findings(before, after, gone, renamed_to, still))
-    found.extend(_module_findings(before, after, symbols, found))
+    found.extend(_module_findings(before, after, symbols, found, still, repo_root))
     unique = {
         (d["kind"], d["path"], d["line"], d["col"], d["name"], d["target"]): d
         for d in found
