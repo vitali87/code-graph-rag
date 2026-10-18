@@ -196,3 +196,43 @@ def test_a_whole_module_import_of_a_package_names_the_package_a_named_one_does(
     whole = {to for frm, to in edges if frm == "whole"}
     assert len(named) == 1, edges
     assert whole == named, edges
+
+
+@pytest.mark.parametrize(
+    ("source", "line"),
+    [
+        ('if (process.env.TRACE) require("./db");\n', 1),
+        ('function boot() {\n  require("./db");\n}\nboot();\n', 2),
+        ('try {\n  require("./db");\n} catch (e) {}\n', 2),
+        ('async function load() {\n  await import("./db");\n}\nload();\n', 2),
+    ],
+    ids=["if-branch", "function-body", "try-block", "awaited-in-function"],
+)
+def test_a_nested_side_effect_call_is_an_imports_edge(
+    temp_repo: Path, mock_ingestor: MagicMock, source: str, line: int
+) -> None:
+    # A statement-level call below the top level still loads the module, as
+    # a bound `require` there is already an import.
+    (temp_repo / "db.js").write_text("module.exports = {};\n", encoding="utf-8")
+    (temp_repo / "main.js").write_text(source, encoding="utf-8")
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    props = _imports(temp_repo, mock_ingestor).get(("main", "db"))
+    assert props is not None, sorted(_imports(temp_repo, mock_ingestor))
+    assert props.get(cs.KEY_LINE) == line, props
+
+
+def test_a_call_that_is_not_a_statement_is_no_side_effect_import(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: `require.resolve("./db")` and a call whose value is used are
+    # no side-effect import of `./db`.
+    (temp_repo / "db.js").write_text("module.exports = {};\n", encoding="utf-8")
+    (temp_repo / "main.js").write_text(
+        'function where() {\n  require.resolve("./db");\n  return lookup("./db");\n}\n'
+        "where();\n",
+        encoding="utf-8",
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    assert ("main", "db") not in _imports(temp_repo, mock_ingestor)

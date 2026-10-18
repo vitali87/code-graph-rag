@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from loguru import logger
-from tree_sitter import Node, Parser
+from tree_sitter import Language, Node, Parser
 
 from .. import constants as cs
 from .. import logs as ls
@@ -63,6 +63,7 @@ from .js_ts.module_paths import (
     resolve_js_workspace_import,
 )
 from .js_ts.reexports import JsExport, follow_js_reexports, js_ts_module_qn
+from .js_ts.utils import get_js_ts_language_obj
 from .lua import utils as lua_utils
 from .python_source_roots import discover_python_source_roots, resolve_via_source_roots
 from .rs import cargo_semver
@@ -88,6 +89,7 @@ from .stdlib_extractor import (
 )
 from .utils import (
     follow_reexports,
+    get_cached_query,
     get_query_cursor,
     node_site_properties,
     safe_decode_text,
@@ -1880,7 +1882,9 @@ class ImportProcessor:
                     | cs.SupportedLanguage.TSX
                 ):
                     self._parse_js_ts_imports(captures, module_qn, root_node)
-                    self._parse_js_side_effect_calls(root_node, module_qn)
+                    self._parse_js_side_effect_calls(
+                        root_node, module_qn, get_js_ts_language_obj(language, queries)
+                    )
                 case cs.SupportedLanguage.JAVA:
                     self._parse_java_imports(captures, module_qn)
                 case cs.SupportedLanguage.RUST:
@@ -4896,12 +4900,26 @@ class ImportProcessor:
             (target, _import_site_props(statement, cs.IMPORTED_NAME_WILDCARD, None))
         )
 
-    def _parse_js_side_effect_calls(self, root_node: Node, module_qn: str) -> None:
-        # A top-level statement that is only `require("./db")` or
-        # `import("./cache")` (awaited or not): the call's value is dropped,
-        # so it is imported for its side effects (issue #3267). Statements
-        # binding the result are `_parse_js_require`'s.
-        for statement in root_node.named_children:
+    def _parse_js_side_effect_calls(
+        self, root_node: Node, module_qn: str, language_obj: Language | None
+    ) -> None:
+        # A statement that is only `require("./db")` or `import("./cache")`
+        # (awaited or not), at any depth: the call's value is dropped, so it
+        # is imported for its side effects (issue #3267). One under
+        # `if (flag)` or in a function body loads the module as surely as a
+        # bound `require` there, which the imports query already reads.
+        # Statements binding the result are `_parse_js_require`'s.
+        statements = (
+            sorted_captures(
+                get_query_cursor(
+                    get_cached_query(language_obj, cs.JS_CALL_STATEMENT_QUERY)
+                ),
+                root_node,
+            ).get(cs.CAPTURE_JS_CALL_STATEMENT, [])
+            if language_obj is not None
+            else root_node.named_children
+        )
+        for statement in statements:
             if (call := _js_side_effect_call(statement)) is None:
                 continue
             specifier, is_require = call
