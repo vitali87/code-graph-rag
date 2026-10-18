@@ -168,6 +168,21 @@ def test_an_alias_given_another_class_is_typed_afresh_on_reingest(
     assert calls.get("viaAlias") == {("Bag", cs.EdgeResolution.EXACT)}, calls
 
 
+def test_a_local_array_type_is_not_the_platform_array(temp_repo: Path) -> None:
+    # Negative: a module's own `Array<T>` indexes to what it declares, not to
+    # `T`, so `xs[0].size()` is no exact `Box.size`.
+    use = (
+        'import { Box } from "./types";\n\n'
+        "interface Other {\n  size(): number;\n}\n\n"
+        "type Array<T> = { [n: number]: Other };\n\n"
+        "export function shadowed(xs: Array<Box>): number {\n"
+        "  return xs[0].size();\n}\n"
+    )
+    calls = _size_calls({"src/types.ts": TYPES, "src/use.ts": use}, temp_repo / "proj")
+
+    assert ("Box", cs.EdgeResolution.EXACT) not in calls.get("shadowed", set())
+
+
 def test_an_element_of_an_aliased_array_is_typed(temp_repo: Path) -> None:
     types = TYPES + "export type Boxes = Box[];\nexport type List<T> = readonly T[];\n"
     use = (

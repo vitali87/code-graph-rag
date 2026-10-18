@@ -6432,7 +6432,11 @@ class CallProcessor:
         if not name:
             return None
         arguments = node.child_by_field_name(cs.TS_FIELD_TYPE_ARGUMENTS)
-        if name in cs.TS_INDEXABLE_GENERIC_NAMES and arguments is not None:
+        if (
+            name in cs.TS_INDEXABLE_GENERIC_NAMES
+            and arguments is not None
+            and self._ts_names_the_platform_type(name, node, module_qn)
+        ):
             element = next(iter(arguments.named_children), None)
             return (
                 self._ts_type_declaration(element, module_qn, scope)
@@ -6445,6 +6449,15 @@ class CallProcessor:
             if aliased is not None
             else None
         )
+
+    def _ts_names_the_platform_type(
+        self, name: str, anchor: Node, module_qn: str
+    ) -> bool:
+        # A module's own `type Array<T> = ...`, or an imported `Array`,
+        # shadows the platform's: its element is what it declares.
+        import_map = self._resolver.import_processor.import_mapping.get(module_qn) or {}
+        declared = self._ts_named_type(name, anchor, module_qn)
+        return name not in import_map and (declared is None or declared.foreign)
 
     def _ts_union_declaration(
         self, node: Node, module_qn: str, scope: _TsTypeScope = _NO_TS_SCOPE
