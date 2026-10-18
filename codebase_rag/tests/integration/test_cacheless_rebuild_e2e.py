@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
@@ -63,8 +64,8 @@ class TestCachelessRebuild:
         # A fresh clone: same repo content evolves, but the cache files are
         # gone while the database still holds the previous parse.
         source.write_text("def new_name():\n    return 1\n", encoding="utf-8")
-        (repo / cs.HASH_CACHE_FILENAME).unlink()
-        (repo / cs.DIR_MTIMES_FILENAME).unlink()
+        state_file(repo, cs.HASH_CACHE_FILENAME).unlink()
+        state_file(repo, cs.DIR_MTIMES_FILENAME).unlink()
 
         _index(memgraph_ingestor, repo)
         names = _function_names(memgraph_ingestor)
@@ -85,8 +86,8 @@ class TestCachelessRebuild:
         _index(memgraph_ingestor, repo)
 
         (repo / "gone.py").unlink()
-        (repo / cs.HASH_CACHE_FILENAME).unlink()
-        (repo / cs.DIR_MTIMES_FILENAME).unlink()
+        state_file(repo, cs.HASH_CACHE_FILENAME).unlink()
+        state_file(repo, cs.DIR_MTIMES_FILENAME).unlink()
 
         _index(memgraph_ingestor, repo)
         rows = memgraph_ingestor.fetch_all(
@@ -110,8 +111,8 @@ class TestCachelessRebuild:
         (repo / "gen.py").write_text("def gen():\n    return 1\n", encoding="utf-8")
         _index(memgraph_ingestor, repo)
 
-        (repo / cs.HASH_CACHE_FILENAME).unlink()
-        (repo / cs.DIR_MTIMES_FILENAME).unlink()
+        state_file(repo, cs.HASH_CACHE_FILENAME).unlink()
+        state_file(repo, cs.DIR_MTIMES_FILENAME).unlink()
         _index(memgraph_ingestor, repo, exclude_paths=frozenset({"gen.py"}))
 
         rows = memgraph_ingestor.fetch_all(
@@ -138,8 +139,8 @@ class TestCachelessRebuild:
         (repo / "__init__.py").write_text(
             "def new_root():\n    return 1\n", encoding="utf-8"
         )
-        (repo / cs.HASH_CACHE_FILENAME).unlink()
-        (repo / cs.DIR_MTIMES_FILENAME).unlink()
+        state_file(repo, cs.HASH_CACHE_FILENAME).unlink()
+        state_file(repo, cs.DIR_MTIMES_FILENAME).unlink()
         _index(memgraph_ingestor, repo)
 
         rows = memgraph_ingestor.fetch_all(
@@ -172,8 +173,8 @@ class TestCachelessRebuild:
         (alpha / "lib" / "shared.py").write_text(
             "def alpha_renamed():\n    return 1\n", encoding="utf-8"
         )
-        (alpha / cs.HASH_CACHE_FILENAME).unlink()
-        (alpha / cs.DIR_MTIMES_FILENAME).unlink()
+        state_file(alpha, cs.HASH_CACHE_FILENAME).unlink()
+        state_file(alpha, cs.DIR_MTIMES_FILENAME).unlink()
         _index(memgraph_ingestor, alpha)
 
         rows = memgraph_ingestor.fetch_all(
@@ -204,8 +205,8 @@ class TestCachelessRebuild:
         locked.write_text("def locked_fn():\n    return 1\n", encoding="utf-8")
         _index(memgraph_ingestor, repo)
 
-        (repo / cs.HASH_CACHE_FILENAME).unlink()
-        (repo / cs.DIR_MTIMES_FILENAME).unlink()
+        state_file(repo, cs.HASH_CACHE_FILENAME).unlink()
+        state_file(repo, cs.DIR_MTIMES_FILENAME).unlink()
         import codebase_rag.graph_updater as gu
 
         real_hash = gu._hash_file_with_bytes
