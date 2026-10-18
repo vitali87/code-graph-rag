@@ -169,3 +169,82 @@ def test_other_strings_are_left_alone(repo: Path, mock_ingestor: MagicMock) -> N
     _repo(repo, {"tests/strings.py": untouched})
     _rename(repo, mock_ingestor, "pkg.core.helper", "add_one")
     assert (repo / "tests" / "strings.py").read_text() == untouched
+
+
+def test_a_path_inside_a_longer_value_is_left_alone(
+    repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negatives: the path quoted inside a longer string, in a comment, or as
+    # prose inside a config value is not the value itself.
+    untouched_py = (
+        "MSG = \"Do not call 'pkg.core.helper' directly\"\n"
+        '# mock.patch("pkg.core.helper") is how the tests patch it\n'
+    )
+    untouched_cfg = "[metadata]\ndescription = see pkg.core:main for details\n"
+    _repo(
+        repo,
+        {
+            "tests/messages.py": untouched_py,
+            "pyproject.toml": _PYPROJECT
+            + '\n[tool.renstr]\nnote = "see pkg.core:main for details"\n',
+            "setup.cfg": untouched_cfg,
+        },
+    )
+    _rename(repo, mock_ingestor, "pkg.core.main", "run_main")
+    pyproject = (repo / "pyproject.toml").read_text()
+    assert 'renstr = "pkg.core:run_main"' in pyproject, pyproject
+    assert 'note = "see pkg.core:main for details"' in pyproject, pyproject
+    assert (repo / "setup.cfg").read_text() == untouched_cfg
+    _rename(repo, mock_ingestor, "pkg.core.helper", "add_one")
+    assert (repo / "tests" / "messages.py").read_text() == untouched_py
+
+
+def test_another_app_with_the_same_import_path_is_left_alone(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `pkg.core.helper` is a path of both apps; only app a's strings are
+    # app a's helper.
+    test_file = 'TARGET = "pkg.core.helper"\n'
+    pyproject = '[project.scripts]\nrun = "pkg.core:helper"\n'
+    root = _repo(
+        temp_repo,
+        {
+            "apps/a/pkg/__init__.py": "",
+            "apps/a/pkg/core.py": _CORE,
+            "apps/a/tests/test_core.py": test_file,
+            "apps/a/pyproject.toml": pyproject,
+            "apps/b/pkg/__init__.py": "",
+            "apps/b/pkg/core.py": _CORE,
+            "apps/b/tests/test_core.py": test_file,
+            "apps/b/pyproject.toml": pyproject,
+        },
+    )
+    _rename(root, mock_ingestor, "apps.a.pkg.core.helper", "add_one")
+    a, b = root / "apps" / "a", root / "apps" / "b"
+    assert 'TARGET = "pkg.core.add_one"' in (a / "tests" / "test_core.py").read_text()
+    assert '"pkg.core:add_one"' in (a / "pyproject.toml").read_text()
+    assert (b / "tests" / "test_core.py").read_text() == test_file
+    assert (b / "pyproject.toml").read_text() == pyproject
+
+
+def test_an_undecodable_byte_before_the_path_keeps_its_offset(
+    repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # A Latin-1 `é` before the entry point: a decode that replaced it would
+    # shift every later offset by two bytes and refuse the rename.
+    (repo / "setup.cfg").write_bytes(
+        b"[metadata]\nauthor = Ren\xe9\n\n[options.entry_points]\n"
+        b"console_scripts =\n    renstr = pkg.core:main\n"
+    )
+    _rename(repo, mock_ingestor, "pkg.core.main", "run_main")
+    assert b"renstr = pkg.core:run_main" in (repo / "setup.cfg").read_bytes()
+
+
+def test_a_symlinked_file_is_patched_once(repo: Path, mock_ingestor: MagicMock) -> None:
+    _repo(repo, {"tests/target.py": 'TARGET = "pkg.core.helper"\n'})
+    try:
+        (repo / "tests" / "alias.py").symlink_to("target.py")
+    except OSError:
+        pytest.skip("symlinks are not available here")
+    _rename(repo, mock_ingestor, "pkg.core.helper", "add_one")
+    assert (repo / "tests" / "target.py").read_text() == 'TARGET = "pkg.core.add_one"\n'
