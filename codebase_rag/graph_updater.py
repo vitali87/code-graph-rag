@@ -2292,10 +2292,12 @@ class GraphUpdater:
             # resolving it would re-attribute in-function uses to the Module.
             if call.rel_path not in self._reparsed_file_keys:
                 continue
+            # By column too: the edge is located at the use, so a use in the
+            # second of two definitions sharing a line must not join the first.
             containing = [
                 s
                 for s in spans.get(call.rel_path, ())
-                if s.start_line <= call.line <= s.end_line
+                if s.contains(call.line, call.col)
                 and s.qualified_name != call.callee_qn
             ]
             if containing:

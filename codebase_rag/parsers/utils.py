@@ -175,7 +175,12 @@ def record_cpp_definition_span(
     rel = cached_relative_path(file_path, repo_path).as_posix()
     spans.setdefault(rel, []).append(
         CppDefinitionSpan(
-            node.start_point[0] + 1, node.end_point[0] + 1, label, qualified_name
+            node.start_point[0] + 1,
+            node.end_point[0] + 1,
+            label,
+            qualified_name,
+            node.start_point[1],
+            node.end_point[1],
         )
     )
 

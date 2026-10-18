@@ -1045,6 +1045,20 @@ class CppDefinitionSpan(NamedTuple):
     end_line: int
     label: str
     qualified_name: str
+    # 0-based, end exclusive: two definitions can share a line. A span read
+    # back from the graph has no end column, so its last line counts whole.
+    start_col: int = 0
+    end_col: int | None = None
+
+    def contains(self, line: int, col: int) -> bool:
+        """Whether the 1-based `line`, 0-based `col` lies inside the span."""
+        if not self.start_line <= line <= self.end_line:
+            return False
+        if line == self.start_line and col < self.start_col:
+            return False
+        return not (
+            line == self.end_line and self.end_col is not None and col >= self.end_col
+        )
 
 
 class PendingMacroCall(NamedTuple):

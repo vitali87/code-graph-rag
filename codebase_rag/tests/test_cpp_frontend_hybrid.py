@@ -823,3 +823,34 @@ def test_hybrid_include_whose_name_a_later_include_took_is_one_located_edge(
         store, cs.RelationshipType.IMPORTS, "hybshadow.calc", "hybshadow.b.util"
     )
     assert second == [{cs.KEY_LINE: 2, cs.KEY_COL: 0, cs.KEY_ALIAS: "util"}], second
+
+
+def test_hybrid_macro_use_belongs_to_the_definition_holding_its_column(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Two definitions on one line: each use is its own definition's, so the
+    # located edge merges with tree-sitter's instead of naming the first.
+    root = temp_repo / "hybline"
+    root.mkdir()
+    (root / "calc.h").write_text("#define DOUBLE(x) ((x) + (x))\n", encoding="utf-8")
+    source = (
+        '#include "calc.h"\n'
+        "int one() { return DOUBLE(1); } int two() { return DOUBLE(2); }\n"
+    )
+    (root / "calc.cpp").write_text(source, encoding="utf-8")
+    (root / "compile_commands.json").write_text(
+        json.dumps([_compdb_entry(root, root / "calc.cpp")]), encoding="utf-8"
+    )
+    store = _StatefulIngestor()
+    _index_dup(root, monkeypatch, store)
+    line = source.splitlines()[1]
+    first = line.index("DOUBLE")
+    second = line.index("DOUBLE", first + 1)
+    one = _sites(
+        store, cs.RelationshipType.CALLS, "hybline.calc.one", "hybline.calc.h.DOUBLE"
+    )
+    two = _sites(
+        store, cs.RelationshipType.CALLS, "hybline.calc.two", "hybline.calc.h.DOUBLE"
+    )
+    assert one == [{cs.KEY_LINE: 2, cs.KEY_COL: first}], one
+    assert two == [{cs.KEY_LINE: 2, cs.KEY_COL: second}], two
