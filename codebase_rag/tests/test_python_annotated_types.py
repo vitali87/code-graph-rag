@@ -86,6 +86,18 @@ class Model:
         return self.dep.handler()
 
 
+class Holder:
+    def __init__(self):
+        self.dep: Annotated[Target, Doc("i")] = None
+        self.quoted: Annotated["Target", Doc("q")]
+
+    def via_attribute(self):
+        return self.dep.handler()
+
+    def via_quoted_attribute(self):
+        return self.quoted.handler()
+
+
 def fn(t: Annotated[Target, Doc("f")]):
     return t.handler()
 
@@ -171,6 +183,8 @@ def test_an_annotated_self_type_enter_types_the_with_target(
         "m.User.via_return",
         "m.User.by_static",
         "m.Model.via_field",
+        "m.Holder.via_attribute",
+        "m.Holder.via_quoted_attribute",
         "m.fn",
         "m.outer.inner",
     ],

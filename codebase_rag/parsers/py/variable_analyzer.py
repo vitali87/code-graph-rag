@@ -366,7 +366,9 @@ class PythonVariableAnalyzerMixin(_VarBase):
             return
         annotation_node = assignment.child_by_field_name(cs.TS_FIELD_TYPE)
         if annotation_node is not None:
-            annotation = safe_decode_text(annotation_node)
+            # Through any `Annotated[T, ...]` to `T`, as the other annotation
+            # readers are (issue #2873).
+            annotation = annotation_text(annotation_node)
             if annotation:
                 annotation = unquote_forward_refs(annotation)
                 # The shared normalizer accepts optional pipe unions, but not
