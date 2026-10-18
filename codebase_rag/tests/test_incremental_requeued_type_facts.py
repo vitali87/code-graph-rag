@@ -172,3 +172,33 @@ def test_a_qualified_name_is_not_bound_by_a_same_named_target(
     assert {e for e in after if "route" in e[0]} == {
         e for e in fresh if "route" in e[0]
     }, after
+
+
+def test_an_aliased_import_does_not_gain_a_same_named_type(tmp_path: Path) -> None:
+    # `from matcher.core import Match as Bar`: the edge reaches a target the
+    # written `Bar` does not spell, so the requeue resolves `Bar` again, and
+    # without the file's imports reached printer.jsont's own `Bar` (#3007
+    # review). That type was there when the file was last parsed with its
+    # imports, so the sync leaves the edges as a fresh index has them.
+    files = {
+        "matcher/__init__.py": "",
+        "matcher/core.py": "class Match:\n    start = 0\n",
+        "printer/__init__.py": "",
+        "printer/jsont.py": 'class Bar:\n    text = b""\n',
+        "printer/util.py": (
+            "from matcher.core import Match as Bar\n\n\n"
+            "def trim(line: Bar) -> Bar:\n    return line\n"
+        ),
+    }
+    root = tmp_path / "repo"
+    _write(root, files)
+    store = _StatefulIngestor()
+    fresh = _sync(root, store, force=True)
+    assert ("printer.util.trim RETURNS", "matcher.core.Match") in fresh, fresh
+
+    _write(root, {"printer/other.py": "def unrelated():\n    return 1\n"})
+    after = _sync(root, store, force=False)
+
+    assert {e for e in after if "trim" in e[0]} == {
+        e for e in fresh if "trim" in e[0]
+    }, after

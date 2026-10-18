@@ -21,7 +21,7 @@ Contract for the two properties:
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Container, Mapping
 from typing import NamedTuple
 
 from tree_sitter import Node
@@ -334,6 +334,7 @@ class TypeReferenceResolver:
         self._prefix = f"{project_name}{cs.SEPARATOR_DOT}"
         # Only generic C# types are recorded: an absent qn declares none.
         self._csharp_arity = csharp_generic_arity or {}
+        self._unparsed: Container[str] = frozenset()
 
     def _is_type(self, qn: str) -> bool:
         # An annotation is a type position: a TS `type`/`interface` sharing
@@ -351,6 +352,14 @@ class TypeReferenceResolver:
         each part to its group, as parsing builds them.
         """
         self._partial_groups = partial_groups
+
+    def join_unparsed(self, unparsed: Container[str]) -> None:
+        """The definitions an incremental run restored from the graph rather
+        than parsed: those of every file it left unchanged."""
+        self._unparsed = unparsed
+
+    def is_unparsed(self, qn: str) -> bool:
+        return qn in self._unparsed
 
     def _every_part(self, types: Mapping[str, None]) -> list[str]:
         # A reference to a partial type names every part, not one chosen
@@ -472,6 +481,7 @@ class TypeReferenceResolver:
         module_qn: str,
         path: str | None = None,
         resolved_targets: frozenset[str] = frozenset(),
+        requeued: bool = False,
     ) -> list[str]:
         # A C# annotation's type arguments decide which of two same-named
         # types it means; elsewhere the name alone is looked up, as ever.
@@ -494,7 +504,12 @@ class TypeReferenceResolver:
                 )
                 continue
             qn = self.resolve(name, module_qn, arity)
-            if qn is not None:
+            # A requeued annotation resolves without its file's imports. A
+            # type in an unchanged file was there when that file was parsed
+            # with them, and its edges hold what they chose, so reaching it
+            # now is only the nearest same-named guess: `from matcher.core
+            # import Match as Bar` reached another file's `Bar` (#3007 review).
+            if qn is not None and not (requeued and qn in self._unparsed):
                 found.setdefault(qn, None)
         return self._every_part(found)
 
@@ -517,7 +532,11 @@ def _emit_returns(
     if fact.return_type is None:
         return 0
     targets = resolver.resolve_annotation(
-        fact.return_type, fact.module_qn, fact.path, fact.resolved_targets
+        fact.return_type,
+        fact.module_qn,
+        fact.path,
+        fact.resolved_targets,
+        resolver.is_unparsed(fact.qualified_name),
     )
     for target_qn in targets:
         ingestor.ensure_relationship_batch(
@@ -533,11 +552,12 @@ def _emit_accepts(
     source: tuple[str, str, str],
 ) -> int:
     accepted: dict[str, None] = {}
+    requeued = resolver.is_unparsed(fact.qualified_name)
     for annotation in fact.param_types or ():
         if not annotation:
             continue
         for target_qn in resolver.resolve_annotation(
-            annotation, fact.module_qn, fact.path, fact.resolved_targets
+            annotation, fact.module_qn, fact.path, fact.resolved_targets, requeued
         ):
             accepted.setdefault(target_qn, None)
     for target_qn in accepted:
