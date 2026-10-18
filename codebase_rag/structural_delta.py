@@ -841,6 +841,11 @@ def _names_bound_by(node: ast.AST, pending: list[ast.AST]) -> Iterator[str]:
         for alias in node.names:
             yield alias.asname or alias.name.partition(cs.SEPARATOR_DOT)[0]
         return
+    yield from _field_bindings(node, pending)
+
+
+def _field_bindings(node: ast.AST, pending: list[ast.AST]) -> Iterator[str]:
+    """What a statement's own expressions bind; its statement lists are queued."""
     for field, value in ast.iter_fields(node):
         if field in _PY_BLOCK_FIELDS:
             pending.extend(value)
