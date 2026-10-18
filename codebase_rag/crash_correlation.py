@@ -57,6 +57,11 @@ _TB_FRAME = re.compile(
 )
 _TB_HEADER = "Traceback (most recent call last):"
 _TB_GROUP_HEADER = "Exception Group Traceback (most recent call last):"
+# The lines that join one section of a chained traceback to the next.
+_TB_CHAIN_LINKS = (
+    "The above exception was the direct cause of the following exception:",
+    "During handling of the above exception, another exception occurred:",
+)
 # ``ValueError: boom`` or a bare ``KeyboardInterrupt``; the leading class of
 # characters admits Unicode identifiers, which Python allows in class names.
 _TB_EXCEPTION = re.compile(r"^(?P<type>[^\W\d][\w.]*)(?::\s?(?P<message>.*))?$")
@@ -468,6 +473,15 @@ def _member_column(separator: re.Match[str]) -> int:
 
 def _parse_section(lines: list[_TracebackLine], level: int) -> ParsedTraceback:
     """The propagated exception of `lines`, whose own text sits at `level`."""
+    # The last section of a chain propagated. One printed without being
+    # raised has no header, and the last header is then its cause's.
+    links = [
+        index
+        for index, line in enumerate(lines)
+        if line.level == level and line.text.strip() in _TB_CHAIN_LINKS
+    ]
+    if links:
+        lines = lines[links[-1] + 1 :]
     headers = [
         index
         for index, line in enumerate(lines)

@@ -421,6 +421,34 @@ def test_a_note_shaped_like_a_separator_leaves_a_later_group_whole() -> None:
     )
 
 
+def test_a_logged_group_caused_by_another_group_lists_only_its_own_members() -> None:
+    # A group printed without being raised has no traceback header, so the
+    # last header was its cause's: the report named the cause, with the
+    # members of both groups.
+    cause = _raised(ExceptionGroup, "original-batch", [_raised(ValueError, "old")])
+    reported = ExceptionGroup("reported-batch", [_raised(TypeError, "new-check")])
+    reported.__cause__ = cause
+
+    parsed = parse_python_traceback(_format(reported))
+
+    assert _outline(parsed) == (
+        "ExceptionGroup",
+        "reported-batch (1 sub-exception)",
+        [],
+        [("TypeError", "new-check", ["_raised"], [])],
+    )
+
+
+def test_a_logged_error_caused_by_a_raised_one_is_the_failure() -> None:
+    # Negative: the cause's stack is not the logged error's.
+    error = RuntimeError("logged")
+    error.__cause__ = _raised(KeyError, "k")
+
+    parsed = parse_python_traceback(_format(error))
+
+    assert _outline(parsed) == ("RuntimeError", "logged", [], [])
+
+
 # --- explain_traceback and rank_root_causes -----------------------------------
 
 
