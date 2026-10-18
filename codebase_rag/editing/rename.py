@@ -29,6 +29,7 @@ rewritten: prose is not a graph edge.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Callable, Iterable
 from pathlib import Path, PurePosixPath
 from typing import NamedTuple
@@ -94,6 +95,11 @@ _RESERVED_WORDS: dict[cs.SupportedLanguage, frozenset[str]] = {
     cs.SupportedLanguage.CSHARP: cs.CSHARP_RESERVED_KEYWORDS,
     cs.SupportedLanguage.LUA: cs.LUA_RESERVED_WORDS,
 }
+# Languages where a method's name is an IdentifierName, which a reserved
+# word may be: `class Store { delete() {} }` and `this.delete()` are valid.
+_RESERVED_METHOD_NAME_LANGUAGES = frozenset(
+    {cs.SupportedLanguage.JS, cs.SupportedLanguage.TS, cs.SupportedLanguage.TSX}
+)
 # Languages whose identifiers may contain `$` (`$emit`, jQuery's `$`).
 _DOLLAR_IDENTIFIER_LANGUAGES = frozenset(
     {
@@ -105,6 +111,18 @@ _DOLLAR_IDENTIFIER_LANGUAGES = frozenset(
         cs.SupportedLanguage.DART,
     }
 )
+
+
+def _is_go_identifier(name: str) -> bool:
+    # Go's letters are `_` and Unicode category L, its digits category Nd
+    # alone; `isidentifier` also admits `a·b`, a letter number (`Ⅻ`) and a
+    # combining mark.
+    return all(
+        char == cs.CHAR_UNDERSCORE
+        or unicodedata.category(char).startswith(cs.UNICODE_LETTER_CATEGORY_PREFIX)
+        or (index and unicodedata.category(char) == cs.UNICODE_DECIMAL_DIGIT_CATEGORY)
+        for index, char in enumerate(name)
+    )
 
 
 _STRUCTURAL = "structural"
@@ -1505,17 +1523,25 @@ class Renamer:
         `aünï` passed; and a reserved word passed this check only to fail
         the post-rewrite parse, if that parse failed at all (issue #3225).
         """
-        path = graph_query.definition(self.fetch_all, self.project, qn, None)["path"]
+        found = graph_query.definition(self.fetch_all, self.project, qn, None)
+        path = found["path"]
         language = get_language_for_extension(Path(path).suffix) if path else None
         spelled = (
             new_name.replace("$", "_")
             if language in _DOLLAR_IDENTIFIER_LANGUAGES
             else new_name
         )
-        if not spelled.isidentifier():
+        if not spelled.isidentifier() or (
+            language == cs.SupportedLanguage.GO and not _is_go_identifier(new_name)
+        ):
             return cs.RENAME_BAD_NAME.format(name=new_name)
-        if language is not None and new_name in _RESERVED_WORDS.get(
-            language, frozenset()
+        if (
+            language is not None
+            and new_name in _RESERVED_WORDS.get(language, frozenset())
+            and not (
+                language in _RESERVED_METHOD_NAME_LANGUAGES
+                and found["label"] == cs.NodeLabel.METHOD.value
+            )
         ):
             return cs.RENAME_RESERVED_WORD.format(name=new_name, language=language)
         return None

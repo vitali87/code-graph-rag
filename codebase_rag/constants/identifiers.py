@@ -7,6 +7,11 @@ parsers already hold (`CSHARP_RESERVED_KEYWORDS`, `LUA_RESERVED_WORDS`).
 
 import keyword
 
+# The Unicode general categories Go spells identifiers with: every letter
+# category (`Lu`, `Ll`, `Lo`, ...) and the decimal digits.
+UNICODE_LETTER_CATEGORY_PREFIX = "L"
+UNICODE_DECIMAL_DIGIT_CATEGORY = "Nd"
+
 PY_RESERVED_WORDS = frozenset(keyword.kwlist)
 # ECMAScript reserved words, strict mode included, plus `await` (reserved in
 # modules) and the literals.

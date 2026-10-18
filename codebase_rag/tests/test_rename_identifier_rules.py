@@ -122,3 +122,44 @@ def test_names_no_language_allows_are_still_refused(
     with pytest.raises(RenameRefused) as refused:
         _plan(temp_repo, graph, member, new)
     assert str(refused.value) == cs.RENAME_BAD_NAME.format(name=new)
+
+
+_JS_CLASS = (
+    "class Store {\n  save(x) { return x; }\n  run() { return this.save(1); }\n}\n"
+    "module.exports = { Store };\n"
+)
+
+
+@pytest.mark.parametrize("new", ["delete", "new"])
+def test_a_js_method_may_take_a_reserved_word(
+    temp_repo: Path, mock_ingestor: MagicMock, new: str
+) -> None:
+    # A method's name is an IdentifierName, which a reserved word may be:
+    # `class Store { delete() {} }` and `this.delete()` are valid.
+    _write(temp_repo, "store.js", _JS_CLASS)
+    graph = _index(temp_repo, mock_ingestor)
+    report = _plan(temp_repo, graph, "store.Store.save", new)
+    assert f"  {new}(x) {{" in report.diff, report.message
+
+
+@pytest.mark.parametrize("new", ["a·b", "Ⅻfoo", "á"])
+def test_a_name_go_does_not_allow_is_refused(
+    temp_repo: Path, mock_ingestor: MagicMock, new: str
+) -> None:
+    # Negative: Go identifiers are Unicode letters, `_` and decimal digits
+    # alone; Python's rule also admits the middle dot, a letter number (Ⅻ)
+    # and a combining mark.
+    _write(temp_repo, "main.go", _GO)
+    graph = _index(temp_repo, mock_ingestor)
+    with pytest.raises(RenameRefused) as refused:
+        _plan(temp_repo, graph, "main.helper", new)
+    assert str(refused.value) == cs.RENAME_BAD_NAME.format(name=new)
+
+
+def test_a_unicode_letter_go_name_is_accepted(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    _write(temp_repo, "main.go", _GO)
+    graph = _index(temp_repo, mock_ingestor)
+    report = _plan(temp_repo, graph, "main.helper", "数据2")
+    assert "func 数据2() int" in report.diff, report.message
