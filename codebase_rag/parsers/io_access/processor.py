@@ -39,6 +39,7 @@ from .extract import (
     iter_token_tree_calls,
     literal_target,
     match_normalised,
+    mode_direction,
     normalise,
     positional_arg_node,
     python_globally_rebound_before,
@@ -1327,17 +1328,7 @@ class IOAccessProcessor:
     ) -> IODirection:
         direction = sink.direction
         if sink.mode_arg is not None:
-            mode = literal_target(
-                node,
-                sink.mode_arg,
-                string_type=descriptor.string_type,
-                content_type=descriptor.string_content_type,
-                keyword_arg_type=descriptor.keyword_arg_type,
-                wrapper_type=descriptor.argument_wrapper_type,
-            )
-            direction = sink.effective_direction(
-                None if mode == DYNAMIC_TARGET else mode
-            )
+            direction = mode_direction(node, sink, descriptor)
         if sink.method_options_arg is not None:
             direction = self._method_options_direction(node, sink, descriptor)
         return direction

@@ -143,3 +143,60 @@ def test_look_alikes_are_not_io(edges: set[tuple[str, str, str]], caller: str) -
     # Negatives: a parameter named `process`, a local `readFile` and some
     # other object's `stdout` stay local calls.
     assert _io(edges, caller) == set(), edges
+
+
+_OPEN_FLAGS = """\
+import * as fsp from "fs/promises";
+
+export async function openW() { const fh = await fsp.open("/tmp/out", "w"); console.log(fh); }
+export async function openA() { const fh = await fsp.open("/tmp/app", "a"); console.log(fh); }
+export async function openR() { const fh = await fsp.open("/tmp/in"); console.log(fh); }
+export async function openDyn(flags) { const fh = await fsp.open("/tmp/dyn", flags); console.log(fh); }
+"""
+
+
+@pytest.fixture(scope="module")
+def flag_edges(tmp_path_factory: pytest.TempPathFactory) -> set[tuple[str, str, str]]:
+    parsers, queries = load_parsers()
+    if "javascript" not in parsers:
+        pytest.skip("javascript parser not available")
+    root = tmp_path_factory.mktemp("io2775f") / "svc"
+    root.mkdir()
+    (root / "flags.mjs").write_text(_OPEN_FLAGS, encoding="utf-8")
+    mock = MagicMock()
+    GraphUpdater(
+        ingestor=mock,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name="svc",
+        capture=resolve_capture(["io"]),
+    ).run(force=True)
+    return {
+        (_short(str(c.args[0][2])), str(c.args[1]), str(c.args[2][2]))
+        for c in mock.ensure_relationship_batch.call_args_list
+        if str(c.args[1]) in ("READS_FROM", "WRITES_TO", "FLOWS_TO")
+    }
+
+
+def test_a_write_only_open_is_no_read_source(
+    flag_edges: set[tuple[str, str, str]],
+) -> None:
+    # Opened with "w" or "a", nothing is read from the file to flow on; the
+    # default "r" and a flags value only known at run time still can be
+    # (#2775 review).
+    flows = {src for src, rel, _dst in flag_edges if rel == "FLOWS_TO"}
+    assert flows == {"resource::FILE::/tmp/in", "resource::FILE::/tmp/dyn"}, flag_edges
+
+
+def test_dynamic_open_flags_may_read_and_write(
+    flag_edges: set[tuple[str, str, str]],
+) -> None:
+    file_io = {e for e in _io(flag_edges, "openDyn") if "FILE" in e[1]}
+    assert file_io == {
+        ("READS_FROM", "resource::FILE::/tmp/dyn"),
+        ("WRITES_TO", "resource::FILE::/tmp/dyn"),
+    }, flag_edges
+    assert {e for e in _io(flag_edges, "openR") if "FILE" in e[1]} == {
+        ("READS_FROM", "resource::FILE::/tmp/in")
+    }, flag_edges
