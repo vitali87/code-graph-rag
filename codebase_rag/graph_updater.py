@@ -7697,7 +7697,7 @@ class GraphUpdater:
             parser, grammar_bytes(file_bytes, language, filepath), language
         ).root_node
         captures = sorted_captures(QueryCursor(functions_query), root)
-        return FileFlowFunctions(captures.get(cs.CAPTURE_FUNCTION, ()), language)
+        return FileFlowFunctions(captures.get(cs.CAPTURE_FUNCTION, ()), language, root)
 
     def _captured_inbound_edges(
         self, reindexed_keys: list[str], deleted_set: set[str]

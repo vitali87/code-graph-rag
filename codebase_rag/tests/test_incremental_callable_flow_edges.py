@@ -87,8 +87,24 @@ _EARLY_USER = (
     "    return early_wrap(_early)\n"
 )
 
+# The wrapper calls the receiver under an import alias.
+_ALIAS_WRAP = (
+    "from registry import run_callback as invoke\n\n\n"
+    "def alias_wrap(cb):\n"
+    "    return invoke(cb)\n"
+)
+_ALIAS_USER = (
+    "from alias_wrap import alias_wrap\n\n\n"
+    "def _aliased():\n"
+    '    return "aliased"\n\n\n'
+    "def run():\n"
+    "    return alias_wrap(_aliased)\n"
+)
+
 _FILES = {
     "util.py": _UTIL,
+    "alias_wrap.py": _ALIAS_WRAP,
+    "alias_user.py": _ALIAS_USER,
     "aaa_wrap.py": _EARLY_WRAP,
     "aaa_user.py": _EARLY_USER,
     "wrap.py": _WRAP,
@@ -193,6 +209,7 @@ def _widen_log(root: Path) -> None:
 _CALLBACK = ("proj.registry.run_callback", "CALLS", "proj.plugins._on_start")
 _FORWARDED = ("proj.registry.run_callback", "CALLS", "proj.user._hook")
 _EARLY = ("proj.registry.run_callback", "CALLS", "proj.aaa_user._early")
+_ALIASED = ("proj.registry.run_callback", "CALLS", "proj.alias_user._aliased")
 
 
 def _instantiates_tag(edges: _EdgeSet) -> set[tuple[str, str, str]]:
@@ -214,6 +231,7 @@ def test_editing_an_import_of_the_receiver_keeps_the_callable_edges(
     assert _CALLBACK in clean, "fixture must produce the callable-argument edge"
     assert _FORWARDED in clean, "fixture must produce the pass-through edge"
     assert _EARLY in clean, "fixture must produce the early wrapper's edge"
+    assert _ALIASED in clean, "fixture must produce the aliased wrapper's edge"
     assert _instantiates_tag(clean), "fixture must produce the register edge"
 
     _widen_log(root)
@@ -223,6 +241,7 @@ def test_editing_an_import_of_the_receiver_keeps_the_callable_edges(
     assert _CALLBACK in after, sorted(clean - after)
     assert _FORWARDED in after, sorted(clean - after)
     assert _EARLY in after, sorted(clean - after)
+    assert _ALIASED in after, sorted(clean - after)
     assert _instantiates_tag(after) == _instantiates_tag(clean)
     assert after == clean, (sorted(clean - after), sorted(after - clean))
 
