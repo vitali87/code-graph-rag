@@ -110,11 +110,12 @@ def test_endpoint_callers_join_the_resolved_and_the_direct_rows() -> None:
         CALLER,
     ]
     assert rows[1]["url"] == "http://users:8000/users/42"
-    # The target is passed as `$qn`, matched against handler OR identity.
+    # The target is passed as `$qn`, matched against handler OR identity; the
+    # exposed endpoints and the project list (the owner check) take no target.
     assert all(
         params[cs.KEY_QN] == ENDPOINT
         for query, params in graph.calls
-        if query != cq.CYPHER_GRAPH_EXPOSED_ENDPOINTS
+        if query not in (cq.CYPHER_GRAPH_EXPOSED_ENDPOINTS, cq.CYPHER_LIST_PROJECTS)
     )
 
 
