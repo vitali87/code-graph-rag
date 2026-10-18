@@ -5297,10 +5297,9 @@ class GraphUpdater:
         carrying two keys reads as the whole node to every store that does
         not merge. Flushed first so the Module nodes of a first build exist
         to match; the modules with nothing recorded (most) are cleared in
-        one statement, the rest set one by one. A store that cannot take a
-        write is left as it was, which reads as "nothing waited"."""
-        if not isinstance(self.ingestor, QueryProtocol):
-            return
+        one statement, the rest set one by one. A store that takes no query
+        (the protobuf index) gets the list as a second write of the Module
+        node, which it merges, or the exported field stays empty (#3206)."""
         recorded = self.factory.import_processor.unresolved_references
         cleared: list[str] = []
         pending: list[tuple[str, list[str]]] = []
@@ -5320,6 +5319,16 @@ class GraphUpdater:
             else:
                 cleared.append(module_qn)
         if not cleared and not pending:
+            return
+        if not isinstance(self.ingestor, QueryProtocol):
+            for module_qn, names in (*((qn, []) for qn in cleared), *pending):
+                self._sink.ensure_node_batch(
+                    cs.NodeLabel.MODULE,
+                    {
+                        cs.KEY_QUALIFIED_NAME: module_qn,
+                        cs.KEY_UNRESOLVED_REFERENCES: names,
+                    },
+                )
             return
         self.ingestor.flush_all()
         try:

@@ -168,3 +168,20 @@ def test_every_property_a_run_writes_is_exported_or_listed(tmp_path: Path) -> No
             if value is not None and key not in fields and key not in allowed
         }
     assert not dropped, sorted(dropped)
+
+
+def test_a_module_keeps_the_names_it_could_not_resolve(tmp_path: Path) -> None:
+    # The graph SETs `unresolved_references` with a query the protobuf sink
+    # cannot run, so the field was declared yet empty in every index.
+    repo = tmp_path / "waits"
+    (repo / "pkg").mkdir(parents=True)
+    (repo / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (repo / "pkg" / "derived.py").write_text(
+        "from .base import Base\n\n\nclass D(Base):\n    pass\n", encoding="utf-8"
+    )
+    (repo / "use.cpp").write_text(
+        '#include "inc/shape.h"\nint use() { return 0; }\n', encoding="utf-8"
+    )
+    payloads = _index(repo, tmp_path / "idx")
+    assert list(payloads["pkg.derived"].unresolved_references) == ["Base"]
+    assert list(payloads["use"].unresolved_references) == ["inc/shape.h"]
