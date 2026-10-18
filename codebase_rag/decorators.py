@@ -25,21 +25,6 @@ def ensure_loaded[T](func: Callable[..., T]) -> Callable[..., T]:
     return wrapper
 
 
-def timing_decorator[**P, T](func: Callable[P, T]) -> Callable[P, T]:
-    @wraps(func)
-    def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
-        start = time.perf_counter()
-        try:
-            return func(*args, **kwargs)
-        finally:
-            elapsed = (time.perf_counter() - start) * 1000
-            # `wraps` copied the qualified name onto the wrapper; a bare Callable
-            # is not known to carry one.
-            logger.info(ls.FUNC_TIMING.format(func=wrapper.__qualname__, time=elapsed))
-
-    return wrapper
-
-
 def async_timing_decorator[**P, T](
     func: Callable[P, Awaitable[T]],
 ) -> Callable[P, Awaitable[T]]:
