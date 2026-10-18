@@ -88,6 +88,18 @@ class SemanticFacts:
     # IMPLEMENTS edges for a structurally-typed language with no syntactic base
     # list (Go #1179); languages with a base list use `base_kinds` instead.
     implements_pairs: list[ImplementsPair] = field(default_factory=list)
+    # Repo-relative module roots (`.` for the repository's own) the compiler
+    # analysed in full. A pair it did not report within one of them does not
+    # hold (Go #2483); a root missing here was never analysed, or its run
+    # failed. Not counted by `is_empty`: a run can analyse and find nothing.
+    analysed_roots: tuple[str, ...] = ()
+    # The repo-relative files those analyses type-checked: a build reads only
+    # the files its GOOS and tags select, so a pair resting on any other file
+    # was never compared, and the fallback keeps it (PR #3360 review).
+    checked_files: frozenset[str] = frozenset()
+    # The declarations (file, line, col) of the types and interfaces those
+    # analyses compared: a pair resting on any other is the fallback's too.
+    compared_types: frozenset[tuple[str, int, int]] = frozenset()
     # Per invocation argument, the locals/parameters the compiler proves
     # reach it (C# Roslyn today, issue #1187). The flow walk unions their
     # taint with its own syntactic evaluation, so an expression shape the
@@ -135,7 +147,16 @@ class LanguageFrontend(Protocol):
 
     def applies(self, repo_path: Path) -> bool: ...
 
-    def run(self, repo_path: Path, files: Sequence[Path]) -> SemanticFacts: ...
+    # `rescued_files` are the repo-relative files the indexing walk keeps
+    # although a default-excluded directory name is on their path; a
+    # whole-repo tool that skips those names must still cover them, or they
+    # reach the graph without compiler facts (review of PR 2490).
+    def run(
+        self,
+        repo_path: Path,
+        files: Sequence[Path],
+        rescued_files: frozenset[str] = frozenset(),
+    ) -> SemanticFacts: ...
 
 
 class FrontendPhase(StrEnum):
