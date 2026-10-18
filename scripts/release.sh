@@ -25,6 +25,12 @@ if git rev-parse "${TAG}" >/dev/null 2>&1; then
   exit 1
 fi
 
+# code-graph-rag requires cgr-graph-rs, whose wheels this machine cannot build
+# for every platform; publishing without them would make this version
+# uninstallable, so stop before anything is committed or uploaded.
+echo "==> Checking cgr-graph-rs on PyPI"
+uv run --no-project --python ">=3.12" python scripts/check_cgr_graph_rs_on_pypi.py
+
 echo "==> Syncing server.json to ${VERSION}"
 perl -i -pe 's/"version": "[^"]*"/"version": "'"${VERSION}"'"/g' server.json
 if [ -n "$(git status --porcelain server.json)" ]; then
