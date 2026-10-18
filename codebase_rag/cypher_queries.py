@@ -1316,16 +1316,22 @@ RETURN t.qualified_name AS qualified_name, t.anchor_hash AS anchor_hash"""
 # 3 lost the edge when one statement deleted it and then merged it again.
 # The note must still carry the `write_id` the pass read: an `annotate` that
 # landed in between wrote newer mentions, which this result would overwrite.
+# And every followed key must still match a target: a definition replaced
+# under its new name would otherwise have that name saved without an edge,
+# and the next pass would read the newcomer as an in-place edit and bind it.
+# Either way nothing is written, and the next sync places the note afresh.
 CYPHER_GLOSS_SET_MENTIONS = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
 WHERE coalesce(g.write_id, '') = $write_id
-SET g.mention_qns = $mention_qns, g.mention_hashes = $mention_hashes,
-    g.mention_quotes = $mention_quotes, g.mentions_lost = $mentions_lost
-WITH g
 OPTIONAL MATCH (m)
 WHERE {_any_label("m", _GRAPH_DEFINITION_LABELS)} AND m.qualified_name STARTS WITH $project_prefix
   AND (m.qualified_name IN $attach_qns
        OR (m.qualified_name + $key_separator + m.anchor_hash) IN $attach_keys)
 WITH g, collect(DISTINCT m) AS targets
+WHERE all(key IN $attach_keys WHERE any(target IN targets
+          WHERE target.qualified_name + $key_separator + target.anchor_hash = key))
+SET g.mention_qns = $mention_qns, g.mention_hashes = $mention_hashes,
+    g.mention_quotes = $mention_quotes, g.mentions_lost = $mentions_lost
+WITH g, targets
 OPTIONAL MATCH (g)-[old:{_MENTIONS}]->(t)
 WHERE NOT t IN targets
 WITH g, targets, collect(old) AS stale_edges
