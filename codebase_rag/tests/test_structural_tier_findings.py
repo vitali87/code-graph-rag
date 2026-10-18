@@ -100,3 +100,15 @@ def test_other_files_are_analysed_as_before(tmp_path: Path) -> None:
     )
     assert _findings(mock, "risky"), "the Python finding disappeared"
     assert _findings(mock, "clean_rb") == set()
+
+
+def test_an_excluded_ruby_file_writes_no_findings_on_the_next_run(
+    tmp_path: Path,
+) -> None:
+    # Negative: the file is still readable, but a reused updater that now
+    # excludes it removes its Module, so the findings pass must not analyse it.
+    updater, mock = _build(tmp_path, {"deployer.rb": _DEPLOYER})
+    mock.reset_mock()
+    updater.exclude_paths = frozenset({"deployer.rb"})
+    updater.run()
+    assert _findings(mock, "deployer_rb") == set()

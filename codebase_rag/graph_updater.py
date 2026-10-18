@@ -6091,6 +6091,12 @@ class GraphUpdater:
         for qn in [qn for qn, path in qn_to_path.items() if path == file_path]:
             del qn_to_path[qn]
             self._rehydrated_module_qns.discard(qn)
+        # The ast-grep tier's modules go too: the findings pass reads its map
+        # as well, so a file excluded on a reused updater would keep writing
+        # findings for the Module the delete just removed (issue #2781).
+        tier_map = self.ast_grep_tier.module_qn_to_file_path
+        for qn in [qn for qn, path in tier_map.items() if path == file_path]:
+            del tier_map[qn]
         # The paths read back from the graph for an earlier incremental run
         # go with the registry entries: `_module_language` falls through to
         # them for a definition qn, and a replacement in another language
