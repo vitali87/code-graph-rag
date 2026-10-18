@@ -506,8 +506,21 @@ class TestLegacyPathKeyMigration:
         executed = self._run_capture(self.CLEAN_ROWS, damaged=True)
 
         purge_queries = [q for q in executed if "DETACH DELETE" in q]
-        assert any("count(DISTINCT p)" in q for q in purge_queries)
+        assert any("owner.root_path" in q for q in purge_queries)
         assert any("absolute_path IS NULL" in q for q in purge_queries)
+
+    def test_current_sharing_is_not_purged_without_legacy_constraints(
+        self,
+    ) -> None:
+        # Projects over the same files share Folder/File nodes by design, so
+        # once the constraints are gone only a node outside an owner's tree
+        # is purged, never every node two projects reach (issue #3025).
+        executed = self._run_capture(self.CLEAN_ROWS, damaged=True)
+
+        purge_queries = [q for q in executed if "DETACH DELETE" in q]
+        assert not any("count(DISTINCT p)" in q for q in purge_queries)
+        detector = next(q for q in executed if "damaged" in q and "parents" in q)
+        assert "root_path" in detector, detector
 
     def test_clean_database_issues_no_drops_or_purges(self) -> None:
         executed = self._run_capture(self.CLEAN_ROWS)
