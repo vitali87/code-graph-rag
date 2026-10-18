@@ -93,6 +93,8 @@ _STATEMENT_SLOTS: tuple[tuple[re.Pattern[bytes], re.Pattern[bytes], bool], ...] 
 # Words that follow a slot keyword without naming a routine
 # (`NO HANDLER VALIDATOR v` reads `VALIDATOR` after `HANDLER`).
 _NOT_ROUTINES = frozenset({"no", "handler", "validator", "inline", "options"})
+# What a quoted identifier's content becomes in the mask.
+_QUOTED_FILL = 0x78  # x
 
 
 class DdlRoutineReference(NamedTuple):
@@ -149,8 +151,15 @@ def _slot_names(
 ) -> Iterator[tuple[int, int]]:
     # Spans of the names the statement's slot clauses carry. A top-level
     # clause inside parentheses is a parameter or column, not the clause.
-    for match in slot.finditer(masked, start, end):
+    pos = start
+    while (match := slot.search(masked, pos, end)) is not None:
         lo, hi = match.span(_NAME_GROUP)
+        if masked[lo:hi].decode(cs.ENCODING_UTF8, "replace").lower() in _NOT_ROUTINES:
+            # The next clause's keyword (`NO HANDLER VALIDATOR v`): read on
+            # from it, or its own routine is skipped.
+            pos = lo
+            continue
+        pos = hi
         if top_level and masked.count(b"(", start, lo) != masked.count(b")", start, lo):
             continue
         yield lo, hi
@@ -167,19 +176,26 @@ def _position(
 
 def _mask(text: bytes) -> bytes:
     # Comments, string literals and dollar-quoted bodies become spaces
-    # (newlines kept, so offsets and lines still match `text`). Quoted
-    # identifiers stay: `"MyFinal"` is a routine name, and a `;` inside one
-    # does not end the statement.
+    # (newlines kept, so offsets and lines still match `text`). A quoted
+    # identifier keeps its quotes, so `"MyFinal"` still matches as a routine
+    # name (read back from `text`), but its content is filled: a `;`, a
+    # parenthesis or a keyword inside one is not syntax.
     out = bytearray(text)
     i = 0
     while (lexical := _LEXICAL_START.search(text, i)) is not None:
         start = lexical.start()
         i, blanked = _lexical_end(text, start)
         if blanked:
-            for k in range(start, i):
-                if out[k] != 0x0A:
-                    out[k] = 0x20
+            _fill(out, start, i, 0x20)
+        elif text[start] == 0x22:  # "
+            _fill(out, start + 1, i - 1, _QUOTED_FILL)
     return bytes(out)
+
+
+def _fill(out: bytearray, lo: int, hi: int, byte: int) -> None:
+    for k in range(lo, min(hi, len(out))):
+        if out[k] != 0x0A:
+            out[k] = byte
 
 
 def _lexical_end(text: bytes, i: int) -> tuple[int, bool]:

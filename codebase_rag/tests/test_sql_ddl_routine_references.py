@@ -77,6 +77,8 @@ CREATE FUNCTION plsample_call_handler() RETURNS language_handler LANGUAGE sql AS
 CREATE FUNCTION add_support(internal) RETURNS internal LANGUAGE sql AS $$ SELECT 1 $$;
 CREATE FUNCTION ghost() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
 CREATE FUNCTION audit_note() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
+CREATE FUNCTION fdw_only_validator(text[], oid) RETURNS void LANGUAGE sql AS $$ SELECT 1 $$;
+CREATE FUNCTION quoted_trigger_fn() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;
 """
 _WIRING = """\
 CREATE TRIGGER t2 AFTER INSERT ON items FOR EACH ROW EXECUTE PROCEDURE audit.log_row();
@@ -108,6 +110,9 @@ CREATE TABLE settings (handler ghost, input ghost);
 /* audited */ CREATE TRIGGER t6 AFTER UPDATE ON items FOR EACH ROW -- EXECUTE FUNCTION ghost()
     WHEN (NEW.note <> 'a;b') EXECUTE FUNCTION audit_note();
 CREATE FUNCTION typed(support ghost) RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;
+CREATE FOREIGN DATA WRAPPER only_validates NO HANDLER VALIDATOR fdw_only_validator;
+CREATE TRIGGER "audit;insert" AFTER INSERT ON items FOR EACH ROW EXECUTE FUNCTION quoted_trigger_fn();
+CREATE TRIGGER "EXECUTE FUNCTION ghost(" AFTER UPDATE ON items FOR EACH ROW EXECUTE FUNCTION quoted_trigger_fn();
 """
 
 _Graph = tuple[Path, _StatefulIngestor]
@@ -222,6 +227,9 @@ def test_the_ddl_naming_a_routine_calls_it_from_its_line(
         ("routines.plsample_call_handler", 15),
         ("routines.add_support", 17),
         ("routines.audit_note", 28),
+        ("routines.fdw_only_validator", 30),
+        ("routines.quoted_trigger_fn", 31),
+        ("routines.quoted_trigger_fn", 32),
     ],
     ids=[
         "trigger-execute-procedure-qualified",
@@ -239,6 +247,9 @@ def test_the_ddl_naming_a_routine_calls_it_from_its_line(
         "language-handler",
         "function-support",
         "trigger-around-comments-and-a-semicolon-string",
+        "fdw-validator-after-no-handler",
+        "trigger-with-a-semicolon-in-its-quoted-name",
+        "trigger-with-syntax-in-its-quoted-name",
     ],
 )
 def test_each_ddl_clause_references_its_routine(
@@ -254,9 +265,9 @@ def test_a_routine_named_only_in_comments_strings_or_bodies_is_not_called(
     wiring: _StatefulIngestor,
 ) -> None:
     # Negative: the same clauses inside a `--` or `/* */` comment, a string
-    # literal and a dollar-quoted routine body are not DDL the file runs,
-    # a table's `handler ghost`/`input ghost` columns and a `support ghost`
-    # parameter are not routine slots.
+    # literal, a dollar-quoted routine body and a quoted trigger name are
+    # not DDL the file runs, a table's `handler ghost`/`input ghost` columns
+    # and a `support ghost` parameter are not routine slots.
     assert _callers(wiring, "routines.ghost") == {}
 
 
