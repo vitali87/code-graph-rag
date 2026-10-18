@@ -68,6 +68,25 @@ class FunctionMatch(TypedDict):
     line_number: int
 
 
+class MgclientProbeRequest(TypedDict):
+    """One Memgraph probe, as the parent hands it to the probe's own process."""
+
+    host: str
+    port: int
+    credentials: list[str] | None
+    # Run after connecting, or None to connect and close.
+    query: str | None
+    # The C runtime whose stdio buffers mgclient's stderr, by library name.
+    c_runtime: str
+
+
+class MgclientProbeReport(TypedDict):
+    succeeded: bool
+    # The message of the mgclient error connect raised, which is all that
+    # tells a refused login from a refused connection; None otherwise.
+    connect_error: str | None
+
+
 class StructuralSearchMatch(TypedDict):
     file: str
     line: int
@@ -93,6 +112,8 @@ class RelBatchRow(TypedDict):
     from_val: PropertyValue
     to_val: PropertyValue
     props: PropertyDict
+    # Set by the flush, which counts written rows by it (issue #2879).
+    row_index: NotRequired[int]
 
 
 BatchParams = NodeBatchRow | RelBatchRow | PropertyDict
@@ -100,6 +121,23 @@ BatchParams = NodeBatchRow | RelBatchRow | PropertyDict
 
 class BatchWrapper(TypedDict):
     batch: Sequence[BatchParams]
+
+
+# A Cypher parameter as the embedded engine is handed one: anything JSON can
+# hold, plus the ingestor's batch rows, named because a TypedDict is not a
+# Mapping[str, ...] subtype.
+type CypherParamValue = (
+    str
+    | int
+    | float
+    | bool
+    | None
+    | Sequence[CypherParamValue]
+    | Mapping[str, CypherParamValue]
+    | NodeBatchRow
+    | RelBatchRow
+)
+type CypherParams = Mapping[str, CypherParamValue]
 
 
 type SimpleName = str
@@ -128,6 +166,15 @@ type TrieNode = dict[str, TrieNode | QualifiedName | NodeType]
 type FunctionRegistry = dict[QualifiedName, NodeType]
 
 
+class OverloadSignature(NamedTuple):
+    # What tells one C++ member overload from another: the parameter types
+    # plus the cv/ref qualifiers (`(const std::string&) const`), and the
+    # parameter count for pairing a definition spelled differently from its
+    # declaration.
+    text: str
+    arity: int
+
+
 class FunctionRegistryTrieProtocol(Protocol):
     def __contains__(self, qualified_name: QualifiedName) -> bool: ...
     def __getitem__(self, qualified_name: QualifiedName) -> NodeType: ...
@@ -150,10 +197,57 @@ class FunctionRegistryTrieProtocol(Protocol):
     def find_ending_with(self, suffix: str) -> list[QualifiedName]: ...
 
     def register_unique_qn(
-        self, natural_qn: QualifiedName, start_line: int, start_col: int = 0
+        self,
+        natural_qn: QualifiedName,
+        start_line: int,
+        start_col: int = 0,
+        kind: NodeType | None = None,
+        origin: str | None = None,
     ) -> QualifiedName: ...
 
+    def claim_other_space(self, natural_qn: QualifiedName, kind: NodeType) -> bool: ...
+
+    def type_kind(self, qualified_name: QualifiedName) -> NodeType | None: ...
+
     def variants(self, qualified_name: QualifiedName) -> list[QualifiedName]: ...
+
+    def register_overload_qn(
+        self,
+        natural_qn: QualifiedName,
+        signature: OverloadSignature,
+        start_line: int,
+        start_col: int = 0,
+        declared_in_class: bool = False,
+    ) -> QualifiedName: ...
+
+    def overload_signature(
+        self, qualified_name: QualifiedName
+    ) -> OverloadSignature | None: ...
+
+    def restore_overload(
+        self,
+        qualified_name: QualifiedName,
+        signature_text: str,
+        declared_in_class: bool,
+    ) -> None: ...
+
+    def add_member_alias(
+        self, alias_qn: QualifiedName, target_qn: QualifiedName
+    ) -> None: ...
+
+    def member_alias_targets(
+        self, alias_qn: QualifiedName
+    ) -> tuple[QualifiedName, ...]: ...
+
+    def set_non_method_members(
+        self, class_qn: QualifiedName, names: Iterable[str]
+    ) -> None: ...
+
+    def binds_non_method(self, class_qn: QualifiedName, member: str) -> bool: ...
+
+    def non_method_holders(self, member: str) -> frozenset[QualifiedName]: ...
+
+    def alias_holders(self, member: str) -> frozenset[QualifiedName]: ...
 
     def mark_property(self, qualified_name: QualifiedName) -> None: ...
 
@@ -168,6 +262,10 @@ class FunctionRegistryTrieProtocol(Protocol):
     def mark_abstract(self, qualified_name: QualifiedName) -> None: ...
 
     def is_abstract(self, qualified_name: QualifiedName) -> bool: ...
+
+    def mark_module_private(self, qualified_name: QualifiedName) -> None: ...
+
+    def is_module_private(self, qualified_name: QualifiedName) -> bool: ...
 
     def mark_body_scoped_name(self, qualified_name: QualifiedName) -> None: ...
 
@@ -327,9 +425,26 @@ class QueryJsonOutput(TypedDict):
 class EmbeddingQueryResult(TypedDict):
     node_id: int
     qualified_name: str
+    label: NodeLabel
     start_line: int | None
     end_line: int | None
     path: str | None
+
+
+class EmbeddingSymbol(NamedTuple):
+    """The function or method an embedding belongs to, by what a re-parse keeps.
+
+    The label is part of it because the graph's identity constraints are per
+    label: a Function and a Method may share a qualified name and still be
+    two nodes, each with an embedding of its own.
+    """
+
+    label: NodeLabel
+    qualified_name: str
+
+
+# One embedding to store: the node it answers for, its vector, its symbol.
+type EmbeddingPoint = tuple[int, list[float], EmbeddingSymbol]
 
 
 class SemanticSearchResult(TypedDict):
@@ -435,6 +550,15 @@ class CSharpCallShape(NamedTuple):
     required: int
     variadic: bool
     is_static: bool
+
+
+class JavaStaticImport(NamedTuple):
+    """One Java `import static` declaration: the class whose static members
+    it brings into scope, and the member it names (`import static C.m;`), or
+    None for the on-demand form (`import static C.*;`)."""
+
+    class_path: str
+    member: str | None
 
 
 class CancelledResult(NamedTuple):
@@ -548,14 +672,6 @@ class LanguageQueries(TypedDict):
     parser: Parser
 
 
-class FunctionNodeProps(TypedDict, total=False):
-    qualified_name: str
-    name: str | None
-    start_line: int
-    end_line: int
-    docstring: str | None
-
-
 # float admits find_duplicate_code's 0-1 similarity threshold (issue #1342).
 # bool is listed for documentation only, being already a subtype of int, and
 # structural_replace's dry_run default has relied on that since it was added.
@@ -630,6 +746,21 @@ class DeadCodeConfig(NamedTuple):
     # exposing an endpoint is live only if an indexed call site reaches that
     # endpoint, so an endpoint nobody calls is reported (issue #1603).
     endpoint_roots: bool = True
+    # Every public or exported symbol is a root (the default, right for a
+    # library, whose API is called from outside the repository). Off, a
+    # symbol roots only as an entry point, test, decorated handler or runtime
+    # hook, so an application's unused public code is reported (issue #2527).
+    public_roots: bool = True
+
+
+class ProjectSync(NamedTuple):
+    """One project in `cgr status`, as the connected graph records it (#2444)."""
+
+    name: str
+    # None for a project synced before the time was kept in the graph, or
+    # one whose first sync never finished.
+    last_synced_at: str | None
+    interrupted: bool
 
 
 class AstFingerprintResult(NamedTuple):
@@ -978,9 +1109,11 @@ class DeferredInherit(NamedTuple):
     still point at a module that only RE-EXPORTS the parent, where the
     name-anchored guess is what finds the declaring one.
 
-    `written_ref` is a C# base as written (`NotificationHandler`1`): the
-    parse-time qn cannot say which name was written, and C# binds that
-    name by scope (namespace, enclosing namespaces, usings), issue #2534.
+    `written_ref` is a C# base as written, with its type-argument count in
+    CLR style (`NotificationHandler`1`): the parse-time qn cannot say which
+    name was written, and C# binds that name by scope (namespace, enclosing
+    namespaces, usings), issue #2534; `PB` and `PB<T>` are two types, so the
+    written arity picks between them (issue #2579).
     """
 
     rel_type: RelationshipType
@@ -991,6 +1124,10 @@ class DeferredInherit(NamedTuple):
     language: SupportedLanguage
     alt_parent_qn: str | None = None
     written_ref: str | None = None
+    # The label the child was declared with. The registry keeps one kind per
+    # name, so a TS interface sharing its name with a value (issue #2520)
+    # cannot be told from that value by its qualified name alone.
+    child_label: str | None = None
 
 
 class RustTraitImpl(NamedTuple):
@@ -1040,10 +1177,106 @@ class DeferredImportEdge(NamedTuple):
     site: PropertyDict | None = None
 
 
+class ScalaPackageBlock(NamedTuple):
+    """The body of one `package p { ... }` block, as a byte span."""
+
+    start: int
+    end: int
+    # The packages its body opens, innermost first, for relative lookups.
+    enclosing: tuple[str, ...]
+
+
+class ScalaClassBases(NamedTuple):
+    """A Scala class's `extends ... with ...` bases, as written, and its start."""
+
+    point: int
+    bases: tuple[str, ...]
+
+
+class ScalaPackageScan(NamedTuple):
+    """What one Scala file declares and mentions (issue #2450).
+
+    Scala packages need not mirror directories, so the package clauses are
+    the only answer to "does this repo define the package an import names".
+    """
+
+    # Each package the file opens -> the names it declares directly in it.
+    packages: dict[str, frozenset[str]]
+    # Packages whose members the file's imports may name relatively,
+    # innermost first: `package a` then `package b` opens `a.b` and `a`.
+    enclosing: tuple[str, ...]
+    # Every name the file writes outside its import and package clauses: the
+    # evidence that pins a wildcard import to the modules actually used.
+    mentions: frozenset[str]
+    # Every `package p { ... }` block: sibling blocks see different packages.
+    blocks: tuple[ScalaPackageBlock, ...]
+    # Class qn relative to the module -> where it sits and its bases as
+    # written, so a base resolves through the imports of its own block.
+    class_bases: dict[str, ScalaClassBases]
+
+
+class ScalaImportBinding(NamedTuple):
+    """One name a Scala import binds, where it is visible, and its site."""
+
+    local_name: str
+    path: str
+    # The packages the import sits in, innermost first.
+    enclosing: tuple[str, ...]
+    # The package block the import is visible in; None for the whole file.
+    block: ScalaPackageBlock | None
+    site: PropertyDict | None
+
+
+class ScalaBlockImports(NamedTuple):
+    """The resolved import map of one package block."""
+
+    block: ScalaPackageBlock
+    mapping: dict[str, str]
+
+
+class ScalaBinding(NamedTuple):
+    """A name a Scala caller binds: the type it holds, and where it holds it.
+
+    The scope is a byte span, so an inner block's `c` hides an outer `c`
+    only inside that block (issue #2450).
+    """
+
+    name: str
+    # None when the type is unknown without inference, or when one scope
+    # binds the name twice to different types.
+    type_name: str | None
+    scope_start: int
+    scope_end: int
+
+
+class ScalaImportTarget(NamedTuple):
+    """A Scala import path resolved against the project's own packages."""
+
+    # The project qn of the imported member, or None when the path names a
+    # package, whose members are spread over the declaring modules.
+    member_qn: str | None
+    # Declaring module qn -> the names it declares under the resolved package.
+    declaring: dict[str, frozenset[str]]
+
+
+class ScalaPackageIndex(NamedTuple):
+    """Every Scala package the project declares, from both directions."""
+
+    # package -> {declaring module qn -> the names it declares there}
+    modules: dict[str, dict[str, frozenset[str]]]
+    # package -> {declared name -> the module qns declaring it}
+    owners: dict[str, dict[str, tuple[str, ...]]]
+
+
 LanguageFamily = frozenset[SupportedLanguage]
 # {bare module qn: {language family: its file's module qn}} for a stem whose
 # files carry their extension, the name each family's importers land on.
 StemSiblingModules = dict[str, dict[LanguageFamily, str]]
+
+
+# A write tool's post-write step (issue #2916): the written paths in, a note
+# for the tool's result out ("" for nothing to say).
+AfterWrite = Callable[[list[str]], Awaitable[str]]
 
 
 class ReingestReport(NamedTuple):
@@ -1142,7 +1375,13 @@ _GLOSS_NODE_PROPS = (
 )
 
 NODE_SCHEMAS: tuple[NodeSchema, ...] = (
-    NodeSchema(NodeLabel.PROJECT, "{name: string, root_path: string?}"),
+    # `captured_relationships` is written by every sync from issue #2521 on;
+    # a graph synced before that has none, which reads as "capture unknown".
+    NodeSchema(
+        NodeLabel.PROJECT,
+        "{name: string, root_path: string?, captured_relationships: list[string]?, "
+        "last_synced_at: string?}",
+    ),
     NodeSchema(
         NodeLabel.PACKAGE,
         "{qualified_name: string, name: string, path: string, absolute_path: string}",
@@ -1154,35 +1393,35 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.MODULE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, unresolved_specifiers: list[string]?, unresolved_references: list[string]?}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, broken_links: list[string]?, unresolved_specifiers: list[string]?, unresolved_references: list[string]?, interface_fingerprint: string?}",
     ),
     NodeSchema(
         NodeLabel.CLASS,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, generic_arity: int?, non_method_members: list[string]?, type_checking_only: boolean?}",
     ),
     NodeSchema(
         NodeLabel.FUNCTION,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, is_object_member: boolean?, is_body_scoped_name: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, is_object_member: boolean?, is_body_scoped_name: boolean?, is_program_main: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
     ),
     NodeSchema(
         NodeLabel.METHOD,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, overrides_external: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, member_aliases: list[string]?, overrides_external: boolean?, is_program_main: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, signature: string?, declared_in_class: boolean?, extension_receiver: string?, extension_namespace: string?, extension_receiver_arity: int?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
     ),
     NodeSchema(
         NodeLabel.INTERFACE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, generic_arity: int?, embeds: list[string]?, implementers_unknown: string?}",
     ),
     NodeSchema(
         NodeLabel.ENUM,
-        "{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?}",
     ),
     NodeSchema(
         NodeLabel.TYPE,
-        "{qualified_name: string, name: string, path: string?, absolute_path: string?, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?}",
+        "{qualified_name: string, name: string, path: string?, absolute_path: string?, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?}",
     ),
     NodeSchema(
         NodeLabel.UNION,
-        "{qualified_name: string, name: string, path: string?, absolute_path: string?, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?}",
+        "{qualified_name: string, name: string, path: string?, absolute_path: string?, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?}",
     ),
     NodeSchema(
         NodeLabel.MODULE_INTERFACE,
@@ -1197,9 +1436,13 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
         NodeLabel.EXTERNAL_MODULE,
         "{qualified_name: string, name: string, path: string}",
     ),
+    # `project` is set on ENDPOINT resources only: an endpoint is scoped to the
+    # project that serves it, and the endpoint linker reads the property back
+    # to match a URL's host to that project. The other kinds are shared
+    # across projects and carry none, hence optional (issue #2536).
     NodeSchema(
         NodeLabel.RESOURCE,
-        "{qualified_name: string, name: string, kind: string}",
+        "{qualified_name: string, name: string, kind: string, project: string?}",
     ),
     NodeSchema(
         NodeLabel.SECTION,
@@ -1359,6 +1602,29 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
             NodeLabel.EXTERNAL_MODULE,
         ),
     ),
+    # TypeScript heritage onto a `type` alias of an object type:
+    # `interface InvalidType extends IssueBase` and `class LazyPath implements
+    # ParseInput` (zod's ZodError.ts and types.ts). The parent resolves to the
+    # alias's Type node. Listed as two exact triples rather than adding Type
+    # to the target lists above, which would also document a class that
+    # `extends` an alias and an enum that `implements` one (issue #2536).
+    RelationshipSchema(
+        (NodeLabel.INTERFACE,),
+        RelationshipType.INHERITS,
+        (NodeLabel.TYPE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.CLASS,),
+        RelationshipType.IMPLEMENTS,
+        (NodeLabel.TYPE,),
+    ),
+    # A Go defined type that is no struct (`type HandlerFunc func(...)`)
+    # carries methods too, and implements an interface by having them.
+    RelationshipSchema(
+        (NodeLabel.TYPE,),
+        RelationshipType.IMPLEMENTS,
+        (NodeLabel.INTERFACE,),
+    ),
     RelationshipSchema(
         # A method-body anonymous-class override is a Function node, so it
         # can source an OVERRIDES edge onto the base Method.
@@ -1387,11 +1653,14 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.EXTERNAL_PACKAGE,),
     ),
     # A relative link in a Markdown document to a file in the repository
-    # (issue #2394: emitted by the document tier but never documented).
+    # (issue #2394: emitted by the document tier but never documented). It
+    # starts at the innermost Section holding it, or at the Module above the
+    # first heading, and ends at the Section its anchor names, or at the File
+    # (issue #2458).
     RelationshipSchema(
-        (NodeLabel.MODULE,),
+        (NodeLabel.MODULE, NodeLabel.SECTION),
         RelationshipType.LINKS_TO,
-        (NodeLabel.FILE,),
+        (NodeLabel.FILE, NodeLabel.SECTION),
     ),
     RelationshipSchema(
         (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD),
@@ -1472,13 +1741,15 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         RelationshipType.HAS_FIELD,
         (NodeLabel.FIELD,),
     ),
-    # Only a Module declares one today: a class-level member is a Field
-    # (issue #1805), so the two labels never share a qualified name.
+    # A Python enum is a Class (an `enum.Enum` subclass), so its members hang
+    # off that Class (issue #2583); every other language's owner is an Enum.
     RelationshipSchema(
-        (NodeLabel.ENUM,),
+        (NodeLabel.ENUM, NodeLabel.CLASS),
         RelationshipType.HAS_VARIANT,
         (NodeLabel.ENUM_VARIANT,),
     ),
+    # Only a Module declares one today: a class-level member is a Field
+    # (issue #1805), so the two labels never share a qualified name.
     RelationshipSchema(
         (NodeLabel.MODULE,),
         RelationshipType.DEFINES_CONSTANT,
