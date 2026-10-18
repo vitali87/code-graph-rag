@@ -10,6 +10,7 @@ from codebase_rag import constants as cs
 
 from .. import constants as ec
 from ..types_defs import (
+    CallOracle,
     GraphData,
     OracleEdge,
     OracleNameEdge,
@@ -331,9 +332,7 @@ def _collect_decls_and_calls(
         )
 
 
-def run_c_call_oracle(
-    target: Path,
-) -> tuple[set[tuple[str, str]], frozenset[str], frozenset[str]]:
+def run_c_call_oracle(target: Path) -> CallOracle:
     # File-level C call sites restricted to first-party callees, the declared
     # name universe, and the cleanly-parsed source files. libclang resolves the
     # true call graph (independent of cgr's tree-sitter C frontend). Each .c
@@ -373,7 +372,7 @@ def run_c_call_oracle(
         for file, name in raw_calls
         if name in declared_names and file in covered_files
     }
-    return edges, declared_names, covered_files
+    return CallOracle(edges, declared_names, covered_files)
 
 
 def _cpp_system_args() -> list[str]:
@@ -409,7 +408,7 @@ def _cpp_include_args(root: Path) -> list[str]:
 def run_cpp_call_oracle(
     target: Path,
     extra_defines: tuple[str, ...] = (),
-) -> tuple[set[tuple[str, str]], frozenset[str], frozenset[str]]:
+) -> CallOracle:
     # File-level C++ call sites restricted to first-party callees (free and
     # member functions), the declared name universe, and the cleanly-parsed
     # source files. libclang resolves the true translation-unit call graph
@@ -463,7 +462,7 @@ def run_cpp_call_oracle(
         for file, name in raw_calls
         if name in declared_names and file in covered_files
     }
-    return edges, declared_names, covered_files
+    return CallOracle(edges, declared_names, covered_files)
 
 
 def _add_edge(

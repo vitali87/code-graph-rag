@@ -7,6 +7,34 @@ from tree_sitter import Node
 from ... import constants as cs
 from ...types_defs import CppParameterType
 from ..utils import safe_decode_text
+from . import local_types
+
+# Declarations whose `type` field names the type of the names they declare.
+_QUALIFIABLE_DECLARATION_TYPES = frozenset(
+    {
+        cs.CppNodeType.PARAMETER_DECLARATION,
+        cs.CppNodeType.OPTIONAL_PARAMETER_DECLARATION,
+        cs.CppNodeType.DECLARATION,
+        cs.CppNodeType.FIELD_DECLARATION,
+    }
+)
+
+
+def _scope_declarations(scope: Node | None) -> list[tuple[Node, int]]:
+    # Every node under `scope` outside the nested scopes (lambdas, local
+    # classes, nested functions) it holds, with the end byte of the innermost
+    # block it sits in: a local is visible from its declaration to there.
+    found: list[tuple[Node, int]] = []
+    pending = [(scope, scope.end_byte)] if scope is not None else []
+    while pending:
+        node, block_end = pending.pop()
+        if node.type == cs.CppNodeType.COMPOUND_STATEMENT:
+            block_end = node.end_byte
+        for child in node.children:
+            if child.type not in cs.CPP_NESTED_SCOPE_NODE_TYPES:
+                found.append((child, block_end))
+                pending.append((child, block_end))
+    return found
 
 
 class CppTypeInferenceEngine:
@@ -250,7 +278,10 @@ class CppTypeInferenceEngine:
 
     def _record_field(self, node: Node, field_types: dict[str, str]) -> None:
         type_node = node.child_by_field_name(cs.FIELD_TYPE)
-        if type_node is None or not (type_name := self._bare_type_name(type_node)):
+        if type_node is None or not (
+            type_name := self._bare_type_name(type_node)
+            or self._local_defined_type_name(type_node)
+        ):
             return
         for declarator in node.children_by_field_name(cs.FIELD_DECLARATOR):
             # A member function declaration (`void Lock();`) is also a
@@ -298,9 +329,65 @@ class CppTypeInferenceEngine:
             # redecls across scopes are reconciled by the caller (drop-on-conflict).
             yield from self._body_declarations(child)
 
+    def declaration_scopes(self, caller_node: Node) -> list[tuple[int, int, str, bool]]:
+        """Each parameter, local and (for a member function written in its
+        class) field the caller can see, as (start, end, name, qualified):
+        the byte window in which a use of `name` finds that declaration, and
+        whether its declared type is spelled qualified (`::B`, `ns::B`). The
+        type map keeps only the bare `B`, but such a name means the class the
+        qualifier names, never a local type the bare name would find (#2631
+        re-review). A parameter or field spans the whole caller, and a
+        parameter hides a field of its name; a local runs from the end of its
+        declaration to the end of its block, so it hides a field only there,
+        as C++ name lookup does."""
+        whole = (caller_node.start_byte, caller_node.end_byte)
+        params: list[tuple[Node, int]] = []
+        if (declarator := self._function_declarator(caller_node)) is not None and (
+            param_list := declarator.child_by_field_name(cs.KEY_PARAMETERS)
+        ) is not None:
+            params = [(param, whole[1]) for param in param_list.children]
+        members = caller_node.parent
+        fields = (
+            _scope_declarations(members)
+            if members is not None and members.type == cs.TS_CPP_FIELD_DECLARATION_LIST
+            else []
+        )
+        scopes = [(*whole, name, q) for _, _, name, q in self._declared_names(params)]
+        hidden = {scope[2] for scope in scopes}
+        scopes.extend(
+            (*whole, name, q)
+            for _, _, name, q in self._declared_names(fields)
+            if name not in hidden
+        )
+        scopes.extend(
+            self._declared_names(
+                _scope_declarations(caller_node.child_by_field_name(cs.FIELD_BODY))
+            )
+        )
+        return scopes
+
+    def _declared_names(
+        self, declarations: list[tuple[Node, int]]
+    ) -> Iterator[tuple[int, int, str, bool]]:
+        # (declaration end, block end, name, whether its declared type is
+        # spelled qualified) for each name the declarations introduce.
+        for declaration, block_end in declarations:
+            if declaration.type not in _QUALIFIABLE_DECLARATION_TYPES:
+                continue
+            type_node = declaration.child_by_field_name(cs.FIELD_TYPE)
+            qualified = type_node is not None and local_types.is_qualified_type(
+                type_node
+            )
+            for declarator in declaration.children_by_field_name(cs.FIELD_DECLARATOR):
+                if (name := self._declarator_name(declarator)) is not None:
+                    yield declaration.end_byte, block_end, name, qualified
+
     def _record_declaration(self, node: Node, decls: list[tuple[str, str]]) -> None:
         type_node = node.child_by_field_name(cs.FIELD_TYPE)
-        if type_node is None or not (type_name := self._bare_type_name(type_node)):
+        if type_node is None or not (
+            type_name := self._bare_type_name(type_node)
+            or self._defined_type_name(type_node)
+        ):
             return
         # One statement may declare several variables sharing the leading type
         # (`Zeta a, b;`), each its own `declarator` field child; record them all.
@@ -321,6 +408,32 @@ class CppTypeInferenceEngine:
                 return self._bare_type_name(inner) if inner is not None else None
             case _:
                 return None
+
+    @staticmethod
+    def _defined_type_name(type_node: Node) -> str | None:
+        # `struct Checker {...} checker;` / `struct {...} enter_state;`: a
+        # local typed by the type defined right there. An unnamed one is
+        # named by position, as its node is; the call pass binds either
+        # name to the local type's qn (issue #2555).
+        if (
+            type_node.type not in cs.CPP_TYPE_SPECIFIER_NODE_TYPES
+            or type_node.child_by_field_name(cs.FIELD_BODY) is None
+        ):
+            return None
+        name_node = type_node.child_by_field_name(cs.FIELD_NAME)
+        if name_node is not None:
+            return safe_decode_text(name_node)
+        return local_types.positional_name(type_node)
+
+    def _local_defined_type_name(self, type_node: Node) -> str | None:
+        # `struct B {...} b;` as a member of a type written in a function
+        # body: the field is typed by that nested local type, which the call
+        # pass binds through the enclosing local type's scope (#2631
+        # review). A member of a namespace-level class keeps its fields as
+        # they were.
+        if not local_types.is_local_type(type_node):
+            return None
+        return self._defined_type_name(type_node)
 
     def _rightmost_name(self, node: Node) -> str | None:
         name_node = node.child_by_field_name(cs.KEY_NAME)
