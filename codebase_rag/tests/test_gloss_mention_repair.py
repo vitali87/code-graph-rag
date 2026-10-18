@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
+from codebase_rag.embedded_graph.connection import EmbeddedConnection
 from codebase_rag.gloss_repair import repair_mentions
 from codebase_rag.types_defs import PropertyDict, ResultRow
 
@@ -139,3 +140,89 @@ def test_the_set_statement_re_validates_a_moved_binding() -> None:
     # Targets are matched before any edge goes, and only stale edges go.
     assert q.index("collect(DISTINCT m) AS targets") < q.index("DELETE edge")
     assert "WHERE NOT t IN targets" in q
+
+
+def test_the_pass_carries_the_write_id_it_read() -> None:
+    # The write is skipped when the note was rewritten after this read, so
+    # the pass hands back the nonce it saw; a note from before nonces has "".
+    note = {**_note([]), cs.KEY_WRITE_ID: "w-read"}
+    store = _Store(note, [_definition(RUN, RUN_HASH)], [])
+
+    repair_mentions(store.fetch_all, store.execute_write)
+
+    ((_query, params),) = store.writes
+    assert params is not None
+    assert params[cs.KEY_WRITE_ID] == "w-read"
+
+    unversioned = _Store(_note([]), [_definition(RUN, RUN_HASH)], [])
+    repair_mentions(unversioned.fetch_all, unversioned.execute_write)
+    ((_query, params),) = unversioned.writes
+    assert params is not None
+    assert params[cs.KEY_WRITE_ID] == ""
+
+
+# Where the pass reads and where it writes are two statements, and an
+# `annotate` from another server, or a sync of another checkout, can land in
+# between. The statement itself is what refuses a stale result, so these run
+# it on the embedded engine.
+_MOVED = f"{P}.c.run"
+_OTHER = f"{P}.c.other"
+_NOTE_EDGES = """MATCH (g:Gloss {qualified_name: 'gloss:n'})
+OPTIONAL MATCH (g)-[:MENTIONS]->(m)
+RETURN g.mention_qns AS qns, g.mentions_lost AS lost,
+       collect(m.qualified_name) AS edges"""
+
+
+def _set_params(
+    write_id: str,
+    mention_qns: list[str],
+    attach_qns: list[str],
+    attach_keys: list[str],
+) -> PropertyDict:
+    return {
+        cs.KEY_QN: "gloss:n",
+        cs.KEY_WRITE_ID: write_id,
+        cs.KEY_MENTION_QNS: mention_qns,
+        cs.KEY_MENTION_HASHES: [RUN_HASH] * len(mention_qns),
+        cs.KEY_MENTION_QUOTES: [""] * len(mention_qns),
+        cs.KEY_MENTIONS_LOST: None,
+        cs.KEY_ATTACH_QNS: attach_qns,
+        cs.KEY_ATTACH_KEYS: attach_keys,
+        cs.KEY_KEY_SEPARATOR: cs.GLOSS_MENTION_KEY_SEPARATOR,
+        cs.KEY_PROJECT_PREFIX: f"{P}.",
+    }
+
+
+def _graph(conn: EmbeddedConnection, write_id: str) -> None:
+    conn.run(
+        "CREATE (:Function {qualified_name: $run, anchor_hash: $h}), "
+        "(:Function {qualified_name: $other, anchor_hash: $h})",
+        {"run": RUN, "other": _OTHER, "h": RUN_HASH},
+    )
+    conn.run(
+        "MATCH (r:Function {qualified_name: $run}) "
+        "CREATE (g:Gloss {qualified_name: 'gloss:n', write_id: $w, "
+        "mention_qns: [$run]})-[:MENTIONS]->(r)",
+        {"run": RUN, "w": write_id},
+    )
+
+
+def test_the_set_statement_skips_a_note_rewritten_since_the_read() -> None:
+    with EmbeddedConnection(":memory:") as conn:
+        # An `annotate` replaced the note's nonce after the pass read "w-read".
+        _graph(conn, "w-newer")
+        conn.run(
+            cq.CYPHER_GLOSS_SET_MENTIONS,
+            _set_params("w-read", [_OTHER], [_OTHER], []),
+        )
+        assert conn.run(_NOTE_EDGES).rows == [([RUN], None, [RUN])]
+
+
+def test_the_set_statement_applies_while_the_note_is_as_read() -> None:
+    with EmbeddedConnection(":memory:") as conn:
+        _graph(conn, "w-read")
+        conn.run(
+            cq.CYPHER_GLOSS_SET_MENTIONS,
+            _set_params("w-read", [_OTHER], [_OTHER], []),
+        )
+        assert conn.run(_NOTE_EDGES).rows == [([_OTHER], None, [_OTHER])]

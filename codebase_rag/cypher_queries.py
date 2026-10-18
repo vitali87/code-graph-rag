@@ -1300,7 +1300,7 @@ OPTIONAL MATCH (g)-[:{_MENTIONS}]->(m)
 RETURN g.qualified_name AS qualified_name, g.project AS project,
        g.target_qn AS target_qn, g.mention_qns AS mention_qns,
        g.mention_hashes AS mention_hashes, g.mention_quotes AS mention_quotes,
-       g.mentions_lost AS mentions_lost,
+       g.mentions_lost AS mentions_lost, g.write_id AS write_id,
        collect(m.qualified_name) AS attached"""
 CYPHER_DEFINITIONS_BY_QNS = f"""UNWIND $qns AS qn
 MATCH (t {{qualified_name: qn}})
@@ -1314,7 +1314,10 @@ RETURN t.qualified_name AS qualified_name, t.anchor_hash AS anchor_hash"""
 # matched BEFORE any edge is deleted, and only an edge to a node that is no
 # longer a target is deleted: with the definition indexes in place, Memgraph
 # 3 lost the edge when one statement deleted it and then merged it again.
+# The note must still carry the `write_id` the pass read: an `annotate` that
+# landed in between wrote newer mentions, which this result would overwrite.
 CYPHER_GLOSS_SET_MENTIONS = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
+WHERE coalesce(g.write_id, '') = $write_id
 SET g.mention_qns = $mention_qns, g.mention_hashes = $mention_hashes,
     g.mention_quotes = $mention_quotes, g.mentions_lost = $mentions_lost
 WITH g
