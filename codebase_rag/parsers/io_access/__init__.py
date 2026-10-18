@@ -33,7 +33,7 @@ from .extract import (
 )
 from .models import ArgHandleSink, HandleBinding, HandleConstructor, IOSink
 from .processor import IOAccessProcessor
-from .py_handles import python_handles_before, python_stream_target
+from .py_handles import python_stream_target
 from .registry import (
     FLOW_REGISTERED_LANGUAGES,
     IO_HANDLE_CONSTRUCTORS,
@@ -78,7 +78,6 @@ __all__ = [
     "normalise",
     "positional_arg_node",
     "python_locally_assigned_names",
-    "python_handles_before",
     "python_name_binding_sites",
     "python_name_shadowed_at",
     "python_stream_target",

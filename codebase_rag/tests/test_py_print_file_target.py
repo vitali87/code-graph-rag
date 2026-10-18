@@ -99,6 +99,32 @@ def log_started():
     print("started", file=log)
 """
 
+# Where `file=` points after a branch, a rebind to None, or a local that
+# shadows an imported stream.
+_REBOUND = """\
+import os
+from sys import stderr as err
+
+
+def branches(cond):
+    f = open("/tmp/a.txt", "w")
+    if cond:
+        f = open("/tmp/b.txt", "w")
+    else:
+        print(os.getenv("BRANCH"), file=f)
+
+
+def cleared():
+    g = open("/tmp/c.txt", "w")
+    g = None
+    print(os.getenv("CLEARED"), file=g)
+
+
+def shadowed():
+    err = open("/tmp/log.txt", "w")
+    print(os.getenv("SHADOWED"), file=err)
+"""
+
 
 def _edges(tmp_path: Path, source: str = _REPORT) -> set[tuple[str, str, str]]:
     root = tmp_path / "report"
@@ -170,3 +196,18 @@ def test_a_secret_printed_elsewhere_never_reaches_stdout(tmp_path: Path) -> None
     assert (_ENV, "resource::FILE::/tmp/later.txt") not in flows, flows
     # The `file=` handle is where the data goes, not data flowing into it.
     assert not any(src == dst for src, dst in flows), flows
+
+
+def test_the_stream_is_the_one_bound_where_print_runs(tmp_path: Path) -> None:
+    edges = _edges(tmp_path, _REBOUND)
+    flows = {(src, dst) for src, rel, dst in edges if rel == "FLOWS_TO"}
+    # A rebind in a sibling branch cannot reach the else branch's print.
+    assert ("resource::ENV::BRANCH", "resource::FILE::/tmp/a.txt") in flows, flows
+    assert ("resource::ENV::BRANCH", "resource::FILE::/tmp/b.txt") not in flows
+    # `g = None` drops the file handle: the print goes to stdout.
+    assert ("resource::ENV::CLEARED", _STDOUT) in flows, flows
+    assert ("resource::ENV::CLEARED", "resource::FILE::/tmp/c.txt") not in flows
+    assert _STDOUT in _writes(edges, "cleared"), edges
+    # A local `err` is the file it was opened on, not the imported stderr.
+    assert ("resource::ENV::SHADOWED", "resource::FILE::/tmp/log.txt") in flows
+    assert _STDERR not in _writes(edges, "shadowed"), edges

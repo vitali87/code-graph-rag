@@ -72,7 +72,10 @@ register `STDIN` sources, but other languages emit them (for example C
 - `sys.stdout` or `sys.stderr` (also through `from sys import stderr`) is that
   stream;
 - a name or `self.<attr>` bound to a handle (`f = open("out.txt", "w")`) is
-  that handle's resource, `FILE::out.txt`;
+  that handle's resource, `FILE::out.txt`: the binding in effect where the
+  print runs, so a rebind in a sibling `if`/`else` branch does not count, a
+  name rebound to `None` is stdout again, and a local named like an imported
+  stream (`err = open(...)` after `from sys import stderr as err`) is its file;
 - any other stream, such as a parameter, records no edge rather than claiming
   stdout.
 

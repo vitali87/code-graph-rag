@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Iterator
 
 from tree_sitter import Node
 
@@ -11,11 +11,17 @@ from .extract import (
     keyword_value,
     literal_target,
     python_locally_assigned_names,
+    python_name_shadowed_at,
     registry_match,
     scope_seed_nodes,
 )
 from .models import HandleBinding, HandleConstructor, IOSink
 from .registry import IO_HANDLE_DERIVES, PY_STD_STREAMS
+
+# The branches of an if statement: its own block, each elif, the else.
+_PY_IF_BRANCHES = frozenset(
+    {cs.TS_PY_BLOCK, cs.TS_PY_ELIF_CLAUSE, cs.TS_PY_ELSE_CLAUSE}
+)
 
 
 def python_binding_from_node(
@@ -160,53 +166,120 @@ def _collect_self_attr_handles(
         stack.extend(node.children)
 
 
-def python_handles_before(
-    node: Node,
-    import_map: dict[str, str],
-    ctor_by_name: dict[str, HandleConstructor],
-) -> dict[str, HandleBinding]:
-    # The handle bindings visible at `node`, for a walk that keeps no handle map
-    # of its own (the flow walk): the enclosing scope's bindings that end before
-    # `node`, in source order (a rebind wins), over the inherited ones. A plain
-    # name assigned anywhere in the scope is local to all of it, so its
-    # inherited binding is dropped, as in the I/O walk.
+def _python_scope(node: Node) -> Node | None:
     scope = node.parent
     while scope is not None and scope.type not in (
         cs.TS_PY_FUNCTION_DEFINITION,
         cs.TS_PY_MODULE,
     ):
         scope = scope.parent
-    if scope is None:
-        return {}
+    return scope
+
+
+def _python_handles_before(
+    scope: Node,
+    node: Node,
+    import_map: dict[str, str],
+    ctor_by_name: dict[str, HandleConstructor],
+) -> tuple[dict[str, HandleBinding], set[str]]:
+    # The handle bindings visible at `node`: the scope's own bindings that end
+    # before `node`, in source order (a rebind wins), over the inherited ones,
+    # plus the names last rebound to `None`. A plain name assigned anywhere in
+    # the scope is local to all of it, so its inherited binding is dropped, as
+    # in the I/O walk. Rebinding a name to anything but a handle drops its
+    # handle (`f = None` after `f = open(...)`).
     handles = inherited_python_handles(scope, import_map, ctor_by_name)
     for name in python_locally_assigned_names(scope):
         if cs.SEPARATOR_DOT not in name:
             handles.pop(name, None)
+    unset: set[str] = set()
+    for current in _python_nodes_before(scope, node):
+        bound = python_binding_from_node(current, import_map, ctor_by_name, handles)
+        if bound is not None:
+            handles[bound[0]] = bound[1]
+            unset.discard(bound[0])
+        elif (rebound := _rebound_name(current)) is not None:
+            name, to_none = rebound
+            handles.pop(name, None)
+            if to_none:
+                unset.add(name)
+            else:
+                unset.discard(name)
+    return handles, unset
+
+
+def _python_nodes_before(scope: Node, node: Node) -> Iterator[Node]:
+    # The nodes of the scope's own body that end before `node` starts, in
+    # source order. Only one branch of an if/elif/else, and one case of a
+    # match, runs, so a sibling of the branch holding `node` is left out:
+    # nothing bound there can reach it.
     stack = list(reversed(scope_seed_nodes(scope)))
     while stack:
         current = stack.pop()
         if current.type in PY_SCOPE_BOUNDARIES or current.start_byte >= node.start_byte:
             continue
+        children = current.children
         if current.end_byte <= node.start_byte:
-            bound = python_binding_from_node(current, import_map, ctor_by_name, handles)
-            if bound is not None:
-                handles[bound[0]] = bound[1]
-        stack.extend(reversed(current.children))
-    return handles
+            yield current
+        else:
+            children = [c for c in children if not _sibling_branch(current, c, node)]
+        stack.extend(reversed(children))
+
+
+def _sibling_branch(parent: Node, child: Node, node: Node) -> bool:
+    # Whether `child` is a branch of `parent` (which holds `node`) other than
+    # the one holding `node`.
+    if child.start_byte <= node.start_byte < child.end_byte:
+        return False
+    if parent.type == cs.TS_PY_IF_STATEMENT:
+        return child.type in _PY_IF_BRANCHES
+    grand = parent.parent
+    return (
+        parent.type == cs.TS_PY_BLOCK
+        and grand is not None
+        and grand.type == cs.TS_PY_MATCH_STATEMENT
+        and child.type == cs.TS_PY_CASE_CLAUSE
+    )
+
+
+def _rebound_name(node: Node) -> tuple[str, bool] | None:
+    # The name or attribute an assignment or `with ... as` rebinds, and
+    # whether it is rebound to `None`.
+    if node.type == cs.TS_PY_ASSIGNMENT:
+        target = node.child_by_field_name(cs.TS_FIELD_LEFT)
+        value = node.child_by_field_name(cs.TS_FIELD_RIGHT)
+    elif node.type == cs.TS_PY_AS_PATTERN:
+        alias = next(
+            (c for c in node.children if c.type == cs.TS_PY_AS_PATTERN_TARGET),
+            None,
+        )
+        target = alias.children[0] if alias and alias.children else None
+        value = None
+    else:
+        return None
+    if (
+        target is None
+        or target.type not in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE)
+        or target.text is None
+    ):
+        return None
+    to_none = value is not None and value.type == cs.TS_PY_NONE
+    return target.text.decode(cs.ENCODING_UTF8), to_none
 
 
 def python_stream_target(
     call_node: Node,
     sink: IOSink,
     import_map: dict[str, str],
-    handles: Callable[[], Mapping[str, HandleBinding]],
+    ctor_by_name: dict[str, HandleConstructor],
 ) -> tuple[ResourceKind, str] | None:
     # Where a stream-parameterised sink writes (issue #2776): `print(x)` and
     # `print(x, file=None)` go to the sink's own stream, `file=sys.stderr` to
     # stderr, and `file=f` to whatever `f` was opened on. A stream the walk
     # cannot name (a parameter, an attribute of an unknown object) is None:
-    # the write is real, but claiming stdout for it would be wrong. `handles`
-    # is asked for only when the stream is a plain name.
+    # the write is real, but claiming stdout for it would be wrong. The
+    # bindings are read only when the stream is not a standard one.
+    default = sink.kind, literal_target(call_node, sink.target_arg, sink.target_kw)
     args = call_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
     stream = (
         None
@@ -214,14 +287,20 @@ def python_stream_target(
         else keyword_value(args, sink.stream_kw)
     )
     if stream is None or stream.type == cs.TS_PY_NONE:
-        return sink.kind, literal_target(call_node, sink.target_arg, sink.target_kw)
-    if stream.text is None:
+        return default
+    scope = _python_scope(call_node)
+    if stream.text is None or scope is None:
         return None
     name = stream.text.decode(cs.ENCODING_UTF8)
+    # A local of the same name (`err = open(...)` after `from sys import
+    # stderr as err`) is not the standard stream.
+    head = name.split(cs.SEPARATOR_DOT, 1)[0]
     std = registry_match(PY_STD_STREAMS, name, import_map)
-    if std is not None:
+    if std is not None and not python_name_shadowed_at(
+        scope, head, call_node.start_byte
+    ):
         return std, DYNAMIC_TARGET
-    binding = handles().get(name)
-    if binding is None:
-        return None
-    return binding.kind, binding.identity
+    handles, unset = _python_handles_before(scope, call_node, import_map, ctor_by_name)
+    if (binding := handles.get(name)) is not None:
+        return binding.kind, binding.identity
+    return default if name in unset else None

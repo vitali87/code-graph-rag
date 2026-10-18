@@ -1973,7 +1973,7 @@ class IOAccessProcessor:
         if sink is None:
             return
         if sink.stream_kw is not None:
-            stream = python_stream_target(node, sink, import_map, lambda: handles)
+            stream = python_stream_target(node, sink, import_map, ctor_by_name)
             if stream is not None:
                 self._emit(caller_spec, sink.direction, *stream)
             return

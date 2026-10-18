@@ -46,7 +46,6 @@ from ..io_access import (
     match_normalised,
     normalise,
     positional_arg_node,
-    python_handles_before,
     python_name_binding_sites,
     python_name_shadowed_at,
     python_stream_target,
@@ -4164,18 +4163,12 @@ class FlowProcessor:
     ) -> tuple[ResourceKind, str] | None:
         if sink.stream_kw is None:
             return sink.kind, literal_target(node, sink.target_arg, sink.target_kw)
-        # `print(x, file=...)` writes where `file=` says (issue #2776); the
-        # walk keeps no handle map, so a named stream's binding is looked up
-        # in the enclosing scope only when it is needed.
+        # `print(x, file=...)` writes where `file=` says (issue #2776); a
+        # named stream's binding is looked up in the enclosing scope.
         ctor_by_name = {
             c.callee: c for c in IO_HANDLE_CONSTRUCTORS.get(ctx.language, ())
         }
-        return python_stream_target(
-            node,
-            sink,
-            ctx.import_map,
-            lambda: python_handles_before(node, ctx.import_map, ctor_by_name),
-        )
+        return python_stream_target(node, sink, ctx.import_map, ctor_by_name)
 
     def _flow_taint_into_sink(
         self, taint: Taint, kind: ResourceKind, dst_identity: str, ctx: _FlowCtx
