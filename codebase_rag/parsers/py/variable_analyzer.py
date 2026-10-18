@@ -16,6 +16,7 @@ from ...types_defs import (
 )
 from ..import_processor import ImportProcessor
 from ..utils import get_cached_query, safe_decode_text
+from .forward_refs import unquote_forward_refs
 from .utils import resolve_class_name
 
 # Deepest operand chain `_value_leaves` will walk. Each term of `a or b or c`
@@ -70,8 +71,9 @@ if TYPE_CHECKING:
 
         def _get_method_return_type_from_ast(self, method_qn: str) -> str | None: ...
 
-        @staticmethod
-        def _is_static_method(def_node: ASTNode) -> bool: ...
+        def name_typed_parameters(
+            self, caller_node: ASTNode, module_qn: str
+        ) -> dict[str, str]: ...
 
     _VarBase: type = _VariableAnalyzerDeps
 else:
@@ -104,6 +106,11 @@ def _reflected_dunder(dunder: str) -> str:
     return f"__r{dunder[2:]}"
 
 
+def _name_spelling(name: str) -> str:
+    """`user_repo`, `UserRepo` and `_UserRepo` all spell `userrepo`."""
+    return name.replace(cs.CHAR_UNDERSCORE, "").lower()
+
+
 def _container_element_type(type_str: str | None) -> str | None:
     """The element inside a canonical ``list[<element>]`` marker, else ``None``."""
     if (
@@ -131,61 +138,23 @@ class PythonVariableAnalyzerMixin(_VarBase):
         if not params_node:
             return
 
-        receiver = self._bound_receiver(caller_node, params_node)
         for param in params_node.children:
-            if param == receiver:
-                # Python binds it to the instance (the class, for a
-                # classmethod), so its name says nothing about its type: the
-                # name heuristic typed `self` as a module's one-letter class
-                # `F` ("sel-f"), and every `self.m()` was looked up on F
-                # (issue #2872).
-                continue
-            self._process_parameter(param, local_var_types, module_qn)
-
-    def _bound_receiver(
-        self, def_node: ASTNode, params_node: ASTNode
-    ) -> ASTNode | None:
-        """The unannotated first parameter of a method in a class body, if any."""
-        holder = def_node.parent
-        if holder is not None and holder.type == cs.TS_PY_DECORATED_DEFINITION:
-            holder = holder.parent
-        if (
-            holder is None
-            or holder.parent is None
-            or holder.parent.type != cs.TS_PY_CLASS_DEFINITION
-            or self._is_static_method(def_node)
-            or not params_node.named_children
-        ):
-            return None
-        first = params_node.named_children[0]
-        return first if first.type == cs.TS_PY_IDENTIFIER else None
+            self._process_parameter(param, local_var_types)
+        # An untyped parameter's name guess comes from the one list the call
+        # resolver labels heuristic, so no guess binds a call exactly (#2608).
+        guessed = self.name_typed_parameters(caller_node, module_qn)
+        for param_name, class_name in guessed.items():
+            local_var_types[param_name] = class_name
+            logger.debug(lg.PY_PARAM_TYPE_INFERRED, param=param_name, type=class_name)
 
     def _process_parameter(
-        self, param: ASTNode, local_var_types: dict[str, str], module_qn: str
+        self, param: ASTNode, local_var_types: dict[str, str]
     ) -> None:
         match param.type:
-            case cs.TS_PY_IDENTIFIER:
-                self._process_untyped_parameter(param, local_var_types, module_qn)
             case cs.TS_PY_TYPED_PARAMETER:
                 self._process_typed_parameter(param, local_var_types)
             case cs.TS_PY_TYPED_DEFAULT_PARAMETER:
                 self._process_typed_default_parameter(param, local_var_types)
-
-    def _process_untyped_parameter(
-        self, param: ASTNode, local_var_types: dict[str, str], module_qn: str
-    ) -> None:
-        if (
-            param.text is None
-            or (param_name := safe_decode_text(param)) is None
-            or not (
-                inferred_type := self._infer_type_from_parameter_name(
-                    param_name, module_qn
-                )
-            )
-        ):
-            return
-        local_var_types[param_name] = inferred_type
-        logger.debug(lg.PY_PARAM_TYPE_INFERRED, param=param_name, type=inferred_type)
 
     def _process_typed_parameter(
         self, param: ASTNode, local_var_types: dict[str, str]
@@ -203,7 +172,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
             and (param_type := safe_decode_text(param_type_node))
         ):
             return
-        local_var_types[param_name] = param_type
+        local_var_types[param_name] = unquote_forward_refs(param_type)
 
     def _process_typed_default_parameter(
         self, param: ASTNode, local_var_types: dict[str, str]
@@ -219,11 +188,16 @@ class PythonVariableAnalyzerMixin(_VarBase):
             and (param_type := safe_decode_text(param_type_node))
         ):
             return
-        local_var_types[param_name] = param_type
+        local_var_types[param_name] = unquote_forward_refs(param_type)
 
     def _infer_type_from_parameter_name(
         self, param_name: str, module_qn: str
     ) -> str | None:
+        # `self` / `cls` ARE the enclosing class, which the type-map builder
+        # seeds from the class itself; matched by name, an imported `F`
+        # ("self".endswith("f")) took every receiver in the module (#2608).
+        if param_name in cs.PY_RECEIVER_PARAM_NAMES:
+            return None
         logger.debug(lg.PY_TYPE_INFER_ATTEMPT, param=param_name, module=module_qn)
         available_class_names = self._collect_available_classes(module_qn)
         logger.debug(lg.PY_AVAILABLE_CLASSES, classes=available_class_names)
@@ -255,31 +229,22 @@ class PythonVariableAnalyzerMixin(_VarBase):
     def _find_best_class_match(
         self, param_name: str, available_class_names: list[str]
     ) -> str | None:
-        param_lower = param_name.lower()
-        best_match = None
-        highest_score = 0
-
-        for class_name in available_class_names:
-            score = self._calculate_match_score(param_lower, class_name.lower())
-            if score > highest_score:
-                highest_score = score
-                best_match = class_name
-
-        logger.debug(
-            lg.PY_BEST_MATCH, param=param_name, match=best_match, score=highest_score
-        )
-        return best_match
-
-    def _calculate_match_score(self, param_lower: str, class_lower: str) -> int:
-        if param_lower == class_lower:
-            return cs.PY_SCORE_EXACT_MATCH
-        if class_lower.endswith(param_lower) or param_lower.endswith(class_lower):
-            return cs.PY_SCORE_SUFFIX_MATCH
-        if class_lower in param_lower:
-            return int(
-                cs.PY_SCORE_CONTAINS_BASE * (len(class_lower) / len(param_lower))
-            )
-        return 0
+        # Only the parameter's WHOLE name spelling a class names it: `payload`
+        # a `Payload`, `user_repo` a `UserRepo`. A suffix or substring does not
+        # (`data` is no `A`, `user` no `AppUser`), nor does a class name too
+        # short to tell from an ordinary variable, and two classes spelled
+        # alike leave the parameter untyped rather than pick one (#2608).
+        spelled = _name_spelling(param_name)
+        matches = {
+            class_name
+            for class_name in available_class_names
+            if len(class_spelling := _name_spelling(class_name))
+            >= cs.PY_PARAM_NAME_MIN_CLASS_LEN
+            and class_spelling == spelled
+        }
+        match = next(iter(matches)) if len(matches) == 1 else None
+        logger.debug(lg.PY_NAME_MATCH, param=param_name, match=match)
+        return match
 
     def _analyze_comprehension(
         self, comp_node: ASTNode, local_var_types: dict[str, str], module_qn: str
