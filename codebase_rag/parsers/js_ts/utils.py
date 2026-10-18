@@ -663,6 +663,10 @@ _JS_TS_DECLARATION_NAMED = frozenset(
         cs.TS_CLASS_DECLARATION,
     }
 )
+# `const cb = function r() {}`: the expression binds `r` inside itself only.
+_JS_TS_SELF_NAMED_FUNCTIONS = frozenset(
+    {cs.TS_FUNCTION_EXPRESSION, cs.TS_GENERATOR_FUNCTION}
+)
 _JS_TS_PATTERN_CONTAINERS = frozenset(
     {
         cs.TS_OBJECT_PATTERN,
@@ -701,11 +705,17 @@ def js_ts_pattern_names(target: Node) -> set[str]:
 
 def js_ts_own_scope_names(func_node: Node) -> frozenset[str]:
     """Every name a function binds itself rather than reads from the
-    function around it: its parameters, its declarations, loop and catch
-    variables, the functions and classes it declares, and a plain name it
-    assigns (which may hold another type by the time it is read). Nested
-    functions are their own scopes and are not entered (issue #3200)."""
+    function around it: a function expression's own name, its parameters,
+    its declarations, loop and catch variables, the functions and classes
+    it declares, and a plain name it assigns (which may hold another type
+    by the time it is read). Nested functions are their own scopes and are
+    not entered (issue #3200)."""
     names: set[str] = set()
+    if func_node.type in _JS_TS_SELF_NAMED_FUNCTIONS and (
+        (name_node := func_node.child_by_field_name(cs.FIELD_NAME)) is not None
+        and (own_name := safe_decode_text(name_node))
+    ):
+        names.add(own_name)
     for field in (cs.FIELD_PARAMETERS, cs.TS_FIELD_PARAMETER):
         if (params := func_node.child_by_field_name(field)) is not None:
             names |= js_ts_pattern_names(params)

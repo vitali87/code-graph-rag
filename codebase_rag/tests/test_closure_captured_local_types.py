@@ -253,6 +253,15 @@ _HIDDEN = {
         "c.outer.inner",
         None,
     ),
+    "js-named-function-expression": (
+        # `function r() {}` as an expression binds `r` to itself, inside.
+        "c.js",
+        _JS_CLASSES + "function outer() {\n  const r = new Range();\n"
+        "  const cb = function r() { return r.reset(); };\n  return cb;\n}\n"
+        "module.exports = { outer };\n",
+        "c.outer.r",
+        None,
+    ),
     "js-untyped-let-in-the-block-around": (
         "c.js",
         _JS_CLASSES + "function outer(o) {\n  const r = new Range();\n"
