@@ -111,9 +111,11 @@ both trip `--fail-on-found` (issues #2845, #2853):
   by name (a renamed or removed parameter, or a positional-only one before
   `/`) and the def has no `**kwargs` to take it.
 - `too_few`: a parameter without a default that no positional and no
-  keyword at the site fills, and the site has no `*rest` or `**opts` that
-  may carry it. Adding `channel` to `send(msg)` makes `send("hi")` read
-  `too_few`; adding `channel=None` leaves it `possibly_missing`.
+  keyword at the site fills, and the site has no `**opts` that may carry
+  it (nor a `*rest`, for a positional one: a `*rest` never fills a
+  keyword-only parameter). Adding `channel` to `send(msg)` makes
+  `send("hi")` read `too_few`; adding `channel=None` leaves it
+  `possibly_missing`.
 
 Each site names the `callee` it was judged against and the `resolution`
 of its edge. A site whose edge is a guess (`heuristic`: the callee matched
