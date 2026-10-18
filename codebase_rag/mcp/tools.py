@@ -254,9 +254,12 @@ def _not_indexed_hint(
     )
     for repo in missing:
         # Forward slashes: shlex quotes a Windows path's backslashes into a
-        # form cmd.exe does not read, while `C:/...` runs in every shell.
+        # form cmd.exe does not read, while `C:/...` runs in every shell. The
+        # project name is quoted too: a workspace file does not constrain it,
+        # and the command is meant to be pasted into a shell (PR #2964 review).
         hint += cs.MCP_WORKSPACE_INDEX_COMMAND.format(
-            path=shlex.quote(repo.repo_path().as_posix()), project=repo.project_name
+            path=shlex.quote(repo.repo_path().as_posix()),
+            project=shlex.quote(repo.project_name),
         )
     for repo in missing:
         holder = _project_holding(repo.repo_path(), roots)

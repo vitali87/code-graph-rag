@@ -160,3 +160,20 @@ async def test_without_a_workspace_every_project_is_listed(root: Path) -> None:
     registry.workspace = None
 
     assert await registry.list_projects() == {"projects": [ALPHA], "count": 1}
+
+
+@pytest.mark.anyio
+async def test_the_index_command_quotes_a_project_name_for_the_shell(
+    root: Path,
+) -> None:
+    # PR #2964 review: a workspace file does not constrain the project name,
+    # and the hinted command is pasted into a shell, so shell syntax in the
+    # name must stay one literal argument.
+    hostile = "alpha; touch pwned"
+    registry, _ingestor = _registry(root, {}, ("a", hostile))
+
+    result = await registry.list_projects()
+
+    hint = str(result.get("hint"))
+    assert "--project-name 'alpha; touch pwned' --update-graph" in hint
+    assert f"--project-name {hostile} " not in hint
