@@ -61,7 +61,7 @@ def _declared_locals(statement: SgNode) -> frozenset[str]:
 
 
 def _bound_inside(scope: SgNode) -> frozenset[str]:
-    """Names a function or loop binds for the code nested in it."""
+    """Names a function or loop binds for the code in its body."""
     kind = scope.kind()
     if kind in _FUNCTION_KINDS:
         names = _identifiers(_child(scope, cs.TS_LUA_PARAMETERS))
@@ -101,7 +101,9 @@ class _LuaScopes:
     def _is_local(self, node: SgNode, name: str) -> bool:
         current = node
         while (scope := current.parent()) is not None:
-            if name in _bound_inside(scope):
+            # Body only: a loop's header expressions run before its variables
+            # exist, so `for i = 1, (function() i = 1 end)()` writes a global.
+            if current.kind() == cs.TS_LUA_BLOCK and name in _bound_inside(scope):
                 return True
             declared = self._locals_of(scope).get(name)
             if declared is not None and declared < current.range().start.index:

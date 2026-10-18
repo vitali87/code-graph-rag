@@ -88,6 +88,14 @@ def test_every_way_lua_binds_a_local_is_seen(tmp_path: Path) -> None:
         ("function g() end\ng = nil\n", [2]),
         # A loop variable is local to its loop only.
         ("for i = 1, 2 do end\ni = 3\n", [2]),
+        # ...and to its body, not its header: the bounds run before it exists.
+        ("for i = 1, (function() i = 42; return 2 end)() do i = i + 1 end\n", [1]),
+        (
+            "for k, v in pairs((function() k = 1; return {} end)()) do\n"
+            "    v = k\n"
+            "end\n",
+            [1],
+        ),
     ],
 )
 def test_a_global_is_still_flagged(
