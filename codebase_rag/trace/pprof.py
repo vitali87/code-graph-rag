@@ -39,7 +39,7 @@ from .records import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Iterable, Iterator, Mapping
     from pathlib import Path
 
 _Sample = tuple[list[int], int]
@@ -126,18 +126,58 @@ def _parse_function(payload: bytes) -> tuple[int, _Function]:
     return function_id, function
 
 
-def _parse_location(payload: bytes) -> tuple[int, list[int]]:
-    """A location's function ids, innermost inline frame first."""
+def _parse_line(payload: bytes) -> tuple[int, int]:
+    """One `Line` record's function id and source line (0 when unknown)."""
+    function_id = line = 0
+    for field, _wire, value in _fields(payload):
+        if field == 1 and isinstance(value, int):
+            function_id = value
+        elif field == 2 and isinstance(value, int):
+            line = value
+    return function_id, line
+
+
+def _parse_location(payload: bytes) -> tuple[int, list[tuple[int, int]]]:
+    """A location's (function id, line) records, innermost inline frame first."""
     location_id = 0
-    function_ids: list[int] = []
+    lines: list[tuple[int, int]] = []
     for field, _wire, value in _fields(payload):
         if field == 1 and isinstance(value, int):
             location_id = value
         elif field == 4 and isinstance(value, bytes):
-            for line_field, _lw, line_value in _fields(value):
-                if line_field == 1 and isinstance(line_value, int):
-                    function_ids.append(line_value)
-    return location_id, function_ids
+            function_id, line = _parse_line(value)
+            if function_id:
+                lines.append((function_id, line))
+    return location_id, lines
+
+
+def _backfill_start_lines(
+    functions: Mapping[int, _Function], sampled_lines: Mapping[int, int]
+) -> None:
+    """Give a function without a start_line the first line it was sampled on.
+
+    pprof-rs writes no `Function.start_line`, only each location's
+    `Line.line`, so every Rust frame had line 0: same-named functions of one
+    file merged into one frame and resolved to whichever name match sorted
+    first (issue #2877). Any line inside the body resolves by span
+    containment; the smallest keeps one frame per function. A start_line
+    the producer wrote (Go's runtime/pprof) is kept.
+    """
+    for function_id, line in sampled_lines.items():
+        function = functions.get(function_id)
+        if function is not None and function.start_line <= 0:
+            function.start_line = line
+
+
+def _first_lines(
+    records: Iterable[tuple[int, int]], into: dict[int, int] | None = None
+) -> dict[int, int]:
+    """The smallest known line of each function among `records`."""
+    lines = {} if into is None else into
+    for function_id, line in records:
+        if line > 0 and (function_id not in lines or line < lines[function_id]):
+            lines[function_id] = line
+    return lines
 
 
 def _parse_sample(payload: bytes) -> tuple[list[int], int]:
@@ -272,6 +312,7 @@ def _decode_profile(
     strings: list[str] = []
     functions: dict[int, _Function] = {}
     locations: dict[int, list[int]] = {}
+    sampled_lines: dict[int, int] = {}
     samples: list[_Sample] = []
     for field, _wire, value in _fields(raw):
         if not isinstance(value, bytes):
@@ -279,18 +320,24 @@ def _decode_profile(
         if field == 2:
             samples.append(_parse_sample(value))
         elif field == 4:
-            location_id, function_ids = _parse_location(value)
-            locations[location_id] = function_ids
+            location_id, lines = _parse_location(value)
+            locations[location_id] = [function_id for function_id, _line in lines]
+            _first_lines(lines, into=sampled_lines)
         elif field == 5:
             function_id, function = _parse_function(value)
             functions[function_id] = function
         elif field == 6:
             strings.append(value.decode("utf-8", errors="replace"))
+    _backfill_start_lines(functions, sampled_lines)
     return strings, functions, locations, samples
 
 
 def _build_frame(
-    function: _Function | None, strings: list[str], root_prefix: str
+    function: _Function | None,
+    strings: list[str],
+    root_prefix: str,
+    excluded_dir: str,
+    bare_name: Callable[[str], str],
 ) -> FramePoint | None:
     """A project FramePoint for the function, or None if out of scope."""
     if function is None or not (0 < function.filename_index < len(strings)):
@@ -298,13 +345,13 @@ def _build_frame(
     path = strings[function.filename_index]
     if not path.startswith(root_prefix):
         return None
-    if _GO_EXCLUDED_DIR in path[len(root_prefix) :].split("/"):
+    if excluded_dir in path[len(root_prefix) :].split("/"):
         return None
     name = (
         strings[function.name_index] if 0 < function.name_index < len(strings) else ""
     )
     return FramePoint(
-        path=path, qualname=_bare_name(name), line=max(function.start_line, 0)
+        path=path, qualname=bare_name(name), line=max(function.start_line, 0)
     )
 
 
@@ -339,15 +386,16 @@ def convert_pprof_profile(
     output: Path,
     workload: str | None,
     *,
-    build_frame: Callable[[_Function | None, list[str], str], FramePoint | None],
+    excluded_dir: str,
+    bare_name: Callable[[str], str],
     language: str,
     tracer: str,
 ) -> int:
     """Decode a pprof profile and write its project call edges to ``output``.
 
-    Shared by the Go and Rust converters, which differ only in ``build_frame``
-    (symbol demangling and out-of-scope directories) and the header tags. pprof
-    profiles are sampled, so the header is always flagged ``sampled``.
+    Shared by the Go and Rust converters, which differ only in ``bare_name``
+    (symbol demangling), the out-of-scope ``excluded_dir`` and the header tags.
+    pprof profiles are sampled, so the header is always flagged ``sampled``.
     """
     raw = _decompress(profile_path.read_bytes(), profile_path)
     try:
@@ -362,8 +410,12 @@ def convert_pprof_profile(
 
     def _frame(function_id: int) -> FramePoint | None:
         if function_id not in frames:
-            frames[function_id] = build_frame(
-                functions.get(function_id), strings, root_prefix
+            frames[function_id] = _build_frame(
+                functions.get(function_id),
+                strings,
+                root_prefix,
+                excluded_dir,
+                bare_name,
             )
         return frames[function_id]
 
@@ -403,7 +455,8 @@ def convert_pprof(
         repo_root,
         output,
         workload,
-        build_frame=_build_frame,
+        excluded_dir=_GO_EXCLUDED_DIR,
+        bare_name=_bare_name,
         language=cs.TRACE_LANGUAGE_GO,
         tracer=cs.TRACE_TOOL_NAME_PPROF,
     )

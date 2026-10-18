@@ -1,6 +1,6 @@
 [project]
 name = "code-graph-rag"
-version = "0.1.62"
+version = "0.2.10"
 description = "The ultimate RAG for your monorepo. Query, understand, and edit multi-language codebases with the power of AI and knowledge graphs"
 readme = "PYPI_README.md"
 requires-python = ">=3.12"
@@ -39,12 +39,11 @@ dependencies = [
     # mcp 2.x removed the Server.list_tools()/call_tool() decorators that
     # codebase_rag/mcp/server.py registers its handlers with, and every
     # documented install resolves this range rather than uv.lock (#2519).
-    "mcp>=1.28.1,<2",
+    "mcp>=1.30.0,<2",
     # Only the providers codebase_rag/providers imports. The `pydantic-ai`
     # meta-package also installs logfire, evals, a CLI and a web UI, none used.
     "pydantic-ai-slim[anthropic,google,openai]>=2.0.0",
     "pydantic-settings>=2.12.0",
-    "pymgclient>=1.5.1",
     "python-dotenv>=1.2.1",
     "tiktoken>=0.12.0",
     "tomli-w>=1.2.0",
@@ -61,6 +60,15 @@ dependencies = [
     "huggingface-hub[hf-xet]>=1.7.2",
     "pathspec>=1.0.4",
     "pygments>=2.20.0",
+    # The embedded graph's `=~`: unlike `re`, a match takes a timeout, so a
+    # backtracking pattern stops at the query's deadline. tiktoken already
+    # installs it.
+    "regex>=2024.11.6",
+    # The embedded graph's Rust acceleration (rust/cgr_graph_rs), shipped as
+    # abi3 wheels for exactly these platforms; elsewhere the engine runs its
+    # Python twin of every part. The floor is the crate version this code
+    # was written against, raised with each crate release.
+    "cgr-graph-rs>=0.1.0,<0.2; platform_python_implementation == 'CPython' and ((sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')) or sys_platform == 'darwin' or (sys_platform == 'win32' and platform_machine == 'AMD64'))",
 ]
 
 [project.scripts]
@@ -75,12 +83,19 @@ package = true
 # semgrep (dev group) pins pyjwt~=2.13.0, which holds the single locked PyJWT
 # below the 2.14.0 fix for GHSA-ffc3-869f-jxw9 and its sibling advisories.
 # Drop this once a semgrep release accepts pyjwt>=2.14.0.
-override-dependencies = ["pyjwt[crypto]>=2.14.0"]
+# semgrep also pins mcp==1.29.0, which holds the locked SDK below the 1.30.0
+# fix for GHSA-84m7-p3x7-pcfv (StreamableHTTP sessions never reclaimed).
+# Drop that entry once a semgrep release accepts mcp>=1.30.0.
+override-dependencies = ["pyjwt[crypto]>=2.14.0", "mcp>=1.30.0,<2"]
 
 # Patched grammars: upstream tree-sitter-c drops declarations after a
 # #define whose value embeds a block comment (issue #555). Our forks carry
 # the repeat(preproc_arg) fix; drop these overrides once upstream releases it.
 [tool.uv.sources]
+# A checkout builds the crate it carries (with a Rust toolchain), so the
+# Python and Rust halves of a change are tested together; installs from
+# PyPI get the published wheels.
+cgr-graph-rs = { path = "rust/cgr_graph_rs" }
 tree-sitter-c = { git = "https://github.com/vitali87/tree-sitter-c", rev = "fa327ad98f847f8173fc46926be4165c7971f960" }
 tree-sitter-cpp = { git = "https://github.com/vitali87/tree-sitter-cpp", rev = "b4a7be2f62f36dd460a14b2d1728d42d81d2c486" }
 
@@ -99,6 +114,9 @@ codebase_rag = [
     "parsers/java_frontend/javac/cgr/*.java",
     "parsers/ast_grep_patterns/*.yaml",
     "analyzers/ast_grep_rules/*/*.yaml",
+    # Julia's pip grammar ships no HIGHLIGHTS_QUERY, so its highlights come
+    # only from this fallback file; without it the wheel silently disables
+    # Julia modifier/decorator extraction (issue #1882 review).
     "queries/highlights/*.scm",
 ]
 # The provenance manifest hashes this file to stamp each index with its codec
@@ -118,14 +136,27 @@ test = [
     "filelock>=3.12",
     "ast-grep-py>=0.44.0",
     "pyyaml>=6.0",
+    # The suite exercises the Memgraph backend with a mocked server, but
+    # imports the real driver's exception types to do it.
+    "pymgclient>=1.6.0",
+    # The `sqlite` vector store's tests run against a real sqlite-vec file.
+    "sqlite-vec>=0.1.9",
 ]
 
 cpp = [
     "libclang>=18.1.1",
 ]
 
-# Neo4j is an optional backend (issue #1590): Memgraph remains the default,
-# so a default install must not pay for a driver it will never load.
+# Memgraph is an optional backend since the embedded graph became the
+# default (issue #386). Its driver is a C extension that builds with cmake
+# wherever no wheel fits, the setup step first-time users tripped on.
+# TransientError, which the ingestor retries, first appears in 1.6.0.
+memgraph = [
+    "pymgclient>=1.6.0",
+]
+
+# Neo4j is an optional backend (issue #1590), so a default install must not
+# pay for a driver it will never load.
 neo4j = [
     "neo4j>=5.28.1",
 ]
@@ -141,6 +172,7 @@ treesitter-full = [
     "tree-sitter-c>=0.24.1",
     "tree-sitter-cpp>=0.23.0",
     "tree-sitter-lua>=0.0.19",
+    "tree-sitter-julia>=0.23.1",
     "tree-sitter-php>=0.24.1",
     "tree-sitter-c-sharp>=0.23.5",
     # Exact pin: PyPI's tree-sitter-dart is a single-maintainer repackaging of
@@ -158,6 +190,12 @@ semantic = [
 
 milvus = [
     "pymilvus[milvus-lite]>=3.0.0",
+]
+
+# The `sqlite` vector store (CGR_VECTOR_STORE_BACKEND=sqlite): vectors in a
+# file beside the embedded graph, so semantic search needs no server either.
+sqlite-vec = [
+    "sqlite-vec>=0.1.9",
 ]
 
 ast-grep = [
@@ -201,6 +239,11 @@ ignore = [
 "evals/flows_corpus/**" = ["T201"]
 # The corpus builder is a CLI script; its output is the point.
 "fuzz/build_corpus.py" = ["T201"]
+# The embedded graph engine compiles Cypher to SQL, so composing SQL text is
+# its job. Identifiers in that text are generated by the compiler and string
+# literals pass through `sql_str`; every value supplied with a query reaches
+# SQLite as a bound parameter, never spliced into the statement.
+"codebase_rag/embedded_graph/**" = ["S608"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -242,8 +285,10 @@ asyncio_mode = "auto"
 # xdist workers decide their grouping flag from the parsed args/ini before
 # any conftest hook fires (xdist remote.py setup_config), so this must be
 # an ini-level option; every dependency set that carries pytest also
-# carries pytest-xdist, so the flag always parses.
-addopts = "--dist=loadgroup"
+# carries pytest-xdist, so the flag always parses. The shard plugin
+# registers `--shard`, which CI uses to split the suite across jobs
+# (codebase_rag/tests/suite_shards.py says why it is not a conftest hook).
+addopts = "--dist=loadgroup -p codebase_rag.tests.suite_shards"
 testpaths = ["codebase_rag/tests"]
 norecursedirs = ["grammars", ".git", "__pycache__", "*.egg-info", ".venv", "venv"]
 python_files = ["test_*.py", "*_test.py"]
@@ -263,6 +308,8 @@ dev = [
     "pyinstaller>=6.14.1",
     "pytest>=9.0.2",
     "pytest-xdist>=3.8.0",
+    # ty resolves the Memgraph driver's types where the code names them.
+    "pymgclient>=1.6.0",
     "ruff>=0.5.5",
     "semgrep>=1.79.0",
     "ty>=0.0.7",
@@ -274,6 +321,13 @@ docs = [
 ]
 fuzz = [
     "atheris>=2.3.0",
+]
+# Builds the cgr-graph-rs wheels (.github/workflows/rust-wheels.yml): zig
+# links each Linux wheel against the oldest glibc or musl its tag promises.
+rust-wheels = [
+    "maturin==1.15.0",
+    # Only the Linux wheels are linked with zig, and it ships no Windows build.
+    "ziglang==0.17.0; sys_platform == 'linux'",
 ]
 
 [tool.bandit]
