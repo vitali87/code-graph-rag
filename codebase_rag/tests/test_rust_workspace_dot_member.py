@@ -41,11 +41,18 @@ def _member(root: Path, rel: str, name: str, body: str) -> None:
     (root / rel / "src" / "lib.rs").write_text(body, encoding="utf-8")
 
 
-def _calls(root: Path, members: str) -> set[tuple[str, str]]:
+# A crate reaches only what it depends on. Pathless entries name workspace
+# members, so those crates are found only through the expanded members; a
+# workspace of the root alone reaches them by path.
+_MEMBER_DEPS = 'member_a = "0.1.0"\nmember_b = "0.1.0"\n'
+_PATH_DEPS = 'member_a = { path = "crates/a" }\nmember_b = { path = "crates/b" }\n'
+
+
+def _calls(root: Path, members: str, deps: str = _MEMBER_DEPS) -> set[tuple[str, str]]:
     (root / "src").mkdir(parents=True)
     (root / "Cargo.toml").write_text(
         '[package]\nname = "rsws"\nversion = "0.1.0"\nedition = "2021"\n\n'
-        f"[workspace]\nmembers = {members}\n",
+        f"[dependencies]\n{deps}\n[workspace]\nmembers = {members}\n",
         encoding="utf-8",
     )
     (root / "src" / "lib.rs").write_text(_ROOT_LIB, encoding="utf-8")
@@ -63,20 +70,22 @@ def _calls(root: Path, members: str) -> set[tuple[str, str]]:
 
 
 @pytest.mark.parametrize(
-    "members",
+    ("members", "deps"),
     [
-        '["."]',
-        '["./"]',
-        '[".", "crates/*"]',
-        '["./", "./crates/a", "crates/b/"]',
+        ('["."]', _PATH_DEPS),
+        ('["./"]', _PATH_DEPS),
+        ('[".", "crates/*"]', _MEMBER_DEPS),
+        ('["./", "./crates/a", "crates/b/"]', _MEMBER_DEPS),
     ],
     ids=["dot", "dot-slash", "dot-and-glob", "dot-slash-prefixed-members"],
 )
-def test_a_root_member_does_not_abort_the_sync(tmp_path: Path, members: str) -> None:
+def test_a_root_member_does_not_abort_the_sync(
+    tmp_path: Path, members: str, deps: str
+) -> None:
     messages: list[str] = []
     sink = logger.add(messages.append, level="DEBUG", format="{message}")
     try:
-        calls = _calls(tmp_path / "rsws", members)
+        calls = _calls(tmp_path / "rsws", members, deps)
     finally:
         logger.remove(sink)
     assert ("src.lib.run", "crates.a.src.lib.helper") in calls, calls
