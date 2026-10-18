@@ -5932,6 +5932,9 @@ class CallProcessor:
             # A Java/C#/Scala `new X(...)` names a type, never a method.
             constructing=ctx.language in _NEW_CONSTRUCTS_LANGUAGES
             and call_node.type in _OBJECT_CREATION_NODE_TYPES,
+            # `$this->label()` and `label()` reach the resolver alike.
+            function_call=ctx.language == cs.SupportedLanguage.PHP
+            and call_node.type == cs.TS_PHP_FUNCTION_CALL_EXPRESSION,
         )
         return self._judge_resolved_callee(ctx, call_node, call_name, callee_info)
 

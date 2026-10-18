@@ -109,10 +109,14 @@ _INHERITED_BARE_CALL_LANGUAGES = frozenset(
     }
 )
 # Of those, the ones where a top-level function the module can see wins over
-# an inherited member: Dart looks a bare name up lexically first, and a PHP
-# bare `label()` is a function call, never a method.
-_LEXICAL_FIRST_LANGUAGES = frozenset(
-    {cs.SupportedLanguage.DART, cs.SupportedLanguage.PHP}
+# an inherited member: Dart looks a bare name up lexically first. A PHP bare
+# `label()` is a function call, never a method, and is kept out altogether.
+_LEXICAL_FIRST_LANGUAGES = frozenset({cs.SupportedLanguage.DART})
+# And the ones whose trait or mixin overrides the superclass: Dart and Scala
+# look the last `with` type up first, and a PHP class takes a used trait's
+# method over its parent's, while their bases are recorded superclass first.
+_LINEARIZED_LANGUAGES = frozenset(
+    {cs.SupportedLanguage.DART, cs.SupportedLanguage.SCALA, cs.SupportedLanguage.PHP}
 )
 
 
@@ -136,6 +140,8 @@ class _CallSite(NamedTuple):
     language: cs.SupportedLanguage | None
     call_point: int | None
     constructing: bool
+    # A PHP `helper()` with no receiver: a function call, never a method.
+    function_call: bool = False
 
 
 def _rust_assoc_path(call: _CallSite) -> tuple[list[str], str] | None:
@@ -720,10 +726,12 @@ class CallResolver:
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
         constructing: bool = False,
+        function_call: bool = False,
     ) -> tuple[str, str] | None:
         """`constructing`: the call is a Java/C# `new X(...)`, so `call_name`
         names a TYPE and the simple-name fallback must not offer a method or
-        function that merely shares the name."""
+        function that merely shares the name. `function_call`: a PHP call
+        with no receiver, which never reaches a method its class inherits."""
         self.last_resolution = cs.EdgeResolution.EXACT
         result = self._reject_class_via_value_receiver(
             self._redirect_protocol_method(
@@ -736,6 +744,7 @@ class CallResolver:
                     language,
                     call_point,
                     constructing,
+                    function_call,
                 )
             ),
             call_name,
@@ -2041,6 +2050,7 @@ class CallResolver:
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
         constructing: bool = False,
+        function_call: bool = False,
     ) -> tuple[str, str] | None:
         call = _CallSite(
             call_name,
@@ -2053,6 +2063,7 @@ class CallResolver:
             language,
             call_point,
             constructing,
+            function_call,
         )
         handled, result = self._resolve_caller_scoped_stages(call)
         if handled:
@@ -2412,6 +2423,7 @@ class CallResolver:
             call.language not in _INHERITED_BARE_CALL_LANGUAGES
             or not class_qn
             or call.constructing
+            or call.function_call
             or cs.SEPARATOR_DOT in name
             or f"{class_qn}{cs.SEPARATOR_DOT}{name}" in self.function_registry
         ):
@@ -2421,10 +2433,43 @@ class CallResolver:
             or name in self.import_processor.import_mapping.get(call.module_qn, {})
         ):
             return None
-        hit = self._resolve_inherited_method(class_qn, name)
+        hit = (
+            self._linearized_method(class_qn, name)
+            if call.language in _LINEARIZED_LANGUAGES
+            else self._resolve_inherited_method(class_qn, name)
+        )
         if hit is None or hit[0] != cs.NodeLabel.METHOD.value:
             return None
         return hit
+
+    def _linearized_method(self, class_qn: str, name: str) -> tuple[str, str] | None:
+        # The first of the class's linearized bases defining `name`.
+        for base in self._linearized_bases(class_qn, frozenset({class_qn}), {}):
+            qn = f"{base}{cs.SEPARATOR_DOT}{name}"
+            if qn in self.function_registry:
+                return self.function_registry[qn], qn
+        return None
+
+    def _linearized_bases(
+        self, class_qn: str, seen: frozenset[str], memo: dict[str, list[str]]
+    ) -> list[str]:
+        # Scala's linearization, which Dart mixin application and PHP trait
+        # use match: the last recorded base first, each followed by its own
+        # bases, and a base two of them share kept only at its last place.
+        # `memo` keeps a diamond-heavy hierarchy from being walked once per
+        # path to each base.
+        if (known := memo.get(class_qn)) is not None:
+            return known
+        order: list[str] = []
+        for base in reversed(self.class_inheritance.get(class_qn, [])):
+            if base in seen:
+                continue
+            order.extend((base, *self._linearized_bases(base, seen | {base}, memo)))
+        last = {base: index for index, base in enumerate(order)}
+        memo[class_qn] = [
+            base for index, base in enumerate(order) if last[base] == index
+        ]
+        return memo[class_qn]
 
     def _go_local_in_scope(self, call: _CallSite) -> bool:
         # Only where the local is in scope: a `helper()` before an inner

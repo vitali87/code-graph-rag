@@ -178,3 +178,100 @@ def test_names_the_class_does_not_inherit_resolve_as_before(
     # bare `helper()` calls the function, not `Base::helper`.
     edges: _Calls = request.getfixturevalue(calls)
     assert callee in _callees(edges, caller), edges
+
+
+# A trait or mixin overrides the superclass: Dart and Scala look the last
+# `with` type up first, and PHP takes a used trait's method over the parent's.
+_DART_OVERRIDE = {
+    "pubspec.yaml": 'name: shapes\nenvironment:\n  sdk: ">=3.0.0 <4.0.0"\n',
+    "lib/signs.dart": """\
+mixin Quiet { String label() => "quiet"; }
+mixin Loud { String label() => "loud"; }
+class Base { String label() => "base"; }
+class Sign extends Base with Loud {
+  String implicitCall() => label();
+}
+class Banner extends Base with Loud, Quiet {
+  String implicitCall() => label();
+}
+""",
+}
+_SCALA_OVERRIDE = {
+    "Signs.scala": """\
+package s
+class Base { def label(): String = "base" }
+trait Loud extends Base { override def label(): String = "loud" }
+class Sign extends Base with Loud {
+  def implicitCall(): String = label()
+}
+""",
+}
+_PHP_OVERRIDE = {
+    "lib/helper.php": '<?php\nnamespace Lib;\nfunction helper(): string { return "lib"; }\n',
+    "helpers.php": '<?php\nfunction shout(): string { return "fn"; }\n',
+    "signs.php": """\
+<?php
+use function Lib\\helper;
+trait Loud { public function label(): string { return "loud"; } }
+class Base {
+    public function label(): string { return "base"; }
+    public function shout(): string { return "base"; }
+    public function HELPER(): string { return "base"; }
+}
+class Sign extends Base {
+    use Loud;
+    public function thisCall(): string { return $this->label(); }
+    public function globalCall(): string { return shout(); }
+    public function foldedCall(): string { return HELPER(); }
+}
+""",
+}
+
+
+@pytest.fixture(scope="module")
+def overrides(tmp_path_factory: pytest.TempPathFactory) -> dict[str, _Calls]:
+    return {
+        grammar: _calls(
+            tmp_path_factory.mktemp(f"{grammar}3169o") / "ovr", files, grammar
+        )
+        for grammar, files in (
+            ("dart", _DART_OVERRIDE),
+            ("scala", _SCALA_OVERRIDE),
+            ("php", _PHP_OVERRIDE),
+        )
+    }
+
+
+@pytest.mark.parametrize(
+    ("grammar", "caller", "callee"),
+    [
+        ("dart", "lib.signs.Sign.implicitCall", "lib.signs.Loud.label"),
+        ("dart", "lib.signs.Banner.implicitCall", "lib.signs.Quiet.label"),
+        ("scala", "Signs.Sign.implicitCall", "Signs.Loud.label"),
+        ("php", "signs.Sign.thisCall", "signs.Loud.label"),
+    ],
+    ids=["dart-mixin", "dart-last-mixin", "scala-trait", "php-trait"],
+)
+def test_a_trait_or_mixin_overrides_the_superclass(
+    overrides: dict[str, _Calls], grammar: str, caller: str, callee: str
+) -> None:
+    edges = overrides[grammar]
+    assert _callees(edges, caller) == {callee: "exact"}, edges
+
+
+@pytest.mark.parametrize(
+    ("caller", "method"),
+    [
+        ("signs.Sign.globalCall", "signs.Base.shout"),
+        ("signs.Sign.foldedCall", "signs.Base.HELPER"),
+    ],
+    ids=["global-function-in-another-file", "case-folded-function-import"],
+)
+def test_a_php_bare_call_never_binds_an_inherited_method(
+    overrides: dict[str, _Calls], caller: str, method: str
+) -> None:
+    # Negative: a bare PHP call is a function call whatever the class
+    # inherits: `shout()` is the global function in helpers.php, and
+    # `HELPER()` the `use function Lib\helper` import, case folded.
+    edges = overrides["php"]
+    assert method not in _callees(edges, caller), edges
