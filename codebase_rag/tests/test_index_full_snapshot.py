@@ -20,6 +20,7 @@ from typer.testing import CliRunner
 import codec.schema_pb2 as pb
 from codebase_rag import constants as cs
 from codebase_rag import logs as ls
+from codebase_rag.checkout_state import state_dir
 from codebase_rag.cli import app
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -93,6 +94,7 @@ def test_an_index_writes_no_sync_state_into_the_repository(
     _index(repo, tmp_path / "out")
 
     assert [name for name in STATE_FILES if (repo / name).exists()] == []
+    assert [name for name in STATE_FILES if (state_dir(repo) / name).exists()] == []
 
 
 def test_an_index_ignores_state_a_sync_left_behind(repo: Path, tmp_path: Path) -> None:
@@ -103,17 +105,18 @@ def test_an_index_ignores_state_a_sync_left_behind(repo: Path, tmp_path: Path) -
         parsers=parsers,
         queries=queries,
     ).run()
-    assert (repo / cs.HASH_CACHE_FILENAME).exists()
-    before = (repo / cs.HASH_CACHE_FILENAME).read_bytes()
+    cache = state_dir(repo) / cs.HASH_CACHE_FILENAME
+    assert cache.exists()
+    before = cache.read_bytes()
 
     _index(repo, tmp_path / "out")
 
     assert len(_graph(tmp_path / "out")[2]) >= 4
     # Negative: the sync's own state is left exactly as it was.
-    assert (repo / cs.HASH_CACHE_FILENAME).read_bytes() == before
+    assert cache.read_bytes() == before
 
 
-def test_a_sync_still_keeps_its_state_in_the_repository(
+def test_a_sync_still_keeps_its_state_for_this_checkout(
     repo: Path, tmp_path: Path
 ) -> None:
     # Negative: only the snapshot command stops writing state; the
@@ -126,7 +129,7 @@ def test_a_sync_still_keeps_its_state_in_the_repository(
         queries=queries,
     ).run()
 
-    assert (repo / cs.HASH_CACHE_FILENAME).exists()
+    assert (state_dir(repo) / cs.HASH_CACHE_FILENAME).exists()
 
 
 def test_one_write_is_reported_once(repo: Path, tmp_path: Path) -> None:

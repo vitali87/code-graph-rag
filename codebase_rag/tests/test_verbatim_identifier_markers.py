@@ -168,7 +168,7 @@ class TestDeadCodeRootLeaf:
     @staticmethod
     def _is_root(qn: str) -> bool:
         from codebase_rag import constants as cs
-        from codebase_rag.dead_code import DeadCodeConfig, _is_root
+        from codebase_rag.dead_code import DeadCodeConfig, _is_root, _StructuralRels
 
         config = DeadCodeConfig(
             include_tests=False,
@@ -187,8 +187,7 @@ class TestDeadCodeRootLeaf:
             set(),
             {},
             {},
-            set(),
-            set(),
+            _StructuralRels(),
             set(),
             {},
             "proj",
