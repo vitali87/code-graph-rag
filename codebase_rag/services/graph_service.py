@@ -430,7 +430,9 @@ class MemgraphIngestor:
                 max_workers=settings.FLUSH_THREAD_POOL_SIZE
             )
         logger.debug(ls.MG_CONNECTED)
-        if self._dialect.name != DIALECT_NEO4J:
+        # Memgraph only: the embedded engine answers `SHOW VERSION` with rows
+        # of its own, which would be read as a version string.
+        if self._dialect.name == DIALECT_MEMGRAPH:
             self._warn_if_unsupported(self.conn)
         return self
 

@@ -16,10 +16,13 @@ import pytest
 from loguru import logger
 
 from codebase_rag import constants as cs
+from codebase_rag.config import settings
+from codebase_rag.graph_dialects import DIALECT_SQLITE
 from codebase_rag.services import graph_service
 from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.tools import health_checker
 from codebase_rag.tools.health_checker import HealthChecker
-from codebase_rag.types_defs import PropertyDict, ResultValue
+from codebase_rag.types_defs import ConnectionProtocol, PropertyDict, ResultValue
 
 _DOCS = Path(__file__).resolve().parents[2] / "docs"
 
@@ -111,6 +114,29 @@ def test_a_supported_or_unreadable_version_warns_nothing(
 ) -> None:
     # Negative: only a version read as below 3.x is reported.
     assert _enter(monkeypatch, version) == []
+
+
+def test_the_embedded_graph_has_no_memgraph_version_read(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Negative: `SHOW VERSION` is Memgraph's. The embedded engine answers it
+    # with rows of its own, which read as a version string.
+    read: list[ConnectionProtocol] = []
+
+    def recording(conn: ConnectionProtocol) -> str | None:
+        read.append(conn)
+        return "2.14.1"
+
+    monkeypatch.setattr(settings, "GRAPH_BACKEND", DIALECT_SQLITE)
+    monkeypatch.setattr(graph_service, "memgraph_version", recording)
+    monkeypatch.setattr(health_checker, "memgraph_version", recording)
+    with MemgraphIngestor(
+        host="127.0.0.1", port=7999, sqlite_path=str(tmp_path / "g.db")
+    ):
+        pass
+    result = HealthChecker().check_memgraph_connection()
+    assert result.passed is True, result
+    assert read == []
 
 
 def test_the_mcp_setup_guide_starts_the_supported_server() -> None:

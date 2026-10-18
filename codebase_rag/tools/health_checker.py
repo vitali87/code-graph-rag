@@ -208,7 +208,7 @@ class HealthChecker:
                 list(cursor.fetchall())
                 version = (
                     memgraph_version(conn)
-                    if settings.GRAPH_BACKEND != DIALECT_NEO4J
+                    if settings.GRAPH_BACKEND == DIALECT_MEMGRAPH
                     else None
                 )
 
