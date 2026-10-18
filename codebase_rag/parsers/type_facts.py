@@ -30,6 +30,8 @@ from .. import constants as cs
 from ..services import IngestorProtocol
 from ..types_defs import FunctionRegistryTrieProtocol, PendingTypeFact
 from .cpp import utils as cpp_utils
+from .csharp import arity as csharp_arity
+from .csharp import utils as csharp_utils
 from .utils import safe_decode_with_fallback
 
 # Identifiers, dotted paths and Rust `::` paths inside an annotation. Generic
@@ -259,6 +261,20 @@ def type_reference_names(annotation: str) -> list[str]:
     return list(seen)
 
 
+def csharp_type_reference_names(annotation: str) -> list[tuple[str, int]]:
+    """`type_reference_names` for C#, each name with its written arity.
+
+    `Dictionary<string, PB<int>>` yields `Dictionary` 2, `string` 0, `PB` 1
+    and `int` 0: `PB` and `PB<T>` are two types (issue #2579).
+    """
+    seen: dict[tuple[str, int], None] = {}
+    for match in _TYPE_NAME_RE.finditer(annotation):
+        name = match.group(0).replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
+        arity = csharp_utils.type_argument_count(annotation[match.end() :])
+        seen.setdefault((name, arity), None)
+    return list(seen)
+
+
 def queue_type_facts(
     sink: list[PendingTypeFact] | None,
     label: str,
@@ -296,14 +312,46 @@ class TypeReferenceResolver:
         function_registry: FunctionRegistryTrieProtocol,
         import_mapping: Mapping[str, Mapping[str, str]],
         project_name: str,
+        csharp_generic_arity: Mapping[str, int] | None = None,
     ) -> None:
         self._registry = function_registry
+        self._partial_groups: Mapping[str, list[str]] = {}
         self._imports = import_mapping
         self._prefix = f"{project_name}{cs.SEPARATOR_DOT}"
+        # Only generic C# types are recorded: an absent qn declares none.
+        self._csharp_arity = csharp_generic_arity or {}
 
     def _is_type(self, qn: str) -> bool:
-        node_type = self._registry.get(qn)
+        # An annotation is a type position: a TS `type`/`interface` sharing
+        # its name with a function answers here, not the function that holds
+        # the registry entry (issue #2520).
+        node_type = self._registry.type_kind(qn)
         return node_type is not None and str(node_type) in TYPE_NODE_TYPES
+
+    def join_partial_groups(self, partial_groups: Mapping[str, list[str]]) -> None:
+        """Count the parts of each C# partial type as one candidate.
+
+        Every file declaring a `partial` type registers its own node, so a
+        name matching the parts read as two equally near candidates and the
+        reference got no edge at all (issue #2469). `partial_groups` maps
+        each part to its group, as parsing builds them.
+        """
+        self._partial_groups = partial_groups
+
+    def _every_part(self, types: Mapping[str, None]) -> list[str]:
+        # A reference to a partial type names every part, not one chosen
+        # part. Which part comes first changes when a sync adds or drops one,
+        # and the edges an unchanged file already holds would keep naming the
+        # old choice beside the new one, a graph no clean index produces
+        # (review on #2829). Every part needs no such migration: a new part
+        # gains its edges from the requeued facts, a dropped one loses them
+        # with its node.
+        found: dict[str, None] = {}
+        for qn in types:
+            for part in sorted(self._partial_groups.get(qn) or (qn,)):
+                if part == qn or self._is_type(part):
+                    found.setdefault(part, None)
+        return list(found)
 
     def _scoped_candidates(self, name: str, module_qn: str) -> list[str]:
         head, _sep, rest = name.partition(cs.SEPARATOR_DOT)
@@ -324,9 +372,8 @@ class TypeReferenceResolver:
     def _nearest_unique(self, matches: list[str], module_qn: str) -> str | None:
         # 3. A unique project type with that name, preferring the nearest
         #    package; two equally near candidates stay unresolved rather
-        #    than guessed.
-        if len(matches) == 1:
-            return matches[0]
+        #    than guessed. The parts of a C# partial type are one candidate,
+        #    as near as its nearest part; `_every_part` then names them all.
         module_parts = module_qn.split(cs.SEPARATOR_DOT)
 
         def shared(qn: str) -> int:
@@ -337,12 +384,40 @@ class TypeReferenceResolver:
                 n += 1
             return n
 
-        ranked = sorted(matches, key=lambda qn: (-shared(qn), len(qn), qn))
-        if shared(ranked[0]) > shared(ranked[1]):
+        types: dict[str, list[str]] = {}
+        for qn in matches:
+            group = self._partial_groups.get(qn)
+            types.setdefault(min(group) if group else qn, []).append(qn)
+        nearness = {min(parts): max(map(shared, parts)) for parts in types.values()}
+        if len(nearness) == 1:
+            return next(iter(nearness))
+        ranked = sorted(nearness, key=lambda qn: (-nearness[qn], len(qn), qn))
+        if nearness[ranked[0]] > nearness[ranked[1]]:
             return ranked[0]
         return None
 
-    def resolve(self, name: str, module_qn: str) -> str | None:
+    def resolve(
+        self, name: str, module_qn: str, arity: int | None = None
+    ) -> str | None:
+        """The project type `name` names from `module_qn`, or None.
+
+        `arity` is a C# reference's written type-argument count: `PB` and
+        `PB<T>` are two types (issue #2579), so a declaration of that arity
+        is looked for first. None of that arity is no reason to drop the name,
+        so the search then runs as for any other language.
+        """
+        if arity is not None:
+            found = self._resolve(name, module_qn, arity)
+            if found is not None:
+                return found
+        return self._resolve(name, module_qn, None)
+
+    def _fits(self, qn: str, arity: int | None) -> bool:
+        if not self._is_type(qn):
+            return False
+        return arity is None or self._csharp_arity.get(qn, 0) == arity
+
+    def _resolve(self, name: str, module_qn: str, arity: int | None) -> str | None:
         # A crate-root path is absolute: it must not bind to a nearer module
         # that happens to share the tail, so the scoped walk is skipped and
         # only the unique-suffix match below decides.
@@ -350,12 +425,14 @@ class TypeReferenceResolver:
         if absolute:
             name = name[len(_RUST_CRATE_ROOT) :]
         for candidate in () if absolute else self._scoped_candidates(name, module_qn):
-            if self._is_type(candidate):
-                return candidate
+            for spelled in csharp_arity.spellings(candidate, arity):
+                if self._fits(spelled, arity):
+                    return spelled
         matches = [
             qn
-            for qn in self._registry.find_ending_with(name)
-            if qn.startswith(self._prefix) and self._is_type(qn)
+            for spelled in csharp_arity.spellings(name, arity)
+            for qn in self._registry.find_ending_with(spelled)
+            if qn.startswith(self._prefix) and self._fits(qn, arity)
         ]
         if not matches:
             return None
@@ -375,16 +452,25 @@ class TypeReferenceResolver:
             return None
         return ranked[0]
 
-    def resolve_annotation(self, annotation: str, module_qn: str) -> list[str]:
+    def resolve_annotation(
+        self, annotation: str, module_qn: str, path: str | None = None
+    ) -> list[str]:
+        # A C# annotation's type arguments decide which of two same-named
+        # types it means; elsewhere the name alone is looked up, as ever.
+        written: list[tuple[str, int | None]] = (
+            list(csharp_type_reference_names(annotation))
+            if path is not None and path.endswith(cs.EXT_CS)
+            else [(name, None) for name in type_reference_names(annotation)]
+        )
         found: dict[str, None] = {}
-        for name in type_reference_names(annotation):
-            qn = self.resolve(name, module_qn)
+        for name, arity in written:
+            qn = self.resolve(name, module_qn, arity)
             if qn is not None:
                 found.setdefault(qn, None)
-        return list(found)
+        return self._every_part(found)
 
     def label_for(self, qn: str) -> str:
-        return str(self._registry[qn])
+        return str(self._registry.type_kind(qn))
 
 
 def _target_spec(
@@ -401,7 +487,7 @@ def _emit_returns(
 ) -> int:
     if fact.return_type is None:
         return 0
-    targets = resolver.resolve_annotation(fact.return_type, fact.module_qn)
+    targets = resolver.resolve_annotation(fact.return_type, fact.module_qn, fact.path)
     for target_qn in targets:
         ingestor.ensure_relationship_batch(
             source, cs.RelationshipType.RETURNS, _target_spec(resolver, target_qn)
@@ -419,7 +505,9 @@ def _emit_accepts(
     for annotation in fact.param_types or ():
         if not annotation:
             continue
-        for target_qn in resolver.resolve_annotation(annotation, fact.module_qn):
+        for target_qn in resolver.resolve_annotation(
+            annotation, fact.module_qn, fact.path
+        ):
             accepted.setdefault(target_qn, None)
     for target_qn in accepted:
         ingestor.ensure_relationship_batch(
@@ -443,5 +531,41 @@ def emit_type_edges(
         source = (fact.label, cs.KEY_QUALIFIED_NAME, fact.qualified_name)
         emitted += _emit_returns(fact, resolver, ingestor, source)
         emitted += _emit_accepts(fact, resolver, ingestor, source)
+    pending.clear()
+    return emitted
+
+
+def emit_of_type_edges[F: tuple[str, str, str, str]](
+    label: cs.NodeLabel,
+    pending: list[F],
+    resolver: TypeReferenceResolver,
+    ingestor: IngestorProtocol,
+) -> int:
+    """OF_TYPE edges for every queued Parameter or Field, after Pass 2.
+
+    Each fact is (qn, module_qn, type_name, path). One resolve per DISTINCT
+    (annotation, module) rather than per member: measured on this repo, 7,868
+    annotated parameters carry 575 distinct annotation strings, so the memo
+    is where the cost goes, not the dedup `_emit_accepts` does per function
+    (which saves 13%); the same annotation also recurs across a class's fields.
+    """
+    memo: dict[tuple[str, str], list[str]] = {}
+    emitted = 0
+    for qn, module_qn, type_name, path in pending:
+        key = (type_name, module_qn)
+        targets = memo.get(key)
+        if targets is None:
+            targets = memo[key] = resolver.resolve_annotation(
+                type_name, module_qn, path
+            )
+        source = (label.value, cs.KEY_QUALIFIED_NAME, qn)
+        for target_qn in targets:
+            ingestor.ensure_relationship_batch(
+                source, cs.RelationshipType.OF_TYPE, _target_spec(resolver, target_qn)
+            )
+            emitted += 1
+    # Emptied like the sibling passes: a reused updater (watch mode) would
+    # otherwise re-resolve every old fact each run and re-emit OF_TYPE from a
+    # member that no longer exists (local review P1).
     pending.clear()
     return emitted

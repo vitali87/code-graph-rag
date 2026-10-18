@@ -605,9 +605,8 @@ def test_the_hash_lookup_is_project_scoped_and_label_bound() -> None:
     q = cq.CYPHER_DEFINITIONS_BY_ANCHOR_HASH
     assert "t.qualified_name STARTS WITH $project_prefix" in q
     assert "t.anchor_hash IN $hashes" in q
-    assert (
-        f"(t:{cs.NodeLabel.FUNCTION.value}|" in q
-        or f"|{cs.NodeLabel.FUNCTION.value}" in q
+    assert f"t:{cs.NodeLabel.FUNCTION.value} OR" in q or (
+        f"OR t:{cs.NodeLabel.FUNCTION.value}" in q
     )
     assert cs.NodeLabel.GLOSS.value not in q.split("MATCH", 1)[1].split(")")[0]
 
@@ -959,9 +958,11 @@ def test_a_module_is_never_a_quote_candidate() -> None:
     bind one; kept in the span index, a sole module match would leave its note
     unattached on every pass rather than graded LOST (Copilot, PR #1966).
     Every other definition label stays a candidate."""
-    match = re.match(r"MATCH \(t:([^)]*)\)", cq.CYPHER_DEFINITION_SPANS)
+    match = re.match(
+        r"MATCH \(t\)\nWHERE \((t:\w+(?: OR t:\w+)*)\)", cq.CYPHER_DEFINITION_SPANS
+    )
     assert match is not None
-    labels = set(match.group(1).split("|"))
+    labels = {part.split(":", 1)[1] for part in match.group(1).split(" OR ")}
     assert cs.NodeLabel.MODULE.value not in labels
     assert labels == {
         label.value
