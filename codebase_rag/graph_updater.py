@@ -5321,14 +5321,7 @@ class GraphUpdater:
         if not cleared and not pending:
             return
         if not isinstance(self.ingestor, QueryProtocol):
-            for module_qn, names in (*((qn, []) for qn in cleared), *pending):
-                self._sink.ensure_node_batch(
-                    cs.NodeLabel.MODULE,
-                    {
-                        cs.KEY_QUALIFIED_NAME: module_qn,
-                        cs.KEY_UNRESOLVED_REFERENCES: names,
-                    },
-                )
+            self._write_unresolved_reference_nodes(cleared, pending)
             return
         self.ingestor.flush_all()
         try:
@@ -5343,6 +5336,18 @@ class GraphUpdater:
                 )
         except Exception:
             logger.warning(ls.PRUNE_QUERY_FAILED, label="unresolved references write")
+
+    def _write_unresolved_reference_nodes(
+        self, cleared: list[str], pending: list[tuple[str, list[str]]]
+    ) -> None:
+        for module_qn, names in (*((qn, []) for qn in cleared), *pending):
+            self._sink.ensure_node_batch(
+                cs.NodeLabel.MODULE,
+                {
+                    cs.KEY_QUALIFIED_NAME: module_qn,
+                    cs.KEY_UNRESOLVED_REFERENCES: names,
+                },
+            )
 
     def _foreign_definer_keys(self, gone_keys: Iterable[str]) -> set[str]:
         """Files that registered definitions keyed under a module going away.
