@@ -24,8 +24,14 @@ from .constants import (
     VECTOR_DIM_SETTINGS,
     VectorStoreBackend,
 )
+from .sqlite_vectors import (
+    SqliteVectorClient,
+    SqliteVectorPoint,
+    SqliteVectorRow,
+    open_sqlite_vector_client,
+)
 from .types_defs import EmbeddingPoint, EmbeddingSymbol
-from .utils.dependencies import has_pymilvus, has_qdrant_client
+from .utils.dependencies import has_pymilvus, has_qdrant_client, has_sqlite_vec
 
 if TYPE_CHECKING:
     from qdrant_client.models import Filter, Record
@@ -223,6 +229,11 @@ def _get_vector_store() -> VectorStore | None:
             logger.warning(ls.VECTOR_STORE_BACKEND_UNAVAILABLE.format(backend=backend))
             return None
         return QdrantVectorStore()
+    if backend == VectorStoreBackend.SQLITE:
+        if not has_sqlite_vec():
+            logger.warning(ls.VECTOR_STORE_BACKEND_UNAVAILABLE.format(backend=backend))
+            return None
+        return SqliteVectorStore()
     return None
 
 
@@ -297,11 +308,14 @@ def embedding_cache_dir() -> Path:
     It sits beside the embedded store, as before. When the bundled stack's
     Qdrant takes the vectors it moves to the stack's folder with them: the
     cache holds vectors too, and at the cwd-relative default it still put a
-    hidden folder into every indexed repository (issue #2355). Its keys carry
-    the embedding model, so one cache serves every project.
+    hidden folder into every indexed repository (issue #2355). The `sqlite`
+    backend's file sits under CGR_HOME, so its cache does too, beside it.
+    Its keys carry the embedding model, so one cache serves every project.
     """
     if _bundled_qdrant_url() is not None:
         return settings.CGR_HOME.expanduser()
+    if settings.VECTOR_STORE_BACKEND == VectorStoreBackend.SQLITE:
+        return settings.vector_db_file.parent
     return Path(settings.QDRANT_DB_PATH)
 
 
@@ -452,6 +466,43 @@ def get_milvus_client(validate: bool = True) -> Any:
             raise
         _CLIENT = client
         _CLIENT_BACKEND = VectorStoreBackend.MILVUS
+    return _CLIENT
+
+
+def _ensure_sqlite_collection(client: SqliteVectorClient, validate: bool) -> None:
+    dim = client.dimension()
+    if dim is None:
+        client.create_collection(settings.SQLITE_VECTOR_DIM)
+        return
+    # vec0 fixes the size when the table is made, as Qdrant's collection
+    # does; see _validate_qdrant_collection.
+    if validate and dim != settings.SQLITE_VECTOR_DIM:
+        raise ValueError(
+            ex.SQLITE_VECTOR_DIM_MISMATCH.format(
+                path=settings.vector_db_file,
+                dim=dim,
+                expected=settings.SQLITE_VECTOR_DIM,
+            )
+        )
+
+
+def get_sqlite_vector_client(validate: bool = True) -> SqliteVectorClient:
+    global _CLIENT, _CLIENT_BACKEND
+    if not has_sqlite_vec():
+        raise RuntimeError(ex.SQLITE_VEC_NOT_INSTALLED)
+
+    _ensure_client_backend(VectorStoreBackend.SQLITE)
+    if _CLIENT is None:
+        client = open_sqlite_vector_client(settings.vector_db_file)
+        try:
+            _ensure_sqlite_collection(client, validate)
+        except Exception:
+            # Close and do not cache, as for Qdrant: a cached client would
+            # skip validation on every later call.
+            client.close()
+            raise
+        _CLIENT = client
+        _CLIENT_BACKEND = VectorStoreBackend.SQLITE
     return _CLIENT
 
 
@@ -1013,9 +1064,151 @@ def _uses_milvus_lite_30_cosine_distance() -> bool:
     return lite_version.startswith("3.0")
 
 
+def _sqlite_names_its_node(
+    point: SqliteVectorPoint, node_by_point: Mapping[str, int]
+) -> bool:
+    return node_by_point.get(point.point_id) == point.node_id
+
+
+def _cosine_similarity(distance: float) -> float:
+    # vec0 answers cosine distance, 1 - similarity; Qdrant and Milvus answer
+    # the similarity itself, higher for nearer, which is what callers rank
+    # and print as the score.
+    return 1.0 - distance
+
+
+class SqliteVectorStore(VectorStore):
+    """Vectors in a sqlite-vec file, keyed by symbol as Qdrant's points are.
+
+    Nothing was ever stored here under a node-id key, so Qdrant's move off
+    those keys (issue #2447) has no counterpart, and every point carries the
+    project it was stored for.
+    """
+
+    backend = VectorStoreBackend.SQLITE
+
+    def store_embedding_batch(
+        self, project_name: str, points: Sequence[EmbeddingPoint]
+    ) -> int:
+        if not points:
+            return 0
+        rows = [
+            SqliteVectorRow(
+                point_id=embedding_point_id(project_name, symbol),
+                node_id=node_id,
+                qualified_name=symbol.qualified_name,
+                vector=embedding,
+            )
+            for node_id, embedding, symbol in points
+        ]
+        return _store_batch(
+            rows, lambda: get_sqlite_vector_client().upsert(project_name, rows)
+        )
+
+    def delete_project_embeddings(
+        self,
+        project_name: str,
+        node_ids: Sequence[int],
+        nested_projects: Sequence[str] = (),
+    ) -> bool:
+        # The project's points are found by the project they were stored
+        # for, so the graph's node ids name nothing more here, and a nested
+        # project's points, stored for that project, are never among them.
+        def _delete(ids: list[PointId]) -> None:
+            get_sqlite_vector_client().delete([str(point_id) for point_id in ids])
+
+        try:
+            found = [
+                point.point_id
+                for point in get_sqlite_vector_client().project_points(project_name)
+            ]
+        except Exception as e:
+            logger.warning(
+                ls.VECTOR_STORE_DELETE_PROJECT_FAILED.format(
+                    backend=self.backend, project=project_name, error=e
+                )
+            )
+            return False
+        return _delete_scoped_embeddings(self.backend, project_name, found, _delete)
+
+    def delete_stale_embeddings(
+        self,
+        project_name: str,
+        current: Mapping[int, EmbeddingSymbol],
+        stored: Collection[int] = frozenset(),
+        nested_projects: Sequence[str] = (),
+    ) -> int:
+        """Delete the project's points that no longer match `current`.
+
+        As QdrantVectorStore.delete_stale_embeddings, less its node-id keyed
+        points: `stored` and `nested_projects` only steer those.
+        """
+        client = get_sqlite_vector_client()
+        expected = _node_by_point(project_name, current)
+        stale = [
+            point.point_id
+            for point in client.project_points(project_name)
+            if not _sqlite_names_its_node(point, expected)
+        ]
+        client.delete(stale)
+        return len(stale)
+
+    def clear_all_embeddings(self) -> None:
+        # Failures propagate, and validation is skipped so a store of the
+        # wrong vector size can be rebuilt; see
+        # QdrantVectorStore.clear_all_embeddings.
+        client = get_sqlite_vector_client(validate=False)
+        try:
+            client.recreate_collection(settings.SQLITE_VECTOR_DIM)
+        except Exception:
+            close_vector_store_client()
+            raise
+        logger.info(ls.VECTOR_STORE_CLEARED.format(backend=self.backend))
+
+    def verify_stored_ids(
+        self, project_name: str, expected: Mapping[int, EmbeddingSymbol]
+    ) -> set[int]:
+        """The node ids in `expected` whose symbol's point names that node."""
+        if not expected:
+            return set()
+        nodes = _node_by_point(project_name, expected)
+        return {
+            nodes[point.point_id]
+            for point in get_sqlite_vector_client().points(list(nodes))
+            if _sqlite_names_its_node(point, nodes)
+        }
+
+    def search_embeddings(
+        self,
+        query_embedding: list[float],
+        top_k: int | None = None,
+        project: str | None = None,
+    ) -> list[tuple[int, float]]:
+        effective_top_k = top_k if top_k is not None else settings.SQLITE_VECTOR_TOP_K
+        try:
+            client = get_sqlite_vector_client()
+
+            def run_query(limit: int) -> list[tuple[int, float, str]]:
+                return [
+                    (hit.node_id, _cosine_similarity(hit.distance), hit.qualified_name)
+                    for hit in client.search(query_embedding, limit)
+                ]
+
+            if project is None:
+                return [
+                    (node_id, score) for node_id, score, _ in run_query(effective_top_k)
+                ]
+            return _search_project_scoped(run_query, effective_top_k, project)
+        except Exception as e:
+            logger.warning(ls.EMBEDDING_SEARCH_FAILED.format(error=e))
+            return []
+
+
 def _configured_vector_dim(backend: VectorStoreBackend) -> int:
     if backend == VectorStoreBackend.MILVUS:
         return settings.MILVUS_VECTOR_DIM
+    if backend == VectorStoreBackend.SQLITE:
+        return settings.SQLITE_VECTOR_DIM
     return settings.QDRANT_VECTOR_DIM
 
 

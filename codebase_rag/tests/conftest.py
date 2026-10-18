@@ -307,6 +307,25 @@ def _isolate_vector_store(
         "MILVUS_URI",
         str(tmp_path_factory.mktemp("milvus-iso") / "milvus.db"),
     )
+    # Unset it already lands under the isolated CGR_HOME; a developer .env
+    # that sets it would not.
+    monkeypatch.setattr(
+        settings,
+        "SQLITE_VECTOR_PATH",
+        tmp_path_factory.mktemp("sqlite-vec-iso") / "vectors.sqlite",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _pin_graph_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The suite's graph fakes model Memgraph -- a patched mgclient, Memgraph
+    # DDL, Memgraph plan rows -- and predate the embedded default (issue
+    # #386), so they keep that backend, whatever a developer's .env says.
+    # The embedded engine's tests choose it explicitly.
+    from codebase_rag.config import settings
+    from codebase_rag.graph_dialects import DIALECT_MEMGRAPH
+
+    monkeypatch.setattr(settings, "GRAPH_BACKEND", DIALECT_MEMGRAPH)
 
 
 @pytest.fixture(autouse=True)
