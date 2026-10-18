@@ -10,8 +10,8 @@ from pathlib import Path
 from codebase_rag import constants as cs
 from codebase_rag.cypher_queries import (
     CYPHER_TRACE_CALLABLES,
-    CYPHER_TRACE_CONFIRM_CALLS,
     CYPHER_TRACE_EXISTING_CALLS,
+    build_trace_confirm_calls_query,
 )
 from codebase_rag.trace.ingest import ingest_trace
 from codebase_rag.trace.records import (
@@ -59,9 +59,11 @@ class _FakeGraph:
     def execute_write(self, query, params=None):
         # The one write ingest may issue: the in-place resolution upgrade of
         # the static edges a trace observed (issue #1526).
-        assert query == CYPHER_TRACE_CONFIRM_CALLS, (
-            "ingestion must not issue raw writes"
-        )
+        assert query in {
+            build_trace_confirm_calls_query(a, b)
+            for a in ("Function", "Method", "Module")
+            for b in ("Function", "Method", "Module")
+        }, "ingestion must not issue raw writes"
         self.upgrades.append(dict(params or {}))
 
     def ensure_node_batch(self, label, properties):

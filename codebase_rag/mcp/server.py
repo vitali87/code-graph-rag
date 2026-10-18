@@ -189,15 +189,7 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
                 result_text = str(result)
 
             content = [TextContent(type=cs.MCP_CONTENT_TYPE_TEXT, text=result_text)]
-            # A JSON tool refuses with a result that is nothing but its error
-            # (an unknown project or name, a partial graph, a failed read).
-            # One that carries an error beside its data, such as an applied
-            # rename reporting a marker it could not clear, did its work.
-            if (
-                returns_json
-                and isinstance(result, dict)
-                and result.keys() == {cs.DICT_KEY_ERROR}
-            ):
+            if returns_json and _reports_failure(result):
                 return CallToolResult(content=content, isError=True)
             return content
 
@@ -207,6 +199,23 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
             return _create_error_content(error_msg)
 
     return server, ingestor
+
+
+def _reports_failure(result: object) -> bool:
+    """Whether a JSON tool result is a refusal.
+
+    A JSON tool refuses with an `error`, alone (an unknown project or name, a
+    partial graph) or beside empty data: `reingest`'s `reparsed: []`, the
+    sites a refused `rename` lists, `delete_project`'s `success: false`
+    (issues #2802, #2785). One that reports work done beside an error, such
+    as an applied rename reporting a marker it could not clear, did its work.
+    """
+    if not isinstance(result, dict) or not result.get(cs.DICT_KEY_ERROR):
+        return False
+    return not (
+        result.get(cs.DICT_KEY_APPLIED) is True
+        or result.get(cs.DICT_KEY_SUCCESS) is True
+    )
 
 
 def _failed_call(message: str) -> CallToolResult:
@@ -334,10 +343,9 @@ async def serve_http(
 
     @contextlib.asynccontextmanager
     async def lifespan(app: Starlette):
-        with _service_lifecycle(ingestor):
-            async with session_manager.run():
-                logger.info(lg.MCP_HTTP_SERVER_READY.format(host=host, port=port))
-                yield
+        async with session_manager.run():
+            logger.info(lg.MCP_HTTP_SERVER_READY.format(host=host, port=port))
+            yield
 
     # With a token, bearer auth fronts the mount even on loopback
     # (defense in depth for shared hosts); without one the exposure
@@ -355,7 +363,11 @@ async def serve_http(
 
     config = uvicorn.Config(starlette_app, host=host, port=port, log_level="info")
     uvicorn_server = uvicorn.Server(config)
-    await uvicorn_server.serve()
+    # Connected before uvicorn starts, as stdio connects before its
+    # transport: uvicorn logs a failure inside the lifespan and returns, so
+    # the command exited 0 for a server that never started (PR 2504 review).
+    with _service_lifecycle(ingestor):
+        await uvicorn_server.serve()
 
 
 if __name__ == "__main__":

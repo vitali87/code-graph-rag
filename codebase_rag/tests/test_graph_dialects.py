@@ -19,6 +19,7 @@ from codebase_rag.constants import (
 from codebase_rag.graph_dialects import (
     DIALECT_MEMGRAPH,
     DIALECT_NEO4J,
+    DIALECT_SQLITE,
     GraphDialect,
     MemgraphDialect,
     Neo4jDialect,
@@ -35,8 +36,8 @@ REAL_PAIRS = (
 
 
 class TestRegistry:
-    def test_both_engines_are_registered(self) -> None:
-        assert available_dialects() == (DIALECT_MEMGRAPH, DIALECT_NEO4J)
+    def test_every_engine_is_registered(self) -> None:
+        assert available_dialects() == (DIALECT_MEMGRAPH, DIALECT_NEO4J, DIALECT_SQLITE)
 
     def test_lookup_is_case_and_whitespace_insensitive(self) -> None:
         assert get_dialect("  NEO4J ").name == DIALECT_NEO4J
