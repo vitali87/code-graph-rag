@@ -2424,10 +2424,15 @@ class CallResolver:
             return None
         if (owner := self._enclosing_class(call.caller_qn)) is None:
             return None
+        # `Base(1)` names the class, not its constructor: unqualified lookup
+        # never finds a constructor, so the construction path must bind it
+        # (INSTANTIATES and the destructor edge) instead (CodeRabbit, PR #2948).
         definers = [
             class_qn
             for class_qn in self._mro(owner)
-            if self.function_registry.get(
+            if qn_markers.strip_dup_marker(class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+            != call.call_name
+            and self.function_registry.get(
                 f"{class_qn}{cs.SEPARATOR_DOT}{call.call_name}"
             )
             == cs.NodeLabel.METHOD.value

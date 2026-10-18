@@ -97,6 +97,16 @@ FILES = {
         "class DE : public DB {};\n"
         "class DD : public DC, public DE { public: int go() { return probe(); } };\n"
     ),
+    # A member constructing its base by name: `Parent(1)` names the class,
+    # which unqualified lookup never answers with the constructor
+    # (CodeRabbit, PR #2948).
+    "c/ctor.h": (
+        "class Parent {\n public:\n  Parent(int x) {}\n  ~Parent() {}\n};\n"
+        "class Kid : public Parent {\n public:\n"
+        "  Kid() : Parent(0) {}\n"
+        "  Parent make() { return Parent(1); }\n"
+        "};\n"
+    ),
     # Lua: a colon method beside a bare call of its name (CodeRabbit, PR
     # #2948); `flush()` is a global, never `M:flush`.
     "lua_m.lua": "local M = {}\nfunction M:flush() return 1 end\nreturn M\n",
@@ -200,6 +210,21 @@ def test_a_receiver_call_a_function_or_an_own_member_still_binds(
     graph: RecordedGraph, caller: str, callee: str, resolution: str
 ) -> None:
     assert _callees(graph, caller).get(callee) == resolution
+
+
+def test_a_cpp_member_constructing_its_base_instantiates_the_class(
+    graph: RecordedGraph,
+) -> None:
+    # As anywhere else, the construction binds the class and its destructor,
+    # not an exact call to `Parent::Parent` found as an inherited member.
+    prefix = f"{graph.project}."
+    instantiated = {
+        dst.removeprefix(prefix)
+        for src, rel, dst, _ in graph.edges
+        if rel == "INSTANTIATES" and src.removeprefix(prefix) == "c.ctor.Kid.make"
+    }
+    assert instantiated == {"c.ctor.Parent"}
+    assert "c.ctor.Parent.~Parent" in _callees(graph, "c.ctor.Kid.make")
 
 
 def test_a_function_local_class_keeps_its_members_bare_calls(
