@@ -227,6 +227,25 @@ def test_fractional_weights_accumulate_before_rounding(tmp_path):
             "shared": {"frames": [{"name": n} for n in _FRAMES]},
             "profiles": [{"type": "sampled", "samples": [[999]], "weights": [1]}],
         },
+        # Negative and bool indexes would still subscript the frame list
+        # (`-1` the last frame, `True` frame 1), so both must be refused.
+        {
+            "shared": {"frames": [{"name": n} for n in _FRAMES]},
+            "profiles": [{"type": "sampled", "samples": [[-1]], "weights": [1]}],
+        },
+        {
+            "shared": {"frames": [{"name": n} for n in _FRAMES]},
+            "profiles": [{"type": "sampled", "samples": [[True]], "weights": [1]}],
+        },
+        # The evented path validates its frame index the same way.
+        {
+            "shared": {"frames": [{"name": n} for n in _FRAMES]},
+            "profiles": [{"type": "evented", "events": [{"type": "O", "frame": 999}]}],
+        },
+        {
+            "shared": {"frames": [{"name": n} for n in _FRAMES]},
+            "profiles": [{"type": "evented", "events": [{"type": "O", "frame": True}]}],
+        },
         # A non-object event entry.
         {
             "shared": {"frames": [{"name": n} for n in _FRAMES]},

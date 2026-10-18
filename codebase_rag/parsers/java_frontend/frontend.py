@@ -20,6 +20,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import NamedTuple
 
@@ -35,6 +36,10 @@ from ..frontends.protocol import CallSiteKey
 _TOOL_SRC = Path(__file__).parent / "javac"
 _TOOL_SOURCE = "cgr/Frontend.java"
 _MAIN_CLASS = "cgr.Frontend"
+# Names a file listing the rescued sources (one repo-relative path a line) the
+# tool compiles beside its own walk, which skips every default-excluded name.
+EXTRA_SOURCES_ENV = "CGR_EXTRA_SOURCES"
+_EXTRA_SOURCES_FILE = "extra-sources.txt"
 _CLASS_FILE = "cgr/Frontend.class"
 _BUILD_LOCK = ".build-lock"
 _STAGING_DIR = "staging"
@@ -198,7 +203,18 @@ def _parse_payload(stdout: str, stderr: str = "") -> JavaSemanticFacts:
     return facts
 
 
-def run_java_frontend(repo_path: Path) -> JavaSemanticFacts:
+def run_java_frontend(
+    repo_path: Path, rescued_files: frozenset[str] = frozenset()
+) -> JavaSemanticFacts:
+    """javac facts for the repo's sources plus the rescued ones.
+
+    The tool still skips every default-excluded name and compiles each rescued
+    `.java` file by itself. Releasing the name instead let every untracked
+    source under any directory of that name into the compilation, where a
+    duplicate class could take a binding from the class the graph holds
+    (review of PR 2490). A file rather than the environment carries the list,
+    which a repo committing generated sources can make long.
+    """
     javac = shutil.which(cs.JAVAC_BIN)
     java = shutil.which(cs.JAVA_BIN)
     if javac is None or java is None:
@@ -207,20 +223,24 @@ def run_java_frontend(repo_path: Path) -> JavaSemanticFacts:
     if out_dir is None:
         return _empty_facts()
     logger.info(ls.JAVA_FRONTEND_RUNNING)
+    extra = sorted(rel for rel in rescued_files if rel.endswith(cs.EXT_JAVA))
+    env = {**os.environ, "CGR_IGNORE_DIRS": ",".join(sorted(cs.IGNORE_PATTERNS))}
     try:
-        proc = subprocess.run(
-            [java, "-cp", str(out_dir), _MAIN_CLASS, str(repo_path)],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-            timeout=_RUN_TIMEOUT,
-            env={
-                **os.environ,
-                "CGR_IGNORE_DIRS": ",".join(sorted(cs.IGNORE_PATTERNS)),
-            },
-        )
+        with tempfile.TemporaryDirectory() as scratch:
+            if extra:
+                listing = Path(scratch) / _EXTRA_SOURCES_FILE
+                listing.write_text("\n".join(extra), encoding=cs.ENCODING_UTF8)
+                env[EXTRA_SOURCES_ENV] = str(listing)
+            proc = subprocess.run(
+                [java, "-cp", str(out_dir), _MAIN_CLASS, str(repo_path)],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+                timeout=_RUN_TIMEOUT,
+                env=env,
+            )
     except (subprocess.SubprocessError, OSError) as error:
         logger.warning(ls.JAVA_FRONTEND_RUN_FAILED.format(error=error))
         return _empty_facts()
