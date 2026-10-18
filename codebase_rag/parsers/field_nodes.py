@@ -607,16 +607,20 @@ def _cpp_collect_callable(node: Node, out: set[str]) -> None:
         if child.type != cs.CppNodeType.FIELD_DECLARATION:
             _cpp_collect_callable(child, out)
             continue
-        type_text = _type_text(child.child_by_field_name(cs.FIELD_TYPE)) or ""
-        wrapper = _CPP_FUNCTION_WRAPPER in type_text
-        for declarator in child.children_by_field_name(cs.FIELD_DECLARATOR):
-            if not (wrapper or _cpp_declares_function(declarator)):
-                continue
-            # A method's declarator is a function_declarator too; only a
-            # parenthesised one (`(*cb)`) names a field.
-            name_node = _cpp_field_identifier(declarator)
-            if name_node is not None and (name := safe_decode_text(name_node)):
-                out.add(name)
+        _cpp_record_callable(child, out)
+
+
+def _cpp_record_callable(decl: Node, out: set[str]) -> None:
+    type_text = _type_text(decl.child_by_field_name(cs.FIELD_TYPE)) or ""
+    wrapper = _CPP_FUNCTION_WRAPPER in type_text
+    for declarator in decl.children_by_field_name(cs.FIELD_DECLARATOR):
+        if not (wrapper or _cpp_declares_function(declarator)):
+            continue
+        # A method's declarator is a function_declarator too; only a
+        # parenthesised one (`(*cb)`) names a field.
+        name_node = _cpp_field_identifier(declarator)
+        if name_node is not None and (name := safe_decode_text(name_node)):
+            out.add(name)
 
 
 def _cpp_declares_function(declarator: Node) -> bool:
