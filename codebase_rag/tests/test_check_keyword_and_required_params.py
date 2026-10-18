@@ -43,10 +43,12 @@ LIB = (
     "    @staticmethod\n"
     "    def util(x):\n        return x\n\n"
     "    @classmethod\n"
-    "    def make(cls, x):\n        return x\n"
+    "    def make(cls, x):\n        return x\n\n\n"
+    "class Payload:\n"
+    "    def encode(self, data):\n        return data\n"
 )
 APP = (
-    "from lib import Svc, connect, kwo, opts, pos_kw, posonly, send\n\n\n"
+    "from lib import Payload, Svc, connect, kwo, opts, pos_kw, posonly, send\n\n\n"
     'def call_connect():\n    return connect(host="a", port=80)\n\n\n'
     'def call_send():\n    return send("hi")\n\n\n'
     "def call_send_splat(params):\n    return send(**params)\n\n\n"
@@ -57,7 +59,9 @@ APP = (
     "def call_util():\n    return Svc.util(1)\n\n\n"
     "def call_make():\n    return Svc.make(1)\n\n\n"
     "def call_pos_kw():\n    return pos_kw(1, b=2)\n\n\n"
-    "def call_run_by_keyword(svc):\n    return Svc.run(self=svc, job=1)\n"
+    "def call_run_by_keyword(svc):\n    return Svc.run(self=svc, job=1)\n\n\n"
+    # `payload` is typed only by its name (`Payload`): a guessed edge.
+    "def call_encode(payload):\n    return payload.encode(data=1)\n"
 )
 
 Indexed = tuple[Path, _StatefulIngestor, GraphUpdater]
@@ -115,6 +119,7 @@ CALLER = {
     "Svc.util": "call_util",
     "Svc.make": "call_make",
     "pos_kw": "call_pos_kw",
+    "Payload.encode": "call_encode",
 }
 
 
@@ -233,6 +238,37 @@ def test_a_keyword_naming_a_positional_only_parameter_does_not_fill_it(
 
 
 # Negative: what must not change.
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("def encode(self, data):", "def encode(self, body):"),
+        ("def encode(self, data):", "def encode(self, data, level):"),
+    ],
+    ids=["renamed-keyword", "required-positional-added"],
+)
+def test_a_guessed_edge_is_not_judged_against_the_header(
+    indexed: Indexed, old: str, new: str
+) -> None:
+    # `payload.encode(data=1)` reaches `Payload.encode` only because the
+    # parameter's name spells the class: the call may run another `encode`,
+    # whose header this one proves nothing about (CodeRabbit, PR #2947).
+    delta = _edit(indexed, old, new)
+
+    assert _verdict(delta, "Payload.encode") not in (
+        cs.DELTA_ARITY_UNEXPECTED_KEYWORD,
+        cs.DELTA_ARITY_TOO_FEW,
+    )
+    assert not has_findings(delta)
+
+
+def test_an_edited_call_on_a_guessed_edge_is_no_arity_finding(
+    indexed: Indexed,
+) -> None:
+    delta = _edit_app(indexed, "payload.encode(data=1)", "payload.encode(dat=1)")
+
+    assert delta["arity_findings"] == []
 
 
 @pytest.mark.parametrize(

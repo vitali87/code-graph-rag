@@ -119,7 +119,10 @@ both trip `--fail-on-found` (issues #2845, #2853):
 
 A def wrapped by a decorator other than `@staticmethod`, `@classmethod`,
 `@abstractmethod` or `@override` is not judged from its header, since the
-decorator may change what a caller passes.
+decorator may change what a caller passes. Nor is a site whose edge was
+bound by name alone (`resolution` `heuristic` or `overload`, as for a
+receiver typed only by its parameter's name): it may lead to a same-named
+def the call never runs.
 
 ### Signatures outside Python
 
