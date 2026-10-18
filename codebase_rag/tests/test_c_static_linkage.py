@@ -68,6 +68,60 @@ _CPP = {
     "m.cpp": '#include "s.h"\nint user() { return T::tm(); }\n',
 }
 
+# Internal linkage the definition itself does not spell (#3154 review).
+_INHERITED = {
+    "c-static-prototype": (
+        {
+            "a.c": (
+                "static long long now(void);\n"
+                "long long now(void) { return 1; }\n"
+                "long long a_tick(void) { return now(); }\n"
+            ),
+            "z.c": "long long now(void) { return 42; }\n",
+            "main.c": "long long now(void);\nint main(void) { return (int) now(); }\n",
+        },
+        "c",
+    ),
+    "cpp-anonymous-namespace": (
+        {
+            "k.cpp": "namespace { int now() { return 1; } }\nint k() { return now(); }\n",
+            "z.cpp": "int now() { return 42; }\n",
+            "main.cpp": "int now();\nint main() { return now(); }\n",
+        },
+        "cpp",
+    ),
+    "cpp-static-template": (
+        {
+            "k.cpp": (
+                "template <typename T> static int now(T) { return 1; }\n"
+                "int k() { return now(1); }\n"
+            ),
+            "z.cpp": "int now(int) { return 42; }\n",
+            "main.cpp": "int now(int);\nint main() { return now(1); }\n",
+        },
+        "cpp",
+    ),
+}
+# A static's file is matched exactly, not as a qn prefix: main.h's module
+# `main.h` and a/b.c's `a.b` both start with another file's (`main`, `a`).
+_PREFIX = {
+    "main.h": "static inline int helper(void) { return 1; }\n",
+    "main.c": "int helper(void);\nint main(void) { return helper(); }\n",
+    "other.c": "int helper(void) { return 7; }\n",
+    "a.c": "int now(void);\nint caller(void) { return now(); }\n",
+    "a/b.c": "static int now(void) { return 1; }\nint bb(void) { return now(); }\n",
+    "z.c": "int now(void) { return 42; }\n",
+}
+# Two same-named headers: the include map keeps one binding per local name.
+_SAME_STEM = {
+    "a/util.h": "static inline int first(void) { return 1; }\n",
+    "b/util.h": "static inline int second(void) { return 2; }\n",
+    "main.c": (
+        '#include "a/util.h"\n#include "b/util.h"\n'
+        "int main(void) { return first() + second(); }\n"
+    ),
+}
+
 _Calls = dict[tuple[str, str], str]
 
 
@@ -157,6 +211,43 @@ def test_a_static_its_file_or_an_includer_can_reach_still_binds(
     assert (caller, callee) in edges, edges
 
 
+@pytest.mark.parametrize(
+    ("case", "own_caller", "private"),
+    [
+        ("c-static-prototype", "a.a_tick", "a.now"),
+        ("cpp-anonymous-namespace", "k.k", "k.now"),
+        ("cpp-static-template", "k.k", "k.now"),
+    ],
+)
+def test_a_static_the_definition_inherits_stays_in_its_file(
+    tmp_path: Path, case: str, own_caller: str, private: str
+) -> None:
+    # `static` on an earlier declaration or on the wrapped template, or an
+    # anonymous namespace, makes the definition just as private.
+    files, grammar = _INHERITED[case]
+    calls = _calls(tmp_path / case, files, grammar)
+    assert ("main.main", "z.now") in calls, calls
+    assert ("main.main", private) not in calls, calls
+    assert (own_caller, private) in calls, calls
+
+
+def test_a_static_is_matched_to_its_file_not_a_qn_prefix(tmp_path: Path) -> None:
+    calls = _calls(tmp_path / "prefix", _PREFIX, "c")
+    assert ("main.main", "other.helper") in calls, calls
+    assert ("main.main", "main.h.helper") not in calls, calls
+    assert ("a.caller", "z.now") in calls, calls
+    assert ("a.caller", "a.b.now") not in calls, calls
+    assert ("a.b.bb", "a.b.now") in calls, calls
+
+
+def test_a_header_a_same_named_include_displaced_still_reaches(
+    tmp_path: Path,
+) -> None:
+    calls = _calls(tmp_path / "stem", _SAME_STEM, "c")
+    assert ("main.main", "a.util.first") in calls, calls
+    assert ("main.main", "b.util.second") in calls, calls
+
+
 def _sync(root: Path, store: _StatefulIngestor, force: bool) -> set[tuple[str, str]]:
     parsers, queries = load_parsers()
     GraphUpdater(ingestor=store, repo_path=root, parsers=parsers, queries=queries).run(
@@ -174,8 +265,12 @@ def _sync(root: Path, store: _StatefulIngestor, force: bool) -> set[tuple[str, s
     [
         (_CSTATIC, "main.c", "a.now", "c"),
         (_CPP, "l.cpp", "k.hidden", "cpp"),
+        (_INHERITED["c-static-prototype"][0], "main.c", "a.now", "c"),
+        (_INHERITED["cpp-anonymous-namespace"][0], "main.cpp", "k.now", "cpp"),
+        # An unchanged header's includes still lead to sds.h's static inline.
+        (_REDIS, "src/aof.c", "src.quicklist.mstime", "c"),
     ],
-    ids=["c", "cpp"],
+    ids=["c", "cpp", "c-static-prototype", "cpp-anonymous-namespace", "redis"],
 )
 def test_an_incremental_sync_keeps_an_unchanged_files_static_private(
     tmp_path: Path, files: dict[str, str], edited: str, private: str, grammar: str
@@ -192,7 +287,7 @@ def test_an_incremental_sync_keeps_an_unchanged_files_static_private(
     _write(root, {edited: files[edited] + "\n"})
     after = _sync(root, store, force=False)
 
-    caller = f"{edited.split('.', 1)[0]}."
+    caller = f"{edited.split('.', 1)[0].replace('/', '.')}."
     assert {e for e in after if e[0].startswith(caller)} == {
         e for e in fresh if e[0].startswith(caller)
     }, after

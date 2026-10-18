@@ -9,6 +9,7 @@ only evidence that it is reachable.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from functools import lru_cache
 from typing import NamedTuple
 
 from tree_sitter import Node
@@ -109,6 +110,42 @@ def c_file_scope(root: Node) -> CFileScope:
         # constants at file scope in C (#2593 review).
         objects.update(enumerator_names(node))
     return CFileScope(frozenset(tu_local), frozenset(objects))
+
+
+def c_definition_has_internal_linkage(definition: Node) -> bool:
+    """Whether a C/C++ function definition is local to its translation unit.
+
+    `static` need not sit on the definition itself: it can sit on the
+    function a template wraps, or on an earlier declaration
+    (`static int now(void); int now(void) { ... }` defines a private `now`),
+    and an anonymous namespace gives the same internal linkage (#3154 review).
+    """
+    inner = definition
+    if definition.type == cs.CppNodeType.TEMPLATE_DECLARATION:
+        inner = next(
+            (
+                child
+                for child in definition.named_children
+                if child.type == cs.CppNodeType.FUNCTION_DEFINITION
+            ),
+            definition,
+        )
+    if cpp_utils.cpp_declaration_has_internal_linkage(inner):
+        return True
+    name = cpp_utils.extract_function_name(inner)
+    if not name:
+        return False
+    root = inner
+    while root.parent is not None:
+        root = root.parent
+    return name in _cached_file_scope(root).tu_local_functions
+
+
+# One file's definitions are ingested together, so the last file's scope is
+# the one asked for again.
+@lru_cache(maxsize=1)
+def _cached_file_scope(root: Node) -> CFileScope:
+    return c_file_scope(root)
 
 
 def enumerator_names(node: Node) -> set[str]:

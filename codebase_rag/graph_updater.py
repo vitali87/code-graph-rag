@@ -4148,7 +4148,9 @@ class GraphUpdater:
             in cs.C_FAMILY_LANGUAGES
             and has_internal_linkage(row)
         ):
-            self.function_registry.mark_internal_linkage(qn)
+            self.function_registry.mark_internal_linkage(
+                qn, self._recorded_module_qn(path)
+            )
         # Restore a C# extension method's index entry for unchanged files, or
         # a re-parsed `b.Describe()` finds no extension and gets no edge
         # (issue #3275).

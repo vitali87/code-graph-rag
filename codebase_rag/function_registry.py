@@ -109,9 +109,10 @@ class FunctionRegistryTrie:
         self._body_scoped_names: set[QualifiedName] = set()
         self._callable_params: dict[QualifiedName, dict[str, int]] = {}
         self._reserved: dict[QualifiedName, tuple[int, int]] = {}
-        # C/C++ functions with internal linkage (`static` at file scope):
-        # callable only from their own translation unit (issue #3154).
-        self._internal_linkage: set[QualifiedName] = set()
+        # C/C++ functions with internal linkage (`static` at file scope),
+        # by the module of the file defining them: callable only from their
+        # own translation unit (issue #3154).
+        self._internal_linkage: dict[QualifiedName, str] = {}
 
     def mark_callable_params(
         self, qualified_name: QualifiedName, params: dict[str, int]
@@ -169,11 +170,14 @@ class FunctionRegistryTrie:
     def is_body_scoped_name(self, qualified_name: QualifiedName) -> bool:
         return qualified_name in self._body_scoped_names
 
-    def mark_internal_linkage(self, qualified_name: QualifiedName) -> None:
-        self._internal_linkage.add(qualified_name)
+    def mark_internal_linkage(
+        self, qualified_name: QualifiedName, module_qn: str
+    ) -> None:
+        self._internal_linkage[qualified_name] = module_qn
 
-    def has_internal_linkage(self, qualified_name: QualifiedName) -> bool:
-        return qualified_name in self._internal_linkage
+    def internal_linkage_module(self, qualified_name: QualifiedName) -> str | None:
+        """The module defining `qualified_name` if it has internal linkage."""
+        return self._internal_linkage.get(qualified_name)
 
     def register_unique_qn(
         self,
@@ -505,7 +509,7 @@ class FunctionRegistryTrie:
         self._abstracts.discard(qualified_name)
         self._module_private.discard(qualified_name)
         self._body_scoped_names.discard(qualified_name)
-        self._internal_linkage.discard(qualified_name)
+        self._internal_linkage.pop(qualified_name, None)
         self._callable_params.pop(qualified_name, None)
 
         self._invalidate_ending_with_cache(simple_name)

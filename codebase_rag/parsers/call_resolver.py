@@ -5089,27 +5089,35 @@ class CallResolver:
         # `#include`s it, directly or through other headers. A bare `now()` in
         # main.c bound a.c's private `static now()` over the extern one it
         # links against (redis: every cross-file `mstime()` landed on
-        # quicklist.c's static copy, issue #3154).
-        own = f"{module_qn}{cs.SEPARATOR_DOT}"
+        # quicklist.c's static copy, issue #3154). Compared by defining
+        # module, not by qn prefix: `proj.main.h.helper` and `proj.a.b.now`
+        # both start with another file's module (`proj.main`, `proj.a`).
+        registry = self.function_registry
         private = {
-            qn
+            qn: unit
             for qn in candidates
-            if self.function_registry.has_internal_linkage(qn)
-            and not qn.startswith(own)
+            if (unit := registry.internal_linkage_module(qn)) is not None
+            and unit != module_qn
         }
         if not private:
             return candidates
-        units = tuple(
-            f"{unit}{cs.SEPARATOR_DOT}" for unit in self._include_closure(module_qn)
-        )
-        return [qn for qn in candidates if qn not in private or qn.startswith(units)]
+        units = self._include_closure(module_qn)
+        return [qn for qn in candidates if private.get(qn, module_qn) in units]
 
     def _include_closure(self, module_qn: str) -> set[str]:
-        import_mapping = self.import_processor.import_mapping
+        imports = self.import_processor
+        import_mapping = imports.import_mapping
+        # A header a later include displaced from its local name (`a/util.h`
+        # then `b/util.h`) is still included, so its statics are reachable.
+        displaced = imports.displaced_include_targets()
         seen = {module_qn}
         pending = [module_qn]
         while pending:
-            for target in import_mapping.get(pending.pop(), {}).values():
+            current = pending.pop()
+            for target in (
+                *(import_mapping.get(current) or {}).values(),
+                *displaced.get(current, ()),
+            ):
                 if target not in seen:
                     seen.add(target)
                     pending.append(target)

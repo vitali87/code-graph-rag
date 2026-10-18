@@ -34,6 +34,7 @@ from . import export_detection
 from .anchor_hash import anchor_hash_props
 from .ast_fingerprint import fingerprint_props
 from .cpp import utils as cpp_utils
+from .cpp.function_values import c_definition_has_internal_linkage
 from .cpp.overloads import cpp_overload_signature
 from .dart import (
     dart_definition_end_point,
@@ -1489,7 +1490,9 @@ class FunctionIngestMixin:
         )
         self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, func_props)
         if language in cs.C_FAMILY_LANGUAGES and has_internal_linkage(func_props):
-            self.function_registry.mark_internal_linkage(resolution.qualified_name)
+            self.function_registry.mark_internal_linkage(
+                resolution.qualified_name, module_qn
+            )
         func_path = func_props.get(cs.KEY_PATH)
         queue_type_facts(
             self.pending_type_facts,
@@ -1667,12 +1670,15 @@ class FunctionIngestMixin:
         modifiers, decorators = extract_modifiers_and_decorators(
             func_node, lang_queries
         )
-        # The C++ highlights query captures no storage class, so a file-scope
-        # `static` went unrecorded and its internal linkage with it (#3154).
+        # The C++ highlights query captures no storage class, and neither
+        # query sees a `static` the definition inherits from an earlier
+        # declaration, a wrapped template or an anonymous namespace, so the
+        # internal linkage went unrecorded (#3154). Recorded as `static`, the
+        # specifier that gives it, so an incremental run restores it too.
         if (
-            language == cs.SupportedLanguage.CPP
+            language in cs.C_FAMILY_LANGUAGES
             and cs.CPP_KEYWORD_STATIC not in modifiers
-            and cpp_utils.cpp_has_static_storage(func_node)
+            and c_definition_has_internal_linkage(func_node)
         ):
             modifiers.append(cs.CPP_KEYWORD_STATIC)
         props: PropertyDict = {
