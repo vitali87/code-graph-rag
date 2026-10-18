@@ -792,3 +792,34 @@ def test_hybrid_continued_include_is_one_located_edge(
     _index_dup(root, monkeypatch, store)
     sites = _sites(store, cs.RelationshipType.IMPORTS, "hybcont.calc", "hybcont.base")
     assert sites == [{cs.KEY_LINE: 1, cs.KEY_COL: 0, cs.KEY_ALIAS: "base"}], sites
+
+
+def test_hybrid_include_whose_name_a_later_include_took_is_one_located_edge(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `a/util.h` and `b/util.h` both bind `util`: tree-sitter keeps the
+    # displaced include's edge at its own directive, where libclang's lands.
+    root = temp_repo / "hybshadow"
+    for name in ("a", "b"):
+        (root / name).mkdir(parents=True)
+        (root / name / "util.h").write_text(
+            f"#define {name.upper()}_UTIL 1\n", encoding="utf-8"
+        )
+    (root / "calc.cpp").write_text(
+        '#include "a/util.h"\n#include "b/util.h"\n'
+        "int both() { return A_UTIL + B_UTIL; }\n",
+        encoding="utf-8",
+    )
+    (root / "compile_commands.json").write_text(
+        json.dumps([_compdb_entry(root, root / "calc.cpp")]), encoding="utf-8"
+    )
+    store = _StatefulIngestor()
+    _index_dup(root, monkeypatch, store)
+    first = _sites(
+        store, cs.RelationshipType.IMPORTS, "hybshadow.calc", "hybshadow.a.util"
+    )
+    assert first == [{cs.KEY_LINE: 1, cs.KEY_COL: 0, cs.KEY_ALIAS: "util"}], first
+    second = _sites(
+        store, cs.RelationshipType.IMPORTS, "hybshadow.calc", "hybshadow.b.util"
+    )
+    assert second == [{cs.KEY_LINE: 2, cs.KEY_COL: 0, cs.KEY_ALIAS: "util"}], second

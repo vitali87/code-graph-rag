@@ -1096,6 +1096,7 @@ class ImportProcessor:
         "_csharp_module_identifiers",
         "_cpp_declaration_mappings",
         "_cpp_shadowed_include_targets",
+        "_cpp_shadowed_include_sites",
         "_rust_dir_listing",
         "_rust_entry_mod_decls",
         "_rust_module_mod_decls",
@@ -1448,6 +1449,10 @@ class ImportProcessor:
         # survived (issue #1758). The binding can hold one name, but the file
         # really does include both headers, so the edge is kept here.
         self._cpp_shadowed_include_targets: set[tuple[str, str]] = set()
+        # The site each of those includes had when it lost its name, so its
+        # edge is located as tree-sitter would place it and libclang's edge
+        # for the same `#include` merges into it (issue #2944).
+        self._cpp_shadowed_include_sites: dict[tuple[str, str], PropertyDict] = {}
         # Local names brought in by a PHP `use function A\B\c` import, keyed by
         # module. A PHP namespace path never matches cgr's file-path qn (a global
         # helper declares `namespace Illuminate\Support` from
@@ -1646,6 +1651,11 @@ class ImportProcessor:
             for entry in self._cpp_shadowed_include_targets
             if entry[0] != module_qn
         }
+        self._cpp_shadowed_include_sites = {
+            entry: site
+            for entry, site in self._cpp_shadowed_include_sites.items()
+            if entry[0] != module_qn
+        }
         # Cleared here too, now that the shadowed sweep READS it. These
         # entries SUPPRESS edges, so a stale one is the opposite hazard: a
         # re-parse that removes an `export module X;` used to leave an
@@ -1725,8 +1735,8 @@ class ImportProcessor:
                 )
         # Includes whose local binding a later include took over: the
         # file includes them, so they keep their edge even though the
-        # map no longer names them (issue #1758). No site: the binding
-        # that carried it belongs to the include that won the name.
+        # map no longer names them (issue #1758), at the site each had
+        # before it lost the name.
         for module_key, shadowed in self._cpp_shadowed_include_targets:
             if module_key != module_qn:
                 continue
@@ -1742,7 +1752,7 @@ class ImportProcessor:
                     module_qn=module_qn,
                     full_name=shadowed,
                     language=language,
-                    site=None,
+                    site=self._cpp_shadowed_include_sites.get((module_qn, shadowed)),
                 )
             )
 
@@ -6345,7 +6355,7 @@ class ImportProcessor:
         # real include of a real header and must keep its IMPORTS edge (#1758).
         displaced = self.import_mapping[module_qn].get(local_name)
         if displaced is not None and displaced != full_name:
-            self._cpp_shadowed_include_targets.add((module_qn, displaced))
+            self._shadow_cpp_include(module_qn, local_name, displaced)
         self.import_mapping[module_qn][local_name] = full_name
         self._record_import_site(module_qn, local_name, include_node, include_path)
         logger.debug(
@@ -6354,6 +6364,15 @@ class ImportProcessor:
             full=full_name,
             system=is_system_include,
         )
+
+    def _shadow_cpp_include(
+        self, module_qn: str, local_name: str, displaced: str
+    ) -> None:
+        # Before the new binding records its own site over the old one.
+        self._cpp_shadowed_include_targets.add((module_qn, displaced))
+        site = self._import_sites.get(module_qn, {}).get(local_name)
+        if site is not None:
+            self._cpp_shadowed_include_sites[(module_qn, displaced)] = site
 
     def _cpp_include_full_name(
         self, include_path: str, is_system_include: bool, module_qn: str
@@ -6482,7 +6501,7 @@ class ImportProcessor:
         # emitted for the include at all (#1758 review).
         displaced = self.import_mapping[module_qn].get(module_name)
         if displaced is not None and displaced != full_name:
-            self._cpp_shadowed_include_targets.add((module_qn, displaced))
+            self._shadow_cpp_include(module_qn, module_name, displaced)
         self.import_mapping[module_qn][module_name] = full_name
         # `module X;` / `export module X;` DECLARE this file's module; the mapping
         # exists for name resolution only, never as an IMPORTS edge.
