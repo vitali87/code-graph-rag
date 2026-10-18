@@ -892,6 +892,37 @@ def _embeddings_marker(state_dir: Path, project_name: str) -> Path:
     return state_dir / cs.EMBEDDINGS_PENDING_PROJECT_TEMPLATE.format(digest=digest)
 
 
+def _embeddings_store_stamp(state_dir: Path, project_name: str) -> Path:
+    """The file naming the vector store backend `project_name`'s points are in.
+
+    A pass that settles the project writes the selected backend there. Once
+    the setting changes, as when `sqlite` replaced Qdrant as the default, the
+    points stay in a store nothing searches, and an unchanged checkout takes
+    the in-sync fast path, which never embeds: until the stamp names the
+    selected backend the project owes a pass. A checkout synced before the
+    stamp existed has none and owes one pass too.
+    """
+    digest = hashlib.sha256(project_name.encode(cs.ENCODING_UTF8)).hexdigest()
+    return state_dir / cs.EMBEDDINGS_STORE_PROJECT_TEMPLATE.format(digest=digest)
+
+
+def _stamp_names_selected_store(stamp: Path) -> bool:
+    try:
+        stamped = stamp.read_text(encoding=cs.ENCODING_UTF8).strip()
+    except OSError:
+        return False
+    return stamped == str(settings.VECTOR_STORE_BACKEND)
+
+
+def _save_embeddings_store(stamp: Path) -> None:
+    try:
+        stamp.write_text(str(settings.VECTOR_STORE_BACKEND), encoding=cs.ENCODING_UTF8)
+    except OSError:
+        # Best effort, as for the pending marker: without the stamp the next
+        # sync runs the pass again, which is slower but loses nothing.
+        logger.debug(ls.EMBEDDINGS_PENDING_NOT_UPDATED)
+
+
 def _save_embeddings_owed(marker: Path, project_name: str, owed: bool) -> bool:
     """Create or remove `project_name`'s marker; say whether that went through."""
     try:
@@ -9869,6 +9900,10 @@ class GraphUpdater:
     def _owes_embeddings(self) -> bool:
         if _embeddings_marker(self.state_dir, self.project_name).exists():
             return True
+        if not _stamp_names_selected_store(
+            _embeddings_store_stamp(self.state_dir, self.project_name)
+        ):
+            return True
         shared = _load_shared_embeddings_owed(
             self.state_dir / cs.EMBEDDINGS_PENDING_FILENAME
         )
@@ -9890,6 +9925,10 @@ class GraphUpdater:
         """
         if pending:
             logger.warning(ls.EMBEDDINGS_PENDING.format(project=self.project_name))
+        else:
+            _save_embeddings_store(
+                _embeddings_store_stamp(self.state_dir, self.project_name)
+            )
         recorded = _save_embeddings_owed(
             _embeddings_marker(self.state_dir, self.project_name),
             self.project_name,

@@ -191,6 +191,10 @@ QDRANT_DEFAULT_DB_PATH = "./.qdrant_code_embeddings"
 # The settings field that holds it. Whether it was supplied is read from the
 # fields the settings sources set, since a supplied value can equal the default.
 SETTING_QDRANT_DB_PATH = "QDRANT_DB_PATH"
+# Settings whose presence, with VECTOR_STORE_BACKEND left unset, marks an
+# install that stored its embeddings in Qdrant when Qdrant was the default.
+SETTING_VECTOR_STORE_BACKEND = "VECTOR_STORE_BACKEND"
+QDRANT_CONNECTION_SETTINGS = ("QDRANT_URL", SETTING_QDRANT_DB_PATH, "QDRANT_API_KEY")
 
 SEMANTIC_DEPENDENCIES = (
     MODULE_PYMILVUS,

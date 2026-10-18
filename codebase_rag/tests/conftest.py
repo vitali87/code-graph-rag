@@ -329,6 +329,16 @@ def _pin_graph_backend(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _pin_vector_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Likewise the vector fakes model Qdrant and predate the `sqlite` default,
+    # so they keep that backend; the other backends' tests choose theirs.
+    from codebase_rag.config import settings
+    from codebase_rag.constants import VectorStoreBackend
+
+    monkeypatch.setattr(settings, "VECTOR_STORE_BACKEND", VectorStoreBackend.QDRANT)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_cgr_home(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> Path:
