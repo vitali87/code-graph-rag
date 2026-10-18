@@ -29,6 +29,7 @@ GRAPH_SCHEMA_PAGE = PROJECT_ROOT / "docs" / "architecture" / "graph-schema.md"
 DOCUMENTED_COMMANDS = (
     ch.CLICommandName.START,
     ch.CLICommandName.INDEX,
+    ch.CLICommandName.WATCH,
     ch.CLICommandName.EXPORT,
     ch.CLICommandName.OPTIMIZE,
     ch.CLICommandName.MCP_SERVER,

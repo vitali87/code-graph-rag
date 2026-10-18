@@ -26,6 +26,7 @@ from loguru import logger
 from watchdog.events import FileCreatedEvent, FileDeletedEvent
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.language_spec import has_other_language_sibling
 from codebase_rag.main import detect_excludable_directories
@@ -45,8 +46,8 @@ from codebase_rag.utils.path_utils import (
     python_stub_has_implementation,
     walk_eligible_files,
 )
+from codebase_rag.watch import CodeChangeEventHandler
 from evals.cgr_graph import _StatefulIngestor
-from realtime_updater import CodeChangeEventHandler
 
 SECRET = "sk-live-123"
 # Every link in the `layout` fixture, by its path in the repository.
@@ -202,7 +203,7 @@ class TestIndex:
     ) -> None:
         create_and_run_updater(layout, mock_ingestor)
         cache = json.loads(
-            (layout / cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8")
+            state_file(layout, cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8")
         )
         assert sorted(cache) == ["pkg/__init__.py", "pkg/core.py"]
 
@@ -310,7 +311,9 @@ class TestIncrementalSync:
 
         assert "repo.sub.linked.outside_fn" not in _function_qns(store)
         assert "repo.sub.own.own" in _function_qns(store)
-        cache = json.loads((repo / cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8"))
+        cache = json.loads(
+            state_file(repo, cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8")
+        )
         assert "sub/linked.py" not in cache
 
     def test_a_sync_after_a_file_became_a_link_keeps_the_targets_file(
@@ -480,7 +483,9 @@ class TestWatcherReplacement:
         handler.dispatch(FileCreatedEvent(str(repo / "old.py")))
 
         assert _function_qns(store) == {"repo.core.helper"}
-        cache = json.loads((repo / cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8"))
+        cache = json.loads(
+            state_file(repo, cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8")
+        )
         assert sorted(cache) == ["core.py"]
 
     def test_reingesting_a_file_replaced_by_a_link_deletes_its_own_file(
@@ -926,7 +931,9 @@ class TestReingestSkipsLinks:
 
         assert _function_qns(store) == {"repo.pkg.core.helper"}
         assert "pkg/alias.py" not in _file_paths(store)
-        cache = json.loads((repo / cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8"))
+        cache = json.loads(
+            state_file(repo, cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8")
+        )
         assert "pkg/alias.py" not in cache
 
     def test_a_same_stem_survivor_is_no_link(self, tmp_path: Path) -> None:

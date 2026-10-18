@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import reprlib
+import subprocess
 from collections.abc import Collection, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -20,7 +21,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from . import constants as cs
 from . import exceptions as ex
 from . import logs
-from .graph_dialects import DIALECT_MEMGRAPH, available_dialects
+from .graph_dialects import DIALECT_SQLITE, available_dialects
 from .types_defs import CgrignorePatterns, ModelConfigKwargs
 
 # Taken before `.env` is merged into the environment, so a refused value can be
@@ -210,6 +211,13 @@ class ModelConfig:
         return ModelConfigKwargs(**result)
 
     def validate_api_key(self, role: str = cs.DEFAULT_MODEL_ROLE) -> None:
+        # A provider nothing serves comes first: no key could satisfy the
+        # check below, and its advice would name a variable nothing reads
+        # (issue #2897). Imported here: the providers import this module.
+        from .providers.base import unknown_provider_message
+
+        if (message := unknown_provider_message(self.provider)) is not None:
+            raise ex.UnknownProviderError(message)
         provider_lower = self.provider.lower()
         env_key = PROVIDER_ENV_KEYS.get(provider_lower)
         if (
@@ -255,10 +263,15 @@ class AppConfig(BaseSettings):
         enable_decoding=False,
     )
 
-    # Which graph engine the ingestor talks to. Memgraph stays the default,
-    # so an existing install keeps its behaviour without touching config;
-    # see `graph_dialects` for what actually differs between engines.
-    GRAPH_BACKEND: str = DIALECT_MEMGRAPH
+    # Which graph engine the ingestor talks to; see `graph_dialects` for
+    # what actually differs between engines. The embedded SQLite engine is
+    # the default because it needs no server, no Docker and no native
+    # driver: a first run indexes straight into a file (issue #386).
+    # Memgraph and Neo4j stay one setting away.
+    GRAPH_BACKEND: str = DIALECT_SQLITE
+    # The embedded graph's file; unset means `graph.sqlite` under CGR_HOME,
+    # one graph shared by every project, as one Memgraph instance is.
+    SQLITE_GRAPH_PATH: Path | None = None
 
     MEMGRAPH_HOST: str = "localhost"
     MEMGRAPH_PORT: int = 7687
@@ -330,6 +343,25 @@ class AppConfig(BaseSettings):
         True, validation_alias="CGR_CAPTURE_LOCAL_DEFINITIONS"
     )
     CGR_HOME: Path = Field(default_factory=lambda: Path.home() / ".cgr")
+
+    @property
+    def graph_db_file(self) -> Path:
+        if self.SQLITE_GRAPH_PATH is not None:
+            return self.SQLITE_GRAPH_PATH.expanduser()
+        return self.CGR_HOME.expanduser() / cs.EG_DEFAULT_DB_FILENAME
+
+    @property
+    def memgraph_set_without_backend(self) -> bool:
+        """Whether Memgraph is configured but the engine was left to default.
+
+        Memgraph was the default engine before the embedded graph replaced
+        it, so this is how an install upgraded in place looks: its graph
+        lives in Memgraph while cgr now opens an empty file.
+        """
+        return cs.GRAPH_BACKEND_SETTING not in self.model_fields_set and any(
+            name in self.model_fields_set for name in cs.MEMGRAPH_CONNECTION_SETTINGS
+        )
+
     # Editor integration for clickable report locations (OSC 8 hyperlinks)
     # and `cgr duplicates --open`. AUTO sniffs the hosting app (Cursor,
     # Windsurf, Zed, VS Code's terminal) and falls back to VS Code; the
@@ -430,6 +462,19 @@ class AppConfig(BaseSettings):
     MILVUS_VECTOR_DIM: int = 768
     MILVUS_TOP_K: int = 5
     MILVUS_CONSISTENCY_LEVEL: str = "Strong"
+    # The `sqlite` vector store's file; unset means `vectors.sqlite` under
+    # CGR_HOME, beside the embedded graph's, so semantic search needs no
+    # server either.
+    SQLITE_VECTOR_PATH: Path | None = None
+    SQLITE_VECTOR_DIM: int = 768
+    SQLITE_VECTOR_TOP_K: int = 5
+
+    @property
+    def vector_db_file(self) -> Path:
+        if self.SQLITE_VECTOR_PATH is not None:
+            return self.SQLITE_VECTOR_PATH.expanduser()
+        return self.CGR_HOME.expanduser() / cs.SQLITE_VEC_DEFAULT_DB_FILENAME
+
     EMBEDDING_PROVIDER: cs.EmbeddingProvider = Field(
         cs.EmbeddingProvider.UNIXCODER, validation_alias="CGR_EMBEDDING_PROVIDER"
     )
@@ -538,6 +583,10 @@ class AppConfig(BaseSettings):
     _active_cypher: ModelConfig | None = None
 
     QUIET: bool = Field(False, validation_alias="CGR_QUIET")
+
+    # The GitHub Sponsors line a finished command ends on in a terminal; set
+    # false to drop it without the rest of the output `--quiet` drops.
+    SPONSOR_PLEDGE: bool = Field(True, validation_alias="CGR_SPONSOR_PLEDGE")
 
     # Compaction discards old tool output to bound the context (#1500). It is
     # on by default because an unbounded history eventually fails the request
@@ -766,8 +815,102 @@ def load_ignore_patterns(repo_path: Path) -> CgrignorePatterns:
     negations = cgr.unignore | git.unignore
     return CgrignorePatterns(
         exclude=cgr.exclude | (git.exclude - negations),
-        unignore=negations,
+        unignore=negations | _tracked_source_dirs(repo_path),
     )
+
+
+_TRACKED_SOURCE_LOGGED: set[tuple[Path, frozenset[str]]] = set()
+
+
+def _tracked_source_dirs(repo_path: Path) -> frozenset[str]:
+    """Anchored un-ignores for tracked directories with ambiguous names.
+
+    A default exclusion matches a directory NAME at any depth, and `bin`,
+    `out`, `env` and the like hold committed first-party source as often as
+    build output: a Dart project's only entry point is `bin/main.dart`. Each
+    tracked file under such a directory is rescued by its own anchored path,
+    not the directory: a directory-level `!` would let untracked build output
+    written beside the tracked source (`bin/generated.js`) through as well
+    (review of PR 2490). An untracked `tools/bin/` stays excluded too, and an
+    explicit exclude still wins as for any `!` line (issue #2406). Outside a
+    git checkout, or if git cannot answer, nothing is rescued.
+    """
+    try:
+        listing = subprocess.run(
+            [cs.SHELL_CMD_GIT, "ls-files", "-z"],
+            cwd=repo_path,
+            capture_output=True,
+            encoding=cs.ENCODING_UTF8,
+            errors="replace",
+            check=False,
+            timeout=cs.GIT_LS_FILES_TIMEOUT_S,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return frozenset()
+    if listing.returncode != 0:
+        return frozenset()
+    rescued: set[str] = set()
+    dirs: set[str] = set()
+    for entry in listing.stdout.split("\0"):
+        parts = entry.split(cs.SEPARATOR_SLASH)
+        # Rescued only when every excluded directory on the path is one of
+        # the ambiguous names: a tracked `vendor/bin/x.js` is still vendored
+        # code. A name with pattern characters or trailing whitespace is left
+        # excluded rather than written as a pattern that could match untracked
+        # files beside it (review of PR 2490).
+        if (
+            cs.TRACKED_PATH_PATTERN_CHARS.search(entry)
+            or entry[-1:].isspace()
+            or any(
+                part in cs.IGNORE_PATTERNS and part not in cs.TRACKED_SOURCE_DIR_NAMES
+                for part in parts[:-1]
+            )
+        ):
+            continue
+        for index, part in enumerate(parts[:-1]):
+            if part in cs.TRACKED_SOURCE_DIR_NAMES:
+                rescued.add(f"{cs.SEPARATOR_SLASH}{entry}")
+                dirs.add(cs.SEPARATOR_SLASH.join(parts[: index + 1]))
+                break
+    kept_dirs = frozenset(dirs)
+    # Logged once per repository and set: several entry points load the
+    # patterns in one run.
+    if kept_dirs and (repo_path, kept_dirs) not in _TRACKED_SOURCE_LOGGED:
+        _TRACKED_SOURCE_LOGGED.add((repo_path, kept_dirs))
+        logger.info(
+            logs.TRACKED_SOURCE_DIRS_KEPT.format(
+                dirs=", ".join(f"{d}/" for d in sorted(kept_dirs))
+            )
+        )
+    return frozenset(rescued)
+
+
+def git_index_path(repo_path: Path) -> Path | None:
+    """The git index `load_ignore_patterns` reads the tracked files from.
+
+    A watcher re-reads its rules when this file changes: `git mv`, `git add`
+    and `git rm` move the tracked-file rescues without touching any ignore
+    file. It lies outside the checkout for a linked worktree. None outside a
+    git checkout, or when git cannot answer.
+    """
+    try:
+        answer = subprocess.run(
+            [cs.SHELL_CMD_GIT, "rev-parse", "--git-path", cs.GIT_INDEX_FILENAME],
+            cwd=repo_path,
+            capture_output=True,
+            encoding=cs.ENCODING_UTF8,
+            errors="replace",
+            check=False,
+            timeout=cs.GIT_LS_FILES_TIMEOUT_S,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if answer.returncode != 0 or not (relative := answer.stdout.strip()):
+        return None
+    # Relative to the checkout for a plain repository, absolute for a linked
+    # worktree. Normalised but not resolved, to compare equal to the paths a
+    # watch on the checkout as given reports.
+    return Path(os.path.normpath(repo_path / relative))
 
 
 CGR_INSTRUCTIONS_FILENAME = ".cgr.md"

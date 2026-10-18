@@ -1,11 +1,12 @@
 import hashlib
 import os
+import posixpath
 import re
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import lru_cache
-from pathlib import Path
+from pathlib import Path, PurePath
 
 from pathspec import PathSpec
 
@@ -28,6 +29,16 @@ def derive_project_name(repo_path: Path) -> str:
     if not base:
         base = _PROJECT_NAME_FALLBACK_BASE
     return f"{base}{cs.PROJECT_NAME_DIGEST_MARKER}{digest}"
+
+
+def nested_project_names(project_name: str, projects: Iterable[str]) -> list[str]:
+    """The projects whose names extend `project_name` (`svc.v2` for `svc`).
+
+    `svc.` prefixes every qualified name of `svc.v2` too, but the longest
+    registered name a symbol sits under owns it (issue #1970).
+    """
+    prefix = f"{project_name}{cs.SEPARATOR_DOT}"
+    return [name for name in projects if name.startswith(prefix)]
 
 
 def default_project_name(repo_path: Path) -> str:
@@ -128,6 +139,19 @@ def cached_file_identity_posix(file_path: Path) -> str:
     inside the repository for a link whose target points outside it.
     """
     return (file_path.parent.resolve() / file_path.name).as_posix()
+
+
+def portable_posix(path: str) -> str:
+    """A path in normalised POSIX form, whichever OS recorded it.
+
+    Nodes store `as_posix()` of the path relative to the root, so `\\`
+    separators, `./` and doubled slashes are spellings of the same file.
+    ``Path.as_posix`` converts only the running host's separator, so a
+    Windows path read on Linux kept its backslashes and never matched a graph
+    path. No real source path contains a backslash on POSIX, so treating one
+    as a separator loses nothing.
+    """
+    return posixpath.normpath(path.replace(cs.SEPARATOR_BACKSLASH, cs.SEPARATOR_SLASH))
 
 
 # #495: .cgrignore lines and --exclude values are interpreted with
@@ -489,21 +513,13 @@ def python_stub_has_implementation(
     Yielding to one left nothing defining the module, neither the stub nor
     the implementation it deferred to.
     """
-    if path.suffix != cs.EXT_PYI:
-        return False
-    if path.name == cs.INIT_PYI:
-        candidates = [path.with_name(cs.INIT_PY)]
-    else:
-        candidates = [path.with_suffix(cs.EXT_PY)]
-        package_dir = path.with_suffix("")
-        # The walk does not enter a linked directory (#2451).
-        if not is_symlink_entry(package_dir):
-            candidates.append(package_dir / cs.INIT_PY)
     return any(
         candidate.is_file()
         # A linked implementation is no implementation: the walk leaves links
         # out (#2451).
         and not is_symlink_entry(candidate)
+        # The walk does not enter a linked package directory `x/` (#2451).
+        and not (candidate.parent != path.parent and is_symlink_entry(candidate.parent))
         and not should_skip_path(
             candidate,
             repo_path,
@@ -511,8 +527,34 @@ def python_stub_has_implementation(
             unignore_paths=unignore_paths,
             is_file=True,
         )
-        for candidate in candidates
+        for candidate in python_stub_implementations(path)
     )
+
+
+def declaration_implementations[P: PurePath](path: P) -> list[P]:
+    """The files that may implement the module a declaration file declares,
+    by path alone, as the indexer pairs them: a `.pyi` stub's (see
+    `python_stub_implementations`), and for a TypeScript declaration
+    (`x.d.ts`, `x.d.mts`, `x.d.cts`) every same-stem implementation module
+    (`x.ts`, `x.js`, ...), as `has_implementation_sibling` asks. Nothing for
+    any other file.
+    """
+    if declaration_extension(path.name) is None:
+        return python_stub_implementations(path)
+    stem = module_stem(path.name)
+    return [path.with_name(f"{stem}{ext}") for ext in _IMPLEMENTATION_EXTS]
+
+
+def python_stub_implementations[P: PurePath](path: P) -> list[P]:
+    """The files that may implement the module a `.pyi` stub declares, by
+    path alone: `x.py` or the package `x/__init__.py` for `x.pyi`, and the
+    `__init__.py` beside it for `__init__.pyi`. Nothing for any other file.
+    """
+    if path.suffix != cs.EXT_PYI:
+        return []
+    if path.name == cs.INIT_PYI:
+        return [path.with_name(cs.INIT_PY)]
+    return [path.with_suffix(cs.EXT_PY), path.with_suffix("") / cs.INIT_PY]
 
 
 def base_module_qn(rel_path: Path, project_name: str) -> str:
@@ -627,6 +669,44 @@ def walk_eligible_files(
                 yield dirpath, fname, rel_path_str
 
 
+def rescued_files(
+    repo_path: Path,
+    exclude_paths: frozenset[str] | None = None,
+    unignore_paths: frozenset[str] | None = None,
+) -> frozenset[str]:
+    """The files the walk indexes although a default-excluded name is on their path.
+
+    The compiler frontends skip those names on their own, so they must be told
+    which files under them the graph holds: a git-tracked `pkg/out/out.go` or
+    a file a `!` line rescues otherwise reaches the graph without its compiler
+    facts (review of PR 2490).
+    """
+    return frozenset(
+        rel_path_str
+        for _dirpath, _fname, rel_path_str in walk_eligible_files(
+            repo_path, exclude_paths, unignore_paths
+        )
+        if any(
+            part in cs.IGNORE_PATTERNS
+            for part in rel_path_str.split(cs.SEPARATOR_SLASH)[:-1]
+        )
+    )
+
+
+def frontend_ignored_dirs(rescued: frozenset[str]) -> frozenset[str]:
+    """The default-excluded names a frontend that filters by name may skip whole.
+
+    For gotypes and Roslyn, which can only drop a directory name everywhere:
+    every name a rescued file sits under stays visible. They then also report
+    on untracked files under that name, which is harmless, because every fact
+    joins to a definition by the position the parse registered and a file the
+    walk skipped registers none.
+    """
+    return cs.IGNORE_PATTERNS - {
+        part for rel in rescued for part in rel.split(cs.SEPARATOR_SLASH)[:-1]
+    }
+
+
 def is_walked_dir(
     dir_parts: tuple[str, ...],
     exclude_paths: frozenset[str] | None = None,
@@ -702,6 +782,25 @@ def project_root_for_qualified_name(
             owner = name
     root = roots[owner]
     return Path(root).resolve() if root is not None else None
+
+
+def projects_sharing_root(project_name: str, roots: dict[str, str | None]) -> list[str]:
+    """Other projects indexed from the same directory as `project_name`.
+
+    Folder and File nodes are keyed by absolute path, so such projects hold
+    the same ones (issue #2665).
+    """
+    root = roots.get(project_name)
+    if root is None:
+        return []
+    resolved = Path(root).resolve()
+    return [
+        name
+        for name, other in roots.items()
+        if name != project_name
+        and other is not None
+        and Path(other).resolve() == resolved
+    ]
 
 
 def absolute_path_within_project_root(

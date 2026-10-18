@@ -21,24 +21,22 @@ import difflib
 import json
 import os
 import shutil
-import stat
-import sys
 import tempfile
-import threading
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import IO, NamedTuple
+from typing import NamedTuple
 
 from loguru import logger
 
 from .. import constants as cs
 from .. import logs as ls
-from ..checkout_state import prepare_state_dir, state_file
+from ..checkout_state import EditLock, state_file, write_history
 from ..config import load_ignore_patterns
 from ..utils.path_utils import should_skip_path
+from ..utils.source_encoding import decode_source
 
 
 class VerificationResult(NamedTuple):
@@ -83,96 +81,19 @@ class TransactionError(ValueError):
     """The transaction could not be prepared (bad path, unreadable file)."""
 
 
-# Two transactions committing into the same tree must serialise their
-# read-verify-write windows, and `cgr edits undo` may run in another process
-# than the agent's server: the lock is an OS advisory lock on a file in the
-# checkout's state directory, held across the baseline check, the verifier,
-# the writes and the history update. A thread lock per root sits in front of
-# it so threads of one process queue rather than contend for the file.
-#
-# An older cgr locked `.cgr-edit-lock` at the checkout root instead, and one
-# still running (an agent's server started before the upgrade) goes on
-# doing so. That file is never moved, copied or removed, since another
-# process may hold it or be about to open it by that path; while it is there
-# it is taken too, after the state directory's, so old and new editors of one
-# tree still exclude each other (issue #2427).
-_REPO_LOCKS: dict[str, threading.Lock] = {}
-_REPO_LOCKS_GUARD = threading.Lock()
-
-
-def _thread_lock(root: Path) -> threading.Lock:
-    key = str(root)
-    with _REPO_LOCKS_GUARD:
-        return _REPO_LOCKS.setdefault(key, threading.Lock())
-
-
-def _lock_file(handle: IO[bytes]) -> None:
-    if sys.platform == cs.PLATFORM_WINDOWS:  # pragma: no cover - platform
-        import msvcrt
-
-        msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
-    else:
-        import fcntl
-
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-
-
-def _unlock_file(handle: IO[bytes]) -> None:
-    if sys.platform == cs.PLATFORM_WINDOWS:  # pragma: no cover - platform
-        import msvcrt
-
-        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-    else:
-        import fcntl
-
-        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-
-
 @contextmanager
-def _locked(handle: IO[bytes]) -> Iterator[None]:
-    _lock_file(handle)
-    try:
-        yield
-    finally:
-        _unlock_file(handle)
+def _repo_lock(root: Path) -> Iterator[EditLock]:
+    """Hold the checkout's edit lock (see `EditLock`) until the block ends."""
+    with EditLock(root) as lock:
+        lock.acquire()
+        yield lock
 
 
-def _open_tree_lock(root: Path) -> IO[bytes] | None:
-    """The lock an older cgr takes at the checkout root, if one is there.
-
-    Opened for reading, never created: a tree no older cgr edited gets no
-    lock file. Only a regular file is cgr's; a link or a FIFO by that name
-    is neither followed nor opened.
-    """
-    path = root / cs.EDIT_LOCK_FILENAME
-    try:
-        if not stat.S_ISREG(path.lstat().st_mode):
-            return None
-        return path.open("rb")
-    except OSError:
-        return None
-
-
-@contextmanager
-def _repo_lock(root: Path) -> Iterator[None]:
-    with _thread_lock(root):
-        # Created, not adopted: the history moves in once both locks are
-        # held, so an older cgr part-way through an edit records its entry
-        # in the tree's copy first.
-        lock_path = prepare_state_dir(root, adopt=False) / cs.EDIT_LOCK_FILENAME
-        with lock_path.open("ab") as handle, _locked(handle):
-            tree_lock = _open_tree_lock(root)
-            if tree_lock is None:
-                yield
-                return
-            with tree_lock, _locked(tree_lock):
-                yield
-
-
-def _decode(data: bytes | None) -> list[str]:
+def _decode(data: bytes | None, path: str) -> list[str]:
     if data is None:
         return []
-    return data.decode(cs.ENCODING_UTF8, errors="replace").splitlines(keepends=True)
+    # A Python file shows in the encoding it declares (issue #2901).
+    return decode_source(data, Path(path)).splitlines(keepends=True)
 
 
 def unified_diff(staged: StagedFile) -> str:
@@ -180,8 +101,8 @@ def unified_diff(staged: StagedFile) -> str:
     from_name = cs.DIFF_DEV_NULL if staged.before is None else f"a/{staged.path}"
     to_name = cs.DIFF_DEV_NULL if staged.after is None else f"b/{staged.path}"
     lines = difflib.unified_diff(
-        _decode(staged.before),
-        _decode(staged.after),
+        _decode(staged.before, staged.path),
+        _decode(staged.after, staged.path),
         fromfile=from_name,
         tofile=to_name,
     )
@@ -410,7 +331,7 @@ class EditTransaction:
                 VerificationResult(True),
                 cs.EDIT_NOTHING_STAGED,
             )
-        with _repo_lock(self.repo_root) if _lock else nullcontext():
+        with _repo_lock(self.repo_root) if _lock else nullcontext() as lock:
             self._check_unchanged()
             tree = self.tree()
             try:
@@ -432,6 +353,10 @@ class EditTransaction:
                     verification,
                     cs.EDIT_VERIFICATION_FAILED.format(reason=verification.message),
                 )
+            if lock is not None and lock.join_tree_lock():
+                # An older cgr made its first edit of this tree while the
+                # verifier ran, and it may have written a staged file.
+                self._check_unchanged()
             self._apply_all(verification)
         self._finished = True
         logger.info(ls.EDIT_TX_APPLIED, tx=self.transaction_id, count=len(files))
@@ -564,12 +489,9 @@ def load_history(repo_root: Path) -> list[dict]:
 
 
 def _save_history(repo_root: Path, entries: list[dict]) -> None:
-    _write_file(
-        history_path(repo_root),
-        json.dumps(entries[-cs.EDIT_HISTORY_LIMIT :], indent=2).encode(
-            cs.ENCODING_UTF8
-        ),
-    )
+    # Through the one writer, which settles every entry it drops (aged out,
+    # or undone) so that no copy of the history in the tree brings it back.
+    write_history(repo_root, entries)
 
 
 def record_transaction(

@@ -47,7 +47,8 @@ establish it and logs why.
 ## cgr's own state
 
 A sync keeps what it needs to stay incremental (the hash cache, directory
-mtimes, the exclusion stamp, the parser fingerprint and pending-work markers),
+mtimes, the exclusion stamp, the parser fingerprint and pending-work markers)
+and its [sync lock](../guide/realtime-updates.md#one-sync-of-a-checkout-at-a-time),
 and `cgr rename` / `cgr edits` keep their undo history and lock, in one
 directory per checkout under `CGR_HOME` (default `~/.cgr`):
 
@@ -75,8 +76,16 @@ starts with `.cgr-` is checked like any other.
 The one exception is the edit lock, `.cgr-edit-lock`: an older cgr still
 running (an MCP server started before the upgrade, say) keeps taking it at
 the repository root, so it is left there, and edits take it as well as their
-own lock for as long as it exists. Delete it once no older cgr runs against
-the checkout.
+own lock for as long as it exists. If it is there but cannot be opened,
+edits stop with a message naming it rather than run beside that cgr. Delete
+it once no older cgr runs against the checkout. Such an older cgr also goes
+on recording its edits in a new `.cgr-edit-history.json` at the root; the
+next sync or edit adds those entries to the history in the state directory
+rather than dropping them, so `cgr edits undo` still reverses them. An entry
+already taken from the tree, or that has left the history since (undone, or
+aged out of the last 50), is never added again. While the entries cannot be
+added (the state directory refuses the write, say), edits of the checkout
+stop with a message saying why, so that undo keeps their order.
 
 ![cgr stats on pallets/flask, then a .cgrignore excluding tests and examples, a cgr start --update-graph sync, and cgr stats showing the smaller graph](../assets/demos/ignore-patterns.gif)
 
@@ -84,7 +93,79 @@ the checkout.
 
 ## Default Exclusions
 
-Code-Graph-RAG automatically excludes common non-source directories such as `.git`, `node_modules`, `__pycache__`, `dist`, `build`, and similar.
+Code-Graph-RAG automatically excludes common non-source directories. A name
+matches a directory at any depth. Cargo's `src/bin/` is always indexed.
+
+Some of these names hold first-party, committed source as often as build
+output: Dart's `bin/main.dart` entry point, npm and gem executables, a Go
+package called `out`, a JavaScript `env` module. The files git tracks under a
+directory with one of those names are indexed, and the run log names each
+directory they are in. Everything else under the same name is still skipped:
+an untracked `bin/generated.js` beside a tracked `bin/main.dart`, a
+`.gitignore`d build folder, an untracked `tools/bin/`, and a tracked file that
+also sits under another excluded directory (`vendor/bin/lib.js` is still
+vendored code). A tracked path whose name holds pattern characters (`*`, `?`,
+`[`, `]`, `!`, `\`) is not rescued either. An explicit exclude (`.cgrignore`
+or `--exclude`) still wins.
+
+The compiler frontends (go/types, javac, Roslyn) see the rescued files too, so
+their calls keep the compiler's binding. javac is handed the rescued files
+themselves, so an untracked source under another directory of the same name
+never enters its compilation. The real-time watcher re-reads these rules when
+`.cgrignore`, `.gitignore` or the git index changes, so a `git mv`, `git add`
+or `git rm` under one of these names, or an edited ignore file, applies without
+a restart.
+
+<!-- SECTION:default_exclusions -->
+| Directory name | Excluded |
+|---|---|
+| `.cache` | always |
+| `.claude` | always |
+| `.cxx` | always |
+| `.dart_tool` | always |
+| `.eclipse` | always |
+| `.eggs` | always |
+| `.env` | always |
+| `.git` | always |
+| `.gradle` | always |
+| `.hg` | always |
+| `.idea` | always |
+| `.ipynb_checkpoints` | always |
+| `.maven` | always |
+| `.mypy_cache` | always |
+| `.nox` | always |
+| `.npm` | always |
+| `.nyc_output` | always |
+| `.pnpm-store` | always |
+| `.pytest_cache` | always |
+| `.qdrant_code_embeddings` | always |
+| `.ruff_cache` | always |
+| `.svn` | always |
+| `.tmp` | always |
+| `.tox` | always |
+| `.venv` | always |
+| `.vs` | always |
+| `.vscode` | always |
+| `.yarn` | always |
+| `__pycache__` | always |
+| `bin` | except the files git tracks in it |
+| `bower_components` | always |
+| `build` | always |
+| `coverage` | except the files git tracks in it |
+| `dist` | always |
+| `env` | except the files git tracks in it |
+| `htmlcov` | always |
+| `node_modules` | always |
+| `obj` | except the files git tracks in it |
+| `out` | except the files git tracks in it |
+| `Pods` | always |
+| `site-packages` | always |
+| `target` | except the files git tracks in it |
+| `temp` | except the files git tracks in it |
+| `tmp` | except the files git tracks in it |
+| `vendor` | always |
+| `venv` | always |
+<!-- /SECTION:default_exclusions -->
 
 Individual files are also skipped by how their **name ends**, covering build
 output and editor leftovers (`.pyc`, `.pyo`, `.o`, `.a`, `.so`, `.dll`,

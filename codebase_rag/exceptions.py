@@ -32,6 +32,7 @@ LITELLM_NOT_RUNNING = (
     "Make sure LiteLLM proxy is running and API key is valid."
 )
 UNKNOWN_PROVIDER = "Unknown provider '{provider}'. Available providers: {available}"
+UNKNOWN_PROVIDER_SUGGESTION = ". Did you mean '{suggestion}'?"
 
 # Dependency errors
 SEMANTIC_EXTRA = "Semantic search requires 'semantic' extra: uv sync --extra semantic"
@@ -84,6 +85,10 @@ SETTING_JSON_LIST_TOO_DEEP = (
 # Windows holds in a variable. The error names the limit, not the value.
 SETTING_NOT_SETTABLE = "the operating system refused it ({error})."
 CONFIG = "{role} configuration error: {error}"
+EMPTY_PROJECT_SCOPE = (
+    "The assistant has no project to work on: an empty project scope would "
+    "cover every project in the graph."
+)
 MODEL_ROLE_HALF_CONFIGURED = (
     "{set_var}={value} is set but {missing_var} is not. "
     "Set both {role}_PROVIDER and {role}_MODEL, or neither to use the local "
@@ -106,6 +111,22 @@ QDRANT_API_KEY_OVER_HTTP = (
     "key unencrypted. Use an https:// QDRANT_URL, or set "
     "QDRANT_ALLOW_INSECURE_API_KEY=true if the connection is protected another "
     "way (for example, it never leaves the machine)."
+)
+
+SQLITE_VECTOR_DIM_MISMATCH = (
+    "SQLite vector store '{path}' has vector dimension {dim}, expected "
+    "{expected}. Set SQLITE_VECTOR_DIM to the embedding model's output size, "
+    "or re-index with --clean to rebuild the store with the new size."
+)
+SQLITE_VEC_NOT_INSTALLED = (
+    "CGR_VECTOR_STORE_BACKEND=sqlite needs sqlite-vec, which is not installed. "
+    "Install it with `pip install 'code-graph-rag[sqlite-vec]'` (or "
+    "`uv sync --extra sqlite-vec`)."
+)
+SQLITE_VEC_EXTENSIONS_UNSUPPORTED = (
+    "CGR_VECTOR_STORE_BACKEND=sqlite loads the sqlite-vec extension, but this "
+    "Python's sqlite3 module was built without extension loading. Use a Python "
+    "that has it (uv-managed Pythons do), or set CGR_VECTOR_STORE_BACKEND=qdrant."
 )
 
 EMBEDDING_DIM_MISMATCH = (
@@ -191,6 +212,14 @@ ACCESS_DENIED = "Access denied: Cannot access files outside the project root."
 
 
 # Exception classes
+class UnknownProviderError(ValueError):
+    """A model role names a provider nothing serves (issue #2897).
+
+    Its own type so a caller that turns a missing key into advice does not
+    turn this into advice about a key no setting can supply.
+    """
+
+
 class LLMGenerationError(Exception):
     pass
 
@@ -209,6 +238,17 @@ GRAPH_UNREACHABLE = (
     "`cgr daemon up`, or set MEMGRAPH_HOST/MEMGRAPH_PORT. `cgr doctor` checks "
     "the setup."
 )
+MGCLIENT_MISSING = (
+    "Error: GRAPH_BACKEND=memgraph needs the Memgraph driver, which is not "
+    "installed. Install it with `pip install 'code-graph-rag[memgraph]'` (or "
+    "`uv sync --extra memgraph`), or unset GRAPH_BACKEND to use the embedded "
+    "graph, which needs no server."
+)
+EMBEDDED_GRAPH_UNAVAILABLE = (
+    "Error: cannot open the embedded graph at {path} ({error}). Set "
+    "SQLITE_GRAPH_PATH to a writable file, or GRAPH_BACKEND=memgraph to use "
+    "a server."
+)
 GRAPH_CREDENTIALS_REFUSED = (
     "Error: Memgraph at {address} refused the credentials ({error}). Set "
     "MEMGRAPH_USERNAME/MEMGRAPH_PASSWORD to the ones the stack was started "
@@ -223,6 +263,24 @@ class RepoPathError(ValueError):
     still catch it. Its own type is what lets `cgr mcp-server` add the
     `TARGET_REPO_PATH` hint to this error and no other (issue #2881).
     """
+
+
+# Sync lock (issue #2441)
+SYNC_IN_PROGRESS = (
+    "Another sync of {repo} is running ({holder}). Two syncs of one checkout at "
+    "once leave the graph incomplete; wait for it to finish, then run this again."
+)
+SYNC_HOLDER = "pid {pid}, project '{project}'"
+SYNC_HOLDER_UNKNOWN = "holder unknown"
+SYNC_LOCK_IS_LINK = (
+    "The sync lock {path} is a symbolic link. A sync never writes through one, "
+    "since it can point outside the checkout; remove it, then run this again."
+)
+SYNC_LOCK_UNAVAILABLE = (
+    "Cannot open the sync lock {path} ({error}). Without it this sync cannot "
+    "tell whether another one is running, so it did not start; make the file "
+    "readable and writable for this user, then run this again."
+)
 
 
 # Deriving from Exception would let every `except Exception` handler between

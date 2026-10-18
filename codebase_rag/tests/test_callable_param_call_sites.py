@@ -21,10 +21,9 @@ from unittest.mock import MagicMock
 import pytest
 from watchdog.events import FileModifiedEvent
 
-import realtime_updater
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
-from codebase_rag import graph_query
+from codebase_rag import graph_query, watch
 from codebase_rag.editing.rename import QueryFn, RenameRefused, rename
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -389,7 +388,7 @@ def test_editing_the_passing_file_keeps_the_receivers_invocation_site(
     main.write_text(edited, encoding="utf-8")
     mock.reset_mock()
 
-    realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0).dispatch(
+    watch.CodeChangeEventHandler(updater, debounce_seconds=0).dispatch(
         FileModifiedEvent(str(main))
     )
 
@@ -413,7 +412,7 @@ def test_editing_the_receiver_moves_the_site_with_the_invocation(
     util.write_text(moved, encoding="utf-8")
     mock.reset_mock()
 
-    realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0).dispatch(
+    watch.CodeChangeEventHandler(updater, debounce_seconds=0).dispatch(
         FileModifiedEvent(str(util))
     )
 

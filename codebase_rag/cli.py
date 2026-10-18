@@ -8,13 +8,13 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Coroutine, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable, Coroutine, Iterable, Iterator
+from contextlib import ExitStack, contextmanager
 from fnmatch import fnmatch
-from functools import partial
+from functools import partial, wraps
 from importlib.metadata import version as get_version
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn
 
 import click
 import typer
@@ -30,10 +30,7 @@ if TYPE_CHECKING:
     # an older typer passes click's own Context at runtime (#1409).
     from typer._click import Context as _GroupContext
 
-from . import (
-    _cli_env,  # noqa: F401  (must run before settings load)
-    cgr_state,
-)
+from . import _cli_env  # noqa: F401  (must run before settings load)
 from . import cli_help as ch
 from . import constants as cs
 from . import cypher_queries as cq
@@ -47,7 +44,7 @@ from .capture import (
     unknown_tokens,
 )
 from .checkout_state import prepare_state_dir
-from .cli_runtime import app_context, connect_memgraph, style
+from .cli_runtime import app_context, connect_memgraph, dim, style
 from .config import load_ignore_patterns, settings, settings_errors
 from .console_marks import status_mark
 from .editing.cli import cli as edits_cli
@@ -60,7 +57,9 @@ from .editor_links import (
     url_template_problem,
 )
 from .graph_cli import cli as graph_cli
+from .graph_dialects import DIALECT_MEMGRAPH
 from .parser_loader import load_parsers
+from .project_selection import ProjectChoice, choose_project, scope_refusal
 from .services.graph_diff import DiffError, diff_indexes, diff_is_empty
 from .services.graph_service import GraphUnavailableError, MemgraphIngestor
 from .services.protobuf_service import ProtobufFileIngestor
@@ -72,8 +71,16 @@ from .services.provenance import (
 )
 from .stack import StackManager
 from .stack.cli import cli as daemon_cli
-from .stack.constants import StackState
+from .stack.constants import SERVICE_QDRANT, StackState
 from .stack.manager import StackError
+from .sync_guard import RUNNING_SYNC_TOKENS as _RUNNING_SYNC_TOKENS
+from .sync_guard import OwnerCheck as _OwnerCheck
+from .sync_guard import SyncRefusedError, mark_sync_incomplete, release_project_claim
+from .sync_guard import clear_sync_incomplete as _clear_sync_incomplete
+from .sync_guard import project_owner_refusal as _project_owner_refusal
+from .sync_guard import sync_marker_params as _sync_marker_params
+from .sync_guard import sync_owner as _sync_owner
+from .sync_lock import SyncLockError, repo_sync_lock
 from .tools.health_checker import HealthChecker
 from .tools.language import cli as language_cli
 from .trace.cli import cli as trace_cli
@@ -84,18 +91,22 @@ from .types_defs import (
     DuplicateMember,
     DuplicatesConfig,
     DuplicatesReport,
+    ProjectSync,
     PropertyValue,
     ResultRow,
     ResultValue,
 )
 from .utils.path_utils import (
     derive_project_name,
+    nested_project_names,
     normalize_project_name,
     project_name_error,
     project_roots_from_rows,
+    projects_sharing_root,
     resolve_repo_path,
     unwritable_output_reason,
 )
+from .utils.process_owner import pid_may_be_running, process_host
 from .utils.terminal_console import terminal_aware_console
 from .workspaces import WorkspaceConfig, WorkspaceError, load_workspace
 from .workspaces.cli import cli as workspace_cli
@@ -189,10 +200,40 @@ class _CgrGroup(TyperGroup):
         # this at connect time with the fix in its message; printing it here
         # covers them all, the delegated groups and the chat included (#2443).
         try:
-            return super().invoke(ctx)
+            result = super().invoke(ctx)
         except GraphUnavailableError as e:
             app_context.console.print(style(str(e), cs.Color.RED))
             raise typer.Exit(1) from e
+        # Only a command that finished gets here: a failure exits by raising.
+        pledge = sponsor_pledge(ctx.invoked_subcommand, sys.stderr.isatty())
+        if pledge:
+            # Soft-wrapped so the terminal, not Rich, breaks the line, and
+            # the URL stays one clickable link.
+            terminal_aware_console(stderr=True).print(
+                dim(pledge), highlight=False, soft_wrap=True
+            )
+        return result
+
+
+# Help pages, and the MCP server, which speaks its protocol until the client
+# hangs up, are not runs that finished.
+_NO_SPONSOR_PLEDGE = frozenset({ch.CLICommandName.HELP, ch.CLICommandName.MCP_SERVER})
+
+
+def sponsor_pledge(command: str | None, terminal: bool) -> str | None:
+    """The GitHub Sponsors line a finished command ends on, or None where it
+    would be in the way: off a terminal (a script or a log reading stderr),
+    under `--quiet` or CGR_SPONSOR_PLEDGE=false, and after the commands in
+    `_NO_SPONSOR_PLEDGE`. On stderr, so it never mixes into a command's
+    output on stdout."""
+    if (
+        not terminal
+        or settings.QUIET
+        or not settings.SPONSOR_PLEDGE
+        or command in _NO_SPONSOR_PLEDGE
+    ):
+        return None
+    return cs.CLI_MSG_SPONSOR_PLEDGE.format(url=cs.SPONSOR_URL)
 
 
 app = typer.Typer(
@@ -215,6 +256,9 @@ def _version_callback(value: bool) -> None:
         )
         for line in credits_lines():
             app_context.console.print(line, highlight=False)
+        app_context.console.print(
+            cs.CLI_MSG_SPONSOR.format(url=cs.SPONSOR_URL), highlight=False
+        )
         raise typer.Exit()
 
 
@@ -328,15 +372,7 @@ def _pre_chat_sync(
     # workspace is active, else just the target repo.
     if workspace_config is None:
         return repo_sync, cs.MSG_SYNCING_KNOWLEDGE_GRAPH
-    # A workspace file written before names were checked can still hold a
-    # dotted one; syncing it would merge nodes across projects (#2412).
-    for repo in workspace_config.repos:
-        if (error := project_name_error(repo.project_name)) is not None:
-            _exit_with_error(
-                cs.CLI_ERR_WORKSPACE_PROJECT_NAME.format(
-                    workspace=workspace_config.name, path=repo.path, error=error
-                )
-            )
+    _exit_if_workspace_names_unstorable(workspace_config)
     workspace_sync = partial(
         _sync_workspace,
         workspace_config,
@@ -351,6 +387,18 @@ def _pre_chat_sync(
     )
 
 
+def _exit_if_workspace_names_unstorable(workspace_config: WorkspaceConfig) -> None:
+    # A workspace file written before names were checked can still hold a
+    # dotted one; syncing it would merge nodes across projects (#2412).
+    for repo in workspace_config.repos:
+        if (error := project_name_error(repo.project_name)) is not None:
+            _exit_with_error(
+                cs.CLI_ERR_WORKSPACE_PROJECT_NAME.format(
+                    workspace=workspace_config.name, path=repo.path, error=error
+                )
+            )
+
+
 def _exit_with_error(message: str) -> NoReturn:
     app_context.console.print(style(message, cs.Color.RED))
     raise typer.Exit(1)
@@ -362,11 +410,20 @@ def _refuse_options_update_graph_drops(
     output_format: cs.QueryFormat,
     no_sync: bool,
     projects: str | None,
+    *,
+    workspace_given: bool,
 ) -> None:
     # `--update-graph` returns once its sync is done, before anything that
     # reads these, so they were accepted and dropped with exit 0 (#2478).
-    # `--workspace` is left out: it decides what the sync covers (#2418).
+    # With `--workspace` it syncs the workspace's repositories and then opens
+    # the assistant, which reads `-a`, `--output-format` and `--projects`, so
+    # only `--no-sync` is refused there, by its own message: a sync asked for
+    # with `--no-sync` contradicts itself (#2418).
     if not update_graph:
+        return
+    if workspace_given:
+        if no_sync:
+            _exit_with_error(cs.CLI_ERR_WORKSPACE_UPDATE_NO_SYNC)
         return
     for option, given, remedy in (
         (cs.CLI_OPT_ASK_AGENT, ask_agent is not None, cs.CLI_REMEDY_DROP_UPDATE_GRAPH),
@@ -388,6 +445,7 @@ def _start_update_graph(
     repo: Path,
     project_name: str,
     *,
+    workspace_config: WorkspaceConfig | None = None,
     project_named: bool,
     batch_size: int,
     exclude: list[str] | None,
@@ -397,8 +455,32 @@ def _start_update_graph(
     capture: list[str] | None,
     skip_embeddings: bool | None,
     assume_yes: bool,
-) -> None:
-    # `start --update-graph`: sync the repo into the graph, then stop.
+    defer_workspace_sync: bool = False,
+) -> bool:
+    """`start --update-graph`: sync, and say whether the assistant opens next.
+
+    A repository is synced and the command stops, as it always has. With
+    --workspace, each of the workspace's repositories is synced under its own
+    name, the set the chat's own sync uses, and the assistant then opens
+    scoped to the workspace (#2418). `--repo-path`, defaulting to the current
+    directory, is not one of them. With `-a` that sync is deferred: the
+    single query runs it, reporting on stderr so that stdout holds only the
+    answer (see `_keep_stdout_for_the_answer`).
+    """
+    if workspace_config is not None:
+        # The same check the chat's own workspace sync makes (#2412).
+        _exit_if_workspace_names_unstorable(workspace_config)
+        if not defer_workspace_sync:
+            _sync_workspace(
+                workspace_config,
+                batch_size,
+                exclude,
+                capture=capture,
+                skip_embeddings=skip_embeddings,
+                assume_yes=assume_yes,
+            )
+            _info(style(cs.CLI_MSG_GRAPH_UPDATED, cs.Color.GREEN))
+        return True
     _info(style(cs.CLI_MSG_UPDATING_GRAPH.format(path=repo), cs.Color.GREEN))
     if not interactive_setup:
         _info(style(cs.CLI_MSG_AUTO_EXCLUDE, cs.Color.YELLOW))
@@ -429,6 +511,7 @@ def _start_update_graph(
             )
         raise typer.Exit(cs.CLI_EXIT_INTERRUPTED) from stop
     _info(style(cs.CLI_MSG_GRAPH_UPDATED, cs.Color.GREEN))
+    return False
 
 
 def _clean_database_only(
@@ -437,13 +520,17 @@ def _clean_database_only(
     # `--clean` without `--update-graph`: wipe the graph, the vector store and
     # the hash cache, then stop.
     _import_vector_store()
-    with connect_memgraph(batch_size) as ingestor:
-        _confirm_destructive_clean(ingestor, project_name, assume_yes)
-        _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
-        ingestor.clean_database()
+    # Held until the embeddings and the hash cache are gone too: a sync let
+    # in after the wipe would publish both, and the clean would then delete
+    # them under that sync's new graph (review of PR 2512).
+    with _sync_lock_or_exit(repo_to_clean, project_name):
+        with connect_memgraph(batch_size) as ingestor:
+            _confirm_destructive_clean(ingestor, project_name, assume_yes)
+            _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
+            ingestor.clean_database()
 
-    clear_all_embeddings()
-    _delete_hash_cache(repo_to_clean)
+        clear_all_embeddings()
+        _delete_hash_cache(repo_to_clean)
     _info(style(cs.CLI_MSG_CLEAN_DONE, cs.Color.GREEN))
 
 
@@ -479,6 +566,34 @@ def _start_active_projects(
         )
         return _resolve_active_projects(projects, default_project)
     return active_projects
+
+
+@contextmanager
+def _console_on_stderr() -> Iterator[None]:
+    console = app_context.console
+    app_context.console = terminal_aware_console(stderr=True)
+    try:
+        yield
+    finally:
+        app_context.console = console
+
+
+def _keep_stdout_for_the_answer[**P](command: Callable[P, None]) -> Callable[P, None]:
+    # `-a` prints its answer, and only that, on stdout, which `main_single_query`
+    # keeps clean of its logs for a script to read: the command's warnings,
+    # its sync's progress (Greptile review of PR 2507) and the query's result
+    # tables go to stderr, from the first check until the command ends
+    # (CodeRabbit review of PR 2507). A decorator rather than a `typer.Context`
+    # parameter, which `start` has too many of already (Sonar S107).
+    @wraps(command)
+    def run(*args: P.args, **kwargs: P.kwargs) -> None:
+        if not kwargs.get("ask_agent"):
+            command(*args, **kwargs)
+            return
+        with _console_on_stderr():
+            command(*args, **kwargs)
+
+    return run
 
 
 def _run_single_query(
@@ -540,6 +655,58 @@ def _launch_session(
     except ValueError as e:
         app_context.console.print(
             style(cs.CLI_ERR_STARTUP.format(error=e), cs.Color.RED)
+        )
+
+
+def _sync_before_session(no_sync: bool, update_graph: bool, answering: bool) -> bool:
+    # Past `_start_update_graph`, `update_graph` means a workspace's, which
+    # has synced every repository already unless `-a` deferred that sync.
+    return not no_sync and (answering or not update_graph)
+
+
+def _exit_if_output_unusable(output: str | None, update_graph: bool) -> None:
+    if output and not update_graph:
+        _exit_with_error(cs.CLI_ERR_OUTPUT_REQUIRES_UPDATE)
+    if output:
+        _exit_if_unwritable(output)
+
+
+def _refuse_unsupported_workspace_update(
+    workspace_config: WorkspaceConfig | None,
+    update_graph: bool,
+    *,
+    clean: bool,
+    output: str | None,
+    interactive_setup: bool,
+) -> None:
+    # Each is defined for one repository: `--clean` wipes the graph before
+    # that repository's sync, `-o` writes that sync's result, and the setup
+    # prompt asks about that repository's directories.
+    if workspace_config is None or not update_graph:
+        return
+    for option, given in (
+        (cs.CLI_OPT_CLEAN, clean),
+        (cs.CLI_OPT_OUTPUT, output is not None),
+        (cs.CLI_OPT_INTERACTIVE_SETUP, interactive_setup),
+    ):
+        if given:
+            _exit_with_error(cs.CLI_ERR_WORKSPACE_UPDATE_OPTION.format(option=option))
+
+
+def _refuse_empty_workspace(
+    workspace_config: WorkspaceConfig | None,
+    update_graph: bool,
+    active_projects: list[str],
+) -> None:
+    # A workspace with no repositories gives `--update-graph` nothing to sync,
+    # and leaves the assistant's scope empty unless `--projects` names one: an
+    # empty scope reads as every project in the shared graph (Greptile review
+    # of PR 2507). Refused before the stack starts or anything is synced.
+    if workspace_config is None or workspace_config.repos:
+        return
+    if update_graph or not active_projects:
+        _exit_with_error(
+            cs.CLI_ERR_START_EMPTY_WORKSPACE.format(name=workspace_config.name)
         )
 
 
@@ -608,7 +775,17 @@ def _resolve_active_projects(projects: str | None, default_project: str) -> list
 
 
 def _maybe_start_stack() -> None:
-    mgr = StackManager()
+    # The Docker stack serves Memgraph, and Qdrant when the vector settings
+    # pick the bundled one. The embedded graph is a file and Neo4j is the
+    # user's own server, so for them the stack runs only for the vectors:
+    # only its Qdrant is started and checked, since every Memgraph check
+    # needs a driver those installs need not have.
+    if settings.GRAPH_BACKEND == DIALECT_MEMGRAPH:
+        mgr = StackManager()
+    else:
+        mgr = StackManager(services=(SERVICE_QDRANT,))
+        if not mgr.serves_vectors():
+            return
     try:
         mgr.locate_published_qdrant()
         if mgr.status().state == StackState.RUNNING:
@@ -720,65 +897,6 @@ def _confirm_destructive_clean(
         raise typer.Exit(1)
 
 
-class _OwnerCheck(NamedTuple):
-    refusal: str | None
-    created: bool = False
-    # The roots the sync's marker write must still find on the Project, this
-    # repository's first; None when there is nothing to hold it to (no
-    # recorded root, or --yes taking the project over).
-    owned_roots: list[str] | None = None
-
-
-def _project_owner_refusal(
-    ingestor: MemgraphIngestor, project_name: str, repo: Path, assume_yes: bool
-) -> _OwnerCheck:
-    """Why a sync must not replace what another repository indexed (#2411),
-    and what its claim holds.
-
-    A derived name carries a hash of its path, so only a chosen one can
-    collide; the sync would delete the other repository's modules as stale
-    and leave that repository's hash cache describing code no longer there.
-    Refused rather than asked: the chat's own sync runs behind a status bar.
-
-    The check claims the name for this repository in the same statement
-    that reads its owner. A separate read let two syncs of a name nobody
-    held both see no owner and both go ahead, and the later one replaced
-    the first one's graph (review of PR 2499).
-    """
-    if not repo.is_dir():
-        return _OwnerCheck(None)
-    root = str(repo.resolve())
-    try:
-        rows = ingestor.fetch_all(
-            cq.CYPHER_CLAIM_PROJECT_ROOT,
-            {cs.KEY_PROJECT_NAME: project_name, cs.KEY_ROOT_PATH: root},
-        )
-    except Exception as exc:
-        logger.warning(ls.MG_PROJECT_ROOT_READ_FAILED.format(error=exc))
-        if assume_yes:
-            return _OwnerCheck(None)
-        return _OwnerCheck(
-            cs.CLI_ERR_PROJECT_OWNER_UNREADABLE.format(
-                project_name=project_name, error=exc
-            )
-        )
-    owner = rows[0].get(cs.KEY_ROOT_PATH) if rows else None
-    if not isinstance(owner, str) or not owner:
-        return _OwnerCheck(None)
-    if Path(owner).resolve() == repo.resolve():
-        # --yes would replace whoever holds it by then, so nothing to hold.
-        held = None if assume_yes else list(dict.fromkeys((root, owner)))
-        return _OwnerCheck(None, rows[0].get(cs.KEY_CREATED) is True, held)
-    if assume_yes:
-        logger.warning(
-            ls.PROJECT_OWNER_REPLACED.format(project_name=project_name, root=owner)
-        )
-        return _OwnerCheck(None)
-    return _OwnerCheck(
-        cs.CLI_ERR_PROJECT_OWNED_ELSEWHERE.format(project_name=project_name, root=owner)
-    )
-
-
 def _exit_if_project_owned_elsewhere(
     batch_size: int, project_name: str, repo: Path, *, clean: bool, assume_yes: bool
 ) -> _OwnerCheck:
@@ -799,14 +917,11 @@ def _exit_if_project_owned_elsewhere(
 
 
 def _release_project_claim(batch_size: int, project_name: str, repo: Path) -> None:
-    params: dict[str, PropertyValue] = {
-        cs.KEY_PROJECT_NAME: project_name,
-        cs.KEY_ROOT_PATH: str(repo.resolve()),
-    }
-    # Best effort: the sync's own failure is what is being reported.
+    # On its own connection, and best effort like the release itself: the
+    # sync's own failure is what is being reported.
     try:
         with connect_memgraph(batch_size) as ingestor:
-            ingestor.execute_write(cq.CYPHER_RELEASE_PROJECT_CLAIM, params)
+            release_project_claim(ingestor, project_name, repo)
     except Exception as exc:
         logger.warning(
             ls.PROJECT_CLAIM_RELEASE_FAILED.format(project_name=project_name, error=exc)
@@ -835,76 +950,123 @@ def _project_claim(
         raise
 
 
-def _sync_marker_params(project_name: str) -> dict[str, PropertyValue]:
-    return {cs.KEY_PROJECT_NAME: project_name, cs.KEY_RUN_ID: cs.CLI_SYNC_RUN_ID}
-
-
 def _mark_sync_incomplete(
     ingestor: MemgraphIngestor,
     project_name: str,
+    owner: dict[str, PropertyValue],
     owned_roots: list[str] | None = None,
 ) -> None:
-    """Put the `:IncompleteRun` marker down before the sync writes (#2219).
+    """Put the `:IncompleteRun` marker down before the sync writes, or exit.
 
-    The same marker the MCP mutating paths write (#1679), so a later MCP
-    process refuses to hydrate from a graph an interrupted CLI sync left
-    partial. Failing to write it aborts the sync: nothing has changed yet,
-    and proceeding would make exactly that partial graph look complete.
-
-    With `owned_roots`, the marker goes down only while the Project still
-    has one of them, checked in the same statement: the claim the ownership
-    check saw may have been released and taken since (review of PR 2499).
+    `mark_sync_incomplete` says why a refused marker stops the sync (#2219)
+    and what `owned_roots` holds it to (review of PR 2499).
     """
+    try:
+        mark_sync_incomplete(ingestor, project_name, owner, owned_roots)
+    except SyncRefusedError as refused:
+        app_context.console.print(style(str(refused), cs.Color.RED))
+        raise typer.Exit(1) from refused
+
+
+@contextmanager
+def _sync_lock_or_exit(repo: Path, project_name: str) -> Iterator[None]:
+    """Hold the checkout's sync lock for the whole sync, or stop first (#2441).
+
+    Taken before the `--clean` wipe and the `:IncompleteRun` marker, so a
+    run refused here has changed nothing: the running sync keeps its graph
+    and its marker, and no marker is left behind for a run that never began.
+    """
+    held = ExitStack()
+    try:
+        held.enter_context(repo_sync_lock(repo, project_name))
+    except SyncLockError as refused:
+        app_context.console.print(style(str(refused), cs.Color.RED))
+        raise typer.Exit(1) from None
+    with held:
+        yield
+
+
+def _is_home_or_root(repo: Path) -> bool:
+    """Whether a sync of `repo` would crawl a whole home directory or disk.
+
+    `--repo-path` defaults to the current directory, so a sync started from
+    `$HOME` indexed every file under it (#2418).
+    """
+    resolved = repo.resolve()
+    return resolved == Path.home().resolve() or resolved == resolved.parent
+
+
+def _exit_if_syncing_home_or_root(repo: Path, assume_yes: bool) -> None:
+    # A home directory or disk root is synced only when `--yes` says so.
+    if not assume_yes and _is_home_or_root(repo):
+        _exit_with_error(cs.CLI_ERR_SYNC_HOME_OR_ROOT.format(path=repo.resolve()))
+
+
+def _stopped_sync_token(owner: ResultRow) -> str | None:
+    """The marker's owner token if the CLI sync that wrote it provably stopped.
+
+    Only a sync in this process table can be checked: one whose process is
+    gone, or one of this process's own that has returned. A marker from
+    another host, from a live process, or from before markers named their
+    owner is kept, since it may guard a graph that sync is still writing.
+    """
+    pid = owner.get(cs.KEY_OWNER_PID)
+    token = owner.get(cs.KEY_OWNER_TOKEN)
+    if (
+        owner.get(cs.KEY_OWNER_HOST) != process_host()
+        or not isinstance(pid, int)
+        or not isinstance(token, str)
+    ):
+        return None
+    if pid == os.getpid():
+        stopped = token not in _RUNNING_SYNC_TOKENS
+    else:
+        stopped = not pid_may_be_running(pid)
+    return token if stopped else None
+
+
+def _clear_stopped_sync_marker(ingestor: MemgraphIngestor, project_name: str) -> bool:
+    """Clear the CLI sync's marker if its sync stopped; True if one is kept."""
     params = _sync_marker_params(project_name)
-    params[cs.KEY_WRITING] = True
-    try:
-        if owned_roots is None:
-            ingestor.execute_write(cq.CYPHER_MARK_PROJECT_INCOMPLETE, params)
-            return
-        params[cs.KEY_ROOT_PATH] = owned_roots[0]
-        params[cs.KEY_ROOT_PATHS] = owned_roots
-        marked = ingestor.fetch_all(cq.CYPHER_MARK_CLAIMED_PROJECT_INCOMPLETE, params)
-    except Exception as exc:
-        app_context.console.print(
-            style(
-                cs.CLI_ERR_SYNC_MARKER_FAILED.format(project=project_name),
-                cs.Color.RED,
-            )
+    kept = False
+    for owner in ingestor.fetch_all(cq.CYPHER_CLI_SYNC_MARKER_OWNER, params):
+        if (token := _stopped_sync_token(owner)) is None:
+            kept = True
+            continue
+        ingestor.execute_write(
+            cq.CYPHER_CLEAR_STOPPED_CLI_SYNC_MARKER,
+            params | {cs.KEY_OWNER_TOKEN: token},
         )
-        raise typer.Exit(1) from exc
-    if not marked:
-        _exit_with_error(_claim_lost_refusal(ingestor, project_name))
+    return kept
 
 
-def _claim_lost_refusal(ingestor: MemgraphIngestor, project_name: str) -> str:
-    try:
-        rows = ingestor.fetch_all(
-            cq.CYPHER_PROJECT_ROOT_PATH, {cs.KEY_PROJECT_NAME: project_name}
-        )
-    except Exception as exc:
-        return cs.CLI_ERR_PROJECT_OWNER_UNREADABLE.format(
-            project_name=project_name, error=exc
-        )
-    owner = rows[0].get(cs.KEY_ROOT_PATH) if rows else None
-    return cs.CLI_ERR_PROJECT_OWNED_ELSEWHERE.format(
-        project_name=project_name, root=owner
-    )
+def _clear_deleted_project_markers(
+    ingestor: MemgraphIngestor, project_name: str
+) -> None:
+    """Take off the markers a deleted project no longer needs (#2444 review).
 
-
-def _clear_sync_incomplete(ingestor: MemgraphIngestor, project_name: str) -> None:
-    """Take the marker off once the sync is recorded; never fails the sync.
-
-    The graph is whole by now, so a failed clear only leaves a stale marker
-    for the next sync of the project to clear (see `CLI_SYNC_RUN_ID`).
+    A marker sits on its own node, out of the delete's reach, so without this
+    a sync that failed before the delete keeps the project in `cgr status`
+    as interrupted. A marker goes only when its run cannot still be writing:
+    the CLI sync's once that sync provably stopped (PR #2532 review: a sync
+    still running would otherwise write on unguarded), and any run's that
+    never wrote the graph. A run that had begun writing owns its marker
+    (#1709). Best effort, like `_clear_sync_incomplete`: the project is
+    deleted.
     """
     try:
+        kept = _clear_stopped_sync_marker(ingestor, project_name)
         ingestor.execute_write(
-            cq.CYPHER_CLEAR_PROJECT_INCOMPLETE, _sync_marker_params(project_name)
+            cq.CYPHER_RECOVER_PROJECT_INCOMPLETE,
+            {cs.KEY_PROJECT_NAME: project_name},
         )
     except Exception as exc:
         logger.warning(
-            ls.CLI_SYNC_MARKER_NOT_CLEARED.format(project=project_name, error=exc)
+            ls.CLI_DELETE_MARKER_NOT_CLEARED.format(project=project_name, error=exc)
         )
+        return
+    if kept:
+        logger.warning(ls.CLI_DELETE_SYNC_MARKER_KEPT.format(project=project_name))
 
 
 def _run_updater_deferring_interrupt(
@@ -912,8 +1074,9 @@ def _run_updater_deferring_interrupt(
 ) -> KeyboardInterrupt | None:
     """Run the sync's graph update; return a Ctrl+C that landed after its commit.
 
-    The caller records the sync and clears its marker before re-raising what
-    this returns; a Ctrl+C before the commit raises `SyncInterrupted` instead.
+    The run stamps the sync time as part of its commit (#2444), and the
+    caller clears its marker before re-raising what this returns; a Ctrl+C
+    before the commit raises `SyncInterrupted` instead.
     """
     try:
         updater.run()
@@ -951,6 +1114,8 @@ def _run_graph_sync(
     # Resolved before any graph write: see `_import_vector_store`.
     from .graph_updater import GraphUpdater
 
+    _exit_if_syncing_home_or_root(repo, assume_yes)
+
     # Once, as the updater would: the ownership check, the marker and the
     # write below must all name the same project.
     project_name = normalize_project_name(project_name, repo)
@@ -968,10 +1133,12 @@ def _run_graph_sync(
 
     elapsed = time.monotonic()
     with (
+        _sync_lock_or_exit(repo, project_name),
         _project_claim(
             batch_size, project_name, repo, clean=clean, assume_yes=assume_yes
         ) as owned_roots,
         connect_memgraph(batch_size) as ingestor,
+        _sync_owner() as owner,
     ):
         if clean:
             _confirm_destructive_clean(ingestor, project_name, assume_yes)
@@ -984,7 +1151,7 @@ def _run_graph_sync(
 
         # After the wipe, which would delete the marker with everything else,
         # and before `ensure_constraints`, whose migration can already purge.
-        _mark_sync_incomplete(ingestor, project_name, owned_roots)
+        _mark_sync_incomplete(ingestor, project_name, owner, owned_roots)
         ingestor.ensure_constraints()
 
         parsers, queries = load_parsers()
@@ -1002,7 +1169,6 @@ def _run_graph_sync(
             skip_embeddings=skip_embeddings,
         )
         interrupted = _run_updater_deferring_interrupt(updater)
-        cgr_state.record_sync(project_name)
         _clear_sync_incomplete(ingestor, project_name)
         # Taken before the export: counting it made a no-op sync of a small
         # repo report the time to dump the whole shared graph (issue #2440).
@@ -1096,7 +1262,9 @@ def _resolve_and_validate_repo(repo_path: str | None) -> Path:
     return resolved
 
 
-def _cleanup_project_embeddings(ingestor: MemgraphIngestor, project_name: str) -> None:
+def _cleanup_project_embeddings(
+    ingestor: MemgraphIngestor, project_name: str, projects: Iterable[str]
+) -> None:
     rows = ingestor.fetch_all(
         cs.CYPHER_QUERY_PROJECT_NODE_IDS,
         {cs.KEY_PROJECT_NAME: project_name},
@@ -1106,7 +1274,11 @@ def _cleanup_project_embeddings(ingestor: MemgraphIngestor, project_name: str) -
         node_id = row.get(cs.KEY_NODE_ID)
         if isinstance(node_id, int):
             node_ids.append(node_id)
-    delete_project_embeddings(project_name, node_ids)
+    # A project nested under this one (`svc.v2` under `svc`) keeps its
+    # vectors, which the prefix-scoped node-id read also names.
+    delete_project_embeddings(
+        project_name, node_ids, nested_project_names(project_name, projects)
+    )
 
 
 @app.command(
@@ -1115,6 +1287,7 @@ def _cleanup_project_embeddings(ingestor: MemgraphIngestor, project_name: str) -
     epilog=ch.EXAMPLES_START,
     rich_help_panel=ch.PANEL_USE,
 )
+@_keep_stdout_for_the_answer
 def start(
     repo_path: str | None = typer.Option(
         None, "--repo-path", help=ch.HELP_REPO_PATH_RETRIEVAL
@@ -1230,7 +1403,12 @@ def start(
     app_context.session.load_cgr_instructions = not no_instructions
 
     _refuse_options_update_graph_drops(
-        update_graph, ask_agent, output_format, no_sync, projects
+        update_graph,
+        ask_agent,
+        output_format,
+        no_sync,
+        projects,
+        workspace_given=workspace is not None,
     )
     if output_format == cs.QueryFormat.JSON and not ask_agent:
         _exit_with_error(cs.CLI_ERR_JSON_REQUIRES_ASK_AGENT)
@@ -1239,10 +1417,20 @@ def start(
     target_repo_path = str(resolved_repo)
     resolved_project_name = _start_project_name(project_name, resolved_repo)
 
-    if output and not update_graph:
-        _exit_with_error(cs.CLI_ERR_OUTPUT_REQUIRES_UPDATE)
-    if output:
-        _exit_if_unwritable(output)
+    _exit_if_output_unusable(output, update_graph)
+
+    workspace_config = _load_workspace_or_exit(workspace)
+    _refuse_unsupported_workspace_update(
+        workspace_config,
+        update_graph,
+        clean=clean,
+        output=output,
+        interactive_setup=interactive_setup,
+    )
+    active_projects = _start_active_projects(
+        workspace_config, projects, resolved_project_name
+    )
+    _refuse_empty_workspace(workspace_config, update_graph, active_projects)
 
     if not no_start_stack:
         _maybe_start_stack()
@@ -1260,27 +1448,26 @@ def start(
     if not ask_agent and not update_graph:
         app_context.console.print(_create_configuration_table(target_repo_path))
 
-    if update_graph:
-        _start_update_graph(
-            resolved_repo,
-            resolved_project_name,
-            project_named=project_name is not None,
-            batch_size=effective_batch_size,
-            exclude=exclude,
-            interactive_setup=interactive_setup,
-            clean=clean,
-            output=output,
-            capture=capture,
-            skip_embeddings=no_embeddings or None,
-            assume_yes=yes,
-        )
+    if update_graph and not _start_update_graph(
+        resolved_repo,
+        resolved_project_name,
+        workspace_config=workspace_config,
+        project_named=project_name is not None,
+        batch_size=effective_batch_size,
+        exclude=exclude,
+        interactive_setup=interactive_setup,
+        clean=clean,
+        output=output,
+        capture=capture,
+        skip_embeddings=no_embeddings or None,
+        assume_yes=yes,
+        defer_workspace_sync=bool(ask_agent),
+    ):
         return
-
-    workspace_config = _load_workspace_or_exit(workspace)
 
     sync_task: Callable[[], None] | None = None
     sync_message = cs.MSG_SYNCING_KNOWLEDGE_GRAPH
-    if not no_sync:
+    if _sync_before_session(no_sync, update_graph, bool(ask_agent)):
         sync_task, sync_message = _pre_chat_sync(
             workspace_config,
             partial(
@@ -1301,10 +1488,6 @@ def start(
             no_embeddings,
             assume_yes=yes,
         )
-
-    active_projects = _start_active_projects(
-        workspace_config, projects, resolved_project_name
-    )
 
     session_project, session_named = _session_project(
         workspace_config, target_repo_path, resolved_project_name, project_name
@@ -1414,12 +1597,84 @@ def index(
         )
         _info(style(cs.CLI_MSG_INDEXING_DONE, cs.Color.GREEN))
 
+    except SyncLockError as refused:
+        app_context.console.print(style(str(refused), cs.Color.RED))
+        raise typer.Exit(1) from None
     except Exception as e:
         app_context.console.print(
             style(cs.CLI_ERR_INDEXING.format(error=e), cs.Color.RED)
         )
         logger.exception(ls.INDEXING_FAILED)
         raise typer.Exit(1) from e
+
+
+@app.command(
+    name=ch.CLICommandName.WATCH,
+    help=ch.CMD_WATCH,
+    short_help=ch.CMD_WATCH,
+    epilog=ch.EXAMPLES_WATCH,
+    rich_help_panel=ch.PANEL_GRAPH,
+)
+def watch_command(
+    repo_path: str | None = typer.Option(
+        None, "--repo-path", help=ch.HELP_REPO_PATH_WATCH
+    ),
+    project_name: str | None = typer.Option(
+        None,
+        "--project-name",
+        help=ch.HELP_PROJECT_NAME_WATCH,
+        callback=_storable_project_name,
+    ),
+    debounce: float = typer.Option(
+        cs.DEFAULT_DEBOUNCE_SECONDS, "--debounce", "-d", min=0, help=ch.HELP_DEBOUNCE
+    ),
+    max_wait: float = typer.Option(
+        cs.DEFAULT_MAX_WAIT_SECONDS, "--max-wait", "-m", min=0, help=ch.HELP_MAX_WAIT
+    ),
+    batch_size: int | None = typer.Option(
+        None,
+        "--batch-size",
+        min=1,
+        help=ch.HELP_BATCH_SIZE,
+    ),
+    no_start_stack: bool = typer.Option(
+        False,
+        "--no-start-stack",
+        help=ch.HELP_NO_START_STACK,
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help=ch.HELP_ASSUME_YES_WATCH,
+    ),
+) -> None:
+    # The checkout, project name, stack and batch size are resolved exactly as
+    # `cgr start` resolves them, so the watcher updates the project that
+    # command syncs and queries (issues #2432, #2433).
+    resolved_repo = _resolve_and_validate_repo(repo_path)
+    # Refused as `cgr start` refuses it, before the stack starts: a scan of
+    # `$HOME` would index all of it and watch it recursively (#2418).
+    _exit_if_syncing_home_or_root(resolved_repo, yes)
+    if not no_start_stack:
+        _maybe_start_stack()
+    # Deferred like the sync's own imports: the watcher pulls in the parsers
+    # and the graph updater, which `cgr --help` should not pay for.
+    from .watch import effective_max_wait, start_watcher
+
+    try:
+        start_watcher(
+            resolved_repo,
+            project_name=_start_project_name(project_name, resolved_repo),
+            project_named=project_name is not None,
+            batch_size=settings.resolve_batch_size(batch_size),
+            debounce_seconds=debounce,
+            max_wait_seconds=effective_max_wait(debounce, max_wait),
+            assume_yes=yes,
+        )
+    except (GraphUnavailableError, SyncLockError, SyncRefusedError) as refused:
+        app_context.console.print(style(str(refused), cs.Color.RED))
+        raise typer.Exit(1) from None
 
 
 @app.command(
@@ -1482,8 +1737,19 @@ def diff_index_command(
 )
 def export(
     output: str = typer.Option(..., "-o", "--output", help=ch.HELP_OUTPUT_PATH),
+    project: list[str] = typer.Option(
+        [], "--project", "-p", help=ch.HELP_EXPORT_PROJECT
+    ),
+    # The spelling before issue #2415, kept working for scripts.
     project_name: list[str] = typer.Option(
-        [], "--project-name", "-n", help=ch.HELP_EXPORT_PROJECT_NAME
+        [], cs.CLI_OPT_PROJECT_NAME, "-n", hidden=True
+    ),
+    repo_path: Path | None = typer.Option(
+        None,
+        "--repo-path",
+        exists=True,
+        file_okay=False,
+        help=ch.HELP_EXPORT_REPO_PATH,
     ),
     workspace: str | None = typer.Option(
         None, "--workspace", help=ch.HELP_EXPORT_WORKSPACE
@@ -1495,23 +1761,26 @@ def export(
 ) -> None:
     _check_retired_export_options(format_json, batch_size)
     _exit_if_unwritable(output)
-    requested = _requested_projects(project_name, _load_workspace_or_exit(workspace))
-    # An explicit scope that resolves to nothing (`-n ""`, an empty workspace)
+    names = [*project, *project_name]
+    requested = _requested_projects(
+        names, _load_workspace_or_exit(workspace), repo_path
+    )
+    # An explicit scope that resolves to nothing (`-p ""`, an empty workspace)
     # must not fall through to the whole graph.
-    if not requested and (project_name or workspace is not None):
+    if not requested and (names or workspace is not None):
         _exit_with_error(cs.CLI_ERR_EXPORT_EMPTY_SCOPE)
 
     _info(style(cs.CLI_MSG_CONNECTING_MEMGRAPH, cs.Color.CYAN))
     exported = False
-    missing: list[str] = []
-    indexed: list[str] = []
+    refusal = ""
     try:
         # An export only reads, so the write buffer's size is moot.
         with connect_memgraph(batch_size=1) as ingestor:
             if requested:
                 indexed = ingestor.list_projects()
-                missing = [name for name in requested if name not in indexed]
-            if not missing:
+                if missing := [name for name in requested if name not in indexed]:
+                    refusal = scope_refusal(missing, indexed, repo_path, ingestor)
+            if not refusal:
                 exported = _export_to_file(ingestor, output, requested)
     except GraphUnavailableError:
         raise
@@ -1525,12 +1794,8 @@ def export(
 
     # Exits are raised out here: typer.Exit is a RuntimeError, so inside the
     # `try` it was reported as "Failed to export graph: 1" with a traceback.
-    if missing:
-        _exit_with_error(
-            cs.CLI_ERR_EXPORT_UNKNOWN_PROJECTS.format(
-                missing=", ".join(missing), projects=", ".join(sorted(indexed))
-            )
-        )
+    if refusal:
+        _exit_with_error(refusal)
     if not exported:
         raise typer.Exit(1)
 
@@ -1553,15 +1818,19 @@ def _exit_if_unwritable(output: str) -> None:
 
 
 def _requested_projects(
-    project_name: list[str], workspace_config: WorkspaceConfig | None
+    project_name: list[str],
+    workspace_config: WorkspaceConfig | None,
+    repo_path: Path | None = None,
 ) -> list[str]:
-    # Order kept, duplicates dropped: `-n a --workspace w` where w also holds
-    # `a` selects `a` once. `cgr stats -n` (#2391) resolves its scope the same
-    # way.
+    # Order kept, duplicates dropped: `-p a --workspace w` where w also holds
+    # `a` selects `a` once. `cgr stats` (#2391) resolves its scope the same
+    # way, and `--repo-path` adds the project the repository derives to, as
+    # `cgr graph` derives it (#2415).
     return list(
         dict.fromkeys(
             [name.strip() for name in project_name if name.strip()]
             + (workspace_config.project_names() if workspace_config else [])
+            + ([derive_project_name(repo_path)] if repo_path else [])
         )
     )
 
@@ -1867,7 +2136,9 @@ def check_command(
         file_okay=False,
         help=ch.HELP_GRAPH_REPO_PATH,
     ),
-    project: str | None = typer.Option(None, "--project", help=ch.HELP_GRAPH_PROJECT),
+    project: str | None = typer.Option(
+        None, "--project", "-p", help=ch.HELP_GRAPH_PROJECT
+    ),
     fail_on_found: bool = typer.Option(
         False, "--fail-on-found", help=ch.HELP_CHECK_FAIL_ON_FOUND
     ),
@@ -1925,7 +2196,9 @@ def rename_command(
         file_okay=False,
         help=ch.HELP_GRAPH_REPO_PATH,
     ),
-    project: str | None = typer.Option(None, "--project", help=ch.HELP_GRAPH_PROJECT),
+    project: str | None = typer.Option(
+        None, "--project", "-p", help=ch.HELP_GRAPH_PROJECT
+    ),
     allow_heuristic: bool = typer.Option(
         False, cs.RENAME_CLI_ALLOW_HEURISTIC, help=ch.HELP_RENAME_ALLOW_HEURISTIC
     ),
@@ -1960,7 +2233,7 @@ def rename_command(
             )
         except RenameRefused as refused:
             typer.echo(str(refused), err=True)
-            for site in sites_for(refused.ambiguous):
+            for site in sites_for([*refused.ambiguous, *refused.unplanned]):
                 typer.echo(f"  {site}", err=True)
             for entry in refused.unlocatable:
                 typer.echo(f"  {entry}", err=True)
@@ -1968,6 +2241,7 @@ def rename_command(
     payload = dict(report._asdict())
     payload[cs.KEY_SITES] = sites_for(report.sites)
     payload[cs.KEY_AMBIGUOUS] = sites_for(report.ambiguous)
+    payload[cs.KEY_UNPLANNED] = sites_for(report.unplanned)
     payload["verdict"] = report.verdict._asdict() if report.verdict else None
     typer.echo(json.dumps(payload, indent=cs.MCP_JSON_INDENT, sort_keys=True))
     if not report.applied and not dry_run:
@@ -2046,34 +2320,70 @@ def status_command() -> None:
         f"qdrant={status.qdrant_endpoint} reachable={status.qdrant_reachable})"
     )
     app_context.console.print(f"compose:  {status.compose_file}")
-    timestamps = cgr_state.read_sync_timestamps()
-    incomplete = (
-        _projects_with_incomplete_runs() if status.memgraph_reachable else set()
-    )
-    if not timestamps and not incomplete:
-        app_context.console.print("syncs:    (no projects synced via cgr yet)")
+    syncs = _project_syncs() if status.memgraph_reachable else None
+    if syncs is None:
+        app_context.console.print(
+            cs.CLI_STATUS_SYNCS_NEED_GRAPH.format(endpoint=status.memgraph_endpoint)
+        )
         return
-    app_context.console.print("syncs:")
-    for project in sorted(timestamps.keys() | incomplete):
-        ts = timestamps.get(project)
-        line = f"  - {project}: last sync {ts}" if ts else f"  - {project}:"
-        if project in incomplete:
-            line = f"{line} ({cs.CLI_STATUS_SYNC_INCOMPLETE})"
-        app_context.console.print(line)
+    if not syncs:
+        app_context.console.print(
+            cs.CLI_STATUS_SYNCS_NONE.format(endpoint=status.memgraph_endpoint)
+        )
+        return
+    app_context.console.print(cs.CLI_STATUS_SYNCS_HEADER)
+    for sync in syncs:
+        app_context.console.print(_sync_row(sync))
 
 
-def _projects_with_incomplete_runs() -> set[str]:
-    """Projects with an outstanding `:IncompleteRun` marker (#2219).
+def _stamp_text(stamp: ResultValue | None) -> str | None:
+    """A recorded sync time as `cgr status` prints it; None when never stamped."""
+    return str(stamp) if stamp else None
 
-    Best effort: status must still print when the graph cannot be read.
+
+def _project_syncs() -> list[ProjectSync] | None:
+    """Every project the connected graph holds, with its last sync (#2444).
+
+    The graph is the only source: a project deleted or wiped goes with its
+    node, and one synced into another Memgraph is not in this one. A project
+    whose first sync never finished has only its `:IncompleteRun` marker
+    (#2219), so it is listed from that. None when the graph cannot be read:
+    status must still print without it.
     """
     try:
         with connect_memgraph(1) as ingestor:
-            rows = ingestor.fetch_all(cq.CYPHER_PROJECTS_WITH_INCOMPLETE_RUNS)
+            projects = ingestor.fetch_all(cq.CYPHER_PROJECT_SYNC_TIMES)
+            markers = ingestor.fetch_all(cq.CYPHER_PROJECTS_WITH_INCOMPLETE_RUNS)
     except Exception as exc:
-        logger.warning(ls.CLI_SYNC_MARKERS_UNREADABLE.format(error=exc))
-        return set()
-    return {str(row["project"]) for row in rows if row.get("project")}
+        logger.warning(ls.CLI_SYNC_STATE_UNREADABLE.format(error=exc))
+        return None
+    synced_at = {
+        str(row[cs.KEY_NAME]): row.get(cs.KEY_LAST_SYNCED_AT)
+        for row in projects
+        if row.get(cs.KEY_NAME)
+    }
+    interrupted = {str(row["project"]) for row in markers if row.get("project")}
+    return [
+        ProjectSync(
+            name=name,
+            last_synced_at=_stamp_text(synced_at.get(name)),
+            interrupted=name in interrupted,
+        )
+        for name in sorted(synced_at.keys() | interrupted)
+    ]
+
+
+def _sync_row(sync: ProjectSync) -> str:
+    details: list[str] = []
+    if sync.last_synced_at:
+        details.append(cs.CLI_STATUS_SYNC_TIME.format(time=sync.last_synced_at))
+    elif not sync.interrupted:
+        details.append(cs.CLI_STATUS_SYNC_NOT_RECORDED)
+    if sync.interrupted:
+        details.append(
+            cs.CLI_STATUS_SYNC_MARKED.format(marker=cs.CLI_STATUS_SYNC_INCOMPLETE)
+        )
+    return cs.CLI_STATUS_SYNC_ROW.format(project=sync.name, detail=" ".join(details))
 
 
 @app.command(
@@ -2186,7 +2496,9 @@ def context_command(
         file_okay=False,
         help=ch.HELP_GRAPH_REPO_PATH,
     ),
-    project: str | None = typer.Option(None, "--project", help=ch.HELP_GRAPH_PROJECT),
+    project: str | None = typer.Option(
+        None, "--project", "-p", help=ch.HELP_GRAPH_PROJECT
+    ),
 ) -> None:
     from . import graph_query
     from .context_slice import context as build_context
@@ -2217,26 +2529,31 @@ def context_command(
     rich_help_panel=ch.PANEL_GRAPH,
 )
 def stats(
+    project: list[str] = typer.Option(
+        [], "--project", "-p", help=ch.HELP_STATS_PROJECT
+    ),
+    # The spelling before issue #2415, kept working for scripts.
     project_name: list[str] = typer.Option(
-        [], "--project-name", "-n", help=ch.HELP_STATS_PROJECT_NAME
+        [], cs.CLI_OPT_PROJECT_NAME, "-n", hidden=True
+    ),
+    repo_path: Path | None = typer.Option(
+        None,
+        "--repo-path",
+        exists=True,
+        file_okay=False,
+        help=ch.HELP_STATS_REPO_PATH,
     ),
     workspace: str | None = typer.Option(
         None, "--workspace", help=ch.HELP_STATS_WORKSPACE
     ),
 ) -> None:
     workspace_config = _load_workspace_or_exit(workspace)
-    # Order kept, duplicates dropped: `-n a --workspace w` where w holds a
-    # again counts a once (issue #2391).
-    requested = list(
-        dict.fromkeys(
-            [name.strip() for name in project_name if name.strip()]
-            + (workspace_config.project_names() if workspace_config else [])
-        )
-    )
+    names = [*project, *project_name]
+    requested = _requested_projects(names, workspace_config, repo_path)
     # An empty list is what "no scope" looks like to the queries below, so a
     # scope that was asked for and came out empty would report the whole
     # shared graph as if it were that scope's (review of PR 2436).
-    if not requested and (project_name or workspace_config is not None):
+    if not requested and (names or workspace_config is not None):
         app_context.console.print(
             style(
                 cs.CLI_ERR_STATS_EMPTY_WORKSPACE.format(name=workspace)
@@ -2249,12 +2566,12 @@ def stats(
 
     app_context.console.print(style(cs.CLI_MSG_CONNECTING_STATS, cs.Color.CYAN))
 
-    missing: list[str] = []
-    projects: list[str] = []
+    refusal = ""
     try:
         with connect_memgraph(batch_size=1) as ingestor:
             projects = list(ingestor.list_projects())
             if missing := [name for name in requested if name not in projects]:
+                refusal = scope_refusal(missing, projects, repo_path, ingestor)
                 node_results, rel_results, breakdown = [], [], []
             else:
                 node_results, rel_results, breakdown = _stats_rows(
@@ -2272,15 +2589,8 @@ def stats(
 
     # Outside the connection, as dead-code does: a typo must not look like a
     # failed query to the service layer's error logging.
-    if missing:
-        app_context.console.print(
-            style(
-                cs.CLI_ERR_STATS_UNKNOWN_PROJECTS.format(
-                    missing=", ".join(missing), projects=", ".join(sorted(projects))
-                ),
-                cs.Color.RED,
-            )
-        )
+    if refusal:
+        app_context.console.print(style(refusal, cs.Color.RED))
         raise typer.Exit(1)
     _print_stats(requested, node_results, rel_results, breakdown)
 
@@ -2359,14 +2669,37 @@ def _int(value: ResultValue | None) -> int:
     return int(value) if isinstance(value, int | float) else 0
 
 
-def _resolve_dead_code_project(
-    project_name: str | None, projects: list[str]
-) -> str | None:
-    if project_name:
-        return project_name.strip()
-    if len(projects) == 1:
-        return projects[0]
-    return None
+def _one_project(project: str | None, alias: str | None, alias_flag: str) -> str | None:
+    """`--project`, or the old spelling it replaced (issue #2415).
+
+    Both naming different projects is refused before the graph is read,
+    rather than one of them silently winning.
+    """
+    if project is None:
+        return alias
+    if alias is not None and alias.strip() != project.strip():
+        _exit_with_error(
+            cs.CLI_ERR_PROJECT_GIVEN_TWICE.format(
+                project=project, alias=alias_flag, other=alias
+            )
+        )
+    return project
+
+
+def _scan_project_option(project: str | None, alias: str | None) -> str | None:
+    # `-p ""` read as no name, as `-n ""` always did for these scans.
+    chosen = _one_project(project, alias, cs.CLI_OPT_PROJECT_NAME)
+    return chosen.strip() if chosen else None
+
+
+def _require_project(choice: ProjectChoice) -> str:
+    # Raised OUTSIDE the connection context so a user typo never trips the
+    # service layer's error logging on exit, and before anything is reported:
+    # a name absent from the graph must error, not scan a nonexistent prefix
+    # and report a clean project.
+    if choice.name is None:
+        _exit_with_error(choice.refusal)
+    return choice.name
 
 
 def _dead_code_config(
@@ -2376,6 +2709,7 @@ def _dead_code_config(
     decorator_roots: list[str],
     min_resolution: cs.EdgeResolution | None = None,
     endpoint_roots: bool = True,
+    public_roots: bool = True,
 ) -> DeadCodeConfig:
     from .dead_code import normalize_decorator_root
 
@@ -2389,6 +2723,7 @@ def _dead_code_config(
         entry_points=tuple(entry_points),
         min_resolution=str(min_resolution) if min_resolution is not None else None,
         endpoint_roots=endpoint_roots,
+        public_roots=public_roots,
     )
 
 
@@ -2478,12 +2813,43 @@ def _build_dead_code_table(candidates: list[DeadCodeRow], project_name: str) -> 
     return table
 
 
+def _print_root_rule(console: Console, public_roots: bool) -> None:
+    # A clean report says which root rule produced it, on screen and in a
+    # saved copy alike: with public roots on, it can just mean every function
+    # is public (issue #2527).
+    console.print(
+        cs.CLI_DEADCODE_RULE_PUBLIC_ROOTS
+        if public_roots
+        else cs.CLI_DEADCODE_RULE_NO_PUBLIC_ROOTS,
+        markup=False,
+        highlight=False,
+        soft_wrap=True,
+    )
+
+
+def _save_dead_code_table(
+    output: Path,
+    table: Table,
+    notice: str,
+    public_roots: bool,
+    has_candidates: bool,
+) -> None:
+    with output.open("w", encoding=cs.ENCODING_UTF8) as fh:
+        file_console = Console(file=fh)
+        _print_report_table(file_console, table)
+        if not has_candidates:
+            _print_root_rule(file_console, public_roots)
+        if notice:
+            file_console.print(notice)
+
+
 def _emit_dead_code(
     candidates: list[DeadCodeRow],
     output_format: cs.DeadCodeFormat,
     output: Path | None,
     project_name: str,
     structural_tier_symbols: int = 0,
+    public_roots: bool = True,
 ) -> None:
     if output_format == cs.DeadCodeFormat.JSON:
         payload = json.dumps(candidates, indent=2)
@@ -2509,23 +2875,22 @@ def _emit_dead_code(
     )
     table = _build_dead_code_table(candidates, project_name)
     if output is not None:
-        with output.open("w", encoding=cs.ENCODING_UTF8) as fh:
-            file_console = Console(file=fh)
-            _print_report_table(file_console, table)
-            if notice:
-                file_console.print(notice)
+        _save_dead_code_table(output, table, notice, public_roots, bool(candidates))
         app_context.console.print(
             style(
                 cs.CLI_DEADCODE_WRITTEN.format(count=len(candidates), path=output),
                 cs.Color.GREEN,
             )
         )
+        if not candidates:
+            _print_root_rule(app_context.console, public_roots)
         if notice:
             app_context.console.print(style(notice, cs.Color.YELLOW))
         return
 
     if not candidates:
         app_context.console.print(style(cs.CLI_DEADCODE_NONE, cs.Color.GREEN))
+        _print_root_rule(app_context.console, public_roots)
     else:
         _print_report_table(app_context.console, table)
         app_context.console.print(
@@ -2547,43 +2912,25 @@ def _notice_single_project_endpoint_roots(show_progress: bool) -> None:
         typer.echo(cs.CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS, err=True)
 
 
-def _require_dead_code_project(resolved: str | None, projects: list[str]) -> str:
-    # An explicit name absent from the graph must error, not scan a
-    # nonexistent prefix and report a clean project (the duplicates command
-    # gained this guard first). Raised OUTSIDE the connection context so a
-    # user typo never trips the service layer's error logging on exit.
-    if resolved is not None and resolved not in projects:
-        app_context.console.print(
-            style(
-                cs.CLI_ERR_DEADCODE_UNKNOWN_PROJECT.format(
-                    project=resolved, projects=projects
-                ),
-                cs.Color.RED,
-            )
-        )
-        raise typer.Exit(1)
-
-    if resolved is None:
-        message = (
-            cs.CLI_ERR_DEADCODE_NO_PROJECTS
-            if not projects
-            else cs.CLI_ERR_DEADCODE_AMBIGUOUS_PROJECT.format(projects=projects)
-        )
-        app_context.console.print(style(message, cs.Color.RED))
-        raise typer.Exit(1)
-    return resolved
-
-
 @app.command(
     name=ch.CLICommandName.DEAD_CODE,
-    help=ch.CMD_DEAD_CODE,
+    help=ch.DESC_DEAD_CODE,
     short_help=ch.CMD_DEAD_CODE,
     epilog=ch.EXAMPLES_DEAD_CODE,
     rich_help_panel=ch.PANEL_GRAPH,
 )
+# Typer turns each parameter into one flag of the command, so the count is the
+# command's option list, not a call site to simplify (python:S107 accepted).
 def dead_code(
+    project: str | None = typer.Option(  # NOSONAR
+        None, "--project", "-p", help=ch.HELP_SCAN_PROJECT
+    ),
+    # The spelling before issue #2415, kept working for scripts.
     project_name: str | None = typer.Option(
-        None, "--project-name", "-n", help=ch.HELP_DEADCODE_PROJECT_NAME
+        None, cs.CLI_OPT_PROJECT_NAME, "-n", hidden=True
+    ),
+    repo_path: Path | None = typer.Option(
+        None, "--repo-path", exists=True, file_okay=False, help=ch.HELP_SCAN_REPO_PATH
     ),
     entry_point: list[str] = typer.Option(
         [], "--entry-point", "-e", help=ch.HELP_DEADCODE_ENTRY_POINT
@@ -2619,22 +2966,27 @@ def dead_code(
         "--endpoint-roots/--no-endpoint-roots",
         help=ch.HELP_DEADCODE_ENDPOINT_ROOTS,
     ),
+    public_roots: bool = typer.Option(
+        True,
+        "--public-roots/--no-public-roots",
+        help=ch.HELP_DEADCODE_PUBLIC_ROOTS,
+    ),
 ) -> None:
     from .dead_code import collect_dead_code_with_coverage
 
+    chosen = _scan_project_option(project, project_name)
     show_progress = output_format == cs.DeadCodeFormat.TABLE and output is None
     if show_progress:
         app_context.console.print(style(cs.CLI_DEADCODE_CONNECTING, cs.Color.CYAN))
 
-    projects: list[str] = []
-    resolved: str | None = None
+    choice = ProjectChoice(None)
     rows: list[ResultRow] = []
     structural_tier_symbols = 0
     try:
         with connect_memgraph(batch_size=1) as ingestor:
             projects = ingestor.list_projects()
-            resolved = _resolve_dead_code_project(project_name, projects)
-            if resolved is not None and resolved in projects:
+            choice = choose_project(chosen, repo_path, projects, ingestor)
+            if (resolved := choice.name) is not None:
                 logger.info(ls.DEADCODE_SCANNING.format(project_name=resolved))
                 rows, structural_tier_symbols = collect_dead_code_with_coverage(
                     ingestor,
@@ -2646,6 +2998,7 @@ def dead_code(
                         decorator_root,
                         min_resolution,
                         endpoint_roots,
+                        public_roots,
                     ),
                 )
                 if not endpoint_roots and len(projects) <= 1:
@@ -2659,13 +3012,18 @@ def dead_code(
         logger.exception(ls.DEADCODE_ERROR.format(error=e))
         raise typer.Exit(1) from e
 
-    resolved = _require_dead_code_project(resolved, projects)
+    resolved = _require_project(choice)
 
     candidates = [
         _to_dead_code_row(row) for row in _filter_excluded_rows(rows, exclude)
     ]
     _emit_dead_code(
-        candidates, output_format, output, resolved, structural_tier_symbols
+        candidates,
+        output_format,
+        output,
+        resolved,
+        structural_tier_symbols,
+        public_roots,
     )
 
     if fail_on_found and candidates:
@@ -2987,8 +3345,15 @@ def _open_duplicate_group(
     rich_help_panel=ch.PANEL_GRAPH,
 )
 def duplicates(
+    project: str | None = typer.Option(
+        None, "--project", "-p", help=ch.HELP_SCAN_PROJECT
+    ),
+    # The spelling before issue #2415, kept working for scripts.
     project_name: str | None = typer.Option(
-        None, "--project-name", "-n", help=ch.HELP_DUPLICATES_PROJECT_NAME
+        None, cs.CLI_OPT_PROJECT_NAME, "-n", hidden=True
+    ),
+    repo_path: Path | None = typer.Option(
+        None, "--repo-path", exists=True, file_okay=False, help=ch.HELP_SCAN_REPO_PATH
     ),
     threshold: float = typer.Option(
         cs.DUPLICATES_DEFAULT_THRESHOLD,
@@ -3022,12 +3387,12 @@ def duplicates(
 ) -> None:
     from .duplicates import collect_duplicates_with_coverage
 
+    chosen = _scan_project_option(project, project_name)
     show_progress = output_format == cs.DuplicatesFormat.TABLE and output is None
     if show_progress:
         app_context.console.print(style(cs.CLI_DUPLICATES_CONNECTING, cs.Color.CYAN))
 
-    projects: list[str] = []
-    resolved: str | None = None
+    choice = ProjectChoice(None)
     roots: dict[str, str | None] = {}
     report = DuplicatesReport(groups=[], skipped_symbols=0, truncated=False)
     try:
@@ -3036,8 +3401,8 @@ def duplicates(
             # Roots ride along for clickable locations and --open; a graph
             # predating Project.root_path just degrades to plain text.
             roots = project_roots_from_rows(ingestor.fetch_all(cq.CYPHER_LIST_PROJECTS))
-            resolved = _resolve_dead_code_project(project_name, projects)
-            if resolved is not None and resolved in projects:
+            choice = choose_project(chosen, repo_path, projects, ingestor)
+            if (resolved := choice.name) is not None:
                 logger.info(ls.DUPLICATES_SCANNING.format(project_name=resolved))
                 report = collect_duplicates_with_coverage(
                     ingestor,
@@ -3058,30 +3423,7 @@ def duplicates(
         logger.exception(ls.DUPLICATES_ERROR.format(error=e))
         raise typer.Exit(1) from e
 
-    # An explicit name absent from the graph must error, not scan a
-    # nonexistent prefix and report a clean project. Raised OUTSIDE the
-    # connection context: a user typo is not a connection failure and must
-    # not trip the service layer's error logging on exit.
-    if resolved is not None and resolved not in projects:
-        app_context.console.print(
-            style(
-                cs.CLI_ERR_DUPLICATES_UNKNOWN_PROJECT.format(
-                    project=resolved, projects=projects
-                ),
-                cs.Color.RED,
-            )
-        )
-        raise typer.Exit(1)
-
-    if resolved is None:
-        message = (
-            cs.CLI_ERR_DEADCODE_NO_PROJECTS
-            if not projects
-            else cs.CLI_ERR_DEADCODE_AMBIGUOUS_PROJECT.format(projects=projects)
-        )
-        app_context.console.print(style(message, cs.Color.RED))
-        raise typer.Exit(1)
-
+    resolved = _require_project(choice)
     root = roots.get(resolved)
     root_path = Path(root) if root else None
     _emit_duplicates(
@@ -3102,6 +3444,22 @@ def duplicates(
         raise typer.Exit(1)
 
 
+def _project_to_delete(explicit: str | None, repo: Path | None) -> str:
+    """The project `delete-project` was asked for, named before connecting.
+
+    Unlike the commands that only read, a delete is never implied by the
+    directory the shell stands in (issue #2415): it takes a name or an
+    explicit --repo-path, and a blank name is no name.
+    """
+    if explicit is not None:
+        if not explicit.strip():
+            _exit_with_error(cs.CLI_ERR_PROJECT_NAME_REQUIRED)
+        return explicit.strip()
+    if repo is None:
+        _exit_with_error(cs.CLI_ERR_PROJECT_NAME_REQUIRED)
+    return derive_project_name(repo)
+
+
 @app.command(
     name=ch.CLICommandName.DELETE_PROJECT,
     help=ch.CMD_DELETE_PROJECT,
@@ -3110,38 +3468,49 @@ def duplicates(
     rich_help_panel=ch.PANEL_GRAPH,
 )
 def delete_project(
-    name: str = typer.Option(
-        ...,
-        "--name",
-        "-n",
-        help=ch.HELP_DELETE_PROJECT_NAME,
+    project: str | None = typer.Option(
+        None, "--project", "-p", help=ch.HELP_DELETE_PROJECT
     ),
+    # The spelling before issue #2415, kept working for scripts.
+    name: str | None = typer.Option(None, cs.CLI_OPT_NAME, "-n", hidden=True),
     repo_path: str | None = typer.Option(
         None,
         "--repo-path",
         help=ch.HELP_DELETE_PROJECT_REPO_PATH,
     ),
 ) -> None:
-    project_name = name.strip()
-    if not project_name:
-        app_context.console.print(style(cs.CLI_ERR_PROJECT_NAME_REQUIRED, cs.Color.RED))
-        raise typer.Exit(1)
-
+    explicit = _one_project(project, name, cs.CLI_OPT_NAME)
+    repo = Path(repo_path) if repo_path else None
+    project_name = _project_to_delete(explicit, repo)
     effective_batch_size = settings.resolve_batch_size(None)
 
     try:
         with connect_memgraph(effective_batch_size) as ingestor:
             projects = ingestor.list_projects()
-            if project_name not in projects:
+            choice = choose_project(
+                None if explicit is None else project_name,
+                repo,
+                projects,
+                ingestor,
+            )
+            if choice.name is None:
+                app_context.console.print(style(choice.refusal, cs.Color.RED))
+                raise typer.Exit(1)
+
+            # A directory indexed under two names used to lose both on delete
+            # (#2665). The delete is ownership-scoped now; say so before it runs.
+            roots = ingestor.list_project_roots()
+            if sharing := projects_sharing_root(project_name, roots):
                 app_context.console.print(
                     style(
-                        cs.CLI_ERR_PROJECT_NOT_FOUND.format(
-                            project_name=project_name, projects=projects
+                        cs.CLI_WARN_DELETE_PROJECT_SHARED_ROOT.format(
+                            projects=", ".join(sharing),
+                            project_name=project_name,
+                            root_path=roots[project_name],
                         ),
-                        cs.Color.RED,
+                        cs.Color.YELLOW,
                     )
                 )
-                raise typer.Exit(1)
 
             _info(
                 style(
@@ -3149,8 +3518,9 @@ def delete_project(
                     cs.Color.YELLOW,
                 )
             )
-            _cleanup_project_embeddings(ingestor, project_name)
+            _cleanup_project_embeddings(ingestor, project_name, projects)
             ingestor.delete_project(project_name)
+            _clear_deleted_project_markers(ingestor, project_name)
     except typer.Exit:
         raise
     except GraphUnavailableError:
