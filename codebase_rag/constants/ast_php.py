@@ -81,3 +81,42 @@ TS_PHP_FIELD_DEFAULT_VALUE = "default_value"
 # An enum body and its cases (issue #1807).
 TS_PHP_ENUM_DECLARATION_LIST = "enum_declaration_list"
 TS_PHP_ENUM_CASE = "enum_case"
+
+# `new` names its class as a `name` (`Box`), a `qualified_name` (`\App\Box`,
+# `Models\Box`) or a `relative_name` (`namespace\Box`), resolved through the
+# enclosing namespace and the `use` imports in force (issue #2466).
+TS_PHP_RELATIVE_NAME = "relative_name"
+TS_PHP_NAMESPACE_NAME = "namespace_name"
+TS_PHP_CONST = "const"
+TS_PHP_PARENTHESIZED_EXPRESSION = "parenthesized_expression"
+TS_PHP_ASSIGNMENT_EXPRESSION = "assignment_expression"
+TS_PHP_REFERENCE_ASSIGNMENT_EXPRESSION = "reference_assignment_expression"
+TS_PHP_AUGMENTED_ASSIGNMENT_EXPRESSION = "augmented_assignment_expression"
+TS_PHP_ANONYMOUS_FUNCTION_USE_CLAUSE = "anonymous_function_use_clause"
+PHP_NAMESPACE_SEPARATOR = "\\"
+# Names `new` accepts that are not classes: the enclosing class, its late
+# static binding and its parent, compared ASCII-lowercased.
+PHP_RESERVED_CLASS_NAMES = frozenset({"self", "static", "parent"})
+PHP_METHOD_CONSTRUCT = "__construct"
+# Parents under which a `$var` is (re)bound by something other than
+# `$var = new C(...)`, so the variable no longer holds one known class.
+# `$a =& $b` aliases BOTH operands: a later write through either rebinds the
+# other, so the right-hand `$b` is a rebinding too, not a read.
+PHP_VARIABLE_REBINDING_PARENTS = frozenset(
+    {
+        "foreach_statement",
+        "by_ref",
+        "list_literal",
+        "global_declaration",
+        "static_variable_declaration",
+        "catch_clause",
+        "unset_statement",
+        TS_PHP_REFERENCE_ASSIGNMENT_EXPRESSION,
+    }
+)
+PHP_ASSIGNMENT_TYPES = frozenset(
+    {TS_PHP_ASSIGNMENT_EXPRESSION, TS_PHP_AUGMENTED_ASSIGNMENT_EXPRESSION}
+)
+PHP_MEMBER_CALL_TYPES = frozenset(
+    {TS_PHP_MEMBER_CALL_EXPRESSION, TS_PHP_NULLSAFE_MEMBER_CALL_EXPRESSION}
+)
