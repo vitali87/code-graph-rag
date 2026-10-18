@@ -379,6 +379,26 @@ def _has_longer_project_owner(
     )
 
 
+def _definitions_by_qn(
+    fetch_all: QueryFn,
+    qns: list[str],
+    project_name: str,
+    longer_prefixes: tuple[str, ...],
+) -> dict[str, Definition]:
+    """The definitions of `qns`, read by qualified name wherever they are."""
+    if not qns:
+        return {}
+    rows = fetch_all(
+        cq.CYPHER_DELTA_DEFINITIONS_BY_QN,
+        {
+            cs.KEY_QNS: qns,
+            cs.KEY_PROJECT_PREFIX: _prefix(project_name),
+            cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_prefixes),
+        },
+    )
+    return {d.qualified_name: d for d in map(_definition, rows)}
+
+
 def snapshot(
     fetch_all: QueryFn,
     project_name: str,
@@ -413,23 +433,9 @@ def snapshot(
     missing_callees = {s.callee for s in sites} - set(definitions)
     missing_callers = {s.caller for s in sites} - set(definitions)
     missing = sorted(missing_callees | missing_callers)
-    callees: dict[str, Definition] = {}
-    callers: dict[str, Definition] = {}
-    if missing:
-        for row in fetch_all(
-            cq.CYPHER_DELTA_DEFINITIONS_BY_QN,
-            {
-                cs.KEY_QNS: missing,
-                cs.KEY_PROJECT_PREFIX: _prefix(project_name),
-                cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_prefixes),
-            },
-        ):
-            definition = _definition(row)
-            qn = definition.qualified_name
-            if qn in missing_callees:
-                callees[qn] = definition
-            if qn in missing_callers:
-                callers[qn] = definition
+    found = _definitions_by_qn(fetch_all, missing, project_name, longer_prefixes)
+    callees = {qn: d for qn, d in found.items() if qn in missing_callees}
+    callers = {qn: d for qn, d in found.items() if qn in missing_callers}
     imports: dict[str, set[str]] = {}
     module_paths: dict[str, str] = {}
     for row in fetch_all(cq.CYPHER_DELTA_MODULE_IMPORTS, params):
