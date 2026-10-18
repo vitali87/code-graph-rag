@@ -149,8 +149,8 @@ def test_only_the_alias_imported_still_binds_exactly(
 def test_an_alias_given_another_class_is_typed_afresh_on_reingest(
     temp_repo: Path,
 ) -> None:
-    # The alias -> class memo outlived the resolver's reset: once `type
-    # Handler = Box` became `= Bag`, the reused updater kept `Box.size`.
+    # Once `type Handler = Box` became `= Bag`, the reused updater must read
+    # the alias afresh, not keep `Box.size`.
     root = temp_repo / "proj"
     use = (
         'import { Handler } from "./types";\n\n'
@@ -180,9 +180,9 @@ def test_an_alias_given_another_class_is_typed_afresh_on_reingest(
 def test_only_an_alias_of_a_wrapped_class_imported_still_binds_exactly(
     temp_repo: Path, alias: str, call: str
 ) -> None:
-    # The receiver was typed through the wrapper, but only an alias naming
-    # the class bare brought it into view: with `Bag.size` beside it, no
-    # edge at all.
+    # Only the alias is imported, so neither `Box.size` nor `Bag.size` is in
+    # view by name: the receiver's declaration, read through the wrapper,
+    # is what binds the call.
     types = TYPES + f"export type Wrapped = {alias};\n"
     use = (
         'import { Wrapped } from "./types";\n\n'
@@ -193,9 +193,29 @@ def test_only_an_alias_of_a_wrapped_class_imported_still_binds_exactly(
     assert calls.get("viaAlias") == {("Box", cs.EdgeResolution.EXACT)}, calls
 
 
+def test_an_alias_imported_beside_a_class_types_only_its_own_receivers(
+    temp_repo: Path,
+) -> None:
+    # `Shadow` names `Bag`: bringing `Bag` into view for the whole module
+    # made `b.size()` on a `Box` ambiguous too, so it lost its exact edge.
+    types = TYPES + "export type Shadow = Bag;\n"
+    use = (
+        'import { Box, Shadow } from "./types";\n\n'
+        "export function boxed(b: Box): number {\n  return b.size();\n}\n\n"
+        "export function shadowed(s: Shadow): number {\n  return s.size();\n}\n"
+    )
+    calls = _size_calls({"src/types.ts": types, "src/use.ts": use}, temp_repo / "proj")
+
+    assert calls.get("boxed") == {("Box", cs.EdgeResolution.EXACT)}, calls
+    # For `s`, `Bag` is in view beside the imported `Box`: two classes
+    # define `size`, which binds nothing, as `import { Box, Bag }` does; in
+    # particular not the `Box.size` the alias does not name.
+    assert "shadowed" not in calls, calls
+
+
 def test_an_alias_type_parameter_is_no_class_it_names(temp_repo: Path) -> None:
-    # `Box` in `type Wrap<Box> = Box` is the parameter: it brought the class
-    # `Box` into view, and `Box.size` beside `Bag.size` left no edge.
+    # `Box` in `type Wrap<Box> = Box` is the parameter, so `h: Wrap<Bag>` is
+    # a `Bag`, not the class `Box`.
     types = TYPES + "export type Wrap<Box> = Box;\n"
     use = (
         'import { Wrap, Bag } from "./types";\n\n'

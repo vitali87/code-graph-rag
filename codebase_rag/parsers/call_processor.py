@@ -5978,8 +5978,11 @@ class CallProcessor:
         # What the name lookup found, checked against what the call site says.
         if ctx.is_csharp and call_node.type in _OBJECT_CREATION_NODE_TYPES:
             return self._csharp_construction_by_arity(call_node, call_name, callee_info)
-        if ctx.is_js_ts and callee_info is not None:
-            return self._judge_js_member_pick(ctx, call_node, callee_info)
+        if (
+            ctx.is_js_ts
+            and self._resolver.last_resolution == cs.EdgeResolution.HEURISTIC
+        ):
+            return self._judge_js_member_pick(ctx, call_node, call_name, callee_info)
         return callee_info
 
     def _csharp_construction_by_arity(
@@ -6013,18 +6016,20 @@ class CallProcessor:
         return callee_info[0], engine.arity_twin(callee_info[1], arity)
 
     def _judge_js_member_pick(
-        self, ctx: _CallScanContext, call_node: Node, callee_info: tuple[str, str]
+        self,
+        ctx: _CallScanContext,
+        call_node: Node,
+        call_name: str,
+        callee_info: tuple[str, str] | None,
     ) -> tuple[str, str] | None:
         # The resolver binds `recv.m()` on a receiver it could not type to the
         # one visible class defining `m`, and calls that a heuristic (issue
-        # #2609). What the receiver is declared as here decides further: a
-        # first-party type owning `m` (itself or a base) makes the binding
-        # the one the type implies, so it is exact; a type the project does
-        # not define (`Map`, a library class, `any`) cannot be that class, so
-        # there is no edge, as for a local `new Map()`. Anything else stays
-        # the heuristic it is.
-        if self._resolver.last_resolution != cs.EdgeResolution.HEURISTIC:
-            return callee_info
+        # #2609); with several visible, or none, it binds nothing. What the
+        # receiver is declared as here decides further: a first-party type
+        # owning `m` (itself or a base) makes the binding the one the type
+        # implies, so it is exact; a type the project does not define (`Map`,
+        # a library class, `any`) cannot be that class, so there is no edge,
+        # as for a local `new Map()`. Anything else stays the heuristic it is.
         func = call_node.child_by_field_name(cs.FIELD_FUNCTION)
         if func is not None and func.type in cs.TS_JS_PREFIXED_CALLEES:
             # `await recv.m<T>(x)`: the receiver sits under the operator.
@@ -6038,12 +6043,25 @@ class CallProcessor:
             return callee_info
         if declared.foreign:
             return None
-        owner_qn = callee_info[1].rpartition(cs.SEPARATOR_DOT)[0]
-        if owner_qn in self._resolver._mro(
-            self._resolver._follow_reexports(declared.qn)
-        ):
+        class_qn = self._resolver._follow_reexports(declared.qn)
+        if callee_info is None or not self._js_class_owns(class_qn, callee_info):
+            # The declaration brings its class into view for this receiver,
+            # as importing the class would: an imported alias may be all that
+            # names it here (`h: Handler` for `type Handler = Box`), and
+            # adding it to the whole module made every other receiver's call
+            # ambiguous (issue #3276). A class already in view changes
+            # nothing.
+            callee_info = self._resolver._resolve_js_member_call_unique(
+                call_name, ctx.module_qn, class_qn
+            )
+        if callee_info is not None and self._js_class_owns(class_qn, callee_info):
             self._resolver.last_resolution = cs.EdgeResolution.EXACT
         return callee_info
+
+    def _js_class_owns(self, class_qn: str, callee_info: tuple[str, str]) -> bool:
+        # The callee is a member of the class or one of its bases.
+        owner_qn = callee_info[1].rpartition(cs.SEPARATOR_DOT)[0]
+        return owner_qn in self._resolver._mro(class_qn)
 
     def _js_receiver_declaration(
         self, ctx: _CallScanContext, receiver: Node | None
