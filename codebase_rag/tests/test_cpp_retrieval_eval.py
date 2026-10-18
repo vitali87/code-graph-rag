@@ -71,5 +71,7 @@ def test_score_cpp_retrieval_prf() -> None:
     result = score_cpp_retrieval(
         {("a.cc", "f"), ("a.cc", "g")}, {("a.cc", "f"), ("b.cc", "h")}
     )
-    row = next(r for r in result.rows if r["label"] == ec.CPP_RETRIEVAL_LABEL)
+    row = next(
+        r for r in result.rows if r["label"] == ec.RetrievalCondition.GRAPH.value
+    )
     assert (row["tp"], row["fp"], row["fn"]) == (1, 1, 1)
