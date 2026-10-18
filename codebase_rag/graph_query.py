@@ -1294,9 +1294,18 @@ def endpoint_callers(
     the endpoint exists and nothing reaches it (issue #3186).
     """
     prefix = _prefix(project_name)
-    exposed = fetch_all(
-        cq.CYPHER_GRAPH_EXPOSED_ENDPOINTS, {cs.KEY_PROJECT_PREFIX: prefix}
-    )
+    # `foo.` selects `foo.bar`'s handlers too, and a concrete or re-spelled
+    # target would resolve to that project's route: only this project's own
+    # endpoints are matched and answered for. The callers stay unscoped, as
+    # they are reported from any project.
+    owns = _owner_check(fetch_all, project_name)
+    exposed = [
+        row
+        for row in fetch_all(
+            cq.CYPHER_GRAPH_EXPOSED_ENDPOINTS, {cs.KEY_PROJECT_PREFIX: prefix}
+        )
+        if owns(str(row.get(cs.KEY_HANDLER)))
+    ]
     keys = _endpoint_keys(exposed, target)
     if not keys:
         raise UnknownEndpointError(_unknown_endpoint(exposed, project_name, target))
@@ -1311,6 +1320,7 @@ def endpoint_callers(
             _endpoint_caller_row,
             fetch_all(query, {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QN: key}),
         )
+        if owns(row["handler"])
     }
     # Every field in the key: a caller that both reads and writes one URL is
     # two rows, and two handlers can share a caller (bot review on PR #1975).

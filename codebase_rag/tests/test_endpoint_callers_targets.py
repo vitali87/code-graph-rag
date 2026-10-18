@@ -180,3 +180,50 @@ async def test_the_mcp_tool_refuses_a_typo_like_callers_does(
         cs.MCP_UNKNOWN_ENDPOINT.format(target=target, project=P)
         + f" Did you mean: {HANDLER},"
     )
+
+
+NESTED = f"{P}.admin"
+NESTED_HANDLER = f"{NESTED}.server.getUser"
+
+
+class NestedProjectGraph(FakeGraph):
+    """`users` beside `users.admin`, whose route `users.` also selects."""
+
+    def __call__(
+        self, query: str, params: PropertyParams | None = None
+    ) -> list[ResultRow]:
+        params = params or {}
+        if query == cq.CYPHER_LIST_PROJECTS:
+            return [{cs.KEY_NAME: P}, {cs.KEY_NAME: NESTED}]
+        if query == cq.CYPHER_GRAPH_EXPOSED_ENDPOINTS:
+            return [
+                *super().__call__(query, params),
+                {"endpoint": "GET /users/<id>", "handler": NESTED_HANDLER},
+            ]
+        rows = super().__call__(query, params)
+        if query == cq.CYPHER_GRAPH_ENDPOINT_CALLERS and params[cs.KEY_QN] in (
+            "GET /users/<id>",
+            NESTED_HANDLER,
+        ):
+            rows.append(
+                {
+                    "label": "Function",
+                    "qualified_name": "web.admin.load",
+                    "path": "admin.js",
+                    "url": "/users/7",
+                    "direction": "READS_FROM",
+                    "endpoint": "GET /users/<id>",
+                    "handler": NESTED_HANDLER,
+                }
+            )
+        return rows
+
+
+def test_a_nested_projects_route_is_not_the_projects_own() -> None:
+    # Negative: `users.admin` is its own registered project; its `GET
+    # /users/<id>` matches the concrete request too, but answers for it.
+    rows = graph_query.endpoint_callers(NestedProjectGraph(), P, "GET /users/42")
+    assert [r["qualified_name"] for r in rows] == sorted(CALLERS)
+    assert {r["handler"] for r in rows} == {HANDLER}
+    with pytest.raises(graph_query.UnknownEndpointError):
+        graph_query.endpoint_callers(NestedProjectGraph(), P, NESTED_HANDLER)
