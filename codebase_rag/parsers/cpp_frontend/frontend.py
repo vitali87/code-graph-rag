@@ -944,8 +944,11 @@ def _parse_and_collect(collector: _Collector, compdb_dir: Path) -> None:
         # resolve them against cgr's cwd, failing every TU of a `bear -- make`
         # database indexed via --repo-path from elsewhere (issue #2943).
         directory = os.path.join(compdb_root, command.directory or "")
-        collector.resolver.working_dir = directory
+        # Only a directory clang is told to work in names what it reports: an
+        # entry whose directory is gone loads from the process cwd instead.
+        collector.resolver.working_dir = None
         if os.path.isdir(directory):
+            collector.resolver.working_dir = directory
             args = [fc.CLANG_WORKING_DIRECTORY_FLAG, directory, *args]
         try:
             # the detailed record exposes MACRO_DEFINITION /

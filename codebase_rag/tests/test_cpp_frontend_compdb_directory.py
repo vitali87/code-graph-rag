@@ -193,3 +193,22 @@ def test_unloadable_translation_unit_is_reported_not_silent(
         logger.remove(handler)
     assert pending == []
     assert any("geometry.cpp" in m for m in messages), messages
+
+
+def test_entry_whose_directory_is_gone_loads_from_the_cwd(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The entry's build directory was removed, but its relative paths load
+    # from the cwd: what clang reports must not be joined to the missing one.
+    root = temp_repo / "cppnodir"
+    _write_geometry(root, relative=True)
+    entry = _entry(root / "build-gone", "geometry.cpp", "-Iinc")
+    (root / "compile_commands.json").write_text(json.dumps([entry]), encoding="utf-8")
+    monkeypatch.chdir(root)
+    ingestor = MagicMock()
+    pending, _ = run_cpp_frontend_hybrid(ingestor, root, root.name, root)
+
+    functions = _functions(ingestor)
+    assert "cppnodir.geometry.h.AREA" in functions, sorted(functions)
+    assert "cppnodir.inc.scale.SCALE" in functions, sorted(functions)
+    assert all(p.rel_path == "geometry.cpp" for p in pending), pending
