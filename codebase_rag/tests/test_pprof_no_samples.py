@@ -86,3 +86,20 @@ def test_input_that_is_not_a_profile_is_still_called_one(
     profile.write_bytes(data)
     with pytest.raises(TraceFormatError, match=NOT_PPROF):
         convert_pprof(profile, repo_root=tmp_path, output=tmp_path / "t.jsonl")
+
+
+@pytest.mark.parametrize(
+    "convert", [convert_pprof, convert_rust_pprof, convert_ebpf_pprof]
+)
+def test_an_unsampled_table_without_the_empty_first_string_is_malformed(
+    tmp_path: Path, convert: Callable[..., int]
+) -> None:
+    # Negative: pprof requires string_table[0] == "", so a payload whose table
+    # opens with anything else is corrupt, not a run too short to sample.
+    profile = tmp_path / "broken.out"
+    profile.write_bytes(gzip.compress(_string(6, "not-empty"), mtime=0))
+    with pytest.raises(TraceFormatError) as exc_info:
+        convert(profile, repo_root=tmp_path, output=tmp_path / "t.jsonl")
+    message = str(exc_info.value)
+    assert NOT_PPROF in message, message
+    assert NO_SAMPLES not in message, message

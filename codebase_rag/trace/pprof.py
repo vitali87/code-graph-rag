@@ -39,7 +39,7 @@ from .records import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator, Mapping, Sized
+    from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence, Sized
     from pathlib import Path
 
 _Sample = tuple[list[int], int]
@@ -381,7 +381,7 @@ def _accumulate_edges(
 
 
 def _require_profile_content(
-    profile_path: Path, strings: Sized, functions: Sized, samples: Sized
+    profile_path: Path, strings: Sequence[str], functions: Sized, samples: Sized
 ) -> None:
     """Refuse a profile with nothing to convert, saying why.
 
@@ -392,7 +392,13 @@ def _require_profile_content(
     if not strings:
         raise TraceFormatError(cs.TRACE_ERR_BAD_PPROF.format(path=profile_path))
     if not samples:
-        raise TraceFormatError(cs.TRACE_ERR_PPROF_NO_SAMPLES.format(path=profile_path))
+        # pprof requires the table's first string to be empty, and its own
+        # tooling rejects a profile without it: such a payload is corrupt, not
+        # a run too short to sample, and "profile longer" would mislead.
+        message = (
+            cs.TRACE_ERR_BAD_PPROF if strings[0] else cs.TRACE_ERR_PPROF_NO_SAMPLES
+        )
+        raise TraceFormatError(message.format(path=profile_path))
     if not functions:
         raise TraceFormatError(cs.TRACE_ERR_BAD_PPROF.format(path=profile_path))
 
