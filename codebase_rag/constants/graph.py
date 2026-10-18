@@ -1523,12 +1523,17 @@ CSHARP_PARTIAL_TYPE_LABELS: frozenset[NodeLabel] = frozenset(
 # generic arity: a rename reads which of them are the parts of one `partial`
 # type by the key parsing groups them under (`csharp_partial_key_from_graph`),
 # which spells the arity (issue #2579).
-_CSHARP_PARTIAL_LABELS = "|".join(
-    sorted(label.value for label in CSHARP_PARTIAL_TYPE_LABELS)
+# Spelled as a WHERE label test rather than `(n:A|B)` alternation, which
+# not every openCypher engine accepts (issue #386).
+_CSHARP_PARTIAL_LABEL_TEST = (
+    "("
+    + " OR ".join(f"n:{label.value}" for label in sorted(CSHARP_PARTIAL_TYPE_LABELS))
+    + ")"
 )
 CYPHER_SAME_NAMED_CSHARP_TYPES = (
-    f"MATCH (n:{_CSHARP_PARTIAL_LABELS}) "
-    "WHERE n.name = $name AND n.qualified_name STARTS WITH $project_prefix "
+    "MATCH (n) "
+    f"WHERE {_CSHARP_PARTIAL_LABEL_TEST} "
+    "AND n.name = $name AND n.qualified_name STARTS WITH $project_prefix "
     "RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, "
     "n.path AS path, n.modifiers AS modifiers, n.generic_arity AS generic_arity"
 )

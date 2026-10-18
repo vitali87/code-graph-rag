@@ -269,6 +269,82 @@ CYPHER_PROJECTS_WITH_INCOMPLETE_RUNS = (
     "MATCH (m:IncompleteRun) RETURN DISTINCT m.project AS project"
 )
 
+_CONTAINMENT_RELS = (
+    "CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION"
+)
+_CONTAINMENT_REL_LIST = (
+    "['CONTAINS_PACKAGE', 'CONTAINS_FOLDER', 'CONTAINS_FILE', "
+    "'CONTAINS_MODULE', 'CONTAINS_SECTION']"
+)
+# The definition walk takes what `CYPHER_DELETE_MODULE` takes from each
+# module (a test pins that), the finding edges included: a Pattern,
+# CodeSmell or SecurityIssue is keyed under its module's qualified name, so
+# no other project holds it, and left out it outlived the project as an
+# orphan (issue #2536).
+_DEFINITION_RELS = (
+    "DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT|"
+    "IMPLEMENTS_PATTERN|HAS_SMELL|HAS_VULNERABILITY"
+)
+
+
+def _belongs_to_p(var: str) -> str:
+    return _name_belongs_to_p(f"{var}.qualified_name")
+
+
+def _name_belongs_to_p(name: str) -> str:
+    # A qualified name is `p`'s when it is `p` or sits under `p.`, but not
+    # under a longer registered name such as `p.v2` (issue #1985): the rule
+    # CYPHER_DELETE_MODULE applies. `nested` is bound to those longer names.
+    return (
+        f"({name} = p.name "
+        f"OR {name} STARTS WITH (p.name + '.')) "
+        f"AND NOT any(q IN nested WHERE {name} = q "
+        f"OR {name} STARTS WITH (q + '.'))"
+    )
+
+
+def _belongs_to_named(var: str) -> str:
+    # _belongs_to_p for a project given by `$project_name`/`$project_prefix`
+    # rather than a bound Project node.
+    return (
+        f"({var}.qualified_name = $project_name "
+        f"OR {var}.qualified_name STARTS WITH $project_prefix) "
+        f"AND NOT any(q IN nested WHERE {var}.qualified_name = q "
+        f"OR {var}.qualified_name STARTS WITH (q + '.'))"
+    )
+
+
+# Folder and File carry no qualified name: they are keyed by absolute_path,
+# so every project indexed from one directory MERGEs onto the same nodes
+# (issue #2665). Only these two edge types lead to them, and from them a walk
+# reaches no other kind of node.
+_SHARED_ENTRY_RELS = "CONTAINS_FOLDER|CONTAINS_FILE"
+
+
+# The nodes project `p` claims: those a containment path from `p` reaches
+# without passing through another project's Package, Module or Section, plus
+# what they define. Walking every containment path instead let two projects
+# over one directory reach each other's packages through their shared `src`
+# Folder, so each deleted and counted the other (issue #2665). Such a path
+# runs through p's own qualified nodes and shared Folders/Files, so it is
+# taken in two walks rather than one path tested node by node, which the
+# embedded engine cannot express: p's own Packages, Modules and Sections that
+# p reaches, then the Folders and Files reached from p or one of those
+# through Folders and Files alone. Binds `p`, `nested` and the per-project
+# list `owned`.
+_CYPHER_PROJECT_CLAIMS = f"""
+OPTIONAL MATCH (longer:Project) WHERE longer.name STARTS WITH (p.name + '.')
+WITH p, collect(longer.name) AS nested
+OPTIONAL MATCH (p)-[:{_CONTAINMENT_RELS}*]->(unit) WHERE {_belongs_to_p("unit")}
+WITH p, nested, collect(DISTINCT unit) AS units
+UNWIND [p] + units AS holder
+OPTIONAL MATCH (holder)-[:{_SHARED_ENTRY_RELS}*]->(entry)
+WITH p, nested, collect(DISTINCT holder) + collect(DISTINCT entry) AS containers
+UNWIND containers AS container
+OPTIONAL MATCH (container)-[:{_DEFINITION_RELS}*]->(defined)
+WITH p, nested, collect(DISTINCT container) + collect(DISTINCT defined) AS owned
+"""
+
 # When a sync of the project last completed (issue #2444). On the Project node
 # so the time lives exactly as long as the project does in THIS graph:
 # `delete-project` and `--clean` take it with the node, and a project synced
@@ -283,31 +359,16 @@ CYPHER_PROJECT_SYNC_TIMES = (
     "RETURN p.name AS name, p.last_synced_at AS last_synced_at ORDER BY p.name"
 )
 
-# The definition walk takes what `CYPHER_DELETE_MODULE` takes from each
-# module (a test pins that), the finding edges included: a Pattern,
-# CodeSmell or SecurityIssue is keyed under its module's qualified name, so
-# no other project holds it, and left out it outlived the project as an
-# orphan (issue #2536).
-CYPHER_DELETE_PROJECT = (
-    """
-MATCH (p:Project {name: $project_name})
-OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
-OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT|IMPLEMENTS_PATTERN|HAS_SMELL|HAS_VULNERABILITY*]->(defined)
-WITH collect(DISTINCT p) + collect(DISTINCT container) + collect(DISTINCT defined) AS owned
-"""
-    + CYPHER_DELETE_OWNED_WITH_RESOURCE_FLOWS
-)
-
 # Retires a project whose checkout was just re-indexed under another name
 # (issue #2412). Both projects index the same files, so they share every
-# Folder and File node (keyed on absolute path), and the walk above would
-# cross those into the new project's modules. Only containers carrying the
-# old project's qualified name go, with what they define; the shared Folder
-# and File nodes stay with the project that still contains them. A
-# repository-root `__init__.py` makes the root Package and Module's qn the
-# bare project name, so the prefix test alone would miss them (review of PR
-# 2497); the trailing dot of the prefix still keeps a project whose name only
-# starts with this one (`acme.webapp` beside `acme.web`).
+# Folder and File node (keyed on absolute path), and a walk over every
+# containment path would cross those into the new project's modules. Only
+# containers carrying the old project's qualified name go, with what they
+# define; the shared Folder and File nodes stay with the project that still
+# contains them. A repository-root `__init__.py` makes the root Package and
+# Module's qn the bare project name, so the prefix test alone would miss them
+# (review of PR 2497); the trailing dot of the prefix still keeps a project
+# whose name only starts with this one (`acme.webapp` beside `acme.web`).
 CYPHER_RETIRE_PROJECT = (
     """
 MATCH (p:Project {name: $project_name})
@@ -320,17 +381,114 @@ WITH collect(DISTINCT p) + collect(DISTINCT container) + collect(DISTINCT define
     + CYPHER_DELETE_OWNED_WITH_RESOURCE_FLOWS
 )
 
+# Deletes what `p` claims, except a Folder or File another project claims
+# too: that one only loses `p`'s edges. The named nodes go first, so the
+# check that follows walks up from each Folder/File over what is left; no
+# large list is ever a grouping key, which cost seconds per thousand nodes.
+# Another project `q` claims a Folder/File it reaches through Folders and
+# Files from itself or from one of its own Packages, the same two walks as
+# _CYPHER_PROJECT_CLAIMS taken upward. The resource-to-resource flows go
+# before any of that: both ends of one are shared Resource nodes, so no
+# detach of what `p` claims reaches it, and its `scope` names the function
+# or module that produced it, one of `p`'s qualified names (issue #2746).
+# Matching the scope by name rather than against `owned` takes a flow of a
+# unit cut off from `p` too, and keeps `owned` out of a grouping key.
+CYPHER_DELETE_PROJECT = f"""
+MATCH (p:Project {{name: $project_name}})
+OPTIONAL MATCH (longer:Project) WHERE longer.name STARTS WITH (p.name + '.')
+WITH p, collect(longer.name) AS nested
+OPTIONAL MATCH (:Resource)-[rf:FLOWS_TO]->(:Resource)
+WHERE {_name_belongs_to_p("rf.scope")}
+WITH p, collect(rf) AS flows
+FOREACH (r IN flows | DELETE r)
+WITH p
+{_CYPHER_PROJECT_CLAIMS}
+WITH [c IN owned WHERE c:Folder OR c:File] AS shareable,
+[c IN owned WHERE NOT (c:Folder OR c:File)] AS named
+FOREACH (n IN named | DETACH DELETE n)
+WITH shareable
+UNWIND shareable AS c
+OPTIONAL MATCH (c)<-[:{_SHARED_ENTRY_RELS}*]-(holder)
+WHERE NOT (holder:Folder OR holder:File)
+OPTIONAL MATCH (holder)<-[:{_CONTAINMENT_RELS}*0..]-(q:Project)
+WHERE q.name <> $project_name
+AND (holder:Project OR holder.qualified_name = q.name
+OR holder.qualified_name STARTS WITH (q.name + '.'))
+WITH c, count(q) AS other_claims
+WHERE other_claims = 0
+DETACH DELETE c
+"""
 
-# Damage detectors for the issue #897 migration. Sharing always leaves a
-# single-hop signature: the topmost merged node has containment parents in
-# two projects (Project roots are never merged, so the parents are distinct
-# nodes). Keyless rows match the second purge's predicate directly.
+# Run after CYPHER_DELETE_PROJECT: the project's Packages and Modules that no
+# containment path from it reached, such as a tree the #897 repair cut off
+# from its Project, go too rather than outliving it as orphans (issue
+# #2665). Modules always carry the project prefix, the fact
+# CYPHER_DELETE_MODULE relies on. Glosses are keyed by qualified name as
+# well, but are neither label and hang off nothing this walks, so they
+# survive the rebuild they are meant to survive (issue #1828).
+CYPHER_DELETE_PROJECT_CUT_OFF_UNITS = f"""
+OPTIONAL MATCH (longer:Project) WHERE longer.name STARTS WITH $project_prefix
+WITH collect(longer.name) AS nested
+OPTIONAL MATCH (pkg:Package) WHERE {_belongs_to_named("pkg")}
+WITH nested, collect(pkg) AS packages
+OPTIONAL MATCH (mod:Module) WHERE {_belongs_to_named("mod")}
+WITH packages, collect(mod) AS modules
+WITH packages + modules AS units
+UNWIND units AS u
+OPTIONAL MATCH (u)-[:{_DEFINITION_RELS}|CONTAINS_SECTION*]->(defined)
+WITH collect(DISTINCT u) + collect(DISTINCT defined) AS gone
+FOREACH (n IN gone | DETACH DELETE n)
+"""
+
+
+# Damage detectors for the issue #897 migration. The superseded key merged
+# projects in DIFFERENT directories that share a relative layout, so a merged
+# node lies outside one owner's tree. The current key (absolute_path) shares a
+# node only between projects over the SAME files -- one checkout under two
+# names, or a project nested in another -- and the node lies inside every
+# owner's tree, so it is not damage (issues #2665, #3025). An owner's tree is its
+# Project's root_path; a Project that records none predates it and counts as
+# legacy. root_path is the resolved path as the OS spells it, backslashes on
+# Windows, while absolute_path is POSIX, so both sides are compared with
+# forward slashes (review of PR 3216). A filesystem root (`/`, `C:\`) already
+# ends in the separator, so the boundary one is added only to a root that
+# does not.
+def _outside_tree(root: str) -> str:
+    node = "replace(n.absolute_path, '\\\\', '/')"
+    tree = f"replace({root}, '\\\\', '/')"
+    prefix = f"CASE WHEN {tree} ENDS WITH '/' THEN {tree} ELSE {tree} + '/' END"
+    return f"({root} IS NULL OR NOT ({node} = {tree} OR {node} STARTS WITH ({prefix})))"
+
+
+# The Projects that reach a node, and the node kept when two or more do and
+# one of them does not hold it in its tree. The owners themselves are
+# collected, not their roots: collect() drops nulls, so an owner that records
+# no root would vanish from the list instead of counting as legacy (review of
+# PR 3216).
+_FROM_OWNERS = (
+    "MATCH (p:Project)"
+    "-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE*]->(n) "
+)
+_ACROSS_ROOTS = (
+    "WITH n, collect(DISTINCT p) AS owners "
+    "WHERE size(owners) > 1 "
+    f"AND any(owner IN owners WHERE {_outside_tree('owner.root_path')}) "
+)
+
+# Sharing always leaves a single-hop signature: the topmost merged node has
+# containment parents in two projects (Project roots are never merged, so the
+# parents are distinct nodes). That cheap test runs on every sync and picks
+# the candidates; only they are walked up to their Projects and judged as the
+# purge judges them. A parent's own path cannot stand in for its Project's
+# root: a Package records its directory, so a File two projects reach through
+# their Packages read as inside both, hiding a rootless owner the purge counts
+# as legacy (review of PR 3216). Keyless rows match the second purge's
+# predicate directly.
 CYPHER_ANY_SHARED_STRUCTURE = (
     "MATCH (parent)-[:CONTAINS_FOLDER|CONTAINS_FILE]->(n) "
-    "WHERE (n:Folder OR n:File) "
+    "WHERE (n:Folder OR n:File) AND n.absolute_path IS NOT NULL "
     "WITH n, count(parent) AS parents "
-    "WHERE parents > 1 "
-    "RETURN 1 AS damaged LIMIT 1"
+    "WHERE parents > 1 " + _FROM_OWNERS + _ACROSS_ROOTS + "RETURN 1 AS damaged LIMIT 1"
 )
 
 CYPHER_ANY_KEYLESS_STRUCTURE = (
@@ -338,10 +496,10 @@ CYPHER_ANY_KEYLESS_STRUCTURE = (
     "RETURN 1 AS damaged LIMIT 1"
 )
 
-# The superseded relative-path key merged same-layout projects onto shared
-# Folder/File nodes (issue #897). A merged node cannot be split, so anything
-# the containment walk reaches from more than one Project is purged; the
-# next re-index rebuilds it with per-project identity.
+# While a legacy constraint is still in force, every node was written by the
+# old key: anything the containment walk reaches from more than one Project is
+# a merge, which cannot be split, so it is purged and the next re-index
+# rebuilds it with per-project identity.
 CYPHER_PURGE_CROSS_PROJECT_STRUCTURE = (
     "MATCH (p:Project)"
     "-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE*]->(n) "
@@ -349,6 +507,16 @@ CYPHER_PURGE_CROSS_PROJECT_STRUCTURE = (
     "WITH n, count(DISTINCT p) AS owners "
     "WHERE owners > 1 "
     "DETACH DELETE n RETURN count(n) AS purged"
+)
+
+# Once the constraints are gone, current data shares nodes legitimately, so
+# only a node outside some owner's tree (or under an owner that records no
+# root) is the old key's merge.
+CYPHER_PURGE_CROSS_ROOT_STRUCTURE = (
+    _FROM_OWNERS
+    + "WHERE (n:Folder OR n:File) AND n.absolute_path IS NOT NULL "
+    + _ACROSS_ROOTS
+    + "DETACH DELETE n RETURN count(n) AS purged"
 )
 
 # Rows written before absolute_path existed can never match the current
@@ -519,6 +687,23 @@ _QUOTE_SPAN_LABELS = "|".join(
     )
 )
 
+
+def _any_label(var: str, labels: str) -> str:
+    """`(var:A OR var:B ...)` for a `|`-joined label list.
+
+    The label-alternation pattern `(n:A|B)` is shorter, but openCypher
+    engines without it reject the whole query, so the queries cgr runs
+    itself test labels in WHERE instead. On Memgraph 3.3 over a 38k-node
+    graph the two spellings plan the same index seeks for a key lookup and
+    return the same rows, with scans within a few percent either way in
+    interleaved runs; the embedded graph reads these labels back for its own
+    seeks (issue #386). Only for a list of two or more labels: a single
+    label stays in the pattern, where it picks the label scan. The prompt's
+    example queries keep the pattern form the model is taught to prefer.
+    """
+    return "(" + " OR ".join(f"{var}:{label}" for label in labels.split("|")) + ")"
+
+
 # A lookup keyed on qualified_name alone can match more than one node: identity
 # constraints are label-scoped, so a Method and a Field may share `<owner>.<name>`.
 # LIMIT 1 without an ORDER BY then picks by storage order. Ordering by label and
@@ -552,7 +737,7 @@ SNIPPET_MODULE_FALLBACK_MAX_DEPTH = 16
 _SNIPPET_CONTAINMENT = "|".join(rel.value for rel in SNIPPET_CONTAINMENT_RELATIONSHIPS)
 
 CYPHER_FIND_BY_QUALIFIED_NAME = f"""
-MATCH (n:{_SNIPPET_LABELS}) WHERE n.qualified_name = $qn
+MATCH (n) WHERE {_any_label("n", _SNIPPET_LABELS)} AND n.qualified_name = $qn
 OPTIONAL MATCH (m:Module)-[:{_SNIPPET_CONTAINMENT}*1..{SNIPPET_MODULE_FALLBACK_MAX_DEPTH}]->(n)
 RETURN n.name AS name, n.start_line AS start, n.end_line AS end, coalesce(n.path, m.path) AS path,
        n.absolute_path AS absolute_path, n.docstring AS docstring
@@ -643,47 +828,64 @@ RETURN type(r) AS type, count(*) AS count
 ORDER BY count DESC
 """
 
-# What a project owns is what deleting it removes: its containment tree and
-# everything the containers define (the same walk as CYPHER_DELETE_PROJECT).
-# That covers File and Folder nodes, which have no qualified name to match a
-# prefix against, and leaves out shared nodes (ExternalPackage, Resource)
-# another project may hold too. Relationships count when they START at an
-# owned node (issue #2391).
-_CYPHER_STATS_OWNED_NODES = """
+# What a project owns is what it claims (_CYPHER_PROJECT_CLAIMS): its
+# containment tree and everything the containers define. That covers File
+# and Folder nodes, which have no qualified name to match a prefix against,
+# and leaves out shared nodes (ExternalPackage, Resource) another project may
+# hold too. A Folder/File shared with a project indexed from the same
+# directory counts for each of them, so a project's counts do not change
+# when a second name is indexed over its checkout (issue #2665).
+# Relationships count when they START at an owned node (issue #2391), except
+# a containment edge from a shared Folder/File into the other project's tree.
+_CYPHER_STATS_OWNED_NODES = (
+    """
 MATCH (p:Project) WHERE p.name IN $project_names
-OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
-OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT|IMPLEMENTS_PATTERN|HAS_SMELL|HAS_VULNERABILITY*]->(defined)
-WITH collect(DISTINCT p) + collect(DISTINCT container) + collect(DISTINCT defined) AS owned
-UNWIND owned AS n
-WITH DISTINCT n
 """
+    + _CYPHER_PROJECT_CLAIMS
+    + """UNWIND owned AS n
+"""
+)
+_CYPHER_STATS_EDGE_IS_PS = (
+    f"NOT (type(r) IN {_CONTAINMENT_REL_LIST} "
+    f"AND m.qualified_name IS NOT NULL AND NOT ({_belongs_to_p('m')}))"
+)
 CYPHER_STATS_PROJECT_NODE_COUNTS = (
     _CYPHER_STATS_OWNED_NODES
-    + """RETURN labels(n) AS labels, count(*) AS count
+    + """WITH DISTINCT n
+RETURN labels(n) AS labels, count(*) AS count
 ORDER BY count DESC
 """
 )
 CYPHER_STATS_PROJECT_RELATIONSHIP_COUNTS = (
     _CYPHER_STATS_OWNED_NODES
-    + """MATCH (n)-[r]->()
+    + """WITH DISTINCT p, nested, n
+MATCH (n)-[r]->(m)
+WHERE """
+    + _CYPHER_STATS_EDGE_IS_PS
+    + """
+WITH DISTINCT r
 RETURN type(r) AS type, count(r) AS count
 ORDER BY count DESC
 """
 )
 # One row per project, so unscoped totals over a shared graph can be
 # attributed; the same ownership walk as above, grouped by project.
-CYPHER_STATS_PER_PROJECT = """
+CYPHER_STATS_PER_PROJECT = (
+    """
 MATCH (p:Project)
-OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
-OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT|IMPLEMENTS_PATTERN|HAS_SMELL|HAS_VULNERABILITY*]->(defined)
-WITH p, [p] + collect(DISTINCT container) + collect(DISTINCT defined) AS owned
-UNWIND owned AS n
-WITH DISTINCT p, n
-OPTIONAL MATCH (n)-[r]->()
+"""
+    + _CYPHER_PROJECT_CLAIMS
+    + """UNWIND owned AS n
+WITH DISTINCT p, nested, n
+OPTIONAL MATCH (n)-[r]->(m)
+WHERE """
+    + _CYPHER_STATS_EDGE_IS_PS
+    + """
 WITH p, n, count(r) AS outgoing
 RETURN p.name AS project, count(n) AS nodes, sum(outgoing) AS relationships
 ORDER BY project
 """
+)
 
 
 # Dead-code fetch queries. Reachability itself runs client-side in
@@ -715,8 +917,8 @@ _DEAD_CODE_REL_TYPES = "|".join(
     )
 )
 
-CYPHER_DEAD_CODE_NODES = f"""MATCH (n:{_DEAD_CODE_NODE_LABELS})
-WHERE n.qualified_name STARTS WITH $project_prefix
+CYPHER_DEAD_CODE_NODES = f"""MATCH (n)
+WHERE {_any_label("n", _DEAD_CODE_NODE_LABELS)} AND n.qualified_name STARTS WITH $project_prefix
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name,
        n.name AS name, n.path AS path, n.namespace AS namespace,
        n.start_line AS start_line, n.end_line AS end_line,
@@ -729,8 +931,9 @@ RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name,
        n.param_types AS param_types,
        n.type_checking_only AS type_checking_only"""
 
-CYPHER_DEAD_CODE_RELS = f"""MATCH (a:{_DEAD_CODE_NODE_LABELS})-[r:{_DEAD_CODE_REL_TYPES}]->(b)
-WHERE a.qualified_name STARTS WITH $project_prefix
+CYPHER_DEAD_CODE_RELS = f"""MATCH (a)-[r:{_DEAD_CODE_REL_TYPES}]->(b)
+WHERE {_any_label("a", _DEAD_CODE_NODE_LABELS)}
+  AND a.qualified_name STARTS WITH $project_prefix
 RETURN labels(a)[0] AS from_label, a.qualified_name AS from_qn,
        type(r) AS rel_type, labels(b)[0] AS to_label,
        b.qualified_name AS to_qn, r.resolution AS resolution"""
@@ -742,8 +945,8 @@ RETURN labels(a)[0] AS from_label, a.qualified_name AS from_qn,
 # excluded here; their count is reported separately as "not analyzed".
 _DUPLICATES_NODE_LABELS = "|".join((NodeLabel.FUNCTION.value, NodeLabel.METHOD.value))
 
-CYPHER_DUPLICATE_FINGERPRINTS = f"""MATCH (n:{_DUPLICATES_NODE_LABELS})
-WHERE n.qualified_name STARTS WITH $project_prefix
+CYPHER_DUPLICATE_FINGERPRINTS = f"""MATCH (n)
+WHERE {_any_label("n", _DUPLICATES_NODE_LABELS)} AND n.qualified_name STARTS WITH $project_prefix
   AND n.ast_fingerprint IS NOT NULL
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name,
        n.name AS name, n.path AS path,
@@ -753,8 +956,8 @@ RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name,
        n.ast_fingerprint_nodes AS ast_fingerprint_nodes,
        n.ast_branch_fingerprints AS ast_branch_fingerprints"""
 
-CYPHER_DUPLICATE_SKIPPED_COUNT = f"""MATCH (n:{_DUPLICATES_NODE_LABELS})
-WHERE n.qualified_name STARTS WITH $project_prefix
+CYPHER_DUPLICATE_SKIPPED_COUNT = f"""MATCH (n)
+WHERE {_any_label("n", _DUPLICATES_NODE_LABELS)} AND n.qualified_name STARTS WITH $project_prefix
   AND n.ast_fingerprint IS NULL
 RETURN count(n) AS skipped"""
 
@@ -878,8 +1081,8 @@ def build_missing_rel_endpoints_query(
 # A C# type's natural name is `<namespace>.<name>`, which its qualified name
 # no longer spells when the namespace mirrors the directory (issue #1629), so
 # the namespace property answers that lookup.
-CYPHER_GRAPH_RESOLVE_NAME = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
-WHERE n.qualified_name STARTS WITH $project_prefix
+CYPHER_GRAPH_RESOLVE_NAME = f"""MATCH (n)
+WHERE {_any_label("n", _GRAPH_DEFINITION_LABELS)} AND n.qualified_name STARTS WITH $project_prefix
   AND (n.qualified_name = $qn OR n.qualified_name ENDS WITH $suffix OR n.name = $name
        OR (n.namespace IS NOT NULL AND n.namespace + '.' + n.name = $qn))
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.path AS path,
@@ -898,21 +1101,21 @@ RETURN m.path AS path, m.qualified_name AS qualified_name"""
 # Every definition registered under one natural name: the name itself and
 # its `name@<line>` (and `@<line>_<col>`) variants, with the decorators that
 # tell a property's getter, setter and deleter apart (issue #1808).
-CYPHER_GLOSS_VARIANTS = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
-WHERE n.qualified_name STARTS WITH $project_prefix
+CYPHER_GLOSS_VARIANTS = f"""MATCH (n)
+WHERE {_any_label("n", _GRAPH_DEFINITION_LABELS)} AND n.qualified_name STARTS WITH $project_prefix
   AND (n.qualified_name = $qn OR n.qualified_name STARTS WITH $variant_prefix)
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.path AS path,
        n.start_line AS start_line, n.end_line AS end_line,
        n.decorators AS decorators"""
-CYPHER_GRAPH_RESOLVE_LOCATION = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
-WHERE n.qualified_name STARTS WITH $project_prefix AND n.path = $path
+CYPHER_GRAPH_RESOLVE_LOCATION = f"""MATCH (n)
+WHERE {_any_label("n", _GRAPH_DEFINITION_LABELS)} AND n.qualified_name STARTS WITH $project_prefix AND n.path = $path
   AND n.start_line <= $line AND $line <= n.end_line
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.path AS path,
        n.start_line AS start_line, n.end_line AS end_line"""
 # `decorated_start_line` is absent on a graph indexed before issue #2428 and
 # on undecorated definitions; the reader falls back to `start_line`.
-CYPHER_GRAPH_DEFINITION = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
-WHERE n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
+CYPHER_GRAPH_DEFINITION = f"""MATCH (n)
+WHERE {_any_label("n", _GRAPH_DEFINITION_LABELS)} AND n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.name AS name,
        n.path AS path, n.start_line AS start_line, n.end_line AS end_line,
        n.decorated_start_line AS decorated_start_line, n.decorators AS decorators,
@@ -943,8 +1146,8 @@ _ANNOTATES = RelationshipType.ANNOTATES.value
 _MENTIONS = RelationshipType.MENTIONS.value
 # The hash the note records, plus what the text-quote anchor needs: the
 # subject's simple name (masked out of the quote) and its span in its file.
-CYPHER_GLOSS_TARGET = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
-WHERE n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
+CYPHER_GLOSS_TARGET = f"""MATCH (n)
+WHERE {_any_label("n", _GRAPH_DEFINITION_LABELS)} AND n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
 RETURN n.anchor_hash AS target_hash, n.name AS name, n.path AS path,
        n.start_line AS start_line, n.end_line AS end_line
 {_DEFINITION_TIEBREAK}
@@ -954,10 +1157,10 @@ LIMIT 1"""
 # definition it followed. A fresh write against a name is EXACT at that
 # name: any other subject edge is dropped before the new one is merged, and
 # the repair state (`moved_from`, `candidate_qns`) is cleared (bot review).
-CYPHER_GLOSS_WRITE = f"""MATCH (t:{_GRAPH_DEFINITION_LABELS})
-WHERE t.qualified_name = $target_qn AND t.qualified_name STARTS WITH $project_prefix
-OPTIONAL MATCH (m:{_GRAPH_DEFINITION_LABELS})
-WHERE m.qualified_name IN $mention_qns AND m.qualified_name STARTS WITH $project_prefix
+CYPHER_GLOSS_WRITE = f"""MATCH (t)
+WHERE {_any_label("t", _GRAPH_DEFINITION_LABELS)} AND t.qualified_name = $target_qn AND t.qualified_name STARTS WITH $project_prefix
+OPTIONAL MATCH (m)
+WHERE {_any_label("m", _GRAPH_DEFINITION_LABELS)} AND m.qualified_name IN $mention_qns AND m.qualified_name STARTS WITH $project_prefix
 WITH t, collect(DISTINCT m) AS mentioned
 WHERE size(mentioned) = size($mention_qns)
 MERGE (g:{_GLOSS} {{qualified_name: $qn}})
@@ -1002,7 +1205,8 @@ CYPHER_REANCHOR_GLOSSES = f"""MATCH (g:{_GLOSS})
 OPTIONAL MATCH (g)-[:{_ANNOTATES}]->(subject)
 WITH g, count(subject) AS subjects
 WHERE subjects = 0
-MATCH (t:{_GRAPH_DEFINITION_LABELS} {{qualified_name: g.target_qn}})
+MATCH (t {{qualified_name: g.target_qn}})
+WHERE {_any_label("t", _GRAPH_DEFINITION_LABELS)}
 MERGE (g)-[:{_ANNOTATES}]->(t)
 SET g.anchor_state = CASE WHEN g.moved_from IS NULL
     THEN '{_STATE_EXACT}' ELSE '{_STATE_MOVED}' END,
@@ -1023,8 +1227,8 @@ RETURN g.qualified_name AS qualified_name, g.target_qn AS target_qn,
        g.moved_from AS moved_from, g.candidate_qns AS candidate_qns,
        g.project AS project, g.anchor_quote AS anchor_quote,
        g.anchor_prefix AS anchor_prefix, g.anchor_suffix AS anchor_suffix"""
-CYPHER_DEFINITIONS_BY_ANCHOR_HASH = f"""MATCH (t:{_GRAPH_DEFINITION_LABELS})
-WHERE t.anchor_hash IN $hashes AND t.qualified_name STARTS WITH $project_prefix
+CYPHER_DEFINITIONS_BY_ANCHOR_HASH = f"""MATCH (t)
+WHERE {_any_label("t", _GRAPH_DEFINITION_LABELS)} AND t.anchor_hash IN $hashes AND t.qualified_name STARTS WITH $project_prefix
 RETURN t.qualified_name AS qualified_name, t.anchor_hash AS anchor_hash"""
 # The move re-validates its own precondition and binds the node it found:
 # the definitions carrying the note's hash in its project are collected
@@ -1042,8 +1246,8 @@ RETURN t.qualified_name AS qualified_name, t.anchor_hash AS anchor_hash"""
 # return home, not another move: the note is EXACT again with no `moved_from`.
 # Computed in a WITH so both SETs read the pre-update values.
 CYPHER_GLOSS_MOVE = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
-MATCH (t:{_GRAPH_DEFINITION_LABELS})
-WHERE t.anchor_hash = $target_hash AND t.qualified_name STARTS WITH $project_prefix
+MATCH (t)
+WHERE {_any_label("t", _GRAPH_DEFINITION_LABELS)} AND t.anchor_hash = $target_hash AND t.qualified_name STARTS WITH $project_prefix
 WITH g, collect(t) AS targets
 WHERE size(targets) = 1
 WITH g, targets[0] AS t, coalesce(g.moved_from, g.target_qn) AS origin
@@ -1059,8 +1263,8 @@ MERGE (g)-[:{_ANNOTATES}]->(t)"""
 # in a project, to digest each one's current text the way the note's quote
 # was digested when it was written. Read once per project per pass, and
 # only when a note has reached this tier.
-CYPHER_DEFINITION_SPANS = f"""MATCH (t:{_QUOTE_SPAN_LABELS})
-WHERE t.qualified_name STARTS WITH $project_prefix
+CYPHER_DEFINITION_SPANS = f"""MATCH (t)
+WHERE {_any_label("t", _QUOTE_SPAN_LABELS)} AND t.qualified_name STARTS WITH $project_prefix
   AND t.path IS NOT NULL AND t.start_line IS NOT NULL AND t.end_line IS NOT NULL
 RETURN t.qualified_name AS qualified_name, t.name AS name, t.path AS path,
        t.start_line AS start_line, t.end_line AS end_line,
@@ -1082,8 +1286,8 @@ RETURN t.qualified_name AS qualified_name, t.name AS name, t.path AS path,
 # cannot be re-validated and is never bound here: null on both sides read as
 # equal would have bound a rewritten body (bot review, PR #1966, twice).
 CYPHER_GLOSS_MOVE_TO_QN = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
-MATCH (t:{_GRAPH_DEFINITION_LABELS})
-WHERE t.qualified_name = $target_qn AND t.qualified_name STARTS WITH $project_prefix
+MATCH (t)
+WHERE {_any_label("t", _GRAPH_DEFINITION_LABELS)} AND t.qualified_name = $target_qn AND t.qualified_name STARTS WITH $project_prefix
   AND t.path = $path AND t.start_line = $start_line AND t.end_line = $end_line
   AND t.anchor_hash IS NOT NULL AND t.anchor_hash = $anchor_hash
 WITH g, collect(t) AS targets
@@ -1103,7 +1307,8 @@ SET g.anchor_state = $anchor_state, g.candidate_qns = $candidate_qns"""
 CYPHER_REANCHOR_GLOSS_MENTIONS = f"""MATCH (g:{_GLOSS})-[:{_ANNOTATES}]->()
 WHERE g.mention_qns IS NOT NULL
 UNWIND g.mention_qns AS mention_qn
-MATCH (m:{_GRAPH_DEFINITION_LABELS} {{qualified_name: mention_qn}})
+MATCH (m {{qualified_name: mention_qn}})
+WHERE {_any_label("m", _GRAPH_DEFINITION_LABELS)}
 MERGE (g)-[:{_MENTIONS}]->(m)"""
 # Staleness (issue #1808): a gloss recorded its subject's `anchor_hash` as
 # `target_hash` when it was written; after a sync the two are compared and the
@@ -1191,11 +1396,13 @@ _CALLEE_ROW = (
     "labels(callee)[0] AS label, callee.qualified_name AS qualified_name,\n       "
     + _CALL_SITE_FIELDS
 )
-CYPHER_GRAPH_CALLERS = f"""MATCH (callee:{_GRAPH_DEFINITION_LABELS} {{qualified_name: $qn}})
+CYPHER_GRAPH_CALLERS = f"""MATCH (callee {{qualified_name: $qn}})
+WHERE {_any_label("callee", _GRAPH_DEFINITION_LABELS)}
 MATCH (caller)-[r:CALLS]->(callee)
 WHERE caller.qualified_name STARTS WITH $project_prefix
 RETURN {_CALLER_ROW}"""
-CYPHER_GRAPH_CALLEES = f"""MATCH (caller:{_GRAPH_DEFINITION_LABELS} {{qualified_name: $qn}})
+CYPHER_GRAPH_CALLEES = f"""MATCH (caller {{qualified_name: $qn}})
+WHERE {_any_label("caller", _GRAPH_DEFINITION_LABELS)}
 MATCH (caller)-[r:CALLS]->(callee)
 WHERE callee.qualified_name STARTS WITH $project_prefix
 RETURN {_CALLEE_ROW}"""
@@ -1203,12 +1410,14 @@ RETURN {_CALLEE_ROW}"""
 # frontier, and `to_qn` / `from_qn` names the frontier node a row hangs off,
 # so a level is one round trip instead of one per node.
 CYPHER_GRAPH_CALLERS_OF = f"""UNWIND $qns AS qn
-MATCH (callee:{_GRAPH_DEFINITION_LABELS} {{qualified_name: qn}})
+MATCH (callee {{qualified_name: qn}})
+WHERE {_any_label("callee", _GRAPH_DEFINITION_LABELS)}
 MATCH (caller)-[r:CALLS]->(callee)
 WHERE caller.qualified_name STARTS WITH $project_prefix
 RETURN callee.qualified_name AS to_qn, {_CALLER_ROW}"""
 CYPHER_GRAPH_CALLEES_OF = f"""UNWIND $qns AS qn
-MATCH (caller:{_GRAPH_DEFINITION_LABELS} {{qualified_name: qn}})
+MATCH (caller {{qualified_name: qn}})
+WHERE {_any_label("caller", _GRAPH_DEFINITION_LABELS)}
 MATCH (caller)-[r:CALLS]->(callee)
 WHERE callee.qualified_name STARTS WITH $project_prefix
 RETURN caller.qualified_name AS from_qn, {_CALLEE_ROW}"""
@@ -1227,9 +1436,10 @@ WHERE h.qualified_name STARTS WITH $project_prefix
 OPTIONAL MATCH (c)-[:READS_FROM|WRITES_TO]->(n:Resource)-[:RESOLVES_TO]->(e)
 WITH h, e, count(DISTINCT c) AS resolved
 OPTIONAL MATCH (d)-[:READS_FROM|WRITES_TO]->(e)
+WITH h, e, resolved, count(DISTINCT d) AS direct
 RETURN e.name AS endpoint, e.kind AS kind, labels(h)[0] AS label,
        h.qualified_name AS handler, h.path AS path,
-       resolved + count(DISTINCT d) AS callers
+       resolved + direct AS callers
 ORDER BY endpoint, handler"""
 # `$qn` names the handler or the endpoint identity (`GET /users/{id}`).
 CYPHER_GRAPH_ENDPOINT_CALLERS = """MATCH (h)-[:EXPOSES]->(e:Resource)
@@ -1257,14 +1467,18 @@ RETURN labels(c)[0] AS label, c.qualified_name AS qualified_name, c.path AS path
        h.qualified_name AS handler, e.project AS handler_project
 ORDER BY qualified_name, url, handler"""
 # The dead-code walk's view of the same joins: per exposing handler, how many
-# call sites reach its resource (through RESOLVES_TO, or directly).
+# call sites reach its resource (through RESOLVES_TO, or directly). Each
+# count is finished in its own WITH: `resolved + count(DISTINCT d)` in one
+# RETURN mixes a variable with an aggregate, which Neo4j 5 rejects as an
+# ambiguous aggregation (Memgraph accepts it).
 CYPHER_DEAD_CODE_ENDPOINT_LINKS = """MATCH (h)-[:EXPOSES]->(e:Resource)
 WHERE h.qualified_name STARTS WITH $project_prefix
 OPTIONAL MATCH (c)-[:READS_FROM|WRITES_TO]->(n:Resource)-[:RESOLVES_TO]->(e)
 WITH h, e, count(DISTINCT c) AS resolved
 OPTIONAL MATCH (d)-[:READS_FROM|WRITES_TO]->(e)
+WITH h, e, resolved, count(DISTINCT d) AS direct
 RETURN h.qualified_name AS handler, e.name AS endpoint,
-       resolved + count(DISTINCT d) AS callers"""
+       resolved + direct AS callers"""
 CYPHER_GRAPH_IMPLEMENTORS = """MATCH (impl)-[r:INHERITS|IMPLEMENTS]->(base)
 WHERE base.qualified_name = $qn AND impl.qualified_name STARTS WITH $project_prefix
 RETURN labels(impl)[0] AS label, impl.qualified_name AS qualified_name,
@@ -1311,14 +1525,14 @@ _QUALIFIED_NAME_LABELS = "|".join(
         if key == UniqueKeyType.QUALIFIED_NAME
     )
 )
-CYPHER_GRAPH_NODE_EXISTS = f"""MATCH (n:{_QUALIFIED_NAME_LABELS})
-WHERE n.qualified_name = $qn
+CYPHER_GRAPH_NODE_EXISTS = f"""MATCH (n)
+WHERE {_any_label("n", _QUALIFIED_NAME_LABELS)} AND n.qualified_name = $qn
 RETURN n.qualified_name AS qualified_name
 LIMIT 1"""
 # The definitions under one dotted parent, which a name mistyped in its last
 # part is closest to.
-CYPHER_GRAPH_DEFINITIONS_UNDER = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
-WHERE n.qualified_name STARTS WITH $project_prefix
+CYPHER_GRAPH_DEFINITIONS_UNDER = f"""MATCH (n)
+WHERE {_any_label("n", _GRAPH_DEFINITION_LABELS)} AND n.qualified_name STARTS WITH $project_prefix
 RETURN n.qualified_name AS qualified_name"""
 # Structural delta after a write (issue #1525): the touched files' definitions
 # with the properties the delta compares, every call/reference site touching
@@ -1340,8 +1554,8 @@ _DELTA_DEFINITION_FIELDS = """RETURN labels(n)[0] AS label, n.qualified_name AS 
        n.ast_fingerprint AS ast_fingerprint,
        n.ast_fingerprint_nodes AS ast_fingerprint_nodes,
        n.ast_branch_fingerprints AS ast_branch_fingerprints"""
-CYPHER_DELTA_DEFINITIONS = f"""MATCH (n:{_DELTA_DEFINITION_LABELS})
-WHERE n.qualified_name STARTS WITH $project_prefix
+CYPHER_DELTA_DEFINITIONS = f"""MATCH (n)
+WHERE {_any_label("n", _DELTA_DEFINITION_LABELS)} AND n.qualified_name STARTS WITH $project_prefix
   AND ALL(longer_project IN $longer_project_prefixes
           WHERE n.qualified_name <> longer_project
             AND NOT n.qualified_name STARTS WITH (longer_project + '.'))
@@ -1353,8 +1567,8 @@ WHERE n.qualified_name STARTS WITH $project_prefix
 # is not prefix-scoped, so an unresolved or external target name can reach
 # this lookup, and a shared graph holding several projects would otherwise
 # let a same-named definition from another project decide the arity verdict.
-CYPHER_DELTA_DEFINITIONS_BY_QN = f"""MATCH (n:{_DELTA_DEFINITION_LABELS})
-WHERE n.qualified_name IN $qns
+CYPHER_DELTA_DEFINITIONS_BY_QN = f"""MATCH (n)
+WHERE {_any_label("n", _DELTA_DEFINITION_LABELS)} AND n.qualified_name IN $qns
   AND n.qualified_name STARTS WITH $project_prefix
   AND ALL(longer_project IN $longer_project_prefixes
           WHERE n.qualified_name <> longer_project
@@ -1413,8 +1627,8 @@ RETURN labels(m)[0] AS label, m.qualified_name AS qualified_name, m.name AS name
        m.path AS path, m.decorators AS decorators,
        m.rust_cfg_test_mods AS rust_cfg_test_mods,
        m.rust_ungated_mods AS rust_ungated_mods"""
-CYPHER_DELTA_RUST_TEST_FNS = """MATCH (n:Function|Method)
-WHERE n.qualified_name STARTS WITH $project_prefix
+CYPHER_DELTA_RUST_TEST_FNS = """MATCH (n)
+WHERE (n:Function OR n:Method) AND n.qualified_name STARTS WITH $project_prefix
   AND ALL(longer_project IN $longer_project_prefixes
           WHERE n.qualified_name <> longer_project
             AND NOT n.qualified_name STARTS WITH (longer_project + '.'))
@@ -1533,8 +1747,9 @@ RETURN labels(c)[0] AS label, c.qualified_name AS qualified_name,
 # path-only match would take the sibling project's findings with it
 # (greptile-local, #1718). A finding's qualified name starts with its
 # module qn, so the prefix test applies unchanged.
-CYPHER_CHECK_DELETE_FINDINGS = f"""MATCH (n:{NodeLabel.CODE_SMELL.value}|{NodeLabel.SECURITY_ISSUE.value}|{NodeLabel.PATTERN.value})
-WHERE n.path IN $paths AND NOT n.qualified_name IN $keep
+CYPHER_CHECK_DELETE_FINDINGS = f"""MATCH (n)
+WHERE (n:{NodeLabel.CODE_SMELL.value} OR n:{NodeLabel.SECURITY_ISSUE.value} OR n:{NodeLabel.PATTERN.value})
+  AND n.path IN $paths AND NOT n.qualified_name IN $keep
   AND (n.qualified_name = $project_name
        OR n.qualified_name STARTS WITH $project_prefix)
 DETACH DELETE n"""
