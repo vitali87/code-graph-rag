@@ -97,6 +97,9 @@ _DIRECTION_REL = {
 _LEAN_ASSIGNMENT_TYPES = frozenset(
     {cs.TS_ASSIGNMENT_EXPRESSION, cs.TS_GO_ASSIGNMENT_STATEMENT}
 )
+_DART_BINDING_TYPES = frozenset(
+    {cs.TS_DART_INITIALIZED_VARIABLE_DEFINITION, cs.TS_DART_ASSIGNMENT_EXPRESSION}
+)
 
 
 def _pattern_children(node: Node, descriptor: LanguageDescriptor) -> list[Node]:
@@ -1877,7 +1880,13 @@ class IOAccessProcessor:
         if lean_handles.type_ctors and node.type == cs.TS_CPP_DECLARATION:
             self._bind_type_decl_handle(node, descriptor, lean_handles)
             return
-        if node.type == cs.TS_DART_INITIALIZED_VARIABLE_DEFINITION:
+        # A Dart assignment shares its node type with the other grammars', but
+        # its value is a flat sibling chain the generic pairing cannot read,
+        # so `f = File('b')` left `f` on its first file (#2761 review).
+        if (
+            node.type in _DART_BINDING_TYPES
+            and descriptor.declarator_type == cs.TS_DART_INITIALIZED_VARIABLE_DEFINITION
+        ):
             self._bind_dart_handle(node, in_scope, import_map, descriptor, lean_handles)
             return
         if (
@@ -1906,7 +1915,16 @@ class IOAccessProcessor:
         name, rhs = dart_binding_name_and_rhs(node)
         if name is None:
             return
+        # `var g = f;` copies f's handle, as the flow walk does (#2761 review).
+        alias = (
+            lean_handles.bindings.get(safe_decode_text(rhs[0]) or "")
+            if len(rhs) == 1 and rhs[0].type == cs.TS_DART_IDENTIFIER
+            else None
+        )
         lean_handles.bindings.pop(name, None)
+        if alias is not None:
+            lean_handles.bindings[name] = alias
+            return
         call = rhs[-1] if rhs else None
         if call is None or call.type != cs.TS_DART_SELECTOR:
             return

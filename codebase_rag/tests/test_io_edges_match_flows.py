@@ -267,3 +267,59 @@ def test_look_alikes_are_not_io(dart_php: _Edges) -> None:
         dart_php
     )
     assert not any(src.startswith("leak") for src, _rel, _dst in dart_php), dart_php
+
+
+_DART_HANDLES = """\
+import 'dart:io';
+import 'package:http/http.dart' as http;
+
+void reassigned() {
+  var f = File('a.txt');
+  f = File('b.txt');
+  f.writeAsStringSync(Platform.environment['K']!);
+}
+
+void copied() {
+  var f = File('out.txt');
+  var g = f;
+  g.writeAsStringSync(Platform.environment['K']!);
+}
+
+void posted(String endpoint) {
+  http.post(Uri.parse(endpoint), body: 'payload');
+}
+"""
+
+
+@pytest.fixture(scope="module")
+def dart_handles(tmp_path_factory: pytest.TempPathFactory) -> _Edges:
+    if "dart" not in load_parsers()[0]:
+        pytest.skip("dart parser not available")
+    root = tmp_path_factory.mktemp("io2761h") / "app"
+    return _index(root, {"handles.dart": _DART_HANDLES})
+
+
+@pytest.mark.parametrize(
+    ("caller", "target"),
+    [
+        # A reassignment rebinds the handle and a copy keeps it, in the I/O
+        # walk as in the flow walk (#2761 review).
+        ("reassigned", "resource::FILE::b.txt"),
+        ("copied", "resource::FILE::out.txt"),
+    ],
+)
+def test_dart_handles_follow_rebinds_and_copies(
+    dart_handles: _Edges, caller: str, target: str
+) -> None:
+    assert _io(dart_handles, caller) == {
+        ("READS_FROM", _ENV_K),
+        ("WRITES_TO", target),
+    }, dart_handles
+    assert (_ENV_K, "FLOWS_TO", target) in dart_handles, dart_handles
+
+
+def test_only_the_first_argument_names_a_dart_target(dart_handles: _Edges) -> None:
+    # `body: 'payload'` follows a dynamic URL; it is not the request's target.
+    assert _io(dart_handles, "posted") == {
+        ("WRITES_TO", "resource::NETWORK::<dynamic>")
+    }, dart_handles

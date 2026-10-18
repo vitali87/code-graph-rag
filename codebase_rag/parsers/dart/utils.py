@@ -1010,7 +1010,12 @@ def dart_string_literal(node: Node, dynamic: str) -> str:
 
 
 def dart_first_string_arg(selector: Node, dynamic: str) -> str:
-    """The first string-literal argument of a call selector, else `dynamic`."""
+    """A call selector's first argument when it is a string literal, else
+    `dynamic`.
+
+    Only the first argument names the target: in `http.post(Uri.parse(url),
+    body: 'payload')` the literal is the body, not the URL (#2761 review).
+    """
     arguments = dart_arguments(selector)
     if arguments is None:
         return dynamic
@@ -1024,6 +1029,7 @@ def dart_first_string_arg(selector: Node, dynamic: str) -> str:
         first = chain[0] if chain else None
         if first is not None and first.type == cs.TS_DART_STRING_LITERAL:
             return dart_string_literal(first, dynamic)
+        return dynamic
     return dynamic
 
 
