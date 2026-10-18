@@ -277,19 +277,24 @@ def test_the_local_release_runs_the_check_on_a_supported_python() -> None:
 
 
 def test_the_fuzz_build_installs_the_crate_it_carries() -> None:
-    """ClusterFuzzLite pip-installs the project, so without the crate in the
-    same call pip looks for cgr-graph-rs on PyPI and the build fails before a
-    target is compiled."""
-    build = (REPO_ROOT / ".clusterfuzzlite" / "build.sh").read_text(encoding="utf-8")
-    (install,) = [
-        line
-        for line in build.splitlines()
-        if "pip install" in line and "[treesitter-full]" in line
+    """ClusterFuzzLite installs the lockfile's export, so cgr-graph-rs comes
+    from wherever the lock takes it: locked to PyPI, the build would fuzz the
+    published crate instead of the one under test, or fail before a target is
+    compiled when PyPI has no release of it yet. Locked to the checkout's
+    directory, the export names it as `./rust/cgr_graph_rs`."""
+    (crate,) = [
+        package
+        for package in _toml(REPO_ROOT / "uv.lock")["package"]
+        if package["name"] == DIST_NAME
     ]
-    assert "./rust/cgr_graph_rs" in install
-    assert install.index("./rust/cgr_graph_rs") < install.index("[treesitter-full]")
+    assert crate["source"] == {"directory": "rust/cgr_graph_rs"}
+    build = (REPO_ROOT / ".clusterfuzzlite" / "build.sh").read_text(encoding="utf-8")
+    assert "uv export --frozen" in build
+    assert '-r "$LOCKED_REQUIREMENTS"' in build
     # OSS-Fuzz's sanitizer flags are for fuzz targets, not a dependency.
-    assert "-u RUSTFLAGS" in build
+    installs = build.count("uv pip install")
+    assert installs
+    assert build.count("-u RUSTFLAGS") == installs
 
 
 def test_the_fuzz_image_has_a_checked_rust_toolchain() -> None:
