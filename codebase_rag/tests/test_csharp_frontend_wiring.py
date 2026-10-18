@@ -292,7 +292,9 @@ def test_auto_mode_runs_frontend_when_dotnet_available(
     monkeypatch.setattr(gu.settings, "CSHARP_FRONTEND", cs.CSharpFrontend.AUTO)
     monkeypatch.setattr(csharp_fe, "csharp_frontend_available", lambda: True)
     monkeypatch.setattr(
-        csharp_fe, "run_csharp_frontend", lambda repo_path: _button_facts()
+        csharp_fe,
+        "run_csharp_frontend",
+        lambda repo_path, ignored_dirs: _button_facts(),
     )
 
     ingestor = MagicMock()
