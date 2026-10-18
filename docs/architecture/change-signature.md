@@ -79,9 +79,11 @@ not checked.
 An old parameter fed to a new one of a different name (`times` from `a`)
 is renamed, and the body follows: every bare reference to the old name in
 the function's body becomes the new name, in the definition and in every
-override. An attribute (`obj.a`) and a keyword argument's name (`f(a=a)`
-becomes `f(a=times)`) share the spelling without being the parameter and
-are left alone. A comprehension that reads the parameter follows the
+override. An attribute (`obj.a`), a keyword argument's name (`f(a=a)`
+becomes `f(a=times)`), a class pattern's keyword (`case Point(a=a)` becomes
+`case Point(a=times)`) and the attribute part of a dotted value pattern
+(`case Color.a:`) share the spelling without being the parameter and are
+left alone. A comprehension that reads the parameter follows the
 rename too, since it binds only its own `for` targets.
 
 The rename refuses, with nothing written, when the old name is used inside
