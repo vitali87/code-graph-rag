@@ -15,9 +15,20 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.config import settings
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from evals.cgr_graph import _StatefulIngestor
+
+
+@pytest.fixture(autouse=True)
+def _pin_treesitter(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The default GO_FRONTEND=auto runs go/types wherever its helper builds
+    # with the local Go, and go/types binds what tree-sitter cannot (a method
+    # promoted through an embedded field), so these tree-sitter facts are only
+    # pinned with the frontend pinned too.
+    monkeypatch.setattr(settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+
 
 BOX_GO = (
     "package m\n\n"

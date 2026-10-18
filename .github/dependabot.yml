@@ -49,6 +49,14 @@ updates:
     directory: "/codebase_rag/parsers/go_frontend/gotypes"
     schedule:
       interval: "monthly"
+    # Every x/tools minor release raises its `go` directive to the newest Go,
+    # and taking it raised the helper's with it: the helper builds with
+    # GOTOOLCHAIN=local, so every older Go lost the go/types frontend (issue
+    # #2395). Patch releases still arrive; a minor bump is taken by hand when
+    # the supported Go floor moves.
+    ignore:
+      - dependency-name: "golang.org/x/tools"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
 
   - package-ecosystem: "nuget"
     directory: "/codebase_rag/parsers/csharp_frontend/roslyn"
