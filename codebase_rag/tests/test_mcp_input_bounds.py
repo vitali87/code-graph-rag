@@ -86,6 +86,11 @@ def _schema(registry: MCPToolsRegistry, tool: str) -> dict[str, object]:
             "offset 7 is past the end of web/a.ts (7 lines)",
             id="just-past-the-end",
         ),
+        pytest.param(
+            {"offset": 10**20, "limit": 1},
+            f"offset {10**20} is past the end of web/a.ts (7 lines)",
+            id="past-what-islice-takes",
+        ),
     ],
 )
 async def test_read_file_refuses_an_out_of_range_window(
@@ -127,6 +132,17 @@ async def test_read_file_answers_a_window_inside_the_file(
     assert isinstance(result, str)
     assert not isinstance(result, te.ToolFailure)
     assert result.startswith(header), result
+
+
+async def test_an_offset_into_an_empty_file_is_past_its_end(temp_repo: Path) -> None:
+    # Only its start, offset 0, is inside a file with no lines.
+    registry = _registry(temp_repo)
+    (temp_repo / "empty.ts").write_text("", encoding="utf-8")
+
+    result = await registry.read_file("empty.ts", offset=1, limit=5)
+
+    assert isinstance(result, te.ToolFailure), result
+    assert str(result) == "Error: offset 1 is past the end of empty.ts (0 lines)"
 
 
 async def test_an_empty_file_reads_from_its_start(temp_repo: Path) -> None:

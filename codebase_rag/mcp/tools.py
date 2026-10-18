@@ -87,7 +87,9 @@ def _read_file_slice(
     full_path: Path, start: int, limit: int | None, file_path: str
 ) -> str:
     with open(full_path, encoding=cs.ENCODING_UTF8) as f:
-        skipped_count = sum(1 for _ in itertools.islice(f, start))
+        # islice() refuses a count past sys.maxsize; no file has that many
+        # lines, so the clamped skip reads to the same end.
+        skipped_count = sum(1 for _ in itertools.islice(f, min(start, sys.maxsize)))
 
         if limit is not None:
             sliced_lines = [line for _, line in zip(range(limit), f)]
@@ -98,7 +100,9 @@ def _read_file_slice(
         remaining_lines_count = sum(1 for _ in f)
 
     total_lines = skipped_count + len(sliced_lines) + remaining_lines_count
-    if start >= total_lines > 0:
+    # Offset 0 is the start even of an empty file; any other offset must
+    # land on a line.
+    if start >= total_lines and start > 0:
         return te.failure(
             cs.MCP_READ_PAST_END.format(offset=start, path=file_path, total=total_lines)
         )
