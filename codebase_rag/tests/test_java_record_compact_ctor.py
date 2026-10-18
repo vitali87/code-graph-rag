@@ -200,3 +200,58 @@ def test_super_is_not_a_sibling_delegation(calls: _Calls) -> None:
     # Negative: `super(1)` runs the superclass's constructor, not one of the
     # class's own, so the `this(...)` pass gives it no edge.
     assert not [to for (src, to) in calls if src == "Child.Child()" and "(" in to]
+
+
+_LOCAL_DATE = """\
+package com.acme;
+
+class Date {
+    Date(long millis) {}
+}
+"""
+_CLOCK = """\
+package com.acme;
+
+import java.util.Date;
+
+class Clock {
+    void now() {
+        new Date(5L);
+    }
+}
+"""
+_STAMP = """\
+package com.acme;
+
+class Stamp {
+    void now() {
+        new Date(5L);
+    }
+}
+"""
+
+
+def test_a_single_type_import_shadows_a_same_package_type(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    # `import java.util.Date;` makes `Date` java.util's in Clock, shadowing the
+    # package's own `Date` (JLS 6.4.1), so `new Date(5L)` reaches neither it nor
+    # its constructor; Stamp, with no import, still does.
+    root = tmp_path_factory.mktemp("java2703imp") / "jimp"
+    src = root / "src" / "com" / "acme"
+    src.mkdir(parents=True)
+    for name, text in (
+        ("Date.java", _LOCAL_DATE),
+        ("Clock.java", _CLOCK),
+        ("Stamp.java", _STAMP),
+    ):
+        (src / name).write_text(text, encoding="utf-8")
+    mock = MagicMock()
+    create_and_run_updater(root, mock, skip_if_missing="java")
+    edges = {
+        (_short(str(c.args[0][2])), _short(str(c.args[2][2])))
+        for rel in (cs.RelationshipType.CALLS, cs.RelationshipType.INSTANTIATES)
+        for c in get_relationships(mock, rel)
+    }
+    assert {("Stamp.now()", "Date"), ("Stamp.now()", "Date.Date(long)")} <= edges
+    assert not [to for src_, to in edges if src_ == "Clock.now()"], edges

@@ -2701,6 +2701,13 @@ class CallResolver:
             or cs.SEPARATOR_DOT in call.call_name
         ):
             return None
+        # A single-type import shadows the package's other types (JLS 6.4.1):
+        # `new Date()` under `import java.util.Date;` is java.util's, so it is
+        # left to the import and external-target probes.
+        if call.call_name in (
+            self.import_processor.import_mapping.get(call.module_qn) or {}
+        ):
+            return None
         engine = self.type_inference.java_type_inference
         qn = engine.same_package_type_qn(call.call_name, call.module_qn)
         if qn is None or self.function_registry.get(qn) != NodeType.CLASS:
