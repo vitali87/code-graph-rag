@@ -1306,7 +1306,7 @@ def endpoint_callers(
         )
         if owns(str(row.get(cs.KEY_HANDLER)))
     ]
-    keys = _endpoint_keys(exposed, target)
+    keys = _endpoint_keys(exposed, target, project_name)
     if not keys:
         raise UnknownEndpointError(_unknown_endpoint(exposed, project_name, target))
     rows = {
@@ -1338,7 +1338,9 @@ def _endpoint_caller_key(row: EndpointCallerRow) -> tuple[str, ...]:
     )
 
 
-def _endpoint_keys(exposed: list[ResultRow], target: str) -> list[str]:
+def _endpoint_keys(
+    exposed: list[ResultRow], target: str, project_name: str
+) -> list[str]:
     # The handler or stored identities `target` means: itself when the
     # project exposes it as written, else the routes a `METHOD /path`
     # request reaches, by the same rule that links a client's URL to a
@@ -1346,7 +1348,7 @@ def _endpoint_keys(exposed: list[ResultRow], target: str) -> list[str]:
     # other, so it reaches the route's parameter in whichever syntax that
     # route declares it (`:id`, `<id>`, `<int:id>`).
     from .parsers.endpoint_routes import METHOD_ANY
-    from .parsers.endpoints import url_matches_template
+    from .parsers.endpoints import inferred_route_identities, url_matches_template
 
     handlers = {str(row.get(cs.KEY_HANDLER)) for row in exposed}
     identities = sorted({str(row.get(cs.KEY_ENDPOINT)) for row in exposed})
@@ -1364,7 +1366,9 @@ def _endpoint_keys(exposed: list[ResultRow], target: str) -> list[str]:
             path, template.strip()
         ):
             served.append(identity)
-    return served
+    # A client-facing path behind a proxy prefix or a router mount reaches
+    # the route the linker inferred for it, so the callers it linked answer.
+    return served or inferred_route_identities(path, method, identities, project_name)
 
 
 def _unknown_endpoint(exposed: list[ResultRow], project_name: str, target: str) -> str:

@@ -227,3 +227,79 @@ def test_a_nested_projects_route_is_not_the_projects_own() -> None:
     assert {r["handler"] for r in rows} == {HANDLER}
     with pytest.raises(graph_query.UnknownEndpointError):
         graph_query.endpoint_callers(NestedProjectGraph(), P, NESTED_HANDLER)
+
+
+class RoutesGraph:
+    """`routes` (identity, handler, caller) and the callers the linker joined
+    to each route through a client-facing URL."""
+
+    def __init__(self, routes: list[tuple[str, str, str]]) -> None:
+        self.routes = routes
+
+    def __call__(
+        self, query: str, params: PropertyParams | None = None
+    ) -> list[ResultRow]:
+        params = params or {}
+        if query == cq.CYPHER_GRAPH_EXPOSED_ENDPOINTS:
+            return [{"endpoint": e, "handler": h} for e, h, _c in self.routes]
+        if query == cq.CYPHER_GRAPH_ENDPOINT_CALLERS:
+            return [
+                {
+                    "label": "Function",
+                    "qualified_name": caller,
+                    "path": "client.js",
+                    "url": "/api/whatever",
+                    "direction": "READS_FROM",
+                    "endpoint": endpoint,
+                    "handler": handler,
+                }
+                for endpoint, handler, caller in self.routes
+                if params[cs.KEY_QN] in (endpoint, handler)
+            ]
+        return []
+
+
+_PROXIED = [
+    ("GET /cases", f"{P}.cases.list_cases", "web.client.cases"),
+    ("POST /admin/api/v1/otp/verify", f"{P}.otp.verify", "web.client.otp"),
+]
+
+
+@pytest.mark.parametrize(
+    ("target", "caller"),
+    [
+        ("GET /api/cases", "web.client.cases"),
+        ("POST /api/v1/otp/verify", "web.client.otp"),
+    ],
+    ids=["proxy-lead", "router-mount"],
+)
+def test_a_client_facing_path_finds_the_route_the_linker_inferred(
+    target: str, caller: str
+) -> None:
+    # The linker joins `/api/cases` to `GET /cases` (a proxy lead, #911) and
+    # `/api/v1/otp/verify` to `POST /admin/api/v1/otp/verify` (a mount, #923).
+    rows = graph_query.endpoint_callers(RoutesGraph(_PROXIED), P, target)
+    assert [r["qualified_name"] for r in rows] == [caller]
+
+
+@pytest.mark.parametrize(
+    ("routes", "target"),
+    [
+        (_PROXIED, "POST /api/cases"),
+        (
+            [
+                ("GET /cases", f"{P}.cases.list_cases", "web.client.a"),
+                ("GET /{tenant}/cases", f"{P}.cases.tenant_cases", "web.client.b"),
+            ],
+            "GET /api/t1/cases",
+        ),
+    ],
+    ids=["other-method", "tie"],
+)
+def test_an_inferred_route_keeps_the_linkers_bounds(
+    routes: list[tuple[str, str, str]], target: str
+) -> None:
+    # Negative: the method still has to match, and two different routes
+    # reached by inference are a tie the linker drops, not a guess.
+    with pytest.raises(graph_query.UnknownEndpointError):
+        graph_query.endpoint_callers(RoutesGraph(routes), P, target)
