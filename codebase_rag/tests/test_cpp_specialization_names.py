@@ -60,9 +60,12 @@ def _index(repo: Path, source: str, mock_ingestor: MagicMock) -> str:
 
 
 def _class_names(mock_ingestor: MagicMock) -> dict[str, str]:
+    # A class with typed fields also gets a partial `field_types` row that
+    # MERGEs into its node; only the full row carries the name.
     return {
         c.args[1][cs.KEY_QUALIFIED_NAME]: c.args[1][cs.KEY_NAME]
         for c in get_nodes(mock_ingestor, cs.NodeLabel.CLASS)
+        if cs.KEY_NAME in c.args[1]
     }
 
 
