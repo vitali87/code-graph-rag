@@ -205,6 +205,22 @@ def test_a_file_the_index_excludes_is_not_a_parse_error(temp_repo: Path) -> None
     assert not has_findings(delta)
 
 
+def test_a_cpp_annotation_ingestion_recovers_is_no_parse_error(
+    temp_repo: Path,
+) -> None:
+    # Negative: tree-sitter splits `LOCKS_REQUIRED(mu)` off the method, and
+    # ingestion parses the file with the macro blanked, as a compiler sees
+    # it; a plain parse reported valid C++ as broken.
+    source = (
+        "class Box {\n public:\n  bool Check() const {\n    return true;\n  }\n};\n"
+    )
+    annotated = source.replace("const {", "const LOCKS_REQUIRED(mu) {")
+
+    delta = _edit_and_observe(temp_repo, {"box.cpp": source}, "box.cpp", annotated)
+
+    assert delta["parse_errors"] == []
+
+
 def test_cgr_check_reports_the_parse_error_against_its_git_base(
     temp_repo: Path,
 ) -> None:

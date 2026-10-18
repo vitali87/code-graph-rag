@@ -2140,31 +2140,35 @@ def new_parse_errors(
     grammar does not know) is no finding of this edit; a file with no base
     is held to parsing like any other.
     """
+    # Deferred: the parser package would load at CLI start-up through
+    # editing -> structural_delta (issue #2253).
+    from .parsers.cpp.preproc_recovery import parse_with_preproc_recovery
+
     parsers, _queries = load_parsers()
     errors: list[ParseError] = []
     for path in sorted(set(paths)):
         language = get_language_for_extension(Path(path).suffix)
-        parser = (
-            parsers.get(language)
-            if isinstance(language, cs.SupportedLanguage)
-            else None
-        )
+        if not isinstance(language, cs.SupportedLanguage):
+            continue
+        parser = parsers.get(language)
         if parser is None:
             continue
         try:
             content = (repo_root / path).read_bytes()
         except OSError:
             continue
-        root = parser.parse(
-            grammar_bytes(content, language, repo_root / path)
+        # Parsed as ingestion parses it: a C++ annotation macro or a
+        # conditional directive the plain grammar splits on is recovered.
+        root = parse_with_preproc_recovery(
+            parser, grammar_bytes(content, language, repo_root / path), language
         ).root_node
         if not root.has_error:
             continue
         base = base_source(path)
         if (
             base is not None
-            and parser.parse(
-                grammar_bytes(base, language, repo_root / path)
+            and parse_with_preproc_recovery(
+                parser, grammar_bytes(base, language, repo_root / path), language
             ).root_node.has_error
         ):
             continue
