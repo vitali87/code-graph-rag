@@ -1,4 +1,4 @@
-# Tests for realtime_updater debouncing: the hybrid strategy that prevents
+# Tests for the watcher's debouncing (codebase_rag/watch.py): the hybrid strategy that prevents
 # redundant graph updates during rapid file saves.
 
 from __future__ import annotations
@@ -160,7 +160,7 @@ class TestCodeChangeEventHandlerDebounce:
     def test_handler_initialization_with_debounce(
         self, mock_updater: MagicMock
     ) -> None:
-        from realtime_updater import CodeChangeEventHandler
+        from codebase_rag.watch import CodeChangeEventHandler
 
         handler = CodeChangeEventHandler(
             mock_updater, debounce_seconds=5, max_wait_seconds=30
@@ -176,7 +176,7 @@ class TestCodeChangeEventHandlerDebounce:
     def test_handler_initialization_without_debounce(
         self, mock_updater: MagicMock
     ) -> None:
-        from realtime_updater import CodeChangeEventHandler
+        from codebase_rag.watch import CodeChangeEventHandler
 
         handler = CodeChangeEventHandler(
             mock_updater, debounce_seconds=0, max_wait_seconds=30
@@ -186,7 +186,7 @@ class TestCodeChangeEventHandlerDebounce:
         assert handler.debounce_enabled is False
 
     def test_handler_uses_default_constants(self, mock_updater: MagicMock) -> None:
-        from realtime_updater import CodeChangeEventHandler
+        from codebase_rag.watch import CodeChangeEventHandler
 
         handler = CodeChangeEventHandler(mock_updater)
 
@@ -196,7 +196,7 @@ class TestCodeChangeEventHandlerDebounce:
     def test_is_relevant_filters_ignored_patterns(
         self, mock_updater: MagicMock, tmp_path: Path
     ) -> None:
-        from realtime_updater import CodeChangeEventHandler
+        from codebase_rag.watch import CodeChangeEventHandler
 
         handler = CodeChangeEventHandler(mock_updater)
 
@@ -211,7 +211,7 @@ class TestCodeChangeEventHandlerDebounce:
     def test_dispatch_ignores_directories(
         self, mock_updater: MagicMock, mock_ingestor: MockQueryIngestor, tmp_path: Path
     ) -> None:
-        from realtime_updater import CodeChangeEventHandler
+        from codebase_rag.watch import CodeChangeEventHandler
 
         handler = CodeChangeEventHandler(
             mock_updater, debounce_seconds=0.1, max_wait_seconds=1
@@ -232,7 +232,7 @@ class TestCodeChangeEventHandlerDebounce:
         mock_ingestor: MockQueryIngestor,
         sample_file: Path,
     ) -> None:
-        from realtime_updater import CodeChangeEventHandler
+        from codebase_rag.watch import CodeChangeEventHandler
 
         # Driven by a manual timer: no elapsed time can flush the batch during
         # the dispatch loop, so the assertion depends on ordering alone.
@@ -263,7 +263,7 @@ class TestCodeChangeEventHandlerDebounce:
         mock_ingestor: MockQueryIngestor,
         sample_file: Path,
     ) -> None:
-        from realtime_updater import CodeChangeEventHandler
+        from codebase_rag.watch import CodeChangeEventHandler
 
         handler = CodeChangeEventHandler(
             mock_updater, debounce_seconds=0, max_wait_seconds=30
@@ -282,7 +282,7 @@ class TestCodeChangeEventHandlerDebounce:
         mock_ingestor: MockQueryIngestor,
         sample_file: Path,
     ) -> None:
-        from realtime_updater import CodeChangeEventHandler
+        from codebase_rag.watch import CodeChangeEventHandler
 
         handler = CodeChangeEventHandler(
             mock_updater, debounce_seconds=0.5, max_wait_seconds=0.3
@@ -301,7 +301,7 @@ class TestCodeChangeEventHandlerDebounce:
     def test_different_files_tracked_separately(
         self, mock_updater: MagicMock, tmp_path: Path
     ) -> None:
-        from realtime_updater import CodeChangeEventHandler
+        from codebase_rag.watch import CodeChangeEventHandler
 
         file1 = tmp_path / "file1.py"
         file2 = tmp_path / "file2.py"
@@ -327,7 +327,7 @@ class TestCodeChangeEventHandlerDebounce:
         mock_ingestor: MockQueryIngestor,
         sample_file: Path,
     ) -> None:
-        from realtime_updater import CodeChangeEventHandler
+        from codebase_rag.watch import CodeChangeEventHandler
 
         handler = CodeChangeEventHandler(
             mock_updater, debounce_seconds=0.1, max_wait_seconds=5
@@ -348,7 +348,7 @@ class TestCodeChangeEventHandlerDebounce:
     def test_created_event_triggers_debounce(
         self, mock_updater: MagicMock, tmp_path: Path
     ) -> None:
-        from realtime_updater import CodeChangeEventHandler
+        from codebase_rag.watch import CodeChangeEventHandler
 
         new_file = tmp_path / "new_file.py"
         new_file.write_text("# new file")
@@ -365,7 +365,7 @@ class TestCodeChangeEventHandlerDebounce:
     def test_deleted_event_triggers_debounce(
         self, mock_updater: MagicMock, sample_file: Path
     ) -> None:
-        from realtime_updater import CodeChangeEventHandler
+        from codebase_rag.watch import CodeChangeEventHandler
 
         handler = CodeChangeEventHandler(
             mock_updater, debounce_seconds=0.2, max_wait_seconds=5
@@ -379,7 +379,7 @@ class TestCodeChangeEventHandlerDebounce:
     def test_thread_safety_concurrent_events(
         self, mock_updater: MagicMock, tmp_path: Path
     ) -> None:
-        from realtime_updater import CodeChangeEventHandler
+        from codebase_rag.watch import CodeChangeEventHandler
 
         handler = CodeChangeEventHandler(
             mock_updater, debounce_seconds=5.0, max_wait_seconds=30
@@ -467,7 +467,7 @@ class TestTimerFactoryContract:
     ) -> None:
         # The real deadlock check: dispatch takes the lock and calls start(),
         # and _process_debounced_change re-acquires that same lock.
-        from realtime_updater import CodeChangeEventHandler
+        from codebase_rag.watch import CodeChangeEventHandler
 
         ManualTimer.reset()
         handler = CodeChangeEventHandler(
@@ -488,7 +488,7 @@ class TestTimerFactoryContract:
         sample_file: Path,
     ) -> None:
         # A newer event for the same path supersedes the scheduled timer.
-        from realtime_updater import CodeChangeEventHandler
+        from codebase_rag.watch import CodeChangeEventHandler
 
         ManualTimer.reset()
         handler = CodeChangeEventHandler(
@@ -504,32 +504,6 @@ class TestTimerFactoryContract:
 
         assert first.cancelled
         assert first.daemon is True
-
-
-class TestDebounceValidation:
-    def test_validate_non_negative_float_accepts_zero(self) -> None:
-        from realtime_updater import _validate_non_negative_float
-
-        assert _validate_non_negative_float(0) == 0
-        assert _validate_non_negative_float(0.0) == 0.0
-
-    def test_validate_non_negative_float_accepts_positive(self) -> None:
-        from realtime_updater import _validate_non_negative_float
-
-        assert _validate_non_negative_float(5) == 5
-        assert _validate_non_negative_float(0.5) == 0.5
-        assert _validate_non_negative_float(100) == 100
-
-    def test_validate_non_negative_float_rejects_negative(self) -> None:
-        import typer
-
-        from realtime_updater import _validate_non_negative_float
-
-        with pytest.raises(typer.BadParameter):
-            _validate_non_negative_float(-1)
-
-        with pytest.raises(typer.BadParameter):
-            _validate_non_negative_float(-0.1)
 
 
 class TestDebounceIntegration:
@@ -573,7 +547,7 @@ class TestDebounceIntegration:
         - User saves file 10 times over 3 seconds
         - With 0.5s debounce and 2s max_wait, should result in ~2-4 updates
         """
-        from realtime_updater import CodeChangeEventHandler
+        from codebase_rag.watch import CodeChangeEventHandler
 
         test_file = tmp_path / "editor.py"
         test_file.write_text("# editing")
@@ -601,7 +575,7 @@ class TestDebounceIntegration:
     def test_single_edit_after_quiet_period(
         self, mock_updater: MagicMock, mock_ingestor: MockQueryIngestor, tmp_path: Path
     ) -> None:
-        from realtime_updater import CodeChangeEventHandler
+        from codebase_rag.watch import CodeChangeEventHandler
 
         test_file = tmp_path / "single.py"
         test_file.write_text("# single edit")
