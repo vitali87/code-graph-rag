@@ -675,14 +675,26 @@ def _dangling(
             renamed_to=new_name,
         )
         if site.caller_path in after.paths:
-            if site.caller_path not in rows:
-                text = _read_source(repo_root, site.caller_path) if repo_root else None
-                rows[site.caller_path] = None if text is None else text.split("\n")
-            _move_to_working_tree(dangling, before, after, rows[site.caller_path])
+            _move_to_working_tree(
+                dangling,
+                before,
+                after,
+                _working_tree_rows(rows, repo_root, site.caller_path),
+            )
         out.append(dangling)
     return sorted(
         out, key=lambda d: (d["path"], d["line"] or 0, d["col"] or 0, d["caller"])
     )
+
+
+def _working_tree_rows(
+    rows: dict[str, list[str] | None], repo_root: Path | None, path: str
+) -> list[str] | None:
+    # Several dangling calls can share a caller's file: it is read once.
+    if path not in rows:
+        text = _read_source(repo_root, path) if repo_root else None
+        rows[path] = None if text is None else text.split("\n")
+    return rows[path]
 
 
 def _move_to_working_tree(
