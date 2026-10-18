@@ -37,6 +37,12 @@ def python_literal_type(
     builtin = types.get(node.type)
     if builtin != cs.PY_TYPE_STR:
         return builtin
+    return _string_literal_type(node)
+
+
+def _string_literal_type(node: Node) -> str:
+    """`bytes` when the string's prefix (a concatenation's first part's) says
+    so, else `str`."""
     first = (
         node.named_children[0]
         if node.type == cs.TS_PY_CONCATENATED_STRING and node.named_children
