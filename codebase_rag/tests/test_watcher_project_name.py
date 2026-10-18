@@ -4,28 +4,29 @@
 but `python realtime_updater.py shop` built its updater without a name, so it
 fell back to the bare directory, `shop`. One checkout became two projects with
 the same root_path, every live update went into the one nobody queries, and
-the two writers kept overwriting each other's sync state.
+the two writers kept overwriting each other's sync state. The watcher is
+`cgr watch` now (issue #2433), resolving the name through `cgr start`'s path.
 """
 
 from __future__ import annotations
 
 import time
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import click
 import pytest
-import typer
 from click.testing import Result
 from typer.testing import CliRunner
 
-import realtime_updater
+from codebase_rag import watch
 from codebase_rag.cli import app
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.utils.path_utils import derive_project_name
-from realtime_updater import CodeChangeEventHandler
+from codebase_rag.watch import CodeChangeEventHandler
 
 runner = CliRunner()
 
@@ -58,17 +59,16 @@ def scans(monkeypatch: pytest.MonkeyPatch) -> list[GraphUpdater]:
 @pytest.fixture
 def observer(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     """Let the watcher scan, schedule its handler, then stop at the first sleep."""
-    monkeypatch.setattr(realtime_updater, "MemgraphIngestor", MagicMock())
-    observer_cls = MagicMock()
-    monkeypatch.setattr(realtime_updater, "Observer", observer_cls)
     monkeypatch.setattr(
-        realtime_updater,
+        watch, "connect_memgraph", lambda batch_size: nullcontext(MagicMock())
+    )
+    observer_cls = MagicMock()
+    monkeypatch.setattr(watch, "Observer", observer_cls)
+    monkeypatch.setattr(
+        watch,
         "time",
         SimpleNamespace(sleep=_stop_at_first_sleep, time=time.time),
     )
-    # `main` replaces every loguru sink with its own stdout one; the suite's
-    # sinks have to survive this test.
-    monkeypatch.setattr(realtime_updater, "logger", MagicMock())
     return observer_cls.return_value
 
 
@@ -76,10 +76,8 @@ def _handler(observer: MagicMock) -> CodeChangeEventHandler:
     return observer.schedule.call_args.args[0]
 
 
-def _watch(*args: str) -> Result:
-    watch_cli = typer.Typer()
-    watch_cli.command()(realtime_updater.main)
-    return runner.invoke(watch_cli, list(args))
+def _watch(path: str, *args: str) -> Result:
+    return runner.invoke(app, ["watch", "--repo-path", path, "--no-start-stack", *args])
 
 
 def _cgr_start(repo: Path, *extra: str) -> Result:
@@ -139,10 +137,9 @@ def test_two_checkouts_with_one_directory_name_stay_two_projects(
         repo.mkdir(parents=True)
         (repo / "app.py").write_text("def handler():\n    return 1\n")
 
-    # The programmatic entry point, with the positional arguments it has
-    # always taken.
-    realtime_updater.start_watcher(str(first), "localhost", 7687, None, 0.0, 0.0)
-    realtime_updater.start_watcher(str(second), "localhost", 7687, None, 0.0, 0.0)
+    for repo in (first, second):
+        watched = _watch(str(repo), "--debounce", "0")
+        assert watched.exit_code == 0, watched.output
 
     names = [scan.project_name for scan in scans]
     assert names == [derive_project_name(first), derive_project_name(second)]

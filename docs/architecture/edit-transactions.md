@@ -51,18 +51,28 @@ outcome.files  # repo-relative paths, sorted
   temp sibling and `os.replace` and records the history entry, holding the
   originals so a failure anywhere after the first write (a later file, the
   history record) restores what already landed. Commits to one repo
-  serialise on an OS-level lock (`.cgr-edit-lock`), so a `cgr edits undo`
-  in another process queues behind an agent's commit. On a rejected
-  verification the working tree is byte-identical to before.
+  serialise on an OS-level lock (`.cgr-edit-lock` in the checkout's state
+  directory), so a `cgr edits undo` in another process queues behind an
+  agent's commit. While a `.cgr-edit-lock` an older cgr left in the
+  checkout root is there, it is taken as well, so an older cgr still
+  running against the tree is excluded too. An older cgr that creates that
+  file while a commit verifies is waited for before the commit writes, and
+  the commit refuses (`TransactionConflict`) if it changed a staged file.
+  On a rejected verification the working tree is byte-identical to before.
 - **Rollback** discards the overlay. `with transaction(root) as tx:` rolls
   back on an exception.
 
 ## History, show and undo
 
-Every applied transaction is appended to `.cgr-edit-history.json` at the
-repo root (one of the `CGR_STATE_FILENAMES`, so it is never indexed): the
-id, timestamp, each file's before/after bytes and the verification outcome.
-The file keeps the last 50 transactions.
+Every applied transaction is appended to `.cgr-edit-history.json` in the
+checkout's state directory under `CGR_HOME`, outside the working tree (see
+[cgr's own state](../advanced/ignore-patterns.md#cgrs-own-state)): the id,
+timestamp, each file's before/after bytes and the verification outcome.
+The file keeps the last 50 transactions. An older cgr still running records
+its edits in a history at the checkout root instead; the next sync or edit
+adds those entries to this one, so `cgr edits undo` reverses them too, and
+an edit refuses to commit while they cannot be added, so that its entry
+never goes before theirs.
 
 ```bash
 cgr edits show            # newest first; --diff prints each patch set
