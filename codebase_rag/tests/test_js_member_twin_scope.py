@@ -188,3 +188,37 @@ def test_an_incremental_sync_keeps_the_prototype_twins(temp_repo: Path) -> None:
     assert after.get("use.run") == {"store.Store.get"}, after
     assert {"view.View.lookup", "view.lookup"} <= after.get("caller.make", set())
     assert after.get("caller.make") == clean.get("caller.make"), (after, clean)
+
+
+def test_an_incremental_sync_keeps_one_line_methods_apart(temp_repo: Path) -> None:
+    # `A.get` and `B.get` written on one line share path, lines and leaf name,
+    # only their columns differ; rehydrating the unchanged file must not pair
+    # them, or `a.get()` also calls `B.get` after the caller is edited (#3174
+    # review).
+    parsers, queries = load_parsers()
+    if "typescript" not in parsers:
+        pytest.skip("typescript parser not available")
+    oneline = (
+        "export class A { get(): number { return 1; } } "
+        "export class B { get(): number { return 2; } }\n"
+    )
+    caller = 'import { A } from "./oneline";\nexport function viaA(a: A): number { return a.get(); }\n'
+    (temp_repo / "src").mkdir(parents=True, exist_ok=True)
+    (temp_repo / "src/oneline.ts").write_text(oneline, encoding="utf-8")
+    (temp_repo / "src/oneuse.ts").write_text(caller, encoding="utf-8")
+
+    def sync(store: _StatefulIngestor, force: bool) -> set[str]:
+        GraphUpdater(
+            ingestor=store, repo_path=temp_repo, parsers=parsers, queries=queries
+        ).run(force=force)
+        return {
+            _short(str(target))
+            for _, source, rel, _, target in store.edges
+            if rel == cs.RelationshipType.CALLS.value
+            and _short(str(source)) == "oneuse.viaA"
+        }
+
+    store = _StatefulIngestor()
+    assert sync(store, force=True) == {"oneline.A.get"}
+    (temp_repo / "src/oneuse.ts").write_text(caller + "// touched\n", encoding="utf-8")
+    assert sync(store, force=False) == {"oneline.A.get"}

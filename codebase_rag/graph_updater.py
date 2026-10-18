@@ -4057,22 +4057,29 @@ class GraphUpdater:
 
         Only parsing marks `View.prototype.lookup = function lookup()` as one
         definition with two names, and the call fan-out to the twin needs that
-        mark (issue #3174). Both nodes span the same lines of the same file
-        under the same leaf name, which no two separate definitions do.
+        mark (issue #3174). Both nodes start at the same line and column of
+        the same file and end on the same line, under the same leaf name,
+        which no two separate definitions do: `class A { get() {} } class B
+        { get() {} }` on one line differ only by column (#3174 review). A row
+        without a column (written before it was recorded) pairs nothing.
         """
-        spans: defaultdict[tuple[str, int, int, str], list[str]] = defaultdict(list)
+        spans: defaultdict[tuple[str, int, int, int, str], list[str]] = defaultdict(
+            list
+        )
         for row in rows:
             qn, path = row.get(cs.KEY_QUALIFIED_NAME), row.get(cs.KEY_PATH)
             start, end = row.get(cs.KEY_START_LINE), row.get(cs.KEY_END_LINE)
+            col = row.get(cs.KEY_START_COL)
             if (
                 row.get(cs.KEY_LABEL) in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD)
                 and isinstance(qn, str)
                 and isinstance(path, str)
                 and isinstance(start, int)
                 and isinstance(end, int)
+                and isinstance(col, int)
             ):
                 leaf = qn.rpartition(cs.SEPARATOR_DOT)[2]
-                spans[(path, start, end, leaf)].append(qn)
+                spans[(path, start, col, end, leaf)].append(qn)
         for qns in spans.values():
             for first, second in itertools.combinations(qns, 2):
                 self.function_registry.mark_same_definition(first, second)
