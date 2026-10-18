@@ -27,6 +27,14 @@ if TYPE_CHECKING:
 
 pytestmark = [pytest.mark.integration]
 
+
+# The embedded engine is the default backend, and the project delete's
+# flow cleanup must compile there too.
+@pytest.fixture(params=["memgraph_ingestor", "sqlite_ingestor"])
+def ingestor(request: pytest.FixtureRequest) -> MemgraphIngestor:
+    return request.getfixturevalue(request.param)
+
+
 TOKEN = "resource::ENV::BILLING_TOKEN"
 STDOUT = "resource::STDOUT::<dynamic>"
 
@@ -86,113 +94,113 @@ def _token_flows(ingestor: MemgraphIngestor) -> list[tuple[str, str | None]]:
 
 
 def test_a_fixed_leak_loses_its_flow_on_an_incremental_reindex(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
     root = _write(tmp_path / "billing", {"app.py": LEAK})
-    _index(memgraph_ingestor, root, "billing", force=True)
-    assert [dst for dst, _ in _token_flows(memgraph_ingestor)] == [STDOUT]
+    _index(ingestor, root, "billing", force=True)
+    assert [dst for dst, _ in _token_flows(ingestor)] == [STDOUT]
 
     _write(root, {"app.py": FIXED})
-    _index(memgraph_ingestor, root, "billing")
+    _index(ingestor, root, "billing")
 
-    assert _token_flows(memgraph_ingestor) == []
+    assert _token_flows(ingestor) == []
 
 
 def test_a_full_rebuild_drops_a_fixed_leak(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
     root = _write(tmp_path / "billing", {"app.py": LEAK})
-    _index(memgraph_ingestor, root, "billing", force=True)
+    _index(ingestor, root, "billing", force=True)
 
     _write(root, {"app.py": FIXED})
-    _index(memgraph_ingestor, root, "billing", force=True)
+    _index(ingestor, root, "billing", force=True)
 
-    assert _token_flows(memgraph_ingestor) == []
+    assert _token_flows(ingestor) == []
 
 
 def test_deleting_the_project_drops_its_flow_while_stdout_stays_anchored(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
     _index(
-        memgraph_ingestor,
+        ingestor,
         _write(tmp_path / "other", {"main.py": PRINTER}),
         "other",
         force=True,
     )
     _index(
-        memgraph_ingestor,
+        ingestor,
         _write(tmp_path / "billing", {"app.py": LEAK}),
         "billing",
         force=True,
     )
 
-    memgraph_ingestor.delete_project("billing")
+    ingestor.delete_project("billing")
 
-    assert _token_flows(memgraph_ingestor) == []
+    assert _token_flows(ingestor) == []
 
 
 def test_each_function_owns_its_own_flow(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
     root = _write(tmp_path / "billing", {"app.py": TWO_LEAKS})
-    _index(memgraph_ingestor, root, "billing", force=True)
+    _index(ingestor, root, "billing", force=True)
 
-    assert _token_flows(memgraph_ingestor) == [
+    assert _token_flows(ingestor) == [
         (STDOUT, "billing.app.audit"),
         (STDOUT, "billing.app.show_config"),
     ]
 
 
 def test_removing_one_of_two_leaks_keeps_the_other(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
     root = _write(tmp_path / "billing", {"app.py": TWO_LEAKS})
-    _index(memgraph_ingestor, root, "billing", force=True)
+    _index(ingestor, root, "billing", force=True)
 
     _write(root, {"app.py": TWO_LEAKS.replace("print(token)", "print(1)")})
-    _index(memgraph_ingestor, root, "billing")
+    _index(ingestor, root, "billing")
 
-    assert _token_flows(memgraph_ingestor) == [(STDOUT, "billing.app.audit")]
+    assert _token_flows(ingestor) == [(STDOUT, "billing.app.audit")]
 
 
 # Negative: what must not change.
 
 
 def test_a_leak_still_in_the_code_survives_a_reindex_of_its_file(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
     root = _write(tmp_path / "billing", {"app.py": LEAK})
-    _index(memgraph_ingestor, root, "billing", force=True)
+    _index(ingestor, root, "billing", force=True)
 
     _write(root, {"app.py": LEAK + "\n\ndef unrelated():\n    return 1\n"})
-    _index(memgraph_ingestor, root, "billing")
+    _index(ingestor, root, "billing")
 
-    assert [dst for dst, _ in _token_flows(memgraph_ingestor)] == [STDOUT]
+    assert [dst for dst, _ in _token_flows(ingestor)] == [STDOUT]
 
 
 def test_reindexing_another_file_keeps_the_leak(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
     root = _write(tmp_path / "billing", {"app.py": LEAK, "util.py": PRINTER})
-    _index(memgraph_ingestor, root, "billing", force=True)
+    _index(ingestor, root, "billing", force=True)
 
     _write(root, {"util.py": PRINTER + "\n\ndef more():\n    return 2\n"})
-    _index(memgraph_ingestor, root, "billing")
+    _index(ingestor, root, "billing")
 
-    assert [dst for dst, _ in _token_flows(memgraph_ingestor)] == [STDOUT]
+    assert [dst for dst, _ in _token_flows(ingestor)] == [STDOUT]
 
 
 def test_deleting_one_project_keeps_another_projects_same_leak(
-    memgraph_ingestor: MemgraphIngestor, tmp_path: Path
+    ingestor: MemgraphIngestor, tmp_path: Path
 ) -> None:
     for project in ("billing", "payroll"):
         _index(
-            memgraph_ingestor,
+            ingestor,
             _write(tmp_path / project, {"app.py": LEAK}),
             project,
             force=True,
         )
 
-    memgraph_ingestor.delete_project("billing")
+    ingestor.delete_project("billing")
 
-    assert [dst for dst, _ in _token_flows(memgraph_ingestor)] == [STDOUT]
+    assert [dst for dst, _ in _token_flows(ingestor)] == [STDOUT]
