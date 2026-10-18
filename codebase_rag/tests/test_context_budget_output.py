@@ -243,3 +243,19 @@ def test_a_neighbourhood_that_fits_omits_nothing(temp_repo: Path) -> None:
         cs.CONTEXT_WHY_TARGET,
         cs.CONTEXT_WHY_CALLER,
     }
+
+
+def test_a_piece_is_charged_for_the_count_it_prints(temp_repo: Path) -> None:
+    # A piece was measured with `tokens: 0` and printed with its own count,
+    # and a count of four digits prints in more tokens than "0" does.
+    body = "class Big:\n" + "".join(
+        f"    def m{i}(self, x):\n        return x * {i}\n\n" for i in range(150)
+    )
+    store = _repo(temp_repo, {"big.py": body})
+
+    slice_ = context(store.fetch_all, PROJECT, f"{PROJECT}.big.Big", 10_000, temp_repo)
+
+    (target,) = slice_["pieces"]
+    assert target["tokens"] >= 1000
+    printed = count_tokens(json.dumps(target, indent=cs.MCP_JSON_INDENT))
+    assert printed == target["tokens"]

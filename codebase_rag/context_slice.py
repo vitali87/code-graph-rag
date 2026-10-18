@@ -432,7 +432,13 @@ def _piece_tokens(
         source=source,
         tokens=0,
     )
-    return count_tokens(json.dumps(piece, indent=cs.MCP_JSON_INDENT))
+    # The piece prints with its own count where it was measured with 0, and
+    # a count of four digits takes more tokens than "0" does: measure again
+    # with the count in place until it stops growing.
+    printed = partial(json.dumps, piece, indent=cs.MCP_JSON_INDENT)
+    while (cost := count_tokens(printed())) > piece["tokens"]:
+        piece["tokens"] = cost
+    return piece["tokens"]
 
 
 class _Fitted(NamedTuple):
