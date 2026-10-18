@@ -19,8 +19,8 @@ from loguru import logger
 from .. import constants as cs
 from ..cypher_queries import (
     CYPHER_TRACE_CALLABLES,
-    CYPHER_TRACE_CONFIRM_CALLS,
     CYPHER_TRACE_EXISTING_CALLS,
+    build_trace_confirm_calls_query,
 )
 from ..services import IngestorProtocol, QueryProtocol
 from .dispatch_site import locate_dispatch_literal
@@ -300,7 +300,7 @@ def _confirm_static(
     the trace decoration merges onto the site-less carrier as before."""
     properties[cs.KEY_RESOLUTION] = cs.EdgeResolution.TRACE_CONFIRMED
     ingestor.execute_write(
-        CYPHER_TRACE_CONFIRM_CALLS,
+        build_trace_confirm_calls_query(caller.label, callee.label),
         {
             cs.KEY_FROM_QN: caller.qualified_name,
             cs.KEY_TO_QN: callee.qualified_name,

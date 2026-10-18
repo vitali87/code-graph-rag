@@ -570,7 +570,7 @@ class RustTypeInferenceEngine:
             if pattern is None or pattern.type != cs.TS_IDENTIFIER or type_node is None:
                 continue
             if (name := safe_decode_text(pattern)) and (
-                type_name := self._bare_type_name(type_node)
+                type_name := self._binding_type_name(type_node)
             ):
                 var_types[name] = type_name
 
@@ -596,13 +596,13 @@ class RustTypeInferenceEngine:
         if not name:
             return
         if annotation := node.child_by_field_name(cs.FIELD_TYPE):
-            if type_name := self._bare_type_name(annotation):
+            if type_name := self._binding_type_name(annotation):
                 var_types[name] = type_name
             return
         value = node.child_by_field_name(cs.FIELD_VALUE)
         if value is not None and value.type == cs.TS_RS_STRUCT_EXPRESSION:
             struct_name = value.child_by_field_name(cs.FIELD_NAME)
-            if struct_name and (type_name := self._bare_type_name(struct_name)):
+            if struct_name and (type_name := self._binding_type_name(struct_name)):
                 var_types[name] = type_name
 
     def _tuple_struct_binding(self, pattern: Node) -> tuple[str, str] | None:
@@ -718,6 +718,15 @@ class RustTypeInferenceEngine:
     def _bare_type_name(self, type_node: Node) -> str | None:
         return _rust_bare_type_name(type_node)
 
+    def _binding_type_name(self, type_node: Node) -> str | None:
+        # A local's declared type keeps a module path it is written with
+        # (`x: crate::a::Builder`): the path names one type wherever it
+        # stands, while the bare leaf would be re-read through the caller's
+        # scope, where a body `use crate::b::Builder;` rebinds it (PR #2791
+        # review). Unlike a callee's recorded return type, the spelling is
+        # the caller's own, so its relative path resolves where it is used.
+        return _rust_bare_type_name(type_node, keep_path=True)
+
     def _path_leaf_name(self, node: Node) -> str | None:
         # Last identifier of a path: `Command` from a bare identifier,
         # `Unknown` from `Command::Unknown`.
@@ -741,13 +750,13 @@ class RustTypeInferenceEngine:
         return found
 
 
-def _rust_bare_generic_name(type_node: Node) -> str | None:
+def _rust_bare_generic_name(type_node: Node, keep_path: bool = False) -> str | None:
     outer = type_node.child_by_field_name(cs.FIELD_TYPE)
     outer_name = _rust_bare_type_name(outer) if outer else None
     # A receiver type strips only transparent deref pointers (Arc<Shared>
     # -> Shared); Option/Result/Vec are kept (a call dispatches to them).
     if outer_name not in cs.RS_DEREF_WRAPPERS:
-        return outer_name
+        return _rust_bare_type_name(outer, keep_path) if outer else None
     args = type_node.child_by_field_name(cs.TS_RS_TYPE_ARGUMENTS)
     if args is None:
         return outer_name
@@ -755,7 +764,7 @@ def _rust_bare_generic_name(type_node: Node) -> str | None:
         (c for c in args.children if c.type in cs.RS_RETURN_TYPE_NODE_TYPES),
         None,
     )
-    return _rust_bare_type_name(inner) if inner else outer_name
+    return _rust_bare_type_name(inner, keep_path) if inner else outer_name
 
 
 def _rust_element_type_name(type_node: Node) -> str | None:
@@ -811,25 +820,45 @@ def _rust_generic_element_name(type_node: Node) -> str | None:
     return None
 
 
-def _rust_bare_type_name(type_node: Node) -> str | None:
+def _rust_bare_type_name(type_node: Node, keep_path: bool = False) -> str | None:
     # Bare type name, stripping references/generics/wrappers down to the leaf
     # identifier: `&'a mut Shutdown` -> Shutdown, `Result<Command>` -> Command.
+    # `keep_path` keeps a module path the leaf is written under.
     match type_node.type:
         case cs.TS_TYPE_IDENTIFIER | cs.TS_RS_PRIMITIVE_TYPE:
             return safe_decode_text(type_node)
         case cs.TS_GENERIC_TYPE:
-            return _rust_bare_generic_name(type_node)
+            return _rust_bare_generic_name(type_node, keep_path)
         case cs.TS_RS_SCOPED_TYPE_IDENTIFIER:
+            if keep_path and (path := _rust_module_type_path(type_node)):
+                return path
             name = type_node.child_by_field_name(cs.FIELD_NAME)
             return safe_decode_text(name) if name else None
         case cs.TS_RS_TUPLE_TYPE:
             inner = tuple_group_inner(type_node)
-            return _rust_bare_type_name(inner) if inner else None
+            return _rust_bare_type_name(inner, keep_path) if inner else None
         case _:
             # reference_type / dyn / impl / bounded / other wrappers: descend
             # to the first typed child (a bounded type's first bound is the
             # principal trait; the rest are auto-trait markers).
             for child in type_node.children:
                 if child.type in cs.RS_RETURN_TYPE_NODE_TYPES:
-                    return _rust_bare_type_name(child)
+                    return _rust_bare_type_name(child, keep_path)
             return None
+
+
+def _rust_module_type_path(type_node: Node) -> str | None:
+    # `crate::a::Builder`, `a::Builder`, `std::path::PathBuf`: a type reached
+    # through modules. A path through a type (`Self::Item`, `T::Output`) is
+    # an associated type, whose leaf is all the type map can use, and a
+    # generic segment (`a::B<T>::C`) has no plain spelling, so both give None.
+    text = "".join((safe_decode_text(type_node) or "").split())
+    head = text.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0]
+    if (
+        not head
+        or head == cs.RS_SELF_TYPE
+        or head[0].isupper()
+        or cs.CHAR_ANGLE_OPEN in text
+    ):
+        return None
+    return text
