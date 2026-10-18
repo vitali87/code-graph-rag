@@ -236,3 +236,32 @@ def test_a_call_that_is_not_a_statement_is_no_side_effect_import(
     create_and_run_updater(temp_repo, mock_ingestor)
 
     assert ("main", "db") not in _imports(temp_repo, mock_ingestor)
+
+
+@pytest.mark.parametrize(
+    ("statement", "binds"),
+    [
+        ('import {} from "./instrument";\n', False),
+        ('import type {} from "./instrument";\n', False),
+        ('import init, {} from "./instrument";\n', True),
+    ],
+    ids=["empty-named-imports", "empty-type-imports", "default-beside-empty"],
+)
+def test_an_import_clause_binding_nothing_is_a_side_effect_import(
+    temp_repo: Path, mock_ingestor: MagicMock, statement: str, binds: bool
+) -> None:
+    # `import {} from "./instrument"` still loads the module, but its clause
+    # binds no name, so neither branch recorded it. A clause binding a
+    # default beside the empty list keeps its own named edge.
+    (temp_repo / "instrument.ts").write_text(
+        "export default function init(): void {}\n", encoding="utf-8"
+    )
+    (temp_repo / "main.ts").write_text(
+        statement + "export const x = 1;\n", encoding="utf-8"
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    props = _imports(temp_repo, mock_ingestor).get(("main", "instrument"))
+    assert props is not None, sorted(_imports(temp_repo, mock_ingestor))
+    assert props.get(cs.KEY_LINE) == 1, props
+    assert (cs.KEY_ALIAS in props) is binds, props

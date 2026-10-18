@@ -482,6 +482,22 @@ def _is_js_side_effect_import(site: PropertyDict | None) -> bool:
     )
 
 
+def _js_clause_binds(clause: Node) -> bool:
+    # Whether an import clause binds a name: a default, a namespace or a
+    # specifier. `import {} from "./x"` binds none and, like `import "./x"`,
+    # imports the module for its side effects (issue #3267).
+    return any(
+        child.type in (cs.TS_IDENTIFIER, cs.TS_NAMESPACE_IMPORT)
+        or (
+            child.type == cs.TS_NAMED_IMPORTS
+            and any(
+                spec.type == cs.TS_IMPORT_SPECIFIER for spec in child.named_children
+            )
+        )
+        for child in clause.named_children
+    )
+
+
 def _js_side_effect_call(statement: Node) -> tuple[str, bool] | None:
     # (specifier, is_require) of a statement that is only `require("./db")`
     # or `import("./cache")`, awaited or not; None for anything else.
@@ -5350,8 +5366,12 @@ class ImportProcessor:
         if not target.module_qn:
             return
         is_aliased_scheme = _has_aliased_scheme(source_text)
-        if not any(child.type == cs.TS_IMPORT_CLAUSE for child in import_node.children):
-            # `import "./instrument"`: still an import of the module.
+        if not any(
+            child.type == cs.TS_IMPORT_CLAUSE and _js_clause_binds(child)
+            for child in import_node.children
+        ):
+            # `import "./instrument"` or `import {} from "./instrument"`:
+            # still an import of the module.
             self._record_js_side_effect_import(module_qn, target.module_qn, import_node)
             return
         for child in import_node.children:
