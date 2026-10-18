@@ -533,6 +533,14 @@ SOURCE_EXTRACT_FAILED = "Failed to extract source from {path}: {error}"
 SOURCE_AST_FAILED = "AST extraction failed for {name}: {error}"
 
 # Memgraph logs
+MG_SET_WITHOUT_BACKEND = (
+    "Memgraph settings are set but GRAPH_BACKEND is not, so cgr is using the "
+    "embedded SQLite graph at {path}, now the default engine instead of "
+    "Memgraph. A graph indexed into Memgraph is not visible here. To keep "
+    "using Memgraph, set GRAPH_BACKEND=memgraph and install "
+    "'code-graph-rag[memgraph]'; to keep the embedded graph, set "
+    "GRAPH_BACKEND=sqlite. Either one silences this notice."
+)
 MG_CONNECTING = "Connecting to Memgraph at {host}:{port}..."
 MG_CONNECT_FAILED = "Could not connect to Memgraph at {host}:{port}: {error}"
 MG_CONNECTED = "Successfully connected to Memgraph."
@@ -1555,4 +1563,8 @@ CHECKOUT_STATE_TREE_LOCK_UNAVAILABLE = (
 )
 CHECKOUT_STATE_HISTORY_DROPPED = (
     "Removed {legacy} from the working tree: it is not an edit history cgr wrote"
+)
+# The embedded graph's Rust extension (embedded_graph/native.py).
+EG_NATIVE_WRITE_FAILED = (
+    "The Rust extension could not write a batch ({error}); the engine writes it"
 )
