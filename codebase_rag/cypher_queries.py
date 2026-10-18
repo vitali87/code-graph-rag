@@ -1766,9 +1766,13 @@ RETURN head(labels(n)) AS label, properties(n) AS props, inbound"""
 # project's own nodes touches can be unanchored by the run: the prune keeps
 # every Resource another node still anchors, and a resource reached only down
 # a FLOWS_TO chain puts a FLOWS_TO edge on the one the project touches. So
-# another project's links never refuse this one's check (issue #3188).
+# another project's links never refuse this one's check (issue #3188). The
+# root module (`__init__.py`, `mod.rs`) IS the project name, not under its
+# prefix, and the check cuts it like any other changed module.
 CYPHER_CHECK_PROJECT_IO_LINKS = """MATCH (r:Resource)--(n)
-WHERE NOT n:Resource AND n.qualified_name STARTS WITH $project_prefix
+WHERE NOT n:Resource
+  AND (n.qualified_name = $project_name
+       OR n.qualified_name STARTS WITH $project_prefix)
 MATCH (r)-[l:FLOWS_TO|RESOLVES_TO]-()
 RETURN type(l) AS rel
 LIMIT 1"""

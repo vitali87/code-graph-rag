@@ -131,3 +131,27 @@ def test_a_route_the_project_exposes_still_refuses(
 
     with pytest.raises(CheckError, match=cs.RelationshipType.RESOLVES_TO.value):
         _isolated(root, store)
+
+
+def test_a_resource_the_root_module_touches_still_refuses(
+    indexed: tuple[Path, _StatefulIngestor],  # noqa: F811
+) -> None:
+    # Negative: the root module (`__init__.py`, `mod.rs`) is the project name
+    # itself, not under its prefix, and a change to it is cut all the same.
+    root, store = indexed
+    _link_other_service(store)
+    module = cs.NodeLabel.MODULE.value
+    store.ensure_node_batch(
+        module, {cs.KEY_QUALIFIED_NAME: PROJECT, cs.KEY_NAME: PROJECT}
+    )
+    store.ensure_relationship_batch(
+        (module, cs.KEY_QUALIFIED_NAME, PROJECT),
+        cs.RelationshipType.READS_FROM,
+        (_RESOURCE, cs.KEY_QUALIFIED_NAME, URL),
+    )
+    _edit(root)
+    before = _state(store)
+
+    with pytest.raises(CheckError, match=cs.RelationshipType.RESOLVES_TO.value):
+        _isolated(root, store)
+    assert _state(store) == before

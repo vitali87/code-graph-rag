@@ -346,7 +346,10 @@ def _refuse_project_holding_io_links(ingestor: object, project_name: str) -> Non
     """
     rows = cast(GraphStore, ingestor).fetch_all(
         cq.CYPHER_CHECK_PROJECT_IO_LINKS,
-        {cs.KEY_PROJECT_PREFIX: project_name + cs.SEPARATOR_DOT},
+        {
+            cs.KEY_PROJECT_PREFIX: project_name + cs.SEPARATOR_DOT,
+            cs.KEY_PROJECT_NAME: project_name,
+        },
     )
     if rows:
         raise CheckError(

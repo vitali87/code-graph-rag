@@ -184,7 +184,9 @@ def test_a_graph_already_holding_an_io_link_is_refused() -> None:
     with pytest.raises(CheckError, match=cs.RelationshipType.FLOWS_TO.value):
         _refuse_project_holding_io_links(store, PROJECT)
     assert store.queries == [cq.CYPHER_CHECK_PROJECT_IO_LINKS]
-    assert store.params == [{cs.KEY_PROJECT_PREFIX: f"{PROJECT}."}]
+    assert store.params == [
+        {cs.KEY_PROJECT_PREFIX: f"{PROJECT}.", cs.KEY_PROJECT_NAME: PROJECT}
+    ]
 
 
 def test_a_graph_without_io_links_is_accepted() -> None:
