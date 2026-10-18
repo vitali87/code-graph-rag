@@ -15,6 +15,11 @@ the comment-based languages.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+from functools import lru_cache
+from types import MappingProxyType
+from typing import NamedTuple
+
 from ..constants import SupportedLanguage
 from ..types_defs import ASTNode
 from .module_docstring import (
@@ -99,6 +104,72 @@ _WRAPPERS: dict[SupportedLanguage, frozenset[str]] = {
 }
 
 
+# A child's place among its siblings is looked up by (start, end, type); see
+# `_sibling_index` for why neither identity nor `==` will do.
+_PositionKey = tuple[tuple[int, int], tuple[int, int], str]
+
+# Parents whose sibling index stays cached. Definitions arrive in document
+# order, so the parents in use at once are the enclosing chain of the current
+# definition (file, class body, nested function body, ...); 32 covers any
+# real nesting. Small, because every entry keeps its parse tree alive.
+_SIBLING_INDEX_CACHE_SIZE = 32
+
+
+class _SiblingIndex(NamedTuple):
+    """One parent's children, and where each sits among them.
+
+    `positions` maps a child's key to its index, or to None when two
+    children share the key and the place is therefore not known.
+    """
+
+    children: tuple[ASTNode, ...]
+    positions: Mapping[_PositionKey, int | None]
+
+
+def _position_key(node: ASTNode) -> _PositionKey:
+    return (node.start_point, node.end_point, node.type)
+
+
+@lru_cache(maxsize=_SIBLING_INDEX_CACHE_SIZE)
+def _sibling_index(parent: ASTNode) -> _SiblingIndex:
+    """The children of `parent` and each one's index, built once per parent.
+
+    Every definition under a parent needs that parent's children and its own
+    place among them. Building the list and scanning it for the node once
+    PER DEFINITION made a file of N top-level functions cost O(N^2): the
+    single largest item in a 6,000-function JavaScript profile, and the
+    reason C, JS/TS, Java and C# files grew quadratically (issue #2453).
+
+    Cached on the parent node itself: tree-sitter compares nodes by tree as
+    well as by id, so a re-parsed file, which is a new tree, never reads an
+    index built from the one it replaced.
+
+    The node is found by source position, NOT by `is`: `parent.children`
+    builds fresh wrapper objects on every access, so the node handed to us is
+    never identical to the one in the list -- measured, `sibs[2] is node` is
+    False while `sibs[2] == node` is True. An identity search silently found
+    nothing and every definition read as undocumented. NOT by `==` either,
+    which is value equality on type and extent, so the first match would win
+    if two siblings ever shared both. The key is (start, end, type), and a
+    key held by two children maps to None rather than to either.
+    """
+    children = tuple(parent.children)
+    positions: dict[_PositionKey, int | None] = {}
+    for index, child in enumerate(children):
+        key = _position_key(child)
+        # Exactly one match is required, rather than taking the first. A
+        # first-match-wins lookup over a set that can hold two is the defect
+        # shape a peer hit on #1835: the concrete case happened to work
+        # because the wanted row came back first, and nothing guaranteed it
+        # would. A second match would mean the key is not unique among one
+        # parent's children after all -- measured as unique across the
+        # annotated and attributed forms in Dart, Java, C and PHP, which is
+        # evidence and not a proof -- so extract nothing rather than silently
+        # documenting whichever sibling came first.
+        positions[key] = None if key in positions else index
+    return _SiblingIndex(children, MappingProxyType(positions))
+
+
 def _climb_wrappers(node: ASTNode, language: SupportedLanguage) -> ASTNode:
     """The outermost single-declaration wrapper around `node`, or `node`.
 
@@ -148,7 +219,7 @@ def _definition_spec(language: SupportedLanguage) -> ModuleDocSpec | None:
 
 
 def _doc_block_start(
-    siblings: list[ASTNode],
+    siblings: Sequence[ASTNode],
     target_index: int,
     spec: ModuleDocSpec,
     interleaved: frozenset[str],
@@ -199,7 +270,9 @@ def _doc_block_start(
     return _line_block_opener(siblings, index, spec)
 
 
-def _line_block_opener(siblings: list[ASTNode], index: int, spec: ModuleDocSpec) -> int:
+def _line_block_opener(
+    siblings: Sequence[ASTNode], index: int, spec: ModuleDocSpec
+) -> int:
     """Walk up from the marked line comment at `index` to where its block opens.
 
     A line-comment doc is written a line at a time. The block extends upward
@@ -213,7 +286,9 @@ def _line_block_opener(siblings: list[ASTNode], index: int, spec: ModuleDocSpec)
     return index
 
 
-def _continues_block(siblings: list[ASTNode], index: int, spec: ModuleDocSpec) -> bool:
+def _continues_block(
+    siblings: Sequence[ASTNode], index: int, spec: ModuleDocSpec
+) -> bool:
     above = siblings[index - 1]
     if above.type not in spec.line_types:
         return False
@@ -225,7 +300,7 @@ def _continues_block(siblings: list[ASTNode], index: int, spec: ModuleDocSpec) -
     return not _is_trailing(siblings, index - 1)
 
 
-def _is_trailing(siblings: list[ASTNode], index: int) -> bool:
+def _is_trailing(siblings: Sequence[ASTNode], index: int) -> bool:
     """Whether `siblings[index]` starts on the row its previous sibling ends on.
 
     `_last_row` rather than `end_point`, because a line comment's extent
@@ -270,8 +345,9 @@ def extract_definition_docstring(
     if parent is None:
         return None
 
-    siblings = list(parent.children)
-    target = _target_index(siblings, node)
+    index = _sibling_index(parent)
+    siblings = index.children
+    target = index.positions.get(_position_key(node))
     if target is None:
         return None
 
@@ -288,40 +364,8 @@ def extract_definition_docstring(
     return _line_doc_for(siblings, start, target, spec)
 
 
-def _target_index(siblings: list[ASTNode], node: ASTNode) -> int | None:
-    """Where `node` sits among its siblings, by source position.
-
-    NOT by `is`: `parent.children` builds fresh wrapper objects on every
-    access, so the node handed to us is never identical to the one in the
-    list we just fetched -- measured, `sibs[2] is node` is False while
-    `sibs[2] == node` is True. An identity search silently found nothing and
-    every definition read as undocumented.
-
-    NOT by `==` either, which is value equality on type and extent, so the
-    first match would win if two siblings ever shared both. The key below is
-    (start, end, type); every match is collected and exactly one is required,
-    for the reason in the comment on the return.
-    """
-    key = (node.start_point, node.end_point, node.type)
-    matches = [
-        index
-        for index, sibling in enumerate(siblings)
-        if (sibling.start_point, sibling.end_point, sibling.type) == key
-    ]
-    # Every match, then require exactly one, rather than taking the first.
-    # A first-match-wins lookup over a set that can hold two is the defect
-    # shape a peer hit on #1835: the concrete case happened to work because
-    # the wanted row came back first, and nothing guaranteed it would. Here a
-    # second match would mean the key is not unique among one parent's
-    # children after all -- measured as unique across the annotated and
-    # attributed forms in Dart, Java, C and PHP, which is evidence and not a
-    # proof -- so return None and extract nothing rather than silently
-    # documenting whichever sibling came back first.
-    return matches[0] if len(matches) == 1 else None
-
-
 def _line_doc_for(
-    siblings: list[ASTNode], start: int, target: int, spec: ModuleDocSpec
+    siblings: Sequence[ASTNode], start: int, target: int, spec: ModuleDocSpec
 ) -> str | None:
     """The content of the line-comment block from `start` up to `target`."""
     lines: list[str] = []
