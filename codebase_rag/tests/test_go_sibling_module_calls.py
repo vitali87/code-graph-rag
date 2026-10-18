@@ -25,15 +25,15 @@ from codebase_rag.tests.conftest import get_relationships, run_updater
 _LIBA = frozenset({"example.com/liba"})
 
 
-def _external(name: str, pkg: str | None, line: int) -> dict[str, object]:
+def _external(name: str, module: str | None, line: int) -> dict[str, object]:
     site: dict[str, object] = {
         "file": "appb/main.go",
         "line": line,
         "col": 4,
         "name": name,
     }
-    if pkg is not None:
-        site["pkg"] = pkg
+    if module is not None:
+        site["module"] = module
     return site
 
 
@@ -48,7 +48,7 @@ def test_a_sibling_module_callee_is_not_external() -> None:
     assert (
         _externals(
             [
-                _external("Slug", "example.com/liba/strs", 1),
+                _external("Slug", "example.com/liba", 1),
                 _external("Root", "example.com/liba", 2),
             ]
         )
@@ -57,15 +57,17 @@ def test_a_sibling_module_callee_is_not_external() -> None:
 
 
 def test_a_third_party_callee_stays_external() -> None:
-    # Negatives: the standard library, another module whose path only shares
-    # a prefix, and a fact from a tool that names no package stay external.
+    # Negatives: the standard library (no module), another module whose path
+    # only shares a prefix, a separate module nested under the in-repo one's
+    # path, and a fact from a tool that names no module stay external.
     assert _externals(
         [
-            _external("Println", "fmt", 1),
-            _external("Thing", "example.com/libabc/x", 2),
-            _external("Old", None, 3),
+            _external("Println", None, 1),
+            _external("Thing", "example.com/libabc", 2),
+            _external("Greet", "example.com/liba/plugin", 3),
+            _external("Old", None, 4),
         ]
-    ) == {"Println", "Thing", "Old"}
+    ) == {"Println", "Thing", "Greet", "Old"}
 
 
 _LIBA_SRC = (
@@ -122,3 +124,61 @@ def test_gotypes_keeps_the_cross_module_call(
     ), calls
     # Negative: the standard library stays external.
     assert not any(b.endswith("Println") for _, b in calls), calls
+
+
+_ROOT_MAIN = (
+    'package main\n\nimport (\n\t"fmt"\n\n\t"example.com/root/plugin"\n)\n\n'
+    'func Greet() string { return "local" }\n\n'
+    "func run() string { return plugin.Greet() }\n\n"
+    "func main() { fmt.Println(run(), Greet()) }\n"
+)
+
+
+def test_gotypes_keeps_a_nested_path_dependency_external(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Negative: `example.com/root/plugin` is a module of its own, outside the
+    # indexed repository, though its path sits under the indexed module's.
+    # Its `Greet` must not bind to the caller's own `Greet`.
+    from codebase_rag.parsers.go_frontend import (
+        go_frontend_available,
+        run_go_frontend,
+    )
+
+    if shutil.which("go") is None or not go_frontend_available():
+        pytest.skip("go toolchain not available")
+    root = temp_repo / "root"
+    _write(
+        temp_repo,
+        "outside/plugin/go.mod",
+        "module example.com/root/plugin\n\ngo 1.21\n",
+    )
+    _write(
+        temp_repo,
+        "outside/plugin/plugin.go",
+        'package plugin\n\nfunc Greet() string { return "dep" }\n',
+    )
+    _write(
+        root,
+        "go.mod",
+        "module example.com/root\n\ngo 1.21\n\n"
+        "require example.com/root/plugin v0.0.0\n\n"
+        "replace example.com/root/plugin => ../outside/plugin\n",
+    )
+    _write(root, "main.go", _ROOT_MAIN)
+    if not run_go_frontend(root).call_sites:
+        pytest.skip("gotypes frontend could not build in this environment")
+
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
+    ingestor = MagicMock()
+    run_updater(root, ingestor, skip_if_missing="go")
+    calls = {
+        (str(c.args[0][2]), str(c.args[2][2]))
+        for c in get_relationships(ingestor, "CALLS")
+    }
+    assert any(
+        a.endswith("main.main") and b.endswith("main.Greet") for a, b in calls
+    ), calls
+    assert not any(
+        a.endswith("main.run") and b.endswith("main.Greet") for a, b in calls
+    ), calls

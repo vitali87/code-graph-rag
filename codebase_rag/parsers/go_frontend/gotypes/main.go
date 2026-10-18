@@ -64,12 +64,14 @@ type externalFact struct {
 	Line int    `json:"line"`
 	Col  int    `json:"col"`
 	Name string `json:"name"`
-	// Pkg is the callee's import path, empty for a callee with no package.
-	// The tool sees one module at a time, so a sibling module of the same
-	// repository (`replace => ../liba`, `go.work`) is outside it too; the
-	// consumer, which knows every in-repo module, tells the two apart
-	// (issue #2809).
-	Pkg string `json:"pkg,omitempty"`
+	// Module is the path of the module providing the callee's package,
+	// empty for the standard library or a callee with no package. The tool
+	// sees one module at a time, so a sibling module of the same repository
+	// (`replace => ../liba`, `go.work`) is outside it too; the consumer,
+	// which knows every in-repo module, tells the two apart (issue #2809).
+	// The module, not the package path: `example.com/root/plugin` can be a
+	// separate dependency module under an in-repo module's path.
+	Module string `json:"module,omitempty"`
 }
 
 // implementsFact is a position-join, never a name-map: Go reuses simple type
@@ -135,8 +137,11 @@ type variantTypes struct {
 }
 
 type collector struct {
-	root       string
-	mainPaths  map[string]bool
+	root      string
+	mainPaths map[string]bool
+	// Package path -> path of the module that provides it, for every loaded
+	// package that belongs to a module.
+	modules    map[string]string
 	ignored    map[string]bool
 	out        *payload
 	namedTypes []typeEntry
@@ -168,7 +173,7 @@ func main() {
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax |
 			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedImports |
-			packages.NeedDeps,
+			packages.NeedDeps | packages.NeedModule,
 		Dir:   root,
 		Tests: true,
 	}
@@ -187,9 +192,16 @@ func main() {
 			mainPaths[pkg.PkgPath] = true
 		}
 	}
+	modules := map[string]string{}
+	packages.Visit(pkgs, nil, func(pkg *packages.Package) {
+		if pkg.Module != nil {
+			modules[pkg.PkgPath] = pkg.Module.Path
+		}
+	})
 	col := &collector{
 		root:      root,
 		mainPaths: mainPaths,
+		modules:   modules,
 		ignored:   ignoredDirs(),
 		out: &payload{
 			Calls:      []callFact{},
@@ -435,12 +447,12 @@ func (c *collector) collectCall(call *ast.CallExpr, pkg *packages.Package, fset 
 		return
 	}
 	if fn.Pkg() == nil || !c.mainPaths[fn.Pkg().Path()] {
-		pkgPath := ""
+		module := ""
 		if fn.Pkg() != nil {
-			pkgPath = fn.Pkg().Path()
+			module = c.modules[fn.Pkg().Path()]
 		}
 		c.out.Externals = append(c.out.Externals, externalFact{
-			File: rel, Line: line, Col: col, Name: name.Name, Pkg: pkgPath,
+			File: rel, Line: line, Col: col, Name: name.Name, Module: module,
 		})
 		return
 	}

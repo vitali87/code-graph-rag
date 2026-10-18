@@ -405,12 +405,10 @@ def _build_tool(go: str) -> Path | None:
     )
 
 
-def _in_repo(package: object, in_repo_modules: frozenset[str]) -> bool:
-    # `example.com/liba` and its packages, never `example.com/libabc`.
-    return isinstance(package, str) and any(
-        package == module or package.startswith(f"{module}/")
-        for module in in_repo_modules
-    )
+def _in_repo(module: object, in_repo_modules: frozenset[str]) -> bool:
+    # The callee's own module, matched exactly: `example.com/root/plugin`
+    # can be a separate dependency under the in-repo `example.com/root`.
+    return isinstance(module, str) and module in in_repo_modules
 
 
 def _parse_payload(
@@ -420,9 +418,8 @@ def _parse_payload(
 
     The tool analyses one module and calls everything outside it external,
     a sibling module of the same repository included. An external site
-    whose callee package belongs to one of `in_repo_modules` is dropped, so
-    the call resolves as first-party instead of being suppressed (issue
-    #2809).
+    whose callee's module is one of `in_repo_modules` is dropped, so the
+    call resolves as first-party instead of being suppressed (issue #2809).
 
     None rather than empty facts for every failure path below: empty facts is
     the correct answer for a module the tool analysed and found nothing in, so
@@ -460,7 +457,7 @@ def _parse_payload(
             external_sites={
                 (site["file"], int(site["line"]), int(site["col"]), site["name"])
                 for site in payload.get("externals", [])
-                if not _in_repo(site.get("pkg"), in_repo_modules)
+                if not _in_repo(site.get("module"), in_repo_modules)
             },
             implements=[
                 GoImplements(
