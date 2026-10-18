@@ -9,11 +9,18 @@ that type bound nothing, and the enum's methods were reported dead (gson:
 
 from __future__ import annotations
 
+from collections import defaultdict
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from tree_sitter import Language, Node, Parser
 
+from codebase_rag.function_registry import FunctionRegistryTrie
+from codebase_rag.parsers.import_processor import ImportProcessor
+from codebase_rag.parsers.java.type_inference import JavaTypeInferenceEngine
 from codebase_rag.tests.test_rename_op import RecordedGraph, _index, _write
+from codebase_rag.types_defs import NodeType
 
 OUTER = """\
 package demo;
@@ -80,9 +87,17 @@ public final class Scoped {
         static class Box { int size() { return 2; } }
 
         static int viaNew() { Box b = new Box(); return b.size(); }
+
+        static class Bag<T> { int count() { return 2; } }
+
+        static int viaGeneric(Bag<String> bag) { return bag.count(); }
+
+        static int viaArray(Box[] boxes) { return boxes[0].size(); }
     }
 
     static class Box { int size() { return 1; } }
+
+    static class Bag<T> { int count() { return 1; } }
 }
 """
 
@@ -169,12 +184,17 @@ def test_a_nested_enum_with_constant_bodies_binds_both_definitions(
             "Scoped.Scoped.Other.Helper.check()",
         ),
         ("Scoped.Scoped.Other.viaNew()", "Scoped.Scoped.Other.Box.size()"),
+        (
+            "Scoped.Scoped.Other.viaGeneric(Bag<String>)",
+            "Scoped.Scoped.Other.Bag.count()",
+        ),
         ("Outer2.Outer2.Child.use(Kind)", "Parent.Parent.Kind.code()"),
     ],
     ids=[
         "enclosing-class-member",
         "inner-scope-enum",
         "local-typed-by-its-initializer",
+        "generic-parameter",
         "inherited-member-type",
     ],
 )
@@ -199,3 +219,60 @@ def test_a_nested_class_or_top_level_enum_still_binds(
     graph: RecordedGraph, caller: str, callee: str
 ) -> None:
     assert _callees(graph, caller).get(callee) == "exact"
+
+
+def _method_body(node: Node, name: str) -> Node | None:
+    if node.type == "method_declaration":
+        name_node = node.child_by_field_name("name")
+        if name_node is not None and name_node.text == name.encode():
+            return node.child_by_field_name("body")
+    for child in node.children:
+        if (found := _method_body(child, name)) is not None:
+            return found
+    return None
+
+
+@pytest.mark.parametrize(
+    ("type_name", "expected"),
+    [
+        ("Bag<String>", "Scoped.Other.Bag"),
+        ("Box[]", "Scoped.Other.Box[]"),
+    ],
+    ids=["generic", "array"],
+)
+def test_a_generic_or_array_type_resolves_in_its_scope(
+    type_name: str, expected: str
+) -> None:
+    # The generic and array branches strip `<...>` / `[]` and resolve the
+    # base name again; that resolution must keep the reading scope, or the
+    # base, declared in both Scoped and Scoped.Other, is ambiguous file-wide.
+    tsjava = pytest.importorskip("tree_sitter_java")
+    module_qn = "proj.Scoped"
+    registry = FunctionRegistryTrie()
+    for qn in (
+        "Scoped",
+        "Scoped.Box",
+        "Scoped.Bag",
+        "Scoped.Other",
+        "Scoped.Other.Box",
+        "Scoped.Other.Bag",
+    ):
+        registry[f"{module_qn}.{qn}"] = NodeType.CLASS
+    engine = JavaTypeInferenceEngine(
+        import_processor=ImportProcessor(repo_path=Path("/r"), project_name="proj"),
+        function_registry=registry,
+        repo_path=Path("/r"),
+        project_name="proj",
+        ast_cache=MagicMock(),
+        queries={},
+        module_qn_to_file_path={},
+        class_inheritance={},
+        simple_name_lookup=defaultdict(set),
+    )
+    tree = Parser(Language(tsjava.language())).parse(SCOPED.encode())
+    scope = _method_body(tree.root_node, "viaArray")
+    assert scope is not None
+    assert (
+        engine._resolve_java_type_name(type_name, module_qn, scope)
+        == f"{module_qn}.{expected}"
+    )
