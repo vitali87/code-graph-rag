@@ -18,7 +18,7 @@ from tree_sitter import Node
 
 from codebase_rag import constants as cs
 from codebase_rag.checkout_state import state_file
-from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.test_incremental_inbound_deferred_targets import _snapshot
 from codebase_rag.types_defs import PropertyDict, ResultRow
@@ -249,6 +249,25 @@ def test_a_cpp_out_of_line_definition_survives_its_headers_reparse(
     assert after.get(cs.KEY_START_LINE) == clean.get(cs.KEY_START_LINE)
 
 
+def test_a_scoped_reingest_keeps_an_out_of_line_definition(cpp_root: Path) -> None:
+    # The watcher and the MCP tool re-ingest through `reingest`, whose
+    # dependent walk follows edges only: box.h joined as util.h's dependent
+    # and its delete took box.cpp's grow, which nothing re-created.
+    _write(cpp_root, _CPP)
+    store = _StatefulIngestor()
+    _index(store, cpp_root, force=True)
+    clean = store.nodes[(cs.NodeLabel.METHOD.value, _CPP_GROW)]
+
+    _edit_after_cache(cpp_root / "util.h", cpp_root, "//")
+    report = _updater(store, cpp_root).reingest(["util.h"])
+
+    assert "box.cpp" in report.affected, report
+    after = store.nodes.get((cs.NodeLabel.METHOD.value, _CPP_GROW))
+    assert after is not None, "the re-ingest deleted Box::grow"
+    assert after.get(cs.KEY_PATH) == "box.cpp", after
+    assert after.get(cs.KEY_START_LINE) == clean.get(cs.KEY_START_LINE)
+
+
 def test_an_incremental_sync_aborts_when_the_member_lookup_fails(
     cpp_root: Path,
 ) -> None:
@@ -264,6 +283,21 @@ def test_an_incremental_sync_aborts_when_the_member_lookup_fails(
     with pytest.raises(RuntimeError, match="foreign-member lookup outage"):
         _index(store, cpp_root, force=False)
     assert (cs.NodeLabel.METHOD.value, _CPP_GROW) in store.nodes
+
+
+def test_a_scoped_reingest_aborts_when_the_member_lookup_fails(
+    cpp_root: Path,
+) -> None:
+    _write(cpp_root, _CPP)
+    store = _MemberLookupOutage()
+    _index(store, cpp_root, force=True)
+    _edit_after_cache(cpp_root / "util.h", cpp_root, "//")
+    store.down = True
+    before = _snapshot(store)
+
+    with pytest.raises(ReingestAborted, match="foreign-member lookup outage"):
+        _updater(store, cpp_root).reingest(["util.h"])
+    assert _snapshot(store) == before
 
 
 def test_a_full_build_goes_on_when_the_member_lookup_fails(cpp_root: Path) -> None:

@@ -8492,6 +8492,35 @@ class GraphUpdater:
                 files[key] = candidate
         return files
 
+    def _reingest_foreign_members(self, keys: set[str]) -> dict[str, Path]:
+        """On-disk files attaching members to a module this call replaces.
+
+        `run()` queues the same files (`_queue_foreign_members`), for the same
+        reason: the delete takes a C++ out-of-line definition with its
+        header's class, and only its own file re-creates it (issue #3271).
+        Repeated until nothing new joins, as there.
+        """
+        files: dict[str, Path] = {}
+        scope = set(keys)
+        frontier = sorted(scope)
+        while frontier:
+            joined: list[str] = []
+            for key in self._foreign_member_keys(frontier):
+                if key in scope:
+                    continue
+                scope.add(key)
+                candidate = self.repo_path / key
+                if (
+                    not candidate.is_file()
+                    or path_utils.is_symlink_entry(candidate)
+                    or self._reingest_ignored(candidate)
+                ):
+                    continue
+                files[key] = candidate
+                joined.append(key)
+            frontier = joined
+        return files
+
     def _flip_sibling_files(
         self, flipped: set[str], present: dict[str, Path], gone: dict[str, Path]
     ) -> dict[str, Path]:
@@ -9253,6 +9282,9 @@ class GraphUpdater:
                 self._reingest_go_package_files(
                     {*present, *gone, *survivors, *affected}
                 )
+            )
+            affected.update(
+                self._reingest_foreign_members({*present, *gone, *survivors, *affected})
             )
             all_keys = sorted({*present, *gone, *survivors, *affected})
             captured = self._capture_inbound_edges(all_keys)
