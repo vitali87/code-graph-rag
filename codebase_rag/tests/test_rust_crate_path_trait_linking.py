@@ -3164,7 +3164,7 @@ def test_watch_reparse_recommits_inline_mod_map(
     # inline mod's callers inherit the enclosing file's imports.
     from watchdog.events import FileModifiedEvent
 
-    import realtime_updater
+    from codebase_rag import watch
 
     project = temp_repo / "rs_watch_inline_mod"
     foo_rs = (
@@ -3193,7 +3193,7 @@ def test_watch_reparse_recommits_inline_mod_map(
     )
     updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
 
-    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler = watch.CodeChangeEventHandler(updater, debounce_seconds=0)
 
     mock_ingestor.reset_mock()
     handler.dispatch(FileModifiedEvent(str(project / "src" / "foo.rs")))
@@ -3359,7 +3359,7 @@ def test_watch_touch_cannot_flip_mod_key_arbitration(
     # touch of the impure file hands it the key.
     from watchdog.events import FileModifiedEvent
 
-    import realtime_updater
+    from codebase_rag import watch
 
     project = temp_repo / "rs_watch_arbitration"
     _write(
@@ -3403,7 +3403,7 @@ def test_watch_touch_cannot_flip_mod_key_arbitration(
     assert (f"{base}.a.b.c.go", f"{base}.beta.helper") in calls, calls
     assert (f"{base}.a.b.c.gb", f"{base}.gamma.helper") in calls, calls
 
-    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler = watch.CodeChangeEventHandler(updater, debounce_seconds=0)
 
     mock_ingestor.reset_mock()
     handler.dispatch(FileModifiedEvent(str(project / "src" / "a" / "b.rs")))
@@ -3437,7 +3437,7 @@ def test_watch_delete_of_mod_rs_drops_its_import_state(
     # voting its inline-mod uses into every later arbitration.
     from watchdog.events import FileDeletedEvent
 
-    import realtime_updater
+    from codebase_rag import watch
 
     project = temp_repo / "rs_modrs_delete"
     _write(
@@ -3464,7 +3464,7 @@ def test_watch_delete_of_mod_rs_drops_its_import_state(
     key = f"{base}.a.c"
     assert updater.factory.import_processor.import_mapping.get(key), "not committed"
 
-    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler = watch.CodeChangeEventHandler(updater, debounce_seconds=0)
 
     mod_rs = project / "src" / "a" / "mod.rs"
     mod_rs.unlink()
@@ -3484,7 +3484,7 @@ def test_python_sibling_edit_keeps_rust_import_state(
     # committed key vanishes.
     from watchdog.events import FileModifiedEvent
 
-    import realtime_updater
+    from codebase_rag import watch
 
     project = temp_repo / "rs_pysibling"
     _write(
@@ -3511,7 +3511,7 @@ def test_python_sibling_edit_keeps_rust_import_state(
     expected = {"helper": f"{base}.beta.helper"}
     assert updater.factory.import_processor.import_mapping.get(key) == expected
 
-    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler = watch.CodeChangeEventHandler(updater, debounce_seconds=0)
 
     # Edge-level assertions are unavailable here: the shared-prefix
     # registration sweep (issue #1025) deregisters foo.rs's inline-mod
@@ -3532,7 +3532,7 @@ def test_watch_create_of_owned_module_keeps_its_own_imports(
     # must not pop it, and no inline writer may recommit over it.
     from watchdog.events import FileCreatedEvent, FileModifiedEvent
 
-    import realtime_updater
+    from codebase_rag import watch
 
     project = temp_repo / "rs_create_owned"
     _write(
@@ -3562,7 +3562,7 @@ def test_watch_create_of_owned_module_keeps_its_own_imports(
     mapping = updater.factory.import_processor.import_mapping.get(key)
     assert mapping == {"helper": f"{base}.beta.helper"}, mapping
 
-    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler = watch.CodeChangeEventHandler(updater, debounce_seconds=0)
 
     inner_rs = project / "src" / "foo" / "inner.rs"
     inner_rs.parent.mkdir(parents=True, exist_ok=True)
@@ -3597,7 +3597,7 @@ def test_watch_touch_of_mod_rs_beside_same_stem_rs_keeps_sibling_state(
     # this event so nothing would recommit its wiped writer.
     from watchdog.events import FileModifiedEvent
 
-    import realtime_updater
+    from codebase_rag import watch
 
     project = temp_repo / "rs_modrs_sibling"
     _write(
@@ -3629,7 +3629,7 @@ def test_watch_touch_of_mod_rs_beside_same_stem_rs_keeps_sibling_state(
     expected = {"helper": f"{base}.beta.helper"}
     assert updater.factory.import_processor.import_mapping.get(key) == expected
 
-    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler = watch.CodeChangeEventHandler(updater, debounce_seconds=0)
 
     mock_ingestor.reset_mock()
     handler.dispatch(FileModifiedEvent(str(project / "src" / "a" / "mod.rs")))
@@ -3655,7 +3655,7 @@ def test_watch_delete_of_disambiguated_mod_rs_drops_its_writer(
     # deleted file keeps voting its uses into every later arbitration.
     from watchdog.events import FileDeletedEvent, FileModifiedEvent
 
-    import realtime_updater
+    from codebase_rag import watch
 
     project = temp_repo / "rs_poly_delete"
     _write(
@@ -3682,7 +3682,7 @@ def test_watch_delete_of_disambiguated_mod_rs_drops_its_writer(
     expected = {"helper": f"{base}.beta.helper"}
     assert updater.factory.import_processor.import_mapping.get(key) == expected
 
-    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler = watch.CodeChangeEventHandler(updater, debounce_seconds=0)
 
     mod_rs = project / "src" / "a" / "mod.rs"
     mod_rs.unlink()
@@ -4437,7 +4437,7 @@ def test_watch_create_refreshes_rust_path_caches(
     # that now holds gamma2.rs, not the full run's snapshot.
     from watchdog.events import FileCreatedEvent, FileModifiedEvent
 
-    import realtime_updater
+    from codebase_rag import watch
 
     project = temp_repo / "rs_watch_cachereset"
     _write(
@@ -4459,7 +4459,7 @@ def test_watch_create_refreshes_rust_path_caches(
     calls = _calls(mock_ingestor)
     assert (f"{base}.a.top", f"{base}.beta.helper") in calls, calls
 
-    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler = watch.CodeChangeEventHandler(updater, debounce_seconds=0)
 
     gamma2 = project / "src" / "gamma2.rs"
     gamma2.write_text("pub const fn helper2() -> u32 {\n    3\n}\n", encoding="utf-8")
@@ -4637,7 +4637,7 @@ def test_watch_storm_delete_and_restore_of_entry_keeps_sibling_maps(
         FileModifiedEvent,
     )
 
-    import realtime_updater
+    from codebase_rag import watch
 
     project = temp_repo / "rs_heal"
     lib_content = "pub mod beta;\npub mod a;\n"
@@ -4660,7 +4660,7 @@ def test_watch_storm_delete_and_restore_of_entry_keeps_sibling_maps(
         expected
     )
 
-    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler = watch.CodeChangeEventHandler(updater, debounce_seconds=0)
 
     lib_rs = project / "src" / "lib.rs"
     lib_rs.unlink()
@@ -4691,7 +4691,7 @@ def test_watch_create_during_entry_absence_keeps_sibling_maps(
         FileModifiedEvent,
     )
 
-    import realtime_updater
+    from codebase_rag import watch
 
     project = temp_repo / "rs_storm_interleave"
     _write(
@@ -4715,7 +4715,7 @@ def test_watch_create_during_entry_absence_keeps_sibling_maps(
         expected
     )
 
-    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler = watch.CodeChangeEventHandler(updater, debounce_seconds=0)
 
     lib_rs = project / "src" / "lib.rs"
     lib_rs.unlink()
@@ -4852,7 +4852,7 @@ def test_touching_one_entry_keeps_the_siblings_declarations(
     # to the item tie-break's real-but-wrong answer.
     from watchdog.events import FileDeletedEvent, FileModifiedEvent
 
-    import realtime_updater
+    from codebase_rag import watch
 
     project = temp_repo / "rs_decl_poison"
     _write(
@@ -4873,7 +4873,7 @@ def test_touching_one_entry_keeps_the_siblings_declarations(
         expected
     )
 
-    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler = watch.CodeChangeEventHandler(updater, debounce_seconds=0)
 
     lib_rs = project / "src" / "lib.rs"
     lib_rs.unlink()
@@ -4971,7 +4971,7 @@ def test_entry_modify_racing_its_own_deletion_keeps_declarations(
     # tie-break to flip a definitive crate attribution.
     from watchdog.events import FileDeletedEvent, FileModifiedEvent
 
-    import realtime_updater
+    from codebase_rag import watch
 
     project = temp_repo / "rs_decl_poison2"
     _write(
@@ -4992,7 +4992,7 @@ def test_entry_modify_racing_its_own_deletion_keeps_declarations(
         expected
     )
 
-    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler = watch.CodeChangeEventHandler(updater, debounce_seconds=0)
 
     lib_rs = project / "src" / "lib.rs"
     handler.dispatch(FileModifiedEvent(str(lib_rs)))
@@ -5132,7 +5132,7 @@ def test_manifest_repoint_evicts_the_dead_explicit_stem(
     # post-swap tree binds tool.rs's Config).
     from watchdog.events import FileModifiedEvent
 
-    import realtime_updater
+    from codebase_rag import watch
 
     project = temp_repo / "rs_repoint"
     _write(
@@ -5156,7 +5156,7 @@ def test_manifest_repoint_evicts_the_dead_explicit_stem(
         "Config": f"{base}.cli.Config"
     }
 
-    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler = watch.CodeChangeEventHandler(updater, debounce_seconds=0)
 
     (project / "Cargo.toml").write_text(
         '[package]\nname = "rs_repoint"\nversion = "0.1.0"\n\n'
@@ -5248,7 +5248,7 @@ def test_watch_reparse_recomputes_edges_through_fresh_resolutions(
     # cached one.
     from watchdog.events import FileModifiedEvent
 
-    import realtime_updater
+    from codebase_rag import watch
 
     project = temp_repo / "rs_fresh_edges"
     _write(
@@ -5266,7 +5266,7 @@ def test_watch_reparse_recomputes_edges_through_fresh_resolutions(
     calls = _calls(mock_ingestor)
     assert (f"{base}.q.ay", f"{base}.lib.helper") in calls, calls
 
-    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler = watch.CodeChangeEventHandler(updater, debounce_seconds=0)
 
     (project / "src" / "q.rs").write_text(
         "use crate::alt::helper;\n\npub fn ay() {\n    helper()\n}\n",
@@ -5334,7 +5334,7 @@ def test_watch_create_of_second_implementer_drops_sole_impl_edge(
     # fresh full run would not.
     from watchdog.events import FileCreatedEvent
 
-    import realtime_updater
+    from codebase_rag import watch
 
     project = temp_repo / "rs_iface"
     _write(
@@ -5367,7 +5367,7 @@ def test_watch_create_of_second_implementer_drops_sole_impl_edge(
     calls = _calls(mock_ingestor)
     assert (f"{base}.caller.go", f"{base}.a.A.m") in calls, calls
 
-    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler = watch.CodeChangeEventHandler(updater, debounce_seconds=0)
 
     b_rs = project / "src" / "b.rs"
     b_rs.write_text(
@@ -5749,7 +5749,7 @@ def test_watch_modify_of_build_script_refreshes_its_declarations(
     # build.rs to cli.rs moves helper's crate with it.
     from watchdog.events import FileModifiedEvent
 
-    import realtime_updater
+    from codebase_rag import watch
 
     project = temp_repo / "rs_buildstale"
     _write(
@@ -5786,7 +5786,7 @@ def test_watch_modify_of_build_script_refreshes_its_declarations(
         "Cfg": f"{base}.build.Cfg"
     }
 
-    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler = watch.CodeChangeEventHandler(updater, debounce_seconds=0)
 
     (project / "build.rs").write_text(
         "pub trait Cfg {\n"
@@ -5875,7 +5875,7 @@ def test_watch_modify_of_a_module_named_build_stays_a_module(
     # the item tie-break.
     from watchdog.events import FileModifiedEvent
 
-    import realtime_updater
+    from codebase_rag import watch
 
     project = temp_repo / "rs_modbuild"
     _write(
@@ -5898,7 +5898,7 @@ def test_watch_modify_of_a_module_named_build_stays_a_module(
         expected
     )
 
-    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler = watch.CodeChangeEventHandler(updater, debounce_seconds=0)
 
     handler.dispatch(FileModifiedEvent(str(project / "src" / "build.rs")))
     handler.dispatch(FileModifiedEvent(str(project / "src" / "q.rs")))
@@ -5976,7 +5976,7 @@ def test_watch_modify_standing_in_for_a_coalesced_create_updates_listing(
     # pre-create listing.
     from watchdog.events import FileModifiedEvent
 
-    import realtime_updater
+    from codebase_rag import watch
 
     project = temp_repo / "rs_watch_coalesced_create"
     _write(
@@ -5996,7 +5996,7 @@ def test_watch_modify_standing_in_for_a_coalesced_create_updates_listing(
 
     base = "rs_watch_coalesced_create.src"
 
-    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler = watch.CodeChangeEventHandler(updater, debounce_seconds=0)
 
     gamma2 = project / "src" / "gamma2.rs"
     gamma2.write_text("pub const fn helper2() -> u32 {\n    3\n}\n", encoding="utf-8")
@@ -6056,7 +6056,7 @@ def test_watch_modify_of_an_already_deleted_file_leaves_the_listing_alone(
     # is event-local and applies only while the file is observably there.
     from watchdog.events import FileModifiedEvent
 
-    import realtime_updater
+    from codebase_rag import watch
 
     project = temp_repo / "rs_watch_modify_after_delete"
     _write(
@@ -6074,7 +6074,7 @@ def test_watch_modify_of_an_already_deleted_file_leaves_the_listing_alone(
     )
     updater = create_and_run_updater(project, mock_ingestor, skip_if_missing="rust")
 
-    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler = watch.CodeChangeEventHandler(updater, debounce_seconds=0)
 
     gamma2 = project / "src" / "gamma2.rs"
     gamma2.write_text("pub const fn helper2() -> u32 {\n    3\n}\n", encoding="utf-8")

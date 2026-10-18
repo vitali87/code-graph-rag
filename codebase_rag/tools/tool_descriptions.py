@@ -166,10 +166,12 @@ MCP_UPDATE_REPOSITORY = (
 MCP_REINGEST = (
     "Re-ingest specific files into the knowledge graph after editing them. "
     "Re-parses only the given files and the files that depend on them, and "
-    "re-resolves calls in that set only, so an edit lands in the graph in the "
-    "time it takes to parse the affected dependents (hundreds of milliseconds "
-    "for a typical file, seconds for a hub imported by dozens) instead of a "
-    "full update_repository pass. "
+    "re-resolves calls in that set only; an edit that leaves a file's "
+    "interface unchanged (a comment, or a function body no other file's "
+    "resolution reads) re-parses no dependents at all. An edit lands in the "
+    "graph in the time it takes to parse the affected dependents (hundreds "
+    "of milliseconds for a typical file, seconds for a hub imported by "
+    "dozens) instead of a full update_repository pass. "
     "Paths are relative to the project root; files that no longer exist are "
     "removed from the graph; paths the project's ignore rules exclude are "
     "skipped and reported rather than indexed. Repository-wide passes are "
@@ -192,14 +194,17 @@ _MCP_DETERMINISTIC_NOTE = (
 MCP_RESOLVE = (
     "Resolve a name or a location to qualified names in the graph. `target` is "
     "a qualified name, a bare name like `helper` or `Store.get`, or "
-    "`path:line` (repo-relative path, 1-based line) for the definitions "
-    "spanning that line, innermost first. Exact matches come first, then "
+    "`path:line` (the file's path relative to the repository root or absolute "
+    "inside it, a 1-based line, optionally `:col`) for the definitions "
+    "spanning that line, innermost first; a file the project does not hold is "
+    "refused with an error. Exact matches come first, then "
     "dotted-suffix matches, then same-name matches. " + _MCP_DETERMINISTIC_NOTE
 )
 MCP_DEFINITION = (
-    "File, line span, docstring and source of one definition by qualified "
-    "name (`found` is false when the graph has no such node). "
-    + _MCP_DETERMINISTIC_NOTE
+    "File, line span, decorators, docstring and source of one definition by "
+    "qualified name (`found` is false when the graph has no such node). "
+    "`start_line` and `source` open at the first decorator; `name_line` is "
+    "the line of its name (the `def`/`class` line). " + _MCP_DETERMINISTIC_NOTE
 )
 MCP_CALLERS = (
     "Call sites that invoke a qualified name, one row per site with the "
@@ -217,15 +222,25 @@ MCP_CALLEES = (
 )
 MCP_IMPLEMENTORS = (
     "Types that inherit from or implement a class, interface or trait "
-    "(INHERITS / IMPLEMENTS edges). " + _MCP_DETERMINISTIC_NOTE
+    "(INHERITS / IMPLEMENTS edges). Direct subtypes only by default; `depth` "
+    "> 1 also follows their own subtypes (every class implementing an "
+    "interface through an abstract base), each row then carrying its `depth` "
+    "and the type it was reached `through`. " + _MCP_DETERMINISTIC_NOTE
 )
 MCP_OVERRIDES = (
     "Methods overriding a method, and the method it overrides (OVERRIDES "
-    "edges in both directions). " + _MCP_DETERMINISTIC_NOTE
+    "edges in both directions). Direct only by default; `depth` > 1 follows "
+    "each direction on its own (the overriders' overriders, and what the "
+    "overridden method overrides in turn), each row then carrying its "
+    "`depth` and the method it was reached `through`. " + _MCP_DETERMINISTIC_NOTE
 )
 MCP_IMPORTERS = (
     "Modules that import a module, with each import statement's line, "
-    "column, bound alias and imported symbol. " + _MCP_DETERMINISTIC_NOTE
+    "column, bound alias and imported symbol. Direct importers only, unless "
+    "`through_reexports` is true: then also the modules that reach it through "
+    "a re-export (a package `__init__.py`, a Rust `pub use`, an `index.ts` "
+    "barrel), each row with `via`, the import statements it came through, "
+    "consumer side first (empty for a direct importer). " + _MCP_DETERMINISTIC_NOTE
 )
 MCP_PARAM_ENDPOINT_TARGET = (
     "The handler's qualified name, or the endpoint identity as `endpoints` "
@@ -260,7 +275,9 @@ MCP_TESTS_REACHING = (
     + _MCP_DETERMINISTIC_NOTE
 )
 MCP_PARAM_TARGET = (
-    "A qualified name, a bare name (`helper`, `Store.get`), or `path:line`."
+    "A qualified name, a bare name (`helper`, `Store.get`), or `path:line` "
+    "(the path relative to the repository root, or absolute inside it; a "
+    "trailing `:col` is ignored)."
 )
 MCP_PARAM_DEPTH = "How many hops to follow (1 to 5; default 1)."
 MCP_PARAM_GRAPH_LIMIT = (
@@ -323,13 +340,19 @@ MCP_PARAM_GLOSS_AUTHOR = (
     "Optional. Who is writing the note (an agent or session name); default `agent`."
 )
 MCP_PARAM_MODULE_QN = "The module's qualified name (for example `myproj.pkg.util`)."
+MCP_PARAM_THROUGH_REEXPORTS = (
+    "Also list the modules that reach it through re-exports (default false)."
+)
 MCP_RENAME = (
     "Rename a function, method, class or other definition everywhere the graph "
     "knows it is referenced: the definition, every call, reference and "
     "instantiation site, import statements (aliases kept), overrides in both "
     "directions, and Python `__all__` entries. Refuses when any site was "
     "resolved heuristically, by overload fan-out, or only by a trace, unless "
-    "`allow_heuristic` is true. A class referenced by an inheritance or type "
+    "`allow_heuristic` is true. It also refuses when the source names the "
+    "symbol where the graph has no site (a call the index missed), listing "
+    "those occurrences as `unplanned`; `allow_heuristic` rewrites them as "
+    "guessed sites. A class referenced by an inheritance or type "
     "annotation edge that carries no rewrite location refuses regardless of "
     "`allow_heuristic`. Every rewritten file must still parse; "
     "otherwise nothing is written. Set `dry_run` to see the plan and diff "
@@ -339,7 +362,8 @@ MCP_RENAME = (
 )
 MCP_PARAM_NEW_NAME = "The new identifier."
 MCP_PARAM_ALLOW_HEURISTIC = (
-    "Rewrite through heuristic, overload and trace-only sites too (default false)."
+    "Rewrite through heuristic, overload and trace-only sites, and the unplanned "
+    "occurrences the graph has no site for, too (default false)."
 )
 MCP_PARAM_RENAME_DRY_RUN = "Plan only: report the sites and diff, write nothing."
 
@@ -472,11 +496,12 @@ MCP_FLOW_VERDICT = (
     "gaps exist. The path may cross a service boundary: a NETWORK resource "
     "that resolves to another project's endpoint continues into that "
     "handler, `remote_hops` lists the (from, to) pairs where it does, and "
-    "the coverage of every project entered counts towards the verdict. "
-    "FLOWS_TO coverage requires indexing with the `io` capture group. For "
-    "an MCP server, set `CGR_CAPTURE=io` in the server environment before "
-    "running index_repository or update_repository, then reindex after "
-    "changing it."
+    "the coverage of every project entered counts towards the verdict. A "
+    "source or sink that is not in the graph, or a source of another "
+    "project, is refused with an error rather than answered. FLOWS_TO "
+    "coverage requires indexing with the `io` capture group. For an MCP "
+    "server, set `CGR_CAPTURE=io` in the server environment before running "
+    "index_repository or update_repository, then reindex after changing it."
 )
 
 MCP_PARAM_PROJECT = (
