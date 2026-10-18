@@ -686,7 +686,7 @@ def _is_conditional_import_node(import_node: Node) -> bool:
 def _rust_member_pattern(pattern: str) -> str:
     # A workspace member glob relative to the root: leading `./` and a
     # trailing `/` dropped, and the root itself (`.`) as the empty pattern.
-    pattern = pattern.strip()
+    # Whitespace is part of a TOML path, so it is kept.
     while pattern.startswith(cs.RS_CURRENT_DIR_PREFIX):
         pattern = pattern[len(cs.RS_CURRENT_DIR_PREFIX) :]
     pattern = pattern.rstrip(cs.SEPARATOR_SLASH)

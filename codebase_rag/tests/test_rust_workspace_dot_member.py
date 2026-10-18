@@ -112,6 +112,8 @@ def test_the_other_members_still_map_to_their_crates(tmp_path: Path) -> None:
         ("./crates/a", "crates/a"),
         ("crates/b/", "crates/b"),
         ("crates/*", "crates/*"),
+        (" crates/a", " crates/a"),
+        (" . ", " . "),
     ],
 )
 def test_a_member_pattern_is_read_relative_to_the_root(
