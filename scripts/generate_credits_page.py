@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import html
 import importlib.util
+import re
 import sys
 from collections.abc import Iterable
 from importlib.metadata import Distribution
@@ -40,6 +41,13 @@ URL_SAFE_CHARS = ":/?#[]@!$&'*+,;=%~"
 # and the link brackets makes any such text literal; ordinary distribution
 # names and versions contain none of them.
 MARKDOWN_LINK_CHARS = ("\\", "[", "]")
+# A licence text can itself be Markdown (cgr-graph-rs's THIRD_PARTY_LICENSES.md
+# titles each crate `## name version`). Inside the <pre> block it renders as
+# text either way, but a line opening with `#` would read as one of this
+# page's own `## component` headings to anything that scans them, so the
+# character is written as its entity there, which a browser shows unchanged.
+LINE_START_HASH = re.compile(r"^#", flags=re.MULTILINE)
+HASH_ENTITY = "&#35;"
 
 PAGE_HEADER = """\
 # Credits
@@ -143,7 +151,9 @@ def render(entries: Iterable[tuple[NoticeEntry, str]]) -> str:
                 version=_inline_text(notice.version),
                 license=_inline_text(notice.license_line()),
                 url=url,
-                text=html.escape("\n\n".join(notice.texts)),
+                text=LINE_START_HASH.sub(
+                    HASH_ENTITY, html.escape("\n\n".join(notice.texts))
+                ),
             )
         )
     return "\n".join(parts)
