@@ -1489,10 +1489,9 @@ class FunctionIngestMixin:
             ls.FUNC_FOUND.format(name=resolution.name, qn=resolution.qualified_name)
         )
         self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, func_props)
-        if language in cs.C_FAMILY_LANGUAGES and has_internal_linkage(func_props):
-            self.function_registry.mark_internal_linkage(
-                resolution.qualified_name, module_qn
-            )
+        self._mark_c_internal_linkage(
+            resolution.qualified_name, module_qn, language, func_props
+        )
         func_path = func_props.get(cs.KEY_PATH)
         queue_type_facts(
             self.pending_type_facts,
@@ -1599,6 +1598,18 @@ class FunctionIngestMixin:
         self._create_function_relationships(
             func_node, resolution, module_qn, language, lang_config
         )
+
+    def _mark_c_internal_linkage(
+        self,
+        qualified_name: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        func_props: PropertyDict,
+    ) -> None:
+        # Only its own translation unit can call a `static` function, so call
+        # resolution needs the module that defines it (#3154).
+        if language in cs.C_FAMILY_LANGUAGES and has_internal_linkage(func_props):
+            self.function_registry.mark_internal_linkage(qualified_name, module_qn)
 
     def _mark_js_ts_name_scope(
         self, func_node: Node, qualified_name: str, func_props: PropertyDict
