@@ -104,16 +104,57 @@ _FILES = {
 _EdgeSet = frozenset[tuple[str, str, str]]
 
 
-def _write(root: Path) -> None:
+# Receivers whose name is not in a `name` field: a JS arrow function is
+# named by the variable it is bound to, a C++ definition by its declarator.
+_JS_FILES = {
+    "util.js": "export function log(msg) {\n  console.log(msg);\n}\n",
+    "registry.js": (
+        "import { log } from './util';\n\n"
+        "export const runCallback = (fn) => {\n"
+        "  log('running');\n"
+        "  return fn();\n"
+        "};\n"
+    ),
+    "plugins.js": (
+        "import { runCallback } from './registry';\n\n"
+        "function onStart() {\n  return 1;\n}\n\n"
+        "export function main() {\n  return runCallback(onStart);\n}\n"
+    ),
+}
+_CPP_FILES = {
+    "util.h": "#pragma once\nvoid log_msg(const char* msg);\n",
+    "util.cpp": '#include "util.h"\nvoid log_msg(const char* msg) {}\n',
+    "registry.h": "#pragma once\nint run_callback(int (*fn)());\n",
+    "registry.cpp": (
+        '#include "registry.h"\n#include "util.h"\n'
+        "int run_callback(int (*fn)()) {\n"
+        '  log_msg("running");\n'
+        "  return fn();\n"
+        "}\n"
+    ),
+    "plugins.cpp": (
+        '#include "registry.h"\n'
+        "static int on_start() { return 1; }\n"
+        "int main_entry() { return run_callback(on_start); }\n"
+    ),
+}
+
+
+def _write(root: Path, files: dict[str, str] = _FILES) -> None:
     root.mkdir()
-    for rel, text in _FILES.items():
+    for rel, text in files.items():
         (root / rel).write_text(text, encoding="utf-8")
 
 
-def _index(store: _StatefulIngestor, root: Path, force: bool) -> GraphUpdater:
+def _index(
+    store: _StatefulIngestor,
+    root: Path,
+    force: bool,
+    language: cs.SupportedLanguage = cs.SupportedLanguage.PYTHON,
+) -> GraphUpdater:
     parsers, queries = load_parsers()
-    if cs.SupportedLanguage.PYTHON not in parsers:
-        pytest.skip("python parser not available")
+    if language not in parsers:
+        pytest.skip(f"{language} parser not available")
     updater = GraphUpdater(
         ingestor=store,
         repo_path=root,
@@ -237,3 +278,46 @@ def test_a_dependent_without_callable_parameters_does_not_widen_the_reparse(
     reparsed = updater._reparsed_file_keys
     assert "plain.py" in reparsed, sorted(reparsed)
     assert "other.py" not in reparsed, sorted(reparsed)
+
+
+@pytest.mark.parametrize(
+    ("language", "files", "edited", "text", "edge"),
+    [
+        pytest.param(
+            cs.SupportedLanguage.JS,
+            _JS_FILES,
+            "util.js",
+            "export function log(msg, level) {\n  console.log(msg);\n}\n",
+            ("proj.registry.runCallback", "CALLS", "proj.plugins.onStart"),
+            id="js-arrow",
+        ),
+        pytest.param(
+            cs.SupportedLanguage.CPP,
+            _CPP_FILES,
+            "util.h",
+            "#pragma once\nvoid log_msg(const char* msg, int level);\n",
+            ("proj.registry.run_callback", "CALLS", "proj.plugins.on_start"),
+            id="cpp-definition",
+        ),
+    ],
+)
+def test_a_receiver_named_outside_a_name_field_brings_in_its_callers(
+    temp_repo: Path,
+    language: cs.SupportedLanguage,
+    files: dict[str, str],
+    edited: str,
+    text: str,
+    edge: tuple[str, str, str],
+) -> None:
+    root = temp_repo / "proj"
+    _write(root, files)
+    store = _StatefulIngestor()
+    _index(store, root, force=True, language=language)
+    clean = _edges(store)
+    assert edge in clean, "fixture must produce the callable-argument edge"
+
+    _rewrite(root / edited, root, text)
+    _index(store, root, force=False, language=language)
+    after = _edges(store)
+
+    assert edge in after, sorted(clean - after)

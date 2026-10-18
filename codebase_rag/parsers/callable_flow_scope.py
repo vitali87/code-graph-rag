@@ -15,6 +15,7 @@ from collections.abc import Collection, Iterable
 from tree_sitter import Node
 
 from .. import constants as cs
+from .handlers import get_handler
 from .utils import callable_parameter_indices, python_parameter_names, safe_decode_text
 
 
@@ -29,9 +30,11 @@ class FileFlowFunctions:
     ) -> None:
         invokers: set[str] = set()
         forwarding: list[tuple[str, Node]] = []
+        # A C++ definition names itself in its declarator and a JS/TS arrow
+        # function through the variable it is bound to.
+        handler = get_handler(language)
         for func_node in function_nodes:
-            name_node = func_node.child_by_field_name(cs.FIELD_NAME)
-            name = safe_decode_text(name_node) if name_node is not None else None
+            name = handler.extract_function_name(func_node)
             if not name:
                 continue
             if callable_parameter_indices(func_node, language):
