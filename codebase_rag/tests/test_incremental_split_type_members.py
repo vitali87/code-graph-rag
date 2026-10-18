@@ -17,6 +17,7 @@ import pytest
 from tree_sitter import Node
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.test_incremental_inbound_deferred_targets import _snapshot
@@ -91,7 +92,7 @@ def _index(store: _StatefulIngestor, root: Path, force: bool) -> None:
 def _edit_after_cache(path: Path, root: Path, marker: str) -> None:
     # A comment changes the hash, not the AST. The mtime lands past the hash
     # cache's so a coarse-timestamp filesystem cannot skip the file unhashed.
-    cache_mtime = (root / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
     path.write_text(path.read_text(encoding="utf-8") + f"{marker} edited\n")
     os.utime(path, (cache_mtime + 1, cache_mtime + 1))
 
