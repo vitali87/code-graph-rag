@@ -115,9 +115,11 @@ def _normalise(text: str) -> str:
 
 
 @lru_cache(maxsize=cs.CONTEXT_SOURCE_CACHE_FILES)
-def _file_lines(path: Path, stamp: tuple[int, int]) -> tuple[str, ...]:
+def _file_lines(path: Path, stamp: tuple[int, int, int, int]) -> tuple[str, ...]:
     # Keyed by modification time and size as well as path, so an edited
     # file is read again; a slice quotes one test file once per test in it.
+    # The inode and change time catch an edit or atomic replacement that
+    # keeps the old size and modification time.
     return tuple(read_source_lines(path))
 
 
@@ -132,7 +134,10 @@ def _lines(repo_root: Path | None, path: str | None, start: int, end: int) -> st
         return ""
     try:
         stat = candidate.stat()
-        lines = _file_lines(candidate, (stat.st_mtime_ns, stat.st_size))
+        lines = _file_lines(
+            candidate,
+            (stat.st_mtime_ns, stat.st_size, stat.st_ctime_ns, stat.st_ino),
+        )
     except (OSError, ValueError, LookupError):
         return ""
     return _normalise(slice_source_lines(lines, start, end, candidate) or "")
