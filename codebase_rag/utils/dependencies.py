@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import importlib.util
-from collections.abc import Sequence
 
 from codebase_rag.constants import (
     MODULE_AST_GREP,
     MODULE_PYMILVUS,
     MODULE_QDRANT_CLIENT,
+    MODULE_SQLITE_VEC,
     MODULE_TORCH,
     MODULE_TRANSFORMERS,
     UNIXCODER_MODEL,
@@ -41,6 +41,10 @@ def has_pymilvus() -> bool:
     return _check_dependency(MODULE_PYMILVUS)
 
 
+def has_sqlite_vec() -> bool:
+    return _check_dependency(MODULE_SQLITE_VEC)
+
+
 def has_ast_grep() -> bool:
     return _check_dependency(MODULE_AST_GREP)
 
@@ -51,6 +55,8 @@ def has_vector_store_dependencies() -> bool:
     backend = settings.VECTOR_STORE_BACKEND
     if backend == VectorStoreBackend.MILVUS:
         return has_pymilvus()
+    if backend == VectorStoreBackend.SQLITE:
+        return has_sqlite_vec()
     return has_qdrant_client()
 
 
@@ -90,11 +96,3 @@ def has_local_embedding_weights() -> bool:
     except Exception:
         return False
     return True
-
-
-def check_dependencies(required_modules: Sequence[str]) -> bool:
-    return all(_check_dependency(module) for module in required_modules)
-
-
-def get_missing_dependencies(required_modules: Sequence[str]) -> list[str]:
-    return [module for module in required_modules if not _check_dependency(module)]
