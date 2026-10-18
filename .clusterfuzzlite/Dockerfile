@@ -21,7 +21,7 @@
 # So: stay on the 20.04 base (glibc 2.31, matching the runner) and get 3.12
 # from uv's standalone CPython, which is built for an ancient glibc floor --
 # `objdump -T` on its libpython reports a maximum requirement of GLIBC_2.9.
-FROM gcr.io/oss-fuzz-base/base-builder-python@sha256:79cc75a68ab65120da54f35d53f10c7536554ffe684eea5bae078a9a5ff82923
+FROM gcr.io/oss-fuzz-base/base-builder-python@sha256:21f6fab17ace4dc76e1c56de91ee95d3d03da021df94b41056ba036f6c6f55e9
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends git && \
@@ -40,6 +40,25 @@ RUN curl -fsSLO "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}
     rm -rf uv-x86_64-unknown-linux-gnu uv-x86_64-unknown-linux-gnu.tar.gz
 
 RUN uv python install 3.12
+
+# code-graph-rag requires cgr-graph-rs, its Rust extension, and a PR has to be
+# fuzzed with the crate it carries, which PyPI may not have yet; build.sh
+# builds it from rust/cgr_graph_rs. base-builder-python ships OSS-Fuzz's cargo
+# wrapper but no toolchain behind it, so install one where the wrapper looks
+# (/rust/bin), checked against the SHA-256 rustup publishes, as uv is above.
+# That wrapper sits at /usr/local/bin/cargo, which rustup-init would otherwise
+# take for another Rust install.
+ARG RUSTUP_VERSION=1.28.2
+ARG RUSTUP_SHA256=20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c
+ARG RUST_TOOLCHAIN=1.85.0
+ENV CARGO_HOME=/rust RUSTUP_HOME=/rust/rustup PATH=$PATH:/rust/bin
+RUN curl -fsSLO "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/x86_64-unknown-linux-gnu/rustup-init" && \
+    echo "${RUSTUP_SHA256}  rustup-init" | sha256sum -c - && \
+    chmod +x rustup-init && \
+    RUSTUP_INIT_SKIP_PATH_CHECK=yes ./rustup-init -y --no-modify-path --profile minimal \
+        --default-toolchain "${RUST_TOOLCHAIN}" && \
+    rm rustup-init && \
+    cargo --version
 
 # Make that interpreter the default `python3` so compile_python_fuzzer and
 # build.sh use it without either knowing where it came from.
