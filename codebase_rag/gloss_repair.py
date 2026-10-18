@@ -495,6 +495,9 @@ class _MentionNote(NamedTuple):
     # As stored, to tell whether the pass changed anything.
     stored: tuple[list[str], list[str], list[str], list[str]]
     attached: frozenset[str]
+    # The nonce of the write the pass read ("" before nonces): the repair is
+    # applied only while the note still carries it.
+    write_id: str
 
 
 def _strings(value: ResultValue | None) -> list[str]:
@@ -515,6 +518,7 @@ def _mention_note(row: ResultRow) -> _MentionNote:
     if len(quotes) != len(qns):
         quotes = [""] * len(qns)
     project = row.get(cs.KEY_PROJECT)
+    write_id = row.get(cs.KEY_WRITE_ID)
     return _MentionNote(
         qualified_name=str(row.get(cs.KEY_QUALIFIED_NAME, "")),
         target_qn=str(row.get(cs.KEY_TARGET_QN, "")),
@@ -530,6 +534,7 @@ def _mention_note(row: ResultRow) -> _MentionNote:
         ],
         stored=(qns, hashes, quotes, sorted(lost)),
         attached=frozenset(_strings(row.get(cs.KEY_ATTACHED))),
+        write_id=write_id if isinstance(write_id, str) else "",
     )
 
 
@@ -723,6 +728,7 @@ def _write_mentions(
         cq.CYPHER_GLOSS_SET_MENTIONS,
         {
             cs.KEY_QN: note.qualified_name,
+            cs.KEY_WRITE_ID: note.write_id,
             cs.KEY_MENTION_QNS: lists[0],
             cs.KEY_MENTION_HASHES: lists[1],
             cs.KEY_MENTION_QUOTES: lists[2],
