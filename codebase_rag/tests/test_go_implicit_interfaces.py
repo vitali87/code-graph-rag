@@ -2154,7 +2154,10 @@ def _one_real_go_run_per_tree(
     run = frontend._run_tool_once
 
     def once(
-        binary: Path, module_root: Path, ignored_dirs: frozenset[str]
+        binary: Path,
+        module_root: Path,
+        ignored_dirs: frozenset[str],
+        in_repo_modules: frozenset[str] = frozenset(),
     ) -> GoSemanticFacts | None:
         key = hashlib.sha256(
             "\0".join(
@@ -2173,17 +2176,19 @@ def _one_real_go_run_per_tree(
         with FileLock(kept.with_suffix(".lock")):
             if kept.is_file():
                 stdout, stderr = json.loads(kept.read_text(encoding="utf-8"))
-                return frontend._parse_payload(stdout, stderr)
+                return frontend._parse_payload(stdout, stderr, in_repo_modules)
             captured: list[tuple[str, str]] = []
             parse = frontend._parse_payload
 
-            def keep(stdout: str, stderr: str) -> GoSemanticFacts:
+            def keep(
+                stdout: str, stderr: str, in_repo: frozenset[str]
+            ) -> GoSemanticFacts | None:
                 captured.append((stdout, stderr))
-                return parse(stdout, stderr)
+                return parse(stdout, stderr, in_repo)
 
             with pytest.MonkeyPatch.context() as patch:
                 patch.setattr(frontend, "_parse_payload", keep)
-                facts = run(binary, module_root, ignored_dirs)
+                facts = run(binary, module_root, ignored_dirs, in_repo_modules)
             if facts is not None and captured:
                 partial = kept.with_suffix(f".{os.getpid()}.part")
                 partial.write_text(json.dumps(captured[0]), encoding="utf-8")
