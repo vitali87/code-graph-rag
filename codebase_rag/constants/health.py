@@ -23,8 +23,9 @@ HEALTH_CHECK_MEMGRAPH_CONNECTION_FAILED_MSG = "Connection or query failed"
 HEALTH_CHECK_MEMGRAPH_UNEXPECTED_FAILURE_MSG = "Unexpected failure"
 HEALTH_CHECK_GRAPH_ERROR = "{engine} error: {error}"
 HEALTH_CHECK_MEMGRAPH_QUERY = "RETURN 1 AS test;"
-# Memgraph 2.x cannot parse the label alternation (`MATCH (n:A|B)`) the
-# graph, dead-code and duplicates queries use (issue #2906).
+# cgr ships against the Memgraph 3.x `cgr daemon up` pins. 2.x parses less
+# Cypher: cgr's own queries test labels in WHERE, but the generated ones still
+# use the label alternation (`MATCH (n:A|B)`) 2.x rejects (issue #2906).
 MEMGRAPH_MIN_MAJOR_VERSION = 3
 CYPHER_SHOW_VERSION = "SHOW VERSION"
 MEMGRAPH_VERSION_SEPARATOR = "."

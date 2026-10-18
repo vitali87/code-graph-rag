@@ -546,9 +546,10 @@ MG_CONNECT_FAILED = "Could not connect to Memgraph at {host}:{port}: {error}"
 MG_CONNECTED = "Successfully connected to Memgraph."
 MG_UNSUPPORTED_VERSION = (
     "Memgraph {version} at {host}:{port} is not supported: cgr needs "
-    "{major}.x or later, and its graph, dead-code and duplicates queries fail "
-    "on this server (\"mismatched input '|'\"). Run `cgr daemon up` to start "
-    "the supported server."
+    "{major}.x or later, and a query this server cannot parse fails with a "
+    "bare parser error (such as \"mismatched input '|'\" for a generated "
+    "query's label alternation). Run `cgr daemon up` to start the supported "
+    "server."
 )
 MG_EXCEPTION = "An exception occurred: {error}. Attempting best-effort flush..."
 MG_DELIBERATE_EXIT = (

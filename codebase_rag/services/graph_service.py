@@ -437,9 +437,9 @@ class MemgraphIngestor:
         return self
 
     def _warn_if_unsupported(self, conn: ConnectionProtocol) -> None:
-        # Named once per server and process: a Memgraph too old for the
-        # label alternation most read queries use otherwise fails each one
-        # with a bare parser error (issue #2906).
+        # Named once per server and process: a Memgraph older than cgr
+        # supports otherwise fails each query it cannot parse with a bare
+        # parser error (issue #2906).
         version = memgraph_version(conn)
         if version is None or not unsupported_memgraph_version(version):
             return

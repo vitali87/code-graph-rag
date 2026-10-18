@@ -213,8 +213,9 @@ class HealthChecker:
                 )
 
             if version is not None and unsupported_memgraph_version(version):
-                # Connected is not usable: a 2.x server parses none of the
-                # label alternations the read paths use (issue #2906).
+                # Connected is not usable: a 2.x server rejects Cypher cgr
+                # writes for 3.x, such as generated queries' label
+                # alternation (issue #2906).
                 return HealthCheckResult(
                     name=cs.HEALTH_CHECK_MEMGRAPH_UNSUPPORTED.format(version=version),
                     passed=False,
