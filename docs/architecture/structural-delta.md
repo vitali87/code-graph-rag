@@ -126,7 +126,10 @@ some no-parameter `pop()`, never fails `--fail-on-found` (issue #2639).
 
 A def wrapped by a decorator other than `@staticmethod`, `@classmethod`,
 `@abstractmethod` or `@override` is not judged from its header, since the
-decorator may change what a caller passes.
+decorator may change what a caller passes. Nor is a site whose edge was
+bound by name alone (`resolution` `heuristic` or `overload`, as for a
+receiver typed only by its parameter's name): it may lead to a same-named
+def the call never runs.
 
 A Python def that turns into an `async def`, or the reverse, breaks a
 call written for the old kind (issue #2860). Each call site is read back

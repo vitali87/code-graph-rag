@@ -1747,6 +1747,10 @@ def _arity_verdict(
     declared_count, verdict = _python_count_verdict(site, definition, repo_root)
     if verdict == cs.DELTA_ARITY_TOO_MANY:
         return declared_count, verdict
+    # A guessed edge may lead to a same-named def the call never runs, whose
+    # header proves nothing about this call (CodeRabbit, PR #2947).
+    if site.resolution not in _DEFINITE_RESOLUTIONS:
+        return declared_count, verdict
     signature = _python_signature(definition, repo_root)
     if signature is None:
         return declared_count, verdict
