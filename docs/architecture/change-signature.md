@@ -49,7 +49,12 @@ call would lose it.
 Every override in the hierarchy (`OVERRIDES` edges in both directions) must
 declare the same parameter names, or the operation refuses naming the
 member that differs: rewriting one and not the other would break the
-substitution the hierarchy exists for.
+substitution the hierarchy exists for. Each override keeps its own
+annotations and defaults, so every rewritten header is checked as Python
+would check it when loading the module, and the operation refuses if one
+fails. Moving `c` before `b` across `Base.f(self, a, b=1, c=2)` and
+`Sub.f(self, a, b, c=2)` refuses, since `Sub.f` would read
+`(self, a, c=2, b)`. So does a new parameter named like the receiver.
 
 ## The mapping
 
@@ -146,6 +151,10 @@ path, line, column and reason, when:
 - it passes more positional arguments than the definition declares, a
   keyword the definition does not declare, or the same parameter twice;
 - it uses `*args`, `**kwargs`, or a bare generator as its arguments;
+- it calls an instance method through a class and passes the receiver
+  itself (`Base.f(obj, a)`, `type(obj).f(obj, a)`). A name counts as a
+  class when it is the method's own class or is spelled `CapWords`,
+  including through an alias (`from pkg.shapes import Base as base`);
 - the graph bound it by `heuristic`, `overload` or `dynamic` resolution and
   `allow_heuristic` is false;
 - it carries no location, or its file cannot be read.
