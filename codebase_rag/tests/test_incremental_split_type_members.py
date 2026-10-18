@@ -21,6 +21,7 @@ from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.test_incremental_inbound_deferred_targets import _snapshot
+from codebase_rag.types_defs import PropertyDict, ResultRow
 from evals.cgr_graph import _StatefulIngestor
 
 _GO = {
@@ -72,21 +73,40 @@ _CPP = {
 _CPP_GROW = "proj.box.h.Box.grow"
 
 
+class _MemberLookupOutage(_StatefulIngestor):
+    """Fails the foreign-member lookup once `down` is set, answers the rest."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.down = False
+
+    def fetch_all(
+        self, query: str, params: PropertyDict | None = None
+    ) -> list[ResultRow]:
+        if self.down and query == cs.CYPHER_FOREIGN_MEMBER_PATHS:
+            raise RuntimeError("foreign-member lookup outage")
+        return super().fetch_all(query, params)
+
+
 def _write(root: Path, files: dict[str, str]) -> None:
     root.mkdir()
     for rel, text in files.items():
         (root / rel).write_text(text, encoding="utf-8")
 
 
-def _index(store: _StatefulIngestor, root: Path, force: bool) -> None:
+def _updater(store: _StatefulIngestor, root: Path) -> GraphUpdater:
     parsers, queries = load_parsers()
-    GraphUpdater(
+    return GraphUpdater(
         ingestor=store,
         repo_path=root,
         parsers=parsers,
         queries=queries,
         project_name="proj",
-    ).run(force=force)
+    )
+
+
+def _index(store: _StatefulIngestor, root: Path, force: bool) -> None:
+    _updater(store, root).run(force=force)
 
 
 def _edit_after_cache(path: Path, root: Path, marker: str) -> None:
@@ -227,3 +247,31 @@ def test_a_cpp_out_of_line_definition_survives_its_headers_reparse(
     after = store.nodes[(cs.NodeLabel.METHOD.value, _CPP_GROW)]
     assert after.get(cs.KEY_PATH) == "box.cpp", after
     assert after.get(cs.KEY_START_LINE) == clean.get(cs.KEY_START_LINE)
+
+
+def test_an_incremental_sync_aborts_when_the_member_lookup_fails(
+    cpp_root: Path,
+) -> None:
+    # The lookup decides which files must re-parse before the delete runs;
+    # read as "none" it let box.h's delete take grow with no file left to
+    # re-create it, and the hash commit then marked the run complete.
+    _write(cpp_root, _CPP)
+    store = _MemberLookupOutage()
+    _index(store, cpp_root, force=True)
+    _edit_after_cache(cpp_root / "util.h", cpp_root, "//")
+    store.down = True
+
+    with pytest.raises(RuntimeError, match="foreign-member lookup outage"):
+        _index(store, cpp_root, force=False)
+    assert (cs.NodeLabel.METHOD.value, _CPP_GROW) in store.nodes
+
+
+def test_a_full_build_goes_on_when_the_member_lookup_fails(cpp_root: Path) -> None:
+    # A full build re-parses every file, so it needs no lookup to keep grow.
+    _write(cpp_root, _CPP)
+    store = _MemberLookupOutage()
+    store.down = True
+    _index(store, cpp_root, force=True)
+
+    node = store.nodes[(cs.NodeLabel.METHOD.value, _CPP_GROW)]
+    assert node.get(cs.KEY_PATH) == "box.cpp", node

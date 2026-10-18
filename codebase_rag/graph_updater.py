@@ -5381,6 +5381,12 @@ class GraphUpdater:
                 },
             )
         except Exception:
+            # The delete that follows takes these members with their type's
+            # module, so an incremental run that read an outage as "none"
+            # lost them for good under a completed hash commit; it aborts, as
+            # the inbound capture does. A full build re-parses every file.
+            if not self._is_full_build:
+                raise
             logger.warning(ls.PRUNE_QUERY_FAILED, label="foreign members")
             return []
         return sorted(
