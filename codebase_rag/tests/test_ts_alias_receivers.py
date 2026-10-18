@@ -168,6 +168,19 @@ def test_an_alias_given_another_class_is_typed_afresh_on_reingest(
     assert calls.get("viaAlias") == {("Bag", cs.EdgeResolution.EXACT)}, calls
 
 
+def test_an_alias_type_parameter_is_no_class_it_names(temp_repo: Path) -> None:
+    # `Box` in `type Wrap<Box> = Box` is the parameter: it brought the class
+    # `Box` into view, and `Box.size` beside `Bag.size` left no edge.
+    types = TYPES + "export type Wrap<Box> = Box;\n"
+    use = (
+        'import { Wrap, Bag } from "./types";\n\n'
+        "export function wrapped(h: Wrap<Bag>): number {\n  return h.size();\n}\n"
+    )
+    calls = _size_calls({"src/types.ts": types, "src/use.ts": use}, temp_repo / "proj")
+
+    assert calls.get("wrapped") == {("Bag", cs.EdgeResolution.EXACT)}, calls
+
+
 def test_a_local_array_type_is_not_the_platform_array(temp_repo: Path) -> None:
     # Negative: a module's own `Array<T>` indexes to what it declares, not to
     # `T`, so `xs[0].size()` is no exact `Box.size`.

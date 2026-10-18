@@ -302,6 +302,16 @@ def _ts_single_named_type(value: Node | None) -> Node | None:
     return value
 
 
+def _ts_type_parameter_names(declaration: Node) -> set[str]:
+    # `T` of `type Maybe<T> = ...`: names the declaration binds, not types.
+    parameters = declaration.child_by_field_name(cs.TS_FIELD_TYPE_PARAMETERS)
+    return {
+        text
+        for param in (parameters.named_children if parameters is not None else ())
+        if (text := safe_decode_text(param.child_by_field_name(cs.FIELD_NAME)))
+    }
+
+
 def _file_language(suffix: str) -> cs.SupportedLanguage | None:
     # `.ipynb` maps to no grammar, but the only notebooks that become modules
     # are Python ones, whose cells are parsed as Python (issue #2480).
@@ -3233,8 +3243,15 @@ class CallResolver:
         value = _ts_single_named_type(
             alias.child_by_field_name(cs.FIELD_VALUE) if alias else None
         )
-        if value is not None and value.type == cs.TS_TYPE_IDENTIFIER:
-            named = safe_decode_text(value) or ""
+        named = safe_decode_text(value) if value is not None else None
+        if (
+            alias is not None
+            and value is not None
+            and value.type == cs.TS_TYPE_IDENTIFIER
+            and named
+            # `Box` of `type Wrap<Box> = Box` is the parameter, no class.
+            and named not in _ts_type_parameter_names(alias)
+        ):
             import_map = self.import_processor.import_mapping.get(module_qn) or {}
             candidate = import_map.get(named) or f"{module_qn}{cs.SEPARATOR_DOT}{named}"
             if self.function_registry.get(candidate) == NodeType.CLASS:
