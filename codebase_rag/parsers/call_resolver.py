@@ -6795,12 +6795,11 @@ class CallResolver:
             owner_qn, self.type_inference.module_qn_to_file_path
         )
         language = self._module_language(owner_module) if owner_module else None
-        if (
-            owner_module
-            and language == cs.SupportedLanguage.DART
-            and (visible := self._dart_visible_type(field_type, owner_module))
-        ):
-            return visible
+        if owner_module and language == cs.SupportedLanguage.DART:
+            # What the declaring library sees is the whole answer: a name it
+            # cannot see uniquely (a package's, or two libraries') is no
+            # same-named class found anywhere else in the project.
+            return self._dart_visible_type(field_type, owner_module) or ""
         # A Rust struct inside an inline `mod` reads that mod's `use` before
         # the file's, so the owner stands where a caller would.
         return self._chain_class_qn(

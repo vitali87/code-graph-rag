@@ -235,3 +235,27 @@ def test_a_dart_name_two_visible_libraries_declare_is_not_picked_by_scope(
 
     resolver = updater.factory.call_processor._resolver
     assert resolver._dart_visible_type("Cart", f"{temp_repo.name}.lib.shop") is None
+
+
+def test_a_dart_field_typed_from_a_package_takes_no_project_class(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: `Cart` is the package's, and no project library `shop.dart`
+    # sees declares one, so the project's unimported `Cart` is not it: the
+    # name-only fallback bound `s.cart.total()` to it, `exact`.
+    files = {
+        "lib/main.dart": _DART["lib/main.dart"],
+        "lib/shop.dart": (
+            "import 'package:other/cart.dart';\n\n"
+            "class Shop {\n  Cart cart = Cart();\n}\n"
+        ),
+        "lib/a_toy/toy_cart.dart": "class Cart {\n  int total() => 3;\n}\n",
+    }
+    for rel, text in files.items():
+        (temp_repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (temp_repo / rel).write_text(text, encoding="utf-8")
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    assert ("lib.a_toy.toy_cart.Cart.total", cs.EdgeResolution.EXACT) not in _calls(
+        temp_repo, mock_ingestor, "lib.main.run"
+    )
