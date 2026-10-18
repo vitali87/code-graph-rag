@@ -696,14 +696,22 @@ def repair_mentions(
         project = projects.get(note.qualified_name)
         placed: dict[str, _Placed] = {}
         for mention in note.mentions:
-            found = placer.place(mention, project)
-            placed.setdefault(found.qualified_name, found)
+            _keep_placement(placed, placer.place(mention, project))
         _write_mentions(execute_write, note, project, placed)
         if any(p.moved for p in placed.values()):
             report.moved.append(note.qualified_name)
         if any(p.lost for p in placed.values()):
             report.lost.append(note.qualified_name)
     return report
+
+
+def _keep_placement(placed: dict[str, _Placed], found: _Placed) -> None:
+    # Two mentions can land on one name: one lost there, another followed
+    # there by its code (`a` deleted, then `b` renamed to `a`). The live one
+    # keeps the name and its edge; first come wins otherwise.
+    prior = placed.get(found.qualified_name)
+    if prior is None or (prior.lost and not found.lost):
+        placed[found.qualified_name] = found
 
 
 def _write_mentions(

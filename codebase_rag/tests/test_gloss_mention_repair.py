@@ -36,7 +36,8 @@ class _Store:
         if query == cq.CYPHER_DEFINITIONS_BY_QNS:
             return self.current
         if query == cq.CYPHER_DEFINITIONS_BY_ANCHOR_HASH:
-            return self.by_hash
+            hashes = (params or {}).get(cs.KEY_HASHES) or []
+            return [r for r in self.by_hash if r[cs.KEY_ANCHOR_HASH] in hashes]
         raise AssertionError(f"unexpected query: {query}")
 
     def execute_write(self, query: str, params: PropertyDict | None = None) -> None:
@@ -276,3 +277,31 @@ def test_a_followed_target_still_carrying_the_hash_is_bound() -> None:
             ),
         )
         assert conn.run(_NOTE_EDGES).rows == [([_MOVED], None, [_MOVED])]
+
+
+def test_a_mention_followed_onto_a_lost_mentions_name_keeps_its_edge() -> None:
+    # The note mentions `a` and `run`; `a` was deleted and is lost, then
+    # `run` was renamed to `a`. Both now place under `a`: the one followed
+    # there by its hash is live, and the lost one must not displace it.
+    gone = f"{P}.b.a"
+    note = {
+        **_note([]),
+        cs.KEY_MENTION_QNS: [gone, RUN],
+        cs.KEY_MENTION_HASHES: [f"{cs.ANCHOR_HASH_VERSION}a", RUN_HASH],
+        cs.KEY_MENTION_QUOTES: ["", ""],
+        cs.KEY_MENTIONS_LOST: [gone],
+    }
+    store = _Store(note, [_definition(gone, RUN_HASH)], [_definition(gone, RUN_HASH)])
+
+    report = repair_mentions(store.fetch_all, store.execute_write)
+
+    ((_query, params),) = store.writes
+    assert params is not None
+    assert params[cs.KEY_MENTION_QNS] == [gone]
+    assert params[cs.KEY_MENTION_HASHES] == [RUN_HASH]
+    assert params[cs.KEY_MENTIONS_LOST] is None
+    assert params[cs.KEY_ATTACH_KEYS] == [
+        f"{gone}{cs.GLOSS_MENTION_KEY_SEPARATOR}{RUN_HASH}"
+    ]
+    assert report.moved == ["gloss:n"]
+    assert report.lost == []
