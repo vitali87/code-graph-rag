@@ -119,7 +119,9 @@ class CppQnResolver:
         """A libclang file name as an absolute path, without touching disk."""
         if self.working_dir is None or os.path.isabs(file_name):
             return file_name
-        return os.path.normpath(os.path.join(self.working_dir, file_name))
+        # Not normalised: in `objdir/../main.cpp` the `..` leaves the
+        # link's target, which only resolving against the disk can follow.
+        return os.path.join(self.working_dir, file_name)
 
     def rel_path(self, file_name: str) -> str | None:
         try:

@@ -212,3 +212,27 @@ def test_entry_whose_directory_is_gone_loads_from_the_cwd(
     assert "cppnodir.geometry.h.AREA" in functions, sorted(functions)
     assert "cppnodir.inc.scale.SCALE" in functions, sorted(functions)
     assert all(p.rel_path == "geometry.cpp" for p in pending), pending
+
+
+def test_parent_of_a_symlinked_directory_is_the_link_targets_parent(
+    temp_repo: Path, elsewhere: Path
+) -> None:
+    # `objdir` points at `pkg/obj`, so the entry's `../main.cpp` is
+    # `pkg/main.cpp`, the file clang loads, not a `main.cpp` at the root.
+    root = temp_repo / "cpplink"
+    (root / "pkg" / "obj").mkdir(parents=True)
+    (root / "pkg" / "main.cpp").write_text(
+        "int linked_main() { return 1; }\n", encoding="utf-8"
+    )
+    (root / "objdir").symlink_to(root / "pkg" / "obj", target_is_directory=True)
+    entry = _entry(root / "objdir", "../main.cpp")
+    (root / "compile_commands.json").write_text(json.dumps([entry]), encoding="utf-8")
+    ingestor = MagicMock()
+    covered = run_cpp_frontend(ingestor, root, root.name, root)
+
+    assert "pkg/main.cpp" in covered, sorted(covered)
+    functions = _functions(ingestor)
+    assert "cpplink.pkg.main.linked_main" in functions, sorted(functions)
+    assert functions["cpplink.pkg.main.linked_main"][cs.KEY_ABSOLUTE_PATH] == (
+        (root / "pkg" / "main.cpp").resolve().as_posix()
+    )
