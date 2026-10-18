@@ -188,3 +188,54 @@ def test_a_caller_in_another_package_keeps_its_chained_result_types(
     _index(store, root, force=False)
 
     assert _size_calls(store) == expected
+
+
+_BUILD_VARIANTS = {
+    "go.mod": "module example.com/ret\n\ngo 1.21\n",
+    "lib/types.go": (
+        "package lib\n\ntype Box struct{ n int }\n\n"
+        "func (b *Box) Size() int { return b.n }\n\n"
+        "type Bag struct{}\n\nfunc (g *Bag) Size() int { return 0 }\n\n"
+        "func MakeBox(n int) *Box { return &Box{n: n} }\n"
+    ),
+    "lib/self_linux.go": (
+        "//go:build linux\n\npackage lib\n\nfunc (b *Box) Self() *Box { return b }\n"
+    ),
+    "lib/self_windows.go": (
+        "//go:build windows\n\npackage lib\n\n"
+        "func (b *Box) Self() *Bag { return &Bag{} }\n"
+    ),
+    "app/app.go": "package app\n",
+    "app/app_test.go": (
+        'package app\n\nimport (\n\t"testing"\n\n\t"example.com/ret/lib"\n)\n\n'
+        "func TestVariant(t *testing.T) {\n\t_ = lib.MakeBox(2).Self().Size()\n}\n"
+    ),
+}
+
+
+def test_build_variants_of_a_method_type_its_chain_as_a_fresh_index_does(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Each build file's `Box.Self` is its own node (`Self`, `Self@5`), but
+    # parsing records their results under the one natural qn, each over the
+    # last in registration order. Read back node by node, the natural qn
+    # kept the first file's result where a clean index has the last's.
+    if cs.SupportedLanguage.GO not in load_parsers()[0]:
+        pytest.skip("go parser not available")
+    monkeypatch.setattr(settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
+    root = temp_repo / "proj"
+    for rel, text in _BUILD_VARIANTS.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text, encoding="utf-8")
+    store = _StatefulIngestor()
+    _index(store, root, force=True)
+    fresh = _size_calls(store)
+    assert fresh.get("TestVariant"), fresh
+
+    test_file = root / "app" / "app_test.go"
+    cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
+    test_file.write_text(test_file.read_text(encoding="utf-8") + "// edited\n")
+    os.utime(test_file, (cache_mtime + 1, cache_mtime + 1))
+    _index(store, root, force=False)
+
+    assert _size_calls(store) == fresh
