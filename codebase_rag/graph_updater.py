@@ -49,7 +49,7 @@ from .parser_fingerprint import compute_parser_fingerprint
 from .parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES
 from .parsers import utils as parser_utils
 from .parsers.ast_grep_tier import AstGrepTier
-from .parsers.callable_flow_scope import flow_function_names
+from .parsers.callable_flow_scope import FileFlowFunctions, settled_flow_names
 from .parsers.contract_linking import link_contracts
 from .parsers.cpp.preproc_recovery import parse_with_preproc_recovery
 from .parsers.cpp_frontend import (
@@ -7610,7 +7610,36 @@ class GraphUpdater:
         scan: _FileScan,
         reindexed_keys: list[str],
     ) -> list[str]:
-        """Queue the files that pass callables into a re-parsed function.
+        """Queue the files that pass callables into a re-parsed function."""
+        queued = len(scan.changed_entries)
+
+        def queue_callers(caller_keys: list[str]) -> list[tuple[Path, str, bytes]]:
+            start = len(scan.changed_entries)
+            self._queue_affected_callers(
+                caller_keys, present, eligible_by_key, scan, reindexed_keys
+            )
+            return [
+                (path, key, data)
+                for path, key, _new, data in scan.changed_entries[start:]
+            ]
+
+        self._expand_callable_flow(
+            [(path, key, data) for path, key, _new, data in scan.changed_entries],
+            {key for _path, key, _new, _data in scan.changed_entries[:edited_count]},
+            queue_callers,
+        )
+        if len(scan.changed_entries) == queued:
+            return reindexed_keys
+        return _reindexed_keys(scan.changed_entries)
+
+    def _expand_callable_flow(
+        self,
+        reparsed: list[tuple[Path, str, bytes]],
+        edited: Collection[str],
+        queue_callers: Callable[[list[str]], list[tuple[Path, str, bytes]]],
+    ) -> None:
+        """Bring the callers of the re-parsed callable-flow holders into the
+        re-parse, until no joined file holds one.
 
         `run_callback(fn): return fn()` gets an edge to each callable its
         callers pass in (`run_callback(_on_start)`), derived from bindings
@@ -7620,56 +7649,55 @@ class GraphUpdater:
         (issue #2911). So a re-parsed file defining such a function brings in
         its callers, and a caller that forwards its own parameter into one
         (`wrap(cb): return run_callback(cb)`) brings in its callers in turn.
-        A file is checked only when it is queued, so a dependent whose
+        An `edited` file holds only through what it forwards: when its
+        invokers hold edges, its callers already re-parse as its dependents.
+        A file is checked only when it is re-parsed, so a dependent whose
         functions take no part in callable flow widens nothing.
         """
-        # An edited file's callers are already queued as its dependents; its
-        # flow functions only seed the names a dependent may forward into.
-        flow_names = frozenset(
-            name
-            for path, _key, _new, data in scan.changed_entries[:edited_count]
-            for name in self._flow_function_names(path, data, frozenset())
-        )
-        frontier = scan.changed_entries[edited_count:]
-        while frontier:
-            holders: list[str] = []
-            for path, key, _new, data in frontier:
-                if names := self._flow_function_names(path, data, flow_names):
-                    holders.append(key)
-                    flow_names = flow_names | names
-            if not holders:
-                break
-            queued = len(scan.changed_entries)
-            reindexed_keys = self._queue_affected_callers(
-                self._affected_caller_keys(sorted(holders)),
-                present,
-                eligible_by_key,
-                scan,
-                reindexed_keys,
+        files = {
+            key: flow
+            for path, key, data in reparsed
+            if (flow := self._file_flow_functions(path, data)) is not None
+        }
+        flow_names: frozenset[str] = frozenset()
+        holders: set[str] = set()
+        while True:
+            flow_names = settled_flow_names(list(files.values()), flow_names)
+            joined = sorted(
+                key
+                for key, flow in files.items()
+                if key not in holders
+                and (
+                    flow.forwarders(flow_names)
+                    if key in edited
+                    else flow.names(flow_names)
+                )
             )
-            frontier = scan.changed_entries[queued:]
-        return reindexed_keys
+            if not joined:
+                return
+            holders.update(joined)
+            for path, key, data in queue_callers(self._affected_caller_keys(joined)):
+                if (flow := self._file_flow_functions(path, data)) is not None:
+                    files[key] = flow
 
-    def _flow_function_names(
-        self, filepath: Path, file_bytes: bytes, flow_names: frozenset[str]
-    ) -> set[str]:
+    def _file_flow_functions(
+        self, filepath: Path, file_bytes: bytes
+    ) -> FileFlowFunctions | None:
         language = self._tree_sitter_language(filepath)
         if language not in cs.CALLABLE_FLOW_LANGUAGES:
-            return set()
+            return None
         language_queries = self.queries.get(language)
         if language_queries is None:
-            return set()
+            return None
         parser = language_queries.get(cs.KEY_PARSER)
         functions_query = language_queries.get(cs.QUERY_FUNCTIONS)
         if parser is None or functions_query is None:
-            return set()
+            return None
         root = parse_with_preproc_recovery(
             parser, grammar_bytes(file_bytes, language, filepath), language
         ).root_node
         captures = sorted_captures(QueryCursor(functions_query), root)
-        return flow_function_names(
-            captures.get(cs.CAPTURE_FUNCTION, ()), language, flow_names
-        )
+        return FileFlowFunctions(captures.get(cs.CAPTURE_FUNCTION, ()), language)
 
     def _captured_inbound_edges(
         self, reindexed_keys: list[str], deleted_set: set[str]

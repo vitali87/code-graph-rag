@@ -70,8 +70,27 @@ _USER = (
     "    return wrap(_hook)\n"
 )
 
+# A wrapper that, like registry.py, depends on util.py, and sorts before
+# it: it is read before `run_callback` is known to take part in the flow.
+_EARLY_WRAP = (
+    "from registry import run_callback\n"
+    "from util import log\n\n\n"
+    "def early_wrap(cb):\n"
+    '    log("wrapping")\n'
+    "    return run_callback(cb)\n"
+)
+_EARLY_USER = (
+    "from aaa_wrap import early_wrap\n\n\n"
+    "def _early():\n"
+    '    return "early"\n\n\n'
+    "def kick():\n"
+    "    return early_wrap(_early)\n"
+)
+
 _FILES = {
     "util.py": _UTIL,
+    "aaa_wrap.py": _EARLY_WRAP,
+    "aaa_user.py": _EARLY_USER,
     "wrap.py": _WRAP,
     "user.py": _USER,
     "registry.py": _REGISTRY,
@@ -132,6 +151,7 @@ def _widen_log(root: Path) -> None:
 
 _CALLBACK = ("proj.registry.run_callback", "CALLS", "proj.plugins._on_start")
 _FORWARDED = ("proj.registry.run_callback", "CALLS", "proj.user._hook")
+_EARLY = ("proj.registry.run_callback", "CALLS", "proj.aaa_user._early")
 
 
 def _instantiates_tag(edges: _EdgeSet) -> set[tuple[str, str, str]]:
@@ -152,6 +172,7 @@ def test_editing_an_import_of_the_receiver_keeps_the_callable_edges(
     clean = _edges(store)
     assert _CALLBACK in clean, "fixture must produce the callable-argument edge"
     assert _FORWARDED in clean, "fixture must produce the pass-through edge"
+    assert _EARLY in clean, "fixture must produce the early wrapper's edge"
     assert _instantiates_tag(clean), "fixture must produce the register edge"
 
     _widen_log(root)
@@ -160,6 +181,7 @@ def test_editing_an_import_of_the_receiver_keeps_the_callable_edges(
 
     assert _CALLBACK in after, sorted(clean - after)
     assert _FORWARDED in after, sorted(clean - after)
+    assert _EARLY in after, sorted(clean - after)
     assert _instantiates_tag(after) == _instantiates_tag(clean)
     assert after == clean, (sorted(clean - after), sorted(after - clean))
 
@@ -179,6 +201,25 @@ def test_editing_the_receiver_itself_keeps_the_callable_edge(
     _append_comment(root / "registry.py", root)
     _index(store, root, force=False)
     assert _edges(store) == clean
+
+
+def test_an_edited_wrapper_brings_in_its_callers(temp_repo: Path) -> None:
+    # A comment keeps wrap.py's interface, so its callers are not its
+    # dependents on this run; the receiver it forwards into re-parses as
+    # util.py's dependent all the same, and needs user.py walked.
+    root = temp_repo / "proj"
+    _write(root)
+    store = _StatefulIngestor()
+    _index(store, root, force=True)
+    clean = _edges(store)
+
+    _widen_log(root)
+    _append_comment(root / "wrap.py", root)
+    _index(store, root, force=False)
+    after = _edges(store)
+
+    assert _FORWARDED in after, sorted(clean - after)
+    assert after == clean, (sorted(clean - after), sorted(after - clean))
 
 
 def test_a_dependent_without_callable_parameters_does_not_widen_the_reparse(

@@ -10,7 +10,7 @@ run_callback(cb)`), their callers in turn (issue #2911).
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 
 from tree_sitter import Node
 
@@ -18,27 +18,55 @@ from .. import constants as cs
 from .utils import callable_parameter_indices, python_parameter_names, safe_decode_text
 
 
-def flow_function_names(
-    function_nodes: Iterable[Node],
-    language: cs.SupportedLanguage,
-    flow_names: frozenset[str],
-) -> set[str]:
-    """Simple names of the functions that invoke a parameter or, in Python,
-    forward one into a call to a function named in `flow_names`."""
-    names: set[str] = set()
-    for func_node in function_nodes:
-        name_node = func_node.child_by_field_name(cs.FIELD_NAME)
-        name = safe_decode_text(name_node) if name_node is not None else None
-        if not name:
-            continue
-        if callable_parameter_indices(func_node, language) or (
-            # Pass-through flow is recorded for Python arguments only.
-            language == cs.SupportedLanguage.PYTHON
-            and flow_names
-            and _forwards_parameter_into(func_node, flow_names)
-        ):
-            names.add(name)
-    return names
+class FileFlowFunctions:
+    """The functions of one file that invoke a parameter, and those that may
+    forward one into such a function."""
+
+    __slots__ = ("invokers", "_forwarding")
+
+    def __init__(
+        self, function_nodes: Iterable[Node], language: cs.SupportedLanguage
+    ) -> None:
+        invokers: set[str] = set()
+        forwarding: list[tuple[str, Node]] = []
+        for func_node in function_nodes:
+            name_node = func_node.child_by_field_name(cs.FIELD_NAME)
+            name = safe_decode_text(name_node) if name_node is not None else None
+            if not name:
+                continue
+            if callable_parameter_indices(func_node, language):
+                invokers.add(name)
+            # Pass-through flow is traced for Python arguments only.
+            if language == cs.SupportedLanguage.PYTHON:
+                forwarding.append((name, func_node))
+        self.invokers = frozenset(invokers)
+        self._forwarding = tuple(forwarding)
+
+    def forwarders(self, flow_names: frozenset[str]) -> set[str]:
+        """Simple names of the functions that forward a parameter into a call
+        to a function named in `flow_names`."""
+        if not flow_names:
+            return set()
+        return {
+            name
+            for name, func_node in self._forwarding
+            if _forwards_parameter_into(func_node, flow_names)
+        }
+
+    def names(self, flow_names: frozenset[str]) -> frozenset[str]:
+        return self.invokers | self.forwarders(flow_names)
+
+
+def settled_flow_names(
+    files: Collection[FileFlowFunctions], flow_names: frozenset[str]
+) -> frozenset[str]:
+    """`flow_names` grown until no file adds one: a wrapper read before the
+    function it forwards into is read again once that name is known."""
+    while True:
+        grown = flow_names.union(*(file.names(flow_names) for file in files))
+        if grown == flow_names:
+            return flow_names
+        flow_names = grown
 
 
 def _forwards_parameter_into(func_node: Node, flow_names: frozenset[str]) -> bool:
