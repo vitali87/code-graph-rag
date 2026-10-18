@@ -98,3 +98,60 @@ def test_a_named_use_and_a_python_star_import_are_unchanged(
     assert _callees(rust, "src.lib.via_named") == {"src.util.build": "exact"}, rust
     python = _calls(tmp_path / "pystar", _PYTHON, "python")
     assert _callees(python, "pkg.use.run") == {"pkg.helpers.shout": "heuristic"}
+
+
+_RUST_VISIBILITY = {
+    "Cargo.toml": '[package]\nname = "rsvis"\nversion = "0.1.0"\nedition = "2021"\n',
+    "src/lib.rs": (
+        "pub mod api;\npub mod app;\npub mod facade;\npub mod hidden;\n"
+        "pub mod pick;\npub mod private_build;\npub mod util;\npub mod visible;\n"
+    ),
+    # `helper` is private to `hidden`, so `use hidden::*` cannot import it.
+    "src/hidden.rs": "fn helper() -> u32 { 99 }\npub fn other() -> u32 { 0 }\n",
+    "src/visible.rs": "pub fn helper() -> u32 { 1 }\n",
+    "src/pick.rs": (
+        "use crate::hidden::*;\nuse crate::visible::*;\n"
+        "pub fn go() -> u32 { helper() + other() }\n"
+    ),
+    # `facade`'s private `use` binds `make` for `facade` alone.
+    "src/facade.rs": (
+        "use crate::private_build::build as make;\n"
+        "pub fn unrelated() -> u32 { make() }\n"
+    ),
+    "src/api.rs": "pub use crate::util::build as make;\n",
+    "src/private_build.rs": "pub fn build() -> u32 { 99 }\n",
+    "src/util.rs": "pub fn build() -> u32 { 3 }\n",
+    "src/app.rs": (
+        "use crate::facade::*;\nuse crate::api::*;\npub fn go() -> u32 { make() }\n"
+    ),
+}
+
+
+@pytest.fixture(scope="module")
+def rust_visibility(tmp_path_factory: pytest.TempPathFactory) -> _Calls:
+    return _calls(
+        tmp_path_factory.mktemp("rs3172vis") / "rsvis", _RUST_VISIBILITY, "rust"
+    )
+
+
+def test_a_name_two_globs_supply_is_not_claimed_exact(
+    rust_visibility: _Calls,
+) -> None:
+    # Negative: `hidden::helper` is private, so rustc takes `visible`'s.
+    # Which one the glob reaches is not known here, so neither is exact;
+    # `other`, which only `hidden` supplies, still is.
+    callees = _callees(rust_visibility, "src.pick.go")
+    assert callees.get("src.hidden.other") == "exact", rust_visibility
+    assert "exact" not in {
+        res for to, res in callees.items() if to.endswith(".helper")
+    }, rust_visibility
+
+
+def test_a_glob_does_not_follow_a_private_use_of_its_base(
+    rust_visibility: _Calls,
+) -> None:
+    # `facade`'s private `use ... as make` is not importable through
+    # `facade::*`; `api`'s public re-export is what `make` names.
+    assert _callees(rust_visibility, "src.app.go") == {"src.util.build": "exact"}, (
+        rust_visibility
+    )
