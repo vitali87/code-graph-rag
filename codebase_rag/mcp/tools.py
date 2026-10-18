@@ -3067,8 +3067,8 @@ class MCPToolsRegistry:
         self,
         qualified_name: str,
         depth: int | None = None,
-        limit: int | None = None,
         project: str | None = None,
+        limit: int | None = None,
     ) -> object:
         return await self._graph_query(
             cs.MCPToolName.CALLERS,
@@ -3086,8 +3086,8 @@ class MCPToolsRegistry:
         self,
         qualified_name: str,
         depth: int | None = None,
-        limit: int | None = None,
         project: str | None = None,
+        limit: int | None = None,
     ) -> object:
         return await self._graph_query(
             cs.MCPToolName.CALLEES,
@@ -3159,9 +3159,9 @@ class MCPToolsRegistry:
     async def tests_reaching(
         self,
         qualified_name: str,
+        project: str | None = None,
         max_depth: int | None = None,
         limit: int | None = None,
-        project: str | None = None,
     ) -> object:
         return await self._graph_query(
             cs.MCPToolName.TESTS_REACHING,

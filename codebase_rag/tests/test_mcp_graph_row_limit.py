@@ -144,3 +144,24 @@ async def test_the_bounds_are_declared_in_the_schemas(
         assert properties[cs.MCPParamName.LIMIT]["type"] == "integer", tool
     reach = registry._tools[cs.MCPToolName.TESTS_REACHING].input_schema["properties"]
     assert reach[cs.MCPParamName.MAX_DEPTH]["type"] == "integer"
+
+
+@pytest.mark.parametrize(
+    ("tool", "rows", "args"),
+    [
+        ("callers", _site_rows(3), (_HELPER, 1, P)),
+        ("callees", _site_rows(3), (_HELPER, 1, P)),
+        ("tests_reaching", _reach_rows(3), (_HELPER, P)),
+        ("implementors", _site_rows(3), (_HELPER, P)),
+        ("importers", _site_rows(3), (_HELPER, P)),
+    ],
+)
+async def test_project_keeps_its_positional_place(
+    registry: MCPToolsRegistry, tool: str, rows: list[object], args: tuple[object, ...]
+) -> None:
+    # The new bounds come after `project`, so a caller of the earlier
+    # signature that passes it positionally is still scoped to it rather than
+    # handing the project name to `limit` or `max_depth`.
+    with patch(f"codebase_rag.mcp.tools.graph_query.{tool}", return_value=rows):
+        result = await getattr(registry, tool)(*args)
+    assert result == rows
