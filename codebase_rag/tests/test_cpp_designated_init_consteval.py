@@ -991,9 +991,11 @@ void demonstrateLambdaInitCaptures() {
 
     total_calls = len(call_relationships)
 
-    # builtin operator edges no longer emitted (#652)
-    assert total_calls >= 12, (
-        f"Expected at least 15 total calls across all tests, found {total_calls}"
+    # builtin operator edges no longer emitted (#652), and the local class
+    # Resource's own calls (acquire/release in its ctor, dtor and move
+    # assignment) belong to its members, not the enclosing function (#2555)
+    assert total_calls >= 11, (
+        f"Expected at least 11 total calls across all tests, found {total_calls}"
     )
 
     assert defines_relationships, "Should still have DEFINES relationships"
