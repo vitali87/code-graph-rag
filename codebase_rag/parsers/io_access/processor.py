@@ -1348,16 +1348,15 @@ class IOAccessProcessor:
             return
         raw = call_name(node)
         if raw is None:
-            if node.type == cs.TS_DART_SELECTOR:
-                self._emit_dart_call(
-                    node,
-                    caller_spec,
-                    import_map,
-                    sink_by_name,
-                    descriptor,
-                    local_names,
-                    lean_handles,
-                )
+            self._emit_dart_call(
+                node,
+                caller_spec,
+                import_map,
+                sink_by_name,
+                descriptor,
+                local_names,
+                lean_handles,
+            )
             return
         if lean_handles is not None and self._emit_lean_handle_method(
             node, caller_spec, raw, descriptor, lean_handles
@@ -1430,7 +1429,9 @@ class IOAccessProcessor:
         # #2761). A method on a handle, bound (`f.readAsString()`) or built
         # inline (`File(p).readAsStringSync()`), is I/O on its resource; any
         # other call matches the sink table, keyed by its first string arg.
-        if not any(c.type == cs.TS_DART_ARGUMENT_PART for c in node.named_children):
+        if node.type != cs.TS_DART_SELECTOR or not any(
+            c.type == cs.TS_DART_ARGUMENT_PART for c in node.named_children
+        ):
             return
         raw = dart_call_name(node)
         if raw is None:
