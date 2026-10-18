@@ -255,3 +255,72 @@ def test_a_namespace_export_does_not_rebind_the_barrels_own_import(
     assert calls.get("src.app.use") == {("src.remote.add", cs.EdgeResolution.EXACT)}, (
         calls
     )
+
+
+def test_a_nested_namespace_export_binds_its_members_exactly(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `math.util.add()` through `export * as math` then `export * as util`:
+    # each namespace is followed to the module it names.
+    _write(
+        temp_repo,
+        {
+            "src/lib/util.ts": _ADD,
+            "src/lib/math.ts": 'export * as util from "./util";\n',
+            "src/lib/index.ts": 'export * as math from "./math";\n',
+            "src/app.ts": 'import { math } from "./lib";\n'
+            "export function run(): number { return math.util.add(1, 2); }\n",
+        },
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    calls = _calls(temp_repo, mock_ingestor)
+    assert calls.get("src.app.run") == {
+        ("src.lib.util.add", cs.EdgeResolution.EXACT)
+    }, calls
+
+
+def test_a_namespace_export_passes_through_a_star_reexport(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `outer` re-exports everything `inner` exports, its `math` namespace
+    # included, so `math.add()` imported from `outer` is `ops.add`.
+    _write(
+        temp_repo,
+        {
+            "src/inner/ops.ts": _ADD,
+            "src/inner/index.ts": 'export * as math from "./ops";\n',
+            "src/outer/index.ts": 'export * from "../inner";\n',
+            "src/app.ts": 'import { math } from "./outer";\n'
+            "export function run(): number { return math.add(1, 2); }\n",
+        },
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    calls = _calls(temp_repo, mock_ingestor)
+    assert calls.get("src.app.run") == {
+        ("src.inner.ops.add", cs.EdgeResolution.EXACT)
+    }, calls
+
+
+def test_a_star_reexport_does_not_pass_on_a_module_its_source_never_exports(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Negative: `lib.ts` exports no `util`; `lib` + `util` only spells the
+    # `lib/util.ts` module, which the star re-export does not pass on.
+    _write(
+        temp_repo,
+        {
+            "src/lib/util.ts": _ADD,
+            "src/lib.ts": "export function other(): number { return 0; }\n",
+            "src/barrel.ts": 'export * from "./lib";\n',
+            "src/app.ts": 'import { util } from "./barrel";\n'
+            "export function run(): number { return util.add(1, 2); }\n",
+        },
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    calls = _calls(temp_repo, mock_ingestor)
+    assert ("src.lib.util.add", cs.EdgeResolution.EXACT) not in calls.get(
+        "src.app.run", set()
+    ), calls

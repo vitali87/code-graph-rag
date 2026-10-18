@@ -3631,9 +3631,10 @@ class CallResolver:
         else:
             # `math.add()` with `math` imported from a barrel that re-exports
             # it as a namespace (`export * as math from "./math"`): the member
-            # is followed from the namespace's module (issue #3249).
+            # is followed from the namespace's module (issue #3249), through
+            # each nested namespace of `math.util.add()` too.
             head, dot, member = call_name.partition(cs.SEPARATOR_DOT)
-            if not dot or cs.SEPARATOR_DOT in member or head not in import_map:
+            if not dot or head not in import_map:
                 return None
             # A local of the same name (`const math = new Local()`) shadows
             # the import, and the typed-receiver path answers for it.

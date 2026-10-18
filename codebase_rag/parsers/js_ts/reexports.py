@@ -173,16 +173,22 @@ class _ReexportWalk:
         # through further barrels. Two that reach different definitions make
         # the name ambiguous, and TypeScript exports neither, so nothing is
         # guessed; one reached along two paths is one binding. A declaration
-        # its module does not export is never passed on.
+        # its module does not export is never passed on. A namespace a source
+        # exports (`export * as math`) reaches a module, which is passed on
+        # too; a name no export moved stays put even where it spells one.
         reached: set[str] = set()
         cut = False
         for key, source in self._imports.get(barrel, {}).items():
             if not key.startswith(cs.IMPORTED_NAME_WILDCARD):
                 continue
-            target, branch_cut = self.follow(f"{source}{cs.SEPARATOR_DOT}{name}")
+            exported = f"{source}{cs.SEPARATOR_DOT}{name}"
+            target, branch_cut = self.follow(exported)
             cut = cut or branch_cut
-            if target in self._registry and not self._registry.is_module_private(
-                target
+            if (
+                target in self._registry
+                and not self._registry.is_module_private(target)
+            ) or (
+                target != exported and js_ts_module_qn(target, self._modules) == target
             ):
                 reached.add(target)
         return (reached.pop() if len(reached) == 1 else None), cut
