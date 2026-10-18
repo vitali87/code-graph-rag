@@ -1274,10 +1274,12 @@ def _preserves_verdict[**P, R](
     @wraps(fn)
     def wrapper(self: CallProcessor, *args: P.args, **kwargs: P.kwargs) -> R:
         saved = self._resolver.last_resolution
+        saved_member = self._resolver.last_bound_member
         try:
             return fn(self, *args, **kwargs)
         finally:
             self._resolver.last_resolution = saved
+            self._resolver.last_bound_member = saved_member
 
     return wrapper
 
@@ -1908,6 +1910,29 @@ def _js_scope_introductions(
             _js_catch_introduction(node, intros)
         stack.extend(node.children)
     return MappingProxyType({name: tuple(found) for name, found in intros.items()})
+
+
+def _js_enclosing_introductions(caller_node: Node) -> js_ts_utils.JsLocalIntros:
+    """Every introduction by `caller_node` or a function around it, by name.
+
+    A module-level caller has none: the module's own bindings are what the
+    object-binding probe resolves through.
+    """
+    found: defaultdict[str, list[js_ts_utils.JsLocalIntro]] = defaultdict(list)
+    scope: Node | None = caller_node
+    while scope is not None:
+        if scope.type in cs.JS_TS_FUNCTION_NODES:
+            for name, intros in _js_scope_introductions(scope).items():
+                found[name].extend(
+                    js_ts_utils.JsLocalIntro(
+                        start,
+                        end,
+                        kind == _JS_DECL_PLAIN and js_ts_utils.is_object_literal(value),
+                    )
+                    for start, end, kind, value in intros
+                )
+        scope = scope.parent
+    return {name: tuple(intros) for name, intros in found.items()}
 
 
 def _js_innermost_enclosing(
@@ -4956,6 +4981,8 @@ class CallProcessor:
             self._record_python_shadowed_imports(caller_node, caller_qn, module_qn)
         elif language == cs.SupportedLanguage.GO:
             self._record_go_local_names(caller_node, caller_qn, caller_type)
+        elif language in cs.JS_TS_LANGUAGES:
+            self._record_js_local_names(caller_node, caller_qn)
 
         # Rust match arms and iterator-adaptor closures both reuse one binding
         # name for different types at different byte ranges (`cmd` per arm;
@@ -5114,6 +5141,20 @@ class CallProcessor:
             self._resolver.go_local_scopes[caller_qn] = scopes
         else:
             self._resolver.go_local_scopes.pop(caller_qn, None)
+
+    def _record_js_local_names(self, caller_node: Node, caller_qn: str) -> None:
+        # What the caller and each function around it introduce: `api.run()`
+        # on a parameter or local named `api` is that value's, never the
+        # module's or an import's object literal (#2763 review).
+        intros = (
+            _js_enclosing_introductions(caller_node)
+            if self._resolver.function_registry.has_object_bindings()
+            else {}
+        )
+        if intros:
+            self._resolver.js_local_scopes[caller_qn] = intros
+        else:
+            self._resolver.js_local_scopes.pop(caller_qn, None)
 
     def _record_caller_flow_params(
         self,
@@ -5506,6 +5547,7 @@ class CallProcessor:
         # verdict; without this reset such an edge would inherit the
         # label the previous call node left behind (issue #1526).
         self._resolver.last_resolution = cs.EdgeResolution.EXACT
+        self._resolver.last_bound_member = None
         if ctx.is_java and call_node.type == cs.TS_JAVA_METHOD_REFERENCE:
             self._ingest_java_method_reference(ctx, call_node)
             return
@@ -7829,6 +7871,11 @@ class CallProcessor:
             # hedge that fans an ambiguous callee onto its twins would
             # cross the block boundary here (issue #1061).
             targets = [callee_qn]
+        if self._resolver.last_bound_member == callee_qn:
+            # `a.go()` named a's own `go` through a's object literal; another
+            # object's `go` shares its `@line` group, not its binding (#2763
+            # review).
+            targets = [callee_qn]
         # The resolver's verdict on this callee, then one edge per
         # same-named candidate when the callee fans out (issue #1526).
         self._resolution = self._resolver.last_resolution
@@ -7958,6 +8005,9 @@ class CallProcessor:
             ctx.is_js_ts
             and cs.SEPARATOR_DOT in call_name
             and callee_type in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD)
+            # A member its literal's binding named has no prototype twin; a
+            # same-named member of a nested scope's literal is another object's.
+            and self._resolver.last_bound_member != callee_qn
         ):
             self._emit_js_member_twins(ctx, callee_qn)
 

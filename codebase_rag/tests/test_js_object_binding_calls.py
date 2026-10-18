@@ -77,6 +77,20 @@ _FILES = {
         "  return opts.go();\n"
         "}\n"
     ),
+    "shadow.mjs": (
+        "const api = { run() { return 1; } };\n"
+        "export function viaParam(api) { return api.run(); }\n"
+        "export function viaLocal(s) { const api = JSON.parse(s); return api.run(); }\n"
+        "export function viaModule() { return api.run(); }\n"
+        "function make() { return { run() { return 2; } }; }\n"
+        "export function viaParamLater(api) { return api.run(); }\n"
+    ),
+    "dup.mjs": (
+        "const a = { go() { return 1; } };\n"
+        "const b = { go() { return 2; } };\n"
+        "export function useA() { return a.go(); }\n"
+        "export function useB() { return b.go(); }\n"
+    ),
 }
 
 
@@ -135,6 +149,39 @@ def test_other_objects_and_keys_are_not_bound(
     assert not [c for (src, c) in calls if src == "neg.nested"], calls
     assert not [c for (src, c) in calls if src == "neg.missing"], calls
     assert ("neg.passed", "neg.go") not in calls, calls
+
+
+def _targets(calls: dict[tuple[str, str], str], caller: str) -> dict[str, str]:
+    return {callee: res for (src, callee), res in calls.items() if src == caller}
+
+
+@pytest.mark.parametrize(
+    "caller", ["shadow.viaParam", "shadow.viaLocal", "shadow.viaParamLater"]
+)
+def test_a_local_of_the_bindings_name_shadows_it(
+    calls: dict[tuple[str, str], str], caller: str
+) -> None:
+    # `api` there is the parameter or the local, not the module's object, so
+    # its `run` is no exact target (a shared calls cache must not make it one).
+    targets = _targets(calls, caller)
+    assert targets.get("shadow.run") != cs.EdgeResolution.EXACT, targets
+
+
+def test_a_bound_call_reaches_only_its_own_objects_member(
+    calls: dict[tuple[str, str], str],
+) -> None:
+    # Same-key members of other objects share the `@line` group (`dup.go`,
+    # `dup.go@2`) or look like a prototype twin (`make`'s literal `run`):
+    # neither is what the binding holds.
+    assert _targets(calls, "shadow.viaModule") == {
+        "shadow.run": cs.EdgeResolution.EXACT
+    }
+    assert _targets(calls, "dup.useA") == {"dup.go": cs.EdgeResolution.EXACT}
+    use_b = _targets(calls, "dup.useB")
+    assert len(use_b) == 1, use_b
+    ((callee, resolution),) = use_b.items()
+    assert callee.startswith("dup.go@"), use_b
+    assert resolution == cs.EdgeResolution.EXACT, use_b
 
 
 def test_rename_rewrites_the_importing_call_site(temp_repo: Path) -> None:

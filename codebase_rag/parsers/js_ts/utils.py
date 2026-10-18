@@ -1,5 +1,5 @@
 from collections.abc import Mapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from tree_sitter import Language, Node, QueryCursor
 
@@ -635,6 +635,27 @@ def is_object_literal_method(func_node: Node) -> bool:
 _OBJECT_LITERAL_WRAPPERS = frozenset(
     {cs.TS_AS_EXPRESSION, cs.TS_SATISFIES_EXPRESSION, cs.TS_PARENTHESIZED_EXPRESSION}
 )
+
+
+class JsLocalIntro(NamedTuple):
+    """One introduction of a name by a function: the byte span it governs and
+    whether the name is bound to an object literal there (issue #2763)."""
+
+    start: int
+    end: int
+    object_literal: bool
+
+
+# A caller's introductions, its own and those of every function around it, by
+# name.
+JsLocalIntros = dict[str, tuple[JsLocalIntro, ...]]
+
+
+def is_object_literal(value: Node | None) -> bool:
+    # `{ ... }`, also under `as const`, `satisfies T` or parentheses.
+    while value is not None and value.type in _OBJECT_LITERAL_WRAPPERS:
+        value = value.named_child(0)
+    return value is not None and value.type == cs.TS_OBJECT
 
 
 def object_literal_binding(func_node: Node) -> str | None:
