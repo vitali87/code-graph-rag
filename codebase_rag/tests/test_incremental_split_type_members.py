@@ -131,13 +131,13 @@ def test_a_method_declared_in_another_file_survives_its_types_reparse(
     assert _LABEL in _snapshot(store)[0]
 
 
-def test_only_the_files_attaching_members_join_the_reparse(
-    go_root: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # Negative: box_extra.go joins because it attaches Grow to Box; main.go
-    # (a caller of box.go) and the unrelated files stay as they are.
+def _parsed_on_sync(
+    root: Path, edited: str, monkeypatch: pytest.MonkeyPatch
+) -> list[str]:
+    # Indexes `root` clean, edits `edited`, and returns the file names the
+    # incremental run re-parses.
     store = _StatefulIngestor()
-    _index(store, go_root, force=True)
+    _index(store, root, force=True)
     parsed: list[str] = []
     original = GraphUpdater._process_single_file
 
@@ -151,40 +151,61 @@ def test_only_the_files_attaching_members_join_the_reparse(
         original(self, filepath, file_bytes=file_bytes, pre_parsed=pre_parsed)
 
     monkeypatch.setattr(GraphUpdater, "_process_single_file", record)
-    _edit_after_cache(go_root / "util.go", go_root, "//")
-    _index(store, go_root, force=False)
+    _edit_after_cache(root / edited, root, "//")
+    _index(store, root, force=False)
+    return sorted(parsed)
 
-    assert sorted(parsed) == ["box.go", "box_extra.go", "tag_methods.go", "util.go"]
+
+# The negative bounds are pinned on C++: a Go package's files re-parse
+# together on a sync (issue #2483), so there the member lookup never decides
+# which files join.
+@pytest.fixture
+def cpp_root(temp_repo: Path) -> Path:
+    if cs.SupportedLanguage.CPP not in load_parsers()[0]:
+        pytest.skip("cpp parser not available")
+    return temp_repo / "proj"
+
+
+def test_only_the_files_attaching_members_join_the_reparse(
+    cpp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Negative: box.cpp joins because it attaches grow to Box; main.cpp (a
+    # caller of box.h) and the unrelated other.cpp stay as they are.
+    _write(
+        cpp_root,
+        {
+            **_CPP,
+            "main.cpp": (
+                '#include "box.h"\nint main() { Box b; return b.size() + b.grow(); }\n'
+            ),
+            "other.cpp": "int other() { return 2; }\n",
+        },
+    )
+
+    assert _parsed_on_sync(cpp_root, "util.h", monkeypatch) == [
+        "box.cpp",
+        "box.h",
+        "util.h",
+    ]
 
 
 def test_a_type_whose_methods_are_all_its_own_reparses_alone(
-    go_root: Path, monkeypatch: pytest.MonkeyPatch
+    cpp_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Negative: with no member declared elsewhere, nothing else joins.
-    for rel in ("box_extra.go", "tag_methods.go"):
-        (go_root / rel).unlink()
-    (go_root / "main.go").write_text(
-        _GO["main.go"].replace(", b.Grow()", ""), encoding="utf-8"
+    # Negative: with no member defined elsewhere, nothing else joins.
+    _write(
+        cpp_root,
+        {
+            "util.h": _CPP["util.h"],
+            "box.h": (
+                '#include "util.h"\nclass Box {\n public:\n  int n = 1;\n'
+                "  int size() const { return clamp(n); }\n};\n"
+            ),
+            "main.cpp": '#include "box.h"\nint main() { Box b; return b.size(); }\n',
+        },
     )
-    store = _StatefulIngestor()
-    _index(store, go_root, force=True)
-    parsed: list[str] = []
-    original = GraphUpdater._process_single_file
 
-    def record(
-        self: GraphUpdater,
-        filepath: Path,
-        file_bytes: bytes | None = None,
-        pre_parsed: tuple[Node, dict[str, list] | None] | None = None,
-    ) -> None:
-        parsed.append(filepath.name)
-        original(self, filepath, file_bytes=file_bytes, pre_parsed=pre_parsed)
-
-    monkeypatch.setattr(GraphUpdater, "_process_single_file", record)
-    _edit_after_cache(go_root / "util.go", go_root, "//")
-    _index(store, go_root, force=False)
-
-    assert sorted(parsed) == ["box.go", "util.go"]
+    assert _parsed_on_sync(cpp_root, "util.h", monkeypatch) == ["box.h", "util.h"]
 
 
 def test_a_cpp_out_of_line_definition_survives_its_headers_reparse(
