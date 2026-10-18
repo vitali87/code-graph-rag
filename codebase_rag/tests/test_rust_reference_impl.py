@@ -15,6 +15,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.rs.utils import extract_impl_target_path
 from codebase_rag.tests.conftest import (
     create_and_run_updater,
     get_nodes,
@@ -157,3 +159,20 @@ def test_a_slice_or_dyn_reference_is_not_its_element_type(
     shouts = {qn for qn in _qns(indexed, cs.NodeLabel.METHOD) if "shout" in qn}
     assert "u8.shout" in shouts, shouts
     assert shouts <= {"Shout.shout", "str.shout", "Raw.shout", "u8.shout"}, shouts
+
+
+@pytest.mark.parametrize(
+    "self_type",
+    ["std::string::String", "&'a std::string::String", "*const std::string::String"],
+)
+def test_the_written_self_path_peels_a_reference_or_pointer(self_type: str) -> None:
+    # The self path decides whether a block is on a crate type or a foreign
+    # one; without it, `impl T for *const std::string::String` was taken for
+    # an impl on a crate type that is also called `String` (#3175 review).
+    parsers, _queries = load_parsers()
+    if cs.SupportedLanguage.RUST not in parsers:
+        pytest.skip("rust parser not available")
+    source = f"impl<'a> Shout for {self_type} {{}}\n".encode()
+    root = parsers[cs.SupportedLanguage.RUST].parse(source).root_node
+    impl = next(c for c in root.children if c.type == cs.TS_IMPL_ITEM)
+    assert extract_impl_target_path(impl) == "std::string::String"
