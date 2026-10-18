@@ -2055,14 +2055,50 @@ class JavaMethodResolverMixin:
     def _created_type_qn(self, creation: ASTNode, module_qn: str) -> str | None:
         # The registered type a `new` names: generic arguments and the diamond
         # dropped (`new Box<>(1)`), a member type through its enclosing one
-        # (`new Request.Builder()`).
+        # (`new Request.Builder()`) or a supertype of it (`new
+        # Derived.Builder()` for Base's Builder), and a fully qualified name
+        # (`new com.acme.Box(3)`) (#2700 review).
         type_node = creation.child_by_field_name(cs.FIELD_TYPE)
         if type_node is None or type_node.text is None:
             return None
         written = type_node.text.decode(cs.ENCODING_UTF8)
         base = written.split(cs.CHAR_ANGLE_OPEN, 1)[0].strip()
         ref = self._java_member_type_ref(base, module_qn)
-        return ref if self.function_registry.get(ref) in _JAVA_TYPE_NODE_TYPES else None
+        if self.function_registry.get(ref) in _JAVA_TYPE_NODE_TYPES:
+            return ref
+        outer, dot, member = base.rpartition(cs.SEPARATOR_DOT)
+        if not dot:
+            return None
+        if inherited := self._inherited_member_type(
+            self._java_member_type_ref(outer, module_qn), member
+        ):
+            return inherited
+        return self._static_import_class_qn(base, module_qn)
+
+    def _inherited_member_type(self, type_qn: str, member: str) -> str | None:
+        # A member type a supertype declares, named through a subtype.
+        seen: set[str] = set()
+        pending = [type_qn]
+        while pending:
+            current = pending.pop()
+            if current in seen or self.function_registry.get(current) is None:
+                continue
+            seen.add(current)
+            candidate = f"{current}{cs.SEPARATOR_DOT}{member}"
+            if self.function_registry.get(candidate) in _JAVA_TYPE_NODE_TYPES:
+                return candidate
+            # A header names its supertypes as written: a sibling file's
+            # type comes back as its bare name.
+            owner = module_qn_for_entity(current, self.module_qn_to_file_path)
+            supertypes = [
+                *filter(None, [self._get_superclass_name(current)]),
+                *self._get_implemented_interfaces(current),
+            ]
+            pending.extend(
+                self._java_type_ref(name, owner) if owner else name
+                for name in supertypes
+            )
+        return None
 
     def _declared_return_type_of(self, method_qn: str) -> str | None:
         open_idx = method_qn.find(cs.CHAR_PAREN_OPEN)

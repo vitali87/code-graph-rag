@@ -96,6 +96,23 @@ class Calc {
     }
 }
 """,
+    "Base.java": """\
+package com.acme;
+
+class Base {
+    static class Builder {
+        int build() {
+            return 1;
+        }
+    }
+}
+""",
+    "Derived.java": """\
+package com.acme;
+
+class Derived extends Base {
+}
+""",
     "Main.java": """\
 package com.acme;
 
@@ -138,6 +155,14 @@ public class Main {
     int notAConstant() {
         return Level.NONE.weight();
     }
+
+    int fullyQualified() {
+        return new com.acme.Box(5).value();
+    }
+
+    int inheritedMemberType() {
+        return new Derived.Builder().build();
+    }
 }
 """,
 }
@@ -170,6 +195,10 @@ def calls(tmp_path_factory: pytest.TempPathFactory) -> dict[str, set[str]]:
         ("Main.diamond()", "Pair.first()"),
         ("Main.memberType()", "Request.Builder.url(String)"),
         ("Main.constantBody()", "Op.apply(int,int)"),
+        # A fully qualified type, and a member type a supertype declares
+        # (#2700 review).
+        ("Main.fullyQualified()", "Box.value()"),
+        ("Main.inheritedMemberType()", "Base.Builder.build()"),
     ],
 )
 def test_the_receiver_types_the_call(
