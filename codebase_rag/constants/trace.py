@@ -140,10 +140,6 @@ TRACE_EXCLUDED_DIR_NAMES = frozenset({"site-packages", ".venv", "node_modules"})
 # installs into dist-packages rather than site-packages.
 TRACE_INSTALLED_DIR_NAMES = TRACE_EXCLUDED_DIR_NAMES | {"dist-packages"}
 
-# Frames recorded on Windows name files with this separator; tracebacks are
-# pasted across OSes, so it is read as a path separator wherever cgr runs.
-TRACE_WINDOWS_PATH_SEPARATOR = "\\"
-
 # Names whose first parameter marks a bound receiver worth sampling.
 TRACE_RECEIVER_PARAMS = ("self", "cls")
 # Receiver types are sampled only for the first N observations of a pair to
