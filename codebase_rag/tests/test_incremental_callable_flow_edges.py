@@ -263,6 +263,32 @@ def test_editing_the_receiver_itself_keeps_the_callable_edge(
     assert _edges(store) == clean
 
 
+def test_reingest_walks_the_passers_of_a_reparsed_receiver(temp_repo: Path) -> None:
+    # The watcher's path: a fresh updater holds no callable-flow records of
+    # the files it does not walk, so the receiver's edges come back only
+    # from re-walking its passers.
+    root = temp_repo / "proj"
+    _write(root)
+    store = _StatefulIngestor()
+    _index(store, root, force=True)
+    clean = _edges(store)
+
+    _widen_log(root)
+    parsers, queries = load_parsers()
+    GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name="proj",
+    ).reingest([root / "util.py"])
+    after = _edges(store)
+
+    assert _CALLBACK in after, sorted(clean - after)
+    assert _FORWARDED in after, sorted(clean - after)
+    assert after == clean, (sorted(clean - after), sorted(after - clean))
+
+
 def test_an_edited_wrapper_brings_in_its_callers(temp_repo: Path) -> None:
     # A comment keeps wrap.py's interface, so its callers are not its
     # dependents on this run; the receiver it forwards into re-parses as

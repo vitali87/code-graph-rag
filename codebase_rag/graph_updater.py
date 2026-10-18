@@ -8834,6 +8834,41 @@ class GraphUpdater:
             )
             self.ingestor.execute_write(stale, {cs.KEY_PATH: absolute})
 
+    def _reingest_callable_flow_passers(
+        self,
+        present: dict[str, Path],
+        gone: dict[str, Path],
+        joined: dict[str, Path],
+    ) -> dict[str, Path]:
+        """On-disk files the re-parse needs to re-derive a callable-flow edge
+        out of a re-parsed file, beside `present` and the files it `joined`."""
+        passers: dict[str, Path] = {}
+        taken = {*present, *gone, *joined}
+
+        def overlay(key: str, path: Path) -> bytes:
+            return self._delombok_overlay.get(key, _read_bytes(path))
+
+        def queue_callers(caller_keys: list[str]) -> list[tuple[Path, str, bytes]]:
+            queued: list[tuple[Path, str, bytes]] = []
+            for key in caller_keys:
+                path = self.repo_path / key
+                if key in taken or not path.is_file():
+                    continue
+                taken.add(key)
+                passers[key] = path
+                queued.append((path, key, overlay(key, path)))
+            return queued
+
+        self._expand_callable_flow(
+            [
+                (path, key, overlay(key, path))
+                for key, path in {**present, **joined}.items()
+            ],
+            present.keys(),
+            queue_callers,
+        )
+        return passers
+
     def _reingest_dependents(
         self,
         present: dict[str, Path],
@@ -9294,6 +9329,18 @@ class GraphUpdater:
                 stable=self._reingest_interface_stable(
                     present, hashes, flux_stems, flipped_dirs
                 ),
+            )
+            affected.update(
+                self._reingest_go_package_files(
+                    {*present, *gone, *survivors, *affected}
+                )
+            )
+            # As in `run()`: the passers of a re-parsed callable-flow holder,
+            # then the Go package files beside any of them.
+            affected.update(
+                self._reingest_callable_flow_passers(
+                    present, gone, {**survivors, **affected}
+                )
             )
             affected.update(
                 self._reingest_go_package_files(
