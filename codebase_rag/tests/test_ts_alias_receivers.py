@@ -168,6 +168,31 @@ def test_an_alias_given_another_class_is_typed_afresh_on_reingest(
     assert calls.get("viaAlias") == {("Bag", cs.EdgeResolution.EXACT)}, calls
 
 
+@pytest.mark.parametrize(
+    ("alias", "call"),
+    [
+        pytest.param("Readonly<Box>", "h.size()", id="readonly-utility"),
+        pytest.param("Box[]", "h[0].size()", id="array"),
+        pytest.param("readonly Box[]", "h[0].size()", id="readonly-array"),
+        pytest.param("Array<Box>", "h[0].size()", id="generic-array"),
+    ],
+)
+def test_only_an_alias_of_a_wrapped_class_imported_still_binds_exactly(
+    temp_repo: Path, alias: str, call: str
+) -> None:
+    # The receiver was typed through the wrapper, but only an alias naming
+    # the class bare brought it into view: with `Bag.size` beside it, no
+    # edge at all.
+    types = TYPES + f"export type Wrapped = {alias};\n"
+    use = (
+        'import { Wrapped } from "./types";\n\n'
+        f"export function viaAlias(h: Wrapped): number {{\n  return {call};\n}}\n"
+    )
+    calls = _size_calls({"src/types.ts": types, "src/use.ts": use}, temp_repo / "proj")
+
+    assert calls.get("viaAlias") == {("Box", cs.EdgeResolution.EXACT)}, calls
+
+
 def test_an_alias_type_parameter_is_no_class_it_names(temp_repo: Path) -> None:
     # `Box` in `type Wrap<Box> = Box` is the parameter: it brought the class
     # `Box` into view, and `Box.size` beside `Bag.size` left no edge.

@@ -393,6 +393,12 @@ TS_TYPE_DECLARATION_NODES = frozenset(
 TS_MEMBER_PRESERVING_UTILITY_TYPES = frozenset(
     {"Readonly", "Partial", "Required", "NonNullable"}
 )
+# The generic wrappers an alias is read through for the class whose members
+# it exposes: `Readonly<Box>` keeps Box's members, `Array<Box>` indexes to a
+# Box (issue #3276).
+TS_ALIAS_READ_THROUGH_GENERICS = (
+    TS_MEMBER_PRESERVING_UTILITY_TYPES | TS_INDEXABLE_GENERIC_NAMES
+)
 # Utility types computing a type the declaration alone does not pin down:
 # `Pick`/`Omit` keep or drop keys, the rest map or extract. Their result may
 # or may not have a method, so they neither confirm nor rule out a binding.

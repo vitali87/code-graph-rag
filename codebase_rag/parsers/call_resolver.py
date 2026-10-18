@@ -3228,20 +3228,45 @@ class CallResolver:
                 return declaration
         return None
 
+    def _ts_alias_subject(self, value: Node | None, module_qn: str) -> Node | None:
+        # The one type whose members an alias value exposes, read through the
+        # wrappers a receiver typed by the alias is read through: `readonly`,
+        # `T[]`, and the platform's `Array<T>` or `Readonly<T>`. A wrapper the
+        # module declares or imports is its own type.
+        import_map = self.import_processor.import_mapping.get(module_qn) or {}
+        while (value := _ts_single_named_type(value)) is not None:
+            if value.type in (cs.TS_READONLY_TYPE, cs.TS_ARRAY_TYPE):
+                value = next(iter(value.named_children), None)
+                continue
+            if value.type != cs.TS_GENERIC_TYPE:
+                return value
+            wrapper = safe_decode_text(value.child_by_field_name(cs.FIELD_NAME)) or ""
+            arguments = value.child_by_field_name(cs.TS_FIELD_TYPE_ARGUMENTS)
+            if (
+                arguments is None
+                or wrapper not in cs.TS_ALIAS_READ_THROUGH_GENERICS
+                or wrapper in import_map
+                or self.ts_type_alias(module_qn, wrapper) is not None
+                or f"{module_qn}{cs.SEPARATOR_DOT}{wrapper}" in self.function_registry
+            ):
+                return None
+            value = next(iter(arguments.named_children), None)
+        return None
+
     def ts_alias_class(self, qn: str, depth: int = 0) -> str | None:
         """The first-party class the type alias `qn` names (issue #3276).
 
-        `type Handler = Box`, `type MaybeBox = Box | undefined` and an alias
-        of such an alias name `Box`; a generic alias or a wider union names
-        no one class.
+        `type Handler = Box`, `type MaybeBox = Box | undefined`, the wrapped
+        `Readonly<Box>`, `Box[]` and `Array<Box>`, and an alias of such an
+        alias name `Box`; a generic alias or a wider union names no one class.
         """
         if qn in self._ts_alias_targets:
             return self._ts_alias_targets[qn]
         target = None
         module_qn, _, name = qn.rpartition(cs.SEPARATOR_DOT)
         alias = self.ts_type_alias(module_qn, name) if module_qn else None
-        value = _ts_single_named_type(
-            alias.child_by_field_name(cs.FIELD_VALUE) if alias else None
+        value = self._ts_alias_subject(
+            alias.child_by_field_name(cs.FIELD_VALUE) if alias else None, module_qn
         )
         named = safe_decode_text(value) if value is not None else None
         if (
