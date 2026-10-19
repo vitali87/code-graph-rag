@@ -96,8 +96,9 @@ TYPE_CHECKING:`, or in the `else` of `if not TYPE_CHECKING:`, never runs,
 so it binds nothing for either check. A caller needs more than an
 importable name: a name only assigned a literal (`name = None`) cannot be
 called, and a JS/TS module serves a name it imports only through an
-`export`. A method is reached through its class, which no module binding
-stands in for, so its callers are listed as before.
+`export` of it: `export { name } from "./home"`, or `export { local as
+name }` naming the import. A method is reached through its class, which no
+module binding stands in for, so its callers are listed as before.
 
 ### Arity verdicts
 

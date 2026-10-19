@@ -24,6 +24,8 @@ from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import NamedTuple, TypedDict
 
+from tree_sitter import Node
+
 from . import constants as cs
 from . import cypher_queries as cq
 from .crash_correlation import ArityError, diagnose_arity
@@ -37,6 +39,7 @@ from .dead_code import (
 from .duplicates import _jaccard
 from .graph_query import QueryFn, _longer_project_prefixes, _opt_int, _prefix
 from .language_spec import get_language_for_extension
+from .parser_loader import load_parsers
 from .types_defs import PropertyDict, ReingestReport, ResultRow
 
 _METHOD_LABELS = frozenset({cs.NodeLabel.METHOD.value})
@@ -1080,6 +1083,7 @@ class _AfterBindings:
         self._sources: dict[str, str | None] = {}
         self._names: dict[str, _SourceNames | None] = {}
         self._rows: dict[str, list[str] | None] = {}
+        self._exports: dict[str, dict[str, str]] = {}
 
     def source(self, path: str) -> str | None:
         if path not in self._sources:
@@ -1142,13 +1146,14 @@ class _AfterBindings:
         own = [
             binding
             for binding in bindings
-            if binding.importer == module
-            and not _typing_only(names, binding.line)
-            and (not for_callers or self._shares(binding))
+            if binding.importer == module and not _typing_only(names, binding.line)
         ]
-        if any(self._resolves(binding, name, seen, for_callers) for binding in own):
+        shared = [b for b in own if not for_callers or self._shares(b)]
+        if any(self._resolves(binding, name, seen, for_callers) for binding in shared):
             return True
-        return names is not None and _unfollowed_import(names, name, own)
+        if self._exports_locally(module, path, name, own, seen, for_callers):
+            return True
+        return names is not None and _unfollowed_import(names, name, shared)
 
     def _resolves(
         self,
@@ -1183,7 +1188,8 @@ class _AfterBindings:
 
         Any module-level name of a Python module can be imported. A JS/TS
         module shares only what it exports: `export { slug } from "./text"`
-        shares `slug`, `import { slug } from "./text"` keeps it to itself.
+        shares `slug`, `import { slug } from "./text"` keeps it to itself
+        unless an `export { slug }` names it (`_exports_locally`).
         The IMPORTS edge starts where its statement does, so the statement's
         first word tells them apart. Another language's import is not taken
         to re-export anything.
@@ -1199,6 +1205,48 @@ class _AfterBindings:
             self._rows[path] = None if text is None else text.split("\n")
         rows = self._rows[path]
         return rows is not None and _opens_export(rows, binding.line, binding.col)
+
+    def _exports_locally(
+        self,
+        module: str,
+        path: str,
+        name: str,
+        bindings: list[ImportBinding],
+        seen: frozenset[tuple[str, str]],
+        for_callers: bool,
+    ) -> bool:
+        """Whether a JS/TS module's `export { local as name }` binds `name`.
+
+        A clause without `from` exports a binding of the module's own: its
+        declaration, or a name it imports, so `import { slug } from
+        "./text"; export { slug };` shares `slug` as `export { slug } from
+        "./text"` does, and `export { s as slug }` shares the `s` it imports
+        under that name. The graph records no edge for such a clause.
+        """
+        local = self._local_exports(path).get(name)
+        if local is None:
+            return False
+        if f"{module}{cs.SEPARATOR_DOT}{local}" in self._facts(path)[0]:
+            return True
+        # `import * as ns` binds a module object, never one of its names.
+        return any(
+            binding.imported_name != cs.IMPORTED_NAME_WILDCARD
+            and self._resolves(binding, local, seen, for_callers)
+            for binding in bindings
+        )
+
+    def _local_exports(self, path: str) -> dict[str, str]:
+        if path not in self._exports:
+            language = _language(path)
+            text = None
+            if language in cs.JS_TS_LANGUAGES and self._repo_root is not None:
+                text = _read_source(self._repo_root, path)
+            self._exports[path] = (
+                {}
+                if text is None or language is None
+                else _js_local_exports(text, language)
+            )
+        return self._exports[path]
 
 
 # A module-level `__getattr__` (PEP 562) can answer for any name.
@@ -1218,6 +1266,41 @@ def _typing_only(names: _SourceNames | None, line: int | None) -> bool:
         and line is not None
         and any(first <= line <= last for first, last in names.typing_only)
     )
+
+
+def _js_local_exports(text: str, language: cs.SupportedLanguage) -> dict[str, str]:
+    """`{exported: local}` for each top-level `export { local as exported }`.
+
+    A clause with `from` re-exports another module's name and is left out:
+    the graph holds it as an IMPORTS edge.
+    """
+    parser = load_parsers()[0].get(language)
+    if parser is None:
+        return {}
+    root = parser.parse(text.encode(cs.ENCODING_UTF8)).root_node
+    clauses = (
+        clause
+        for statement in root.children
+        if statement.type == cs.TS_EXPORT_STATEMENT
+        and statement.child_by_field_name(cs.FIELD_SOURCE) is None
+        for clause in statement.named_children
+        if clause.type == cs.TS_EXPORT_CLAUSE
+    )
+    exported: dict[str, str] = {}
+    for clause in clauses:
+        # A comment between the braces has no name and is skipped.
+        for specifier in clause.named_children:
+            local = _node_text(specifier.child_by_field_name(cs.FIELD_NAME))
+            alias = _node_text(specifier.child_by_field_name(cs.FIELD_ALIAS))
+            if local:
+                exported[alias or local] = local
+    return exported
+
+
+def _node_text(node: Node | None) -> str | None:
+    if node is None or node.text is None:
+        return None
+    return node.text.decode(cs.ENCODING_UTF8)
 
 
 def _opens_export(rows: list[str], line: int | None, col: int | None) -> bool:

@@ -309,6 +309,26 @@ def test_a_caller_through_the_module_name_is_not_dangling(temp_repo: Path) -> No
     assert _runs(temp_repo) == "hello-world"
 
 
+def _move_ts(root: Path, util_after: str) -> StructuralDelta:
+    """Index a TS `slug` and its caller, move `slug` into `src/text.ts`."""
+    util = "export function slug(s: string): string {\n  return s.toLowerCase();\n}\n"
+    app = (
+        'import { slug } from "./util";\n\n'
+        "export function page(t: string): string {\n  return slug(t);\n}\n"
+    )
+    store, updater = _index(root, {"src/util.ts": util, "src/app.ts": app})
+    (root / "src/text.ts").write_text(util, encoding="utf-8")
+    (root / "src/util.ts").write_text(util_after, encoding="utf-8")
+    paths = ["src/util.ts", "src/text.ts"]
+    return observe(
+        store.fetch_all,
+        PROJECT,
+        paths,
+        lambda: updater.reingest(paths),
+        repo_root=root,
+    )
+
+
 @pytest.mark.parametrize(
     ("util_after", "dangling"),
     [
@@ -321,6 +341,12 @@ def test_a_caller_through_the_module_name_is_not_dangling(temp_repo: Path) -> No
             [("page", "util")],
             id="imported-only",
         ),
+        # Negative: exported, but under another name than the caller's.
+        pytest.param(
+            'import { slug } from "./text";\n\nexport { slug as other };\n',
+            [("page", "util")],
+            id="exported-as-another-name",
+        ),
         # Negative: nothing left behind, so `import { slug } from "./util"`
         # binds nothing.
         pytest.param("", [("page", "util")], id="nothing-left"),
@@ -329,25 +355,42 @@ def test_a_caller_through_the_module_name_is_not_dangling(temp_repo: Path) -> No
 def test_a_typescript_move_with_a_re_export(
     temp_repo: Path, util_after: str, dangling: list[tuple[str, str]]
 ) -> None:
-    util = "export function slug(s: string): string {\n  return s.toLowerCase();\n}\n"
-    app = (
-        'import { slug } from "./util";\n\n'
-        "export function page(t: string): string {\n  return slug(t);\n}\n"
-    )
-    store, updater = _index(temp_repo, {"src/util.ts": util, "src/app.ts": app})
-    (temp_repo / "src/text.ts").write_text(util, encoding="utf-8")
-    (temp_repo / "src/util.ts").write_text(util_after, encoding="utf-8")
-    paths = ["src/util.ts", "src/text.ts"]
-
-    delta = observe(
-        store.fetch_all,
-        PROJECT,
-        paths,
-        lambda: updater.reingest(paths),
-        repo_root=temp_repo,
-    )
+    delta = _move_ts(temp_repo, util_after)
 
     assert _callers(delta) == dangling
+
+
+@pytest.mark.parametrize(
+    "util_after",
+    [
+        pytest.param(
+            'import { slug } from "./text";\n\nexport { slug };\n', id="same-name"
+        ),
+        pytest.param(
+            'import { slug } from "./text";\n\nexport { /* kept */ slug as slug };\n',
+            id="aliased-to-itself",
+        ),
+        pytest.param(
+            'import { slug as s } from "./text";\n\nexport { s as slug };\n',
+            id="alias",
+        ),
+        # Not an import: the module's own declaration, exported as `slug`.
+        pytest.param(
+            "function slugify(s: string): string {\n  return s;\n}\n\n"
+            "export { slugify as slug };\n",
+            id="own-declaration",
+        ),
+    ],
+)
+def test_a_typescript_import_the_old_module_exports_is_not_dangling(
+    temp_repo: Path, util_after: str
+) -> None:
+    # CodeRabbit, PR #3312: an `export { ... }` without `from` that names
+    # the import shares it as `export { slug } from "./text"` does.
+    delta = _move_ts(temp_repo, util_after)
+
+    assert delta["dangling_callers"] == []
+    assert delta["dangling_importers"] == []
 
 
 def test_cgr_check_passes_a_move_with_a_re_export(temp_repo: Path) -> None:
