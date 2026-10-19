@@ -15,7 +15,9 @@ from typing import cast
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag import cypher_queries as cq
 from codebase_rag.capture import resolve_capture
+from codebase_rag.embedded_graph.connection import EmbeddedConnection
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services import QueryingIngestorProtocol
 from codebase_rag.structural_check import CheckError, run_check
@@ -155,3 +157,78 @@ def test_a_resource_the_root_module_touches_still_refuses(
     with pytest.raises(CheckError, match=cs.RelationshipType.RESOLVES_TO.value):
         _isolated(root, store)
     assert _state(store) == before
+
+
+NESTED = f"{PROJECT}.v2"
+NESTED_LOAD = f"{NESTED}.client.load"
+
+
+def _link_from_nested_qn(store: _StatefulIngestor, *, registered: bool) -> None:
+    # The other service's link, read this time by a node under `PROJECT.v2.`:
+    # the qualified-name prefix `PROJECT.` covers it either way.
+    _link_other_service(store)
+    if registered:
+        store.ensure_node_batch(cs.NodeLabel.PROJECT.value, {cs.KEY_NAME: NESTED})
+    store.ensure_node_batch(
+        _FUNCTION, {cs.KEY_QUALIFIED_NAME: NESTED_LOAD, cs.KEY_NAME: "load"}
+    )
+    store.ensure_relationship_batch(
+        (_FUNCTION, cs.KEY_QUALIFIED_NAME, NESTED_LOAD),
+        cs.RelationshipType.READS_FROM,
+        (_RESOURCE, cs.KEY_QUALIFIED_NAME, URL),
+    )
+
+
+def test_a_nested_projects_io_links_do_not_refuse_the_check(
+    indexed: tuple[Path, _StatefulIngestor],  # noqa: F811
+) -> None:
+    # A registered `PROJECT.v2` owns the names under it, so the module delete
+    # spares its nodes and the link they anchor survives the run (#1985).
+    root, store = indexed
+    _link_from_nested_qn(store, registered=True)
+    _edit(root)
+    before = _state(store)
+
+    delta = _isolated(root, store)
+
+    assert delta["dangling_callers"][0]["target"] == f"{PROJECT}.pkg.util.helper"
+    assert _state(store) == before
+
+
+def test_an_unregistered_nested_name_is_the_projects_own(
+    indexed: tuple[Path, _StatefulIngestor],  # noqa: F811
+) -> None:
+    # Negative: with no `PROJECT.v2` project, a node under that name is the
+    # checked project's own (a `v2/` package), so its link still refuses.
+    root, store = indexed
+    _link_from_nested_qn(store, registered=False)
+    _edit(root)
+    before = _state(store)
+
+    with pytest.raises(CheckError, match=cs.RelationshipType.RESOLVES_TO.value):
+        _isolated(root, store)
+    assert _state(store) == before
+
+
+@pytest.mark.parametrize(("project", "refused"), [("svc", False), ("svc.v2", True)])
+def test_the_query_leaves_a_nested_projects_links_to_it(
+    project: str, refused: bool
+) -> None:
+    # The query itself, on the embedded engine: only `svc.v2`'s function
+    # reads the URL, so `svc`'s check passes and `svc.v2`'s still refuses.
+    with EmbeddedConnection(":memory:") as conn:
+        conn.run(
+            "CREATE (:Project {name: 'svc'}), (:Project {name: 'svc.v2'}),"
+            " (f:Function {qualified_name: 'svc.v2.client.load'}),"
+            f" (u:Resource {{qualified_name: '{URL}'}}),"
+            f" (e:Resource {{qualified_name: '{ROUTE}'}}),"
+            " (f)-[:READS_FROM]->(u), (u)-[:RESOLVES_TO]->(e)"
+        )
+        rows = conn.run(
+            cq.CYPHER_CHECK_PROJECT_IO_LINKS,
+            {
+                cs.KEY_PROJECT_NAME: project,
+                cs.KEY_PROJECT_PREFIX: project + cs.SEPARATOR_DOT,
+            },
+        ).rows
+    assert rows == ([(cs.RelationshipType.RESOLVES_TO.value,)] if refused else [])

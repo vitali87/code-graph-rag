@@ -2137,9 +2137,15 @@ class _StatefulIngestor:
 
     def _check_project_io_links(self, params: PropertyDict) -> list[ResultRow]:
         # A FLOWS_TO / RESOLVES_TO edge on a Resource one of the project's
-        # own (non-Resource) nodes touches, its root module included.
+        # own (non-Resource) nodes touches, its root module included and a
+        # registered project nested under its prefix left out.
         prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
         name = _str(params.get(cs.KEY_PROJECT_NAME))
+        nested = {
+            _str(uid)
+            for label, uid in self.nodes
+            if label == _PROJECT_LABEL and _str(uid).startswith(prefix)
+        }
         resource = cs.NodeLabel.RESOURCE.value
         touched: set[_NodeId] = set()
         for fl, fv, _rel, tl, tv in self.edges:
@@ -2147,7 +2153,11 @@ class _StatefulIngestor:
                 if rl != resource or ol == resource:
                     continue
                 qn = self.nodes.get((ol, ov), {}).get(cs.KEY_QUALIFIED_NAME)
-                if isinstance(qn, str) and (qn == name or qn.startswith(prefix)):
+                if (
+                    isinstance(qn, str)
+                    and (qn == name or qn.startswith(prefix))
+                    and not _shadowed_by_longer_owner(qn, nested)
+                ):
                     touched.add((rl, rv))
         io = {cs.RelationshipType.FLOWS_TO.value, cs.RelationshipType.RESOLVES_TO.value}
         found = next(
