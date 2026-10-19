@@ -185,6 +185,31 @@ def test_a_coroutine_handed_on_is_a_hint_not_a_finding(indexed: Indexed) -> None
     assert not has_findings(delta)
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        "    for item in fetch():\n        return item",
+        "    return [item for item in (fetch())]",
+    ],
+    ids=["for-statement", "comprehension"],
+)
+def test_a_now_async_call_iterated_is_a_definite_finding(
+    indexed: Indexed, body: str
+) -> None:
+    # A coroutine is not iterable, so `for item in fetch()` raises
+    # `TypeError` once `fetch` is async (CodeRabbit, PR #2951).
+    delta = _edit_both(
+        indexed,
+        ("def fetch():", "async def fetch():"),
+        ("def use():\n    return fetch() + 1", f"def use():\n{body}"),
+    )
+
+    (change,) = delta["signature_changes"]
+    verdicts = {site["caller"]: site["verdict"] for site in change["sites"]}
+    assert verdicts[f"{PROJECT}.app.use"] == cs.DELTA_ARITY_ASYNC_CHANGED
+    assert has_findings(delta)
+
+
 # Negative: what must not change.
 
 
@@ -202,6 +227,25 @@ def test_a_body_edit_keeps_its_async_ness_and_finds_nothing(
     delta = _edit(indexed, old, new)
 
     assert delta["signature_changes"] == []
+    assert not has_findings(delta)
+
+
+def test_an_async_for_over_a_now_async_call_is_a_hint(indexed: Indexed) -> None:
+    # `async for` takes an async iterable: an async generator `fetch` gives
+    # one and a coroutine does not, which the `async def` alone cannot tell.
+    delta = _edit_both(
+        indexed,
+        ("def fetch():", "async def fetch():"),
+        (
+            "def use():\n    return fetch() + 1",
+            "async def use():\n    async for item in fetch():\n        return item",
+        ),
+    )
+
+    (change,) = [
+        c for c in delta["signature_changes"] if c["qualified_name"] == _qn("fetch")
+    ]
+    assert cs.DELTA_ARITY_ASYNC_CHANGED not in {s["verdict"] for s in change["sites"]}
     assert not has_findings(delta)
 
 

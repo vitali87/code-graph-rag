@@ -1978,7 +1978,8 @@ def _signature_changes(
 
 
 # Nodes that use a call's value where it stands, so a coroutine there is
-# never run (issue #2860); an attribute or subscript reads its object.
+# never run (issue #2860); an attribute or subscript reads its object, and a
+# `for` loop or clause iterates its iterable (CodeRabbit, PR #2951).
 _PY_SYNC_VALUE_READERS = frozenset(
     {
         cs.TS_PY_EXPRESSION_STATEMENT,
@@ -1992,6 +1993,8 @@ _PY_SYNC_VALUE_READERS = frozenset(
 _PY_READ_OBJECT_FIELDS = {
     cs.TS_PY_ATTRIBUTE: cs.TS_FIELD_OBJECT,
     cs.TS_PY_SUBSCRIPT: cs.FIELD_VALUE,
+    cs.TS_PY_FOR_STATEMENT: cs.TS_FIELD_RIGHT,
+    cs.TS_PY_FOR_IN_CLAUSE: cs.TS_FIELD_RIGHT,
 }
 
 
@@ -2063,14 +2066,20 @@ def _value_parent(call: Node) -> tuple[Node | None, Node]:
 
 def _read_synchronously(parent: Node | None, child: Node) -> bool:
     """Whether the value is used on the spot: discarded as a statement, an
-    operand, or the object of an attribute or subscript read."""
+    operand, the object of an attribute or subscript read, or the iterable
+    of a `for`. An `async for` takes an async iterable, which an async
+    generator gives, so it is left to the hint."""
     if parent is None:
         return False
     if parent.type in _PY_SYNC_VALUE_READERS:
         return True
     field = _PY_READ_OBJECT_FIELDS.get(parent.type)
     target = parent.child_by_field_name(field) if field else None
-    return target is not None and target.id == child.id
+    return (
+        target is not None
+        and target.id == child.id
+        and not any(c.type == cs.TS_PY_ASYNC for c in parent.children)
+    )
 
 
 # --- new duplicates -----------------------------------------------------------

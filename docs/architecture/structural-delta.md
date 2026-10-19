@@ -134,13 +134,15 @@ def the call never runs.
 A Python def that turns into an `async def`, or the reverse, breaks a
 call written for the old kind (issue #2860). Each call site is read back
 from its source. A call to a now-async function whose result is thrown
-away (`fetch()` as a statement) gets a coroutine whose body never runs, and
-an `await` of a now-sync function awaits a plain value it cannot await.
+away (`fetch()` as a statement) gets a coroutine whose body never runs, one
+a `for` iterates (`for x in fetch():`) raises `TypeError`, and an `await`
+of a now-sync function awaits a plain value it cannot await.
 Those sites read `async_changed`, which trips `--fail-on-found`, unless
 their arity verdict already does. A caller already migrated (`await
 fetch()` once the function is async, a plain `fetch()` once it no longer
 is) is fine, and any other use of the result (returned, assigned, handed
-to `asyncio.run` or `gather`) is not judged: the change carries
+to `asyncio.run` or `gather`, or the iterable of an `async for`, which an
+async generator serves) is not judged: the change carries
 `async_change`, a hint. Nor does the flip alone make an endpoint's remote
 callers a finding: a handler turning `async` serves the same route. The
 same flip in JavaScript, TypeScript or Rust is listed in `symbols.changed`
