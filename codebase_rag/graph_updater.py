@@ -116,6 +116,7 @@ from .path_filters import matches_test_path
 from .services import (
     FilteringIngestor,
     IngestorProtocol,
+    NodeUpdateProtocol,
     QueryingIngestorProtocol,
     QueryProtocol,
 )
@@ -5298,8 +5299,9 @@ class GraphUpdater:
         not merge. Flushed first so the Module nodes of a first build exist
         to match; the modules with nothing recorded (most) are cleared in
         one statement, the rest set one by one. A store that takes no query
-        (the protobuf index) gets the list as a second write of the Module
-        node, which it merges, or the exported field stays empty (#3206)."""
+        but can update a node it holds (the protobuf index) has the list set
+        in place, or the exported field stays empty (#3206); any other store
+        is left as it was, which reads as "nothing waited"."""
         recorded = self.factory.import_processor.unresolved_references
         cleared: list[str] = []
         pending: list[tuple[str, list[str]]] = []
@@ -5321,7 +5323,7 @@ class GraphUpdater:
         if not cleared and not pending:
             return
         if not isinstance(self.ingestor, QueryProtocol):
-            self._write_unresolved_reference_nodes(cleared, pending)
+            self._update_unresolved_reference_nodes(cleared, pending)
             return
         self.ingestor.flush_all()
         try:
@@ -5337,11 +5339,15 @@ class GraphUpdater:
         except Exception:
             logger.warning(ls.PRUNE_QUERY_FAILED, label="unresolved references write")
 
-    def _write_unresolved_reference_nodes(
+    def _update_unresolved_reference_nodes(
         self, cleared: list[str], pending: list[tuple[str, list[str]]]
     ) -> None:
+        # Never a second node write: one carrying only these two keys reads
+        # as the whole Module node to every store that does not merge.
+        if not isinstance(self.ingestor, NodeUpdateProtocol):
+            return
         for module_qn, names in (*((qn, []) for qn in cleared), *pending):
-            self._sink.ensure_node_batch(
+            self.ingestor.update_node_properties(
                 cs.NodeLabel.MODULE,
                 {
                     cs.KEY_QUALIFIED_NAME: module_qn,
