@@ -259,3 +259,75 @@ def test_a_dart_field_typed_from_a_package_takes_no_project_class(
     assert ("lib.a_toy.toy_cart.Cart.total", cs.EdgeResolution.EXACT) not in _calls(
         temp_repo, mock_ingestor, "lib.main.run"
     )
+
+
+def _index_dart(
+    repo: Path, mock: MagicMock, shop: str, main: str = _DART["lib/main.dart"]
+) -> set[tuple[str, str]]:
+    files = {
+        **_DART,
+        "lib/main.dart": main,
+        "lib/shop.dart": f"{shop}\nclass Shop {{\n  Cart cart = Cart();\n}}\n",
+    }
+    for rel, text in files.items():
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text(text, encoding="utf-8")
+    create_and_run_updater(repo, mock)
+    return _calls(repo, mock, "lib.main.run")
+
+
+def test_a_dart_library_s_own_class_shadows_the_one_it_imports(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `shop.dart`'s own `Cart` is the bare name there, whatever `cart.dart`
+    # brings in: counting both as candidates left the hop untyped, and with
+    # `cart.dart` imported beside it the caller has no unique `total()` either.
+    shop = "import 'cart.dart';\n\nclass Cart {\n  int total() => 4;\n}\n"
+    main = f"import 'cart.dart';\n{_DART['lib/main.dart']}"
+
+    assert _index_dart(temp_repo, mock_ingestor, shop, main) == {
+        ("lib.shop.Cart.total", cs.EdgeResolution.EXACT)
+    }
+
+
+@pytest.mark.parametrize(
+    "shop",
+    [
+        "import 'cart.dart';\nimport 'a_toy/cart.dart' hide Cart;\n",
+        "import 'cart.dart';\nimport 'a_toy/cart.dart' show Other;\n",
+        "import 'cart.dart' show Cart;\nimport 'a_toy/cart.dart' show Cart hide Cart;\n",
+        "import 'cart.dart';\nexport 'a_toy/cart.dart';\n",
+    ],
+    ids=["hide", "show-other", "show-then-hide", "export"],
+)
+def test_a_dart_library_kept_out_of_scope_does_not_contest_the_bare_type(
+    temp_repo: Path, mock_ingestor: MagicMock, shop: str
+) -> None:
+    # `a_toy/cart.dart`'s `Cart` never reaches `shop.dart`'s scope: a
+    # `show` / `hide` list keeps it out, and an `export` hands it to
+    # `shop.dart`'s importers without bringing it in.
+    assert _index_dart(temp_repo, mock_ingestor, shop) == {
+        ("lib.cart.Cart.total", cs.EdgeResolution.EXACT)
+    }
+
+
+@pytest.mark.parametrize(
+    "directive",
+    [
+        "import 'cart.dart' hide Cart;",
+        "import 'cart.dart' show Other;",
+        "export 'cart.dart';",
+    ],
+    ids=["hide", "show-other", "export"],
+)
+def test_a_dart_field_typed_from_a_package_takes_no_out_of_scope_class(
+    temp_repo: Path, mock_ingestor: MagicMock, directive: str
+) -> None:
+    # Negative: `Cart` is the package's, and `cart.dart`'s is out of
+    # `shop.dart`'s scope, so the one project `Cart` the directives name is
+    # not the field's type.
+    shop = f"import 'package:other/cart.dart';\n{directive}\n"
+
+    assert ("lib.cart.Cart.total", cs.EdgeResolution.EXACT) not in _index_dart(
+        temp_repo, mock_ingestor, shop
+    )

@@ -6564,31 +6564,37 @@ class CallResolver:
             frontier = list(parents)
         return levels
 
-    def _dart_visible_libraries(
-        self, module_qn: str, *, prefixed: bool = True
-    ) -> set[str]:
+    def _dart_visible_libraries(self, module_qn: str) -> set[str]:
         """The libraries whose top-level names `module_qn` can see: itself,
         every library it imports (prefixed or not), and whatever those hand
         on through `export` / `part`, transitively. A library a dependency
-        merely IMPORTS stays hidden (issue #2482). Without `prefixed`, a
-        library imported only `as p` is left out: its names are `p.Name`,
-        never a bare `Name` (issue #3286)."""
+        merely IMPORTS stays hidden (issue #2482)."""
         processor = self.import_processor
         imported = set(processor.import_mapping.get(module_qn, {}).values())
-        aliased = {
-            library
-            for libraries in processor.dart_import_aliases.get(module_qn, {}).values()
-            for library in libraries
-        }
-        if prefixed:
-            imported |= aliased
-        else:
-            # `import 'a.dart'; import 'a.dart' as p;` still sees bare names.
-            imported -= aliased - set(processor.dart_bare_imports.get(module_qn, ()))
-        visible = {module_qn, *imported}
-        frontier = list(imported)
+        for libraries in processor.dart_import_aliases.get(module_qn, {}).values():
+            imported.update(libraries)
+        return self._dart_with_exposed({module_qn, *imported}, list(imported))
+
+    def _dart_bare_visible_libraries(self, module_qn: str, name: str) -> set[str]:
+        """The libraries whose `name` `module_qn` can write bare: those its
+        plain `import` and `part` directives bring in, unless a `show` /
+        `hide` clause keeps `name` out, and whatever those hand on through
+        `export` / `part`. An `as p` import names them `p.Name` instead, and
+        an `export` hands names to importers without bringing them in
+        (issue #3286)."""
+        roots = [
+            directive.library
+            for directive in self.import_processor.dart_bare_imports.get(module_qn, ())
+            if directive.admits(name)
+        ]
+        return self._dart_with_exposed(set(roots), roots)
+
+    def _dart_with_exposed(self, visible: set[str], frontier: list[str]) -> set[str]:
+        """`visible` plus whatever the `frontier` libraries hand on through
+        `export` / `part`, transitively."""
+        exposed_by = self.import_processor.dart_exposed_libraries
         while frontier:
-            for exposed in processor.dart_exposed_libraries.get(frontier.pop(), ()):
+            for exposed in exposed_by.get(frontier.pop(), ()):
                 if exposed not in visible:
                     visible.add(exposed)
                     frontier.append(exposed)
@@ -6809,18 +6815,24 @@ class CallResolver:
         )
 
     def _dart_visible_type(self, type_name: str, module_qn: str) -> str | None:
+        # The library's own declaration shadows every imported one.
+        if own := self._dart_declared_type(module_qn, type_name):
+            return own
         # A Dart import brings in a LIBRARY, never a name, so the import map
         # has no key for `Cart`: the type is the one the libraries visible
         # from `module_qn` declare, when exactly one of them does.
         found = {
             qn
-            for library in self._dart_visible_libraries(module_qn, prefixed=False)
-            if self.function_registry.get(
-                qn := f"{library}{cs.SEPARATOR_DOT}{type_name}"
-            )
-            in _CONSTRUCTIBLE_NODE_TYPES
+            for library in self._dart_bare_visible_libraries(module_qn, type_name)
+            if (qn := self._dart_declared_type(library, type_name))
         }
         return next(iter(found)) if len(found) == 1 else None
+
+    def _dart_declared_type(self, library: str, type_name: str) -> str | None:
+        qn = f"{library}{cs.SEPARATOR_DOT}{type_name}"
+        return (
+            qn if self.function_registry.get(qn) in _CONSTRUCTIBLE_NODE_TYPES else None
+        )
 
     def _chain_class_qn(
         self, type_name: str, module_qn: str, rust_caller: str | None = None

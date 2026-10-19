@@ -49,10 +49,13 @@ from ..utils.path_utils import (
 )
 from .cpp_frontend.qn import build_module_qn_map
 from .dart import (
+    DartBareImport,
     dart_binding_spans,
+    dart_combinators,
     dart_exposes_library,
     dart_extract_uri,
     dart_import_prefix,
+    dart_is_export,
     dart_local_name,
     dart_resolve_import,
 )
@@ -1384,11 +1387,14 @@ class ImportProcessor:
         # edge (those come from import_mapping's values) while the name the
         # source writes resolves to the aliased library (Greptile, #2033).
         self.dart_import_aliases: dict[str, dict[str, list[str]]] = {}
-        # {module qn: [libraries a directive brings in WITHOUT a prefix]}.
+        # {module qn: [the `import` / `part` directives that bring a library's
+        # names in WITHOUT a prefix, with their `show` / `hide` clauses]}.
         # The file-derived import_mapping key is written for a prefixed
-        # import too, so only this tells `import 'a.dart'; import 'a.dart'
-        # as p;` (bare `A` visible) from the prefixed import alone (#3286).
-        self.dart_bare_imports: dict[str, list[str]] = {}
+        # import and an `export` too, so only this tells `import 'a.dart';
+        # import 'a.dart' as p;` (bare `A` visible) from the prefixed import
+        # alone, and either from `export 'a.dart';`, which brings in nothing
+        # (#3286).
+        self.dart_bare_imports: dict[str, list[DartBareImport]] = {}
         # {library module qn: [module qns it hands to ITS importers]}: the
         # targets of its `export` and `part` directives. import_mapping holds
         # those beside plain imports, which expose nothing, so an extension
@@ -6651,8 +6657,10 @@ class ImportProcessor:
                         module_qn, prefix, full_name, import_node, uri
                     )
                     prefixes.add(prefix)
-                else:
-                    self.dart_bare_imports.setdefault(module_qn, []).append(full_name)
+                elif not dart_is_export(import_node):
+                    self.dart_bare_imports.setdefault(module_qn, []).append(
+                        DartBareImport(full_name, dart_combinators(import_node))
+                    )
         # A local or parameter of the same name SHADOWS the prefix inside its
         # scope, and an UNTYPED one (`var p = 1`) never reaches the resolver's
         # local_var_types, so the type map cannot answer this. The binding is
