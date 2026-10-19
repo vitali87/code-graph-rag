@@ -719,8 +719,9 @@ class _SourceNames(NamedTuple):
     # Names only ever assigned a value no call can run on (`slug = None`):
     # importable, but a caller of the function they replace fails.
     inert: frozenset[str] = frozenset()
-    # The (first, last) lines of each `if TYPE_CHECKING:` body, whose
-    # imports bind nothing at run time.
+    # The (first, last) lines of each branch only type checkers read (an
+    # `if TYPE_CHECKING:` body, the `else` of `if not TYPE_CHECKING:`),
+    # whose imports bind nothing at run time.
     typing_only: tuple[tuple[int, int], ...] = ()
 
 
@@ -833,9 +834,9 @@ def _names_bound_by(node: ast.AST, pending: list[ast.AST]) -> Iterator[str]:
     if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
         yield from _definition_bindings(node)
         return
-    if isinstance(node, ast.If) and _is_type_checking(node.test):
-        # Its body runs for type checkers only; its `else` runs instead.
-        pending.extend(node.orelse)
+    if (branches := _type_checking_branches(node)) is not None:
+        # One branch runs for type checkers only; the other runs instead.
+        pending.extend(branches[1])
         return
     if isinstance(node, ast.Import):
         for alias in node.names:
@@ -895,9 +896,8 @@ def _python_top_level_names(text: str) -> _SourceNames | None:
         if isinstance(node, ast.ImportFrom):
             imported.update(alias.asname or alias.name for alias in node.names)
             continue
-        if isinstance(node, ast.If) and _is_type_checking(node.test):
-            last = node.body[-1]
-            typing_only.append((node.body[0].lineno, last.end_lineno or last.lineno))
+        if (span := _typing_only_span(node)) is not None:
+            typing_only.append(span)
         bound = set(_names_bound_by(node, pending))
         assigned_inert = _inert_targets(node)
         own.update(bound)
@@ -920,6 +920,34 @@ def _is_type_checking(test: ast.expr) -> bool:
         case ast.Name(id=cs.PY_TYPE_CHECKING) | ast.Attribute(attr=cs.PY_TYPE_CHECKING):
             return True
     return False
+
+
+def _type_checking_branches(
+    node: ast.AST,
+) -> tuple[list[ast.stmt], list[ast.stmt]] | None:
+    """(The branch only type checkers read, the one that runs) of a guard.
+
+    `if TYPE_CHECKING:` runs its `else`; `if not TYPE_CHECKING:` runs its
+    body, and its `else` is the branch type checkers read. Any other
+    statement is no such guard.
+    """
+    if not isinstance(node, ast.If):
+        return None
+    if _is_type_checking(node.test):
+        return node.body, node.orelse
+    match node.test:
+        case ast.UnaryOp(op=ast.Not(), operand=operand) if _is_type_checking(operand):
+            return node.orelse, node.body
+    return None
+
+
+def _typing_only_span(node: ast.AST) -> tuple[int, int] | None:
+    """The (first, last) lines of the branch of a guard that never runs."""
+    branches = _type_checking_branches(node)
+    if branches is None or not branches[0]:
+        return None
+    first, last = branches[0][0], branches[0][-1]
+    return first.lineno, last.end_lineno or last.lineno
 
 
 def _inert_targets(node: ast.AST) -> frozenset[str]:
@@ -1088,7 +1116,8 @@ class _AfterBindings:
         `from app.empty import helper` keeps nothing when `app.empty` has no
         `helper`. A chain of re-exports is followed, into modules the edit
         left alone too; a cycle in it binds nothing. An import under `if
-        TYPE_CHECKING:` never runs, so it binds nothing.
+        TYPE_CHECKING:`, or in the `else` of `if not TYPE_CHECKING:`, never
+        runs, so it binds nothing.
 
         `for_callers` asks for a binding a call from another module still
         works through: a name only assigned a literal (`helper = None`)

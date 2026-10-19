@@ -238,6 +238,37 @@ def test_a_re_export_in_the_else_of_a_type_checking_guard_is_not_dangling(
     assert _runs(temp_repo) == "hello-world"
 
 
+def test_a_re_export_in_the_else_of_a_negated_guard_leaves_its_callers_dangling(
+    temp_repo: Path,
+) -> None:
+    # Negative (CodeRabbit, PR #3312): `if not TYPE_CHECKING:` runs its
+    # body, so its `else` is the branch only type checkers read.
+    util = (
+        "from typing import TYPE_CHECKING\n\nif not TYPE_CHECKING:\n    pass\n"
+        f"else:\n    {REEXPORT}"
+    )
+
+    delta = _move(temp_repo, util)
+
+    assert _callers(delta) == [("page", "util")]
+    assert [(d["importer"], d["name"]) for d in delta["dangling_importers"]] == [
+        (f"{PROJECT}.py.app", "slug")
+    ]
+    assert "ImportError" in _runs(temp_repo)
+
+
+def test_a_re_export_in_the_body_of_a_negated_guard_is_not_dangling(
+    temp_repo: Path,
+) -> None:
+    util = f"import typing\n\nif not typing.TYPE_CHECKING:\n    {REEXPORT}"
+
+    delta = _move(temp_repo, util)
+
+    assert delta["dangling_callers"] == []
+    assert delta["dangling_importers"] == []
+    assert _runs(temp_repo) == "hello-world"
+
+
 def test_a_removed_method_is_dangling_whatever_its_module_binds(
     temp_repo: Path,
 ) -> None:
