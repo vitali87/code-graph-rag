@@ -1396,10 +1396,11 @@ class ImportProcessor:
         # alone, and either from `export 'a.dart';`, which brings in nothing
         # (#3286).
         self.dart_bare_imports: dict[str, list[DartBareImport]] = {}
-        # {part file module qn: the library its `part of '...'` directive
-        # names}. A part brings in nothing: it is a piece of that library and
-        # writes names through the library's imports (#3286). `part of
-        # my.library;` names no file and is not recorded.
+        # {part file module qn: the library whose `part '...'` directive
+        # names it}. A part brings in nothing: it is a piece of that library
+        # and writes names through the library's imports (#3286). The
+        # library's directive is read, not the part's `part of`, which may
+        # name the library by its `library shop;` name rather than a file.
         self.dart_part_of: dict[str, str] = {}
         # {library module qn: [module qns it hands to ITS importers]}: the
         # targets of its `export` and `part` directives. import_mapping holds
@@ -1693,7 +1694,14 @@ class ImportProcessor:
         self.dart_prefix_shadows.pop(module_qn, None)
         self.dart_import_aliases.pop(module_qn, None)
         self.dart_bare_imports.pop(module_qn, None)
-        self.dart_part_of.pop(module_qn, None)
+        # Keyed by the part but written by its LIBRARY's parse: the library's
+        # re-parse drops the links it wrote, and the part's keeps them, as
+        # the library still names it.
+        self.dart_part_of = {
+            part: library
+            for part, library in self.dart_part_of.items()
+            if library != module_qn
+        }
         self.dart_exposed_libraries.pop(module_qn, None)
         self._retract_import_sites(module_qn)
 
@@ -6680,12 +6688,16 @@ class ImportProcessor:
         self, module_qn: str, directive: Node, full_name: str
     ) -> None:
         # `part of 'shop.dart';` brings nothing in: the file is a piece of
-        # that library and writes names in its scope (#3286). An `export`
-        # hands its target to importers only; a plain `import` or a `part`
-        # brings the target's names in bare.
+        # that library and writes names in its scope (#3286). The link comes
+        # from the library's `part 'shop_model.dart';`, which a `part of
+        # shop;` naming no file has too. An `export` hands its target to
+        # importers only; a plain `import` or a `part` brings the target's
+        # names in bare.
         if directive.type == cs.TS_DART_PART_OF_DIRECTIVE:
-            self.dart_part_of[module_qn] = full_name
-        elif not dart_is_export(directive):
+            return
+        if directive.type == cs.TS_DART_PART_DIRECTIVE:
+            self.dart_part_of[full_name] = module_qn
+        if not dart_is_export(directive):
             self.dart_bare_imports.setdefault(module_qn, []).append(
                 DartBareImport(full_name, dart_combinators(directive))
             )

@@ -334,36 +334,48 @@ def test_a_dart_field_typed_from_a_package_takes_no_out_of_scope_class(
 
 
 @pytest.mark.parametrize(
-    ("shop", "main", "target"),
+    ("shop", "part_of", "main", "target"),
     [
         (
             "import 'cart.dart';\n\npart 'shop_model.dart';\n",
+            "part of 'shop.dart';",
             _DART["lib/main.dart"],
             "lib.cart.Cart.total",
         ),
         (
             "import 'cart.dart';\n\npart 'shop_model.dart';\n\n"
             "class Cart {\n  int total() => 4;\n}\n",
+            "part of 'shop.dart';",
             f"import 'cart.dart';\n{_DART['lib/main.dart']}",
             "lib.shop.Cart.total",
         ),
+        (
+            "library shop;\n\nimport 'cart.dart';\n\npart 'shop_model.dart';\n",
+            "part of shop;",
+            _DART["lib/main.dart"],
+            "lib.cart.Cart.total",
+        ),
     ],
-    ids=["library-import", "library-own-class"],
+    ids=["library-import", "library-own-class", "part-of-library-name"],
 )
 def test_a_dart_field_declared_in_a_part_is_typed_in_its_library_s_scope(
-    temp_repo: Path, mock_ingestor: MagicMock, shop: str, main: str, target: str
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    shop: str,
+    part_of: str,
+    main: str,
+    target: str,
 ) -> None:
     # `shop_model.dart` is part of `shop.dart`'s library, so its `Cart` is
     # written in that library's scope: `shop.dart`'s imports and its own
     # classes. Read as a file of its own the part imports nothing, and the
-    # `cart.dart` field was left untyped.
+    # `cart.dart` field was left untyped. `part of shop;` names the library
+    # by its name, not a file, so the link is `shop.dart`'s `part` directive.
     files = {
         **_DART,
         "lib/main.dart": main,
         "lib/shop.dart": shop,
-        "lib/shop_model.dart": (
-            "part of 'shop.dart';\n\nclass Shop {\n  Cart cart = Cart();\n}\n"
-        ),
+        "lib/shop_model.dart": f"{part_of}\n\nclass Shop {{\n  Cart cart = Cart();\n}}\n",
     }
     for rel, text in files.items():
         (temp_repo / rel).parent.mkdir(parents=True, exist_ok=True)
