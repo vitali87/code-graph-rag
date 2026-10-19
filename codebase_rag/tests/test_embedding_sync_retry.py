@@ -36,6 +36,7 @@ from codebase_rag.checkout_state import state_file
 from codebase_rag.constants import VectorStoreBackend
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.sqlite_vectors import extensions_loadable
 from codebase_rag.types_defs import PropertyParams, ResultRow
 from codebase_rag.utils.dependencies import (
     has_pymilvus,
@@ -401,6 +402,9 @@ class TestASwitchedStoreIsRefilled:
         assert _in_sync(repo, graph) is True
 
     @pytest.mark.skipif(not has_sqlite_vec(), reason="sqlite-vec not installed")
+    @pytest.mark.skipif(
+        not extensions_loadable(), reason="this Python's sqlite3 cannot load extensions"
+    )
     def test_an_unchanged_sync_fills_a_newly_selected_store(
         self, repo: Path, graph: _Graph, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -183,8 +183,9 @@ treesitter-full = [
 ]
 
 # sqlite-vec is the default vector store's, on the platforms it ships wheels
-# for (it has no sdist); qdrant-client is for CGR_VECTOR_STORE_BACKEND=qdrant,
-# the default before it and the choice elsewhere.
+# for (it has no sdist), which cover every one torch ships wheels for; no
+# marker tells musl from glibc, and torch has no musl wheels either.
+# qdrant-client is for CGR_VECTOR_STORE_BACKEND=qdrant, the default before it.
 semantic = [
     "qdrant-client>=1.9.0",
     "sqlite-vec>=0.1.9; (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')) or sys_platform == 'darwin' or (sys_platform == 'win32' and platform_machine == 'AMD64')",
