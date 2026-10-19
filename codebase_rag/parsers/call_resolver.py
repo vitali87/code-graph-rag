@@ -6815,16 +6815,22 @@ class CallResolver:
         )
 
     def _dart_visible_type(self, type_name: str, module_qn: str) -> str | None:
-        # The library's own declaration shadows every imported one.
-        if own := self._dart_declared_type(module_qn, type_name):
-            return own
+        # A part file is a piece of its library and has no imports of its
+        # own: it writes names in the library's scope, so `shop_model.dart`
+        # sees what `shop.dart` imports.
+        library = self.import_processor.dart_part_of.get(module_qn, module_qn)
+        # The library's own declaration shadows every imported one, and a
+        # part's class is one of the library's own.
+        for scope in (module_qn, library):
+            if own := self._dart_declared_type(scope, type_name):
+                return own
         # A Dart import brings in a LIBRARY, never a name, so the import map
         # has no key for `Cart`: the type is the one the libraries visible
-        # from `module_qn` declare, when exactly one of them does.
+        # from `library` declare, when exactly one of them does.
         found = {
             qn
-            for library in self._dart_bare_visible_libraries(module_qn, type_name)
-            if (qn := self._dart_declared_type(library, type_name))
+            for visible in self._dart_bare_visible_libraries(library, type_name)
+            if (qn := self._dart_declared_type(visible, type_name))
         }
         return next(iter(found)) if len(found) == 1 else None
 

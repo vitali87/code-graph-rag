@@ -1131,6 +1131,7 @@ class ImportProcessor:
         "dart_prefix_shadows",
         "dart_import_aliases",
         "dart_bare_imports",
+        "dart_part_of",
         "dart_exposed_libraries",
         "rust_block_scope_imports",
         "rust_self_module_imports",
@@ -1395,6 +1396,11 @@ class ImportProcessor:
         # alone, and either from `export 'a.dart';`, which brings in nothing
         # (#3286).
         self.dart_bare_imports: dict[str, list[DartBareImport]] = {}
+        # {part file module qn: the library its `part of '...'` directive
+        # names}. A part brings in nothing: it is a piece of that library and
+        # writes names through the library's imports (#3286). `part of
+        # my.library;` names no file and is not recorded.
+        self.dart_part_of: dict[str, str] = {}
         # {library module qn: [module qns it hands to ITS importers]}: the
         # targets of its `export` and `part` directives. import_mapping holds
         # those beside plain imports, which expose nothing, so an extension
@@ -1687,6 +1693,7 @@ class ImportProcessor:
         self.dart_prefix_shadows.pop(module_qn, None)
         self.dart_import_aliases.pop(module_qn, None)
         self.dart_bare_imports.pop(module_qn, None)
+        self.dart_part_of.pop(module_qn, None)
         self.dart_exposed_libraries.pop(module_qn, None)
         self._retract_import_sites(module_qn)
 
@@ -6657,10 +6664,8 @@ class ImportProcessor:
                         module_qn, prefix, full_name, import_node, uri
                     )
                     prefixes.add(prefix)
-                elif not dart_is_export(import_node):
-                    self.dart_bare_imports.setdefault(module_qn, []).append(
-                        DartBareImport(full_name, dart_combinators(import_node))
-                    )
+                else:
+                    self._record_dart_unprefixed(module_qn, import_node, full_name)
         # A local or parameter of the same name SHADOWS the prefix inside its
         # scope, and an UNTYPED one (`var p = 1`) never reaches the resolver's
         # local_var_types, so the type map cannot answer this. The binding is
@@ -6669,6 +6674,20 @@ class ImportProcessor:
         if root_node is not None and prefixes:
             self.dart_prefix_shadows[module_qn] = dart_binding_spans(
                 root_node, frozenset(prefixes)
+            )
+
+    def _record_dart_unprefixed(
+        self, module_qn: str, directive: Node, full_name: str
+    ) -> None:
+        # `part of 'shop.dart';` brings nothing in: the file is a piece of
+        # that library and writes names in its scope (#3286). An `export`
+        # hands its target to importers only; a plain `import` or a `part`
+        # brings the target's names in bare.
+        if directive.type == cs.TS_DART_PART_OF_DIRECTIVE:
+            self.dart_part_of[module_qn] = full_name
+        elif not dart_is_export(directive):
+            self.dart_bare_imports.setdefault(module_qn, []).append(
+                DartBareImport(full_name, dart_combinators(directive))
             )
 
     def _bind_dart_import_prefix(

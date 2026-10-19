@@ -331,3 +331,45 @@ def test_a_dart_field_typed_from_a_package_takes_no_out_of_scope_class(
     assert ("lib.cart.Cart.total", cs.EdgeResolution.EXACT) not in _index_dart(
         temp_repo, mock_ingestor, shop
     )
+
+
+@pytest.mark.parametrize(
+    ("shop", "main", "target"),
+    [
+        (
+            "import 'cart.dart';\n\npart 'shop_model.dart';\n",
+            _DART["lib/main.dart"],
+            "lib.cart.Cart.total",
+        ),
+        (
+            "import 'cart.dart';\n\npart 'shop_model.dart';\n\n"
+            "class Cart {\n  int total() => 4;\n}\n",
+            f"import 'cart.dart';\n{_DART['lib/main.dart']}",
+            "lib.shop.Cart.total",
+        ),
+    ],
+    ids=["library-import", "library-own-class"],
+)
+def test_a_dart_field_declared_in_a_part_is_typed_in_its_library_s_scope(
+    temp_repo: Path, mock_ingestor: MagicMock, shop: str, main: str, target: str
+) -> None:
+    # `shop_model.dart` is part of `shop.dart`'s library, so its `Cart` is
+    # written in that library's scope: `shop.dart`'s imports and its own
+    # classes. Read as a file of its own the part imports nothing, and the
+    # `cart.dart` field was left untyped.
+    files = {
+        **_DART,
+        "lib/main.dart": main,
+        "lib/shop.dart": shop,
+        "lib/shop_model.dart": (
+            "part of 'shop.dart';\n\nclass Shop {\n  Cart cart = Cart();\n}\n"
+        ),
+    }
+    for rel, text in files.items():
+        (temp_repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (temp_repo / rel).write_text(text, encoding="utf-8")
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    assert _calls(temp_repo, mock_ingestor, "lib.main.run") == {
+        (target, cs.EdgeResolution.EXACT)
+    }
