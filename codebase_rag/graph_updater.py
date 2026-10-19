@@ -900,7 +900,8 @@ def _embeddings_store_stamp(state_dir: Path, project_name: str) -> Path:
     points stay in a store nothing searches, and an unchanged checkout takes
     the in-sync fast path, which never embeds: until the stamp names the
     selected backend the project owes a pass. A checkout synced before the
-    stamp existed has none and owes one pass too.
+    stamp existed has none; its points went to the default then, Qdrant, so
+    only an install that now selects another backend owes that pass.
     """
     digest = hashlib.sha256(project_name.encode(cs.ENCODING_UTF8)).hexdigest()
     return state_dir / cs.EMBEDDINGS_STORE_PROJECT_TEMPLATE.format(digest=digest)
@@ -909,6 +910,8 @@ def _embeddings_store_stamp(state_dir: Path, project_name: str) -> Path:
 def _stamp_names_selected_store(stamp: Path) -> bool:
     try:
         stamped = stamp.read_text(encoding=cs.ENCODING_UTF8).strip()
+    except FileNotFoundError:
+        stamped = str(cs.EMBEDDINGS_STORE_UNSTAMPED)
     except OSError:
         return False
     return stamped == str(settings.VECTOR_STORE_BACKEND)

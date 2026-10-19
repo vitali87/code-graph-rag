@@ -195,6 +195,9 @@ SETTING_QDRANT_DB_PATH = "QDRANT_DB_PATH"
 # install that stored its embeddings in Qdrant when Qdrant was the default.
 SETTING_VECTOR_STORE_BACKEND = "VECTOR_STORE_BACKEND"
 QDRANT_CONNECTION_SETTINGS = ("QDRANT_URL", SETTING_QDRANT_DB_PATH, "QDRANT_API_KEY")
+# The backend a project synced before cgr stamped its vector store was embedded
+# into: the default then.
+EMBEDDINGS_STORE_UNSTAMPED = VectorStoreBackend.QDRANT
 
 SEMANTIC_DEPENDENCIES = (
     MODULE_PYMILVUS,

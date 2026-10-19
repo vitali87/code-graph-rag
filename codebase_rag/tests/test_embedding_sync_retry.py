@@ -405,10 +405,21 @@ class TestASwitchedStoreIsRefilled:
     @pytest.mark.skipif(
         not extensions_loadable(), reason="this Python's sqlite3 cannot load extensions"
     )
+    # Unstamped: synced before the stamp existed, when Qdrant was the default,
+    # as an install that now opens the sqlite default was.
+    @pytest.mark.parametrize("stamped", [True, False], ids=["stamped", "unstamped"])
     def test_an_unchanged_sync_fills_a_newly_selected_store(
-        self, repo: Path, graph: _Graph, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self,
+        repo: Path,
+        graph: _Graph,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        stamped: bool,
     ) -> None:
         _sync(repo, graph, {1: _KEEP})
+        if not stamped:
+            for stamp in _store_stamps(repo):
+                stamp.unlink()
         store = tmp_path / "vectors.sqlite"
         monkeypatch.setattr(
             vs.settings, "VECTOR_STORE_BACKEND", VectorStoreBackend.SQLITE
@@ -425,15 +436,15 @@ class TestASwitchedStoreIsRefilled:
         assert _sqlite_points(store) == [(_KEEP, 1)]
         assert _in_sync(repo, graph) is True
 
-    def test_a_checkout_synced_before_the_stamp_owes_one_pass(
+    def test_a_checkout_synced_before_the_stamp_keeps_its_qdrant_store(
         self, repo: Path, graph: _Graph
     ) -> None:
+        # Negative: its points went to Qdrant, the default then, and an
+        # install that chose Qdrant still searches them there.
         _sync(repo, graph, {1: _KEEP})
         for stamp in _store_stamps(repo):
             stamp.unlink()
 
-        assert _in_sync(repo, graph) is False
-        assert _sync(repo, graph, {1: _KEEP}).skipped_because_in_sync is False
         assert _in_sync(repo, graph) is True
 
     def test_a_sync_without_embeddings_neither_owes_nor_stamps(
