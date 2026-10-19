@@ -68,6 +68,7 @@ from .php import utils as php_utils
 from .py.class_aliases import scan_class_body_aliases
 from .py.receiver_rebinding import (
     ReceiverRebinding,
+    rebound_receivers,
     receiver_annotation,
     receiver_rebinding,
 )
@@ -222,6 +223,7 @@ class _CallScanContext:
     cpp_local_aliases: dict[str, list[tuple[str, int, int]]] | None = None
     php_scope_classes: php_class_names.ScopeCache | None = None
     cpp_indirection: dict[str, int] | None = None
+    rebound_receivers: frozenset[str] | None = None
 
 
 _TYPED_LANGUAGES = frozenset(
@@ -6631,8 +6633,38 @@ class CallProcessor:
                 ctx.caller_qn,
                 ctx.language,
                 call_point=call_node.start_byte,
+                receiver_rebound=self._untyped_receiver_rebound(
+                    ctx, call_node, call_name, call_var_types
+                ),
             )
         return callee_info
+
+    @staticmethod
+    def _untyped_receiver_rebound(
+        ctx: _CallScanContext,
+        call_node: Node,
+        call_name: str,
+        call_var_types: dict[str, str] | None,
+    ) -> bool:
+        # `self = pick()` of a type the map cannot name leaves `self` out of
+        # it, as on a method that never rebinds it; a call such a rebinding
+        # may precede may run on `pick()`'s value, not on the instance
+        # (CodeRabbit, PR #2951). A typed receiver needs no flag: its type
+        # already keeps the call off the enclosing class.
+        receiver, _, member = call_name.partition(cs.SEPARATOR_DOT)
+        if (
+            not ctx.class_context
+            or not member
+            or receiver not in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS)
+            or (call_var_types and receiver in call_var_types)
+        ):
+            return False
+        if ctx.rebound_receivers is None:
+            ctx.rebound_receivers = rebound_receivers(ctx.caller_node)
+        return (
+            receiver in ctx.rebound_receivers
+            and receiver_rebinding(call_node, receiver).sometimes
+        )
 
     def _resolve_go_callee(
         self,

@@ -81,6 +81,22 @@ FILES = {
         "class Y:\n    def m(self):\n        return 2\n\n\n"
         "class A(X, Y):\n    def run(self):\n        return self.m()\n"
     ),
+    "rebind_unknown.py": (
+        "def pick():\n    return object()\n\n\n"
+        "class Host:\n    def m(self):\n        return 1\n\n"
+        "    def after(self):\n"
+        "        self.m()\n"
+        "        self = pick()\n"
+        "        return self.m()\n\n"
+        "    def maybe(self, flag):\n"
+        "        if flag:\n"
+        "            self = pick()\n"
+        "        return self.m()\n\n"
+        "    def looped(self, items):\n"
+        "        for _ in items:\n"
+        "            self.m()\n"
+        "            self = pick()\n"
+    ),
 }
 
 
@@ -211,3 +227,28 @@ def test_an_inherited_self_call_follows_the_c3_order(graph: RecordedGraph) -> No
     # `class A(X, Y)` with `X(Z)`: Python reaches Z's `m` through X before
     # Y's, where a breadth-first walk takes Y's (CodeRabbit, PR #2951).
     assert _calls(graph, "c3.A.run") == {"c3.Z.m": "exact"}
+
+
+def test_a_call_before_an_unknown_rebinding_stays_exact(graph: RecordedGraph) -> None:
+    # No `self = pick()` can run before it, so it runs on the instance.
+    assert _calls_at(graph, "rebind_unknown.Host.after", 10) == {
+        "rebind_unknown.Host.m": "exact"
+    }
+
+
+@pytest.mark.parametrize(
+    ("caller", "line"),
+    [
+        ("rebind_unknown.Host.after", 12),
+        ("rebind_unknown.Host.maybe", 17),
+        ("rebind_unknown.Host.looped", 21),
+    ],
+    ids=["after", "conditional-before", "later-in-a-loop"],
+)
+def test_a_call_an_unknown_rebinding_may_precede_is_not_exact(
+    graph: RecordedGraph, caller: str, line: int
+) -> None:
+    # `self = pick()` leaves `self` untyped, so the type map cannot tell it
+    # from the instance; the call may run on what `pick()` returned, so the
+    # enclosing class's method is only a guess (CodeRabbit, PR #2951).
+    assert _calls_at(graph, caller, line) == {"rebind_unknown.Host.m": "heuristic"}

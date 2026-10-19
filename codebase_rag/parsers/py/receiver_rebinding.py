@@ -48,6 +48,16 @@ def receiver_rebinding(call: Node, receiver: str) -> ReceiverRebinding:
     return ReceiverRebinding(always=always, sometimes=sometimes)
 
 
+def rebound_receivers(function: Node) -> frozenset[str]:
+    """The receivers (`self`, `cls`) a `self = Other()` in the def's own body
+    rebinds: only a call through one of them needs `receiver_rebinding`."""
+    return frozenset(
+        receiver
+        for receiver in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS)
+        if _assignments_to(function, receiver)
+    )
+
+
 def receiver_annotation(call: Node, receiver: str) -> str | None:
     """The annotation the def enclosing `call` declares `receiver` with.
 
