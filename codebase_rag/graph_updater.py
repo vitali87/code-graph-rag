@@ -5358,15 +5358,46 @@ class GraphUpdater:
         """
         while True:
             joined = len(present)
+            member_keys = self._foreign_member_keys(
+                sorted({*reindexed_keys, *deleted_keys})
+            )
             reindexed_keys = self._queue_affected_callers(
-                self._foreign_member_keys(sorted({*reindexed_keys, *deleted_keys})),
+                member_keys,
                 present,
-                eligible_by_key,
+                self._member_files(member_keys, eligible_by_key),
                 scan,
                 reindexed_keys,
             )
             if len(present) == joined:
                 return reindexed_keys
+
+    def _member_files(
+        self, keys: list[str], eligible_by_key: dict[str, Path]
+    ) -> dict[str, Path]:
+        """Where each file attaching members is read from.
+
+        A single-file run walked only its target, so the lookup's files are
+        resolved on disk as `reingest` resolves them: looked up in the walk,
+        each was dropped and the delete took its members for good (#3271).
+        """
+        if self._single_file is None:
+            return eligible_by_key
+        on_disk = {
+            key: path
+            for key in keys
+            if (path := self._member_file_on_disk(key)) is not None
+        }
+        return {**on_disk, **eligible_by_key}
+
+    def _member_file_on_disk(self, key: str) -> Path | None:
+        candidate = self.repo_path / key
+        if (
+            not candidate.is_file()
+            or path_utils.is_symlink_entry(candidate)
+            or self._reingest_ignored(candidate)
+        ):
+            return None
+        return candidate
 
     def _foreign_member_keys(self, keys: list[str]) -> list[str]:
         if not keys or not isinstance(self.ingestor, QueryProtocol):
@@ -8509,12 +8540,8 @@ class GraphUpdater:
                 if key in scope:
                     continue
                 scope.add(key)
-                candidate = self.repo_path / key
-                if (
-                    not candidate.is_file()
-                    or path_utils.is_symlink_entry(candidate)
-                    or self._reingest_ignored(candidate)
-                ):
+                candidate = self._member_file_on_disk(key)
+                if candidate is None:
                     continue
                 files[key] = candidate
                 joined.append(key)

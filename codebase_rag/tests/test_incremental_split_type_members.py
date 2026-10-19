@@ -268,6 +268,37 @@ def test_a_scoped_reingest_keeps_an_out_of_line_definition(cpp_root: Path) -> No
     assert after.get(cs.KEY_START_LINE) == clean.get(cs.KEY_START_LINE)
 
 
+def test_a_single_file_run_keeps_an_out_of_line_definition(cpp_root: Path) -> None:
+    # A single-file run walks only its target, so the lookup named box.cpp
+    # but found no walked file to queue: box.h's delete took grow, and
+    # box.cpp's unchanged hash kept every later sync from re-creating it.
+    _write(cpp_root, _CPP)
+    store = _StatefulIngestor()
+    _index(store, cpp_root, force=True)
+    clean = _snapshot(store)
+
+    _edit_after_cache(cpp_root / "box.h", cpp_root, "//")
+    _index(store, cpp_root / "box.h", force=False)
+
+    assert _snapshot(store) == clean
+
+
+def test_a_single_file_run_keeps_a_method_declared_in_another_file(
+    go_root: Path,
+) -> None:
+    # box_extra.go joins for Grow, then tag_methods.go for the Tag.Label
+    # that box_extra.go's own module holds.
+    store = _StatefulIngestor()
+    _index(store, go_root, force=True)
+    clean = _facts(store, _GROW)
+
+    _edit_after_cache(go_root / "box.go", go_root, "//")
+    _index(store, go_root / "box.go", force=False)
+
+    assert _facts(store, _GROW) == clean
+    assert _LABEL in _snapshot(store)[0]
+
+
 def test_an_incremental_sync_aborts_when_the_member_lookup_fails(
     cpp_root: Path,
 ) -> None:
