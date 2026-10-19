@@ -75,6 +75,12 @@ FILES = {
         "        self = Later()\n"
         "        return self.m()\n"
     ),
+    "c3.py": (
+        "class Z:\n    def m(self):\n        return 1\n\n\n"
+        "class X(Z):\n    pass\n\n\n"
+        "class Y:\n    def m(self):\n        return 2\n\n\n"
+        "class A(X, Y):\n    def run(self):\n        return self.m()\n"
+    ),
 }
 
 
@@ -199,3 +205,9 @@ def test_an_annotated_receiver_keeps_its_type_until_rebound(
     assert before.get("annotated_rebind.Entry.m") == "exact"
     assert "annotated_rebind.Later.m" not in before
     assert _calls_at(graph, caller, 18) == {"annotated_rebind.Later.m": "exact"}
+
+
+def test_an_inherited_self_call_follows_the_c3_order(graph: RecordedGraph) -> None:
+    # `class A(X, Y)` with `X(Z)`: Python reaches Z's `m` through X before
+    # Y's, where a breadth-first walk takes Y's (CodeRabbit, PR #2951).
+    assert _calls(graph, "c3.A.run") == {"c3.Z.m": "exact"}

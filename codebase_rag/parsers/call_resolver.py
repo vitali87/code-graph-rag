@@ -638,7 +638,11 @@ class CallResolver:
         return self._rust_scope_type(followed) or followed
 
     def _try_resolve_method(
-        self, class_qn: str, method_name: str, separator: str = cs.SEPARATOR_DOT
+        self,
+        class_qn: str,
+        method_name: str,
+        separator: str = cs.SEPARATOR_DOT,
+        c3: bool = False,
     ) -> tuple[str, str] | None:
         # A class-body alias of the name (issue #2620) lists every method
         # the member may hold, its own `def` included when that survives.
@@ -647,7 +651,7 @@ class CallResolver:
         method_qn = f"{class_qn}{separator}{method_name}"
         if method_qn in self.function_registry:
             return self.function_registry[method_qn], method_qn
-        return self._resolve_inherited_method(class_qn, method_name)
+        return self._resolve_inherited_method(class_qn, method_name, c3=c3)
 
     def reset_resolution_caches(self) -> None:
         # The watch pass deletes EVERY CALLS edge and recomputes them
@@ -787,7 +791,9 @@ class CallResolver:
         target = (
             (self.function_registry[own_qn], own_qn)
             if own_qn in self.function_registry
-            else self._resolve_inherited_method(call.class_context, method_name)
+            else self._resolve_inherited_method(
+                call.class_context, method_name, c3=True
+            )
         )
         if target is None or self.function_registry.is_abstract(target[1]):
             return None
@@ -1439,7 +1445,7 @@ class CallResolver:
         return targets
 
     def self_dispatch_targets(
-        self, class_context: str, method_name: str
+        self, class_context: str, method_name: str, c3: bool = False
     ) -> set[tuple[str, str]]:
         # self.M()/cls.M() statically targets the enclosing class's own or inherited
         # M, and dynamically dispatches to any concrete subclass override of M. Anchor
@@ -1455,7 +1461,7 @@ class CallResolver:
         # override does), so it must not be a call target; a concrete sibling/impl
         # wins. Abstract methods only "reached" polymorphically are handled as
         # dead-code roots, not by a spurious CALLS edge.
-        if (base := self._try_resolve_method(class_context, method_name)) and (
+        if (base := self._try_resolve_method(class_context, method_name, c3=c3)) and (
             not self.function_registry.is_abstract(base[1])
         ):
             targets.add(base)
@@ -7412,7 +7418,11 @@ class CallResolver:
         return order
 
     def _resolve_inherited_method(
-        self, class_qn: str, method_name: str, own_members: bool = True
+        self,
+        class_qn: str,
+        method_name: str,
+        own_members: bool = True,
+        c3: bool = False,
     ) -> tuple[str, str] | None:
         # Every caller has already looked for a def of the name on class_qn
         # itself. A class-body alias there (`run = _plain`, issue #2620) is
@@ -7425,6 +7435,14 @@ class CallResolver:
                 return alias
             if self.function_registry.binds_non_method(class_qn, method_name):
                 return None
+        if c3:
+            # A Python lookup the caller marks exact goes in Python's own
+            # order: `class A(X, Y)` with `X(Z)` reaches Z's `m` through X
+            # before Y's, where the breadth-first walk takes Y's
+            # (CodeRabbit, PR #2951).
+            return self._resolve_inherited_along_mro(
+                self._c3_mro(class_qn), method_name
+            )
         if found := self._go_variant_method(class_qn, method_name):
             return found
         if class_qn not in self.class_inheritance:

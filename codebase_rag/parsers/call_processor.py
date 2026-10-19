@@ -7537,7 +7537,7 @@ class CallProcessor:
         _, _, self_method = call_name.partition(cs.SEPARATOR_DOT)
         if cs.SEPARATOR_DOT not in self_method:
             for target_type, target_qn in self._resolver.self_dispatch_targets(
-                class_context, self_method
+                class_context, self_method, c3=True
             ):
                 for variant in self._resolver.function_registry.variants(target_qn):
                     ctx.ensure_rel(
