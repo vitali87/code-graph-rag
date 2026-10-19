@@ -10,14 +10,22 @@ no CALLS edge because the import map proved no library visible.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.test_incremental_deleted_dependents import (
+    _materialise,
+    _snapshot,
+)
+from evals.cgr_graph import _StatefulIngestor
 
 _SHAPES = {
     "pubspec.yaml": 'name: shapes\nenvironment:\n  sdk: ">=3.0.0 <4.0.0"\n',
@@ -269,3 +277,95 @@ def test_a_reingested_pubspec_rename_reaches_the_reparsed_importer(
     imports = _edges(temp_repo, mock_ingestor, cs.RelationshipType.IMPORTS.value)
     edge = ("test.circle_test", cs.NodeLabel.MODULE.value, "lib.src.circle")
     assert edge in imports, sorted(imports)
+
+
+# A sync that sees only the pubspec change: the importers are unchanged on
+# disk, and nothing in the graph points from them at the pubspec, so only
+# the package map moving can send them to the re-parse.
+_PUBSPEC_CHANGES = {
+    "renamed": ("name: old_shapes\n", "name: shapes\n"),
+    "renamed-away": ("name: shapes\n", "name: old_shapes\n"),
+    "added": (None, "name: shapes\n"),
+    "deleted": ("name: shapes\n", None),
+}
+
+
+def _shapes_with(pubspec: str | None) -> dict[str, str]:
+    files = {k: v for k, v in _SHAPES.items() if k != cs.DEP_FILE_PUBSPEC}
+    return files if pubspec is None else {**files, cs.DEP_FILE_PUBSPEC: pubspec}
+
+
+def _stateful_updater(store: _StatefulIngestor, root: Path) -> GraphUpdater:
+    parsers, queries = load_parsers()
+    return GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name="proj",
+    )
+
+
+def _change_pubspec(root: Path, text: str | None) -> None:
+    # Stamped past the hash cache, whose mtime the incremental pass trusts.
+    stamp = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime + 1
+    pubspec = root / cs.DEP_FILE_PUBSPEC
+    if text is None:
+        pubspec.unlink()
+    else:
+        pubspec.write_text(text, encoding="utf-8")
+        os.utime(pubspec, (stamp, stamp))
+    os.utime(root, (stamp, stamp))
+
+
+def _sync_pubspec(updater: GraphUpdater, sync: str, deleted: bool) -> None:
+    if sync == "run":
+        updater.run(force=False)
+    elif deleted:
+        updater.reingest([], deleted=[cs.DEP_FILE_PUBSPEC])
+    else:
+        updater.reingest([cs.DEP_FILE_PUBSPEC])
+
+
+@pytest.mark.parametrize("sync", ["run", "reingest"])
+@pytest.mark.parametrize(
+    ("before", "after"), list(_PUBSPEC_CHANGES.values()), ids=list(_PUBSPEC_CHANGES)
+)
+def test_a_pubspec_change_alone_reparses_the_package_importers(
+    temp_repo: Path, sync: str, before: str | None, after: str | None
+) -> None:
+    root = temp_repo / "proj"
+    _materialise(root, _shapes_with(before))
+    store = _StatefulIngestor()
+    _stateful_updater(store, root).run(force=True)
+    _change_pubspec(root, after)
+    _sync_pubspec(_stateful_updater(store, root), sync, deleted=after is None)
+
+    clean_root = temp_repo / "clean" / "proj"
+    clean_root.parent.mkdir()
+    _materialise(clean_root, _shapes_with(after))
+    clean = _StatefulIngestor()
+    _stateful_updater(clean, clean_root).run(force=True)
+
+    # `lib/report.dart` imports its own package from inside `lib/`, and
+    # `test/circle_test.dart` from outside it; both move with the map.
+    after, expected = _snapshot(store), _snapshot(clean)
+    assert after == expected, sorted(after[1] ^ expected[1])
+
+
+def test_a_pubspec_edit_keeping_the_name_reparses_no_importer(
+    temp_repo: Path,
+) -> None:
+    # Negative: a dependency bump, the usual pubspec edit, leaves every
+    # `package:` import where it was, so no Dart file joins the re-parse.
+    root = temp_repo / "proj"
+    pubspec = "name: shapes\n"
+    _materialise(root, _shapes_with(pubspec))
+    store = _StatefulIngestor()
+    _stateful_updater(store, root).run(force=True)
+    _change_pubspec(root, f"{pubspec}dependencies:\n  meta: ^1.9.0\n")
+
+    report = _stateful_updater(store, root).reingest([cs.DEP_FILE_PUBSPEC])
+
+    assert report.reparsed == (cs.DEP_FILE_PUBSPEC,)
+    assert report.affected == ()

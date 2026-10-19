@@ -6635,12 +6635,7 @@ class ImportProcessor:
             uri = dart_extract_uri(import_node)
             if not uri:
                 continue
-            packages = (
-                self._dart_package_libs()
-                if uri.startswith(cs.DART_SCHEME_PACKAGE)
-                else None
-            )
-            if full_name := dart_resolve_import(uri, module_qn, packages):
+            if full_name := self.dart_import_target(uri, module_qn):
                 local_name = dart_local_name(uri)
                 self.import_mapping[module_qn][local_name] = full_name
                 self._record_import_site(module_qn, local_name, import_node, uri)
@@ -6669,6 +6664,16 @@ class ImportProcessor:
             self.dart_prefix_shadows[module_qn] = dart_binding_spans(
                 root_node, frozenset(prefixes)
             )
+
+    def dart_import_target(self, uri: str, module_qn: str) -> str:
+        # What `uri` resolves to under the package map as it is on disk now;
+        # a pubspec change is judged by whether this moved (#3278 review).
+        packages = (
+            self._dart_package_libs()
+            if uri.startswith(cs.DART_SCHEME_PACKAGE)
+            else None
+        )
+        return dart_resolve_import(uri, module_qn, packages)
 
     def _dart_package_libs(self) -> dict[str, str]:
         # `package:<name>/<path>` with `<name>` a pubspec in this repository

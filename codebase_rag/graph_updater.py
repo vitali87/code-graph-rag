@@ -5152,6 +5152,49 @@ class GraphUpdater:
             | self._broken_link_waiter_keys(present_keys)
         )
 
+    def _dart_package_waiters(self, keys: Iterable[str]) -> set[str]:
+        """Dart importers whose `package:` import a pubspec change moved
+        (issue #3278 review).
+
+        A pubspec's `name:` is what `package:<name>/...` resolves by, so
+        adding, deleting or renaming one moves an import between a project
+        module and an external package while the importer is unchanged on
+        disk, and no edge leads from it to the pubspec for the dependents
+        lookup to follow. Each stored `package:` edge is resolved again
+        against the map on disk now; only an importer whose target moved
+        re-parses, so an edit that keeps the name (a dependency bump) sends
+        none. A failed read degrades to the previous behaviour, never worse.
+        """
+        if self._is_full_build or not isinstance(self.ingestor, QueryProtocol):
+            return set()
+        if all(PurePosixPath(key).name != cs.DEP_FILE_PUBSPEC for key in keys):
+            return set()
+        import_processor = self.factory.import_processor
+        # A scoped re-ingest resets the map only when it deletes the old
+        # subtrees, after this lookup; the map judged must be the new one.
+        import_processor.reset_dart_path_caches()
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_PACKAGE_URI_IMPORTS,
+                {
+                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                    cs.CYPHER_PARAM_URI_PREFIX: cs.DART_SCHEME_PACKAGE,
+                },
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="Dart package importers")
+            return set()
+        return {
+            path
+            for row in rows
+            if isinstance(path := row.get(cs.KEY_CALLER_PATH), str)
+            and path.endswith(cs.DART_EXT)
+            and isinstance(uri := row.get(cs.KEY_IMPORTED_NAME), str)
+            and isinstance(from_qn := row.get(cs.KEY_FROM_QN), str)
+            and import_processor.dart_import_target(uri, from_qn)
+            != row.get(cs.KEY_TO_QN)
+        }
+
     def _unresolved_reference_waiters(
         self,
         added: list[tuple[str, bytes]],
@@ -6964,6 +7007,7 @@ class GraphUpdater:
         waiters = {
             *self._unresolved_importer_keys(added_keys),
             *self._unresolved_reference_waiters(added_entries, modified_entries),
+            *self._dart_package_waiters({*present, *deleted_before_parse}),
         }
         # A foreign definer's definitions are rebuilt with the module it
         # defines into, so their callers are its dependents as a re-indexed
@@ -8754,6 +8798,7 @@ class GraphUpdater:
                     if created is None or key not in created
                 ],
             ),
+            *self._dart_package_waiters(keys),
         }
         for caller_key in (
             *self._dependent_keys(keys, stable or {}, waiters),

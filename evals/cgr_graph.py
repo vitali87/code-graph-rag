@@ -1820,6 +1820,8 @@ class _StatefulIngestor:
                 return [{cs.KEY_CALLER_PATH: p} for p in sorted(waiting)]
             case cs.CYPHER_LINKING_DOCUMENT_PATHS:
                 return self._linking_document_rows(params or {})
+            case cs.CYPHER_PACKAGE_URI_IMPORTS:
+                return self._package_uri_import_rows(params or {})
             case (
                 cs.CYPHER_INTERFACE_FINGERPRINTS
                 | cs.CYPHER_INTERFACE_BOUNDARY_EDGES
@@ -2473,6 +2475,35 @@ class _StatefulIngestor:
                 cs.KEY_TARGET_PATH: path,
             }
             for source_path, label, path in sorted(found)
+        ]
+
+    def _package_uri_import_rows(self, params: PropertyDict) -> list[ResultRow]:
+        # CYPHER_PACKAGE_URI_IMPORTS (issue #3278 review): the IMPORTS edges
+        # written for a URI under the given scheme, with where each went.
+        prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
+        uri_prefix = _str(params.get(cs.CYPHER_PARAM_URI_PREFIX))
+        found: set[tuple[str, str, str, str]] = set()
+        if not prefix or not uri_prefix:
+            return []
+        for edge in self.keyed_edges:
+            from_label, from_val, rel_type, _to_label, to_val, _site = edge
+            if rel_type != cs.RelationshipType.IMPORTS.value:
+                continue
+            importer = self.nodes.get((from_label, from_val))
+            uri = _str(self.edge_props.get(edge, {}).get(cs.KEY_IMPORTED_NAME))
+            if importer is None or not uri.startswith(uri_prefix):
+                continue
+            path = _str(importer.get(cs.KEY_PATH))
+            if path and _str(from_val).startswith(prefix):
+                found.add((path, _str(from_val), uri, _str(to_val)))
+        return [
+            {
+                cs.KEY_CALLER_PATH: path,
+                cs.KEY_FROM_QN: from_qn,
+                cs.KEY_IMPORTED_NAME: uri,
+                cs.KEY_TO_QN: to_qn,
+            }
+            for path, from_qn, uri, to_qn in sorted(found)
         ]
 
     def _broken_link_rows(self, params: PropertyDict) -> list[ResultRow]:
