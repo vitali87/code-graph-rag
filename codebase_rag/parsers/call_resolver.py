@@ -6412,6 +6412,7 @@ class CallResolver:
         # The callee of the chain's first hop, bound exactly or not at all: a
         # callee bound only by name is a guess, and typing the rest of the
         # chain from its return would build every later hop on that guess.
+        chain_verdict = self.last_resolution
         resolved = self.resolve_function_call(
             call.call_name,
             call.module_qn,
@@ -6421,10 +6422,14 @@ class CallResolver:
             call.language,
             call.call_point,
         )
+        hop_exact = self.last_resolution == cs.EdgeResolution.EXACT
+        # The hop's verdict is read here and goes no further. `this.make` in
+        # an arrow misses by name, which is a heuristic verdict, and the
+        # class-anchored hop below types it exactly; left behind, that miss
+        # labelled the exact `this.make().done()` heuristic (issue #3276).
+        self.last_resolution = chain_verdict
         if resolved is not None:
-            return (
-                resolved[1] if self.last_resolution == cs.EdgeResolution.EXACT else None
-            )
+            return resolved[1] if hop_exact else None
         # `this.m()` in an arrow: name resolution climbs from the arrow to its
         # method, not the class, so the call processor anchors such a call on
         # the enclosing class instead (#971). The hop is typed the same way.
