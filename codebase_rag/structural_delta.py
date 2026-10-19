@@ -230,9 +230,10 @@ class ParseError(TypedDict):
     line: int
     col: int
     message: str
-    # Definitions the base held in the file that the broken tree lost:
-    # tree-sitter's recovery dropped them, not the edit, so they are not
-    # `removed` and nothing calling them is dangling.
+    # Definitions the base held in the file that the broken tree lost while
+    # the edited text still names them: tree-sitter's recovery dropped them,
+    # not the edit, so they are not `removed` and nothing calling them is
+    # dangling.
     unreliable: list[str]
 
 
@@ -2472,7 +2473,11 @@ def observe(
         skipped = set(report.skipped)
         indexed = [path for path in path_list if path not in skipped]
         _report_parse_errors(
-            delta, before, new_parse_errors(repo_root, indexed, base_source)
+            delta,
+            before,
+            new_parse_errors(repo_root, indexed, base_source),
+            repo_root,
+            base_source,
         )
     # The re-ingest's own clock covers only its inner work; the caller sees
     # the wall time of the whole apply step, and `delta_ms` is everything
@@ -2571,18 +2576,33 @@ def _first_error(node: Node) -> Node:
 
 
 def _report_parse_errors(
-    delta: StructuralDelta, before: Snapshot, errors: list[ParseError]
+    delta: StructuralDelta,
+    before: Snapshot,
+    errors: list[ParseError],
+    repo_root: Path,
+    base_source: Callable[[str], bytes | None],
 ) -> None:
     """Attach `errors`, and stop blaming the edit for what they hid."""
     broken = {error["path"]: error for error in errors}
-    lost = {
-        qn
+    removed = {
+        qn: definition
         for qn in delta["symbols"]["removed"]
         if (definition := before.definitions.get(qn)) is not None
         and definition.path in broken
     }
+    texts = {
+        path: (_read_or_none(repo_root / path), base_source(path))
+        for path in {definition.path for definition in removed.values()}
+    }
+    # A definition whose name the edit erased from the text was deleted, not
+    # lost to the recovery: its callers dangle as any removal's do.
+    lost = {
+        qn
+        for qn, definition in removed.items()
+        if not _erased_by_the_edit(definition.name, *texts[definition.path])
+    }
     for qn in sorted(lost):
-        broken[before.definitions[qn].path]["unreliable"].append(qn)
+        broken[removed[qn].path]["unreliable"].append(qn)
     delta["symbols"]["removed"] = [
         qn for qn in delta["symbols"]["removed"] if qn not in lost
     ]
@@ -2593,6 +2613,31 @@ def _report_parse_errors(
         i for i in delta["dangling_importers"] if i["target"] not in lost
     ]
     delta["parse_errors"] = errors
+
+
+def _read_or_none(path: Path) -> bytes | None:
+    try:
+        return path.read_bytes()
+    except OSError:
+        return None
+
+
+def _erased_by_the_edit(name: str, edited: bytes | None, base: bytes | None) -> bool:
+    """True when the base spells `name` as a word and the edited file does not.
+
+    No parse is trusted here: the edited tree is the broken one. A name no
+    source spells (`anonymous_3_4`), or a text that cannot be read, is left
+    to the recovery.
+    """
+    word = re.compile(
+        rb"(?<!\w)" + re.escape(name.encode(cs.ENCODING_UTF8)) + rb"(?!\w)"
+    )
+    return (
+        edited is not None
+        and base is not None
+        and word.search(base) is not None
+        and word.search(edited) is None
+    )
 
 
 def has_findings(delta: StructuralDelta) -> bool:

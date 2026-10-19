@@ -108,6 +108,36 @@ def test_definitions_the_recovery_lost_are_unreliable_not_removed(
 
 
 @pytest.mark.parametrize(
+    ("broken", "deleted", "lost"),
+    [
+        pytest.param("def g():\n    return (1\n", "f", [], id="delete-f-break-g"),
+        pytest.param("def g()\n    return 1\n", "f", ["g"], id="delete-f-g-no-colon"),
+        pytest.param(
+            "def f(x):\n    return x + (\n", "g", ["f"], id="break-f-delete-g"
+        ),
+    ],
+)
+def test_a_definition_the_edit_deleted_is_removed_beside_the_break(
+    temp_repo: Path, broken: str, deleted: str, lost: list[str]
+) -> None:
+    # The edit deleted one definition and broke another. Only what the
+    # edited text still names is the recovery's loss; the deletion's caller
+    # and importer dangle, and once re-ingested the graph keeps no base for
+    # a later fix of the break to report them against.
+    caller = "from a import f, g\n\n\ndef h():\n    return f(1) + g()\n"
+    delta = _edit_and_observe(temp_repo, {"a.py": A, "b.py": caller}, "a.py", broken)
+
+    target = f"{PROJECT}.a.{deleted}"
+    (error,) = delta["parse_errors"]
+    assert error["unreliable"] == [f"{PROJECT}.a.{name}" for name in lost]
+    assert delta["symbols"]["removed"] == [target]
+    assert {c["target"] for c in delta["dangling_callers"]} == {target}
+    assert f"{PROJECT}.b.h" in {c["caller"] for c in delta["dangling_callers"]}
+    assert [i["target"] for i in delta["dangling_importers"]] == [target]
+    assert has_findings(delta)
+
+
+@pytest.mark.parametrize(
     ("rel", "source", "broken", "line"),
     [
         pytest.param(
