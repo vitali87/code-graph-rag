@@ -13,6 +13,7 @@ edited package's Go files, issue #2483), so only the restore could keep it.
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,12 @@ from codebase_rag import constants as cs
 from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.frontends import (
+    EMITTING_FRONTENDS,
+    FrontendEmitContext,
+    FrontendEmitResult,
+    FrontendPhase,
+)
 from codebase_rag.tests.test_incremental_inbound_deferred_targets import (
     Snapshot,
     _calls,
@@ -203,3 +210,70 @@ def test_a_run_failing_after_pass_2_bookkeeping_still_restores_the_inbound_edges
         _index(store, root, force=False)
 
     assert _PY_MAIN_TO_SIZE in _calls(_snapshot(store))
+
+
+class _BrokenEmitter:
+    """An after-definitions emitting frontend whose emit raises."""
+
+    language = cs.SupportedLanguage.RUST
+    phase = FrontendPhase.AFTER_DEFINITIONS
+
+    def available(self) -> bool:
+        return True
+
+    def applies(self, repo_path: Path) -> bool:
+        return True
+
+    def emit(self, ctx: FrontendEmitContext) -> FrontendEmitResult:
+        raise RuntimeError("stage failed")
+
+
+def _break_an_after_definitions_emitter(patch: pytest.MonkeyPatch) -> None:
+    # Inside the deferred stages, ahead of the Go receiver methods.
+    patched = dict(EMITTING_FRONTENDS)
+    patched[_BrokenEmitter.language] = _BrokenEmitter()
+    patch.setattr("codebase_rag.graph_updater.EMITTING_FRONTENDS", patched)
+
+
+def _break_the_java_frontend(patch: pytest.MonkeyPatch) -> None:
+    # Between Pass 2 and the deferred stages.
+    def fail(_self: GraphUpdater) -> None:
+        raise RuntimeError("stage failed")
+
+    patch.setattr(GraphUpdater, "_run_java_frontend", fail)
+
+
+@pytest.mark.parametrize(
+    "break_stage",
+    [_break_an_after_definitions_emitter, _break_the_java_frontend],
+    ids=["after-definitions-emitter", "stage-before-the-deferred-ones"],
+)
+def test_a_run_stopped_before_the_go_methods_register_keeps_the_edges_into_them(
+    temp_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    break_stage: Callable[[pytest.MonkeyPatch], None],
+) -> None:
+    # Negative: a Go receiver method joins the registry only in the deferred
+    # stages, so a run stopped before them dropped every held edge into one,
+    # and for good: the next run re-parses box.go again, not cmd/app/main.go,
+    # and the edge is no longer in the graph to capture.
+    if cs.SupportedLanguage.GO not in load_parsers()[0]:
+        pytest.skip("go parser not available")
+    root = temp_repo / "proj"
+    for rel, text in _GO.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text, encoding="utf-8")
+    store = _StatefulIngestor()
+    _index(store, root, force=True)
+    clean = _snapshot(store)
+    _edit_after_cache(root / "util.go", root, "//")
+    with monkeypatch.context() as patch:
+        break_stage(patch)
+        with pytest.raises(RuntimeError, match="stage failed"):
+            _index(store, root, force=False)
+
+    assert _MAIN_TO_SIZE in _calls(_snapshot(store))
+    # The next run completes what the stopped one left (box.go's own calls)
+    # and keeps the edge, with nothing extra.
+    _index(store, root, force=False)
+    assert _snapshot(store) == clean

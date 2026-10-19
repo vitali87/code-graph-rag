@@ -2913,8 +2913,8 @@ class GraphUpdater:
             # (#3270). In `finally`, with Pass 2 inside the `try`: a run
             # stopped by a failing file, by the cache stash that closes Pass 2
             # or by a later stage cannot capture these edges again, since
-            # their targets' subtrees are already gone, so it keeps what the
-            # registry places.
+            # their targets' subtrees are already gone, so it restores them
+            # on the way out, Go receiver methods included.
             self._restore_pending_inbound_edges()
 
         logger.info(ls.FOUND_FUNCTIONS, count=len(self.function_registry))
@@ -5616,6 +5616,14 @@ class GraphUpdater:
 
     def _restore_pending_inbound_edges(self) -> None:
         captured, self._pending_inbound_edges = self._pending_inbound_edges, []
+        if captured:
+            # A run stopped before the deferred stages reached the Go receiver
+            # methods registers them here, or every held edge into one is
+            # dropped for good: the next run re-parses the method's file but
+            # not the caller, and the edge is no longer in the graph to
+            # capture. A no-op once those stages ran; a stopped run never
+            # verifies parent links, so they still follow every registration.
+            self.factory.definition_processor.resolve_deferred_go_methods()
         self._restore_inbound_edges(captured)
 
     def _restore_target_exists(self, label: str, qualified_name: str) -> bool:
