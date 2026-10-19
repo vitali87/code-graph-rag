@@ -66,6 +66,15 @@ FILES = {
         "class Mine:\n    def m(self):\n        return 1\n\n"
         "    def typed(self: Other2):\n        return self.m()\n"
     ),
+    "annotated_rebind.py": (
+        "class Entry:\n    def m(self):\n        return 1\n\n\n"
+        "class Later:\n    def m(self):\n        return 2\n\n\n"
+        "class Holder:\n    def m(self):\n        return 3\n\n"
+        "    def typed(self: Entry):\n"
+        "        self.m()\n"
+        "        self = Later()\n"
+        "        return self.m()\n"
+    ),
 }
 
 
@@ -90,6 +99,17 @@ def _calls(graph: RecordedGraph, caller: str) -> dict[str, str]:
     return {
         dst.removeprefix(f"{graph.project}."): str(props.get("resolution"))
         for (dst, _line, _col), props in sites.items()
+    }
+
+
+def _calls_at(graph: RecordedGraph, caller: str, line: int) -> dict[str, str]:
+    """`_calls` for the one call site on `line`."""
+    return {
+        dst.removeprefix(f"{graph.project}."): str(props.get("resolution"))
+        for src, rel, dst, props in graph.edges
+        if rel == "CALLS"
+        and src == f"{graph.project}.{caller}"
+        and props.get("line") == line
     }
 
 
@@ -166,3 +186,16 @@ def test_an_annotated_receiver_binds_its_own_type(graph: RecordedGraph) -> None:
     # `self: Other2` in a method of `Mine` names the receiver's type; the
     # enclosing class must not take the call (Greptile, PR #2953).
     assert _calls(graph, "annotated.Mine.typed").get("annotated.Other2.m") == "exact"
+
+
+def test_an_annotated_receiver_keeps_its_type_until_rebound(
+    graph: RecordedGraph,
+) -> None:
+    # `self: Entry` holds from the def's entry: the call before
+    # `self = Later()` runs on Entry, though the method-wide type map holds
+    # Later (CodeRabbit, PR #2951). The call after it runs on Later.
+    caller = "annotated_rebind.Holder.typed"
+    before = _calls_at(graph, caller, 16)
+    assert before.get("annotated_rebind.Entry.m") == "exact"
+    assert "annotated_rebind.Later.m" not in before
+    assert _calls_at(graph, caller, 18) == {"annotated_rebind.Later.m": "exact"}

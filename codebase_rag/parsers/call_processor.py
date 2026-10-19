@@ -68,7 +68,7 @@ from .php import utils as php_utils
 from .py.class_aliases import scan_class_body_aliases
 from .py.receiver_rebinding import (
     ReceiverRebinding,
-    annotates_receiver,
+    receiver_annotation,
     receiver_rebinding,
 )
 from .rpc_exposure import GoRpcExposureProcessor
@@ -5793,22 +5793,23 @@ class CallProcessor:
             call_var_types = self._overlay_span_binding(
                 call_name, call_node, ctx.local_var_types, ctx.span_bindings
             )
-        receiver = call_name.partition(cs.SEPARATOR_DOT)[0]
         if (
             call_var_types
             and (rebinding := self._receiver_rebinding_at(ctx, call_node, call_name))
             and not rebinding.sometimes
-            # An annotated `self: Other` holds from the def's entry, so no
-            # rebinding is needed for the map's type to apply.
-            and not annotates_receiver(call_node, receiver)
         ):
             # No `self = Other()` can run before this call, so the method-wide
-            # type of `self` does not apply to it (issue #2620).
+            # type of `self` does not apply to it (issue #2620). An annotated
+            # `self: Entry` holds from the def's entry, so that type does
+            # (CodeRabbit, PR #2951).
+            receiver = call_name.partition(cs.SEPARATOR_DOT)[0]
             call_var_types = {
                 name: var_type
                 for name, var_type in call_var_types.items()
                 if name != receiver
             }
+            if annotated := receiver_annotation(call_node, receiver):
+                call_var_types[receiver] = annotated
 
         if ctx.is_cpp:
             self._emit_cpp_template_dispatch(ctx, call_name, call_var_types)

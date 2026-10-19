@@ -20,6 +20,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ..utils import safe_decode_text
+from .forward_refs import unquote_forward_refs
 
 # Scopes whose assignments bind their own locals, not the method's receiver.
 _NESTED_SCOPES = frozenset(
@@ -47,12 +48,13 @@ def receiver_rebinding(call: Node, receiver: str) -> ReceiverRebinding:
     return ReceiverRebinding(always=always, sometimes=sometimes)
 
 
-def annotates_receiver(call: Node, receiver: str) -> bool:
-    """Whether the def enclosing `call` declares `receiver` with an annotation.
+def receiver_annotation(call: Node, receiver: str) -> str | None:
+    """The annotation the def enclosing `call` declares `receiver` with.
 
-    `def typed(self: Other)` types the receiver from the def's entry, so that
-    type holds for a call no rebinding precedes, unlike the one a body
-    `self = Other()` puts in the method-wide map.
+    `def typed(self: Other)` types the receiver from the def's entry, so a
+    call no rebinding precedes runs on `Other`, whatever later type a body
+    `self = Later()` puts in the method-wide map. The text is the one the
+    type map records for the parameter.
     """
     function = _enclosing_function(call)
     params = (
@@ -61,7 +63,7 @@ def annotates_receiver(call: Node, receiver: str) -> bool:
         else None
     )
     if params is None:
-        return False
+        return None
     for param in params.named_children:
         if param.type == cs.TS_PY_TYPED_PARAMETER:
             name = next(
@@ -72,8 +74,9 @@ def annotates_receiver(call: Node, receiver: str) -> bool:
         else:
             continue
         if name is not None and safe_decode_text(name) == receiver:
-            return True
-    return False
+            annotation = safe_decode_text(param.child_by_field_name(cs.TS_FIELD_TYPE))
+            return unquote_forward_refs(annotation) if annotation else None
+    return None
 
 
 def _enclosing_function(node: Node) -> Node | None:
