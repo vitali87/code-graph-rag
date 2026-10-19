@@ -231,7 +231,7 @@ class ParseError(TypedDict):
     col: int
     message: str
     # Definitions the base held in the file that the broken tree lost while
-    # the edited text still names them: tree-sitter's recovery dropped them,
+    # the edited text still declares them: tree-sitter's recovery dropped them,
     # not the edit, so they are not `removed` and nothing calling them is
     # dangling.
     unreliable: list[str]
@@ -2594,12 +2594,13 @@ def _report_parse_errors(
         path: (_read_or_none(repo_root / path), base_source(path))
         for path in {definition.path for definition in removed.values()}
     }
-    # A definition whose name the edit erased from the text was deleted, not
-    # lost to the recovery: its callers dangle as any removal's do.
+    # A definition whose declaration the edit erased from the text was
+    # deleted, not lost to the recovery, even with a call to it left behind:
+    # its callers dangle as any removal's do.
     lost = {
         qn
         for qn, definition in removed.items()
-        if not _erased_by_the_edit(definition.name, *texts[definition.path])
+        if not _erased_by_the_edit(definition, *texts[definition.path])
     }
     for qn in sorted(lost):
         broken[removed[qn].path]["unreliable"].append(qn)
@@ -2622,22 +2623,44 @@ def _read_or_none(path: Path) -> bytes | None:
         return None
 
 
-def _erased_by_the_edit(name: str, edited: bytes | None, base: bytes | None) -> bool:
-    """True when the base spells `name` as a word and the edited file does not.
+def _erased_by_the_edit(
+    definition: Definition, edited: bytes | None, base: bytes | None
+) -> bool:
+    """True when the base declares `definition` and the edited file does not.
 
     No parse is trusted here: the edited tree is the broken one. A name no
     source spells (`anonymous_3_4`), or a text that cannot be read, is left
     to the recovery.
     """
-    word = re.compile(
-        rb"(?<!\w)" + re.escape(name.encode(cs.ENCODING_UTF8)) + rb"(?!\w)"
-    )
-    return (
-        edited is not None
-        and base is not None
-        and word.search(base) is not None
-        and word.search(edited) is None
-    )
+    if edited is None or base is None:
+        return False
+    declared = _declaration(definition, base)
+    return declared.search(base) is not None and declared.search(edited) is None
+
+
+def _declaration(definition: Definition, base: bytes) -> re.Pattern[bytes]:
+    """How the base declares `definition`, as a pattern for the edited text.
+
+    The name as the first of its graph lines in the base spells it, with
+    the word and marks before it there (`def f`, `function f`, `func f`,
+    `class C`, `void m`, `T) m` for a Go method), or opening a line when
+    nothing precedes it: a call left behind (`return f(`, `t.m(`) declares
+    nothing. The bare word when those lines do not spell it.
+    """
+    name = re.escape(definition.name.encode(cs.ENCODING_UTF8)) + rb"(?!\w)"
+    word = re.compile(rb"(?<!\w)" + name)
+    # Split as tree-sitter counts rows, which only `\n` ends.
+    lines = base.split(b"\n")[max(definition.start_line - 1, 0) : definition.end_line]
+    spelt = next(((line, m) for line in lines if (m := word.search(line))), None)
+    if spelt is None:
+        return word
+    line, match = spelt
+    lead = re.search(cs.DELTA_DECLARATION_LEAD_PATTERN, line[: match.start()])
+    if lead is None:
+        return re.compile(cs.DELTA_DECLARATION_LINE_START_PATTERN + name)
+    marks = [re.escape(bytes([c])) for c in lead[2] if not bytes([c]).isspace()]
+    joint = rb"\s*" + rb"\s*".join(marks) + rb"\s*" if marks else rb"\s+"
+    return re.compile(rb"(?<!\w)" + re.escape(lead[1]) + joint + name)
 
 
 def has_findings(delta: StructuralDelta) -> bool:

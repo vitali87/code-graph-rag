@@ -111,6 +111,8 @@ def test_definitions_the_recovery_lost_are_unreliable_not_removed(
     ("broken", "deleted", "lost"),
     [
         pytest.param("def g():\n    return (1\n", "f", [], id="delete-f-break-g"),
+        # `g` still calls `f`: a call is no declaration of it.
+        pytest.param("def g():\n    return f(1\n", "f", [], id="delete-f-call-left"),
         pytest.param("def g()\n    return 1\n", "f", ["g"], id="delete-f-g-no-colon"),
         pytest.param(
             "def f(x):\n    return x + (\n", "g", ["f"], id="break-f-delete-g"
@@ -121,7 +123,7 @@ def test_a_definition_the_edit_deleted_is_removed_beside_the_break(
     temp_repo: Path, broken: str, deleted: str, lost: list[str]
 ) -> None:
     # The edit deleted one definition and broke another. Only what the
-    # edited text still names is the recovery's loss; the deletion's caller
+    # edited text still declares is the recovery's loss; the deletion's caller
     # and importer dangle, and once re-ingested the graph keeps no base for
     # a later fix of the break to report them against.
     caller = "from a import f, g\n\n\ndef h():\n    return f(1) + g()\n"
@@ -168,6 +170,78 @@ def test_typescript_and_go_breaks_are_parse_errors(
     assert [(e["path"], e["line"]) for e in delta["parse_errors"]] == [(rel, line)]
     assert "missing" in delta["parse_errors"][0]["message"]
     assert has_findings(delta)
+
+
+TS_A = (
+    "export function f(x: number) { return x + 1; }\n"
+    "export function g() {\n  return f(1);\n}\n"
+)
+TS_B = "import { f, g } from './a';\nexport function h() { return f(1) + g(); }\n"
+GO_A = (
+    "package a\n\nfunc f(x int) int { return x + 1 }\n\n"
+    "func g() int {\n\treturn f(1)\n}\n"
+)
+GO_B = "package a\n\nfunc h() int { return f(1) + g() }\n"
+GO_T = (
+    "package a\n\ntype T struct{}\n\nfunc (t *T) m() int { return 1 }\n\n"
+    "func g(t *T) int {\n\treturn t.m()\n}\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("files", "broken", "removed", "lost"),
+    [
+        pytest.param(
+            {"web/a.ts": TS_A, "web/b.ts": TS_B},
+            "export function g() {\n  return f(1;\n}\n",
+            ["web.a.f"],
+            [],
+            id="typescript-delete-f",
+        ),
+        pytest.param(
+            {"web/a.ts": TS_A, "web/b.ts": TS_B},
+            TS_A.replace("function g() {", "function g( {"),
+            [],
+            ["web.a.g"],
+            id="typescript-g-lost",
+        ),
+        pytest.param(
+            {"a.go": GO_A, "b.go": GO_B},
+            "package a\n\nfunc g() int {\n\treturn f(1\n}\n",
+            ["a.f"],
+            [],
+            id="go-delete-f",
+        ),
+        pytest.param(
+            {"a.go": GO_T},
+            GO_T.replace("func (t *T) m() int { return 1 }\n\n", "").replace(
+                "t.m()", "t.m("
+            ),
+            ["a.T.m"],
+            [],
+            id="go-delete-method",
+        ),
+    ],
+)
+def test_typescript_and_go_deletions_beside_a_break_stay_removed(
+    temp_repo: Path,
+    files: dict[str, str],
+    broken: str,
+    removed: list[str],
+    lost: list[str],
+) -> None:
+    # `f(1` and `t.m(` are calls the edit left behind, not declarations, so
+    # the deleted `function f`, `func f` and `func (t *T) m` dangle; a `g`
+    # the edited text still declares is the recovery's loss.
+    rel = next(iter(files))
+    delta = _edit_and_observe(temp_repo, files, rel, broken)
+
+    (error,) = delta["parse_errors"]
+    assert error["unreliable"] == [f"{PROJECT}.{qn}" for qn in lost]
+    assert delta["symbols"]["removed"] == [f"{PROJECT}.{qn}" for qn in removed]
+    assert {c["target"] for c in delta["dangling_callers"]} == {
+        f"{PROJECT}.{qn}" for qn in removed
+    }
 
 
 def test_a_file_that_did_not_parse_at_the_base_is_not_a_new_error(
