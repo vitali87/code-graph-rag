@@ -294,9 +294,10 @@ def test_a_scoped_reingest_aborts_when_the_member_lookup_fails(
     _edit_after_cache(cpp_root / "util.h", cpp_root, "//")
     store.down = True
     before = _snapshot(store)
+    updater = _updater(store, cpp_root)
 
     with pytest.raises(ReingestAborted, match="foreign-member lookup outage"):
-        _updater(store, cpp_root).reingest(["util.h"])
+        updater.reingest(["util.h"])
     assert _snapshot(store) == before
 
 
