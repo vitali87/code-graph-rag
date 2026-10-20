@@ -385,3 +385,38 @@ def test_a_dart_field_declared_in_a_part_is_typed_in_its_library_s_scope(
     assert _calls(temp_repo, mock_ingestor, "lib.main.run") == {
         (target, cs.EdgeResolution.EXACT)
     }
+
+
+@pytest.mark.parametrize(
+    "shop_in",
+    ["lib/shop_model.dart", "lib/shop.dart"],
+    ids=["sibling-part", "defining-file"],
+)
+def test_a_dart_class_declared_in_a_part_shadows_the_one_its_library_imports(
+    temp_repo: Path, mock_ingestor: MagicMock, shop_in: str
+) -> None:
+    # `shop.dart` and its parts are one library, so `shop_cart.dart`'s `Cart`
+    # is the library's own and shadows `cart.dart`'s wherever `Shop` sits:
+    # only the declaring file and `shop.dart` were checked, so both `Cart`s
+    # contested the bare name, the hop was left untyped and `run`'s own
+    # `cart.dart` import bound `total()` to that `Cart`.
+    files = {
+        **_DART,
+        "lib/main.dart": f"import 'cart.dart';\n{_DART['lib/main.dart']}",
+        "lib/shop.dart": (
+            "import 'cart.dart';\n\npart 'shop_model.dart';\npart 'shop_cart.dart';\n"
+        ),
+        "lib/shop_model.dart": "part of 'shop.dart';\n",
+        "lib/shop_cart.dart": (
+            "part of 'shop.dart';\n\nclass Cart {\n  int total() => 5;\n}\n"
+        ),
+    }
+    files[shop_in] += "\nclass Shop {\n  Cart cart = Cart();\n}\n"
+    for rel, text in files.items():
+        (temp_repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (temp_repo / rel).write_text(text, encoding="utf-8")
+    create_and_run_updater(temp_repo, mock_ingestor)
+
+    assert _calls(temp_repo, mock_ingestor, "lib.main.run") == {
+        ("lib.shop_cart.Cart.total", cs.EdgeResolution.EXACT)
+    }

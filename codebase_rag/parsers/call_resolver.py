@@ -6820,9 +6820,9 @@ class CallResolver:
         # sees what `shop.dart` imports.
         library = self.import_processor.dart_part_of.get(module_qn, module_qn)
         # The library's own declaration shadows every imported one, and a
-        # part's class is one of the library's own.
-        for scope in (module_qn, library):
-            if own := self._dart_declared_type(scope, type_name):
+        # class in any of its parts is one of the library's own.
+        for unit in self._dart_library_units(library):
+            if own := self._dart_declared_type(unit, type_name):
                 return own
         # A Dart import brings in a LIBRARY, never a name, so the import map
         # has no key for `Cart`: the type is the one the libraries visible
@@ -6833,6 +6833,14 @@ class CallResolver:
             if (qn := self._dart_declared_type(visible, type_name))
         }
         return next(iter(found)) if len(found) == 1 else None
+
+    def _dart_library_units(self, library: str) -> list[str]:
+        """`library`'s defining file and every part its `part` directives
+        name: one Dart library, so one scope, whichever file declares a
+        name (#3286)."""
+        part_of = self.import_processor.dart_part_of
+        exposed = self.import_processor.dart_exposed_libraries.get(library, ())
+        return [library, *(unit for unit in exposed if part_of.get(unit) == library)]
 
     def _dart_declared_type(self, library: str, type_name: str) -> str | None:
         qn = f"{library}{cs.SEPARATOR_DOT}{type_name}"
