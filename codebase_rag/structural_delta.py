@@ -21,10 +21,11 @@ import ast
 import re
 import time
 from collections.abc import Callable, Iterable, Iterator
+from functools import lru_cache
 from pathlib import Path
 from typing import NamedTuple, NotRequired, TypedDict
 
-from tree_sitter import Node
+from tree_sitter import Node, Tree
 
 from . import constants as cs
 from . import cypher_queries as cq
@@ -77,6 +78,8 @@ class CallSite(NamedTuple):
     arg_count: int | None
     kwarg_names: tuple[str, ...]
     star_args: bool
+    # `**opts` at the site: it may supply any keyword, required ones too.
+    star_kwargs: bool = False
 
 
 class ImportBinding(NamedTuple):
@@ -308,6 +311,7 @@ def _site(row: ResultRow) -> CallSite:
         arg_count=_opt_int(row.get(cs.KEY_ARG_COUNT)),
         kwarg_names=_strings(row.get(cs.KEY_KWARG_NAMES)),
         star_args=row.get(cs.KEY_STAR_ARGS) is True,
+        star_kwargs=row.get(cs.KEY_STAR_KWARGS) is True,
     )
 
 
@@ -1346,9 +1350,81 @@ def _dangling_importers(
 # --- signature changes --------------------------------------------------------
 
 
-# `*name` only: a bare `*` (keyword-only marker) accepts no extra positionals
-# and `**name` accepts keywords, not positionals.
-_VARIADIC = re.compile(r"(?<!\*)\*(?!\*)\s*[A-Za-z_]")
+# The receivers that bind a method: a call through anything else that passes
+# `self` itself is an unbound call through the class (issue #2899).
+_PY_BOUND_RECEIVERS = frozenset({cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS})
+
+
+@lru_cache(maxsize=cs.DELTA_PARSED_SOURCES_KEPT)
+def _python_tree(path: str, mtime_ns: int, size: int) -> Tree | None:
+    """One parse per version of a source file, shared by every site in it."""
+    # Local import: parser_loader pulls in the language grammars.
+    from .parser_loader import load_parsers
+
+    parser = load_parsers()[0].get(cs.SupportedLanguage.PYTHON)
+    if parser is None:
+        return None
+    try:
+        return parser.parse(Path(path).read_bytes())
+    except OSError:
+        return None
+
+
+def _python_source_tree(path: Path) -> Tree | None:
+    # A stub (`.pyi`) is Python source too: a call can resolve to a function
+    # only a stub defines (Greptile, PR #2946).
+    if path.suffix not in cs.PY_EXTENSIONS:
+        return None
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return _python_tree(str(path), stat.st_mtime_ns, stat.st_size)
+
+
+def _node_text(node: Node) -> str:
+    return (node.text or b"").decode(cs.ENCODING_UTF8, errors="replace")
+
+
+def _function_of(root: Node, name: str, start_line: int) -> Node | None:
+    """The def named `name` starting on `start_line` (its decorators' line,
+    for a decorated def)."""
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if node.end_point[0] + 1 < start_line or node.start_point[0] + 1 > start_line:
+            continue
+        if node.type == cs.TS_PY_FUNCTION_DEFINITION:
+            name_node = node.child_by_field_name(cs.TS_FIELD_NAME)
+            parent = node.parent
+            starts = {node.start_point[0] + 1}
+            if parent is not None and parent.type == cs.TS_PY_DECORATED_DEFINITION:
+                starts.add(parent.start_point[0] + 1)
+            if (
+                name_node is not None
+                and _node_text(name_node) == name
+                and start_line in starts
+            ):
+                return node
+        stack.extend(node.named_children)
+    return None
+
+
+def _definition_node(definition: Definition, repo_root: Path) -> Node | None:
+    tree = _python_source_tree(repo_root / definition.path)
+    if tree is None:
+        return None
+    return _function_of(tree.root_node, definition.name, definition.start_line)
+
+
+def _is_star_args(parameter: Node) -> bool:
+    # `*rest` or `*rest: int`; a bare `*` is a keyword separator, and
+    # `**opts` takes keywords, not positionals.
+    if parameter.type == cs.TS_PY_LIST_SPLAT_PATTERN:
+        return True
+    return parameter.type == cs.TS_PY_TYPED_PARAMETER and any(
+        child.type == cs.TS_PY_LIST_SPLAT_PATTERN for child in parameter.named_children
+    )
 
 
 def _is_variadic(definition: Definition, repo_root: Path | None) -> bool:
@@ -1357,33 +1433,266 @@ def _is_variadic(definition: Definition, repo_root: Path | None) -> bool:
     `positional_params` ends at the star (CPython counts nothing after it),
     so the stored list alone cannot tell `f(a)` from `f(a, *rest)`; the
     header is read back so a variadic callee is never reported as
-    receiving too many arguments.
+    receiving too many arguments. Read from the syntax tree, not the text up
+    to the first `)`, which a default such as `b=dict()` closes early, so
+    `*rest` after it was never seen (issue #2899).
     """
     if repo_root is None or not definition.path or definition.start_line < 1:
         return False
-    try:
-        lines = (
-            (repo_root / definition.path)
-            .read_text(encoding=cs.ENCODING_UTF8)
-            .splitlines()
+    node = _definition_node(definition, repo_root)
+    parameters = (
+        node.child_by_field_name(cs.TS_FIELD_PARAMETERS) if node is not None else None
+    )
+    return parameters is not None and any(
+        _is_star_args(parameter) for parameter in parameters.named_children
+    )
+
+
+class _PySignature(NamedTuple):
+    """A Python def's header, as a caller must satisfy it (issues #2853, #2845)."""
+
+    positional: tuple[str, ...]
+    positional_only: frozenset[str]
+    keyword_only: tuple[str, ...]
+    required: frozenset[str]
+    var_positional: bool
+    var_keyword: bool
+    # Defined in a class and not a staticmethod: a bound call fills the
+    # first positional (`self` / `cls`) itself.
+    receiver: bool
+
+
+def _decorators(function: Node) -> list[str]:
+    parent = function.parent
+    if parent is None or parent.type != cs.TS_PY_DECORATED_DEFINITION:
+        return []
+    return [
+        _node_text(child).lstrip(cs.DECORATOR_AT).strip()
+        for child in parent.named_children
+        if child.type == cs.TS_PY_DECORATOR
+    ]
+
+
+def _parameter_name(parameter: Node) -> tuple[str, bool] | None:
+    """(name, has a default) of a plain parameter, or None for anything else."""
+    match parameter.type:
+        case cs.TS_PY_IDENTIFIER:
+            return _node_text(parameter), False
+        case cs.TS_PY_DEFAULT_PARAMETER | cs.TS_PY_TYPED_DEFAULT_PARAMETER:
+            name = parameter.child_by_field_name(cs.TS_FIELD_NAME)
+            return (_node_text(name), True) if name is not None else None
+        case cs.TS_PY_TYPED_PARAMETER:
+            name = next(
+                (c for c in parameter.named_children if c.type == cs.TS_PY_IDENTIFIER),
+                None,
+            )
+            return (_node_text(name), False) if name is not None else None
+    return None
+
+
+def _is_star_kwargs(parameter: Node) -> bool:
+    if parameter.type == cs.TS_PY_DICTIONARY_SPLAT_PATTERN:
+        return True
+    return parameter.type == cs.TS_PY_TYPED_PARAMETER and any(
+        child.type == cs.TS_PY_DICTIONARY_SPLAT_PATTERN
+        for child in parameter.named_children
+    )
+
+
+def _python_signature(
+    definition: Definition, repo_root: Path | None
+) -> _PySignature | None:
+    """The header of a Python def, read back from its syntax tree.
+
+    None when it cannot be read, or when a decorator other than the
+    signature-preserving ones wraps it: `@click.command`, `@overload` or a
+    fixture may stand between the call and the header, so judging the call
+    against the header would be a guess.
+    """
+    if repo_root is None or not definition.path or definition.start_line < 1:
+        return None
+    tree = _python_source_tree(repo_root / definition.path)
+    function = (
+        _function_of(tree.root_node, definition.name, definition.start_line)
+        if tree
+        else None
+    )
+    parameters = (
+        function.child_by_field_name(cs.TS_FIELD_PARAMETERS) if function else None
+    )
+    if function is None or parameters is None:
+        return None
+    decorators = _decorators(function)
+    if any(d not in cs.PY_SIGNATURE_PRESERVING_DECORATORS for d in decorators):
+        return None
+    return _signature_of(
+        parameters,
+        receiver=_defined_in_class(function) and cs.PY_STATICMETHOD not in decorators,
+    )
+
+
+def _defined_in_class(function: Node) -> bool:
+    """Whether the def sits directly in a class body (decorated or not)."""
+    container = function.parent
+    if container is not None and container.type == cs.TS_PY_DECORATED_DEFINITION:
+        container = container.parent
+    return (
+        container is not None
+        and container.type == cs.TS_PY_BLOCK
+        and container.parent is not None
+        and container.parent.type == cs.TS_PY_CLASS_DEFINITION
+    )
+
+
+def _signature_of(parameters: Node, receiver: bool) -> _PySignature:
+    """The `_PySignature` a def's `parameters` node spells out."""
+    positional: list[str] = []
+    keyword_only: list[str] = []
+    positional_only: set[str] = set()
+    required: set[str] = set()
+    var_positional = var_keyword = after_star = False
+    for parameter in parameters.named_children:
+        if parameter.type == cs.TS_PY_POSITIONAL_SEPARATOR:
+            positional_only.update(positional)
+        elif parameter.type == cs.TS_PY_KEYWORD_SEPARATOR:
+            after_star = True
+        elif _is_star_args(parameter):
+            var_positional = after_star = True
+        elif _is_star_kwargs(parameter):
+            var_keyword = True
+        elif (named := _parameter_name(parameter)) is not None:
+            name, has_default = named
+            (keyword_only if after_star else positional).append(name)
+            if not has_default:
+                required.add(name)
+    return _PySignature(
+        positional=tuple(positional),
+        positional_only=frozenset(positional_only),
+        keyword_only=tuple(keyword_only),
+        required=frozenset(required),
+        var_positional=var_positional,
+        var_keyword=var_keyword,
+        receiver=receiver,
+    )
+
+
+def _signature_verdict(
+    site: CallSite, signature: _PySignature, bound: bool
+) -> str | None:
+    """A definite verdict the header alone settles, or None.
+
+    `unexpected_keyword`: a keyword naming nothing the def accepts by
+    keyword (a positional-only name included), with no `**kwargs` to take
+    it, is a certain `TypeError` (issue #2853). `too_few`: a required
+    parameter no positional and no keyword fills is one too, unless a
+    `**opts` at the site may carry it, or a `*rest` a positional one (issue
+    #2845).
+    """
+    positional = (
+        signature.positional[1:]
+        if bound and signature.receiver and signature.positional
+        else signature.positional
+    )
+    by_keyword = {
+        name for name in positional if name not in signature.positional_only
+    } | set(signature.keyword_only)
+    if not signature.var_keyword and any(
+        name not in by_keyword for name in site.kwarg_names
+    ):
+        return cs.DELTA_ARITY_UNEXPECTED_KEYWORD
+    if site.star_kwargs or site.arg_count is None:
+        return None
+    written = site.arg_count - len(site.kwarg_names)
+    # Only a keyword the def accepts by name fills a parameter: one naming a
+    # positional-only parameter lands in `**kw` and leaves it unfilled
+    # (Greptile, PR #2947).
+    supplied = set(positional[:written]) | (set(site.kwarg_names) & by_keyword)
+    expected = (set(positional) | set(signature.keyword_only)) & signature.required
+    if site.star_args:
+        # A `*rest` may fill any positional, but never a keyword-only
+        # parameter (CodeRabbit, PR #2947).
+        expected &= set(signature.keyword_only)
+    return cs.DELTA_ARITY_TOO_FEW if expected - supplied else None
+
+
+def _call_starting_at(root: Node, row: int, col: int) -> Node | None:
+    node: Node | None = root.descendant_for_point_range((row, col), (row, col))
+    while node is not None and node.start_point == (row, col):
+        if node.type == cs.TS_PY_CALL:
+            return node
+        node = node.parent
+    return None
+
+
+def _passes_self_explicitly(
+    site: CallSite, definition: Definition, repo_root: Path | None
+) -> bool:
+    """`Base.__init__(self, a)`: a method called through its class, with the
+    receiver written as the first argument rather than bound (issue #2899).
+
+    The site records only its counts, so the call is read back: a receiver
+    that names a class, and a first positional argument that is `self`. A
+    receiver names a class when it is the method's own class or is spelled
+    as one (CapWords); `tool.m(self, x)` through an instance binds `tool`
+    and passes `self` as well (Greptile, PR #2946).
+    """
+    if repo_root is None or site.line is None or site.col is None:
+        return False
+    tree = _python_source_tree(repo_root / site.caller_path)
+    if tree is None:
+        return False
+    call = _call_starting_at(tree.root_node, site.line - 1, site.col)
+    function = call.child_by_field_name(cs.TS_FIELD_FUNCTION) if call else None
+    if function is None or function.type != cs.TS_PY_ATTRIBUTE:
+        return False
+    receiver = function.child_by_field_name(cs.TS_FIELD_OBJECT)
+    if (
+        receiver is None
+        or receiver.type == cs.TS_PY_CALL
+        or _node_text(receiver) in _PY_BOUND_RECEIVERS
+    ):
+        return False
+    named = _node_text(receiver).rsplit(cs.SEPARATOR_DOT, 1)[-1]
+    owner = definition.qualified_name.rsplit(cs.SEPARATOR_DOT, 2)[-2:-1]
+    if not (named[:1].isupper() or named in owner):
+        return False
+    arguments = call.child_by_field_name(cs.TS_FIELD_ARGUMENTS) if call else None
+    first = next(
+        (
+            argument
+            for argument in (arguments.named_children if arguments else [])
+            if argument.type not in (cs.TS_PY_KEYWORD_ARGUMENT, cs.TS_COMMENT)
+        ),
+        None,
+    )
+    return (
+        first is not None
+        and first.type == cs.TS_PY_IDENTIFIER
+        and _node_text(first) == cs.PY_KEYWORD_SELF
+        and not _is_classmethod(definition, repo_root)
+    )
+
+
+def _is_classmethod(definition: Definition, repo_root: Path) -> bool:
+    # `@classmethod` binds `cls` even through the class, so `Base.m(self,
+    # x)` passes it on top of `self` (Greptile, PR #2946).
+    node = _definition_node(definition, repo_root)
+    decorated = node.parent if node is not None else None
+    return (
+        decorated is not None
+        and decorated.type == cs.TS_PY_DECORATED_DEFINITION
+        and any(
+            child.type == cs.TS_PY_DECORATOR
+            and _node_text(child)
+            .lstrip(cs.DECORATOR_AT)
+            .strip()
+            .rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            in cs.CLASSMETHOD_DECORATORS
+            for child in decorated.children
         )
-    except (OSError, UnicodeDecodeError):
-        return False
-    header: list[str] = []
-    for line in lines[definition.start_line - 1 : definition.end_line or None]:
-        header.append(line)
-        if ")" in line:
-            break
-    text = "\n".join(header)
-    open_at = text.find("(")
-    close_at = text.find(")", open_at + 1)
-    if open_at < 0 or close_at < 0:
-        return False
-    return _VARIADIC.search(text[open_at:close_at]) is not None
+    )
 
 
-# The verdicts that name a call the language rejects; the rest are hints.
-_DEFINITE_VERDICTS = frozenset({cs.DELTA_ARITY_TOO_MANY, cs.DELTA_ARITY_TOO_FEW})
 # Bindings that name the function the call runs. Absent is the legacy exact.
 _DEFINITE_RESOLUTIONS = frozenset(
     {"", cs.EdgeResolution.EXACT.value, cs.EdgeResolution.TRACE_CONFIRMED.value}
@@ -1536,12 +1845,55 @@ def _arity_verdict(
 ) -> tuple[int, str]:
     if _language(definition.path) in cs.DECLARED_ARITY_LANGUAGES:
         return _declared_arity_verdict(site, definition)
+    declared_count, verdict = _python_count_verdict(site, definition, repo_root)
+    if verdict == cs.DELTA_ARITY_TOO_MANY:
+        return declared_count, verdict
+    # A guessed edge may lead to a same-named def the call never runs, whose
+    # header proves nothing about this call (CodeRabbit, PR #2947).
+    if site.resolution not in _DEFINITE_RESOLUTIONS:
+        return declared_count, verdict
+    signature = _python_signature(definition, repo_root)
+    if signature is None:
+        return declared_count, verdict
+    bound = definition.label in _METHOD_LABELS and not (
+        (
+            site.arg_count is not None
+            and site.arg_count > len(site.kwarg_names)
+            and _passes_self_explicitly(site, definition, repo_root)
+        )
+        or _passes_receiver_by_keyword(site, signature)
+    )
+    return declared_count, (_signature_verdict(site, signature, bound) or verdict)
+
+
+def _passes_receiver_by_keyword(site: CallSite, signature: _PySignature) -> bool:
+    """`Base.m(self=self, x=x)`: the receiver supplied by keyword.
+
+    A bound call naming its own receiver is a `TypeError` (multiple values
+    for it), so a site that names it is an unbound call through the class
+    (Greptile, PR #2947).
+    """
+    return (
+        signature.receiver
+        and bool(signature.positional)
+        and signature.positional[0] in site.kwarg_names
+    )
+
+
+def _python_count_verdict(
+    site: CallSite, definition: Definition, repo_root: Path | None
+) -> tuple[int, str]:
     declared = definition.positional_params
     if declared is None:
         return -1, cs.DELTA_ARITY_UNKNOWN
     if site.arg_count is None:
         return len(declared), cs.DELTA_ARITY_UNKNOWN
-    is_method = definition.label in _METHOD_LABELS
+    # An unbound call through the class supplies `self` itself, so it is
+    # judged as a plain function call against every declared parameter.
+    is_method = definition.label in _METHOD_LABELS and not (
+        site.arg_count > len(site.kwarg_names)
+        and _passes_self_explicitly(site, definition, repo_root)
+    )
     # `arg_count` counts keyword arguments too (issue #1522); only the
     # positionals plus the keywords naming a declared positional parameter
     # fill the declared list. A keyword naming nothing declared is neutral:
@@ -1612,7 +1964,7 @@ def _arity_findings(after: Snapshot, repo_root: Path | None) -> list[ArityAtSite
         ):
             continue
         finding = _site_finding(site, callee, repo_root)
-        if finding["verdict"] in _DEFINITE_VERDICTS:
+        if finding["verdict"] in cs.DELTA_ARITY_DEFINITE:
             out.append(finding)
     return sorted(out, key=_site_order)
 
@@ -2224,12 +2576,13 @@ def has_findings(delta: StructuralDelta) -> bool:
         # An import of a removed name fails when the importing module loads,
         # with or without a call site to go with it (issue #2516).
         or delta["dangling_importers"]
-        # Only a definite verdict: the graph records no defaults, so a
-        # `possibly_missing` site (`send(msg)` becoming `send(msg,
-        # channel=None)`) is a hint the JSON keeps, not a finding (issue
-        # #2656, as structural-delta.md documents).
+        # Only a definite verdict: a `possibly_missing` site (`send(msg)`
+        # becoming `send(msg, channel=None)`) is a hint the JSON keeps, not
+        # a finding (issue #2656, as structural-delta.md documents). A
+        # declared signature settles `too_few` (#2517); a Python header read
+        # back settles `too_few` and `unexpected_keyword` (#2845, #2853).
         or any(
-            site["verdict"] in _DEFINITE_VERDICTS
+            site["verdict"] in cs.DELTA_ARITY_DEFINITE
             for change in delta["signature_changes"]
             for site in change["sites"]
         )
