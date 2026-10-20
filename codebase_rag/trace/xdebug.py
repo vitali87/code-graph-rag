@@ -23,17 +23,17 @@ them to the nearest user-defined ancestor.
 
 Xdebug >= 3.1 built with zlib gzips its traces by default
 (``xdebug.use_compression=1``), writing ``.xt.gz``; such a trace is
-recognised by its gzip magic bytes and read decompressed.
+recognised by its gzip magic bytes and inflated under the same size cap as a
+gzipped pprof profile, so a decompression bomb is refused rather than held.
 """
 
 from __future__ import annotations
 
-import gzip
-import zlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from .. import constants as cs
+from .pprof import _decompress
 from .records import (
     CallRecord,
     FramePoint,
@@ -74,22 +74,15 @@ def _read_trace_lines(trace_path: Path) -> list[str]:
 
     A cut-off or corrupt gzip stream (say, a run killed before Xdebug closed
     the file) becomes a TraceFormatError naming the file rather than a bare
-    EOFError or zlib.error.
+    EOFError or zlib.error, as does one inflating past the size cap.
     """
-    with trace_path.open("rb") as fh:
-        compressed = fh.read(len(cs.TRACE_GZIP_MAGIC)) == cs.TRACE_GZIP_MAGIC
-    if not compressed:
-        text = trace_path.read_text(encoding=cs.ENCODING_UTF8, errors="replace")
-        return text.splitlines()
-    try:
-        with gzip.open(
-            trace_path, "rt", encoding=cs.ENCODING_UTF8, errors="replace"
-        ) as stream:
-            return stream.read().splitlines()
-    except (EOFError, gzip.BadGzipFile, zlib.error) as e:
-        raise TraceFormatError(
-            cs.TRACE_ERR_BAD_XDEBUG_GZIP.format(path=trace_path)
-        ) from e
+    raw = _decompress(
+        trace_path.read_bytes(),
+        trace_path,
+        bad_template=cs.TRACE_ERR_BAD_XDEBUG_GZIP,
+        too_large_template=cs.TRACE_ERR_XDEBUG_TOO_LARGE,
+    )
+    return raw.decode(cs.ENCODING_UTF8, errors="replace").splitlines()
 
 
 def _parse_calls(lines: list[str]) -> list[_Call]:

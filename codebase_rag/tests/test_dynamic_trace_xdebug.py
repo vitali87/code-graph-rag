@@ -250,6 +250,19 @@ def test_truncated_gzip_trace_is_rejected(tmp_path):
         convert_xdebug_trace(trace_path, output=tmp_path / "out.jsonl")
 
 
+def test_gzip_trace_inflating_past_the_cap_is_refused(tmp_path, monkeypatch):
+    # The trace is inflated under the gzipped-profile cap, so a small .xt.gz
+    # that expands to far more than the cap is refused, not held in memory.
+    limit = 64 * 1024
+    monkeypatch.setattr(cs, "TRACE_MAX_DECOMPRESSED_BYTES", limit)
+    trace_path = tmp_path / "bomb.xt.gz"
+    trace_path.write_bytes(gzip.compress(bytes(limit * 64)))
+    assert trace_path.stat().st_size < limit
+
+    with pytest.raises(TraceFormatError, match="gunzip it"):
+        convert_xdebug_trace(trace_path, output=tmp_path / "out.jsonl")
+
+
 _php = _php_with_xdebug()
 
 
