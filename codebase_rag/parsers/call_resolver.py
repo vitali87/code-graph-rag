@@ -2428,9 +2428,8 @@ class CallResolver:
             or f"{class_qn}{cs.SEPARATOR_DOT}{name}" in self.function_registry
         ):
             return None
-        if call.language in _LEXICAL_FIRST_LANGUAGES and (
-            f"{call.module_qn}{cs.SEPARATOR_DOT}{name}" in self.function_registry
-            or name in self.import_processor.import_mapping.get(call.module_qn, {})
+        if call.language in _LEXICAL_FIRST_LANGUAGES and self._dart_bare_name_visible(
+            name, call.module_qn
         ):
             return None
         hit = (
@@ -6661,10 +6660,27 @@ class CallResolver:
         imported = set(processor.import_mapping.get(module_qn, {}).values())
         for libraries in processor.dart_import_aliases.get(module_qn, {}).values():
             imported.update(libraries)
-        visible = {module_qn, *imported}
-        frontier = list(imported)
+        return self._dart_with_exposed({module_qn, *imported}, imported)
+
+    def _dart_bare_name_visible(self, name: str, module_qn: str) -> bool:
+        # A top-level `name` a bare identifier in `module_qn` finds lexically:
+        # the library's own, or one its unprefixed imports and parts bring
+        # in, with what those hand on through `export` / `part`. A
+        # prefix-only import's names are reachable as `p.name` alone, so it
+        # is left out, unlike in _dart_visible_libraries.
+        roots = self.import_processor.dart_bare_imports.get(module_qn, [])
+        return any(
+            f"{library}{cs.SEPARATOR_DOT}{name}" in self.function_registry
+            for library in self._dart_with_exposed({module_qn, *roots}, roots)
+        )
+
+    def _dart_with_exposed(self, visible: set[str], roots: Iterable[str]) -> set[str]:
+        # `visible` grown by what `roots` hand on through `export` / `part`,
+        # transitively.
+        exposed_by = self.import_processor.dart_exposed_libraries
+        frontier = list(roots)
         while frontier:
-            for exposed in processor.dart_exposed_libraries.get(frontier.pop(), ()):
+            for exposed in exposed_by.get(frontier.pop(), ()):
                 if exposed not in visible:
                     visible.add(exposed)
                     frontier.append(exposed)

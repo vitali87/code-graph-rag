@@ -275,3 +275,63 @@ def test_a_php_bare_call_never_binds_an_inherited_method(
     # `HELPER()` the `use function Lib\helper` import, case folded.
     edges = overrides["php"]
     assert method not in _callees(edges, caller), edges
+
+
+# Dart looks a bare name up lexically first, and a library's scope holds the
+# top-level names its unprefixed imports bring in, with whatever those hand
+# on through `export` and `part`. A prefixed import's names are reachable
+# only as `p.name`, so the inherited member still answers a bare call.
+_DART_IMPORTS = {
+    "pubspec.yaml": 'name: shapes\nenvironment:\n  sdk: ">=3.0.0 <4.0.0"\n',
+    "lib/helpers.dart": "part 'pieces.dart';\nString shout() => \"top\";\n",
+    "lib/pieces.dart": "part of 'helpers.dart';\nString hum() => \"part\";\n",
+    "lib/more.dart": 'String whisper() => "more";\n',
+    "lib/barrel.dart": "export 'more.dart';\n",
+    "lib/other.dart": 'String yell() => "other";\n',
+    "lib/signs.dart": """\
+import 'helpers.dart';
+import 'barrel.dart';
+import 'other.dart' as p;
+class Base {
+  String shout() => "b"; String whisper() => "b";
+  String hum() => "b"; String yell() => "b";
+}
+class Sign extends Base {
+  String importedCall() => shout();
+  String exportedCall() => whisper();
+  String partCall() => hum();
+  String prefixedCall() => yell();
+}
+""",
+}
+
+
+@pytest.fixture(scope="module")
+def dart_imports(tmp_path_factory: pytest.TempPathFactory) -> _Calls:
+    return _calls(tmp_path_factory.mktemp("dart3169i") / "imp", _DART_IMPORTS, "dart")
+
+
+@pytest.mark.parametrize(
+    ("caller", "callee"),
+    [
+        ("lib.signs.Sign.importedCall", "lib.helpers.shout"),
+        ("lib.signs.Sign.exportedCall", "lib.more.whisper"),
+        ("lib.signs.Sign.partCall", "lib.pieces.hum"),
+    ],
+    ids=["unprefixed-import", "through-export", "through-part"],
+)
+def test_a_dart_imported_top_level_function_wins_over_an_inherited_method(
+    dart_imports: _Calls, caller: str, callee: str
+) -> None:
+    callees = _callees(dart_imports, caller)
+    assert callee in callees, dart_imports
+    assert not any(".Base." in to for to in callees), dart_imports
+
+
+def test_a_dart_prefix_only_import_leaves_the_inherited_method(
+    dart_imports: _Calls,
+) -> None:
+    # Negative: `import 'other.dart' as p;` binds `yell` as `p.yell` only.
+    assert _callees(dart_imports, "lib.signs.Sign.prefixedCall") == {
+        "lib.signs.Base.yell": "exact"
+    }, dart_imports
