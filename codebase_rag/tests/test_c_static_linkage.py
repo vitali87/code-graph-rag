@@ -102,6 +102,22 @@ _INHERITED = {
         "cpp",
     ),
 }
+# C++ overloads are two functions: `static` on `f(int)` leaves `f(double)`
+# extern, and `n::k(int)` is not the file's `static k(int)` (#3154 review).
+_CPP_OVERLOADS = {
+    "a.cpp": (
+        "static void f(int);\n"
+        "void f(double) {}\n"
+        "static void h(int) {}\n"
+        "void h(double) {}\n"
+        "static void k(int);\n"
+        "namespace n { void k(int) {} }\n"
+    ),
+    "b.cpp": (
+        "void f(double);\nvoid h(double);\nnamespace n { void k(int); }\n"
+        "void g() { f(1.0); h(1.0); n::k(1); }\n"
+    ),
+}
 # A static's file is matched exactly, not as a qn prefix: main.h's module
 # `main.h` and a/b.c's `a.b` both start with another file's (`main`, `a`).
 _PREFIX = {
@@ -231,6 +247,15 @@ def test_a_static_the_definition_inherits_stays_in_its_file(
     assert (own_caller, private) in calls, calls
 
 
+def test_a_cpp_static_overload_leaves_the_extern_one_linkable(
+    tmp_path: Path,
+) -> None:
+    # `a.f` is the `static f(int)` prototype, `a.f@2` the extern `f(double)`.
+    calls = _calls(tmp_path / "overloads", _CPP_OVERLOADS, "cpp")
+    callees = {to for (src, to) in calls if src == "b.g"}
+    assert callees == {"a.f@2", "a.h@4", "a.n.k"}, calls
+
+
 def test_a_static_is_matched_to_its_file_not_a_qn_prefix(tmp_path: Path) -> None:
     calls = _calls(tmp_path / "prefix", _PREFIX, "c")
     assert ("main.main", "other.helper") in calls, calls
@@ -267,10 +292,18 @@ def _sync(root: Path, store: _StatefulIngestor, force: bool) -> set[tuple[str, s
         (_CPP, "l.cpp", "k.hidden", "cpp"),
         (_INHERITED["c-static-prototype"][0], "main.c", "a.now", "c"),
         (_INHERITED["cpp-anonymous-namespace"][0], "main.cpp", "k.now", "cpp"),
+        (_CPP_OVERLOADS, "b.cpp", "a.f", "cpp"),
         # An unchanged header's includes still lead to sds.h's static inline.
         (_REDIS, "src/aof.c", "src.quicklist.mstime", "c"),
     ],
-    ids=["c", "cpp", "c-static-prototype", "cpp-anonymous-namespace", "redis"],
+    ids=[
+        "c",
+        "cpp",
+        "c-static-prototype",
+        "cpp-anonymous-namespace",
+        "cpp-overloads",
+        "redis",
+    ],
 )
 def test_an_incremental_sync_keeps_an_unchanged_files_static_private(
     tmp_path: Path, files: dict[str, str], edited: str, private: str, grammar: str

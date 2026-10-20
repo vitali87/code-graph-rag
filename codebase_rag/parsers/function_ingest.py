@@ -1689,7 +1689,7 @@ class FunctionIngestMixin:
         if (
             language in cs.C_FAMILY_LANGUAGES
             and cs.CPP_KEYWORD_STATIC not in modifiers
-            and c_definition_has_internal_linkage(func_node)
+            and c_definition_has_internal_linkage(func_node, language)
         ):
             modifiers.append(cs.CPP_KEYWORD_STATIC)
         props: PropertyDict = {
