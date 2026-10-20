@@ -116,7 +116,7 @@ jobs:
             --target "$TARGET" --compatibility "$COMPATIBILITY" --out dist
 
       - name: Upload the wheel
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: cgr-graph-rs-${{ matrix.target }}
           path: dist/*.whl
@@ -156,7 +156,7 @@ jobs:
             --target universal2-apple-darwin --out dist
 
       - name: Upload the wheel
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: cgr-graph-rs-universal2-apple-darwin
           path: dist/*.whl
@@ -191,7 +191,7 @@ jobs:
             --manifest-path "$CRATE/Cargo.toml" --out dist
 
       - name: Upload the wheel
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: cgr-graph-rs-x86_64-pc-windows-msvc
           path: dist/*.whl
