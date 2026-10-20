@@ -5335,6 +5335,99 @@ class GraphUpdater:
         except Exception:
             logger.warning(ls.PRUNE_QUERY_FAILED, label="unresolved references write")
 
+    def _queue_foreign_members(
+        self,
+        reindexed_keys: list[str],
+        deleted_keys: list[str],
+        present: set[str],
+        eligible_by_key: dict[str, Path],
+        scan: _FileScan,
+    ) -> list[str]:
+        """Queue the files that attach members to a module about to go.
+
+        A Go method keys under its receiver type's module whatever file
+        declares it, and a C++ out-of-line definition hangs on its header's
+        class. The re-parse delete walks the module's subtree and takes them,
+        and only their own file recreates them, so a type's file re-parsed as
+        a mere dependent left `Box.Grow` (box_extra.go) deleted until
+        box_extra.go itself changed (issue #3271). Read from the graph, so a
+        fresh process finds them too; `_foreign_definer_keys` reads this
+        run's span records, which a new updater does not have yet. Repeated
+        until nothing new joins: a joined file's own module can hold another
+        file's members.
+        """
+        while True:
+            joined = len(present)
+            member_keys = self._foreign_member_keys(
+                sorted({*reindexed_keys, *deleted_keys})
+            )
+            reindexed_keys = self._queue_affected_callers(
+                member_keys,
+                present,
+                self._member_files(member_keys, eligible_by_key),
+                scan,
+                reindexed_keys,
+            )
+            if len(present) == joined:
+                return reindexed_keys
+
+    def _member_files(
+        self, keys: list[str], eligible_by_key: dict[str, Path]
+    ) -> dict[str, Path]:
+        """Where each file attaching members is read from.
+
+        A single-file run walked only its target, so the lookup's files are
+        resolved on disk as `reingest` resolves them: looked up in the walk,
+        each was dropped and the delete took its members for good (#3271).
+        """
+        if self._single_file is None:
+            return eligible_by_key
+        on_disk = {
+            key: path
+            for key in keys
+            if (path := self._member_file_on_disk(key)) is not None
+        }
+        return {**on_disk, **eligible_by_key}
+
+    def _member_file_on_disk(self, key: str) -> Path | None:
+        candidate = self.repo_path / key
+        if (
+            not candidate.is_file()
+            or path_utils.is_symlink_entry(candidate)
+            or self._reingest_ignored(candidate)
+        ):
+            return None
+        return candidate
+
+    def _foreign_member_keys(self, keys: list[str]) -> list[str]:
+        if not keys or not isinstance(self.ingestor, QueryProtocol):
+            return []
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_FOREIGN_MEMBER_PATHS,
+                {
+                    cs.CYPHER_PARAM_PATHS: keys,
+                    cs.KEY_PROJECT_NAME: self.project_name,
+                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                },
+            )
+        except Exception:
+            # The delete that follows takes these members with their type's
+            # module, so an incremental run that read an outage as "none"
+            # lost them for good under a completed hash commit; it aborts, as
+            # the inbound capture does. A full build re-parses every file.
+            if not self._is_full_build:
+                raise
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="foreign members")
+            return []
+        return sorted(
+            {
+                path
+                for row in rows
+                if isinstance(path := row.get(cs.KEY_PATH), str) and path
+            }
+        )
+
     def _foreign_definer_keys(self, gone_keys: Iterable[str]) -> set[str]:
         """Files that registered definitions keyed under a module going away.
 
@@ -6999,6 +7092,9 @@ class GraphUpdater:
             scan,
             reindexed_keys,
         )
+        reindexed_keys = self._queue_foreign_members(
+            reindexed_keys, deleted_before_parse, present, eligible_by_key, scan
+        )
         # Pass 2 order decides which same-stem file claims the bare module
         # qn; a clean build processes files in walk order, so the re-parse
         # set follows it too instead of the order the dependents were found.
@@ -8427,6 +8523,31 @@ class GraphUpdater:
                 files[key] = candidate
         return files
 
+    def _reingest_foreign_members(self, keys: set[str]) -> dict[str, Path]:
+        """On-disk files attaching members to a module this call replaces.
+
+        `run()` queues the same files (`_queue_foreign_members`), for the same
+        reason: the delete takes a C++ out-of-line definition with its
+        header's class, and only its own file re-creates it (issue #3271).
+        Repeated until nothing new joins, as there.
+        """
+        files: dict[str, Path] = {}
+        scope = set(keys)
+        frontier = sorted(scope)
+        while frontier:
+            joined: list[str] = []
+            for key in self._foreign_member_keys(frontier):
+                if key in scope:
+                    continue
+                scope.add(key)
+                candidate = self._member_file_on_disk(key)
+                if candidate is None:
+                    continue
+                files[key] = candidate
+                joined.append(key)
+            frontier = joined
+        return files
+
     def _flip_sibling_files(
         self, flipped: set[str], present: dict[str, Path], gone: dict[str, Path]
     ) -> dict[str, Path]:
@@ -9188,6 +9309,9 @@ class GraphUpdater:
                 self._reingest_go_package_files(
                     {*present, *gone, *survivors, *affected}
                 )
+            )
+            affected.update(
+                self._reingest_foreign_members({*present, *gone, *survivors, *affected})
             )
             all_keys = sorted({*present, *gone, *survivors, *affected})
             captured = self._capture_inbound_edges(all_keys)
