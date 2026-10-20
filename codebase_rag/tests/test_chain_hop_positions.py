@@ -204,7 +204,8 @@ def test_the_arity_check_reads_a_member_call_back_from_its_site(col: int) -> Non
     # the `self` it passes; the site now starts at `__init__`, not `Base`.
     tree = load_parsers()[0][cs.SupportedLanguage.PYTHON].parse(_UNBOUND)
     call = _call_starting_at(tree.root_node, 2, col)
-    assert call is not None and call.text == b"Base.__init__(self, a)"
+    assert call is not None
+    assert call.text == b"Base.__init__(self, a)"
 
 
 def test_a_member_name_that_is_not_called_names_no_call() -> None:
