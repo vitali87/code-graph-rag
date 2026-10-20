@@ -12,6 +12,10 @@ def _scoped_chain_segments(node: Node) -> list[str] | None:
     # fully-qualified inline call disambiguates by path in the return-type
     # lookup.
     path = node.child_by_field_name(cs.TS_RS_FIELD_PATH)
+    if path is not None and path.type == cs.TS_GENERIC_TYPE:
+        # `Factory::<u8>::build`: type arguments do not change whose fn is
+        # called, and `Factory::<u8>` names no type to look it up on (#3168).
+        path = path.child_by_field_name(cs.FIELD_TYPE)
     name = node.child_by_field_name(cs.FIELD_NAME)
     base = safe_decode_text(path) if path else None
     leaf = safe_decode_text(name) if name else None
@@ -482,6 +486,15 @@ class RustTypeInferenceEngine:
         bindings: list[tuple[str, list[str], int]] = []
         if body := caller_node.child_by_field_name(cs.FIELD_BODY):
             self._collect_call_bindings(body, bindings)
+        # `Self::build()` calls the enclosing impl's fn: read `Self` as the
+        # impl target, as a `Self` local is, so its return type is found and
+        # outranks a constructor guess for `Self::Build()` (#3168).
+        if any(segments[0] == cs.RS_SELF_TYPE for _, segments, _ in bindings) and (
+            impl_type := _enclosing_impl_type(caller_node)
+        ):
+            for _, segments, _ in bindings:
+                if segments[0] == cs.RS_SELF_TYPE:
+                    segments[0] = impl_type
         return bindings
 
     def collect_generic_bounds(self, caller_node: Node) -> dict[str, list[str]]:

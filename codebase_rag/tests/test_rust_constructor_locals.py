@@ -31,13 +31,17 @@ impl Circle { pub fn render(&self) -> u32 { 7 } }
 impl Other { pub fn render(&self) -> u32 { 9 } }
 impl Widget { pub fn render(&self) -> u32 { 1 } }
 impl Pair { pub fn render(&self) -> u32 { self.0 } }
-impl Shape { pub fn render(&self) -> u32 { 2 } }
+impl Shape {
+    pub fn render(&self) -> u32 { 2 }
+    pub fn self_variant() -> u32 { let s = Self::Circle(1); s.render() }
+}
 impl Point {
     pub fn render(&self) -> u32 { self.x }
     pub fn new() -> Self { let p = Self { x: 0 }; p.render(); p }
     pub fn copy_of(&self, other: &Self) -> u32 { other.render() }
     pub fn annotated(&self) -> u32 { let s: Self = Point { x: 2 }; s.render() }
     pub fn make() -> Point { Point { x: 5 } }
+    pub fn self_assoc() -> u32 { let p = Self::make(); p.render() }
 }
 pub fn brace() -> u32 { let p = Point { x: 1 }; p.render() }
 pub fn unit() -> u32 { let w = Widget; w.render() }
@@ -56,6 +60,7 @@ impl Factory {
     #[allow(non_snake_case)]
     pub fn Build() -> Product { Product }
     pub fn render(&self) -> u32 { 4 }
+    pub fn self_pascal_fn() -> u32 { let p = Self::Build(); p.render() }
 }
 pub struct S { pub x: u32 }
 impl S { pub fn render(&self) -> u32 { 10 } }
@@ -63,13 +68,18 @@ impl S { pub fn render(&self) -> u32 { 10 } }
 pub struct lower { pub x: u32 }
 impl lower { pub fn render(&self) -> u32 { 11 } }
 pub struct Wrapper<T> { pub v: T }
-impl<T> Wrapper<T> { pub fn render(&self) -> u32 { 5 } }
+impl<T> Wrapper<T> {
+    pub fn render(&self) -> u32 { 5 }
+    #[allow(non_snake_case)]
+    pub fn Build() -> Product { Product }
+}
 pub enum Tree<T> { Leaf(T), Empty }
 impl<T> Tree<T> { pub fn render(&self) -> u32 { 6 } }
 // Shares its name with the `Tree::Leaf` variant.
 pub struct Leaf;
 impl Leaf { pub fn render(&self) -> u32 { 8 } }
 pub fn pascal_fn() -> u32 { let p = Factory::Build(); p.render() }
+pub fn turbofish_pascal_fn() -> u32 { let p = Wrapper::<u8>::Build(); p.render() }
 pub fn short_name() -> u32 { let s = S { x: 1 }; s.render() }
 pub fn lowercase_name() -> u32 { let l = lower { x: 1 }; l.render() }
 pub fn turbofish_literal() -> u32 { let w = Wrapper::<u8> { v: 1 }; w.render() }
@@ -152,6 +162,7 @@ def _callees(calls: _Calls, caller: str) -> dict[str, str]:
         ("lib.Point.copy_of", "lib.Point.render"),
         ("lib.Point.annotated", "lib.Point.render"),
         ("lib.turbofish_variant", "lib.Tree.render"),
+        ("lib.Shape.self_variant", "lib.Shape.render"),
         ("lib.all_caps_tuple", "lib.ID.render"),
         ("lib.all_caps_variant", "lib.Value.render"),
     ],
@@ -167,6 +178,7 @@ def _callees(calls: _Calls, caller: str) -> dict[str, str]:
         "self-param",
         "self-annotation",
         "turbofish-enum-variant",
+        "self-enum-variant",
         "all-caps-tuple-struct",
         "all-caps-enum-variant",
     ],
@@ -205,15 +217,36 @@ def test_the_shapes_that_typed_before_still_do(
     assert _callees(calls, caller).get(callee) == "exact", calls
 
 
+@pytest.mark.parametrize(
+    ("caller", "owner"),
+    [
+        ("lib.pascal_fn", "lib.Factory.render"),
+        ("lib.Factory.self_pascal_fn", "lib.Factory.render"),
+        ("lib.turbofish_pascal_fn", "lib.Wrapper.render"),
+    ],
+    ids=["type-path", "self-path", "turbofish-path"],
+)
 def test_a_pascal_case_associated_fn_types_its_local_by_its_return_type(
-    calls: _Calls,
+    calls: _Calls, caller: str, owner: str
 ) -> None:
     # Negative: `Factory::Build()` is spelled like the variant
     # `Shape::Circle(1)`, but it is a function, and its declared return type
-    # says what `p` is.
-    callees = _callees(calls, "lib.pascal_fn")
+    # says what `p` is, however the call spells its type (`Self::Build()`,
+    # `Wrapper::<u8>::Build()`).
+    callees = _callees(calls, caller)
     assert callees.get("lib.Product.render") == "exact", calls
-    assert "lib.Factory.render" not in callees, calls
+    assert owner not in callees, calls
+
+
+def test_a_self_associated_call_types_its_local_by_its_return_type(
+    calls: _Calls,
+) -> None:
+    # `Self::make()` calls the impl's own `Point::make`, as `Point::make()`
+    # does in `lib.assoc`.
+    assert _callees(calls, "lib.Point.self_assoc") == {
+        "lib.Point.make": "exact",
+        "lib.Point.render": "exact",
+    }, calls
 
 
 def test_an_all_caps_fn_types_its_local_by_its_return_type(calls: _Calls) -> None:
