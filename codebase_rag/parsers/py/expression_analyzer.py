@@ -290,6 +290,7 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
                     imported,
                     self.import_processor.import_mapping,
                     self.function_registry,
+                    self.import_processor.python_module_all,
                 )
             )
         for qn in candidates:
