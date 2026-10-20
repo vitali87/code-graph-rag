@@ -782,13 +782,7 @@ def _dangling(
             target=site.callee,
             renamed_to=new_name,
         )
-        if site.caller_path in after.paths:
-            _move_to_working_tree(
-                dangling,
-                before,
-                after,
-                _working_tree(trees, repo_root, site.caller_path),
-            )
+        _move_to_working_tree(dangling, before, after, trees, repo_root)
         out.append(dangling)
     return sorted(
         out, key=lambda d: (d["path"], d["line"] or 0, d["col"] or 0, d["caller"])
@@ -827,7 +821,8 @@ def _move_to_working_tree(
     dangling: DanglingCaller,
     before: Snapshot,
     after: Snapshot,
-    tree: _WorkingTree | None,
+    trees: dict[str, _WorkingTree | None],
+    repo_root: Path | None,
 ) -> None:
     """Report a re-parsed caller's dangling call where it is now.
 
@@ -838,8 +833,11 @@ def _move_to_working_tree(
     lines; one whose body changed keeps the base line, marked as such.
     The skeleton drops names, comments and blank lines, so swapping two
     calls or moving a comment past one leaves it equal: the shifted line
-    is taken only when the working tree reads the call there.
+    is taken only when the working tree reads the call there. A caller
+    this pass did not re-parse is left as it is.
     """
+    if dangling["path"] not in after.paths:
+        return
     old = before.definitions.get(dangling["caller"])
     new = after.definitions.get(dangling["caller"])
     if old is None or new is None or dangling["line"] is None:
@@ -848,7 +846,12 @@ def _move_to_working_tree(
     if (old.fingerprint, old.end_line - old.start_line) == (
         new.fingerprint,
         new.end_line - new.start_line,
-    ) and _reads_call(tree, line, dangling["col"], _call_name(before, dangling)):
+    ) and _reads_call(
+        _working_tree(trees, repo_root, dangling["path"]),
+        line,
+        dangling["col"],
+        _call_name(before, dangling),
+    ):
         dangling["line"] = line
         return
     dangling["line_from"] = cs.DANGLING_LINE_FROM_BASE
