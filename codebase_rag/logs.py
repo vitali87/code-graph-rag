@@ -1184,6 +1184,10 @@ CLI_DELETE_MARKER_NOT_CLEARED = (
     "cleared: {error}. cgr status may list it as interrupted until it is synced "
     "again."
 )
+CLI_DELETE_GLOSS_SWEEP_SKIPPED = (
+    "The delete of project {project} failed, and whether it still exists "
+    "could not be read: {error}. Its notes (glosses) were not swept."
+)
 CLI_DELETE_SYNC_MARKER_KEPT = (
     "Project {project} was deleted, but a cgr sync of it may still be running, "
     "so its incomplete-run marker was kept: cgr status lists it as interrupted "

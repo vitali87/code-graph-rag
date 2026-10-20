@@ -249,6 +249,10 @@ CLI_ERR_CLEAN_UNKNOWN_PROJECTS = (
 CLI_MSG_CLEAN_ABORTED = "Aborted: the graph was left untouched."
 CLI_MSG_DELETING_PROJECT = "Deleting project '{project_name}' from the graph..."
 CLI_MSG_PROJECT_DELETED = "Project '{project_name}' deleted successfully."
+CLI_WARN_GLOSSES_NOT_PRUNED = (
+    "Warning: the notes (glosses) of project '{project_name}' could not be "
+    "removed and remain in the graph unattached; the log has the error."
+)
 CLI_WARN_DELETE_PROJECT_SHARED_ROOT = (
     "Warning: project(s) {projects} were indexed from the same directory as "
     "'{project_name}' ({root_path}). Only what '{project_name}' owns is "
