@@ -973,13 +973,16 @@ def test_reanchoring_rebuilds_edges_from_the_notes_own_record(tmp_path: Path) ->
             cs.KEY_TARGET_QN: f"{P}.gone.f",
             cs.KEY_TARGET_HASH: None,
             cs.KEY_ANCHOR_STATE: cs.GlossAnchorState.EXACT.value,
+            cs.KEY_PROJECT: P,
         }
     ]
+    # The repair covers the syncing project's notes only (issue #3236).
     updater = GraphUpdater(
         ingestor=store,  # type: ignore[arg-type]
         repo_path=tmp_path,
         parsers={},
         queries={},
+        project_name=P,
     )
     updater._reanchor_glosses()
     # Name tier first; then the repair tier places or marks what the name
@@ -1262,7 +1265,10 @@ def test_the_reanchor_pass_hands_the_updater_reader_to_the_repair(
     with patch("codebase_rag.graph_updater.repair_unanchored") as repair:
         updater._reanchor_glosses()
     repair.assert_called_once_with(
-        store.fetch_all, store.execute_write, updater._read_project_source
+        store.fetch_all,
+        store.execute_write,
+        updater._read_project_source,
+        project_name=updater.project_name,
     )
 
 

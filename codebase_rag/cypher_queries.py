@@ -1181,7 +1181,17 @@ _STATE_STALE = GlossAnchorState.STALE.value
 # by then the name it moved to.
 # "Unattached" is asked with OPTIONAL MATCH plus a count, not a pattern
 # predicate in WHERE, which Memgraph 3 rejects (test_memgraph3_cypher_compat).
+# Every post-sync pass reads the syncing project's notes alone (issue #3236):
+# by the recorded `project`, or for a note written before that property
+# existed by the longest registered project prefixing its target, as
+# `gloss_repair` assigns it. Another project's note changes state only when
+# its own definitions do, on that project's sync.
+_GLOSS_OF_SYNCING_PROJECT = """(g.project = $project_name
+       OR (g.project IS NULL AND g.target_qn STARTS WITH $project_prefix
+           AND ALL(longer_project IN $longer_project_prefixes
+                   WHERE NOT g.target_qn STARTS WITH (longer_project + '.'))))"""
 CYPHER_REANCHOR_GLOSSES = f"""MATCH (g:{_GLOSS})
+WHERE {_GLOSS_OF_SYNCING_PROJECT}
 OPTIONAL MATCH (g)-[:{_ANNOTATES}]->(subject)
 WITH g, count(subject) AS subjects
 WHERE subjects = 0
@@ -1285,7 +1295,7 @@ MERGE (g)-[:{_ANNOTATES}]->(t)"""
 CYPHER_GLOSS_MARK = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
 SET g.anchor_state = $anchor_state, g.candidate_qns = $candidate_qns"""
 CYPHER_REANCHOR_GLOSS_MENTIONS = f"""MATCH (g:{_GLOSS})-[:{_ANNOTATES}]->()
-WHERE g.mention_qns IS NOT NULL
+WHERE g.mention_qns IS NOT NULL AND {_GLOSS_OF_SYNCING_PROJECT}
 UNWIND g.mention_qns AS mention_qn
 MATCH (m {{qualified_name: mention_qn}})
 WHERE {_any_label("m", _GRAPH_DEFINITION_LABELS)}
@@ -1302,7 +1312,8 @@ MERGE (g)-[:{_MENTIONS}]->(m)"""
 # visible for as long as the hashes agree. Nothing here moves a note or
 # deletes one.
 CYPHER_GRADE_GLOSS_ANCHORS = f"""MATCH (g:{_GLOSS})-[:{_ANNOTATES}]->(t)
-WHERE g.target_hash IS NOT NULL AND t.anchor_hash IS NOT NULL
+WHERE {_GLOSS_OF_SYNCING_PROJECT}
+  AND g.target_hash IS NOT NULL AND t.anchor_hash IS NOT NULL
   AND g.target_hash STARTS WITH '{ANCHOR_HASH_VERSION}'
 SET g.anchor_state = CASE WHEN g.target_hash = t.anchor_hash
     THEN (CASE WHEN g.moved_from IS NULL
@@ -1565,7 +1576,7 @@ RETURN a.qualified_name AS from_qn, a.path AS from_path, type(r) AS rel_type,
        r.call_qualifier AS call_qualifier,
        b.qualified_name AS to_qn, b.path AS to_path, r.line AS line, r.col AS col,
        r.arg_count AS arg_count, r.kwarg_names AS kwarg_names,
-       r.star_args AS star_args"""
+       r.star_args AS star_args, r.star_kwargs AS star_kwargs"""
 # One hop of the backward test-reach walk: the callers of a frontier of
 # qualified names, with the properties the test classifier reads.
 # The blast radius of a signature change crosses services (issue #1603): a
