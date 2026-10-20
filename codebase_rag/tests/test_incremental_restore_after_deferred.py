@@ -23,6 +23,7 @@ from codebase_rag import constants as cs
 from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers import function_ingest
 from codebase_rag.parsers.frontends import (
     EMITTING_FRONTENDS,
     FrontendEmitContext,
@@ -55,6 +56,21 @@ _GO = {
     ),
 }
 _MAIN_TO_SIZE = ("proj.cmd.app.main.main", "proj.box.Box.Size")
+# box.go also holds a plain function, registered during Pass 2, so its
+# inbound edge never depended on the deferred Go stages.
+_GO_WITH_CONSTRUCTOR = {
+    **_GO,
+    "box.go": (
+        "package split\n\ntype Box struct{ N int }\n\n"
+        "func NewBox() *Box { return &Box{N: clamp(1)} }\n\n"
+        "func (b *Box) Size() int { return clamp(b.N) }\n"
+    ),
+    "cmd/app/main.go": (
+        'package main\n\nimport (\n\t"fmt"\n\n\t"example.com/split"\n)\n\n'
+        "func main() {\n\tb := split.NewBox()\n\tfmt.Println(b.Size())\n}\n"
+    ),
+}
+_MAIN_TO_NEW_BOX = ("proj.cmd.app.main.main", "proj.box.NewBox")
 _SIZE_TO_CLAMP = ("proj.box.Box.Size", "proj.util.clamp")
 
 _PY = {
@@ -277,3 +293,38 @@ def test_a_run_stopped_before_the_go_methods_register_keeps_the_edges_into_them(
     # and keeps the edge, with nothing extra.
     _index(store, root, force=False)
     assert _snapshot(store) == clean
+
+
+def test_a_failing_go_method_registration_still_restores_the_other_edges(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Negative: the restore registers the pending Go receiver methods first.
+    # When that raises (it fails in the deferred stage, and again on the way
+    # out), the held edges into everything else must still come back, as
+    # they did when the restore ran at the end of Pass 2: the next run
+    # cannot capture them again, and cmd/app/main.go is not re-parsed.
+    if cs.SupportedLanguage.GO not in load_parsers()[0]:
+        pytest.skip("go parser not available")
+    root = temp_repo / "proj"
+    for rel, text in _GO_WITH_CONSTRUCTOR.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text, encoding="utf-8")
+    store = _StatefulIngestor()
+    _index(store, root, force=True)
+    assert _MAIN_TO_NEW_BOX in _calls(_snapshot(store)), "fixture must produce it"
+    _edit_after_cache(root / "util.go", root, "//")
+    original = function_ingest.ingest_method
+
+    def fail_go(*args: object, **kwargs: object) -> str | None:
+        if kwargs.get("language") == cs.SupportedLanguage.GO:
+            raise RuntimeError("go method ingestion failed")
+        return original(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(function_ingest, "ingest_method", fail_go)
+        with pytest.raises(RuntimeError, match="go method ingestion failed"):
+            _index(store, root, force=False)
+
+    assert _MAIN_TO_NEW_BOX in _calls(_snapshot(store))
+    _index(store, root, force=False)
+    assert _MAIN_TO_NEW_BOX in _calls(_snapshot(store))

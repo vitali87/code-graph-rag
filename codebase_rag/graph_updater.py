@@ -5616,15 +5616,20 @@ class GraphUpdater:
 
     def _restore_pending_inbound_edges(self) -> None:
         captured, self._pending_inbound_edges = self._pending_inbound_edges, []
-        if captured:
-            # A run stopped before the deferred stages reached the Go receiver
-            # methods registers them here, or every held edge into one is
-            # dropped for good: the next run re-parses the method's file but
-            # not the caller, and the edge is no longer in the graph to
-            # capture. A no-op once those stages ran; a stopped run never
-            # verifies parent links, so they still follow every registration.
-            self.factory.definition_processor.resolve_deferred_go_methods()
-        self._restore_inbound_edges(captured)
+        try:
+            if captured:
+                # A run stopped before the deferred stages reached the Go receiver
+                # methods registers them here, or every held edge into one is
+                # dropped for good: the next run re-parses the method's file but
+                # not the caller, and the edge is no longer in the graph to
+                # capture. A no-op once those stages ran; a stopped run never
+                # verifies parent links, so they still follow every registration.
+                self.factory.definition_processor.resolve_deferred_go_methods()
+        finally:
+            # Even when that registration raises (a run stopped BY it retries
+            # it here): the edges into every other target are placeable, and
+            # nothing captures them again either.
+            self._restore_inbound_edges(captured)
 
     def _restore_target_exists(self, label: str, qualified_name: str) -> bool:
         """Whether a captured edge's target is back after the re-parse.
