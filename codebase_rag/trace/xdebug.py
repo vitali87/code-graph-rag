@@ -20,10 +20,16 @@ names alone.
 Internal functions (``call_user_func``, callback-taking array functions)
 and file-inclusion pseudo-frames are glue, not endpoints; edges see through
 them to the nearest user-defined ancestor.
+
+Xdebug >= 3.1 built with zlib gzips its traces by default
+(``xdebug.use_compression=1``), writing ``.xt.gz``; such a trace is
+recognised by its gzip magic bytes and read decompressed.
 """
 
 from __future__ import annotations
 
+import gzip
+import zlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -61,6 +67,29 @@ class _Call:
     defining_file: str = ""
     defining_line: int = 0
     children_seen: bool = field(default=False)
+
+
+def _read_trace_lines(trace_path: Path) -> list[str]:
+    """The trace's lines, decompressing a gzip-compressed (``.xt.gz``) trace.
+
+    A cut-off or corrupt gzip stream (say, a run killed before Xdebug closed
+    the file) becomes a TraceFormatError naming the file rather than a bare
+    EOFError or zlib.error.
+    """
+    with trace_path.open("rb") as fh:
+        compressed = fh.read(len(cs.TRACE_GZIP_MAGIC)) == cs.TRACE_GZIP_MAGIC
+    if not compressed:
+        text = trace_path.read_text(encoding=cs.ENCODING_UTF8, errors="replace")
+        return text.splitlines()
+    try:
+        with gzip.open(
+            trace_path, "rt", encoding=cs.ENCODING_UTF8, errors="replace"
+        ) as stream:
+            return stream.read().splitlines()
+    except (EOFError, gzip.BadGzipFile, zlib.error) as e:
+        raise TraceFormatError(
+            cs.TRACE_ERR_BAD_XDEBUG_GZIP.format(path=trace_path)
+        ) from e
 
 
 def _parse_calls(lines: list[str]) -> list[_Call]:
@@ -135,7 +164,7 @@ def convert_xdebug_trace(
     workload: str | None = None,
 ) -> int:
     """Write ``trace_path``'s call edges to ``output``; returns record count."""
-    lines = trace_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    lines = _read_trace_lines(trace_path)
     if not any(line.startswith(cs.TRACE_XDEBUG_FORMAT_LINE) for line in lines[:5]):
         raise TraceFormatError(cs.TRACE_ERR_BAD_XDEBUG.format(path=trace_path))
 
