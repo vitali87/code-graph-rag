@@ -89,11 +89,15 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     # an incremental run's rehydration; absent reads as "not rehydrated",
     # which is how every run behaved before #3272, and the next parse of the
     # file rewrites it.
+    # `php_namespace` (issue #3277) is read back only by an incremental run's
+    # rehydration; absent reads as "no namespace recorded", as every run did
+    # before #3277, until the file is next parsed.
     "Module": frozenset(
         {
             "absolute_path",
             "end_line",
             "go_package",
+            "php_namespace",
             "start_line",
             "unresolved_specifiers",
             "unresolved_references",
