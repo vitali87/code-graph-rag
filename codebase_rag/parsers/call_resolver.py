@@ -1441,10 +1441,12 @@ class CallResolver:
         # keep-both design). Only the same definition is a twin: matching a
         # same-name function by its parent's path paired `Store.get` with the
         # module's own `function get()`, so `s.get()` called both (#3174).
-        leaf = callee_qn.rpartition(cs.SEPARATOR_DOT)[2]
+        # Leaves compare without the duplicate marker: a free `lookup` written
+        # above makes the fn-expr's name `view.lookup@5`, still the same leaf.
+        leaf = qn_markers.natural_qn(callee_qn).rpartition(cs.SEPARATOR_DOT)[2]
         twins: set[tuple[str, str]] = set()
         for qn in self.function_registry.same_definition(callee_qn):
-            if qn.rpartition(cs.SEPARATOR_DOT)[2] != leaf:
+            if qn_markers.natural_qn(qn).rpartition(cs.SEPARATOR_DOT)[2] != leaf:
                 continue
             label = self.function_registry.get(qn)
             if label in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD):

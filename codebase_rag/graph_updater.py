@@ -4061,7 +4061,9 @@ class GraphUpdater:
         the same file and end on the same line, under the same leaf name,
         which no two separate definitions do: `class A { get() {} } class B
         { get() {} }` on one line differ only by column (#3174 review). A row
-        without a column (written before it was recorded) pairs nothing.
+        without a column (written before it was recorded) pairs nothing. The
+        leaf is compared without its duplicate marker, as parsing pairs
+        `View.lookup` with `view.lookup@5` when a free `lookup` came first.
         """
         spans: defaultdict[tuple[str, int, int, int, str], list[str]] = defaultdict(
             list
@@ -4078,7 +4080,7 @@ class GraphUpdater:
                 and isinstance(end, int)
                 and isinstance(col, int)
             ):
-                leaf = qn.rpartition(cs.SEPARATOR_DOT)[2]
+                leaf = _natural_qn(qn).rpartition(cs.SEPARATOR_DOT)[2]
                 spans[(path, start, col, end, leaf)].append(qn)
         for qns in spans.values():
             for first, second in itertools.combinations(qns, 2):

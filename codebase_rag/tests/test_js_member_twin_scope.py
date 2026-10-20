@@ -222,3 +222,52 @@ def test_an_incremental_sync_keeps_one_line_methods_apart(temp_repo: Path) -> No
     assert sync(store, force=True) == {"oneline.A.get"}
     (temp_repo / "src/oneuse.ts").write_text(caller + "// touched\n", encoding="utf-8")
     assert sync(store, force=False) == {"oneline.A.get"}
+
+
+def test_a_prototype_twin_with_a_duplicate_marker_stays_paired(
+    temp_repo: Path,
+) -> None:
+    # An earlier free `function lookup` holds the natural `shadow.lookup`, so
+    # the prototype fn-expr registers as `shadow.lookup@3` while its member
+    # name stays `View.lookup`. The pair's leaves differ only by the marker;
+    # both a clean index and an incremental sync of the caller must still
+    # edge both names, and never the free function (#3174 review).
+    parsers, queries = load_parsers()
+    if "javascript" not in parsers:
+        pytest.skip("javascript parser not available")
+    (temp_repo / "src").mkdir(parents=True, exist_ok=True)
+    (temp_repo / "src/shadow.js").write_text(
+        'function lookup(name) { return "free " + name }\n'
+        "function View(name) { this.name = name }\n"
+        "View.prototype.lookup = function lookup(name) {\n"
+        "  return name\n"
+        "}\n"
+        "module.exports = { View, lookup }\n",
+        encoding="utf-8",
+    )
+    caller = (
+        'const { View } = require("./shadow");\n'
+        "function make() { return new View('y').lookup('z'); }\n"
+        "module.exports = { make };\n"
+    )
+    (temp_repo / "src/shadowuse.js").write_text(caller, encoding="utf-8")
+
+    def sync(store: _StatefulIngestor, force: bool) -> set[str]:
+        GraphUpdater(
+            ingestor=store, repo_path=temp_repo, parsers=parsers, queries=queries
+        ).run(force=force)
+        return {
+            _short(str(target))
+            for _, source, rel, _, target in store.edges
+            if rel == cs.RelationshipType.CALLS.value
+            and _short(str(source)) == "shadowuse.make"
+            and "lookup" in str(target)
+        }
+
+    expected = {"shadow.View.lookup", "shadow.lookup@3"}
+    store = _StatefulIngestor()
+    assert sync(store, force=True) == expected
+    (temp_repo / "src/shadowuse.js").write_text(
+        caller + "// touched\n", encoding="utf-8"
+    )
+    assert sync(store, force=False) == expected
