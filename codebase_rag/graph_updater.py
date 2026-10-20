@@ -2691,6 +2691,19 @@ class GraphUpdater:
             self._state_dir = prepare_state_dir(self.repo_path)
         return self._state_dir
 
+    @property
+    def call_pass_failures(self) -> list[Path]:
+        """Files the last call pass failed in, whole or in one caller (#3173).
+
+        Each one logged its error and kept every edge it could, so the run
+        still completes; the sync summary names them, since an exit-0 "done"
+        was the only other signal that a file had lost its calls.
+        """
+        processor = self.factory._call_processor
+        if processor is None:
+            return []
+        return sorted(processor.failed_call_files)
+
     def _require_repo_dir(self) -> None:
         """Raise `FileNotFoundError` unless `self.repo_path` is a directory.
 
@@ -2763,6 +2776,10 @@ class GraphUpdater:
             else None
         )
         self._embeddings_interrupted = False
+        # Per-run as well: an in-sync run walks no calls, and must not report
+        # a previous run's failures as its own.
+        if self.factory._call_processor is not None:
+            self.factory._call_processor.failed_call_files.clear()
         self._sink.ensure_node_batch(
             cs.NODE_PROJECT,
             {
@@ -8206,6 +8223,7 @@ class GraphUpdater:
         # whose spans would resolve against the refreshed registry onto
         # whatever now sits at the old line/column.
         self.factory.call_processor.reset_js_receiver_bindings()
+        self.factory.call_processor.failed_call_files.clear()
         captures_cache = self.factory._func_class_captures_cache
         # Iterate every file parsed this run, not the bounded AST cache: on a
         # large repo the cache evicts most files, and iterating it drops their
