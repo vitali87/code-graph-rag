@@ -735,8 +735,10 @@ def _still_names(
 _NAMED = r"(?<![\w$]){name}(?![\w$])"
 
 
-def _still_bound(before: Snapshot, still: _AfterBindings) -> Callable[[str], bool]:
-    """Whether a gone module-level symbol's own module still binds its name.
+def _gone_for_callers(
+    before: Snapshot, gone: set[str], still: _AfterBindings
+) -> Callable[[str], bool]:
+    """Whether `qn` is gone and its own module no longer binds its name.
 
     A move that leaves `from new_home import name` behind, or a rename that
     keeps `old = new`, leaves every caller reaching the name through that
@@ -746,15 +748,17 @@ def _still_bound(before: Snapshot, still: _AfterBindings) -> Callable[[str], boo
     """
     answers: dict[str, bool] = {}
 
-    def bound(qn: str) -> bool:
+    def fails(qn: str) -> bool:
+        if qn not in gone:
+            return False
         if qn not in answers:
             module, _sep, name = qn.rpartition(cs.SEPARATOR_DOT)
-            answers[qn] = module not in before.definitions and still.binds(
+            answers[qn] = module in before.definitions or not still.binds(
                 module, before.definitions[qn].path, name, for_callers=True
             )
         return answers[qn]
 
-    return bound
+    return fails
 
 
 def _dangling(
@@ -768,11 +772,12 @@ def _dangling(
     renamed_to = {r["old"]: r["new"] for r in symbols["renamed"]}
     after_pairs = {(site.caller, site.callee) for site in after.sites}
     held = _held(before.sites)
-    still_bound = _still_bound(before, still)
+    # A caller reaching a gone name its module still binds keeps working.
+    dangles = _gone_for_callers(before, gone, still)
     out: list[DanglingCaller] = []
     seen: set[tuple[str, str, int | None, int | None]] = set()
     for site in before.sites:
-        if site.callee not in gone:
+        if not dangles(site.callee):
             continue
         callee = before.definitions[site.callee]
         # Only a caller the edit touched is in the after-snapshot to read.
@@ -782,14 +787,11 @@ def _dangling(
             continue
         new_name = renamed_to.get(site.callee)
         # A caller re-parsed in this pass that now binds to the renamed
-        # symbol was updated; every other caller still names what is gone,
-        # unless the name it reaches it by is still bound there.
+        # symbol was updated; every other caller still names what is gone.
         if site.caller_path in after.paths and (
             (new_name is not None and (site.caller, new_name) in after_pairs)
             or site.caller not in after.definitions
         ):
-            continue
-        if still_bound(site.callee):
             continue
         key = (site.caller, site.callee, site.line, site.col)
         if key in seen:
