@@ -61,6 +61,7 @@ class _FakeGo:
         self.build_ok = build_ok
         self.time_out_first = time_out_first
         self.builds = 0
+        self.runs = 0
 
     def __call__(
         self, cmd: Sequence[str], **kwargs: object
@@ -79,6 +80,7 @@ class _FakeGo:
             return subprocess.CompletedProcess(
                 cmd, 1, stdout="", stderr="go: go.mod requires go >= 9.0"
             )
+        self.runs += 1
         return subprocess.CompletedProcess(cmd, 0, stdout='{"calls": []}\n', stderr="")
 
 
@@ -466,6 +468,25 @@ def test_a_helper_built_under_the_current_floor_is_reused(
     assert first is not None
     assert second == first
     assert fake.builds == 1
+
+
+def test_a_cached_helper_is_not_handed_to_an_older_go(
+    monkeypatch: pytest.MonkeyPatch, go_repo: Path, cgr_home: Path
+) -> None:
+    # The helper loads packages with the `go` on PATH, and a version manager
+    # can put one below the floor there after a newer Go built the helper; the
+    # fresh cached binary must not let it run (PR #3410 review).
+    _run(monkeypatch, go_repo, _FakeGo("go1.27.2", build_ok=True))
+    older = _FakeGo("go1.27.1", build_ok=True)
+
+    facts, warnings = _run(monkeypatch, go_repo, older)
+
+    assert older.builds == 0
+    assert older.runs == 0
+    assert not facts.call_sites
+    assert len(warnings) == 1
+    assert "1.27.1" in warnings[0]
+    assert "1.27.2" in warnings[0]
 
 
 def test_an_unreadable_floor_gets_a_cache_of_its_own(
