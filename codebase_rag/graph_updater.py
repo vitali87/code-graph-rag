@@ -32,6 +32,7 @@ from .config import settings
 from .function_registry import FunctionRegistryTrie
 from .gloss_anchor import ParsedSource, parse_source
 from .gloss_repair import repair_unanchored
+from .graph_query import _longer_project_prefixes
 from .interface_skip import (
     callers_to_reparse,
     stable_interface_modules,
@@ -9486,7 +9487,8 @@ class GraphUpdater:
             self.finding_analyzer.analyze(scoped)
 
     def _reanchor_glosses(self) -> None:
-        """Re-attach every Gloss to the definitions its own record names, then grade it.
+        """Re-attach this project's Glosses to the definitions their own records
+        name, then grade them.
 
         A gloss lives only in the graph, so a rebuild that deletes and
         recreates a definition, or an inbound-edge capture that could not be
@@ -9500,7 +9502,15 @@ class GraphUpdater:
         if not isinstance(self.ingestor, QueryProtocol):
             return
         try:
-            self.ingestor.execute_write(cq.CYPHER_REANCHOR_GLOSSES)
+            # Only this project's definitions changed (issue #3236).
+            scope: PropertyParams = {
+                cs.KEY_PROJECT_NAME: self.project_name,
+                cs.KEY_PROJECT_PREFIX: f"{self.project_name}{cs.SEPARATOR_DOT}",
+                cs.KEY_LONGER_PROJECT_PREFIXES: list(
+                    _longer_project_prefixes(self.ingestor.fetch_all, self.project_name)
+                ),
+            }
+            self.ingestor.execute_write(cq.CYPHER_REANCHOR_GLOSSES, scope)
             # A note whose name did not come back is placed by content hash
             # (MOVED) or marked AMBIGUOUS / LOST. Before the mentions restore,
             # so a note that moved gets its MENTIONS edges back this run.
@@ -9508,12 +9518,13 @@ class GraphUpdater:
                 self.ingestor.fetch_all,
                 self.ingestor.execute_write,
                 self._read_project_source,
+                project_name=self.project_name,
             )
-            self.ingestor.execute_write(cq.CYPHER_REANCHOR_GLOSS_MENTIONS)
+            self.ingestor.execute_write(cq.CYPHER_REANCHOR_GLOSS_MENTIONS, scope)
             # Then grade: the subject's `anchor_hash` was just re-emitted by
             # the parse, so comparing it with the note's recorded hash here
             # is what makes a note about changed code read STALE.
-            self.ingestor.execute_write(cq.CYPHER_GRADE_GLOSS_ANCHORS)
+            self.ingestor.execute_write(cq.CYPHER_GRADE_GLOSS_ANCHORS, scope)
         except Exception as error:  # noqa: BLE001 -- see docstring
             logger.warning(ls.GLOSS_REANCHOR_FAILED.format(error=error))
 
