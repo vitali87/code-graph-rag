@@ -7,6 +7,7 @@ import sys
 import uuid
 from collections.abc import Callable, Collection
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from loguru import logger
 from pydantic_ai import Agent, DeferredToolRequests, Tool
@@ -26,7 +27,11 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services import QueryProtocol
 from codebase_rag.services.gloss_cleanup import prune_orphaned_glosses
 from codebase_rag.services.graph_service import MemgraphIngestor
-from codebase_rag.services.llm import CypherQueryGenerator, create_rag_orchestrator
+from codebase_rag.services.llm import (
+    CypherQueryGenerator,
+    create_rag_orchestrator,
+    run_to_text_answer,
+)
 from codebase_rag.services.provenance import head_commit
 from codebase_rag.sync_lock import repo_sync_lock
 from codebase_rag.tools import tool_descriptions as td
@@ -76,10 +81,28 @@ from codebase_rag.utils.terminal_console import terminal_aware_console
 from codebase_rag.vector_store import clear_all_embeddings, delete_project_embeddings
 from codebase_rag.workspaces import WorkspaceConfig, WorkspaceRepo
 
+if TYPE_CHECKING:
+    from codebase_rag.crash_correlation import (
+        FrameResolutionRate,
+        RootCauseReport,
+        TracebackReport,
+    )
 
-def _read_file_slice(full_path: Path, start: int, limit: int | None) -> str:
+
+def _found_nothing(result: object) -> bool:
+    """An empty walk, or a lookup that answered `found: false`."""
+    return result == [] or (
+        isinstance(result, dict) and result.get(cs.MCP_KEY_FOUND) is False
+    )
+
+
+def _read_file_slice(
+    full_path: Path, start: int, limit: int | None, file_path: str
+) -> str:
     with open(full_path, encoding=cs.ENCODING_UTF8) as f:
-        skipped_count = sum(1 for _ in itertools.islice(f, start))
+        # islice() refuses a count past sys.maxsize; no file has that many
+        # lines, so the clamped skip reads to the same end.
+        skipped_count = sum(1 for _ in itertools.islice(f, min(start, sys.maxsize)))
 
         if limit is not None:
             sliced_lines = [line for _, line in zip(range(limit), f)]
@@ -90,6 +113,12 @@ def _read_file_slice(full_path: Path, start: int, limit: int | None) -> str:
         remaining_lines_count = sum(1 for _ in f)
 
     total_lines = skipped_count + len(sliced_lines) + remaining_lines_count
+    # Offset 0 is the start even of an empty file; any other offset must
+    # land on a line.
+    if start >= total_lines and start > 0:
+        return te.failure(
+            cs.MCP_READ_PAST_END.format(offset=start, path=file_path, total=total_lines)
+        )
     header = cs.MCP_PAGINATION_HEADER.format(
         start=start + 1,
         end=start + len(sliced_lines),
@@ -293,6 +322,45 @@ def _project_holding(
     if not holders:
         return None
     return max(holders, key=lambda h: len(h[1].parts))
+
+
+def _resolution_section(resolution: "FrameResolutionRate") -> dict:
+    # `rate` is a property, so `_asdict()` omits it; mapped explicitly
+    # because the ratio is the number the caller acts on (issue #227).
+    return {
+        "total": resolution.total,
+        "resolved": resolution.resolved,
+        "rate": resolution.rate,
+    }
+
+
+def _explained_section(report: "TracebackReport") -> dict:
+    """One exception of an explained traceback: the one that propagated, or
+    a member of an ExceptionGroup, with members of its own (issue #3235)."""
+    return {
+        "exception_type": report.exception_type,
+        "exception_message": report.exception_message,
+        "frames": [frame._asdict() for frame in report.frames],
+        "resolution": _resolution_section(report.resolution),
+        "note": report.note,
+        "members": [_explained_section(member) for member in report.members],
+        "omitted_members": report.omitted_members,
+    }
+
+
+def _ranked_section(report: "RootCauseReport") -> dict:
+    """One exception's ranking, as `_explained_section` lays it out."""
+    return {
+        "exception_type": report.exception_type,
+        "exception_message": report.exception_message,
+        "failing": report.failing,
+        "anchor_is_crash_site": report.anchor_is_crash_site,
+        "candidates": [candidate._asdict() for candidate in report.candidates],
+        "resolution": _resolution_section(report.resolution),
+        "note": report.note,
+        "members": [_ranked_section(member) for member in report.members],
+        "omitted_members": report.omitted_members,
+    }
 
 
 class MCPToolsRegistry:
@@ -749,10 +817,12 @@ class MCPToolsRegistry:
                         cs.MCPParamName.OFFSET: MCPInputSchemaProperty(
                             type=cs.MCPSchemaType.INTEGER,
                             description=td.MCP_PARAM_OFFSET,
+                            minimum=cs.MCP_READ_OFFSET_MINIMUM,
                         ),
                         cs.MCPParamName.LIMIT: MCPInputSchemaProperty(
                             type=cs.MCPSchemaType.INTEGER,
                             description=td.MCP_PARAM_LIMIT,
+                            minimum=cs.MCP_READ_LIMIT_MINIMUM,
                         ),
                     },
                     required=[cs.MCPParamName.FILE_PATH],
@@ -1264,19 +1334,9 @@ class MCPToolsRegistry:
                 path_prefix_map,
             )
         return {
-            "exception_type": report.exception_type,
-            "exception_message": report.exception_message,
-            "frames": [frame._asdict() for frame in report.frames],
+            **_explained_section(report),
             "flow_gaps": list(report.flow_gaps),
-            # `rate` is a property, so `_asdict()` omits it; mapped explicitly
-            # because the ratio is the number the caller acts on (issue #227).
-            "resolution": {
-                "total": report.resolution.total,
-                "resolved": report.resolution.resolved,
-                "rate": report.resolution.rate,
-            },
             "inferred_checkout_root": report.inferred_root,
-            "note": report.note,
         }
 
     async def rank_root_causes(
@@ -1301,20 +1361,10 @@ class MCPToolsRegistry:
                 path_prefix_map,
             )
         return {
-            "exception_type": report.exception_type,
-            "exception_message": report.exception_message,
-            "failing": report.failing,
-            "anchor_is_crash_site": report.anchor_is_crash_site,
-            "candidates": [candidate._asdict() for candidate in report.candidates],
+            **_ranked_section(report),
             "flow_used": report.flow_used,
             "flow_gaps": list(report.flow_gaps),
-            "resolution": {
-                "total": report.resolution.total,
-                "resolved": report.resolution.resolved,
-                "rate": report.resolution.rate,
-            },
             "inferred_checkout_root": report.inferred_root,
-            "note": report.note,
         }
 
     async def list_projects(self) -> ListProjectsResult:
@@ -2723,8 +2773,15 @@ class MCPToolsRegistry:
                     )
                 ) is not None:
                     return {cs.DICT_KEY_ERROR: refusal}
-                response = await self.rag_agent.run(question, message_history=[])
-            return {"output": str(response.output)}
+                # No operator to ask: an edit or a non-read-only command is
+                # denied, and the model answers without it.
+                answer = await run_to_text_answer(
+                    self.rag_agent,
+                    question,
+                    approve=False,
+                    denial=cs.MCP_ASK_AGENT_APPROVAL_DENIED,
+                )
+            return {"output": answer}
         except Exception as e:
             logger.error(lg.MCP_ASK_AGENT_ERROR.format(error=e))
             return {"error": cs.MCP_ASK_AGENT_ERROR.format(error=e)}
@@ -2829,10 +2886,14 @@ class MCPToolsRegistry:
                 ):
                     return {cs.DICT_KEY_ERROR: refusal}
                 result = await _run_in_thread(run, project_name)
-                if target is not None and result == []:
+                if target is not None and _found_nothing(result):
                     if unknown := await _run_in_thread(
                         self._unknown_target_error, project_name, target
                     ):
+                        # A `found: false` row keeps its fields beside the
+                        # refusal, for a client that reads `found`.
+                        if isinstance(result, dict):
+                            return {**result, cs.DICT_KEY_ERROR: unknown}
                         return {cs.DICT_KEY_ERROR: unknown}
                 return result
         except Exception as e:
@@ -2944,9 +3005,22 @@ class MCPToolsRegistry:
         return await self._graph_query(
             cs.MCPToolName.RESOLVE,
             project,
-            lambda name: graph_query.resolve_or_refuse(
-                self.ingestor.fetch_all, name, target
-            ),
+            lambda name: self._resolve_rows(name, target),
+        )
+
+    def _resolve_rows(self, project_name: str, target: str) -> object:
+        # A line no file can have is refused as such (issue #3244); the
+        # graph would only be asked about it to overflow a Bolt integer.
+        location = graph_query.parse_location(target)
+        if location is not None and location[1] > cs.GRAPH_MAX_SOURCE_LINE:
+            path, line = location
+            return {
+                cs.DICT_KEY_ERROR: cs.MCP_RESOLVE_LINE_OUT_OF_RANGE.format(
+                    path=path, line=line
+                )
+            }
+        return graph_query.resolve_or_refuse(
+            self.ingestor.fetch_all, project_name, target
         )
 
     def _workspace_scope(self, project: str | None) -> tuple[str | None, str | None]:
@@ -3069,6 +3143,8 @@ class MCPToolsRegistry:
                 qualified_name,
                 self._source_root_for(name),
             ),
+            # Refused as `callers` refuses an unknown name (issue #3244).
+            target=qualified_name,
         )
 
     async def endpoints(self, project: str | None = None) -> object:
@@ -3086,12 +3162,24 @@ class MCPToolsRegistry:
         return await self._graph_query(
             cs.MCPToolName.ENDPOINT_CALLERS,
             project,
-            lambda name: self._uncaptured_refusal(
-                cs.MCPToolName.ENDPOINT_CALLERS,
-                name,
-                graph_query.endpoint_callers(self.ingestor.fetch_all, name, target),
-            ),
+            lambda name: self._endpoint_callers(name, target),
         )
+
+    def _endpoint_callers(self, project_name: str, target: str) -> object:
+        # A target that names no endpoint is refused, as `callers` refuses an
+        # unknown name: `[]` means the endpoint exists and nothing reaches it
+        # (issue #3186). A project synced without what the tool reads holds no
+        # endpoint at all, so that refusal names the missing capture instead.
+        tool = cs.MCPToolName.ENDPOINT_CALLERS
+        try:
+            rows = graph_query.endpoint_callers(
+                self.ingestor.fetch_all, project_name, target
+            )
+        except graph_query.UnknownEndpointError as unknown:
+            return self._uncaptured_refusal(tool, project_name, []) or {
+                cs.DICT_KEY_ERROR: str(unknown)
+            }
+        return self._uncaptured_refusal(tool, project_name, rows)
 
     async def remote_dependencies(self, project: str | None = None) -> object:
         return await self._graph_query(
@@ -3657,9 +3745,10 @@ class MCPToolsRegistry:
             # The guard is inside the lock so an update cannot land between
             # the check and the read (Greptile, PR #1547).
             async with self._ingestor_lock:
+                project_name = derive_project_name(Path(self.project_root))
                 if refusal := await _run_in_thread(
                     self._incomplete_refusal,
-                    derive_project_name(Path(self.project_root)),
+                    project_name,
                     cs.MCPToolName.GET_CODE_SNIPPET,
                 ):
                     return CodeSnippetResultDict(
@@ -3668,18 +3757,29 @@ class MCPToolsRegistry:
                 snippet = await _plain_function(self._code_tool)(
                     qualified_name=qualified_name
                 )
-            if isinstance(snippet, str):
-                # The workspace guard answered instead of the retriever.
-                return CodeSnippetResultDict(
-                    error=snippet, found=False, error_message=snippet
-                )
-            result: CodeSnippetResultDict | None = snippet.model_dump()
-            if result is None:
-                return CodeSnippetResultDict(
-                    error=te.MCP_TOOL_RETURNED_NONE,
-                    found=False,
-                    error_message=te.MCP_INVALID_RESPONSE,
-                )
+                if isinstance(snippet, str):
+                    # The workspace guard answered instead of the retriever.
+                    return CodeSnippetResultDict(
+                        error=snippet, found=False, error_message=snippet
+                    )
+                result: CodeSnippetResultDict | None = snippet.model_dump()
+                if result is None:
+                    return CodeSnippetResultDict(
+                        error=te.MCP_TOOL_RETURNED_NONE,
+                        found=False,
+                        error_message=te.MCP_INVALID_RESPONSE,
+                    )
+                if result.get(cs.MCP_KEY_FOUND) is False:
+                    # No snippet is a refusal, worded as `callers` words an
+                    # unknown name when the graph has none (issue #3244).
+                    unknown = await _run_in_thread(
+                        self._unknown_target_error, project_name, qualified_name
+                    )
+                    result[cs.DICT_KEY_ERROR] = (
+                        unknown
+                        or result.get(cs.MCP_KEY_ERROR_MESSAGE)
+                        or te.CODE_ENTITY_NOT_FOUND
+                    )
             return result
         except Exception as e:
             logger.error(lg.MCP_ERROR_CODE_SNIPPET.format(error=e))
@@ -3712,6 +3812,10 @@ class MCPToolsRegistry:
         self, file_path: str, offset: int | None = None, limit: int | None = None
     ) -> str:
         logger.info(lg.MCP_READ_FILE.format(path=file_path, offset=offset, limit=limit))
+        if offset is not None and offset < cs.MCP_READ_OFFSET_MINIMUM:
+            return te.failure(cs.MCP_READ_OFFSET_NEGATIVE.format(offset=offset))
+        if limit is not None and limit < cs.MCP_READ_LIMIT_MINIMUM:
+            return te.failure(cs.MCP_READ_LIMIT_NOT_POSITIVE.format(limit=limit))
         try:
             if offset is not None or limit is not None:
                 project_root = Path(self.project_root).resolve()
@@ -3721,7 +3825,9 @@ class MCPToolsRegistry:
                 except (ValueError, RuntimeError):
                     return te.failure(lg.FILE_OUTSIDE_ROOT.format(action="access"))
                 start = offset if offset is not None else 0
-                return await _run_in_thread(_read_file_slice, full_path, start, limit)
+                return await _run_in_thread(
+                    _read_file_slice, full_path, start, limit, file_path
+                )
             else:
                 # Returned as is: a ToolFailure must stay one (issue #2650).
                 return await _plain_function(self._file_reader_tool)(

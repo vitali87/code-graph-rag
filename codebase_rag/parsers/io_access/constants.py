@@ -58,6 +58,8 @@ class IODirection(StrEnum):
 
 # Synthetic qualified name for a Resource node: resource::<kind>::<identity>.
 RESOURCE_QN_FORMAT = "resource::{kind}::{identity}"
+# How a project scopes a resource identity it alone can reach.
+RESOURCE_PROJECT_IDENTITY = "{project}::{identity}"
 
 # Identity used when the accessed target is not a static string literal.
 DYNAMIC_TARGET = "<dynamic>"
