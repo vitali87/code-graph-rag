@@ -215,3 +215,41 @@ def test_a_recursive_captured_local_function_keeps_its_self_edge(
     )
     assert summary.resolution.unresolved == {}
     assert _pairs(graph) == {(local, local)}
+
+
+def test_named_js_recursion_off_the_graph_leaf_keeps_its_self_edge(
+    tmp_path: Path,
+) -> None:
+    # V8 names a function assigned to a member by its inferred name
+    # (`exports.walk`, `Tree.depth` for `Tree.prototype.depth`), which matches
+    # no node's leaf, so the frame resolves by span alone; it still lands on
+    # its own node, so `walk -> walk` is recursion. An anonymous function the
+    # graph did not index still folds into the function holding it.
+    walk = f"{_PROJECT}.lib.walk.walk"
+    depth = f"{_PROJECT}.lib.walk.Tree.depth"
+    run = f"{_PROJECT}.lib.walk.run"
+    graph = _FakeGraph(
+        [
+            _callable_row(cs.NodeLabel.FUNCTION, walk, "lib/walk.js", 2, 5),
+            _callable_row(cs.NodeLabel.FUNCTION, depth, "lib/walk.js", 8, 10),
+            _callable_row(cs.NodeLabel.FUNCTION, run, "lib/walk.js", 12, 14),
+        ],
+        [
+            {cs.KEY_FROM_QN: walk, cs.KEY_TO_QN: walk},
+            {cs.KEY_FROM_QN: depth, cs.KEY_TO_QN: depth},
+        ],
+    )
+    path = f"{tmp_path / 'repo'}/lib/walk.js"
+    summary = _ingest(
+        tmp_path,
+        cs.TRACE_LANGUAGE_JS,
+        [
+            _record(("exports.walk", 2), ("exports.walk", 2), path=path),
+            _record(("Tree.depth", 8), ("Tree.depth", 8), path=path),
+            _record(("run", 12), (cs.TRACE_QUALNAME_ANONYMOUS, 13), path=path),
+        ],
+        graph,
+    )
+    assert summary.resolution.unresolved == {"intra_node": 1}
+    assert (summary.edges, summary.confirmed_static) == (2, 2)
+    assert _pairs(graph) == {(walk, walk), (depth, depth)}

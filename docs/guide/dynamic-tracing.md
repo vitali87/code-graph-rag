@@ -678,7 +678,8 @@ does not know are counted per reason instead of being silently dropped.
   PHP closures the static graph did not index. Real recursion, where both
   frames name the method, is still a self-edge, and so is recursion in a
   frame that resolves to a node of its own (an anonymous-class method, an
-  indexed PHP closure, a C# local function). An anonymous-class
+  indexed PHP closure, a C# local function, a JS function V8 reports by an
+  inferred name such as `exports.walk`). An anonymous-class
   method resolves to its own node — the innermost source span containing the
   frame line, threaded under the enclosing method — rather than to the
   enclosing method itself. Frames the static graph cannot account for

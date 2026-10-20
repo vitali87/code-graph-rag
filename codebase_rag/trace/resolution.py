@@ -498,10 +498,14 @@ class JsFrameResolver:
         if chosen is None:
             stats.record(cs.TraceUnresolvedReason.NO_MATCH)
             return None
+        # Only a nameless frame folds into the function holding it. A named one
+        # that matches no leaf (V8's inferred `exports.walk`) still lands on its
+        # own node by span, so its recursion is real (#2709 review). Start lines
+        # cannot tell the two apart: pprof frames may carry sampled lines.
         return ResolvedFrame(
             label=chosen.label,
             qualified_name=chosen.qualified_name,
-            folded=not by_name,
+            folded=frame.qualname.startswith(cs.TRACE_SYNTHETIC_PREFIX),
         )
 
 
