@@ -36,6 +36,7 @@ from .dead_code import (
 )
 from .graph_query import QueryFn, _longer_project_prefixes, _owner_check, _prefix
 from .parsers.utils import _is_static_decorator
+from .structural_delta import _is_receiver, _language
 from .types_defs import PropertyDict, PropertyValue, ResultValue
 from .utils.path_utils import portable_posix
 
@@ -116,6 +117,7 @@ class SideSummary(TypedDict):
 
 class PairedByCounts(TypedDict):
     explicit: int
+    module: int
     container: int
     name: int
 
@@ -154,6 +156,9 @@ class _Callable(NamedTuple):
     # parallel to them. Read only for Python, whose `positional_params` stop
     # at `*args` and the keyword-only ones.
     declared: int
+    # The module path relative to the side's scope, set once the scope is
+    # known: `a/utils` tells `legacy/a/utils.py` from `legacy/b/utils.py`.
+    module: str = ""
 
 
 class _Arity(NamedTuple):
@@ -252,6 +257,7 @@ def port_check(
             pairs=len(reports),
             paired_by=PairedByCounts(
                 explicit=how.count(cs.PairedBy.EXPLICIT),
+                module=how.count(cs.PairedBy.MODULE),
                 container=how.count(cs.PairedBy.CONTAINER),
                 name=how.count(cs.PairedBy.NAME),
             ),
@@ -309,6 +315,25 @@ def _container(label: str, qualified_name: str, name: str, path: str) -> str:
     file = PurePosixPath(path)
     stem = file.parent.name if file.stem in cs.PORT_PACKAGE_ENTRY_STEMS else file.stem
     return normalize_name(stem)
+
+
+def _module_path(path: str, scope: str) -> str:
+    # Relative to the scope, so `legacy/a/utils.py` and `rewrite/a/utils.rs`
+    # agree; a package entry file stands for its directory, as in _container.
+    if not scope:
+        relative = path
+    elif path.startswith(scope + cs.SEPARATOR_SLASH):
+        relative = path[len(scope) + 1 :]
+    else:
+        # The scope is the file itself.
+        relative = PurePosixPath(path).name
+    file = PurePosixPath(relative)
+    parts = (
+        file.parent.parts
+        if file.stem in cs.PORT_PACKAGE_ENTRY_STEMS
+        else (*file.parent.parts, file.stem)
+    )
+    return cs.SEPARATOR_SLASH.join(normalize_name(part) for part in parts)
 
 
 def _callable(label: str, qualified_name: str, props: PropertyDict) -> _Callable:
@@ -401,7 +426,7 @@ def _side(
     fetch_all: QueryFn, graph: _ProjectGraph, spec: PortScope, include_tests: bool
 ) -> _Side:
     chosen = {
-        qn: found
+        qn: found._replace(module=_module_path(found.path, spec.scope))
         for qn, found in graph.callables.items()
         if _in_scope(found.path, spec.scope)
         and (include_tests or qn not in graph.tests)
@@ -441,26 +466,34 @@ def _resolve_target(side: _Side, target: str) -> str:
     return matches[0]
 
 
+def _tier_key(found: _Callable, tier: cs.PairedBy) -> tuple[str, ...]:
+    match tier:
+        case cs.PairedBy.MODULE:
+            return (found.key, found.module, found.container)
+        case cs.PairedBy.CONTAINER:
+            return (found.key, found.container)
+        case _:
+            return (found.key,)
+
+
 def _group(
-    callables: Iterable[_Callable], by_container: bool
+    callables: Iterable[_Callable], tier: cs.PairedBy
 ) -> dict[tuple[str, ...], list[_Callable]]:
     groups: dict[tuple[str, ...], list[_Callable]] = {}
     for found in callables:
-        key = (found.key, found.container) if by_container else (found.key,)
-        groups.setdefault(key, []).append(found)
+        groups.setdefault(_tier_key(found, tier), []).append(found)
     return groups
 
 
 def _pair_unique(
     olds: Iterable[_Callable],
     news: Iterable[_Callable],
-    by_container: bool,
+    tier: cs.PairedBy,
     pairing: _Pairing,
 ) -> tuple[list[_Callable], list[_Callable]]:
     """Pair every group holding one callable on each side; return the rest."""
-    how = cs.PairedBy.CONTAINER if by_container else cs.PairedBy.NAME
-    old_groups = _group(olds, by_container)
-    new_groups = _group(news, by_container)
+    old_groups = _group(olds, tier)
+    new_groups = _group(news, tier)
     left_old: list[_Callable] = []
     left_new: list[_Callable] = []
     for key in sorted(old_groups.keys() | new_groups.keys()):
@@ -468,7 +501,7 @@ def _pair_unique(
         in_new = new_groups.get(key, [])
         if len(in_old) == 1 and len(in_new) == 1:
             pairing.pairs.append(
-                (in_old[0].qualified_name, in_new[0].qualified_name, how)
+                (in_old[0].qualified_name, in_new[0].qualified_name, tier)
             )
         else:
             left_old.extend(in_old)
@@ -493,18 +526,16 @@ def _pair(old: _Side, new: _Side, explicit: Sequence[tuple[str, str]]) -> _Pairi
         taken_old.add(o)
         taken_new.add(n)
         pairing.pairs.append((o, n, cs.PairedBy.EXPLICIT))
-    # The same name in the same container first, the strongest evidence short
-    # of an explicit pair; then the name alone among what that left, where
+    # Strongest evidence first, each tier on what the previous one left: the
+    # same module path, then the same container when the two layouts differ
+    # (`lexer.py` against `cypher/lexer.rs`), then the name alone, where
     # `paired_by: name` tells the reader the containers differ.
-    left_old, left_new = _pair_unique(
-        (c for qn, c in old.callables.items() if qn not in taken_old),
-        (c for qn, c in new.callables.items() if qn not in taken_new),
-        True,
-        pairing,
-    )
-    left_old, left_new = _pair_unique(left_old, left_new, False, pairing)
-    old_by_name = _group(left_old, by_container=False)
-    new_by_name = _group(left_new, by_container=False)
+    left_old = [c for qn, c in old.callables.items() if qn not in taken_old]
+    left_new = [c for qn, c in new.callables.items() if qn not in taken_new]
+    for tier in cs.PORT_PAIRING_TIERS:
+        left_old, left_new = _pair_unique(left_old, left_new, tier, pairing)
+    old_by_name = _group(left_old, cs.PairedBy.NAME)
+    new_by_name = _group(left_new, cs.PairedBy.NAME)
     for key in sorted(old_by_name.keys() | new_by_name.keys()):
         olds = sorted(c.qualified_name for c in old_by_name.get(key, []))
         news = sorted(c.qualified_name for c in new_by_name.get(key, []))
@@ -561,7 +592,8 @@ def _calls_parity(
 def _arity(found: _Callable, positional: tuple[str, ...] | None) -> _Arity | None:
     if positional is None:
         return None
-    if PurePosixPath(found.path).suffix in cs.PY_EXTENSIONS:
+    language = _language(found.path)
+    if language == cs.SupportedLanguage.PYTHON:
         # Python records CPython's positional names, receiver included, and
         # stops at `*args` or `*`; `param_types` lists every declared
         # parameter, so more of those than positional names means a `*args`,
@@ -574,12 +606,9 @@ def _arity(found: _Callable, positional: tuple[str, ...] | None) -> _Arity | Non
         ):
             names = names[1:]
         return _Arity(len(names), found.declared > len(positional))
-    kept = [
-        p
-        for p in positional
-        if p != cs.POSITIONAL_RECEIVER_SELF
-        and not p.startswith(cs.POSITIONAL_RECEIVER_THIS_PREFIX)
-    ]
+    # Only the language that writes a receiver marker loses it: a JavaScript
+    # `function f(self)` takes one argument, as its Python twin does.
+    kept = [p for p in positional if not _is_receiver(p, language)]
     rest = [p for p in kept if p.startswith(cs.POSITIONAL_REST_PREFIX)]
     return _Arity(len(kept) - len(rest), bool(rest))
 

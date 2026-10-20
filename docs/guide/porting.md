@@ -72,7 +72,7 @@ impl Shape {
   "match": 3,
   "new_only": 1,
   "old_only": 1,
-  "paired_by": {"container": 5, "explicit": 0, "name": 0},
+  "paired_by": {"container": 0, "explicit": 0, "module": 5, "name": 0},
   "pairs": 5,
   "unknown": 0
 }
@@ -108,7 +108,7 @@ the Rust one does not.
     "qualified_name": "geo__e4d7ab2f.py.geometry.Shape.describe",
     "start_line": 22
   },
-  "paired_by": "container",
+  "paired_by": "module",
   "verdict": "DIFFERS"
 }
 ```
@@ -123,7 +123,8 @@ first:
 | `paired_by` | Meaning |
 |-------------|---------|
 | `explicit` | A `--pair OLD=NEW` you gave. Each side is a qualified name or a dotted suffix that names exactly one definition of its scope. |
-| `container` | The same name in the same container: the enclosing class for a method, the module's file for a function (the directory for a package entry file such as `__init__.py`, `mod.rs`, `lib.rs` or `index.ts`). |
+| `module` | The same name at the same module path relative to each scope, and in the same class for a method: `legacy/a/utils.py` pairs with `rewrite/a/utils.rs`, not with `rewrite/b/utils.rs`. A package entry file such as `__init__.py`, `mod.rs`, `lib.rs` or `index.ts` stands for its directory. |
+| `container` | The same name in the same container when the two layouts differ: the enclosing class for a method, the module file's stem for a function, so `lexer.py` still pairs with `cypher/lexer.rs`. |
 | `name` | The same name, the only one of its name left on each side, in different containers. Worth a look: a generic name such as `get` can pair two unrelated functions. |
 
 A name that still matches several definitions on both sides is never guessed:

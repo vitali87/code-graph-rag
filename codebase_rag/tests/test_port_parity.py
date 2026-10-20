@@ -93,15 +93,27 @@ FIXTURE: dict[str, str] = {
 }
 
 
-def _qn(rel: str) -> str:
-    return f"{PROJECT}.{rel}"
+# Repeated basenames (`a/utils`, `b/utils`) pair by their path under each
+# scope; a module the port moved (`lexer.py` -> `cypher/lexer.rs`) still pairs
+# by its file's stem.
+LAYOUTS = "port_layouts"
+LAYOUT_FIXTURE: dict[str, str] = {
+    "legacy/a/utils.py": "def run(x):\n    return x\n",
+    "legacy/b/utils.py": "def run():\n    return 0\n",
+    "legacy/lexer.py": "def tokenize(text):\n    return text\n",
+    "rewrite/a/utils.rs": "pub fn run(x: i64) -> i64 {\n    x\n}\n",
+    "rewrite/b/utils.rs": "pub fn run() -> i64 {\n    0\n}\n",
+    "rewrite/cypher/lexer.rs": "pub fn tokenize(text: &str) -> &str {\n    text\n}\n",
+}
 
 
-@pytest.fixture
-def indexed(temp_repo: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setattr(settings, "GRAPH_BACKEND", DIALECT_SQLITE)
-    root = temp_repo / PROJECT
-    for rel, text in FIXTURE.items():
+def _qn(rel: str, project: str = PROJECT) -> str:
+    return f"{project}.{rel}"
+
+
+def _index(parent: Path, project: str, files: dict[str, str]) -> Path:
+    root = parent / project
+    for rel, text in files.items():
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
@@ -113,9 +125,21 @@ def indexed(temp_repo: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             repo_path=root,
             parsers=parsers,
             queries=queries,
-            project_name=PROJECT,
+            project_name=project,
         ).run(force=True)
     return root
+
+
+@pytest.fixture
+def indexed(temp_repo: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setattr(settings, "GRAPH_BACKEND", DIALECT_SQLITE)
+    return _index(temp_repo, PROJECT, FIXTURE)
+
+
+@pytest.fixture
+def layouts(temp_repo: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setattr(settings, "GRAPH_BACKEND", DIALECT_SQLITE)
+    return _index(temp_repo, LAYOUTS, LAYOUT_FIXTURE)
 
 
 def _check(
@@ -123,12 +147,13 @@ def _check(
     new: str = "rs",
     pairs: Sequence[tuple[str, str]] = (),
     include_tests: bool = False,
+    project: str = PROJECT,
 ) -> ParityReport:
     with MemgraphIngestor(host="unused", port=0) as ingestor:
         return port_check(
             ingestor.fetch_all,
-            PortScope(PROJECT, old),
-            PortScope(PROJECT, new),
+            PortScope(project, old),
+            PortScope(project, new),
             pairs,
             include_tests=include_tests,
         )
@@ -143,7 +168,7 @@ def test_identical_twins_match_on_calls_and_arity(indexed: Path) -> None:
     report = _check()
     area = _pair_of(report, _qn("py.geometry.area"))
     assert area["new"]["qualified_name"] == _qn("rs.geometry.area")
-    assert area["paired_by"] == cs.PairedBy.CONTAINER
+    assert area["paired_by"] == cs.PairedBy.MODULE
     assert area["verdict"] == cs.ParityVerdict.MATCH
     assert area["calls"]["verdict"] == cs.ParityVerdict.MATCH
     assert area["arity"] == {
@@ -243,7 +268,12 @@ def test_the_summary_counts_the_report(indexed: Path) -> None:
     assert summary["pairs"] == len(report["pairs"]) == 5
     assert summary["differs"] == 2
     assert summary["match"] == 3
-    assert summary["paired_by"]["container"] == 5
+    assert summary["paired_by"] == {
+        "explicit": 0,
+        "module": 5,
+        "container": 0,
+        "name": 0,
+    }
     assert (summary["old_only"], summary["new_only"], summary["ambiguous"]) == (
         1,
         1,
@@ -255,6 +285,33 @@ def test_the_summary_counts_the_report(indexed: Path) -> None:
         "scope": "py",
         "definitions": 8,
     }
+
+
+def test_repeated_basenames_pair_by_their_path_under_each_scope(
+    layouts: Path,
+) -> None:
+    report = _check("legacy", "rewrite", project=LAYOUTS)
+    assert report["ambiguous"] == []
+    pairs = {
+        p["old"]["qualified_name"]: (p["new"]["qualified_name"], p["paired_by"])
+        for p in report["pairs"]
+    }
+    assert pairs == {
+        _qn("legacy.a.utils.run", LAYOUTS): (
+            _qn("rewrite.a.utils.run", LAYOUTS),
+            cs.PairedBy.MODULE,
+        ),
+        _qn("legacy.b.utils.run", LAYOUTS): (
+            _qn("rewrite.b.utils.run", LAYOUTS),
+            cs.PairedBy.MODULE,
+        ),
+        # Moved under `cypher/`, so only the file's stem still agrees.
+        _qn("legacy.lexer.tokenize", LAYOUTS): (
+            _qn("rewrite.cypher.lexer.tokenize", LAYOUTS),
+            cs.PairedBy.CONTAINER,
+        ),
+    }
+    assert report["summary"]["match"] == 3
 
 
 @pytest.mark.parametrize(
@@ -400,6 +457,23 @@ def test_arity_drops_receivers_in_every_language() -> None:
     ) == _Arity(1, False)
     assert _arity(_callable("m.rs", method), ("self", "x")) == _Arity(1, False)
     assert _arity(_callable("m.cs"), ("this s", "n?")) == _Arity(1, False)
+
+
+@pytest.mark.parametrize(
+    ("path", "positional", "fixed"),
+    [
+        ("m.js", ("self",), 1),
+        ("m.go", ("self", "x"), 2),
+        ("m.ts", ("this s",), 1),
+        ("m.java", ("self",), 1),
+    ],
+)
+def test_only_the_language_writing_a_receiver_marker_loses_it(
+    path: str, positional: tuple[str, ...], fixed: int
+) -> None:
+    # `self` is Rust's marker and `this name` C#'s; elsewhere they are
+    # ordinary parameters written as declared.
+    assert _arity(_callable(path), positional) == _Arity(fixed, False)
 
 
 def test_parameters_past_the_positional_run_leave_arity_open() -> None:

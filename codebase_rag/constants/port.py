@@ -25,14 +25,21 @@ PARITY_VERDICT_RANK: dict[ParityVerdict, int] = {
 
 
 class PairedBy(StrEnum):
-    """How a pair was found, strongest first: a `--pair` the user gave, the
-    same normalised name in the same container (class, or module file), or
-    the same name alone with the containers differing, which is the pairing
-    to verify."""
+    """How a pair was found, strongest first: a `--pair` the user gave; the
+    same normalised name at the same module path relative to each scope (and
+    in the same class, for a method); the same name in the same container
+    (the class, or the module file's stem) when the layouts differ; or the
+    same name alone with the containers differing, which is the pairing to
+    verify."""
 
     EXPLICIT = "explicit"
-    NAME = "name"
+    MODULE = "module"
     CONTAINER = "container"
+    NAME = "name"
+
+
+# The automatic tiers, tried in this order on what the previous one left.
+PORT_PAIRING_TIERS = (PairedBy.MODULE, PairedBy.CONTAINER, PairedBy.NAME)
 
 
 PORT_CALLABLE_LABELS = frozenset({NodeLabel.FUNCTION.value, NodeLabel.METHOD.value})
