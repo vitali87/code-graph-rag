@@ -14,6 +14,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.parser_loader import load_parsers
+from codebase_rag.structural_delta import _call_starting_at
 from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
 
 _CSHARP = """\
@@ -182,3 +184,31 @@ def test_bare_calls_and_constructions_keep_their_start(tmp_path: Path) -> None:
     assert any(
         rel == "INSTANTIATES" and (line, col) == (9, 15) for rel, _c, line, col in sites
     ), sites
+
+
+_UNBOUND = b"""\
+class Child(Base):
+    def __init__(self, a):
+        Base.__init__(self, a)
+        register(Base.m)
+"""
+
+
+@pytest.mark.parametrize(
+    "col",
+    [8, 13],
+    ids=["call start, as a graph indexed before the fix recorded it", "member name"],
+)
+def test_the_arity_check_reads_a_member_call_back_from_its_site(col: int) -> None:
+    # `cgr check` reads `Base.__init__(self, a)` back from its site to see
+    # the `self` it passes; the site now starts at `__init__`, not `Base`.
+    tree = load_parsers()[0][cs.SupportedLanguage.PYTHON].parse(_UNBOUND)
+    call = _call_starting_at(tree.root_node, 2, col)
+    assert call is not None and call.text == b"Base.__init__(self, a)"
+
+
+def test_a_member_name_that_is_not_called_names_no_call() -> None:
+    # `Base.m` passed as a value: its name is no call's site, and the
+    # enclosing `register(...)` call is sited at `register`.
+    tree = load_parsers()[0][cs.SupportedLanguage.PYTHON].parse(_UNBOUND)
+    assert _call_starting_at(tree.root_node, 3, 22) is None
