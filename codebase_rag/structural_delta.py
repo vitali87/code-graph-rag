@@ -744,21 +744,35 @@ def _move_to_working_tree(
     if old is None or new is None or dangling["line"] is None:
         return
     line = dangling["line"] + new.start_line - old.start_line
-    target = before.definitions.get(dangling["target"])
-    name = target.name if target else dangling["target"].rpartition(cs.SEPARATOR_DOT)[2]
     if (old.fingerprint, old.end_line - old.start_line) == (
         new.fingerprint,
         new.end_line - new.start_line,
-    ) and _reads_call(tree, line, dangling["col"], name):
+    ) and _reads_call(tree, line, dangling["col"], _call_names(before, dangling)):
         dangling["line"] = line
         return
     dangling["line_from"] = cs.DANGLING_LINE_FROM_BASE
 
 
+def _call_names(before: Snapshot, dangling: DanglingCaller) -> list[str]:
+    """The names a dangling call can be spelled by in its caller's file.
+
+    The target's own name, and what the file imports it as: after `from
+    util import helper as h` the call reads `h()`.
+    """
+    target = before.definitions.get(dangling["target"])
+    name = target.name if target else dangling["target"].rpartition(cs.SEPARATOR_DOT)[2]
+    aliases = {
+        b.bound
+        for b in before.bindings
+        if b.importer_path == dangling["path"] and b.symbol == dangling["target"]
+    }
+    return [name, *sorted(aliases - {name})]
+
+
 def _reads_call(
-    tree: _WorkingTree | None, line: int, col: int | None, name: str
+    tree: _WorkingTree | None, line: int, col: int | None, names: list[str]
 ) -> bool:
-    """Whether the code at 1-based `line`, byte `col`, names `name` first.
+    """Whether the code at 1-based `line`, byte `col`, names one of `names` first.
 
     Plainly or through a qualifier: `helper(`, `self.helper(`,
     `util::helper(`, `new Helper(`. The skeleton sees neither a comment's
@@ -772,7 +786,8 @@ def _reads_call(
         rest = row.encode(cs.ENCODING_UTF8)[col:].decode(cs.ENCODING_UTF8)
     except UnicodeDecodeError:
         return False
-    pattern = cs.DANGLING_CALL_QUALIFIER_PATTERN + re.escape(name)
+    spelled = "|".join(re.escape(name) for name in names)
+    pattern = f"{cs.DANGLING_CALL_QUALIFIER_PATTERN}(?:{spelled})"
     if re.match(pattern + cs.DANGLING_CALL_NAME_END_PATTERN, rest) is None:
         return False
     return not _inside_text(tree.root, line - 1, col)

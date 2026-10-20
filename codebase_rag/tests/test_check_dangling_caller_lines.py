@@ -37,10 +37,12 @@ def indexed(tmp_path: Path) -> tuple[Path, _StatefulIngestor, GraphUpdater]:
     return _index(tmp_path, _APP)
 
 
-def _index(tmp_path: Path, app: str) -> tuple[Path, _StatefulIngestor, GraphUpdater]:
+def _index(
+    tmp_path: Path, app: str, elsewhere: str = _ELSEWHERE
+) -> tuple[Path, _StatefulIngestor, GraphUpdater]:
     root = tmp_path / PROJECT
     _write(root, "app.py", app)
-    _write(root, "far.py", _ELSEWHERE)
+    _write(root, "far.py", elsewhere)
     store = _StatefulIngestor()
     parsers, queries = load_parsers()
     updater = GraphUpdater(
@@ -184,3 +186,22 @@ def test_a_call_through_a_qualifier_is_moved_too(tmp_path: Path) -> None:
     sites = _sites(_check(root, store, updater, ["app.py"]))
 
     assert sites["app.Box.uses"] == (3, 15, ""), sites
+
+
+def test_a_call_through_an_import_alias_is_moved_too(tmp_path: Path) -> None:
+    # CodeRabbit, PR #3245: `from app import helper as h` spells the call
+    # `h()`, not by the definition's name.
+    elsewhere = "from app import helper as h\n\n\ndef far():\n    return h()\n"
+    root, store, updater = _index(tmp_path, _APP, elsewhere)
+    _write(root, "app.py", _APP.replace(_HELPER, ""))
+    _write(
+        root,
+        "far.py",
+        elsewhere.replace("def far", "def first():\n    return 0\n\n\ndef far"),
+    )
+
+    sites = _sites(_check(root, store, updater, ["app.py", "far.py"]))
+
+    edited = (root / "far.py").read_text().splitlines()
+    assert sites["far.far"] == (9, 11, ""), sites
+    assert edited[8][11:].startswith("h()"), edited
