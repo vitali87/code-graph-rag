@@ -435,14 +435,14 @@ def test_ordinary_range_does_not_ship(tmp_path: Path) -> None:
     assert out["breaking"] == "false"
 
 
-def test_breaking_label_on_an_earlier_commit_of_the_range_is_reported(
+def test_breaking_label_on_an_earlier_commit_of_the_range_ships(
     tmp_path: Path,
 ) -> None:
     _commits(tmp_path, {OLDER: "feat: a", SHA: "fix: b"}, {OLDER: "breaking change"})
     out = _decide(tmp_path, f"{OLDER}\\n{SHA}\\n")
     assert out["breaking"] == "true"
-    # A breaking change waits for the cadence like any other release.
-    assert out["release"] == "false"
+    # A breaking change does not wait for the cadence, like a security fix.
+    assert out["release"] == "true"
 
 
 def test_a_security_fix_does_not_hide_a_breaking_label(tmp_path: Path) -> None:
@@ -806,6 +806,12 @@ def test_a_breaking_change_behind_a_deferred_bump_is_not_counted_again(
     assert out["breaking"] == "false"
 
 
+def test_a_deferred_breaking_release_ships_on_the_next_bump(tmp_path: Path) -> None:
+    # Counted once for the number, but its release is still owed.
+    out = _deferred_breaking_bump(tmp_path, {OLDER: "breaking change"})
+    assert out["release"] == "true"
+
+
 def test_the_security_scan_still_reads_past_the_last_bump(tmp_path: Path) -> None:
     out = _deferred_breaking_bump(tmp_path, {OLDER: "security\nbreaking change"})
     assert out["security"] == "true"
@@ -845,6 +851,12 @@ def test_a_hand_set_version_already_accounts_for_its_breaking_change(
     out = _hand_set_version(tmp_path, {HAND_SET: "breaking change"})
     assert out["breaking"] == "false"
     assert _lines(tmp_path / "contents_calls") == [HAND_SET, OUTSIDE]
+
+
+def test_a_hand_set_breaking_change_still_ships(tmp_path: Path) -> None:
+    # The merge that set the version ran no bump, so nothing released it.
+    out = _hand_set_version(tmp_path, {HAND_SET: "breaking change"})
+    assert out["release"] == "true"
 
 
 def test_a_breaking_change_after_a_hand_set_version_counts(tmp_path: Path) -> None:
