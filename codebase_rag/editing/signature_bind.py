@@ -487,6 +487,21 @@ def _value_at_site(
     raise _Unmapped(cs.SIGNATURE_SITE_NO_VALUE.format(name=spec.name))
 
 
+def _refuse_dropped_effects(
+    sources: Sequence[_Source | None], bound: Mapping[int, _Binding]
+) -> None:
+    """A value no new parameter takes must run no code.
+
+    Rendering leaves it out, so `helper(1, save())` with `b` dropped would
+    become `helper(1)` and stop calling `save()`. A name or a plain literal
+    is safe to leave out (Greptile, PR #2166).
+    """
+    taken = {s.index for s in sources if s is not None and s.literal is None}
+    for index, binding in sorted(bound.items()):
+        if index not in taken and not binding.inert:
+            raise _Unmapped(cs.SIGNATURE_SITE_DROPS_EFFECT.format(text=binding.text))
+
+
 def _render_site(
     candidate: _Candidate,
     new: Sequence[ParamSpec],
@@ -499,6 +514,7 @@ def _render_site(
     the mapping cannot complete keeps the inner rewrites as they were.
     """
     bound, consumed = _fold(candidate, edits)
+    _refuse_dropped_effects(sources, bound)
     text = _render_arguments(new, sources, bound)
     for edit in consumed:
         edits.remove(edit)

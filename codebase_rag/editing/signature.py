@@ -171,6 +171,16 @@ class SignatureChanger:
                             name=dropped, qn=header.qn
                         )
                     )
+        # The other way round: a genuinely new parameter shadows whatever
+        # the body read under that name, so `return len(a)` with a new
+        # `len=None` calls the parameter. Renamed targets are checked by the
+        # body rewrite itself (Greptile, PR #2166).
+        for header in headers:
+            for added in (s.name for s in new if s.name not in old_names):
+                if _body_reads(header, added):
+                    raise SignatureRefused(
+                        cs.SIGNATURE_NEW_NAME_TAKEN.format(name=added, qn=header.qn)
+                    )
         sites: list[SignatureSite] = []
         edits: list[_Edit] = []
         for header in headers:

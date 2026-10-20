@@ -228,6 +228,71 @@ def test_dropping_a_parameter_the_body_reads_is_refused(
         change_signature(root, store.fetch_all, PROJECT, HELPER, ["a"])
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        "    return len(a)\n",
+        # A nested scope reads it through the closure just the same.
+        "    def inner():\n        return len(a)\n\n    return inner()\n",
+    ],
+    ids=["body", "nested-scope"],
+)
+def test_a_new_parameter_the_body_already_reads_is_refused(
+    temp_repo: Path, body: str
+) -> None:
+    # `len(a)` would start calling the new parameter instead of the
+    # builtin, and nothing would fail until the call (Greptile, #2166).
+    source = f"def helper(a):\n{body}"
+    files = {"pkg/__init__.py": "", UTIL: source}
+    root, store, _updater = _indexed(temp_repo, files)
+    with pytest.raises(SignatureRefused, match="Cannot add parameter len"):
+        change_signature(root, store.fetch_all, PROJECT, HELPER, ["a", "len=None"])
+    assert _read(root, UTIL) == source
+
+
+def test_a_new_parameter_named_like_a_keyword_label_is_added(
+    temp_repo: Path,
+) -> None:
+    # `g(len=1)` names g's parameter, not anything in this scope.
+    source = "def helper(a):\n    return dict(len=a)\n"
+    files = {"pkg/__init__.py": "", UTIL: source}
+    root, store, _updater = _indexed(temp_repo, files)
+    report = change_signature(root, store.fetch_all, PROJECT, HELPER, ["a", "len=None"])
+    assert report.applied, report.message
+    assert "def helper(a, len=None):" in _read(root, UTIL)
+
+
+def test_a_dropped_argument_that_runs_code_leaves_the_site_unmapped(
+    temp_repo: Path,
+) -> None:
+    # `helper(1, save())` rewritten as `helper(1)` would stop calling
+    # `save()` (Greptile, #2166). A name or a literal runs nothing.
+    root, store, _updater = _indexed(
+        temp_repo,
+        {
+            "pkg/__init__.py": "",
+            UTIL: "def helper(a, b):\n    return a\n",
+            APP: (
+                "from pkg.util import helper\n\n\n"
+                "def save():\n    return 1\n\n\n"
+                "def run():\n    return helper(1, save())\n\n\n"
+                "def run_inert(x):\n    return helper(1, x)\n"
+            ),
+        },
+    )
+    report = change_signature(
+        root, store.fetch_all, PROJECT, HELPER, ["a"], dry_run=True
+    )
+    assert [(site.owner, site.reason) for site in report.unmapped] == [
+        (
+            f"{PROJECT}.pkg.app.run",
+            cs.SIGNATURE_SITE_DROPS_EFFECT.format(text="save()"),
+        )
+    ]
+    assert "+    return helper(1)\n" in report.diff
+    assert "+    return helper(1, save())\n" not in report.diff
+
+
 def test_literal_of_the_wrong_type_is_refused(
     repo: tuple[Path, _StatefulIngestor, GraphUpdater],
 ) -> None:

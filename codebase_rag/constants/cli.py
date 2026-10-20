@@ -1010,6 +1010,10 @@ SIGNATURE_BODY_NAME_TAKEN = (
     "Cannot rename parameter {old} of {qn} to {new}: `{new}` is already used "
     "in its body"
 )
+SIGNATURE_NEW_NAME_TAKEN = (
+    "Cannot add parameter {name} to {qn}: `{name}` is already used in its "
+    "body, which would start reading the parameter instead"
+)
 SIGNATURE_HIERARCHY_MISMATCH = (
     "Cannot change the signature of {qn}: its override {member} declares "
     "({theirs}) where {qn} declares ({ours}); make the hierarchy agree first"
@@ -1048,6 +1052,10 @@ SIGNATURE_SITE_TOO_MANY = (
 )
 SIGNATURE_SITE_NO_VALUE = "no value for `{name}`; map it or give it a default"
 SIGNATURE_SITE_OVERLAPS = "its arguments overlap another edit of this change"
+SIGNATURE_SITE_DROPS_EFFECT = (
+    "passes `{text}` for a dropped parameter, and leaving it out would skip "
+    "the code it runs"
+)
 SIGNATURE_SITE_EXPLICIT_RECEIVER = (
     "reaches the method through its class and passes the receiver as an "
     "argument (`{text}`); rewrite it by hand"
