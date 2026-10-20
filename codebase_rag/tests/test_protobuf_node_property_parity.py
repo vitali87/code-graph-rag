@@ -88,11 +88,15 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     # `js_exports` (issue #3274) is read back only by an incremental run's
     # rehydration; absent reads as "no stored table", which is how every run
     # behaved before #3274, and the next parse of the module rewrites it.
+    # `php_namespace` (issue #3277) is read back only by an incremental run's
+    # rehydration; absent reads as "no namespace recorded", as every run did
+    # before #3277, until the file is next parsed.
     "Module": frozenset(
         {
             "absolute_path",
             "end_line",
             "js_exports",
+            "php_namespace",
             "start_line",
             "unresolved_specifiers",
             "unresolved_references",

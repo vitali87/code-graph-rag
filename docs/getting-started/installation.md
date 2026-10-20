@@ -133,7 +133,7 @@ uv tool install --compile-bytecode "code-graph-rag[treesitter-full,ast-grep,sema
 
 ## Install from git
 
-PyPI and GitHub Releases only receive every 50th version, plus any security fix, so they usually trail `main` by tens of versions. To run the newest code, install straight from the repository:
+PyPI and GitHub Releases only receive every 50th version, plus any security fix or breaking change, so they usually trail `main` by tens of versions. To run the newest code, install straight from the repository:
 
 ```bash
 uv tool install "code-graph-rag[treesitter-full,ast-grep,semantic] @ git+https://github.com/vitali87/code-graph-rag@main"
