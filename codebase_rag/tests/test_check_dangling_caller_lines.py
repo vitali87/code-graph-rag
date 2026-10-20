@@ -205,3 +205,45 @@ def test_a_call_through_an_import_alias_is_moved_too(tmp_path: Path) -> None:
     edited = (root / "far.py").read_text().splitlines()
     assert sites["far.far"] == (9, 11, ""), sites
     assert edited[8][11:].startswith("h()"), edited
+
+
+@pytest.mark.parametrize(
+    ("imports", "params", "body", "edited_body"),
+    [
+        # CodeRabbit, PR #3245: the file imports the target as `a` and as
+        # `b`, so either name reads as the call, and the skeleton drops
+        # names: `a()` can trade lines with a `b()` the parameter shadows.
+        pytest.param(
+            "from app import helper as a\nfrom app import helper as b\n",
+            "b",
+            "    x = a()\n    y = b()\n",
+            "    y = b()\n    x = a()\n",
+            id="two-aliases",
+        ),
+        # Imported as `h`, the target's own name calls something else: here
+        # the parameter `helper`.
+        pytest.param(
+            "from app import helper as h\n",
+            "helper",
+            "    x = h()\n    y = helper()\n",
+            "    y = helper()\n    x = h()\n",
+            id="own-name-shadowed",
+        ),
+    ],
+)
+def test_a_call_traded_with_a_shadowed_spelling_says_its_line_is_the_base_one(
+    tmp_path: Path, imports: str, params: str, body: str, edited_body: str
+) -> None:
+    # Negative: far's start moved by +4, but the call moved within it, so
+    # the shifted line holds the parameter's call, not the dangling one.
+    head = f"{imports}\n\ndef far({params}):\n"
+    tail = "    return x + y\n"
+    root, store, updater = _index(tmp_path, _APP, head + body + tail)
+    _write(root, "app.py", _APP.replace(_HELPER, ""))
+    first = "def first():\n    return 0\n\n\ndef far"
+    _write(root, "far.py", head.replace("def far", first) + edited_body + tail)
+
+    sites = _sites(_check(root, store, updater, ["app.py", "far.py"]))
+
+    base_line = head.count("\n") + 1
+    assert sites["far.far"] == (base_line, 8, cs.DANGLING_LINE_FROM_BASE), sites
