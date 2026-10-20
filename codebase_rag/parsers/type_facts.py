@@ -21,7 +21,7 @@ Contract for the two properties:
 from __future__ import annotations
 
 import re
-from collections.abc import Container, Mapping
+from collections.abc import Callable, Container, Mapping
 from typing import NamedTuple
 
 from tree_sitter import Node
@@ -335,6 +335,8 @@ class TypeReferenceResolver:
         # Only generic C# types are recorded: an absent qn declares none.
         self._csharp_arity = csharp_generic_arity or {}
         self._unparsed: Container[str] = frozenset()
+        self._restore_imports: Callable[[str], None] | None = None
+        self._imports_tried: set[str] = set()
 
     def _is_type(self, qn: str) -> bool:
         # An annotation is a type position: a TS `type`/`interface` sharing
@@ -353,10 +355,29 @@ class TypeReferenceResolver:
         """
         self._partial_groups = partial_groups
 
-    def join_unparsed(self, unparsed: Container[str]) -> None:
+    def join_unparsed(
+        self,
+        unparsed: Container[str],
+        restore_imports: Callable[[str], None] | None = None,
+    ) -> None:
         """The definitions an incremental run restored from the graph rather
-        than parsed: those of every file it left unchanged."""
+        than parsed: those of every file it left unchanged. `restore_imports`
+        loads the imports of such a file, which that run did not parse, by
+        its module qn."""
         self._unparsed = unparsed
+        self._restore_imports = restore_imports
+
+    def _imports_loaded(self, module_qn: str) -> bool:
+        """Whether `module_qn`'s imports were missing and are held now."""
+        if (
+            self._restore_imports is None
+            or module_qn in self._imports
+            or module_qn in self._imports_tried
+        ):
+            return False
+        self._imports_tried.add(module_qn)
+        self._restore_imports(module_qn)
+        return module_qn in self._imports
 
     def is_unparsed(self, qn: str) -> bool:
         return qn in self._unparsed
@@ -504,12 +525,15 @@ class TypeReferenceResolver:
                 )
                 continue
             qn = self.resolve(name, module_qn, arity)
-            # A requeued annotation resolves without its file's imports. A
-            # type in an unchanged file was there when that file was parsed
-            # with them, and its edges hold what they chose, so reaching it
-            # now is only the nearest same-named guess: `from matcher.core
-            # import Match as Bar` reached another file's `Bar` (#3007 review).
-            if qn is not None and not (requeued and qn in self._unparsed):
+            # A requeued annotation's file was not parsed, so its imports may
+            # not be held, and without them the type reached is only the
+            # nearest same-named guess: `from matcher.core import Match as
+            # Bar` reached another file's `Bar` (#3007 review). They are
+            # loaded once such a name reaches a type, and the name resolved
+            # again as a fresh index resolves it.
+            if qn is not None and requeued and self._imports_loaded(module_qn):
+                qn = self.resolve(name, module_qn, arity)
+            if qn is not None:
                 found.setdefault(qn, None)
         return self._every_part(found)
 

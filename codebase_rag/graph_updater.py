@@ -2578,7 +2578,9 @@ class GraphUpdater:
         self._ungroup_rehydrated_non_partials()
         # Return/parameter annotations resolve against the complete registry
         # (issue #1527), so a type defined in a later file still gets its edge.
-        typed = self.factory.definition_processor.emit_type_edges()
+        typed = self.factory.definition_processor.emit_type_edges(
+            self._restore_requeued_imports
+        )
         if typed:
             logger.info(ls.TYPE_EDGES_EMITTED, count=typed)
         return known_module_paths
@@ -2656,6 +2658,20 @@ class GraphUpdater:
                     )
                 pending.append(holder)
         return restored
+
+    def _restore_requeued_imports(self, module_qn: str) -> None:
+        """Parse the imports of an unchanged module for its requeued
+        annotations, which resolve through them as a fresh index's do: no
+        re-parsed file need reach it (#3007 review)."""
+        module_paths = self.factory.definition_processor.module_qn_to_file_path
+        path = module_paths.get(module_qn)
+        if path is None or not self._restore_module_imports(module_qn, path):
+            return
+        import_processor = self.factory.import_processor
+        # Re-pointed as the closure walk re-points what it restores (#2586).
+        import_processor.point_module_imports_at_own_language_siblings(
+            module_qn, module_paths, import_processor.stem_sibling_modules(module_paths)
+        )
 
     def _restore_module_imports(self, module_qn: str, path: Path) -> bool:
         """Parse one unchanged module's imports; False when Pass 2 would not."""
