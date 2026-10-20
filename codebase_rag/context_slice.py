@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import re
+import textwrap
 from collections.abc import Callable, Iterable
 from functools import lru_cache, partial
 from pathlib import Path
@@ -439,9 +440,15 @@ def _piece_tokens(
     )
     # The piece prints with its own count where it was measured with 0, and
     # a count of four digits takes more tokens than "0" does: measure again
-    # with the count in place until it stops growing.
-    printed = partial(json.dumps, piece, indent=cs.MCP_JSON_INDENT)
-    while (cost := count_tokens(printed())) > piece["tokens"]:
+    # with the count in place until it stops growing. It is measured as
+    # the slice prints it, every line indented to its depth there: measured
+    # flush left, a 10,000 budget printed 10,478 tokens of pieces and fields.
+    margin = " " * (cs.CONTEXT_PIECE_DEPTH * cs.MCP_JSON_INDENT)
+    while (
+        cost := count_tokens(
+            textwrap.indent(json.dumps(piece, indent=cs.MCP_JSON_INDENT), margin)
+        )
+    ) > piece["tokens"]:
         piece["tokens"] = cost
     return piece["tokens"]
 

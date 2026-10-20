@@ -48,8 +48,9 @@ embedding similarity for a free-text task, then name. Tokens are counted
 with the same encoder the query tools use, and pieces are taken in order
 while they fit: the total never exceeds `budget_tokens`. A piece is
 charged for what it prints, its source and the fields beside it (name,
-file, span, reason), so a slice of one-line call sites cannot print many
-times its budget in metadata (issue #3243). The target is special: when it
+file, span, reason) at the indentation the slice prints them with, so a
+slice of one-line call sites cannot print many times its budget in
+metadata (issue #3243). The target is special: when it
 alone exceeds the budget it is trimmed to the most leading lines that fit
 and the slice is marked `truncated`; a budget too small for even its first
 line names it in `omitted` instead. `omitted_count` counts every
