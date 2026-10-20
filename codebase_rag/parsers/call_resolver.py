@@ -140,8 +140,9 @@ class _CallSite(NamedTuple):
     language: cs.SupportedLanguage | None
     call_point: int | None
     constructing: bool
-    # A PHP `helper()` with no receiver: a function call, never a method.
-    function_call: bool = False
+    # The call is on the caller's own object (`label()`, `this->label()`,
+    # `$this->label()`), not on another receiver its bare name hides.
+    implicit_receiver: bool = False
 
 
 def _rust_assoc_path(call: _CallSite) -> tuple[list[str], str] | None:
@@ -726,12 +727,14 @@ class CallResolver:
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
         constructing: bool = False,
-        function_call: bool = False,
+        implicit_receiver: bool = False,
     ) -> tuple[str, str] | None:
         """`constructing`: the call is a Java/C# `new X(...)`, so `call_name`
         names a TYPE and the simple-name fallback must not offer a method or
-        function that merely shares the name. `function_call`: a PHP call
-        with no receiver, which never reaches a method its class inherits."""
+        function that merely shares the name. `implicit_receiver`: the call is
+        on the caller's own object, so it may reach a method its class
+        inherits; a PHP function call or a call on another receiver never
+        does, though its name can be just as bare."""
         self.last_resolution = cs.EdgeResolution.EXACT
         result = self._reject_class_via_value_receiver(
             self._redirect_protocol_method(
@@ -744,7 +747,7 @@ class CallResolver:
                     language,
                     call_point,
                     constructing,
-                    function_call,
+                    implicit_receiver,
                 )
             ),
             call_name,
@@ -2050,7 +2053,7 @@ class CallResolver:
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
         constructing: bool = False,
-        function_call: bool = False,
+        implicit_receiver: bool = False,
     ) -> tuple[str, str] | None:
         call = _CallSite(
             call_name,
@@ -2063,7 +2066,7 @@ class CallResolver:
             language,
             call_point,
             constructing,
-            function_call,
+            implicit_receiver,
         )
         handled, result = self._resolve_caller_scoped_stages(call)
         if handled:
@@ -2423,7 +2426,7 @@ class CallResolver:
             call.language not in _INHERITED_BARE_CALL_LANGUAGES
             or not class_qn
             or call.constructing
-            or call.function_call
+            or not call.implicit_receiver
             or cs.SEPARATOR_DOT in name
             or f"{class_qn}{cs.SEPARATOR_DOT}{name}" in self.function_registry
         ):
@@ -6992,6 +6995,8 @@ class CallResolver:
             caller_qn,
             language,
             call_point,
+            # `make()` in `make().m()` has no receiver of its own.
+            implicit_receiver=True,
         )
         if resolved is not None:
             return_type = self._callee_return_type(resolved[1], language)

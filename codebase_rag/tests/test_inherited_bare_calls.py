@@ -395,3 +395,128 @@ def test_a_dart_inherited_call_stays_exact_where_no_import_can_hide_it(
     # `package:bloc` import to bring in, and plain.dart imports only
     # base.dart, which the guard reads and which declares no `shout`.
     assert _callees(dart_package, caller) == {callee: "exact"}, dart_package
+
+
+# PHP, C++ and Scala name a call on any receiver by its bare method too:
+# `$other->label()`, `a.b.label()` and `xs label y` reach the resolver as
+# `label`, just as `$this->label()`, `label()` and `this.label(1)` do. Only a
+# call on the caller's own object reaches what its class inherits; the others
+# keep the name search's answer.
+_PHP_RECEIVERS = {
+    "receivers.php": """\
+<?php
+class Archive { public function label(): string { return "archive"; } }
+class Base { public function label(): string { return "base"; } }
+class Circle extends Base {
+    private $repo;
+    public function otherCall($other): string { return $other->label(); }
+    public function chainCall(): string { return $this->repo->label(); }
+    public function scopedCall(): string { return Archive::label(); }
+    public function nullsafeCall(): string { return $this?->label(); }
+}
+""",
+}
+_CPP_RECEIVERS = {
+    "receivers.cpp": """\
+class Archive { public: int label() { return 0; } };
+class Base {
+ public:
+  int label() { return 1; }
+  Archive* getA() { return nullptr; }
+};
+struct Holder { Archive b; };
+class Circle : public Base {
+ public:
+  Archive items[2];
+  int factoryCall() { return getA()->label(); }
+  int chainCall(Holder a) { return a.b.label(); }
+  int indexCall() { return items[0].label(); }
+  int derefCall(Archive* p) { return (*p).label(); }
+  int derefThisCall() { return (*this).label(); }
+};
+""",
+}
+_SCALA_RECEIVERS = {
+    "Receivers.scala": """\
+package s
+class Archive { def label(y: Int): String = "archive" }
+class Base { def label(y: Int): String = "base" }
+class Circle extends Base {
+  def infixCall(xs: Archive, y: Int): String = xs label y
+  def dotCall(xs: Archive): String = xs.label(1)
+}
+""",
+}
+
+
+@pytest.fixture(scope="module")
+def receivers(tmp_path_factory: pytest.TempPathFactory) -> dict[str, _Calls]:
+    return {
+        grammar: _calls(
+            tmp_path_factory.mktemp(f"{grammar}3169r") / "rcv", files, grammar
+        )
+        for grammar, files in (
+            ("php", _PHP_RECEIVERS),
+            ("cpp", _CPP_RECEIVERS),
+            ("scala", _SCALA_RECEIVERS),
+        )
+    }
+
+
+@pytest.mark.parametrize(
+    ("grammar", "caller"),
+    [
+        ("php", "receivers.Circle.otherCall"),
+        ("php", "receivers.Circle.chainCall"),
+        ("php", "receivers.Circle.scopedCall"),
+        ("cpp", "receivers.Circle.chainCall"),
+        ("cpp", "receivers.Circle.indexCall"),
+        ("cpp", "receivers.Circle.derefCall"),
+        ("scala", "Receivers.Circle.infixCall"),
+        ("scala", "Receivers.Circle.dotCall"),
+    ],
+    ids=[
+        "php-other-variable",
+        "php-property-chain",
+        "php-other-class",
+        "cpp-member-chain",
+        "cpp-subscript",
+        "cpp-dereferenced-pointer",
+        "scala-infix",
+        "scala-other-value",
+    ],
+)
+def test_a_call_on_another_receiver_never_binds_an_inherited_method(
+    receivers: dict[str, _Calls], grammar: str, caller: str
+) -> None:
+    edges = receivers[grammar]
+    callees = _callees(edges, caller)
+    assert not any(to.endswith(".Base.label") for to in callees), edges
+    assert any(to.endswith(".Archive.label") for to in callees), edges
+
+
+@pytest.mark.parametrize(
+    ("grammar", "caller", "callee"),
+    [
+        ("php", "receivers.Circle.nullsafeCall", "receivers.Base.label"),
+        ("cpp", "receivers.Circle.derefThisCall", "receivers.Base.label"),
+    ],
+    ids=["php-nullsafe-this", "cpp-dereferenced-this"],
+)
+def test_a_call_on_the_own_object_still_binds_the_base_method(
+    receivers: dict[str, _Calls], grammar: str, caller: str, callee: str
+) -> None:
+    # Controls: `$this?->label()` and `(*this).label()` are calls on the
+    # caller's own object, as `$this->label()` and `this->label()` are.
+    assert _callees(receivers[grammar], caller) == {callee: "exact"}, receivers[grammar]
+
+
+def test_an_inherited_factory_still_types_the_chain_it_starts(
+    receivers: dict[str, _Calls],
+) -> None:
+    # Control: `getA()` in `getA()->label()` has no receiver of its own, so it
+    # is Base.getA, whose return type then binds `label` on Archive.
+    assert _callees(receivers["cpp"], "receivers.Circle.factoryCall") == {
+        "receivers.Base.getA": "exact",
+        "receivers.Archive.label": "exact",
+    }, receivers["cpp"]
