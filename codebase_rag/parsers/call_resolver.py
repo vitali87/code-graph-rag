@@ -3258,6 +3258,16 @@ class CallResolver:
         # candidate's parent may equal an import or sit anywhere under one.
         import_map = self.import_processor.import_mapping.get(module_qn) or {}
         imported = set(import_map.values())
+        # A default import names `<module>.default`; the class the module
+        # default-exports is what it makes visible (issue #3179).
+        imported |= {
+            self.import_processor.follow_js_default_import(
+                value,
+                self.type_inference.module_qn_to_file_path,
+                self.function_registry,
+            )
+            for value in imported
+        }
         visible = [
             qn
             for qn in candidates

@@ -35,6 +35,19 @@ generation of the graph. Measured overhead on top of the re-ingest is
 reported per call as `delta_ms`; the benchmark (`benchmarks/bench_reingest.py`)
 records it next to the re-ingest itself.
 
+A caller the edit touched is judged by its new body (issue #3246). If that
+body no longer names a removed or renamed symbol, the call went with it: a
+callback replaced by a loop, a named function expression swapped for an
+arrow, a nested helper inlined. Such a caller is no dangling caller. An
+anonymous function is never named, so a caller re-parsed without it no
+longer calls it. A body that still names the symbol, or one that cannot be
+read, keeps the caller listed. So does a call that need not name its
+callee: one to a function of another file, which an import binds under any
+name (`from lib import helper as h`, a default import, a `require` of the
+whole module); one to a method, which runs under names it does not carry
+(`Widget(1)` calls `Widget.__init__`); and one to a function taken as a
+value elsewhere (`h = helper; h(x)`).
+
 ## What it reports
 
 ```json
@@ -77,7 +90,7 @@ records it next to the re-ingest itself.
 | `symbols.renamed`    | A symbol that disappeared while one with the same whole-skeleton fingerprint appeared in the same file. Paired one-to-one. |
 | `symbols.changed`    | A symbol whose skeleton fingerprint or declared positional parameters moved. A change to a literal alone does not register here. |
 | `dangling_callers`   | Call sites of a removed or renamed symbol that still name it: every caller in a file that was not part of the edit, and callers in edited files that did not re-bind to the new name. The `line`/`col` are the site's recorded position. |
-| `dangling_importers` | Import statements and Python `__all__` entries that still name a removed or renamed symbol (issue #2516): a package `__init__` re-exporting it, say, with no call site to go with the import. `kind` is `import` (the statement's position; `name` is the imported name) or `__all__` (the string entry's position; `name` is the name the module exported it under). An importer the edit did not touch is always listed; one it touched only if it still names the symbol. Nothing is listed while the old module still binds the name, as it does after a move that leaves `from new_home import name` behind. A replacement import is followed to its target, into modules the edit did not touch as well, so one naming nothing there does not count, while a wildcard import of a module that defines the name does; a Python module's assignments are read from its source, and a target outside the project is taken at its word. A string in a comment inside `__all__` exports nothing. |
+| `dangling_importers` | Import statements and Python `__all__` entries that still name a removed or renamed symbol (issue #2516): a package `__init__` re-exporting it, say, with no call site to go with the import. `kind` is `import` (the statement's position; `name` is the imported name) or `__all__` (the string entry's position; `name` is the name the module exported it under). An importer the edit did not touch is always listed; one it touched only if it still names the symbol. Nothing is listed while the old module still binds the name, as it does after a move that leaves `from new_home import name` behind. A replacement import is followed to its target, into modules the edit did not touch as well, so one naming nothing there does not count, while a wildcard import of a module that defines the name does; a Python module's assignments are read from its source, and a target outside the project is taken at its word. A string in a comment inside `__all__` exports nothing. An import of a **module** the edit deleted or moved (issue #3266) is listed with `kind` `module`: `import pkg.signals`, `from pkg import util`, `import pkg.util as pu`, an ES `export * from "./util"` or `import * as u from "./util"`. `target` is the module, `name` what the statement binds (`*` for a re-export), and `renamed_to` the module it moved to, taken from the definitions that moved with it or, for a module defining nothing, the one new module with its file name. A Python module turned into a package, or a JS/TS file turned into a directory whose `index` the same specifier resolves to, is not gone. A statement already listed for a removed name it imports is listed once. |
 | `signature_changes`  | Symbols whose positional parameters changed or that turned `async` or back (`async_change`: `added` or `removed`, else null), with every call site and a verdict each, and `remote_callers`: call sites in any project that reach an endpoint the symbol exposes, through a network resource or directly for an RPC or dispatch resource (issue #1603). |
 | `arity_findings`     | Call sites in the edited files the callee certainly rejects: more positional arguments than it declares (`too_many`); a required parameter nothing fills (`too_few`), where the signature declares which parameters are optional (see [signatures outside Python](#signatures-outside-python)) or, for Python, from the header read back; or a keyword it does not accept (`unexpected_keyword`, Python). |
 | `new_duplicates`     | New or changed functions whose fingerprint (`exact`) or branch set (`similar`, Jaccard at the duplicates threshold) matches an existing function; `original` is the older one. The duplicate detector's minimum size applies. |
