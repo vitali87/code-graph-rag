@@ -366,3 +366,59 @@ def test_a_receiver_named_outside_a_name_field_brings_in_its_callers(
     after = _edges(store)
 
     assert edge in after, sorted(clean - after)
+
+
+# A passer the callable flow brings in can hold a class whose member another
+# file defines out of line: re-parsing plugins.h deletes its subtree, and only
+# plugins.cpp re-creates Plugin::id where a clean index puts it (issue #3271).
+_CPP_MEMBER_FILES = {
+    **{key: text for key, text in _CPP_FILES.items() if key != "plugins.cpp"},
+    "plugins.h": (
+        '#pragma once\n#include "registry.h"\n'
+        "static int on_start() { return 1; }\n"
+        "class Plugin {\n public:\n  int id() const;\n"
+        "  int start() const { return run_callback(on_start); }\n};\n"
+    ),
+    "plugins.cpp": '#include "plugins.h"\nint Plugin::id() const { return 7; }\n',
+}
+_PLUGIN_ID = (cs.NodeLabel.METHOD.value, "proj.plugins.h.Plugin.id")
+
+
+@pytest.mark.parametrize("scoped", [False, True], ids=["run", "reingest"])
+def test_a_passer_keeps_the_members_another_file_defines(
+    temp_repo: Path, scoped: bool
+) -> None:
+    root = temp_repo / "proj"
+    _write(root, _CPP_MEMBER_FILES)
+    store = _StatefulIngestor()
+    _index(store, root, force=True, language=cs.SupportedLanguage.CPP)
+    clean = _edges(store)
+    member = store.nodes[_PLUGIN_ID]
+    assert (
+        "proj.registry.run_callback",
+        "CALLS",
+        "proj.plugins.h.on_start",
+    ) in clean, "fixture must produce the callable-argument edge"
+    assert member.get(cs.KEY_PATH) == "plugins.cpp", member
+
+    _rewrite(
+        root / "util.h",
+        root,
+        "#pragma once\nvoid log_msg(const char* msg, int level);\n",
+    )
+    if scoped:
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=store,
+            repo_path=root,
+            parsers=parsers,
+            queries=queries,
+            project_name="proj",
+        ).reingest([root / "util.h"])
+    else:
+        _index(store, root, force=False, language=cs.SupportedLanguage.CPP)
+
+    after = store.nodes[_PLUGIN_ID]
+    assert after.get(cs.KEY_PATH) == "plugins.cpp", after
+    assert after.get(cs.KEY_START_LINE) == member.get(cs.KEY_START_LINE)
+    assert _edges(store) == clean
