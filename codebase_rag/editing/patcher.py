@@ -33,7 +33,7 @@ from tree_sitter import Node, Parser
 from .. import constants as cs
 from ..language_spec import get_language_for_extension
 from ..parser_loader import load_parsers
-from ..utils.source_encoding import python_source_view
+from ..utils.source_encoding import encode_source, python_source_view
 
 
 class SpanEdit(NamedTuple):
@@ -316,7 +316,7 @@ class Patcher:
         if codec is None:
             return content
         try:
-            return content.decode(cs.ENCODING_UTF8).encode(codec)
+            return encode_source(content.decode(cs.ENCODING_UTF8), codec)
         except UnicodeError as error:
             raise PatcherError(
                 cs.PATCH_UNENCODABLE.format(path=key, codec=codec)

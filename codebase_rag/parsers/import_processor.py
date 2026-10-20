@@ -47,6 +47,7 @@ from ..utils.path_utils import (
     should_skip_rel_file,
     walk_eligible_files,
 )
+from ..utils.source_encoding import grammar_bytes
 from .cpp_frontend.qn import build_module_qn_map
 from .dart import (
     dart_binding_spans,
@@ -64,6 +65,7 @@ from .js_ts.module_paths import (
 )
 from .js_ts.reexports import JsExport, follow_js_reexports, js_ts_module_qn
 from .lua import utils as lua_utils
+from .php.namespaces import declared_namespace
 from .python_source_roots import discover_python_source_roots, resolve_via_source_roots
 from .rs import cargo_semver
 from .rs import utils as rs_utils
@@ -461,12 +463,13 @@ def _js_export_specifiers(statement: Node) -> Iterator[tuple[str, str]]:
 
 
 def _names_js_module(site: PropertyDict | None) -> bool:
-    # `export * from "./x"` and `import * as ns from "./x"` both record `*`
-    # as their imported name: what they store is the module itself, never a
-    # `module.symbol` pair (issues #2464, #2934).
-    return (
-        site is not None and site.get(cs.KEY_IMPORTED_NAME) == cs.IMPORTED_NAME_WILDCARD
-    )
+    # `export * from` and `import * as ns` record `*` as their imported name,
+    # and `const m = require("./m")` records none: each names the module
+    # itself, never a name inside it (issues #2464, #2934).
+    if site is None:
+        return False
+    imported = site.get(cs.KEY_IMPORTED_NAME)
+    return imported is None or imported == cs.IMPORTED_NAME_WILDCARD
 
 
 def _load_jsonc(path: Path) -> dict | None:
@@ -886,6 +889,16 @@ def _python_assignment_binding(stmt: Node, name: str) -> str | None:
             value = safe_decode_text(child.child_by_field_name(cs.TS_FIELD_RIGHT))
             bound = f"={value}"
     return bound
+
+
+def _rust_member_pattern(pattern: str) -> str:
+    # A workspace member glob relative to the root: leading `./` and a
+    # trailing `/` dropped, and the root itself (`.`) as the empty pattern.
+    # Whitespace is part of a TOML path, so it is kept.
+    while pattern.startswith(cs.RS_CURRENT_DIR_PREFIX):
+        pattern = pattern[len(cs.RS_CURRENT_DIR_PREFIX) :]
+    pattern = pattern.rstrip(cs.SEPARATOR_SLASH)
+    return "" if pattern == cs.RS_CURRENT_DIR else pattern
 
 
 def _rust_norm_manifest_path(path: str) -> str:
@@ -2361,7 +2374,11 @@ class ImportProcessor:
                 self._csharp_module_namespaces[module_qn] = {}
                 self._csharp_module_identifiers[module_qn] = frozenset()
                 continue
-            tree = parser.parse(source)
+            # Parsed as the indexer parses it: a UTF-16 file's raw bytes read
+            # as no declarations at all (#3153 review).
+            tree = parser.parse(
+                grammar_bytes(source, cs.SupportedLanguage.CSHARP, Path(path))
+            )
             self._csharp_module_namespaces[module_qn] = self._collect_csharp_namespaces(
                 tree.root_node
             )
@@ -2730,9 +2747,10 @@ class ImportProcessor:
             # `export * from "./add"` in `math/index.ts` stores the module
             # `math.add`, which the resolution above reads as the name `add`
             # of the `math` barrel: the barrel itself (issue #2464). A
-            # namespace import beside an `index.ts` or a same-named file read
-            # the same way, so `import * as m from "./utils/math"` imported
-            # `utils.index` (issue #2934).
+            # namespace import or whole-module `require` beside a directory's
+            # `index.ts` or a same-named file read the same way, so
+            # `import * as m from "./utils/math"` imported `utils.index`
+            # (issue #2934).
             module_path = (
                 self._verify_internal_import_target(
                     entry.full_name,
@@ -3770,9 +3788,21 @@ class ImportProcessor:
         for pattern in members:
             if not isinstance(pattern, str):
                 continue
+            # `"."` (or `"./"`) is the root package joining its own
+            # workspace, and the root is already listed; Python 3.12's
+            # `Path.glob` raises IndexError / AttributeError on those two
+            # rather than ValueError (issue #3167).
+            pattern = _rust_member_pattern(pattern)
+            if not pattern:
+                continue
             try:
                 matches = sorted(self.repo_path.glob(pattern))
-            except (ValueError, NotImplementedError):
+            except Exception as error:
+                # One member the manifest spells oddly is one crate left
+                # unmapped, never a failed sync.
+                logger.debug(
+                    ls.RUST_WORKSPACE_MEMBER_UNEXPANDED, pattern=pattern, error=error
+                )
                 continue
             dirs.extend(match for match in matches if match.is_dir())
         return dirs
@@ -5599,6 +5629,25 @@ class ImportProcessor:
             return self.follow_js_reexports(qn, module_paths, function_registry)
         return follow_reexports(qn, self.import_mapping, function_registry)
 
+    def follow_js_default_import(
+        self,
+        qn: str,
+        module_paths: Mapping[str, Path],
+        function_registry: FunctionRegistryTrieProtocol,
+    ) -> str:
+        """The definition a default import names, or `qn` unchanged.
+
+        `import Store from "./Store"` maps `Store` to `<module>.default`,
+        where only an anonymous `export default class {}` is registered; the
+        module's export table says which named class or function is its
+        default. Read as `<module>.default`, a default-imported class typed
+        nothing and was visible to no fallback (issue #3179).
+        """
+        if not qn.endswith(cs.IMPORT_DEFAULT_SUFFIX) or qn in function_registry:
+            return qn
+        followed = self.follow_js_reexports(qn, module_paths, function_registry)
+        return followed if followed in function_registry else qn
+
     def _record_js_export_bindings(self, statement: Node, module_qn: str) -> None:
         """Record what each name an `export` statement publishes stands for.
 
@@ -6796,23 +6845,10 @@ class ImportProcessor:
         the status quo, and unlike a first-block guess it never asserts an
         answer it does not have.
         """
-        declarations = [
-            child
-            for child in root_node.children
-            if child.type == cs.TS_PHP_NAMESPACE_DEFINITION
-        ]
-        if len(declarations) != 1:
-            return
-        name_node = declarations[0].child_by_field_name(cs.TS_FIELD_NAME)
-        if name_node is None or not name_node.text:
-            # `namespace { ... }` -- the explicit GLOBAL namespace. It has no
-            # name, and binding it to "" would make every unqualified lookup
-            # match it.
-            return
-        declared = safe_decode_with_fallback(name_node)
-        if not declared:
-            return
-        self.php_module_namespaces[module_qn] = declared.replace("\\", cs.SEPARATOR_DOT)
+        # `namespace { ... }` -- the explicit GLOBAL namespace -- has no name,
+        # and binding it to "" would make every unqualified lookup match it.
+        if (declared := declared_namespace(root_node)) is not None:
+            self.php_module_namespaces[module_qn] = declared
 
     def _parse_php_imports(
         self, captures: dict, module_qn: str, root_node: Node | None = None
