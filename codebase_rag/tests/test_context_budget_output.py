@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import textwrap
 import time
 from pathlib import Path
 
@@ -68,7 +69,7 @@ def _printed(slice_: context_slice.ContextSlice) -> int:
     return count_tokens(json.dumps(slice_, indent=cs.MCP_JSON_INDENT))
 
 
-@pytest.mark.parametrize("budget", [4000, 1000, 300])
+@pytest.mark.parametrize("budget", [20_000, 10_000, 4000, 1000, 300])
 def test_the_printed_slice_fits_the_budget(temp_repo: Path, budget: int) -> None:
     store = _central(temp_repo)
 
@@ -261,8 +262,13 @@ def test_a_piece_is_charged_for_the_count_it_prints(temp_repo: Path) -> None:
 
     (target,) = slice_["pieces"]
     assert target["tokens"] >= 1000
-    printed = count_tokens(json.dumps(target, indent=cs.MCP_JSON_INDENT))
-    assert printed == target["tokens"]
+    # As the slice prints it: two levels deep, inside the slice and its
+    # `pieces` list, every line indented by both levels.
+    printed = textwrap.indent(
+        json.dumps(target, indent=cs.MCP_JSON_INDENT), " " * 2 * cs.MCP_JSON_INDENT
+    )
+    assert printed in json.dumps(slice_, indent=cs.MCP_JSON_INDENT)
+    assert count_tokens(printed) == target["tokens"]
 
 
 def test_a_replaced_file_is_quoted_afresh(temp_repo: Path) -> None:
