@@ -56,7 +56,7 @@
 
 - name: breaking change
   color: b60205
-  description: Breaking API or behavior change; bumps the minor version (major from 1.0)
+  description: Breaking API or behavior change; bumps the minor version (major from 1.0) and releases it
 
 - name: language support
   color: 1d76db
