@@ -718,6 +718,12 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
             (identifier) @name @call
             .
             (token_tree . "("))
+        (token_tree
+            (identifier) @name @call
+            .
+            "::"
+            .
+            "<")
         """,
     ),
     cs.SupportedLanguage.SQL: LanguageSpec(

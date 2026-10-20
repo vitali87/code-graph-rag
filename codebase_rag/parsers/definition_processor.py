@@ -56,6 +56,7 @@ from .js_ts.overloads import folded_overload_signatures, implementation_signatur
 from .module_docstring import extract_module_docstring
 from .notebook import is_notebook_path
 from .parameter_nodes import PendingParameterType
+from .php.namespaces import declared_namespace
 from .py.overloads import folded_overload_stubs
 from .utils import (
     get_function_captures,
@@ -824,6 +825,10 @@ class DefinitionProcessor(
             module_props[cs.KEY_DOCSTRING] = docstring
         if fingerprint := interface_fingerprint(root_node, language):
             module_props[cs.KEY_INTERFACE_FINGERPRINT] = fingerprint
+        if language == cs.SupportedLanguage.PHP and (
+            namespace := declared_namespace(root_node)
+        ):
+            module_props[cs.KEY_PHP_NAMESPACE] = namespace
         if self.generated_source_prefixes and (
             hint := generator_hint(relative_path_str, self.generated_source_prefixes)
         ):
