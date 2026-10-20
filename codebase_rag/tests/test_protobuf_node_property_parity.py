@@ -98,10 +98,14 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     # graph round-tripped through protobuf has no stored fingerprint to
     # compare against, so a sync re-parses every dependent caller, as it did
     # before the property existed, and the re-parse writes it back.
+    # `php_namespace` (issue #3277) is read back only by an incremental run's
+    # rehydration; absent reads as "no namespace recorded", as every run did
+    # before #3277, until the file is next parsed.
     "Module": frozenset(
         {
             "absolute_path",
             "end_line",
+            "php_namespace",
             "start_line",
             "unresolved_specifiers",
             "unresolved_references",

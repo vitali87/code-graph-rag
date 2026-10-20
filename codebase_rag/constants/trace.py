@@ -105,6 +105,17 @@ TRACE_MSG_ADDRS_UNRESOLVED = (
 TRACE_ERR_BAD_XDEBUG = (
     "{path} is not an Xdebug computerized trace (expected 'File format: 4')."
 )
+TRACE_ERR_BAD_XDEBUG_GZIP = (
+    "{path} is gzip-compressed but truncated or corrupt, so it cannot be read "
+    "as an Xdebug trace."
+)
+TRACE_ERR_XDEBUG_TOO_LARGE = (
+    "{path} decompresses to more than {limit} bytes; refusing to inflate it in "
+    "memory. If the trace is genuine, gunzip it and convert the .xt file."
+)
+# Xdebug >= 3.1 built with zlib compresses traces by default
+# (xdebug.use_compression=1) and appends .gz to the .xt name.
+TRACE_XDEBUG_SUFFIXES = (".xt", ".xt.gz")
 TRACE_XDEBUG_FORMAT_LINE = "File format: 4"
 TRACE_XDEBUG_MAIN = "{main}"
 TRACE_XDEBUG_GLUE_FUNCTIONS = frozenset(

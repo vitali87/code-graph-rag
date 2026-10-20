@@ -154,6 +154,30 @@ def _projects_of(
     return projects
 
 
+def _owned_by[N: _Recorded](
+    fetch_all: QueryFn, notes: list[N], project_name: str | None
+) -> tuple[list[N], dict[str, str | None]]:
+    """The notes `project_name` owns, and each kept note's project.
+
+    The owner is the one `_projects_of` assigns: the recorded project, or for
+    a legacy note the longest registered project prefixing its target. None
+    keeps every note.
+    """
+    if project_name is not None:
+        prefix = f"{project_name}{cs.SEPARATOR_DOT}"
+        notes = [
+            note
+            for note in notes
+            if note.project == project_name
+            or (note.project is None and note.target_qn.startswith(prefix))
+        ]
+    projects = _projects_of(fetch_all, notes)
+    if project_name is not None:
+        # A legacy note under this prefix may belong to a longer project.
+        notes = [n for n in notes if projects.get(n.qualified_name) == project_name]
+    return notes, projects
+
+
 def _candidates_by_hash(
     fetch_all: QueryFn, notes: list[_Unanchored], projects: dict[str, str | None]
 ) -> dict[tuple[str, str], list[str]]:
@@ -323,6 +347,7 @@ def repair_unanchored(
     fetch_all: QueryFn,
     execute_write: WriteFn,
     read_source: SourceReader | None = None,
+    project_name: str | None = None,
 ) -> RepairReport:
     """Place every unattached note by content hash, then by text quote, or
     mark why it cannot be.
@@ -347,12 +372,18 @@ def repair_unanchored(
     so the same graph yields the same writes. Raises nothing of its own; a
     store error propagates to the caller, which logs it and lets the next
     run retry (`GraphUpdater._reanchor_glosses`).
+
+    `project_name` scopes the pass to one project's notes: a sync changed
+    that project's definitions only, so another project's note can change
+    state only on that project's own sync. Unscoped, every sync of every
+    project paid two whole-graph lookups per project holding an unattached
+    note, deleted projects included (issue #3236).
     """
     notes = sorted(
         (_unanchored(row) for row in fetch_all(cq.CYPHER_UNANCHORED_GLOSSES, None)),
         key=lambda n: n.qualified_name,
     )
-    projects = _projects_of(fetch_all, notes)
+    notes, projects = _owned_by(fetch_all, notes, project_name)
     candidates = _candidates_by_hash(fetch_all, notes, projects)
     quotes = _QuoteIndex(fetch_all, read_source) if read_source is not None else None
     report = RepairReport(moved=[], ambiguous=[], lost=[])
@@ -653,6 +684,7 @@ def repair_mentions(
     fetch_all: QueryFn,
     execute_write: WriteFn,
     read_source: SourceReader | None = None,
+    project_name: str | None = None,
 ) -> MentionReport:
     """Place every attached note's mentions, then rebuild their edges.
 
@@ -671,6 +703,11 @@ def repair_mentions(
     A note is written only when its mentions or edges differ from what the
     pass read, so an unchanged graph costs one read. Deterministic: notes
     and mentions are visited in key order.
+
+    `project_name` scopes the pass to one project's notes, by the owner rule
+    `repair_unanchored` uses: a sync changed that project's definitions
+    only, so another project's mentions move only on its own sync (issue
+    #3236).
     """
     notes = sorted(
         (
@@ -679,6 +716,7 @@ def repair_mentions(
         ),
         key=lambda n: n.qualified_name,
     )
+    notes, projects = _owned_by(fetch_all, notes, project_name)
     report = MentionReport(moved=[], lost=[])
     if not notes:
         return report
@@ -689,7 +727,6 @@ def repair_mentions(
         anchor_hash = row.get(cs.KEY_ANCHOR_HASH)
         if isinstance(qn, str):
             current[qn].append(anchor_hash if isinstance(anchor_hash, str) else None)
-    projects = _projects_of(fetch_all, notes)
     quotes = _QuoteIndex(fetch_all, read_source) if read_source is not None else None
     placer = _MentionPlacer(fetch_all, current, quotes)
     for note in notes:
