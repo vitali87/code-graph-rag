@@ -536,18 +536,8 @@ class PhpFrameResolver:
     ) -> ResolvedFrame | None:
         closure = _PHP_CLOSURE.match(frame.qualname)
         if closure:
-            # A closure is named by its own position. The static tier indexes
-            # it as a node starting there (`outer.anonymous_3_9`), which its
-            # own frame resolves to; only one it did not index folds into the
-            # function that defines it (#2709 review).
-            start = int(closure.group("start"))
-            node = self._node_at(closure.group("path"), start, stats)
-            if node is None:
-                return None
-            return ResolvedFrame(
-                label=node.label,
-                qualified_name=node.qualified_name,
-                folded=node.start_line != start,
+            return self._resolve_closure(
+                closure.group("path"), int(closure.group("start")), stats
             )
         if frame.path:
             if frame.qualname == cs.TRACE_XDEBUG_MAIN:
@@ -570,6 +560,22 @@ class PhpFrameResolver:
             stats.record(cs.TraceUnresolvedReason.UNKNOWN_PATH)
             return None
         return ResolvedFrame(label=module.label, qualified_name=module.qualified_name)
+
+    def _resolve_closure(
+        self, path: str, start: int, stats: ResolutionStats
+    ) -> ResolvedFrame | None:
+        # A closure is named by its own position. The static tier indexes it
+        # as a node starting there (`outer.anonymous_3_9`), which its own
+        # frame resolves to; only one it did not index folds into the
+        # function that defines it (#2709 review).
+        node = self._node_at(path, start, stats)
+        if node is None:
+            return None
+        return ResolvedFrame(
+            label=node.label,
+            qualified_name=node.qualified_name,
+            folded=node.start_line != start,
+        )
 
     def _resolve_position(
         self, path: str, line: int, stats: ResolutionStats
