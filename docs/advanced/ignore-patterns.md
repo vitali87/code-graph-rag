@@ -25,6 +25,7 @@ fixtures/**
 - A pattern containing a slash (`docs/*.md`, `/generated`) is anchored to the repository root
 - A trailing slash (`build/`) matches directories only
 - Lines starting with `!` un-ignore matching paths that a **default** exclusion would skip (explicit excludes always win; the name-ending rule under [Default Exclusions](#default-exclusions) is un-ignorable only for `.min.js` and `.min.css`, and only by a `!` line naming the file)
+- One exception to explicit excludes winning: a `!` line naming one path, without wildcards, inside an excluded directory (`!generated/node_modules` when `.gitignore` excludes `generated/`) keeps that path. The walk enters the excluded directory only on the way to it, so the rest of `generated/` stays out, and a pattern excluding files inside the kept path itself (`*.js`) still applies. This is what interactive setup saves when you keep a directory that sits inside an excluded one
 - Lines starting with `#` are comments; blank lines are ignored
 - Patterns from `.cgrignore` are merged with `--exclude` flags (which use the same syntax) and auto-detected directories
 

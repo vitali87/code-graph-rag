@@ -37,8 +37,8 @@ def test_gitignore_exact_negation_cancels_its_exclude(tmp_path: Path) -> None:
 
 def test_gitignore_finer_negation_stays_an_unignore(tmp_path: Path) -> None:
     # A finer-grained negation (`!dist/keep.py` under an excluded `dist/`)
-    # cannot cancel by string match; it flows to unignore, where it rescues
-    # from built-in ignores only (documented ceiling in config.py).
+    # cannot cancel by string match; it flows to unignore, where the walk
+    # predicates lift `dist/` for that one path (path_utils.nested_keeps).
     (tmp_path / GITIGNORE_FILENAME).write_text(
         "dist/\n!dist/keep.py\n", encoding="utf-8"
     )

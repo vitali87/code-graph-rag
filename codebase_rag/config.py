@@ -23,6 +23,7 @@ from . import exceptions as ex
 from . import logs
 from .graph_dialects import DIALECT_SQLITE, available_dialects
 from .types_defs import CgrignorePatterns, ModelConfigKwargs
+from .utils.path_utils import keeps_outside_run_excludes
 
 # Taken before `.env` is merged into the environment, so a refused value can be
 # traced to the shell that exported it or to the file (#2474).
@@ -806,16 +807,21 @@ def load_ignore_patterns(repo_path: Path) -> CgrignorePatterns:
     # check gives excludes precedence, so a negation overrides a .gitignore
     # exclude only by CANCELLING the exact pattern (`!generated/` drops
     # `generated/`); .cgrignore excludes are never cancelled.
-    # ponytail: root .gitignore only, exact-string cancellation only; a
-    # finer-grained negation (`!dist/keep.py` under excluded `dist/`) still
-    # cannot rescue -- an ordered PathSpec soft layer in should_skip_path is
-    # the upgrade path if real repos need it.
+    # ponytail: root .gitignore only, exact-string cancellation only. A
+    # finer-grained negation (`!dist/keep.py` under excluded `dist/`) is not
+    # cancelled here; the walk predicates let it through instead, lifting
+    # only the enclosing directory's exclusion (path_utils.nested_keeps).
     cgr = _load_ignore_file(repo_path / CGRIGNORE_FILENAME)
     git = _load_ignore_file(repo_path / GITIGNORE_FILENAME)
     negations = cgr.unignore | git.unignore
+    exclude = cgr.exclude | (git.exclude - negations)
+    # Each rescue is a nested keep, which lifts the exclusion of the
+    # directories enclosing it. That is for a `!` line someone wrote; an
+    # explicit exclude of the directory must still win over a rescue (#2406).
+    rescued = keeps_outside_run_excludes(_tracked_source_dirs(repo_path), exclude)
     return CgrignorePatterns(
-        exclude=cgr.exclude | (git.exclude - negations),
-        unignore=negations | _tracked_source_dirs(repo_path),
+        exclude=exclude,
+        unignore=negations | (rescued or frozenset()),
     )
 
 
@@ -832,8 +838,9 @@ def _tracked_source_dirs(repo_path: Path) -> frozenset[str]:
     not the directory: a directory-level `!` would let untracked build output
     written beside the tracked source (`bin/generated.js`) through as well
     (review of PR 2490). An untracked `tools/bin/` stays excluded too, and an
-    explicit exclude still wins as for any `!` line (issue #2406). Outside a
-    git checkout, or if git cannot answer, nothing is rescued.
+    explicit exclude still wins (issue #2406; `load_ignore_patterns` drops the
+    rescues one encloses). Outside a git checkout, or if git cannot answer,
+    nothing is rescued.
     """
     try:
         listing = subprocess.run(
