@@ -5028,6 +5028,8 @@ class CallProcessor:
             self._record_python_shadowed_imports(caller_node, caller_qn, module_qn)
         elif language == cs.SupportedLanguage.GO:
             self._record_go_local_names(caller_node, caller_qn, caller_type)
+        elif language == cs.SupportedLanguage.CPP:
+            self._record_cpp_local_names(caller_node, caller_qn, caller_type)
 
         caller_spec = (caller_type, cs.KEY_QUALIFIED_NAME, caller_qn)
 
@@ -5231,6 +5233,26 @@ class CallProcessor:
             self._resolver.go_local_scopes[caller_qn] = scopes
         else:
             self._resolver.go_local_scopes.pop(caller_qn, None)
+
+    def _record_cpp_local_names(
+        self, caller_node: Node, caller_qn: str, caller_type: str
+    ) -> None:
+        # Only a member function's bare call can find a base's member, and a
+        # parameter or local of that name hides it where in scope (PR #2948).
+        # The class's fields are left out: that walk also meets the
+        # parameters of the class's other member declarations.
+        scopes: dict[str, list[tuple[int, int]]] = {}
+        if caller_type == cs.NodeLabel.METHOD:
+            for start, end, name, _ in CppTypeInferenceEngine().declaration_scopes(
+                caller_node, fields=False
+            ):
+                scopes.setdefault(name, []).append((start, end))
+        if scopes:
+            self._resolver.cpp_local_scopes[caller_qn] = {
+                name: tuple(spans) for name, spans in scopes.items()
+            }
+        else:
+            self._resolver.cpp_local_scopes.pop(caller_qn, None)
 
     def _record_caller_flow_params(
         self,

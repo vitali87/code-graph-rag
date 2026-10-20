@@ -107,6 +107,21 @@ FILES = {
         "  Parent make() { return Parent(1); }\n"
         "};\n"
     ),
+    # A parameter or local named like an inherited method hides it where in
+    # scope, so the call invokes that value (CodeRabbit, PR #2948). The
+    # declaration of `run` puts a `dispatch` parameter in the class body,
+    # which must not hide `HB::dispatch` from `closed`.
+    "c/hide.h": (
+        "class HB { public: void dispatch() {} };\n"
+        "class HD : public HB {\n public:\n"
+        "  void run(void (*dispatch)());\n"
+        "  void local() { auto dispatch = [] {}; dispatch(); }\n"
+        "  void closed() { { auto dispatch = [] {}; } dispatch(); }\n"
+        "};\n"
+    ),
+    "c/hide.cpp": (
+        '#include "hide.h"\nvoid HD::run(void (*dispatch)()) { dispatch(); }\n'
+    ),
     # Lua: a colon method beside a bare call of its name (CodeRabbit, PR
     # #2948); `flush()` is a global, never `M:flush`.
     "lua_m.lua": "local M = {}\nfunction M:flush() return 1 end\nreturn M\n",
@@ -179,6 +194,7 @@ def test_a_bare_call_binds_no_method_of_an_unrelated_class(
         ("c.stat.h.Stat.inherited", "c.base.Base.helper"),
         ("c.stat.h.Deeper.twice", "c.base.Base.helper"),
         ("c.diamond.DD.go", "c.diamond.DB.probe"),
+        ("c.hide.h.HD.closed", "c.hide.h.HB.dispatch"),
     ],
 )
 def test_a_cpp_member_reaches_an_inherited_method_by_name_lookup(
@@ -187,6 +203,13 @@ def test_a_cpp_member_reaches_an_inherited_method_by_name_lookup(
     # The base's method is what C++ name lookup finds, not a guess among
     # every `helper` in the project (`Other::helper` sits beside it).
     assert _callees(graph, caller) == {method: "exact"}
+
+
+@pytest.mark.parametrize("caller", ["c.hide.h.HD.run", "c.hide.h.HD.local"])
+def test_a_cpp_parameter_or_local_hides_an_inherited_method(
+    graph: RecordedGraph, caller: str
+) -> None:
+    assert "c.hide.h.HB.dispatch" not in _callees(graph, caller)
 
 
 # Negative: what must not change.

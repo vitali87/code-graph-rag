@@ -306,6 +306,7 @@ class CallResolver:
         "python_name_typed_params",
         "python_shadowed_imports",
         "go_local_scopes",
+        "cpp_local_scopes",
         "python_local_names",
         "function_registry",
         "import_processor",
@@ -378,6 +379,10 @@ class CallResolver:
         # call processor before the caller's calls resolve: a bare call to
         # one of them inside its span calls that value (#2571).
         self.go_local_scopes: dict[str, go_utils.GoLocalScopes] = {}
+        # C++ member qn -> its parameters and locals and the byte spans each
+        # is in scope over, filled the same way: a bare call to one of them
+        # there calls that value, not a base's member it hides (PR #2948).
+        self.cpp_local_scopes: dict[str, dict[str, tuple[tuple[int, int], ...]]] = {}
         # caller qn -> every name that Python function binds itself (#2666);
         # filled alongside python_shadowed_imports.
         self.python_local_names: dict[str, frozenset[str]] = {}
@@ -2400,9 +2405,16 @@ class CallResolver:
         # block's `helper := ...`, or after that block closes, is the
         # package's function (#2616 review). A call with no position falls
         # back to the whole function.
+        return self._local_in_scope(call, self.go_local_scopes)
+
+    @staticmethod
+    def _local_in_scope(
+        call: _CallSite,
+        scopes: Mapping[str, Mapping[str, tuple[tuple[int, int], ...]]],
+    ) -> bool:
         if not call.caller_qn or cs.SEPARATOR_DOT in call.call_name:
             return False
-        spans = self.go_local_scopes.get(call.caller_qn, {}).get(call.call_name)
+        spans = scopes.get(call.caller_qn, {}).get(call.call_name)
         if not spans:
             return False
         point = call.call_point
@@ -2421,6 +2433,11 @@ class CallResolver:
             return None
         language = call.language or self._module_language(call.module_qn)
         if language not in cs.C_FAMILY_LANGUAGES:
+            return None
+        # A parameter or local of the name hides every member where it is in
+        # scope: `void D::run(void (*dispatch)()) { dispatch(); }` calls the
+        # parameter, not an inherited `B::dispatch` (CodeRabbit, PR #2948).
+        if self._local_in_scope(call, self.cpp_local_scopes):
             return None
         if (owner := self._enclosing_class(call.caller_qn)) is None:
             return None
