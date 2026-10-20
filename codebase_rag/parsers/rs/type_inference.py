@@ -906,8 +906,13 @@ def _enclosing_impl_type(node: Node) -> str | None:
     current = node.parent
     while current is not None:
         if current.type == cs.TS_RS_IMPL_ITEM:
+            # `impl crate::a::Thing` keeps its path, as a declared local type
+            # does: the bare leaf would be re-read through the file's scope,
+            # where `use crate::b::Thing;` names another type.
             target = current.child_by_field_name(cs.FIELD_TYPE)
-            return _rust_bare_type_name(target) if target is not None else None
+            if target is None:
+                return None
+            return _rust_bare_type_name(target, keep_path=True)
         current = current.parent
     return None
 

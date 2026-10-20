@@ -18,6 +18,8 @@ from codebase_rag.tests.conftest import create_and_run_updater, get_relationship
 
 _LIB = """\
 pub mod shapes;
+pub mod rival;
+pub mod paths;
 pub struct Widget;
 pub struct Pair(pub u32, pub u32);
 pub struct Point { pub x: u32 }
@@ -77,6 +79,21 @@ _SHAPES = """\
 pub struct Disk { pub r: u32 }
 impl Disk { pub fn area(&self) -> u32 { self.r } }
 """
+_RIVAL = """\
+pub struct Disk;
+impl Disk { pub fn area(&self) -> u32 { 0 } }
+"""
+# The impl names `shapes::Disk` by path, while the bare `Disk` in this file
+# is the imported `rival::Disk`.
+_PATHS = """\
+use crate::rival::Disk;
+impl crate::shapes::Disk {
+    pub fn literal() -> u32 { let d = Self { r: 1 }; d.area() }
+    pub fn param(&self, other: &Self) -> u32 { other.area() }
+    pub fn annotated() -> u32 { let d: Self = crate::shapes::Disk { r: 2 }; d.area() }
+}
+pub fn rival() -> u32 { let d = Disk; d.area() }
+"""
 
 _Calls = dict[tuple[str, str], str]
 
@@ -91,6 +108,8 @@ def calls(tmp_path_factory: pytest.TempPathFactory) -> _Calls:
     )
     (root / "src" / "lib.rs").write_text(_LIB, encoding="utf-8")
     (root / "src" / "shapes.rs").write_text(_SHAPES, encoding="utf-8")
+    (root / "src" / "rival.rs").write_text(_RIVAL, encoding="utf-8")
+    (root / "src" / "paths.rs").write_text(_PATHS, encoding="utf-8")
     mock = MagicMock()
     create_and_run_updater(root, mock, skip_if_missing="rust")
     return {
@@ -178,3 +197,16 @@ def test_a_pascal_case_associated_fn_types_its_local_by_its_return_type(
     callees = _callees(calls, "lib.pascal_fn")
     assert callees.get("lib.Product.render") == "exact", calls
     assert "lib.Factory.render" not in callees, calls
+
+
+@pytest.mark.parametrize(
+    "caller",
+    ["paths.Disk.literal", "paths.Disk.param", "paths.Disk.annotated"],
+    ids=["self-literal", "self-param", "self-annotation"],
+)
+def test_a_self_local_keeps_the_impl_targets_path(calls: _Calls, caller: str) -> None:
+    # `Self` in `impl crate::shapes::Disk` is shapes::Disk; read as the bare
+    # `Disk`, it resolved through the file's `use crate::rival::Disk;` and
+    # bound rival's `area` exactly.
+    assert _callees(calls, caller) == {"shapes.Disk.area": "exact"}, calls
+    assert _callees(calls, "paths.rival") == {"rival.Disk.area": "exact"}, calls
