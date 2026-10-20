@@ -19,7 +19,9 @@ functions:
 classes:
   - kind: data_type
   - kind: newtype
-  - kind: type_synomym
+  # tree-sitter-haskell 0.24 (ast-grep-py 0.51) fixed the grammar's old
+  # `type_synomym` spelling; the old name is now an invalid kind.
+  - kind: type_synonym
   - kind: class
 imports:
   - kind: import
