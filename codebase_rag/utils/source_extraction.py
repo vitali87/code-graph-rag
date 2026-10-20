@@ -8,7 +8,7 @@ from loguru import logger
 from .. import constants as cs
 from .. import logs as ls
 from ..constants import ENCODING_UTF8, PY_EXTENSIONS
-from .source_encoding import decode_python_source
+from .source_encoding import decode_python_source, decode_wide_source
 
 
 def read_source_lines(file_path: Path, encoding: str = ENCODING_UTF8) -> list[str]:
@@ -16,10 +16,12 @@ def read_source_lines(file_path: Path, encoding: str = ENCODING_UTF8) -> list[st
     raw_bytes = file_path.read_bytes()
     # The indexer parsed a Python source in the encoding it declares, and
     # the lines it recorded are lines of that text (issue #2445).
+    # Any other UTF-16/32 source with a BOM was parsed as its decoded text
+    # too (issue #3153).
     declared = (
         decode_python_source(raw_bytes, file_path)
         if file_path.suffix in PY_EXTENSIONS
-        else None
+        else decode_wide_source(raw_bytes, file_path)
     )
     text = raw_bytes.decode(encoding) if declared is None else declared
     return text.splitlines(keepends=True)

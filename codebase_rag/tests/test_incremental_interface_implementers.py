@@ -710,3 +710,47 @@ def test_a_sync_forgets_an_untraceable_impl_the_edit_removed(
     )
     assert _calls(store) == clean_calls
     assert _snapshot(store) == _snapshot(clean_store)
+
+
+# The gson shape once more (issue #3256): a call typed to `Strategy` fans out
+# to the stored enum's method and its constant bodies only while the enum is
+# the sole implementer. Once it stops implementing the interface, or a second
+# implementer arrives in a new file, a clean index binds the interface alone.
+JAVA_ENUM_UNBOUND = JAVA_ENUM["src/demo/Policy.java"].replace(
+    " implements Strategy", ""
+)
+JAVA_LOWER_FILE = "package demo;\n\npublic " + JAVA_LOWER_CLASS
+
+
+@pytest.mark.parametrize("mode", MODES)
+@pytest.mark.parametrize(
+    "edits",
+    [
+        {"src/demo/Policy.java": JAVA_ENUM_UNBOUND},
+        {"src/demo/Lower.java": JAVA_LOWER_FILE},
+    ],
+    ids=["enum-drops-the-interface", "second-implementer-beside-the-stored-enum"],
+)
+def test_a_sync_retires_the_enum_constant_fan_out(
+    temp_repo: Path, edits: dict[str, str], mode: str
+) -> None:
+    root = temp_repo / PROJECT
+    _write(root, JAVA_ENUM)
+    store = _StatefulIngestor()
+    updater = _index(store, root, force=True)
+    assert any(
+        edge[1].startswith(f"{JAVA_POLICY_QN}{cs.DUP_QN_MARKER}")
+        for edge in _calls_from(_calls(store), JAVA_CALLER_QN)
+    ), "fixture must reach the enum's constant bodies before the edit"
+
+    caller = "src/demo/Caller.java"
+    _resync(store, root, updater, {**edits, caller: JAVA_ENUM[caller] + "// x\n"}, mode)
+
+    clean_store = _StatefulIngestor()
+    _index(clean_store, root, force=True)
+    clean_calls = _calls(clean_store)
+    assert {edge[1] for edge in _calls_from(clean_calls, JAVA_CALLER_QN)} == {
+        f"{PROJECT}.src.demo.Strategy.Strategy.translate(String)"
+    }
+    assert _calls(store) == clean_calls
+    assert _snapshot(store) == _snapshot(clean_store)
