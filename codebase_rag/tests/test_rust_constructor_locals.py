@@ -74,6 +74,19 @@ pub fn short_name() -> u32 { let s = S { x: 1 }; s.render() }
 pub fn lowercase_name() -> u32 { let l = lower { x: 1 }; l.render() }
 pub fn turbofish_literal() -> u32 { let w = Wrapper::<u8> { v: 1 }; w.render() }
 pub fn turbofish_variant() -> u32 { let t = Tree::<u8>::Leaf(1); t.render() }
+#[allow(clippy::upper_case_acronyms)]
+pub struct ID(pub u32);
+impl ID { pub fn render(&self) -> u32 { self.0 } }
+pub enum Value { I64(i64), Nil }
+impl Value { pub fn render(&self) -> u32 { 12 } }
+// Shares its name with the `Value::I64` variant.
+pub struct I64;
+impl I64 { pub fn render(&self) -> u32 { 13 } }
+#[allow(non_snake_case)]
+pub fn MAKE() -> Product { Product }
+pub fn all_caps_tuple() -> u32 { let i = ID(1); i.render() }
+pub fn all_caps_variant() -> u32 { let v = Value::I64(1); v.render() }
+pub fn all_caps_fn() -> u32 { let p = MAKE(); p.render() }
 """
 _SHAPES = """\
 pub struct Disk { pub r: u32 }
@@ -139,6 +152,8 @@ def _callees(calls: _Calls, caller: str) -> dict[str, str]:
         ("lib.Point.copy_of", "lib.Point.render"),
         ("lib.Point.annotated", "lib.Point.render"),
         ("lib.turbofish_variant", "lib.Tree.render"),
+        ("lib.all_caps_tuple", "lib.ID.render"),
+        ("lib.all_caps_variant", "lib.Value.render"),
     ],
     ids=[
         "unit-struct",
@@ -152,6 +167,8 @@ def _callees(calls: _Calls, caller: str) -> dict[str, str]:
         "self-param",
         "self-annotation",
         "turbofish-enum-variant",
+        "all-caps-tuple-struct",
+        "all-caps-enum-variant",
     ],
 )
 def test_a_constructed_local_types_its_method_call(
@@ -197,6 +214,13 @@ def test_a_pascal_case_associated_fn_types_its_local_by_its_return_type(
     callees = _callees(calls, "lib.pascal_fn")
     assert callees.get("lib.Product.render") == "exact", calls
     assert "lib.Factory.render" not in callees, calls
+
+
+def test_an_all_caps_fn_types_its_local_by_its_return_type(calls: _Calls) -> None:
+    # Negative: a call spelled like the all-caps tuple struct `ID(1)` may be
+    # a function, whose declared return type says what `p` is.
+    callees = _callees(calls, "lib.all_caps_fn")
+    assert callees.get("lib.Product.render") == "exact", calls
 
 
 @pytest.mark.parametrize(

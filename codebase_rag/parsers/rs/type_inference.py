@@ -852,35 +852,44 @@ def _constructed_type(value: Node) -> str | None:
             name, keep_path=True
         )
     if value.type == cs.TS_RS_CALL_EXPRESSION:
+        # A call may build an all-caps tuple struct or variant (`ID(1)`,
+        # `Value::I64(1)`), where a bare `MAX` is a const.
         path = value.child_by_field_name(cs.FIELD_FUNCTION)
-    elif value.type in (cs.TS_IDENTIFIER, cs.TS_SCOPED_IDENTIFIER):
-        path = value
-    else:
-        return None
-    return _constructor_path_type(path) if path is not None else None
+        if path is None:
+            return None
+        return _constructor_path_type(path, allow_all_upper=True)
+    if value.type in (cs.TS_IDENTIFIER, cs.TS_SCOPED_IDENTIFIER):
+        return _constructor_path_type(value)
+    return None
 
 
-def _constructor_path_type(path: Node) -> str | None:
+def _constructor_path_type(path: Node, allow_all_upper: bool = False) -> str | None:
     # `Point` / `Self` -> itself; `shapes::Point` -> shapes::Point, keeping
     # the module path as a declared type does (#2622); `Shape::Circle` (a
     # type-named qualifier) -> Shape. A lowercase leaf is a function or an
     # associated fn (`Type::new`), typed from its return type elsewhere.
     if path.type in (cs.TS_IDENTIFIER, cs.TS_TYPE_IDENTIFIER):
         text = safe_decode_text(path)
-        return text if text and _is_type_like(text) else None
+        return text if text and _is_type_like(text, allow_all_upper) else None
     if path.type in cs.RS_GENERIC_CONSTRUCTOR_PATHS:
         # Type arguments do not change which type is built: `Tree::<u8>`.
         inner = path.child_by_field_name(
             cs.FIELD_FUNCTION if path.type == cs.TS_GENERIC_FUNCTION else cs.FIELD_TYPE
         )
-        return _constructor_path_type(inner) if inner is not None else None
+        if inner is None:
+            return None
+        return _constructor_path_type(inner, allow_all_upper)
     if path.type not in (cs.TS_SCOPED_IDENTIFIER, cs.TS_RS_SCOPED_TYPE_IDENTIFIER):
         return None
     leaf = safe_decode_text(path.child_by_field_name(cs.FIELD_NAME))
-    if not leaf or not _is_type_like(leaf):
+    if not leaf or not _is_type_like(leaf, allow_all_upper):
         return None
     qualifier = path.child_by_field_name(cs.TS_RS_FIELD_PATH)
-    owner = _constructor_path_type(qualifier) if qualifier is not None else None
+    owner = (
+        _constructor_path_type(qualifier, allow_all_upper)
+        if qualifier is not None
+        else None
+    )
     return owner or _rust_module_type_path(path) or leaf
 
 
@@ -892,14 +901,14 @@ def is_constructor_guess(type_name: str, segments: list[str]) -> bool:
     return (
         0 < len(segments) <= 2
         and type_name == segments[0]
-        and _is_type_like(segments[-1])
+        and _is_type_like(segments[-1], allow_all_upper=True)
     )
 
 
-def _is_type_like(name: str) -> bool:
+def _is_type_like(name: str, allow_all_upper: bool = False) -> bool:
     # UpperCamelCase, the convention for types and variants; SCREAMING_CASE
-    # names a const, not something constructed.
-    return name[0].isupper() and not name.isupper()
+    # names a const, not something constructed, unless it is called.
+    return name[0].isupper() and (allow_all_upper or not name.isupper())
 
 
 def _enclosing_impl_type(node: Node) -> str | None:
