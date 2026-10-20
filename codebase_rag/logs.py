@@ -776,6 +776,17 @@ FILE_OUTSIDE_ROOT = "Security risk: Attempted to {action} file outside of projec
 # Call processor logs
 CALL_PROCESSING_FILE = "Processing calls in cached AST for: {path}"
 CALL_PROCESSING_FAILED = "Failed to process calls in {path}: {error}"
+# One caller's failure is contained to that caller (issue #3173): a pathological
+# function no longer costs the rest of its file every call edge. Both keep a
+# prefix the test harness's pass-failure gate watches.
+CALLER_CALLS_FAILED = (
+    "Failed to process calls in {caller} ({path}); the file's other callers "
+    "are kept: {error}"
+)
+CALLER_LOCAL_TYPES_FAILED = (
+    "Failed to infer local types in {caller} ({path}); its calls resolve "
+    "untyped: {error}"
+)
 # Re-reading a file evicted from the bounded AST cache is tolerate-and-continue,
 # not a pass failure, and must not borrow the message above: the test harness
 # fails a run on that one (issue #1070).
@@ -872,6 +883,9 @@ IMP_CREATED_RELATIONSHIP = (
     "  Created IMPORTS relationship: {from_module} -> {to_module} (from {full_name})"
 )
 IMP_PARSE_FAILED = "Failed to parse imports in {module}: {error}"
+RUST_WORKSPACE_MEMBER_UNEXPANDED = (
+    "Rust workspace member {pattern!r} could not be expanded, skipped: {error}"
+)
 IMP_DROPPED_PHANTOM_TARGET = (
     "  Dropped IMPORTS edge to unverifiable internal target: "
     "{from_module} -> {to_module}"
@@ -1183,6 +1197,10 @@ CLI_DELETE_MARKER_NOT_CLEARED = (
     "Project {project} was deleted, but its incomplete-run marker could not be "
     "cleared: {error}. cgr status may list it as interrupted until it is synced "
     "again."
+)
+CLI_DELETE_GLOSS_SWEEP_SKIPPED = (
+    "The delete of project {project} failed, and whether it still exists "
+    "could not be read: {error}. Its notes (glosses) were not swept."
 )
 CLI_DELETE_SYNC_MARKER_KEPT = (
     "Project {project} was deleted, but a cgr sync of it may still be running, "

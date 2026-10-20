@@ -209,6 +209,10 @@ KEY_UNRESOLVED_SPECIFIERS = "unresolved_specifiers"
 # so the modules that waited for it are re-parsed (issue #1568). Written
 # unconditionally on every parse so a resolved name clears.
 KEY_UNRESOLVED_REFERENCES = "unresolved_references"
+# The dotted namespace a PHP file declares (`App.Util`), on its Module: a
+# `use function App\\Util\\slug` matches it, and only a parse of the file
+# gives it, so an incremental run reads it back from here (issue #3277).
+KEY_PHP_NAMESPACE = "php_namespace"
 KEY_ABSOLUTE_PATH = "absolute_path"
 # Whether flow analysis covered a Module: its language is in the source/sink
 # registry AND the FLOWS_TO capture group was enabled at indexing. Read by
@@ -991,9 +995,11 @@ MILVUS_IDS_EXPR = "{field} in {ids}"
 # Milvus answers a delete with the deleted keys or with this count.
 MILVUS_DELETE_COUNT_KEY = "delete_count"
 
-# What a module owns: the walk the module delete takes and the inbound-edge
-# capture mirrors, so the two cannot disagree on what goes (issue #2918).
-_CYPHER_MODULE_SUBTREE_RELS = (
+# The ownership relations a Module's subtree hangs off, walked by the
+# re-parse delete, by the inbound-edge capture that mirrors it (so the two
+# cannot disagree on what goes, issue #2918) and by the lookup of files that
+# attach members to it.
+MODULE_SUBTREE_REL_PATTERN = (
     "DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER"
     "|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT"
     "|IMPLEMENTS_PATTERN|HAS_SMELL|HAS_VULNERABILITY"
@@ -1041,7 +1047,7 @@ CYPHER_DELETE_MODULE = (
     # re-parse stripped its edge and left the node: an orphan per re-parse
     # after a sync that drops the `findings` capture group, or per finding
     # the edited source no longer matches (issue #2536).
-    + f"OPTIONAL MATCH (m)-[:{_CYPHER_MODULE_SUBTREE_RELS}*0..]->(c) "
+    + f"OPTIONAL MATCH (m)-[:{MODULE_SUBTREE_REL_PATTERN}*0..]->(c) "
     "DETACH DELETE m, c"
 )
 # Keyed on absolute_path: the relative path is shared across same-layout
@@ -1249,7 +1255,8 @@ CYPHER_ALL_DEFINITION_QNS = (
 CYPHER_ALL_MODULE_QNS = (
     "MATCH (n) WHERE (n:Module OR n:ModuleInterface) "
     "AND n.qualified_name STARTS WITH $project_prefix "
-    "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label"
+    "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label, "
+    "n.php_namespace AS php_namespace"
 )
 
 # Inbound reference edges (from unchanged files) into symbols defined in one
@@ -1306,7 +1313,7 @@ CYPHER_INBOUND_EDGES = (
     "UNWIND $paths AS path "
     "MATCH (m:Module {path: path}) "
     + _CYPHER_OWN_MODULE
-    + f"MATCH (m)-[:{_CYPHER_MODULE_SUBTREE_RELS}*0..]->(target) "
+    + f"MATCH (m)-[:{MODULE_SUBTREE_REL_PATTERN}*0..]->(target) "
     "WITH DISTINCT target "
     "MATCH (caller)-[r:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS|IMPLEMENTS|OVERRIDES"
     "|RETURNS|ACCEPTS|ANNOTATES|MENTIONS|LINKS_TO]->(target) "
@@ -1325,6 +1332,19 @@ CYPHER_INBOUND_EDGES = (
 # like INHERITS: an implementor in the same package holds no import edge into
 # its interface's file, and without this it was neither re-parsed nor
 # restored when that file was re-indexed (issue #1565).
+# Files that attach members to these modules' subtrees: a Go method keyed
+# under its receiver type's module whatever file declares it, a C++
+# out-of-line definition hung on its header's class. The re-parse delete
+# walks the subtree and takes them, and only their own file recreates them,
+# so they must re-parse in the same run (issue #3271).
+CYPHER_FOREIGN_MEMBER_PATHS = (
+    "MATCH (m:Module) WHERE m.path IN $paths "
+    "AND (m.qualified_name = $project_name "
+    "OR m.qualified_name STARTS WITH $project_prefix) "
+    f"MATCH (m)-[:{MODULE_SUBTREE_REL_PATTERN}*1..]->(c) "
+    "WHERE c.path IS NOT NULL AND NOT c.path IN $paths "
+    "RETURN DISTINCT c.path AS path"
+)
 CYPHER_AFFECTED_CALLER_PATHS = (
     "MATCH (caller)-[:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS|IMPLEMENTS]->(target) "
     "WHERE target.path IN $paths AND caller.path IS NOT NULL "

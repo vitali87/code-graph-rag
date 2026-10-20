@@ -32,6 +32,7 @@ from .config import settings
 from .function_registry import FunctionRegistryTrie
 from .gloss_anchor import ParsedSource, parse_source
 from .gloss_repair import repair_unanchored
+from .graph_query import _longer_project_prefixes
 from .interface_skip import (
     callers_to_reparse,
     stable_interface_modules,
@@ -1604,6 +1605,14 @@ def _advance_past_settled(progress: Progress, task: TaskID, scan: _FileScan) -> 
         progress.advance(task, scan.skipped_count + scan.unreadable_count)
 
 
+def _package_modules(module_files: Mapping[str, Path]) -> frozenset[str]:
+    # The module qns that are a package's `__init__.py`: a relative import
+    # there resolves against the package itself (issue #3192).
+    return frozenset(
+        qn for qn, path in module_files.items() if path.name in cs.PY_PACKAGE_INIT_FILES
+    )
+
+
 class GraphUpdater:
     """Drive a full or incremental ingest of a repository into the graph.
 
@@ -2682,6 +2691,19 @@ class GraphUpdater:
             self._state_dir = prepare_state_dir(self.repo_path)
         return self._state_dir
 
+    @property
+    def call_pass_failures(self) -> list[Path]:
+        """Files the last call pass failed in, whole or in one caller (#3173).
+
+        Each one logged its error and kept every edge it could, so the run
+        still completes; the sync summary names them, since an exit-0 "done"
+        was the only other signal that a file had lost its calls.
+        """
+        processor = self.factory._call_processor
+        if processor is None:
+            return []
+        return sorted(processor.failed_call_files)
+
     def _require_repo_dir(self) -> None:
         """Raise `FileNotFoundError` unless `self.repo_path` is a directory.
 
@@ -2754,6 +2776,10 @@ class GraphUpdater:
             else None
         )
         self._embeddings_interrupted = False
+        # Per-run as well: an in-sync run walks no calls, and must not report
+        # a previous run's failures as its own.
+        if self.factory._call_processor is not None:
+            self.factory._call_processor.failed_call_files.clear()
         self._sink.ensure_node_batch(
             cs.NODE_PROJECT,
             {
@@ -3224,7 +3250,9 @@ class GraphUpdater:
         self._drop_stale_handler_exposes(
             [qn for _label, qn, _decorators, _module in entries]
         )
-        registry = build_router_registry(module_asts)
+        registry = build_router_registry(
+            module_asts, _package_modules({**known_files, **module_files})
+        )
         for label, qn, decorators, module_qn in entries:
             # Test modules stay in the stale-EXPOSES drop above (so a
             # legacy graph sheds their endpoints) but emit nothing: a route
@@ -3266,7 +3294,12 @@ class GraphUpdater:
             asts[qn] = loaded[qn]
             pending.extend(
                 target
-                for target in imported_module_qns(qn, loaded[qn], module_qns)
+                for target in imported_module_qns(
+                    qn,
+                    loaded[qn],
+                    module_qns,
+                    is_package=known[qn].name in cs.PY_PACKAGE_INIT_FILES,
+                )
                 if target not in files
             )
         return files, asts
@@ -4049,6 +4082,13 @@ class GraphUpdater:
                 self.factory.definition_processor.cpp_module_interfaces.add(qn)
             else:
                 self._rehydrated_module_qns.add(qn)
+            # An unchanged PHP file's declared namespace, which a
+            # `use function App\\Util\\slug` is matched against (issue #3277).
+            if (
+                isinstance(namespace := row.get(cs.KEY_PHP_NAMESPACE), str)
+                and namespace
+            ):
+                self.factory.import_processor.php_module_namespaces[qn] = namespace
 
     def _rehydrate_definition_row(self, row: ResultRow) -> bool:
         """Re-register one definition row missing locally; True when added."""
@@ -5334,6 +5374,99 @@ class GraphUpdater:
                 )
         except Exception:
             logger.warning(ls.PRUNE_QUERY_FAILED, label="unresolved references write")
+
+    def _queue_foreign_members(
+        self,
+        reindexed_keys: list[str],
+        deleted_keys: list[str],
+        present: set[str],
+        eligible_by_key: dict[str, Path],
+        scan: _FileScan,
+    ) -> list[str]:
+        """Queue the files that attach members to a module about to go.
+
+        A Go method keys under its receiver type's module whatever file
+        declares it, and a C++ out-of-line definition hangs on its header's
+        class. The re-parse delete walks the module's subtree and takes them,
+        and only their own file recreates them, so a type's file re-parsed as
+        a mere dependent left `Box.Grow` (box_extra.go) deleted until
+        box_extra.go itself changed (issue #3271). Read from the graph, so a
+        fresh process finds them too; `_foreign_definer_keys` reads this
+        run's span records, which a new updater does not have yet. Repeated
+        until nothing new joins: a joined file's own module can hold another
+        file's members.
+        """
+        while True:
+            joined = len(present)
+            member_keys = self._foreign_member_keys(
+                sorted({*reindexed_keys, *deleted_keys})
+            )
+            reindexed_keys = self._queue_affected_callers(
+                member_keys,
+                present,
+                self._member_files(member_keys, eligible_by_key),
+                scan,
+                reindexed_keys,
+            )
+            if len(present) == joined:
+                return reindexed_keys
+
+    def _member_files(
+        self, keys: list[str], eligible_by_key: dict[str, Path]
+    ) -> dict[str, Path]:
+        """Where each file attaching members is read from.
+
+        A single-file run walked only its target, so the lookup's files are
+        resolved on disk as `reingest` resolves them: looked up in the walk,
+        each was dropped and the delete took its members for good (#3271).
+        """
+        if self._single_file is None:
+            return eligible_by_key
+        on_disk = {
+            key: path
+            for key in keys
+            if (path := self._member_file_on_disk(key)) is not None
+        }
+        return {**on_disk, **eligible_by_key}
+
+    def _member_file_on_disk(self, key: str) -> Path | None:
+        candidate = self.repo_path / key
+        if (
+            not candidate.is_file()
+            or path_utils.is_symlink_entry(candidate)
+            or self._reingest_ignored(candidate)
+        ):
+            return None
+        return candidate
+
+    def _foreign_member_keys(self, keys: list[str]) -> list[str]:
+        if not keys or not isinstance(self.ingestor, QueryProtocol):
+            return []
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_FOREIGN_MEMBER_PATHS,
+                {
+                    cs.CYPHER_PARAM_PATHS: keys,
+                    cs.KEY_PROJECT_NAME: self.project_name,
+                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                },
+            )
+        except Exception:
+            # The delete that follows takes these members with their type's
+            # module, so an incremental run that read an outage as "none"
+            # lost them for good under a completed hash commit; it aborts, as
+            # the inbound capture does. A full build re-parses every file.
+            if not self._is_full_build:
+                raise
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="foreign members")
+            return []
+        return sorted(
+            {
+                path
+                for row in rows
+                if isinstance(path := row.get(cs.KEY_PATH), str) and path
+            }
+        )
 
     def _foreign_definer_keys(self, gone_keys: Iterable[str]) -> set[str]:
         """Files that registered definitions keyed under a module going away.
@@ -7009,6 +7142,9 @@ class GraphUpdater:
             scan,
             reindexed_keys,
         )
+        reindexed_keys = self._queue_foreign_members(
+            reindexed_keys, deleted_before_parse, present, eligible_by_key, scan
+        )
         # Pass 2 order decides which same-stem file claims the bare module
         # qn; a clean build processes files in walk order, so the re-parse
         # set follows it too instead of the order the dependents were found.
@@ -8097,6 +8233,7 @@ class GraphUpdater:
         # whose spans would resolve against the refreshed registry onto
         # whatever now sits at the old line/column.
         self.factory.call_processor.reset_js_receiver_bindings()
+        self.factory.call_processor.failed_call_files.clear()
         captures_cache = self.factory._func_class_captures_cache
         # Iterate every file parsed this run, not the bounded AST cache: on a
         # large repo the cache evicts most files, and iterating it drops their
@@ -8435,6 +8572,31 @@ class GraphUpdater:
                 ):
                     continue
                 files[key] = candidate
+        return files
+
+    def _reingest_foreign_members(self, keys: set[str]) -> dict[str, Path]:
+        """On-disk files attaching members to a module this call replaces.
+
+        `run()` queues the same files (`_queue_foreign_members`), for the same
+        reason: the delete takes a C++ out-of-line definition with its
+        header's class, and only its own file re-creates it (issue #3271).
+        Repeated until nothing new joins, as there.
+        """
+        files: dict[str, Path] = {}
+        scope = set(keys)
+        frontier = sorted(scope)
+        while frontier:
+            joined: list[str] = []
+            for key in self._foreign_member_keys(frontier):
+                if key in scope:
+                    continue
+                scope.add(key)
+                candidate = self._member_file_on_disk(key)
+                if candidate is None:
+                    continue
+                files[key] = candidate
+                joined.append(key)
+            frontier = joined
         return files
 
     def _flip_sibling_files(
@@ -9199,6 +9361,9 @@ class GraphUpdater:
                     {*present, *gone, *survivors, *affected}
                 )
             )
+            affected.update(
+                self._reingest_foreign_members({*present, *gone, *survivors, *affected})
+            )
             all_keys = sorted({*present, *gone, *survivors, *affected})
             captured = self._capture_inbound_edges(all_keys)
             captured_trace = self._capture_trace_edges(all_keys)
@@ -9365,7 +9530,8 @@ class GraphUpdater:
             self.finding_analyzer.analyze(scoped)
 
     def _reanchor_glosses(self) -> None:
-        """Re-attach every Gloss to the definitions its own record names, then grade it.
+        """Re-attach this project's Glosses to the definitions their own records
+        name, then grade them.
 
         A gloss lives only in the graph, so a rebuild that deletes and
         recreates a definition, or an inbound-edge capture that could not be
@@ -9379,7 +9545,15 @@ class GraphUpdater:
         if not isinstance(self.ingestor, QueryProtocol):
             return
         try:
-            self.ingestor.execute_write(cq.CYPHER_REANCHOR_GLOSSES)
+            # Only this project's definitions changed (issue #3236).
+            scope: PropertyParams = {
+                cs.KEY_PROJECT_NAME: self.project_name,
+                cs.KEY_PROJECT_PREFIX: f"{self.project_name}{cs.SEPARATOR_DOT}",
+                cs.KEY_LONGER_PROJECT_PREFIXES: list(
+                    _longer_project_prefixes(self.ingestor.fetch_all, self.project_name)
+                ),
+            }
+            self.ingestor.execute_write(cq.CYPHER_REANCHOR_GLOSSES, scope)
             # A note whose name did not come back is placed by content hash
             # (MOVED) or marked AMBIGUOUS / LOST. Before the mentions restore,
             # so a note that moved gets its MENTIONS edges back this run.
@@ -9387,12 +9561,13 @@ class GraphUpdater:
                 self.ingestor.fetch_all,
                 self.ingestor.execute_write,
                 self._read_project_source,
+                project_name=self.project_name,
             )
-            self.ingestor.execute_write(cq.CYPHER_REANCHOR_GLOSS_MENTIONS)
+            self.ingestor.execute_write(cq.CYPHER_REANCHOR_GLOSS_MENTIONS, scope)
             # Then grade: the subject's `anchor_hash` was just re-emitted by
             # the parse, so comparing it with the note's recorded hash here
             # is what makes a note about changed code read STALE.
-            self.ingestor.execute_write(cq.CYPHER_GRADE_GLOSS_ANCHORS)
+            self.ingestor.execute_write(cq.CYPHER_GRADE_GLOSS_ANCHORS, scope)
         except Exception as error:  # noqa: BLE001 -- see docstring
             logger.warning(ls.GLOSS_REANCHOR_FAILED.format(error=error))
 
