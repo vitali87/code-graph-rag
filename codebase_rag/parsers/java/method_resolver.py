@@ -2054,15 +2054,14 @@ class JavaMethodResolverMixin:
 
     def _created_type_qn(self, creation: ASTNode, module_qn: str) -> str | None:
         # The registered type a `new` names: generic arguments and the diamond
-        # dropped (`new Box<>(1)`), a member type through its enclosing one
-        # (`new Request.Builder()`) or a supertype of it (`new
-        # Derived.Builder()` for Base's Builder), and a fully qualified name
-        # (`new com.acme.Box(3)`) (#2700 review).
+        # dropped (`new Box<>(1)`, `new Holder<T>.Slot()`), a member type
+        # through its enclosing one (`new Request.Builder()`) or a supertype
+        # of it (`new Derived.Builder()` for Base's Builder), and a fully
+        # qualified name (`new com.acme.Box(3)`) (#2700 review).
         type_node = creation.child_by_field_name(cs.FIELD_TYPE)
         if type_node is None or type_node.text is None:
             return None
-        written = type_node.text.decode(cs.ENCODING_UTF8)
-        base = written.split(cs.CHAR_ANGLE_OPEN, 1)[0].strip()
+        base = _erase_type_arguments(type_node.text.decode(cs.ENCODING_UTF8))
         ref = self._java_member_type_ref(base, module_qn)
         if self.function_registry.get(ref) in _JAVA_TYPE_NODE_TYPES:
             return ref

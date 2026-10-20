@@ -113,6 +113,21 @@ package com.acme;
 class Derived extends Base {
 }
 """,
+    "Holder.java": """\
+package com.acme;
+
+class Holder<T> {
+    class Slot {
+        int size() {
+            return 0;
+        }
+    }
+
+    int parameterizedOuter() {
+        return new Holder<T>.Slot().size();
+    }
+}
+""",
     "Main.java": """\
 package com.acme;
 
@@ -199,6 +214,9 @@ def calls(tmp_path_factory: pytest.TempPathFactory) -> dict[str, set[str]]:
         # (#2700 review).
         ("Main.fullyQualified()", "Box.value()"),
         ("Main.inheritedMemberType()", "Base.Builder.build()"),
+        # Type arguments on the enclosing type keep the member path: javac
+        # accepts `new Holder<T>.Slot()` inside Holder (#2700 review).
+        ("Holder.parameterizedOuter()", "Holder.Slot.size()"),
     ],
 )
 def test_the_receiver_types_the_call(
