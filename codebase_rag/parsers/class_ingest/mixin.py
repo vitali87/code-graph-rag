@@ -1722,6 +1722,21 @@ class ClassIngestMixin:
             # to the real implementation, so no edge ever reaches it; only the
             # parse can tell dead code it is a declaration.
             class_props[cs.KEY_TYPE_CHECKING_ONLY] = True
+        elif language == cs.SupportedLanguage.CPP:
+            self._record_cpp_callable_fields(class_node, class_props)
+
+    def _record_cpp_callable_fields(
+        self, class_node: Node, class_props: PropertyDict
+    ) -> None:
+        # Stored on the node so an incremental run that does not re-parse
+        # this header still lets a re-parsed `o->cb()` reach a free `cb`. A
+        # templated class's members live on its inner class_specifier.
+        member_node = _cpp_type_spec(class_node)
+        if member_node is None:
+            return
+        if names := sorted(cpp_callable_field_names(member_node)):
+            class_props[cs.KEY_CALLABLE_FIELDS] = names
+            self.cpp_callable_fields.update(names)
 
     def _record_declared_type_members(
         self,
@@ -1860,7 +1875,6 @@ class ClassIngestMixin:
                 member_node
             ):
                 self.class_field_types[class_qn] = field_types
-            self.cpp_callable_fields.update(cpp_callable_field_names(member_node))
         elif language == cs.SupportedLanguage.GO:
             # Record Go struct field types so a field-hop receiver
             # (`engine.trees.get()`) resolves, and a local bound from such a call

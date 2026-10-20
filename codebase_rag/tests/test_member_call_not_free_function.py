@@ -15,7 +15,10 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
+from evals.cgr_graph import _StatefulIngestor
 
 _RUST = {
     "Cargo.toml": '[package]\nname = "rsm2f"\nversion = "0.1.0"\nedition = "2021"\n',
@@ -168,3 +171,54 @@ def test_cpp_and_c_calls_that_can_reach_a_free_function_still_do(
     # Negatives: `ns::helper()` names a free function, and `o->open_dev()`
     # through a function-pointer table names one too, in C and in C++.
     assert (caller, callee) in cpp, cpp
+
+
+_OPS_HEADER = """\
+#include <functional>
+
+struct Ops { int (*cb)(); std::function<int()> fn; };
+"""
+_OPS_CALLER = """\
+#include "ops.h"
+
+int cb() { return 1; }
+int fn() { return 2; }
+int other() { return 3; }
+
+int run(Ops* o) { return o->cb() + o->fn() + o->other(); }
+"""
+
+
+def _stored_calls(store: _StatefulIngestor, caller: str) -> set[str]:
+    return {
+        str(target)
+        for _, source, rel, _, target in store.edges
+        if rel == cs.RelationshipType.CALLS.value and str(source) == caller
+    }
+
+
+def test_an_incremental_run_keeps_callable_members_of_an_unchanged_header(
+    tmp_path: Path,
+) -> None:
+    # Re-parsing only the caller leaves the struct's header to rehydration
+    # from the graph, so its callable members have to survive the round trip
+    # (#3220 review). `o->other()` names no callable member and stays unbound.
+    parsers, queries = load_parsers()
+    if cs.SupportedLanguage.CPP not in parsers:
+        pytest.skip("cpp parser not available")
+    root = tmp_path / "cbinc"
+    root.mkdir()
+    (root / "ops.h").write_text(_OPS_HEADER, encoding="utf-8")
+    (root / "main.cpp").write_text(_OPS_CALLER, encoding="utf-8")
+    expected = {"cbinc.main.cb", "cbinc.main.fn"}
+    store = _StatefulIngestor()
+
+    def sync(force: bool) -> set[str]:
+        GraphUpdater(
+            ingestor=store, repo_path=root, parsers=parsers, queries=queries
+        ).run(force=force)
+        return _stored_calls(store, "cbinc.main.run")
+
+    assert sync(force=True) == expected
+    (root / "main.cpp").write_text(_OPS_CALLER + "// touched\n", encoding="utf-8")
+    assert sync(force=False) == expected
