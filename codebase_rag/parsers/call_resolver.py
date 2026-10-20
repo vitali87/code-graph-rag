@@ -6669,9 +6669,30 @@ class CallResolver:
         # prefix-only import's names are reachable as `p.name` alone, so it
         # is left out, unlike in _dart_visible_libraries.
         roots = self.import_processor.dart_bare_imports.get(module_qn, [])
-        return any(
+        libraries = self._dart_with_exposed({module_qn, *roots}, roots)
+        if any(
             f"{library}{cs.SEPARATOR_DOT}{name}" in self.function_registry
-            for library in self._dart_with_exposed({module_qn, *roots}, roots)
+            for library in libraries
+        ):
+            return True
+        # A `package:` or `dart:` URI is kept as written, so the guard cannot
+        # read what such an import brings in (`package:shapes/helpers.dart`
+        # is lib/helpers.dart). Where the project declares a top-level
+        # `name`, that import may bring it in, and the name search that runs
+        # instead can find it; where it declares none, no first-party
+        # function can be the target, so the inherited member stands.
+        modules = self.type_inference.module_qn_to_file_path
+        return any(
+            library not in modules for library in libraries
+        ) and self._dart_declares_top_level(name)
+
+    def _dart_declares_top_level(self, name: str) -> bool:
+        # Whether any Dart library of the project declares `name` at its top.
+        modules = self.type_inference.module_qn_to_file_path
+        return any(
+            (path := modules.get(self._parent_qn(qn))) is not None
+            and _file_language(path.suffix) == cs.SupportedLanguage.DART
+            for qn in self.function_registry.find_ending_with(name)
         )
 
     def _dart_with_exposed(self, visible: set[str], roots: Iterable[str]) -> set[str]:

@@ -335,3 +335,63 @@ def test_a_dart_prefix_only_import_leaves_the_inherited_method(
     assert _callees(dart_imports, "lib.signs.Sign.prefixedCall") == {
         "lib.signs.Base.yell": "exact"
     }, dart_imports
+
+
+# A `package:` URI is kept as written, so the guard cannot read what such an
+# import brings in. Where the project declares a top-level function of the
+# name, that import may be the one bringing it in (here it is the package's
+# own lib/helpers.dart), so the inherited member is no certainty. Where the
+# project declares none, nothing first-party can answer, and an import the
+# guard reads in full rules the name out either way.
+_DART_PACKAGE = {
+    "pubspec.yaml": 'name: shapes\nenvironment:\n  sdk: ">=3.0.0 <4.0.0"\n',
+    "lib/helpers.dart": 'String shout() => "top";\n',
+    "lib/base.dart": 'class Base { String shout() => "b"; String emit() => "b"; }\n',
+    "lib/signs.dart": """\
+import 'package:shapes/helpers.dart';
+import 'package:bloc/bloc.dart';
+import 'base.dart';
+class Sign extends Base {
+  String packageCall() => shout();
+  String unreadCall() => emit();
+}
+""",
+    "lib/plain.dart": """\
+import 'base.dart';
+class Plain extends Base {
+  String resolvedCall() => shout();
+}
+""",
+}
+
+
+@pytest.fixture(scope="module")
+def dart_package(tmp_path_factory: pytest.TempPathFactory) -> _Calls:
+    return _calls(tmp_path_factory.mktemp("dart3169p") / "pkg", _DART_PACKAGE, "dart")
+
+
+def test_a_dart_package_import_may_bring_the_top_level_function_in(
+    dart_package: _Calls,
+) -> None:
+    # `import 'package:shapes/helpers.dart'` brings in lib/helpers.dart's
+    # `shout`, so the call keeps the name search's answer, not Base.shout.
+    callees = _callees(dart_package, "lib.signs.Sign.packageCall")
+    assert "lib.helpers.shout" in callees, dart_package
+    assert not any(".Base." in to for to in callees), dart_package
+
+
+@pytest.mark.parametrize(
+    ("caller", "callee"),
+    [
+        ("lib.signs.Sign.unreadCall", "lib.base.Base.emit"),
+        ("lib.plain.Plain.resolvedCall", "lib.base.Base.shout"),
+    ],
+    ids=["no-top-level-of-the-name", "only-readable-imports"],
+)
+def test_a_dart_inherited_call_stays_exact_where_no_import_can_hide_it(
+    dart_package: _Calls, caller: str, callee: str
+) -> None:
+    # Controls: no first-party top-level `emit` exists for the unread
+    # `package:bloc` import to bring in, and plain.dart imports only
+    # base.dart, which the guard reads and which declares no `shout`.
+    assert _callees(dart_package, caller) == {callee: "exact"}, dart_package
