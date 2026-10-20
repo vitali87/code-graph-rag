@@ -240,7 +240,11 @@ jobs:
           # (TAG_STATUS 2) and no bump commit: the commit that set it is the
           # one whose parent held another version, and the number chosen
           # there already accounts for it and for everything before it.
+          # Its release is another matter: nothing in this range has been
+          # released, so a breaking change anywhere in it is still owed one,
+          # even behind the newest bump, whose release may have been deferred.
           BREAKING=false
+          UNRELEASED_BREAKING=false
           COUNTING=true
           for SHA in $COMMITS; do
             if [ "$SECURITY" = "true" ] &&
@@ -291,13 +295,18 @@ jobs:
             if printf '%s\n' "$PULLS" | grep -qx security; then
               SECURITY=true
             fi
-            if [ "$COUNTING" = "true" ] &&
-                printf '%s\n' "$PULLS" | grep -qxF 'breaking change'; then
-              BREAKING=true
+            if printf '%s\n' "$PULLS" | grep -qxF 'breaking change'; then
+              UNRELEASED_BREAKING=true
+              if [ "$COUNTING" = "true" ]; then
+                BREAKING=true
+              fi
             fi
           done
+          # A breaking change ships at once, like a security fix, rather than
+          # waiting for RELEASE_EVERY: the version that announces it should be
+          # one users can install, not an interim tag.
           RELEASE=false
-          if [ "$SECURITY" = "true" ]; then
+          if [ "$SECURITY" = "true" ] || [ "$UNRELEASED_BREAKING" = "true" ]; then
             RELEASE=true
           elif [ -n "$LATEST" ]; then
             TAGS_SINCE=$(git ls-remote --tags origin "refs/tags/v*" \
@@ -545,7 +554,7 @@ jobs:
 
       - name: Install uv
         if: steps.decide.outputs.release == 'true'
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
