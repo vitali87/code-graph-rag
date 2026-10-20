@@ -132,6 +132,12 @@ git() {
   case "$1" in
     ls-remote)
       [ "$LS_REMOTE_FAILS" = true ] && return 128
+      case "$*" in
+        *refs/tags/*)
+          printf '%s\n' "${@: -1}" >> tag_lookups
+          return "${TAG_EXIT:-2}"
+          ;;
+      esac
       printf '%s\trefs/heads/main\n' "$TIP"
       ;;
     show) printf 'version = "0.0.5"\n' ;;
@@ -157,6 +163,47 @@ def test_newest_run_bumps(tmp_path: Path) -> None:
     )
     assert result.returncode == 0, result.stderr
     assert out["skip"] == "false"
+    assert out["hand_set"] == "false"
+    assert not (tmp_path / "tag_lookups").exists()
+
+
+def _check_hand_set(
+    tmp_path: Path, **env: str
+) -> tuple[subprocess.CompletedProcess[str], dict[str, str]]:
+    # HEAD^ held 0.0.5, and the merge itself set 0.1.0.
+    (tmp_path / "pyproject.toml").write_text('version = "0.1.0"\n', encoding="utf-8")
+    return _run(
+        "Check if version was manually changed",
+        CHECK_STUBS,
+        tmp_path,
+        {"TIP": SHA, **env},
+    )
+
+
+def test_a_version_set_by_hand_is_tagged_without_a_bump(tmp_path: Path) -> None:
+    result, out = _check_hand_set(tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert out["skip"] == "false"
+    assert out["hand_set"] == "true"
+    assert _lines(tmp_path / "tag_lookups") == ["refs/tags/v0.1.0"]
+
+
+def test_a_version_set_by_hand_that_is_already_tagged_stands_down(
+    tmp_path: Path,
+) -> None:
+    result, out = _check_hand_set(tmp_path, TAG_EXIT="0")
+    assert result.returncode == 0, result.stderr
+    assert out["skip"] == "true"
+    assert "nothing to tag" in result.stdout
+
+
+def test_a_failed_tag_lookup_for_a_hand_set_version_fails_the_run(
+    tmp_path: Path,
+) -> None:
+    result, out = _check_hand_set(tmp_path, TAG_EXIT="128")
+    assert result.returncode != 0
+    assert "could not look up tag v0.1.0" in result.stdout
+    assert "skip" not in out
 
 
 COMMIT_STUBS = r"""
@@ -192,6 +239,15 @@ def test_successful_push_is_recorded(tmp_path: Path) -> None:
     result, out = _commit(tmp_path)
     assert result.returncode == 0, result.stderr
     assert out["pushed"] == "true"
+
+
+def test_a_version_set_by_hand_still_gets_its_bump_commit(tmp_path: Path) -> None:
+    # Nothing may be left to change, but a later breaking scan stops there.
+    result, _ = _commit(tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert "git: commit --allow-empty -m chore: bump version to 0.1.0" in (
+        result.stdout
+    )
 
 
 def test_rejected_push_stands_down_when_main_moved_on(tmp_path: Path) -> None:
@@ -468,10 +524,9 @@ def test_the_labels_are_read_before_the_bump_type_is_chosen() -> None:
     assert names.index("Decide whether this tag ships a release") < names.index(
         "Determine bump type"
     )
-    assert (
-        _step("Determine bump type")["env"]["BREAKING"]
-        == "${{ steps.decide.outputs.breaking }}"
-    )
+    env = _step("Determine bump type")["env"]
+    assert env["BREAKING"] == "${{ steps.decide.outputs.breaking }}"
+    assert env["HAND_SET"] == "${{ steps.check_manual.outputs.hand_set }}"
 
 
 @pytest.mark.parametrize(
@@ -499,6 +554,28 @@ def test_the_bump_type_follows_the_breaking_label_unless_dispatched(
     )
     assert result.returncode == 0, result.stderr
     assert out["type"] == expected
+
+
+@pytest.mark.parametrize(
+    ("event", "breaking", "dispatched"),
+    [("push", "true", ""), ("workflow_dispatch", "false", "minor")],
+)
+def test_a_version_set_by_hand_is_not_bumped_again(
+    tmp_path: Path, event: str, breaking: str, dispatched: str
+) -> None:
+    result, out = _run(
+        "Determine bump type",
+        "",
+        tmp_path,
+        {
+            "GITHUB_EVENT_NAME": event,
+            "BREAKING": breaking,
+            "DISPATCH_BUMP_TYPE": dispatched,
+            "HAND_SET": "true",
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    assert out["type"] == "none"
 
 
 def test_non_sha_range_entries_never_reach_git_or_a_url(tmp_path: Path) -> None:
@@ -825,8 +902,9 @@ def test_a_breaking_change_after_a_deferred_bump_counts(tmp_path: Path) -> None:
 
 
 def _hand_set_version(tmp_path: Path, labels: dict[str, str]) -> dict[str, str]:
-    # HAND_SET changed the version from 0.1.89 to 0.2.0 itself, so no bump
-    # ran for it and no tag names 0.2.0.
+    # HAND_SET changed the version from 0.1.89 to 0.2.0 itself, and its own
+    # run never tagged it (one from before such runs did, or that failed), so
+    # no tag names 0.2.0.
     _commits(
         tmp_path,
         {HAND_SET: "Merge pull request #1", SHA: "Merge pull request #2"},
@@ -854,8 +932,32 @@ def test_a_hand_set_version_already_accounts_for_its_breaking_change(
 
 
 def test_a_hand_set_breaking_change_still_ships(tmp_path: Path) -> None:
-    # The merge that set the version ran no bump, so nothing released it.
+    # Its own run released nothing, so this later one does.
     out = _hand_set_version(tmp_path, {HAND_SET: "breaking change"})
+    assert out["release"] == "true"
+
+
+def test_a_breaking_change_ships_on_the_merge_that_sets_its_version(
+    tmp_path: Path,
+) -> None:
+    # The run for the merge that set 0.2.0 itself, before anything tags it.
+    _commits(
+        tmp_path,
+        {SHA: "Merge pull request #1"},
+        {SHA: f"{PULL_REQUEST}\nbreaking change"},
+        parents={SHA: OUTSIDE},
+    )
+    _versions(tmp_path, {OUTSIDE: "0.1.89"})
+    result, out = _decide_run(
+        tmp_path,
+        f"{SHA}\\n",
+        CURRENT="0.2.0",
+        LS_REMOTE_EXIT="2",
+        TAG_LIST=f"{OLDER}\\trefs/tags/v0.1.89\\n",
+    )
+    assert result.returncode == 0, result.stderr
+    # The number chosen by hand already accounts for it.
+    assert out["breaking"] == "false"
     assert out["release"] == "true"
 
 
@@ -893,7 +995,9 @@ def test_an_unreadable_earlier_version_fails_the_run(tmp_path: Path) -> None:
 def test_the_breaking_scan_stops_at_the_commit_a_bump_makes() -> None:
     commit = _step("Commit version bump")["run"]
     decide = _step("Decide whether this tag ships a release")["run"]
-    assert 'git commit -m "chore: bump version to ${NEW_VERSION}"' in commit
+    assert (
+        'git commit --allow-empty -m "chore: bump version to ${NEW_VERSION}"' in commit
+    )
     assert '"chore: bump version to "*)' in decide
 
 
