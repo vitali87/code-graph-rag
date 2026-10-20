@@ -163,3 +163,34 @@ def test_a_unicode_letter_go_name_is_accepted(
     graph = _index(temp_repo, mock_ingestor)
     report = _plan(temp_repo, graph, "main.helper", "数据2")
     assert "func 数据2() int" in report.diff, report.message
+
+
+_LUA = (
+    "local function helper(a)\n  return a\nend\n\n"
+    "local function run()\n  return helper(1)\nend\n\n"
+    "return { run = run }\n"
+)
+
+
+@pytest.mark.parametrize("new", ["数据", "a数据", "Größe", "x٣"])
+def test_a_name_lua_does_not_allow_is_refused(
+    temp_repo: Path, mock_ingestor: MagicMock, new: str
+) -> None:
+    # Negative: a Lua name is ASCII letters, digits and `_` (Lua 5.4 manual
+    # section 3.1, digits being 0-9 alone); `isidentifier` and the Lua
+    # grammar admit the CJK, accented and Arabic-Indic digit names the Lua
+    # lexer refuses, so the rename was written as code Lua cannot load.
+    _write(temp_repo, "mod.lua", _LUA)
+    graph = _index(temp_repo, mock_ingestor)
+    with pytest.raises(RenameRefused) as refused:
+        _plan(temp_repo, graph, "mod.helper", new)
+    assert str(refused.value) == cs.RENAME_BAD_NAME.format(name=new)
+
+
+def test_an_ascii_lua_name_is_accepted(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    _write(temp_repo, "mod.lua", _LUA)
+    graph = _index(temp_repo, mock_ingestor)
+    report = _plan(temp_repo, graph, "mod.helper", "_fetch2")
+    assert "local function _fetch2(a)" in report.diff, report.message

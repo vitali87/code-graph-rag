@@ -111,6 +111,9 @@ _DOLLAR_IDENTIFIER_LANGUAGES = frozenset(
         cs.SupportedLanguage.DART,
     }
 )
+# Languages whose identifiers are ASCII alone: Lua's lexer reads letters and
+# digits as the C locale does, so `数据`, `Größe` and `x٣` do not load.
+_ASCII_IDENTIFIER_LANGUAGES = frozenset({cs.SupportedLanguage.LUA})
 
 
 def _is_go_identifier(name: str) -> bool:
@@ -1531,8 +1534,10 @@ class Renamer:
             if language in _DOLLAR_IDENTIFIER_LANGUAGES
             else new_name
         )
-        if not spelled.isidentifier() or (
-            language == cs.SupportedLanguage.GO and not _is_go_identifier(new_name)
+        if (
+            not spelled.isidentifier()
+            or (language in _ASCII_IDENTIFIER_LANGUAGES and not new_name.isascii())
+            or (language == cs.SupportedLanguage.GO and not _is_go_identifier(new_name))
         ):
             return cs.RENAME_BAD_NAME.format(name=new_name)
         if (
