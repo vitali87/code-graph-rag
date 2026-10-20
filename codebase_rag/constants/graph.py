@@ -841,6 +841,9 @@ KEY_ANCHOR = "anchor"
 # omitted key, so a fixed link would otherwise stay listed as broken.
 KEY_BROKEN_LINKS = "broken_links"
 KEY_DECORATORS = "decorators"
+# The largest line a `path:line` target is looked up at: past it no source
+# file has the line, and the value would overflow a Bolt integer.
+GRAPH_MAX_SOURCE_LINE = 2**31 - 1
 # Return and parameter annotations as written (issue #1527). `return_type` is
 # absent when the definition has none; `param_types` is parallel to the
 # declared parameters ("" for an unannotated one) and absent, not empty, for
@@ -1442,6 +1445,22 @@ CYPHER_UNRESOLVED_IMPORTER_PATHS = (
     "OR target.qualified_name STARTS WITH (name + '.')) "
     "RETURN DISTINCT importer.path AS caller_path"
 )
+# Every IMPORTS edge written for a `package:` URI, with where it went (issue
+# #3278 review). A Dart pubspec's `name:` decides whether `package:<name>/...`
+# is a module of the project or an external package, so adding, deleting or
+# renaming one moves those imports while the importers stay unchanged on
+# disk, and no edge leads from them to the pubspec for the dependents lookup
+# to follow. The caller resolves each URI again and keeps the moved ones.
+CYPHER_PACKAGE_URI_IMPORTS = (
+    "MATCH (importer)-[r:IMPORTS]->(target) "
+    "WHERE importer.path IS NOT NULL "
+    "AND importer.qualified_name STARTS WITH $project_prefix "
+    "AND r.imported_name STARTS WITH $uri_prefix "
+    "RETURN DISTINCT importer.path AS caller_path, "
+    "importer.qualified_name AS from_qn, r.imported_name AS imported_name, "
+    "target.qualified_name AS to_qn"
+)
+CYPHER_PARAM_URI_PREFIX = "uri_prefix"
 # Modules carrying at least one unresolved relative specifier, with the
 # specifiers themselves. The specifier is relative to the IMPORTING module's
 # directory, so the match against a created file is resolved in Python rather
