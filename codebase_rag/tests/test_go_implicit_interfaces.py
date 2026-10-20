@@ -19,7 +19,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -2157,7 +2157,7 @@ def _one_real_go_run_per_tree(
         binary: Path,
         module_root: Path,
         ignored_dirs: frozenset[str],
-        in_repo_modules: frozenset[str] = frozenset(),
+        in_repo_modules: Mapping[str, frozenset[Path]] | None = None,
     ) -> GoSemanticFacts | None:
         key = hashlib.sha256(
             "\0".join(
@@ -2181,7 +2181,7 @@ def _one_real_go_run_per_tree(
             parse = frontend._parse_payload
 
             def keep(
-                stdout: str, stderr: str, in_repo: frozenset[str]
+                stdout: str, stderr: str, in_repo: Mapping[str, frozenset[Path]] | None
             ) -> GoSemanticFacts | None:
                 captured.append((stdout, stderr))
                 return parse(stdout, stderr, in_repo)

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -22,10 +23,13 @@ from codebase_rag import graph_updater as gu
 from codebase_rag.parsers.go_frontend.frontend import _parse_payload
 from codebase_rag.tests.conftest import get_relationships, run_updater
 
-_LIBA = frozenset({"example.com/liba"})
+_LIBA_DIR = Path("/repo/liba").resolve()
+_LIBA = {"example.com/liba": frozenset({_LIBA_DIR})}
 
 
-def _external(name: str, module: str | None, line: int) -> dict[str, object]:
+def _external(
+    name: str, module: str | None, line: int, directory: Path | None = None
+) -> dict[str, object]:
     site: dict[str, object] = {
         "file": "appb/main.go",
         "line": line,
@@ -34,6 +38,8 @@ def _external(name: str, module: str | None, line: int) -> dict[str, object]:
     }
     if module is not None:
         site["module"] = module
+    if directory is not None:
+        site["dir"] = str(directory)
     return site
 
 
@@ -45,10 +51,14 @@ def _externals(entries: list[dict[str, object]]) -> set[str]:
 
 
 def test_a_sibling_module_callee_is_not_external() -> None:
+    # Loaded from the in-repo directory (spelled through `appb/..`), and a
+    # fact from an older tool that names the module but no directory.
     assert (
         _externals(
             [
-                _external("Slug", "example.com/liba", 1),
+                _external(
+                    "Slug", "example.com/liba", 1, _LIBA_DIR.parent / "appb/../liba"
+                ),
                 _external("Root", "example.com/liba", 2),
             ]
         )
@@ -59,15 +69,19 @@ def test_a_sibling_module_callee_is_not_external() -> None:
 def test_a_third_party_callee_stays_external() -> None:
     # Negatives: the standard library (no module), another module whose path
     # only shares a prefix, a separate module nested under the in-repo one's
-    # path, and a fact from a tool that names no module stay external.
+    # path, a fact from a tool that names no module, and the in-repo
+    # module's path loaded from elsewhere (a published copy in the module
+    # cache) stay external.
+    cached = Path("/gomodcache/example.com/liba@v1.0.0").resolve()
     assert _externals(
         [
             _external("Println", None, 1),
             _external("Thing", "example.com/libabc", 2),
             _external("Greet", "example.com/liba/plugin", 3),
             _external("Old", None, 4),
+            _external("Cached", "example.com/liba", 5, cached),
         ]
-    ) == {"Println", "Thing", "Greet", "Old"}
+    ) == {"Println", "Thing", "Greet", "Old", "Cached"}
 
 
 _LIBA_SRC = (
@@ -182,3 +196,73 @@ def test_gotypes_keeps_a_nested_path_dependency_external(
     assert not any(
         a.endswith("main.run") and b.endswith("main.Greet") for a, b in calls
     ), calls
+
+
+def _publish(proxy: Path, module: str, version: str, files: dict[str, str]) -> None:
+    # One released version on a `file://` GOPROXY, so the module cache case
+    # runs offline.
+    versions = proxy / module / "@v"
+    versions.mkdir(parents=True, exist_ok=True)
+    (versions / "list").write_text(f"{version}\n", encoding="utf-8")
+    (versions / f"{version}.info").write_text(
+        json.dumps({"Version": version, "Time": "2024-01-01T00:00:00Z"}),
+        encoding="utf-8",
+    )
+    (versions / f"{version}.mod").write_text(files["go.mod"], encoding="utf-8")
+    with zipfile.ZipFile(versions / f"{version}.zip", "w") as archive:
+        for rel, text in files.items():
+            archive.writestr(f"{module}@{version}/{rel}", text)
+
+
+def test_gotypes_keeps_a_cached_copy_of_an_in_repo_module_external(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Negative: `appb` requires a published `example.com/liba` with no
+    # `replace` or `go.work`, so Go builds it from the module cache although
+    # the repository holds a `liba` of the same path. The call goes to the
+    # cached copy and must not bind to the repository's `Slug`.
+    from codebase_rag.parsers.go_frontend import frontend
+
+    go = shutil.which("go")
+    if go is None:
+        pytest.skip("go toolchain not available")
+    # Built first: the environment below points the module cache, which the
+    # helper's own build reads, at an offline proxy.
+    if frontend._build_tool(go) is None:
+        pytest.skip("gotypes frontend could not build in this environment")
+    liba_mod = "module example.com/liba\n\ngo 1.21\n"
+    proxy = temp_repo / "proxy"
+    _publish(
+        proxy,
+        "example.com/liba",
+        "v1.0.0",
+        {"go.mod": liba_mod, "strs/strs.go": _LIBA_SRC},
+    )
+    monkeypatch.setenv("GOPROXY", proxy.as_uri())
+    monkeypatch.setenv("GOSUMDB", "off")
+    monkeypatch.setenv("GOMODCACHE", str(temp_repo / "modcache"))
+    monkeypatch.setenv("GOFLAGS", "-mod=mod -modcacherw")
+    monkeypatch.delenv("GOWORK", raising=False)
+    root = temp_repo / "gomm"
+    _write(root, "liba/go.mod", liba_mod)
+    _write(root, "liba/strs/strs.go", _LIBA_SRC)
+    _write(
+        root,
+        "appb/go.mod",
+        "module example.com/appb\n\ngo 1.21\n\nrequire example.com/liba v1.0.0\n",
+    )
+    _write(root, "appb/main.go", _MAIN)
+    if not frontend.run_go_frontend(root).call_sites:
+        pytest.skip("gotypes frontend could not build in this environment")
+
+    monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
+    ingestor = MagicMock()
+    run_updater(root, ingestor, skip_if_missing="go")
+    calls = {
+        (str(c.args[0][2]), str(c.args[2][2]))
+        for c in get_relationships(ingestor, "CALLS")
+    }
+    assert any(
+        a.endswith("appb.main.main") and b.endswith("appb.main.run") for a, b in calls
+    ), calls
+    assert not any(b.endswith("liba.strs.strs.Slug") for _, b in calls), calls
