@@ -24,6 +24,8 @@ from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import NamedTuple, NotRequired, TypedDict
 
+from tree_sitter import Node
+
 from . import constants as cs
 from . import cypher_queries as cq
 from .crash_correlation import ArityError, diagnose_arity
@@ -37,6 +39,7 @@ from .dead_code import (
 from .duplicates import _jaccard
 from .graph_query import QueryFn, _longer_project_prefixes, _opt_int, _prefix
 from .language_spec import get_language_for_extension
+from .parser_loader import load_parsers
 from .types_defs import PropertyDict, ReingestReport, ResultRow
 
 _METHOD_LABELS = frozenset({cs.NodeLabel.METHOD.value})
@@ -648,7 +651,7 @@ def _dangling(
     gone = set(symbols["removed"]) | {r["old"] for r in symbols["renamed"]}
     renamed_to = {r["old"]: r["new"] for r in symbols["renamed"]}
     after_pairs = {(site.caller, site.callee) for site in after.sites}
-    rows: dict[str, list[str] | None] = {}
+    trees: dict[str, _WorkingTree | None] = {}
     out: list[DanglingCaller] = []
     seen: set[tuple[str, str, int | None, int | None]] = set()
     for site in before.sites:
@@ -679,7 +682,7 @@ def _dangling(
                 dangling,
                 before,
                 after,
-                _working_tree_rows(rows, repo_root, site.caller_path),
+                _working_tree(trees, repo_root, site.caller_path),
             )
         out.append(dangling)
     return sorted(
@@ -687,21 +690,39 @@ def _dangling(
     )
 
 
-def _working_tree_rows(
-    rows: dict[str, list[str] | None], repo_root: Path | None, path: str
-) -> list[str] | None:
+class _WorkingTree(NamedTuple):
+    """A re-parsed caller's file as it is now."""
+
+    rows: list[str]
+    # None when the file's language has no grammar.
+    root: Node | None
+
+
+def _working_tree(
+    trees: dict[str, _WorkingTree | None], repo_root: Path | None, path: str
+) -> _WorkingTree | None:
     # Several dangling calls can share a caller's file: it is read once.
-    if path not in rows:
+    if path not in trees:
         text = _read_source(repo_root, path) if repo_root else None
-        rows[path] = None if text is None else text.split("\n")
-    return rows[path]
+        trees[path] = (
+            None
+            if text is None
+            else _WorkingTree(text.split("\n"), _syntax_root(path, text))
+        )
+    return trees[path]
+
+
+def _syntax_root(path: str, text: str) -> Node | None:
+    language = get_language_for_extension(Path(path).suffix)
+    parser = load_parsers()[0].get(language) if language else None
+    return parser.parse(text.encode(cs.ENCODING_UTF8)).root_node if parser else None
 
 
 def _move_to_working_tree(
     dangling: DanglingCaller,
     before: Snapshot,
     after: Snapshot,
-    rows: list[str] | None,
+    tree: _WorkingTree | None,
 ) -> None:
     """Report a re-parsed caller's dangling call where it is now.
 
@@ -724,26 +745,48 @@ def _move_to_working_tree(
     if (old.fingerprint, old.end_line - old.start_line) == (
         new.fingerprint,
         new.end_line - new.start_line,
-    ) and _reads_call(rows, line, dangling["col"], name):
+    ) and _reads_call(tree, line, dangling["col"], name):
         dangling["line"] = line
         return
     dangling["line_from"] = cs.DANGLING_LINE_FROM_BASE
 
 
-def _reads_call(rows: list[str] | None, line: int, col: int | None, name: str) -> bool:
-    """Whether the text at 1-based `line`, byte `col`, names `name` first.
+def _reads_call(
+    tree: _WorkingTree | None, line: int, col: int | None, name: str
+) -> bool:
+    """Whether the code at 1-based `line`, byte `col`, names `name` first.
 
     Plainly or through a qualifier: `helper(`, `self.helper(`,
-    `util::helper(`, `new Helper(`.
+    `util::helper(`, `new Helper(`. The skeleton sees neither a comment's
+    text nor a string literal's, so a `# helper()` that traded lines with
+    the call leaves it equal too: a name read inside one is no call.
     """
-    if rows is None or col is None or not 0 < line <= len(rows):
+    if tree is None or col is None or not 0 < line <= len(tree.rows):
         return False
+    row = tree.rows[line - 1]
     try:
-        rest = rows[line - 1].encode(cs.ENCODING_UTF8)[col:].decode(cs.ENCODING_UTF8)
+        rest = row.encode(cs.ENCODING_UTF8)[col:].decode(cs.ENCODING_UTF8)
     except UnicodeDecodeError:
         return False
     pattern = cs.DANGLING_CALL_QUALIFIER_PATTERN + re.escape(name)
-    return re.match(pattern + cs.DANGLING_CALL_NAME_END_PATTERN, rest) is not None
+    if re.match(pattern + cs.DANGLING_CALL_NAME_END_PATTERN, rest) is None:
+        return False
+    return not _inside_text(tree.root, line - 1, col)
+
+
+def _inside_text(root: Node | None, row: int, col: int) -> bool:
+    """Whether 0-based (`row`, byte `col`) is in a comment's or a string's text.
+
+    Without a grammar the line's text alone decides. An interpolated call
+    (`f"{helper()}"`, `${helper()}`) starts at its own identifier, not at
+    the string around it.
+    """
+    if root is None:
+        return False
+    node = root.descendant_for_point_range((row, col), (row, col))
+    return node is not None and any(
+        marker in node.type for marker in cs.DANGLING_CALL_TEXT_NODE_SUBSTRINGS
+    )
 
 
 # --- dangling importers ------------------------------------------------------

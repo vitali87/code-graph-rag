@@ -137,13 +137,28 @@ _HELPER = "def helper():\n    return 1\n\n\n"
             "    a = helper()\n\n    b = other()\n",
             id="blank-line-moved",
         ),
+        # CodeRabbit, PR #3245: a comment naming the callee at the call's
+        # column can trade lines with the call, so the shifted line reads
+        # `helper()`, but inside the comment.
+        pytest.param(
+            "    a = helper()\n    #   helper()\n    b = other()\n",
+            "    #   helper()\n    a = helper()\n    b = other()\n",
+            id="comment-swapped",
+        ),
+        # Nor does the skeleton look inside a string literal: a line it
+        # gains can carry the callee's name to the shifted line.
+        pytest.param(
+            '    b = """\n    """\n    a = helper()\n\n\n',
+            '    b = """\n\n        helper()\n    """\n    a = helper()\n',
+            id="string-line-moved",
+        ),
     ],
 )
 def test_a_call_moved_inside_an_unchanged_skeleton_says_its_line_is_the_base_one(
     tmp_path: Path, body: str, edited_body: str
 ) -> None:
-    # Negative: the caller's start moved by -4, but the call moved by -5
-    # within it, so the shifted line holds no `helper` call.
+    # Negative: the caller's start moved by -4, but the call moved within
+    # it, so the shifted line holds no `helper` call.
     head = "def other():\n    return 2\n\n\ndef uses_helper():\n"
     tail = "    return a + b\n"
     root, store, updater = _index(tmp_path, _HELPER + head + body + tail)
