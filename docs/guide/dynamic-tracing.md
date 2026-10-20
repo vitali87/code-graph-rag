@@ -90,9 +90,20 @@ Attach it to any JVM workload, most usefully a test run:
 
 ```bash
 java -javaagent:build/cgr-jvm-agent.jar="include=com.example;repo=/path/to/your-repo" ...
-# Maven:  MAVEN_OPTS='-javaagent:...' mvn test
+# Maven: Surefire runs the tests in a forked JVM, so pass the agent through argLine
+mvn test -DargLine='-javaagent:build/cgr-jvm-agent.jar=include=com.example;repo=/path/to/your-repo'
 # Gradle: add the same -javaagent flag to test { jvmArgs ... }
 ```
+
+`MAVEN_OPTS` sets only the JVM that runs Maven itself, not the one Surefire
+forks for the tests (`forkCount=1` by default), so an agent passed there
+traces no test method; it reaches the tests only with `-DargLine` (or with
+`-DforkCount=0`, which runs them inside Maven's JVM). Keep the quotes around
+the `argLine` value: the `;` between the agent options would otherwise end
+the shell command. To set it once, put it in the Surefire configuration of
+`pom.xml`, as `<argLine>-javaagent:...</argLine>`; when the pom already sets
+`argLine` (JaCoCo does, for its own agent), append to it with
+`<argLine>@{argLine} -javaagent:...</argLine>` instead of replacing it.
 
 
 ![make jvm-agent, then jlox run under the agent and cgr trace ingest, revealing the visitor dispatch from Expr.Call.accept to Interpreter.visitCallExpr](../assets/demos/dynamic-tracing-jvm.gif)
