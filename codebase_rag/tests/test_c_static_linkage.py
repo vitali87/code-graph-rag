@@ -101,9 +101,23 @@ _INHERITED = {
         },
         "cpp",
     ),
+    # A named namespace's `static` declaration, even in an earlier block of
+    # the namespace, is inherited by its definition there.
+    "cpp-namespace-static-prototype": (
+        {
+            "k.cpp": (
+                "namespace N { static int now(); }\n"
+                "namespace N { int now() { return 1; } int k() { return now(); } }\n"
+            ),
+            "z.cpp": "namespace N { int now() { return 42; } }\n",
+            "main.cpp": "namespace N { int now(); }\nint main() { return N::now(); }\n",
+        },
+        "cpp",
+    ),
 }
 # C++ overloads are two functions: `static` on `f(int)` leaves `f(double)`
-# extern, and `n::k(int)` is not the file's `static k(int)` (#3154 review).
+# extern, `n::k(int)` is not the file's `static k(int)`, nor the file's
+# `m(int)` n's `static m(int)` (#3154 review).
 _CPP_OVERLOADS = {
     "a.cpp": (
         "static void f(int);\n"
@@ -112,10 +126,13 @@ _CPP_OVERLOADS = {
         "void h(double) {}\n"
         "static void k(int);\n"
         "namespace n { void k(int) {} }\n"
+        "namespace n { static void m(int); }\n"
+        "void m(int) {}\n"
     ),
     "b.cpp": (
         "void f(double);\nvoid h(double);\nnamespace n { void k(int); }\n"
-        "void g() { f(1.0); h(1.0); n::k(1); }\n"
+        "void m(int);\n"
+        "void g() { f(1.0); h(1.0); n::k(1); m(1); }\n"
     ),
 }
 # A static's file is matched exactly, not as a qn prefix: main.h's module
@@ -228,21 +245,23 @@ def test_a_static_its_file_or_an_includer_can_reach_still_binds(
 
 
 @pytest.mark.parametrize(
-    ("case", "own_caller", "private"),
+    ("case", "own_caller", "private", "extern"),
     [
-        ("c-static-prototype", "a.a_tick", "a.now"),
-        ("cpp-anonymous-namespace", "k.k", "k.now"),
-        ("cpp-static-template", "k.k", "k.now"),
+        ("c-static-prototype", "a.a_tick", "a.now", "z.now"),
+        ("cpp-anonymous-namespace", "k.k", "k.now", "z.now"),
+        ("cpp-static-template", "k.k", "k.now", "z.now"),
+        # `k.N.now` is the static prototype, `k.N.now@2` its definition.
+        ("cpp-namespace-static-prototype", "k.N.k", "k.N.now@2", "z.N.now"),
     ],
 )
 def test_a_static_the_definition_inherits_stays_in_its_file(
-    tmp_path: Path, case: str, own_caller: str, private: str
+    tmp_path: Path, case: str, own_caller: str, private: str, extern: str
 ) -> None:
     # `static` on an earlier declaration or on the wrapped template, or an
     # anonymous namespace, makes the definition just as private.
     files, grammar = _INHERITED[case]
     calls = _calls(tmp_path / case, files, grammar)
-    assert ("main.main", "z.now") in calls, calls
+    assert ("main.main", extern) in calls, calls
     assert ("main.main", private) not in calls, calls
     assert (own_caller, private) in calls, calls
 
@@ -253,7 +272,7 @@ def test_a_cpp_static_overload_leaves_the_extern_one_linkable(
     # `a.f` is the `static f(int)` prototype, `a.f@2` the extern `f(double)`.
     calls = _calls(tmp_path / "overloads", _CPP_OVERLOADS, "cpp")
     callees = {to for (src, to) in calls if src == "b.g"}
-    assert callees == {"a.f@2", "a.h@4", "a.n.k"}, calls
+    assert callees == {"a.f@2", "a.h@4", "a.n.k", "a.m"}, calls
 
 
 def test_a_static_is_matched_to_its_file_not_a_qn_prefix(tmp_path: Path) -> None:
@@ -292,6 +311,12 @@ def _sync(root: Path, store: _StatefulIngestor, force: bool) -> set[tuple[str, s
         (_CPP, "l.cpp", "k.hidden", "cpp"),
         (_INHERITED["c-static-prototype"][0], "main.c", "a.now", "c"),
         (_INHERITED["cpp-anonymous-namespace"][0], "main.cpp", "k.now", "cpp"),
+        (
+            _INHERITED["cpp-namespace-static-prototype"][0],
+            "main.cpp",
+            "k.N.now@2",
+            "cpp",
+        ),
         (_CPP_OVERLOADS, "b.cpp", "a.f", "cpp"),
         # An unchanged header's includes still lead to sds.h's static inline.
         (_REDIS, "src/aof.c", "src.quicklist.mstime", "c"),
@@ -301,6 +326,7 @@ def _sync(root: Path, store: _StatefulIngestor, force: bool) -> set[tuple[str, s
         "cpp",
         "c-static-prototype",
         "cpp-anonymous-namespace",
+        "cpp-namespace-static-prototype",
         "cpp-overloads",
         "redis",
     ],

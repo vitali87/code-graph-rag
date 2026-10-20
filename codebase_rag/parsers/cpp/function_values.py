@@ -31,7 +31,8 @@ class CFileScope(NamedTuple):
     objects: frozenset[str]
     # The `static` functions again, by name and parameter signature: C++
     # overloads `f(int)` and `f(double)` are two functions, and `static` on
-    # one leaves the other's linkage alone (#3154 review).
+    # one leaves the other's linkage alone (#3154 review). A named
+    # namespace's are keyed by their qualified name (`N::f`).
     tu_local_overloads: frozenset[tuple[str, str]] = frozenset()
 
 
@@ -111,6 +112,8 @@ def c_file_scope(root: Node) -> CFileScope:
             _record_function_definition(node, tu_local, overloads)
         elif node.type == cs.CppNodeType.DECLARATION:
             _record_declaration(node, tu_local, overloads, objects)
+        elif node.type == cs.CppNodeType.NAMESPACE_DEFINITION:
+            _record_namespace_statics(node, overloads)
         # An enum written anywhere outside a function body (alone, in a
         # typedef, a declaration, or even a struct member) declares its
         # constants at file scope in C (#2593 review).
@@ -148,25 +151,33 @@ def c_definition_has_internal_linkage(
         # C has no overloads: every declaration of a name is one function.
         name = cpp_utils.extract_function_name(inner)
         return name is not None and name in scope.tu_local_functions
-    # In C++ only the same signature, defined at file scope as the `static`
-    # declarations recorded are, is the function one of them made private:
-    # `static void f(int);` leaves `void f(double)` and `n::f(int)` extern.
+    # In C++ only the same signature, in the same namespace, is the function
+    # a `static` declaration made private: `static void f(int);` leaves
+    # `void f(double)` and `n::f(int)` extern.
     key = _overload_key(inner.child_by_field_name(cs.FIELD_DECLARATOR))
+    namespace = _namespace_scope(definition)
     return (
         key is not None
-        and key in scope.tu_local_overloads
-        and _at_file_scope(definition)
+        and namespace is not None
+        and (f"{namespace}{key[0]}", key[1]) in scope.tu_local_overloads
     )
 
 
-def _at_file_scope(node: Node) -> bool:
-    # What c_file_scope walks: no namespace or class between it and the root.
+def _namespace_scope(node: Node) -> str | None:
+    # `N::` (`A::B::` nested) for a declaration in a named namespace, "" at
+    # file scope, None in a class, a function or an anonymous namespace.
+    scope = ""
     current = node.parent
     while current is not None:
-        if current.type not in cs.C_FILE_SCOPE_CONTAINER_TYPES:
-            return False
+        if current.type == cs.CppNodeType.NAMESPACE_DEFINITION:
+            name = safe_decode_text(current.child_by_field_name(cs.FIELD_NAME))
+            if not name:
+                return None
+            scope = f"{name}{cs.SEPARATOR_DOUBLE_COLON}{scope}"
+        elif current.type not in cs.C_FILE_SCOPE_CONTAINER_TYPES:
+            return None
         current = current.parent
-    return True
+    return scope
 
 
 # One file's definitions are ingested together, so the last file's scope is
@@ -241,6 +252,36 @@ def _record_declaration(
             tu_local.add(name)
             if signature := cpp_declarator_signature(function):
                 overloads.add((name, signature.text))
+
+
+def _record_namespace_statics(namespace: Node, overloads: set[tuple[str, str]]) -> None:
+    # `namespace N { static int f(); int f() {} }` defines a private `f` too
+    # (#3154 review). Only the overload keys: the names and objects the call
+    # processor reads stay the file scope's.
+    stack = [namespace]
+    while stack:
+        node = stack.pop()
+        if (
+            node.type in cs.C_FILE_SCOPE_CONTAINER_TYPES
+            or node.type == cs.CppNodeType.NAMESPACE_DEFINITION
+        ):
+            stack.extend(node.named_children)
+        elif (
+            node.type == cs.CppNodeType.DECLARATION
+            and cpp_utils.cpp_has_static_storage(node)
+        ):
+            overloads.update(_namespace_overload_keys(node))
+
+
+def _namespace_overload_keys(declaration: Node) -> Iterator[tuple[str, str]]:
+    # (`N::f`, parameter signature) of each function the declaration declares.
+    if (scope := _namespace_scope(declaration)) is None:
+        return
+    for declarator in declaration.children_by_field_name(cs.FIELD_DECLARATOR):
+        name, function = _declared_name(declarator)
+        signature = None if function is None else cpp_declarator_signature(function)
+        if name and signature is not None:
+            yield f"{scope}{name}", signature.text
 
 
 def _overload_key(declarator: Node | None) -> tuple[str, str] | None:
