@@ -978,6 +978,43 @@ def _body_function_nodes(
     return captures.get(cs.CAPTURE_FUNCTION, [])
 
 
+def _next_macro_token(token: Node) -> Node | None:
+    # The token after `token` in a macro's stream, comments skipped.
+    following = token.next_sibling
+    while following is not None and following.type in cs.RS_COMMENT_TYPES:
+        following = following.next_sibling
+    return following
+
+
+def _macro_turbofish_reaches_args(ident: Node) -> bool:
+    """Whether a macro-token identifier is a call, through any turbofish.
+
+    `make::<u64>()` in a macro is the flat stream `make :: < u64 > ( )`, so
+    the query's identifier-then-`(` shape missed it and every turbofish call
+    inside `assert!`/`println!` lost its edge (issue #3212). An identifier
+    followed by `::<` is a call only when the generic arguments close straight
+    into an argument group; `a::<B>::c()` continues the path instead. A
+    comment between them (`make::<u64> /* type */ ()`) is a token too.
+    """
+    scope = _next_macro_token(ident)
+    if scope is None or scope.type != cs.TS_RS_TOKEN_SCOPE:
+        return True
+    depth = 0
+    token = _next_macro_token(scope)
+    while token is not None:
+        depth += cs.RS_MACRO_ANGLE_DEPTH.get(token.type, 0)
+        if depth <= 0:
+            break
+        token = _next_macro_token(token)
+    if token is None or depth != 0 or (args := _next_macro_token(token)) is None:
+        return False
+    return (
+        args.type == cs.TS_RS_TOKEN_TREE
+        and args.child_count > 0
+        and args.children[0].type == cs.CHAR_PAREN_OPEN
+    )
+
+
 def _find_call_arguments_node(call_node: Node) -> Node | None:
     args_node = call_node.child_by_field_name(cs.FIELD_ARGUMENTS)
     if args_node is not None:
@@ -4321,6 +4358,16 @@ class CallProcessor:
             )
         return None
 
+    def _macro_token_call_name(self, ident: Node) -> str | None:
+        # Attribute arguments share the token_tree shape (`skip(self)` in
+        # `#[instrument(skip(self))]`) but name no function; binding them
+        # by bare name invented module-level CALLS (issue #2541).
+        if rs_utils.in_attribute_arguments(ident):
+            return None
+        if not _macro_turbofish_reaches_args(ident):
+            return None
+        return self._macro_call_name(ident)
+
     def _get_call_target_name(
         self, call_node: Node, language: cs.SupportedLanguage | None = None
     ) -> str | None:
@@ -4332,12 +4379,7 @@ class CallProcessor:
         # mis-resolves (`server.run()` in tokio::select! to the same-module free
         # fn `run` instead of Listener.run).
         if call_node.type == cs.TS_IDENTIFIER and call_node.text is not None:
-            # Attribute arguments share the token_tree shape (`skip(self)` in
-            # `#[instrument(skip(self))]`) but name no function; binding them
-            # by bare name invented module-level CALLS (issue #2541).
-            if rs_utils.in_attribute_arguments(call_node):
-                return None
-            return self._macro_call_name(call_node)
+            return self._macro_token_call_name(call_node)
         # A SQL `invocation` names its routine through an unnamed
         # `object_reference` child (no `function` or `name` field), so every
         # SQL call site fell through nameless and was dropped (issue #2449).
