@@ -11,7 +11,9 @@ the config read).
 from __future__ import annotations
 
 import codecs
+import errno
 import json
+import os
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -190,6 +192,31 @@ def test_an_unparseable_tsconfig_is_named_once(
 ) -> None:
     cfg = tmp_path / "tsconfig.json"
     cfg.write_text('{"compilerOptions": {"paths": {"@/*": ["./*"]}', encoding="utf-8")
+    assert import_processor._load_jsonc(cfg) is None
+    assert import_processor._load_jsonc(cfg) is None
+    assert len([w for w in warnings if str(cfg) in w]) == 1, warnings
+
+
+def _denied(self: Path, *_args: object, **_kwargs: object) -> str:
+    raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), str(self))
+
+
+@pytest.mark.parametrize("unreadable", ["not-utf-8", "permission-denied"])
+def test_an_unreadable_tsconfig_is_named_once(
+    tmp_path: Path,
+    warnings: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+    unreadable: str,
+) -> None:
+    # CodeRabbit, PR #3229: a config that is found but cannot be read or
+    # decoded loses its `paths` and `baseUrl` all the same (a Latin-1 file
+    # crashed the run with UnicodeDecodeError, then was dropped unnamed).
+    cfg = tmp_path / "tsconfig.json"
+    if unreadable == "permission-denied":
+        cfg.write_text(_REPRO, encoding="utf-8")
+        monkeypatch.setattr(Path, "read_text", _denied)
+    else:
+        cfg.write_bytes(_REPRO.replace("preserve", "pr\u00e9serve").encode("latin-1"))
     assert import_processor._load_jsonc(cfg) is None
     assert import_processor._load_jsonc(cfg) is None
     assert len([w for w in warnings if str(cfg) in w]) == 1, warnings

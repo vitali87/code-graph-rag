@@ -466,12 +466,17 @@ def _names_js_module(site: PropertyDict | None) -> bool:
 
 def _load_jsonc(path: Path) -> dict | None:
     # tsconfig.json is JSONC (comments, trailing commas, a BOM), read the way
-    # TypeScript reads it. A config that still is not JSON loses its `paths`
-    # and `baseUrl`, so every alias import turns external: say which file.
+    # TypeScript reads it. A config that still is not JSON, or that cannot be
+    # read or decoded, loses its `paths` and `baseUrl`, so every alias import
+    # turns external: say which file.
     try:
         stat = path.stat()
+    except OSError:
+        return None
+    try:
         text = path.read_text(encoding=cs.ENCODING_UTF8_SIG)
     except (OSError, UnicodeDecodeError):
+        _warn_unparseable_tsconfig(path, stat.st_mtime_ns)
         return None
     for source in (text, strip_jsonc(text)):
         try:
