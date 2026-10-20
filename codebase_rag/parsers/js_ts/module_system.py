@@ -45,6 +45,18 @@ def _es6_declaration_name(export_function: ASTNode | None) -> str | None:
     return safe_decode_text(name_node)
 
 
+def _default_alias_spec(statement: ASTNode) -> ASTNode | None:
+    # The `pad as default` specifier of an `export { ... }` clause, if any.
+    for clause in statement.named_children:
+        if clause.type != cs.TS_EXPORT_CLAUSE:
+            continue
+        for spec in clause.named_children:
+            alias = safe_decode_text(spec.child_by_field_name(cs.FIELD_ALIAS))
+            if alias == cs.TS_EXPORT_DEFAULT:
+                return spec
+    return None
+
+
 class JsTsModuleSystemMixin:
     __slots__ = ("_processed_imports", "_pending_direct_module_exports")
     ingestor: IngestorProtocol
@@ -435,6 +447,59 @@ class JsTsModuleSystemMixin:
                 self.import_processor.commonjs_direct_exports[module_qn] = (
                     loc.qualified_name
                 )
+
+    def _record_esm_default_export(self, root_node: ASTNode, module_qn: str) -> None:
+        """Remember which definition the module's `export default` names.
+
+        Runs after every definition's qn is registered (an anonymous default
+        function is known only by its span). A default import is mapped to
+        `<module>.default`, which nothing is registered under, so without this
+        a call through it reached nothing (issue #2724).
+        """
+        target = self._esm_default_export_target(root_node, module_qn)
+        if target is not None:
+            self.import_processor.esm_default_exports[module_qn] = target
+
+    def _esm_default_export_target(
+        self, root_node: ASTNode, module_qn: str
+    ) -> str | None:
+        for statement in root_node.named_children:
+            if statement.type != cs.TS_EXPORT_STATEMENT:
+                continue
+            if any(child.type == cs.TS_EXPORT_DEFAULT for child in statement.children):
+                exported = statement.child_by_field_name(
+                    cs.FIELD_DECLARATION
+                ) or statement.child_by_field_name(cs.FIELD_VALUE)
+                if exported is not None:
+                    return self._esm_exported_qn(exported, module_qn)
+                continue
+            # `export { pad as default }`; a re-export with a `from` names
+            # another module's binding and is left alone.
+            if statement.child_by_field_name(cs.FIELD_SOURCE) is not None:
+                continue
+            spec = _default_alias_spec(statement)
+            if spec is not None:
+                return self._esm_named_qn(
+                    safe_decode_text(spec.child_by_field_name(cs.FIELD_NAME)),
+                    module_qn,
+                )
+        return None
+
+    def _esm_exported_qn(self, exported: ASTNode, module_qn: str) -> str | None:
+        if exported.type == cs.TS_IDENTIFIER:
+            return self._esm_named_qn(safe_decode_text(exported), module_qn)
+        loc = self.function_locations.get(function_span_key(module_qn, exported))
+        if loc is not None and loc.qualified_name in self.function_registry:
+            return loc.qualified_name
+        return self._esm_named_qn(
+            safe_decode_text(exported.child_by_field_name(cs.FIELD_NAME)), module_qn
+        )
+
+    def _esm_named_qn(self, name: str | None, module_qn: str) -> str | None:
+        if not name:
+            return None
+        qn = f"{module_qn}{cs.SEPARATOR_DOT}{name}"
+        return qn if qn in self.function_registry else None
 
     def _ingest_commonjs_exports(
         self,
