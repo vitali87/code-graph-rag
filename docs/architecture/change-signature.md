@@ -56,6 +56,12 @@ fails. Moving `c` before `b` across `Base.f(self, a, b=1, c=2)` and
 `Sub.f(self, a, b, c=2)` refuses, since `Sub.f` would read
 `(self, a, c=2, b)`. So does a new parameter named like the receiver.
 
+A new parameter, one no old parameter was called, also refuses when the
+body of any member, or a scope nested in it, already reads that name: the
+body would start reading the parameter instead. Adding `len=None` to
+`def helper(a): return len(a)` refuses, while `dict(len=a)` in the body
+does not count, since `len` there only labels the argument.
+
 ## The mapping
 
 The mapping says, for each new parameter, where its value comes from at a
@@ -151,6 +157,9 @@ path, line, column and reason, when:
 - it passes more positional arguments than the definition declares, a
   keyword the definition does not declare, or the same parameter twice;
 - it uses `*args`, `**kwargs`, or a bare generator as its arguments;
+- it passes a value that runs code for a parameter the new list drops
+  (`helper(1, save())` with `b` dropped), since leaving the value out
+  would skip that code; a dropped name or plain literal is simply removed;
 - it calls an instance method through a class and passes the receiver
   itself (`Base.f(obj, a)`, `type(obj).f(obj, a)`). A name counts as a
   class when it is the method's own class or is spelled `CapWords`,
