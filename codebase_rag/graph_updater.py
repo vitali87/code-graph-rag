@@ -1468,6 +1468,13 @@ def _drop_class_keyed_entry(
     """Drop one removed class's rows from the class-keyed maps."""
     processor.class_inheritance.pop(qn, None)
     processor.class_field_types.pop(qn, None)
+    # A Rust struct's guard-inner and element maps go with its field types:
+    # the re-parse records them only for fields that still have one, and a
+    # field retyped from `Mutex<State>` to a lock of its own kept unwrapping
+    # to State at `.lock()` (a scoped re-ingest reads the old map back from
+    # the graph before it re-parses).
+    processor.class_field_guard_inner.pop(qn, None)
+    processor.class_field_element_types.pop(qn, None)
     # A partial part leaves its group too. The group list is the
     # very list `_csharp_partial_index` holds under the syntactic
     # key, so removing the part there keeps both views in step;
@@ -6206,8 +6213,8 @@ class GraphUpdater:
         self, module_qn_prefixes: set[str], file_path: Path
     ) -> None:
         """Drop a removed file's entries from `class_inheritance`,
-        `class_field_types`, the C# partial groups and the parsed implementer
-        pairs.
+        `class_field_types` (with the Rust guard-inner and element maps), the
+        C# partial groups and the parsed implementer pairs.
 
         All three are keyed by a CLASS qn; the first two were never mentioned
         in `remove_file_from_state`, so a deleted file's rows outlived it on a
