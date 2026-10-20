@@ -225,8 +225,9 @@ def test_a_nested_projects_route_is_not_the_projects_own() -> None:
     rows = graph_query.endpoint_callers(NestedProjectGraph(), P, "GET /users/42")
     assert [r["qualified_name"] for r in rows] == sorted(CALLERS)
     assert {r["handler"] for r in rows} == {HANDLER}
+    graph = NestedProjectGraph()
     with pytest.raises(graph_query.UnknownEndpointError):
-        graph_query.endpoint_callers(NestedProjectGraph(), P, NESTED_HANDLER)
+        graph_query.endpoint_callers(graph, P, NESTED_HANDLER)
 
 
 class RoutesGraph:
@@ -301,5 +302,6 @@ def test_an_inferred_route_keeps_the_linkers_bounds(
 ) -> None:
     # Negative: the method still has to match, and two different routes
     # reached by inference are a tie the linker drops, not a guess.
+    graph = RoutesGraph(routes)
     with pytest.raises(graph_query.UnknownEndpointError):
-        graph_query.endpoint_callers(RoutesGraph(routes), P, target)
+        graph_query.endpoint_callers(graph, P, target)
