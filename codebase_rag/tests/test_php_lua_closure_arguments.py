@@ -139,6 +139,29 @@ function M.function_then_value()
   return render(view)
 end
 
+function M.past_a_nested_local(t)
+  local cmp = function(a, b) return a < b end
+  do
+    local cmp
+    cmp = "text"
+  end
+  table.sort(t, cmp)
+end
+
+function M.past_a_nested_parameter(t)
+  local cmp = function(a, b) return a < b end
+  local function keep(cmp) cmp = "text" return cmp end
+  table.sort(t, cmp)
+end
+
+function M.value_assigned_in_a_nested_block()
+  local view = function() return "page" end
+  do
+    view = "text"
+  end
+  return render(view)
+end
+
 -- Module-level calls root the module functions here, keeping the
 -- export-roots gap (#2578) out of the dead-code assertion.
 M.sort_desc({3, 1, 2})
@@ -157,6 +180,9 @@ M.newer_function_local({2, 1}, 1)
 M.shadow_repeat()
 M.shadow_reassigned_value()
 M.function_then_value()
+M.past_a_nested_local({2, 1})
+M.past_a_nested_parameter({2, 1})
+M.value_assigned_in_a_nested_block()
 
 return M
 """
@@ -266,6 +292,8 @@ def _targets(graph: RecordedGraph, caller: str) -> set[str]:
         ("app.M.assigned_later", "app.M.assigned_later.cmp"),
         ("app.M.assigned_from_nil", "app.M.assigned_from_nil.cmp"),
         ("app.M.newer_function_local", "app.M.newer_function_local.cb"),
+        ("app.M.past_a_nested_local", "app.M.past_a_nested_local.cmp"),
+        ("app.M.past_a_nested_parameter", "app.M.past_a_nested_parameter.cmp"),
     ],
     ids=[
         "local-function",
@@ -275,6 +303,10 @@ def _targets(graph: RecordedGraph, caller: str) -> set[str]:
         "function-assigned-after-a-bare-local",
         "function-assigned-after-a-nil-local",
         "function-local-nearer-than-a-parameter",
+        # An assignment to an inner `local` or parameter of the same name
+        # stores into that binding, not the function local passed here.
+        "function-local-past-a-nested-local",
+        "function-local-past-a-nested-parameter",
     ],
 )
 def test_a_named_lua_function_argument_is_referenced(
@@ -313,12 +345,18 @@ def test_a_lua_value_shadowing_a_function_binds_nothing(
     assert "app.view" not in _targets(graph, caller)
 
 
+@pytest.mark.parametrize(
+    "caller",
+    ["app.M.function_then_value", "app.M.value_assigned_in_a_nested_block"],
+    ids=["same-block", "nested-block"],
+)
 def test_a_function_local_reassigned_a_value_binds_nothing(
-    graph: RecordedGraph,
+    graph: RecordedGraph, caller: str
 ) -> None:
     # `view` holds "text" when it is passed: the last assignment before the
-    # read decides, not the function it first held (CodeRabbit, PR #2974).
-    targets = _targets(graph, "app.M.function_then_value")
+    # read decides, not the function it first held (CodeRabbit, PR #2974),
+    # even from a nested block that declares no `view` of its own.
+    targets = _targets(graph, caller)
     assert not [t for t in targets if t.endswith(".view")]
 
 

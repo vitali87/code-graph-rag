@@ -571,10 +571,12 @@ def _assigned_kind(node: Node, name: str) -> bool | None:
     return None
 
 
-def _last_assignment(region: Node, after: int, before: int, name: str) -> bool | None:
-    """What the last assignment to `name` in `region` between the byte
-    offsets `after` and `before` stores: True for a function, False for
-    another value, None when there is none. That assignment, not the
+def _last_assignment(
+    region: Node, after: int, before: int, name: str, binding: Node
+) -> bool | None:
+    """What the last assignment to `name`'s `binding` in `region` between
+    the byte offsets `after` and `before` stores: True for a function, False
+    for another value, None when there is none. That assignment, not the
     binding, is what the read at `before` sees."""
     last: tuple[int, bool] | None = None
     stack = [region]
@@ -586,6 +588,11 @@ def _last_assignment(region: Node, after: int, before: int, name: str) -> bool |
             node.start_byte >= after
             and (kind := _assigned_kind(node, name)) is not None
             and (last is None or node.start_byte > last[0])
+            # A nested block's own `local name`, or a nested function's
+            # parameter `name`, takes the assignment instead (CodeRabbit,
+            # PR #2974).
+            and (owner := _nearest_binding(node, name)) is not None
+            and owner[0] == binding
         ):
             last = (node.start_byte, kind)
         stack.extend(node.named_children)
@@ -622,6 +629,17 @@ def _binding_at(scope: Node, child: Node, name: str) -> Node | None:
     return None
 
 
+def _nearest_binding(node: Node, name: str) -> tuple[Node, Node, Node] | None:
+    """The nearest binding of `name` that `node` sees, with the scope it is
+    found in and the child of that scope `node` sits under."""
+    child, scope = node, node.parent
+    while scope is not None:
+        if (binding := _binding_at(scope, child, name)) is not None:
+            return binding, scope, child
+        child, scope = scope, scope.parent
+    return None
+
+
 def is_local_value(identifier: Node) -> bool:
     """Whether the nearest Lua binding of the name `identifier` reads is a
     local VALUE -- a value-bound `local`, a parameter or a loop variable --
@@ -635,20 +653,15 @@ def is_local_value(identifier: Node) -> bool:
     definition pass registers under that name, so it hides nothing.
     """
     name = safe_decode_text(identifier)
-    if not name:
+    if not name or (found := _nearest_binding(identifier, name)) is None:
         return False
-    child, scope = identifier, identifier.parent
-    while scope is not None:
-        binding = _binding_at(scope, child, name)
-        if binding is not None:
-            after = binding.end_byte if binding != scope else child.start_byte
-            # The last assignment before the read decides, whatever the
-            # binding first held (CodeRabbit, PR #2974).
-            assigned = _last_assignment(scope, after, identifier.start_byte, name)
-            if assigned is not None:
-                return not assigned
-            if binding.type == cs.TS_LUA_FUNCTION_DECLARATION and binding != scope:
-                return False
-            return binding == scope or name in _local_value_names(binding)
-        child, scope = scope, scope.parent
-    return False
+    binding, scope, child = found
+    after = binding.end_byte if binding != scope else child.start_byte
+    # The last assignment before the read decides, whatever the binding
+    # first held (CodeRabbit, PR #2974).
+    assigned = _last_assignment(scope, after, identifier.start_byte, name, binding)
+    if assigned is not None:
+        return not assigned
+    if binding.type == cs.TS_LUA_FUNCTION_DECLARATION and binding != scope:
+        return False
+    return binding == scope or name in _local_value_names(binding)
