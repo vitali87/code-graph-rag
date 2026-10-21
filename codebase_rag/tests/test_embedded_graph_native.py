@@ -138,7 +138,9 @@ class TestGraphVersion:
         with running_until(Deadline.after(60)):
             left = seconds_left()
             assert left is not None
-            assert 0 < left <= 60
+            # Windows' monotonic clock can read the same value twice, and
+            # (t + 60) - t then rounds a hair above 60.
+            assert 0 < left <= 60 + 1e-6
 
 
 # ------------------------------------------------------------------ values
