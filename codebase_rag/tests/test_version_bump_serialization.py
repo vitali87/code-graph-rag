@@ -463,6 +463,35 @@ def test_only_the_exact_breaking_change_label_counts(tmp_path: Path) -> None:
     assert _decide(tmp_path, f"{SHA}\\n")["breaking"] == "false"
 
 
+def test_release_now_label_on_an_earlier_commit_of_the_range_ships(
+    tmp_path: Path,
+) -> None:
+    _commits(tmp_path, {OLDER: "fix: a", SHA: "feat: x"}, {OLDER: "release now"})
+    out = _decide(tmp_path, f"{OLDER}\\n{SHA}\\n")
+    assert out["release"] == "true"
+    # No security notice and no breaking bump: the label only skips the wait.
+    assert out["security"] == "false"
+    assert out["breaking"] == "false"
+
+
+def test_only_the_exact_release_now_label_counts(tmp_path: Path) -> None:
+    _commits(tmp_path, {SHA: "feat: x"}, {SHA: "release\nrelease now please"})
+    assert _decide(tmp_path, f"{SHA}\\n")["release"] == "false"
+
+
+def test_every_label_the_decide_step_reads_is_in_the_manifest() -> None:
+    # The label sync creates only what labels.yml lists; a label read here but
+    # missing there could never be applied, and its release would never ship.
+    manifest = yaml.safe_load(
+        (WORKFLOW.parents[1] / "labels.yml").read_text(encoding="utf-8")
+    )
+    names = {label["name"] for label in manifest}
+    script = _step("Decide whether this tag ships a release")["run"]
+    for label in ("security", "breaking change", "release now"):
+        assert label in script
+        assert label in names
+
+
 def test_the_labels_are_read_before_the_bump_type_is_chosen() -> None:
     names = [s["name"] for s in _workflow()["jobs"]["bump-version"]["steps"]]
     assert names.index("Decide whether this tag ships a release") < names.index(

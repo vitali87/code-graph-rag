@@ -245,6 +245,7 @@ jobs:
           # even behind the newest bump, whose release may have been deferred.
           BREAKING=false
           UNRELEASED_BREAKING=false
+          RELEASE_NOW=false
           COUNTING=true
           for SHA in $COMMITS; do
             if [ "$SECURITY" = "true" ] &&
@@ -295,6 +296,12 @@ jobs:
             if printf '%s\n' "$PULLS" | grep -qx security; then
               SECURITY=true
             fi
+            # A label, not a checkbox in the description: applying a label
+            # takes triage access, while any author, a fork's included, can
+            # edit the description of their own pull request.
+            if printf '%s\n' "$PULLS" | grep -qxF 'release now'; then
+              RELEASE_NOW=true
+            fi
             if printf '%s\n' "$PULLS" | grep -qxF 'breaking change'; then
               UNRELEASED_BREAKING=true
               if [ "$COUNTING" = "true" ]; then
@@ -304,9 +311,13 @@ jobs:
           done
           # A breaking change ships at once, like a security fix, rather than
           # waiting for RELEASE_EVERY: the version that announces it should be
-          # one users can install, not an interim tag.
+          # one users can install, not an interim tag. A pull request labelled
+          # "release now" ships at once too, without the security notice: a
+          # fix users should not wait for need not be a vulnerability, and
+          # borrowing the security label would announce one that is not there.
           RELEASE=false
-          if [ "$SECURITY" = "true" ] || [ "$UNRELEASED_BREAKING" = "true" ]; then
+          if [ "$SECURITY" = "true" ] || [ "$UNRELEASED_BREAKING" = "true" ] ||
+              [ "$RELEASE_NOW" = "true" ]; then
             RELEASE=true
           elif [ -n "$LATEST" ]; then
             TAGS_SINCE=$(git ls-remote --tags origin "refs/tags/v*" \
