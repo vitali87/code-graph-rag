@@ -28,8 +28,9 @@ rewritten: prose is not a graph edge.
 
 from __future__ import annotations
 
+import os
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path, PurePosixPath
 from typing import NamedTuple
 
@@ -488,6 +489,27 @@ def _chain_links(
         if node.start_point[0] <= line - 1 <= node.end_point[0]:
             stack.extend(node.children)
     return sorted(found)
+
+
+def _replace_in_string(
+    patcher: Patcher, site: RenameSite, old_name: str, new_name: str
+) -> None:
+    # Inside a string the name is no identifier node, so the identifier
+    # check cannot vouch for it; the bytes must still spell the old name.
+    source = patcher.source(site.path)
+    start = line_col_to_byte(source, site.line, site.col)
+    end = start + len(old_name.encode(cs.ENCODING_UTF8))
+    if source[start:end] != old_name.encode(cs.ENCODING_UTF8):
+        raise PatcherError(
+            cs.PATCH_IDENTIFIER_MISMATCH.format(
+                path=site.path,
+                line=site.line,
+                col=site.col,
+                expected=old_name,
+                found=source[start:end].decode(cs.ENCODING_UTF8, errors="replace"),
+            )
+        )
+    patcher.replace_span(site.path, (start, end), new_name)
 
 
 def _jsx_closing_token(
@@ -1436,6 +1458,7 @@ class Renamer:
                 unplanned,
             )
         sites.extend(unplanned)
+        sites.extend(self._dotted_path_sites(members, old_name))
         sites.extend(
             RenameSite(
                 "import",
@@ -1468,6 +1491,144 @@ class Renamer:
             unplanned=tuple(unplanned),
             companions=companions,
         )
+
+    def _dotted_path_sites(self, members: list[str], old_name: str) -> list[RenameSite]:
+        """Strings spelling a member's whole import path, at its name.
+
+        `mock.patch("pkg.core.helper")`, `monkeypatch.setattr("pkg.mod.fn")`
+        and a `[project.scripts]` entry point `"pkg.core:main"` name the
+        definition by path, not by a code reference, so the rename rewrote
+        every code site and left them: the patching test raised
+        `AttributeError` and the console script pointed nowhere (issue
+        #2810). Only a string that IS the path, a whole string literal or
+        config value, is a site; a longer path, another module's, a bare name
+        or prose around the path stays as written. So does a path another
+        module of the repository spells too (`apps/b/pkg/core.py` beside
+        `apps/a/pkg/core.py`), unless the file sits under this module's
+        import root and not under the other's.
+        """
+        spelled = self._spelled_import_paths(members, old_name)
+        if not spelled:
+            return []
+        longest_first = sorted(spelled, key=len, reverse=True)
+        alternatives = "|".join(re.escape(path) for path in longest_first)
+        entry_points = "|".join(
+            re.escape(path)
+            for path in longest_first
+            if cs.RENAME_ENTRY_POINT_SEPARATOR in path
+        )
+        quoted = re.compile(rf"""(["'])(?P<path>{alternatives})\1""")
+        bare = re.compile(rf"(?<![\w.:])(?P<path>{entry_points})(?![\w.:])")
+        files = self._string_site_files()
+        rivals = self._rival_roots(files, spelled)
+        name_length = len(old_name.encode(cs.ENCODING_UTF8))
+        found: dict[tuple[str, int, int], RenameSite] = {}
+        for file in files:
+            rel = PurePosixPath(file.relative_to(self.repo_root).as_posix())
+            try:
+                source = file.read_bytes()
+            except OSError:
+                continue
+            patterns = [(quoted, False)]
+            if file.suffix in cs.RENAME_BARE_ENTRY_POINT_SUFFIXES:
+                patterns.append((bare, True))
+            for path, end in _whole_value_paths(source, file.suffix, patterns):
+                spelling = spelled[path]
+                if not _owns_spelling(rel, spelling, rivals.get(spelling.module, [])):
+                    continue
+                line, col = byte_to_line_col(source, end - name_length)
+                found.setdefault(
+                    (rel.as_posix(), line, col),
+                    RenameSite(
+                        cs.RENAME_SITE_KIND_STRING,
+                        rel.as_posix(),
+                        line,
+                        col,
+                        spelling.member,
+                        cs.EdgeResolution.EXACT,
+                    ),
+                )
+        return list(found.values())
+
+    def _spelled_import_paths(
+        self, members: list[str], old_name: str
+    ) -> dict[str, _Spelling]:
+        """Each dotted (`pkg.core.helper`) and entry point (`pkg.core:helper`)
+        path spelling a Python member, mapped to that member."""
+        spelled: dict[str, _Spelling] = {}
+        for member in members:
+            module_qn, module_path = self._module_of(member)
+            inner = member.removeprefix(f"{module_qn}{cs.SEPARATOR_DOT}")
+            if (
+                module_path is None
+                or inner == member
+                or inner.rsplit(cs.SEPARATOR_DOT, 1)[-1] != old_name
+                or get_language_for_extension(Path(module_path).suffix)
+                != cs.SupportedLanguage.PYTHON
+            ):
+                continue
+            for import_path, root in self._python_import_paths(module_path):
+                spelling = _Spelling(member, module_path, import_path, root)
+                spelled[f"{import_path}{cs.SEPARATOR_DOT}{inner}"] = spelling
+                spelled[f"{import_path}{cs.RENAME_ENTRY_POINT_SEPARATOR}{inner}"] = (
+                    spelling
+                )
+        return spelled
+
+    def _rival_roots(
+        self, files: list[Path], spelled: dict[str, _Spelling]
+    ) -> dict[str, list[PurePosixPath]]:
+        """The import roots from which another Python file of the repository
+        is a spelled module path too, by that path."""
+        modules = {spelling.module for spelling in spelled.values()}
+        own = {spelling.path for spelling in spelled.values()}
+        tails = {module.rsplit(cs.SEPARATOR_DOT, 1)[-1] for module in modules}
+        rivals: dict[str, list[PurePosixPath]] = {}
+        for file in files:
+            rel = file.relative_to(self.repo_root).as_posix()
+            stem = file.parent.name if file.stem == cs.PY_PACKAGE_INIT else file.stem
+            if file.suffix != cs.EXT_PY or rel in own or stem not in tails:
+                continue
+            for import_path, root in self._python_import_paths(rel):
+                if import_path in modules:
+                    rivals.setdefault(import_path, []).append(root)
+        return rivals
+
+    def _string_site_files(self) -> list[Path]:
+        # Pruned while walking: `node_modules` or a virtualenv can hold more
+        # files than the project itself. A symlink is skipped: its target is
+        # walked as itself when it is in the repository, and patched once.
+        files: list[Path] = []
+        for directory, dirnames, filenames in os.walk(self.repo_root):
+            dirnames[:] = sorted(d for d in dirnames if d not in cs.IGNORE_PATTERNS)
+            files.extend(
+                path
+                for name in sorted(filenames)
+                if Path(name).suffix in cs.RENAME_STRING_SUFFIXES
+                and not (path := Path(directory) / name).is_symlink()
+            )
+        return files
+
+    def _python_import_paths(self, module_path: str) -> list[tuple[str, PurePosixPath]]:
+        """The dotted names a Python file imports as, one per import root,
+        with that root.
+
+        A root is the repository or a directory that is not itself a package,
+        so `src/pkg/core.py` imports as `pkg.core` (and `src.pkg.core`), and
+        `pkg/core.py` as `pkg.core`.
+        """
+        parts = list(Path(module_path).with_suffix("").parts)
+        if parts and parts[-1] == cs.PY_PACKAGE_INIT:
+            parts.pop()
+        paths: list[tuple[str, PurePosixPath]] = []
+        for start in range(len(parts)):
+            root = self.repo_root.joinpath(*parts[:start])
+            if start and (root / f"{cs.PY_PACKAGE_INIT}.py").is_file():
+                continue
+            paths.append(
+                (cs.SEPARATOR_DOT.join(parts[start:]), PurePosixPath(*parts[:start]))
+            )
+        return paths
 
     def _unplanned(
         self,
@@ -1689,6 +1850,9 @@ class Renamer:
             if key in done or site.kind in ("unlocatable", "import"):
                 continue
             done.add(key)
+            if site.kind == cs.RENAME_SITE_KIND_STRING:
+                _replace_in_string(patcher, site, old_name, new_name)
+                continue
             patcher.replace_identifier_at(
                 site.path, site.line, site.col, old_name, new_name
             )
@@ -2176,6 +2340,95 @@ class Renamer:
             undone=True,
             message=cs.RENAME_CONTRACT_FAILED.format(reasons=reasons),
         )
+
+
+class _Spelling(NamedTuple):
+    """A string spelling of a member's import path: the member, its module's
+    file, the dotted module path it goes through and the import root that
+    path is read from (`src` for `src/pkg/core.py` as `pkg.core`)."""
+
+    member: str
+    path: str
+    module: str
+    root: PurePosixPath
+
+
+# A quoted config value is the whole value: after `key =`, an array's `[` or
+# `,`, or alone on its line, and followed by nothing but a separator or a
+# comment. An unquoted entry point (`setup.cfg`) is everything after `=`, an
+# extras list and a comment aside.
+_VALUE_BEFORE = re.compile(r"(?:^|[=\[,{])\s*$")
+_VALUE_AFTER = re.compile(r"\s*(?:$|[,\]}#;])")
+_BARE_VALUE_AFTER = re.compile(r"\s*(?:\[[^\]]*\])?\s*(?:[#;].*)?$")
+# Keeps every byte a lone undecodable byte occupied, so an offset in the
+# decoded text maps back to the same offset in the file.
+_EXACT_BYTES = "surrogateescape"
+
+
+def _whole_value_paths(
+    source: bytes, suffix: str, patterns: list[tuple[re.Pattern[str], bool]]
+) -> Iterator[tuple[str, int]]:
+    """The spelled paths `patterns` find in a file that are a whole string
+    literal (Python) or a whole config value, each with the byte offset
+    where it ends. Each pattern says whether it finds unquoted values."""
+    text = source.decode(cs.ENCODING_UTF8, errors=_EXACT_BYTES)
+    tree: Node | None = None
+    for pattern, bare in patterns:
+        for match in pattern.finditer(text):
+            path = match.group("path")
+            start = len(
+                text[: match.start("path")].encode(
+                    cs.ENCODING_UTF8, errors=_EXACT_BYTES
+                )
+            )
+            end = start + len(path.encode(cs.ENCODING_UTF8, errors=_EXACT_BYTES))
+            if suffix == cs.EXT_PY:
+                tree = tree or _python_tree(source)
+                whole = tree is not None and _whole_python_string(tree, start, end)
+            else:
+                whole = _whole_config_value(text, match, bare)
+            if whole:
+                yield path, end
+
+
+def _python_tree(source: bytes) -> Node | None:
+    parser = load_parsers()[0].get(cs.SupportedLanguage.PYTHON)
+    return None if parser is None else parser.parse(source).root_node
+
+
+def _whole_python_string(tree: Node, start: int, end: int) -> bool:
+    # The bytes between the string's own quotes: `"Do not call
+    # 'pkg.core.helper' directly"` holds the path, but is not it.
+    node = tree.descendant_for_byte_range(start, end)
+    while node is not None and node.type != cs.TS_PY_STRING:
+        node = node.parent
+    if node is None or node.child_count < 2:
+        return False
+    return node.children[0].end_byte == start and node.children[-1].start_byte == end
+
+
+def _whole_config_value(text: str, match: re.Match[str], bare: bool) -> bool:
+    line_start = text.rfind("\n", 0, match.start()) + 1
+    line_end = text.find("\n", match.end())
+    before = text[line_start : match.start()]
+    after = text[match.end() : len(text) if line_end < 0 else line_end]
+    if bare:
+        return before.rstrip().endswith("=") and bool(_BARE_VALUE_AFTER.match(after))
+    return bool(_VALUE_BEFORE.search(before)) and bool(_VALUE_AFTER.match(after))
+
+
+def _owns_spelling(
+    rel: PurePosixPath, spelling: _Spelling, rivals: list[PurePosixPath]
+) -> bool:
+    """Whether a string in `rel` spelling a path another module spells too
+    means this member: the nearest import root holding `rel` is its own."""
+    if not rivals:
+        return True
+    holding = [root for root in (spelling.root, *rivals) if rel.is_relative_to(root)]
+    if not holding:
+        return False
+    depth = max(len(root.parts) for root in holding)
+    return [root for root in holding if len(root.parts) == depth] == [spelling.root]
 
 
 class _Namesakes(NamedTuple):
