@@ -365,14 +365,21 @@ def _merge_resolution(
         callees[callee] = resolution
 
 
-def _load_project(fetch_all: QueryFn, project: str) -> _ProjectGraph:
-    params = {cs.KEY_PROJECT_PREFIX: _prefix(project)}
+def _owned_nodes(
+    fetch_all: QueryFn, project: str, params: PropertyDict
+) -> dict[_NodeId, PropertyDict]:
     owns = _owner_check(fetch_all, project)
     nodes: dict[_NodeId, PropertyDict] = {}
     for row in fetch_all(cq.CYPHER_DEAD_CODE_NODES, params):
         qualified_name = _text(row.get(cs.KEY_QUALIFIED_NAME))
         if qualified_name and owns(qualified_name):
             nodes[(_text(row.get(cs.KEY_LABEL)), qualified_name)] = _node_props(row)
+    return nodes
+
+
+def _load_project(fetch_all: QueryFn, project: str) -> _ProjectGraph:
+    params: PropertyDict = {cs.KEY_PROJECT_PREFIX: _prefix(project)}
+    nodes = _owned_nodes(fetch_all, project, params)
     rust_modules = _rust_test_modules_from_nodes(nodes)
     rust_spans = _rust_test_fn_spans(nodes)
     callables: dict[str, _Callable] = {}
@@ -385,6 +392,14 @@ def _load_project(fetch_all: QueryFn, project: str) -> _ProjectGraph:
         callables[qualified_name] = found
         if _is_test_symbol(props, qualified_name, found.path, rust_modules, rust_spans):
             tests.add(qualified_name)
+    return _ProjectGraph(
+        callables, frozenset(tests), _project_calls(fetch_all, params, callables)
+    )
+
+
+def _project_calls(
+    fetch_all: QueryFn, params: PropertyDict, callables: dict[str, _Callable]
+) -> dict[str, dict[str, str | None]]:
     calls: dict[str, dict[str, str | None]] = {}
     for row in fetch_all(cq.CYPHER_DEAD_CODE_RELS, params):
         if _text(row.get(cs.KEY_REL_TYPE)) != cs.RelationshipType.CALLS.value:
@@ -398,7 +413,7 @@ def _load_project(fetch_all: QueryFn, project: str) -> _ProjectGraph:
                 callee,
                 resolution if isinstance(resolution, str) else None,
             )
-    return _ProjectGraph(callables, frozenset(tests), calls)
+    return calls
 
 
 def _positional_params(
@@ -509,8 +524,10 @@ def _pair_unique(
     return left_old, left_new
 
 
-def _pair(old: _Side, new: _Side, explicit: Sequence[tuple[str, str]]) -> _Pairing:
-    pairing = _Pairing([], [], [], [])
+def _pair_explicit(
+    old: _Side, new: _Side, explicit: Sequence[tuple[str, str]], pairing: _Pairing
+) -> tuple[set[str], set[str]]:
+    """Pair what `--pair` names; return the qualified names it took per side."""
     taken_old: set[str] = set()
     taken_new: set[str] = set()
     for old_target, new_target in explicit:
@@ -526,6 +543,12 @@ def _pair(old: _Side, new: _Side, explicit: Sequence[tuple[str, str]]) -> _Pairi
         taken_old.add(o)
         taken_new.add(n)
         pairing.pairs.append((o, n, cs.PairedBy.EXPLICIT))
+    return taken_old, taken_new
+
+
+def _pair(old: _Side, new: _Side, explicit: Sequence[tuple[str, str]]) -> _Pairing:
+    pairing = _Pairing([], [], [], [])
+    taken_old, taken_new = _pair_explicit(old, new, explicit, pairing)
     # Strongest evidence first, each tier on what the previous one left: the
     # same module path, then the same container when the two layouts differ
     # (`lexer.py` against `cypher/lexer.rs`), then the name alone, where
@@ -534,6 +557,15 @@ def _pair(old: _Side, new: _Side, explicit: Sequence[tuple[str, str]]) -> _Pairi
     left_new = [c for qn, c in new.callables.items() if qn not in taken_new]
     for tier in cs.PORT_PAIRING_TIERS:
         left_old, left_new = _pair_unique(left_old, left_new, tier, pairing)
+    _settle_leftovers(left_old, left_new, pairing)
+    return pairing
+
+
+def _settle_leftovers(
+    left_old: list[_Callable], left_new: list[_Callable], pairing: _Pairing
+) -> None:
+    """What no tier paired: ambiguous where both sides still share a name,
+    otherwise unpaired on its own side."""
     old_by_name = _group(left_old, cs.PairedBy.NAME)
     new_by_name = _group(left_new, cs.PairedBy.NAME)
     for key in sorted(old_by_name.keys() | new_by_name.keys()):
@@ -546,7 +578,6 @@ def _pair(old: _Side, new: _Side, explicit: Sequence[tuple[str, str]]) -> _Pairi
             pairing.new_only.extend(news)
     pairing.old_only.sort()
     pairing.new_only.sort()
-    return pairing
 
 
 # --- judging a pair -------------------------------------------------------------
