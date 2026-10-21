@@ -99,7 +99,10 @@ request itself.
 `version-bump.yml` tags every version bump, but only some of those tags publish.
 A bump is not one per merge: runs are serialised, and only the run for the
 newest commit on `main` bumps, so merges that land close together share one
-bump and one tag. Which tags publish comes down to the CREDENTIAL used to push
+bump and one tag. Each older run would still need a runner just to stand down,
+one after another, so `version-bump-supersede.yml` cancels every bump run that
+has not started yet for a commit the newest merge contains, and the newest
+run goes next. Which tags publish comes down to the CREDENTIAL used to push
 the tag, which is easy to miss when reading the workflows:
 
 ```yaml
@@ -124,7 +127,9 @@ marker, or an associated PR labelled `security`) or a PR labelled
 `breaking change`, so the version that announces a breaking change is one
 users can install. To ship any other merge at once, label its PR `release now`
 before merging: it releases without the security notice or a breaking bump.
-Do not borrow the `security` label for this, since every release it triggers
+It counts only when whoever applied it last is a repository admin or
+maintainer; applied by anyone else, a bot or a workflow token included, it is
+ignored and the run's summary says so. Do not borrow the `security` label for this, since every release it triggers
 opens with a "contains a security fix" notice. The label is read when the
 merge's bump runs; added after that, it comes too late, since the merge is
 already behind the bump's tag. A release also needs green CI

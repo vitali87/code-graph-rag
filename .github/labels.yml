@@ -60,7 +60,7 @@
 
 - name: release now
   color: 5319e7
-  description: Release as soon as this pull request merges instead of waiting for the cadence
+  description: "Maintainers only: release as soon as this pull request merges instead of waiting for the cadence"
 
 - name: language support
   color: 1d76db
