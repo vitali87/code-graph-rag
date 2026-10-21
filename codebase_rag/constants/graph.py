@@ -9,6 +9,8 @@ KEY_LABELS = "labels"
 KEY_LABEL = "label"
 KEY_PROPERTIES = "properties"
 KEY_PURGED = "purged"
+# The column the issue #897 damage detectors return a row under.
+KEY_DAMAGED = "damaged"
 KEY_FROM_ID = "from_id"
 KEY_TO_ID = "to_id"
 KEY_TYPE = "type"
