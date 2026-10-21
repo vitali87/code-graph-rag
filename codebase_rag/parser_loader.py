@@ -382,13 +382,33 @@ def _create_highlights_query(
 
 
 def missing_grammars() -> list[cs.SupportedLanguage]:
-    """Supported languages whose grammar package is not importable.
+    """Supported languages a sync could not parse for want of a grammar.
 
     The base package ships Python's grammar only; the rest come from the
-    `treesitter-full` extra (issue #2905). An import check, so a grammar
-    that is installed but fails to load still counts as present here.
+    `treesitter-full` extra (issue #2905). An installed pip grammar must also
+    load, as a sync loads it: one built for another tree-sitter ABI is
+    dropped there, so it counts as missing here. A grammar checkout is
+    never imported or built, by `grammar_installed`'s rule that a yes/no
+    must not run checkout code: its built binding counts as present.
     """
-    return sorted(lang for lang in LANGUAGE_SPECS if not _get_language_library(lang))
+    return sorted(lang for lang in LANGUAGE_SPECS if not _grammar_loads(lang))
+
+
+def _grammar_loads(lang_name: cs.SupportedLanguage) -> bool:
+    lang_import = _IMPORT_SPECS.get(lang_name)
+    loader = (
+        None
+        if lang_import is None
+        else _import_pip_grammar(lang_import.module_path, lang_import.attr_name)
+    )
+    if loader is None:
+        return grammar_installed(lang_name)
+    try:
+        Language(loader())
+    except Exception:
+        # `_process_language` drops the language on the same failure.
+        return False
+    return True
 
 
 COMBINED_FUNC_CLASS_QUERIES: dict[cs.SupportedLanguage, Query | None] = {}

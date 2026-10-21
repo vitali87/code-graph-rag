@@ -90,13 +90,26 @@ def test_files_no_grammar_covers_are_not_counted(tmp_path: Path) -> None:
     assert _grammar_warnings(warnings) == [], warnings
 
 
-def test_doctor_names_the_missing_grammars(monkeypatch: pytest.MonkeyPatch) -> None:
-    real = parser_loader._get_language_library
-    absent = {cs.SupportedLanguage.TS, cs.SupportedLanguage.GO}
+def _without_pip_grammars(
+    monkeypatch: pytest.MonkeyPatch, absent: set[cs.SupportedLanguage]
+) -> None:
+    # The base install: these languages' pip packages do not import.
+    modules = {parser_loader._IMPORT_SPECS[lang].module_path for lang in absent}
+    real = parser_loader._import_pip_grammar
     monkeypatch.setattr(
         parser_loader,
-        "_get_language_library",
-        lambda lang: None if lang in absent else real(lang),
+        "_import_pip_grammar",
+        lambda module, attr: None if module in modules else real(module, attr),
+    )
+
+
+def test_doctor_names_the_missing_grammars(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # No grammar checkout in the working directory to fall back to.
+    monkeypatch.chdir(tmp_path)
+    _without_pip_grammars(
+        monkeypatch, {cs.SupportedLanguage.TS, cs.SupportedLanguage.GO}
     )
     result = HealthChecker().check_tree_sitter_grammars()
     assert not result.passed, result
@@ -104,6 +117,50 @@ def test_doctor_names_the_missing_grammars(monkeypatch: pytest.MonkeyPatch) -> N
     assert "go" in result.error, result.error
     assert "typescript" in result.error, result.error
     assert "treesitter-full" in result.error, result.error
+
+
+def test_doctor_does_not_build_a_grammar_checkout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # A checkout's `grammars/tree-sitter-go` with a setup.py: loading falls
+    # back to building it in place, which runs that script. A health check
+    # answers a yes/no and must not run code from the directory it is in.
+    bindings = tmp_path / parser_loader._submodule_bindings_path(
+        cs.SupportedLanguage.GO
+    )
+    bindings.mkdir(parents=True)
+    (bindings.parents[1] / cs.SETUP_PY).write_text("raise SystemExit(1)\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(parser_loader, "_loader_cache", {})
+    _without_pip_grammars(monkeypatch, {cs.SupportedLanguage.GO})
+    ran: list[str] = []
+    monkeypatch.setattr(
+        parser_loader, "_build_submodule", lambda lang: ran.append(lang) or False
+    )
+    monkeypatch.setattr(parser_loader, "_import_submodule", ran.append)
+    result = HealthChecker().check_tree_sitter_grammars()
+    assert ran == [], ran
+    assert result.error is not None and "go" in result.error, result
+
+
+def test_doctor_counts_an_installed_grammar_that_does_not_load(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # A pip grammar built for another tree-sitter ABI imports fine, then
+    # fails as the Language is made: a sync drops the language there.
+    monkeypatch.chdir(tmp_path)
+    go = parser_loader._IMPORT_SPECS[cs.SupportedLanguage.GO].module_path
+    real = parser_loader._import_pip_grammar
+
+    def incompatible() -> object:
+        raise ValueError("Incompatible Language version 99")
+
+    monkeypatch.setattr(
+        parser_loader,
+        "_import_pip_grammar",
+        lambda module, attr: incompatible if module == go else real(module, attr),
+    )
+    assert cs.SupportedLanguage.GO in parser_loader.missing_grammars()
 
 
 class _GrammarOnlyChecker:
