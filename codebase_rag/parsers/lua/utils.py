@@ -513,12 +513,23 @@ def _name_value_pairs(assignment: Node) -> list[tuple[Node, Node | None]]:
     ]
 
 
+def _unparenthesized(value: Node) -> Node:
+    # `local cmp = (function() end)` holds the function the parentheses
+    # wrap, which the definition pass registers as `cmp` (CodeRabbit, PR #2974).
+    while value.type == cs.TS_PARENTHESIZED_EXPRESSION and value.named_children:
+        value = value.named_children[0]
+    return value
+
+
 def _paired_names(assignment: Node, function_valued: bool) -> set[str]:
     return {
         text
         for target, value in _name_value_pairs(assignment)
         if target.type == cs.TS_LUA_IDENTIFIER
-        and (value is not None and value.type == cs.TS_LUA_FUNCTION_DEFINITION)
+        and (
+            value is not None
+            and _unparenthesized(value).type == cs.TS_LUA_FUNCTION_DEFINITION
+        )
         == function_valued
         and (text := safe_decode_text(target))
     }

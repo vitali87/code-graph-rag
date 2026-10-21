@@ -162,6 +162,17 @@ function M.value_assigned_in_a_nested_block()
   return render(view)
 end
 
+function M.parenthesized_local(t)
+  local cmp = ((function(a, b) return a < b end))
+  table.sort(t, cmp)
+end
+
+function M.parenthesized_assignment(t)
+  local cmp
+  cmp = (function(a, b) return a < b end)
+  table.sort(t, cmp)
+end
+
 -- Module-level calls root the module functions here, keeping the
 -- export-roots gap (#2578) out of the dead-code assertion.
 M.sort_desc({3, 1, 2})
@@ -183,6 +194,8 @@ M.function_then_value()
 M.past_a_nested_local({2, 1})
 M.past_a_nested_parameter({2, 1})
 M.value_assigned_in_a_nested_block()
+M.parenthesized_local({2, 1})
+M.parenthesized_assignment({2, 1})
 
 return M
 """
@@ -294,6 +307,8 @@ def _targets(graph: RecordedGraph, caller: str) -> set[str]:
         ("app.M.newer_function_local", "app.M.newer_function_local.cb"),
         ("app.M.past_a_nested_local", "app.M.past_a_nested_local.cmp"),
         ("app.M.past_a_nested_parameter", "app.M.past_a_nested_parameter.cmp"),
+        ("app.M.parenthesized_local", "app.M.parenthesized_local.cmp"),
+        ("app.M.parenthesized_assignment", "app.M.parenthesized_assignment.cmp"),
     ],
     ids=[
         "local-function",
@@ -307,6 +322,8 @@ def _targets(graph: RecordedGraph, caller: str) -> set[str]:
         # stores into that binding, not the function local passed here.
         "function-local-past-a-nested-local",
         "function-local-past-a-nested-parameter",
+        "parenthesized-function-local",
+        "parenthesized-function-assigned-after-a-bare-local",
     ],
 )
 def test_a_named_lua_function_argument_is_referenced(
