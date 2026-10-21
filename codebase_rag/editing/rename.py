@@ -1436,6 +1436,14 @@ class Renamer:
                 unplanned,
             )
         sites.extend(unplanned)
+        if crossing := self._go_sites_losing_visibility(qn, sites, old_name, new_name):
+            raise RenameRefused(
+                cs.RENAME_GO_UNEXPORTS.format(
+                    qn=qn, name=new_name, count=len(crossing)
+                ),
+                crossing,
+                unlocatable,
+            )
         sites.extend(
             RenameSite(
                 "import",
@@ -1467,6 +1475,39 @@ class Renamer:
             message=cs.RENAME_PLANNED.format(count=len(sites)),
             unplanned=tuple(unplanned),
             companions=companions,
+        )
+
+    def _go_sites_losing_visibility(
+        self, qn: str, sites: list[RenameSite], old_name: str, new_name: str
+    ) -> list[RenameSite]:
+        """Go sites outside the definition's package when the rename unexports.
+
+        Go reads an identifier's first letter as its visibility: `Slug` is
+        exported, `slug` is private to its package. Renaming one to the other
+        rewrote `strs.Slug(...)` in package `main` to `strs.slug(...)`, which
+        no build accepts, and every postcondition passed (issue #2813). A
+        package is a directory, except that an external test package
+        (`package strs_test`) beside it sees only exported names.
+        """
+        if not old_name[:1].isupper() or new_name[:1].isupper():
+            return []
+        home = next(
+            (
+                self._go_package(s.path)
+                for s in sites
+                if s.kind == "definition" and s.owner == qn and _is_go_path(s.path)
+            ),
+            None,
+        )
+        if home is None:
+            return []
+        return [
+            s for s in sites if _is_go_path(s.path) and self._go_package(s.path) != home
+        ]
+
+    def _go_package(self, rel_path: str) -> str:
+        return go_utils.package_key(
+            rel_path, read_package_clause(self.repo_root / rel_path)
         )
 
     def _unplanned(
