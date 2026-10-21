@@ -289,8 +289,9 @@ def test_a_dropped_argument_that_runs_code_leaves_the_site_unmapped(
             cs.SIGNATURE_SITE_DROPS_EFFECT.format(text="save()"),
         )
     ]
-    assert "+    return helper(1)\n" in report.diff
-    assert "+    return helper(1, save())\n" not in report.diff
+    # Line by line: the fixture is written with the platform's line endings.
+    added = [line for line in report.diff.splitlines() if line.startswith("+ ")]
+    assert added == ["+    return helper(1)"]
 
 
 def test_literal_of_the_wrong_type_is_refused(
