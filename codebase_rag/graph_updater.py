@@ -1415,6 +1415,11 @@ class _PruneTally:
     registry_skipped: int = 0
 
 
+# This run's derivation, as repo-relative paths: the package directories, and
+# every directory the walk admitted.
+type _StructureNow = tuple[set[str], set[str]]
+
+
 class _Orphan(NamedTuple):
     """One node the prune deletes, as it read it."""
 
@@ -1423,6 +1428,9 @@ class _Orphan(NamedTuple):
     # A Package is deleted only while it still holds the path it was judged
     # by, so a checkout sharing its project name keeps the one it wrote.
     absolute_path: str
+    # A Folder whose directory is on disk but outside this run's walk: another
+    # project over the same files may still hold it.
+    unadmitted: bool = False
 
 
 def _reindexed_keys(changed_entries: list[tuple[Path, str, bool, bytes]]) -> list[str]:
@@ -9731,11 +9739,12 @@ class GraphUpdater:
         # A directory is represented by exactly one of Folder and Package,
         # decided by identify_structure this run; the node of the other kind
         # is stale even though the directory exists (issue #1570).
-        packages_now = {
-            rel.as_posix()
-            for rel, qn in self.factory.structure_processor.structural_elements.items()
-            if qn
-        }
+        structure = self.factory.structure_processor.structural_elements
+        packages_now = {rel.as_posix() for rel, qn in structure.items() if qn}
+        # Every directory this run's walk admitted. One still on disk but now
+        # excluded (`.cgrignore`, `--exclude`) is not among them, and a fresh
+        # index of the tree has no node for it (issue #2884).
+        directories_now = {rel.as_posix() for rel in structure}
 
         read_failed = False
         for query_all, scope, delete_query, label in prune_specs:
@@ -9747,7 +9756,9 @@ class GraphUpdater:
                 logger.warning(ls.PRUNE_QUERY_FAILED, label=label)
                 read_failed = True
                 continue
-            orphans = self._orphan_rows(rows, label, repo_abs, packages_now, tally)
+            orphans = self._orphan_rows(
+                rows, label, repo_abs, (packages_now, directories_now), tally
+            )
             total_pruned += self._delete_orphans(
                 self.ingestor, orphans, label, delete_query
             )
@@ -9786,13 +9797,13 @@ class GraphUpdater:
         rows: list[ResultRow],
         label: str,
         repo_abs: str,
-        packages_now: set[str],
+        structure_now: _StructureNow,
         tally: _PruneTally,
     ) -> list[_Orphan]:
         """Every orphan among one label's rows."""
         orphans = []
         for r in rows:
-            orphan = self._orphan_row(r, label, repo_abs, packages_now, tally)
+            orphan = self._orphan_row(r, label, repo_abs, structure_now, tally)
             if orphan is not None:
                 orphans.append(orphan)
         return orphans
@@ -9802,7 +9813,7 @@ class GraphUpdater:
         r: ResultRow,
         label: str,
         repo_abs: str,
-        packages_now: set[str],
+        structure_now: _StructureNow,
         tally: _PruneTally,
     ) -> _Orphan | None:
         """One row's node, when it is an orphan."""
@@ -9835,7 +9846,7 @@ class GraphUpdater:
                 return None
             if not owned:
                 return None
-        key = self._stale_orphan_key(path, abs_path, label, packages_now)
+        key = self._stale_orphan_key(path, abs_path, label, structure_now)
         if key is None:
             return None
         read_at = abs_path if isinstance(abs_path, str) and abs_path else key
@@ -9843,7 +9854,26 @@ class GraphUpdater:
         # two can share an absolute path (issue #2451).
         if label == cs.NodeLabel.PACKAGE and isinstance(qn, str) and qn:
             return _Orphan(path, qn, read_at)
-        return _Orphan(path, key, read_at)
+        return _Orphan(
+            path, key, read_at, self._unadmitted_folder(path, label, structure_now)
+        )
+
+    def _unadmitted_folder(
+        self, path: str, label: str, structure_now: _StructureNow
+    ) -> bool:
+        """Whether a stale Folder's directory is on disk, out of this walk only.
+
+        Every project over these files reads the same disk, so a directory
+        that is gone or turned into a package is stale for all of them. Each
+        has its own walk, though: one checkout indexed under two names, or a
+        project nested in another, can admit what this one excludes.
+        """
+        _packages_now, directories_now = structure_now
+        return (
+            label == cs.NodeLabel.FOLDER
+            and path not in directories_now
+            and not _vanished(self.repo_path / path)
+        )
 
     def _foreign_row(
         self, path: str, abs_path: ResultValue | None, repo_abs: str
@@ -9882,11 +9912,15 @@ class GraphUpdater:
         path: str,
         abs_path: ResultValue | None,
         label: str,
-        packages_now: set[str],
+        structure_now: _StructureNow,
     ) -> str | None:
         """The delete key of a node that is stale or whose path is gone."""
+        packages_now, directories_now = structure_now
         stale_kind = (
-            (label == "Folder" and path in packages_now)
+            (
+                label == "Folder"
+                and (path in packages_now or path not in directories_now)
+            )
             or (label == "Package" and path not in packages_now)
             # No node is derived at a link's path any more (issue #2451). A
             # Folder is exempt: one is keyed on its absolute path, and a link
@@ -9930,9 +9964,27 @@ class GraphUpdater:
                     self._delete_module_entities(orphan.path)
                 elif delete_query == cs.CYPHER_DELETE_PACKAGE_BY_QN:
                     self._delete_package(ingestor, orphan.key, orphan.absolute_path)
+                elif orphan.unadmitted:
+                    self._release_folder(ingestor, orphan.key)
                 else:
                     ingestor.execute_write(delete_query, {cs.KEY_PATH: orphan.key})
         return len(orphans)
+
+    def _release_folder(self, ingestor: QueryProtocol, absolute_path: str) -> None:
+        """Drop this project's hold on a Folder its walk no longer admits.
+
+        The Folder goes only when no other project still claims it: one keyed
+        on its absolute path is shared by every project over these files, and
+        a DETACH DELETE took it, with every Module it holds, out of a project
+        that still admits the directory (#2884 review).
+        """
+        params: PropertyParams = {
+            cs.KEY_PATH: absolute_path,
+            cs.KEY_PROJECT_NAME: self.project_name,
+            cs.KEY_PROJECT_PREFIX: f"{self.project_name}{cs.SEPARATOR_DOT}",
+        }
+        ingestor.execute_write(cq.CYPHER_RELEASE_FOLDER, params)
+        ingestor.execute_write(cq.CYPHER_DELETE_UNCLAIMED_FOLDER, params)
 
     def _delete_package(
         self, ingestor: QueryProtocol, qualified_name: str, absolute_path: str

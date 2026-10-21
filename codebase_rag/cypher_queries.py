@@ -373,22 +373,11 @@ OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_
 DETACH DELETE p, container, defined
 """
 
-# Deletes what `p` claims, except a Folder or File another project claims
-# too: that one only loses `p`'s edges. The named nodes go first, so the
-# check that follows walks up from each Folder/File over what is left; no
-# large list is ever a grouping key, which cost seconds per thousand nodes.
-# Another project `q` claims a Folder/File it reaches through Folders and
-# Files from itself or from one of its own Packages, the same two walks as
-# _CYPHER_PROJECT_CLAIMS taken upward.
-CYPHER_DELETE_PROJECT = f"""
-MATCH (p:Project {{name: $project_name}})
-{_CYPHER_PROJECT_CLAIMS}
-WITH [c IN owned WHERE c:Folder OR c:File] AS shareable,
-[c IN owned WHERE NOT (c:Folder OR c:File)] AS named
-FOREACH (n IN named | DETACH DELETE n)
-WITH shareable
-UNWIND shareable AS c
-OPTIONAL MATCH (c)<-[:{_SHARED_ENTRY_RELS}*]-(holder)
+# Deletes the Folder/File bound to `c` unless a project other than
+# `$project_name` claims it. Another project `q` claims a Folder/File it
+# reaches through Folders and Files from itself or from one of its own
+# Packages, the same two walks as _CYPHER_PROJECT_CLAIMS taken upward.
+_DELETE_UNLESS_CLAIMED_ELSEWHERE = f"""OPTIONAL MATCH (c)<-[:{_SHARED_ENTRY_RELS}*]-(holder)
 WHERE NOT (holder:Folder OR holder:File)
 OPTIONAL MATCH (holder)<-[:{_CONTAINMENT_RELS}*0..]-(q:Project)
 WHERE q.name <> $project_name
@@ -398,6 +387,38 @@ WITH c, count(q) AS other_claims
 WHERE other_claims = 0
 DETACH DELETE c
 """
+
+# Deletes what `p` claims, except a Folder or File another project claims
+# too: that one only loses `p`'s edges. The named nodes go first, so the
+# check that follows walks up from each Folder/File over what is left; no
+# large list is ever a grouping key, which cost seconds per thousand nodes.
+CYPHER_DELETE_PROJECT = f"""
+MATCH (p:Project {{name: $project_name}})
+{_CYPHER_PROJECT_CLAIMS}
+WITH [c IN owned WHERE c:Folder OR c:File] AS shareable,
+[c IN owned WHERE NOT (c:Folder OR c:File)] AS named
+FOREACH (n IN named | DETACH DELETE n)
+WITH shareable
+UNWIND shareable AS c
+{_DELETE_UNLESS_CLAIMED_ELSEWHERE}"""
+
+# The orphan prune's delete for a Folder whose directory is still on disk but
+# outside this project's walk (`.cgrignore`, `--exclude`; issue #2884). Folder
+# identity is the absolute path, so one checkout indexed under two names, or a
+# project nested in another, shares the node, and DETACH DELETE took it out of
+# the other project's tree too. This project's own containment edges go first
+# (from its Project or one of its Packages), then the Folder, only when no
+# other project still claims it.
+CYPHER_RELEASE_FOLDER = (
+    "MATCH (holder)-[r:CONTAINS_FOLDER]->(:Folder {absolute_path: $path}) "
+    "WHERE (holder:Project AND holder.name = $project_name) "
+    "OR (holder:Package AND (holder.qualified_name = $project_name "
+    "OR holder.qualified_name STARTS WITH $project_prefix)) "
+    "DELETE r"
+)
+CYPHER_DELETE_UNCLAIMED_FOLDER = (
+    "MATCH (c:Folder {absolute_path: $path})\n" + _DELETE_UNLESS_CLAIMED_ELSEWHERE
+)
 
 # Run after CYPHER_DELETE_PROJECT: the project's Packages and Modules that no
 # containment path from it reached, such as a tree the #897 repair cut off
