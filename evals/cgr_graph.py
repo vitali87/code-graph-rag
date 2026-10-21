@@ -130,6 +130,14 @@ _PROJECT_CONTAINMENT_RELS = frozenset(
         cs.RelationshipType.CONTAINS_SECTION.value,
     }
 )
+# The only edges into a Folder or File, which the shared-node claim check of
+# CYPHER_DELETE_UNCLAIMED_FOLDER climbs before it looks for a Project.
+_SHARED_ENTRY_RELS = frozenset(
+    {
+        cs.RelationshipType.CONTAINS_FOLDER.value,
+        cs.RelationshipType.CONTAINS_FILE.value,
+    }
+)
 _PROJECT_DEFINED_RELS = _DEFINES_RELS | {
     cs.RelationshipType.HAS_PARAMETER.value,
     cs.RelationshipType.HAS_FIELD.value,
@@ -2043,6 +2051,20 @@ class _StatefulIngestor:
                 self._detach_delete(
                     self._nodes_at_path(_FOLDER_LABEL, path, key=cs.KEY_ABSOLUTE_PATH)
                 )
+            case cq.CYPHER_RELEASE_FOLDER:
+                self._release_folder(params or {})
+            case cq.CYPHER_DELETE_UNCLAIMED_FOLDER:
+                folders = self._nodes_at_path(
+                    _FOLDER_LABEL, path, key=cs.KEY_ABSOLUTE_PATH
+                )
+                project_name = params.get(cs.KEY_PROJECT_NAME) if params else None
+                self._detach_delete(
+                    {
+                        folder
+                        for folder in folders
+                        if not self._claimed_elsewhere(folder, project_name)
+                    }
+                )
             case cs.CYPHER_DELETE_PACKAGE_BY_QN:
                 self._detach_delete(self._scoped_packages(params or {}))
             case cs.CYPHER_DELETE_PACKAGE:
@@ -2705,6 +2727,72 @@ class _StatefulIngestor:
             self.edge_props.pop(edge, None)
             self._out[project].discard(edge)
             self._in.get((edge[3], edge[4]), set()).discard(edge)
+
+    def _release_folder(self, params: PropertyDict) -> None:
+        # Mirrors CYPHER_RELEASE_FOLDER: only the project's own containment
+        # edges into the Folder go, from its Project or one of its Packages.
+        name = _str(params.get(cs.KEY_PROJECT_NAME))
+        prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
+
+        def own(edge: _EdgeKey) -> bool:
+            holder_label, holder_key = edge[0], _str(edge[1])
+            if holder_label == _PROJECT_LABEL:
+                return holder_key == name
+            return holder_label == _PACKAGE_LABEL and (
+                holder_key == name or holder_key.startswith(prefix)
+            )
+
+        folders = self._nodes_at_path(
+            _FOLDER_LABEL, params.get(cs.KEY_PATH), key=cs.KEY_ABSOLUTE_PATH
+        )
+        for folder in folders:
+            for edge in [
+                edge
+                for edge in self._in.get(folder, set())
+                if edge[2] == cs.RelationshipType.CONTAINS_FOLDER.value and own(edge)
+            ]:
+                self.edge_props.pop(edge, None)
+                self._out.get((edge[0], edge[1]), set()).discard(edge)
+                self._in[folder].discard(edge)
+
+    def _reaching(self, start: _NodeId, rels: frozenset[str]) -> set[_NodeId]:
+        # `_reachable` walked against the edges: every node with a path of
+        # `rels` edges INTO `start`.
+        found: set[_NodeId] = set()
+        frontier = [start]
+        while frontier:
+            node = frontier.pop()
+            for from_label, from_val, rel_type, *_rest in self._in.get(node, ()):
+                parent = (from_label, from_val)
+                if rel_type in rels and parent not in found:
+                    found.add(parent)
+                    frontier.append(parent)
+        return found
+
+    def _claimed_elsewhere(self, node: _NodeId, project_name: PropertyValue) -> bool:
+        # Mirrors the claim check of CYPHER_DELETE_UNCLAIMED_FOLDER: another
+        # Project reaches the node through Folders and Files from itself or
+        # from one of its own Packages.
+        holders = {
+            holder
+            for holder in self._reaching(node, _SHARED_ENTRY_RELS)
+            if holder[0] not in (_FOLDER_LABEL, _FILE_LABEL)
+        }
+        for holder in holders:
+            holder_qn = _str(self.nodes.get(holder, {}).get(cs.KEY_QUALIFIED_NAME))
+            for label, owner in {holder} | self._reaching(
+                holder, _PROJECT_CONTAINMENT_RELS
+            ):
+                if label != _PROJECT_LABEL or owner == project_name:
+                    continue
+                owner_name = _str(owner)
+                if (
+                    holder[0] == _PROJECT_LABEL
+                    or holder_qn == owner_name
+                    or holder_qn.startswith(f"{owner_name}.")
+                ):
+                    return True
+        return False
 
     def _delete_orphan_external_modules(self) -> None:
         doomed = {

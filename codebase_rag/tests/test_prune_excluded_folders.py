@@ -15,6 +15,8 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag import cypher_queries as cq
+from codebase_rag.embedded_graph.connection import EmbeddedConnection
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from evals.cgr_graph import _StatefulIngestor
@@ -160,3 +162,90 @@ def test_a_reused_updater_prunes_what_its_walk_stopped_admitting(
     updater.run()
 
     assert _paths(store, cs.NodeLabel.FOLDER) == {"src", "src/pkg"}
+
+
+_TREE_RELS = frozenset(
+    {
+        cs.RelationshipType.CONTAINS_FOLDER.value,
+        cs.RelationshipType.CONTAINS_PACKAGE.value,
+    }
+)
+
+
+def _tree_folders(store: _StatefulIngestor, project: str) -> set[str]:
+    """The Folders a project's containment edges reach, as its tree reads."""
+    children: dict[tuple[str, object], set[tuple[str, object]]] = {}
+    for from_label, from_val, rel, to_label, to_val in store.edges:
+        if rel in _TREE_RELS:
+            children.setdefault((from_label, from_val), set()).add((to_label, to_val))
+    seen: set[tuple[str, object]] = set()
+    frontier = [(cs.NodeLabel.PROJECT.value, project)]
+    while frontier:
+        for child in children.get(frontier.pop(), ()):
+            if child not in seen:
+                seen.add(child)
+                frontier.append(child)
+    return {
+        str(store.nodes[node][cs.KEY_PATH])
+        for node in seen
+        if node[0] == cs.NodeLabel.FOLDER.value and node in store.nodes
+    }
+
+
+def test_a_folder_another_project_still_holds_stays(tmp_path: Path) -> None:
+    # One checkout indexed under two names shares its Folders, keyed on the
+    # absolute path (#2665). Excluding `tests` from one must leave the other's:
+    # a DETACH DELETE took it, and every Module it holds there, out of the
+    # other project's tree.
+    root = _tree(tmp_path / "proj")
+    store = _StatefulIngestor()
+    _sync(store, root, frozenset())
+    _sync(store, root, frozenset(), project="copy")
+    held = _tree_folders(store, "copy")
+    assert {"tests", "tests/sub", "examples/ex1/inner"} <= held, held
+
+    _sync(store, root, _EXCLUDE)
+
+    assert _tree_folders(store, "copy") == held
+    assert _tree_folders(store, "demo") == {"src", "src/pkg"}
+
+
+# `notes` only `demo` holds; `copy` holds the rest too, `data` through its own
+# Package.
+_SHARED_GRAPH = """
+CREATE (demo:Project {name: 'demo'}), (copy:Project {name: 'copy'}),
+       (tests:Folder {absolute_path: '/w/tests'}),
+       (sub:Folder {absolute_path: '/w/tests/sub'}),
+       (notes:Folder {absolute_path: '/w/notes'}),
+       (demo_pkg:Package {qualified_name: 'demo.pkg'}),
+       (copy_pkg:Package {qualified_name: 'copy.pkg'}),
+       (data:Folder {absolute_path: '/w/pkg/data'}),
+       (demo)-[:CONTAINS_FOLDER]->(tests), (copy)-[:CONTAINS_FOLDER]->(tests),
+       (tests)-[:CONTAINS_FOLDER]->(sub), (demo)-[:CONTAINS_FOLDER]->(notes),
+       (demo)-[:CONTAINS_PACKAGE]->(demo_pkg),
+       (copy)-[:CONTAINS_PACKAGE]->(copy_pkg),
+       (demo_pkg)-[:CONTAINS_FOLDER]->(data), (copy_pkg)-[:CONTAINS_FOLDER]->(data)
+"""
+_FOLDER_EDGES = (
+    "MATCH (holder)-[:CONTAINS_FOLDER]->(f:Folder) "
+    "RETURN coalesce(holder.name, holder.qualified_name, holder.absolute_path) "
+    "AS holder, f.absolute_path AS folder ORDER BY holder, folder"
+)
+
+
+def test_the_release_runs_on_the_embedded_engine(tmp_path: Path) -> None:
+    # The store above emulates the two statements; this runs them on the
+    # default backend's engine, on a file as a user's graph is.
+    with EmbeddedConnection(str(tmp_path / "graph.sqlite")) as conn:
+        conn.run(_SHARED_GRAPH)
+        for path in ("/w/tests/sub", "/w/tests", "/w/notes", "/w/pkg/data"):
+            params = {"path": path, "project_name": "demo", "project_prefix": "demo."}
+            conn.run(cq.CYPHER_RELEASE_FOLDER, params)
+            conn.run(cq.CYPHER_DELETE_UNCLAIMED_FOLDER, params)
+        edges = conn.run(_FOLDER_EDGES).rows
+
+    assert [tuple(row) for row in edges] == [
+        ("/w/tests", "/w/tests/sub"),
+        ("copy", "/w/tests"),
+        ("copy.pkg", "/w/pkg/data"),
+    ]
