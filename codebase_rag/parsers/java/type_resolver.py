@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, NamedTuple
 
 from ... import constants as cs
@@ -23,6 +23,17 @@ _JAVA_HEADER_DECL_TYPES = (
     cs.TS_CLASS_DECLARATION,
     cs.TS_INTERFACE_DECLARATION,
     cs.TS_ENUM_DECLARATION,
+)
+
+# The declarations that open a member-type scope: a simple type name read
+# inside one resolves first to a type it declares.
+_JAVA_TYPE_DECL_AST_TYPES = frozenset(
+    {
+        cs.TS_CLASS_DECLARATION,
+        cs.TS_INTERFACE_DECLARATION,
+        cs.TS_ENUM_DECLARATION,
+        cs.TS_RECORD_DECLARATION,
+    }
 )
 
 
@@ -122,7 +133,12 @@ class JavaTypeResolverMixin:
     module_qn_to_file_path: dict[str, Path]
     ast_cache: ASTCacheProtocol
     _fqn_to_module_qn: dict[str, list[str]]
+    class_inheritance: dict[str, list[str]]
     _class_headers: dict[Path, JavaClassHeaders]
+    _supertype_walks: dict[str, tuple[str, ...]]
+    # Annotation only, never a def: this mixin precedes JavaMethodResolverMixin
+    # in the MRO, so a stub here would shadow the real implementation.
+    _java_direct_supertypes: Callable[[str], tuple[list[str], bool]]
 
     def _module_qn_to_java_fqn(self, module_qn: str) -> str | None:
         parts = module_qn.split(cs.SEPARATOR_DOT)
@@ -219,7 +235,71 @@ class JavaTypeResolverMixin:
             return class_qn
         return target
 
-    def _resolve_java_type_name(self, type_name: str, module_qn: str) -> str:
+    def _enclosing_type_qns(self, scope: ASTNode, module_qn: str) -> list[str]:
+        """The qualified names of the named types enclosing `scope`,
+        innermost first: `module.Outer.Inner`, then `module.Outer`."""
+        names: list[str] = []
+        current = scope.parent
+        while current is not None:
+            if current.type in _JAVA_TYPE_DECL_AST_TYPES:
+                name_node = current.child_by_field_name(cs.FIELD_NAME)
+                if name_node is None or not (name := safe_decode_text(name_node)):
+                    return []
+                names.append(name)
+            current = current.parent
+        names.reverse()
+        return [
+            cs.SEPARATOR_DOT.join([module_qn, *names[:depth]])
+            for depth in range(len(names), 0, -1)
+        ]
+
+    def _scoped_member_type(
+        self, type_name: str, module_qn: str, scope: ASTNode
+    ) -> str | None:
+        # Java reads a simple type name as a member of the innermost
+        # enclosing type that declares one, ahead of the file's other types
+        # and its imports, so a same-named type elsewhere in the file does
+        # not make it ambiguous (Greptile, PR #2973).
+        # Each enclosing type's members include those it inherits, ahead of
+        # the next type out (JLS 8.5; CodeRabbit, PR #2973).
+        for enclosing in self._enclosing_type_qns(scope, module_qn):
+            for owner in self._type_and_supertypes(enclosing):
+                member = f"{owner}{cs.SEPARATOR_DOT}{type_name}"
+                if (
+                    member in self.function_registry
+                    and self.function_registry[member] in JAVA_TYPE_DECL_NODE_TYPES
+                ):
+                    return member
+        return None
+
+    def _type_and_supertypes(self, class_qn: str) -> tuple[str, ...]:
+        """`class_qn`, then its superclasses and superinterfaces, nearest
+        first, each once."""
+        # Every scoped parameter and local walks the hierarchies around it,
+        # and reading a type's interfaces reads its declaration, so a walk is
+        # kept until the pass's memos are reset.
+        if (walk := self._supertype_walks.get(class_qn)) is not None:
+            return walk
+        order: list[str] = []
+        seen = {class_qn}
+        pending = [class_qn]
+        while pending:
+            current = pending.pop(0)
+            order.append(current)
+            # class_inheritance holds a superclass and an interface's
+            # superinterfaces but never the interfaces a class implements,
+            # which are read off its declaration, nested or not (CodeRabbit,
+            # PR #2973).
+            for supertype in self._java_direct_supertypes(current)[0]:
+                if supertype not in seen:
+                    seen.add(supertype)
+                    pending.append(supertype)
+        walk = self._supertype_walks[class_qn] = tuple(order)
+        return walk
+
+    def _resolve_java_type_name(
+        self, type_name: str, module_qn: str, scope: ASTNode | None = None
+    ) -> str:
         if not type_name:
             return cs.JAVA_TYPE_OBJECT
 
@@ -234,29 +314,40 @@ class JavaTypeResolverMixin:
 
         if type_name.endswith(cs.JAVA_ARRAY_SUFFIX):
             base_type = type_name[:-2]
-            resolved_base = self._resolve_java_type_name(base_type, module_qn)
+            resolved_base = self._resolve_java_type_name(base_type, module_qn, scope)
             return f"{resolved_base}{cs.JAVA_ARRAY_SUFFIX}"
 
         if cs.CHAR_ANGLE_OPEN in type_name and cs.CHAR_ANGLE_CLOSE in type_name:
             base_type = type_name.split(cs.CHAR_ANGLE_OPEN, maxsplit=1)[0]
-            return self._resolve_java_type_name(base_type, module_qn)
+            return self._resolve_java_type_name(base_type, module_qn, scope)
+
+        if scope is not None and (
+            member := self._scoped_member_type(type_name, module_qn, scope)
+        ):
+            return member
 
         if module_qn in self.import_processor.import_mapping:
             import_map = self.import_processor.import_mapping[module_qn]
             if type_name in import_map:
                 return self._imported_class_qn(import_map[type_name], type_name)
 
+        return self._module_local_type(type_name, module_qn) or type_name
+
+    def _module_local_type(self, type_name: str, module_qn: str) -> str | None:
+        # An enum is a type declaration like a class or an interface: a
+        # receiver of a nested enum's type was left untyped (issue #2922).
         same_package_qn = f"{module_qn}{cs.SEPARATOR_DOT}{type_name}"
-        if same_package_qn in self.function_registry and self.function_registry[
-            same_package_qn
-        ] in [NodeType.CLASS, NodeType.INTERFACE]:
+        if (
+            same_package_qn in self.function_registry
+            and self.function_registry[same_package_qn] in JAVA_TYPE_DECL_NODE_TYPES
+        ):
             return same_package_qn
 
         # A nested class referenced by its simple name from within the same file
         # (`RECORD_HELPER` typed by the nested `RecordHelper`): the qn is
         # `module.Outer.Nested`, not `module.Nested`, so the direct check above
         # misses it. Search only this module's trie subtree (bounded, not a
-        # whole-registry scan) for a CLASS/INTERFACE whose last segment is the simple
+        # whole-registry scan) for a type declaration whose last segment is the simple
         # name, used only when unambiguous so a same-named nested type elsewhere
         # cannot mis-resolve. The trie indexes by dot segment, so find_with_prefix
         # already excludes character-level prefix collisions.
@@ -264,13 +355,12 @@ class JavaTypeResolverMixin:
         nested = [
             qn
             for qn, entity_type in self.function_registry.find_with_prefix(module_qn)
-            if qn.endswith(suffix)
-            and entity_type in (NodeType.CLASS, NodeType.INTERFACE)
+            if qn.endswith(suffix) and entity_type in JAVA_TYPE_DECL_NODE_TYPES
         ]
         if len(nested) == 1:
             return nested[0]
 
-        return type_name
+        return None
 
     def _java_class_headers(self, module_qn: str) -> JavaClassHeaders | None:
         # Call resolution asks for a class's superclass and interfaces once
