@@ -180,7 +180,8 @@ def test_generic_bare_call_binds_arity_matched_overload(
 
     pairs = _call_pairs(mock_ingestor)
     assert any(
-        s.endswith("N.Builder.Handle") and t.endswith("N.Builder.Handle(System.Func)")
+        s.endswith("N.Builder.Handle")
+        and t.endswith("N.Builder.Handle(System.Func<TException, bool>)")
         for s, t in pairs
     ), pairs
     assert not any(
@@ -195,7 +196,7 @@ def test_bare_call_prefers_in_scope_local_function(
     # The 2-arg `Handle(outcome, predicate)` inside the Func overload's
     # lambda must bind to the local function declared in the SAME body, not
     # to the parameterless method overload the trie falls back to (the
-    # enclosing-scope walk cannot see through the caller's `(System.Func)`
+    # enclosing-scope walk cannot see through the caller's `(System.Func<TException, bool>)`
     # signature suffix). That mis-bind left Polly's HandleInner/HandleNested
     # local functions with zero incoming edges -- flagged dead.
     (csharp_project / "Builder.cs").write_text(LOCAL_FN_SHADOW_SRC, encoding="utf-8")
@@ -203,12 +204,13 @@ def test_bare_call_prefers_in_scope_local_function(
 
     pairs = _call_pairs(mock_ingestor)
     assert any(
-        s.endswith("N.Builder.Handle(System.Func)")
+        s.endswith("N.Builder.Handle(System.Func<TException, bool>)")
         and t.endswith("N.Builder.Handle.Handle")
         for s, t in pairs
     ), pairs
     assert not any(
-        s.endswith("N.Builder.Handle(System.Func)") and t.endswith("N.Builder.Handle")
+        s.endswith("N.Builder.Handle(System.Func<TException, bool>)")
+        and t.endswith("N.Builder.Handle")
         for s, t in pairs
     ), pairs
 

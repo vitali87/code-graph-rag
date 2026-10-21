@@ -6655,6 +6655,7 @@ class CallProcessor:
         callee_info = self._resolver.resolve_csharp_method_call(
             call_node, ctx.module_qn, call_var_types, ctx.caller_qn
         )
+        self._emit_csharp_overload_family(ctx, call_node)
         if (
             callee_info is not None
             and callee_info != csharp_ti.CSHARP_EXTERNAL_TARGET
@@ -6669,7 +6670,11 @@ class CallProcessor:
             # the site: that is the compiler's exact overload
             # choice, and widening it would revive dead siblings.
             engine = self._resolver.type_inference.csharp_type_inference
-            if not engine.semantic_fact_resolved(call_node, ctx.module_qn):
+            if not engine.semantic_fact_resolved(
+                call_node, ctx.module_qn
+            ) and not engine.csharp_call_ranked(
+                call_node, ctx.module_qn, ctx.caller_qn
+            ):
                 for sibling_qn in engine.csharp_same_arity_family(callee_info[1]):
                     ctx.ensure_rel(
                         ctx.caller_spec,
@@ -6701,6 +6706,35 @@ class CallProcessor:
                 constructing=call_node.type in _OBJECT_CREATION_NODE_TYPES,
             )
         return callee_info
+
+    def _emit_csharp_overload_family(
+        self, ctx: _CallScanContext, call_node: Node
+    ) -> None:
+        # A member call whose arguments fit several same-arity overloads
+        # equally well takes an edge to each, and none of them is `exact`:
+        # the resolver's verdict carries the label onto the edge it returned
+        # too (issue #2619).
+        engine = self._resolver.type_inference.csharp_type_inference
+        family = engine.csharp_member_overload_family(
+            call_node, ctx.module_qn, ctx.caller_qn
+        )
+        # Bound by name alone, or on a receiver of no known type: a guess,
+        # never an exact edge (PR 2814 review).
+        if engine.csharp_call_guessed(call_node, ctx.module_qn, ctx.caller_qn):
+            resolution = cs.EdgeResolution.HEURISTIC
+        elif family:
+            resolution = cs.EdgeResolution.OVERLOAD
+        else:
+            return
+        self._resolution = resolution
+        self._resolver.last_resolution = resolution
+        for sibling_qn in family:
+            for variant in self._resolver.function_registry.variants(sibling_qn):
+                ctx.ensure_rel(
+                    ctx.caller_spec,
+                    cs.RelationshipType.CALLS,
+                    (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, variant),
+                )
 
     def _resolve_python_callee(
         self,

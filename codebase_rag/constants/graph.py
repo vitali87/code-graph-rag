@@ -877,6 +877,32 @@ KEY_DECLARED_IN_CLASS = "declared_in_class"
 KEY_EXTENSION_RECEIVER = "extension_receiver"
 KEY_EXTENSION_NAMESPACE = "extension_namespace"
 KEY_EXTENSION_RECEIVER_ARITY = "extension_receiver_arity"
+# What C# overload ranking reads of a declaration (issue #2619), stored for
+# the same reason (PR 2814 review): a generic type's or method's own
+# `type_parameters` (KEY_TYPE_PARAMETERS), a method's `where` clauses as
+# "T:Person" entries, the generic bases a type passes type arguments to
+# (`Base<Circle>`), and an `implicit operator`'s [source, target] types.
+KEY_TYPE_CONSTRAINTS = "type_constraints"
+KEY_GENERIC_BASES = "generic_bases"
+# For inferring a method's type parameters (PR 2814 review): an interface's
+# parameters' variances, "out", "in" or "" each, stored only when one varies,
+# and `true` on a value type (a struct or a `record struct`).
+KEY_TYPE_PARAMETER_VARIANCES = "type_parameter_variances"
+KEY_VALUE_TYPE = "value_type"
+# For judging a `where` clause (PR 2814 review): every base a C# type's base
+# list writes, as written, so what it implements is known.
+KEY_BASE_TYPES = "base_types"
+# A C# type's indexers, each as `<return type>=><parameter types>` written
+# (`Right=>int`), for what indexing a value of it gives (PR 2814 review).
+KEY_INDEXER_TYPES = "indexer_types"
+# A C# type's field and property types, each as `<name>=><type>`, so a
+# receiver read through a field of an unchanged type is typed (PR 2814).
+KEY_FIELD_TYPES = "field_types"
+KEY_IMPLICIT_CONVERSION = "implicit_conversion"
+# How each of a C# method's parameters is passed ("ref", "out", "in", "ref
+# readonly", "" by value), stored only when one is not by value (PR 2814).
+KEY_PARAMETER_MODES = "parameter_modes"
+CSHARP_CONSTRAINT_SEPARATOR = ":"
 # Declared POSITIONAL parameter names of a Python function, receiver included,
 # for arity-TypeError diagnosis (issue #227). Positional-only because CPython's
 # "takes N positional arguments" counts nothing after `*`/`*args`, and
@@ -1243,6 +1269,15 @@ CYPHER_ALL_DEFINITION_QNS = (
     "n.extension_receiver AS extension_receiver, "
     "n.extension_namespace AS extension_namespace, "
     "n.extension_receiver_arity AS extension_receiver_arity, "
+    "n.positional_params AS positional_params, "
+    "n.type_parameters AS type_parameters, "
+    "n.type_constraints AS type_constraints, "
+    "n.implicit_conversion AS implicit_conversion, "
+    "n.parameter_modes AS parameter_modes, "
+    "n.generic_bases AS generic_bases, "
+    "n.type_parameter_variances AS type_parameter_variances, "
+    "n.value_type AS value_type, n.base_types AS base_types, "
+    "n.indexer_types AS indexer_types, n.field_types AS field_types, "
     "n.embeds AS embeds"
 )
 
