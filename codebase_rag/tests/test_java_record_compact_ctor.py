@@ -9,6 +9,7 @@ which never runs for two arguments. `this(only, only)` reached nothing
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -232,12 +233,12 @@ class Stamp {
 
 
 def test_a_single_type_import_shadows_a_same_package_type(
-    tmp_path_factory: pytest.TempPathFactory,
+    tmp_path: Path,
 ) -> None:
     # `import java.util.Date;` makes `Date` java.util's in Clock, shadowing the
     # package's own `Date` (JLS 6.4.1), so `new Date(5L)` reaches neither it nor
     # its constructor; Stamp, with no import, still does.
-    root = tmp_path_factory.mktemp("java2703imp") / "jimp"
+    root = tmp_path / "jimp"
     src = root / "src" / "com" / "acme"
     src.mkdir(parents=True)
     for name, text in (
