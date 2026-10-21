@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 from typing import NamedTuple
 
@@ -147,6 +148,28 @@ class _LeanHandles(NamedTuple):
     # (`userClient userv1connect.UserServiceClient`): field name -> stem.
     # Injected clients are called through these, not through a local binding.
     rpc_fields: dict[str, str]
+
+
+@contextmanager
+def _child_handle_scope(
+    lean_handles: _LeanHandles | None, unbound: Iterable[str] = ()
+) -> Iterator[None]:
+    # A nested block or an inline callback walked within its caller is a child
+    # lexical scope for handles too: what it binds (`const out = {}`) is out of
+    # scope afterwards, so it must not leak to, kill or replace the enclosing
+    # bindings, and a name it binds anew (a callback parameter `out`) is not the
+    # enclosing handle inside it (mirrors the in_scope shadow set, by value).
+    if lean_handles is None:
+        yield
+        return
+    snapshot = dict(lean_handles.bindings)
+    for name in unbound:
+        lean_handles.bindings.pop(name, None)
+    try:
+        yield
+    finally:
+        lean_handles.bindings.clear()
+        lean_handles.bindings.update(snapshot)
 
 
 # The connect-go constructor: `New<Stem>Client`, qualified by a generated
@@ -819,18 +842,21 @@ class IOAccessProcessor:
             # Python lambda does, so its I/O lands on this caller (#2772).
             if node.type in descriptor.nested_scope_types:
                 if is_inline_callback(node, descriptor, self._has_own_pass):
-                    self._emit_inline_callback(
-                        node,
-                        in_scope | body_extra,
-                        caller_spec,
-                        import_map,
-                        sink_by_name,
-                        macro_sinks,
-                        stream_sinks,
-                        member_reads,
-                        descriptor,
-                        lean_handles,
-                    )
+                    with _child_handle_scope(
+                        lean_handles, self._param_names(node, descriptor)
+                    ):
+                        self._emit_direct_sinks(
+                            node,
+                            caller_spec,
+                            import_map,
+                            sink_by_name,
+                            macro_sinks,
+                            stream_sinks,
+                            member_reads,
+                            descriptor,
+                            lean_handles,
+                            inherited=in_scope | body_extra,
+                        )
                 continue
             if node.type == descriptor.block_scope_type:
                 self._walk_nested_block(
@@ -864,45 +890,6 @@ class IOAccessProcessor:
             ):
                 stack.extend(reversed(node.named_children))
 
-    def _emit_inline_callback(
-        self,
-        node: Node,
-        in_scope: frozenset[str],
-        caller_spec: tuple[str, str, str],
-        import_map: dict[str, str],
-        sink_by_name: dict[str, IOSink],
-        macro_sinks: dict[str, IOSink],
-        stream_sinks: dict[str, IOSink],
-        member_reads: tuple[tuple[str, ResourceKind], ...],
-        descriptor: LanguageDescriptor,
-        lean_handles: _LeanHandles | None,
-    ) -> None:
-        # An inline callback walked within its caller is a child scope for
-        # handles too: a parameter named like an outer handle is not that
-        # handle (`items.forEach(out => out.write(x))`), and what the callback
-        # binds (`const out = {}`) must not kill or replace the caller's own.
-        snapshot = dict(lean_handles.bindings) if lean_handles is not None else None
-        if lean_handles is not None:
-            for name in self._param_names(node, descriptor):
-                lean_handles.bindings.pop(name, None)
-        try:
-            self._emit_direct_sinks(
-                node,
-                caller_spec,
-                import_map,
-                sink_by_name,
-                macro_sinks,
-                stream_sinks,
-                member_reads,
-                descriptor,
-                lean_handles,
-                inherited=in_scope,
-            )
-        finally:
-            if lean_handles is not None and snapshot is not None:
-                lean_handles.bindings.clear()
-                lean_handles.bindings.update(snapshot)
-
     def _walk_nested_block(
         self,
         node: Node,
@@ -917,24 +904,20 @@ class IOAccessProcessor:
         lean_handles: _LeanHandles | None,
     ) -> None:
         # A nested block is a child lexical scope for handles too: a handle declared
-        # inside it is out of scope after the block, so its binding must not leak to
-        # later statements (mirrors the in_scope shadow set, passed by value).
-        snapshot = dict(lean_handles.bindings) if lean_handles is not None else None
-        self._walk_scope(
-            list(node.named_children),
-            in_scope,
-            caller_spec,
-            import_map,
-            sink_by_name,
-            macro_sinks,
-            stream_sinks,
-            member_reads,
-            descriptor,
-            lean_handles,
-        )
-        if lean_handles is not None and snapshot is not None:
-            lean_handles.bindings.clear()
-            lean_handles.bindings.update(snapshot)
+        # inside it is out of scope after the block (_child_handle_scope).
+        with _child_handle_scope(lean_handles):
+            self._walk_scope(
+                list(node.named_children),
+                in_scope,
+                caller_spec,
+                import_map,
+                sink_by_name,
+                macro_sinks,
+                stream_sinks,
+                member_reads,
+                descriptor,
+                lean_handles,
+            )
 
     def _emit_node_sinks(
         self,
