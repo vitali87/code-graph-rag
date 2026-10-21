@@ -39,16 +39,30 @@ def _tree(root: Path) -> Path:
     return root
 
 
-def _sync(store: _StatefulIngestor, root: Path, exclude: frozenset[str]) -> None:
+def _updater(
+    store: _StatefulIngestor,
+    root: Path,
+    exclude: frozenset[str],
+    project: str = "demo",
+) -> GraphUpdater:
     parsers, queries = load_parsers()
-    GraphUpdater(
+    return GraphUpdater(
         ingestor=store,
         repo_path=root,
         parsers=parsers,
         queries=queries,
-        project_name="demo",
+        project_name=project,
         exclude_paths=exclude,
-    ).run()
+    )
+
+
+def _sync(
+    store: _StatefulIngestor,
+    root: Path,
+    exclude: frozenset[str],
+    project: str = "demo",
+) -> None:
+    _updater(store, root, exclude, project).run()
 
 
 def _paths(store: _StatefulIngestor, label: cs.NodeLabel) -> set[str]:
@@ -121,3 +135,28 @@ def test_files_and_modules_still_match_a_fresh_index(
     _sync(store, root, frozenset())
     _sync(store, root, _EXCLUDE)
     assert _paths(store, label) == _paths(_fresh(tmp_path), label)
+
+
+def test_a_reused_updater_prunes_what_its_walk_stopped_admitting(
+    tmp_path: Path,
+) -> None:
+    # The watcher's rebuild runs the updater it already holds, and every run
+    # re-resolves the generated-source rescue (#1140): with the build file
+    # gone, `target/` leaves the walk while it stays on disk. The structure
+    # map kept the previous run's directories, so their Folders stayed.
+    root = _tree(tmp_path / "proj")
+    (root / "pom.xml").write_text("<project/>", encoding="utf-8")
+    generated = root / "target" / "generated-sources" / "annotations" / "com"
+    generated.mkdir(parents=True)
+    (generated / "Widget.java").write_text(
+        "package com;\n\npublic class Widget {\n}\n", encoding="utf-8"
+    )
+    store = _StatefulIngestor()
+    updater = _updater(store, root, _EXCLUDE)
+    updater.run()
+    assert "target/generated-sources" in _paths(store, cs.NodeLabel.FOLDER)
+
+    (root / "pom.xml").unlink()
+    updater.run()
+
+    assert _paths(store, cs.NodeLabel.FOLDER) == {"src", "src/pkg"}
