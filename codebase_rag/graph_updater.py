@@ -50,6 +50,7 @@ from .parser_fingerprint import compute_parser_fingerprint
 from .parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES
 from .parsers import utils as parser_utils
 from .parsers.ast_grep_tier import AstGrepTier
+from .parsers.callable_flow_scope import FileFlowFunctions, settled_flow_names
 from .parsers.contract_linking import link_contracts
 from .parsers.cpp.preproc_recovery import parse_with_preproc_recovery
 from .parsers.cpp_frontend import (
@@ -7135,6 +7136,7 @@ class GraphUpdater:
             scan.changed_entries, is_full_build
         )
         added_keys = [key for key, _b in added_entries]
+        edited_count = len(scan.changed_entries)
         stable = self._interface_stable_modules(
             _interface_sources(scan.changed_entries, {*deleted_before_parse, *siblings})
         )
@@ -7178,8 +7180,13 @@ class GraphUpdater:
             scan,
             reindexed_keys,
         )
-        reindexed_keys = self._queue_foreign_members(
-            reindexed_keys, deleted_before_parse, present, eligible_by_key, scan
+        reindexed_keys = self._queue_callable_flow_closure(
+            edited_count,
+            deleted_before_parse,
+            present,
+            eligible_by_key,
+            scan,
+            reindexed_keys,
         )
         # Pass 2 order decides which same-stem file claims the bare module
         # qn; a clean build processes files in walk order, so the re-parse
@@ -7769,6 +7776,143 @@ class GraphUpdater:
             logger.info(ls.INCREMENTAL_AFFECTED_CALLERS, count=affected)
             reindexed_keys = _reindexed_keys(scan.changed_entries)
         return reindexed_keys
+
+    def _queue_callable_flow_closure(
+        self,
+        edited_count: int,
+        deleted_keys: list[str],
+        present: set[str],
+        eligible_by_key: dict[str, Path],
+        scan: _FileScan,
+        reindexed_keys: list[str],
+    ) -> list[str]:
+        """Queue the callable-flow passers, then the Go package files and the
+        member files of everything re-parsed, until none brings in more.
+
+        A file the last two bring in can hold a receiver itself: registry.cpp
+        joins for the out-of-line members of registry.h, a dependent, and
+        re-parsing it deletes `run_callback -> on_start` unless the passer,
+        plugins.cpp, re-parses too. So the callable flow is walked again over
+        every file they add.
+        """
+        while True:
+            reindexed_keys = self._queue_callable_flow_passers(
+                edited_count, present, eligible_by_key, scan, reindexed_keys
+            )
+            flowed = len(present)
+            # A Go caller the callable flow brought in re-parses with its
+            # package too, as every other re-parsed Go file does (issue #2483).
+            reindexed_keys = self._queue_affected_callers(
+                _go_package_siblings(present, eligible_by_key),
+                present,
+                eligible_by_key,
+                scan,
+                reindexed_keys,
+            )
+            # After the callable flow, so a passer it brought in keeps the
+            # members other files attach to its types as well (issue #3271).
+            reindexed_keys = self._queue_foreign_members(
+                reindexed_keys, deleted_keys, present, eligible_by_key, scan
+            )
+            if len(present) == flowed:
+                return reindexed_keys
+
+    def _queue_callable_flow_passers(
+        self,
+        edited_count: int,
+        present: set[str],
+        eligible_by_key: dict[str, Path],
+        scan: _FileScan,
+        reindexed_keys: list[str],
+    ) -> list[str]:
+        """Queue the files that pass callables into a re-parsed function."""
+        queued = len(scan.changed_entries)
+
+        def queue_callers(caller_keys: list[str]) -> list[tuple[Path, str, bytes]]:
+            start = len(scan.changed_entries)
+            self._queue_affected_callers(
+                caller_keys, present, eligible_by_key, scan, reindexed_keys
+            )
+            return [
+                (path, key, data)
+                for path, key, _new, data in scan.changed_entries[start:]
+            ]
+
+        self._expand_callable_flow(
+            [(path, key, data) for path, key, _new, data in scan.changed_entries],
+            {key for _path, key, _new, _data in scan.changed_entries[:edited_count]},
+            queue_callers,
+        )
+        if len(scan.changed_entries) == queued:
+            return reindexed_keys
+        return _reindexed_keys(scan.changed_entries)
+
+    def _expand_callable_flow(
+        self,
+        reparsed: list[tuple[Path, str, bytes]],
+        edited: Collection[str],
+        queue_callers: Callable[[list[str]], list[tuple[Path, str, bytes]]],
+    ) -> None:
+        """Bring the callers of the re-parsed callable-flow holders into the
+        re-parse, until no joined file holds one.
+
+        `run_callback(fn): return fn()` gets an edge to each callable its
+        callers pass in (`run_callback(_on_start)`), derived from bindings
+        recorded while walking the CALLERS' files. A dependent re-parsed only
+        because an import changed loses that outgoing edge, and its callers,
+        a level past the dependents, were never walked to re-emit it
+        (issue #2911). So a re-parsed file defining such a function brings in
+        its callers, and a caller that forwards its own parameter into one
+        (`wrap(cb): return run_callback(cb)`) brings in its callers in turn.
+        An `edited` file holds only through what it forwards: when its
+        invokers hold edges, its callers already re-parse as its dependents.
+        A file is checked only when it is re-parsed, so a dependent whose
+        functions take no part in callable flow widens nothing.
+        """
+        files = {
+            key: flow
+            for path, key, data in reparsed
+            if (flow := self._file_flow_functions(path, data)) is not None
+        }
+        flow_names: frozenset[str] = frozenset()
+        holders: set[str] = set()
+        while True:
+            flow_names = settled_flow_names(list(files.values()), flow_names)
+            joined = sorted(
+                key
+                for key, flow in files.items()
+                if key not in holders
+                and (
+                    flow.forwarders(flow_names)
+                    if key in edited
+                    else flow.names(flow_names)
+                )
+            )
+            if not joined:
+                return
+            holders.update(joined)
+            for path, key, data in queue_callers(self._affected_caller_keys(joined)):
+                if (flow := self._file_flow_functions(path, data)) is not None:
+                    files[key] = flow
+
+    def _file_flow_functions(
+        self, filepath: Path, file_bytes: bytes
+    ) -> FileFlowFunctions | None:
+        language = self._tree_sitter_language(filepath)
+        if language not in cs.CALLABLE_FLOW_LANGUAGES:
+            return None
+        language_queries = self.queries.get(language)
+        if language_queries is None:
+            return None
+        parser = language_queries.get(cs.KEY_PARSER)
+        functions_query = language_queries.get(cs.QUERY_FUNCTIONS)
+        if parser is None or functions_query is None:
+            return None
+        root = parse_with_preproc_recovery(
+            parser, grammar_bytes(file_bytes, language, filepath), language
+        ).root_node
+        captures = sorted_captures(QueryCursor(functions_query), root)
+        return FileFlowFunctions(captures.get(cs.CAPTURE_FUNCTION, ()), language, root)
 
     def _captured_inbound_edges(
         self, reindexed_keys: list[str], deleted_set: set[str]
@@ -8931,6 +9075,60 @@ class GraphUpdater:
             )
             self.ingestor.execute_write(stale, {cs.KEY_PATH: absolute})
 
+    def _reingest_callable_flow_closure(
+        self,
+        present: dict[str, Path],
+        gone: dict[str, Path],
+        joined: dict[str, Path],
+    ) -> dict[str, Path]:
+        """The callable-flow passers, Go package files and member files the
+        re-parse needs beside `present` and `joined`, until none brings in
+        more; `run()` widens its set the same way
+        (`_queue_callable_flow_closure`)."""
+        reached = dict(joined)
+        while True:
+            reached.update(self._reingest_callable_flow_passers(present, gone, reached))
+            flowed = len(reached)
+            reached.update(self._reingest_go_package_files({*present, *gone, *reached}))
+            reached.update(self._reingest_foreign_members({*present, *gone, *reached}))
+            if len(reached) == flowed:
+                return {key: path for key, path in reached.items() if key not in joined}
+
+    def _reingest_callable_flow_passers(
+        self,
+        present: dict[str, Path],
+        gone: dict[str, Path],
+        joined: dict[str, Path],
+    ) -> dict[str, Path]:
+        """On-disk files the re-parse needs to re-derive a callable-flow edge
+        out of a re-parsed file, beside `present` and the files it `joined`."""
+        passers: dict[str, Path] = {}
+        taken = {*present, *gone, *joined}
+
+        def overlay(key: str, path: Path) -> bytes:
+            return self._delombok_overlay.get(key, _read_bytes(path))
+
+        def queue_callers(caller_keys: list[str]) -> list[tuple[Path, str, bytes]]:
+            queued: list[tuple[Path, str, bytes]] = []
+            for key in caller_keys:
+                path = self.repo_path / key
+                if key in taken or not path.is_file():
+                    continue
+                taken.add(key)
+                passers[key] = path
+                queued.append((path, key, overlay(key, path)))
+            return queued
+
+        self._expand_callable_flow(
+            [
+                (path, key, overlay(key, path))
+                for key, path in {**present, **joined}.items()
+            ],
+            present.keys(),
+            queue_callers,
+        )
+        return passers
+
     def _reingest_dependents(
         self,
         present: dict[str, Path],
@@ -9409,7 +9607,9 @@ class GraphUpdater:
                 )
             )
             affected.update(
-                self._reingest_foreign_members({*present, *gone, *survivors, *affected})
+                self._reingest_callable_flow_closure(
+                    present, gone, {**survivors, **affected}
+                )
             )
             all_keys = sorted({*present, *gone, *survivors, *affected})
             captured = self._capture_inbound_edges(all_keys)
