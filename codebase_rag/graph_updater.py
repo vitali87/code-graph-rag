@@ -9,7 +9,7 @@ import secrets
 import stat
 import sys
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -1681,6 +1681,9 @@ class GraphUpdater:
         # and evicts on large repos, so Pass 3 must iterate this full list (not
         # the cache) and re-parse evicted files, or their calls are dropped.
         self._parsed_files: list[tuple[Path, cs.SupportedLanguage]] = []
+        # Per run: files of a supported language whose grammar is not
+        # installed, reported once the run has seen every file (#2905).
+        self._missing_grammar_files: Counter[cs.SupportedLanguage] = Counter()
         # Rel-path -> registered qns for FRONTEND registrations, which have
         # no tree-sitter span records; the watch prefix sweep reads this to
         # spare foreign files' entries (issue #1025).
@@ -2752,7 +2755,8 @@ class GraphUpdater:
         # Reset per-run parse tracking so a reused updater does not reprocess
         # a previous run's files in Pass 3.
         self._parsed_files.clear()
-        # Per-run for the same reason: the warning names THIS run's files.
+        # Per-run for the same reason: the warnings name THIS run's files.
+        self._missing_grammar_files.clear()
         self.ast_grep_tier.reset_unparsed()
         # Per-run for the same reason: the set records what THIS run parsed,
         # so a reused updater must not treat a previous run's interfaces as
@@ -2981,6 +2985,7 @@ class GraphUpdater:
             self.factory.definition_processor.module_qn_to_file_path
         )
 
+        self._warn_missing_grammars()
         # Once per sync, after every file was seen: files the ast-grep tier
         # would parse but could not, for want of its extra (issue #2634).
         self.ast_grep_tier.warn_unparsed()
@@ -8167,9 +8172,37 @@ class GraphUpdater:
             self.document_tier.process_file(filepath, structural_elements)
             return True
         # A file no tier took still gets its File node; the ast-grep tier
-        # counts the ones it only skipped for lack of its extra.
+        # counts the ones it only skipped for lack of its extra, and a
+        # tree-sitter language's file counts when its grammar is missing.
         self.ast_grep_tier.note_unparsed(filepath.suffix)
+        self._note_missing_grammar(filepath)
         return False
+
+    def _note_missing_grammar(self, filepath: Path) -> None:
+        # A file no tier took is a bare File node; count it when its
+        # language is one a grammar would have parsed (issue #2905).
+        lang_config = get_language_spec(filepath.suffix)
+        if (
+            lang_config is not None
+            and isinstance(lang_config.language, cs.SupportedLanguage)
+            and lang_config.language not in self.parsers
+        ):
+            self._missing_grammar_files[lang_config.language] += 1
+
+    def _warn_missing_grammars(self) -> None:
+        if not self._missing_grammar_files:
+            return
+        logger.warning(
+            ls.GRAMMARS_MISSING_FILES.format(
+                count=self._missing_grammar_files.total(),
+                languages=cs.HEALTH_CHECK_GRAMMARS_LIST_SEPARATOR.join(
+                    ls.GRAMMARS_MISSING_LANGUAGE_COUNT.format(
+                        language=language, count=count
+                    )
+                    for language, count in sorted(self._missing_grammar_files.items())
+                ),
+            )
+        )
 
     def _process_notebook(self, filepath: Path, file_bytes: bytes | None) -> None:
         """Parse a Python notebook's code cells as the module they make.
@@ -9347,6 +9380,7 @@ class GraphUpdater:
         # THIS call's answer, not the last one's.
         self.reingest_mutated = False
         self.reingest_scope = ()
+        self._missing_grammar_files.clear()
         self._reingest_pinned_sources = {}
         self.ast_grep_tier.reset_unparsed()
         present, gone, skipped = self._reingest_split(paths, deleted)
@@ -9538,6 +9572,7 @@ class GraphUpdater:
             skipped=tuple(sorted(skipped)),
             elapsed_ms=(time.perf_counter() - started) * 1000.0,
         )
+        self._warn_missing_grammars()
         self.ast_grep_tier.warn_unparsed()
         logger.info(
             ls.REINGEST_DONE,
