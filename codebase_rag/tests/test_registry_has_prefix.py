@@ -77,6 +77,35 @@ def test_has_prefix_matches_the_listing_it_replaces() -> None:
         assert trie.has_prefix(prefix) is bool(trie.find_with_prefix(prefix)), prefix
 
 
+def test_has_prefix_stops_at_the_first_entry_of_a_wide_module(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trie = FunctionRegistryTrie()
+    for i in range(500):
+        trie[f"proj.wide.f{i}"] = NodeType.FUNCTION
+    visited: list[object] = []
+    descend = FunctionRegistryTrie._subtree_has_entry
+
+    def counting(self: FunctionRegistryTrie, node: dict) -> bool:
+        visited.append(node)
+        return descend(self, node)
+
+    monkeypatch.setattr(FunctionRegistryTrie, "_subtree_has_entry", counting)
+    assert trie.has_prefix("proj.wide")
+    # The module node and its first child, not all 500 children.
+    assert len(visited) == 2
+
+
+def test_has_prefix_matches_the_listing_under_an_internal_looking_segment() -> None:
+    # Keys starting with the trie's internal prefix are skipped by the
+    # listing, so a subtree holding only such a name lists nothing; the
+    # yes/no answer must not claim otherwise from the bare child above it.
+    trie = FunctionRegistryTrie()
+    trie["proj.pkg.__init__"] = NodeType.FUNCTION
+    for prefix in ("proj", "proj.pkg"):
+        assert trie.has_prefix(prefix) is bool(trie.find_with_prefix(prefix)), prefix
+
+
 def test_has_prefix_forgets_a_deleted_subtree() -> None:
     trie = FunctionRegistryTrie()
     trie["proj.lone.mod.f"] = NodeType.FUNCTION

@@ -634,15 +634,19 @@ class FunctionRegistryTrie:
         walk to its first one, not a copy of all of them (issue #2919).
         """
         node = self._navigate_to_prefix(prefix)
-        stack = [] if node is None else [node]
-        while stack:
-            current = stack.pop()
-            if cs.TRIE_QN_KEY in current:
-                return True
-            for key, child in current.items():
-                if not key.startswith(cs.TRIE_INTERNAL_PREFIX):
-                    assert isinstance(child, dict)
-                    stack.append(child)
+        return node is not None and self._subtree_has_entry(node)
+
+    def _subtree_has_entry(self, node: TrieNode) -> bool:
+        # Descends into a child before looking at its siblings: a module's
+        # first child leads to an entry, so a wide module costs the walk down
+        # to one, not a pass over all of its children.
+        if cs.TRIE_QN_KEY in node:
+            return True
+        for key, child in node.items():
+            if not key.startswith(cs.TRIE_INTERNAL_PREFIX):
+                assert isinstance(child, dict)
+                if self._subtree_has_entry(child):
+                    return True
         return False
 
     def add_member_alias(
