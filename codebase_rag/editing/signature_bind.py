@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 import symtable
 from collections.abc import Iterable, Mapping, Sequence
+from itertools import product
 
 from tree_sitter import Node
 
@@ -537,6 +538,40 @@ def _check_hierarchy(
                     theirs=cs.SEPARATOR_COMMA_SPACE.join(theirs),
                     ours=cs.SEPARATOR_COMMA_SPACE.join(old_names),
                 )
+            )
+
+
+def _refuse_body_conflicts(
+    headers: Sequence[_Header],
+    old_names: Sequence[str],
+    new: Sequence[ParamSpec],
+    renamed: Sequence[tuple[str, str]],
+) -> None:
+    """Refuse a parameter list a member's body would no longer agree with.
+
+    A dropped parameter the body still reads leaves an unresolved name:
+    `def f(a): return a` emptied writes `def f(): return a`, which PARSES
+    and raises NameError only when called, so neither the syntax nor the
+    arity postcondition catches it. Renamed names are excluded: the body
+    rewrite follows those (Copilot, PR #1533).
+
+    The other way round, a genuinely new parameter shadows whatever the
+    body read under that name, so `return len(a)` with a new `len=None`
+    calls the parameter. Renamed targets are checked by the body rewrite
+    itself (Greptile, PR #2166).
+    """
+    kept = {spec.name for spec in new} | {old for old, _new in renamed}
+    dropped = [name for name in old_names if name not in kept]
+    added = [spec.name for spec in new if spec.name not in old_names]
+    for header, name in product(headers, dropped):
+        if _body_reads(header, name):
+            raise SignatureRefused(
+                cs.SIGNATURE_DROPPED_STILL_READ.format(name=name, qn=header.qn)
+            )
+    for header, name in product(headers, added):
+        if _body_reads(header, name):
+            raise SignatureRefused(
+                cs.SIGNATURE_NEW_NAME_TAKEN.format(name=name, qn=header.qn)
             )
 
 

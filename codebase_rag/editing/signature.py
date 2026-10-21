@@ -44,11 +44,11 @@ from .contract import Reingest
 from .patcher import Patcher, PatcherError
 from .signature_bind import (
     _bind_arguments,
-    _body_reads,
     _check_hierarchy,
     _definition_edits,
     _find_definition,
     _params_of,
+    _refuse_body_conflicts,
     _render_site,
     _take_receiver,
     _text,
@@ -157,30 +157,7 @@ class SignatureChanger:
             and source.index is not None
             and old_names[source.index] != spec.name
         ]
-        # A dropped parameter the body still reads leaves an unresolved
-        # name: `def f(a): return a` emptied writes `def f(): return a`,
-        # which PARSES and raises NameError only when called, so neither
-        # the syntax nor the arity postcondition catches it. Renamed names
-        # are excluded: the body rewrite follows those (Copilot, PR #1533).
-        kept = {spec.name for spec in new} | {old for old, _new in renamed}
-        for header in headers:
-            for dropped in (name for name in old_names if name not in kept):
-                if _body_reads(header, dropped):
-                    raise SignatureRefused(
-                        cs.SIGNATURE_DROPPED_STILL_READ.format(
-                            name=dropped, qn=header.qn
-                        )
-                    )
-        # The other way round: a genuinely new parameter shadows whatever
-        # the body read under that name, so `return len(a)` with a new
-        # `len=None` calls the parameter. Renamed targets are checked by the
-        # body rewrite itself (Greptile, PR #2166).
-        for header in headers:
-            for added in (s.name for s in new if s.name not in old_names):
-                if _body_reads(header, added):
-                    raise SignatureRefused(
-                        cs.SIGNATURE_NEW_NAME_TAKEN.format(name=added, qn=header.qn)
-                    )
+        _refuse_body_conflicts(headers, old_names, new, renamed)
         sites: list[SignatureSite] = []
         edits: list[_Edit] = []
         for header in headers:
