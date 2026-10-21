@@ -10152,10 +10152,12 @@ class CallProcessor:
                 )
             )
         )
-        if any(pos_qns) or kw_qns:
-            self._flow_bucket.factory_calls.append(
-                _FactoryCall(scope_qn, factory_qn, pos_qns, kw_qns)
-            )
+        # Kept even when no argument is a callback (`f(1)`, `f()`): the call
+        # still runs the returned closure, and its CALLS edge is the closure's
+        # only caller now that its maker has none (issue #2945).
+        self._flow_bucket.factory_calls.append(
+            _FactoryCall(scope_qn, factory_qn, pos_qns, kw_qns)
+        )
 
     def _parse_call_arguments(
         self, call_node: Node

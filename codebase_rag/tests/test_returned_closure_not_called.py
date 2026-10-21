@@ -63,6 +63,11 @@ def use_adder():
     return f(1)
 
 
+def use_adder_bare():
+    g = make_adder()
+    return g()
+
+
 def _unused_factory():
     def orphan():
         return 1
@@ -78,6 +83,14 @@ export const arrowFactory = (fn) => {
   const inner = (...a) => fn(...a);
   return inner;
 };
+export function makeAdder() {
+  function add(x) { return x + 1; }
+  return add;
+}
+export function useAdder() {
+  const f = makeAdder();
+  return f(1);
+}
 """
 
 TS = """\
@@ -89,6 +102,14 @@ export function makeLogger(fn: F): F {
 export function castFactory(fn: F): F {
   function wrapper(...a: unknown[]) { return fn(...a); }
   return wrapper as unknown as F;
+}
+export function makeAdder(): (x: number) => number {
+  function add(x: number): number { return x + 1; }
+  return add;
+}
+export function useAdder(): number {
+  const f = makeAdder();
+  return f(1);
 }
 """
 
@@ -114,10 +135,21 @@ def _edges(graph: RecordedGraph, rel: str) -> dict[tuple[str, str], object]:
 RETURNED = [
     ("deco.log_calls", "deco.log_calls.wrapper"),
     ("deco.make", "deco.make.impl"),
+    ("deco.make_adder", "deco.make_adder.add"),
     ("f.makeLogger", "f.makeLogger.wrapper"),
     ("f.arrowFactory", "f.arrowFactory.inner"),
+    ("f.makeAdder", "f.makeAdder.add"),
     ("t.makeLogger", "t.makeLogger.wrapper"),
     ("t.castFactory", "t.castFactory.wrapper"),
+    ("t.makeAdder", "t.makeAdder.add"),
+]
+
+# `f = make_adder(); f(1)`: the alias call, not the maker, calls the closure.
+ALIAS_CALLED = [
+    ("deco.use_adder", "deco.make_adder.add"),
+    ("deco.use_adder_bare", "deco.make_adder.add"),
+    ("f.useAdder", "f.makeAdder.add"),
+    ("t.useAdder", "t.makeAdder.add"),
 ]
 
 
@@ -131,6 +163,15 @@ def test_a_returned_closure_is_not_called_by_its_maker(
 def test_no_twin_of_a_returned_closure_is_called(graph: RecordedGraph) -> None:
     calls = _edges(graph, cs.RelationshipType.CALLS)
     assert not [pair for pair in calls if pair[0] == "deco.make"]
+
+
+@pytest.mark.parametrize(("scope", "closure"), ALIAS_CALLED)
+def test_an_alias_call_without_a_callback_calls_the_returned_closure(
+    graph: RecordedGraph, scope: str, closure: str
+) -> None:
+    # No argument is a callback, yet the call runs the closure: with the
+    # maker's edge gone it is the closure's only caller.
+    assert (scope, closure) in _edges(graph, cs.RelationshipType.CALLS)
 
 
 # Negative: what must not change.
@@ -197,10 +238,7 @@ def test_dead_code_still_keeps_a_returned_closure_alive(graph: RecordedGraph) ->
         for row in collect_dead_code(_DeadCodeGraph(graph), graph.project, config)
     }
 
-    alive = {closure for _outer, closure in RETURNED} | {
-        "deco.make.impl@21",
-        "deco.make_adder.add",
-    }
+    alive = {closure for _outer, closure in RETURNED} | {"deco.make.impl@21"}
     assert not reported & alive
     # A factory nothing reaches does not revive its closure.
     assert {"deco._unused_factory", "deco._unused_factory.orphan"} <= reported
