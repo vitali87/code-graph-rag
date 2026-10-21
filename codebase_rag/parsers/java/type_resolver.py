@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, NamedTuple
 
 from ... import constants as cs
@@ -135,6 +135,10 @@ class JavaTypeResolverMixin:
     _fqn_to_module_qn: dict[str, list[str]]
     class_inheritance: dict[str, list[str]]
     _class_headers: dict[Path, JavaClassHeaders]
+    _supertype_walks: dict[str, tuple[str, ...]]
+    # Annotation only, never a def: this mixin precedes JavaMethodResolverMixin
+    # in the MRO, so a stub here would shadow the real implementation.
+    _java_direct_supertypes: Callable[[str], tuple[list[str], bool]]
 
     def _module_qn_to_java_fqn(self, module_qn: str) -> str | None:
         parts = module_qn.split(cs.SEPARATOR_DOT)
@@ -268,20 +272,30 @@ class JavaTypeResolverMixin:
                     return member
         return None
 
-    def _type_and_supertypes(self, class_qn: str) -> Iterator[str]:
+    def _type_and_supertypes(self, class_qn: str) -> tuple[str, ...]:
         """`class_qn`, then its superclasses and superinterfaces, nearest
         first, each once."""
+        # Every scoped parameter and local walks the hierarchies around it,
+        # and reading a type's interfaces reads its declaration, so a walk is
+        # kept until the pass's memos are reset.
+        if (walk := self._supertype_walks.get(class_qn)) is not None:
+            return walk
+        order: list[str] = []
         seen = {class_qn}
         pending = [class_qn]
         while pending:
             current = pending.pop(0)
-            yield current
-            # The hierarchy the definition pass resolved: superclass and
-            # interfaces, by their registered qns.
-            for supertype in self.class_inheritance.get(current, ()):
+            order.append(current)
+            # class_inheritance holds a superclass and an interface's
+            # superinterfaces but never the interfaces a class implements,
+            # which are read off its declaration, nested or not (CodeRabbit,
+            # PR #2973).
+            for supertype in self._java_direct_supertypes(current)[0]:
                 if supertype not in seen:
                     seen.add(supertype)
                     pending.append(supertype)
+        walk = self._supertype_walks[class_qn] = tuple(order)
+        return walk
 
     def _resolve_java_type_name(
         self, type_name: str, module_qn: str, scope: ASTNode | None = None

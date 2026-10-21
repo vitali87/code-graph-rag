@@ -122,6 +122,36 @@ public class Outer2 {
 }
 """
 
+# A member type inherited from an implemented interface wins the same way
+# (JLS 8.5), whether that interface is in another file or nested in the
+# enclosing class itself.
+IFACE = """\
+package demo;
+
+public interface Iface {
+    enum Kind { A; int code() { return 1; } }
+}
+"""
+OUTER3 = """\
+package demo;
+
+public class Outer3 {
+    enum Kind { B; int code() { return 2; } }
+
+    interface Local {
+        enum Kind { C; int code() { return 3; } }
+    }
+
+    static class Child implements Iface {
+        int use(Kind k) { return k.code(); }
+    }
+
+    static class Sibling implements Local {
+        int use(Kind k) { return k.code(); }
+    }
+}
+"""
+
 PREFIX = "src.main.java.demo"
 
 
@@ -133,6 +163,8 @@ def graph(tmp_path_factory: pytest.TempPathFactory) -> RecordedGraph:
     _write(root, f"{PREFIX.replace('.', '/')}/Scoped.java", SCOPED)
     _write(root, f"{PREFIX.replace('.', '/')}/Parent.java", PARENT)
     _write(root, f"{PREFIX.replace('.', '/')}/Outer2.java", OUTER2)
+    _write(root, f"{PREFIX.replace('.', '/')}/Iface.java", IFACE)
+    _write(root, f"{PREFIX.replace('.', '/')}/Outer3.java", OUTER3)
     return _index(root, MagicMock())
 
 
@@ -189,6 +221,8 @@ def test_a_nested_enum_with_constant_bodies_binds_both_definitions(
             "Scoped.Scoped.Other.Bag.count()",
         ),
         ("Outer2.Outer2.Child.use(Kind)", "Parent.Parent.Kind.code()"),
+        ("Outer3.Outer3.Child.use(Kind)", "Iface.Iface.Kind.code()"),
+        ("Outer3.Outer3.Sibling.use(Kind)", "Outer3.Outer3.Local.Kind.code()"),
     ],
     ids=[
         "enclosing-class-member",
@@ -196,6 +230,8 @@ def test_a_nested_enum_with_constant_bodies_binds_both_definitions(
         "local-typed-by-its-initializer",
         "generic-parameter",
         "inherited-member-type",
+        "implemented-interface-member-type",
+        "nested-interface-member-type",
     ],
 )
 def test_a_same_named_type_resolves_in_the_callers_scope(
