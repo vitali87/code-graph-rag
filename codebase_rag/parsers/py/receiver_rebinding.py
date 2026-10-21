@@ -20,6 +20,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ..utils import safe_decode_text
+from .forward_refs import unquote_forward_refs
 
 # Scopes whose assignments bind their own locals, not the method's receiver.
 _NESTED_SCOPES = frozenset(
@@ -45,6 +46,47 @@ def receiver_rebinding(call: Node, receiver: str) -> ReceiverRebinding:
         elif _shares_a_loop(assignment, call, function):
             sometimes = True
     return ReceiverRebinding(always=always, sometimes=sometimes)
+
+
+def rebound_receivers(function: Node) -> frozenset[str]:
+    """The receivers (`self`, `cls`) a `self = Other()` in the def's own body
+    rebinds: only a call through one of them needs `receiver_rebinding`."""
+    return frozenset(
+        receiver
+        for receiver in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS)
+        if _assignments_to(function, receiver)
+    )
+
+
+def receiver_annotation(call: Node, receiver: str) -> str | None:
+    """The annotation the def enclosing `call` declares `receiver` with.
+
+    `def typed(self: Other)` types the receiver from the def's entry, so a
+    call no rebinding precedes runs on `Other`, whatever later type a body
+    `self = Later()` puts in the method-wide map. The text is the one the
+    type map records for the parameter.
+    """
+    function = _enclosing_function(call)
+    params = (
+        function.child_by_field_name(cs.TS_FIELD_PARAMETERS)
+        if function is not None
+        else None
+    )
+    if params is None:
+        return None
+    for param in params.named_children:
+        if param.type == cs.TS_PY_TYPED_PARAMETER:
+            name = next(
+                (c for c in param.children if c.type == cs.TS_PY_IDENTIFIER), None
+            )
+        elif param.type == cs.TS_PY_TYPED_DEFAULT_PARAMETER:
+            name = param.child_by_field_name(cs.TS_FIELD_NAME)
+        else:
+            continue
+        if name is not None and safe_decode_text(name) == receiver:
+            annotation = safe_decode_text(param.child_by_field_name(cs.TS_FIELD_TYPE))
+            return unquote_forward_refs(annotation) if annotation else None
+    return None
 
 
 def _enclosing_function(node: Node) -> Node | None:

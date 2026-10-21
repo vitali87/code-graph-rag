@@ -66,7 +66,12 @@ from .lua import utils as lua_utils
 from .php import class_names as php_class_names
 from .php import utils as php_utils
 from .py.class_aliases import scan_class_body_aliases
-from .py.receiver_rebinding import ReceiverRebinding, receiver_rebinding
+from .py.receiver_rebinding import (
+    ReceiverRebinding,
+    rebound_receivers,
+    receiver_annotation,
+    receiver_rebinding,
+)
 from .rpc_exposure import GoRpcExposureProcessor
 from .rs import utils as rs_utils
 from .scala import utils as scala_utils
@@ -218,6 +223,7 @@ class _CallScanContext:
     cpp_local_aliases: dict[str, list[tuple[str, int, int]]] | None = None
     php_scope_classes: php_class_names.ScopeCache | None = None
     cpp_indirection: dict[str, int] | None = None
+    rebound_receivers: frozenset[str] | None = None
 
 
 _TYPED_LANGUAGES = frozenset(
@@ -5899,13 +5905,17 @@ class CallProcessor:
             and not rebinding.sometimes
         ):
             # No `self = Other()` can run before this call, so the method-wide
-            # type of `self` does not apply to it (issue #2620).
+            # type of `self` does not apply to it (issue #2620). An annotated
+            # `self: Entry` holds from the def's entry, so that type does
+            # (CodeRabbit, PR #2951).
             receiver = call_name.partition(cs.SEPARATOR_DOT)[0]
             call_var_types = {
                 name: var_type
                 for name, var_type in call_var_types.items()
                 if name != receiver
             }
+            if annotated := receiver_annotation(call_node, receiver):
+                call_var_types[receiver] = annotated
 
         if ctx.is_cpp:
             self._emit_cpp_template_dispatch(ctx, call_name, call_var_types)
@@ -6727,8 +6737,38 @@ class CallProcessor:
                 ctx.caller_qn,
                 ctx.language,
                 call_point=call_node.start_byte,
+                receiver_rebound=self._untyped_receiver_rebound(
+                    ctx, call_node, call_name, call_var_types
+                ),
             )
         return callee_info
+
+    @staticmethod
+    def _untyped_receiver_rebound(
+        ctx: _CallScanContext,
+        call_node: Node,
+        call_name: str,
+        call_var_types: dict[str, str] | None,
+    ) -> bool:
+        # `self = pick()` of a type the map cannot name leaves `self` out of
+        # it, as on a method that never rebinds it; a call such a rebinding
+        # may precede may run on `pick()`'s value, not on the instance
+        # (CodeRabbit, PR #2951). A typed receiver needs no flag: its type
+        # already keeps the call off the enclosing class.
+        receiver, _, member = call_name.partition(cs.SEPARATOR_DOT)
+        if (
+            not ctx.class_context
+            or not member
+            or receiver not in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS)
+            or (call_var_types and receiver in call_var_types)
+        ):
+            return False
+        if ctx.rebound_receivers is None:
+            ctx.rebound_receivers = rebound_receivers(ctx.caller_node)
+        return (
+            receiver in ctx.rebound_receivers
+            and receiver_rebinding(call_node, receiver).sometimes
+        )
 
     def _resolve_go_callee(
         self,
@@ -7633,7 +7673,7 @@ class CallProcessor:
         _, _, self_method = call_name.partition(cs.SEPARATOR_DOT)
         if cs.SEPARATOR_DOT not in self_method:
             for target_type, target_qn in self._resolver.self_dispatch_targets(
-                class_context, self_method
+                class_context, self_method, c3=True
             ):
                 for variant in self._resolver.function_registry.variants(target_qn):
                     ctx.ensure_rel(
