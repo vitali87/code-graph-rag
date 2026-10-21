@@ -10262,10 +10262,12 @@ class CallProcessor:
                 )
             )
         )
-        if any(pos_qns) or kw_qns:
-            self._flow_bucket.factory_calls.append(
-                _FactoryCall(scope_qn, factory_qn, pos_qns, kw_qns)
-            )
+        # Kept even when no argument is a callback (`f(1)`, `f()`): the call
+        # still runs the returned closure, and its CALLS edge is the closure's
+        # only caller now that its maker has none (issue #2945).
+        self._flow_bucket.factory_calls.append(
+            _FactoryCall(scope_qn, factory_qn, pos_qns, kw_qns)
+        )
 
     def _parse_call_arguments(
         self, call_node: Node
@@ -10681,9 +10683,13 @@ class CallProcessor:
         # No walk is running, so an edge with no recorded site carries none rather
         # than the last node a walk left behind (Go's 1:0-7, issue #2459).
         self._site_node = None
+        # A closure a function returns is not called by it: the located
+        # REFERENCES edge of the `return` keeps it reachable from its maker,
+        # and a CALLS edge there listed every decorator's wrapper among its
+        # callees (issue #2945). Only an alias call (`f = make(); f()`) calls
+        # the returned closure.
         returned_callables = self._merged_returned_callables()
         seeds, edges = self._callable_flow_slots()
-        self._emit_returned_closure_calls(returned_callables)
         self._emit_factory_closure_calls(returned_callables, seeds)
         bindings = self._propagate_flow_bindings(seeds, edges)
         invocations = self._merged_param_invocations()
@@ -10770,34 +10776,6 @@ class CallProcessor:
             else:
                 edges[slot].add((arg.source_caller, arg.source_param))
         return seeds, edges
-
-    def _emit_returned_closure_calls(
-        self, returned_callables: dict[str, set[str]]
-    ) -> None:
-        registry = self._resolver.function_registry
-        ensure_rel = self._emit_rel
-        # A nested closure a function returns is reachable whenever that function
-        # is reached (created and handed back as the return value). Nested
-        # functions are no longer roots, so this producer edge keeps a genuinely
-        # used closure (a returned decorator/formatter) live without reviving the
-        # closures of an unreachable outer function.
-        for producer_qn, returned in returned_callables.items():
-            producer_type = registry.get(producer_qn)
-            if producer_type is None:
-                continue
-            prefix = f"{producer_qn}{cs.SEPARATOR_DOT}"
-            producer_spec = (producer_type, cs.KEY_QUALIFIED_NAME, producer_qn)
-            for closure_qn in returned:
-                if not closure_qn.startswith(prefix):
-                    continue
-                closure_type = registry.get(closure_qn)
-                if closure_type is None:
-                    continue
-                ensure_rel(
-                    producer_spec,
-                    cs.RelationshipType.CALLS,
-                    (closure_type, cs.KEY_QUALIFIED_NAME, closure_qn),
-                )
 
     def _emit_factory_closure_calls(
         self,
