@@ -113,7 +113,17 @@ func goBound() {
 \t_, _ = g, h
 }
 
-func main() { goCb(nil); goLeak(); goBound() }
+func goGrouped() {
+\tb := os.Getenv("GROUPED")
+\tfunc(a, b string) { fmt.Println(b) }("x", "y")
+}
+
+func goGroupedHandle() {
+\tf, _ := os.OpenFile("grouped.txt", os.O_WRONLY, 0)
+\tfunc(a, f *os.File) { f.Write(nil) }(nil, nil)
+}
+
+func main() { goCb(nil); goLeak(); goBound(); goGrouped(); goGroupedHandle() }
 """,
     "Cb.java": """\
 import java.util.List;
@@ -281,6 +291,16 @@ def test_a_callback_parameter_shadows_the_outer_name(
     assert ("resource::ENV::OTHER", "resource::STDERR::<dynamic>") not in _flows(
         edges
     ), edges
+
+
+def test_every_grouped_go_parameter_shadows_the_outer_name(
+    edges: set[tuple[str, str, str]],
+) -> None:
+    # Negatives: Go groups `a, b string` into one declaration, and its `b` is
+    # the callback's own, not the tainted outer `b` nor the outer file handle.
+    assert ("WRITES_TO", _STDOUT) in _io(edges, "goGrouped"), edges
+    assert ("resource::ENV::GROUPED", _STDOUT) not in _flows(edges), edges
+    assert _io(edges, "goGroupedHandle") == set(), edges
 
 
 def test_a_callback_local_shadows_the_global_in_the_flow_walk(

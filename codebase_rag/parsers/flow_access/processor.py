@@ -1228,15 +1228,21 @@ class FlowProcessor:
                 names.add(params.text.decode(cs.ENCODING_UTF8))
         elif params is not None:
             for child in params.named_children:
-                target = (
-                    child.child_by_field_name(cs.TS_FIELD_PATTERN)
-                    or child.child_by_field_name(cs.TS_FIELD_NAME)
-                    or child
-                )
-                self._js_binding_names(target, descriptor, names)
+                for target in self._callback_param_targets(child):
+                    self._js_binding_names(target, descriptor, names)
         if (single := node.child_by_field_name(cs.TS_FIELD_PARAMETER)) is not None:
             self._js_binding_names(single, descriptor, names)
         return names
+
+    @staticmethod
+    def _callback_param_targets(param: Node) -> list[Node]:
+        # What one entry of a callback's parameter list binds: its `pattern`
+        # (TS `(x: T) =>`, Rust `|x: T|`), else EVERY `name` (Go groups `a, b
+        # string` into one declaration; Java `String x`, C# `int x` have one),
+        # else the entry itself (`(x) =>`).
+        if (pattern := param.child_by_field_name(cs.TS_FIELD_PATTERN)) is not None:
+            return [pattern]
+        return param.children_by_field_name(cs.TS_FIELD_NAME) or [param]
 
     def _walk_flat_stmt(self, node: Node, state: _LeanState, jc: _JsCtx) -> _LeanState:
         # Structured walk for the non-hoisted flat languages (Go, Java, Rust,
