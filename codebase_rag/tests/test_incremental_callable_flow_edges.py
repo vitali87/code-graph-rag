@@ -422,3 +422,121 @@ def test_a_passer_keeps_the_members_another_file_defines(
     assert after.get(cs.KEY_PATH) == "plugins.cpp", after
     assert after.get(cs.KEY_START_LINE) == member.get(cs.KEY_START_LINE)
     assert _edges(store) == clean
+
+
+# The receiver lives in a member file: registry.h re-parses as util.h's
+# dependent but holds only declarations, and the member lookup brings in
+# registry.cpp for its out-of-line Registry::size. registry.cpp also defines
+# the receiver and does not include util.h, so its passer, plugins.cpp, is
+# no dependent of this run.
+_CPP_MEMBER_RECEIVER_FILES = {
+    "util.h": _CPP_FILES["util.h"],
+    "util.cpp": _CPP_FILES["util.cpp"],
+    "registry.h": (
+        '#pragma once\n#include "util.h"\n'
+        "int run_callback(int (*fn)());\n"
+        "class Registry {\n public:\n  int size() const;\n};\n"
+    ),
+    "registry.cpp": (
+        '#include "registry.h"\n'
+        "int Registry::size() const { return 0; }\n"
+        "int run_callback(int (*fn)()) { return fn(); }\n"
+    ),
+    "plugins.cpp": _CPP_FILES["plugins.cpp"],
+}
+_RUN_ON_START = ("proj.registry.run_callback", "CALLS", "proj.plugins.on_start")
+
+
+@pytest.mark.parametrize("scoped", [False, True], ids=["run", "reingest"])
+def test_a_receiver_in_a_member_file_brings_in_its_callers(
+    temp_repo: Path, scoped: bool
+) -> None:
+    root = temp_repo / "proj"
+    _write(root, _CPP_MEMBER_RECEIVER_FILES)
+    store = _StatefulIngestor()
+    _index(store, root, force=True, language=cs.SupportedLanguage.CPP)
+    clean = _edges(store)
+    assert _RUN_ON_START in clean, "fixture must produce the callable-argument edge"
+
+    _rewrite(
+        root / "util.h",
+        root,
+        "#pragma once\nvoid log_msg(const char* msg, int level);\n",
+    )
+    if scoped:
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=store,
+            repo_path=root,
+            parsers=parsers,
+            queries=queries,
+            project_name="proj",
+        ).reingest([root / "util.h"])
+    else:
+        _index(store, root, force=False, language=cs.SupportedLanguage.CPP)
+    after = _edges(store)
+
+    assert _RUN_ON_START in after, sorted(clean - after)
+    assert after == clean, (sorted(clean - after), sorted(after - clean))
+
+
+# The Go shape: app/app.go joins as the passer of reg.Run, and app/each.go
+# joins only as its package file, after the callable flow was walked. each.go
+# holds a receiver of its own, whose passer, cli/cli.go, depends on nothing
+# this run re-parses for any other reason.
+_GO_FILES = {
+    "go.mod": "module example.com/flow\n\ngo 1.21\n",
+    "util/util.go": "package util\n\nfunc Log(msg string) {}\n",
+    "reg/reg.go": (
+        'package reg\n\nimport "example.com/flow/util"\n\n'
+        'func Run(fn func() int) int {\n\tutil.Log("running")\n\treturn fn()\n}\n'
+    ),
+    "app/app.go": (
+        'package app\n\nimport "example.com/flow/reg"\n\n'
+        "func onStart() int { return 1 }\n\n"
+        "func Main() int { return reg.Run(onStart) }\n"
+    ),
+    "app/each.go": "package app\n\nfunc Each(fn func() int) int { return fn() }\n",
+    "cli/cli.go": (
+        'package cli\n\nimport "example.com/flow/app"\n\n'
+        "func hook() int { return 2 }\n\n"
+        "func Go() int { return app.Each(hook) }\n"
+    ),
+}
+_EACH_HOOK = ("proj.app.each.Each", "CALLS", "proj.cli.cli.hook")
+
+
+@pytest.mark.parametrize("scoped", [False, True], ids=["run", "reingest"])
+def test_a_receiver_in_a_passers_package_brings_in_its_callers(
+    temp_repo: Path, scoped: bool
+) -> None:
+    root = temp_repo / "proj"
+    root.mkdir()
+    for rel, text in _GO_FILES.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text, encoding="utf-8")
+    store = _StatefulIngestor()
+    _index(store, root, force=True, language=cs.SupportedLanguage.GO)
+    clean = _edges(store)
+    assert _EACH_HOOK in clean, "fixture must produce the callable-argument edge"
+
+    _rewrite(
+        root / "util" / "util.go",
+        root,
+        "package util\n\nfunc Log(msg string, level int) {}\n",
+    )
+    if scoped:
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=store,
+            repo_path=root,
+            parsers=parsers,
+            queries=queries,
+            project_name="proj",
+        ).reingest([root / "util" / "util.go"])
+    else:
+        _index(store, root, force=False, language=cs.SupportedLanguage.GO)
+    after = _edges(store)
+
+    assert _EACH_HOOK in after, sorted(clean - after)
+    assert after == clean, (sorted(clean - after), sorted(after - clean))

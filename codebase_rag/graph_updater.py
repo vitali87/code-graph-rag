@@ -7134,22 +7134,13 @@ class GraphUpdater:
             scan,
             reindexed_keys,
         )
-        reindexed_keys = self._queue_callable_flow_passers(
-            edited_count, present, eligible_by_key, scan, reindexed_keys
-        )
-        # A Go caller the callable flow brought in re-parses with its package
-        # too, as every other re-parsed Go file does (issue #2483).
-        reindexed_keys = self._queue_affected_callers(
-            _go_package_siblings(present, eligible_by_key),
+        reindexed_keys = self._queue_callable_flow_closure(
+            edited_count,
+            deleted_before_parse,
             present,
             eligible_by_key,
             scan,
             reindexed_keys,
-        )
-        # Last, so a passer the callable flow brought in keeps the members
-        # other files attach to its types as well (issue #3271).
-        reindexed_keys = self._queue_foreign_members(
-            reindexed_keys, deleted_before_parse, present, eligible_by_key, scan
         )
         # Pass 2 order decides which same-stem file claims the bare module
         # qn; a clean build processes files in walk order, so the re-parse
@@ -7739,6 +7730,46 @@ class GraphUpdater:
             logger.info(ls.INCREMENTAL_AFFECTED_CALLERS, count=affected)
             reindexed_keys = _reindexed_keys(scan.changed_entries)
         return reindexed_keys
+
+    def _queue_callable_flow_closure(
+        self,
+        edited_count: int,
+        deleted_keys: list[str],
+        present: set[str],
+        eligible_by_key: dict[str, Path],
+        scan: _FileScan,
+        reindexed_keys: list[str],
+    ) -> list[str]:
+        """Queue the callable-flow passers, then the Go package files and the
+        member files of everything re-parsed, until none brings in more.
+
+        A file the last two bring in can hold a receiver itself: registry.cpp
+        joins for the out-of-line members of registry.h, a dependent, and
+        re-parsing it deletes `run_callback -> on_start` unless the passer,
+        plugins.cpp, re-parses too. So the callable flow is walked again over
+        every file they add.
+        """
+        while True:
+            reindexed_keys = self._queue_callable_flow_passers(
+                edited_count, present, eligible_by_key, scan, reindexed_keys
+            )
+            flowed = len(present)
+            # A Go caller the callable flow brought in re-parses with its
+            # package too, as every other re-parsed Go file does (issue #2483).
+            reindexed_keys = self._queue_affected_callers(
+                _go_package_siblings(present, eligible_by_key),
+                present,
+                eligible_by_key,
+                scan,
+                reindexed_keys,
+            )
+            # After the callable flow, so a passer it brought in keeps the
+            # members other files attach to its types as well (issue #3271).
+            reindexed_keys = self._queue_foreign_members(
+                reindexed_keys, deleted_keys, present, eligible_by_key, scan
+            )
+            if len(present) == flowed:
+                return reindexed_keys
 
     def _queue_callable_flow_passers(
         self,
@@ -8998,6 +9029,25 @@ class GraphUpdater:
             )
             self.ingestor.execute_write(stale, {cs.KEY_PATH: absolute})
 
+    def _reingest_callable_flow_closure(
+        self,
+        present: dict[str, Path],
+        gone: dict[str, Path],
+        joined: dict[str, Path],
+    ) -> dict[str, Path]:
+        """The callable-flow passers, Go package files and member files the
+        re-parse needs beside `present` and `joined`, until none brings in
+        more; `run()` widens its set the same way
+        (`_queue_callable_flow_closure`)."""
+        reached = dict(joined)
+        while True:
+            reached.update(self._reingest_callable_flow_passers(present, gone, reached))
+            flowed = len(reached)
+            reached.update(self._reingest_go_package_files({*present, *gone, *reached}))
+            reached.update(self._reingest_foreign_members({*present, *gone, *reached}))
+            if len(reached) == flowed:
+                return {key: path for key, path in reached.items() if key not in joined}
+
     def _reingest_callable_flow_passers(
         self,
         present: dict[str, Path],
@@ -9499,21 +9549,10 @@ class GraphUpdater:
                     {*present, *gone, *survivors, *affected}
                 )
             )
-            # As in `run()`: the passers of a re-parsed callable-flow holder,
-            # then the Go package files beside any of them.
             affected.update(
-                self._reingest_callable_flow_passers(
+                self._reingest_callable_flow_closure(
                     present, gone, {**survivors, **affected}
                 )
-            )
-            affected.update(
-                self._reingest_go_package_files(
-                    {*present, *gone, *survivors, *affected}
-                )
-            )
-            # Last, as in `run()`: the passers' types can hold members too.
-            affected.update(
-                self._reingest_foreign_members({*present, *gone, *survivors, *affected})
             )
             all_keys = sorted({*present, *gone, *survivors, *affected})
             captured = self._capture_inbound_edges(all_keys)
