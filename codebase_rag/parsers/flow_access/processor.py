@@ -42,6 +42,7 @@ from ..io_access import (
     lean_definition_header_nodes,
     literal_target,
     match_normalised,
+    mode_direction,
     normalise,
     positional_arg_node,
     python_name_binding_sites,
@@ -3412,6 +3413,13 @@ class FlowProcessor:
     def _js_read_source(self, node: Node, raw: str, jc: _JsCtx) -> HandleBinding | None:
         sink = self._js_match_sink(raw, jc.flow.read_sinks, jc)
         if sink is None:
+            return None
+        # `fsp.open(p, "w")` opens for writing only, so nothing is read from
+        # the file to flow on (#2775 review).
+        if (
+            sink.mode_arg is not None
+            and mode_direction(node, sink, jc.descriptor) == IODirection.WRITE
+        ):
             return None
         identity = literal_target(
             node,

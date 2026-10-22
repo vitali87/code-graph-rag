@@ -8,9 +8,9 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ..utils import cpp_declarator_name, python_import_bound_names
-from .constants import DYNAMIC_TARGET, PY_SCOPE_BOUNDARIES
+from .constants import DYNAMIC_TARGET, PY_SCOPE_BOUNDARIES, IODirection
 from .descriptor import LanguageDescriptor
-from .models import RenderedText
+from .models import IOSink, RenderedText
 
 # Definition nodes whose BODY is a separate scope but whose HEADER (default arg
 # values, annotations, base classes, decorators) executes in the enclosing scope at
@@ -1324,3 +1324,29 @@ def literal_target(
         template_type=template_type,
         substitution_type=substitution_type,
     )
+
+
+def mode_direction(
+    call_node: Node, sink: IOSink, descriptor: LanguageDescriptor
+) -> IODirection:
+    """The direction a sink with an open-mode argument has at one call.
+
+    No mode argument is the sink's default (`fs.promises.open(p)` reads); a
+    literal mode decides as `effective_direction` reads it; a mode that is
+    not a literal may be any, so the call may both read and write (#2775
+    review).
+    """
+    mode_node = target_arg_node(
+        call_node,
+        sink.mode_arg,
+        keyword_arg_type=descriptor.keyword_arg_type,
+        wrapper_type=descriptor.argument_wrapper_type,
+    )
+    if mode_node is None:
+        return sink.direction
+    mode = string_literal(
+        mode_node, descriptor.string_type, descriptor.string_content_type
+    )
+    if mode == DYNAMIC_TARGET:
+        return IODirection.READ_WRITE
+    return sink.effective_direction(mode)
