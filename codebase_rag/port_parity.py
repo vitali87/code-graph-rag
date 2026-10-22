@@ -481,20 +481,22 @@ def _resolve_target(side: _Side, target: str) -> str:
     return matches[0]
 
 
-def _tier_key(found: _Callable, tier: cs.PairedBy) -> tuple[str, ...]:
+def _tier_key(found: _Callable, tier: cs.PairedBy) -> tuple[str, str, str]:
+    # Keys are only compared within one tier, so a field the tier ignores is
+    # left blank rather than dropped.
     match tier:
         case cs.PairedBy.MODULE:
             return (found.key, found.module, found.container)
         case cs.PairedBy.CONTAINER:
-            return (found.key, found.container)
+            return (found.key, "", found.container)
         case _:
-            return (found.key,)
+            return (found.key, "", "")
 
 
 def _group(
     callables: Iterable[_Callable], tier: cs.PairedBy
-) -> dict[tuple[str, ...], list[_Callable]]:
-    groups: dict[tuple[str, ...], list[_Callable]] = {}
+) -> dict[tuple[str, str, str], list[_Callable]]:
+    groups: dict[tuple[str, str, str], list[_Callable]] = {}
     for found in callables:
         groups.setdefault(_tier_key(found, tier), []).append(found)
     return groups
