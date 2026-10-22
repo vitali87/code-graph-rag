@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from collections.abc import Iterator
 
 from tree_sitter import Node
@@ -114,7 +115,127 @@ def _python_exported(node: Node, name: str) -> bool:
         return False
     if name.startswith(cs.PY_NAME_DUNDER) and name.endswith(cs.PY_NAME_DUNDER):
         return True
-    return not name.startswith(cs.PY_NAME_UNDERSCORE)
+    if not name.startswith(cs.PY_NAME_UNDERSCORE):
+        return True
+    # A name the module lists in `__all__` is its declared API, underscore or
+    # not (issue #2855); only a module-level definition is one of its names.
+    root = _python_module_root(node)
+    return root is not None and name in _python_dunder_all(root)
+
+
+def _python_module_root(node: Node) -> Node | None:
+    # The tree root, or None when a class encloses the definition.
+    current = node
+    while current.parent is not None:
+        current = current.parent
+        if current.type == cs.TS_PY_CLASS_DEFINITION:
+            return None
+    return current
+
+
+# 1-slot memo of the last module's `__all__`, as for the script scan below:
+# consecutive definitions of one file hit it, so the module is read once.
+_last_dunder_all: tuple[Node, frozenset[str]] | None = None
+
+
+def _python_dunder_all(root: Node) -> frozenset[str]:
+    global _last_dunder_all
+    if _last_dunder_all is not None and _last_dunder_all[0] == root:
+        return _last_dunder_all[1]
+    names: set[str] = set()
+    _collect_dunder_all(root, names, top_level=True)
+    frozen = frozenset(names)
+    _last_dunder_all = (root, frozen)
+    return frozen
+
+
+def _collect_dunder_all(scope: Node, names: set[str], top_level: bool) -> None:
+    # `__all__ = [...]`, `__all__ += [...]`, `__all__.extend([...])` and
+    # `__all__.append(...)` at module level, in order, including inside a
+    # top-level `if`/`try`/`with`; a function or class body is not the
+    # module's. A plain assignment at the top level always runs and replaces
+    # the list (CodeRabbit, PR #2954), unless it reads the list it rebinds
+    # (`__all__ = __all__ + [...]`); one in a block may not run, so what it
+    # lists is added to what the list may hold.
+    for statement in scope.children:
+        if statement.type in cs.PY_MODULE_LEVEL_BLOCKS:
+            _collect_dunder_all(statement, names, top_level=False)
+        elif statement.type == cs.TS_PY_EXPRESSION_STATEMENT:
+            _apply_dunder_all_updates(statement, names, top_level)
+
+
+def _apply_dunder_all_updates(
+    statement: Node, names: set[str], top_level: bool
+) -> None:
+    # The `__all__` updates of one expression statement, in order.
+    for expression in statement.named_children:
+        if (listed := _dunder_all_update(expression)) is None:
+            continue
+        if (
+            top_level
+            and expression.type == cs.TS_PY_ASSIGNMENT
+            and not _reads_dunder_all(listed)
+        ):
+            names.clear()
+        names.update(_string_values(listed))
+
+
+def _reads_dunder_all(node: Node) -> bool:
+    # Whether an expression reads `__all__` itself, keeping what it held.
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if (
+            current.type == cs.TS_PY_IDENTIFIER
+            and current.text == cs.PY_DUNDER_ALL.encode()
+        ):
+            return True
+        stack.extend(current.children)
+    return False
+
+
+def _dunder_all_update(expression: Node) -> Node | None:
+    # The node holding the names an `__all__` update lists, if it is one.
+    if expression.type in (cs.TS_PY_ASSIGNMENT, cs.TS_PY_AUGMENTED_ASSIGNMENT):
+        target = expression.child_by_field_name(cs.TS_FIELD_LEFT)
+        if target is not None and target.text == cs.PY_DUNDER_ALL.encode():
+            return expression.child_by_field_name(cs.TS_FIELD_RIGHT)
+        return None
+    if expression.type != cs.TS_PY_CALL:
+        return None
+    function = expression.child_by_field_name(cs.TS_FIELD_FUNCTION)
+    if function is None or function.type != cs.TS_PY_ATTRIBUTE:
+        return None
+    receiver = function.child_by_field_name(cs.FIELD_OBJECT)
+    method = function.child_by_field_name(cs.TS_PY_FIELD_ATTRIBUTE)
+    if (
+        receiver is not None
+        and receiver.text == cs.PY_DUNDER_ALL.encode()
+        and method is not None
+        and method.text is not None
+        and method.text.decode(cs.ENCODING_UTF8) in cs.PY_DUNDER_ALL_MUTATORS
+    ):
+        return expression.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
+    return None
+
+
+def _string_values(node: Node) -> Iterator[str]:
+    # Each string literal's VALUE, as Python reads it: adjacent literals join
+    # (`"_foo" "bar"` is `_foobar`) and escapes decode (`"\x5fapi"` is
+    # `_api`), where the raw source fragments named neither (Greptile, PR
+    # #2954). A literal that is no constant (an f-string) names nothing
+    # knowable.
+    if node.type in (cs.TS_PY_STRING, cs.TS_PY_CONCATENATED_STRING):
+        if node.text is not None:
+            try:
+                value = ast.literal_eval(node.text.decode(cs.ENCODING_UTF8))
+            except (ValueError, SyntaxError):
+                return
+            if isinstance(value, str):
+                yield value
+        return
+    for child in node.children:
+        yield from _string_values(child)
 
 
 def _python_nested_in_function(node: Node) -> bool:
