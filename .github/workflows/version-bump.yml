@@ -37,7 +37,9 @@ jobs:
     # run could otherwise displace the newest one and then stand down at the
     # tip check, leaving nothing to bump. Older runs still stand down; the
     # newest bumps once for all, as "Decide" scans every commit since the
-    # last release tag.
+    # last release tag. version-bump-supersede.yml cancels the waiting ones,
+    # and only those whose commit a newer merge contains, so it never removes
+    # the run that has to bump.
     concurrency:
       group: version-bump-main
       cancel-in-progress: false
@@ -47,6 +49,9 @@ jobs:
     permissions:
       contents: write
       actions: read
+      # Who applied a "release now" label is read from the pull request's
+      # events.
+      pull-requests: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -245,6 +250,7 @@ jobs:
           # even behind the newest bump, whose release may have been deferred.
           BREAKING=false
           UNRELEASED_BREAKING=false
+          RELEASE_NOW=false
           COUNTING=true
           for SHA in $COMMITS; do
             if [ "$SECURITY" = "true" ] &&
@@ -252,9 +258,9 @@ jobs:
               break
             fi
             # One lookup per commit: "#pull-request" marks each pull request
-            # the commit belongs to, followed by that pull request's labels.
+            # the commit belongs to, followed by its "#<number>" and labels.
             if ! PULLS=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}/pulls" \
-                --jq '.[] | "#pull-request", .labels[].name'); then
+                --jq '.[] | "#pull-request", "#\(.number)", .labels[].name'); then
               echo "::error::could not read the pull request labels of ${SHA}; refusing to decide the release"
               exit 1
             fi
@@ -295,6 +301,45 @@ jobs:
             if printf '%s\n' "$PULLS" | grep -qx security; then
               SECURITY=true
             fi
+            # A label, not a checkbox in the description: any author, a fork's
+            # included, can edit the description of their own pull request.
+            # Triage access is not enough either, and neither is a bot or a
+            # workflow token that can write pull requests: only a label whose
+            # last application was by an admin or maintainer counts.
+            if [ "$RELEASE_NOW" = "false" ] &&
+                printf '%s\n' "$PULLS" | grep -qxF 'release now'; then
+              for PR in $(printf '%s\n' "$PULLS" | awk '
+                  $0 == "#pull-request" { number = 1; pr = ""; next }
+                  number { number = 0; if ($0 ~ /^#[1-9][0-9]*$/) pr = substr($0, 2); next }
+                  $0 == "release now" && pr != "" { print pr }'); do
+                if ! LABELERS=$(gh api --paginate \
+                    "repos/${GITHUB_REPOSITORY}/issues/${PR}/events?per_page=100" \
+                    --jq '.[] | select(.event == "labeled" and .label.name == "release now")
+                      | "\(.actor.type) \(.actor.login)"'); then
+                  echo "::error::could not read who labelled #${PR} release now; refusing to decide the release"
+                  exit 1
+                fi
+                LABELER=$(printf '%s\n' "$LABELERS" | tail -n 1)
+                LOGIN="${LABELER#User }"
+                ROLE=""
+                if [ "$LOGIN" != "$LABELER" ] && [[ "$LOGIN" =~ ^[A-Za-z0-9-]+$ ]]; then
+                  if ! ROLE=$(gh api \
+                      "repos/${GITHUB_REPOSITORY}/collaborators/${LOGIN}/permission" \
+                      --jq .role_name); then
+                    echo "::error::could not read the role of ${LOGIN}, who labelled #${PR} release now; refusing to decide the release (removing the label lets it go ahead without one)"
+                    exit 1
+                  fi
+                fi
+                case "$ROLE" in
+                  admin|maintain)
+                    RELEASE_NOW=true
+                    break
+                    ;;
+                esac
+                echo "::warning::#${PR} was labelled release now by '${LABELER:-no recorded event}', not a maintainer; the label is ignored"
+                echo "- **Release now:** #${PR} ignored, labelled by '${LABELER:-no recorded event}', not a maintainer" >> "$GITHUB_STEP_SUMMARY"
+              done
+            fi
             if printf '%s\n' "$PULLS" | grep -qxF 'breaking change'; then
               UNRELEASED_BREAKING=true
               if [ "$COUNTING" = "true" ]; then
@@ -304,9 +349,13 @@ jobs:
           done
           # A breaking change ships at once, like a security fix, rather than
           # waiting for RELEASE_EVERY: the version that announces it should be
-          # one users can install, not an interim tag.
+          # one users can install, not an interim tag. A pull request labelled
+          # "release now" ships at once too, without the security notice: a
+          # fix users should not wait for need not be a vulnerability, and
+          # borrowing the security label would announce one that is not there.
           RELEASE=false
-          if [ "$SECURITY" = "true" ] || [ "$UNRELEASED_BREAKING" = "true" ]; then
+          if [ "$SECURITY" = "true" ] || [ "$UNRELEASED_BREAKING" = "true" ] ||
+              [ "$RELEASE_NOW" = "true" ]; then
             RELEASE=true
           elif [ -n "$LATEST" ]; then
             TAGS_SINCE=$(git ls-remote --tags origin "refs/tags/v*" \

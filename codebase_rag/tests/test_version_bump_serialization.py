@@ -259,6 +259,18 @@ gh() {
       [ "$CONTENTS_FAIL" = true ] && return 1
       cat "versions/${url##*ref=}" 2> /dev/null
       ;;
+    */issues/*/events*)
+      pr="${url#*/issues/}"
+      printf '%s\n' "${pr%%/*}" >> events_calls
+      [ "$EVENTS_FAIL" = true ] && return 1
+      cat "labelers/${pr%%/*}" 2> /dev/null
+      ;;
+    */collaborators/*/permission)
+      login="${url#*/collaborators/}"
+      printf '%s\n' "${login%%/*}" >> role_calls
+      [ "$ROLE_FAIL" = true ] && return 1
+      cat "roles/${login%%/*}" 2> /dev/null
+      ;;
     *) return 1 ;;
   esac
 }
@@ -295,7 +307,11 @@ def _commits(
     ):
         (tmp_path / folder).mkdir()
         for sha, text in entries.items():
-            (tmp_path / folder / sha).write_text(text + "\n", encoding="utf-8")
+            # LF, as `gh` prints on the Ubuntu runner: awk and `read` would
+            # keep a Windows CR inside the last field of each line.
+            (tmp_path / folder / sha).write_text(
+                text + "\n", encoding="utf-8", newline="\n"
+            )
 
 
 def _read_or(path: Path, default: str) -> str:
@@ -349,7 +365,10 @@ def _decide_run(
             "TAG_LIST_FAILS": "false",
             "STATUS_FAILS": "false",
             "CONTENTS_FAIL": "false",
+            "EVENTS_FAIL": "false",
+            "ROLE_FAIL": "false",
             "DEFERRED_RELEASE_MARKER": MARKER,
+            "GITHUB_STEP_SUMMARY": str(tmp_path / "summary"),
             **env,
         },
     )
@@ -461,6 +480,109 @@ def test_a_security_fix_does_not_hide_a_breaking_label(tmp_path: Path) -> None:
 def test_only_the_exact_breaking_change_label_counts(tmp_path: Path) -> None:
     _commits(tmp_path, {SHA: "feat: x"}, {SHA: "breaking\nbreaking changes"})
     assert _decide(tmp_path, f"{SHA}\\n")["breaking"] == "false"
+
+
+RELEASE_NOW_PR = "#pull-request\n#12\nrelease now"
+
+
+def _labelled_by(
+    tmp_path: Path, labelers: dict[str, str], roles: dict[str, str]
+) -> None:
+    # What the events query prints per pull request ("<type> <login>" for each
+    # time "release now" was applied, oldest first), and each login's role.
+    for folder, entries in (("labelers", labelers), ("roles", roles)):
+        (tmp_path / folder).mkdir()
+        for name, text in entries.items():
+            (tmp_path / folder / name).write_text(
+                text + "\n", encoding="utf-8", newline="\n"
+            )
+
+
+@pytest.mark.parametrize("role", ["admin", "maintain"])
+def test_release_now_label_from_a_maintainer_ships(tmp_path: Path, role: str) -> None:
+    _commits(tmp_path, {OLDER: "fix: a", SHA: "feat: x"}, {OLDER: RELEASE_NOW_PR})
+    _labelled_by(tmp_path, {"12": "User vitali87"}, {"vitali87": role})
+    out = _decide(tmp_path, f"{OLDER}\\n{SHA}\\n")
+    assert out["release"] == "true"
+    # No security notice and no breaking bump: the label only skips the wait.
+    assert out["security"] == "false"
+    assert out["breaking"] == "false"
+    assert _lines(tmp_path / "events_calls") == ["12"]
+
+
+@pytest.mark.parametrize("role", ["write", "triage", "read", ""])
+def test_release_now_label_from_anyone_else_is_ignored(
+    tmp_path: Path, role: str
+) -> None:
+    _commits(tmp_path, {SHA: "feat: x"}, {SHA: RELEASE_NOW_PR})
+    _labelled_by(tmp_path, {"12": "User someone"}, {"someone": role})
+    assert _decide(tmp_path, f"{SHA}\\n")["release"] == "false"
+    assert "#12 ignored" in (tmp_path / "summary").read_text(encoding="utf-8")
+
+
+def test_release_now_label_from_a_bot_is_ignored_without_a_role_lookup(
+    tmp_path: Path,
+) -> None:
+    _commits(tmp_path, {SHA: "feat: x"}, {SHA: RELEASE_NOW_PR})
+    _labelled_by(tmp_path, {"12": "Bot claude[bot]"}, {})
+    assert _decide(tmp_path, f"{SHA}\\n")["release"] == "false"
+    assert not (tmp_path / "role_calls").exists()
+
+
+def test_the_last_application_of_release_now_decides(tmp_path: Path) -> None:
+    # Removed and applied again: the label in force is the latest one.
+    _commits(tmp_path, {SHA: "feat: x"}, {SHA: RELEASE_NOW_PR})
+    _labelled_by(
+        tmp_path, {"12": "User vitali87\nBot claude[bot]"}, {"vitali87": "admin"}
+    )
+    assert _decide(tmp_path, f"{SHA}\\n")["release"] == "false"
+
+
+def test_release_now_label_with_no_recorded_application_is_ignored(
+    tmp_path: Path,
+) -> None:
+    _commits(tmp_path, {SHA: "feat: x"}, {SHA: RELEASE_NOW_PR})
+    _labelled_by(tmp_path, {"12": ""}, {})
+    assert _decide(tmp_path, f"{SHA}\\n")["release"] == "false"
+
+
+@pytest.mark.parametrize("failing", ["EVENTS_FAIL", "ROLE_FAIL"])
+def test_an_unreadable_labeller_fails_instead_of_guessing(
+    tmp_path: Path, failing: str
+) -> None:
+    _commits(tmp_path, {SHA: "feat: x"}, {SHA: RELEASE_NOW_PR})
+    _labelled_by(tmp_path, {"12": "User vitali87"}, {"vitali87": "admin"})
+    result, out = _decide_run(tmp_path, f"{SHA}\\n", **{failing: "true"})
+    assert result.returncode != 0
+    assert "release" not in out
+
+
+def test_only_the_exact_release_now_label_counts(tmp_path: Path) -> None:
+    _commits(
+        tmp_path, {SHA: "feat: x"}, {SHA: "#pull-request\n#12\nrelease\nrelease nowx"}
+    )
+    _labelled_by(tmp_path, {"12": "User vitali87"}, {"vitali87": "admin"})
+    assert _decide(tmp_path, f"{SHA}\\n")["release"] == "false"
+    assert not (tmp_path / "events_calls").exists()
+
+
+def test_a_pull_request_number_that_is_not_one_reaches_no_url(tmp_path: Path) -> None:
+    _commits(tmp_path, {SHA: "feat: x"}, {SHA: "#pull-request\n#1/../x\nrelease now"})
+    assert _decide(tmp_path, f"{SHA}\\n")["release"] == "false"
+    assert not (tmp_path / "events_calls").exists()
+
+
+def test_every_label_the_decide_step_reads_is_in_the_manifest() -> None:
+    # The label sync creates only what labels.yml lists; a label read here but
+    # missing there could never be applied, and its release would never ship.
+    manifest = yaml.safe_load(
+        (WORKFLOW.parents[1] / "labels.yml").read_text(encoding="utf-8")
+    )
+    names = {label["name"] for label in manifest}
+    script = _step("Decide whether this tag ships a release")["run"]
+    for label in ("security", "breaking change", "release now"):
+        assert label in script
+        assert label in names
 
 
 def test_the_labels_are_read_before_the_bump_type_is_chosen() -> None:
@@ -930,14 +1052,19 @@ def _pulls_query() -> str:
         # The bump step's own commit: no pull request at all.
         ([], []),
         (
-            [{"labels": [{"name": "security"}, {"name": "breaking change"}]}],
-            [PULL_REQUEST, "security", "breaking change"],
+            [
+                {
+                    "number": 7,
+                    "labels": [{"name": "security"}, {"name": "breaking change"}],
+                }
+            ],
+            [PULL_REQUEST, "#7", "security", "breaking change"],
         ),
-        ([{"labels": []}], [PULL_REQUEST]),
+        ([{"number": 8, "labels": []}], [PULL_REQUEST, "#8"]),
     ],
 )
 def test_the_label_query_marks_each_pull_request(
-    pulls: list[dict[str, list[dict[str, str]]]], expected: list[str]
+    pulls: list[dict[str, int | list[dict[str, str]]]], expected: list[str]
 ) -> None:
     if shutil.which("jq") is None:
         pytest.skip("the Ubuntu workflow requires jq")
