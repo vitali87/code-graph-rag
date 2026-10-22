@@ -25,9 +25,14 @@ env:
 jobs:
   bump-version:
     name: Auto Version Bump
+    # Skip only the bump commit this job pushes, known by its subject and its
+    # author. A merge whose pull request is titled "chore: bump version to X"
+    # carries the phrase too, and is just the merge that sets a version by
+    # hand, which this job has to tag.
     if: >-
       github.ref == 'refs/heads/main' &&
-      !contains(github.event.head_commit.message, 'chore: bump version')
+      !(startsWith(github.event.head_commit.message, 'chore: bump version to ') &&
+      github.event.head_commit.author.email == 'github-actions[bot]@users.noreply.github.com')
     # One bump at a time. Without this, two merges close together each start
     # a run from their own commit, and the second push to main is rejected.
     # Declared on the job, not the workflow: a run whose job is skipped (the

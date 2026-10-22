@@ -250,6 +250,24 @@ def test_a_version_set_by_hand_still_gets_its_bump_commit(tmp_path: Path) -> Non
     )
 
 
+def test_only_the_bump_commit_this_job_pushes_skips_the_job(tmp_path: Path) -> None:
+    # A merge whose pull request is titled "chore: bump version to X" has the
+    # phrase in its message too, and is the merge that sets a version by hand:
+    # matching the phrase alone left that version untagged and unreleased.
+    result, _ = _commit(tmp_path)
+    assert result.returncode == 0, result.stderr
+    author = re.search(r"^git: config user\.email (\S+)$", result.stdout, re.M)
+    assert author is not None
+    assert "git: commit --allow-empty -m chore: bump version to 0.1.0" in (
+        result.stdout
+    )
+    assert _workflow()["jobs"]["bump-version"]["if"] == (
+        "github.ref == 'refs/heads/main' && "
+        "!(startsWith(github.event.head_commit.message, 'chore: bump version to ') && "
+        f"github.event.head_commit.author.email == '{author[1]}')"
+    )
+
+
 def test_rejected_push_stands_down_when_main_moved_on(tmp_path: Path) -> None:
     result, out = _commit(tmp_path, PUSH_EXIT="1", TIP=NEWER)
     assert result.returncode == 0, result.stderr
