@@ -61,7 +61,8 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **GitHub Sponsors**: Added support for GitHub Sponsors via the command line.
+- **Python**: Added support for inferring instance attributes from annotations.
+- **General**: Various fixes for import resolution, naming conflicts, and project syncing.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
@@ -118,13 +119,14 @@ Three version lines exist and they intentionally differ:
 | where | what it tracks |
 |---|---|
 | git tags | every version, one per merge |
-| GitHub Releases (binaries, signatures) | every 50th version, plus any security fix or breaking change |
-| PyPI | every 50th version, plus any security fix or breaking change |
+| GitHub Releases (binaries, signatures) | every 50th version, plus any security fix, breaking change or merge labelled `release now` |
+| PyPI | every 50th version, plus any security fix, breaking change or merge labelled `release now` |
 
 So the newest tag on `main` usually runs ahead of the newest release, often by
 tens of patch versions; they coincide only just after a release. Nothing is
-stuck, the cadences differ by design. A security fix or a breaking change does
-NOT wait for the cadence: either ships a release and a PyPI upload immediately.
+stuck, the cadences differ by design. A security fix, a breaking change or a
+merge a maintainer labels `release now` does NOT wait for the cadence: each ships
+a release and a PyPI upload immediately.
 
 `uv tool install` and `pipx install` give you the newest PyPI version, which is the
 newest RELEASE, not the newest tag. Interim tags exist so every merge is
