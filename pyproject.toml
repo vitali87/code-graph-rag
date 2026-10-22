@@ -86,7 +86,18 @@ package = true
 # semgrep also pins mcp==1.29.0, which holds the locked SDK below the 1.30.0
 # fix for GHSA-84m7-p3x7-pcfv (StreamableHTTP sessions never reclaimed).
 # Drop that entry once a semgrep release accepts mcp>=1.30.0.
-override-dependencies = ["pyjwt[crypto]>=2.14.0", "mcp>=1.30.0,<2"]
+# semgrep also pins opentelemetry-api, -sdk and -exporter-otlp-proto-http
+# ~=1.37.0, which holds the locked API below the 1.45.1 fix for
+# GHSA-xcq7-p3pf-p88h (quadratic tracestate parsing). The SDK and exporter pin
+# the API exactly, so all three move together. Drop these entries once a
+# semgrep release accepts opentelemetry-api>=1.45.1.
+override-dependencies = [
+    "pyjwt[crypto]>=2.14.0",
+    "mcp>=1.30.0,<2",
+    "opentelemetry-api>=1.45.1,<2",
+    "opentelemetry-sdk>=1.45.1,<2",
+    "opentelemetry-exporter-otlp-proto-http>=1.45.1,<2",
+]
 
 # Patched grammars: upstream tree-sitter-c drops declarations after a
 # #define whose value embeds a block comment (issue #555). Our forks carry
