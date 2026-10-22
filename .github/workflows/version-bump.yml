@@ -519,6 +519,18 @@ jobs:
               --jq '"\(.summary) (\(.severity) severity, CVSS \(.cvss.score // "n/a")), advisory [\(.ghsa_id)](https://github.com/'"${GITHUB_REPOSITORY}"'/security/advisories/\(.ghsa_id))\(if .cve_id then " / " + .cve_id else "" end)."' \
               2>/dev/null) || DETAIL=""
           fi
+          # A GHSA id can also name an advisory against a dependency (a lock
+          # bump that clears an OSV-Scanner finding). Those live in the global
+          # advisory database, not in this repository, where the link 404s.
+          # An id found in neither is most likely this repository's own draft,
+          # so the pointer below still links here. The global record may carry
+          # only cvss_severities, with 0.0 for a version it was not scored
+          # under, so the first nonzero score wins.
+          if [ -z "$DETAIL" ] && [ -n "$GHSA" ]; then
+            DETAIL=$(gh api "advisories/${GHSA}" \
+              --jq '"\(.summary) (\(.severity) severity, CVSS \([.cvss.score, .cvss_severities.cvss_v3.score, .cvss_severities.cvss_v4.score] | map(select(. != null and . > 0)) | first // "n/a")), dependency advisory [\(.ghsa_id)](https://github.com/advisories/\(.ghsa_id))\(if .cve_id then " / " + .cve_id else "" end)."' \
+              2>/dev/null) || DETAIL=""
+          fi
           {
             echo "## 🔒 Security"
             echo
