@@ -117,10 +117,17 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     # round-tripped through protobuf reads as "not marked", so those stubs
     # are reported again exactly as before the property existed, and the
     # next parse writes the mark back.
+    # `callable_fields` (issue #3176) lets an incremental run re-register the
+    # function-pointer and `std::function` members of a C++ type in a header
+    # it does not re-parse. A graph round-tripped through protobuf loses them,
+    # so until that header is parsed again a re-parsed `o->cb()` reaches no
+    # free `cb`, the method-only reading every other member call gets; the
+    # same holds for a C++ `Union`. Exporting it needs protoc (#1490).
     "Class": frozenset(
         {
             "anchor_hash",
             "absolute_path",
+            "callable_fields",
             "decorated_start_line",
             "modifiers",
             "non_method_members",
@@ -247,6 +254,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
         {
             "anchor_hash",
             "absolute_path",
+            "callable_fields",
             "decorated_start_line",
             "decorators",
             "docstring",
