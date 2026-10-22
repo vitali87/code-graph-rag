@@ -269,7 +269,7 @@ writes, exposes or calls. Its `kind` is one of:
 | ENV | An environment variable |
 | SOCKET | A socket address |
 | PROCESS | A command run as a subprocess |
-| ENDPOINT | A route a handler exposes (`GET /users/{id}`), reached from a NETWORK resource through `RESOLVES_TO` |
+| ENDPOINT | A route a handler exposes (`GET /users/{id}`), reached from a NETWORK resource through `RESOLVES_TO`. Its `project` property names the project that serves it, which scopes its qualified name and endpoint lookups. |
 | CONTRACT | A codegen contract operation shared by client stubs and server implementations |
 | RPC | An RPC method a handler exposes; callers join it directly |
 | DISPATCH | A string-keyed dispatch target (a queue name, a command key); callers join it directly, or through `RESOLVES_TO` from a `key/deployment` variant of the key |
