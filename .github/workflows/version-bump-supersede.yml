@@ -11,8 +11,12 @@ name: Version Bump Supersede
 # A separate workflow rather than a job in version-bump.yml: a run's status
 # there would then be "in progress" while this job ran, hiding a bump job
 # that is still waiting behind it. A run already started is left alone: it
-# may have pushed its bump and be waiting on CI to tag it. A run for a commit
-# this one does not contain may be for a newer merge, which has to bump.
+# may have pushed its bump and be waiting on CI to tag it. One that starts
+# between the listing and the cancel started after this merge reached main,
+# so its tip check stands it down before it can push, and cancelling it
+# loses nothing; re-reading its status first would not close that gap
+# either. A run for a commit this one does not contain may be for a newer
+# merge, which has to bump.
 on:
   push:
     branches:
