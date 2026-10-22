@@ -13,6 +13,7 @@ from ... import logs as lg
 from ...types_defs import FunctionRegistryTrieProtocol, LanguageQueries, NodeType
 from ..js_ts.utils import find_method_in_ast as find_js_method_in_ast
 from ..utils import get_cached_query, safe_decode_text, sorted_captures
+from .utils import python_literal_type, unshadowed_literal_type
 from .with_analyzer import WithTarget
 
 _PY_SCOPE_TYPES = frozenset(
@@ -1006,8 +1007,15 @@ class PythonAstAnalyzerMixin(_AstBase):
         for_statements = [f for f in for_statements if _belongs_to(f, node)]
         comprehensions = [c for c in comprehensions if _scope_of(c) == node.id]
 
+        # A literal types a name only when every assignment to it is one: the
+        # type map is flat per function, so `x = Bag(); x.get(k); x = {}`,
+        # or a later `x = make_bag()`, must not let the literal decide every
+        # call on `x` (bot review on PR #2912).
+        rebound = self._names_bound_to_non_literals(assignments)
         for assignment in assignments:
-            self._process_assignment_simple(assignment, local_var_types, module_qn)
+            self._process_assignment_simple(
+                assignment, local_var_types, module_qn, rebound
+            )
 
         # Between the two assignment passes: a with target types from its
         # manager, which the simple pass may have typed, and the complex pass
@@ -1147,8 +1155,26 @@ class PythonAstAnalyzerMixin(_AstBase):
                 if name in scratch:
                     local_var_types[name] = scratch[name]
 
+    def _names_bound_to_non_literals(self, assignments: list[Node]) -> set[str]:
+        names: set[str] = set()
+        for assignment in assignments:
+            left = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
+            right = assignment.child_by_field_name(cs.TS_FIELD_RIGHT)
+            if (
+                left is not None
+                and right is not None
+                and python_literal_type(right) is None
+                and (name := self._extract_assignment_variable_name(left))
+            ):
+                names.add(name)
+        return names
+
     def _process_assignment_simple(
-        self, assignment_node: Node, local_var_types: dict[str, str], module_qn: str
+        self,
+        assignment_node: Node,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        rebound: set[str] | None = None,
     ) -> None:
         left_node = assignment_node.child_by_field_name(cs.TS_FIELD_LEFT)
         right_node = assignment_node.child_by_field_name(cs.TS_FIELD_RIGHT)
@@ -1162,9 +1188,26 @@ class PythonAstAnalyzerMixin(_AstBase):
 
         if inferred_type := self._infer_type_from_expression_simple(
             right_node, module_qn
+        ) or (
+            None
+            if rebound is not None and var_name in rebound
+            else self._unannotated_literal_type(assignment_node, right_node, module_qn)
         ):
             local_var_types[var_name] = inferred_type
             logger.debug(lg.PY_TYPE_SIMPLE, var=var_name, type=inferred_type)
+
+    def _unannotated_literal_type(
+        self, assignment: Node, value: Node, module_qn: str
+    ) -> str | None:
+        """`d = {}`: the builtin the literal is, so `d.get(k)` is `dict.get` and
+        not a first-party `get` that shares the name (issue #2859). An annotated
+        assignment (`q: tuple[W, B] = (...)`) is left to its annotation, which
+        says more than the literal does."""
+        if assignment.child_by_field_name(cs.TS_FIELD_TYPE) is not None:
+            return None
+        return unshadowed_literal_type(
+            value, module_qn, self.import_processor, self.function_registry
+        )
 
     def _process_assignment_complex(
         self, assignment_node: Node, local_var_types: dict[str, str], module_qn: str
