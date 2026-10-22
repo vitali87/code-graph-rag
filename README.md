@@ -61,11 +61,8 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **CodeQL**: Improved handling of interface implementers and Python annotations.
-- **Checks**: Enhanced error reporting for unbound Python calls, rejected callee keywords, and unfilled required parameters.
-- **Tracing**: Added support for reading gzip-compressed Xdebug traces.
-- **Rust**: Improved handling of macro calls and workspace listings.
-- **MCP**: Enhanced responses for out-of-range input and unknown symbols.
+- **Python**: Added support for inferring instance attributes from annotations.
+- **General**: Various fixes for import resolution, naming conflicts, and project syncing.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.

@@ -11,12 +11,14 @@ the README. The release workflow prepends feature entries via
 (dropping non-feature themes), and moves the marker below the block it
 inserted; hand edits remain welcome between releases and render too.
 
+- **Python**: Added support for inferring instance attributes from annotations.
+- **General**: Various fixes for import resolution, naming conflicts, and project syncing.
+<!-- latest-release-end -->
 - **CodeQL**: Improved handling of interface implementers and Python annotations.
 - **Checks**: Enhanced error reporting for unbound Python calls, rejected callee keywords, and unfilled required parameters.
 - **Tracing**: Added support for reading gzip-compressed Xdebug traces.
 - **Rust**: Improved handling of macro calls and workspace listings.
 - **MCP**: Enhanced responses for out-of-range input and unknown symbols.
-<!-- latest-release-end -->
 - **CodeQL Scanning**: Switch to advanced CodeQL setup for more comprehensive analysis of pull requests from forks.
 - **Python Annotations**: Infer Python instance attributes from annotations for improved type handling.
 - **Xdebug Trace Support**: Now reads gzip-compressed Xdebug traces for enhanced debugging.
