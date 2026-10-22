@@ -14,6 +14,7 @@ WORKFLOW = (
     / "workflows"
     / "version-bump-supersede.yml"
 )
+BUMP_WORKFLOW = WORKFLOW.with_name("version-bump.yml")
 OURS = "a" * 40
 OLDER = "b" * 40
 OLDEST = "c" * 40
@@ -202,4 +203,10 @@ def test_it_runs_outside_the_bump_queue_on_every_merge_to_main() -> None:
     assert "concurrency" not in job
     assert job["permissions"] == {"actions": "write", "contents": "read"}
     # The bump commit's own push supersedes nothing: its merge's run bumped.
-    assert "chore: bump version" in job["if"]
+    # The same commits skip both workflows, so a merge titled like the bump
+    # commit, which version-bump.yml runs for, still cancels what it supersedes.
+    bump = yaml.safe_load(BUMP_WORKFLOW.read_text(encoding="utf-8"))
+    assert job["if"].startswith(
+        "!(startsWith(github.event.head_commit.message, 'chore: bump version to ') && "
+    )
+    assert bump["jobs"]["bump-version"]["if"].endswith(" && " + job["if"])

@@ -92,7 +92,9 @@ accounts for every pull request merged up to it. Nothing rolls over: the
 patch number keeps counting past 999, because a carry into the minor number
 would announce a breaking change that never happened. To pick a type by hand,
 run the workflow with its `bump_type` input or change the version in the pull
-request itself.
+request itself. A version set in the pull request is not bumped again: its
+merge gets the bump commit and tag a bumped version gets, and a release when
+one is due, so a breaking change or security fix in it ships with it.
 
 ### Release cadence and why tags outrun releases
 
