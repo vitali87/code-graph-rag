@@ -11,12 +11,17 @@ the README. The release workflow prepends feature entries via
 (dropping non-feature themes), and moves the marker below the block it
 inserted; hand edits remain welcome between releases and render too.
 
+- **CodeQL**: Improved handling of interface implementers and Python annotations.
+- **Checks**: Enhanced error reporting for unbound Python calls, rejected callee keywords, and unfilled required parameters.
+- **Tracing**: Added support for reading gzip-compressed Xdebug traces.
+- **Rust**: Improved handling of macro calls and workspace listings.
+- **MCP**: Enhanced responses for out-of-range input and unknown symbols.
+<!-- latest-release-end -->
 - **CodeQL Scanning**: Switch to advanced CodeQL setup for more comprehensive analysis of pull requests from forks.
 - **Python Annotations**: Infer Python instance attributes from annotations for improved type handling.
 - **Xdebug Trace Support**: Now reads gzip-compressed Xdebug traces for enhanced debugging.
 - **Rust Macro Edge**: Ensures turbofish calls within macros receive their CALLS edge.
 - **Improved Syncing**: Re-parse files attaching members to re-indexed modules and keep declared namespaces of unchanged PHP files.
-<!-- latest-release-end -->
 - **GitHub Sponsors**: Added support for GitHub Sponsors via the command line.
 - **Signature**: Implemented header reading and argument binding for rewrite functionality.
 - **Migration**: Prevented unintended purging of shared Folder/File nodes.

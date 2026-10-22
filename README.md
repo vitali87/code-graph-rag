@@ -61,11 +61,11 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **CodeQL Scanning**: Switch to advanced CodeQL setup for more comprehensive analysis of pull requests from forks.
-- **Python Annotations**: Infer Python instance attributes from annotations for improved type handling.
-- **Xdebug Trace Support**: Now reads gzip-compressed Xdebug traces for enhanced debugging.
-- **Rust Macro Edge**: Ensures turbofish calls within macros receive their CALLS edge.
-- **Improved Syncing**: Re-parse files attaching members to re-indexed modules and keep declared namespaces of unchanged PHP files.
+- **CodeQL**: Improved handling of interface implementers and Python annotations.
+- **Checks**: Enhanced error reporting for unbound Python calls, rejected callee keywords, and unfilled required parameters.
+- **Tracing**: Added support for reading gzip-compressed Xdebug traces.
+- **Rust**: Improved handling of macro calls and workspace listings.
+- **MCP**: Enhanced responses for out-of-range input and unknown symbols.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
