@@ -1,0 +1,224 @@
+"""An incremental sync keeps the field types of classes it does not re-parse.
+
+A field-hop receiver (`args.mode.update(...)`, `args.mode.Update(1)`) types
+through the declaring class's field map, and only parsing filled that map.
+Editing the caller re-parsed it while `LowArgs` came back from the graph
+without its fields, so Rust re-bound the call by name to the trait method
+and to the caller itself, and C# dropped the edge (issue #3004).
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from codebase_rag import constants as cs
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
+from evals.cgr_graph import _StatefulIngestor
+
+_RUST = {
+    "Cargo.toml": '[package]\nname = "rsfieldinc"\nversion = "0.1.0"\nedition = "2021"\n',
+    "src/main.rs": "mod flags;\nfn main() {}\n",
+    "src/flags/mod.rs": (
+        "mod defs;\nmod lowargs;\n\n"
+        "pub(crate) use crate::flags::lowargs::{LowArgs, Mode};\n\n"
+        "pub(crate) trait Flag {\n    fn update(&self, args: &mut LowArgs);\n}\n"
+    ),
+    "src/flags/lowargs.rs": (
+        "pub(crate) struct LowArgs {\n    pub(crate) mode: Mode,\n}\n\n"
+        "pub(crate) enum Mode {\n    Search,\n    Count,\n}\n\n"
+        "impl Mode {\n    pub(crate) fn update(&mut self, new: Mode) {\n"
+        "        *self = new;\n    }\n}\n"
+    ),
+    "src/flags/defs.rs": (
+        "use crate::flags::lowargs::{LowArgs, Mode};\nuse crate::flags::Flag;\n\n"
+        "struct Count;\n\nimpl Flag for Count {\n"
+        "    fn update(&self, args: &mut LowArgs) {\n"
+        "        args.mode.update(Mode::Count);\n    }\n}\n"
+    ),
+}
+_CSHARP = {
+    "src/LowArgs.cs": (
+        "public class Mode { public void Update(int n) {} }\n"
+        "public class LowArgs { public Mode mode = new Mode(); }\n"
+    ),
+    "src/Defs.cs": (
+        "public class Defs { public void Update(LowArgs args) "
+        "{ args.mode.Update(1); } }\n"
+    ),
+}
+# A C# interface's property types a field hop as a class's field does.
+_CSHARP_INTERFACE = {
+    "src/Args.cs": (
+        "public class Mode { public void Update(int n) {} }\n"
+        "public interface IArgs { Mode mode { get; } }\n"
+    ),
+    "src/Defs.cs": (
+        "public class Defs { public void Update(IArgs args) "
+        "{ args.mode.Update(1); } }\n"
+    ),
+}
+# A guard field (`state: Mutex<State>`) unwraps to its inner type at a
+# `.lock()` hop; `Aaa` is the by-name decoy a lost inner type falls to.
+_RUST_GUARD = {
+    "Cargo.toml": '[package]\nname = "rsguardinc"\nversion = "0.1.0"\nedition = "2021"\n',
+    "src/main.rs": "mod db;\nmod shared;\nfn main() {}\n",
+    "src/shared.rs": (
+        "use std::sync::Mutex;\n\n"
+        "pub struct Aaa {}\n\nimpl Aaa {\n"
+        "    pub fn next_expiration(&self) -> i32 { 2 }\n}\n\n"
+        "pub struct State {}\n\nimpl State {\n"
+        "    pub fn next_expiration(&self) -> i32 { 1 }\n}\n\n"
+        "pub struct Shared {\n    pub state: Mutex<State>,\n}\n"
+    ),
+    "src/db.rs": (
+        "use crate::shared::Shared;\n\n"
+        "pub fn update(s: &Shared) -> i32 {\n"
+        "    let state = s.state.lock().unwrap();\n"
+        "    state.next_expiration()\n}\n"
+    ),
+}
+
+# `self.items.iter()` closures bind `i` to the field's element type.
+_RUST_ELEMENTS = {
+    "Cargo.toml": '[package]\nname = "rselemsinc"\nversion = "0.1.0"\nedition = "2021"\n',
+    "src/main.rs": "mod holder;\nfn main() {}\n",
+    "src/holder.rs": (
+        "pub struct Item {}\n\nimpl Item {\n"
+        "    pub fn go(&self) -> i32 { 1 }\n}\n\n"
+        "pub struct Other {}\n\nimpl Other {\n"
+        "    pub fn go(&self) -> i32 { 2 }\n}\n\n"
+        "pub struct Holder {\n    pub items: Vec<Item>,\n}\n\n"
+        "impl Holder {\n    pub fn update(&self) {\n"
+        "        self.items.iter().for_each(|i| {\n            i.go();\n        });\n"
+        "    }\n}\n"
+    ),
+}
+# The guard field retyped to a first-party lock whose own `lock()` returns
+# Aaa: a kept `Mutex<State>` inner type would still unwrap it to State.
+_TO_OWN_LOCK = (
+    "pub struct Shared {\n    pub state: Mutex<State>,",
+    "pub struct Lock {}\n\nimpl Lock {\n"
+    "    pub fn lock(&self) -> Aaa {\n        Aaa {}\n    }\n}\n\n"
+    "pub struct Shared {\n    pub state: Lock,",
+)
+
+_Calls = dict[tuple[str, str], str]
+
+
+def _write(root: Path, files: dict[str, str]) -> None:
+    for rel, text in files.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text, encoding="utf-8")
+
+
+def _updater(root: Path, store: _StatefulIngestor) -> GraphUpdater:
+    parsers, queries = load_parsers()
+    return GraphUpdater(
+        ingestor=store, repo_path=root, parsers=parsers, queries=queries
+    )
+
+
+def _sync(root: Path, store: _StatefulIngestor, force: bool) -> _Calls:
+    _updater(root, store).run(force=force)
+    return _calls(store)
+
+
+def _calls(store: _StatefulIngestor) -> _Calls:
+    return {
+        (str(edge[1]).split(".src.", 1)[1], str(edge[4]).split(".src.", 1)[1]): str(
+            store.props_for(edge).get(cs.KEY_RESOLUTION)
+        )
+        for edge in store.edges
+        if edge[2] == cs.RelationshipType.CALLS.value and "pdate" in str(edge[1])
+    }
+
+
+def _append(root: Path, rel: str, text: str) -> None:
+    (root / rel).write_text((root / rel).read_text() + text, encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("files", "caller_file", "grammar"),
+    [
+        (_RUST, "src/flags/defs.rs", "rust"),
+        (_CSHARP, "src/Defs.cs", "c_sharp"),
+        (_CSHARP_INTERFACE, "src/Defs.cs", "c_sharp"),
+        (_RUST_GUARD, "src/db.rs", "rust"),
+    ],
+    ids=["rust", "csharp", "csharp-interface", "rust-guard"],
+)
+def test_editing_the_caller_keeps_the_field_typed_call(
+    tmp_path: Path, files: dict[str, str], caller_file: str, grammar: str
+) -> None:
+    if grammar not in load_parsers()[0]:
+        pytest.skip(f"{grammar} parser not available")
+    root = tmp_path / "repo"
+    _write(root, files)
+    store = _StatefulIngestor()
+    fresh = _sync(root, store, force=True)
+    assert list(fresh.values()) == ["exact"], fresh
+
+    _append(root, caller_file, "// unrelated edit\n")
+
+    assert _sync(root, store, force=False) == fresh
+
+
+def test_a_re_parsed_class_takes_its_new_field_type(tmp_path: Path) -> None:
+    # Negative: when the class's own file changes, its fresh fields decide,
+    # not the ones the graph held.
+    if "rust" not in load_parsers()[0]:
+        pytest.skip("rust parser not available")
+    root = tmp_path / "repo"
+    _write(root, _RUST)
+    store = _StatefulIngestor()
+    _sync(root, store, force=True)
+
+    lowargs = (root / "src/flags/lowargs.rs").read_text()
+    (root / "src/flags/lowargs.rs").write_text(
+        lowargs.replace("pub(crate) mode: Mode,", "pub(crate) mode: Other,")
+        + "\npub(crate) struct Other;\n\nimpl Other {\n"
+        "    pub(crate) fn update(&mut self, new: Mode) {}\n}\n",
+        encoding="utf-8",
+    )
+    _append(root, "src/flags/defs.rs", "// unrelated edit\n")
+
+    after = _sync(root, store, force=False)
+    assert after == {("flags.defs.Count.update", "flags.lowargs.Other.update"): "exact"}
+
+
+@pytest.mark.parametrize(
+    ("files", "edited", "edit", "reuse_updater"),
+    [
+        (_RUST_GUARD, "src/shared.rs", _TO_OWN_LOCK, False),
+        (_RUST_GUARD, "src/shared.rs", _TO_OWN_LOCK, True),
+        (_RUST_ELEMENTS, "src/holder.rs", ("Vec<Item>", "Other"), True),
+    ],
+    ids=["guard-fresh-updater", "guard-reused-updater", "elements-reused-updater"],
+)
+def test_a_re_ingested_struct_drops_its_old_field_metadata(
+    tmp_path: Path,
+    files: dict[str, str],
+    edited: str,
+    edit: tuple[str, str],
+    reuse_updater: bool,
+) -> None:
+    # A field that no longer has a guard-inner or element type records none
+    # on the re-parse, so the old entry must go with the struct's other
+    # class-keyed maps: a fresh updater (the MCP tool's) reads the old guard
+    # map back from the graph before the scoped re-parse, and a reused one
+    # (the watcher's) still holds what it parsed.
+    if "rust" not in load_parsers()[0]:
+        pytest.skip("rust parser not available")
+    root = tmp_path / "repo"
+    _write(root, files)
+    store = _StatefulIngestor()
+    indexer = _updater(root, store)
+    indexer.run(force=True)
+
+    (root / edited).write_text((root / edited).read_text().replace(*edit))
+    (indexer if reuse_updater else _updater(root, store)).reingest([edited])
+
+    assert _calls(store) == _sync(root, _StatefulIngestor(), force=True)

@@ -1469,6 +1469,13 @@ def _drop_class_keyed_entry(
     """Drop one removed class's rows from the class-keyed maps."""
     processor.class_inheritance.pop(qn, None)
     processor.class_field_types.pop(qn, None)
+    # A Rust struct's guard-inner and element maps go with its field types:
+    # the re-parse records them only for fields that still have one, and a
+    # field retyped from `Mutex<State>` to a lock of its own kept unwrapping
+    # to State at `.lock()` (a scoped re-ingest reads the old map back from
+    # the graph before it re-parses).
+    processor.class_field_guard_inner.pop(qn, None)
+    processor.class_field_element_types.pop(qn, None)
     # A partial part leaves its group too. The group list is the
     # very list `_csharp_partial_index` holds under the syntactic
     # key, so removing the part there keeps both views in step;
@@ -4188,12 +4195,36 @@ class GraphUpdater:
                 namespace if isinstance(namespace, str) else "",
                 arity if isinstance(arity, int) else 0,
             )
+        # Restore an unchanged class's field types: only parsing records them,
+        # and a re-parsed file's field-hop receiver (`args.mode.update()`)
+        # types through them (issue #3004).
+        if isinstance(fields := row.get(cs.KEY_FIELD_TYPES), list):
+            self._rehydrate_class_field_types(qn, fields)
         # Record the defining file so _is_cpp_defined can language-check
         # rehydrated candidates (deferred C++ INHERITS resolution runs
         # after this and must reach bases in UNCHANGED headers).
         if isinstance(path := row.get(cs.KEY_PATH), str):
             self._rehydrate_definition_path(node_type, qn, path, row)
         return True
+
+    def _rehydrate_class_field_types(self, qn: str, fields: Sequence[object]) -> None:
+        field_types: dict[str, str] = {}
+        guard_inner: dict[str, str] = {}
+        for entry in fields:
+            # `name<TAB>type`, plus `<TAB>inner` for a Rust guard field.
+            name, _, rest = str(entry).partition(cs.FIELD_TYPE_SEPARATOR)
+            type_name, _, inner = rest.partition(cs.FIELD_TYPE_SEPARATOR)
+            if name and type_name:
+                field_types[name] = type_name
+                if inner:
+                    guard_inner[name] = inner
+        dp = self.factory.definition_processor
+        # A re-parsed class's fresh maps win, its guard inner types included.
+        if not field_types or qn in dp.class_field_types:
+            return
+        dp.class_field_types[qn] = field_types
+        if guard_inner:
+            dp.class_field_guard_inner[qn] = guard_inner
 
     def _rehydrate_go_method_sets(self, rows: list[ResultRow]) -> None:
         # An unchanged Go file's methods and interfaces still count toward
@@ -6359,8 +6390,8 @@ class GraphUpdater:
         self, module_qn_prefixes: set[str], file_path: Path
     ) -> None:
         """Drop a removed file's entries from `class_inheritance`,
-        `class_field_types`, the C# partial groups and the parsed implementer
-        pairs.
+        `class_field_types` (with the Rust guard-inner and element maps), the
+        C# partial groups and the parsed implementer pairs.
 
         All three are keyed by a CLASS qn; the first two were never mentioned
         in `remove_file_from_state`, so a deleted file's rows outlived it on a

@@ -540,6 +540,9 @@ message GraphCodeIndex {
     // How many type parameters a generic C# type declares; 0 when it is
     // not generic (issue #2579).
     int32 generic_arity = 9;
+    // `name<TAB>type` per field (plus `<TAB>inner` for a Rust guard field
+    // such as `Mutex<State>`), read back by incremental runs (issue #3004).
+    repeated string field_types = 10;
   }
 
   message Interface {
@@ -557,6 +560,8 @@ message GraphCodeIndex {
     // "embeds" or "constraint"; empty when it can (#3360). A rename of a
     // method of its name refuses.
     string implementers_unknown = 7;
+    // A C# interface's property types, as Class.field_types (issue #3004).
+    repeated string field_types = 8;
   }
 
   message Enum {
@@ -581,4 +586,6 @@ message GraphCodeIndex {
     string qualified_name = 1;
 
     string name = 2;
+    // The union's field types, as Class.field_types (issue #3004).
+    repeated string field_types = 3;
   }
