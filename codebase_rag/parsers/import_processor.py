@@ -48,6 +48,7 @@ from ..utils.path_utils import (
     walk_eligible_files,
 )
 from ..utils.source_encoding import grammar_bytes
+from .cpp.utils import cpp_include_local_name
 from .cpp_frontend.qn import build_module_qn_map
 from .dart import (
     dart_binding_spans,
@@ -748,7 +749,7 @@ def _external_module_name(module_path: str) -> str:
     position, so every `.h` include minted an ExternalModule called `h`:
     `std.stdio.h`, `std.signal.h` and `std.sys.types.h` alike (issue #1758).
     A header is named by its own stem instead, the same name
-    `_cpp_include_local_name` binds it under, so the node and the local name
+    `cpp_include_local_name` binds it under, so the node and the local name
     agree.
 
     The header rule is deliberately confined to the `std.` prefix that
@@ -760,7 +761,7 @@ def _external_module_name(module_path: str) -> str:
 
     The three-segment floor leaves one known inconsistency: `<std.h>` has the
     two-segment qn `std.h`, indistinguishable here from a package `h` under
-    `std`, so its node is named `h` while `_cpp_include_local_name` binds it
+    `std`, so its node is named `h` while `cpp_include_local_name` binds it
     as `std`. Lowering the floor to two would rename every `<pkg.h>`-shaped
     external of every language; `<std.h>` is not a real header, so the
     inconsistency is the cheaper of the two errors.
@@ -768,7 +769,7 @@ def _external_module_name(module_path: str) -> str:
     A second, unfixable-here case: this sees only the qn, and slash
     segmentation has already erased the difference between a PATH and dots
     inside one basename. `<foo/bar.h>` and `<foo.bar.h>` both become
-    `std.foo.bar.h`, yet `_cpp_include_local_name` binds the first as `bar`
+    `std.foo.bar.h`, yet `cpp_include_local_name` binds the first as `bar`
     (basename stem) and the second as `foo` (first stem segment). One name
     must therefore disagree with its binding, and no rule at this layer can
     tell which. It is `<foo/bar.h>` -- a real path, the common shape -- that
@@ -786,15 +787,6 @@ def _external_module_name(module_path: str) -> str:
     ):
         return segments[-2]
     return segments[-1]
-
-
-def _cpp_include_local_name(include_path: str) -> str:
-    """The name the include binds locally: the header's stem for `.h`/`.hpp`,
-    the bare last path segment otherwise (`<vector>`)."""
-    header_name = include_path.rsplit(cs.SEPARATOR_SLASH, maxsplit=1)[-1]
-    if header_name.endswith(cs.EXT_H) or header_name.endswith(cs.EXT_HPP):
-        return header_name.split(cs.SEPARATOR_DOT)[0]
-    return header_name
 
 
 def _php_use_clause_binding(clause: Node) -> tuple[str, str] | None:
@@ -1118,6 +1110,7 @@ class ImportProcessor:
         "_csharp_module_identifiers",
         "_cpp_declaration_mappings",
         "_cpp_shadowed_include_targets",
+        "_cpp_shadowed_include_sites",
         "_dart_packages",
         "_rust_dir_listing",
         "_rust_entry_mod_decls",
@@ -1471,6 +1464,10 @@ class ImportProcessor:
         # survived (issue #1758). The binding can hold one name, but the file
         # really does include both headers, so the edge is kept here.
         self._cpp_shadowed_include_targets: set[tuple[str, str]] = set()
+        # The site each of those includes had when it lost its name, so its
+        # edge is located as tree-sitter would place it and libclang's edge
+        # for the same `#include` merges into it (issue #2944).
+        self._cpp_shadowed_include_sites: dict[tuple[str, str], PropertyDict] = {}
         # The repo's own Dart packages, pubspec `name:` -> qn of its `lib/`,
         # found on the first `package:` import so a project with no Dart
         # pays no extra walk (issue #3278).
@@ -1673,6 +1670,11 @@ class ImportProcessor:
             for entry in self._cpp_shadowed_include_targets
             if entry[0] != module_qn
         }
+        self._cpp_shadowed_include_sites = {
+            entry: site
+            for entry, site in self._cpp_shadowed_include_sites.items()
+            if entry[0] != module_qn
+        }
         # Cleared here too, now that the shadowed sweep READS it. These
         # entries SUPPRESS edges, so a stale one is the opposite hazard: a
         # re-parse that removes an `export module X;` used to leave an
@@ -1752,8 +1754,8 @@ class ImportProcessor:
                 )
         # Includes whose local binding a later include took over: the
         # file includes them, so they keep their edge even though the
-        # map no longer names them (issue #1758). No site: the binding
-        # that carried it belongs to the include that won the name.
+        # map no longer names them (issue #1758), at the site each had
+        # before it lost the name.
         for module_key, shadowed in self._cpp_shadowed_include_targets:
             if module_key != module_qn:
                 continue
@@ -1769,7 +1771,7 @@ class ImportProcessor:
                     module_qn=module_qn,
                     full_name=shadowed,
                     language=language,
-                    site=None,
+                    site=self._cpp_shadowed_include_sites.get((module_qn, shadowed)),
                 )
             )
 
@@ -6403,7 +6405,7 @@ class ImportProcessor:
         if spec is None:
             return
         include_path, is_system_include = spec
-        local_name = _cpp_include_local_name(include_path)
+        local_name = cpp_include_local_name(include_path)
         full_name = self._cpp_include_full_name(
             include_path, is_system_include, module_qn
         )
@@ -6413,7 +6415,7 @@ class ImportProcessor:
         # real include of a real header and must keep its IMPORTS edge (#1758).
         displaced = self.import_mapping[module_qn].get(local_name)
         if displaced is not None and displaced != full_name:
-            self._cpp_shadowed_include_targets.add((module_qn, displaced))
+            self._shadow_cpp_include(module_qn, local_name, displaced)
         self.import_mapping[module_qn][local_name] = full_name
         self._record_import_site(module_qn, local_name, include_node, include_path)
         logger.debug(
@@ -6422,6 +6424,15 @@ class ImportProcessor:
             full=full_name,
             system=is_system_include,
         )
+
+    def _shadow_cpp_include(
+        self, module_qn: str, local_name: str, displaced: str
+    ) -> None:
+        # Before the new binding records its own site over the old one.
+        self._cpp_shadowed_include_targets.add((module_qn, displaced))
+        site = self._import_sites.get(module_qn, {}).get(local_name)
+        if site is not None:
+            self._cpp_shadowed_include_sites[(module_qn, displaced)] = site
 
     def _cpp_include_full_name(
         self, include_path: str, is_system_include: bool, module_qn: str
@@ -6550,7 +6561,7 @@ class ImportProcessor:
         # emitted for the include at all (#1758 review).
         displaced = self.import_mapping[module_qn].get(module_name)
         if displaced is not None and displaced != full_name:
-            self._cpp_shadowed_include_targets.add((module_qn, displaced))
+            self._shadow_cpp_include(module_qn, module_name, displaced)
         self.import_mapping[module_qn][module_name] = full_name
         # `module X;` / `export module X;` DECLARE this file's module; the mapping
         # exists for name resolution only, never as an IMPORTS edge.
