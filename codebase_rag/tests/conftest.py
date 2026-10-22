@@ -40,6 +40,13 @@ pytest_plugins = ["pytester"]
 # list" at INFO into every later child's stderr, which the tests that read a
 # child's exact output catch. Set before any test imports gRPC.
 os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
+# Quieting those handlers did not stop them running in every macOS child
+# between fork and exec, and children there have died without a word: a
+# build-lock holder that never printed, a toolchain probe that exited
+# non-zero, a benchmark child killed by SIGTRAP. Every child the suite spawns
+# execs at once, the case gRPC's fork-support doc says to turn the handlers
+# off for; set to false, gRPC registers none.
+os.environ["GRPC_ENABLE_FORK_SUPPORT"] = "false"
 
 
 class NodeProtocol(Protocol):
