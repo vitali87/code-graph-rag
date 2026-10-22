@@ -134,7 +134,7 @@ test = [
     "testcontainers>=4.9.0",
     "libclang>=18.1.1",
     "filelock>=3.12",
-    "ast-grep-py>=0.44.0",
+    "ast-grep-py>=0.51.0",
     "pyyaml>=6.0",
     # The suite exercises the Memgraph backend with a mocked server, but
     # imports the real driver's exception types to do it.
@@ -199,7 +199,7 @@ sqlite-vec = [
 ]
 
 ast-grep = [
-    "ast-grep-py>=0.44.0",
+    "ast-grep-py>=0.51.0",
     "pyyaml>=6.0",
 ]
 python-semantics = [
