@@ -212,9 +212,9 @@ def test_branches_of_different_types_behave_like_a_union_annotation(
     picks ONE of the two arbitrarily (measured on this fixture: `Engine.run`
     alone). Neither is right. The receiver is typed as the union an annotation
     would spell, so whatever the resolver does for `chosen: Widget | Engine`
-    -- today it emits no edge, and per-member emission would be the
-    improvement for both -- it does identically here. The plain assignment is
-    the known-positive that proves the harness observes edges at all.
+    -- one edge per member's method (issue #2842) -- it does identically
+    here. The plain assignment is the known-positive that proves the harness
+    observes edges at all.
     """
     both = "flag: bool, widget: Widget, engine: Engine"
     direct = _pick_calls(
@@ -231,7 +231,10 @@ def test_branches_of_different_types_behave_like_a_union_annotation(
     )
 
     assert any(t.endswith("engine.Widget.run") for t in direct), direct
-    assert ternary == annotated, (ternary, annotated)
+    # Each fixture is its own project, so compare past the project segment.
+    members = {t.split(".", 1)[1] for t in ternary}
+    assert members == {t.split(".", 1)[1] for t in annotated}, (ternary, annotated)
+    assert members == {"engine.Widget.run", "engine.Engine.run"}, members
     assert not (
         len(ternary) == 1 and next(iter(ternary)).endswith("engine.Engine.run")
     ), "the bare-name fallback picked one branch arbitrarily"
