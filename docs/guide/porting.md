@@ -44,8 +44,10 @@ Take a Python module and its Rust port:
 def area(width, height):
     return scale(width) * height
 
+
 def perimeter(width, height):
     return 2 * (width + height)
+
 
 class Shape:
     def describe(self, prefix):
