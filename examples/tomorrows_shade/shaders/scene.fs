@@ -273,7 +273,10 @@ float sdCanopyBase(vec3 p)
 float canopyNoise(vec3 p)
 {
     vec3 q = p + vec3(0.0, 0.0, 0.25 * uWind * uCanopyHullR.w * sin(uTime * 1.3 + p.x * 0.4));
-    float n = 0.55 * noise3(q * 1.3) + 0.3 * noise3(q * 3.1 + 7.1) + 0.15 * noise3(q * 7.3 + 3.3);
+    float n = 0.55 * noise3(q * 1.3) + 0.3 * noise3(q * 3.1 + 7.1);
+    // billowy small clusters of leaves with crisp crevices between them
+    float b = 1.0 - abs(noise3(q * 7.3 + 3.3) * 2.0 - 1.0);
+    n += 0.2 * b * b;
     return n;
 }
 
@@ -950,16 +953,14 @@ vec3 terrainNormal(vec3 p, float t, float lod)
 
 float softShadow(vec3 ro, vec3 rd, float tmax, float k)
 {
+    // classic penumbra estimate: robust on the blended (inexact) fields of the
+    // characters; a jittered start turns any remaining banding into fine noise
     float res = 1.0;
-    float t = 0.02;
-    float ph = 1e10;
-    for (int i = 0; i < 64; i++) {
+    float t = 0.01 + 0.02 * hash12(gl_FragCoord.xy);
+    for (int i = 0; i < 72; i++) {
         float h = mapShadow(ro + rd * t);
-        float y = h * h / (2.0 * ph);
-        float d = sqrt(max(h * h - y * y, 0.0));
-        res = min(res, k * d / max(0.0, t - y));
-        ph = h;
-        t += clamp(h, 0.02, 0.4 + t * 0.12);
+        res = min(res, k * h / t);
+        t += clamp(h, 0.012, 0.4 + t * 0.12);
         if (res < 0.003 || t > tmax) break;
     }
     res = clamp(res, 0.0, 1.0);
@@ -1430,9 +1431,8 @@ vec3 shade(vec3 ro, vec3 rd, float t, float mat, out float outDepth)
             alb = charColor(c, 2);
             if (type == 0.0 || type == 2.0) {
                 // knit texture
-                vec3 q = p * 220.0;
-                float knit = 0.5 + 0.5 * sin(q.x * 0.9 + 0.6 * sin(q.y * 1.7));
-                alb *= 0.9 + 0.16 * knit;
+                float knit = noise3(p * vec3(320.0, 140.0, 320.0)) * 0.6 + noise3(p * 900.0) * 0.4;
+                alb *= 0.86 + 0.24 * knit;
             } else {
                 alb *= 0.92 + 0.12 * noise3(p * 150.0);
             }
