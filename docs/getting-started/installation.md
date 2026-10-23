@@ -233,7 +233,16 @@ cosign verify-blob \
   code-graph-rag-linux-amd64
 ```
 
-Substitute the binary name for your platform. Packages installed from PyPI are protected differently: `pip` and `uv` verify package hashes, which proves integrity in transit, and releases after v0.0.187 additionally carry a [PEP 740](https://peps.python.org/pep-0740/) attestation. That is a publish attestation — proof that the file was uploaded by this project's trusted publisher — rather than build provenance, and it can be queried through PyPI's [Integrity API](https://docs.pypi.org/api/integrity/).
+Substitute the binary name for your platform.
+
+Each binary also ships with a [CycloneDX](https://cyclonedx.org/) software bill of materials, `code-graph-rag-<platform>-<arch>.cdx.json`, listing the Python packages that platform's binary is built from with their versions and declared licences. It is signed and covered by the provenance attestation like the binary, so the commands above verify it too. The Docker image on `ghcr.io` carries an SPDX SBOM attestation for each platform:
+
+```bash
+docker buildx imagetools inspect ghcr.io/vitali87/code-graph-rag:latest \
+  --format '{{ json .SBOM }}'
+```
+
+Packages installed from PyPI are protected differently: `pip` and `uv` verify package hashes, which proves integrity in transit, and releases after v0.0.187 additionally carry a [PEP 740](https://peps.python.org/pep-0740/) attestation. That is a publish attestation — proof that the file was uploaded by this project's trusted publisher — rather than build provenance, and it can be queried through PyPI's [Integrity API](https://docs.pypi.org/api/integrity/).
 
 ## Choose a Graph Backend
 
