@@ -1,0 +1,6 @@
+/third_party/
+/src/*.o
+/tomorrows_shade
+/tomorrows_shade.exe
+*.mp4
+*.wav
