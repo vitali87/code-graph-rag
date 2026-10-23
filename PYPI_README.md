@@ -59,8 +59,9 @@ transformers are then not required locally.
 `pip install code-graph-rag` gives you the newest PyPI release, which is deliberately
 not the newest commit. Git tags exist for every version (one per merge), while PyPI
 uploads and GitHub Release binaries land on an every-50 cadence, so the tag on `main`
-usually runs ahead of the published version. A security fix is the exception: it
-ships immediately rather than waiting for the cadence.
+usually runs ahead of the published version. A security fix, a breaking change or a
+merge a maintainer labels `release now` is the exception: each ships immediately
+rather than waiting for the cadence.
 
 To run code newer than the latest release, install from git with uv:
 

@@ -584,6 +584,10 @@ class AppConfig(BaseSettings):
 
     QUIET: bool = Field(False, validation_alias="CGR_QUIET")
 
+    # The GitHub Sponsors line a finished command ends on in a terminal; set
+    # false to drop it without the rest of the output `--quiet` drops.
+    SPONSOR_PLEDGE: bool = Field(True, validation_alias="CGR_SPONSOR_PLEDGE")
+
     # Compaction discards old tool output to bound the context (#1500). It is
     # on by default because an unbounded history eventually fails the request
     # outright, but a mechanism that drops data must be declinable: set this

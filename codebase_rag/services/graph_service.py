@@ -35,6 +35,7 @@ from ..constants import (
     KEY_NAME,
     KEY_PROJECT_NAME,
     KEY_PROJECT_NAMES,
+    KEY_PROJECT_PREFIX,
     KEY_PROPS,
     KEY_PURGED,
     KEY_TO_MISSING,
@@ -49,18 +50,21 @@ from ..constants import (
     REL_ENDPOINT_JOINER,
     REL_ENDPOINT_SOURCE,
     REL_ENDPOINT_TARGET,
+    SEPARATOR_DOT,
 )
 from ..cypher_queries import (
     CYPHER_ANY_KEYLESS_STRUCTURE,
     CYPHER_ANY_SHARED_STRUCTURE,
     CYPHER_DELETE_ALL,
     CYPHER_DELETE_PROJECT,
+    CYPHER_DELETE_PROJECT_CUT_OFF_UNITS,
     CYPHER_EXPORT_NODES,
     CYPHER_EXPORT_PROJECT_NODES,
     CYPHER_EXPORT_PROJECT_RELATIONSHIPS,
     CYPHER_EXPORT_RELATIONSHIPS,
     CYPHER_LIST_PROJECTS,
     CYPHER_PURGE_CROSS_PROJECT_STRUCTURE,
+    CYPHER_PURGE_CROSS_ROOT_STRUCTURE,
     CYPHER_PURGE_KEYLESS_STRUCTURE,
     build_create_node_query,
     build_create_relationship_query,
@@ -651,6 +655,13 @@ class MemgraphIngestor:
     def delete_project(self, project_name: str) -> None:
         logger.info(ls.MG_DELETING_PROJECT.format(project_name=project_name))
         self._execute_query(CYPHER_DELETE_PROJECT, {KEY_PROJECT_NAME: project_name})
+        self._execute_query(
+            CYPHER_DELETE_PROJECT_CUT_OFF_UNITS,
+            {
+                KEY_PROJECT_NAME: project_name,
+                KEY_PROJECT_PREFIX: f"{project_name}{SEPARATOR_DOT}",
+            },
+        )
         # Shared prefix-less nodes (Resources, ExternalModules) only lose
         # their edges above; drop the ones this project alone anchored.
         prune_unanchored_resources(self)
@@ -698,16 +709,22 @@ class MemgraphIngestor:
             self._execute_query(
                 self._dialect.drop_constraint(label, prop, discovered_name)
             )
-        damaged = bool(self._execute_query(CYPHER_ANY_SHARED_STRUCTURE)) or bool(
-            self._execute_query(CYPHER_ANY_KEYLESS_STRUCTURE)
-        )
+        # With a legacy constraint in force no current sync has written here,
+        # so every shared node is the old key's merge. Without one, current
+        # data shares a node between projects over the same files, and only a
+        # node outside an owner's tree is legacy (issue #3025).
+        if legacy_present:
+            cross_project_purge = CYPHER_PURGE_CROSS_PROJECT_STRUCTURE
+            damaged = True
+        else:
+            cross_project_purge = CYPHER_PURGE_CROSS_ROOT_STRUCTURE
+            damaged = bool(self._execute_query(CYPHER_ANY_SHARED_STRUCTURE)) or bool(
+                self._execute_query(CYPHER_ANY_KEYLESS_STRUCTURE)
+            )
         if not damaged:
             return
         purged = 0
-        for purge_query in (
-            CYPHER_PURGE_CROSS_PROJECT_STRUCTURE,
-            CYPHER_PURGE_KEYLESS_STRUCTURE,
-        ):
+        for purge_query in (cross_project_purge, CYPHER_PURGE_KEYLESS_STRUCTURE):
             rows = self._execute_query(purge_query)
             if rows:
                 purged += int(str(rows[0][KEY_PURGED]))
