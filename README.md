@@ -61,8 +61,8 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **Dependency Locking**: Locked `opentelemetry-api` to version 1.45.1 for stability.
-- **GHSA Security Fix**: Addressed GHSA-xcq7-p3pf-p88h vulnerability.
+- **Security**: Linked dependency advisories in the security notice to the global database.
+- **Build**: Enabled building the gotypes helper on Go 1.27.2 with x/mod v0.42.0.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
