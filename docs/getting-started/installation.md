@@ -107,9 +107,9 @@ With semantic code search (UniXcoder embeddings):
 pip install 'code-graph-rag[semantic]'
 ```
 
-Its vectors go to an embedded Qdrant by default. Add the `sqlite-vec` extra and
-set `CGR_VECTOR_STORE_BACKEND=sqlite` to keep them in a SQLite file beside the
-graph instead; see [Semantic Search](../sdk/semantic-search.md).
+Its vectors go to a SQLite file beside the graph (`~/.cgr/vectors.sqlite`), so
+no server or Docker is needed. Set `CGR_VECTOR_STORE_BACKEND=qdrant` to use
+Qdrant instead; see [Semantic Search](../sdk/semantic-search.md).
 
 With both full language support and semantic search:
 
@@ -197,6 +197,17 @@ cgr --version
 ```
 
 ![cgr --version printing the installed code-graph-rag version](../assets/demos/installation-version.gif)
+
+### From Qdrant to the sqlite vector store
+
+Semantic search keeps its vectors in a SQLite file, `~/.cgr/vectors.sqlite`,
+by default; Qdrant was the default before. An install that never chose a
+backend switches on upgrade: each project's next sync embeds it again into the
+new file, even with nothing in the checkout changed, and the vectors in Qdrant
+are left where they are, no longer searched. Nothing starts Docker for them.
+To keep Qdrant, set `CGR_VECTOR_STORE_BACKEND=qdrant`; an install that sets
+`QDRANT_URL` or `QDRANT_DB_PATH` without it is told so once. A `pip` install
+gets the new store's sqlite-vec by repeating the `semantic` extra, as above.
 
 ## Verify Release Artifacts
 

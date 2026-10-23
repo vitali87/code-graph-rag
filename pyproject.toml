@@ -193,8 +193,13 @@ treesitter-full = [
     "tree-sitter-markdown>=0.5.1",
 ]
 
+# sqlite-vec is the default vector store's, on the platforms it ships wheels
+# for (it has no sdist), which cover every one torch ships wheels for; no
+# marker tells musl from glibc, and torch has no musl wheels either.
+# qdrant-client is for CGR_VECTOR_STORE_BACKEND=qdrant, the default before it.
 semantic = [
     "qdrant-client>=1.9.0",
+    "sqlite-vec>=0.1.9; (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')) or sys_platform == 'darwin' or (sys_platform == 'win32' and platform_machine == 'AMD64')",
     "torch>=2.6.0",
     "transformers>=5.0.0",
 ]
@@ -203,8 +208,9 @@ milvus = [
     "pymilvus[milvus-lite]>=3.0.0",
 ]
 
-# The `sqlite` vector store (CGR_VECTOR_STORE_BACKEND=sqlite): vectors in a
-# file beside the embedded graph, so semantic search needs no server either.
+# The default `sqlite` vector store alone, for an install that computes its
+# embeddings elsewhere (CGR_EMBEDDING_PROVIDER=openai): vectors in a file
+# beside the embedded graph, so semantic search needs no server either.
 sqlite-vec = [
     "sqlite-vec>=0.1.9",
 ]

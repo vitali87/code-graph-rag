@@ -121,7 +121,7 @@ Get your MiniMax API key from the [MiniMax Platform](https://platform.minimax.io
 |----------|---------|-------------|
 | `GRAPH_BACKEND` | `sqlite` | Graph engine: `sqlite` (embedded, no server), `memgraph` or `neo4j`. Memgraph needs the `memgraph` extra (`uv pip install 'code-graph-rag[memgraph]'`) and the bundled stack (`cgr daemon up`); Neo4j needs the `neo4j` extra and is configured with the `NEO4J_*` variables below, and a Neo4j server is yours to run. See [Graph Backends](../architecture/embedded-graph.md). |
 | `SQLITE_GRAPH_PATH` | `$CGR_HOME/graph.sqlite` | The embedded graph's file, shared by every indexed project as one Memgraph instance is |
-| `CGR_VECTOR_STORE_BACKEND` | `qdrant` | Where semantic search keeps its vectors: `qdrant`, `milvus` (the `milvus` extra) or `sqlite`, a file needing no server (the `sqlite-vec` extra). See [Semantic Search](../sdk/semantic-search.md). |
+| `CGR_VECTOR_STORE_BACKEND` | `sqlite` | Where semantic search keeps its vectors: `sqlite`, a file needing no server (sqlite-vec, in the `semantic` extra), `qdrant` or `milvus` (the `milvus` extra). See [Semantic Search](../sdk/semantic-search.md). |
 | `SQLITE_VECTOR_PATH` | `$CGR_HOME/vectors.sqlite` | The `sqlite` vector store's file, beside the embedded graph's |
 | `MEMGRAPH_HOST` | `localhost` | Memgraph hostname |
 | `MEMGRAPH_PORT` | `7687` | Memgraph port |

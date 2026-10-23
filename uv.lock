@@ -482,6 +482,7 @@ python-semantics = [
 ]
 semantic = [
     { name = "qdrant-client" },
+    { name = "sqlite-vec", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or sys_platform == 'darwin'" },
     { name = "torch" },
     { name = "transformers" },
 ]
@@ -582,6 +583,7 @@ requires-dist = [
     { name = "qdrant-client", marker = "extra == 'semantic'", specifier = ">=1.9.0" },
     { name = "regex", specifier = ">=2024.11.6" },
     { name = "rich", specifier = ">=14.2.0" },
+    { name = "sqlite-vec", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'semantic') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'semantic') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'semantic') or (sys_platform == 'darwin' and extra == 'semantic')", specifier = ">=0.1.9" },
     { name = "sqlite-vec", marker = "extra == 'sqlite-vec'", specifier = ">=0.1.9" },
     { name = "sqlite-vec", marker = "extra == 'test'", specifier = ">=0.1.9" },
     { name = "testcontainers", marker = "extra == 'test'", specifier = ">=4.9.0" },
