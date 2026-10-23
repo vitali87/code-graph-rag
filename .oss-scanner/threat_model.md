@@ -64,7 +64,12 @@ These matter most.
   indexing triggers with default settings: the Go frontend
   (`parsers/go_frontend/`, on by default when `go` is installed), the libclang
   layer of the C/C++ frontend (`parsers/cpp_frontend/`, on by default with the
-  `cpp` extra and a compilation database), and `parsers/stdlib_extractor.py`.
+  `cpp` extra and a compilation database), Lombok preprocessing
+  (`parsers/java_lombok.py`, which runs delombok in the default Java mode
+  whenever a Lombok JAR is configured or found in `~/.m2` and the repository's
+  build files mention Lombok), and `parsers/stdlib_extractor.py`. The javac
+  frontend (`JAVA_FRONTEND=javac`) is opt-in but passes `-proc:none`, so it
+  must not run repository code either.
 - The read-only guarantee for model-written Cypher:
   `codebase_rag/services/llm.py`, `codebase_rag/cypher_guard.py`, the
   `fetch_read_only` path in the graph service, and project scoping in
@@ -187,11 +192,10 @@ text in `codebase_rag/tool_errors.py`), and a regression test under
   write is trusted by design.
 - YOLO mode (Shift+Tab) and `--no-confirm` turn approval off on purpose; only
   the checks documented as remaining in them are in scope (rated low above).
-- Toolchain modes the operator has to select, which security.md documents as
-  running the repository's build logic with the user's privileges: the C#
-  Roslyn modes (`CSHARP_FRONTEND=auto|hybrid|roslyn`), Lombok preprocessing,
-  and `JAVA_FRONTEND=javac`. The defaults (tree-sitter for C#, heuristic for
-  Java) are in scope.
+- The C# Roslyn modes (`CSHARP_FRONTEND=auto|hybrid|roslyn`), which the
+  operator has to select and which security.md documents as running
+  `dotnet restore`, MSBuild and source generators with the user's privileges.
+  The tree-sitter default is in scope.
 - Network use that security.md documents: model and embedding providers,
   DuckDuckGo or Serpdive search, tiktoken's encoding download, and toolchains
   fetching dependencies.
