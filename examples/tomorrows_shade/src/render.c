@@ -427,7 +427,16 @@ void RenderInit(RenderConfig cfg, const char *baseDir)
 
 void RenderShutdown(void)
 {
-    UnloadShader(gScene.sh);
+    Prog *progs[] = { &gScene, &gMix, &gDof, &gBright, &gDown, &gUp, &gRays, &gFinal };
+    for (int i = 0; i < 8; i++) UnloadShader(progs[i]->sh);
+    RenderTexture2D *rts[] = { &gSceneA, &gSceneB, &gSceneMix, &gDofRT, &gRaysRT, &gOut, &gGround };
+    for (int i = 0; i < 7; i++) UnloadRenderTexture(*rts[i]);
+    for (int i = 0; i < BLOOM_LEVELS; i++) UnloadRenderTexture(gBloom[i]);
+    UnloadTexture(gNoise);
+    UnloadTexture(gHeight);
+    UnloadFont(gFontRegular);
+    UnloadFont(gFontItalic);
+    UnloadFont(gFontTitle);
 }
 
 static void DrawTextShadowed(Font font, const char *text, Vector2 pos, float size, float spacing, Color col, float alpha)
