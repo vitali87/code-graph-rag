@@ -11,7 +11,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -102,6 +104,127 @@ def test_security_notice_falls_back_when_the_advisory_fetch_fails(
     assert lines[2].startswith("This release contains a security fix; see advisory")
     assert "GHSA-aaaa-bbbb-cccc" in lines[2]
     assert not any("403" in line for line in lines)
+
+
+_UBUNTU_BASH_ONLY = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="the step runs under the Ubuntu runner's bash; on the Windows runner "
+    "`bash` resolves to the WSL launcher, which has no distribution installed",
+)
+_REPOSITORY = "vitali87/code-graph-rag"
+_GHSA = "GHSA-xcq7-p3pf-p88h"
+_REPOSITORY_ADVISORY = f"repos/{_REPOSITORY}/security-advisories/{_GHSA}"
+_GLOBAL_ADVISORY = f"advisories/{_GHSA}"
+_SUMMARY = "OpenTelemetry Python: Unbounded tracestate parsing in opentelemetry-api"
+_ADVISORY = {
+    "ghsa_id": _GHSA,
+    "cve_id": "CVE-2026-114603",
+    "summary": _SUMMARY,
+    "severity": "medium",
+}
+# Serves `gh api <path> --jq <filter>` from <path>.json through the real jq, so
+# the step's filters run as on the runner, and answers a missing record as gh
+# does: the error body on stdout and a nonzero exit.
+_FAKE_GH = r"""#!/usr/bin/env bash
+path=""
+filter=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    api) ;;
+    --jq) filter="$2"; shift ;;
+    *) path="$1" ;;
+  esac
+  shift
+done
+printf '%s\n' "$path" >> "$GH_FIXTURES/calls"
+fixture="$GH_FIXTURES/$(printf '%s' "$path" | tr '/' '_').json"
+if [ ! -f "$fixture" ]; then
+  printf '%s' '{"message":"Not Found","status":"404"}'
+  exit 1
+fi
+jq -r "$filter" "$fixture"
+"""
+
+
+def _run_security_notice(
+    tmp_path: Path, records: dict[str, dict[str, object]]
+) -> tuple[str, list[str]]:
+    fixtures = tmp_path / "fixtures"
+    fixtures.mkdir()
+    for path, record in records.items():
+        fixture = fixtures / f"{path.replace('/', '_')}.json"
+        fixture.write_text(json.dumps(record), encoding="utf-8")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gh = fake_bin / "gh"
+    fake_gh.write_text(_FAKE_GH, encoding="utf-8", newline="\n")
+    fake_gh.chmod(0o755)
+    out = tmp_path / "security.md"
+    script = _security_notice_script().replace("/tmp/security.md", str(out))
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
+        "GITHUB_REPOSITORY": _REPOSITORY,
+        "GHSA": _GHSA,
+        "GH_FIXTURES": str(fixtures),
+    }
+
+    subprocess.run(["bash", "-e", "-c", script], check=True, env=env)
+
+    calls = fixtures / "calls"
+    lines = out.read_text(encoding="utf-8").splitlines()
+    return lines[2], calls.read_text(encoding="utf-8").splitlines()
+
+
+@_UBUNTU_BASH_ONLY
+def test_a_dependency_advisory_links_to_the_global_advisory_database(
+    tmp_path: Path,
+) -> None:
+    # v0.2.10 and v0.2.16 linked their dependency advisories (mcp, certifi)
+    # under this repository's security/advisories, where they 404. The global
+    # record scores through cvss_severities, 0.0 marking an unscored version.
+    record = {
+        **_ADVISORY,
+        "cvss_severities": {"cvss_v3": {"score": 5.3}, "cvss_v4": {"score": 0.0}},
+    }
+
+    notice, calls = _run_security_notice(tmp_path, {_GLOBAL_ADVISORY: record})
+
+    assert notice == (
+        f"{_SUMMARY} (medium severity, CVSS 5.3), dependency advisory "
+        f"[{_GHSA}](https://github.com/advisories/{_GHSA}) / CVE-2026-114603."
+    )
+    assert calls == [_REPOSITORY_ADVISORY, _GLOBAL_ADVISORY]
+
+
+@_UBUNTU_BASH_ONLY
+def test_a_repository_advisory_keeps_its_repository_link(tmp_path: Path) -> None:
+    record = {**_ADVISORY, "cvss": {"score": 5.3}}
+
+    notice, calls = _run_security_notice(tmp_path, {_REPOSITORY_ADVISORY: record})
+
+    assert notice == (
+        f"{_SUMMARY} (medium severity, CVSS 5.3), advisory "
+        f"[{_GHSA}](https://github.com/{_REPOSITORY}/security/advisories/{_GHSA})"
+        " / CVE-2026-114603."
+    )
+    # The repository's own record wins; the global database is not consulted.
+    assert calls == [_REPOSITORY_ADVISORY]
+
+
+@_UBUNTU_BASH_ONLY
+def test_an_advisory_found_nowhere_still_points_at_this_repository(
+    tmp_path: Path,
+) -> None:
+    # Most likely this repository's own draft, which the token cannot read and
+    # which publishes at that address later (issue #1149).
+    notice, calls = _run_security_notice(tmp_path, {})
+
+    assert notice == (
+        "This release contains a security fix; see advisory "
+        f"[{_GHSA}](https://github.com/{_REPOSITORY}/security/advisories/{_GHSA})."
+    )
+    assert calls == [_REPOSITORY_ADVISORY, _GLOBAL_ADVISORY]
 
 
 def _render_step() -> dict[str, str]:
