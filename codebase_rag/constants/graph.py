@@ -998,6 +998,19 @@ MILVUS_IDS_EXPR = "{field} in {ids}"
 # Milvus answers a delete with the deleted keys or with this count.
 MILVUS_DELETE_COUNT_KEY = "delete_count"
 
+# The tail of the module and project deletes: `owned` lists every node the
+# delete removes. A resource-to-resource FLOWS_TO joins two shared Resource
+# nodes, so detaching the owned nodes never reaches it; the flows whose
+# `scope` names an owned node go first (issue #2746).
+CYPHER_DELETE_OWNED_WITH_RESOURCE_FLOWS = (
+    "WITH owned, [n IN owned | n.qualified_name] AS owners "
+    f"OPTIONAL MATCH (:{NodeLabel.RESOURCE.value})-[rf:{RelationshipType.FLOWS_TO.value}]->"
+    f"(:{NodeLabel.RESOURCE.value}) "
+    "WHERE rf.scope IN owners "
+    "WITH owned, collect(rf) AS flows "
+    "FOREACH (r IN flows | DELETE r) "
+    "FOREACH (n IN owned | DETACH DELETE n)"
+)
 # The ownership relations a Module's subtree hangs off, walked by the
 # re-parse delete and by the lookup of files that attach members to it.
 MODULE_SUBTREE_REL_PATTERN = (
@@ -1045,7 +1058,8 @@ CYPHER_DELETE_MODULE = (
     # after a sync that drops the `findings` capture group, or per finding
     # the edited source no longer matches (issue #2536).
     f"OPTIONAL MATCH (m)-[:{MODULE_SUBTREE_REL_PATTERN}*0..]->(c) "
-    "DETACH DELETE m, c"
+    # The walk starts at length 0, so `owned` includes the module itself.
+    "WITH m, collect(DISTINCT c) AS owned " + CYPHER_DELETE_OWNED_WITH_RESOURCE_FLOWS
 )
 # Keyed on absolute_path: the relative path is shared across same-layout
 # projects, and a path-only delete would take the sibling's node (issue #897).
@@ -1727,9 +1741,10 @@ REL_ENDPOINT_JOINER = " and "
 # same node pair; these props join the MERGE key so parallel edges are not
 # collapsed at write time (issue #722). Props absent from a batch's rows are
 # dropped from the key at flush time, so resource-level FLOWS_TO (no `via`)
-# still dedups on endpoints.
+# dedups on its endpoints and its `scope`: one edge per function that
+# produced the flow, so each goes away with its own owner (issue #2746).
 MERGE_KEY_PROPS_BY_REL: dict[str, tuple[str, ...]] = {
-    RelationshipType.FLOWS_TO.value: ("via", "kind"),
+    RelationshipType.FLOWS_TO.value: ("via", "kind", "scope"),
     # One edge per call/reference/instantiation site (issue #1522); a row
     # without a site still merges on its endpoints alone.
     RelationshipType.CALLS.value: (KEY_LINE, KEY_COL),
