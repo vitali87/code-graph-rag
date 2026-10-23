@@ -82,9 +82,9 @@ _EMPTY_MANIFESTS = pytest.mark.parametrize(
 
 @pytest.fixture
 def records() -> Generator[list[tuple[str, str]], None, None]:
-    # Finalize earlier tests' garbage before capturing: ImportProcessor.__del__
-    # saves the stdlib cache and logs at DEBUG, which would otherwise land in
-    # this capture whenever the cyclic GC happens to run mid-test.
+    # An updater an earlier test left in a reference cycle saves the stdlib
+    # cache from its finalizer, logging at DEBUG whenever the collector gets
+    # to it; collected now, so it cannot land in this test's records.
     gc.collect()
     captured: list[tuple[str, str]] = []
     sink_id = logger.add(
