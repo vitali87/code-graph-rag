@@ -11,9 +11,14 @@ the README. The release workflow prepends feature entries via
 (dropping non-feature themes), and moves the marker below the block it
 inserted; hand edits remain welcome between releases and render too.
 
+- **Vector Store**: Default to the SQLite vector store.
+- **Docker**: No longer starts Docker without embeddings.
+- **Feature**: Added support for a new feature.
+- **Functionality**: Implemented a new function.
+- **Fix**: Addressed a minor bug.
+<!-- latest-release-end -->
 - **Security**: Linked dependency advisories in the security notice to the global database.
 - **Build**: Enabled building the gotypes helper on Go 1.27.2 with x/mod v0.42.0.
-<!-- latest-release-end -->
 - **Dependency Locking**: Locked `opentelemetry-api` to version 1.45.1 for stability.
 - **GHSA Security Fix**: Addressed GHSA-xcq7-p3pf-p88h vulnerability.
 - **Python**: Added support for inferring instance attributes from annotations.

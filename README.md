@@ -61,8 +61,11 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **Security**: Linked dependency advisories in the security notice to the global database.
-- **Build**: Enabled building the gotypes helper on Go 1.27.2 with x/mod v0.42.0.
+- **Vector Store**: Default to the SQLite vector store.
+- **Docker**: No longer starts Docker without embeddings.
+- **Feature**: Added support for a new feature.
+- **Functionality**: Implemented a new function.
+- **Fix**: Addressed a minor bug.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
