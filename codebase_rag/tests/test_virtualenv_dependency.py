@@ -105,6 +105,7 @@ def test_prompt_command_substitution_stays_inert_in_bash(
         ],
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         env=env,
         check=True,
     )
