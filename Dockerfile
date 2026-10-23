@@ -1,12 +1,12 @@
-FROM ghcr.io/astral-sh/uv:0.13@sha256:cdc6093146eb3ff6a40107b38f008b789e050e77ad87865e381d9917da55a168 AS uv
+FROM ghcr.io/astral-sh/uv:0.13@sha256:4a1f3666816dafadd20ceb71eac9a7d56d7ef30279f7d64048519ab901ada336 AS uv
 
-FROM python:3.14-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d AS builder
+FROM python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170 AS builder
 
 COPY --from=uv /uv /uvx /bin/
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        cmake build-essential git libssl-dev zlib1g-dev libzstd-dev && \
+        cmake build-essential git libssl-dev zlib1g-dev libzstd-dev cargo && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -29,14 +29,16 @@ ENV UV_PYTHON_PREFERENCE=only-managed
 # .python-version must arrive with the manifests: without it this first sync
 # falls back to the newest managed Python allowed by requires-python (which
 # moves with each uv release), and the later sync, once COPY . . brings in the
-# pin, rebuilds .venv on the pinned version.
+# pin, rebuilds .venv on the pinned version. --no-install-local leaves out
+# the project and cgr-graph-rs, a path dependency built from rust/ (with the
+# cargo above), as neither source is here until COPY . . brings it.
 COPY pyproject.toml uv.lock .python-version ./
-RUN uv sync --frozen --no-dev --extra treesitter-full --no-install-project --no-binary-package pymgclient
+RUN uv sync --frozen --no-dev --extra treesitter-full --extra memgraph --no-install-local --no-binary-package pymgclient
 
 COPY . .
-RUN uv sync --frozen --no-dev --extra treesitter-full --no-binary-package pymgclient
+RUN uv sync --frozen --no-dev --extra treesitter-full --extra memgraph --no-binary-package pymgclient
 
-FROM python:3.14-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d
+FROM python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ripgrep libssl3 zlib1g libzstd1 && \

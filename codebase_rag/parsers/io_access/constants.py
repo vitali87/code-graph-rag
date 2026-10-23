@@ -59,6 +59,8 @@ class IODirection(StrEnum):
 # Synthetic qualified name for a Resource node: resource::<kind>::<identity>.
 # Defined with the graph constants so readers outside the parsers share it.
 RESOURCE_QN_FORMAT = cs.RESOURCE_QN_FORMAT
+# How a project scopes a resource identity it alone can reach.
+RESOURCE_PROJECT_IDENTITY = "{project}::{identity}"
 
 # Identity used when the accessed target is not a static string literal.
 DYNAMIC_TARGET = "<dynamic>"

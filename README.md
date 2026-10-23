@@ -42,13 +42,13 @@
 
 # Code-Graph-RAG
 
-Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by compiler-grade frontends and runtime traces where available, builds a knowledge graph of its structure in Memgraph, and lets you query, edit, and optimise that code in plain English. It works across a monorepo of mixed languages under one unified graph schema.
+Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by compiler-grade frontends and runtime traces where available, builds a knowledge graph of its structure in an embedded graph database that needs no server, and lets you query, edit, and optimise that code in plain English. It works across a monorepo of mixed languages under one unified graph schema.
 
 <p align="center">
   <b>1. Index:</b> <code>cgr start --update-graph</code> parses a repository into a knowledge graph (sped up)
 </p>
 <p align="center">
-  <img src="./assets/demo-indexing.gif" alt="cgr parsing the code-graph-rag repository into a Memgraph knowledge graph, then printing node and relationship counts">
+  <img src="./assets/demo-indexing.gif" alt="cgr parsing the code-graph-rag repository into a knowledge graph, then printing node and relationship counts">
 </p>
 
 <p align="center">
@@ -61,11 +61,7 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **Enhanced CLI Scope**: `cgr stats` and `cgr export` now support scoping to specific projects or workspaces, and offer improved error handling.
-- **Improved Logging**: Logging has been refined to provide more informative messages, including per-symbol indexing and connection lifecycle details, and reduced unnecessary output.
-- **Expanded Language Support**: Added support for Julia as a supported language.
-- **Refined Graph Navigation**: Improved handling of cross-service links in flow verdicts and signature deltas, and enhanced the ability to follow re-exports.
-- **Contextual Improvements**: Added support for context-slice queries, reasons, and the necessary ingestor reads.
+- **GitHub Sponsors**: Added support for GitHub Sponsors via the command line.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
@@ -86,14 +82,16 @@ Point Code-Graph-RAG at a repository and it reads every source file, extracts fu
 
 The system has two components:
 
-1. **Multi-language parser.** A Tree-sitter based parser reads the codebase and ingests functions, classes, methods, modules, and their relationships into Memgraph under a single language-agnostic schema. Where a toolchain is available, compiler-grade frontends layer exact facts on top (libclang for C/C++, `go/types` for Go, and opt-in Roslyn, `javac` and Jedi for C#, Java and Python), and [dynamic tracing](docs/guide/dynamic-tracing.md) merges calls observed at runtime. Tree-sitter stays the backbone: a trace only sees code that ran, and a compiler frontend only covers what its toolchain can build.
+1. **Multi-language parser.** A Tree-sitter based parser reads the codebase and ingests functions, classes, methods, modules, and their relationships into the graph under a single language-agnostic schema. Where a toolchain is available, compiler-grade frontends layer exact facts on top (libclang for C/C++, `go/types` for Go, and opt-in Roslyn, `javac` and Jedi for C#, Java and Python), and [dynamic tracing](docs/guide/dynamic-tracing.md) merges calls observed at runtime. Tree-sitter stays the backbone: a trace only sees code that ran, and a compiler frontend only covers what its toolchain can build.
 2. **RAG system** (`codebase_rag/`). An interactive CLI that turns natural language into Cypher queries, retrieves matching code, and drives AI-powered editing and optimisation.
 
 ```
-Source Code -> Tree-sitter Parser -> AST Analysis -> Memgraph Knowledge Graph
+Source Code -> Tree-sitter Parser -> AST Analysis -> Knowledge Graph
                                                              |
 User Query -> AI Model (Cypher Gen) -> Cypher Query -> Graph Results -> Response
 ```
+
+The graph is stored in an embedded SQLite file by default. Memgraph and Neo4j are opt-in backends that run the same Cypher; [Graph Backends](docs/architecture/embedded-graph.md) compares them.
 
 See the [Architecture Overview](docs/architecture/overview.md) and [Graph Schema](docs/architecture/graph-schema.md) for the full picture.
 
@@ -120,13 +118,13 @@ Three version lines exist and they intentionally differ:
 | where | what it tracks |
 |---|---|
 | git tags | every version, one per merge |
-| GitHub Releases (binaries, signatures) | every 50th version, plus any security fix |
-| PyPI | every 50th version, plus any security fix |
+| GitHub Releases (binaries, signatures) | every 50th version, plus any security fix or breaking change |
+| PyPI | every 50th version, plus any security fix or breaking change |
 
 So the newest tag on `main` usually runs ahead of the newest release, often by
 tens of patch versions; they coincide only just after a release. Nothing is
-stuck, the cadences differ by design. A security fix does NOT wait for the
-cadence: it ships a release and a PyPI upload immediately.
+stuck, the cadences differ by design. A security fix or a breaking change does
+NOT wait for the cadence: either ships a release and a PyPI upload immediately.
 
 `uv tool install` and `pipx install` give you the newest PyPI version, which is the
 newest RELEASE, not the newest tag. Interim tags exist so every merge is
@@ -140,7 +138,7 @@ uv tool install "code-graph-rag[treesitter-full,ast-grep,semantic] @ git+https:/
 
 To upgrade an existing install, run `uv tool upgrade code-graph-rag` (with pipx, `pipx upgrade code-graph-rag`, or `pipx reinstall code-graph-rag` for a git install). [Upgrade](docs/getting-started/installation.md#upgrade) covers the other install methods.
 
-You also need Python 3.12+, Docker (for Memgraph), `cmake`, and `ripgrep`. Full prerequisites, source installs, and environment setup are in the [Installation](docs/getting-started/installation.md) guide.
+You also need Python 3.12+ and `ripgrep`. The graph lives in an embedded SQLite file by default, so there is no database server to run: no Docker and no `cmake`. Memgraph and Neo4j remain available as opt-in backends ([Graph Backends](docs/architecture/embedded-graph.md)). Full prerequisites, source installs, and environment setup are in the [Installation](docs/getting-started/installation.md) guide.
 
 > [!NOTE]
 > The wheel is pure Python (`py3-none-any`), so it installs on any platform with Python 3.12 or newer. Older system interpreters (Debian Bookworm ships 3.11) need the interpreter pinned explicitly; see [Installation](docs/getting-started/installation.md#older-system-interpreters) for the commands.
@@ -148,13 +146,15 @@ You also need Python 3.12+, Docker (for Memgraph), `cmake`, and `ripgrep`. Full 
 ## Quick Start
 
 ```bash
-# Start the packaged Memgraph + Qdrant stack (no compose file needed)
-cgr daemon up
-
 # Parse a repository into the graph, then query it
 cgr start --repo-path /path/to/repo --update-graph
 cgr start --repo-path /path/to/repo
 ```
+
+The graph is written to `~/.cgr/graph.sqlite` (set `SQLITE_GRAPH_PATH` to move it).
+To use Memgraph instead, install the driver with the `memgraph` extra, set
+`GRAPH_BACKEND=memgraph`, and start the packaged Memgraph + Qdrant stack with
+`cgr daemon up`.
 
 Repeat the first command for each repository you want indexed; the graph is
 shared, and syncing one project leaves the others alone. To start over from an
@@ -191,6 +191,7 @@ Code-Graph-RAG runs as an [MCP](https://modelcontextprotocol.io) server so Claud
 **Architecture**
 - [Overview](docs/architecture/overview.md)
 - [Graph Schema](docs/architecture/graph-schema.md)
+- [Graph Backends](docs/architecture/embedded-graph.md)
 - [Language Support](docs/architecture/language-support.md)
 - [Data-Flow Edges](docs/architecture/data-flow-edges.md)
 
@@ -224,6 +225,8 @@ Please see [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines. Good 
 ## Support
 
 For issues or questions, check the [Troubleshooting](docs/advanced/troubleshooting.md) guide first, then open an issue.
+
+If cgr is useful to you, please consider pledging support on [GitHub Sponsors](https://github.com/sponsors/vitali87). cgr links the page under `cgr --version` and, in a terminal, after most commands finish; set `CGR_SPONSOR_PLEDGE=false` to hide that line.
 
 ## License
 

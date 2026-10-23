@@ -209,6 +209,10 @@ KEY_UNRESOLVED_SPECIFIERS = "unresolved_specifiers"
 # so the modules that waited for it are re-parsed (issue #1568). Written
 # unconditionally on every parse so a resolved name clears.
 KEY_UNRESOLVED_REFERENCES = "unresolved_references"
+# The dotted namespace a PHP file declares (`App.Util`), on its Module: a
+# `use function App\\Util\\slug` matches it, and only a parse of the file
+# gives it, so an incremental run reads it back from here (issue #3277).
+KEY_PHP_NAMESPACE = "php_namespace"
 KEY_ABSOLUTE_PATH = "absolute_path"
 # Whether flow analysis covered a Module: its language is in the source/sink
 # registry AND the FLOWS_TO capture group was enabled at indexing. Read by
@@ -843,6 +847,9 @@ KEY_ANCHOR = "anchor"
 # omitted key, so a fixed link would otherwise stay listed as broken.
 KEY_BROKEN_LINKS = "broken_links"
 KEY_DECORATORS = "decorators"
+# The largest line a `path:line` target is looked up at: past it no source
+# file has the line, and the value would overflow a Bolt integer.
+GRAPH_MAX_SOURCE_LINE = 2**31 - 1
 # Return and parameter annotations as written (issue #1527). `return_type` is
 # absent when the definition has none; `param_types` is parallel to the
 # declared parameters ("" for an unannotated one) and absent, not empty, for
@@ -1010,6 +1017,13 @@ CYPHER_DELETE_OWNED_WITH_RESOURCE_FLOWS = (
     "FOREACH (r IN flows | DELETE r) "
     "FOREACH (n IN owned | DETACH DELETE n)"
 )
+# The ownership relations a Module's subtree hangs off, walked by the
+# re-parse delete and by the lookup of files that attach members to it.
+MODULE_SUBTREE_REL_PATTERN = (
+    "DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER"
+    "|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT"
+    "|IMPLEMENTS_PATTERN|HAS_SMELL|HAS_VULNERABILITY"
+)
 CYPHER_DELETE_MODULE = (
     # Scoped to the project: two projects in the shared graph can hold the
     # same relative path, and a path-only match would take the sibling's
@@ -1049,9 +1063,7 @@ CYPHER_DELETE_MODULE = (
     # re-parse stripped its edge and left the node: an orphan per re-parse
     # after a sync that drops the `findings` capture group, or per finding
     # the edited source no longer matches (issue #2536).
-    "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER"
-    "|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT"
-    "|IMPLEMENTS_PATTERN|HAS_SMELL|HAS_VULNERABILITY*0..]->(c) "
+    f"OPTIONAL MATCH (m)-[:{MODULE_SUBTREE_REL_PATTERN}*0..]->(c) "
     # The walk starts at length 0, so `owned` includes the module itself.
     "WITH m, collect(DISTINCT c) AS owned " + CYPHER_DELETE_OWNED_WITH_RESOURCE_FLOWS
 )
@@ -1260,7 +1272,8 @@ CYPHER_ALL_DEFINITION_QNS = (
 CYPHER_ALL_MODULE_QNS = (
     "MATCH (n) WHERE (n:Module OR n:ModuleInterface) "
     "AND n.qualified_name STARTS WITH $project_prefix "
-    "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label"
+    "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label, "
+    "n.php_namespace AS php_namespace"
 )
 
 # Inbound reference edges (from unchanged files) into symbols defined in one
@@ -1323,6 +1336,19 @@ CYPHER_INBOUND_EDGES = (
 # like INHERITS: an implementor in the same package holds no import edge into
 # its interface's file, and without this it was neither re-parsed nor
 # restored when that file was re-indexed (issue #1565).
+# Files that attach members to these modules' subtrees: a Go method keyed
+# under its receiver type's module whatever file declares it, a C++
+# out-of-line definition hung on its header's class. The re-parse delete
+# walks the subtree and takes them, and only their own file recreates them,
+# so they must re-parse in the same run (issue #3271).
+CYPHER_FOREIGN_MEMBER_PATHS = (
+    "MATCH (m:Module) WHERE m.path IN $paths "
+    "AND (m.qualified_name = $project_name "
+    "OR m.qualified_name STARTS WITH $project_prefix) "
+    f"MATCH (m)-[:{MODULE_SUBTREE_REL_PATTERN}*1..]->(c) "
+    "WHERE c.path IS NOT NULL AND NOT c.path IN $paths "
+    "RETURN DISTINCT c.path AS path"
+)
 CYPHER_AFFECTED_CALLER_PATHS = (
     "MATCH (caller)-[:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS|IMPLEMENTS]->(target) "
     "WHERE target.path IN $paths AND caller.path IS NOT NULL "
@@ -1425,6 +1451,22 @@ CYPHER_UNRESOLVED_IMPORTER_PATHS = (
     "OR target.qualified_name STARTS WITH (name + '.')) "
     "RETURN DISTINCT importer.path AS caller_path"
 )
+# Every IMPORTS edge written for a `package:` URI, with where it went (issue
+# #3278 review). A Dart pubspec's `name:` decides whether `package:<name>/...`
+# is a module of the project or an external package, so adding, deleting or
+# renaming one moves those imports while the importers stay unchanged on
+# disk, and no edge leads from them to the pubspec for the dependents lookup
+# to follow. The caller resolves each URI again and keeps the moved ones.
+CYPHER_PACKAGE_URI_IMPORTS = (
+    "MATCH (importer)-[r:IMPORTS]->(target) "
+    "WHERE importer.path IS NOT NULL "
+    "AND importer.qualified_name STARTS WITH $project_prefix "
+    "AND r.imported_name STARTS WITH $uri_prefix "
+    "RETURN DISTINCT importer.path AS caller_path, "
+    "importer.qualified_name AS from_qn, r.imported_name AS imported_name, "
+    "target.qualified_name AS to_qn"
+)
+CYPHER_PARAM_URI_PREFIX = "uri_prefix"
 # Modules carrying at least one unresolved relative specifier, with the
 # specifiers themselves. The specifier is relative to the IMPORTING module's
 # directory, so the match against a created file is resolved in Python rather
@@ -1529,12 +1571,17 @@ CSHARP_PARTIAL_TYPE_LABELS: frozenset[NodeLabel] = frozenset(
 # generic arity: a rename reads which of them are the parts of one `partial`
 # type by the key parsing groups them under (`csharp_partial_key_from_graph`),
 # which spells the arity (issue #2579).
-_CSHARP_PARTIAL_LABELS = "|".join(
-    sorted(label.value for label in CSHARP_PARTIAL_TYPE_LABELS)
+# Spelled as a WHERE label test rather than `(n:A|B)` alternation, which
+# not every openCypher engine accepts (issue #386).
+_CSHARP_PARTIAL_LABEL_TEST = (
+    "("
+    + " OR ".join(f"n:{label.value}" for label in sorted(CSHARP_PARTIAL_TYPE_LABELS))
+    + ")"
 )
 CYPHER_SAME_NAMED_CSHARP_TYPES = (
-    f"MATCH (n:{_CSHARP_PARTIAL_LABELS}) "
-    "WHERE n.name = $name AND n.qualified_name STARTS WITH $project_prefix "
+    "MATCH (n) "
+    f"WHERE {_CSHARP_PARTIAL_LABEL_TEST} "
+    "AND n.name = $name AND n.qualified_name STARTS WITH $project_prefix "
     "RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, "
     "n.path AS path, n.modifiers AS modifiers, n.generic_arity AS generic_arity"
 )

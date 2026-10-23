@@ -464,6 +464,9 @@ def _definitions_at(
     location: Location,
     owns: Callable[[str], bool],
 ) -> list[SymbolRow]:
+    if location.line > cs.GRAPH_MAX_SOURCE_LINE:
+        # No file has the line, and Bolt could not carry it (#3244).
+        return []
     rows = fetch_all(
         cq.CYPHER_GRAPH_RESOLVE_LOCATION,
         {
