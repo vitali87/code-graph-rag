@@ -54,6 +54,7 @@ from .dart import (
     dart_exposes_library,
     dart_extract_uri,
     dart_import_prefix,
+    dart_is_export,
     dart_local_name,
     dart_resolve_import,
     discover_dart_packages,
@@ -1143,6 +1144,7 @@ class ImportProcessor:
         "dart_prefix_shadows",
         "dart_import_aliases",
         "dart_exposed_libraries",
+        "dart_bare_imports",
         "rust_block_scope_imports",
         "rust_self_module_imports",
         "rust_restricted_use_names",
@@ -1404,6 +1406,12 @@ class ImportProcessor:
         # reached through a barrel file could not be told from one the barrel
         # merely uses (issue #2482).
         self.dart_exposed_libraries: dict[str, list[str]] = {}
+        # {library module qn: [module qns whose top-level names a BARE
+        # identifier there can see]}: its unprefixed imports and its parts.
+        # import_mapping cannot say which those are: it keys every import by
+        # its file-derived name, an `as p` one included, whose names the
+        # source reaches only as `p.name`.
+        self.dart_bare_imports: dict[str, list[str]] = {}
         # Uses inside const/static initializer blocks, keyed by file
         # module qn: (block start byte, block end byte, imports, nested
         # mod spans, nested fn spans, nested item scopes with their
@@ -1694,6 +1702,7 @@ class ImportProcessor:
         self.dart_prefix_shadows.pop(module_qn, None)
         self.dart_import_aliases.pop(module_qn, None)
         self.dart_exposed_libraries.pop(module_qn, None)
+        self.dart_bare_imports.pop(module_qn, None)
         self._retract_import_sites(module_qn)
 
     def displaced_include_targets(self) -> dict[str, frozenset[str]]:
@@ -6691,6 +6700,8 @@ class ImportProcessor:
                         module_qn, prefix, full_name, import_node, uri
                     )
                     prefixes.add(prefix)
+                elif not dart_is_export(import_node):
+                    self.dart_bare_imports.setdefault(module_qn, []).append(full_name)
         # A local or parameter of the same name SHADOWS the prefix inside its
         # scope, and an UNTYPED one (`var p = 1`) never reaches the resolver's
         # local_var_types, so the type map cannot answer this. The binding is
