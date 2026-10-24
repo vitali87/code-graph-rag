@@ -16,6 +16,7 @@ import pytest
 from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
+from codebase_rag.checkout_state import state_file
 from codebase_rag.cli import app
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -233,7 +234,9 @@ def test_signature_change_lists_every_site_with_a_verdict(
     (site,) = change["sites"]
     assert site["path"] == "pkg/app.py"
     assert site["line"] == 5
-    assert site["verdict"] == cs.DELTA_ARITY_POSSIBLY_MISSING
+    # `b` has no default, so `helper(1)` is certainly short (issue #2845);
+    # it read `possibly_missing` while the header was not read back.
+    assert site["verdict"] == cs.DELTA_ARITY_TOO_FEW
     assert site["declared_count"] == 2
 
 
@@ -985,7 +988,7 @@ def test_indexing_two_projects_on_one_tree_does_not_reuse_fast_path(
         str(properties.get(cs.KEY_QUALIFIED_NAME, "")).startswith("project_b.")
         for properties in store.nodes.values()
     )
-    assert _load_exclusion_state(root / cs.EXCLUSION_STATE_FILENAME) == {
+    assert _load_exclusion_state(state_file(root, cs.EXCLUSION_STATE_FILENAME)) == {
         "exclude": [],
         "unignore": [],
         "project": "project_a",
@@ -1034,6 +1037,7 @@ def test_unnamed_check_preserves_unnamed_stamp_after_reingest(
 ) -> None:
     import subprocess
 
+    from codebase_rag.graph_updater import _load_exclusion_state
     from codebase_rag.parser_loader import load_parsers
     from codebase_rag.structural_check import CheckError, indexed_scope, run_check
     from codebase_rag.utils.path_utils import derive_project_name
@@ -1076,8 +1080,10 @@ def test_unnamed_check_preserves_unnamed_stamp_after_reingest(
     )
 
     assert indexed_scope(root, project_name) == (None, None)
-    with pytest.raises(CheckError):
-        indexed_scope(root, project_name, explicit=True)
+    # The check left the stamp as the unnamed run wrote it.
+    stamp = _load_exclusion_state(state_file(root, cs.EXCLUSION_STATE_FILENAME))
+    assert stamp is not None, stamp
+    assert not stamp.get("named"), stamp
     with pytest.raises(CheckError):
         indexed_scope(root, "explicit-project", explicit=True)
 
@@ -1138,9 +1144,10 @@ def test_check_ignores_cgr_state_files(
         check=True,
     )
     store = _StatefulIngestor()
-    # Indexing after the commit leaves cgr's state files untracked.
     _updater(store, root).run(force=True)
-    assert any(p.name.startswith(".cgr-") for p in root.iterdir())
+    # Indexing keeps its state out of the tree (issue #2427); one an older
+    # cgr left there is still untracked and must not count as an edit.
+    (root / cs.HASH_CACHE_FILENAME).write_text("{}")
     assert changed_since(root, "HEAD") == ([], [])
     parsers, queries = load_parsers()
     delta = run_check(root, "HEAD", PROJECT, store, parsers, queries)
