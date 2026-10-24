@@ -13,7 +13,7 @@ from watchdog.events import (
     FileSystemEvent,
 )
 
-from realtime_updater import CodeChangeEventHandler
+from codebase_rag.watch import CodeChangeEventHandler
 
 # The watcher decides WHICH events reach the graph; GraphUpdater.reingest
 # decides what happens to them (issue #1524; see test_reingest.py for the
