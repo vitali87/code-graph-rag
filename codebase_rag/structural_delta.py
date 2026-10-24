@@ -23,7 +23,7 @@ import time
 from collections.abc import Callable, Iterable, Iterator
 from functools import lru_cache
 from pathlib import Path
-from typing import NamedTuple, TypedDict
+from typing import NamedTuple, NotRequired, TypedDict
 
 from tree_sitter import Node, Tree
 
@@ -40,6 +40,7 @@ from .dead_code import (
 from .duplicates import _jaccard
 from .graph_query import QueryFn, _longer_project_prefixes, _opt_int, _prefix
 from .language_spec import get_language_for_extension
+from .parser_loader import load_parsers
 from .types_defs import PropertyDict, ReingestReport, ResultRow
 
 _METHOD_LABELS = frozenset({cs.NodeLabel.METHOD.value})
@@ -133,6 +134,11 @@ class DanglingCaller(TypedDict):
     col: int | None
     target: str
     renamed_to: str | None
+    # Set to "base" when `line` is the call's line in the base ref because
+    # the site could not be moved to its working-tree line: the edit changed
+    # the caller's body, or the shifted line does not read the call (issue
+    # #3171).
+    line_from: NotRequired[str]
 
 
 class DanglingImporter(TypedDict):
@@ -744,6 +750,7 @@ def _dangling(
     renamed_to = {r["old"]: r["new"] for r in symbols["renamed"]}
     after_pairs = {(site.caller, site.callee) for site in after.sites}
     held = _held(before.sites)
+    trees: dict[str, _WorkingTree | None] = {}
     out: list[DanglingCaller] = []
     seen: set[tuple[str, str, int | None, int | None]] = set()
     for site in before.sites:
@@ -767,18 +774,145 @@ def _dangling(
         if key in seen:
             continue
         seen.add(key)
-        out.append(
-            DanglingCaller(
-                caller=site.caller,
-                path=site.caller_path,
-                line=site.line,
-                col=site.col,
-                target=site.callee,
-                renamed_to=new_name,
-            )
+        dangling = DanglingCaller(
+            caller=site.caller,
+            path=site.caller_path,
+            line=site.line,
+            col=site.col,
+            target=site.callee,
+            renamed_to=new_name,
         )
+        _move_to_working_tree(dangling, before, after, trees, repo_root)
+        out.append(dangling)
     return sorted(
         out, key=lambda d: (d["path"], d["line"] or 0, d["col"] or 0, d["caller"])
+    )
+
+
+class _WorkingTree(NamedTuple):
+    """A re-parsed caller's file as it is now."""
+
+    rows: list[str]
+    # None when the file's language has no grammar.
+    root: Node | None
+
+
+def _working_tree(
+    trees: dict[str, _WorkingTree | None], repo_root: Path | None, path: str
+) -> _WorkingTree | None:
+    # Several dangling calls can share a caller's file: it is read once.
+    if path not in trees:
+        text = _read_source(repo_root, path) if repo_root else None
+        trees[path] = (
+            None
+            if text is None
+            else _WorkingTree(text.split("\n"), _syntax_root(path, text))
+        )
+    return trees[path]
+
+
+def _syntax_root(path: str, text: str) -> Node | None:
+    language = get_language_for_extension(Path(path).suffix)
+    parser = load_parsers()[0].get(language) if language else None
+    return parser.parse(text.encode(cs.ENCODING_UTF8)).root_node if parser else None
+
+
+def _move_to_working_tree(
+    dangling: DanglingCaller,
+    before: Snapshot,
+    after: Snapshot,
+    trees: dict[str, _WorkingTree | None],
+    repo_root: Path | None,
+) -> None:
+    """Report a re-parsed caller's dangling call where it is now.
+
+    The site comes from the base graph, so it carried the base line: a
+    deletion above the caller reported the call past the end of the file
+    or at another function's line (issue #3171). A caller whose body the
+    edit left alone moved as a whole, so its call moved by the same
+    lines; one whose body changed keeps the base line, marked as such.
+    The skeleton drops names, comments and blank lines, so swapping two
+    calls or moving a comment past one leaves it equal: the shifted line
+    is taken only when the working tree reads the call there. A caller
+    this pass did not re-parse is left as it is.
+    """
+    if dangling["path"] not in after.paths:
+        return
+    old = before.definitions.get(dangling["caller"])
+    new = after.definitions.get(dangling["caller"])
+    if old is None or new is None or dangling["line"] is None:
+        return
+    line = dangling["line"] + new.start_line - old.start_line
+    if (old.fingerprint, old.end_line - old.start_line) == (
+        new.fingerprint,
+        new.end_line - new.start_line,
+    ) and _reads_call(
+        _working_tree(trees, repo_root, dangling["path"]),
+        line,
+        dangling["col"],
+        _call_name(before, dangling),
+    ):
+        dangling["line"] = line
+        return
+    dangling["line_from"] = cs.DANGLING_LINE_FROM_BASE
+
+
+def _call_name(before: Snapshot, dangling: DanglingCaller) -> str | None:
+    """The one name a dangling call is spelled by in its caller's file.
+
+    What the file imports the target as (after `from util import helper as
+    h` the call reads `h()`, and a `helper()` there calls something else),
+    else the target's own name. None when the file imports it under two
+    names: either then reads as the call, so `a()` trading lines with a
+    `b()` that a parameter `b` shadows would leave the shifted line
+    looking right (CodeRabbit, PR #3245).
+    """
+    aliases = {
+        b.bound
+        for b in before.bindings
+        if b.importer_path == dangling["path"] and b.symbol == dangling["target"]
+    }
+    if aliases:
+        return aliases.pop() if len(aliases) == 1 else None
+    target = before.definitions.get(dangling["target"])
+    return target.name if target else dangling["target"].rpartition(cs.SEPARATOR_DOT)[2]
+
+
+def _reads_call(
+    tree: _WorkingTree | None, line: int, col: int | None, name: str | None
+) -> bool:
+    """Whether the code at 1-based `line`, byte `col`, names `name` first.
+
+    Plainly or through a qualifier: `helper(`, `self.helper(`,
+    `util::helper(`, `new Helper(`. The skeleton sees neither a comment's
+    text nor a string literal's, so a `# helper()` that traded lines with
+    the call leaves it equal too: a name read inside one is no call.
+    """
+    if tree is None or name is None or col is None or not 0 < line <= len(tree.rows):
+        return False
+    row = tree.rows[line - 1]
+    try:
+        rest = row.encode(cs.ENCODING_UTF8)[col:].decode(cs.ENCODING_UTF8)
+    except UnicodeDecodeError:
+        return False
+    pattern = cs.DANGLING_CALL_QUALIFIER_PATTERN + re.escape(name)
+    if re.match(pattern + cs.DANGLING_CALL_NAME_END_PATTERN, rest) is None:
+        return False
+    return not _inside_text(tree.root, line - 1, col)
+
+
+def _inside_text(root: Node | None, row: int, col: int) -> bool:
+    """Whether 0-based (`row`, byte `col`) is in a comment's or a string's text.
+
+    Without a grammar the line's text alone decides. An interpolated call
+    (`f"{helper()}"`, `${helper()}`) starts at its own identifier, not at
+    the string around it.
+    """
+    if root is None:
+        return False
+    node = root.descendant_for_point_range((row, col), (row, col))
+    return node is not None and any(
+        marker in node.type for marker in cs.DANGLING_CALL_TEXT_NODE_SUBSTRINGS
     )
 
 
@@ -1213,6 +1347,10 @@ def _dunder_all_entries(text: str, name: str) -> list[tuple[int, int]]:
 def _python_source(repo_root: Path, path: str) -> str | None:
     if get_language_for_extension(Path(path).suffix) != cs.SupportedLanguage.PYTHON:
         return None
+    return _read_source(repo_root, path)
+
+
+def _read_source(repo_root: Path, path: str) -> str | None:
     try:
         return (repo_root / path).read_text(encoding=cs.ENCODING_UTF8)
     except (OSError, UnicodeDecodeError):
