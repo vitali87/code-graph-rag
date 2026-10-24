@@ -173,7 +173,8 @@ def test_a_call_moved_inside_an_unchanged_skeleton_says_its_line_is_the_base_one
 
 
 def test_a_call_through_a_qualifier_is_moved_too(tmp_path: Path) -> None:
-    # `self.helper()` starts at `self`: the qualifier is read past.
+    # `self.helper()` is recorded at `helper`, its member name (#3166), and
+    # moves with its line; a site recorded at `self` reads the qualifier past.
     app = (
         "class Box:\n    def helper(self):\n        return 1\n\n"
         "    def uses(self):\n        return self.helper()\n"
@@ -185,7 +186,7 @@ def test_a_call_through_a_qualifier_is_moved_too(tmp_path: Path) -> None:
 
     sites = _sites(_check(root, store, updater, ["app.py"]))
 
-    assert sites["app.Box.uses"] == (3, 15, ""), sites
+    assert sites["app.Box.uses"] == (3, 20, ""), sites
 
 
 def test_a_call_through_an_import_alias_is_moved_too(tmp_path: Path) -> None:
