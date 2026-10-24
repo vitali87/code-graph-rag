@@ -170,6 +170,12 @@ MSG_SYNCING_WORKSPACE = (
 )
 CLI_MSG_SYNC_SKIPPED = "Knowledge graph already in sync for '{project}' ({elapsed:.2f}s, no changes detected)."
 CLI_MSG_SYNC_DONE = "Knowledge graph sync done for '{project}' in {elapsed:.2f}s."
+CLI_MSG_CALL_PASS_FAILURES = (
+    "Call analysis failed in {count} file(s); their CALLS edges may be "
+    "incomplete (see the errors above): {files}"
+)
+CLI_CALL_PASS_FAILURES_SHOWN = 10
+CLI_MSG_AND_MORE = "... {count} more"
 CLI_MSG_SYNC_INTERRUPTED = (
     "Interrupted: the graph for '{project}' is incomplete; re-run "
     "'cgr start --update-graph' with the same options to finish it."
@@ -249,6 +255,10 @@ CLI_ERR_CLEAN_UNKNOWN_PROJECTS = (
 CLI_MSG_CLEAN_ABORTED = "Aborted: the graph was left untouched."
 CLI_MSG_DELETING_PROJECT = "Deleting project '{project_name}' from the graph..."
 CLI_MSG_PROJECT_DELETED = "Project '{project_name}' deleted successfully."
+CLI_WARN_GLOSSES_NOT_PRUNED = (
+    "Warning: the notes (glosses) of project '{project_name}' could not be "
+    "removed and remain in the graph unattached; the log has the error."
+)
 CLI_WARN_DELETE_PROJECT_SHARED_ROOT = (
     "Warning: project(s) {projects} were indexed from the same directory as "
     "'{project_name}' ({root_path}). Only what '{project_name}' owns is "
@@ -355,8 +365,8 @@ CHECK_NOT_INDEXED = (
 # before rebuilding them from the edited tree, so those edges cannot be put
 # back. Refused rather than silently lost (greptile-local, #1718).
 CHECK_ISOLATED_GRAPH_HAS_IO = (
-    "--isolated cannot restore the IO resource links this graph already "
-    "holds ({groups}): cutting a changed file's subtree can leave a resource "
+    "--isolated cannot restore the IO resource links project {project}'s code "
+    "anchors ({groups}): cutting a changed file's subtree can leave a resource "
     "chain unanchored, and the re-ingest's repo-wide resource prune would "
     "delete it. Re-run without --isolated on a graph you can rebuild."
 )
@@ -535,6 +545,12 @@ UI_NEW_FILE_HEADER = "[bold cyan]New file: {path}[/bold cyan]"
 UI_SHELL_COMMAND_HEADER = "[bold cyan]Shell command:[/bold cyan]"
 UI_TOOL_APPROVAL = "[bold yellow]⚠️  Tool '{tool_name}' requires approval:[/bold yellow]"
 UI_FEEDBACK_PROMPT = "Feedback (why rejected, or press Enter to skip)"
+# `cgr start -a` has no operator to ask: what the model is told when it asks
+# for an edit or a non-read-only command without --no-confirm (issue #2657).
+ASK_AGENT_APPROVAL_DENIED = (
+    "Edits and non-read-only commands are disabled in --ask-agent mode; "
+    "answer without them. The user can re-run with --no-confirm to allow them."
+)
 UI_OPTIMIZATION_START = (
     "[bold green]Starting {language} optimization session...[/bold green]"
 )
