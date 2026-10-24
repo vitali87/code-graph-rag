@@ -243,16 +243,23 @@ def _bare_name(symbol: str) -> str:
     return segments[-1]
 
 
-def _decompress(raw: bytes, profile_path: Path) -> bytes:
+def _decompress(
+    raw: bytes,
+    profile_path: Path,
+    *,
+    bad_template: str = cs.TRACE_ERR_BAD_PPROF,
+    too_large_template: str = cs.TRACE_ERR_PPROF_TOO_LARGE,
+) -> bytes:
     """Gunzip a gzipped profile under a size cap (#2263).
 
     Malformed input, and output past ``TRACE_MAX_DECOMPRESSED_BYTES``, become a
-    TraceFormatError. Inflating in chunks keeps a decompression bomb from ever
-    being held whole; every gzip member is read, as ``gzip.decompress`` does.
+    TraceFormatError worded by the two templates. Inflating in chunks keeps a
+    decompression bomb from ever being held whole; every gzip member is read,
+    as ``gzip.decompress`` does.
     """
     if raw[:2] != cs.TRACE_GZIP_MAGIC:
         return raw
-    bad = TraceFormatError(cs.TRACE_ERR_BAD_PPROF.format(path=profile_path))
+    bad = TraceFormatError(bad_template.format(path=profile_path))
     view = memoryview(raw)
     out = bytearray()
     position = 0
@@ -268,7 +275,9 @@ def _decompress(raw: bytes, profile_path: Path) -> bytes:
             members += 1
             if members > cs.TRACE_MAX_GZIP_MEMBERS:
                 raise bad
-            position = _inflate_member(view, position, out, profile_path, bad)
+            position = _inflate_member(
+                view, position, out, bad, too_large_template, profile_path
+            )
     except zlib.error as e:
         raise bad from e
     return bytes(out)
@@ -278,8 +287,9 @@ def _inflate_member(
     view: memoryview,
     position: int,
     out: bytearray,
-    profile_path: Path,
     bad: TraceFormatError,
+    too_large_template: str,
+    profile_path: Path,
 ) -> int:
     """Inflate the gzip member at `position` into `out`; return where it ends.
 
@@ -295,7 +305,7 @@ def _inflate_member(
         out += inflater.decompress(chunk, limit + 1 - len(out))
         if len(out) > limit:
             raise TraceFormatError(
-                cs.TRACE_ERR_PPROF_TOO_LARGE.format(path=profile_path, limit=limit)
+                too_large_template.format(path=profile_path, limit=limit)
             )
         # Below the cap the output limit never bound, so the slice was
         # consumed up to the member's end; what follows it is unused.
