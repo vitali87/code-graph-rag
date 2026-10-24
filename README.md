@@ -61,8 +61,7 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **Dependency Locking**: Locked `opentelemetry-api` to version 1.45.1 for stability.
-- **GHSA Security Fix**: Addressed GHSA-xcq7-p3pf-p88h vulnerability.
+- **SBOM**: CycloneDX SBOM and Docker image attestation published with each release.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
@@ -189,6 +188,7 @@ Code-Graph-RAG runs as an [MCP](https://modelcontextprotocol.io) server so Claud
 - [Real-Time Updates](docs/guide/realtime-updates.md)
 - [C/C++ Semantic Mode](docs/guide/cpp-semantic-mode.md)
 - [MCP Server](docs/guide/mcp-server.md)
+- [Porting Between Languages](docs/guide/porting.md)
 
 **Architecture**
 - [Overview](docs/architecture/overview.md)

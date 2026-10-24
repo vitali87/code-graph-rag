@@ -556,6 +556,51 @@ def test_only_the_exact_breaking_change_label_counts(tmp_path: Path) -> None:
     assert _decide(tmp_path, f"{SHA}\\n")["breaking"] == "false"
 
 
+def test_the_pull_requests_labelled_breaking_are_named(tmp_path: Path) -> None:
+    # The release names a labelled pull request that added no notes, so the
+    # numbers are passed on, not only the flag (issue #3431). A near-miss
+    # label and a number that is not one name nothing.
+    _commits(
+        tmp_path,
+        {OLDER: "feat: a", SHA: "fix: b"},
+        {
+            OLDER: "#pull-request\n#41\nbreaking change",
+            SHA: "#pull-request\n#42\nbreaking changes\n"
+            "#pull-request\n#1/../x\nbreaking change",
+        },
+    )
+    assert _decide(tmp_path, f"{OLDER}\\n{SHA}\\n")["breaking_prs"] == "41"
+
+
+def _security_release_with_two_breaking_changes(tmp_path: Path) -> dict[str, str]:
+    # A security release ships whatever else the range holds, so its bump is
+    # settled by the first breaking label; the release section still names
+    # the labelled pull request behind it (issue #3431).
+    _commits(
+        tmp_path,
+        {OLDER: "feat: a", SHA: "fix: b [security]"},
+        {
+            OLDER: f"{RELEASE_NOW_PR}\nbreaking change",
+            SHA: "#pull-request\n#41\nbreaking change",
+        },
+    )
+    return _decide(tmp_path, f"{OLDER}\\n{SHA}\\n")
+
+
+def test_a_security_release_names_every_breaking_pull_request(tmp_path: Path) -> None:
+    out = _security_release_with_two_breaking_changes(tmp_path)
+    assert out["security"] == "true"
+    assert out["breaking_prs"] == "12 41"
+
+
+def test_a_settled_security_release_reads_only_the_labels(tmp_path: Path) -> None:
+    # Past that point the "release now" lookups would change nothing and cost
+    # calls that can fail the run.
+    _security_release_with_two_breaking_changes(tmp_path)
+    assert _lines(tmp_path / "pulls_calls") == [SHA, OLDER]
+    assert not (tmp_path / "events_calls").exists()
+
+
 RELEASE_NOW_PR = "#pull-request\n#12\nrelease now"
 
 

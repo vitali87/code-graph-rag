@@ -1376,11 +1376,12 @@ class _StatefulIngestor:
                 # Any node in any project: the unknown-target refusal asks
                 # whether the name is in the graph at all (issue #3244).
                 wanted = _str((params or {}).get(cs.KEY_QN))
-                return [
+                rows: list[ResultRow] = [
                     {cs.KEY_QUALIFIED_NAME: wanted}
                     for props in self.nodes.values()
                     if props.get(cs.KEY_QUALIFIED_NAME) == wanted
-                ][:1]
+                ]
+                return rows[:1]
             case cq.CYPHER_CLAIM_PROJECT_ROOT:
                 return self._claim_project_root(params or {})
             case cq.CYPHER_MARK_CLAIMED_PROJECT_INCOMPLETE:
