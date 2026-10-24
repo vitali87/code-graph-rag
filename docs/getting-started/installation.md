@@ -1,5 +1,5 @@
 ---
-description: "Install Code-Graph-RAG and set up Memgraph for multi-language codebase analysis."
+description: "Install Code-Graph-RAG and choose a graph backend for multi-language codebase analysis."
 ---
 
 # Installation
@@ -7,14 +7,13 @@ description: "Install Code-Graph-RAG and set up Memgraph for multi-language code
 ## Prerequisites
 
 - Python 3.12+ (see [Older system interpreters](#older-system-interpreters) if your distribution ships an older Python)
-- Docker & Docker Compose (for Memgraph)
-- **cmake** (required for building pymgclient dependency)
 - **ripgrep** (`rg`) (required for shell command text searching)
+- Only for the optional Memgraph backend: Docker & Docker Compose, and **cmake** where no `pymgclient` wheel fits your platform
 - **For cloud models**: Google Gemini API key, OpenAI API key, or both
 - **For local models**: Ollama installed and running
 - `uv` package manager (recommended) or `pip`
 
-### Installing cmake and ripgrep
+### Installing ripgrep (and cmake for Memgraph)
 
 === "macOS"
 
@@ -78,7 +77,7 @@ Without `uv`, install CPython 3.12 yourself and call it directly:
     python3.12 -m pip install "code-graph-rag[treesitter-full,ast-grep,semantic]"
 
 Dependencies may still need platform wheels or build tools, such as `cmake` for
-`pymgclient`.
+`pymgclient`, which only the `memgraph` extra installs.
 
 ## Install from PyPI
 
@@ -108,6 +107,10 @@ With semantic code search (UniXcoder embeddings):
 pip install 'code-graph-rag[semantic]'
 ```
 
+Its vectors go to a SQLite file beside the graph (`~/.cgr/vectors.sqlite`), so
+no server or Docker is needed. Set `CGR_VECTOR_STORE_BACKEND=qdrant` to use
+Qdrant instead; see [Semantic Search](../sdk/semantic-search.md).
+
 With both full language support and semantic search:
 
 ```bash
@@ -130,7 +133,7 @@ uv tool install --compile-bytecode "code-graph-rag[treesitter-full,ast-grep,sema
 
 ## Install from git
 
-PyPI and GitHub Releases only receive every 50th version, plus any security fix, so they usually trail `main` by tens of versions. To run the newest code, install straight from the repository:
+PyPI and GitHub Releases only receive every 50th version, plus any security fix, breaking change or merge labelled `release now`, so they usually trail `main` by tens of versions. To run the newest code, install straight from the repository:
 
 ```bash
 uv tool install "code-graph-rag[treesitter-full,ast-grep,semantic] @ git+https://github.com/vitali87/code-graph-rag@main"
@@ -195,6 +198,17 @@ cgr --version
 
 ![cgr --version printing the installed code-graph-rag version](../assets/demos/installation-version.gif)
 
+### From Qdrant to the sqlite vector store
+
+Semantic search keeps its vectors in a SQLite file, `~/.cgr/vectors.sqlite`,
+by default; Qdrant was the default before. An install that never chose a
+backend switches on upgrade: each project's next sync embeds it again into the
+new file, even with nothing in the checkout changed, and the vectors in Qdrant
+are left where they are, no longer searched. Nothing starts Docker for them.
+To keep Qdrant, set `CGR_VECTOR_STORE_BACKEND=qdrant`; an install that sets
+`QDRANT_URL` or `QDRANT_DB_PATH` without it is told so once. A `pip` install
+gets the new store's sqlite-vec by repeating the `semantic` extra, as above.
+
 ## Verify Release Artifacts
 
 Each [GitHub release](https://github.com/vitali87/code-graph-rag/releases) ships prebuilt binaries together with Sigstore signatures (`*.sigstore.json`); releases from v0.0.484 onwards also carry a SLSA build provenance attestation (`multiple.intoto.jsonl`). Both are produced by the `build-binaries.yml` GitHub Actions workflow using keyless signing, so there is no maintainer-held key to obtain: verification checks that the artifact was built by this repository's release workflow.
@@ -219,9 +233,29 @@ cosign verify-blob \
   code-graph-rag-linux-amd64
 ```
 
-Substitute the binary name for your platform. Packages installed from PyPI are protected differently: `pip` and `uv` verify package hashes, which proves integrity in transit, and releases after v0.0.187 additionally carry a [PEP 740](https://peps.python.org/pep-0740/) attestation. That is a publish attestation — proof that the file was uploaded by this project's trusted publisher — rather than build provenance, and it can be queried through PyPI's [Integrity API](https://docs.pypi.org/api/integrity/).
+Substitute the binary name for your platform.
 
-## Start Memgraph
+Each binary also ships with a [CycloneDX](https://cyclonedx.org/) software bill of materials, `code-graph-rag-<platform>-<arch>.cdx.json`, listing the Python packages that platform's binary is built from with their versions and declared licences. It is signed and covered by the provenance attestation like the binary, so the commands above verify it too. The Docker image on `ghcr.io` carries an SPDX SBOM attestation for each platform:
+
+```bash
+docker buildx imagetools inspect ghcr.io/vitali87/code-graph-rag:latest \
+  --format '{{ json .SBOM }}'
+```
+
+Packages installed from PyPI are protected differently: `pip` and `uv` verify package hashes, which proves integrity in transit, and releases after v0.0.187 additionally carry a [PEP 740](https://peps.python.org/pep-0740/) attestation. That is a publish attestation — proof that the file was uploaded by this project's trusted publisher — rather than build provenance, and it can be queried through PyPI's [Integrity API](https://docs.pypi.org/api/integrity/).
+
+## Choose a Graph Backend
+
+Nothing to start by default: the graph is an embedded SQLite file,
+`~/.cgr/graph.sqlite` (`SQLITE_GRAPH_PATH` moves it), written and queried in
+process through the same Cypher the other backends run. How it works, and how
+it compares with Memgraph, is in [Graph Backends](../architecture/embedded-graph.md).
+
+### Memgraph (optional)
+
+Install the driver with the `memgraph` extra (for example
+`uv tool install "code-graph-rag[treesitter-full,memgraph]"`), set
+`GRAPH_BACKEND=memgraph`, and start the packaged stack:
 
 ```bash
 cgr daemon up
@@ -261,7 +295,6 @@ This checks that all required dependencies and services are available.
 - **mcp**: Model Context Protocol SDK
 - **pydantic-ai-slim**: AI Agent Framework, the Pydantic way, slim package
 - **pydantic-settings**: Settings management using Pydantic
-- **pymgclient**: Memgraph database adapter for Python language
 - **python-dotenv**: Read key-value pairs from a .env file and set them as environment variables
 - **tiktoken**: tiktoken is a fast BPE tokeniser for use with OpenAI's models
 - **tomli-w**: A lil' TOML writer
@@ -278,4 +311,7 @@ This checks that all required dependencies and services are available.
 - **huggingface-hub**: Client library to download and publish models, datasets and other repos on the huggingface.co hub
 - **pathspec**: Utility library for gitignore style pattern matching of file paths.
 - **pygments**: Pygments is a syntax highlighting package written in Python.
+- **certifi**: Python package for providing Mozilla's CA Bundle.
+- **regex**: Alternative regular expression module, to replace re.
+- **cgr-graph-rs**: Native acceleration for code-graph-rag's embedded graph
 <!-- /SECTION:dependencies -->
