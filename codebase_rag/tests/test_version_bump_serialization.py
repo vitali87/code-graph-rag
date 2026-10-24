@@ -556,6 +556,22 @@ def test_only_the_exact_breaking_change_label_counts(tmp_path: Path) -> None:
     assert _decide(tmp_path, f"{SHA}\\n")["breaking"] == "false"
 
 
+def test_the_pull_requests_labelled_breaking_are_named(tmp_path: Path) -> None:
+    # The release names a labelled pull request that added no notes, so the
+    # numbers are passed on, not only the flag (issue #3431). A near-miss
+    # label and a number that is not one name nothing.
+    _commits(
+        tmp_path,
+        {OLDER: "feat: a", SHA: "fix: b"},
+        {
+            OLDER: "#pull-request\n#41\nbreaking change",
+            SHA: "#pull-request\n#42\nbreaking changes\n"
+            "#pull-request\n#1/../x\nbreaking change",
+        },
+    )
+    assert _decide(tmp_path, f"{OLDER}\\n{SHA}\\n")["breaking_prs"] == "41"
+
+
 RELEASE_NOW_PR = "#pull-request\n#12\nrelease now"
 
 

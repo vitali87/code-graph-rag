@@ -274,6 +274,7 @@ jobs:
           # even behind the newest bump, whose release may have been deferred.
           BREAKING=false
           UNRELEASED_BREAKING=false
+          BREAKING_PRS=""
           RELEASE_NOW=false
           COUNTING=true
           for SHA in $COMMITS; do
@@ -369,8 +370,17 @@ jobs:
               if [ "$COUNTING" = "true" ]; then
                 BREAKING=true
               fi
+              # The release names a labelled pull request that added no notes,
+              # so the numbers go on with the flag (issue #3431). The scan can
+              # stop early on a security release, so this list may be short;
+              # the notes themselves are read in full from changes/breaking/.
+              BREAKING_PRS="${BREAKING_PRS} $(printf '%s\n' "$PULLS" | awk '
+                  $0 == "#pull-request" { number = 1; pr = ""; next }
+                  number { number = 0; if ($0 ~ /^#[1-9][0-9]*$/) pr = substr($0, 2); next }
+                  $0 == "breaking change" && pr != "" { print pr }')"
             fi
           done
+          BREAKING_PRS=$(printf '%s\n' $BREAKING_PRS | sort -un | paste -sd ' ' -)
           # A breaking change ships at once, like a security fix, rather than
           # waiting for RELEASE_EVERY: the version that announces it should be
           # one users can install, not an interim tag. A pull request labelled
@@ -396,6 +406,7 @@ jobs:
             echo "latest=$LATEST"
             echo "security=$SECURITY"
             echo "breaking=$BREAKING"
+            echo "breaking_prs=$BREAKING_PRS"
             echo "ghsa=$GHSA"
           } >> "$GITHUB_OUTPUT"
 
@@ -545,6 +556,35 @@ jobs:
             echo "**Upgrading is strongly recommended.**"
             echo
           } > /tmp/security.md
+
+      - name: Prepend breaking-change notice
+        if: steps.decide.outputs.release == 'true'
+        env:
+          LATEST_TAG: ${{ steps.decide.outputs.latest }}
+          BREAKING_PRS: ${{ steps.decide.outputs.breaking_prs }}
+        run: |
+          # A breaking release must say what breaks and how to migrate; v0.3.2
+          # shipped without it (issue #3431). The notes are the fragments added
+          # under changes/breaking/ since the last release. Comparing two trees
+          # needs only the release's commit, not the history between, so one
+          # shallow fetch serves the shallow checkout. A failed lookup fails
+          # the run, as in "Decide", rather than publishing without the notes.
+          set -o pipefail
+          if [ -n "$LATEST_TAG" ]; then
+            if [[ ! "$LATEST_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::refusing malformed release tag '${LATEST_TAG}'"
+              exit 1
+            fi
+            git fetch --quiet --depth=1 --no-tags origin \
+              "refs/tags/${LATEST_TAG}:refs/tags/${LATEST_TAG}"
+            ADDED=$(git diff --name-only --no-renames --diff-filter=A \
+              "refs/tags/${LATEST_TAG}" "$GITHUB_SHA" -- changes/breaking/)
+          else
+            ADDED=$(git ls-files -- changes/breaking/)
+          fi
+          printf '%s\n' "$ADDED" \
+            | python3 scripts/breaking_notes.py render --labelled "$BREAKING_PRS" \
+            > /tmp/breaking.md
 
       - name: Generate highlights
         if: steps.decide.outputs.release == 'true'
@@ -933,8 +973,10 @@ jobs:
           TAG="v${NEW_VERSION}"
           : > /tmp/body.md
           # The 🔒 Security disclaimer must lead the release body, above the
-          # AI highlights and the generated changelog (issue #1149).
+          # AI highlights and the generated changelog (issue #1149). The
+          # breaking-change notes follow it (issue #3431).
           [ -s /tmp/security.md ] && cat /tmp/security.md >> /tmp/body.md
+          [ -s /tmp/breaking.md ] && cat /tmp/breaking.md >> /tmp/body.md
           [ -s /tmp/highlights.md ] && cat /tmp/highlights.md >> /tmp/body.md
           cat /tmp/notes.md >> /tmp/body.md
           gh release create "$TAG" --title "$TAG" --notes-file /tmp/body.md --verify-tag \

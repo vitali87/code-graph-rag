@@ -22,6 +22,7 @@ import yaml
 
 from codebase_rag import constants as cs
 from codebase_rag.tests.conftest import git_env
+from scripts import breaking_notes as bn
 
 _WORKFLOW = (
     Path(__file__).resolve().parents[2] / ".github" / "workflows" / "version-bump.yml"
@@ -313,3 +314,109 @@ def test_a_failed_render_restores_the_files_and_fails_the_step(
     assert (git_repo / "NEWS.md").read_text() == "old news\n"
     assert (git_repo / "README.md").read_text() == "old readme\n"
     assert "FAILED" in (tmp_path / "summary.md").read_text()
+
+
+# The breaking-change notes a release adds follow the security notice
+# (issue #3431).
+def _release_step(name: str) -> dict[str, str]:
+    return next(step for step in _steps() if step.get("name") == name)
+
+
+_NOTICE = "Prepend breaking-change notice"
+
+
+def test_every_release_runs_the_breaking_change_step() -> None:
+    assert _release_step(_NOTICE)["if"] == "steps.decide.outputs.release == 'true'"
+
+
+def test_the_section_sits_between_the_security_notice_and_the_highlights() -> None:
+    script = _release_step("Create release")["run"]
+    order = [
+        script.index(f"/tmp/{part}.md >>")
+        for part in ("security", "breaking", "highlights", "notes")
+    ]
+    assert order == sorted(order)
+
+
+def _git(cwd: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        env=git_env(),
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def _commit(repo: Path, files: dict[str, str]) -> str:
+    for name, text in files.items():
+        path = repo / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8", newline="\n")
+    _git(repo, "add", "-A")
+    _git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x")
+    return _git(repo, "rev-parse", "HEAD")
+
+
+def _run_notice(
+    tmp_path: Path, latest: str, labelled: str
+) -> tuple[subprocess.CompletedProcess[str], Path]:
+    if sys.platform == "win32":
+        pytest.skip("the step runs under the Ubuntu runner's bash")
+    upstream = tmp_path / "upstream"
+    upstream.mkdir()
+    _git(upstream, "init", "-q")
+    script = (_WORKFLOW.parents[2] / "scripts" / "breaking_notes.py").read_text("utf-8")
+    _commit(
+        upstream,
+        {"scripts/breaking_notes.py": script, "changes/breaking/10.md": "Old."},
+    )
+    _git(upstream, "tag", "v0.1.0")
+    head = _commit(
+        upstream,
+        {"changes/breaking/10.md": "Old, edited.", "changes/breaking/11.md": "New."},
+    )
+    # A shallow clone, as the release job's checkout is: the tag's commit is
+    # not in it until the step fetches it.
+    work = tmp_path / "work"
+    _git(tmp_path, "clone", "-q", "--depth=1", upstream.as_uri(), str(work))
+    out = tmp_path / "breaking.md"
+    result = subprocess.run(
+        [
+            "bash",
+            "--noprofile",
+            "--norc",
+            "-e",
+            "-c",
+            _release_step(_NOTICE)["run"].replace("/tmp/breaking.md", str(out)),
+        ],
+        cwd=work,
+        env={
+            **git_env(),
+            "LATEST_TAG": latest,
+            "BREAKING_PRS": labelled,
+            "GITHUB_SHA": head,
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result, out
+
+
+def test_the_release_publishes_only_the_notes_added_since_the_last_release(
+    tmp_path: Path,
+) -> None:
+    result, out = _run_notice(tmp_path, "v0.1.0", "11 12")
+    assert result.returncode == 0, result.stderr
+    assert out.read_text("utf-8") == (
+        f"{bn.HEADING}\n\nNew.\n\nThis release contains a breaking change; see #12.\n\n"
+    )
+
+
+def test_a_malformed_release_tag_fails_the_step(tmp_path: Path) -> None:
+    result, out = _run_notice(tmp_path, "v0.1.0 HEAD", "")
+    assert result.returncode != 0
+    assert "refusing malformed release tag" in result.stdout
+    assert not out.exists()
