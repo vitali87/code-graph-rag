@@ -61,11 +61,7 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **CodeQL Scanning**: Switch to advanced CodeQL setup for more comprehensive analysis of pull requests from forks.
-- **Python Annotations**: Infer Python instance attributes from annotations for improved type handling.
-- **Xdebug Trace Support**: Now reads gzip-compressed Xdebug traces for enhanced debugging.
-- **Rust Macro Edge**: Ensures turbofish calls within macros receive their CALLS edge.
-- **Improved Syncing**: Re-parse files attaching members to re-indexed modules and keep declared namespaces of unchanged PHP files.
+- **SBOM**: CycloneDX SBOM and Docker image attestation published with each release.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
@@ -122,13 +118,14 @@ Three version lines exist and they intentionally differ:
 | where | what it tracks |
 |---|---|
 | git tags | every version, one per merge |
-| GitHub Releases (binaries, signatures) | every 50th version, plus any security fix or breaking change |
-| PyPI | every 50th version, plus any security fix or breaking change |
+| GitHub Releases (binaries, signatures) | every 50th version, plus any security fix, breaking change or merge labelled `release now` |
+| PyPI | every 50th version, plus any security fix, breaking change or merge labelled `release now` |
 
 So the newest tag on `main` usually runs ahead of the newest release, often by
 tens of patch versions; they coincide only just after a release. Nothing is
-stuck, the cadences differ by design. A security fix or a breaking change does
-NOT wait for the cadence: either ships a release and a PyPI upload immediately.
+stuck, the cadences differ by design. A security fix, a breaking change or a
+merge a maintainer labels `release now` does NOT wait for the cadence: each ships
+a release and a PyPI upload immediately.
 
 `uv tool install` and `pipx install` give you the newest PyPI version, which is the
 newest RELEASE, not the newest tag. Interim tags exist so every merge is
@@ -191,6 +188,7 @@ Code-Graph-RAG runs as an [MCP](https://modelcontextprotocol.io) server so Claud
 - [Real-Time Updates](docs/guide/realtime-updates.md)
 - [C/C++ Semantic Mode](docs/guide/cpp-semantic-mode.md)
 - [MCP Server](docs/guide/mcp-server.md)
+- [Porting Between Languages](docs/guide/porting.md)
 
 **Architecture**
 - [Overview](docs/architecture/overview.md)
