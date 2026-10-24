@@ -48,8 +48,9 @@ RUN curl -fsSLO "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/x
 # The shell tool's allowlist includes `rg`, with its own flag guards.
 RUN cargo install --locked ripgrep@14.1.1 && rg --version
 
-# The uv minor the production Dockerfile pins.
-RUN pip install --no-cache-dir "uv==0.13.5"
+# The uv release the production Dockerfile pins, copied from the same image so
+# the base image's pip, which may predate the emSign distrust, fetches nothing.
+COPY --from=ghcr.io/astral-sh/uv:0.13.5@sha256:32a7bb39b496babbd997b0a39a4d66c126bdaf5661b302bf6f06abda8deca6ff /uv /uvx /usr/local/bin/
 
 # Scanner contract: the checkout lives inside the image, at /src.
 COPY . /src
