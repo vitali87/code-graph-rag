@@ -117,6 +117,7 @@ from .path_filters import matches_test_path
 from .services import (
     FilteringIngestor,
     IngestorProtocol,
+    NodeUpdateProtocol,
     QueryingIngestorProtocol,
     QueryProtocol,
 )
@@ -891,6 +892,40 @@ def _embeddings_marker(state_dir: Path, project_name: str) -> Path:
     """
     digest = hashlib.sha256(project_name.encode(cs.ENCODING_UTF8)).hexdigest()
     return state_dir / cs.EMBEDDINGS_PENDING_PROJECT_TEMPLATE.format(digest=digest)
+
+
+def _embeddings_store_stamp(state_dir: Path, project_name: str) -> Path:
+    """The file naming the vector store backend `project_name`'s points are in.
+
+    A pass that settles the project writes the selected backend there. Once
+    the setting changes, as when `sqlite` replaced Qdrant as the default, the
+    points stay in a store nothing searches, and an unchanged checkout takes
+    the in-sync fast path, which never embeds: until the stamp names the
+    selected backend the project owes a pass. A checkout synced before the
+    stamp existed has none; its points went to the default then, Qdrant, so
+    only an install that now selects another backend owes that pass.
+    """
+    digest = hashlib.sha256(project_name.encode(cs.ENCODING_UTF8)).hexdigest()
+    return state_dir / cs.EMBEDDINGS_STORE_PROJECT_TEMPLATE.format(digest=digest)
+
+
+def _stamp_names_selected_store(stamp: Path) -> bool:
+    try:
+        stamped = stamp.read_text(encoding=cs.ENCODING_UTF8).strip()
+    except FileNotFoundError:
+        stamped = str(cs.EMBEDDINGS_STORE_UNSTAMPED)
+    except OSError:
+        return False
+    return stamped == str(settings.VECTOR_STORE_BACKEND)
+
+
+def _save_embeddings_store(stamp: Path) -> None:
+    try:
+        stamp.write_text(str(settings.VECTOR_STORE_BACKEND), encoding=cs.ENCODING_UTF8)
+    except OSError:
+        # Best effort, as for the pending marker: without the stamp the next
+        # sync runs the pass again, which is slower but loses nothing.
+        logger.debug(ls.EMBEDDINGS_PENDING_NOT_UPDATED)
 
 
 def _save_embeddings_owed(marker: Path, project_name: str, owed: bool) -> bool:
@@ -3051,6 +3086,7 @@ class GraphUpdater:
             py_engine._return_stmt_cache.clear()
             py_engine._method_return_type_cache.clear()
             py_engine._self_assignment_cache.clear()
+            py_engine._class_member_type_cache.clear()
 
     def _finish_in_sync_run(self) -> None:
         logger.info(ls.GRAPH_ALREADY_IN_SYNC)
@@ -5192,6 +5228,49 @@ class GraphUpdater:
             | self._broken_link_waiter_keys(present_keys)
         )
 
+    def _dart_package_waiters(self, keys: Iterable[str]) -> set[str]:
+        """Dart importers whose `package:` import a pubspec change moved
+        (issue #3278 review).
+
+        A pubspec's `name:` is what `package:<name>/...` resolves by, so
+        adding, deleting or renaming one moves an import between a project
+        module and an external package while the importer is unchanged on
+        disk, and no edge leads from it to the pubspec for the dependents
+        lookup to follow. Each stored `package:` edge is resolved again
+        against the map on disk now; only an importer whose target moved
+        re-parses, so an edit that keeps the name (a dependency bump) sends
+        none. A failed read degrades to the previous behaviour, never worse.
+        """
+        if self._is_full_build or not isinstance(self.ingestor, QueryProtocol):
+            return set()
+        if all(PurePosixPath(key).name != cs.DEP_FILE_PUBSPEC for key in keys):
+            return set()
+        import_processor = self.factory.import_processor
+        # A scoped re-ingest resets the map only when it deletes the old
+        # subtrees, after this lookup; the map judged must be the new one.
+        import_processor.reset_dart_path_caches()
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_PACKAGE_URI_IMPORTS,
+                {
+                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                    cs.CYPHER_PARAM_URI_PREFIX: cs.DART_SCHEME_PACKAGE,
+                },
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="Dart package importers")
+            return set()
+        return {
+            path
+            for row in rows
+            if isinstance(path := row.get(cs.KEY_CALLER_PATH), str)
+            and path.endswith(cs.DART_EXT)
+            and isinstance(uri := row.get(cs.KEY_IMPORTED_NAME), str)
+            and isinstance(from_qn := row.get(cs.KEY_FROM_QN), str)
+            and import_processor.dart_import_target(uri, from_qn)
+            != row.get(cs.KEY_TO_QN)
+        }
+
     def _unresolved_reference_waiters(
         self,
         added: list[tuple[str, bytes]],
@@ -5337,10 +5416,10 @@ class GraphUpdater:
         carrying two keys reads as the whole node to every store that does
         not merge. Flushed first so the Module nodes of a first build exist
         to match; the modules with nothing recorded (most) are cleared in
-        one statement, the rest set one by one. A store that cannot take a
-        write is left as it was, which reads as "nothing waited"."""
-        if not isinstance(self.ingestor, QueryProtocol):
-            return
+        one statement, the rest set one by one. A store that takes no query
+        but can update a node it holds (the protobuf index) has the list set
+        in place, or the exported field stays empty (#3206); any other store
+        is left as it was, which reads as "nothing waited"."""
         recorded = self.factory.import_processor.unresolved_references
         cleared: list[str] = []
         pending: list[tuple[str, list[str]]] = []
@@ -5361,6 +5440,9 @@ class GraphUpdater:
                 cleared.append(module_qn)
         if not cleared and not pending:
             return
+        if not isinstance(self.ingestor, QueryProtocol):
+            self._update_unresolved_reference_nodes(cleared, pending)
+            return
         self.ingestor.flush_all()
         try:
             if cleared:
@@ -5374,6 +5456,22 @@ class GraphUpdater:
                 )
         except Exception:
             logger.warning(ls.PRUNE_QUERY_FAILED, label="unresolved references write")
+
+    def _update_unresolved_reference_nodes(
+        self, cleared: list[str], pending: list[tuple[str, list[str]]]
+    ) -> None:
+        # Never a second node write: one carrying only these two keys reads
+        # as the whole Module node to every store that does not merge.
+        if not isinstance(self.ingestor, NodeUpdateProtocol):
+            return
+        for module_qn, names in (*((qn, []) for qn in cleared), *pending):
+            self.ingestor.update_node_properties(
+                cs.NodeLabel.MODULE,
+                {
+                    cs.KEY_QUALIFIED_NAME: module_qn,
+                    cs.KEY_UNRESOLVED_REFERENCES: names,
+                },
+            )
 
     def _queue_foreign_members(
         self,
@@ -7007,6 +7105,7 @@ class GraphUpdater:
         self.factory.import_processor.reset_rust_path_caches()
         self.factory.import_processor.reset_java_path_caches()
         self.factory.import_processor.reset_julia_path_caches()
+        self.factory.import_processor.reset_dart_path_caches()
         cache_path = self.state_dir / cs.HASH_CACHE_FILENAME
         dir_mtimes_path = self.state_dir / cs.DIR_MTIMES_FILENAME
         baseline = self._hash_baseline(force, cache_path, dir_mtimes_path)
@@ -7096,6 +7195,7 @@ class GraphUpdater:
         waiters = {
             *self._unresolved_importer_keys(added_keys),
             *self._unresolved_reference_waiters(added_entries, modified_entries),
+            *self._dart_package_waiters({*present, *deleted_before_parse}),
         }
         # A foreign definer's definitions are rebuilt with the module it
         # defines into, so their callers are its dependents as a re-indexed
@@ -8915,6 +9015,7 @@ class GraphUpdater:
                     if created is None or key not in created
                 ],
             ),
+            *self._dart_package_waiters(keys),
         }
         for caller_key in (
             *self._dependent_keys(keys, stable or {}, waiters),
@@ -9028,12 +9129,17 @@ class GraphUpdater:
             # per-layout cache: any .jl change invalidates the whole set.
             if path.suffix == cs.EXT_JL:
                 import_processor.reset_julia_path_caches()
+            # A pubspec's `name:` is what Dart `package:` imports resolve by.
+            if path.name == cs.DEP_FILE_PUBSPEC:
+                import_processor.reset_dart_path_caches()
         for key, path in gone.items():
             self.remove_file_from_state(path)
             self._delete_module_entities(key)
             # A deleted .jl file invalidates the same path caches reparse does.
             if path.suffix == cs.EXT_JL:
                 import_processor.reset_julia_path_caches()
+            if path.name == cs.DEP_FILE_PUBSPEC:
+                import_processor.reset_dart_path_caches()
             if isinstance(self.ingestor, QueryProtocol):
                 # Keyed on the absolute path: a sibling project's File node
                 # can share the relative path (issue #897). The entry's own
@@ -9276,6 +9382,11 @@ class GraphUpdater:
         taken by `holds_sync_lock` (issue #2441).
         """
         started = time.perf_counter()
+        # The Python engine memoises per pass, as run() knows: on the
+        # long-lived updater the MCP server, the watcher and rename hold, an
+        # edited function's old return type would re-resolve its dependents,
+        # and the Node-keyed entries would pin every re-parsed tree (#2927).
+        self._clear_python_inference_caches()
         # A scoped re-ingest is never a full build, whatever the previous
         # run() was: the flag decides whether a failed inbound-edge capture
         # aborts (it must, or the run drops cross-file edges under a
@@ -10044,6 +10155,10 @@ class GraphUpdater:
     def _owes_embeddings(self) -> bool:
         if _embeddings_marker(self.state_dir, self.project_name).exists():
             return True
+        if not _stamp_names_selected_store(
+            _embeddings_store_stamp(self.state_dir, self.project_name)
+        ):
+            return True
         shared = _load_shared_embeddings_owed(
             self.state_dir / cs.EMBEDDINGS_PENDING_FILENAME
         )
@@ -10065,6 +10180,10 @@ class GraphUpdater:
         """
         if pending:
             logger.warning(ls.EMBEDDINGS_PENDING.format(project=self.project_name))
+        else:
+            _save_embeddings_store(
+                _embeddings_store_stamp(self.state_dir, self.project_name)
+            )
         recorded = _save_embeddings_owed(
             _embeddings_marker(self.state_dir, self.project_name),
             self.project_name,
