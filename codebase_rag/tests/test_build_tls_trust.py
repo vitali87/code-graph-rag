@@ -19,10 +19,12 @@ reject, so a pattern that matches nothing cannot pass for compliance.
 from __future__ import annotations
 
 import re
+import tomllib
 from pathlib import Path
 
 import pytest
 import yaml
+from packaging.requirements import Requirement
 from packaging.version import Version
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -262,6 +264,112 @@ def test_every_stage_that_installs_packages_upgrades_ca_certificates() -> None:
         for p, t in zip(DOCKERFILES, texts)
         if ca_store_problems(t)
     } == {}
+
+
+# certifi's bundle and grpcio's roots.pem are their own copies of the roots:
+# certifi 2026.10.23 also drops emSign ECC Root CA - C3 and emSign Root CA -
+# C1, and grpcio 1.84.1 is the first whose roots.pem drops G3.
+LOCKFILE = REPO_ROOT / "uv.lock"
+LOCK_FLOORS = {"certifi": Version("2026.10.23"), "grpcio": Version("1.84.1")}
+GOOD_LOCK = (
+    '[[package]]\nname = "certifi"\nversion = "2026.10.23"\n\n'
+    '[[package]]\nname = "grpcio"\nversion = "1.84.1"\n'
+)
+_LOCKED = re.compile(
+    r'^\[\[package\]\]\nname = "(?P<name>[^"]+)"\nversion = "(?P<version>[^"]+)"',
+    re.MULTILINE,
+)
+
+
+def lock_problems(text: str) -> list[str]:
+    locked: dict[str, list[str]] = {}
+    for package in _LOCKED.finditer(text):
+        locked.setdefault(package["name"], []).append(package["version"])
+    return [
+        f"{name} {versions or 'unlocked'} below {floor}"
+        for name, floor in LOCK_FLOORS.items()
+        if not (versions := locked.get(name))
+        or any(fails_floor(v, floor) for v in versions)
+    ]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        GOOD_LOCK.replace("2026.10.23", "2026.10.19"),
+        GOOD_LOCK.replace("1.84.1", "1.84.0"),
+        GOOD_LOCK.split("\n\n")[1],
+    ],
+    ids=["old-certifi", "old-grpcio", "certifi-unlocked"],
+)
+def test_a_lock_with_a_stale_root_bundle_is_rejected(text: str) -> None:
+    assert text != GOOD_LOCK
+    assert lock_problems(text)
+
+
+def test_a_lock_at_the_floors_is_accepted() -> None:
+    assert lock_problems(GOOD_LOCK) == []
+
+
+def test_the_lock_is_past_every_bundled_root_fix() -> None:
+    assert lock_problems(LOCKFILE.read_text(encoding="utf-8")) == []
+
+
+# A published wheel carries pyproject's ranges, not uv.lock, and pip upgrades
+# a dependency only when the installed one no longer satisfies them. So the
+# floors are declared too: certifi in the core dependencies, grpcio in the
+# extras whose clients pull it in.
+PYPROJECT = REPO_ROOT / "pyproject.toml"
+LAST_STALE = {"certifi": "2026.10.19", "grpcio": "1.84.0"}
+GRPC_EXTRAS = ("semantic", "milvus")
+GOOD_PYPROJECT = (
+    '[project]\ndependencies = ["loguru>=0.7.3", "certifi>=2026.10.23"]\n'
+    "[project.optional-dependencies]\n"
+    'semantic = ["qdrant-client>=1.9.0", "grpcio>=1.84.1"]\n'
+    'milvus = ["pymilvus[milvus-lite]>=3.0.0", "grpcio>=1.84.1"]\n'
+)
+
+
+def declared_floor_problems(text: str) -> list[str]:
+    """Each place must require the package with a range that admits the
+    fixed release and refuses the last stale one."""
+    project = tomllib.loads(text)["project"]
+    extras = project.get("optional-dependencies", {})
+    places = [("certifi", "dependencies", project.get("dependencies", []))]
+    places += [("grpcio", f"extra {e}", extras.get(e, [])) for e in GRPC_EXTRAS]
+    problems = []
+    for name, where, requirements in places:
+        ranges = [r.specifier for r in map(Requirement, requirements) if r.name == name]
+        if not any(
+            s.contains(str(LOCK_FLOORS[name])) and not s.contains(LAST_STALE[name])
+            for s in ranges
+        ):
+            problems.append(f"{where} does not require {name}>={LOCK_FLOORS[name]}")
+    return problems
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        GOOD_PYPROJECT.replace(', "certifi>=2026.10.23"', ""),
+        GOOD_PYPROJECT.replace("certifi>=2026.10.23", "certifi>=2026.10.19"),
+        GOOD_PYPROJECT.replace(', "grpcio>=1.84.1"]\n', "]\n", 1),
+        GOOD_PYPROJECT.replace("grpcio>=1.84.1", "grpcio>=1.84.0"),
+        GOOD_PYPROJECT.replace("certifi>=2026.10.23", "certifi"),
+    ],
+    ids=["no-certifi", "stale-certifi", "extra-without-grpcio", "stale-grpcio", "bare"],
+)
+def test_a_declared_range_that_admits_a_stale_bundle_is_rejected(text: str) -> None:
+    assert text != GOOD_PYPROJECT
+    assert declared_floor_problems(text)
+
+
+def test_declared_floors_are_accepted() -> None:
+    assert declared_floor_problems(GOOD_PYPROJECT) == []
+
+
+def test_pyproject_declares_every_bundled_root_floor() -> None:
+    assert declared_floor_problems(PYPROJECT.read_text(encoding="utf-8")) == []
 
 
 @pytest.mark.parametrize(
