@@ -21,7 +21,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from . import constants as cs
 from . import exceptions as ex
 from . import logs
-from .graph_dialects import DIALECT_MEMGRAPH, available_dialects
+from .graph_dialects import DIALECT_SQLITE, available_dialects
 from .types_defs import CgrignorePatterns, ModelConfigKwargs
 from .utils.path_utils import keeps_outside_run_excludes
 
@@ -264,10 +264,15 @@ class AppConfig(BaseSettings):
         enable_decoding=False,
     )
 
-    # Which graph engine the ingestor talks to. Memgraph stays the default,
-    # so an existing install keeps its behaviour without touching config;
-    # see `graph_dialects` for what actually differs between engines.
-    GRAPH_BACKEND: str = DIALECT_MEMGRAPH
+    # Which graph engine the ingestor talks to; see `graph_dialects` for
+    # what actually differs between engines. The embedded SQLite engine is
+    # the default because it needs no server, no Docker and no native
+    # driver: a first run indexes straight into a file (issue #386).
+    # Memgraph and Neo4j stay one setting away.
+    GRAPH_BACKEND: str = DIALECT_SQLITE
+    # The embedded graph's file; unset means `graph.sqlite` under CGR_HOME,
+    # one graph shared by every project, as one Memgraph instance is.
+    SQLITE_GRAPH_PATH: Path | None = None
 
     MEMGRAPH_HOST: str = "localhost"
     MEMGRAPH_PORT: int = 7687
@@ -339,6 +344,25 @@ class AppConfig(BaseSettings):
         True, validation_alias="CGR_CAPTURE_LOCAL_DEFINITIONS"
     )
     CGR_HOME: Path = Field(default_factory=lambda: Path.home() / ".cgr")
+
+    @property
+    def graph_db_file(self) -> Path:
+        if self.SQLITE_GRAPH_PATH is not None:
+            return self.SQLITE_GRAPH_PATH.expanduser()
+        return self.CGR_HOME.expanduser() / cs.EG_DEFAULT_DB_FILENAME
+
+    @property
+    def memgraph_set_without_backend(self) -> bool:
+        """Whether Memgraph is configured but the engine was left to default.
+
+        Memgraph was the default engine before the embedded graph replaced
+        it, so this is how an install upgraded in place looks: its graph
+        lives in Memgraph while cgr now opens an empty file.
+        """
+        return cs.GRAPH_BACKEND_SETTING not in self.model_fields_set and any(
+            name in self.model_fields_set for name in cs.MEMGRAPH_CONNECTION_SETTINGS
+        )
+
     # Editor integration for clickable report locations (OSC 8 hyperlinks)
     # and `cgr duplicates --open`. AUTO sniffs the hosting app (Cursor,
     # Windsurf, Zed, VS Code's terminal) and falls back to VS Code; the
@@ -429,8 +453,11 @@ class AppConfig(BaseSettings):
     QDRANT_UPSERT_RETRIES: int = Field(default=3, gt=0)
     QDRANT_RETRY_BASE_DELAY: float = Field(default=0.5, gt=0)
     QDRANT_BATCH_SIZE: int = Field(default=50, gt=0)
+    # The `sqlite` store is the default for the reason the embedded graph is:
+    # a file under CGR_HOME needs no server and no Docker. Qdrant and Milvus
+    # stay one setting away.
     VECTOR_STORE_BACKEND: cs.VectorStoreBackend = Field(
-        cs.VectorStoreBackend.QDRANT, validation_alias="CGR_VECTOR_STORE_BACKEND"
+        cs.VectorStoreBackend.SQLITE, validation_alias="CGR_VECTOR_STORE_BACKEND"
     )
     MILVUS_URI: str = "./.milvus_code_embeddings.db"
     MILVUS_TOKEN: str | None = None
@@ -439,6 +466,31 @@ class AppConfig(BaseSettings):
     MILVUS_VECTOR_DIM: int = 768
     MILVUS_TOP_K: int = 5
     MILVUS_CONSISTENCY_LEVEL: str = "Strong"
+    # The `sqlite` vector store's file; unset means `vectors.sqlite` under
+    # CGR_HOME, beside the embedded graph's, so semantic search needs no
+    # server either.
+    SQLITE_VECTOR_PATH: Path | None = None
+    SQLITE_VECTOR_DIM: int = 768
+    SQLITE_VECTOR_TOP_K: int = 5
+
+    @property
+    def qdrant_set_without_backend(self) -> bool:
+        """Whether Qdrant is configured but the vector store was left to default.
+
+        Qdrant was the default vector store before the `sqlite` one replaced
+        it, so this is how an install upgraded in place looks: its embeddings
+        live in Qdrant while cgr now opens an empty file.
+        """
+        return cs.SETTING_VECTOR_STORE_BACKEND not in self.model_fields_set and any(
+            name in self.model_fields_set for name in cs.QDRANT_CONNECTION_SETTINGS
+        )
+
+    @property
+    def vector_db_file(self) -> Path:
+        if self.SQLITE_VECTOR_PATH is not None:
+            return self.SQLITE_VECTOR_PATH.expanduser()
+        return self.CGR_HOME.expanduser() / cs.SQLITE_VEC_DEFAULT_DB_FILENAME
+
     EMBEDDING_PROVIDER: cs.EmbeddingProvider = Field(
         cs.EmbeddingProvider.UNIXCODER, validation_alias="CGR_EMBEDDING_PROVIDER"
     )
@@ -547,6 +599,10 @@ class AppConfig(BaseSettings):
     _active_cypher: ModelConfig | None = None
 
     QUIET: bool = Field(False, validation_alias="CGR_QUIET")
+
+    # The GitHub Sponsors line a finished command ends on in a terminal; set
+    # false to drop it without the rest of the output `--quiet` drops.
+    SPONSOR_PLEDGE: bool = Field(True, validation_alias="CGR_SPONSOR_PLEDGE")
 
     # Compaction discards old tool output to bound the context (#1500). It is
     # on by default because an unbounded history eventually fails the request
