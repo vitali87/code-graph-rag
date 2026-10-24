@@ -308,3 +308,21 @@ def test_a_method_on_a_readonly_array_is_no_element_method(temp_repo: Path) -> N
     calls = _size_calls({"src/types.ts": TYPES, "src/use.ts": use}, temp_repo / "proj")
 
     assert "ro" not in calls, calls
+
+
+@pytest.mark.parametrize(
+    "index", ['"length"', "`length`"], ids=["string", "template-string"]
+)
+def test_a_named_property_of_an_array_is_not_an_element(
+    temp_repo: Path, index: str
+) -> None:
+    # Negative: `xs["length"]` on `Box[]` is the array's own property, a
+    # number, not an element, so its call is no exact `Box.size`.
+    use = (
+        'import { Box } from "./types";\n\n'
+        "export function named(xs: Box[]): number {\n"
+        f"  return xs[{index}].size();\n}}\n"
+    )
+    calls = _size_calls({"src/types.ts": TYPES, "src/use.ts": use}, temp_repo / "proj")
+
+    assert ("Box", cs.EdgeResolution.EXACT) not in calls.get("named", set()), calls

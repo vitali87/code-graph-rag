@@ -6229,6 +6229,9 @@ class CallProcessor:
         obj = receiver.child_by_field_name(cs.FIELD_OBJECT)
         if obj is None or obj.type != cs.TS_IDENTIFIER:
             return None
+        index = receiver.child_by_field_name(cs.TS_FIELD_INDEX)
+        if index is None or index.type in cs.TS_PROPERTY_NAME_INDEX_TYPES:
+            return None
         annotation = self._js_identifier_annotation(obj)
         inner = next(iter(annotation.named_children), None) if annotation else None
         return (
