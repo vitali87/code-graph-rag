@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from ... import constants as cs
-from ...types_defs import FunctionRegistryTrieProtocol
+from ...types_defs import FunctionRegistryTrieProtocol, ResultValue
 
 
 class JsExport(NamedTuple):
@@ -25,6 +25,30 @@ class JsExport(NamedTuple):
     # `<source>.<name>` for another module's export it re-exports.
     target: str
     local: bool
+
+
+def encode_js_exports(exports: Mapping[str, JsExport]) -> list[str]:
+    """One stored entry per exported name, as `KEY_JS_EXPORTS` holds them."""
+    sep = cs.JS_EXPORT_FIELD_SEP
+    return sorted(
+        f"{name}{sep}{export.target}{sep}"
+        f"{cs.JS_EXPORT_LOCAL_FLAG if export.local else cs.JS_EXPORT_REEXPORT_FLAG}"
+        for name, export in exports.items()
+    )
+
+
+def decode_js_exports(entries: ResultValue) -> dict[str, JsExport]:
+    """The export table `encode_js_exports` stored; malformed entries skipped."""
+    table: dict[str, JsExport] = {}
+    for entry in entries if isinstance(entries, list) else ():
+        if not isinstance(entry, str):
+            continue
+        fields = entry.split(cs.JS_EXPORT_FIELD_SEP)
+        if len(fields) == 3 and fields[0] and fields[1]:
+            table[fields[0]] = JsExport(
+                fields[1], local=fields[2] == cs.JS_EXPORT_LOCAL_FLAG
+            )
+    return table
 
 
 def follow_js_reexports(
