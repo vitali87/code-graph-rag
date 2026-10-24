@@ -3092,12 +3092,24 @@ class MCPToolsRegistry:
         return await self._graph_query(
             cs.MCPToolName.ENDPOINT_CALLERS,
             project,
-            lambda name: self._uncaptured_refusal(
-                cs.MCPToolName.ENDPOINT_CALLERS,
-                name,
-                graph_query.endpoint_callers(self.ingestor.fetch_all, name, target),
-            ),
+            lambda name: self._endpoint_callers(name, target),
         )
+
+    def _endpoint_callers(self, project_name: str, target: str) -> object:
+        # A target that names no endpoint is refused, as `callers` refuses an
+        # unknown name: `[]` means the endpoint exists and nothing reaches it
+        # (issue #3186). A project synced without what the tool reads holds no
+        # endpoint at all, so that refusal names the missing capture instead.
+        tool = cs.MCPToolName.ENDPOINT_CALLERS
+        try:
+            rows = graph_query.endpoint_callers(
+                self.ingestor.fetch_all, project_name, target
+            )
+        except graph_query.UnknownEndpointError as unknown:
+            return self._uncaptured_refusal(tool, project_name, []) or {
+                cs.DICT_KEY_ERROR: str(unknown)
+            }
+        return self._uncaptured_refusal(tool, project_name, rows)
 
     async def remote_dependencies(self, project: str | None = None) -> object:
         return await self._graph_query(
