@@ -374,14 +374,15 @@ def _build_tool(go: str) -> Path | None:
 
     The version floor is checked before a build so an old Go is named plainly
     instead of surfacing as `go build`'s stderr, and a failed build is not
-    retried on every sync (issue #2395).
+    retried on every sync (issue #2395). It is checked before a cached helper
+    is reused too: the helper drives the `go` on PATH to load packages, and a
+    version manager can put an older Go there after a newer one built it, so
+    a cached build must not let a Go below the floor run (PR #3410 review).
     """
     cache = _cache_dir()
     src = cache / "src"
     out = cache / "out"
     binary = out / _BINARY_NAME
-    if artifact_fresh(binary, _newest_source_mtime):
-        return binary
     version = _toolchain_version(go)
     if (required := _too_old(version)) is not None:
         logger.warning(
@@ -390,6 +391,8 @@ def _build_tool(go: str) -> Path | None:
             )
         )
         return None
+    if artifact_fresh(binary, _newest_source_mtime):
+        return binary
     marker = cache / _BUILD_FAILED_MARKER
     # The fast path: a remembered failure skips the lock, and any wait on it,
     # entirely. `_compile_and_remember` checks again once the lock is held.
