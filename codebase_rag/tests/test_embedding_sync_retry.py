@@ -20,8 +20,9 @@ from __future__ import annotations
 import errno
 import hashlib
 import json
+import sqlite3
 from collections.abc import Callable, Generator, Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -35,8 +36,13 @@ from codebase_rag.checkout_state import state_file
 from codebase_rag.constants import VectorStoreBackend
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.sqlite_vectors import extensions_loadable
 from codebase_rag.types_defs import PropertyParams, ResultRow
-from codebase_rag.utils.dependencies import has_pymilvus, has_qdrant_client
+from codebase_rag.utils.dependencies import (
+    has_pymilvus,
+    has_qdrant_client,
+    has_sqlite_vec,
+)
 from evals.cgr_graph import _StatefulIngestor
 
 pytestmark = pytest.mark.skipif(
@@ -365,6 +371,91 @@ class TestWhatTheRetryLeavesAlone:
         retry = _sync(repo, graph, {2: _KEEP})
         assert retry.skipped_because_in_sync is False
         assert _points() == [(_KEEP, 2)]
+
+
+def _store_stamps(repo: Path) -> list[Path]:
+    """The per-project files naming the backend a project's points are in."""
+    pattern = cs.EMBEDDINGS_STORE_PROJECT_TEMPLATE.format(digest="*")
+    return sorted(state_file(repo, "").glob(pattern))
+
+
+def _sqlite_points(path: Path) -> list[tuple[str, int]]:
+    with closing(sqlite3.connect(path)) as conn:
+        return sorted(
+            conn.execute("SELECT qualified_name, node_id FROM cgr_vector_points")
+        )
+
+
+class TestASwitchedStoreIsRefilled:
+    """The points stay in the store they were written to. When the selected
+    backend changes, as when `sqlite` replaced Qdrant as the default, an
+    unchanged checkout would keep the in-sync fast path, which never embeds,
+    and semantic search would find nothing until some file changed."""
+
+    def test_a_settled_pass_keeps_the_fast_path(
+        self, repo: Path, graph: _Graph
+    ) -> None:
+        # Negative: the stamp names the backend the pass wrote to.
+        _sync(repo, graph, {1: _KEEP})
+
+        assert [p.read_text() for p in _store_stamps(repo)] == ["qdrant"]
+        assert _in_sync(repo, graph) is True
+
+    @pytest.mark.skipif(not has_sqlite_vec(), reason="sqlite-vec not installed")
+    @pytest.mark.skipif(
+        not extensions_loadable(), reason="this Python's sqlite3 cannot load extensions"
+    )
+    # Unstamped: synced before the stamp existed, when Qdrant was the default,
+    # as an install that now opens the sqlite default was.
+    @pytest.mark.parametrize("stamped", [True, False], ids=["stamped", "unstamped"])
+    def test_an_unchanged_sync_fills_a_newly_selected_store(
+        self,
+        repo: Path,
+        graph: _Graph,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        stamped: bool,
+    ) -> None:
+        _sync(repo, graph, {1: _KEEP})
+        if not stamped:
+            for stamp in _store_stamps(repo):
+                stamp.unlink()
+        store = tmp_path / "vectors.sqlite"
+        monkeypatch.setattr(
+            vs.settings, "VECTOR_STORE_BACKEND", VectorStoreBackend.SQLITE
+        )
+        monkeypatch.setattr(vs.settings, "SQLITE_VECTOR_PATH", store)
+        monkeypatch.setattr(vs.settings, "SQLITE_VECTOR_DIM", _DIM)
+        vs.close_vector_store_client()
+
+        assert _in_sync(repo, graph) is False
+        refill = _sync(repo, graph, {1: _KEEP})
+        vs.close_vector_store_client()
+
+        assert refill.skipped_because_in_sync is False
+        assert _sqlite_points(store) == [(_KEEP, 1)]
+        assert _in_sync(repo, graph) is True
+
+    def test_a_checkout_synced_before_the_stamp_keeps_its_qdrant_store(
+        self, repo: Path, graph: _Graph
+    ) -> None:
+        # Negative: its points went to Qdrant, the default then, and an
+        # install that chose Qdrant still searches them there.
+        _sync(repo, graph, {1: _KEEP})
+        for stamp in _store_stamps(repo):
+            stamp.unlink()
+
+        assert _in_sync(repo, graph) is True
+
+    def test_a_sync_without_embeddings_neither_owes_nor_stamps(
+        self, repo: Path, graph: _Graph
+    ) -> None:
+        # Negative: a run that cannot embed keeps the fast path, as for the
+        # pending marker, and leaves the pass to the next run that can.
+        _sync(repo, graph, {1: _KEEP}, skip_embeddings=True)
+
+        assert _store_stamps(repo) == []
+        assert _in_sync(repo, graph, skip_embeddings=True) is True
 
 
 _OTHER = "other"
