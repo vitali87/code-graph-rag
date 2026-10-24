@@ -275,6 +275,13 @@ VECTOR_STORE_BACKEND_UNAVAILABLE = (
     "Vector store backend '{backend}' dependencies are not available"
 )
 VECTOR_STORE_BACKEND_UNKNOWN = "Unknown vector store backend '{backend}'"
+QDRANT_SET_WITHOUT_BACKEND = (
+    "Qdrant settings are set but CGR_VECTOR_STORE_BACKEND is not, so cgr is "
+    "using the sqlite vector store at {path}, now the default instead of "
+    "Qdrant. Embeddings stored in Qdrant are not searched here. To keep using "
+    "Qdrant, set CGR_VECTOR_STORE_BACKEND=qdrant; to keep the sqlite store, "
+    "set CGR_VECTOR_STORE_BACKEND=sqlite. Either one silences this notice."
+)
 VECTOR_STORE_DELETE_PROJECT = (
     "Deleting {count} {backend} vectors for project '{project}'"
 )
@@ -908,6 +915,7 @@ IMP_CSHARP = "C# using: {name} -> {path}"
 IMP_GO = "Go import: {package} -> {path}"
 IMP_GO_MODULE_PATH = "Go module path: {module} -> {path}"
 IMP_JS_WORKSPACE_PACKAGE = "JS workspace package: {package} -> {path}"
+IMP_DART_PACKAGE = "Dart package: {package} -> {path}"
 CONTRACT_OPERATIONS = "Contract operations: {count} declared, {created} artefact links"
 CONTRACT_YAML_UNAVAILABLE = (
     "PyYAML is not installed; skipping YAML contract spec {path}"
