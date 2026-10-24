@@ -59,6 +59,7 @@ from .editor_links import (
 from .graph_cli import cli as graph_cli
 from .graph_dialects import DIALECT_MEMGRAPH
 from .parser_loader import load_parsers
+from .port_cli import cli as port_cli
 from .project_selection import ProjectChoice, choose_project, scope_refusal
 from .services.gloss_cleanup import prune_orphaned_glosses
 from .services.graph_diff import DiffError, diff_indexes, diff_is_empty
@@ -2174,6 +2175,18 @@ def edits_command(ctx: typer.Context) -> None:
 )
 def graph_command(ctx: typer.Context) -> None:
     _run_delegated_group(graph_cli, ctx)
+
+
+@app.command(
+    name=ch.CLICommandName.PORT,
+    help=ch.CMD_PORT,
+    short_help=ch.CMD_PORT,
+    add_help_option=False,
+    context_settings=_DELEGATED_GROUP_CONTEXT,
+    rich_help_panel=ch.PANEL_USE,
+)
+def port_command(ctx: typer.Context) -> None:
+    _run_delegated_group(port_cli, ctx)
 
 
 @app.command(
