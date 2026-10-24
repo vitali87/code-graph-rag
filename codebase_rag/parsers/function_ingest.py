@@ -1698,6 +1698,8 @@ class FunctionIngestMixin:
         props.update(type_facts_props(extract_type_facts(func_node, language)))
         if language == cs.SupportedLanguage.DART and dart_is_top_level_main(func_node):
             props[cs.KEY_IS_PROGRAM_MAIN] = True
+        if language == cs.SupportedLanguage.GO:
+            props.update(go_utils.return_type_props(func_node))
         props.update(fingerprint_props(func_node))
         props.update(anchor_hash_props(func_node, decorators))
         props.update(decorated_start_props(func_node))

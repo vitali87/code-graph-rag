@@ -813,6 +813,8 @@ class DefinitionProcessor(
             module_props[cs.KEY_DOCSTRING] = docstring
         if fingerprint := interface_fingerprint(root_node, language):
             module_props[cs.KEY_INTERFACE_FINGERPRINT] = fingerprint
+        if package := self.go_package_names.get(module_qn):
+            module_props[cs.KEY_GO_PACKAGE] = package
         if language == cs.SupportedLanguage.PHP and (
             namespace := declared_namespace(root_node)
         ):
