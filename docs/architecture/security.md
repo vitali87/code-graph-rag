@@ -11,7 +11,7 @@ handles security incidents, compromised releases and recovery communications.
 
 ## What the software does
 
-code-graph-rag parses codebases into a knowledge graph stored in a local Memgraph database, optionally embeds code for semantic search in a local Qdrant instance, and answers natural-language questions about the code, either through the interactive CLI agent or through the MCP server.
+code-graph-rag parses codebases into a knowledge graph stored in a local graph database (an embedded SQLite file by default, or Memgraph or Neo4j), optionally embeds code for semantic search in a local vector store (a SQLite file by default, or Qdrant or Milvus), and answers natural-language questions about the code, either through the interactive CLI agent or through the MCP server.
 
 ## Scope, assets and attacker assumptions
 
