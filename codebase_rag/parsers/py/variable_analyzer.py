@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -18,7 +19,7 @@ from ...types_defs import (
 from ..import_processor import ImportProcessor
 from ..utils import get_cached_query, safe_decode_text
 from .forward_refs import unquote_forward_refs
-from .utils import resolve_class_name
+from .utils import resolve_class_name, resolve_dotted_class
 
 # Deepest operand chain `_value_leaves` will walk. Each term of `a or b or c`
 # or `x + y + z` is one level. Measured over every assignment in this repo the
@@ -54,6 +55,8 @@ if TYPE_CHECKING:
         def _infer_type_from_expression(
             self, node: ASTNode, module_qn: str, scope: ASTNode | None = None
         ) -> str | None: ...
+
+        def _type_of_annotated_name(self, text: str, module_qn: str) -> str | None: ...
 
         def _find_class_node(self, class_qn: str) -> ASTNode | None: ...
 
@@ -355,13 +358,48 @@ class PythonVariableAnalyzerMixin(_VarBase):
         right_node = assignment.child_by_field_name(cs.TS_FIELD_RIGHT)
         if not (
             left_node
-            and right_node
             and left_node.type == cs.TS_PY_ATTRIBUTE
             and (left_text := left_node.text)
             and (attr_name := left_text.decode(cs.ENCODING_UTF8)).startswith(
                 cs.PY_SELF_PREFIX
             )
         ):
+            return
+        annotation_node = assignment.child_by_field_name(cs.TS_FIELD_TYPE)
+        if annotation_node is not None:
+            annotation = safe_decode_text(annotation_node)
+            if annotation:
+                annotation = unquote_forward_refs(annotation)
+                # The shared normalizer accepts optional pipe unions, but not
+                # their typing.Union spelling.
+                if union := re.fullmatch(
+                    r"(?:typing\.)?Union\[([^,\[\]]+),\s*None\]", annotation
+                ):
+                    annotation = f"{union.group(1)} | None"
+            assigned_type = (
+                self._type_of_annotated_name(annotation, module_qn)
+                if annotation
+                else None
+            )
+            if (
+                assigned_type
+                and cs.SEPARATOR_DOT in assigned_type
+                and not self._get_project_class_qn(assigned_type, module_qn)
+            ):
+                # `models.Store` / `m.Store` names the class through the
+                # module's imports; the registry only knows `proj.models.Store`.
+                assigned_type = resolve_dotted_class(
+                    assigned_type,
+                    module_qn,
+                    self.import_processor,
+                    self.function_registry,
+                )
+            if assigned_type and self._get_project_class_qn(assigned_type, module_qn):
+                local_var_types[attr_name] = assigned_type
+            else:
+                local_var_types.pop(attr_name, None)
+            return
+        if right_node is None:
             return
         # Read without its body's type map (a whole module's self-assignments,
         # or `__init__`'s for another method), so the assignment goes along:

@@ -88,6 +88,16 @@ A pull request that changes something a user can see must show it working, in th
 - **How to attach it:** embed it inline as a GitHub attachment, never committed. Reference the file in the body and let `gh` upload it: `gh pr create --attach ./after.png` or `gh pr edit <n> --attach ./after.png` (GitHub CLI 2.99 or later). A body line such as `![after](./after.png)` is rewritten to the uploaded `github.com/user-attachments` URL; without one the image is appended. By hand, drag or paste the file into the description.
 - **When nothing is visible:** an internal refactor, a test-only or CI-only change says so in one line instead, for example `No user-visible change: refactors the call resolver's cache key.`
 
+### Breaking changes
+
+A change that breaks existing setups (a new default, a removed option, a renamed setting) is announced in its release under "⚠️ Breaking changes". The text comes from the pull request:
+
+- Mark the title with `!`, for example `feat(vectors)!: default to the sqlite vector store`.
+- A maintainer adds the `breaking change` label. The label bumps the minor version and releases at once.
+- Add the release notes as `changes/breaking/<PR number>.md`: what changed, how to keep the old behaviour, what happens to existing installs, and a link to the docs. Write them for users reading the release, in Markdown with no heading.
+
+The **Breaking Change Notes** check fails until the title, the label and the file agree.
+
 ### Continuous Integration
 
 All pull requests are automatically validated by our CI workflow, which runs in parallel for faster feedback:
