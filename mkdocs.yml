@@ -92,6 +92,7 @@ nav:
     - C/C++ Semantic Mode: guide/cpp-semantic-mode.md
     - MCP Server: guide/mcp-server.md
     - Multi-Project Graphs: guide/multi-project.md
+    - Porting Between Languages: guide/porting.md
   - Python SDK:
     - Overview: sdk/overview.md
     - Graph Loader: sdk/graph-loader.md
