@@ -346,8 +346,14 @@ class TestRestoreVariant:
 
     @pytest.mark.parametrize(
         "qn",
-        ["p.f", "p.Outer@7.run", "p.@event", "p.C.m(java.lang.String)"],
-        ids=["plain", "marker-on-an-outer-segment", "csharp-verbatim", "signature"],
+        ["p.f", "p.Outer@7.run", "p.@event", "p.C.m(java.lang.String)", "p.C.o@x"],
+        ids=[
+            "plain",
+            "marker-on-an-outer-segment",
+            "csharp-verbatim",
+            "signature",
+            "non-numeric-suffix",
+        ],
     )
     def test_a_name_without_a_trailing_marker_stays_alone(self, qn: str) -> None:
         registry = FunctionRegistryTrie()

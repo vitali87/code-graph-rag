@@ -226,6 +226,11 @@ cgr trace convert run.xt --workload phpunit
 cgr trace ingest cgr-trace.jsonl --repo-path /path/to/your-repo
 ```
 
+An Xdebug (3.1 or later) built with zlib compresses traces by default
+(`xdebug.use_compression=1`) and writes `run.xt.gz` instead; pass that file to
+`cgr trace convert` as is. A compressed trace is inflated in memory under a
+256 MiB cap; to convert a larger one, `gunzip` it and pass the `.xt` file.
+
 
 ![PHPUnit under Xdebug tracing, then cgr trace convert and ingest, adding the callable-stage call from FingersCrossedProcessor.process to Pipeline.__invoke](../assets/demos/dynamic-tracing-php.gif)
 
