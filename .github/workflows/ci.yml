@@ -447,12 +447,9 @@ jobs:
         run: uv build --wheel rust/cgr_graph_rs --out-dir dist-rust
 
       # pip trusts the system store as well as its own certifi, and the runner's
-      # ca-certificates may still carry emSign ECC Root CA - G3: deselect it.
-      - name: Distrust emSign ECC Root CA - G3
-        run: |
-          sudo sed -i 's|^mozilla/emSign_ECC_Root_CA_-_G3\.crt$|!&|' /etc/ca-certificates.conf
-          sudo update-ca-certificates --fresh > /dev/null
-          test ! -e /etc/ssl/certs/emSign_ECC_Root_CA_-_G3.pem
+      # ca-certificates may still carry distrusted eMudhra roots: deselect them.
+      - name: Distrust the eMudhra roots
+        run: sudo bash scripts/distrust_ca_roots.sh
 
       # Deliberately plain venv + pip: uv.lock must not participate.
       - name: Install the wheel with unlocked resolution
