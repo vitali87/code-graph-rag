@@ -209,6 +209,10 @@ TS_DART_TYPE_IDENTIFIER = "type_identifier"
 # `import '...' as name;` alias
 TS_DART_IMPORT_SPECIFICATION = "import_specification"
 DART_IMPORT_ALIAS_KEYWORD = "as"
+# `show A, B` / `hide C` after a directive's URI: the keyword is the
+# combinator's first child, the names it lists are its identifiers.
+TS_DART_COMBINATOR = "combinator"
+TS_DART_SHOW = "show"
 
 # URI scheme prefixes distinguishing external (dart:/package:) from
 # first-party (relative path) imports.
