@@ -107,8 +107,9 @@ class _Header(NamedTuple):
 class _Binding(NamedTuple):
     text: str
     keyword: bool
-    position: int  # index among the site's arguments, for keyword order
+    position: int  # index among the site's arguments: the order they evaluate in
     span: tuple[int, int]  # byte span of the value, for edits nested in it
+    inert: bool = False  # a name or plain literal: evaluating it runs no code
 
 
 class _Edit(NamedTuple):

@@ -220,7 +220,8 @@ def test_an_isolated_check_refuses_a_graph_already_holding_io_links(
     with IO on can hold a resource chain the re-ingest's repo-wide prune
     would delete once a changed file's subtree stops anchoring it (bot
     review, #1718). `test_an_isolated_check_runs_without_io_links` is the
-    control: the same fixture without the edge runs."""
+    control: the same fixture without the edge runs. Only a chain the checked
+    project's own code anchors is refused (#3188), so `run()` reads it."""
     root, store = indexed
     resource = cs.NodeLabel.RESOURCE.value
     for name in ("env:HOME", "file:/tmp/out"):
@@ -230,11 +231,16 @@ def test_an_isolated_check_refuses_a_graph_already_holding_io_links(
         cs.RelationshipType.FLOWS_TO.value,
         (resource, cs.KEY_QUALIFIED_NAME, "file:/tmp/out"),
     )
+    store.ensure_relationship_batch(
+        (cs.NodeLabel.FUNCTION.value, cs.KEY_QUALIFIED_NAME, f"{PROJECT}.pkg.app.run"),
+        cs.RelationshipType.READS_FROM.value,
+        (resource, cs.KEY_QUALIFIED_NAME, "env:HOME"),
+    )
     store.flush_all()
     _edit(root)
     parsers, queries = load_parsers()
 
-    with pytest.raises(CheckError, match="already holds"):
+    with pytest.raises(CheckError, match=cs.RelationshipType.FLOWS_TO.value):
         run_check(root, "HEAD", PROJECT, store, parsers, queries, isolated=True)
 
 
