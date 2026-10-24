@@ -42,12 +42,12 @@ With semantic code search (UniXcoder embeddings):
 pip install 'code-graph-rag[semantic]'
 ```
 
-Qdrant is the default vector store for semantic search. To use Milvus Lite,
-install `code-graph-rag[semantic,milvus]`, then set
+The vectors go to a SQLite file beside the embedded graph
+(`~/.cgr/vectors.sqlite`), so semantic search needs no server and no Docker
+either. To use Qdrant instead, set `CGR_VECTOR_STORE_BACKEND=qdrant`. To use
+Milvus Lite, install `code-graph-rag[semantic,milvus]`, then set
 `CGR_VECTOR_STORE_BACKEND=milvus` and `MILVUS_URI=./.milvus_code_embeddings.db`
-before indexing. To keep the vectors in a SQLite file beside the embedded graph
-(`~/.cgr/vectors.sqlite`, no server), install `code-graph-rag[semantic,sqlite-vec]`
-and set `CGR_VECTOR_STORE_BACKEND=sqlite`.
+before indexing.
 
 To compute embeddings on an OpenAI-compatible endpoint (OpenAI, Ollama, vLLM)
 instead of locally, set `CGR_EMBEDDING_PROVIDER=openai` with
@@ -59,8 +59,9 @@ transformers are then not required locally.
 `pip install code-graph-rag` gives you the newest PyPI release, which is deliberately
 not the newest commit. Git tags exist for every version (one per merge), while PyPI
 uploads and GitHub Release binaries land on an every-50 cadence, so the tag on `main`
-usually runs ahead of the published version. A security fix is the exception: it
-ships immediately rather than waiting for the cadence.
+usually runs ahead of the published version. A security fix, a breaking change or a
+merge a maintainer labels `release now` is the exception: each ships immediately
+rather than waiting for the cadence.
 
 To run code newer than the latest release, install from git with uv:
 
