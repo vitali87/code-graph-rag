@@ -829,6 +829,7 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
     # API the re-export walk follows: a re-parse must not keep a stale one.
     processor.js_export_bindings = {"m": {"Svc": JsExport("m.svc.Svc", local=False)}}
     processor._julia_scope_map_keys = {"m": {"m.Inner"}}
+    processor._js_side_effect_imports = {}
 
     processor._clear_module_import_state("m")
 
