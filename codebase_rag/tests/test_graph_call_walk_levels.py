@@ -204,14 +204,18 @@ def test_the_looked_up_node_is_matched_by_label_and_qualified_name(
     name: str, looked_up: str, other: str, key: str
 ) -> None:
     query = getattr(cq, name)
-    # Its own MATCH, so the planner starts there from the label indexes
-    # rather than scanning every node for the unlabelled far end.
+    # Its own MATCH, labelled in its WHERE, so the planner starts there from
+    # the label indexes rather than scanning every node for the unlabelled
+    # far end (Memgraph 3.3 plans one label-and-property seek per label).
     lookup = re.search(
-        rf"MATCH \({looked_up}:([A-Za-z|]+) \{{qualified_name: (\$?\w+)\}}\)", query
+        rf"MATCH \({looked_up} \{{qualified_name: (\$?\w+)\}}\)\n"
+        rf"WHERE \(({looked_up}:\w+(?: OR {looked_up}:\w+)*)\)\n",
+        query,
     )
     assert lookup is not None, query
-    assert _calls_endpoint_labels() <= set(lookup.group(1).split("|"))
-    assert lookup.group(2) == key
+    labels = {part.split(":", 1)[1] for part in lookup.group(2).split(" OR ")}
+    assert _calls_endpoint_labels() <= labels
+    assert lookup.group(1) == key
     if not key.startswith("$"):
         assert f"UNWIND ${cs.KEY_QNS} AS {key}" in query
     # The far end keeps its project filter, and nothing compares the
