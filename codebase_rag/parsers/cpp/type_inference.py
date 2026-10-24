@@ -316,7 +316,11 @@ class CppTypeInferenceEngine:
             yield from self._body_declarations(body)
 
     def _body_declarations(self, node: Node) -> Iterator[Node]:
-        for child in node.children:
+        # An explicit stack, not recursion: a generated `else if` chain or a
+        # long `||` condition nests ~1,000 levels deep (issue #3173).
+        stack = list(reversed(node.children))
+        while stack:
+            child = stack.pop()
             # A lambda / nested function / local class body opens its own scope;
             # its declarations are not locals of the enclosing function, so stop
             # here or an inner `x` would be attributed to the outer `x`.
@@ -324,10 +328,10 @@ class CppTypeInferenceEngine:
                 continue
             if child.type == cs.CppNodeType.DECLARATION:
                 yield child
-            # Recurse into ordinary nested blocks (if/for/while/try bodies) so a
+            # Descend into ordinary nested blocks (if/for/while/try bodies) so a
             # variable declared only in an inner block still resolves; conflicting
             # redecls across scopes are reconciled by the caller (drop-on-conflict).
-            yield from self._body_declarations(child)
+            stack.extend(reversed(child.children))
 
     def declaration_scopes(self, caller_node: Node) -> list[tuple[int, int, str, bool]]:
         """Each parameter, local and (for a member function written in its
