@@ -55,7 +55,9 @@ def _isolated_output(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, N
 def connect() -> Generator[MagicMock, None, None]:
     ingestor = MagicMock()
     ingestor.list_projects.return_value = INDEXED
-    ingestor.export_graph_to_dict.return_value = GRAPH
+    ingestor.iter_export_nodes.return_value = iter(GRAPH["nodes"])
+    ingestor.iter_export_relationships.return_value = iter(GRAPH["relationships"])
+    ingestor.export_graph_metadata.return_value = GRAPH["metadata"]
     with patch("codebase_rag.cli.connect_memgraph") as mock_connect:
         mock_connect.return_value.__enter__ = MagicMock(return_value=ingestor)
         mock_connect.return_value.__exit__ = MagicMock(return_value=False)
@@ -71,7 +73,7 @@ def _run(args: list[str]) -> Result:
 
 
 def _scope(connect: MagicMock) -> list[str]:
-    call = _ingestor(connect).export_graph_to_dict.call_args
+    call = _ingestor(connect).iter_export_nodes.call_args
     if call.args:
         return list(call.args[0])
     return list(call.kwargs.get("project_names", []))
@@ -151,7 +153,7 @@ def test_an_unknown_project_is_an_error_that_names_the_indexed_ones(
     assert result.exit_code == 1
     assert "nope" in result.output
     assert "alpha, beta, gamma" in result.output
-    _ingestor(connect).export_graph_to_dict.assert_not_called()
+    _ingestor(connect).iter_export_nodes.assert_not_called()
     assert not out.exists()
 
 
@@ -292,7 +294,7 @@ def test_a_directory_without_write_access_fails_before_the_graph_is_read(
 def test_a_failed_export_is_one_line_without_a_traceback(
     connect: MagicMock, tmp_path: Path
 ) -> None:
-    _ingestor(connect).export_graph_to_dict.side_effect = RuntimeError("boom")
+    _ingestor(connect).iter_export_nodes.side_effect = RuntimeError("boom")
 
     result = _run(["-q", "export", "-o", str(tmp_path / "x.json")])
 
@@ -303,7 +305,7 @@ def test_a_failed_export_is_one_line_without_a_traceback(
 def test_the_traceback_of_a_failed_export_is_kept_at_debug(
     connect: MagicMock, tmp_path: Path
 ) -> None:
-    _ingestor(connect).export_graph_to_dict.side_effect = RuntimeError("boom")
+    _ingestor(connect).iter_export_nodes.side_effect = RuntimeError("boom")
     records: list[tuple[str, bool]] = []
     logger.add(
         lambda message: records.append(
