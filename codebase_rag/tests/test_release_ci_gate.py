@@ -202,7 +202,9 @@ def _assert_deferred(result: subprocess.CompletedProcess[str]) -> None:
     only the release waits for a bump whose CI is proven. The annotation is
     what keeps that release due on the next run."""
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "git: commit -m chore: bump version to 0.0.951" in result.stdout
+    assert (
+        "git: commit --allow-empty -m chore: bump version to 0.0.951" in result.stdout
+    )
     assert "git: push\n" in result.stdout
     assert (
         f"git: tag -a v0.0.951 -m {MARKER}: CI is not proven for {SHA}" in result.stdout
