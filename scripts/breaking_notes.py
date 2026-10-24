@@ -20,15 +20,18 @@ import argparse
 import json
 import re
 import sys
+from collections.abc import Iterable
 from pathlib import Path, PurePosixPath
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 FRAGMENT_DIR = PurePosixPath("changes/breaking")
 LABEL = "breaking change"
 HEADING = "## ⚠️ Breaking changes"
-# The type and scope of ci.yml's PR title pattern; only the "!" before the
-# colon marks a breaking change, never one in the description.
-BREAKING_TITLE = re.compile(r"^[a-z]+(\([a-zA-Z0-9_-]+\))?!: ")
+# A conventional-commit header, as ci.yml's title check parses it: a scope is
+# whatever sits in the parentheses, "rename,imports" and "mcp/server.py" among
+# them. Only the "!" before the colon marks a breaking change, never one in the
+# description.
+BREAKING_TITLE = re.compile(r"^[a-z]+(\([^()]+\))?!: ")
 FRAGMENT_NAME = re.compile(r"^([1-9][0-9]*)\.md$")
 
 
@@ -37,7 +40,7 @@ def _has_text(path: Path) -> bool:
 
 
 def check_pull_request(
-    number: int, title: str, labels: list[str], root: Path
+    number: int, title: str, labels: list[str], root: Path, added: Iterable[str] = ()
 ) -> list[str]:
     errors: list[str] = []
     labelled = LABEL in labels
@@ -46,6 +49,11 @@ def check_pull_request(
         errors.append(
             f'The title marks a breaking change with "!", but the pull request '
             f'is not labelled "{LABEL}". A maintainer applies the label.'
+        )
+    if labelled and not BREAKING_TITLE.match(title):
+        errors.append(
+            f'The pull request is labelled "{LABEL}", but its title has no "!" '
+            'before the colon. Mark it, as in "feat(scope)!: summary".'
         )
     if labelled and not _has_text(root / fragment):
         errors.append(
@@ -58,6 +66,13 @@ def check_pull_request(
             f"{fragment} holds breaking-change notes, but the pull request is "
             f'not labelled "{LABEL}", so its release would not be breaking.'
         )
+    # The release publishes every fragment added since the last release, so
+    # notes filed under another number would never meet the label check.
+    errors.extend(
+        f"{path} is added by this pull request, which may add notes only as {fragment}."
+        for path in added
+        if PurePosixPath(path) != fragment
+    )
     directory = root / FRAGMENT_DIR
     if directory.is_dir():
         errors.extend(
@@ -110,6 +125,12 @@ def main(argv: list[str] | None = None) -> int:
     check.add_argument("--number", type=int, required=True)
     check.add_argument("--title", required=True)
     check.add_argument("--labels-json", type=_labels, required=True)
+    check.add_argument(
+        "--added",
+        type=str.splitlines,
+        default=[],
+        help="the paths under changes/breaking/ the pull request adds, one per line",
+    )
     render = commands.add_parser(
         "render", help="write the release section from fragment paths on stdin"
     )
@@ -117,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "check":
         errors = check_pull_request(
-            args.number, args.title, args.labels_json, PROJECT_ROOT
+            args.number, args.title, args.labels_json, PROJECT_ROOT, args.added
         )
         for error in errors:
             print(f"::error::{error}")

@@ -26,6 +26,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The merge commit and its first parent, the base, so the check
+          # sees which notes this pull request adds.
+          fetch-depth: 2
 
       - name: Check the label, the title and the notes agree
         env:
@@ -33,5 +36,7 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: |
+          ADDED=$(git diff --name-only --no-renames --diff-filter=A HEAD^1 HEAD \
+            -- changes/breaking/)
           python3 scripts/breaking_notes.py check --number "$PR_NUMBER" \
-            --title "$PR_TITLE" --labels-json "$PR_LABELS"
+            --title "$PR_TITLE" --labels-json "$PR_LABELS" --added "$ADDED"
