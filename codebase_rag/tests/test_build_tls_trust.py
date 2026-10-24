@@ -264,6 +264,55 @@ def test_every_stage_that_installs_packages_upgrades_ca_certificates() -> None:
     } == {}
 
 
+# certifi's bundle and grpcio's roots.pem are their own copies of the roots:
+# certifi 2026.10.23 also drops emSign ECC Root CA - C3 and emSign Root CA -
+# C1, and grpcio 1.84.1 is the first whose roots.pem drops G3.
+LOCKFILE = REPO_ROOT / "uv.lock"
+LOCK_FLOORS = {"certifi": Version("2026.10.23"), "grpcio": Version("1.84.1")}
+GOOD_LOCK = (
+    '[[package]]\nname = "certifi"\nversion = "2026.10.23"\n\n'
+    '[[package]]\nname = "grpcio"\nversion = "1.84.1"\n'
+)
+_LOCKED = re.compile(
+    r'^\[\[package\]\]\nname = "(?P<name>[^"]+)"\nversion = "(?P<version>[^"]+)"',
+    re.MULTILINE,
+)
+
+
+def lock_problems(text: str) -> list[str]:
+    locked: dict[str, list[str]] = {}
+    for package in _LOCKED.finditer(text):
+        locked.setdefault(package["name"], []).append(package["version"])
+    return [
+        f"{name} {versions or 'unlocked'} below {floor}"
+        for name, floor in LOCK_FLOORS.items()
+        if not (versions := locked.get(name))
+        or any(fails_floor(v, floor) for v in versions)
+    ]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        GOOD_LOCK.replace("2026.10.23", "2026.10.19"),
+        GOOD_LOCK.replace("1.84.1", "1.84.0"),
+        GOOD_LOCK.split("\n\n")[1],
+    ],
+    ids=["old-certifi", "old-grpcio", "certifi-unlocked"],
+)
+def test_a_lock_with_a_stale_root_bundle_is_rejected(text: str) -> None:
+    assert text != GOOD_LOCK
+    assert lock_problems(text)
+
+
+def test_a_lock_at_the_floors_is_accepted() -> None:
+    assert lock_problems(GOOD_LOCK) == []
+
+
+def test_the_lock_is_past_every_bundled_root_fix() -> None:
+    assert lock_problems(LOCKFILE.read_text(encoding="utf-8")) == []
+
+
 @pytest.mark.parametrize(
     "text",
     [
