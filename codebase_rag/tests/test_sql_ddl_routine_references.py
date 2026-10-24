@@ -20,6 +20,7 @@ from codebase_rag import constants as cs
 from codebase_rag.dead_code import collect_dead_code, default_dead_code_config
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.sql_recovery import parse_sql
 from codebase_rag.tests.test_incremental_added_dependents import _add_after_cache
 from codebase_rag.tests.test_incremental_deleted_dependents import (
     _index as _index_into,
@@ -280,6 +281,25 @@ def test_an_aggregate_counts_its_state_function_once_per_statement(
         5,
         10,
     ]
+
+
+def test_ddl_a_statement_isolated_parse_blanks_still_references_its_routine(
+    tmp_path: Path,
+) -> None:
+    # The EVENT TRIGGER's ERROR swallows the function after it, so the file
+    # is re-parsed with the trigger blanked (issue #3180); the DDL is read
+    # from the file, not from that copy.
+    source = (
+        "CREATE FUNCTION on_ddl() RETURNS event_trigger LANGUAGE plpgsql AS $$ BEGIN RETURN; END; $$;\n"
+        "CREATE EVENT TRIGGER watch ON ddl_command_end EXECUTE FUNCTION on_ddl();\n"
+        "CREATE FUNCTION later() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;\n"
+    )
+    parsers, _ = load_parsers()
+    tree = parse_sql(parsers[cs.SupportedLanguage.SQL], source.encode())
+    assert tree.root_node.text is not None
+    assert b"EVENT TRIGGER" not in tree.root_node.text
+    store = _index(tmp_path / PROJECT, {"events.sql": source})
+    assert _callers(store, "events.on_ddl") == {"events": (2, 63)}
 
 
 def test_a_routine_added_later_links_the_unchanged_ddl_naming_it(
