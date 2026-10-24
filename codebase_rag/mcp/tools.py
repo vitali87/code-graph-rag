@@ -2561,12 +2561,24 @@ class MCPToolsRegistry:
 
     def _base_sources(self, paths: list[str]) -> dict[str, bytes | None]:
         """Each path's content before a write: what a new parse error is
-        measured against (None for a file the write creates)."""
+        measured against (None for a file the write creates).
+
+        This runs before the write tool checks the path, so it reads only a
+        regular file inside the root, as `read_file` does: a `..` path or a
+        link out of the root is never opened, whether to a secret or to
+        `/dev/zero`, whose read would never end. The write refuses those.
+        """
         root = Path(self.project_root)
+        real_root = root.resolve()
         bases: dict[str, bytes | None] = {}
         for rel in sd.normalise_paths(paths, root):
             try:
-                bases[rel] = (root / rel).read_bytes()
+                target = (real_root / rel).resolve()
+                target.relative_to(real_root)
+            except (ValueError, RuntimeError, OSError):
+                continue
+            try:
+                bases[rel] = target.read_bytes() if target.is_file() else None
             except OSError:
                 bases[rel] = None
         return bases

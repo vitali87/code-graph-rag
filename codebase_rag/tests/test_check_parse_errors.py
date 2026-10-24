@@ -378,3 +378,26 @@ async def test_an_mcp_write_that_breaks_the_file_leads_with_the_parse_error(
     clean = await registry.write_file("a.py", A)
     # Negative: a write that parses leads with the success line as before.
     assert clean.startswith(cs.MCP_WRITE_SUCCESS.format(path="a.py")), clean
+
+
+def test_the_pre_write_read_stays_inside_the_root(tmp_path: Path) -> None:
+    # The base is read before the write tool checks the path, so the read
+    # itself must refuse what the write would: a `..` path, and a link out
+    # of the root, never reach the file outside.
+    from unittest.mock import MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    outside = tmp_path / "outside.py"
+    outside.write_text('API_TOKEN = "not-a-real-secret"\n', encoding="utf-8")
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "a.py").write_text(A, encoding="utf-8")
+    (root / "linked.py").symlink_to(outside)
+    registry = MCPToolsRegistry(
+        project_root=str(root), ingestor=MagicMock(), cypher_gen=MagicMock()
+    )
+
+    bases = registry._base_sources(["../outside.py", "linked.py", "a.py", "new.py"])
+
+    assert bases == {"a.py": A.encode("utf-8"), "new.py": None}
