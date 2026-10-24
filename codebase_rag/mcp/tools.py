@@ -3358,6 +3358,9 @@ class MCPToolsRegistry:
                     cs.MCPParamName.ALLOW_HEURISTIC: prop(
                         cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_ALLOW_HEURISTIC
                     ),
+                    cs.MCPParamName.ALLOW_EXTERNAL_OVERRIDE: prop(
+                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_ALLOW_EXTERNAL_OVERRIDE
+                    ),
                     cs.MCPParamName.DRY_RUN: prop(
                         cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_RENAME_DRY_RUN
                     ),
@@ -3378,6 +3381,7 @@ class MCPToolsRegistry:
         allow_heuristic: bool = False,
         dry_run: bool = False,
         project: str | None = None,
+        allow_external_override: bool = False,
     ) -> object:
         # The graph read and the edit share the ingestor lock (taken by
         # `_graph_query`): a rebuild landing between planning and writing
@@ -3386,7 +3390,12 @@ class MCPToolsRegistry:
             cs.MCPToolName.RENAME,
             project,
             lambda name: self._run_rename(
-                name, qualified_name, new_name, allow_heuristic, dry_run
+                name,
+                qualified_name,
+                new_name,
+                allow_heuristic,
+                dry_run,
+                allow_external_override,
             ),
         )
 
@@ -3510,6 +3519,7 @@ class MCPToolsRegistry:
         new_name: str,
         allow_heuristic: bool,
         dry_run: bool,
+        allow_external_override: bool = False,
     ) -> object:
         from codebase_rag.editing.rename import RenameRefused, rename, sites_for
 
@@ -3542,6 +3552,7 @@ class MCPToolsRegistry:
                 dry_run=dry_run,
                 reingest=reingest,
                 heuristic_opt_in=cs.MCPParamName.ALLOW_HEURISTIC,
+                allow_external_override=allow_external_override,
             )
         except RenameRefused as refused:
             return {

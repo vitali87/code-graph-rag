@@ -901,6 +901,27 @@ RENAME_UNPLANNED_ALSO_GUESSED = (
 RENAME_UNPLANNED_SHOWN = 10
 RENAME_UNPLANNED_MORE = "{shown}, and {more} more"
 RENAME_CLI_ALLOW_HEURISTIC = "--allow-heuristic"
+# A method that overrides or implements something the project does not define
+# stops doing so when renamed, and nothing at a call site shows it (issue
+# #3226). `{option}` is spelled as for RENAME_AMBIGUOUS.
+RENAME_EXTERNAL_OVERRIDE = (
+    "Refusing to rename {qn}: {reasons}. The renamed method would no longer "
+    "override it, and nothing would call it in its place; pass {option} to "
+    "rename it anyway"
+)
+RENAME_CLI_ALLOW_EXTERNAL_OVERRIDE = "--allow-external-override"
+RENAME_OVERRIDES_EXTERNAL = "{qn} overrides a method outside the project"
+RENAME_PROTOCOL_METHOD = "{qn} is the Python protocol method {name}"
+RENAME_UNMATCHED_OVERRIDE = (
+    "{qn} is marked {marker} but overrides no method in the project"
+)
+RENAME_OVERRIDE_ALSO_OUTSIDE = (
+    "{qn} is marked {marker} and its class also extends or implements "
+    "{supertypes}, outside the project, which may declare it"
+)
+# The columns of CYPHER_RENAME_OVERRIDE_FACTS that are no node property.
+RENAME_FACT_BASES = "bases"
+RENAME_FACT_OUTSIDE_SUPERTYPES = "outside_supertypes"
 RENAME_UNLOCATABLE_SITE = "{owner}: site cannot be located ({resolution})"
 RENAME_RESOLUTION_BAD_POSITION = "position outside its file"
 RENAME_RESOLUTION_CLASS_VIA_PARAM = (

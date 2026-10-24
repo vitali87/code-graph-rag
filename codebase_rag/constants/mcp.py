@@ -123,6 +123,7 @@ class MCPParamName(StrEnum):
     THROUGH_REEXPORTS = "through_reexports"
     NEW_NAME = "new_name"
     ALLOW_HEURISTIC = "allow_heuristic"
+    ALLOW_EXTERNAL_OVERRIDE = "allow_external_override"
     BUDGET_TOKENS = "budget_tokens"
 
 
