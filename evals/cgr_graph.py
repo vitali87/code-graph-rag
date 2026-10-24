@@ -1094,18 +1094,20 @@ class _StatefulIngestor:
                     for edge in self._in.get(target, ())
                     if edge[2] == cs.RelationshipType.DEFINES_METHOD.value
                 ]
-                row[cs.RENAME_FACT_OUTSIDE_SUPERTYPES] = sorted(
-                    {
-                        str(edge[4])
-                        for owner in owners
-                        for edge in self._out.get(owner, ())
-                        if edge[2]
-                        in (
-                            cs.RelationshipType.INHERITS.value,
-                            cs.RelationshipType.IMPLEMENTS.value,
-                        )
-                        and not self._in_project((edge[3], edge[4]), prefix)
-                    }
+                row[cs.RENAME_FACT_OUTSIDE_SUPERTYPES] = list[ResultScalar](
+                    sorted(
+                        {
+                            str(edge[4])
+                            for owner in owners
+                            for edge in self._out.get(owner, ())
+                            if edge[2]
+                            in (
+                                cs.RelationshipType.INHERITS.value,
+                                cs.RelationshipType.IMPLEMENTS.value,
+                            )
+                            and not self._in_project((edge[3], edge[4]), prefix)
+                        }
+                    )
                 )
                 return [row]
             return []
