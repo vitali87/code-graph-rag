@@ -123,9 +123,11 @@ jobs:
         run: |
           uv sync --extra treesitter-full --extra semantic --extra milvus --extra test --group dev
 
+      # evals/ too: the pre-commit hook checks it, so a type error there failed
+      # every local commit while this job stayed green (issue #3436).
       - name: Run type checking
         run: |
-          uv run ty check codebase_rag --exclude codebase_rag/tests/
+          uv run ty check codebase_rag evals --exclude codebase_rag/tests/
 
       # Again with the optional `neo4j` extra installed: its package types
       # every statement `LiteralString`, so a checkout with all extras saw
@@ -133,7 +135,7 @@ jobs:
       - name: Run type checking with the neo4j extra
         run: |
           uv sync --extra treesitter-full --extra semantic --extra milvus --extra test --extra neo4j --group dev
-          uv run ty check codebase_rag --exclude codebase_rag/tests/
+          uv run ty check codebase_rag evals --exclude codebase_rag/tests/
 
   test-unit:
     name: Unit Tests (${{ matrix.os }}, py${{ matrix.python-version }}, shard ${{ matrix.shard }})
@@ -158,6 +160,14 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+
+      - name: Set up Go
+        # The go/types helper's tests build it with the Go on PATH, and the
+        # runner image's Go is older than the floor in gotypes/go.mod.
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ">=1.27.2"
+          cache-dependency-path: codebase_rag/parsers/go_frontend/gotypes/go.sum
 
       - name: Key the uv cache on dependencies, not the project version
         shell: bash
@@ -254,6 +264,14 @@ jobs:
           # runs repository-controlled code, so the token must not persist
           # into the local Git config.
           persist-credentials: false
+
+      - name: Set up Go
+        # The go/types helper's tests build it with the Go on PATH, and the
+        # runner image's Go is older than the floor in gotypes/go.mod.
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ">=1.27.2"
+          cache-dependency-path: codebase_rag/parsers/go_frontend/gotypes/go.sum
 
       - name: Key the uv cache on dependencies, not the project version
         shell: bash
@@ -428,10 +446,22 @@ jobs:
       - name: Build the cgr-graph-rs wheel
         run: uv build --wheel rust/cgr_graph_rs --out-dir dist-rust
 
+      # pip trusts the system store as well as its own certifi, and the runner's
+      # ca-certificates may still carry emSign ECC Root CA - G3: deselect it.
+      - name: Distrust emSign ECC Root CA - G3
+        run: |
+          sudo sed -i 's|^mozilla/emSign_ECC_Root_CA_-_G3\.crt$|!&|' /etc/ca-certificates.conf
+          sudo update-ca-certificates --fresh > /dev/null
+          test ! -e /etc/ssl/certs/emSign_ECC_Root_CA_-_G3.pem
+
       # Deliberately plain venv + pip: uv.lock must not participate.
       - name: Install the wheel with unlocked resolution
         run: |
           python -m venv .fresh-venv
+          # The venv's bundled pip may predate the emSign distrust (pip
+          # 26.2.2), so it fetches only pip itself, checked against a pinned
+          # SHA-256, before the upgrade to the newest release.
+          ./.fresh-venv/bin/python -m pip install "pip @ https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl#sha256=fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70"
           ./.fresh-venv/bin/python -m pip install --upgrade pip
           ./.fresh-venv/bin/python -m pip install dist/*.whl --find-links dist-rust
 
@@ -494,7 +524,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: ">=1.26.6"
+          go-version: ">=1.27.2"
           cache-dependency-path: codebase_rag/parsers/go_frontend/gotypes/go.sum
 
       - name: Key the uv cache on dependencies, not the project version
