@@ -453,8 +453,11 @@ class AppConfig(BaseSettings):
     QDRANT_UPSERT_RETRIES: int = Field(default=3, gt=0)
     QDRANT_RETRY_BASE_DELAY: float = Field(default=0.5, gt=0)
     QDRANT_BATCH_SIZE: int = Field(default=50, gt=0)
+    # The `sqlite` store is the default for the reason the embedded graph is:
+    # a file under CGR_HOME needs no server and no Docker. Qdrant and Milvus
+    # stay one setting away.
     VECTOR_STORE_BACKEND: cs.VectorStoreBackend = Field(
-        cs.VectorStoreBackend.QDRANT, validation_alias="CGR_VECTOR_STORE_BACKEND"
+        cs.VectorStoreBackend.SQLITE, validation_alias="CGR_VECTOR_STORE_BACKEND"
     )
     MILVUS_URI: str = "./.milvus_code_embeddings.db"
     MILVUS_TOKEN: str | None = None
@@ -469,6 +472,18 @@ class AppConfig(BaseSettings):
     SQLITE_VECTOR_PATH: Path | None = None
     SQLITE_VECTOR_DIM: int = 768
     SQLITE_VECTOR_TOP_K: int = 5
+
+    @property
+    def qdrant_set_without_backend(self) -> bool:
+        """Whether Qdrant is configured but the vector store was left to default.
+
+        Qdrant was the default vector store before the `sqlite` one replaced
+        it, so this is how an install upgraded in place looks: its embeddings
+        live in Qdrant while cgr now opens an empty file.
+        """
+        return cs.SETTING_VECTOR_STORE_BACKEND not in self.model_fields_set and any(
+            name in self.model_fields_set for name in cs.QDRANT_CONNECTION_SETTINGS
+        )
 
     @property
     def vector_db_file(self) -> Path:

@@ -1181,7 +1181,17 @@ _STATE_STALE = GlossAnchorState.STALE.value
 # by then the name it moved to.
 # "Unattached" is asked with OPTIONAL MATCH plus a count, not a pattern
 # predicate in WHERE, which Memgraph 3 rejects (test_memgraph3_cypher_compat).
+# Every post-sync pass reads the syncing project's notes alone (issue #3236):
+# by the recorded `project`, or for a note written before that property
+# existed by the longest registered project prefixing its target, as
+# `gloss_repair` assigns it. Another project's note changes state only when
+# its own definitions do, on that project's sync.
+_GLOSS_OF_SYNCING_PROJECT = """(g.project = $project_name
+       OR (g.project IS NULL AND g.target_qn STARTS WITH $project_prefix
+           AND ALL(longer_project IN $longer_project_prefixes
+                   WHERE NOT g.target_qn STARTS WITH (longer_project + '.'))))"""
 CYPHER_REANCHOR_GLOSSES = f"""MATCH (g:{_GLOSS})
+WHERE {_GLOSS_OF_SYNCING_PROJECT}
 OPTIONAL MATCH (g)-[:{_ANNOTATES}]->(subject)
 WITH g, count(subject) AS subjects
 WHERE subjects = 0
@@ -1285,7 +1295,7 @@ MERGE (g)-[:{_ANNOTATES}]->(t)"""
 CYPHER_GLOSS_MARK = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
 SET g.anchor_state = $anchor_state, g.candidate_qns = $candidate_qns"""
 CYPHER_REANCHOR_GLOSS_MENTIONS = f"""MATCH (g:{_GLOSS})-[:{_ANNOTATES}]->()
-WHERE g.mention_qns IS NOT NULL
+WHERE g.mention_qns IS NOT NULL AND {_GLOSS_OF_SYNCING_PROJECT}
 UNWIND g.mention_qns AS mention_qn
 MATCH (m {{qualified_name: mention_qn}})
 WHERE {_any_label("m", _GRAPH_DEFINITION_LABELS)}
@@ -1302,7 +1312,8 @@ MERGE (g)-[:{_MENTIONS}]->(m)"""
 # visible for as long as the hashes agree. Nothing here moves a note or
 # deletes one.
 CYPHER_GRADE_GLOSS_ANCHORS = f"""MATCH (g:{_GLOSS})-[:{_ANNOTATES}]->(t)
-WHERE g.target_hash IS NOT NULL AND t.anchor_hash IS NOT NULL
+WHERE {_GLOSS_OF_SYNCING_PROJECT}
+  AND g.target_hash IS NOT NULL AND t.anchor_hash IS NOT NULL
   AND g.target_hash STARTS WITH '{ANCHOR_HASH_VERSION}'
 SET g.anchor_state = CASE WHEN g.target_hash = t.anchor_hash
     THEN (CASE WHEN g.moved_from IS NULL
@@ -1421,7 +1432,13 @@ RETURN e.name AS endpoint, e.kind AS kind, labels(h)[0] AS label,
        h.qualified_name AS handler, h.path AS path,
        resolved + direct AS callers
 ORDER BY endpoint, handler"""
-# `$qn` names the handler or the endpoint identity (`GET /users/{id}`).
+# The project's endpoint identities and their handlers: what an
+# `endpoint_callers` target is resolved against before any caller is read.
+CYPHER_GRAPH_EXPOSED_ENDPOINTS = """MATCH (h)-[:EXPOSES]->(e:Resource)
+WHERE h.qualified_name STARTS WITH $project_prefix
+RETURN DISTINCT e.name AS endpoint, h.qualified_name AS handler
+ORDER BY endpoint, handler"""
+# `$qn` names the handler or the endpoint identity as stored (`GET /users/:id`).
 CYPHER_GRAPH_ENDPOINT_CALLERS = """MATCH (h)-[:EXPOSES]->(e:Resource)
 WHERE h.qualified_name STARTS WITH $project_prefix
   AND (h.qualified_name = $qn OR e.name = $qn)
@@ -1565,7 +1582,7 @@ RETURN a.qualified_name AS from_qn, a.path AS from_path, type(r) AS rel_type,
        r.call_qualifier AS call_qualifier,
        b.qualified_name AS to_qn, b.path AS to_path, r.line AS line, r.col AS col,
        r.arg_count AS arg_count, r.kwarg_names AS kwarg_names,
-       r.star_args AS star_args"""
+       r.star_args AS star_args, r.star_kwargs AS star_kwargs"""
 # One hop of the backward test-reach walk: the callers of a frontier of
 # qualified names, with the properties the test classifier reads.
 # The blast radius of a signature change crosses services (issue #1603): a
@@ -1640,6 +1657,31 @@ WHERE m.qualified_name STARTS WITH $project_prefix
             AND NOT m.qualified_name STARTS WITH (longer_project + '.'))
   AND r.imported_name IS NOT NULL
   AND (m.path IN $paths OR t.path IN $paths)
+RETURN m.qualified_name AS from_qn, m.path AS from_path,
+       t.qualified_name AS to_qn, t.path AS to_path,
+       r.imported_name AS imported_name,
+       r.alias AS alias, r.line AS line, r.col AS col"""
+# The modules at the touched paths, and every import of one (issue #3266):
+# a module the edit deleted or moved leaves each statement naming the module
+# itself dangling -- `import pkg.signals`, `export * from "./util"` -- which
+# the by-name query above, keyed on a symbol, cannot see.
+CYPHER_DELTA_MODULES = """MATCH (n:Module)
+WHERE n.qualified_name STARTS WITH $project_prefix
+  AND ALL(longer_project IN $longer_project_prefixes
+          WHERE n.qualified_name <> longer_project
+            AND NOT n.qualified_name STARTS WITH (longer_project + '.'))
+  AND n.path IN $paths
+RETURN n.qualified_name AS qualified_name, n.path AS path"""
+CYPHER_DELTA_MODULE_IMPORTERS = """MATCH (m:Module)-[r:IMPORTS]->(t:Module)
+WHERE m.qualified_name STARTS WITH $project_prefix
+  AND t.qualified_name STARTS WITH $project_prefix
+  AND ALL(longer_project IN $longer_project_prefixes
+          WHERE m.qualified_name <> longer_project
+            AND NOT m.qualified_name STARTS WITH (longer_project + '.'))
+  AND ALL(longer_project IN $longer_project_prefixes
+          WHERE t.qualified_name <> longer_project
+            AND NOT t.qualified_name STARTS WITH (longer_project + '.'))
+  AND t.path IN $paths
 RETURN m.qualified_name AS from_qn, m.path AS from_path,
        t.qualified_name AS to_qn, t.path AS to_path,
        r.imported_name AS imported_name,
@@ -1758,14 +1800,26 @@ OPTIONAL MATCH (x)-->(n)
 WITH n, count(x) AS inbound
 RETURN head(labels(n)) AS label, properties(n) AS props, inbound"""
 
-# Whether the graph already holds any IO resource link (FLOWS_TO,
-# RESOLVES_TO). An isolated check refuses on one: deleting a changed file's
-# subtree can leave a resource chain unanchored, and the re-ingest's
-# repo-wide `prune_unanchored_resources` would delete it, chain edges and all,
-# beyond what the capture holds (bot review, #1718). A typed pattern with
-# LIMIT 1 stops at the first such edge instead of scanning every relationship.
-CYPHER_CHECK_GRAPH_IO_LINKS = """MATCH ()-[r:FLOWS_TO|RESOLVES_TO]->()
-RETURN type(r) AS rel
+# An IO resource link (FLOWS_TO, RESOLVES_TO) the checked project anchors. An
+# isolated check refuses on one: deleting a changed file's subtree can leave
+# that resource unanchored, and the re-ingest's repo-wide
+# `prune_unanchored_resources` would delete it, chain edges and all, beyond
+# what the capture holds (bot review, #1718). Only a Resource one of the
+# project's own nodes touches can be unanchored by the run: the prune keeps
+# every Resource another node still anchors, and a resource reached only down
+# a FLOWS_TO chain puts a FLOWS_TO edge on the one the project touches. So
+# another project's links never refuse this one's check (issue #3188). The
+# root module (`__init__.py`, `mod.rs`) IS the project name, not under its
+# prefix, and the check cuts it like any other changed module. A registered
+# project nested under the prefix (`svc.v2` under `svc`) is another project
+# too: the module delete spares its nodes (issue #1985), so they are left out
+# by the same rule, read from the graph's Project nodes as that delete does.
+CYPHER_CHECK_PROJECT_IO_LINKS = f"""OPTIONAL MATCH (longer:Project) WHERE longer.name STARTS WITH $project_prefix
+WITH collect(longer.name) AS nested
+MATCH (r:Resource)--(n)
+WHERE NOT n:Resource AND {_belongs_to_named("n")}
+MATCH (r)-[l:FLOWS_TO|RESOLVES_TO]-()
+RETURN type(l) AS rel
 LIMIT 1"""
 
 # The shared nodes the isolated check created, by label and qualified name: the ones the scope reaches that the snapshot above did not hold.
