@@ -71,6 +71,7 @@ from .services.llm import (
     CypherGenerator,
     create_rag_orchestrator,
     create_research_agent,
+    run_to_text_answer,
 )
 from .taint import ReadContentRecord
 from .tools.ast_grep_service import AstGrepService
@@ -81,6 +82,7 @@ from .tools.duplicate_detection import create_find_duplicates_tool
 from .tools.file_editor import FileEditor, create_file_editor_tool
 from .tools.file_reader import FileReader, create_file_reader_tool
 from .tools.file_writer import FileWriter, create_file_writer_tool
+from .tools.graph_refresh import GraphRefresher
 from .tools.research import create_research_tool
 from .tools.semantic_search import (
     create_get_function_source_tool,
@@ -93,6 +95,7 @@ from .tools.web_search import create_web_search_tool, make_web_searcher
 from .types_defs import (
     CHAT_LOOP_UI,
     OPTIMIZATION_LOOP_UI,
+    AfterWrite,
     AgentLoopUI,
     CancelledResult,
     ConfirmationToolNames,
@@ -106,6 +109,7 @@ from .types_defs import (
     ToolArgs,
 )
 from .utils.interruptible_thread import run_in_interruptible_thread
+from .utils.path_utils import derive_project_name, is_symlink_entry
 from .utils.rich_markdown import LeftAlignedMarkdown
 from .utils.token_utils import estimate_message_tokens
 
@@ -1709,7 +1713,11 @@ async def _run_interactive_loop(
 
             initial_question = None
 
-        except KeyboardInterrupt:
+        # Ctrl+D on an empty prompt, or the terminal's input closing, raises
+        # EOFError: leave as Ctrl+C does. Reported as an unexpected error, it
+        # printed a traceback and re-prompted, forever once input had closed
+        # (issue #2917).
+        except (KeyboardInterrupt, EOFError):
             break
         except Exception as e:
             logger.exception(ls.UNEXPECTED.format(error=e))
@@ -1808,7 +1816,9 @@ def detect_excludable_directories(repo_path: Path) -> set[str]:
         except PermissionError:
             continue
         for path in entries:
-            if not path.is_dir():
+            # Only directories the walk can reach are offered: it follows no
+            # link (issue #2451).
+            if not path.is_dir() or is_symlink_entry(path):
                 continue
             if path.name in cs.IGNORE_PATTERNS:
                 detected.add(path.relative_to(repo_path).as_posix())
@@ -2018,6 +2028,7 @@ def _initialize_services_and_agent(
     repo_path: str,
     ingestor: ReadOnlyQueryProtocol,
     active_projects: list[str] | None = None,
+    after_write: AfterWrite | None = None,
 ) -> tuple[Agent[None, str | DeferredToolRequests], ConfirmationToolNames, str]:
     """Build the orchestrator, its tools, and the shared session services.
 
@@ -2025,6 +2036,12 @@ def _initialize_services_and_agent(
     search is deliberately absent from the orchestrator: it belongs to the
     research sub-agent instead (issue #1128).
     """
+    # Fail closed: `None` is a session with no scope at all (`cgr optimize`),
+    # but an empty list is a scope that came out empty, such as a workspace
+    # with no repositories, and the prompts and the query tool below would
+    # read it as every project in the graph (Greptile review of PR 2507).
+    if active_projects is not None and not active_projects:
+        raise ValueError(ex.EMPTY_PROJECT_SCOPE)
     _validate_provider_config(
         cs.ModelRole.ORCHESTRATOR, settings.active_orchestrator_config
     )
@@ -2055,8 +2072,8 @@ def _initialize_services_and_agent(
     )
     code_tool = create_code_retrieval_tool(code_retriever, read_record)
     file_reader_tool = create_file_reader_tool(file_reader, read_record)
-    file_writer_tool = create_file_writer_tool(file_writer)
-    file_editor_tool = create_file_editor_tool(file_editor)
+    file_writer_tool = create_file_writer_tool(file_writer, after_write)
+    file_editor_tool = create_file_editor_tool(file_editor, after_write)
     shell_command_tool = create_shell_command_tool(shell_commander, read_record)
     directory_lister_tool = create_directory_lister_tool(directory_lister)
     semantic_search_tool = create_semantic_search_tool(ingestor)
@@ -2143,12 +2160,22 @@ def main_single_query(
         rag_agent, _, _ = _initialize_services_and_agent(
             repo_path, ingestor, active_projects=active_projects
         )
-        response = asyncio.run(rag_agent.run(question, message_history=[]))
+        # The same rule as the chat loop's prompt, with no one to prompt:
+        # --no-confirm (or YOLO) approves, anything else is denied.
+        approve = not app_context.session.confirm_edits or app_context.session.is_yolo()
+        answer = asyncio.run(
+            run_to_text_answer(
+                rag_agent,
+                question,
+                approve=approve,
+                denial=cs.ASK_AGENT_APPROVAL_DENIED,
+            )
+        )
         if output_format == cs.QueryFormat.JSON:
-            payload = QueryJsonOutput(query=question, response=str(response.output))
+            payload = QueryJsonOutput(query=question, response=answer)
             print(json.dumps(payload, ensure_ascii=False))  # noqa: T201
         else:
-            print(response.output)  # noqa: T201
+            print(answer)  # noqa: T201
 
 
 async def main_async(
@@ -2158,6 +2185,8 @@ async def main_async(
     show_config_table: bool = True,
     pre_chat_sync: Callable[[], None] | None = None,
     pre_chat_sync_message: str = cs.MSG_SYNCING_KNOWLEDGE_GRAPH,
+    project_name: str | None = None,
+    project_named: bool = False,
 ) -> None:
     project_root = _setup_common_initialization(repo_path)
 
@@ -2174,8 +2203,19 @@ async def main_async(
             )
         )
 
+        # The agent's approved writes reach the graph the way the MCP edit
+        # tools' do, so later questions read the edited code (issue #2916).
+        refresher = GraphRefresher(
+            ingestor,
+            project_root,
+            project_name or derive_project_name(project_root),
+            project_named,
+        )
         rag_agent, tool_names, system_prompt = _initialize_services_and_agent(
-            repo_path, ingestor, active_projects=active_projects
+            repo_path,
+            ingestor,
+            active_projects=active_projects,
+            after_write=refresher.after_write,
         )
         _prime_context_token_counter(system_prompt)
 
