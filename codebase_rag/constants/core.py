@@ -262,6 +262,9 @@ PRUNE_PENDING_FILENAME = ".cgr-prune-pending"
 # PR #3358). Not in CGR_STATE_FILENAMES: no cgr ever wrote one into the tree,
 # so there is nothing to move out of it.
 EMBEDDINGS_PENDING_PROJECT_TEMPLATE = ".cgr-embeddings-pending-{digest}"
+# The vector store backend a project's points were last settled in, one file
+# per project for the same reason; likewise never written into the tree.
+EMBEDDINGS_STORE_PROJECT_TEMPLATE = ".cgr-embeddings-store-{digest}"
 # The marker an earlier build shared between every project of a checkout: a
 # JSON list of the projects owing a pass, or an empty file. Read so that each
 # still retries once, then split into the per-project files above.
