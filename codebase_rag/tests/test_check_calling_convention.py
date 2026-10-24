@@ -712,7 +712,12 @@ def test_typescript_get_and_static_flips_break_their_callers(
     delta = _edit(temp_repo, files, "cart.ts", edited)
 
     assert _change(delta, "total")["changes"] == [cs.DELTA_CONVENTION_BECAME_ACCESSOR]
-    assert _verdicts(delta, "total") == {"subtotal": cs.DELTA_CONVENTION_CALLS_ACCESSOR}
+    # `scale` now reads the getter, which the edit wrote; a read of what was
+    # a method claims nothing, as in Python.
+    assert _verdicts(delta, "total") == {
+        "scale": cs.DELTA_ARITY_UNKNOWN,
+        "subtotal": cs.DELTA_CONVENTION_CALLS_ACCESSOR,
+    }
     assert _change(delta, "tax")["changes"] == [cs.DELTA_CONVENTION_NO_LONGER_STATIC]
     # `this` in a static method is the class.
     assert _verdicts(delta, "tax") == {
@@ -838,6 +843,98 @@ def test_a_protected_member_claims_nothing_of_a_caller_outside_the_class(
     assert _verdicts(delta, "shared") == {"viaSub": cs.DELTA_ARITY_UNKNOWN}
     assert not has_findings(delta)
     assert _tsc(temp_repo) == ""
+
+
+@needs_tsc
+def test_this_in_an_arrow_of_a_static_field_is_the_class(temp_repo: Path) -> None:
+    # Bot review on PR #3311: the arrow is a definition of its own, but its
+    # `this` is the one where it is written, the class, not an instance.
+    cart = CART_TS.replace(
+        "  static twice(",
+        "  static helper = (): number => this.tax(3);\n\n  static twice(",
+    )
+    edited = cart.replace("  static tax(", "  tax(")
+
+    delta = _edit(temp_repo, {"cart.ts": cart, "shop.ts": SHOP_TS}, "cart.ts", edited)
+
+    assert _verdicts(delta, "tax") == {
+        "helper": cs.DELTA_CONVENTION_NEEDS_INSTANCE,
+        "twice": cs.DELTA_CONVENTION_NEEDS_INSTANCE,
+        "vat": cs.DELTA_CONVENTION_NEEDS_INSTANCE,
+    }
+    assert "cart.ts(12,38): error TS2339" in _tsc(temp_repo)
+
+
+GETTER_TS = """export class Cart {
+  items: number[] = [1, 2];
+
+  get count(): number {
+    return this.items.length;
+  }
+
+  static get limit(): number {
+    return 9;
+  }
+}
+"""
+GETTER_SHOP_TS = """import { Cart } from "./cart";
+
+export function size(): number {
+  const cart = new Cart();
+  return cart.count;
+}
+
+export function cap(): number {
+  return Cart.limit;
+}
+"""
+
+
+@needs_tsc
+@pytest.mark.parametrize(
+    ("edit", "name", "change", "verdicts", "error"),
+    [
+        (
+            ("  get count(", "  private get count("),
+            "count",
+            cs.DELTA_CONVENTION_VISIBILITY_NARROWED,
+            {"size": cs.DELTA_CONVENTION_INACCESSIBLE},
+            "TS2341",
+        ),
+        (
+            ("  get count(", "  count("),
+            "count",
+            cs.DELTA_CONVENTION_NO_LONGER_ACCESSOR,
+            {"size": cs.DELTA_CONVENTION_READS_METHOD},
+            "TS2322",
+        ),
+        (
+            ("  static get limit(", "  get limit("),
+            "limit",
+            cs.DELTA_CONVENTION_NO_LONGER_STATIC,
+            {"cap": cs.DELTA_CONVENTION_NEEDS_INSTANCE},
+            "TS2339",
+        ),
+    ],
+)
+def test_a_getter_read_is_judged(
+    temp_repo: Path,
+    edit: tuple[str, str],
+    name: str,
+    change: str,
+    verdicts: dict[str, str],
+    error: str,
+) -> None:
+    # Bot review on PR #3311: a getter read is a REFERENCES edge, not a
+    # CALLS edge, and the edit breaks it all the same.
+    files = {"cart.ts": GETTER_TS, "shop.ts": GETTER_SHOP_TS}
+
+    delta = _edit(temp_repo, files, "cart.ts", GETTER_TS.replace(*edit))
+
+    assert _change(delta, name)["changes"] == [change]
+    assert _verdicts(delta, name) == verdicts
+    assert has_findings(delta)
+    assert error in _tsc(temp_repo)
 
 
 # --- Java ---------------------------------------------------------------------

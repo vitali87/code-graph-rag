@@ -42,6 +42,7 @@ from .duplicates import _jaccard
 from .graph_query import QueryFn, _longer_project_prefixes, _opt_int, _prefix
 from .language_spec import get_language_for_extension
 from .parser_loader import load_parsers
+from .parsers.js_ts.utils import this_names_class_at
 from .types_defs import PropertyDict, ReingestReport, ResultRow
 from .utils.source_encoding import grammar_bytes
 
@@ -2510,9 +2511,9 @@ def _is_called(access: Node) -> bool:
 
 
 def _own_receiver(caller: Definition | None) -> str | None:
-    """What `this`, or Java's implicit receiver, is inside `caller`: the
-    class in a static method (JavaScript's `this` there is the class, and
-    Java has none), an instance in any other."""
+    """What Java's `this`, or its implicit receiver, is inside `caller`: the
+    class in a static method (where Java has no `this`), an instance in any
+    other."""
     convention = _convention(caller) if caller is not None else None
     if convention is None:
         return None
@@ -2521,8 +2522,19 @@ def _own_receiver(caller: Definition | None) -> str | None:
     return cs.DELTA_RECEIVER_INSTANCE
 
 
+def _js_this(root: Node, this: Node) -> str | None:
+    # An arrow takes `this` from where it is written, though the graph makes
+    # it a definition of its own: in a static method it is the class (bot
+    # review on PR #3311). A plain function's own `this` is neither.
+    names_class = this_names_class_at(root, this.start_byte)
+    if names_class is None:
+        return None
+    return cs.DELTA_RECEIVER_CLASS if names_class else cs.DELTA_RECEIVER_INSTANCE
+
+
 def _receiver(
     access: Node,
+    root: Node,
     class_name: str,
     language: cs.SupportedLanguage,
     caller: Definition | None,
@@ -2546,6 +2558,8 @@ def _receiver(
             }.get(text)
         return None
     if target.type == cs.TS_THIS:
+        if language in cs.JS_TS_LANGUAGES:
+            return _js_this(root, target)
         return _own_receiver(caller)
     if target.type in _CONSTRUCTION_TYPES:
         return cs.DELTA_RECEIVER_INSTANCE
@@ -2564,17 +2578,16 @@ def _site_form(
     if fields is None or language is None or site.line is None or site.col is None:
         return None
     root = trees.root(site.caller_path)
-    access = (
-        _member_access(root, site, definition.name, fields)
-        if root is not None
-        else None
-    )
+    if root is None:
+        return None
+    access = _member_access(root, site, definition.name, fields)
     if access is None:
         return None
     return _SiteForm(
         called=_is_called(access),
         receiver=_receiver(
             access,
+            root,
             _declaring_type(definition),
             language,
             after.definitions.get(site.caller) or after.callers.get(site.caller),
@@ -2768,39 +2781,54 @@ def _moved_site(
     return moved
 
 
+def _reaches(site: CallSite, qn: str, accessor: bool) -> bool:
+    # A JS/TS getter read is a REFERENCES edge: the read runs the getter but
+    # is no call, and the edit breaks it all the same (bot review on PR #3311).
+    if site.callee != qn:
+        return False
+    return site.rel == cs.RelationshipType.CALLS.value or (
+        accessor and site.rel == cs.RelationshipType.REFERENCES.value
+    )
+
+
 def _calls_into(
-    qn: str, before: Snapshot, after: Snapshot, trees: _SourceTrees
+    qn: str,
+    before: Snapshot,
+    after: Snapshot,
+    trees: _SourceTrees,
+    accessor: tuple[bool, bool],
 ) -> list[CallSite]:
     """The call sites of `qn`, after the edit and before it.
 
     A caller still makes the call it made, though the re-bound graph may no
     longer draw it: a Python property read is a call edge only while it is
-    a property. A site in an edited file is recorded where it stood before
-    the edit, so it is moved to where it stands now, also in the file that
-    defines `qn` (bot review on PR #3311).
+    a property, a getter read a reference only while it is a getter. A site
+    in an edited file is recorded where it stood before the edit, so it is
+    moved to where it stands now, also in the file that defines `qn` (bot
+    review on PR #3311). `accessor` says whether `qn` was one before the
+    edit and after it.
     """
-    sites = [
-        site
-        for site in after.sites
-        if site.callee == qn and site.rel == cs.RelationshipType.CALLS.value
-    ]
-    seen = {(site.caller, site.caller_path, site.line, site.col) for site in sites}
+    was_accessor, is_accessor = accessor
+    drawn = [site for site in after.sites if _reaches(site, qn, is_accessor)]
     name = after.definitions[qn].name
     for site in before.sites:
-        if site.callee != qn or site.rel != cs.RelationshipType.CALLS.value:
+        if not _reaches(site, qn, was_accessor):
             continue
         current = (
             _moved_site(site, name, before, after, trees)
             if site.caller_path in after.paths
             else site
         )
-        if current is None:
-            continue
-        key = (current.caller, current.caller_path, current.line, current.col)
-        if key not in seen:
-            seen.add(key)
-            sites.append(current)
-    return sites
+        if current is not None:
+            drawn.append(current)
+    # One site per position: a call the edit left alone is drawn before and
+    # after it, and a Python property read as a call and a reference both;
+    # the call edge is the one judged.
+    drawn.sort(key=lambda site: site.rel != cs.RelationshipType.CALLS.value)
+    sites: dict[tuple[str, str, int | None, int | None], CallSite] = {}
+    for site in drawn:
+        sites.setdefault((site.caller, site.caller_path, site.line, site.col), site)
+    return list(sites.values())
 
 
 def _convention_changes(
@@ -2834,7 +2862,9 @@ def _convention_changes(
                     _site_form(trees, site, new_def, after),
                 ),
             )
-            for site in _calls_into(qn, before, after, trees)
+            for site in _calls_into(
+                qn, before, after, trees, (old.accessor, new.accessor)
+            )
         ]
         out.append(
             ConventionChange(

@@ -203,17 +203,22 @@ instance is `Cart()`, `new Cart()`, Python's `self` or `this` in an instance
 method; the class is its own name, Python's `cls`, or `this` in a static
 method (and a Java call with no receiver there). A variable, a parameter or
 a factory's result may hold either, so a site written through one is
-`unknown`. `this` in a caller in a file the edit did not touch is read
-from that caller's definition. A caller is judged from the call it makes,
-whether the re-bound graph still draws it or not: a Python property read
-is a call edge only while it is a property. A site the graph drew before
-the edit of its own file is moved with its caller, when the caller kept
-its shape and the edited source still accesses the member there.
+`unknown`. JavaScript and TypeScript `this` is read from where it is
+written: an arrow takes the `this` around it, so one in a static field or
+method names the class, and a plain function's own `this` is `unknown`.
+Java's `this` is read from the caller's definition, also in a file the
+edit did not touch. A caller is judged from the call it makes, whether the
+re-bound graph still draws it or not: a Python property read is a call
+edge only while it is a property. A JavaScript or TypeScript getter read
+is a reference edge, judged like a call while it reads a getter. A site
+the graph drew before the edit of its own file is moved with its caller,
+when the caller kept its shape and the edited source still accesses the
+member there.
 
 | Verdict          | When |
 |------------------|------|
 | `calls_accessor` | A call of what is now a property or getter (`Cart().total()`): Python calls the value it returns, TypeScript rejects it (TS6234). |
-| `reads_method`   | A Python read of what was a property and is now a method: it yields the bound method instead of the value. |
+| `reads_method`   | A read of what was a property or getter and is now a method: it yields the method instead of the value, which TypeScript rejects where a value is expected (TS2322). |
 | `needs_instance` | A call through the class of what is now an instance method (`Cart.tax(3)`): TypeScript rejects it (TS2339), JavaScript finds no such member, Java rejects a non-static method from a static context. |
 | `needs_class`    | A call through an instance of what is now static, in JavaScript and TypeScript (TS2576). Java allows it, so it reads `ok` there. |
 | `rebound`        | A Python call whose receiver is bound where it was not, or no longer bound where it was: `Cart().tax(3)` once `@staticmethod` is gone passes the instance as `x`, and `Cart.make()` once `@classmethod` is gone passes nothing for `cls`. A call through the class of a plain method binds nothing, so `Cart.tax(3)` reads `ok`, and a refactor that drops `self` as it adds `@staticmethod` keeps what each argument fills. |
