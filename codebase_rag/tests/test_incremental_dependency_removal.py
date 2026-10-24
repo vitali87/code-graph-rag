@@ -207,13 +207,33 @@ def test_another_projects_dependencies_and_shared_packages_survive(
 def test_a_lookalike_of_a_manifest_does_not_trigger_a_resync(
     tmp_path: Path,
 ) -> None:
+    # `requirements-dev.txt` is a manifest since #3034; a `.txt.bak` copy of
+    # one, or a notes file, still is not.
     store, repo = _synced_repo(tmp_path)
-    _write(repo, {"requirements-dev.txt": "pytest\n"})
+    _write(repo, {"requirements.txt.bak": "pytest\n", "package.md": "pytest\n"})
     _updater(store, repo).run(force=False)
     store.issued.clear()
-    _write(repo, {"requirements-dev.txt": "pytest\nruff\n"})
+    _write(repo, {"requirements.txt.bak": "pytest\nruff\n"})
 
     _updater(store, repo).run(force=False)
 
     assert cs.CYPHER_DELETE_PROJECT_DEPENDENCIES not in store.issued
+    assert len(_dependencies(store)) == 6
+
+
+def test_a_secondary_requirements_file_is_a_manifest(tmp_path: Path) -> None:
+    # Only the file named exactly `requirements.txt` was parsed, so the pins
+    # in `requirements-dev.txt` never reached the graph and editing it did not
+    # resync the project's dependencies (#3034).
+    store, repo = _synced_repo(tmp_path)
+    _write(repo, {"requirements-dev.txt": "pytest\nruff\n"})
+    _updater(store, repo).run(force=False)
+    assert {"pytest", "ruff"} <= _packages(store)
+    store.issued.clear()
+    (repo / "requirements-dev.txt").unlink()
+
+    _updater(store, repo).run(force=False)
+
+    assert cs.CYPHER_DELETE_PROJECT_DEPENDENCIES in store.issued
+    assert {"pytest", "ruff"}.isdisjoint(_packages(store))
     assert len(_dependencies(store)) == 6
