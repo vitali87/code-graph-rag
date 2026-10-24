@@ -90,6 +90,7 @@ def test_version_flag() -> None:
                     package=cs.PACKAGE_NAME, version=get_version(cs.PACKAGE_NAME)
                 ),
                 cs.CLI_MSG_CREDITS.format(url=cs.CREDITS_URL),
+                cs.CLI_MSG_SPONSOR.format(url=cs.SPONSOR_URL),
             ]
         )
         assert result.stdout.strip() == expected, (
