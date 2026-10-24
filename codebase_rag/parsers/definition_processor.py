@@ -55,7 +55,9 @@ from .js_ts.overloads import folded_overload_signatures, implementation_signatur
 from .module_docstring import extract_module_docstring
 from .notebook import is_notebook_path
 from .parameter_nodes import PendingParameterType
+from .php.namespaces import declared_namespace
 from .py.overloads import folded_overload_stubs
+from .sql_recovery import lost_sql_functions
 from .utils import (
     get_function_captures,
     safe_decode_with_fallback,
@@ -633,6 +635,10 @@ class DefinitionProcessor(
             if parsed is None:
                 return None
             root_node, pre_combined_captures = parsed
+            if language == cs.SupportedLanguage.SQL:
+                self._warn_lost_sql_functions(
+                    file_path, relative_path_str, root_node, source_bytes
+                )
 
             module_qn = base_module_qn(relative_path, self.project_name)
             module_qn = self._disambiguate_module_qn(module_qn, file_path)
@@ -789,6 +795,17 @@ class DefinitionProcessor(
             pre_combined_captures = None
         return root_node, pre_combined_captures
 
+    @staticmethod
+    def _warn_lost_sql_functions(
+        file_path: Path, relative_path: str, root_node: ASTNode, source: bytes | None
+    ) -> None:
+        # A function even a statement-isolated parse cannot read is missing
+        # from the graph with its calls; the sync says so (issue #3180).
+        if source is None:
+            source = file_path.read_bytes()
+        if count := lost_sql_functions(source, root_node):
+            logger.warning(ls.SQL_FUNCTIONS_UNPARSED, path=relative_path, count=count)
+
     def _ingest_module_node(
         self,
         file_path: Path,
@@ -812,6 +829,10 @@ class DefinitionProcessor(
             module_props[cs.KEY_DOCSTRING] = docstring
         if fingerprint := interface_fingerprint(root_node, language):
             module_props[cs.KEY_INTERFACE_FINGERPRINT] = fingerprint
+        if language == cs.SupportedLanguage.PHP and (
+            namespace := declared_namespace(root_node)
+        ):
+            module_props[cs.KEY_PHP_NAMESPACE] = namespace
         if self.generated_source_prefixes and (
             hint := generator_hint(relative_path_str, self.generated_source_prefixes)
         ):
