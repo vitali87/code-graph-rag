@@ -123,9 +123,11 @@ jobs:
         run: |
           uv sync --extra treesitter-full --extra semantic --extra milvus --extra test --group dev
 
+      # evals/ too: the pre-commit hook checks it, so a type error there failed
+      # every local commit while this job stayed green (issue #3436).
       - name: Run type checking
         run: |
-          uv run ty check codebase_rag --exclude codebase_rag/tests/
+          uv run ty check codebase_rag evals --exclude codebase_rag/tests/
 
       # Again with the optional `neo4j` extra installed: its package types
       # every statement `LiteralString`, so a checkout with all extras saw
@@ -133,7 +135,7 @@ jobs:
       - name: Run type checking with the neo4j extra
         run: |
           uv sync --extra treesitter-full --extra semantic --extra milvus --extra test --extra neo4j --group dev
-          uv run ty check codebase_rag --exclude codebase_rag/tests/
+          uv run ty check codebase_rag evals --exclude codebase_rag/tests/
 
   test-unit:
     name: Unit Tests (${{ matrix.os }}, py${{ matrix.python-version }}, shard ${{ matrix.shard }})
