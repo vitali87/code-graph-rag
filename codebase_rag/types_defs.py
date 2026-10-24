@@ -123,6 +123,23 @@ class BatchWrapper(TypedDict):
     batch: Sequence[BatchParams]
 
 
+# A Cypher parameter as the embedded engine is handed one: anything JSON can
+# hold, plus the ingestor's batch rows, named because a TypedDict is not a
+# Mapping[str, ...] subtype.
+type CypherParamValue = (
+    str
+    | int
+    | float
+    | bool
+    | None
+    | Sequence[CypherParamValue]
+    | Mapping[str, CypherParamValue]
+    | NodeBatchRow
+    | RelBatchRow
+)
+type CypherParams = Mapping[str, CypherParamValue]
+
+
 type SimpleName = str
 type QualifiedName = str
 type SimpleNameLookup = defaultdict[SimpleName, set[QualifiedName]]
@@ -665,6 +682,8 @@ class MCPInputSchemaProperty(TypedDict, total=False):
     type: str
     description: str
     default: str | int | float | bool
+    # JSON Schema's lower bound for a number, enforced by the MCP layer.
+    minimum: int
     items: dict[str, str]
     # JSON Schema's key for the value type of an object used as a map.
     additionalProperties: dict[str, str]
@@ -1380,7 +1399,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.MODULE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, broken_links: list[string]?, unresolved_specifiers: list[string]?, unresolved_references: list[string]?, interface_fingerprint: string?}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, broken_links: list[string]?, unresolved_specifiers: list[string]?, unresolved_references: list[string]?, interface_fingerprint: string?, php_namespace: string?}",
     ),
     NodeSchema(
         NodeLabel.CLASS,
