@@ -3627,15 +3627,30 @@ class CallResolver:
         import_map: dict[str, str],
         language: cs.SupportedLanguage | None,
         module_qn: str,
+        local_var_types: dict[str, str] | None,
     ) -> tuple[str, str] | None:
         # `import { plus } from "./lib"` maps `plus` to `lib.plus`, where a
         # barrel registers nothing: its `export { add as plus } from` names
         # the definition, possibly through further barrels. Without this the
         # call fell to the name-only fallback, which found no `plus` at all,
         # or only guessed the right `add` (issue #2464).
-        if language not in cs.JS_TS_LANGUAGES or call_name not in import_map:
+        if language not in cs.JS_TS_LANGUAGES:
             return None
-        imported_qn = import_map[call_name]
+        if call_name in import_map:
+            imported_qn = import_map[call_name]
+        else:
+            # `math.add()` with `math` imported from a barrel that re-exports
+            # it as a namespace (`export * as math from "./math"`): the member
+            # is followed from the namespace's module (issue #3249), through
+            # each nested namespace of `math.util.add()` too.
+            head, dot, member = call_name.partition(cs.SEPARATOR_DOT)
+            if not dot or head not in import_map:
+                return None
+            # A local of the same name (`const math = new Local()`) shadows
+            # the import, and the typed-receiver path answers for it.
+            if local_var_types and head in local_var_types:
+                return None
+            imported_qn = f"{import_map[head]}{cs.SEPARATOR_DOT}{member}"
         followed = self.import_processor.follow_js_reexports(
             imported_qn,
             self.type_inference.module_qn_to_file_path,
@@ -3687,7 +3702,7 @@ class CallResolver:
             return result
 
         if result := self._try_resolve_js_reexport(
-            call_name, import_map, language, module_qn
+            call_name, import_map, language, module_qn, local_var_types
         ):
             return result
 
