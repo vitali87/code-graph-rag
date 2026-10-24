@@ -193,13 +193,21 @@ def stage_distrust_problems(text: str) -> list[str]:
     return problems
 
 
-def distrust_before_pip_problems(commands: list[str]) -> list[str]:
-    pips = [i for i, c in enumerate(commands) if _PIP_INSTALL.search(c)]
-    if not pips:
-        return ["no pip install found"]
-    runs = [c for c in commands[: pips[0]] if not re.match(r"(?:COPY|ADD)\s", c)]
+# What reaches the network through the system store: pip, curl, cargo, and uv
+# building or syncing, which runs cargo for the crate.
+_FETCH = re.compile(
+    r"\bpip install\b|\bcurl\b|\bcargo (?:build|fetch|install)\b|\buv (?:build|sync)\b"
+)
+
+
+def distrust_before_fetch_problems(commands: list[str]) -> list[str]:
+    commands = [c for c in commands if not c.lstrip().startswith("#")]
+    fetches = [i for i, c in enumerate(commands) if _FETCH.search(c)]
+    if not fetches:
+        return ["nothing fetches"]
+    runs = [c for c in commands[: fetches[0]] if not re.match(r"(?:COPY|ADD)\s", c)]
     if not any(_SCRIPT_CALL.search(c) for c in runs):
-        return ["distrust_ca_roots.sh does not run before the first pip install"]
+        return ["distrust_ca_roots.sh does not run before the first fetch"]
     return []
 
 
@@ -426,38 +434,42 @@ def test_every_stage_that_upgrades_ca_certificates_distrusts_the_roots() -> None
         [RUN_SCRIPT.replace("roots.sh", "roots_v2.sh"), GOOD_PIP_BOOTSTRAP],
         # Copying the script into an image does not run it.
         [COPY_SCRIPT, GOOD_PIP_BOOTSTRAP],
+        # Building the crate fetches through cargo before pip ever runs.
+        ["uv build --wheel rust/cgr_graph_rs", RUN_SCRIPT, GOOD_PIP_BOOTSTRAP],
     ],
-    ids=["upgrade-only", "after-pip", "near-miss", "copied-not-run"],
+    ids=["upgrade-only", "after-pip", "near-miss", "copied-not-run", "build-first"],
 )
-def test_pip_on_a_store_that_still_trusts_the_roots_is_rejected(
+def test_a_fetch_from_a_store_that_still_trusts_the_roots_is_rejected(
     commands: list[str],
 ) -> None:
-    assert distrust_before_pip_problems(commands)
+    assert distrust_before_fetch_problems(commands)
 
 
-def test_distrusting_before_pip_is_accepted() -> None:
-    commands = [RUN_SCRIPT, GOOD_PIP_BOOTSTRAP, "python -m pip install pkg"]
-    assert distrust_before_pip_problems(commands) == []
+def test_distrusting_before_the_first_fetch_is_accepted() -> None:
+    # A comment that names a fetching tool fetches nothing.
+    commands = ["# curl fetches through the store", RUN_SCRIPT, "uv build --wheel"]
+    assert distrust_before_fetch_problems(commands) == []
 
 
-def test_every_build_image_distrusts_the_roots_before_pip() -> None:
+def test_every_build_image_distrusts_the_roots_before_fetching() -> None:
     """Ubuntu 20.04, the fuzz image's base, still ships all four roots in its
     newest ca-certificates (20240203~20.04.1), so upgrading cannot drop them."""
-    checked = {}
-    for dockerfile in DOCKERFILES:
-        commands = logical_lines(dockerfile.read_text(encoding="utf-8"))
-        if any(_PIP_INSTALL.search(c) for c in commands):
-            checked[dockerfile] = distrust_before_pip_problems(commands)
-    assert FUZZ_IMAGE in checked
+    checked = {
+        dockerfile: distrust_before_fetch_problems(
+            logical_lines(dockerfile.read_text(encoding="utf-8"))
+        )
+        for dockerfile in DOCKERFILES
+    }
     assert {path: problems for path, problems in checked.items() if problems} == {}
 
 
-def test_the_unlocked_wheel_job_distrusts_the_roots_before_pip() -> None:
-    """The runner image's ca-certificates is whatever it was built with."""
+def test_the_unlocked_wheel_job_distrusts_the_roots_before_fetching() -> None:
+    """The runner image's ca-certificates is whatever it was built with, and
+    the crate's wheel build fetches through cargo before pip runs."""
     workflow = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
     commands = [
         line
         for step in workflow["jobs"][UNLOCKED_JOB]["steps"]
         for line in step.get("run", "").splitlines()
     ]
-    assert distrust_before_pip_problems(commands) == []
+    assert distrust_before_fetch_problems(commands) == []
