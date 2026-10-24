@@ -386,7 +386,7 @@ def test_rank_degrades_to_calls_only_when_flow_is_absent(tmp_path):
     assert ranked == [f"{_P}.app.service.dispatch", f"{_P}.app.service.main"]
 
 
-def test_parses_a_real_exception_group_using_the_last_sub_exception():
+def test_parses_a_real_exception_group_into_the_group_and_its_member():
     def leaf_a():
         raise ValueError("a failed")
 
@@ -402,12 +402,17 @@ def test_parses_a_real_exception_group_using_the_last_sub_exception():
         gather()
     except BaseException:
         text = traceback.format_exc()
-    # The box margin (+, |) is stripped and the last sub-exception's own
-    # traceback wins: the deepest real cause, not the group wrapper.
+    # The box margin (+, |) is stripped: the group is the failure that
+    # propagated, raised in `gather`, and its sub-exception keeps its own
+    # traceback (issue #3235).
     parsed = parse_python_traceback(text)
-    assert parsed.exception_type == "ValueError"
-    assert parsed.exception_message == "a failed"
-    assert [frame.qualname for frame in parsed.frames] == ["gather", "leaf_a"]
+    assert parsed.exception_type == "ExceptionGroup"
+    assert parsed.exception_message == "parallel failures (1 sub-exception)"
+    assert [frame.qualname for frame in parsed.frames][-1] == "gather"
+    (member,) = parsed.members
+    assert member.exception_type == "ValueError"
+    assert member.exception_message == "a failed"
+    assert [frame.qualname for frame in member.frames] == ["gather", "leaf_a"]
 
 
 def test_parses_a_unicode_exception_name():
