@@ -60,7 +60,9 @@ from .editor_links import (
 from .graph_cli import cli as graph_cli
 from .graph_dialects import DIALECT_MEMGRAPH
 from .parser_loader import load_parsers
+from .port_cli import cli as port_cli
 from .project_selection import ProjectChoice, choose_project, scope_refusal
+from .services.gloss_cleanup import prune_orphaned_glosses
 from .services.graph_diff import DiffError, diff_indexes, diff_is_empty
 from .services.graph_service import GraphUnavailableError, MemgraphIngestor
 from .services.protobuf_service import ProtobufFileIngestor
@@ -72,7 +74,7 @@ from .services.provenance import (
 )
 from .stack import StackManager
 from .stack.cli import cli as daemon_cli
-from .stack.constants import SERVICE_QDRANT, StackState
+from .stack.constants import SERVICE_MEMGRAPH, SERVICE_QDRANT, StackState
 from .stack.manager import StackError
 from .sync_guard import RUNNING_SYNC_TOKENS as _RUNNING_SYNC_TOKENS
 from .sync_guard import OwnerCheck as _OwnerCheck
@@ -775,15 +777,25 @@ def _resolve_active_projects(projects: str | None, default_project: str) -> list
     return [default_project]
 
 
-def _maybe_start_stack() -> None:
+def _maybe_start_stack(skip_embeddings: bool = False) -> None:
     # The Docker stack serves Memgraph, and Qdrant when the vector settings
     # pick the bundled one. The embedded graph is a file and Neo4j is the
     # user's own server, so for them the stack runs only for the vectors:
     # only its Qdrant is started and checked, since every Memgraph check
-    # needs a driver those installs need not have.
+    # needs a driver those installs need not have. A run that writes no
+    # embeddings, or writes them to another backend, needs no Qdrant, so it
+    # never starts one: for the embedded graph that means no Docker at all.
+    wants_vectors = not (skip_embeddings or settings.SKIP_EMBEDDINGS)
     if settings.GRAPH_BACKEND == DIALECT_MEMGRAPH:
-        mgr = StackManager()
+        mgr = (
+            StackManager()
+            if wants_vectors
+            and settings.VECTOR_STORE_BACKEND == cs.VectorStoreBackend.QDRANT
+            else StackManager(services=(SERVICE_MEMGRAPH,))
+        )
     else:
+        if not wants_vectors:
+            return
         mgr = StackManager(services=(SERVICE_QDRANT,))
         if not mgr.serves_vectors():
             return
@@ -1070,6 +1082,28 @@ def _clear_deleted_project_markers(
         logger.warning(ls.CLI_DELETE_SYNC_MARKER_KEPT.format(project=project_name))
 
 
+def _sweep_glosses_after_failed_delete(
+    ingestor: MemgraphIngestor, project_name: str
+) -> None:
+    """Sweep the notes of a delete that raised after the project was removed.
+
+    The delete commits statement by statement, so a later cleanup can raise
+    once the project is already gone, and a retry then stops at "project not
+    found" before any sweep. A project still listed keeps its unattached
+    notes: they are LOST or AMBIGUOUS by design and readable on their old
+    names. Never raises, so the delete's own error is what is reported.
+    """
+    try:
+        still_listed = project_name in ingestor.list_projects()
+    except Exception as exc:
+        logger.warning(
+            ls.CLI_DELETE_GLOSS_SWEEP_SKIPPED.format(project=project_name, error=exc)
+        )
+        return
+    if not still_listed:
+        prune_orphaned_glosses(ingestor, project_name)
+
+
 def _run_updater_deferring_interrupt(
     updater: "GraphUpdater",
 ) -> KeyboardInterrupt | None:
@@ -1208,8 +1242,31 @@ def _run_graph_sync(
                 cs.StyleModifier.NONE,
             )
         )
+        _report_call_pass_failures(repo, list(updater.call_pass_failures))
     if interrupted is not None:
         raise interrupted
+
+
+def _report_call_pass_failures(repo: Path, failed: list[Path]) -> None:
+    # A file whose call pass failed lost edges while the sync still reads
+    # "done": the error lines scroll away, so the summary counts them (#3173).
+    if not failed:
+        return
+    names = sorted(
+        path.relative_to(repo).as_posix() if path.is_relative_to(repo) else str(path)
+        for path in failed
+    )
+    shown = names[: cs.CLI_CALL_PASS_FAILURES_SHOWN]
+    if len(names) > len(shown):
+        shown.append(cs.CLI_MSG_AND_MORE.format(count=len(names) - len(shown)))
+    app_context.console.print(
+        style(
+            cs.CLI_MSG_CALL_PASS_FAILURES.format(
+                count=len(names), files=", ".join(shown)
+            ),
+            cs.Color.YELLOW,
+        )
+    )
 
 
 def _delete_hash_cache(repo_path: Path) -> None:
@@ -1434,7 +1491,7 @@ def start(
     _refuse_empty_workspace(workspace_config, update_graph, active_projects)
 
     if not no_start_stack:
-        _maybe_start_stack()
+        _maybe_start_stack(skip_embeddings=no_embeddings)
 
     effective_batch_size = settings.resolve_batch_size(batch_size)
 
@@ -2119,6 +2176,18 @@ def edits_command(ctx: typer.Context) -> None:
 )
 def graph_command(ctx: typer.Context) -> None:
     _run_delegated_group(graph_cli, ctx)
+
+
+@app.command(
+    name=ch.CLICommandName.PORT,
+    help=ch.CMD_PORT,
+    short_help=ch.CMD_PORT,
+    add_help_option=False,
+    context_settings=_DELEGATED_GROUP_CONTEXT,
+    rich_help_panel=ch.PANEL_USE,
+)
+def port_command(ctx: typer.Context) -> None:
+    _run_delegated_group(port_cli, ctx)
 
 
 @app.command(
@@ -3522,7 +3591,26 @@ def delete_project(
                 )
             )
             _cleanup_project_embeddings(ingestor, project_name, projects)
-            ingestor.delete_project(project_name)
+            try:
+                ingestor.delete_project(project_name)
+            except Exception:
+                _sweep_glosses_after_failed_delete(ingestor, project_name)
+                raise
+            # A Gloss is out of the delete's reach by design, which is what
+            # lets it survive an index's delete-then-rebuild, so the
+            # deliberate delete sweeps the project's notes, as MCP
+            # `delete_project` does. Without it the next index re-attached
+            # them by name (issue #3231). The sweep never raises: the delete
+            # is done, and a retry would stop at "project not found".
+            if not prune_orphaned_glosses(ingestor, project_name):
+                app_context.console.print(
+                    style(
+                        cs.CLI_WARN_GLOSSES_NOT_PRUNED.format(
+                            project_name=project_name
+                        ),
+                        cs.Color.YELLOW,
+                    )
+                )
             _clear_deleted_project_markers(ingestor, project_name)
     except typer.Exit:
         raise
