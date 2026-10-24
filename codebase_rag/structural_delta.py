@@ -1814,9 +1814,19 @@ def _signature_verdict(
 
 
 def _call_starting_at(root: Node, row: int, col: int) -> Node | None:
-    node: Node | None = root.descendant_for_point_range((row, col), (row, col))
-    while node is not None and node.start_point == (row, col):
-        if node.type == cs.TS_PY_CALL:
+    # A member call's site starts at its name, `__init__` in
+    # `Base.__init__(self, a)`, not where the call node starts (issue #3166);
+    # a graph indexed before that recorded the node's start, so both name it.
+    # Local import: the parsers package pulls in every language processor.
+    from .parsers.utils import call_site_start
+
+    point = (row, col)
+    node: Node | None = root.descendant_for_point_range(point, point)
+    while node is not None:
+        if node.type == cs.TS_PY_CALL and point in (
+            node.start_point,
+            call_site_start(node),
+        ):
             return node
         node = node.parent
     return None
