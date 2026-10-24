@@ -196,6 +196,11 @@ EXPORT_FOUND = "  Found {export_type}: {name} (qn: {qn})"
 DEF_PARSING_AST = "Parsing and Caching AST for {language}: {path}"
 DEF_UNSUPPORTED_LANGUAGE = "Unsupported language '{language}' for {path}"
 DEF_NO_PARSER = "No parser available for {language}"
+SQL_FUNCTIONS_UNPARSED = (
+    "{path}: {count} CREATE FUNCTION statement(s) could not be parsed and are "
+    "not in the graph (tree-sitter-sql cannot read their header, e.g. OUT/INOUT "
+    "parameters)"
+)
 DEF_PARSE_FAILED = "Failed to parse or ingest {path}: {error}"
 DEF_PARSING_DEPENDENCY = "  Parsing dependency file: {path}"
 DEF_FOUND_DEPENDENCY = "    Found dependency: {name} (spec: {spec})"
@@ -275,6 +280,13 @@ VECTOR_STORE_BACKEND_UNAVAILABLE = (
     "Vector store backend '{backend}' dependencies are not available"
 )
 VECTOR_STORE_BACKEND_UNKNOWN = "Unknown vector store backend '{backend}'"
+QDRANT_SET_WITHOUT_BACKEND = (
+    "Qdrant settings are set but CGR_VECTOR_STORE_BACKEND is not, so cgr is "
+    "using the sqlite vector store at {path}, now the default instead of "
+    "Qdrant. Embeddings stored in Qdrant are not searched here. To keep using "
+    "Qdrant, set CGR_VECTOR_STORE_BACKEND=qdrant; to keep the sqlite store, "
+    "set CGR_VECTOR_STORE_BACKEND=sqlite. Either one silences this notice."
+)
 VECTOR_STORE_DELETE_PROJECT = (
     "Deleting {count} {backend} vectors for project '{project}'"
 )
