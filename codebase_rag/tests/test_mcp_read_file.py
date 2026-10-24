@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from codebase_rag import tool_errors as te
 from codebase_rag.mcp.tools import MCPToolsRegistry
 
 pytestmark = [pytest.mark.anyio]
@@ -116,12 +117,14 @@ class TestReadFileWithPagination:
     async def test_read_offset_beyond_file_length(
         self, mcp_registry: MCPToolsRegistry, sample_file: Path
     ) -> None:
-        """Test reading with offset beyond file length."""
+        """An offset past the end is refused, not answered "Lines 151-150"
+        (issue #3244)."""
         result = await mcp_registry.read_file("test_file.txt", offset=150)
 
-        lines = result.split("\n")
-        assert "of 100" in lines[0]
-        assert lines[0] == "# Lines 151-150 of 100"
+        assert isinstance(result, te.ToolFailure)
+        assert (
+            result == "Error: offset 150 is past the end of test_file.txt (100 lines)"
+        )
 
     async def test_read_zero_offset(
         self, mcp_registry: MCPToolsRegistry, sample_file: Path

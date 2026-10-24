@@ -41,10 +41,19 @@ class QueryingIngestorProtocol(IngestorProtocol, QueryProtocol, Protocol):
     """A sink that can also read back what it wrote."""
 
 
+@runtime_checkable
+class NodeUpdateProtocol(Protocol):
+    """A sink that takes no query yet can set properties on a node it already
+    holds (the protobuf index): the query-free `MATCH ... SET`."""
+
+    def update_node_properties(self, label: str, properties: PropertyDict) -> None: ...
+
+
 from .filtering import FilteringIngestor  # noqa: E402
 
 __all__ = [
     "IngestorProtocol",
+    "NodeUpdateProtocol",
     "QueryingIngestorProtocol",
     "QueryProtocol",
     "ReadOnlyQueryProtocol",

@@ -25,7 +25,11 @@ HEALTH_CHECK_GRAPH_ERROR = "{engine} error: {error}"
 HEALTH_CHECK_MEMGRAPH_QUERY = "RETURN 1 AS test;"
 
 # Display names for the engines the ingestor can talk to.
-HEALTH_ENGINE_NAMES = {"memgraph": "Memgraph", "neo4j": "Neo4j"}
+HEALTH_ENGINE_NAMES = {
+    "memgraph": "Memgraph",
+    "neo4j": "Neo4j",
+    "sqlite": "Embedded graph (SQLite)",
+}
 
 HEALTH_CHECK_GRAPH_INTEGRITY_OK = "Graph structural integrity verified"
 HEALTH_CHECK_GRAPH_INTEGRITY_FAILED = "Graph structural integrity violations"
@@ -110,9 +114,9 @@ HEALTH_CHECK_TOOL_TIMEOUT_ERROR = (
 )
 HEALTH_CHECK_TOOL_FAILED_MSG = "Check failed"
 
-# cmake is deliberately absent: it only builds pymgclient, a hard
-# dependency doctor has already imported by the time it runs, so a
-# missing cmake cannot be what is wrong with a working install.
+# cmake is deliberately absent: it only builds pymgclient, the optional
+# Memgraph driver, and doctor reports a missing driver through the graph
+# connection check, which names the extra to install.
 HEALTH_CHECK_EXTERNAL_TOOLS = [
     ("ripgrep", "rg"),
 ]

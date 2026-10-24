@@ -54,10 +54,18 @@ _PROPERTY_BEARING = (cs.NodeLabel.FIELD, cs.NodeLabel.PARAMETER)
 
 
 def _matched_labels(query: str) -> set[str]:
-    """The labels the query's MATCH admits, from `(n:A|B|C)`."""
+    """The labels the query's MATCH admits on `n`.
+
+    Read from `(n:A|B|C)`, or from the `(n:A OR n:B OR n:C)` test the
+    queries now spell in WHERE so engines without label alternation accept
+    them (issue #386).
+    """
     match = re.search(r"MATCH \(n:([A-Za-z|]+)\)", query)
-    assert match is not None, f"no label-scoped MATCH found in:\n{query}"
-    return set(match.group(1).split("|"))
+    if match is not None:
+        return set(match.group(1).split("|"))
+    test = re.search(r"MATCH \(n\)\s+WHERE \((n:\w+(?: OR n:\w+)*)\)", query)
+    assert test is not None, f"no label-scoped MATCH found in:\n{query}"
+    return {part.split(":", 1)[1] for part in test.group(1).split(" OR ")}
 
 
 # The snippet lookup reads source, so it admits the definition labels plus any
