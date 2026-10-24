@@ -35,6 +35,19 @@ generation of the graph. Measured overhead on top of the re-ingest is
 reported per call as `delta_ms`; the benchmark (`benchmarks/bench_reingest.py`)
 records it next to the re-ingest itself.
 
+A caller the edit touched is judged by its new body (issue #3246). If that
+body no longer names a removed or renamed symbol, the call went with it: a
+callback replaced by a loop, a named function expression swapped for an
+arrow, a nested helper inlined. Such a caller is no dangling caller. An
+anonymous function is never named, so a caller re-parsed without it no
+longer calls it. A body that still names the symbol, or one that cannot be
+read, keeps the caller listed. So does a call that need not name its
+callee: one to a function of another file, which an import binds under any
+name (`from lib import helper as h`, a default import, a `require` of the
+whole module); one to a method, which runs under names it does not carry
+(`Widget(1)` calls `Widget.__init__`); and one to a function taken as a
+value elsewhere (`h = helper; h(x)`).
+
 ## What it reports
 
 ```json
@@ -77,9 +90,9 @@ records it next to the re-ingest itself.
 | `symbols.renamed`    | A symbol that disappeared while one with the same whole-skeleton fingerprint appeared in the same file. Paired one-to-one. |
 | `symbols.changed`    | A symbol whose skeleton fingerprint or declared positional parameters moved. A change to a literal alone does not register here. |
 | `dangling_callers`   | Call sites of a removed or renamed symbol that still name it: every caller in a file that was not part of the edit, and callers in edited files that did not re-bind to the new name. The `line`/`col` are the site's recorded position. |
-| `dangling_importers` | Import statements and Python `__all__` entries that still name a removed or renamed symbol (issue #2516): a package `__init__` re-exporting it, say, with no call site to go with the import. `kind` is `import` (the statement's position; `name` is the imported name) or `__all__` (the string entry's position; `name` is the name the module exported it under). An importer the edit did not touch is always listed; one it touched only if it still names the symbol. Nothing is listed while the old module still binds the name, as it does after a move that leaves `from new_home import name` behind. A replacement import is followed to its target, into modules the edit did not touch as well, so one naming nothing there does not count, while a wildcard import of a module that defines the name does; a Python module's assignments are read from its source, and a target outside the project is taken at its word. A string in a comment inside `__all__` exports nothing. |
+| `dangling_importers` | Import statements and Python `__all__` entries that still name a removed or renamed symbol (issue #2516): a package `__init__` re-exporting it, say, with no call site to go with the import. `kind` is `import` (the statement's position; `name` is the imported name) or `__all__` (the string entry's position; `name` is the name the module exported it under). An importer the edit did not touch is always listed; one it touched only if it still names the symbol. Nothing is listed while the old module still binds the name, as it does after a move that leaves `from new_home import name` behind. A replacement import is followed to its target, into modules the edit did not touch as well, so one naming nothing there does not count, while a wildcard import of a module that defines the name does; a Python module's assignments are read from its source, and a target outside the project is taken at its word. A string in a comment inside `__all__` exports nothing. An import of a **module** the edit deleted or moved (issue #3266) is listed with `kind` `module`: `import pkg.signals`, `from pkg import util`, `import pkg.util as pu`, an ES `export * from "./util"` or `import * as u from "./util"`. `target` is the module, `name` what the statement binds (`*` for a re-export), and `renamed_to` the module it moved to, taken from the definitions that moved with it or, for a module defining nothing, the one new module with its file name. A Python module turned into a package, or a JS/TS file turned into a directory whose `index` the same specifier resolves to, is not gone. A statement already listed for a removed name it imports is listed once. |
 | `signature_changes`  | Symbols whose positional parameters changed, with every call site and a verdict each, and `remote_callers`: call sites in any project that reach an endpoint the symbol exposes, through a network resource or directly for an RPC or dispatch resource (issue #1603). |
-| `arity_findings`     | Call sites in the edited files the callee's language rejects: more positional arguments than the callee declares (`too_many`), the only verdict that needs no knowledge of defaults, and, where the signature declares which parameters are optional, fewer than it requires (`too_few`, see [signatures outside Python](#signatures-outside-python)). |
+| `arity_findings`     | Call sites in the edited files the callee certainly rejects: more positional arguments than it declares (`too_many`); a required parameter nothing fills (`too_few`), where the signature declares which parameters are optional (see [signatures outside Python](#signatures-outside-python)) or, for Python, from the header read back; or a keyword it does not accept (`unexpected_keyword`, Python). |
 | `new_duplicates`     | New or changed functions whose fingerprint (`exact`) or branch set (`similar`, Jaccard at the duplicates threshold) matches an existing function; `original` is the older one. The duplicate detector's minimum size applies. |
 | `new_import_cycles`  | Strongly connected components of the module import graph that contain an edited module and did not exist before the edit. |
 | `stale_importers`    | Modules that still import a module every moved symbol left empty. Only a move (a rename across modules) produces one; the `move` operation's contract reads it. |
@@ -101,6 +114,28 @@ holds when they alone exceed the parameters (`one(a, b, *rest)` against
 means fewer arguments than parameters: the graph does not record
 defaults, so this is a hint, not a finding, and does not trip
 `--fail-on-found`.
+
+For a Python callee the header itself is read back, which records what the
+graph does not: which parameters have defaults, which take keywords, and
+whether `**kwargs` exists. Two more verdicts are definite from it, and
+both trip `--fail-on-found` (issues #2845, #2853):
+
+- `unexpected_keyword`: the site passes a keyword the def does not accept
+  by name (a renamed or removed parameter, or a positional-only one before
+  `/`) and the def has no `**kwargs` to take it.
+- `too_few`: a parameter without a default that no positional and no
+  keyword at the site fills, and the site has no `**opts` that may carry
+  it (nor a `*rest`, for a positional one: a `*rest` never fills a
+  keyword-only parameter). Adding `channel` to `send(msg)` makes
+  `send("hi")` read `too_few`; adding `channel=None` leaves it
+  `possibly_missing`.
+
+A def wrapped by a decorator other than `@staticmethod`, `@classmethod`,
+`@abstractmethod` or `@override` is not judged from its header, since the
+decorator may change what a caller passes. Nor is a site whose edge was
+bound by name alone (`resolution` `heuristic` or `overload`, as for a
+receiver typed only by its parameter's name): it may lead to a same-named
+def the call never runs.
 
 ### Signatures outside Python
 
@@ -140,11 +175,13 @@ signature change as above.
 Not read, so their edits never reach `signature_changes`: C and C++ (a
 default sits on the header declaration, which the definition need not
 repeat), Scala and Dart (named and curried parameter lists), Lua (any count
-is accepted) and bodiless TypeScript signatures (an overload, an interface
-or abstract member: a call matches one of possibly several). A definition
-indexed before these lists existed has none on the base side and is not
-compared; the first sync after upgrading re-parses every file, since the
-parser changed, and records the lists and every site's `spread_args`.
+is accepted), bodiless TypeScript signatures (an overload, an interface
+or abstract member: a call matches one of possibly several) and the
+implementation of a TypeScript overload set, which its callers never see.
+A definition indexed before these lists existed has none on the base side
+and is not compared; the first sync after upgrading re-parses every file,
+since the parser changed, and records the lists and every site's
+`spread_args`.
 
 ## `cgr check`
 
@@ -160,8 +197,8 @@ The graph is assumed to reflect `--base` (index there, then edit). Files
 that differ between the base and the working tree, untracked files
 included, are re-ingested and the delta printed as JSON. With
 `--fail-on-found` the command exits 1 when the delta reports dangling
-callers, dangling importers, `too_many` arity findings, new duplicates or
-new import cycles.
+callers, dangling importers, `too_many`, `too_few` or `unexpected_keyword`
+arity findings, new duplicates or new import cycles.
 A project that is not indexed is refused: a scoped re-ingest completes a
 graph, it cannot stand in for the first index.
 
@@ -197,9 +234,10 @@ What `--isolated` does not promise:
   the marker stays, readers refuse, and the next full update repairs the
   graph.
 - **Some graphs are refused.** A capture that enables IO resource links, a
-  graph that already holds any, and a hash cache that exists but cannot be
-  read are all refused before anything is written, because the restore could
-  not undo them.
+  project whose own code anchors a resource holding one (another project's
+  links on a shared graph do not count: the run cannot unanchor them), and a
+  hash cache that exists but cannot be read are all refused before anything
+  is written, because the restore could not undo them.
 
 The capture and restore read the changed files' subgraph plus one
 graph-wide scan of the shared ExternalModule and Resource nodes, the same
