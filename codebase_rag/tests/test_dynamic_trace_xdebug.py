@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import gzip
 import shutil
 import subprocess
 import textwrap
@@ -13,7 +14,7 @@ import textwrap
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.trace.records import read_trace_file
+from codebase_rag.trace.records import TraceFormatError, read_trace_file
 from codebase_rag.trace.xdebug import convert_xdebug_trace
 
 
@@ -56,9 +57,21 @@ def _exit(level, fn_id):
     return f"{level}\t{fn_id}\t1\t0.002\t480000"
 
 
+def _trace_text(rows):
+    return _HEADER + "\n".join(rows) + "\n" + _FOOTER
+
+
 def _write(tmp_path, rows):
     trace_path = tmp_path / "run.xt"
-    trace_path.write_text(_HEADER + "\n".join(rows) + "\n" + _FOOTER)
+    trace_path.write_text(_trace_text(rows))
+    return trace_path
+
+
+def _write_gzipped(tmp_path, rows):
+    # Xdebug >= 3.1 built with zlib compresses traces by default
+    # (xdebug.use_compression=1), writing run.xt.gz instead of run.xt.
+    trace_path = tmp_path / "run.xt.gz"
+    trace_path.write_bytes(gzip.compress(_trace_text(rows).encode(cs.ENCODING_UTF8)))
     return trace_path
 
 
@@ -200,6 +213,53 @@ def test_malformed_trace_is_rejected(tmp_path):
     trace_path.write_text("not an xdebug trace\n")
 
     with pytest.raises(ValueError):
+        convert_xdebug_trace(trace_path, output=tmp_path / "out.jsonl")
+
+
+def test_gzip_compressed_trace_converts_like_the_plain_one(tmp_path):
+    repo = tmp_path.as_posix()
+    rows = _sample_rows(repo)
+    plain_count, _plain_header, plain_records = _convert(tmp_path, rows)
+    output = tmp_path / "gz.jsonl"
+
+    count = convert_xdebug_trace(_write_gzipped(tmp_path, rows), output=output)
+
+    header, records = read_trace_file(output)
+    assert header.language == cs.TRACE_LANGUAGE_PHP
+    assert count == plain_count > 0
+    assert list(records) == plain_records
+
+
+def test_gzip_compressed_non_trace_is_rejected(tmp_path):
+    trace_path = tmp_path / "broken.xt.gz"
+    trace_path.write_bytes(gzip.compress(b"not an xdebug trace\n"))
+
+    with pytest.raises(TraceFormatError, match="File format: 4"):
+        convert_xdebug_trace(trace_path, output=tmp_path / "out.jsonl")
+
+
+def test_truncated_gzip_trace_is_rejected(tmp_path):
+    # A run killed before Xdebug closes the stream leaves a cut-off gzip file;
+    # that is a format error naming the file, not a bare EOFError.
+    repo = tmp_path.as_posix()
+    trace_path = _write_gzipped(tmp_path, _sample_rows(repo))
+    data = trace_path.read_bytes()
+    trace_path.write_bytes(data[: len(data) // 2])
+
+    with pytest.raises(TraceFormatError, match="truncated or corrupt"):
+        convert_xdebug_trace(trace_path, output=tmp_path / "out.jsonl")
+
+
+def test_gzip_trace_inflating_past_the_cap_is_refused(tmp_path, monkeypatch):
+    # The trace is inflated under the gzipped-profile cap, so a small .xt.gz
+    # that expands to far more than the cap is refused, not held in memory.
+    limit = 64 * 1024
+    monkeypatch.setattr(cs, "TRACE_MAX_DECOMPRESSED_BYTES", limit)
+    trace_path = tmp_path / "bomb.xt.gz"
+    trace_path.write_bytes(gzip.compress(bytes(limit * 64)))
+    assert trace_path.stat().st_size < limit
+
+    with pytest.raises(TraceFormatError, match="gunzip it"):
         convert_xdebug_trace(trace_path, output=tmp_path / "out.jsonl")
 
 

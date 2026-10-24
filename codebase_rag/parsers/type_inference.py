@@ -28,6 +28,7 @@ from .lua import LuaTypeInferenceEngine
 from .py import PythonTypeInferenceEngine, resolve_class_name
 from .rs import RustTypeInferenceEngine
 from .rs import utils as rs_utils
+from .rs.type_inference import is_constructor_guess
 from .utils import follow_reexports
 
 if TYPE_CHECKING:
@@ -983,14 +984,17 @@ class TypeInferenceEngine:
         # Type a Rust local bound from an associated-function call
         # (`let cmd = Command::from_frame(f)?`) with the call's return type, so a
         # later `cmd.apply()` resolves to the real type, not the ambiguous name-only
-        # trie fallback. Only fills names not already typed.
+        # trie fallback. Only fills names not already typed, or typed only by
+        # their initializer's constructor-like spelling (#3168).
         bounds: dict[str, list[str]] | None = None
         for (
             name,
             segments,
             call_point,
         ) in self.rust_type_inference.collect_call_var_bindings(caller_node):
-            if name in var_types:
+            if name in var_types and not is_constructor_guess(
+                var_types[name], segments
+            ):
                 continue
             if return_type := self._infer_rust_call_return_type(
                 segments, module_qn, var_types, call_point
