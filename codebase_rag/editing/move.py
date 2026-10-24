@@ -2083,7 +2083,11 @@ class Mover:
             )
             at = source.find(old_attr, start, end)
             if at < 0:
-                continue
+                # A member call's site starts at its name (#3166), past the
+                # module path it is reached through.
+                at = start + len(name.encode(cs.ENCODING_UTF8)) - len(old_attr)
+                if at < 0 or source[at : at + len(old_attr)] != old_attr:
+                    continue
             patcher.replace_span(path, (at, at + len(old_attr)), new_attr)
             if path not in touched:
                 touched.add(path)
