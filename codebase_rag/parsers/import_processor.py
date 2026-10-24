@@ -47,6 +47,7 @@ from ..utils.path_utils import (
     should_skip_rel_file,
     walk_eligible_files,
 )
+from ..utils.source_encoding import grammar_bytes
 from .cpp_frontend.qn import build_module_qn_map
 from .dart import (
     dart_binding_spans,
@@ -55,6 +56,7 @@ from .dart import (
     dart_import_prefix,
     dart_local_name,
     dart_resolve_import,
+    discover_dart_packages,
 )
 from .go import discover_go_module_paths, resolve_go_import_path
 from .js_ts.commonjs_exports import commonjs_export_bindings, is_commonjs_module
@@ -64,6 +66,7 @@ from .js_ts.module_paths import (
 )
 from .js_ts.reexports import JsExport, follow_js_reexports, js_ts_module_qn
 from .lua import utils as lua_utils
+from .php.namespaces import declared_namespace
 from .python_source_roots import discover_python_source_roots, resolve_via_source_roots
 from .rs import cargo_semver
 from .rs import utils as rs_utils
@@ -461,12 +464,13 @@ def _js_export_specifiers(statement: Node) -> Iterator[tuple[str, str]]:
 
 
 def _names_js_module(site: PropertyDict | None) -> bool:
-    # `export * from "./x"` and `import * as ns from "./x"` both record `*`
-    # as their imported name: what they store is the module itself, never a
-    # `module.symbol` pair (issues #2464, #2934).
-    return (
-        site is not None and site.get(cs.KEY_IMPORTED_NAME) == cs.IMPORTED_NAME_WILDCARD
-    )
+    # `export * from` and `import * as ns` record `*` as their imported name,
+    # and `const m = require("./m")` records none: each names the module
+    # itself, never a name inside it (issues #2464, #2934).
+    if site is None:
+        return False
+    imported = site.get(cs.KEY_IMPORTED_NAME)
+    return imported is None or imported == cs.IMPORTED_NAME_WILDCARD
 
 
 def _load_jsonc(path: Path) -> dict | None:
@@ -681,6 +685,16 @@ def _is_conditional_import_node(import_node: Node) -> bool:
             return True
         current = current.parent
     return False
+
+
+def _rust_member_pattern(pattern: str) -> str:
+    # A workspace member glob relative to the root: leading `./` and a
+    # trailing `/` dropped, and the root itself (`.`) as the empty pattern.
+    # Whitespace is part of a TOML path, so it is kept.
+    while pattern.startswith(cs.RS_CURRENT_DIR_PREFIX):
+        pattern = pattern[len(cs.RS_CURRENT_DIR_PREFIX) :]
+    pattern = pattern.rstrip(cs.SEPARATOR_SLASH)
+    return "" if pattern == cs.RS_CURRENT_DIR else pattern
 
 
 def _rust_norm_manifest_path(path: str) -> str:
@@ -1104,6 +1118,7 @@ class ImportProcessor:
         "_csharp_module_identifiers",
         "_cpp_declaration_mappings",
         "_cpp_shadowed_include_targets",
+        "_dart_packages",
         "_rust_dir_listing",
         "_rust_entry_mod_decls",
         "_rust_module_mod_decls",
@@ -1456,6 +1471,10 @@ class ImportProcessor:
         # survived (issue #1758). The binding can hold one name, but the file
         # really does include both headers, so the edge is kept here.
         self._cpp_shadowed_include_targets: set[tuple[str, str]] = set()
+        # The repo's own Dart packages, pubspec `name:` -> qn of its `lib/`,
+        # found on the first `package:` import so a project with no Dart
+        # pays no extra walk (issue #3278).
+        self._dart_packages: dict[str, str] | None = None
         # Local names brought in by a PHP `use function A\B\c` import, keyed by
         # module. A PHP namespace path never matches cgr's file-path qn (a global
         # helper declares `namespace Illuminate\Support` from
@@ -2140,7 +2159,11 @@ class ImportProcessor:
                 self._csharp_module_namespaces[module_qn] = {}
                 self._csharp_module_identifiers[module_qn] = frozenset()
                 continue
-            tree = parser.parse(source)
+            # Parsed as the indexer parses it: a UTF-16 file's raw bytes read
+            # as no declarations at all (#3153 review).
+            tree = parser.parse(
+                grammar_bytes(source, cs.SupportedLanguage.CSHARP, Path(path))
+            )
             self._csharp_module_namespaces[module_qn] = self._collect_csharp_namespaces(
                 tree.root_node
             )
@@ -2509,9 +2532,10 @@ class ImportProcessor:
             # `export * from "./add"` in `math/index.ts` stores the module
             # `math.add`, which the resolution above reads as the name `add`
             # of the `math` barrel: the barrel itself (issue #2464). A
-            # namespace import beside an `index.ts` or a same-named file read
-            # the same way, so `import * as m from "./utils/math"` imported
-            # `utils.index` (issue #2934).
+            # namespace import or whole-module `require` beside a directory's
+            # `index.ts` or a same-named file read the same way, so
+            # `import * as m from "./utils/math"` imported `utils.index`
+            # (issue #2934).
             module_path = (
                 self._verify_internal_import_target(
                     entry.full_name,
@@ -3504,9 +3528,21 @@ class ImportProcessor:
         for pattern in members:
             if not isinstance(pattern, str):
                 continue
+            # `"."` (or `"./"`) is the root package joining its own
+            # workspace, and the root is already listed; Python 3.12's
+            # `Path.glob` raises IndexError / AttributeError on those two
+            # rather than ValueError (issue #3167).
+            pattern = _rust_member_pattern(pattern)
+            if not pattern:
+                continue
             try:
                 matches = sorted(self.repo_path.glob(pattern))
-            except (ValueError, NotImplementedError):
+            except Exception as error:
+                # One member the manifest spells oddly is one crate left
+                # unmapped, never a failed sync.
+                logger.debug(
+                    ls.RUST_WORKSPACE_MEMBER_UNEXPANDED, pattern=pattern, error=error
+                )
                 continue
             dirs.extend(match for match in matches if match.is_dir())
         return dirs
@@ -5358,6 +5394,25 @@ class ImportProcessor:
             return self.follow_js_reexports(qn, module_paths, function_registry)
         return follow_reexports(qn, self.import_mapping, function_registry)
 
+    def follow_js_default_import(
+        self,
+        qn: str,
+        module_paths: Mapping[str, Path],
+        function_registry: FunctionRegistryTrieProtocol,
+    ) -> str:
+        """The definition a default import names, or `qn` unchanged.
+
+        `import Store from "./Store"` maps `Store` to `<module>.default`,
+        where only an anonymous `export default class {}` is registered; the
+        module's export table says which named class or function is its
+        default. Read as `<module>.default`, a default-imported class typed
+        nothing and was visible to no fallback (issue #3179).
+        """
+        if not qn.endswith(cs.IMPORT_DEFAULT_SUFFIX) or qn in function_registry:
+            return qn
+        followed = self.follow_js_reexports(qn, module_paths, function_registry)
+        return followed if followed in function_registry else qn
+
     def _record_js_export_bindings(self, statement: Node, module_qn: str) -> None:
         """Record what each name an `export` statement publishes stands for.
 
@@ -5555,6 +5610,11 @@ class ImportProcessor:
         self._julia_declared = None
         self._julia_scope_declared = None
         self._julia_scope_map_keys = {}
+
+    def reset_dart_path_caches(self) -> None:
+        # Same contract as reset_rust_path_caches: a pubspec added, removed
+        # or renamed since the package map was built must be re-read.
+        self._dart_packages = None
 
     def reset_rust_path_caches(self) -> None:
         # The filesystem may have gained or lost files since the caches
@@ -6555,23 +6615,10 @@ class ImportProcessor:
         the status quo, and unlike a first-block guess it never asserts an
         answer it does not have.
         """
-        declarations = [
-            child
-            for child in root_node.children
-            if child.type == cs.TS_PHP_NAMESPACE_DEFINITION
-        ]
-        if len(declarations) != 1:
-            return
-        name_node = declarations[0].child_by_field_name(cs.TS_FIELD_NAME)
-        if name_node is None or not name_node.text:
-            # `namespace { ... }` -- the explicit GLOBAL namespace. It has no
-            # name, and binding it to "" would make every unqualified lookup
-            # match it.
-            return
-        declared = safe_decode_with_fallback(name_node)
-        if not declared:
-            return
-        self.php_module_namespaces[module_qn] = declared.replace("\\", cs.SEPARATOR_DOT)
+        # `namespace { ... }` -- the explicit GLOBAL namespace -- has no name,
+        # and binding it to "" would make every unqualified lookup match it.
+        if (declared := declared_namespace(root_node)) is not None:
+            self.php_module_namespaces[module_qn] = declared
 
     def _parse_php_imports(
         self, captures: dict, module_qn: str, root_node: Node | None = None
@@ -6649,7 +6696,7 @@ class ImportProcessor:
             uri = dart_extract_uri(import_node)
             if not uri:
                 continue
-            if full_name := dart_resolve_import(uri, module_qn):
+            if full_name := self.dart_import_target(uri, module_qn):
                 local_name = dart_local_name(uri)
                 self.import_mapping[module_qn][local_name] = full_name
                 self._record_import_site(module_qn, local_name, import_node, uri)
@@ -6678,6 +6725,28 @@ class ImportProcessor:
             self.dart_prefix_shadows[module_qn] = dart_binding_spans(
                 root_node, frozenset(prefixes)
             )
+
+    def dart_import_target(self, uri: str, module_qn: str) -> str:
+        # What `uri` resolves to under the package map as it is on disk now;
+        # a pubspec change is judged by whether this moved (#3278 review).
+        packages = (
+            self._dart_package_libs()
+            if uri.startswith(cs.DART_SCHEME_PACKAGE)
+            else None
+        )
+        return dart_resolve_import(uri, module_qn, packages)
+
+    def _dart_package_libs(self) -> dict[str, str]:
+        # `package:<name>/<path>` with `<name>` a pubspec in this repository
+        # names a module of the project, not a dependency (issue #3278).
+        if self._dart_packages is None:
+            self._dart_packages = {
+                name: f"{self.project_name}{cs.SEPARATOR_DOT}{lib}"
+                for name, lib in discover_dart_packages(
+                    self.repo_path, self.exclude_paths, self.unignore_paths
+                ).items()
+            }
+        return self._dart_packages
 
     def _bind_dart_import_prefix(
         self,
