@@ -193,10 +193,12 @@ def stage_distrust_problems(text: str) -> list[str]:
     return problems
 
 
-# What reaches the network through the system store: pip, curl, cargo, and uv
-# building or syncing, which runs cargo for the crate.
+# What reaches the network through the system store: pip under any of its
+# names, curl, cargo, go fetching modules, and uv building or syncing, which
+# runs cargo for the crate.
 _FETCH = re.compile(
-    r"\bpip install\b|\bcurl\b|\bcargo (?:build|fetch|install)\b|\buv (?:build|sync)\b"
+    r"\bpip(?:3(?:\.\d+)?)? install\b|\bcurl\b|\bcargo (?:build|fetch|install)\b"
+    r"|\bgo (?:build|get|install|mod download)\b|\buv (?:build|sync)\b"
 )
 
 
@@ -436,8 +438,21 @@ def test_every_stage_that_upgrades_ca_certificates_distrusts_the_roots() -> None
         [COPY_SCRIPT, GOOD_PIP_BOOTSTRAP],
         # Building the crate fetches through cargo before pip ever runs.
         ["uv build --wheel rust/cgr_graph_rs", RUN_SCRIPT, GOOD_PIP_BOOTSTRAP],
+        # pip fetches under its versioned names too.
+        ["pip3 install pkg", RUN_SCRIPT, GOOD_PIP_BOOTSTRAP],
+        ["pip3.12 install pkg", RUN_SCRIPT, GOOD_PIP_BOOTSTRAP],
+        ["go mod download", RUN_SCRIPT, GOOD_PIP_BOOTSTRAP],
     ],
-    ids=["upgrade-only", "after-pip", "near-miss", "copied-not-run", "build-first"],
+    ids=[
+        "upgrade-only",
+        "after-pip",
+        "near-miss",
+        "copied-not-run",
+        "build-first",
+        "pip3-first",
+        "pip3.12-first",
+        "go-first",
+    ],
 )
 def test_a_fetch_from_a_store_that_still_trusts_the_roots_is_rejected(
     commands: list[str],
