@@ -6,6 +6,22 @@ from ... import constants as cs
 from ..utils import safe_decode_text
 
 
+def declared_namespace(root_node: Node) -> str | None:
+    """The dotted namespace a PHP file declares, when it declares exactly one.
+
+    A file with several top-level namespace blocks, or only the unnamed
+    global `namespace { ... }`, answers None: it has no single namespace,
+    and naming one would bind an import to the wrong block's functions
+    (#1484). Shared by the import pass and the Module node (issue #3277).
+    """
+    declarations = [
+        child
+        for child in root_node.children
+        if child.type == cs.TS_PHP_NAMESPACE_DEFINITION
+    ]
+    return _namespace_name(declarations[0]) if len(declarations) == 1 else None
+
+
 def enclosing_namespace(node: Node) -> str | None:
     """The dotted PHP namespace that lexically encloses `node`, or None in
     the global namespace.
