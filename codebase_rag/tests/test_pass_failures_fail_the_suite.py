@@ -15,6 +15,7 @@ from codebase_rag.parsers import dependency_parser
 from codebase_rag.parsers.call_processor import CallProcessor
 from codebase_rag.parsers.definition_processor import DefinitionProcessor
 from codebase_rag.parsers.import_processor import ImportProcessor
+from codebase_rag.parsers.type_inference import TypeInferenceEngine
 from codebase_rag.tests.conftest import assert_no_pass_failures, create_and_run_updater
 
 _SOURCE = (
@@ -46,11 +47,16 @@ def _run_with_broken_pass(
     ("target", "attribute", "expected"),
     [
         (CallProcessor, "_ingest_function_calls", "Failed to process calls in "),
+        (
+            TypeInferenceEngine,
+            "build_local_variable_type_map",
+            "Failed to infer local types in ",
+        ),
         (DefinitionProcessor, "_ingest_all_functions", "Failed to parse or ingest "),
         (ImportProcessor, "_parse_python_imports", "Failed to parse imports in "),
         (dependency_parser, "_load_toml", "Error parsing "),
     ],
-    ids=["calls", "definitions", "imports", "dependencies"],
+    ids=["calls", "local-types", "definitions", "imports", "dependencies"],
 )
 def test_a_raising_pass_is_caught_and_would_fail_the_run(
     temp_repo: Path,
