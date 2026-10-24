@@ -57,11 +57,9 @@ MGCLIENT_PROBE_CHILD_ARG = "--mgclient-probe-child"
 # `websockets.cli`), which put `libreadline.so.8` inside the MIT-licensed
 # one-file binary. Every importer guards the import, and interactive input
 # goes through prompt_toolkit, so nothing loses behaviour without it.
-# `sqlite3` is excluded because filelock (via huggingface-hub and torch)
-# imports it for its read-write locks, which bundled `libsqlite3` with no
-# licence entry. filelock guards that import, and nothing else in the binary
-# uses sqlite3.
-PYINSTALLER_EXCLUDED_MODULES = ["logfire", "readline", "sqlite3"]
+# `sqlite3` is bundled: the embedded graph, cgr's default backend, is a
+# SQLite file. Its library carries a notice entry (SQLite is public domain).
+PYINSTALLER_EXCLUDED_MODULES = ["logfire", "readline"]
 
 # Archive entries a release binary must never carry, matched against the last
 # path segment of each TOC name. Checked on the built archive, so a new route
@@ -93,4 +91,7 @@ PYINSTALLER_PACKAGES: list["PyInstallerPackage"] = [
     PyInstallerPackage(name="tomli_w", collect_all=True),
     PyInstallerPackage(name="protobuf", collect_all=True),
     PyInstallerPackage(name="genai_prices", collect_all=True),
+    # The embedded graph's Rust half, loaded by name (embedded_graph/
+    # extension.py), so PyInstaller never sees an import of it.
+    PyInstallerPackage(name="cgr_graph_rs", collect_all=True),
 ]

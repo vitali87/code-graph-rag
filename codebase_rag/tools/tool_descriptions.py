@@ -243,8 +243,9 @@ MCP_IMPORTERS = (
     "consumer side first (empty for a direct importer). " + _MCP_DETERMINISTIC_NOTE
 )
 MCP_PARAM_ENDPOINT_TARGET = (
-    "The handler's qualified name, or the endpoint identity as `endpoints` "
-    "lists it (`GET /users/{id}`)."
+    "The handler's qualified name, or the endpoint identity (`GET /users/{id}`) "
+    "in any path-parameter syntax (`{id}`, `:id`, `<id>`), or a concrete "
+    "request (`GET /users/42`)."
 )
 MCP_ENDPOINTS = (
     "The endpoints a project exposes (routes, RPC methods, dispatch keys), one "
@@ -256,8 +257,11 @@ MCP_ENDPOINTS = (
 )
 MCP_ENDPOINT_CALLERS = (
     "Call sites, in any indexed project, that reach one endpoint: `target` is "
-    "the handler's qualified name or the endpoint identity (`GET /users/{id}`). "
-    "Each row names the caller, its file, the URL it accesses and the direction "
+    "the handler's qualified name or the endpoint identity (`GET /users/{id}`), "
+    "whichever parameter syntax the route declares (`:id`, `<id>`); a concrete "
+    "request (`GET /users/42`) matches the routes it is served by. A target "
+    "that names no endpoint the project exposes is refused with the close "
+    "identities and handlers, so an empty list means nothing reaches it. Each row names the caller, its file, the URL it accesses and the direction "
     "(READS_FROM or WRITES_TO); an RPC or dispatch caller reaches the endpoint "
     "directly, so its `url` is the endpoint identity. Literal URLs resolve; "
     "dynamic ones do not and are absent here. " + _MCP_DETERMINISTIC_NOTE
@@ -298,7 +302,7 @@ MCP_GLOSSES = (
     "Notes (Glosses) about one definition: `annotating` are filed on it, "
     "`mentioning` are filed on other definitions and refer to it. `target` "
     "is resolved as `annotate` resolves it. Each note's `anchor_state` is "
-    "graded after each sync: EXACT when its definition's content hash still "
+    "graded after each sync of its project: EXACT when its definition's content hash still "
     "equals the one recorded at writing, STALE when it differs (EXACT again "
     "on revert), MOVED when the name is gone and exactly one definition in "
     "the project carries the recorded hash (the note follows it; "
@@ -526,7 +530,10 @@ MCP_EXPLAIN_TRACEBACK = (
     "runner, a container, a teammate's machine, Windows) is matched by the "
     "checkout root its frames share, reported as inferred_checkout_root; "
     "pass path_prefix_map when that root cannot be inferred. When nothing "
-    "resolves, note says why. Use this to ground a failure report in "
+    "resolves, note says why. For an ExceptionGroup, frames is the stack "
+    "that raised the group, and members holds each sub-exception (nested "
+    "groups included) with its own frames; omitted_members counts those "
+    "the traceback itself left out. Use this to ground a failure report in "
     "the indexed code before deciding where to look."
 )
 
@@ -549,7 +556,9 @@ MCP_RANK_ROOT_CAUSES = (
     "index_repository or update_repository, then reindex after changing it. "
     "Frames from another checkout "
     "resolve as in explain_traceback, and resolution plus note say why a "
-    "ranking is empty."
+    "ranking is empty. For an ExceptionGroup, the ranking anchors where the "
+    "group was raised, and members ranks each sub-exception against its own "
+    "failing frame."
 )
 
 MCP_CONTEXT = (
@@ -571,7 +580,8 @@ MCP_PARAM_BUDGET_TOKENS = "Token budget for the slice (default 4000)."
 MCP_PARAM_TRACEBACK_TEXT = (
     "The traceback text exactly as Python printed it (the 'Traceback "
     "(most recent call last):' block; chained tracebacks are fine, the "
-    "final propagated section is used)"
+    "final propagated section is used, and an ExceptionGroup's "
+    "sub-exceptions are each analysed under members)"
 )
 MCP_PARAM_PATH_PREFIX_MAP = (
     "Optional. Maps the checkout root the traceback was recorded under to a "
