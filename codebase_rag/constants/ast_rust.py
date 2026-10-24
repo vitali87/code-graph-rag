@@ -113,6 +113,14 @@ TS_RS_LOOP_EXPRESSION = "loop_expression"
 # A Rust call node whose callee is descended for chain flattening: a plain call
 # or a turbofish generic_function (`f::<T>()`).
 RS_CALL_OR_GENERIC_FN = (TS_RS_CALL_EXPRESSION, TS_GENERIC_FUNCTION)
+TS_RS_GENERIC_TYPE_WITH_TURBOFISH = "generic_type_with_turbofish"
+# A constructor path with type arguments: `Tree::<u8>::Leaf`'s qualifier,
+# `Wrapper::<u8> { .. }`'s name, `Pair::<u8>(..)`'s callee.
+RS_GENERIC_CONSTRUCTOR_PATHS = (
+    TS_GENERIC_TYPE,
+    TS_RS_GENERIC_TYPE_WITH_TURBOFISH,
+    TS_GENERIC_FUNCTION,
+)
 TS_RS_TUPLE_STRUCT_PATTERN = "tuple_struct_pattern"
 TS_RS_TYPE_ARGUMENTS = "type_arguments"
 TS_RS_TRY_EXPRESSION = "try_expression"
@@ -156,6 +164,9 @@ RS_MACRO_RECEIVER_TYPES = RS_IDENT_OR_SELF
 # (`server . run`, `Config :: load`), and the segments a `::` path takes
 # (`Self` is an identifier token; `crate`, `super`, `self` are keywords).
 RS_MACRO_CHAIN_SEPARATORS = (TS_RS_TOKEN_DOT, TS_RS_TOKEN_SCOPE)
+# How far each token moves the nesting of a turbofish's generic arguments in a
+# macro token stream, where `Vec<Vec<u8>>` closes with one `>>` token.
+RS_MACRO_ANGLE_DEPTH = {"<": 1, ">": -1, ">>": -2}
 RS_MACRO_PATH_SEGMENT_TYPES = (TS_IDENTIFIER, KEYWORD_SELF, TS_RS_CRATE, KEYWORD_SUPER)
 # Rust `Self` return type resolves to the enclosing impl target.
 RS_SELF_TYPE = "Self"
@@ -294,6 +305,9 @@ RS_MANIFEST_KIND_DIRS = {
 }
 RS_MANIFEST_WORKSPACE_KEY = "workspace"
 RS_MANIFEST_MEMBERS_KEY = "members"
+# A workspace member that is the root package itself, and its `./` prefix.
+RS_CURRENT_DIR = "."
+RS_CURRENT_DIR_PREFIX = "./"
 RS_MANIFEST_NAME_KEY = "name"
 RS_MANIFEST_LIB_SECTION = "lib"
 RS_MANIFEST_DEP_SECTIONS = ("dependencies", "dev-dependencies", "build-dependencies")
