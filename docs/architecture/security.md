@@ -11,7 +11,7 @@ handles security incidents, compromised releases and recovery communications.
 
 ## What the software does
 
-code-graph-rag parses codebases into a knowledge graph stored in a local Memgraph database, optionally embeds code for semantic search in a local Qdrant instance, and answers natural-language questions about the code, either through the interactive CLI agent or through the MCP server.
+code-graph-rag parses codebases into a knowledge graph stored in a local graph database (an embedded SQLite file by default, or Memgraph or Neo4j), optionally embeds code for semantic search in a local vector store (a SQLite file by default, or Qdrant or Milvus), and answers natural-language questions about the code, either through the interactive CLI agent or through the MCP server.
 
 ## Scope, assets and attacker assumptions
 
@@ -183,6 +183,12 @@ to their own providers, outside this server's control. Use trusted destinations,
 protected transport and host/network restrictions appropriate to the data.
 Environment variables and `.env` configure credentials; they do not prevent
 secrets in source files, command output or logs from being exposed.
+
+Token counting, which bounds graph-query results and the agent's context,
+reads tiktoken's `cl100k_base` encoding, which tiktoken downloads on first use
+and caches. Without network access the counts are estimated from text length
+instead, with one warning; a copy of the encoding in the directory
+`TIKTOKEN_CACHE_DIR` names restores exact counts.
 
 ### MCP access
 

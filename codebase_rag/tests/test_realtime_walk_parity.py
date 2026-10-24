@@ -8,7 +8,7 @@ from watchdog.events import DirMovedEvent, FileModifiedEvent
 
 from codebase_rag import constants as cs
 from codebase_rag.utils.path_utils import walk_eligible_files
-from realtime_updater import CodeChangeEventHandler
+from codebase_rag.watch import CodeChangeEventHandler
 
 # The watcher and the repository walk must agree about which files are in the
 # graph. The watcher used to check directory names against the built-in
