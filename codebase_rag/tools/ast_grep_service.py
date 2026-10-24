@@ -19,7 +19,7 @@ from .. import constants as cs
 from ..config import load_ignore_patterns
 from ..language_spec import get_language_for_extension
 from ..types_defs import StructuralReplaceChange, StructuralSearchMatch
-from ..utils.path_utils import should_skip_path
+from ..utils.path_utils import is_symlink_entry, should_skip_path
 
 if TYPE_CHECKING:
     from ast_grep_py import SgNode
@@ -50,6 +50,22 @@ def _ast_grep_lang_ids() -> frozenset[str]:
     return frozenset(cs.AST_GREP_LANGUAGES.values()) | frozenset(
         _structural_tier_ids().values()
     )
+
+
+def _deepest_cause(error: str) -> str:
+    """The last numbered cause of an ast-grep error, or its first line.
+
+    `cannot get matcher` is all the first line says; the cause that names
+    the problem (`No AST root is detected`, a standalone `$$$`) sits at the
+    end of the chain, above a backtrace no agent can act on (issue #3244).
+    """
+    chain = error.split(cs.AST_GREP_BACKTRACE_MARKER, 1)[0]
+    causes = [
+        match.group("cause")
+        for line in chain.splitlines()
+        if (match := cs.AST_GREP_CAUSE.match(line))
+    ]
+    return causes[-1] if causes else chain.strip().split("\n", 1)[0]
 
 
 class AstGrepService:
@@ -98,7 +114,9 @@ class AstGrepService:
             return None
         if wanted is not None and ast_grep_lang != wanted:
             return None
-        if should_skip_path(
+        # The same symlink rule as graph ingestion (issue #2451): a linked
+        # file was searched twice and rewritten through the link twice.
+        if is_symlink_entry(abs_path) or should_skip_path(
             abs_path,
             self.project_root,
             exclude_paths=self.exclude_paths,
@@ -157,7 +175,9 @@ class AstGrepService:
             return root.find_all(pattern=pattern)
         except RuntimeError as exc:
             raise ValueError(
-                cs.AST_GREP_INVALID_PATTERN.format(pattern=pattern, error=exc)
+                cs.AST_GREP_INVALID_PATTERN.format(
+                    pattern=pattern, error=_deepest_cause(str(exc))
+                )
             ) from exc
 
     def search(

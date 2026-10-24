@@ -23,15 +23,21 @@ concatenated path, the generated shape) an attribute expression like
 ``wrapper.GetMe``. A bare ``apiClient.get('/users')`` has none of these
 and is ignored.
 
-EXPOSES attribution is a ladder: a bare-identifier handler defined in the
-module, else the registering call's enclosing function, else the module
-itself, so the endpoint always stays anchored and the trace lands at the
-wiring site.
+EXPOSES attribution is a ladder: the handler function itself, else the
+registering call's enclosing function, else the module itself, so the
+endpoint always stays anchored and the trace lands at the wiring site. A JS
+handler is the LAST argument after the path (the ones before it are
+middleware); passed inline (a function expression, an arrow, an object
+method) it is its own function node, found by its start position, and a
+bare identifier names a function of the registering scope or the module
+(issue #2521).
 
 Ceilings (each simply yields nothing, never a wrong template): sub-router
-mounting (``app.use('/prefix', router)``), gorilla mux ``.Methods()``
-chains, JS handlers referenced through imports or attributes, factories and
-consts bound in a different module.
+mounting (``app.use('/prefix', router)``), a gorilla mux ``.Methods()``
+argument that is not a literal verb or an ``http.Method<Verb>`` constant,
+factories and consts bound in a different module. A JS handler referenced
+through an import or an attribute, and a Go function literal (not a graph
+node), fall back to the next rung of the ladder.
 """
 
 from __future__ import annotations
@@ -41,7 +47,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .. import constants as cs
-from .endpoint_prefixes import UNKNOWN_LEAD
+from .endpoint_prefixes import UNKNOWN_LEAD, _decode
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -76,6 +82,18 @@ CYPHER_DELETE_MODULE_EXPOSES = (
     "-[e:EXPOSES]->(:Resource {kind: 'ENDPOINT'}) DELETE e"
 )
 
+# An inline route handler is its own function node, found by where it
+# starts. A module this run did not parse (unchanged on an incremental run)
+# has only its top-level function spans rehydrated, so a handler nested in
+# another function is read back from the start position its node persists,
+# or the attribution would differ between a full and an incremental run.
+CYPHER_MODULE_FUNCTION_STARTS = (
+    "MATCH (m:Module)-[:DEFINES|DEFINES_METHOD*]->(f) "
+    "WHERE m.qualified_name IN $module_qns AND (f:Function OR f:Method) "
+    "RETURN m.qualified_name AS module_qn, f.qualified_name AS qualified_name, "
+    "labels(f)[0] AS label, f.start_line AS start_line, f.start_col AS start_col"
+)
+
 _JS_VERBS = {
     "get": "GET",
     "post": "POST",
@@ -107,6 +125,14 @@ _GO_VERB_METHODS = {m: m for m in _HTTP_METHODS} | {
     m.capitalize(): m for m in _HTTP_METHODS
 }
 _GO_HANDLE_METHODS = frozenset({"HandleFunc", "Handle"})
+# gorilla/mux's verb restriction, and net/http's verb constants.
+_GO_METHODS_LINK = "Methods"
+_GO_HTTP_PACKAGE = "http"
+_GO_METHOD_CONST = "Method"
+# `.Methods` takes any method token and upper-cases it (WebDAV's PROPFIND
+# included), and net/http's constants name CONNECT and TRACE as well.
+_GO_HTTP_METHOD_CONSTS = frozenset({*_HTTP_METHODS, "CONNECT", "TRACE"})
+_HTTP_METHOD_TOKEN_RE = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
 _GO_FRAMEWORK_FACTORIES = frozenset(
     {
         "echo.New",
@@ -139,8 +165,13 @@ _GO_PATH_LITERALS = (
 class RouteRegistration:
     method: str
     path: str
-    handler_name: str | None  # bare-identifier handler, when present
+    # A bare-identifier handler, or the name of an inline one.
+    handler_name: str | None
     scope: str  # enclosing function chain, '' at module level
+    # (row, column) where an inline handler function starts, 0-based as
+    # tree-sitter reports it: the key its own function node is recorded
+    # under.
+    handler_start: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -165,12 +196,6 @@ class _ModuleEvidence:
     wrapper_bindings: frozenset[tuple[str, str, tuple[int, int] | None]]
     # (receiver type name, method name) for every module method declaration.
     module_methods: frozenset[tuple[str, str]]
-
-
-def _decode(node: Node | None) -> str | None:
-    if node is None or node.text is None:
-        return None
-    return node.text.decode(cs.ENCODING_UTF8)
 
 
 def _literal_path(
@@ -211,6 +236,25 @@ def _handler_identifier(node: Node | None, identifier_type: str) -> str | None:
     if node is not None and node.type == identifier_type:
         return _decode(node)
     return None
+
+
+_JS_INLINE_HANDLER_NODES = frozenset(
+    {cs.TS_FUNCTION_EXPRESSION, cs.TS_ARROW_FUNCTION, cs.TS_METHOD_DEFINITION}
+)
+
+
+def _js_handler(node: Node | None) -> tuple[str | None, tuple[int, int] | None]:
+    # (name, inline start) of the function that answers the request: an
+    # inline function is its own node, keyed by where it starts; a bare
+    # identifier only has a name.
+    if node is None:
+        return None, None
+    if node.type in _JS_INLINE_HANDLER_NODES:
+        start = (node.start_point[0], node.start_point[1])
+        return _decode(node.child_by_field_name(cs.TS_FIELD_NAME)), start
+    if node.type in (cs.TS_PY_IDENTIFIER, cs.TS_SHORTHAND_PROPERTY_IDENTIFIER):
+        return _decode(node), None
+    return None, None
 
 
 def _receiver_is_framework(fn: Node, evidence: _ModuleEvidence) -> bool:
@@ -306,10 +350,10 @@ def _js_direct_registration(
         )
     ):
         return None
-    handler = _handler_identifier(
-        args[1] if len(args) > 1 else None, cs.TS_PY_IDENTIFIER
-    )
-    return RouteRegistration(method, path, handler, scope)
+    # Express runs every argument after the path in order; the last one
+    # answers the request and the ones before it are middleware.
+    handler, start = _js_handler(args[-1] if len(args) > 1 else None)
+    return RouteRegistration(method, path, handler, scope, start)
 
 
 def _js_chained_registration(
@@ -328,8 +372,8 @@ def _js_chained_registration(
         )
     ):
         return None
-    handler = _handler_identifier(args[0] if args else None, cs.TS_PY_IDENTIFIER)
-    return RouteRegistration(method, path, handler, scope)
+    handler, start = _js_handler(args[-1] if args else None)
+    return RouteRegistration(method, path, handler, scope, start)
 
 
 def _object_entry(child: Node) -> tuple[str, Node] | None:
@@ -407,19 +451,13 @@ def _js_options_registrations(
     # identifier declared in the module. A client's request({url, method})
     # has neither; a handler referenced through an import stays a ceiling.
     handler = entries.get(_JS_OPTIONS_HANDLER_KEY)
-    handler_name = (
-        _decode(handler)
-        if handler is not None
-        and handler.type in (cs.TS_PY_IDENTIFIER, cs.TS_SHORTHAND_PROPERTY_IDENTIFIER)
-        else None
-    )
-    inline_types = _JS_INLINE_HANDLER_TYPES | {cs.TS_METHOD_DEFINITION}
+    handler_name, start = _js_handler(handler)
     if not (
-        (handler is not None and handler.type in inline_types)
+        start is not None
         or (handler_name is not None and handler_name in evidence.declared_functions)
     ):
         return []
-    return [RouteRegistration(m, path, handler_name, scope) for m in methods]
+    return [RouteRegistration(m, path, handler_name, scope, start) for m in methods]
 
 
 def _js_registrations(
@@ -435,7 +473,67 @@ def _go_registrations(
     call: Node, scope: str, evidence: _ModuleEvidence
 ) -> list[RouteRegistration]:
     single = _go_registration(call, scope, evidence)
-    return [] if single is None else [single]
+    if single is None:
+        return []
+    if single.method != METHOD_ANY:
+        return [single]
+    # gorilla/mux keeps the verb on the chain: `r.HandleFunc(p, h).Methods(
+    # "GET")`. Read as ANY, a GET and a POST handler on one path became one
+    # endpoint exposed by both (issue #3195).
+    verbs = _go_methods_chain(call)
+    if verbs is None:
+        return [single]
+    return [
+        RouteRegistration(verb, single.path, single.handler_name, single.scope)
+        for verb in verbs
+    ]
+
+
+def _go_methods_chain(call: Node) -> list[str] | None:
+    # The verbs a `.Methods(...)` link further up `call`'s chain names; None
+    # when the chain has no such link. An argument that is not a literal
+    # verb or an `http.Method<Verb>` constant leaves the verbs unknown, and
+    # the empty list then yields nothing, never a wrong ANY template.
+    node = call
+    for _ in range(_CHAIN_DEPTH_LIMIT):
+        # `(r.HandleFunc(p, h)).Methods("GET")`: the parentheses change
+        # nothing about the chain.
+        while (
+            node.parent is not None
+            and node.parent.type == cs.TS_PARENTHESIZED_EXPRESSION
+        ):
+            node = node.parent
+        selector = node.parent
+        outer = selector.parent if selector is not None else None
+        if (
+            selector is None
+            or selector.type != cs.TS_GO_SELECTOR_EXPRESSION
+            or selector.child_by_field_name(cs.FIELD_OPERAND) != node
+            or outer is None
+            or outer.type != cs.TS_GO_CALL_EXPRESSION
+            or outer.child_by_field_name(cs.FIELD_FUNCTION) != selector
+        ):
+            return None
+        if _decode(selector.child_by_field_name(cs.FIELD_FIELD)) == _GO_METHODS_LINK:
+            verbs = [_go_verb(arg) for arg in _call_args(outer)]
+            if not verbs or None in verbs:
+                return []
+            return [verb for verb in verbs if verb is not None]
+        node = outer
+    return None
+
+
+def _go_verb(node: Node) -> str | None:
+    # `"GET"`, `` `get` ``, `"PROPFIND"` or `http.MethodGet`.
+    if node.type == cs.TS_GO_SELECTOR_EXPRESSION:
+        package = _decode(node.child_by_field_name(cs.FIELD_OPERAND))
+        name = _decode(node.child_by_field_name(cs.FIELD_FIELD)) or ""
+        if package != _GO_HTTP_PACKAGE or not name.startswith(_GO_METHOD_CONST):
+            return None
+        verb = name.removeprefix(_GO_METHOD_CONST).upper()
+        return verb if verb in _GO_HTTP_METHOD_CONSTS else None
+    verb = _literal_path(node, _GO_PATH_LITERALS) or ""
+    return verb.upper() if _HTTP_METHOD_TOKEN_RE.fullmatch(verb) else None
 
 
 def _wrapper_in_scope(
