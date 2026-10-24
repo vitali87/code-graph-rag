@@ -5,10 +5,12 @@ security incident with intermediates under it, so a client that still carries
 it can be handed a forged certificate for PyPI, GitHub or anything it fetches.
 The first fixed releases are uv 0.13.4, pip 26.2.2 and
 pypa/gh-action-pypi-publish v1.14.3, which bundles certifi 2026.10.19 and
-sigstore 4.5.1. A pinned Debian base image is a snapshot of its
-ca-certificates package, and the LLM clients reach the system store through
-httpx2's truststore context, so every stage that installs packages installs
-ca-certificates too, which upgrades it to the archive's current release.
+sigstore 4.5.1. A pinned base image is a snapshot of its ca-certificates
+package, and the LLM clients reach the system store through httpx2's
+truststore context, so every stage that installs packages names
+ca-certificates, which upgrades it. pip trusts the system store on top of its
+own certifi, and Ubuntu 20.04's archive still ships the root, so wherever pip
+fetches, the root is first deselected in the store.
 
 Each check is a function run against the repository and against text it must
 reject, so a pattern that matches nothing cannot pass for compliance.
@@ -43,6 +45,10 @@ GOOD_PIP_BOOTSTRAP = (
     f'3f/06/pip-26.2.2-py3-none-any.whl#sha256={"b" * 64}"'
 )
 SHA = "c" * 40
+DESELECT_G3 = (
+    r"sed -i 's|^mozilla/emSign_ECC_Root_CA_-_G3\.crt$|!&|' /etc/ca-certificates.conf"
+    " && update-ca-certificates --fresh"
+)
 
 
 def logical_lines(text: str) -> list[str]:
@@ -62,6 +68,9 @@ _HASHED_PIP = re.compile(
     r"pip-(?P<version>\d+\.\d+\.\d+)-py3-none-any\.whl#sha256=[0-9a-f]{64}\b"
 )
 _CA_CERTIFICATES = re.compile(r"(?<![\w-])ca-certificates(?![\w-])")
+# An `apt-get install`'s arguments up to the next shell operator, so a path
+# such as /etc/ca-certificates.conf later in the same RUN is not an install.
+_APT_INSTALL_ARGS = re.compile(r"apt-get install\b([^&;|\n]*)")
 _PYPI_PUBLISH = re.compile(
     r"uses:\s*pypa/gh-action-pypi-publish@(?P<ref>\S+)(?:\s+#\s*v(?P<version>\S+))?"
 )
@@ -100,12 +109,8 @@ def ca_store_problems(text: str) -> list[str]:
         f"stage {index} (FROM {stage.splitlines()[0]}) installs packages "
         "without upgrading ca-certificates"
         for index, stage in enumerate(stages)
-        if (
-            installs := [
-                line for line in stage.splitlines() if "apt-get install" in line
-            ]
-        )
-        and not any(_CA_CERTIFICATES.search(line) for line in installs)
+        if (installs := _APT_INSTALL_ARGS.findall(stage))
+        and not any(_CA_CERTIFICATES.search(args) for args in installs)
     ]
 
 
@@ -117,6 +122,30 @@ def pypi_publish_problems(text: str) -> list[str]:
         elif use["version"] is None or fails_floor(use["version"], PYPI_PUBLISH_FLOOR):
             problems.append(f"below {PYPI_PUBLISH_FLOOR} or unversioned: {use[0]}")
     return problems
+
+
+_G3_ROOT = re.compile(r"(?<![\w-])emSign_ECC_Root_CA_-_G3\\?\.crt(?![\w-])")
+
+
+def g3_deselect_problems(commands: list[str]) -> list[str]:
+    """pip verifies TLS against the system store through truststore and loads
+    its own certifi on top, so even a fixed pip trusts emSign ECC Root CA - G3
+    while the system store still carries it. Wherever pip fetches, the root is
+    first deselected in /etc/ca-certificates.conf and the store rebuilt."""
+    pips = [i for i, c in enumerate(commands) if _PIP_INSTALL.search(c)]
+    if not pips:
+        return ["no pip install found"]
+    before_pip = commands[: pips[0]]
+    deselects = [
+        i
+        for i, c in enumerate(before_pip)
+        if _G3_ROOT.search(c) and "!" in c and "/etc/ca-certificates.conf" in c
+    ]
+    if not deselects:
+        return ["emSign ECC Root CA - G3 not deselected before the first pip install"]
+    if not any("update-ca-certificates" in c for c in before_pip[deselects[0] :]):
+        return ["the CA store is not rebuilt after deselecting emSign ECC Root CA - G3"]
+    return []
 
 
 @pytest.mark.parametrize(
@@ -206,8 +235,11 @@ def test_the_unlocked_wheel_job_bootstraps_pip() -> None:
         "FROM base\nRUN apt-get install -y ripgrep\n",
         "FROM base\nRUN apt-get install -y ca-certificates-java ripgrep\n",
         "FROM base\nRUN apt-get install -y \\\n    ripgrep\n",
+        # The package name inside a path in the same RUN is not an install.
+        "FROM base\nRUN apt-get install -y git && \\\n"
+        "    sed -i 's|^x$|!&|' /etc/ca-certificates.conf && update-ca-certificates\n",
     ],
-    ids=["runtime-stage-skips-it", "near-miss-package-name", "continued-line"],
+    ids=["runtime-skips-it", "near-miss-name", "continued-line", "path-only"],
 )
 def test_a_stage_that_skips_ca_certificates_is_rejected(text: str) -> None:
     assert ca_store_problems(text)
@@ -260,3 +292,49 @@ def test_every_pypi_upload_uses_a_fixed_action() -> None:
         for n, t in texts.items()
         if pypi_publish_problems(t)
     } == {}
+
+
+@pytest.mark.parametrize(
+    "commands",
+    [
+        ["apt-get install -y ca-certificates", GOOD_PIP_BOOTSTRAP],
+        [GOOD_PIP_BOOTSTRAP, DESELECT_G3],
+        [DESELECT_G3.split(" && ", maxsplit=1)[0], GOOD_PIP_BOOTSTRAP],
+        [DESELECT_G3.replace("_G3", "_C3"), GOOD_PIP_BOOTSTRAP],
+        [
+            "rm /etc/ssl/certs/emSign_ECC_Root_CA_-_G3.pem && update-ca-certificates",
+            GOOD_PIP_BOOTSTRAP,
+        ],
+    ],
+    ids=["upgrade-only", "after-pip", "no-rebuild", "near-miss-root", "pem-removed"],
+)
+def test_pip_on_a_store_that_still_trusts_g3_is_rejected(commands: list[str]) -> None:
+    assert g3_deselect_problems(commands)
+
+
+def test_deselecting_g3_before_pip_is_accepted() -> None:
+    commands = [DESELECT_G3, GOOD_PIP_BOOTSTRAP, "python -m pip install pkg"]
+    assert g3_deselect_problems(commands) == []
+
+
+def test_every_build_image_deselects_g3_before_pip() -> None:
+    """Ubuntu 20.04, the fuzz image's base, still ships the root in its
+    newest ca-certificates (20240203~20.04.1), so upgrading cannot drop it."""
+    checked = {}
+    for dockerfile in DOCKERFILES:
+        commands = logical_lines(dockerfile.read_text(encoding="utf-8"))
+        if any(_PIP_INSTALL.search(c) for c in commands):
+            checked[dockerfile] = g3_deselect_problems(commands)
+    assert FUZZ_IMAGE in checked
+    assert {path: problems for path, problems in checked.items() if problems} == {}
+
+
+def test_the_unlocked_wheel_job_deselects_g3_before_pip() -> None:
+    """The runner image's ca-certificates is whatever it was built with."""
+    workflow = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
+    commands = [
+        line
+        for step in workflow["jobs"][UNLOCKED_JOB]["steps"]
+        for line in step.get("run", "").splitlines()
+    ]
+    assert g3_deselect_problems(commands) == []

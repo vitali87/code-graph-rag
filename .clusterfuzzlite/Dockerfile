@@ -23,11 +23,15 @@
 # `objdump -T` on its libpython reports a maximum requirement of GLIBC_2.9.
 FROM gcr.io/oss-fuzz-base/base-builder-python@sha256:21f6fab17ace4dc76e1c56de91ee95d3d03da021df94b41056ba036f6c6f55e9
 
-# Naming ca-certificates upgrades the base image's CA store to the archive's
-# current release, which drops roots distrusted since the image was built.
+# pip trusts this store as well as its own certifi, and Ubuntu 20.04's newest
+# ca-certificates (20240203~20.04.1) still carries emSign ECC Root CA - G3,
+# so that root is deselected and the store rebuilt before anything is fetched.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates git && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* && \
+    sed -i 's|^mozilla/emSign_ECC_Root_CA_-_G3\.crt$|!&|' /etc/ca-certificates.conf && \
+    update-ca-certificates --fresh > /dev/null && \
+    test ! -e /etc/ssl/certs/emSign_ECC_Root_CA_-_G3.pem
 
 # uv is fetched as a pinned release artifact and checked against the SHA-256
 # its publisher ships, rather than by piping https://astral.sh/uv/install.sh
