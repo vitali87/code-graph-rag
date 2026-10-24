@@ -160,6 +160,13 @@ TS_FIELD_CONSEQUENCE = "consequence"
 TS_FIELD_ARGUMENT = "argument"
 TS_PY_UNARY_OPERATOR = "unary_operator"
 TS_PY_CONCATENATED_STRING = "concatenated_string"
+# Argument values that run no code when evaluated, so `change_signature` may
+# reorder a call site made only of them (issue #1533).
+TS_PY_INTEGER = "integer"
+TS_PY_FLOAT = "float"
+TS_PY_TRUE = "true"
+TS_PY_FALSE = "false"
+TS_PY_NONE = "none"
 # Read positions the binding scan of `python_name_binding_sites` recognises.
 TS_PY_SLICE = "slice"
 TS_PY_ASSERT_STATEMENT = "assert_statement"
@@ -402,6 +409,8 @@ PROPERTY_DECORATORS: frozenset[str] = frozenset({"property", "cached_property"})
 ABSTRACT_DECORATORS: frozenset[str] = frozenset({"abstractmethod", "abstractproperty"})
 # A static method takes no receiver: a first parameter named `self` is explicit.
 STATIC_DECORATORS: frozenset[str] = frozenset({"staticmethod"})
+# A class method binds `cls` even when called through its class.
+CLASSMETHOD_DECORATORS: frozenset[str] = frozenset({"classmethod"})
 
 # Eager builtins that invoke a callable argument synchronously in the caller's
 # stack frame, so the trace attributes the call to the enclosing function (no

@@ -196,6 +196,11 @@ EXPORT_FOUND = "  Found {export_type}: {name} (qn: {qn})"
 DEF_PARSING_AST = "Parsing and Caching AST for {language}: {path}"
 DEF_UNSUPPORTED_LANGUAGE = "Unsupported language '{language}' for {path}"
 DEF_NO_PARSER = "No parser available for {language}"
+SQL_FUNCTIONS_UNPARSED = (
+    "{path}: {count} CREATE FUNCTION statement(s) could not be parsed and are "
+    "not in the graph (tree-sitter-sql cannot read their header, e.g. OUT/INOUT "
+    "parameters)"
+)
 DEF_PARSE_FAILED = "Failed to parse or ingest {path}: {error}"
 DEF_PARSING_DEPENDENCY = "  Parsing dependency file: {path}"
 DEF_FOUND_DEPENDENCY = "    Found dependency: {name} (spec: {spec})"
@@ -275,6 +280,13 @@ VECTOR_STORE_BACKEND_UNAVAILABLE = (
     "Vector store backend '{backend}' dependencies are not available"
 )
 VECTOR_STORE_BACKEND_UNKNOWN = "Unknown vector store backend '{backend}'"
+QDRANT_SET_WITHOUT_BACKEND = (
+    "Qdrant settings are set but CGR_VECTOR_STORE_BACKEND is not, so cgr is "
+    "using the sqlite vector store at {path}, now the default instead of "
+    "Qdrant. Embeddings stored in Qdrant are not searched here. To keep using "
+    "Qdrant, set CGR_VECTOR_STORE_BACKEND=qdrant; to keep the sqlite store, "
+    "set CGR_VECTOR_STORE_BACKEND=sqlite. Either one silences this notice."
+)
 VECTOR_STORE_DELETE_PROJECT = (
     "Deleting {count} {backend} vectors for project '{project}'"
 )
@@ -539,6 +551,14 @@ SOURCE_EXTRACT_FAILED = "Failed to extract source from {path}: {error}"
 SOURCE_AST_FAILED = "AST extraction failed for {name}: {error}"
 
 # Memgraph logs
+MG_SET_WITHOUT_BACKEND = (
+    "Memgraph settings are set but GRAPH_BACKEND is not, so cgr is using the "
+    "embedded SQLite graph at {path}, now the default engine instead of "
+    "Memgraph. A graph indexed into Memgraph is not visible here. To keep "
+    "using Memgraph, set GRAPH_BACKEND=memgraph and install "
+    "'code-graph-rag[memgraph]'; to keep the embedded graph, set "
+    "GRAPH_BACKEND=sqlite. Either one silences this notice."
+)
 MG_CONNECTING = "Connecting to Memgraph at {host}:{port}..."
 MG_CONNECT_FAILED = "Could not connect to Memgraph at {host}:{port}: {error}"
 MG_CONNECTED = "Successfully connected to Memgraph."
@@ -774,6 +794,17 @@ FILE_OUTSIDE_ROOT = "Security risk: Attempted to {action} file outside of projec
 # Call processor logs
 CALL_PROCESSING_FILE = "Processing calls in cached AST for: {path}"
 CALL_PROCESSING_FAILED = "Failed to process calls in {path}: {error}"
+# One caller's failure is contained to that caller (issue #3173): a pathological
+# function no longer costs the rest of its file every call edge. Both keep a
+# prefix the test harness's pass-failure gate watches.
+CALLER_CALLS_FAILED = (
+    "Failed to process calls in {caller} ({path}); the file's other callers "
+    "are kept: {error}"
+)
+CALLER_LOCAL_TYPES_FAILED = (
+    "Failed to infer local types in {caller} ({path}); its calls resolve "
+    "untyped: {error}"
+)
 # Re-reading a file evicted from the bounded AST cache is tolerate-and-continue,
 # not a pass failure, and must not borrow the message above: the test harness
 # fails a run on that one (issue #1070).
@@ -870,6 +901,9 @@ IMP_CREATED_RELATIONSHIP = (
     "  Created IMPORTS relationship: {from_module} -> {to_module} (from {full_name})"
 )
 IMP_PARSE_FAILED = "Failed to parse imports in {module}: {error}"
+RUST_WORKSPACE_MEMBER_UNEXPANDED = (
+    "Rust workspace member {pattern!r} could not be expanded, skipped: {error}"
+)
 IMP_DROPPED_PHANTOM_TARGET = (
     "  Dropped IMPORTS edge to unverifiable internal target: "
     "{from_module} -> {to_module}"
@@ -892,6 +926,7 @@ IMP_CSHARP = "C# using: {name} -> {path}"
 IMP_GO = "Go import: {package} -> {path}"
 IMP_GO_MODULE_PATH = "Go module path: {module} -> {path}"
 IMP_JS_WORKSPACE_PACKAGE = "JS workspace package: {package} -> {path}"
+IMP_DART_PACKAGE = "Dart package: {package} -> {path}"
 CONTRACT_OPERATIONS = "Contract operations: {count} declared, {created} artefact links"
 CONTRACT_YAML_UNAVAILABLE = (
     "PyYAML is not installed; skipping YAML contract spec {path}"
@@ -1181,6 +1216,10 @@ CLI_DELETE_MARKER_NOT_CLEARED = (
     "Project {project} was deleted, but its incomplete-run marker could not be "
     "cleared: {error}. cgr status may list it as interrupted until it is synced "
     "again."
+)
+CLI_DELETE_GLOSS_SWEEP_SKIPPED = (
+    "The delete of project {project} failed, and whether it still exists "
+    "could not be read: {error}. Its notes (glosses) were not swept."
 )
 CLI_DELETE_SYNC_MARKER_KEPT = (
     "Project {project} was deleted, but a cgr sync of it may still be running, "
@@ -1560,4 +1599,8 @@ CHECKOUT_STATE_TREE_LOCK_UNAVAILABLE = (
 )
 CHECKOUT_STATE_HISTORY_DROPPED = (
     "Removed {legacy} from the working tree: it is not an edit history cgr wrote"
+)
+# The embedded graph's Rust extension (embedded_graph/native.py).
+EG_NATIVE_WRITE_FAILED = (
+    "The Rust extension could not write a batch ({error}); the engine writes it"
 )

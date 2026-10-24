@@ -1,6 +1,6 @@
 # Code-Graph-RAG
 
-Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by compiler-grade frontends and runtime traces where available, builds a knowledge graph of its structure in Memgraph, and lets you query, edit, and optimise that code in plain English. It works across a monorepo of mixed languages under one unified graph schema.
+Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by compiler-grade frontends and runtime traces where available, builds a knowledge graph of its structure in an embedded graph database that needs no server, and lets you query, edit, and optimise that code in plain English. It works across a monorepo of mixed languages under one unified graph schema.
 
 ## What It Does
 
@@ -42,8 +42,10 @@ With semantic code search (UniXcoder embeddings):
 pip install 'code-graph-rag[semantic]'
 ```
 
-Qdrant is the default vector store for semantic search. To use Milvus Lite,
-install `code-graph-rag[semantic,milvus]`, then set
+The vectors go to a SQLite file beside the embedded graph
+(`~/.cgr/vectors.sqlite`), so semantic search needs no server and no Docker
+either. To use Qdrant instead, set `CGR_VECTOR_STORE_BACKEND=qdrant`. To use
+Milvus Lite, install `code-graph-rag[semantic,milvus]`, then set
 `CGR_VECTOR_STORE_BACKEND=milvus` and `MILVUS_URI=./.milvus_code_embeddings.db`
 before indexing.
 
@@ -57,8 +59,9 @@ transformers are then not required locally.
 `pip install code-graph-rag` gives you the newest PyPI release, which is deliberately
 not the newest commit. Git tags exist for every version (one per merge), while PyPI
 uploads and GitHub Release binaries land on an every-50 cadence, so the tag on `main`
-usually runs ahead of the published version. A security fix is the exception: it
-ships immediately rather than waiting for the cadence.
+usually runs ahead of the published version. A security fix, a breaking change or a
+merge a maintainer labels `release now` is the exception: each ships immediately
+rather than waiting for the cadence.
 
 To run code newer than the latest release, install from git with uv:
 
@@ -80,14 +83,22 @@ for git installs and the other methods.
 ### Prerequisites
 
 - Python 3.12+
-- Docker (for Memgraph)
-- `cmake` (for building pymgclient)
 - `ripgrep` (`rg`) (for shell command text searching)
+- Only for the optional Memgraph backend: Docker, and `cmake` where no
+  `pymgclient` wheel fits your platform
+
+The knowledge graph is an embedded SQLite file (`~/.cgr/graph.sqlite`), so there
+is no database server to run. Memgraph and Neo4j remain available as opt-in
+backends; see [Graph Backends](https://docs.code-graph-rag.com/architecture/embedded-graph/).
 
 The wheel is pure Python (`py3-none-any`), so it installs on any platform with
-Python 3.12 or newer. Some distributions ship an older interpreter (Debian
-Bookworm, and so Raspberry Pi OS Bookworm, ships 3.11), which also explains the
-failed piwheels Bookworm build. On those systems, see the [installation
+Python 3.12 or newer. On Linux (x86_64, aarch64), macOS and Windows x64 it also
+pulls in `cgr-graph-rs`, a native extension that speeds up the embedded graph;
+elsewhere the same engine runs in pure Python.
+
+Some distributions ship an older interpreter (Debian Bookworm, and so Raspberry
+Pi OS Bookworm, ships 3.11), which also explains the failed piwheels Bookworm
+build. On those systems, see the [installation
 guide](https://github.com/vitali87/code-graph-rag/blob/main/docs/getting-started/installation.md#older-system-interpreters)
 for the available interpreter-pinning alternatives.
 
@@ -95,13 +106,16 @@ for the available interpreter-pinning alternatives.
 
 The package installs a `cgr` command.
 
-**Start Memgraph, parse a repo, and query it:**
+**Parse a repo, then query it:**
 
 ```bash
-cgr daemon up                              # start Memgraph + Qdrant
-cgr start --repo-path ./my-project \
-          --update-graph --clean           # parse & launch interactive chat
+cgr start --repo-path ./my-project --update-graph   # parse into the graph
+cgr start --repo-path ./my-project                  # launch the interactive chat
 ```
+
+The graph is written to `~/.cgr/graph.sqlite`. To use Memgraph instead, install
+`code-graph-rag[memgraph]`, set `GRAPH_BACKEND=memgraph`, and start the packaged
+Memgraph + Qdrant stack with `cgr daemon up`.
 
 **Index to protobuf for offline use:**
 
@@ -209,7 +223,11 @@ for fn in functions[:5]:
     print(f"{fn.properties['name']}: {len(rels)} relationships")
 ```
 
-### Query Memgraph with Cypher
+### Query the graph with Cypher
+
+`MemgraphIngestor` keeps its original name but works with whichever backend
+`GRAPH_BACKEND` selects. On the default embedded graph, `host` and `port` are
+not used.
 
 ```python
 from cgr import MemgraphIngestor
@@ -262,8 +280,10 @@ Configure via `.env` or environment variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MEMGRAPH_HOST` | `localhost` | Memgraph hostname |
-| `MEMGRAPH_PORT` | `7687` | Memgraph port |
+| `GRAPH_BACKEND` | `sqlite` | Graph engine: `sqlite` (embedded), `memgraph`, or `neo4j` |
+| `SQLITE_GRAPH_PATH` | `~/.cgr/graph.sqlite` | Embedded graph file |
+| `MEMGRAPH_HOST` | `localhost` | Memgraph hostname (with `GRAPH_BACKEND=memgraph`) |
+| `MEMGRAPH_PORT` | `7687` | Memgraph port (with `GRAPH_BACKEND=memgraph`) |
 | `ORCHESTRATOR_PROVIDER` | | Provider: `google`, `openai`, `anthropic`, `azure`, `ollama`, `minimax`, `litellm_proxy` |
 | `ORCHESTRATOR_MODEL` | | Model ID (e.g. `gpt-5.6-terra`, `gemini-3.6-flash`, `claude-sonnet-5`, `qwen2.5-coder`) |
 | `ORCHESTRATOR_API_KEY` | | API key for the provider (not needed for `ollama`) |

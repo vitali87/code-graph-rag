@@ -118,6 +118,14 @@ def _is_local_address(host: str) -> bool:
     return False
 
 
+def _names_this_machine(url: str) -> bool:
+    try:
+        host = urlsplit(url).hostname
+    except ValueError:
+        return False
+    return host is not None and _is_local_address(host)
+
+
 def _addresses_of(host: str) -> set[str]:
     try:
         infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
@@ -404,8 +412,13 @@ class StackManager:
         memgraph_port: int | None = None,
         qdrant_port: int = 6333,
         project_name: str = cs.COMPOSE_PROJECT_NAME,
+        services: tuple[str, ...] = cs.CORE_SERVICES,
     ) -> None:
         self.home = (home or settings.CGR_HOME).expanduser()
+        # The services this manager starts and checks. A graph backend other
+        # than Memgraph uses the stack only for its Qdrant, and every Memgraph
+        # check needs the driver such an install need not have.
+        self.services = services
         self.package_compose = (
             package_compose
             or (Path(__file__).resolve().parent / cs.PACKAGE_COMPOSE_RELATIVE).resolve()
@@ -567,6 +580,7 @@ class StackManager:
         mismatched = [
             f"{service}: {name}"
             for service, names in cs.STACK_AUTH_VARIABLES.items()
+            if service in self.services
             for name in names
             if _resolved_environment(config, service).get(name) != configured.get(name)
         ]
@@ -576,6 +590,46 @@ class StackManager:
                     variables=", ".join(mismatched), path=self.compose_file
                 )
             )
+
+    def serves_vectors(self) -> bool:
+        """Whether the app's embeddings go to this stack's Qdrant.
+
+        The choice `vector_store` makes: a QDRANT_URL naming where Compose
+        publishes Qdrant, or, with neither QDRANT_URL nor QDRANT_DB_PATH
+        chosen, a stack set up here. Then `cgr start` starts the stack even
+        for a graph backend that needs nothing from it.
+        """
+        if settings.VECTOR_STORE_BACKEND != root_cs.VectorStoreBackend.QDRANT:
+            return False
+        if settings.QDRANT_URL:
+            # Only an address of this machine can be where the stack publishes
+            # Qdrant, so a remote server needs no word from Docker.
+            if _names_this_machine(settings.QDRANT_URL):
+                self._try_locating_published_qdrant()
+            return _names_published_qdrant(
+                settings.QDRANT_URL, self._qdrant_bind, self.qdrant_port
+            )
+        return (
+            root_cs.SETTING_QDRANT_DB_PATH not in settings.model_fields_set
+            and self.compose_file.exists()
+        )
+
+    def _try_locating_published_qdrant(self) -> None:
+        """Where Compose publishes Qdrant, before QDRANT_URL is compared to it.
+
+        A stack published on another port than the default is still the one
+        a QDRANT_URL with that port names, and only Compose knows the port.
+        Without a compose file or Docker there is no stack to ask about. A
+        project Compose cannot render or answer for in time, or that
+        publishes Qdrant on no fixed port, leaves the default to compare
+        against, as before this check.
+        """
+        if not self.compose_file.exists() or shutil.which(cs.DOCKER_BIN) is None:
+            return
+        try:
+            self._adopt_published_qdrant(self._resolved_config())
+        except (StackError, subprocess.TimeoutExpired, OSError):
+            return
 
     def locate_published_qdrant(self) -> None:
         """Ask Compose where Qdrant is published before checking a running stack.
@@ -757,9 +811,10 @@ class StackManager:
     def _services_accepting_anonymous(self) -> list[str]:
         """The services that accept connections without their configured credentials."""
         open_services: list[str] = []
-        if self.memgraph_credentials and self._memgraph_accepts_anonymous():
+        credentialed = self._services_with_credentials()
+        if cs.SERVICE_MEMGRAPH in credentialed and self._memgraph_accepts_anonymous():
             open_services.append(cs.SERVICE_MEMGRAPH)
-        if self.qdrant_api_key and qdrant_accepts_anonymous(
+        if cs.SERVICE_QDRANT in credentialed and qdrant_accepts_anonymous(
             self.qdrant_port, host=self.qdrant_host
         ):
             open_services.append(cs.SERVICE_QDRANT)
@@ -844,6 +899,11 @@ class StackManager:
             *args,
         ]
 
+    def _compose_targets(self) -> tuple[str, ...]:
+        # No names starts the whole project, Lab included; a start narrowed to
+        # some services names them, so Compose leaves the others alone.
+        return () if self.services == cs.CORE_SERVICES else self.services
+
     def up(self, timeout: float = cs.DEFAULT_DOCKER_TIMEOUT_S) -> None:
         self.check_docker()
         self.ensure_compose_file()
@@ -864,7 +924,7 @@ class StackManager:
         # containers, and the credential check in wait_healthy never runs.
         try:
             result = subprocess.run(
-                self._compose_cmd("up", "-d"),
+                self._compose_cmd("up", "-d", *self._compose_targets()),
                 capture_output=True,
                 text=True,
                 encoding=root_cs.ENCODING_UTF8,
@@ -979,6 +1039,12 @@ class StackManager:
         self._raise_if_qdrant_rejects_key()
 
     def _wait_for_services(self, timeout: float) -> None:
+        if cs.SERVICE_MEMGRAPH in self.services:
+            self._wait_for_memgraph(timeout)
+        if cs.SERVICE_QDRANT in self.services:
+            self._wait_for_qdrant(timeout)
+
+    def _wait_for_memgraph(self, timeout: float) -> None:
         logger.info(
             cs.MSG_WAITING_FOR_HEALTH.format(
                 service=cs.SERVICE_MEMGRAPH,
@@ -998,6 +1064,8 @@ class StackManager:
                     service=cs.SERVICE_MEMGRAPH, timeout=timeout
                 )
             )
+
+    def _wait_for_qdrant(self, timeout: float) -> None:
         logger.info(
             cs.MSG_WAITING_FOR_HEALTH.format(
                 service=cs.SERVICE_QDRANT,
@@ -1048,9 +1116,9 @@ class StackManager:
 
     def _services_with_credentials(self) -> list[str]:
         services: list[str] = []
-        if self.memgraph_credentials:
+        if cs.SERVICE_MEMGRAPH in self.services and self.memgraph_credentials:
             services.append(cs.SERVICE_MEMGRAPH)
-        if self.qdrant_api_key:
+        if cs.SERVICE_QDRANT in self.services and self.qdrant_api_key:
             services.append(cs.SERVICE_QDRANT)
         return services
 
@@ -1119,29 +1187,41 @@ class StackManager:
         existing password from MEMGRAPH_PASSWORD, so after that setting
         changes every probe is refused by a Memgraph that is otherwise fine.
         """
-        if self.memgraph_credentials and memgraph_rejects_credentials(
-            self.memgraph_host, self.memgraph_port, self.memgraph_credentials
+        if (
+            cs.SERVICE_MEMGRAPH in self.services
+            and self.memgraph_credentials
+            and memgraph_rejects_credentials(
+                self.memgraph_host, self.memgraph_port, self.memgraph_credentials
+            )
         ):
             raise StackError(cs.ERR_MEMGRAPH_REJECTS_CREDENTIALS)
 
     def status(self) -> StackStatus:
-        memgraph_ok = wait_for_memgraph(
+        memgraph_ok = cs.SERVICE_MEMGRAPH in self.services and wait_for_memgraph(
             self.memgraph_host,
             self.memgraph_port,
             timeout=0.1,
             interval=0.0,
             credentials=self.memgraph_credentials,
         )
-        qdrant_ok = wait_for_qdrant(
+        qdrant_ok = cs.SERVICE_QDRANT in self.services and wait_for_qdrant(
             self.qdrant_port, timeout=0.1, interval=0.0, host=self.qdrant_host
         )
-        match (memgraph_ok, qdrant_ok):
-            case (True, True):
-                state = cs.StackState.RUNNING
-            case (False, False):
-                state = cs.StackState.STOPPED
-            case _:
-                state = cs.StackState.PARTIAL
+        # Only the services this manager runs decide the state.
+        reachable = [
+            ok
+            for service, ok in (
+                (cs.SERVICE_MEMGRAPH, memgraph_ok),
+                (cs.SERVICE_QDRANT, qdrant_ok),
+            )
+            if service in self.services
+        ]
+        if all(reachable):
+            state = cs.StackState.RUNNING
+        elif not any(reachable):
+            state = cs.StackState.STOPPED
+        else:
+            state = cs.StackState.PARTIAL
         return StackStatus(
             state=state,
             memgraph_reachable=memgraph_ok,
