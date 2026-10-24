@@ -124,6 +124,25 @@ jobs:
             --binary "$BINARY" \
             --output "dist/code-graph-rag-${{ matrix.platform }}-${{ matrix.arch }}.THIRD_PARTY_NOTICES.txt"
 
+      # A CycloneDX SBOM of the packages this platform's binary is built
+      # from. The build environment also holds the dev group (pyinstaller,
+      # pylint, semgrep, ...), which the binary never contains, so the SBOM
+      # reads a second environment synced from the same lock with the same
+      # extras and no dev group; every package is already in uv's cache. uv
+      # evaluates the lock's markers for this runner, so pywin32 is listed
+      # in the Windows SBOM only. Like the notices, the name shares the
+      # binary's prefix so the upload, release and signing globs pick it up.
+      - name: Generate SBOM
+        shell: bash
+        run: |
+          SBOM_ENV="$RUNNER_TEMP/sbom-env"
+          UV_PROJECT_ENVIRONMENT="$SBOM_ENV" uv sync --frozen --no-dev --no-install-project \
+            --extra treesitter-full --extra memgraph
+          uvx --from cyclonedx-bom==7.5.0 cyclonedx-py environment \
+            --pyproject pyproject.toml --mc-type application --sv 1.6 \
+            --output-file "dist/code-graph-rag-${{ matrix.platform }}-${{ matrix.arch }}.cdx.json" \
+            "$SBOM_ENV"
+
       - name: Test binary
         shell: bash
         run: |

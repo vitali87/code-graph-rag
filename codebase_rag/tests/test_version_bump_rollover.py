@@ -92,6 +92,16 @@ def test_a_breaking_bump_is_minor_below_one_and_major_after(
     assert _new_version(current, "breaking") == expected
 
 
+def test_a_version_set_by_hand_is_kept_as_it_stands() -> None:
+    assert _new_version("0.3.0", "none") == "0.3.0"
+
+
+def test_a_malformed_version_set_by_hand_is_refused() -> None:
+    result = _bump("0.3.0a", "none")
+    assert result.returncode != 0
+    assert "refusing malformed version" in result.stdout
+
+
 def test_step_script_interpolates_no_expressions() -> None:
     step = _bump_step()
     assert "${{" not in step["run"]
