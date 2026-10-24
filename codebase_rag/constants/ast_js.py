@@ -44,6 +44,9 @@ JS_MODULE_RECEIVERS = frozenset({"exports", "module", "this"})
 # `(new Box())`): only text that reads `new` once these are stripped is
 # looked up in the file's tree to see whether it IS a construction (#2465).
 JS_NEW_KEYWORD = "new"
+# The `export` keyword opening a statement, read where an IMPORTS edge starts,
+# so `export { x } from` is told from `import { x } from` (#3248).
+JS_EXPORT_STATEMENT_PATTERN = rb"export(?![\w$])"
 JS_RECEIVER_LEADING_CHARS = "( \t\r\n"
 # The directive that makes a script or function strict, where a function
 # declared in a block is scoped to that block (no Annex B hoisting).
