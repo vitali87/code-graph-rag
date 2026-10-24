@@ -61,16 +61,13 @@ class TestMcpSdkMajorBound:
 
 
 class TestMcpSdkRangeStillAdmits1x:
-    """Negative tests: the ceiling must not narrow anything below 2.0."""
+    """The ceiling must not narrow the patched 1.x line below 2.0."""
 
-    @pytest.mark.parametrize("version", ["1.28.1", "1.29.0", "1.29.1", "1.30.0"])
+    @pytest.mark.parametrize("version", ["1.30.0", "1.31.0"])
     def test_the_supported_1x_releases_stay_installable(self, version: str) -> None:
         # 1.x is still maintained upstream (1.30.0 shipped after 2.0.0), so a
         # fresh install keeps receiving its fixes.
         assert _declared_mcp_range().contains(version)
-
-    def test_the_floor_is_unchanged(self) -> None:
-        assert not _declared_mcp_range().contains("1.28.0")
 
     def test_the_locked_version_is_inside_the_declared_range(self) -> None:
         locked = _locked_mcp_version()
@@ -78,4 +75,26 @@ class TestMcpSdkRangeStillAdmits1x:
         assert _declared_mcp_range().contains(locked), (
             f"uv.lock pins mcp {locked}, outside the declared range; dev and CI "
             "would then run an SDK that no user can install"
+        )
+
+
+class TestMcpFloorExcludesUnboundedSessions:
+    """Negative tests: no install may resolve an SDK that never frees HTTP sessions.
+
+    Before 1.30.0 (CVE-2026-59951) the stateful StreamableHTTP session manager
+    that ``serve_http`` mounts kept every session forever: no idle expiry, no
+    cap, and a ``DELETE`` left the entry registered, so any client able to
+    reach the endpoint could grow server memory without bound.
+    """
+
+    @pytest.mark.parametrize("version", ["1.28.0", "1.28.1", "1.29.0", "1.29.1"])
+    def test_a_fresh_install_cannot_resolve_a_vulnerable_release(
+        self, version: str
+    ) -> None:
+        declared = _declared_mcp_range()
+
+        assert not declared.contains(version), (
+            f"pyproject.toml declares mcp{declared}, which admits {version}: "
+            "its StreamableHTTP session manager never reclaims sessions "
+            "(CVE-2026-59951, fixed in 1.30.0)"
         )

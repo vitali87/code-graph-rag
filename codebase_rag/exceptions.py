@@ -113,6 +113,24 @@ QDRANT_API_KEY_OVER_HTTP = (
     "way (for example, it never leaves the machine)."
 )
 
+SQLITE_VECTOR_DIM_MISMATCH = (
+    "SQLite vector store '{path}' has vector dimension {dim}, expected "
+    "{expected}. Set SQLITE_VECTOR_DIM to the embedding model's output size, "
+    "or re-index with --clean to rebuild the store with the new size."
+)
+SQLITE_VEC_NOT_INSTALLED = (
+    "The sqlite vector store (the default, CGR_VECTOR_STORE_BACKEND=sqlite) "
+    "needs sqlite-vec, which is not installed. Install it with "
+    "`pip install 'code-graph-rag[sqlite-vec]'` (or `uv sync --extra "
+    "sqlite-vec`); the `semantic` extra includes it."
+)
+SQLITE_VEC_EXTENSIONS_UNSUPPORTED = (
+    "The sqlite vector store (the default, CGR_VECTOR_STORE_BACKEND=sqlite) "
+    "loads the sqlite-vec extension, but this "
+    "Python's sqlite3 module was built without extension loading. Use a Python "
+    "that has it (uv-managed Pythons do), or set CGR_VECTOR_STORE_BACKEND=qdrant."
+)
+
 EMBEDDING_DIM_MISMATCH = (
     "The embedding model produced {dim}-dimensional vectors, but the {backend} "
     "collection holds {expected}-dimensional ones. Set {setting} to the "
@@ -221,6 +239,17 @@ GRAPH_UNREACHABLE = (
     "Error: cannot reach Memgraph at {address} ({error}). Start the stack with "
     "`cgr daemon up`, or set MEMGRAPH_HOST/MEMGRAPH_PORT. `cgr doctor` checks "
     "the setup."
+)
+MGCLIENT_MISSING = (
+    "Error: GRAPH_BACKEND=memgraph needs the Memgraph driver, which is not "
+    "installed. Install it with `pip install 'code-graph-rag[memgraph]'` (or "
+    "`uv sync --extra memgraph`), or unset GRAPH_BACKEND to use the embedded "
+    "graph, which needs no server."
+)
+EMBEDDED_GRAPH_UNAVAILABLE = (
+    "Error: cannot open the embedded graph at {path} ({error}). Set "
+    "SQLITE_GRAPH_PATH to a writable file, or GRAPH_BACKEND=memgraph to use "
+    "a server."
 )
 GRAPH_CREDENTIALS_REFUSED = (
     "Error: Memgraph at {address} refused the credentials ({error}). Set "

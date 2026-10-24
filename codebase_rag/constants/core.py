@@ -10,6 +10,15 @@ PY_PACKAGE_INIT_FILES: tuple[str, ...] = (INIT_PY, INIT_PYI)
 
 ENCODING_UTF8 = "utf-8"
 ENCODING_UTF8_SIG = "utf-8-sig"
+# BOM-aware: decoding picks the byte order from the mark and drops it.
+ENCODING_UTF16 = "utf-16"
+ENCODING_UTF32 = "utf-32"
+# One byte order each, for the text after a BOM: writing that text back in
+# one of these, behind the same mark, gives the file's own bytes.
+ENCODING_UTF16_LE = "utf-16-le"
+ENCODING_UTF16_BE = "utf-16-be"
+ENCODING_UTF32_LE = "utf-32-le"
+ENCODING_UTF32_BE = "utf-32-be"
 ENCODING_ASCII = "ascii"
 # Codec names (as `codecs.lookup` normalises them) whose bytes the grammar
 # already reads as they are, so a source declaring one needs no transcoding.
@@ -253,6 +262,9 @@ PRUNE_PENDING_FILENAME = ".cgr-prune-pending"
 # PR #3358). Not in CGR_STATE_FILENAMES: no cgr ever wrote one into the tree,
 # so there is nothing to move out of it.
 EMBEDDINGS_PENDING_PROJECT_TEMPLATE = ".cgr-embeddings-pending-{digest}"
+# The vector store backend a project's points were last settled in, one file
+# per project for the same reason; likewise never written into the tree.
+EMBEDDINGS_STORE_PROJECT_TEMPLATE = ".cgr-embeddings-store-{digest}"
 # The marker an earlier build shared between every project of a checkout: a
 # JSON list of the projects owing a pass, or an empty file. Read so that each
 # still retries once, then split into the per-project files above.
