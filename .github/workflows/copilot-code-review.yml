@@ -32,11 +32,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Key the uv cache on dependencies, not the project version
+        shell: bash
+        run: |
+          awk 'skip && /^version = / { skip = 0; next }
+               { skip = /^name = "code-graph-rag"\r?$/; print }' \
+            uv.lock > "$RUNNER_TEMP/uv-deps.lock"
+
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           enable-cache: true
-          cache-dependency-glob: "uv.lock"
+          cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
