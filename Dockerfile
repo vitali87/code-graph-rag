@@ -1,12 +1,15 @@
-FROM ghcr.io/astral-sh/uv:0.13@sha256:cdc6093146eb3ff6a40107b38f008b789e050e77ad87865e381d9917da55a168 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.5@sha256:32a7bb39b496babbd997b0a39a4d66c126bdaf5661b302bf6f06abda8deca6ff AS uv
 
-FROM python:3.14-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d AS builder
+FROM python:3.14-slim@sha256:35caba83af2fe6da9a5d922f9b0156f21d1246a48278c58a08bd253303ba42e8 AS builder
 
 COPY --from=uv /uv /uvx /bin/
 
+# Naming ca-certificates upgrades it to the archive's current release: the
+# pinned base is a snapshot whose CA store can predate a root's removal, as
+# with emSign ECC Root CA - G3 in October 2026. cargo fetches through it.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        cmake build-essential git libssl-dev zlib1g-dev libzstd-dev cargo && \
+        ca-certificates cmake build-essential git libssl-dev zlib1g-dev libzstd-dev cargo && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -38,10 +41,12 @@ RUN uv sync --frozen --no-dev --extra treesitter-full --extra memgraph --no-inst
 COPY . .
 RUN uv sync --frozen --no-dev --extra treesitter-full --extra memgraph --no-binary-package pymgclient
 
-FROM python:3.14-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d
+FROM python:3.14-slim@sha256:35caba83af2fe6da9a5d922f9b0156f21d1246a48278c58a08bd253303ba42e8
 
+# ca-certificates as in the builder: the LLM clients verify TLS against this
+# store through httpx2's truststore context, not certifi.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ripgrep libssl3 zlib1g libzstd1 && \
+    apt-get install -y --no-install-recommends ca-certificates ripgrep libssl3 zlib1g libzstd1 && \
     rm -rf /var/lib/apt/lists/*
 
 RUN useradd --create-home appuser
