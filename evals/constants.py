@@ -797,3 +797,57 @@ FIRST_TOOL_MISS = "no"
 # instead of every real sync (issue #2392).
 CYPHER_PARAM_PATTERN = r"\$([A-Za-z_][A-Za-z0-9_]*)"
 CYPHER_PARAMS_MISSING = "Parameter(s) {names} not provided for query:\n{query}"
+
+# --- graph backend parity (issue #386) ---------------------------------------
+# Every read query the package ships, run on two backends over one graph.
+PARITY_QUERY_PREFIX = "CYPHER_"
+PARITY_PACKAGE_PREFIX = "codebase_rag."
+PARITY_SKIP_MODULE = ".tests"
+PARITY_MAIN = "__main__"
+PARITY_WRITE_PATTERN = re.compile(
+    r"\b(MERGE|CREATE|SET|DELETE|REMOVE|FOREACH|DROP)\b", re.IGNORECASE
+)
+PARITY_PARAM_PATTERN = re.compile(r"\$([A-Za-z_]\w*)")
+PARITY_ORDER_BY_PATTERN = re.compile(r"\bORDER\s+BY\b", re.IGNORECASE)
+PARITY_LIMIT_PATTERN = re.compile(r"\bLIMIT\b", re.IGNORECASE)
+# Columns holding engine-assigned ids, which no two engines share.
+PARITY_ID_COLUMN_PATTERN = re.compile(r"(^|_)ids?$|^id\(|node_id|_id\b", re.IGNORECASE)
+# Read queries the audit formats from pieces, not runnable on their own.
+PARITY_FRAGMENTS = frozenset(
+    {"CYPHER_AUDIT_IS_NULL", "CYPHER_AUDIT_MISSING_REQUIRED", "CYPHER_AUDIT_OR"}
+)
+PARITY_PARAM_FALLBACK = "x"
+PARITY_FLOAT_DIGITS = 6
+PARITY_TAG_NODE = "node"
+PARITY_TAG_REL = "rel"
+PARITY_ID_MASK = "<id>"
+PARITY_MS_PER_S = 1000
+
+
+class ParityEngine(StrEnum):
+    MEMGRAPH = "memgraph"
+    SQLITE = "sqlite"
+
+
+PARITY_FORMAT_FIELD_PATTERN = re.compile(r"\{[a-z_]+\}")
+PARITY_READ_PATTERN = re.compile(r"\bRETURN\b", re.IGNORECASE)
+PARITY_DUMP_NODES = "MATCH (n) RETURN labels(n) AS labels, properties(n) AS props"
+PARITY_DUMP_RELS = (
+    "MATCH (a)-[r]->(b) RETURN labels(a)[0] AS from_label, properties(a) AS from_props, "
+    "type(r) AS type, properties(r) AS props, labels(b)[0] AS to_label, "
+    "properties(b) AS to_props"
+)
+PARITY_PROJECT_ROOT = "MATCH (p:Project {name: $name}) RETURN p.root_path AS root"
+PARITY_TOP_CALLEES = (
+    "MATCH (c)-[:CALLS]->(f) WHERE f.qualified_name STARTS WITH $prefix "
+    "AND (f:Function OR f:Method) RETURN f.qualified_name AS qn, f.name AS name, "
+    "f.start_line AS line, count(c) AS k ORDER BY k DESC, qn LIMIT 5"
+)
+PARITY_MODULES = (
+    "MATCH (m:Module) WHERE m.qualified_name STARTS WITH $prefix "
+    "RETURN m.qualified_name AS qn, m.name AS name ORDER BY qn LIMIT 5"
+)
+PARITY_FILES = (
+    "MATCH (f:File) WHERE f.absolute_path STARTS WITH $root "
+    "RETURN f.path AS path, f.absolute_path AS absolute_path ORDER BY path LIMIT 5"
+)

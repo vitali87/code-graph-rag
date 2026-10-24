@@ -23,6 +23,7 @@ class CLICommandName(StrEnum):
     CHECK = "check"
     RENAME = "rename"
     CONTEXT = "context"
+    PORT = "port"
     STOP = "stop"
     STATUS = "status"
     HELP = "help"
@@ -169,8 +170,10 @@ HELP_CHECK_BASE = (
 )
 HELP_CHECK_FAIL_ON_FOUND = (
     "Exit with status 1 when the delta reports dangling callers, dangling "
-    "importers, calls with too many arguments, new duplicates or new import "
-    "cycles. A possibly_missing site is reported but does not fail the check."
+    "importers, calls with too many arguments, too few for a required "
+    "parameter or a keyword the callee does not accept, new duplicates or new "
+    "import cycles. A possibly_missing site is reported but does not fail the "
+    "check."
 )
 HELP_CHECK_ISOLATED = (
     "Measure the edit, then put the graph and the hash cache back so the "
@@ -204,6 +207,43 @@ EXAMPLES_CONTEXT = (
 )
 HELP_CONTEXT_TARGET = "Qualified name, bare name, path:line, or a free-text task."
 HELP_CONTEXT_BUDGET = "Token budget for the slice."
+CMD_PORT = "Judge a port between languages: pair the functions of two implementations and compare their calls and arity, as JSON, no LLM."
+CMD_PORT_GROUP = CMD_PORT
+CMD_PORT_CHECK = (
+    "Pair the functions and methods under OLD_SCOPE with those under "
+    "NEW_SCOPE (paths relative to the repository root) and judge each pair "
+    "MATCH, DIFFERS or UNKNOWN on the first-party calls it makes and its "
+    "positional arity; unpaired and ambiguous definitions are listed."
+)
+EPILOG_PORT = "Run 'cgr help port COMMAND' for command-specific help."
+# `\b` opens a paragraph click prints as written instead of rewrapping it,
+# which keeps one example per line.
+EPILOG_PORT_CHECK = (
+    "\b\nExamples:\n  cgr port check src/legacy src/rewrite\n"
+    "  cgr port check codebase_rag/embedded_graph rust/cgr_graph_rs/src "
+    "--fail-on-found\n"
+    "  cgr port check py rs --pair py.lexer._lex=rs.lexer.tokenize\n\n"
+    "Exit status: 0 with the JSON report; 1 with --fail-on-found when a pair "
+    "DIFFERS; 2 when the scopes overlap or a --pair is malformed or repeated; "
+    "3 when a project is not indexed; 4 when a scope holds no function or "
+    "method, or a --pair names none or several."
+)
+HELP_PORT_NEW_PROJECT = (
+    "Project holding NEW_SCOPE, when the new implementation was indexed as a "
+    "project of its own (default: the project of OLD_SCOPE)."
+)
+HELP_PORT_PAIR = (
+    "Pair two definitions explicitly, OLD=NEW, each a qualified name or a "
+    "dotted suffix naming exactly one definition of its side. Repeatable."
+)
+HELP_PORT_INCLUDE_TESTS = (
+    "Pair test functions too; by default they are left out, classified as "
+    "tests-reaching classifies them."
+)
+HELP_PORT_FAIL_ON_FOUND = (
+    "Exit with status 1 when any pair DIFFERS. UNKNOWN pairs and unpaired "
+    "definitions do not fail the check."
+)
 CMD_TRACE_INGEST = "Resolve a trace file against a project and write dynamic edges"
 CMD_TRACE_CONVERT = "Convert a V8 .cpuprofile (node --cpu-prof) to a trace file"
 
@@ -677,6 +717,7 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.CHECK: CMD_CHECK,
     CLICommandName.RENAME: CMD_RENAME,
     CLICommandName.CONTEXT: CMD_CONTEXT,
+    CLICommandName.PORT: CMD_PORT,
     CLICommandName.WORKSPACE: CMD_WORKSPACE,
     CLICommandName.STOP: CMD_STOP,
     CLICommandName.STATUS: CMD_STATUS,
