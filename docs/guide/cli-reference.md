@@ -48,6 +48,7 @@ Every top-level command, from the CLI's own help registry:
 | `cgr check` | Report the structural delta of the working tree against a git ref: dangling callers and importers, arity findings, new duplicates, new import cycles, tests reaching the edited symbols. |
 | `cgr rename` | Rename a definition everywhere the graph references it (definition, call and reference sites, imports, overrides, __all__); refuses on guessed sites and on occurrences the graph has no site for. |
 | `cgr context` | Print a graph-ranked context slice for a symbol, location or task within a token budget: source, caller lines, callee signatures, types, tests, docs. |
+| `cgr port` | Judge a port between languages: pair the functions of two implementations and compare their calls and arity, as JSON, no LLM. |
 | `cgr workspace` | Manage named groups of repositories |
 | `cgr stop` | Stop the shared stack (alias for cgr daemon down) |
 | `cgr status` | Show stack state and the last sync time for each project |
@@ -375,6 +376,29 @@ graph cannot answer, and a refusal prints nothing on stdout:
 `resolve` answers `[]` when no name matches, and `definition` answers
 `{"found": false, ...}` for a qualified name it does not find; neither exits
 with `4`.
+
+### `cgr port`
+
+Judge a port between languages from the graph, as JSON, with no LLM in the
+path. `cgr port check OLD_SCOPE NEW_SCOPE` pairs the functions and methods
+under two paths (relative to the repository root) and judges each pair
+`MATCH`, `DIFFERS` or `UNKNOWN` on the first-party calls it makes and its
+positional arity; unpaired and ambiguous definitions are listed.
+
+```bash
+cgr port check src/legacy src/rewrite
+cgr port check codebase_rag/embedded_graph rust/cgr_graph_rs/src --fail-on-found
+cgr port check py rs --pair py.jobs.nightly.run=rs.jobs.run
+```
+
+`--new-project` names the project holding `NEW_SCOPE` when the new
+implementation was indexed on its own, `--pair OLD=NEW` (repeatable) pairs two
+definitions explicitly, `--include-tests` pairs test functions too, and
+`--fail-on-found` exits with `1` when a pair `DIFFERS`. A refusal prints
+nothing on stdout: `2` for overlapping scopes or a malformed `--pair`, `3` for
+a project that is not indexed, `4` for a scope holding no function or a
+`--pair` naming none or several. [Porting Between Languages](porting.md)
+explains the pairing and the verdicts.
 
 ## Makefile Commands
 
