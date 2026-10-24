@@ -555,8 +555,8 @@ fn render_seeds(seeds: &[Option<i64>]) -> String {
 /// aborts.
 fn check_walk(input: &mut Input, conn: &Connection, model: &Model) {
     // Any text: if it parses, its rendering parses to the same seeds.
-    // Mutant: in walk.rs `parse_seeds`, map "null" to Some(0). Input
-    // (hex): 0b aborts.
+    // Mutant: in walk.rs `parse_seeds`, negate each id. Input (hex):
+    // 02035b355d aborts.
     let raw = input.text(16);
     if let Ok(seeds) = parse_seeds(&raw) {
         require!(
@@ -573,6 +573,8 @@ fn check_walk(input: &mut Input, conn: &Connection, model: &Model) {
             k => Some(model.nodes[k - 2].id),
         })
         .collect();
+    // Mutant: in walk.rs `parse_seeds`, map "null" to Some(0). Input
+    // (hex): 0b aborts.
     let text = render_seeds(&seeds);
     let parsed = parse_seeds(&text);
     require!(
