@@ -16,9 +16,10 @@ pytestmark = pytest.mark.skipif(
     reason="libclang not available",
 )
 
-# `struct WIDGET_API Widget` is a macro tree-sitter cannot expand: it loses
-# the Widget class. The libclang frontend recovers it. The wiring decides
-# which path runs, gated on CPP_FRONTEND + a discoverable compile_commands.
+# `struct WIDGET_API Widget` is a macro tree-sitter cannot expand. The
+# libclang frontend recovers the class, and since issue #2840 so does the
+# tree-sitter path, by blanking the macro. The wiring decides which path
+# runs, gated on CPP_FRONTEND + a discoverable compile_commands.
 _HEADER = """
 #define WIDGET_API
 
@@ -58,7 +59,7 @@ def _write_project(root: Path) -> None:
     )
 
 
-def test_default_treesitter_does_not_recover_macro_class(temp_repo: Path) -> None:
+def test_default_path_reads_the_macro_class_once(temp_repo: Path) -> None:
     root = temp_repo / "defaultproj"
     _write_project(root)
 
@@ -66,11 +67,11 @@ def test_default_treesitter_does_not_recover_macro_class(temp_repo: Path) -> Non
     run_updater(root, ingestor)
     classes = get_qualified_names(get_nodes(ingestor, "Class"))
 
-    # No regression: with the default flag, indexing is the tree-sitter path,
-    # which mis-parses the macro and never produces ui.Widget.
-    assert not any(q.endswith(".ui.Widget") for q in classes), (
-        f"default path should not engage the frontend: {classes}"
-    )
+    # The default path takes definitions from tree-sitter, which reads the
+    # macro-prefixed class itself since issue #2840: one Widget, and none
+    # named after the macro.
+    assert len([q for q in classes if q.endswith(".ui.Widget")]) == 1, classes
+    assert not any(q.endswith(".ui.WIDGET_API") for q in classes), classes
 
 
 def test_libclang_frontend_recovers_macro_class(

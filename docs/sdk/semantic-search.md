@@ -14,7 +14,33 @@ Semantic search requires the `semantic` extra:
 pip install 'code-graph-rag[semantic]'
 ```
 
-Qdrant is the default vector store. Where the vectors go is decided in this
+The default vector store is a SQLite file, as the embedded graph keeps the
+graph (`CGR_VECTOR_STORE_BACKEND=sqlite`, through sqlite-vec, which the
+`semantic` extra installs). The vectors go to `$CGR_HOME/vectors.sqlite`
+(default `~/.cgr/vectors.sqlite`, beside the graph's `graph.sqlite`); set
+`SQLITE_VECTOR_PATH` to move the file. No server and no Docker are involved,
+the embedding cache sits beside the file, and several cgr processes (an MCP
+server and an indexing run, say) can share it. It needs a Python whose
+`sqlite3` module can load extensions, which uv-managed Pythons can; on one that
+cannot, semantic search is off and the log says why. A vector of all zeros has
+no direction for cosine similarity, so this store keeps it but never returns it
+from a search.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `SQLITE_VECTOR_PATH` | `$CGR_HOME/vectors.sqlite` | The vectors' file |
+| `SQLITE_VECTOR_DIM` | `768` | Vector size, fixed when the file's table is made |
+| `SQLITE_VECTOR_TOP_K` | `5` | Hits returned when a search names no count |
+
+When the selected backend changes, each project's next sync embeds the
+project again into the newly selected store, even with nothing in the checkout changed; the
+vectors the other store holds are left where they are and no longer searched.
+An install upgraded from when Qdrant was the default does this once, and one
+that sets `QDRANT_URL` or `QDRANT_DB_PATH` without `CGR_VECTOR_STORE_BACKEND`
+logs a notice saying so.
+
+Qdrant was the default vector store before the SQLite file. To use it, set
+`CGR_VECTOR_STORE_BACKEND=qdrant`. Where its vectors go is then decided in this
 order:
 
 1. `QDRANT_URL` set: that Qdrant server.
@@ -70,10 +96,11 @@ By default embeddings are computed locally with UniXcoder (requires the
 `semantic` extra's torch/transformers). Alternatively, any OpenAI-compatible
 embeddings endpoint (OpenAI, Ollama, vLLM, LM Studio, and others) can compute
 them server-side, so torch and transformers are not needed locally; only the
-vector store dependency (`qdrant-client` or the `milvus` extra) is required:
+vector store dependency (the `sqlite-vec` extra for the default store,
+`qdrant-client` or the `milvus` extra) is required:
 
 ```bash
-pip install 'code-graph-rag' qdrant-client
+pip install 'code-graph-rag[sqlite-vec]'
 export CGR_EMBEDDING_PROVIDER=openai
 export OPENAI_EMBEDDING_BASE_URL="http://localhost:11434/v1"  # default: https://api.openai.com/v1
 export OPENAI_EMBEDDING_MODEL="nomic-embed-text"              # default: text-embedding-3-small
@@ -90,7 +117,8 @@ Additional settings:
 
 The vector store dimension must match the embedding model's output. UniXcoder
 produces 768-dimensional vectors (the default), while `text-embedding-3-small`
-produces 1536; set `QDRANT_VECTOR_DIM` (or `MILVUS_VECTOR_DIM`) accordingly, or
+produces 1536; set `QDRANT_VECTOR_DIM` (or `MILVUS_VECTOR_DIM`,
+`SQLITE_VECTOR_DIM`) accordingly, or
 use `OPENAI_EMBEDDING_DIMENSIONS` to request 768-dimensional output. Cached
 embeddings are keyed per provider and model, so switching models never replays
 vectors from another embedding space.

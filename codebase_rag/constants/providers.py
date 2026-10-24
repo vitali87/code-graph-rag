@@ -100,6 +100,7 @@ class EmbeddingDevice(StrEnum):
 class VectorStoreBackend(StrEnum):
     QDRANT = "qdrant"
     MILVUS = "milvus"
+    SQLITE = "sqlite"
 
 
 # The setting that sizes each backend's collection, named in the error raised
@@ -107,6 +108,7 @@ class VectorStoreBackend(StrEnum):
 VECTOR_DIM_SETTINGS: dict[VectorStoreBackend, str] = {
     VectorStoreBackend.QDRANT: "QDRANT_VECTOR_DIM",
     VectorStoreBackend.MILVUS: "MILVUS_VECTOR_DIM",
+    VectorStoreBackend.SQLITE: "SQLITE_VECTOR_DIM",
 }
 
 
@@ -177,6 +179,7 @@ MODULE_TORCH = "torch"
 MODULE_TRANSFORMERS = "transformers"
 MODULE_QDRANT_CLIENT = "qdrant_client"
 MODULE_PYMILVUS = "pymilvus"
+MODULE_SQLITE_VEC = "sqlite_vec"
 
 # qdrant-client sends the `api-key` header in the clear only when the URL
 # names this scheme; a URL without a scheme switches to https once a key is set.
@@ -188,10 +191,18 @@ QDRANT_DEFAULT_DB_PATH = "./.qdrant_code_embeddings"
 # The settings field that holds it. Whether it was supplied is read from the
 # fields the settings sources set, since a supplied value can equal the default.
 SETTING_QDRANT_DB_PATH = "QDRANT_DB_PATH"
+# Settings whose presence, with VECTOR_STORE_BACKEND left unset, marks an
+# install that stored its embeddings in Qdrant when Qdrant was the default.
+SETTING_VECTOR_STORE_BACKEND = "VECTOR_STORE_BACKEND"
+QDRANT_CONNECTION_SETTINGS = ("QDRANT_URL", SETTING_QDRANT_DB_PATH, "QDRANT_API_KEY")
+# The backend a project synced before cgr stamped its vector store was embedded
+# into: the default then.
+EMBEDDINGS_STORE_UNSTAMPED = VectorStoreBackend.QDRANT
 
 SEMANTIC_DEPENDENCIES = (
     MODULE_PYMILVUS,
     MODULE_QDRANT_CLIENT,
+    MODULE_SQLITE_VEC,
     MODULE_TORCH,
     MODULE_TRANSFORMERS,
 )
@@ -207,3 +218,13 @@ class UniXcoderMode(StrEnum):
 UNIXCODER_MASK_TOKEN = "<mask0>"
 UNIXCODER_BUFFER_BIAS = "bias"
 UNIXCODER_MAX_CONTEXT = 1024
+
+
+# An agent run with no operator settles every tool approval itself (the CLI's
+# `-a`, MCP's ask_agent; issue #2657). A model that asks again after every
+# answer would otherwise loop forever.
+NONINTERACTIVE_APPROVAL_ROUNDS = 10
+NONINTERACTIVE_APPROVAL_LOOP = (
+    "The agent still requested tool approval after {rounds} rounds of answers; "
+    "stopped without a text answer."
+)

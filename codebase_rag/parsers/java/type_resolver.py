@@ -1,16 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from ... import constants as cs
 from ...types_defs import ASTNode, NodeType
-from .utils import (
-    find_package_start_index,
-    get_class_context_from_qn,
-    get_root_node_from_module_qn,
-    safe_decode_text,
-)
+from .utils import find_package_start_index, safe_decode_text
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -20,7 +15,104 @@ if TYPE_CHECKING:
 
 # Node types an imported Java name can declare (records and annotation types
 # register as CLASS).
-_JAVA_TYPE_DECL_NODE_TYPES = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
+JAVA_TYPE_DECL_NODE_TYPES = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
+
+# The declarations a module's "current class" is read from: the first of
+# these in the file.
+_JAVA_HEADER_DECL_TYPES = (
+    cs.TS_CLASS_DECLARATION,
+    cs.TS_INTERFACE_DECLARATION,
+    cs.TS_ENUM_DECLARATION,
+)
+
+
+class JavaClassHeaders(NamedTuple):
+    """What one file's type declarations name in their headers.
+
+    Names are kept as written: resolving one reads the import map and the
+    registry, so it happens at lookup time exactly as before. `superclasses`
+    and `interfaces` hold, per class name, the first class declaration a
+    pre-order walk of the file reaches that answers the lookup.
+    """
+
+    type_names: tuple[str, ...]
+    superclasses: dict[str, str]
+    interfaces: dict[str, tuple[str, ...]]
+
+
+def _declared_name(node: ASTNode) -> str | None:
+    name_node = node.child_by_field_name(cs.FIELD_NAME)
+    return safe_decode_text(name_node) if name_node else None
+
+
+def _header_type_name(parent_node: ASTNode) -> str | None:
+    for child in parent_node.children:
+        if child.type == cs.TS_GENERIC_TYPE:
+            for subchild in child.children:
+                if subchild.type == cs.TS_TYPE_IDENTIFIER:
+                    return safe_decode_text(subchild)
+        elif child.type == cs.TS_TYPE_IDENTIFIER:
+            return safe_decode_text(child)
+    return None
+
+
+def _interface_type_names(interfaces_node: ASTNode, names: list[str]) -> None:
+    for child in interfaces_node.children:
+        if child.type == cs.TS_TYPE_IDENTIFIER:
+            if interface_name := safe_decode_text(child):
+                names.append(interface_name)
+        elif child.children:
+            _interface_type_names(child, names)
+
+
+def _record_superclass(
+    class_node: ASTNode, name: str, superclasses: dict[str, str]
+) -> None:
+    if name in superclasses:
+        return
+    if (superclass_node := class_node.child_by_field_name(cs.FIELD_SUPERCLASS)) and (
+        superclass := _header_type_name(superclass_node)
+    ):
+        superclasses[name] = superclass
+
+
+def _record_interfaces(
+    class_node: ASTNode,
+    name: str,
+    interfaces: dict[str, tuple[str, ...]],
+    cut: frozenset[str],
+) -> frozenset[str]:
+    # A class whose `implements` clause names no type (error recovery)
+    # answers nothing, and the lookup moves on to the next declaration of
+    # that name without looking inside this one, as the per-name walk this
+    # index replaced did. `cut` carries such names into the class's body.
+    if name in interfaces or name in cut:
+        return cut
+    if not (interfaces_node := class_node.child_by_field_name(cs.FIELD_INTERFACES)):
+        return cut
+    names: list[str] = []
+    _interface_type_names(interfaces_node, names)
+    if names:
+        interfaces[name] = tuple(names)
+        return cut
+    return cut | {name}
+
+
+def collect_java_class_headers(root: ASTNode) -> JavaClassHeaders:
+    """Every class header of the file, read off one pre-order walk."""
+    type_names: list[str] = []
+    superclasses: dict[str, str] = {}
+    interfaces: dict[str, tuple[str, ...]] = {}
+    stack: list[tuple[ASTNode, frozenset[str]]] = [(root, frozenset())]
+    while stack:
+        node, cut = stack.pop()
+        if node.type in _JAVA_HEADER_DECL_TYPES and (name := _declared_name(node)):
+            type_names.append(name)
+            if node.type == cs.TS_CLASS_DECLARATION:
+                _record_superclass(node, name, superclasses)
+                cut = _record_interfaces(node, name, interfaces, cut)
+        stack.extend((child, cut) for child in reversed(node.children))
+    return JavaClassHeaders(tuple(type_names), superclasses, interfaces)
 
 
 class JavaTypeResolverMixin:
@@ -30,6 +122,7 @@ class JavaTypeResolverMixin:
     module_qn_to_file_path: dict[str, Path]
     ast_cache: ASTCacheProtocol
     _fqn_to_module_qn: dict[str, list[str]]
+    _class_headers: dict[Path, JavaClassHeaders]
 
     def _module_qn_to_java_fqn(self, module_qn: str) -> str | None:
         parts = module_qn.split(cs.SEPARATOR_DOT)
@@ -115,13 +208,13 @@ class JavaTypeResolverMixin:
         # through unchanged.
         if (
             target in self.function_registry
-            and self.function_registry[target] in _JAVA_TYPE_DECL_NODE_TYPES
+            and self.function_registry[target] in JAVA_TYPE_DECL_NODE_TYPES
         ):
             return target
         class_qn = f"{target}{cs.SEPARATOR_DOT}{type_name}"
         if (
             class_qn in self.function_registry
-            and self.function_registry[class_qn] in _JAVA_TYPE_DECL_NODE_TYPES
+            and self.function_registry[class_qn] in JAVA_TYPE_DECL_NODE_TYPES
         ):
             return class_qn
         return target
@@ -179,124 +272,45 @@ class JavaTypeResolverMixin:
 
         return type_name
 
-    def _get_superclass_name(self, class_qn: str) -> str | None:
-        ctx = get_class_context_from_qn(
-            class_qn, self.module_qn_to_file_path, self.ast_cache
-        )
-        if not ctx:
+    def _java_class_headers(self, module_qn: str) -> JavaClassHeaders | None:
+        # Call resolution asks for a class's superclass and interfaces once
+        # per call site and per level of an inherited-method climb; walking
+        # the whole file for each answer cost gson most of its sync (#2470).
+        # A tree holds still for a whole call pass, so one walk serves every
+        # lookup until the pass's memos are reset.
+        file_path = self.module_qn_to_file_path.get(module_qn)
+        if file_path is None:
             return None
+        if (headers := self._class_headers.get(file_path)) is not None:
+            return headers
+        if not (entry := self.ast_cache.load(file_path)):
+            return None
+        headers = collect_java_class_headers(entry[0])
+        self._class_headers[file_path] = headers
+        return headers
 
-        return self._find_superclass_using_ast(
-            ctx.root_node, ctx.target_class_name, ctx.module_qn
-        )
-
-    def _find_superclass_using_ast(
-        self, node: ASTNode, target_class_name: str, module_qn: str
-    ) -> str | None:
-        if node.type == cs.TS_CLASS_DECLARATION:
-            if (
-                name_node := node.child_by_field_name(cs.FIELD_NAME)
-            ) and safe_decode_text(name_node) == target_class_name:
-                if superclass_node := node.child_by_field_name(cs.FIELD_SUPERCLASS):
-                    if superclass_name := self._extract_type_name_from_node(
-                        superclass_node
-                    ):
-                        return self._resolve_java_type_name(superclass_name, module_qn)
-
-        for child in node.children:
-            if result := self._find_superclass_using_ast(
-                child, target_class_name, module_qn
-            ):
-                return result
-
-        return None
-
-    def _extract_type_name_from_node(self, parent_node: ASTNode) -> str | None:
-        for child in parent_node.children:
-            if child.type == cs.TS_GENERIC_TYPE:
-                for subchild in child.children:
-                    if subchild.type == cs.TS_TYPE_IDENTIFIER:
-                        return safe_decode_text(subchild)
-            elif child.type == cs.TS_TYPE_IDENTIFIER:
-                return safe_decode_text(child)
+    def _get_superclass_name(self, class_qn: str) -> str | None:
+        module_qn, _, class_name = class_qn.rpartition(cs.SEPARATOR_DOT)
+        if not module_qn or not (headers := self._java_class_headers(module_qn)):
+            return None
+        if superclass := headers.superclasses.get(class_name):
+            return self._resolve_java_type_name(superclass, module_qn)
         return None
 
     def _get_implemented_interfaces(self, class_qn: str) -> list[str]:
-        parts = class_qn.split(cs.SEPARATOR_DOT)
-        if len(parts) < 2:
+        module_qn, _, class_name = class_qn.rpartition(cs.SEPARATOR_DOT)
+        if not module_qn or not (headers := self._java_class_headers(module_qn)):
             return []
-
-        module_qn = cs.SEPARATOR_DOT.join(parts[:-1])
-        target_class_name = parts[-1]
-
-        file_path = self.module_qn_to_file_path.get(module_qn)
-        if file_path is None or not (entry := self.ast_cache.load(file_path)):
-            return []
-
-        root_node, _ = entry
-
-        return self._find_interfaces_using_ast(root_node, target_class_name, module_qn)
-
-    def _find_interfaces_using_ast(
-        self, node: ASTNode, target_class_name: str, module_qn: str
-    ) -> list[str]:
-        if node.type == cs.TS_CLASS_DECLARATION:
-            if (
-                name_node := node.child_by_field_name(cs.FIELD_NAME)
-            ) and safe_decode_text(name_node) == target_class_name:
-                if interfaces_node := node.child_by_field_name(cs.FIELD_INTERFACES):
-                    interface_list: list[str] = []
-                    self._extract_interface_names(
-                        interfaces_node, interface_list, module_qn
-                    )
-                    return interface_list
-
-        for child in node.children:
-            if result := self._find_interfaces_using_ast(
-                child, target_class_name, module_qn
-            ):
-                return result
-
-        return []
-
-    def _extract_interface_names(
-        self, interfaces_node: ASTNode, interface_list: list[str], module_qn: str
-    ) -> None:
-        for child in interfaces_node.children:
-            if child.type == cs.TS_TYPE_IDENTIFIER:
-                if interface_name := safe_decode_text(child):
-                    resolved_interface = self._resolve_java_type_name(
-                        interface_name, module_qn
-                    )
-                    interface_list.append(resolved_interface)
-            elif child.children:
-                self._extract_interface_names(child, interface_list, module_qn)
+        return [
+            self._resolve_java_type_name(interface, module_qn)
+            for interface in headers.interfaces.get(class_name, ())
+        ]
 
     def _get_current_class_name(self, module_qn: str) -> str | None:
-        root_node = get_root_node_from_module_qn(
-            module_qn, self.module_qn_to_file_path, self.ast_cache
-        )
-        if not root_node:
+        if cs.SEPARATOR_DOT not in module_qn or not (
+            headers := self._java_class_headers(module_qn)
+        ):
             return None
-
-        class_names: list[str] = []
-        self._traverse_for_class_declarations(root_node, class_names)
-
-        return f"{module_qn}{cs.SEPARATOR_DOT}{class_names[0]}" if class_names else None
-
-    def _traverse_for_class_declarations(
-        self, node: ASTNode, class_names: list[str]
-    ) -> None:
-        match node.type:
-            case (
-                cs.TS_CLASS_DECLARATION
-                | cs.TS_INTERFACE_DECLARATION
-                | cs.TS_ENUM_DECLARATION
-            ):
-                if (name_node := node.child_by_field_name(cs.FIELD_NAME)) and (
-                    class_name := safe_decode_text(name_node)
-                ):
-                    class_names.append(class_name)
-
-        for child in node.children:
-            self._traverse_for_class_declarations(child, class_names)
+        if not headers.type_names:
+            return None
+        return f"{module_qn}{cs.SEPARATOR_DOT}{headers.type_names[0]}"
