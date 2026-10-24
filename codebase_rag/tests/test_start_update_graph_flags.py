@@ -112,6 +112,16 @@ def test_project_name_help_states_the_stored_default(tmp_path: Path) -> None:
     assert len(example) == len(derived)
 
 
+def test_project_name_help_limits_uniqueness_to_one_machine() -> None:
+    # The hash covers the absolute path only, so the same path on two
+    # machines feeding one graph derives the same name (CodeRabbit, PR 3342),
+    # and its 8 hex digits can collide on one machine too (CodeRabbit, PR 3343).
+    assert "never share one" not in ch.HELP_PROJECT_NAME
+    assert "on one machine" in ch.HELP_PROJECT_NAME
+    assert "collision" in ch.HELP_PROJECT_NAME
+    assert "one graph" in ch.HELP_PROJECT_NAME
+
+
 def test_rendered_start_help_shows_the_new_texts() -> None:
     # Wide enough that rich never folds a word of the help column.
     result = runner.invoke(app, ["start", "--help"], env={"COLUMNS": "200"})
@@ -213,3 +223,15 @@ def test_output_without_update_graph_keeps_its_own_error(
     assert code == 1, output
     assert cs.CLI_ERR_OUTPUT_REQUIRES_UPDATE in output
     start.sync.assert_not_called()
+
+
+@pytest.mark.parametrize("flag", [True, False], ids=["no-embeddings", "default"])
+def test_no_embeddings_reaches_the_stack_start(
+    start: _Start, tmp_path: Path, flag: bool
+) -> None:
+    # The stack's Qdrant is started only for a sync that writes embeddings.
+    extra = ["--no-embeddings"] if flag else []
+    code, output = _invoke(tmp_path, "--update-graph", *extra)
+
+    assert code == 0, output
+    start.stack.assert_called_once_with(skip_embeddings=flag)
