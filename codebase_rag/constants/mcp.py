@@ -250,6 +250,11 @@ MCP_ROOT_NOT_INDEXED = (
 # it" / "no test reaches it" (issue #2461).
 MCP_UNKNOWN_TARGET = "{qualified_name!r} is not in the graph."
 MCP_UNKNOWN_TARGET_HINT = " `resolve` lists the qualified names a name matches."
+MCP_UNKNOWN_ENDPOINT = (
+    "{target!r} names no endpoint project {project!r} exposes: neither a "
+    "handler nor an endpoint identity."
+)
+MCP_UNKNOWN_ENDPOINT_HINT = " `endpoints` lists the project's identities and handlers."
 # `flow_verdict` with a source or sink it cannot walk from (issue #2939).
 MCP_FLOW_SOURCE = "source"
 MCP_FLOW_SINK = "sink"
