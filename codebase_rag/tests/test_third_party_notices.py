@@ -1115,6 +1115,8 @@ class TestNativeNotices:
             # interpreter link it.
             (("libsqlite3.so.0",), {"CPython", "SQLite"}),
             (("sqlite3.dll",), {"CPython", "SQLite"}),
+            # Ubuntu 26.04's OpenSSL links libzstd, so it rides in beside it.
+            (("libcrypto.so.3", "libzstd.so.1"), {"CPython", "OpenSSL", "Zstandard"}),
             (
                 WINDOWS_RELEASE_LIBRARIES,
                 {
