@@ -11,8 +11,30 @@ the README. The release workflow prepends feature entries via
 (dropping non-feature themes), and moves the marker below the block it
 inserted; hand edits remain welcome between releases and render too.
 
-- **GitHub Sponsors**: Added support for GitHub Sponsors via the command line.
+- **SBOM**: CycloneDX SBOM and Docker image attestation published with each release.
 <!-- latest-release-end -->
+- **Vector Store**: Default to the SQLite vector store.
+- **Docker**: No longer starts Docker without embeddings.
+- **Feature**: Added support for a new feature.
+- **Functionality**: Implemented a new function.
+- **Fix**: Addressed a minor bug.
+- **Security**: Linked dependency advisories in the security notice to the global database.
+- **Build**: Enabled building the gotypes helper on Go 1.27.2 with x/mod v0.42.0.
+- **Dependency Locking**: Locked `opentelemetry-api` to version 1.45.1 for stability.
+- **GHSA Security Fix**: Addressed GHSA-xcq7-p3pf-p88h vulnerability.
+- **Python**: Added support for inferring instance attributes from annotations.
+- **General**: Various fixes for import resolution, naming conflicts, and project syncing.
+- **CodeQL**: Improved handling of interface implementers and Python annotations.
+- **Checks**: Enhanced error reporting for unbound Python calls, rejected callee keywords, and unfilled required parameters.
+- **Tracing**: Added support for reading gzip-compressed Xdebug traces.
+- **Rust**: Improved handling of macro calls and workspace listings.
+- **MCP**: Enhanced responses for out-of-range input and unknown symbols.
+- **CodeQL Scanning**: Switch to advanced CodeQL setup for more comprehensive analysis of pull requests from forks.
+- **Python Annotations**: Infer Python instance attributes from annotations for improved type handling.
+- **Xdebug Trace Support**: Now reads gzip-compressed Xdebug traces for enhanced debugging.
+- **Rust Macro Edge**: Ensures turbofish calls within macros receive their CALLS edge.
+- **Improved Syncing**: Re-parse files attaching members to re-indexed modules and keep declared namespaces of unchanged PHP files.
+- **GitHub Sponsors**: Added support for GitHub Sponsors via the command line.
 - **Signature**: Implemented header reading and argument binding for rewrite functionality.
 - **Migration**: Prevented unintended purging of shared Folder/File nodes.
 - **Engine Operations**: Restored `delete-project` and stats execution on the embedded engine.
