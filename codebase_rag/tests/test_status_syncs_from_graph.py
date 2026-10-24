@@ -35,7 +35,10 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.stack.constants import StackState
 from codebase_rag.stack.manager import StackStatus
 from codebase_rag.types_defs import PropertyDict, ResultRow
-from codebase_rag.utils.path_utils import derive_project_name
+from codebase_rag.utils.path_utils import (
+    derive_project_name,
+    project_roots_from_rows,
+)
 from codebase_rag.utils.process_owner import process_host
 from evals.cgr_graph import _StatefulIngestor
 
@@ -94,6 +97,9 @@ class _Memgraph(_StatefulIngestor):
         return [
             str(row[cs.KEY_NAME]) for row in self.fetch_all(cq.CYPHER_LIST_PROJECTS)
         ]
+
+    def list_project_roots(self) -> dict[str, str | None]:
+        return project_roots_from_rows(self.fetch_all(cq.CYPHER_LIST_PROJECTS))
 
     def clean_database(self) -> None:
         self.nodes.clear()
