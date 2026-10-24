@@ -1,6 +1,6 @@
 [project]
 name = "code-graph-rag"
-version = "0.2.13"
+version = "0.3.8"
 description = "The ultimate RAG for your monorepo. Query, understand, and edit multi-language codebases with the power of AI and knowledge graphs"
 readme = "PYPI_README.md"
 requires-python = ">=3.12"
@@ -60,6 +60,10 @@ dependencies = [
     "huggingface-hub[hf-xet]>=1.7.2",
     "pathspec>=1.0.4",
     "pygments>=2.20.0",
+    # certifi is the CA bundle httpx and requests verify against; 2026.10.23
+    # is the first without the distrusted eMudhra roots. Declared so an
+    # upgrade over an older install moves it too.
+    "certifi>=2026.10.23",
     # The embedded graph's `=~`: unlike `re`, a match takes a timeout, so a
     # backtracking pattern stops at the query's deadline. tiktoken already
     # installs it.
@@ -86,7 +90,18 @@ package = true
 # semgrep also pins mcp==1.29.0, which holds the locked SDK below the 1.30.0
 # fix for GHSA-84m7-p3x7-pcfv (StreamableHTTP sessions never reclaimed).
 # Drop that entry once a semgrep release accepts mcp>=1.30.0.
-override-dependencies = ["pyjwt[crypto]>=2.14.0", "mcp>=1.30.0,<2"]
+# semgrep also pins opentelemetry-api, -sdk and -exporter-otlp-proto-http
+# ~=1.37.0, which holds the locked API below the 1.45.1 fix for
+# GHSA-xcq7-p3pf-p88h (quadratic tracestate parsing). The SDK and exporter pin
+# the API exactly, so all three move together. Drop these entries once a
+# semgrep release accepts opentelemetry-api>=1.45.1.
+override-dependencies = [
+    "pyjwt[crypto]>=2.14.0",
+    "mcp>=1.30.0,<2",
+    "opentelemetry-api>=1.45.1,<2",
+    "opentelemetry-sdk>=1.45.1,<2",
+    "opentelemetry-exporter-otlp-proto-http>=1.45.1,<2",
+]
 
 # Patched grammars: upstream tree-sitter-c drops declarations after a
 # #define whose value embeds a block comment (issue #555). Our forks carry
@@ -134,7 +149,7 @@ test = [
     "testcontainers>=4.9.0",
     "libclang>=18.1.1",
     "filelock>=3.12",
-    "ast-grep-py>=0.44.0",
+    "ast-grep-py>=0.51.0",
     "pyyaml>=6.0",
     # The suite exercises the Memgraph backend with a mocked server, but
     # imports the real driver's exception types to do it.
@@ -182,24 +197,35 @@ treesitter-full = [
     "tree-sitter-markdown>=0.5.1",
 ]
 
+# sqlite-vec is the default vector store's, on the platforms it ships wheels
+# for (it has no sdist), which cover every one torch ships wheels for; no
+# marker tells musl from glibc, and torch has no musl wheels either.
+# qdrant-client is for CGR_VECTOR_STORE_BACKEND=qdrant, the default before it.
 semantic = [
     "qdrant-client>=1.9.0",
+    # The gRPC client verifies TLS against grpcio's own roots.pem; 1.84.1 is
+    # the first without emSign ECC Root CA - G3.
+    "grpcio>=1.84.1",
+    "sqlite-vec>=0.1.9; (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')) or sys_platform == 'darwin' or (sys_platform == 'win32' and platform_machine == 'AMD64')",
     "torch>=2.6.0",
     "transformers>=5.0.0",
 ]
 
 milvus = [
     "pymilvus[milvus-lite]>=3.0.0",
+    # As in `semantic`: pymilvus's gRPC client trusts grpcio's roots.pem.
+    "grpcio>=1.84.1",
 ]
 
-# The `sqlite` vector store (CGR_VECTOR_STORE_BACKEND=sqlite): vectors in a
-# file beside the embedded graph, so semantic search needs no server either.
+# The default `sqlite` vector store alone, for an install that computes its
+# embeddings elsewhere (CGR_EMBEDDING_PROVIDER=openai): vectors in a file
+# beside the embedded graph, so semantic search needs no server either.
 sqlite-vec = [
     "sqlite-vec>=0.1.9",
 ]
 
 ast-grep = [
-    "ast-grep-py>=0.44.0",
+    "ast-grep-py>=0.51.0",
     "pyyaml>=6.0",
 ]
 python-semantics = [

@@ -1377,11 +1377,12 @@ class _StatefulIngestor:
                 # Any node in any project: the unknown-target refusal asks
                 # whether the name is in the graph at all (issue #3244).
                 wanted = _str((params or {}).get(cs.KEY_QN))
-                return [
+                rows: list[ResultRow] = [
                     {cs.KEY_QUALIFIED_NAME: wanted}
                     for props in self.nodes.values()
                     if props.get(cs.KEY_QUALIFIED_NAME) == wanted
-                ][:1]
+                ]
+                return rows[:1]
             case cq.CYPHER_CLAIM_PROJECT_ROOT:
                 return self._claim_project_root(params or {})
             case cq.CYPHER_MARK_CLAIMED_PROJECT_INCOMPLETE:
@@ -1485,13 +1486,8 @@ class _StatefulIngestor:
                         key=lambda n: (n[0], _str(n[1])),
                     )
                 ]
-            case cq.CYPHER_CHECK_GRAPH_IO_LINKS:
-                io = {
-                    cs.RelationshipType.FLOWS_TO.value,
-                    cs.RelationshipType.RESOLVES_TO.value,
-                }
-                found = next((edge[2] for edge in self.edges if edge[2] in io), None)
-                return [] if found is None else [{cs.KEY_REL: found}]
+            case cq.CYPHER_CHECK_PROJECT_IO_LINKS:
+                return self._check_project_io_links(params or {})
             case cq.CYPHER_CHECK_SHARED_NODES:
                 return [
                     {
@@ -2221,6 +2217,41 @@ class _StatefulIngestor:
                 value = uid
             fields[prefix + key] = _result(value)
         return fields
+
+    def _check_project_io_links(self, params: PropertyDict) -> list[ResultRow]:
+        # A FLOWS_TO / RESOLVES_TO edge on a Resource one of the project's
+        # own (non-Resource) nodes touches, its root module included and a
+        # registered project nested under its prefix left out.
+        prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
+        name = _str(params.get(cs.KEY_PROJECT_NAME))
+        nested = {
+            _str(uid)
+            for label, uid in self.nodes
+            if label == _PROJECT_LABEL and _str(uid).startswith(prefix)
+        }
+        resource = cs.NodeLabel.RESOURCE.value
+        touched: set[_NodeId] = set()
+        for fl, fv, _rel, tl, tv in self.edges:
+            for (rl, rv), (ol, ov) in (((fl, fv), (tl, tv)), ((tl, tv), (fl, fv))):
+                if rl != resource or ol == resource:
+                    continue
+                qn = self.nodes.get((ol, ov), {}).get(cs.KEY_QUALIFIED_NAME)
+                if (
+                    isinstance(qn, str)
+                    and (qn == name or qn.startswith(prefix))
+                    and not _shadowed_by_longer_owner(qn, nested)
+                ):
+                    touched.add((rl, rv))
+        io = {cs.RelationshipType.FLOWS_TO.value, cs.RelationshipType.RESOLVES_TO.value}
+        found = next(
+            (
+                rel
+                for fl, fv, rel, tl, tv in sorted(self.edges, key=str)
+                if rel in io and ((fl, fv) in touched or (tl, tv) in touched)
+            ),
+            None,
+        )
+        return [] if found is None else [{cs.KEY_REL: found}]
 
     def _check_scope_edges(self, params: PropertyDict) -> list[ResultRow]:
         rows: list[ResultRow] = []
