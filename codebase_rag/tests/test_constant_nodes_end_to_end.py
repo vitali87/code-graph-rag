@@ -109,12 +109,11 @@ def test_a_constant_never_wins_the_source_lookup_from_a_real_definition() -> Non
         assert label not in cs.SNIPPET_NODE_LABELS, (
             f"{label.value} carries no end_line and would break source retrieval"
         )
-        # Matched as a whole label in the rendered alternation, not as a
-        # prefix: `f"{label}|"` would miss a label that sorts LAST and so
-        # carries no trailing pipe, and a bare substring test would match
+        # Matched as a whole label after its `:` (`n:A OR n:B`, or the older
+        # `n:A|B`), not as a prefix: a bare substring test would match
         # `Constant` inside a longer label name.
         assert not re.search(
-            rf"[:|]{re.escape(label.value)}[|)]",
+            rf"[:|]{re.escape(label.value)}(?!\w)",
             cq.CYPHER_FIND_BY_QUALIFIED_NAME,
         )
     # The control: span-bearing labels ARE in the allowlist and DO reach the
@@ -123,7 +122,7 @@ def test_a_constant_never_wins_the_source_lookup_from_a_real_definition() -> Non
     for label in (cs.NodeLabel.FUNCTION, cs.NodeLabel.CLASS):
         assert label in cs.SNIPPET_NODE_LABELS
         assert re.search(
-            rf"[:|]{re.escape(label.value)}[|)]",
+            rf"[:|]{re.escape(label.value)}(?!\w)",
             cq.CYPHER_FIND_BY_QUALIFIED_NAME,
         )
 
