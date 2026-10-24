@@ -134,6 +134,17 @@ MCP_JSON_INDENT = 2
 MCP_LOG_LEVEL_INFO = "INFO"
 MCP_LOG_FORMAT = "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>"
 MCP_PAGINATION_HEADER = "# Lines {start}-{end} of {total}\n"
+# `read_file`'s window, refused in its own terms rather than as whatever
+# `islice()` says of a negative index, or as "Lines 1001-1000 of 7"
+# (issue #3244). The schema bounds them too; a direct call is checked here.
+MCP_READ_OFFSET_MINIMUM = 0
+MCP_READ_LIMIT_MINIMUM = 1
+MCP_READ_OFFSET_NEGATIVE = "offset {offset} is negative"
+MCP_READ_LIMIT_NOT_POSITIVE = "limit {limit} is not positive"
+MCP_READ_PAST_END = "offset {offset} is past the end of {path} ({total} lines)"
+# A `path:line` target whose line no source file can reach; sent on, it
+# overflows the 64-bit Bolt integer in the driver.
+MCP_RESOLVE_LINE_OUT_OF_RANGE = "Line {line} of {path} is out of range."
 
 # MCP response messages
 MCP_INDEX_SUCCESS = "Successfully indexed repository at {path}. Knowledge graph has been updated (previous data cleared)."
@@ -239,6 +250,11 @@ MCP_ROOT_NOT_INDEXED = (
 # it" / "no test reaches it" (issue #2461).
 MCP_UNKNOWN_TARGET = "{qualified_name!r} is not in the graph."
 MCP_UNKNOWN_TARGET_HINT = " `resolve` lists the qualified names a name matches."
+MCP_UNKNOWN_ENDPOINT = (
+    "{target!r} names no endpoint project {project!r} exposes: neither a "
+    "handler nor an endpoint identity."
+)
+MCP_UNKNOWN_ENDPOINT_HINT = " `endpoints` lists the project's identities and handlers."
 # `flow_verdict` with a source or sink it cannot walk from (issue #2939).
 MCP_FLOW_SOURCE = "source"
 MCP_FLOW_SINK = "sink"
