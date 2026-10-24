@@ -59,6 +59,7 @@ from .editor_links import (
 from .graph_cli import cli as graph_cli
 from .graph_dialects import DIALECT_MEMGRAPH
 from .parser_loader import load_parsers
+from .port_cli import cli as port_cli
 from .project_selection import ProjectChoice, choose_project, scope_refusal
 from .services.gloss_cleanup import prune_orphaned_glosses
 from .services.graph_diff import DiffError, diff_indexes, diff_is_empty
@@ -72,7 +73,7 @@ from .services.provenance import (
 )
 from .stack import StackManager
 from .stack.cli import cli as daemon_cli
-from .stack.constants import SERVICE_QDRANT, StackState
+from .stack.constants import SERVICE_MEMGRAPH, SERVICE_QDRANT, StackState
 from .stack.manager import StackError
 from .sync_guard import RUNNING_SYNC_TOKENS as _RUNNING_SYNC_TOKENS
 from .sync_guard import OwnerCheck as _OwnerCheck
@@ -775,15 +776,25 @@ def _resolve_active_projects(projects: str | None, default_project: str) -> list
     return [default_project]
 
 
-def _maybe_start_stack() -> None:
+def _maybe_start_stack(skip_embeddings: bool = False) -> None:
     # The Docker stack serves Memgraph, and Qdrant when the vector settings
     # pick the bundled one. The embedded graph is a file and Neo4j is the
     # user's own server, so for them the stack runs only for the vectors:
     # only its Qdrant is started and checked, since every Memgraph check
-    # needs a driver those installs need not have.
+    # needs a driver those installs need not have. A run that writes no
+    # embeddings, or writes them to another backend, needs no Qdrant, so it
+    # never starts one: for the embedded graph that means no Docker at all.
+    wants_vectors = not (skip_embeddings or settings.SKIP_EMBEDDINGS)
     if settings.GRAPH_BACKEND == DIALECT_MEMGRAPH:
-        mgr = StackManager()
+        mgr = (
+            StackManager()
+            if wants_vectors
+            and settings.VECTOR_STORE_BACKEND == cs.VectorStoreBackend.QDRANT
+            else StackManager(services=(SERVICE_MEMGRAPH,))
+        )
     else:
+        if not wants_vectors:
+            return
         mgr = StackManager(services=(SERVICE_QDRANT,))
         if not mgr.serves_vectors():
             return
@@ -1479,7 +1490,7 @@ def start(
     _refuse_empty_workspace(workspace_config, update_graph, active_projects)
 
     if not no_start_stack:
-        _maybe_start_stack()
+        _maybe_start_stack(skip_embeddings=no_embeddings)
 
     effective_batch_size = settings.resolve_batch_size(batch_size)
 
@@ -2164,6 +2175,18 @@ def edits_command(ctx: typer.Context) -> None:
 )
 def graph_command(ctx: typer.Context) -> None:
     _run_delegated_group(graph_cli, ctx)
+
+
+@app.command(
+    name=ch.CLICommandName.PORT,
+    help=ch.CMD_PORT,
+    short_help=ch.CMD_PORT,
+    add_help_option=False,
+    context_settings=_DELEGATED_GROUP_CONTEXT,
+    rich_help_panel=ch.PANEL_USE,
+)
+def port_command(ctx: typer.Context) -> None:
+    _run_delegated_group(port_cli, ctx)
 
 
 @app.command(
