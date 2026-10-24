@@ -358,6 +358,48 @@ class JsTypeInferenceEngine:
         )
         return local_var_types
 
+    def own_scope_variable_types(
+        self,
+        func_node: ASTNode,
+        module_qn: str,
+        language: cs.SupportedLanguage | None = None,
+    ) -> dict[tuple[int, int], dict[str, str | None]]:
+        """The variables a function declares itself, the ones a nested
+        function captures (issue #3200), by the byte span each holds in: a
+        `let` or `const` holds in its block, where a same-named one in a
+        sibling block is another variable. A name mapped to None is declared
+        there without a type, and still hides a same-named one further out.
+        Unlike the caller map, a nested function's own declarations are left
+        out: a same-named local there is a different variable."""
+        root = func_node
+        while root.parent is not None:
+            root = root.parent
+        scopes: dict[tuple[int, int], dict[str, str | None]] = {}
+        for name, spans in self._js_binding_index(func_node, root, language).items():
+            for span in spans:
+                scopes.setdefault(span, {})[name] = None
+        # A first-party interface parameter types as it does in the
+        # function's own map (#2524); a `var` redeclaring it wins below.
+        parameters: dict[str, str] = {}
+        self._seed_interface_parameters(func_node, parameters, module_qn)
+        if parameters:
+            whole = (func_node.start_byte, func_node.end_byte)
+            scopes.setdefault(whole, {}).update(parameters)
+        body = func_node.child_by_field_name(cs.FIELD_BODY)
+        stack: list[ASTNode] = list(reversed(body.children)) if body else []
+        while stack:
+            current = stack.pop()
+            if current.type in cs.JS_TS_FUNCTION_NODES:
+                continue
+            if current.type == cs.TS_VARIABLE_DECLARATOR:
+                typed: dict[str, str] = {}
+                self._record_declarator(current, typed, module_qn, language)
+                if typed:
+                    span = self._js_declarator_span(current, func_node)
+                    scopes.setdefault(span, {}).update(typed)
+            stack.extend(reversed(current.children))
+        return scopes
+
     def _seed_interface_parameters(
         self, caller_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
