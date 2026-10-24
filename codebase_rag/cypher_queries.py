@@ -1432,7 +1432,13 @@ RETURN e.name AS endpoint, e.kind AS kind, labels(h)[0] AS label,
        h.qualified_name AS handler, h.path AS path,
        resolved + direct AS callers
 ORDER BY endpoint, handler"""
-# `$qn` names the handler or the endpoint identity (`GET /users/{id}`).
+# The project's endpoint identities and their handlers: what an
+# `endpoint_callers` target is resolved against before any caller is read.
+CYPHER_GRAPH_EXPOSED_ENDPOINTS = """MATCH (h)-[:EXPOSES]->(e:Resource)
+WHERE h.qualified_name STARTS WITH $project_prefix
+RETURN DISTINCT e.name AS endpoint, h.qualified_name AS handler
+ORDER BY endpoint, handler"""
+# `$qn` names the handler or the endpoint identity as stored (`GET /users/:id`).
 CYPHER_GRAPH_ENDPOINT_CALLERS = """MATCH (h)-[:EXPOSES]->(e:Resource)
 WHERE h.qualified_name STARTS WITH $project_prefix
   AND (h.qualified_name = $qn OR e.name = $qn)
@@ -1795,14 +1801,26 @@ OPTIONAL MATCH (x)-->(n)
 WITH n, count(x) AS inbound
 RETURN head(labels(n)) AS label, properties(n) AS props, inbound"""
 
-# Whether the graph already holds any IO resource link (FLOWS_TO,
-# RESOLVES_TO). An isolated check refuses on one: deleting a changed file's
-# subtree can leave a resource chain unanchored, and the re-ingest's
-# repo-wide `prune_unanchored_resources` would delete it, chain edges and all,
-# beyond what the capture holds (bot review, #1718). A typed pattern with
-# LIMIT 1 stops at the first such edge instead of scanning every relationship.
-CYPHER_CHECK_GRAPH_IO_LINKS = """MATCH ()-[r:FLOWS_TO|RESOLVES_TO]->()
-RETURN type(r) AS rel
+# An IO resource link (FLOWS_TO, RESOLVES_TO) the checked project anchors. An
+# isolated check refuses on one: deleting a changed file's subtree can leave
+# that resource unanchored, and the re-ingest's repo-wide
+# `prune_unanchored_resources` would delete it, chain edges and all, beyond
+# what the capture holds (bot review, #1718). Only a Resource one of the
+# project's own nodes touches can be unanchored by the run: the prune keeps
+# every Resource another node still anchors, and a resource reached only down
+# a FLOWS_TO chain puts a FLOWS_TO edge on the one the project touches. So
+# another project's links never refuse this one's check (issue #3188). The
+# root module (`__init__.py`, `mod.rs`) IS the project name, not under its
+# prefix, and the check cuts it like any other changed module. A registered
+# project nested under the prefix (`svc.v2` under `svc`) is another project
+# too: the module delete spares its nodes (issue #1985), so they are left out
+# by the same rule, read from the graph's Project nodes as that delete does.
+CYPHER_CHECK_PROJECT_IO_LINKS = f"""OPTIONAL MATCH (longer:Project) WHERE longer.name STARTS WITH $project_prefix
+WITH collect(longer.name) AS nested
+MATCH (r:Resource)--(n)
+WHERE NOT n:Resource AND {_belongs_to_named("n")}
+MATCH (r)-[l:FLOWS_TO|RESOLVES_TO]-()
+RETURN type(l) AS rel
 LIMIT 1"""
 
 # The shared nodes the isolated check created, by label and qualified name: the ones the scope reaches that the snapshot above did not hold.
