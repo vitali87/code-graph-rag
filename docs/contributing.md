@@ -92,14 +92,19 @@ accounts for every pull request merged up to it. Nothing rolls over: the
 patch number keeps counting past 999, because a carry into the minor number
 would announce a breaking change that never happened. To pick a type by hand,
 run the workflow with its `bump_type` input or change the version in the pull
-request itself.
+request itself. A version set in the pull request is not bumped again: its
+merge gets the bump commit and tag a bumped version gets, and a release when
+one is due, so a breaking change or security fix in it ships with it.
 
 ### Release cadence and why tags outrun releases
 
 `version-bump.yml` tags every version bump, but only some of those tags publish.
 A bump is not one per merge: runs are serialised, and only the run for the
 newest commit on `main` bumps, so merges that land close together share one
-bump and one tag. Which tags publish comes down to the CREDENTIAL used to push
+bump and one tag. Each older run would still need a runner just to stand down,
+one after another, so `version-bump-supersede.yml` cancels every bump run that
+has not started yet for a commit the newest merge contains, and the newest
+run goes next. Which tags publish comes down to the CREDENTIAL used to push
 the tag, which is easy to miss when reading the workflows:
 
 ```yaml
@@ -120,13 +125,24 @@ the publish.
 
 A release happens every 50 versions, or immediately when the `decide` step
 sees a security fix (a GHSA id in the commit message, an explicit `[security]`
-marker, or an associated PR labelled `security`). A release also needs green CI
+marker, or an associated PR labelled `security`) or a PR labelled
+`breaking change`, so the version that announces a breaking change is one
+users can install. To ship any other merge at once, label its PR `release now`
+before merging: it releases without the security notice or a breaking bump.
+It counts only when whoever applied it last is a repository admin or
+maintainer; applied by anyone else, a bot or a workflow token included, it is
+ignored and the run's summary says so. Do not borrow the `security` label for this, since every release it triggers
+opens with a "contains a security fix" notice. The label is read when the
+merge's bump runs; added after that, it comes too late, since the merge is
+already behind the bump's tag. A release also needs green CI
 on the merge commit it is cut from, within 45 minutes of the bump being pushed.
 When CI fails or does not finish in time, the bump is still tagged, as an
 interim tag annotated `release-deferred:`, and the release moves to the next
 bump (the run's summary reads "Release: deferred"). The next run never starts
 its scan at such a tag, so it reads the deferred commits again and a security
-fix among them still releases without waiting for the 50-version cadence.
+fix, breaking change or `release now` PR among them still releases without
+waiting for the 50-version cadence. The breaking change still bumps the number
+only once.
 
 If you are ever debugging "the tag exists but PyPI did not update", check WHICH
 kind of tag it is first. For an interim tag this is the intended behaviour and
