@@ -117,6 +117,7 @@ from .path_filters import matches_test_path
 from .services import (
     FilteringIngestor,
     IngestorProtocol,
+    NodeUpdateProtocol,
     QueryingIngestorProtocol,
     QueryProtocol,
 )
@@ -1774,6 +1775,10 @@ class GraphUpdater:
         # not follow their qualified names onto a same-stem survivor.
         self._captured_trace_edges: list[CapturedTraceEdge] = []
         self._trace_gone_paths: frozenset[str] = frozenset()
+        # The edges into re-indexed files that `_process_files` captured, held
+        # for `run()` to restore once the deferred stages have registered
+        # every re-parsed definition (issue #3270).
+        self._pending_inbound_edges: list[ResultRow] = []
         # The file keys the current `reingest` call will delete and re-parse
         # (changed, deleted, dependents, same-stem survivors), published right
         # before `before_write` runs so a caller can capture exactly that set
@@ -2916,53 +2921,62 @@ class GraphUpdater:
         self._run_go_frontend()
 
         logger.info(ls.PASS_2_FILES)
-        self._process_files(force=force)
+        try:
+            self._process_files(force=force)
+            # Before the partial join on an incremental run: rebuild the type
+            # locations for unchanged .cs files so a partial part living in one
+            # still joins its group (issue #1229). Pass-2 entries for re-parsed
+            # files are already present and take precedence. A cacheless full build
+            # (force=False but _is_full_build) already re-parsed every file, so the
+            # project-wide query would be wasted work -- skip it.
+            if not force and not self._is_full_build:
+                self._rehydrate_csharp_type_locations()
+                # Same posture for the col-keyed indexes (issue #1240): the Go
+                # IMPLEMENTS and semantic-call joins below resolve against
+                # locations Pass 2 filled only for re-parsed files.
+                self._rehydrate_go_type_locations()
+                self._rehydrate_function_locations()
 
-        # Before the partial join on an incremental run: rebuild the type
-        # locations for unchanged .cs files so a partial part living in one
-        # still joins its group (issue #1229). Pass-2 entries for re-parsed
-        # files are already present and take precedence. A cacheless full build
-        # (force=False but _is_full_build) already re-parsed every file, so the
-        # project-wide query would be wasted work -- skip it.
-        if not force and not self._is_full_build:
-            self._rehydrate_csharp_type_locations()
-            # Same posture for the col-keyed indexes (issue #1240): the Go
-            # IMPLEMENTS and semantic-call joins below resolve against
-            # locations Pass 2 filled only for re-parsed files.
-            self._rehydrate_go_type_locations()
-            self._rehydrate_function_locations()
+            # Partial groups join AFTER Pass 2: the Roslyn declaration
+            # locations resolve against the Class qns Pass 2 just registered.
+            self._join_csharp_partials()
 
-        # Partial groups join AFTER Pass 2: the Roslyn declaration
-        # locations resolve against the Class qns Pass 2 just registered.
-        self._join_csharp_partials()
+            # Go IMPLEMENTS pairs join AFTER Pass 2 for the same reason: both ends
+            # resolve against the go_type_locations index Pass 2 just registered.
+            self._join_go_implements()
 
-        # Go IMPLEMENTS pairs join AFTER Pass 2 for the same reason: both ends
-        # resolve against the go_type_locations index Pass 2 just registered.
-        self._join_go_implements()
+            # The Jedi Python frontend runs AFTER Pass 2 (its facts join Pass 3
+            # calls against the function_locations Pass 2 just filled) and needs
+            # the parsed-file list, which Pass 2 produced (issue #1183).
+            self._run_python_frontend()
 
-        # The Jedi Python frontend runs AFTER Pass 2 (its facts join Pass 3
-        # calls against the function_locations Pass 2 just filled) and needs
-        # the parsed-file list, which Pass 2 produced (issue #1183).
-        self._run_python_frontend()
+            # Same posture for Java (issue #1181): the facts resolve against the
+            # method name-token locations Pass 2 registered.
+            self._run_java_frontend()
 
-        # Same posture for Java (issue #1181): the facts resolve against the
-        # method name-token locations Pass 2 registered.
-        self._run_java_frontend()
+            # Before known_module_paths is built from the map: the seed pass only
+            # ever adds, so a reused updater carries qns whose Module another
+            # writer has since deleted.
+            #
+            # A forced run prunes too. It re-parses every file but does NOT clear
+            # the map, so on a reused updater a qn whose Module and file are both
+            # gone survives a full rebuild -- measured, and the reason this is not
+            # gated on `not force`. Nothing this run parsed can be dropped
+            # (`_parsed_files` exempts it) and an unreadable or empty read is
+            # already a no-op, so the first full build of an empty graph is
+            # unaffected.
+            self._prune_stale_seeded_module_qns()
 
-        # Before known_module_paths is built from the map: the seed pass only
-        # ever adds, so a reused updater carries qns whose Module another
-        # writer has since deleted.
-        #
-        # A forced run prunes too. It re-parses every file but does NOT clear
-        # the map, so on a reused updater a qn whose Module and file are both
-        # gone survives a full rebuild -- measured, and the reason this is not
-        # gated on `not force`. Nothing this run parsed can be dropped
-        # (`_parsed_files` exempts it) and an unreadable or empty read is
-        # already a no-op, so the first full build of an empty graph is
-        # unaffected.
-        self._prune_stale_seeded_module_qns()
-
-        known_module_paths = self._resolve_deferred_definitions(rehydrate=not force)
+            known_module_paths = self._resolve_deferred_definitions(rehydrate=not force)
+        finally:
+            # After the deferred stages, as `_reingest_resolve` does, so an
+            # edge into a re-parsed Go receiver method finds it registered
+            # (#3270). In `finally`, with Pass 2 inside the `try`: a run
+            # stopped by a failing file, by the cache stash that closes Pass 2
+            # or by a later stage cannot capture these edges again, since
+            # their targets' subtrees are already gone, so it restores them
+            # on the way out, Go receiver methods included.
+            self._restore_pending_inbound_edges()
 
         logger.info(ls.FOUND_FUNCTIONS, count=len(self.function_registry))
         # The resolver memoises name -> qn answers and module languages
@@ -3979,7 +3993,14 @@ class GraphUpdater:
             return
         self._rehydrate_module_qns(module_rows)
         self._rehydrate_class_inheritance_from_graph()
-        self._rehydrate_interface_implementers(project_params)
+        # run() holds the inbound edges for the restore after the deferred
+        # stages (#3270), so an unchanged impl of a re-parsed trait that only
+        # its OVERRIDES edge records (`impl crate::Trait for u64`) is not in
+        # the graph yet: the held rows count as read, as reingest's captured
+        # ones do.
+        self._rehydrate_interface_implementers(
+            project_params, carried=self._pending_inbound_edges
+        )
         dp = self.factory.definition_processor
         self._requeue_member_types(
             cs.CYPHER_PROJECT_PARAMETER_TYPES,
@@ -5382,11 +5403,16 @@ class GraphUpdater:
         language = get_language_for_extension(PurePosixPath(key).suffix)
         parser = self.parsers.get(language) if language is not None else None
         query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language) if language else None
-        if parser is None or query is None:
+        if parser is None or query is None or language is None:
             return set()
         try:
-            tree = parser.parse(
-                grammar_bytes(file_bytes, language, self.repo_path / key)
+            # The same recovery the definition pass parses with, or an added
+            # SQL file offers only the routines a mis-lexed `$1,$2` left in
+            # its plain parse (issue #3180).
+            tree = parse_with_preproc_recovery(
+                parser,
+                grammar_bytes(file_bytes, language, self.repo_path / key),
+                language,
             )
             captures = sorted_captures(QueryCursor(query), tree.root_node)
         except Exception:
@@ -5415,10 +5441,10 @@ class GraphUpdater:
         carrying two keys reads as the whole node to every store that does
         not merge. Flushed first so the Module nodes of a first build exist
         to match; the modules with nothing recorded (most) are cleared in
-        one statement, the rest set one by one. A store that cannot take a
-        write is left as it was, which reads as "nothing waited"."""
-        if not isinstance(self.ingestor, QueryProtocol):
-            return
+        one statement, the rest set one by one. A store that takes no query
+        but can update a node it holds (the protobuf index) has the list set
+        in place, or the exported field stays empty (#3206); any other store
+        is left as it was, which reads as "nothing waited"."""
         recorded = self.factory.import_processor.unresolved_references
         cleared: list[str] = []
         pending: list[tuple[str, list[str]]] = []
@@ -5439,6 +5465,9 @@ class GraphUpdater:
                 cleared.append(module_qn)
         if not cleared and not pending:
             return
+        if not isinstance(self.ingestor, QueryProtocol):
+            self._update_unresolved_reference_nodes(cleared, pending)
+            return
         self.ingestor.flush_all()
         try:
             if cleared:
@@ -5452,6 +5481,22 @@ class GraphUpdater:
                 )
         except Exception:
             logger.warning(ls.PRUNE_QUERY_FAILED, label="unresolved references write")
+
+    def _update_unresolved_reference_nodes(
+        self, cleared: list[str], pending: list[tuple[str, list[str]]]
+    ) -> None:
+        # Never a second node write: one carrying only these two keys reads
+        # as the whole Module node to every store that does not merge.
+        if not isinstance(self.ingestor, NodeUpdateProtocol):
+            return
+        for module_qn, names in (*((qn, []) for qn in cleared), *pending):
+            self.ingestor.update_node_properties(
+                cs.NodeLabel.MODULE,
+                {
+                    cs.KEY_QUALIFIED_NAME: module_qn,
+                    cs.KEY_UNRESOLVED_REFERENCES: names,
+                },
+            )
 
     def _queue_foreign_members(
         self,
@@ -5804,6 +5849,23 @@ class GraphUpdater:
             rel,
             (target_label, target_key, target_qn),
         )
+
+    def _restore_pending_inbound_edges(self) -> None:
+        captured, self._pending_inbound_edges = self._pending_inbound_edges, []
+        try:
+            if captured:
+                # A run stopped before the deferred stages reached the Go receiver
+                # methods registers them here, or every held edge into one is
+                # dropped for good: the next run re-parses the method's file but
+                # not the caller, and the edge is no longer in the graph to
+                # capture. A no-op once those stages ran; a stopped run never
+                # verifies parent links, so they still follow every registration.
+                self.factory.definition_processor.resolve_deferred_go_methods()
+        finally:
+            # Even when that registration raises (a run stopped BY it retries
+            # it here): the edges into every other target are placeable, and
+            # nothing captures them again either.
+            self._restore_inbound_edges(captured)
 
     def _restore_target_exists(self, label: str, qualified_name: str) -> bool:
         """Whether a captured edge's target is back after the re-parse.
@@ -7317,7 +7379,11 @@ class GraphUpdater:
         deleted_keys = self._deleted_keys_for_run(old_hashes, preexisting_paths, scan)
         self._delete_reconciled_files(deleted_keys, deleted_set)
 
-        self._restore_inbound_edges(captured_inbound)
+        # Restored by `run()` after the deferred stages, not here: a Go
+        # receiver method joins the registry only there, so every edge into
+        # one was dropped as a target the re-index had not recreated, and
+        # the unchanged caller is never re-parsed to rebuild it (#3270).
+        self._pending_inbound_edges = captured_inbound
 
         self._log_process_counts(scan, changed_count)
         self._log_unparsable_manifests()

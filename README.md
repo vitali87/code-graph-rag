@@ -188,6 +188,7 @@ Code-Graph-RAG runs as an [MCP](https://modelcontextprotocol.io) server so Claud
 - [Real-Time Updates](docs/guide/realtime-updates.md)
 - [C/C++ Semantic Mode](docs/guide/cpp-semantic-mode.md)
 - [MCP Server](docs/guide/mcp-server.md)
+- [Porting Between Languages](docs/guide/porting.md)
 
 **Architecture**
 - [Overview](docs/architecture/overview.md)
