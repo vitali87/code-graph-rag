@@ -367,6 +367,15 @@ def test_the_memo_gives_what_the_walk_without_it_gives_on_a_chain(seed: int) -> 
         assert found == expected, interface
 
 
+def _cpu_seconds() -> float:
+    # CPU time, not wall clock, for the bounds below: each catches a walk
+    # gone quadratic, and a busy `pytest -n auto` runner deschedules this
+    # process for seconds without the walk doing any more work (a walk of
+    # a few tenths of a second read 5.04 s on main's coverage run). As in
+    # test_rust_attr_run_scan_perf.py (#1473).
+    return time.process_time()
+
+
 @pytest.mark.parametrize("tail", ["known", "unresolved"])
 def test_a_chain_far_past_the_recursion_limit_is_walked(tail: str) -> None:
     # Three Python frames per embed overflowed at a few hundred links.
@@ -382,9 +391,9 @@ def test_a_chain_far_past_the_recursion_limit_is_walked(tail: str) -> None:
     }
     if tail == "unresolved":
         embeds[f"I{links - 1}"] = None
-    started = time.monotonic()
+    started = _cpu_seconds()
     full = go_ifaces.full_method_sets(own, embeds, {})
-    assert time.monotonic() - started < 10
+    assert _cpu_seconds() - started < 10
     top = full.sets["I0"]
     if tail == "unresolved":
         assert top is None
@@ -399,10 +408,10 @@ def test_merged_builds_along_a_chain_stay_small() -> None:
     # interface inherits through a chain of such embeds doubled per link.
     linux = name_constraint("x_linux.go")
     builds = header_constraint("//go:build cgo\n")
-    started = time.monotonic()
+    started = _cpu_seconds()
     for _ in range(5000):
         builds = any_of((all_of((builds, linux)), all_of((builds, negate(linux)))))
-    assert time.monotonic() - started < 5
+    assert _cpu_seconds() - started < 5
     assert builds == header_constraint("//go:build cgo\n")
 
 
@@ -410,13 +419,13 @@ def test_a_constraint_past_the_size_or_depth_cap_is_unknown() -> None:
     # An expression nested deeper than the decision's walk and Python's
     # hashing recurse through is unknown, and decided as such, at once.
     nested = header_constraint("//go:build t0\n")
-    started = time.monotonic()
+    started = _cpu_seconds()
     for k in range(1, 5000):
         tag = header_constraint(f"//go:build t{k % 7}\n")
         nested = any_of(
             (all_of((nested, tag)), header_constraint(f"//go:build u{k}\n"))
         )
-    assert time.monotonic() - started < 5
+    assert _cpu_seconds() - started < 5
     assert nested == UNKNOWN
     assert decide((nested,)) is None
 
@@ -464,9 +473,9 @@ def test_a_chain_of_redeclarations_links_each_link_once(declaring: str) -> None:
         if declaring == "every" or k in (0, links - 1)
     }
     bases = {f"I{k}": [f"I{k + 1}"] for k in range(links - 1)}
-    started = time.monotonic()
+    started = _cpu_seconds()
     found = _links(own, bases)
-    assert time.monotonic() - started < 5
+    assert _cpu_seconds() - started < 5
     if declaring == "every":
         assert found == {(f"I{k}.M", f"I{k + 1}.M") for k in range(links - 1)}
     else:
@@ -566,6 +575,6 @@ def test_a_cascade_of_gathered_declarations_is_joined_in_linear_work(
     assert work[2000][1] == (2000 - 1 if builds == "one" else 2000 - 2)
     assert work[2000][0] <= 3 * max(work[1000][0], 1)
     own, bases = _cascade(4000)
-    started = time.monotonic()
+    started = _cpu_seconds()
     _links(own, bases, files)
-    assert time.monotonic() - started < 5
+    assert _cpu_seconds() - started < 5
