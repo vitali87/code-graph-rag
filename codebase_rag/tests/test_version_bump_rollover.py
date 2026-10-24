@@ -30,12 +30,10 @@ def _bump(current: str, bump_type: str = "patch") -> subprocess.CompletedProcess
     bash = shutil.which("bash")
     if bash is None:
         pytest.skip("the Ubuntu workflow requires bash")
-    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     script = _bump_step()["run"]
     env = {
         **os.environ,
         "GITHUB_OUTPUT": os.devnull,
-        "VERSION_COMPONENT_CAP": str(workflow["env"]["VERSION_COMPONENT_CAP"]),
         "CURRENT": current,
         "BUMP_TYPE": bump_type,
     }
@@ -55,31 +53,53 @@ def _new_version(current: str, bump_type: str = "patch") -> str:
     return result.stdout.split(" to ")[1].split(" ")[0]
 
 
-def test_cap_is_one_thousand() -> None:
+def test_no_component_is_capped() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-    assert workflow["env"]["VERSION_COMPONENT_CAP"] == 1000
+    assert "VERSION_COMPONENT_CAP" not in workflow["env"]
 
 
+# 0.0.1006 once rolled over into 0.1.0, announcing a breaking change that
+# nothing made; past 999 a component now just keeps counting.
 @pytest.mark.parametrize(
     ("current", "bump_type", "expected"),
     [
         ("0.0.5", "patch", "0.0.6"),
-        ("0.0.998", "patch", "0.0.999"),
-        ("0.0.999", "patch", "0.1.0"),
-        ("0.0.1006", "patch", "0.1.0"),
-        ("0.1.0", "patch", "0.1.1"),
-        ("0.999.999", "patch", "1.0.0"),
-        ("0.1500.3", "patch", "1.0.0"),
-        ("0.998.7", "minor", "0.999.0"),
-        ("0.999.7", "minor", "1.0.0"),
+        ("0.0.999", "patch", "0.0.1000"),
+        ("0.0.1006", "patch", "0.0.1007"),
+        ("0.999.999", "patch", "0.999.1000"),
+        ("0.999.7", "minor", "0.1000.0"),
         ("0.999.7", "major", "1.0.0"),
-        ("0.0.1006", "minor", "0.1.0"),
     ],
 )
-def test_components_roll_over_at_the_cap(
+def test_components_never_roll_over(
     current: str, bump_type: str, expected: str
 ) -> None:
     assert _new_version(current, bump_type) == expected
+
+
+@pytest.mark.parametrize(
+    ("current", "expected"),
+    [
+        ("0.1.89", "0.2.0"),
+        ("0.0.1006", "0.1.0"),
+        ("1.4.2", "2.0.0"),
+        ("2.0.1500", "3.0.0"),
+    ],
+)
+def test_a_breaking_bump_is_minor_below_one_and_major_after(
+    current: str, expected: str
+) -> None:
+    assert _new_version(current, "breaking") == expected
+
+
+def test_a_version_set_by_hand_is_kept_as_it_stands() -> None:
+    assert _new_version("0.3.0", "none") == "0.3.0"
+
+
+def test_a_malformed_version_set_by_hand_is_refused() -> None:
+    result = _bump("0.3.0a", "none")
+    assert result.returncode != 0
+    assert "refusing malformed version" in result.stdout
 
 
 def test_step_script_interpolates_no_expressions() -> None:
