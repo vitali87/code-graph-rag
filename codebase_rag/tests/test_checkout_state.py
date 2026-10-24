@@ -113,7 +113,8 @@ def _as_an_older_cgr_left_it(repo: Path) -> dict[str, bytes]:
     a hash cache an older cgr wrote. Wherever the sync put the files, they
     end in the tree, so this is the pre-upgrade layout either way. The sync
     lock is dropped instead: no cgr that kept its state in the tree took
-    one (issue #2441).
+    one (issue #2441). So are the vector store stamps: none wrote those
+    either.
     """
     directory = state_dir(repo)
     for name in cs.CGR_STATE_FILENAMES:
@@ -123,6 +124,9 @@ def _as_an_older_cgr_left_it(repo: Path) -> dict[str, bytes]:
             (directory / name).unlink()
         else:
             os.replace(directory / name, repo / name)
+    stamps = cs.EMBEDDINGS_STORE_PROJECT_TEMPLATE.format(digest="*")
+    for stamp in directory.glob(stamps):
+        stamp.unlink()
     if directory.is_dir():
         directory.rmdir()
     return {
