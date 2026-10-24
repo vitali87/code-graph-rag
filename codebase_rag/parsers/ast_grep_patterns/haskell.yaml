@@ -19,7 +19,7 @@ functions:
 classes:
   - kind: data_type
   - kind: newtype
-  - kind: type_synomym
+  - kind: type_synonym
   - kind: class
 imports:
   - kind: import
