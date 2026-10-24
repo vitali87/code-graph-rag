@@ -39,7 +39,7 @@ from .graph_updater import GraphUpdater, _load_exclusion_state, _load_project_st
 from .services import QueryingIngestorProtocol
 from .structural_delta import StructuralDelta, normalise_paths, observe
 from .types_defs import LanguageQueries, PropertyDict, ReingestReport
-from .utils.path_utils import derive_project_name
+from .utils.path_utils import derive_project_name, should_skip_path
 
 _GIT_DELETED = "D"
 
@@ -333,19 +333,29 @@ def _refuse_unrestorable_capture(capture: CaptureSelection) -> None:
         )
 
 
-def _refuse_graph_holding_io_links(ingestor: object) -> None:
-    """Refuse an isolated run over a graph that already holds IO links.
+def _refuse_project_holding_io_links(ingestor: object, project_name: str) -> None:
+    """Refuse an isolated run over IO links the checked project anchors.
 
     The capture check above covers what THIS run would write. A graph built
     earlier with IO enabled can hold resource chains of its own; deleting a
     changed file's subtree can leave one unanchored, and the re-ingest's
     repo-wide resource prune then deletes it, chain edges included, which
-    the capture cannot put back (bot review, #1718).
+    the capture cannot put back (bot review, #1718). Only a resource the
+    project's own nodes touch can be unanchored by the run, so another
+    project's links do not refuse it (issue #3188).
     """
-    rows = cast(GraphStore, ingestor).fetch_all(cq.CYPHER_CHECK_GRAPH_IO_LINKS)
+    rows = cast(GraphStore, ingestor).fetch_all(
+        cq.CYPHER_CHECK_PROJECT_IO_LINKS,
+        {
+            cs.KEY_PROJECT_PREFIX: project_name + cs.SEPARATOR_DOT,
+            cs.KEY_PROJECT_NAME: project_name,
+        },
+    )
     if rows:
         raise CheckError(
-            cs.CHECK_ISOLATED_GRAPH_HAS_IO.format(groups=rows[0].get(cs.KEY_REL))
+            cs.CHECK_ISOLATED_GRAPH_HAS_IO.format(
+                project=project_name, groups=rows[0].get(cs.KEY_REL)
+            )
         )
 
 
@@ -419,8 +429,24 @@ def run_check(
     the re-ingest is measured and then undone (see `check_isolation`).
     """
     changed, deleted = changed_since(repo_root, base)
-    changed = normalise_paths(changed, repo_root)
-    deleted = normalise_paths(deleted, repo_root)
+
+    def indexed(rel: str) -> bool:
+        # git lists every untracked file `.gitignore` leaves in, and a new
+        # repo's `.venv` or `node_modules` is all of them: the files a sync
+        # would skip are not the edit (issue #3264). Skipped before anything
+        # resolves them, so an interpreter symlink leaving the repository
+        # cannot abort the check, and before the snapshots, whose path
+        # filters scale with the list.
+        return not should_skip_path(
+            repo_root / rel,
+            repo_root,
+            exclude_paths=exclude_paths,
+            unignore_paths=unignore_paths,
+            is_file=True,
+        )
+
+    changed = [p for p in normalise_paths(changed, repo_root) if indexed(p)]
+    deleted = [p for p in normalise_paths(deleted, repo_root) if indexed(p)]
     updater = GraphUpdater(
         ingestor=ingestor,
         repo_path=repo_root,
@@ -446,7 +472,7 @@ def run_check(
     if not isolated:
         return measure(lambda: updater.reingest(changed, deleted=deleted))
     _refuse_unrestorable_capture(capture or default_capture())
-    _refuse_graph_holding_io_links(ingestor)
+    _refuse_project_holding_io_links(ingestor, project_name)
     return _measure_then_restore(
         updater,
         ingestor,

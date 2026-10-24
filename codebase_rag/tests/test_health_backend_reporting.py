@@ -16,7 +16,7 @@ from codebase_rag.graph_dialects import (
     DIALECT_NEO4J,
     get_dialect,
 )
-from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_service import GraphUnavailableError, MemgraphIngestor
 from codebase_rag.tools.health_checker import (
     HealthChecker,
     _backend_connection,
@@ -262,7 +262,7 @@ class TestConnectionFailureClassification:
             "codebase_rag.tools.health_checker.settings.GRAPH_BACKEND",
             DIALECT_MEMGRAPH,
         )
-        assert _connection_error_types() == (mgclient.Error,)
+        assert _connection_error_types() == (mgclient.Error, GraphUnavailableError)
 
     def test_an_unreachable_neo4j_reads_as_a_connection_failure(
         self, monkeypatch
