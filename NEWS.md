@@ -11,12 +11,13 @@ the README. The release workflow prepends feature entries via
 (dropping non-feature themes), and moves the marker below the block it
 inserted; hand edits remain welcome between releases and render too.
 
+- **SBOM**: CycloneDX SBOM and Docker image attestation published with each release.
+<!-- latest-release-end -->
 - **Vector Store**: Default to the SQLite vector store.
 - **Docker**: No longer starts Docker without embeddings.
 - **Feature**: Added support for a new feature.
 - **Functionality**: Implemented a new function.
 - **Fix**: Addressed a minor bug.
-<!-- latest-release-end -->
 - **Security**: Linked dependency advisories in the security notice to the global database.
 - **Build**: Enabled building the gotypes helper on Go 1.27.2 with x/mod v0.42.0.
 - **Dependency Locking**: Locked `opentelemetry-api` to version 1.45.1 for stability.

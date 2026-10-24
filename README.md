@@ -61,11 +61,7 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **Vector Store**: Default to the SQLite vector store.
-- **Docker**: No longer starts Docker without embeddings.
-- **Feature**: Added support for a new feature.
-- **Functionality**: Implemented a new function.
-- **Fix**: Addressed a minor bug.
+- **SBOM**: CycloneDX SBOM and Docker image attestation published with each release.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
