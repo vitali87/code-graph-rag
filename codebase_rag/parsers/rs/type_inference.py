@@ -12,6 +12,10 @@ def _scoped_chain_segments(node: Node) -> list[str] | None:
     # fully-qualified inline call disambiguates by path in the return-type
     # lookup.
     path = node.child_by_field_name(cs.TS_RS_FIELD_PATH)
+    if path is not None and path.type == cs.TS_GENERIC_TYPE:
+        # `Factory::<u8>::build`: type arguments do not change whose fn is
+        # called, and `Factory::<u8>` names no type to look it up on (#3168).
+        path = path.child_by_field_name(cs.FIELD_TYPE)
     name = node.child_by_field_name(cs.FIELD_NAME)
     base = safe_decode_text(path) if path else None
     leaf = safe_decode_text(name) if name else None
@@ -32,6 +36,16 @@ class RustTypeInferenceEngine:
         self._collect_parameters(caller_node, var_types)
         if body := caller_node.child_by_field_name(cs.FIELD_BODY):
             self._collect_bindings(body, var_types)
+        # `other: &Self`, `let s: Self = ..`, `let p = Self { .. }` name the
+        # enclosing impl's type; left as `Self`, no receiver typed (#3168).
+        # Only a `Self` local needs the impl, so only then walk up to it.
+        if (
+            cs.RS_SELF_TYPE in var_types.values()
+            and (impl_type := _enclosing_impl_type(caller_node)) is not None
+        ):
+            for name, type_name in var_types.items():
+                if type_name == cs.RS_SELF_TYPE:
+                    var_types[name] = impl_type
         return var_types
 
     def build_field_type_map(self, class_node: Node) -> dict[str, str]:
@@ -145,18 +159,22 @@ class RustTypeInferenceEngine:
         scope: tuple[int, int],
         entries: list[tuple[str, str, int, int, int]],
     ) -> None:
-        if node.type == cs.TS_RS_FUNCTION_ITEM:
-            # A nested fn item shares no scope with the enclosing body:
-            # its lets must not leak out (closures DO share attribution
-            # scope and keep descending, span-gated by their block).
-            return
-        if node.type == cs.TS_RS_LET_DECLARATION:
-            self._element_let_entry(node, scope, entries)
-        child_scope = (
-            (node.start_byte, node.end_byte) if node.type == cs.TS_RS_BLOCK else scope
-        )
-        for child in node.children:
-            self._collect_element_lets(child, child_scope, entries)
+        stack = [(node, scope)]
+        while stack:
+            current, current_scope = stack.pop()
+            if current.type == cs.TS_RS_FUNCTION_ITEM:
+                # A nested fn item shares no scope with the enclosing body:
+                # its lets must not leak out (closures DO share attribution
+                # scope and keep descending, span-gated by their block).
+                continue
+            if current.type == cs.TS_RS_LET_DECLARATION:
+                self._element_let_entry(current, current_scope, entries)
+            child_scope = (
+                (current.start_byte, current.end_byte)
+                if current.type == cs.TS_RS_BLOCK
+                else current_scope
+            )
+            stack.extend((child, child_scope) for child in reversed(current.children))
 
     def _element_let_entry(
         self,
@@ -472,6 +490,15 @@ class RustTypeInferenceEngine:
         bindings: list[tuple[str, list[str], int]] = []
         if body := caller_node.child_by_field_name(cs.FIELD_BODY):
             self._collect_call_bindings(body, bindings)
+        # `Self::build()` calls the enclosing impl's fn: read `Self` as the
+        # impl target, as a `Self` local is, so its return type is found and
+        # outranks a constructor guess for `Self::Build()` (#3168).
+        if any(segments[0] == cs.RS_SELF_TYPE for _, segments, _ in bindings) and (
+            impl_type := _enclosing_impl_type(caller_node)
+        ):
+            for _, segments, _ in bindings:
+                if segments[0] == cs.RS_SELF_TYPE:
+                    segments[0] = impl_type
         return bindings
 
     def collect_generic_bounds(self, caller_node: Node) -> dict[str, list[str]]:
@@ -580,10 +607,14 @@ class RustTypeInferenceEngine:
         # param) would clobber the entry with the wrong (last) type. They come
         # per-arm-scoped via collect_match_arm_bindings, overlaid by the resolver at
         # each call's position.
-        if node.type == cs.TS_RS_LET_DECLARATION:
-            self._collect_let_binding(node, var_types)
-        for child in node.children:
-            self._collect_bindings(child, var_types)
+        # An explicit stack, not recursion: a generated `else if` chain or a
+        # long `||` condition nests ~1,000 levels deep (issue #3173).
+        stack = [node]
+        while stack:
+            current = stack.pop()
+            if current.type == cs.TS_RS_LET_DECLARATION:
+                self._collect_let_binding(current, var_types)
+            stack.extend(reversed(current.children))
 
     def _collect_let_binding(self, node: Node, var_types: dict[str, str]) -> None:
         # `let x: T = ...` (explicit annotation) and `let x = T { .. }` (struct
@@ -600,10 +631,8 @@ class RustTypeInferenceEngine:
                 var_types[name] = type_name
             return
         value = node.child_by_field_name(cs.FIELD_VALUE)
-        if value is not None and value.type == cs.TS_RS_STRUCT_EXPRESSION:
-            struct_name = value.child_by_field_name(cs.FIELD_NAME)
-            if struct_name and (type_name := self._binding_type_name(struct_name)):
-                var_types[name] = type_name
+        if value is not None and (type_name := _constructed_type(value)):
+            var_types[name] = type_name
 
     def _tuple_struct_binding(self, pattern: Node) -> tuple[str, str] | None:
         # `Variant(x)`: bind x to the variant's payload type. Rust's newtype idiom
@@ -650,10 +679,12 @@ class RustTypeInferenceEngine:
     def _collect_call_bindings(
         self, node: Node, bindings: list[tuple[str, list[str], int]]
     ) -> None:
-        if node.type == cs.TS_RS_LET_DECLARATION:
-            self._collect_call_binding(node, bindings)
-        for child in node.children:
-            self._collect_call_bindings(child, bindings)
+        stack = [node]
+        while stack:
+            current = stack.pop()
+            if current.type == cs.TS_RS_LET_DECLARATION:
+                self._collect_call_binding(current, bindings)
+            stack.extend(reversed(current.children))
 
     def _collect_call_binding(
         self, node: Node, bindings: list[tuple[str, list[str], int]]
@@ -739,14 +770,12 @@ class RustTypeInferenceEngine:
 
     def _descendants_of_type(self, node: Node, node_type: str) -> list[Node]:
         found: list[Node] = []
-
-        def walk(n: Node) -> None:
-            if n.type == node_type:
-                found.append(n)
-            for child in n.children:
-                walk(child)
-
-        walk(node)
+        stack = [node]
+        while stack:
+            current = stack.pop()
+            if current.type == node_type:
+                found.append(current)
+            stack.extend(reversed(current.children))
         return found
 
 
@@ -817,6 +846,104 @@ def _rust_generic_element_name(type_node: Node) -> str | None:
         return None if name == cs.CHAR_UNDERSCORE else name
     if outer_name in cs.RS_DEREF_WRAPPERS:
         return _rust_element_type_name(inner)
+    return None
+
+
+def _constructed_type(value: Node) -> str | None:
+    """The type a `let` initializer constructs, read from the syntax alone.
+
+    A struct literal was the only constructor typed: a unit struct
+    (`Widget`), a tuple struct (`Pair(1, 2)`), an enum variant
+    (`Shape::Circle(1)`, `Shape::Unit`, `Shape::Rect { .. }`, typed as the
+    enum) and any of them behind `&`/`&mut` left the local untyped, so the
+    name-only fallback picked a same-named method of another type (#3168).
+    """
+    while value.type == cs.TS_RS_REFERENCE_EXPRESSION:
+        inner = value.child_by_field_name(cs.FIELD_VALUE)
+        if inner is None:
+            return None
+        value = inner
+    if value.type == cs.TS_RS_STRUCT_EXPRESSION:
+        # A struct literal names a type whatever its spelling, a turbofish
+        # (`Point::<u32> { .. }`) included.
+        name = value.child_by_field_name(cs.FIELD_NAME)
+        if name is None:
+            return None
+        return _constructor_path_type(name) or _rust_bare_type_name(
+            name, keep_path=True
+        )
+    if value.type == cs.TS_RS_CALL_EXPRESSION:
+        # A call may build an all-caps tuple struct or variant (`ID(1)`,
+        # `Value::I64(1)`), where a bare `MAX` is a const.
+        path = value.child_by_field_name(cs.FIELD_FUNCTION)
+        if path is None:
+            return None
+        return _constructor_path_type(path, allow_all_upper=True)
+    if value.type in (cs.TS_IDENTIFIER, cs.TS_SCOPED_IDENTIFIER):
+        return _constructor_path_type(value)
+    return None
+
+
+def _constructor_path_type(path: Node, allow_all_upper: bool = False) -> str | None:
+    # `Point` / `Self` -> itself; `shapes::Point` -> shapes::Point, keeping
+    # the module path as a declared type does (#2622); `Shape::Circle` (a
+    # type-named qualifier) -> Shape. A lowercase leaf is a function or an
+    # associated fn (`Type::new`), typed from its return type elsewhere.
+    if path.type in (cs.TS_IDENTIFIER, cs.TS_TYPE_IDENTIFIER):
+        text = safe_decode_text(path)
+        return text if text and _is_type_like(text, allow_all_upper) else None
+    if path.type in cs.RS_GENERIC_CONSTRUCTOR_PATHS:
+        # Type arguments do not change which type is built: `Tree::<u8>`.
+        inner = path.child_by_field_name(
+            cs.FIELD_FUNCTION if path.type == cs.TS_GENERIC_FUNCTION else cs.FIELD_TYPE
+        )
+        if inner is None:
+            return None
+        return _constructor_path_type(inner, allow_all_upper)
+    if path.type not in (cs.TS_SCOPED_IDENTIFIER, cs.TS_RS_SCOPED_TYPE_IDENTIFIER):
+        return None
+    leaf = safe_decode_text(path.child_by_field_name(cs.FIELD_NAME))
+    if not leaf or not _is_type_like(leaf, allow_all_upper):
+        return None
+    qualifier = path.child_by_field_name(cs.TS_RS_FIELD_PATH)
+    owner = (
+        _constructor_path_type(qualifier, allow_all_upper)
+        if qualifier is not None
+        else None
+    )
+    return owner or _rust_module_type_path(path) or leaf
+
+
+def is_constructor_guess(type_name: str, segments: list[str]) -> bool:
+    """Whether `type_name` is only what `let x = <segments>(..)` reads as a
+    constructor from its spelling (`Pair(..)`, `Shape::Circle(..)`): a
+    PascalCase function (`Factory::Build()`) is spelled the same, and its
+    declared return type, when known, outranks the guess."""
+    return (
+        0 < len(segments) <= 2
+        and type_name == segments[0]
+        and _is_type_like(segments[-1], allow_all_upper=True)
+    )
+
+
+def _is_type_like(name: str, allow_all_upper: bool = False) -> bool:
+    # UpperCamelCase, the convention for types and variants; SCREAMING_CASE
+    # names a const, not something constructed, unless it is called.
+    return name[0].isupper() and (allow_all_upper or not name.isupper())
+
+
+def _enclosing_impl_type(node: Node) -> str | None:
+    current = node.parent
+    while current is not None:
+        if current.type == cs.TS_RS_IMPL_ITEM:
+            # `impl crate::a::Thing` keeps its path, as a declared local type
+            # does: the bare leaf would be re-read through the file's scope,
+            # where `use crate::b::Thing;` names another type.
+            target = current.child_by_field_name(cs.FIELD_TYPE)
+            if target is None:
+                return None
+            return _rust_bare_type_name(target, keep_path=True)
+        current = current.parent
     return None
 
 
