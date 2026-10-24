@@ -8,9 +8,10 @@ from .languages import SupportedLanguage
 # Optional dependency module name for the dependency guard.
 MODULE_AST_GREP = "ast_grep_py"
 
-# cgr language -> ast-grep language id. scala and dart are intentionally
-# absent: ast-grep ships no grammar for them, so files in those languages
-# are skipped by the tools rather than crashing the Rust binding.
+# cgr language -> ast-grep language id. ast-grep-py parses Scala and Dart
+# too, so a search covers them (issue #2783); SQL is absent because the
+# binding has no grammar for it and panics on one. Structural-tier languages
+# (Ruby, Kotlin, ...) come from their pattern configs' `ast_grep_id`.
 AST_GREP_LANGUAGES: dict[SupportedLanguage, str] = {
     SupportedLanguage.PYTHON: "python",
     SupportedLanguage.JS: "javascript",
@@ -24,6 +25,8 @@ AST_GREP_LANGUAGES: dict[SupportedLanguage, str] = {
     SupportedLanguage.PHP: "php",
     SupportedLanguage.LUA: "lua",
     SupportedLanguage.CSHARP: "csharp",
+    SupportedLanguage.SCALA: "scala",
+    SupportedLanguage.DART: "dart",
 }
 
 # Metavariable tokens in a rewrite template. ast-grep's node.replace() does
@@ -56,6 +59,10 @@ AST_GREP_UNKNOWN_LANGUAGE = (
     "Unknown or unsupported language '{language}'. Supported: {supported}"
 )
 AST_GREP_INVALID_PATTERN = "Invalid ast-grep pattern '{pattern}': {error}"
+# ast-grep's error carries its whole cause chain and a Rust backtrace; the
+# deepest numbered cause before the backtrace is the one that says why.
+AST_GREP_BACKTRACE_MARKER = "Stack backtrace:"
+AST_GREP_CAUSE = re.compile(r"^\s*\d+: (?P<cause>.+)$")
 AST_GREP_TRUNCATED = (
     "Result cap of {limit} reached; narrow the pattern or raise the limit for more."
 )

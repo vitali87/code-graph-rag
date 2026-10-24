@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import importlib.util
-from collections.abc import Sequence
+from functools import cache
 
+from loguru import logger
+
+from codebase_rag import exceptions as ex
 from codebase_rag.constants import (
     MODULE_AST_GREP,
     MODULE_PYMILVUS,
     MODULE_QDRANT_CLIENT,
+    MODULE_SQLITE_VEC,
     MODULE_TORCH,
     MODULE_TRANSFORMERS,
     UNIXCODER_MODEL,
@@ -41,6 +45,31 @@ def has_pymilvus() -> bool:
     return _check_dependency(MODULE_PYMILVUS)
 
 
+def has_sqlite_vec() -> bool:
+    return _check_dependency(MODULE_SQLITE_VEC)
+
+
+def sqlite_vec_loadable() -> bool:
+    """Whether this Python can load sqlite-vec, which is installed.
+
+    It loads as a SQLite extension, which some Python builds (pyenv's default
+    among them) cannot load. The `sqlite` store is then unavailable, as
+    without the package: semantic search is off rather than failing in every
+    sync and on `--clean`, and the reason is logged once.
+    """
+    from codebase_rag.sqlite_vectors import extensions_loadable
+
+    if extensions_loadable():
+        return True
+    _warn_sqlite_extensions_unsupported()
+    return False
+
+
+@cache
+def _warn_sqlite_extensions_unsupported() -> None:
+    logger.warning(ex.SQLITE_VEC_EXTENSIONS_UNSUPPORTED)
+
+
 def has_ast_grep() -> bool:
     return _check_dependency(MODULE_AST_GREP)
 
@@ -51,6 +80,8 @@ def has_vector_store_dependencies() -> bool:
     backend = settings.VECTOR_STORE_BACKEND
     if backend == VectorStoreBackend.MILVUS:
         return has_pymilvus()
+    if backend == VectorStoreBackend.SQLITE:
+        return has_sqlite_vec() and sqlite_vec_loadable()
     return has_qdrant_client()
 
 
@@ -90,11 +121,3 @@ def has_local_embedding_weights() -> bool:
     except Exception:
         return False
     return True
-
-
-def check_dependencies(required_modules: Sequence[str]) -> bool:
-    return all(_check_dependency(module) for module in required_modules)
-
-
-def get_missing_dependencies(required_modules: Sequence[str]) -> list[str]:
-    return [module for module in required_modules if not _check_dependency(module)]
