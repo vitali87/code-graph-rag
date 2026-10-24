@@ -564,9 +564,12 @@ def test_an_explicit_db_path_keeps_the_embedded_store_and_skips_the_probe(
 
 
 def _settings_from(env_file: Path, monkeypatch: pytest.MonkeyPatch) -> AppConfig:
-    """Settings as a fresh process builds them from its environment and .env."""
-    for name in ("QDRANT_URL", "CGR_VECTOR_STORE_BACKEND"):
-        monkeypatch.delenv(name, raising=False)
+    """Settings as a fresh process builds them from its environment and .env.
+
+    Qdrant is chosen: these are its rules, and it is no longer the default.
+    """
+    monkeypatch.delenv("QDRANT_URL", raising=False)
+    monkeypatch.setenv("CGR_VECTOR_STORE_BACKEND", "qdrant")
     return AppConfig(_env_file=env_file)
 
 
