@@ -63,7 +63,9 @@ fuzz_target!(|data: &[u8]| {
     // `run` returns what the procedure it names returns, for the names
     // `implements` accepts, and None for every other name.
     // Mutant: in lib.rs `run_until`, dispatch ANCESTORS with `false`.
-    // Input: a graph with an edge, and one pair, aborts.
+    // Input (hex): 000040ec0800b500020000000000000000001900ff aborts.
+    // Mutant: in lib.rs `implements`, drop DESCENDANTS. Input: the empty
+    // input aborts.
     let start = pairs.first().map(|&(a, _)| Arg::Int(ids[a]));
     let reach_args: Vec<Arg> = start.into_iter().collect();
     let reach_start = match reach_args.first() {
@@ -207,8 +209,10 @@ fn same_records(a: &[Record], b: &[Record]) -> bool {
 /// one to the earlier one. `scc` returns the same components, by id.
 /// Returns each node's component index.
 ///
-/// Mutant: in lib.rs `tarjan_until`, drop the `low[v] = low[v].min(index[w])`
-/// update. Input: a 3-node cycle 0->1->2->0 aborts.
+/// Mutant: in lib.rs `tarjan_until`, update `low[v]` from `low[v]` in place
+/// of `index[w]`. Input (hex): 00fd040021020000000000000000000000006701023100
+/// aborts. Mutant: in lib.rs `scc_until`, list each component's members
+/// reversed. Input: the same aborts.
 fn check_tarjan(graph: &Graph) -> Vec<usize> {
     let n = graph.ids.len();
     let comps = tarjan(graph);
@@ -251,8 +255,12 @@ fn check_tarjan(graph: &Graph) -> Vec<usize> {
 /// node order, the two ends of an edge share one, and two nodes share one
 /// exactly when an undirected path joins them.
 ///
-/// Mutant: in lib.rs `wcc`, number a component `next + 1`. Input: one node
-/// aborts (its id is 1, not 0).
+/// Mutant: in lib.rs `wcc`, number a component `next + 1`. Input (hex):
+/// 0033000000e6003333332c323637cb aborts. Mutant: make the union a no-op
+/// (`parent[rs.max(rd)] = rs.max(rd)`). Input (hex):
+/// 00fd0400210200000000000000000000003f3000 aborts. Mutant: give every
+/// node the component of root 0. Input (hex):
+/// 00004036fb363600606060606060ffffffffffffff aborts.
 fn check_wcc(graph: &Graph, pairs: &[(usize, usize)]) {
     let records = wcc(graph);
     check_nodes(graph, &records, "wcc");
@@ -316,9 +324,10 @@ fn reach_ids(graph: &Graph, start: Option<i64>, reverse: bool) -> Vec<i64> {
 /// each reaches the other. No start, or one that is not a node, reaches
 /// nothing.
 ///
-/// Mutant: in lib.rs `reach_until`, start with `seen[origin] = true` and
-/// drop the `w != origin` test, so a cycle lists the start. Input: a
-/// self-loop 0->0 and the pair (0, 0) aborts.
+/// Mutant: in lib.rs `reach_until`, drop the `w != origin` test. Input
+/// (hex): e800b501000155000100000018344a5777344a57 aborts. Mutant: build the
+/// reverse adjacency forwards. Input (hex):
+/// 00004014f7ff4f00020000000000000019f8d348d52a aborts.
 fn check_reach(graph: &Graph, pairs: &[(usize, usize)], component: &[usize]) {
     require!(
         reach_ids(graph, None, false).is_empty(),
@@ -365,7 +374,7 @@ fn check_reach(graph: &Graph, pairs: &[(usize, usize)], component: &[usize]) {
 /// return one finite-or-not rank per node, never a crash.
 ///
 /// Mutant: in lib.rs `pagerank_until`, drop `damping * dangling / n` from
-/// `base`. Input: two nodes, no edges, no arguments, aborts.
+/// `base`. Input (hex): 0033000000e6003333332c323636cb aborts.
 fn check_pagerank(graph: &Graph, args: &[Arg]) {
     let records = pagerank(graph, args);
     check_nodes(graph, &records, "pagerank");
@@ -390,8 +399,8 @@ fn check_pagerank(graph: &Graph, args: &[Arg]) {
 /// degree is their sum. The mode is not case-sensitive, and no mode means
 /// undirected.
 ///
-/// Mutant: in lib.rs `degree`, count `counts[d]` for "out". Input: one
-/// edge 0->1 aborts.
+/// Mutant: in lib.rs `degree`, count `counts[d]` for "out". Input (hex):
+/// 00fd0400210200000000000000000000003f3000 aborts.
 fn check_degree(graph: &Graph) {
     let of = |mode: &str| {
         let records = degree(graph, &[Arg::Text(mode.into())]);
@@ -434,8 +443,8 @@ fn check_degree(graph: &Graph) {
 /// through, because no other node has an edge into it or none gets an edge
 /// out of it, scores exactly 0.
 ///
-/// Mutant: in lib.rs `betweenness_until`, drop the `w != s` test. Input:
-/// three nodes and the edge 0->1 aborts (node 0 scores).
+/// Mutant: in lib.rs `betweenness_until`, drop the `w != s` test. Input
+/// (hex): 00fd0400210200000000000000000000003f3000 aborts.
 fn check_betweenness(graph: &Graph) {
     let records = betweenness(graph);
     check_nodes(graph, &records, "betweenness");

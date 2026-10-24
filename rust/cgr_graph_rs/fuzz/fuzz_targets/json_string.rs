@@ -19,14 +19,16 @@ fuzz_target!(|data: &[u8]| {
     let mut out = String::from("[");
     push_string(&mut out, &s);
     // It appends, and keeps what was there.
+    // Mutant: in json_text.rs, replace `out` with the opening quote in
+    // place of pushing it. Input: the empty string aborts.
     require!(
         out.starts_with('['),
         "push_string changed the text before it"
     );
     let literal = &out[1..];
     // `ensure_ascii`: the literal is printable ASCII between two quotes.
-    // Mutant: in json_text.rs, push every character of 0x7f and above as
-    // it is. Input: "é" aborts.
+    // Mutant: in json_text.rs, push each character up to U+00FF as it is.
+    // Input: b4 b4 b4 b4 7f a6 a9 07 aborts (DEL comes out raw).
     require!(
         literal.len() >= 2
             && literal.starts_with('"')
@@ -37,8 +39,10 @@ fuzz_target!(|data: &[u8]| {
     // A JSON parser reads back the same string, and every escape is the
     // one `json.dumps` writes.
     // Mutant: in json_text.rs, push `\u{8}` as `\u0008` in place of `\b`.
-    // Input: "\u{8}" aborts. Mutant: make HEX uppercase. Input: "\n\u{ff}"
-    // aborts.
+    // Input: the byte 08 aborts. Mutant: make HEX uppercase. Input: the
+    // byte c3 (read as U+FFFD) aborts. Mutant: build the low surrogate
+    // from 0xd800. Input: f1 a3 a3 9f aborts. Mutant: push `\r` as `\n`.
+    // Input: the byte 0d aborts.
     match decode(&literal[1..literal.len() - 1]) {
         Ok(decoded) => require!(
             decoded == *s,

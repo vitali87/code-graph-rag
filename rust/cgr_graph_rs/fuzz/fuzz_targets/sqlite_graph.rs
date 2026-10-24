@@ -124,8 +124,8 @@ fuzz_target!(|data: &[u8]| {
     }
     // Graph::load reads the nodes in id order and the edges in id order,
     // keeping each one whose two ends exist.
-    // Mutant: in lib.rs, SQL_EDGES orders by `src`. Input: two batches
-    // that create g->f, then f->g, aborts.
+    // Mutant: in lib.rs, order SQL_EDGES by `src`. Input (hex):
+    // 090084000e0000cdd6aad6252a84 aborts.
     let graph = Graph::load(&conn).expect("Graph::load on the model's database");
     let ids: Vec<i64> = model.nodes.iter().map(|n| n.id).collect();
     let position = |id: i64| ids.binary_search(&id).expect("an edge between nodes");
@@ -166,7 +166,8 @@ fn json_text(s: &str) -> String {
 /// transaction that bumps the graph version once.
 ///
 /// Mutant: in ingest.rs `merge_nodes`, drop the `refresh.execute` call.
-/// Input: a batch whose second row moves the first row's node aborts.
+/// Input (hex): 00002f0701fa aborts. Mutant: make SQL_FIND_NODE find
+/// nothing (`AND 0`). Input (hex): 09dd03 aborts.
 fn node_batch(input: &mut Input, conn: &mut Connection, model: &mut Model) {
     let label = *input.pick(&LABELS);
     let rows = input.below(MAX_ROWS + 1);
@@ -175,7 +176,7 @@ fn node_batch(input: &mut Input, conn: &mut Connection, model: &mut Model) {
         .map(|_| match input.below(6) {
             0 | 1 => None,
             2 | 3 => Some(Patch::Counter(input.byte() as i64)),
-            4 => Some(Patch::Move(input.pick(&KEYS))),
+            4 => Some(Patch::Move(*input.pick(&KEYS))),
             _ => Some(Patch::Malformed),
         })
         .collect();
@@ -265,9 +266,14 @@ fn node_batch(input: &mut Input, conn: &mut Connection, model: &mut Model) {
 /// keys, or creates one; then the SETs run in row order. It returns how
 /// many distinct row indexes matched.
 ///
-/// Mutant: in ingest.rs `merge_relationships`, drop `SQL_FIND_EDGE_ORDER`
-/// from both lookups. Input: a batch creating two `line`-less CALLS edges
-/// f->g with different lines, then a batch without merge keys, aborts.
+/// Mutant: in ingest.rs, find the last match (`ORDER BY id DESC`). Input
+/// (hex):
+///   ae894022ff30002400008585858585858585858585857b788560600b61600700
+///   60db20ee8585767a7a7a858585858585854384767a7a7a850057858585858585
+///   858585858585858500000000a0a8a8a8
+/// aborts. Mutant: return `matched.len()` in place of the distinct count.
+/// Input (hex): 00200b9090a09090909004 aborts. Mutant: look both ends up
+/// in the `from` cache. Input (hex): 60600b60600760cf531d0b aborts.
 fn relationship_batch(input: &mut Input, conn: &mut Connection, model: &mut Model) {
     let from_label = *input.pick(&LABELS);
     let to_label = *input.pick(&LABELS);
@@ -416,8 +422,8 @@ fn line_value(l: usize) -> KeyValue {
 /// the model's changes and bumps the version once; a failure changes
 /// nothing (`check_database` compares after each step).
 ///
-/// Mutant: in ingest.rs `merge_nodes`, run `tx.commit()` before the SETs.
-/// Input: a node batch with a malformed SET aborts.
+/// Mutant: in ingest.rs `merge_nodes`, make the transaction commit when it
+/// is dropped (`DropBehavior::Commit`). Input (hex): 30002f2f2f2f aborts.
 fn settle(succeeded: bool, expected: bool, model: &mut Model, mut want: Model, what: &str) {
     require!(
         succeeded == expected,
@@ -534,12 +540,23 @@ fn render_seeds(seeds: &[Option<i64>]) -> String {
 /// the edges leaving the node, then the ones entering it that are not
 /// self-loops. `to_json` writes the same rows, with each row's path.
 ///
-/// Mutant: in walk.rs `prefetch`, drop the self-loop filter. Input: a
-/// self-loop f->f and a walk from f in both directions aborts.
+/// Mutant: in walk.rs `prefetch`, drop the self-loop filter. Input (hex):
+///   0051514747515151510019510108518051515151515151546020e0e0e0e0e0e0
+///   e0e0e0e0e0e0e0e0e0310000000000ff
+/// aborts, and so does the mutant that sorts edge ids descending in
+/// walk.rs `read`.
+/// Mutant: in walk.rs `walk`, drop the `on_path` test. Input (hex):
+///   090084610000cdd6aad6a6a69999a6a6a6a6a6a6ffa6a6ffffffff00007fffff
+///   03ff00d22323ffffffa6000000302b
+/// aborts. Mutant: in walk.rs `to_json`, write `entry.edge + 1`. Input
+/// (hex):
+///   090084610000cdd6a6a6a6ffa6a6ffffffffff0000007fffeaff2d2323ffffff
+///   a6a6a6a6252b84
+/// aborts.
 fn check_walk(input: &mut Input, conn: &Connection, model: &Model) {
     // Any text: if it parses, its rendering parses to the same seeds.
-    // Mutant: in walk.rs `parse_seeds`, map "null" to Some(0). Input: the
-    // text "[null]" aborts.
+    // Mutant: in walk.rs `parse_seeds`, map "null" to Some(0). Input
+    // (hex): 0b aborts.
     let raw = input.text(16);
     if let Ok(seeds) = parse_seeds(&raw) {
         require!(

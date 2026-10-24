@@ -29,8 +29,8 @@ fuzz_target!(|data: &[u8]| {
     match (&lexed, &parsed) {
         // `parse` lexes first, so a lexer error is the parse error,
         // unchanged.
-        // Mutant: return a SyntaxError at position 0 from `parse` when
-        // tokenize fails. Input: "'" aborts.
+        // Mutant: in parser.rs `parse`, map tokenize's error to an
+        // UnterminatedString at 0. Input: "~" aborts.
         (Err(lexed), _) => require!(
             parsed.as_ref().err() == Some(lexed),
             "tokenize failed with {lexed:?} but parse returned {parsed:?}"
@@ -38,8 +38,10 @@ fuzz_target!(|data: &[u8]| {
         // Once the text lexes, only the grammar can reject it: an error
         // the lexer makes cannot come from the parser, and the position is
         // a character offset into the query, or its end.
-        // Mutant: in parser.rs `statement`, report Unexpected at
-        // `tok.pos + 1`. Input: "MATCH" aborts (position 6 > 5).
+        // Mutant: in parser.rs `Parser::error`, report `tok.pos + 1`.
+        // Input: the empty query aborts (position 1 > 0).
+        // Mutant: in parser.rs, defer deep nesting as `NonAscii`. Input:
+        // "RETURN " then 40 "(", "1" and 40 ")" aborts.
         (Ok(_), Err(error)) => {
             require!(
                 !is_lexer_error(error),
@@ -86,8 +88,10 @@ fn is_lexer_error(error: &Error) -> bool {
 /// spans at least one character, and one `Eof` closes the list at the end.
 /// Each token's span holds what its kind says it does.
 ///
-/// Mutant: in lexer.rs, push the parameter token with `pos: i + 1`.
-/// Input: "$a" aborts (the span no longer starts with `$`).
+/// Mutant: in lexer.rs `tokenize`, end an identifier at `j + 1`. Input:
+/// "d" aborts. Mutant: give a parameter the value `text[i..j]`, its `$`
+/// included. Input: "$" aborts. Mutant: put Eof at `n + 1`. Input: the
+/// empty query aborts.
 fn check_tokens(tokens: &[Token], chars: &[char]) {
     let n = chars.len();
     let (eof, body) = tokens.split_last().expect("tokenize returns at least Eof");
@@ -136,8 +140,9 @@ fn check_tokens(tokens: &[Token], chars: &[char]) {
 /// lexer's `CypherSyntaxError` offset does, and a deferral at the
 /// character Python must judge.
 ///
-/// Mutant: in lexer.rs, report UnexpectedChar at `i + 1`. Input: "#"
-/// aborts.
+/// Mutant: in lexer.rs `tokenize`, report UnexpectedChar at `i + 1`.
+/// Input: "~" aborts. Mutant: in lexer.rs `unicode_escape`, decline at
+/// `at + 1`. Input: "'\u" aborts.
 fn check_lexer_error(error: &Error, chars: &[char]) {
     let at = |i: usize| chars.get(i).copied();
     let ok = match error {
