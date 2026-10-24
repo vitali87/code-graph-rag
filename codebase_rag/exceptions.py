@@ -119,12 +119,14 @@ SQLITE_VECTOR_DIM_MISMATCH = (
     "or re-index with --clean to rebuild the store with the new size."
 )
 SQLITE_VEC_NOT_INSTALLED = (
-    "CGR_VECTOR_STORE_BACKEND=sqlite needs sqlite-vec, which is not installed. "
-    "Install it with `pip install 'code-graph-rag[sqlite-vec]'` (or "
-    "`uv sync --extra sqlite-vec`)."
+    "The sqlite vector store (the default, CGR_VECTOR_STORE_BACKEND=sqlite) "
+    "needs sqlite-vec, which is not installed. Install it with "
+    "`pip install 'code-graph-rag[sqlite-vec]'` (or `uv sync --extra "
+    "sqlite-vec`); the `semantic` extra includes it."
 )
 SQLITE_VEC_EXTENSIONS_UNSUPPORTED = (
-    "CGR_VECTOR_STORE_BACKEND=sqlite loads the sqlite-vec extension, but this "
+    "The sqlite vector store (the default, CGR_VECTOR_STORE_BACKEND=sqlite) "
+    "loads the sqlite-vec extension, but this "
     "Python's sqlite3 module was built without extension loading. Use a Python "
     "that has it (uv-managed Pythons do), or set CGR_VECTOR_STORE_BACKEND=qdrant."
 )
