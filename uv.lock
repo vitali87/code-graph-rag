@@ -436,6 +436,7 @@ name = "code-graph-rag"
 version = "0.3.6"
 source = { editable = "." }
 dependencies = [
+    { name = "certifi" },
     { name = "cgr-graph-rs", marker = "(platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'AMD64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_python_implementation == 'CPython' and sys_platform == 'darwin')" },
     { name = "click" },
     { name = "defusedxml" },
@@ -472,6 +473,7 @@ memgraph = [
     { name = "pymgclient" },
 ]
 milvus = [
+    { name = "grpcio" },
     { name = "pymilvus", extra = ["milvus-lite"] },
 ]
 neo4j = [
@@ -481,6 +483,7 @@ python-semantics = [
     { name = "jedi" },
 ]
 semantic = [
+    { name = "grpcio" },
     { name = "qdrant-client" },
     { name = "sqlite-vec", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or sys_platform == 'darwin'" },
     { name = "torch" },
@@ -551,11 +554,14 @@ rust-wheels = [
 requires-dist = [
     { name = "ast-grep-py", marker = "extra == 'ast-grep'", specifier = ">=0.51.0" },
     { name = "ast-grep-py", marker = "extra == 'test'", specifier = ">=0.51.0" },
+    { name = "certifi", specifier = ">=2026.10.23" },
     { name = "cgr-graph-rs", marker = "(platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'AMD64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_python_implementation == 'CPython' and sys_platform == 'darwin')", directory = "rust/cgr_graph_rs" },
     { name = "click", specifier = ">=8.3.3" },
     { name = "defusedxml", specifier = ">=0.7.1" },
     { name = "diff-match-patch", specifier = ">=20241021" },
     { name = "filelock", marker = "extra == 'test'", specifier = ">=3.12" },
+    { name = "grpcio", marker = "extra == 'milvus'", specifier = ">=1.84.1" },
+    { name = "grpcio", marker = "extra == 'semantic'", specifier = ">=1.84.1" },
     { name = "huggingface-hub", extras = ["hf-xet"], specifier = ">=1.7.2" },
     { name = "jedi", marker = "extra == 'python-semantics'", specifier = ">=0.19" },
     { name = "jedi", marker = "extra == 'test'", specifier = ">=0.19" },
