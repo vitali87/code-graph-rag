@@ -23,16 +23,18 @@
 # `objdump -T` on its libpython reports a maximum requirement of GLIBC_2.9.
 FROM gcr.io/oss-fuzz-base/base-builder-python@sha256:21f6fab17ace4dc76e1c56de91ee95d3d03da021df94b41056ba036f6c6f55e9
 
+# Naming ca-certificates upgrades the base image's CA store to the archive's
+# current release, which drops roots distrusted since the image was built.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends git && \
+    apt-get install -y --no-install-recommends ca-certificates git && \
     rm -rf /var/lib/apt/lists/*
 
 # uv is fetched as a pinned release artifact and checked against the SHA-256
 # its publisher ships, rather than by piping https://astral.sh/uv/install.sh
 # into a root shell: that URL is mutable, and the image build runs as root, so
 # a compromised script would get root code execution during CI.
-ARG UV_VERSION=0.12.10
-ARG UV_SHA256=173d95a0c32d18c896c46ba6fafbf3cf9c14ab74b033f81b76c883ef492a976b
+ARG UV_VERSION=0.13.5
+ARG UV_SHA256=f68d291c75783122dad58ab77def0e13f3233f358731db5d6d7e8715603b928f
 RUN curl -fsSLO "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-x86_64-unknown-linux-gnu.tar.gz" && \
     echo "${UV_SHA256}  uv-x86_64-unknown-linux-gnu.tar.gz" | sha256sum -c - && \
     tar -xzf uv-x86_64-unknown-linux-gnu.tar.gz && \
@@ -64,6 +66,12 @@ RUN curl -fsSLO "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/x
 # build.sh use it without either knowing where it came from.
 RUN ln -sf "$(uv python find 3.12)" /usr/local/bin/python3 && \
     python3 --version
+
+# The interpreter's bundled pip may predate the emSign distrust (pip 26.2.2),
+# so the first thing it fetches is pip itself, from a wheel it checks against
+# a pinned SHA-256. The installs below and build.sh's then run on that pip.
+RUN python3 -m pip install --no-cache-dir --break-system-packages \
+        "pip @ https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl#sha256=fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70"
 
 # atheris and pyinstaller belong to the base image's 3.11 and are invisible to
 # 3.12, so install them for the interpreter that will actually freeze the
