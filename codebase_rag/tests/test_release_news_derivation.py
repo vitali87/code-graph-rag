@@ -346,6 +346,7 @@ def _git(cwd: Path, *args: str) -> str:
         check=True,
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
     ).stdout.strip()
 
 
@@ -360,7 +361,7 @@ def _commit(repo: Path, files: dict[str, str]) -> str:
 
 
 def _run_notice(
-    tmp_path: Path, latest: str, labelled: str
+    tmp_path: Path, latest: str, labelled: str, *, released: bool = True
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
     if sys.platform == "win32":
         pytest.skip("the step runs under the Ubuntu runner's bash")
@@ -372,7 +373,8 @@ def _run_notice(
         upstream,
         {"scripts/breaking_notes.py": script, "changes/breaking/10.md": "Old."},
     )
-    _git(upstream, "tag", "v0.1.0")
+    if released:
+        _git(upstream, "tag", "v0.1.0")
     head = _commit(
         upstream,
         {"changes/breaking/10.md": "Old, edited.", "changes/breaking/11.md": "New."},
@@ -400,6 +402,7 @@ def _run_notice(
         },
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         check=False,
     )
     return result, out
@@ -419,4 +422,20 @@ def test_a_malformed_release_tag_fails_the_step(tmp_path: Path) -> None:
     result, out = _run_notice(tmp_path, "v0.1.0 HEAD", "")
     assert result.returncode != 0
     assert "refusing malformed release tag" in result.stdout
+    assert not out.exists()
+
+
+def test_a_first_release_publishes_every_note(tmp_path: Path) -> None:
+    result, out = _run_notice(tmp_path, "", "", released=False)
+    assert result.returncode == 0, result.stderr
+    assert out.read_text("utf-8") == f"{bn.HEADING}\n\nOld, edited.\n\nNew.\n\n"
+
+
+def test_a_failed_release_lookup_fails_the_step(tmp_path: Path) -> None:
+    # "Decide" passes an empty tag when its lookup fails as well as when
+    # nothing was released; read as a first release, the body would repeat
+    # every note ever written.
+    result, out = _run_notice(tmp_path, "", "")
+    assert result.returncode != 0
+    assert "release tags exist" in result.stdout
     assert not out.exists()

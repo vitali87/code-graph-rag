@@ -580,6 +580,13 @@ jobs:
             ADDED=$(git diff --name-only --no-renames --diff-filter=A \
               "refs/tags/${LATEST_TAG}" "$GITHUB_SHA" -- changes/breaking/)
           else
+            # "Decide" passes an empty tag when its lookup fails too. Read as a
+            # first release, that would publish every note ever written.
+            TAGS=$(git ls-remote --tags origin 'refs/tags/v*')
+            if [ -n "$TAGS" ]; then
+              echo "::error::no latest release, but release tags exist"
+              exit 1
+            fi
             ADDED=$(git ls-files -- changes/breaking/)
           fi
           printf '%s\n' "$ADDED" \
