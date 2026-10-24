@@ -40,6 +40,13 @@ pytest_plugins = ["pytester"]
 # list" at INFO into every later child's stderr, which the tests that read a
 # child's exact output catch. Set before any test imports gRPC.
 os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
+# Quieting those handlers did not stop them running in every macOS child
+# between fork and exec, and children there have died without a word: a
+# build-lock holder that never printed, a toolchain probe that exited
+# non-zero, a benchmark child killed by SIGTRAP. Every child the suite spawns
+# execs at once, the case gRPC's fork-support doc says to turn the handlers
+# off for; set to false, gRPC registers none.
+os.environ["GRPC_ENABLE_FORK_SUPPORT"] = "false"
 
 
 class NodeProtocol(Protocol):
@@ -120,6 +127,8 @@ logger.remove()
 # entry per pass, and the import pass logs at WARNING rather than ERROR.
 _PASS_FAILURE_PREFIXES = (
     "Failed to process calls in ",
+    # A caller's local types, contained to that caller (issue #3173).
+    "Failed to infer local types in ",
     "Failed to parse or ingest ",
     "Failed to parse imports in ",
     "Error parsing ",
@@ -326,6 +335,16 @@ def _pin_graph_backend(monkeypatch: pytest.MonkeyPatch) -> None:
     from codebase_rag.graph_dialects import DIALECT_MEMGRAPH
 
     monkeypatch.setattr(settings, "GRAPH_BACKEND", DIALECT_MEMGRAPH)
+
+
+@pytest.fixture(autouse=True)
+def _pin_vector_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Likewise the vector fakes model Qdrant and predate the `sqlite` default,
+    # so they keep that backend; the other backends' tests choose theirs.
+    from codebase_rag.config import settings
+    from codebase_rag.constants import VectorStoreBackend
+
+    monkeypatch.setattr(settings, "VECTOR_STORE_BACKEND", VectorStoreBackend.QDRANT)
 
 
 @pytest.fixture(autouse=True)
