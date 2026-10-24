@@ -277,10 +277,22 @@ jobs:
           BREAKING_PRS=""
           RELEASE_NOW=false
           COUNTING=true
+          # The pull requests in $PULLS labelled "breaking change", which the
+          # release names when they added no notes (issue #3431).
+          breaking_prs() {
+            printf '%s\n' "$PULLS" | awk '
+                $0 == "#pull-request" { number = 1; pr = ""; next }
+                number { number = 0; if ($0 ~ /^#[1-9][0-9]*$/) pr = substr($0, 2); next }
+                $0 == "breaking change" && pr != "" { print pr }'
+          }
           for SHA in $COMMITS; do
+            # A security release ships whatever else the range holds, so once
+            # its bump is settled the rest of the range is read only for the
+            # pull requests the release names.
+            SETTLED=false
             if [ "$SECURITY" = "true" ] &&
                 { [ "$BREAKING" = "true" ] || [ "$COUNTING" = "false" ]; }; then
-              break
+              SETTLED=true
             fi
             # One lookup per commit: "#pull-request" marks each pull request
             # the commit belongs to, followed by its "#<number>" and labels.
@@ -288,6 +300,10 @@ jobs:
                 --jq '.[] | "#pull-request", "#\(.number)", .labels[].name'); then
               echo "::error::could not read the pull request labels of ${SHA}; refusing to decide the release"
               exit 1
+            fi
+            if [ "$SETTLED" = "true" ]; then
+              BREAKING_PRS="${BREAKING_PRS} $(breaking_prs)"
+              continue
             fi
             PARENT=""
             if [ "$COUNTING" = "true" ]; then
@@ -370,14 +386,7 @@ jobs:
               if [ "$COUNTING" = "true" ]; then
                 BREAKING=true
               fi
-              # The release names a labelled pull request that added no notes,
-              # so the numbers go on with the flag (issue #3431). The scan can
-              # stop early on a security release, so this list may be short;
-              # the notes themselves are read in full from changes/breaking/.
-              BREAKING_PRS="${BREAKING_PRS} $(printf '%s\n' "$PULLS" | awk '
-                  $0 == "#pull-request" { number = 1; pr = ""; next }
-                  number { number = 0; if ($0 ~ /^#[1-9][0-9]*$/) pr = substr($0, 2); next }
-                  $0 == "breaking change" && pr != "" { print pr }')"
+              BREAKING_PRS="${BREAKING_PRS} $(breaking_prs)"
             fi
           done
           BREAKING_PRS=$(printf '%s\n' $BREAKING_PRS | sort -un | paste -sd ' ' -)
