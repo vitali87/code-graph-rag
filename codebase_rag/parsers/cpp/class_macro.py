@@ -18,6 +18,7 @@
 from tree_sitter import Node, Parser, QueryCursor, Tree
 
 from ... import constants as cs
+from ...query_predicates import query_captures
 from ..utils import get_cached_query
 from .trailing_annotation import _blank_spans, _damage
 
@@ -31,7 +32,7 @@ def retry_without_class_name_macros(
     spans = sorted(
         {
             (macro.start_byte, macro.end_byte)
-            for specifier in cursor.captures(tree.root_node).get(
+            for specifier in query_captures(cursor, tree.root_node).get(
                 cs.CAPTURE_CPP_MACRO_CLASS, []
             )
             if (macro := _macro_in_place_of_name(specifier)) is not None

@@ -99,6 +99,28 @@ def test_a_truncated_name_is_reported(
     )
 
 
+# The root node starts at the first token, not at byte 0, so a file opening
+# with whitespace has a root whose text is shorter than the file. Probing that
+# text with file offsets reads bytes shifted by the padding.
+LEADING_PADDING = (b"\n", b"\n\n  \n")
+
+
+@pytest.mark.parametrize("lead", LEADING_PADDING, ids=("one_line", "mixed"))
+@pytest.mark.parametrize("language", sorted(TRUNCATING))
+def test_a_truncated_name_is_reported_after_leading_whitespace(
+    parsers_and_queries: tuple[dict, dict], language: str, lead: bytes
+) -> None:
+    filename, clean = TRUNCATING[language]
+    dirty = lead + clean.replace(b"greet", b"gr\xffeet", 1)
+
+    dirty_names, dirty_warnings = _index(parsers_and_queries, filename, dirty)
+
+    assert dirty_warnings, (
+        f"{language}: a truncated name after {lead!r} reached the graph with "
+        f"no warning; indexed {sorted(dirty_names)}"
+    )
+
+
 @pytest.mark.parametrize(
     "identifier",
     ["alpha", "café", "élan", "函数"],
@@ -241,11 +263,12 @@ def test_a_valid_multibyte_character_beside_a_name_is_not_reported(
     The probe is a window the width of the longest UTF-8 sequence, with the
     partial character at the cut edge trimmed before decoding.
     """
-    source = "def alpha\u00a9():\n    return 1\n".encode()
+    for lead in (b"", *LEADING_PADDING):
+        source = lead + "def alpha\u00a9():\n    return 1\n".encode()
 
-    _names, warnings = _index(parsers_and_queries, "a.py", source)
+        _names, warnings = _index(parsers_and_queries, "a.py", source)
 
-    assert not warnings, "false alarm on a valid multi-byte character"
+        assert not warnings, f"false alarm on a valid character after {lead!r}"
 
 
 def test_a_synthesized_name_still_resolves_to_its_source_span(
@@ -319,3 +342,28 @@ def test_the_containment_oracle_cannot_detect_this() -> None:
 
     with pytest.raises(UnicodeDecodeError):
         raw.decode(cs.ENCODING_UTF8)
+
+
+def test_the_probe_buffer_lines_up_with_file_offsets(
+    parsers_and_queries: tuple[dict, dict],
+) -> None:
+    """Node offsets index the FILE, so the probe buffer must be the file's width.
+
+    The padding before the root's first token is whitespace in the file, so it
+    is restored as whitespace: anything else would read as a bad byte beside a
+    name that opens the file.
+    """
+    from codebase_rag.parsers.utils import _node_source_bytes
+
+    parsers, _queries = parsers_and_queries
+    source = b"\n\n  \nx = 1\n"
+    tree = parsers[cs.SupportedLanguage.PYTHON].parse(source)
+    at = source.index(b"1")
+    leaf = tree.root_node.descendant_for_byte_range(at, at + 1)
+    assert tree.root_node.start_byte > 0, "the fixture has no padding to restore"
+
+    buffer = _node_source_bytes(leaf)
+
+    assert buffer is not None
+    assert buffer[leaf.start_byte : leaf.end_byte] == b"1"
+    assert buffer[: tree.root_node.start_byte].isspace()
