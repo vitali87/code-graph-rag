@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -232,3 +233,50 @@ class TestMcpReadFile:
 
     def test_source_is_served(self, registry: MCPToolsRegistry) -> None:
         assert "print" in asyncio.run(registry.read_file("app.py"))
+
+
+@pytest.mark.skipif(shutil.which("rg") is None, reason="ripgrep not installed")
+class TestRecursiveRipgrep:
+    """A ripgrep given no path, or a directory, searches every file below it
+    that is neither hidden nor ignored (Codex review on PR #3471)."""
+
+    @pytest.fixture
+    def tree(self, tmp_path: Path) -> Path:
+        (tmp_path / "certs").mkdir()
+        (tmp_path / "certs" / "server.pem").write_text(f"KEY={SECRET}\n")
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "app.py").write_text("print('hi')\n")
+        return tmp_path
+
+    @pytest.mark.parametrize(
+        "command", ["rg KEY", "rg KEY certs", "rg -n '' certs/", "rg -i KEY ."]
+    )
+    def test_a_search_that_reaches_a_credential_file_is_not_confined(
+        self, tree: Path, command: str
+    ) -> None:
+        assert _noninteractive_denial(command, tree) is not None
+
+    @pytest.mark.parametrize(
+        "command", ["rg KEY src", "rg -g '*.py' KEY", "rg -t py KEY", "rg --files"]
+    )
+    def test_a_search_that_leaves_it_out_stays_confined(
+        self, tree: Path, command: str
+    ) -> None:
+        assert _noninteractive_denial(command, tree) is None
+
+    def test_an_ignored_credential_file_is_not_searched(self, tree: Path) -> None:
+        (tree / ".ignore").write_text("*.pem\n")
+
+        assert _noninteractive_denial("rg KEY", tree) is None
+
+    def test_without_ripgrep_nothing_is_read(
+        self, tree: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        real_which = shutil.which
+        monkeypatch.setattr(
+            shutil,
+            "which",
+            lambda name, *a, **k: None if name == "rg" else real_which(name, *a, **k),
+        )
+
+        assert _noninteractive_denial("rg KEY", tree) is None

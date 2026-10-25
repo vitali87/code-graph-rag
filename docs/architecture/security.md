@@ -269,8 +269,8 @@ chat asks before reading one, and a run with nobody to ask is denied; a shell
 read that names one, or an `rg` with `--hidden`, `-.`, `-u` or
 `--unrestricted`, needs approval the same way. This is a name-based list, not
 secret scanning: a credential pasted into `settings.py` is read like any other
-source, and an `rg` over a directory still searches files that are neither
-hidden nor ignored.
+source. A recursive `rg` (no path, or a directory) is checked against the files
+it would search, as `rg --files` lists them with the same roots and filters.
 
 Commands run with the host user's privileges and inherited environment.
 Working-directory and argument checks are not an OS sandbox. Repository text,

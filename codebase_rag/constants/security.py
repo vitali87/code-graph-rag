@@ -863,6 +863,32 @@ SHELL_RG_HIDDEN_SWITCHES = frozenset({"-.", "-u", "--hidden", "--unrestricted"})
 SHELL_RG_PATTERN_OPTIONS = frozenset({"-e", "--regexp", "-f", "--file"})
 SHELL_CMD_RG = "rg"
 SHELL_STDIN_OPERAND = "-"
+# A recursive ripgrep is checked against the files it would search, listed by
+# `rg --files` with the options that narrow that list (#3457).
+SHELL_RG_LIST_FILES = "--files"
+SHELL_RG_DEFAULT_ROOT = "."
+SHELL_RG_FILE_FILTERS = frozenset(
+    {
+        "-g",
+        "--glob",
+        "--iglob",
+        "--glob-case-insensitive",
+        "-t",
+        "--type",
+        "-T",
+        "--type-not",
+        "--type-add",
+        "--type-clear",
+        "-d",
+        "--max-depth",
+        "--max-filesize",
+        "--ignore-file",
+        "--ignore-file-case-insensitive",
+        "--one-file-system",
+    }
+)
+SHELL_RG_LIST_TIMEOUT_SECONDS = 10
+SHELL_RG_LIST_OK_CODES = frozenset({0, 1})
 
 
 # git subcommands that run a caller-supplied command. `filter-branch

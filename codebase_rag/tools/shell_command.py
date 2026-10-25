@@ -5,6 +5,7 @@ import os
 import re
 import shlex
 import shutil
+import subprocess
 import sys
 import time
 from collections.abc import Callable, Iterator
@@ -2215,7 +2216,58 @@ def _reaches_sensitive_file(parts: list[str], root: Path) -> bool:
     operands = _read_operands(parts, kinds)
     if command == cs.SHELL_CMD_RG and not names & cs.SHELL_RG_PATTERN_OPTIONS:
         operands = operands[1:]
-    return any(is_sensitive_path(root / name) for name in files + operands)
+    if any(is_sensitive_path(root / name) for name in files + operands):
+        return True
+    recurses = not operands or any((root / name).is_dir() for name in operands)
+    return (
+        command == cs.SHELL_CMD_RG
+        and cs.SHELL_RG_LIST_FILES not in names
+        and recurses
+        and _rg_searches_sensitive_file(options, operands, root)
+    )
+
+
+def _rg_searches_sensitive_file(
+    options: list[_ReadOption], roots: list[str], root: Path
+) -> bool:
+    """Whether a ripgrep recursing into `roots` would search a credential file.
+
+    Its file list is asked of ripgrep itself (`rg --files` over the same roots
+    and narrowing filters), so ignore files and globs leave out exactly what
+    the search leaves out: `rg KEY certs/` printed an unignored `server.pem`
+    that `cat certs/server.pem` could not (Codex review on PR #3471).
+    """
+    if (rg := shutil.which(cs.SHELL_CMD_RG)) is None:
+        # Without ripgrep the command cannot run, so it reads nothing.
+        return False
+    filters = [
+        token
+        for option in options
+        if option.name in cs.SHELL_RG_FILE_FILTERS
+        for token in (option.name, option.value)
+        if token
+    ]
+    try:
+        listed = subprocess.run(
+            [
+                rg,
+                cs.SHELL_RG_LIST_FILES,
+                *filters,
+                "--",
+                *(roots or [cs.SHELL_RG_DEFAULT_ROOT]),
+            ],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=cs.SHELL_RG_LIST_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return True
+    # 1 is ripgrep's "nothing found"; anything else is a list we cannot trust.
+    if listed.returncode not in cs.SHELL_RG_LIST_OK_CODES:
+        return True
+    return any(is_sensitive_path(root / name) for name in listed.stdout.splitlines())
 
 
 def _read_operands(parts: list[str], kinds: dict[str, cs.ReadOptionKind]) -> list[str]:
