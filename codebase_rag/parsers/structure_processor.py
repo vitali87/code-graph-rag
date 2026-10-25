@@ -207,6 +207,12 @@ class StructureProcessor:
         reports in place of one line per directory (issue #2398).
         """
         directories = self._directories_to_derive(only)
+        if only is None:
+            # The whole map is re-derived, so it holds only what this walk
+            # admits. A reused updater otherwise kept a directory its walk had
+            # since stopped admitting (excluded, no longer rescued, a link),
+            # and the prune read its Folder as still in the tree (#2884).
+            self.structural_elements.clear()
         package_indicators = self.package_indicator_names()
 
         packages = folders = 0
