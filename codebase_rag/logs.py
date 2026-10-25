@@ -401,7 +401,8 @@ CGR_INSTRUCTIONS_LOADED = "Loaded project instructions from {path} ({chars} char
 CGR_INSTRUCTIONS_READ_FAILED = "Failed to read project instructions {path}: {error}"
 CGR_INSTRUCTIONS_UNAPPROVED = (
     "Skipped {path}: its current content has not been approved. Approve it in an "
-    "interactive session (cgr start), or set CGR_TRUST_PROJECT_INSTRUCTIONS=true"
+    "interactive session (cgr start), or export CGR_TRUST_PROJECT_INSTRUCTIONS=true "
+    "(a .env file cannot set it)"
 )
 CGR_INSTRUCTIONS_STORE_UNREADABLE = (
     "Ignoring unreadable instruction approvals {path}: {error}"

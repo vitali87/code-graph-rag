@@ -776,11 +776,26 @@ def load_settings(
     itself, so such a variable is refused here too, with that message alone.
     """
     held_back = unset or {}
+    # A waiver of a safeguard against the repository's own content counts only
+    # when the user exported it: `.env` in the working directory is usually the
+    # analysed repository's file, and could approve its own .cgr.md (Codex
+    # review on PR #3471). Held at its default, silently, like an unset one.
+    exported = {name.upper() for name in inherited_env}
+    waivers = {
+        name for name in cs.ENVIRONMENT_ONLY_SETTINGS if name.upper() not in exported
+    }
     try:
-        return AppConfig(**_defaults_for(held_back)), tuple(held_back.values())
+        return (
+            AppConfig(**_defaults_for({*held_back, *waivers})),
+            tuple(held_back.values()),
+        )
     except ValidationError as error:
         refusals = error.errors(include_url=False)
-    refused = {*held_back, *(str(refusal["loc"][0]) for refusal in refusals)}
+    refused = {
+        *held_back,
+        *waivers,
+        *(str(refusal["loc"][0]) for refusal in refusals),
+    }
     messages = tuple(_describe_refusal(r, inherited_env) for r in refusals)
     return AppConfig(**_defaults_for(refused)), (*held_back.values(), *messages)
 

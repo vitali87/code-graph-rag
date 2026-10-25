@@ -141,8 +141,9 @@ cgr mcp-server --read-only    # or MCP_READ_ONLY=true
 `write_file`, the edit tools, indexing, `annotate`, `delete_project` and
 `wipe_database` are then neither listed nor run: a call by name returns an
 error with `isError: true`. In either mode `read_file` refuses files that look
-like credentials (`.env`, private keys, `.git/config`, ...); set
-`CGR_ALLOW_SENSITIVE_READS=true` to serve them.
+like credentials (`.env`, private keys, `.git/config`, ...); export
+`CGR_ALLOW_SENSITIVE_READS=true` in the server's environment to serve them (a
+`.env` in its working directory cannot set it).
 
 ![A Python MCP client over stdio listing the server's tools and calling list_projects, resolve, callers, get_code_snippet and find_duplicate_code on pallets/itsdangerous](../assets/demos/mcp-server-tools.gif)
 

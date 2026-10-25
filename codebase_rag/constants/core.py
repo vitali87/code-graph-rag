@@ -343,6 +343,11 @@ TRUST_STORE_FILE_MODE = 0o600
 TRUST_STORE_DIR_MODE = 0o700
 # Between ~/.cgr.md and the repository's .cgr.md in the system prompt.
 CGR_INSTRUCTIONS_SEPARATOR = "\n\n---\n\n"
+# Read only from the environment cgr starts with, never from `.env` in the
+# working directory, which usually belongs to the repository being analysed.
+ENVIRONMENT_ONLY_SETTINGS = frozenset(
+    {"CGR_TRUST_PROJECT_INSTRUCTIONS", "CGR_ALLOW_SENSITIVE_READS"}
+)
 # Every file cgr keeps about one checkout. They live in that checkout's
 # directory under CGR_HOME / CGR_STATE_DIRNAME rather than in the working
 # tree, and a copy an older cgr left in the tree is moved there, so a name

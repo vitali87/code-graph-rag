@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -371,3 +372,43 @@ class TestInteractiveApproval:
             main._confirm_repo_instructions(temp_repo)
 
         ask.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("variable", "field"),
+    [
+        ("CGR_TRUST_PROJECT_INSTRUCTIONS", "TRUST_PROJECT_INSTRUCTIONS"),
+        ("CGR_ALLOW_SENSITIVE_READS", "ALLOW_SENSITIVE_READS"),
+    ],
+)
+def test_a_waiver_in_the_working_directorys_dotenv_is_ignored(
+    variable: str, field: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`cgr start` usually runs inside the repository it analyses, so that
+    repository's `.env` must not approve its own .cgr.md."""
+    monkeypatch.delenv(variable, raising=False)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(f"{variable}=true\n", encoding="utf-8")
+
+    loaded, errors = cgr_config.load_settings(frozenset(os.environ))
+
+    assert getattr(loaded, field) is False
+    assert errors == ()
+
+
+@pytest.mark.parametrize(
+    ("variable", "field"),
+    [
+        ("CGR_TRUST_PROJECT_INSTRUCTIONS", "TRUST_PROJECT_INSTRUCTIONS"),
+        ("CGR_ALLOW_SENSITIVE_READS", "ALLOW_SENSITIVE_READS"),
+    ],
+)
+def test_an_exported_waiver_is_honoured(
+    variable: str, field: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(variable, "true")
+
+    loaded, _ = cgr_config.load_settings(frozenset(os.environ))
+
+    assert getattr(loaded, field) is True

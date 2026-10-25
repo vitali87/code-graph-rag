@@ -211,7 +211,7 @@ MCP_READ_PAST_END = "offset {offset} is past the end of {path} ({total} lines)"
 # it, and repository text can ask for it as easily as for source (#3457).
 MCP_READ_SENSITIVE_REFUSED = (
     "{path} looks like a credential file, so it is not served over MCP. "
-    "Set CGR_ALLOW_SENSITIVE_READS=true to serve it."
+    "Export CGR_ALLOW_SENSITIVE_READS=true in the server's environment to serve it."
 )
 # A `path:line` target whose line no source file can reach; sent on, it
 # overflows the 64-bit Bolt integer in the driver.

@@ -247,7 +247,10 @@ and asks, defaulting to no. The approval is a SHA-256 of the content, kept in
 again. Sessions with nobody to ask (`cgr start -a`, MCP `ask_agent`) load it
 only when its current content was approved before.
 `CGR_TRUST_PROJECT_INSTRUCTIONS=true` skips the question for every
-repository; use it only for CI on repositories you control. The prompt tells
+repository; use it only for CI on repositories you control. It counts only when
+exported in the environment cgr starts with: a `.env` in the working directory
+is usually the analysed repository's own file, so it cannot set this, nor
+`CGR_ALLOW_SENSITIVE_READS`. The prompt tells
 the model that these instructions cannot grant permissions or skip approvals,
 but approval of the file, not that wording, is the control: GHSA-2rr7-8xrw-gmhr
 was a `.cgr.md` that asked the agent to plant a git backdoor without asking.
