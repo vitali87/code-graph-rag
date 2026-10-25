@@ -35,6 +35,7 @@ from ..types_defs import (
 )
 from ..utils import qn_markers
 from ..utils.path_utils import cached_relative_path
+from ..utils.source_encoding import grammar_bytes
 from .call_resolver import PY_EXTERNAL_TARGET, CallResolver
 from .class_ingest.identity import build_nested_qualified_name_for_class
 from .cpp import local_types as cpp_local_types
@@ -3152,7 +3153,7 @@ class CallProcessor:
         # The module runs the DDL, so it is the caller, as for a CHECK
         # constraint's `invocation`. The site is the routine's name in the
         # clause; no node spans it when the statement did not parse.
-        text = root_node.text
+        text = self._sql_source_as_written(root_node)
         if not text:
             return
         self._site_node = None
@@ -3163,6 +3164,22 @@ class CallProcessor:
             self._link_sql_routine(
                 module_qn, module_spec, reference.name, reference.site
             )
+
+    def _sql_source_as_written(self, root_node: Node) -> bytes | None:
+        # The tree's own text can be the statement-isolated re-parse's copy,
+        # which blanks every statement the grammar cannot read on its own
+        # (#3180), and most DDL that names a routine is such a statement. The
+        # copy keeps every offset, so the file as the grammar read it lines
+        # up with the tree; the tree's text is the fallback only when the
+        # file is gone.
+        path = self._call_file
+        if path is not None:
+            try:
+                source = path.read_bytes()
+            except OSError:
+                return root_node.text
+            return grammar_bytes(source, cs.SupportedLanguage.SQL, path)
+        return root_node.text
 
     @_site_scoped
     def _ingest_java_enum_constant_ctor_calls(
