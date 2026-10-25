@@ -2,7 +2,7 @@ import os
 import posixpath
 import re
 import tomllib
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Collection, Iterator, Mapping, Sequence
 from functools import lru_cache
 from pathlib import Path
 from typing import NamedTuple
@@ -1081,6 +1081,7 @@ class ImportProcessor:
         "import_mapping",
         "csharp_static_imports",
         "csharp_global_static_imports",
+        "csharp_global_usings",
         "java_static_imports",
         "commonjs_direct_exports",
         "conditional_imports",
@@ -1116,6 +1117,7 @@ class ImportProcessor:
         "_inferred_module_imports",
         "_csharp_module_namespaces",
         "_csharp_module_identifiers",
+        "_csharp_recovered_usings",
         "_cpp_declaration_mappings",
         "_cpp_shadowed_include_targets",
         "_dart_packages",
@@ -1197,6 +1199,9 @@ class ImportProcessor:
         # compilation. Keyed by the DECLARING module, so a re-parse or a
         # removal of that file drops exactly its own directives.
         self.csharp_global_static_imports: dict[str, set[str]] = {}
+        # `global using N;` puts N's extension methods in scope in every file
+        # of the compilation; keyed by the declaring module as above.
+        self.csharp_global_usings: dict[str, set[str]] = {}
         # Java `import static` brings a class's static MEMBERS into bare-call
         # scope. import_mapping keys `import static C.m;` like a type import,
         # and files `import static C.*;` (members of CLASS C) under the same
@@ -1268,6 +1273,9 @@ class ImportProcessor:
         self._inferred_module_imports: dict[str, set[str]] = {}
         self._csharp_module_namespaces: dict[str, dict[str, set[str]]] = {}
         self._csharp_module_identifiers: dict[str, frozenset[str]] = {}
+        # An unchanged C# file's `using`s, as `import_mapping` records a
+        # parsed one's, read back for the type names its declarations write.
+        self._csharp_recovered_usings: dict[str, dict[str, str]] = {}
         # Scala packages need not mirror directories (issue #2450): each
         # file's package clauses, scanned when it is parsed, say which
         # modules declare a package an import names.
@@ -1663,6 +1671,7 @@ class ImportProcessor:
         self._scala_block_imports.pop(module_qn, None)
         self.csharp_static_imports.pop(module_qn, None)
         self.csharp_global_static_imports.pop(module_qn, None)
+        self.csharp_global_usings.pop(module_qn, None)
         self.java_static_imports.pop(module_qn, None)
         self._julia_scope_map_keys.pop(module_qn, None)
         # Cleared with the mapping it shadows: these entries ADD edges, so a
@@ -1796,6 +1805,7 @@ class ImportProcessor:
         # longer makes (issue #1347).
         self._inferred_module_imports.pop(module_qn, None)
         if language == cs.SupportedLanguage.CSHARP:
+            self._csharp_recovered_usings.pop(module_qn, None)
             self._csharp_module_namespaces[module_qn] = self._collect_csharp_namespaces(
                 root_node
             )
@@ -2066,10 +2076,18 @@ class ImportProcessor:
         # would rebuild edges a clean rebuild of the same tree never emits.
         self._csharp_module_namespaces.pop(module_qn, None)
         self._csharp_module_identifiers.pop(module_qn, None)
+        self._csharp_recovered_usings.pop(module_qn, None)
         self._inferred_module_imports.pop(module_qn, None)
         self.import_mapping.pop(module_qn, None)
         self.csharp_static_imports.pop(module_qn, None)
         self.csharp_global_static_imports.pop(module_qn, None)
+        self.csharp_global_usings.pop(module_qn, None)
+
+    def csharp_declared_namespaces(self, module_qn: str) -> Collection[str] | None:
+        """The namespaces a C# file declares its types in (none for the
+        global namespace); None when the file was not scanned."""
+        declared = self._csharp_module_namespaces.get(module_qn)
+        return None if declared is None else declared.keys()
 
     def requeue_csharp_import_edges(self) -> None:
         """Re-queue every parsed C# module's using entries for a fresh flush.
@@ -2170,7 +2188,45 @@ class ImportProcessor:
             self._csharp_module_identifiers[module_qn] = (
                 self._collect_csharp_identifiers(tree.root_node)
             )
+            self._csharp_recovered_usings[module_qn] = self._collect_csharp_usings(
+                tree.root_node
+            )
             self._collect_csharp_global_static_imports(tree.root_node, module_qn)
+
+    def _collect_csharp_usings(self, root: Node) -> dict[str, str]:
+        # Each `using` a file writes, keyed as `_parse_csharp_imports` keys
+        # a parsed file's in `import_mapping`: its alias, or its path's last
+        # segment.
+        usings: dict[str, str] = {}
+        pending = [root]
+        while pending:
+            node = pending.pop()
+            if node.type != cs.TS_CSHARP_USING_DIRECTIVE:
+                pending.extend(
+                    child
+                    for child in node.children
+                    if child.type == cs.TS_CSHARP_USING_DIRECTIVE
+                    or child.type in cs.CSHARP_USING_HOLDERS
+                )
+                continue
+            parsed = self._csharp_using_target(node)
+            if parsed is None:
+                continue
+            imported_path, alias_node = parsed
+            local_name = (
+                safe_decode_with_fallback(alias_node)
+                if alias_node is not None and alias_node.text
+                else imported_path.split(cs.SEPARATOR_DOT)[-1]
+            )
+            usings[local_name] = imported_path
+        return usings
+
+    def csharp_usings(self, module_qn: str) -> Mapping[str, str]:
+        """A C# file's `using`s by local name: as its parse recorded them,
+        or, for a file this run did not parse, as its source writes them."""
+        return self.import_mapping.get(module_qn) or self._csharp_recovered_usings.get(
+            module_qn, {}
+        )
 
     def _emit_csharp_internal_imports(
         self,
@@ -5547,6 +5603,26 @@ class ImportProcessor:
                 self._record_csharp_static_import(
                     import_node, module_qn, imported_path, alias_node, global_only=True
                 )
+                self._record_csharp_global_using(
+                    import_node, module_qn, imported_path, alias_node
+                )
+
+    def _record_csharp_global_using(
+        self,
+        import_node: Node,
+        module_qn: str,
+        imported_path: str,
+        alias_node: Node | None,
+    ) -> None:
+        # `global using N;`: a namespace every file of the compilation
+        # imports, whose extension methods are in scope everywhere.
+        modifiers = {child.type for child in import_node.children}
+        if (
+            alias_node is None
+            and cs.TS_CSHARP_GLOBAL in modifiers
+            and cs.TS_CSHARP_STATIC not in modifiers
+        ):
+            self.csharp_global_usings.setdefault(module_qn, set()).add(imported_path)
 
     def _parse_csharp_imports(self, captures: dict, module_qn: str) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
@@ -5562,6 +5638,9 @@ class ImportProcessor:
                 local_name = imported_path.split(cs.SEPARATOR_DOT)[-1]
             self.import_mapping[module_qn][local_name] = imported_path
             self._record_csharp_static_import(
+                import_node, module_qn, imported_path, alias_node
+            )
+            self._record_csharp_global_using(
                 import_node, module_qn, imported_path, alias_node
             )
             self._record_import_site(

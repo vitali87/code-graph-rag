@@ -18,6 +18,11 @@ from tree_sitter import Node
 from .. import constants as cs
 from ..services import IngestorProtocol
 from ..types_defs import CSharpCallShape
+from .csharp.utils import (
+    type_parameter_constraints,
+    type_parameter_names,
+    written_parameter_type,
+)
 from .utils import safe_decode_text
 
 
@@ -454,17 +459,64 @@ def csharp_declared_parameters(func_node: Node) -> list[DeclaredParameter]:
 
 
 def csharp_call_shape(func_node: Node) -> CSharpCallShape:
-    """The arity bounds and staticness C# bare-call binding checks."""
+    """The arity bounds and staticness C# bare-call binding checks, the type
+    parameters a generic method declares, which shadow its class's, and
+    what overload ranking weighs: how each parameter is passed, and whether
+    the method overrides a virtual one."""
     params = csharp_declared_parameters(func_node)
+    modifiers = {
+        safe_decode_text(child)
+        for child in func_node.children
+        if child.type == cs.TS_CSHARP_MODIFIER
+    }
+    modes = csharp_parameter_modes(func_node)
     return CSharpCallShape(
         required=sum(not (p.has_default or p.is_variadic) for p in params),
         variadic=any(p.is_variadic for p in params),
-        is_static=any(
-            child.type == cs.TS_CSHARP_MODIFIER
-            and safe_decode_text(child) == cs.TS_CSHARP_MODIFIER_STATIC
-            for child in func_node.children
+        is_static=cs.TS_CSHARP_MODIFIER_STATIC in modifiers,
+        type_parameters=type_parameter_names(
+            func_node.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE_PARAMETERS)
         ),
+        constraints=type_parameter_constraints(func_node),
+        names=tuple(p.name for p in params),
+        returns=_csharp_return_text(func_node),
+        modes=modes if any(modes) else (),
+        overrides=cs.TS_CSHARP_MODIFIER_OVERRIDE in modifiers,
+        types=tuple(written_parameter_type(p.type_name or "") for p in params),
     )
+
+
+def csharp_parameter_modes(func_node: Node) -> tuple[str, ...]:
+    """How each declared parameter is passed, in declared order: `ref`,
+    `out`, `in` or `ref readonly`, "" by value (a `params` tail is)."""
+    params = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is None:
+        return ()
+    return tuple(
+        _passing_mode(param) if param.type == cs.TS_CSHARP_PARAMETER else ""
+        for param in params.named_children
+        if param.type in (cs.TS_CSHARP_PARAMETER, cs.TS_CSHARP_ARRAY_TYPE)
+    )
+
+
+def _passing_mode(param: Node) -> str:
+    # `ref readonly int x` -> "ref readonly"; `this`, `scoped` say nothing
+    # of how an argument is passed.
+    return " ".join(
+        text
+        for child in param.children
+        if child.type == cs.TS_CSHARP_MODIFIER
+        and (text := safe_decode_text(child) or "") in cs.CSHARP_PASSING_MODIFIERS
+    )
+
+
+def _csharp_return_text(func_node: Node) -> str:
+    # The return type a C# method declares, as written; "" for none (a
+    # constructor, an operator's implicit one).
+    returns = func_node.child_by_field_name(cs.TS_CSHARP_FIELD_RETURNS)
+    if returns is None:
+        returns = func_node.child_by_field_name(cs.FIELD_TYPE)
+    return (safe_decode_text(returns) or "") if returns is not None else ""
 
 
 # --- Lua ---------------------------------------------------------------------

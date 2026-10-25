@@ -91,9 +91,11 @@ def test_a_reparsed_caller_keeps_its_extension_calls(temp_repo: Path) -> None:
         f"{_EXT}.AddMyServices",
         f"{_EXT}.Build",
     }, fresh
-    # `g` is a `Builder<int>`: the generic twin's extension, the `Build`
-    # declared on line 11, never the one for the plain `Builder`.
-    assert (f"{_EXT}.Build(Builder)@11", cs.EdgeResolution.EXACT) in fresh, fresh
+    # `g` is a `Builder<int>`: the generic twin's extension, never the one
+    # for the plain `Builder`. Its signature keeps its type argument, so the
+    # two are told apart by name rather than by a line marker (issue #2619).
+    assert (f"{_EXT}.Build(Builder<T>)", cs.EdgeResolution.EXACT) in fresh, fresh
+    assert f"{_EXT}.Build(Builder)" not in {target for target, _r in fresh}, fresh
 
     _edit(
         root,

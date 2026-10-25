@@ -545,11 +545,31 @@ class JavaMethodReferenceParts(NamedTuple):
 class CSharpCallShape(NamedTuple):
     """How a C# method may be called: the arguments every call must pass
     (parameters with neither a default nor `params`), whether a `params`
-    tail takes extra arguments, and whether it is static."""
+    tail takes extra arguments, whether it is static, and the type
+    parameters it declares itself (`M<T, U>` -> ("T", "U"))."""
 
     required: int
     variadic: bool
     is_static: bool
+    type_parameters: tuple[str, ...] = ()
+    # (type parameter, type it is constrained to), one per type written in
+    # a `where` clause: `where T : Person` -> (("T", "Person"),).
+    constraints: tuple[tuple[str, str], ...] = ()
+    # The parameters' names, in declared order, which a named argument binds
+    # by (`M(y: 1)`); empty when not known.
+    names: tuple[str, ...] = ()
+    # The return type as written (`Widget[]`, `List<Widget>`), "" for none.
+    returns: str = ""
+    # How each parameter is passed, in declared order ("ref", "out", "in",
+    # "ref readonly", "" by value); empty when every one is by value.
+    modes: tuple[str, ...] = ()
+    # Whether it overrides a base's virtual method (`override`), which it
+    # stands for in overload resolution.
+    overrides: bool = False
+    # The parameters' types as written, in declared order, a trailing `?`
+    # kept (`T?`, `Point?`), which the qn's signature drops; empty when not
+    # known.
+    types: tuple[str, ...] = ()
 
 
 class JavaStaticImport(NamedTuple):
@@ -1146,6 +1166,39 @@ class RustTraitImpl(NamedTuple):
     method_qns: list[str]
 
 
+class CSharpGenericBase(NamedTuple):
+    """A base written with type arguments: `Inline<Person>` is
+    ("Inline", ("Person",)); the arity is the argument count."""
+
+    name: str
+    arguments: tuple[str, ...]
+
+
+class CSharpGenericShape(NamedTuple):
+    """What a C# type contributes to substituting type arguments down its
+    hierarchy: its own type parameters (`T` of `Validator<T>`) and the
+    arguments it passes to each generic base (issue #2619). For inferring
+    a method's type parameters from it (PR 2814 review), an interface's
+    parameters' variances (`out`, `in` or "" each, empty when none varies)
+    and whether it is a value type (a struct or a `record struct`), whose
+    type arguments never vary. For judging a `where` clause, every base its
+    base list writes, as written (`Shape`, `IThing<int>`): with them, what
+    a type implements is known, interfaces included. For what indexing a
+    value of the type gives, each indexer it declares, as its return type
+    and parameter types are written (`Right=>int`)."""
+
+    parameters: tuple[str, ...]
+    bases: tuple[CSharpGenericBase, ...]
+    variances: tuple[str, ...] = ()
+    value_type: bool = False
+    base_types: tuple[str, ...] = ()
+    indexers: tuple[str, ...] = ()
+    # (type parameter, type or kind it is constrained to), as a method's
+    # `where` clauses are (`CSharpCallShape.constraints`): what a `?` on one
+    # of its type parameters means follows from them.
+    constraints: tuple[tuple[str, str], ...] = ()
+
+
 class PendingTypeFact(NamedTuple):
     """A definition whose annotations still need resolving into edges (#1527)."""
 
@@ -1399,7 +1452,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.CLASS,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, generic_arity: int?, non_method_members: list[string]?, type_checking_only: boolean?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, generic_arity: int?, non_method_members: list[string]?, type_checking_only: boolean?, type_parameters: list[string]?, type_constraints: list[string]?, generic_bases: list[string]?, value_type: boolean?, base_types: list[string]?, indexer_types: list[string]?, field_types: list[string]?}",
     ),
     NodeSchema(
         NodeLabel.FUNCTION,
@@ -1407,11 +1460,11 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.METHOD,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, member_aliases: list[string]?, overrides_external: boolean?, is_program_main: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, signature: string?, declared_in_class: boolean?, extension_receiver: string?, extension_namespace: string?, extension_receiver_arity: int?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, member_aliases: list[string]?, overrides_external: boolean?, is_program_main: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, signature: string?, declared_in_class: boolean?, extension_receiver: string?, extension_namespace: string?, extension_receiver_arity: int?, type_parameters: list[string]?, type_constraints: list[string]?, implicit_conversion: list[string]?, parameter_modes: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
     ),
     NodeSchema(
         NodeLabel.INTERFACE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, generic_arity: int?, embeds: list[string]?, implementers_unknown: string?}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, decorated_start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, anchor_hash: string?, namespace: string?, generic_arity: int?, type_parameters: list[string]?, type_constraints: list[string]?, type_parameter_variances: list[string]?, generic_bases: list[string]?, base_types: list[string]?, indexer_types: list[string]?, field_types: list[string]?, embeds: list[string]?, implementers_unknown: string?}",
     ),
     NodeSchema(
         NodeLabel.ENUM,

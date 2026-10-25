@@ -40,6 +40,7 @@ from .interface_skip import (
 )
 from .language_spec import (
     LANGUAGE_FQN_SPECS,
+    csharp_module_qn_from_graph,
     csharp_namespaced_from_graph,
     csharp_partial_key_from_graph,
     get_language_for_extension,
@@ -56,7 +57,9 @@ from .parsers.cpp_frontend import (
     cpp_frontend_available,
     find_compile_commands,
 )
+from .parsers.csharp import graph_facts as csharp_graph_facts
 from .parsers.csharp import utils as csharp_utils
+from .parsers.csharp.overloads import Scope
 from .parsers.csharp_frontend import find_csharp_project
 from .parsers.definition_processor import DefinitionProcessor
 from .parsers.document_tier import DocumentTier, broken_link_keys
@@ -1498,12 +1501,38 @@ def _added_and_modified_entries(
     return added_entries, modified_entries
 
 
+def _restore_csharp_method_facts(
+    processor: DefinitionProcessor, qn: str, row: ResultRow
+) -> None:
+    # An unchanged C# method's call shape, generic-ness and implicit
+    # conversion, as `_record_ingested_method` records them at a parse.
+    if (shape := csharp_graph_facts.method_call_shape(row)) is not None:
+        processor.csharp_call_shapes[qn] = shape
+        if shape.type_parameters:
+            processor.csharp_generic_methods.add(qn)
+    if (conversion := csharp_graph_facts.method_conversion(row)) is not None:
+        class_qn = qn.split(cs.CHAR_PAREN_OPEN, 1)[0].rpartition(cs.SEPARATOR_DOT)[0]
+        processor.csharp_implicit_conversions.setdefault(class_qn, []).append(
+            conversion
+        )
+    # What a chained call off it is typed by (`Holder.Get().M()`).
+    if (returned := csharp_graph_facts.method_return_type(row)) is not None:
+        processor.csharp_method_return_types.setdefault(qn, returned)
+
+
 def _drop_class_keyed_entry(
     processor: DefinitionProcessor, owner_module: dict[str, str], qn: str
 ) -> None:
     """Drop one removed class's rows from the class-keyed maps."""
     processor.class_inheritance.pop(qn, None)
     processor.class_field_types.pop(qn, None)
+    processor.csharp_generic_shapes.pop(qn, None)
+    processor.csharp_implicit_conversions.pop(qn, None)
+    # Parsed classes leave the arity map through #1769's sweep; a class an
+    # incremental run rehydrated has no owner record there.
+    processor.csharp_class_generic_arity.pop(qn, None)
+    # Popped only now: #1769's sweep, which runs first, reads it.
+    processor.csharp_class_owner_module.pop(qn, None)
     # A partial part leaves its group too. The group list is the
     # very list `_csharp_partial_index` holds under the syntactic
     # key, so removing the part there keeps both views in step;
@@ -3011,7 +3040,7 @@ class GraphUpdater:
         self._write_unresolved_references()
 
         self.factory.definition_processor.process_all_method_overrides(
-            self.known_module_paths()
+            self._csharp_type_scopes, self.known_module_paths()
         )
 
         # Deferred endpoint emission: every module is parsed now, so router
@@ -4172,12 +4201,37 @@ class GraphUpdater:
         # back as a plain entry left the incremental graph with a single edge
         # where a clean index has one per definition (issue #2403).
         self.function_registry.restore_variant(qn)
+        self._rehydrate_name_index(qn, row)
+        self._rehydrate_registry_marks(qn, row)
+        self._rehydrate_extension_method(qn, row)
+        # Record the defining file so _is_cpp_defined can language-check
+        # rehydrated candidates (deferred C++ INHERITS resolution runs
+        # after this and must reach bases in UNCHANGED headers).
+        if isinstance(path := row.get(cs.KEY_PATH), str):
+            self._rehydrate_definition_path(node_type, qn, path, row)
+        return True
+
+    def _rehydrate_name_index(self, qn: str, row: ResultRow) -> None:
         # Parsing indexes a definition under its name as well as its qn's
         # last segment, which for `ILog.Info(string)` is not `Info` and for
         # the variant `Limb@6` is not `Limb`; without it a re-parsed caller's
-        # name lookup misses the definition (#3261, #2403).
-        if isinstance(name := row.get(cs.KEY_NAME), str) and name:
-            self.function_registry.index_name(qn, name)
+        # name lookup misses the definition (#3261, #2403). A C#
+        # explicit interface implementation is left out, as a parse leaves it
+        # out (issue #2619): only its interface's receiver reaches it, and its
+        # qn (`Runner.IRun#Go(int)`) says it is one (CodeRabbit, PR 2814).
+        name = row.get(cs.KEY_NAME)
+        if not isinstance(name, str) or not name:
+            return
+        path = row.get(cs.KEY_PATH)
+        if (
+            isinstance(path, str)
+            and path.endswith(cs.EXT_CS)
+            and csharp_utils.is_explicit_member_qn(qn)
+        ):
+            return
+        self.function_registry.index_name(qn, name)
+
+    def _rehydrate_registry_marks(self, qn: str, row: ResultRow) -> None:
         # Restore the property-name set for unchanged files: property-dispatch
         # resolution (`obj.prop`) consults it, so a re-parsed file's call to a
         # @property defined elsewhere would otherwise drop.
@@ -4230,6 +4284,8 @@ class GraphUpdater:
         # only its own body can call by that name (issue #2402).
         if row.get(cs.KEY_IS_BODY_SCOPED_NAME):
             self.function_registry.mark_body_scoped_name(qn)
+
+    def _rehydrate_extension_method(self, qn: str, row: ResultRow) -> None:
         # Restore a C# extension method's index entry for unchanged files, or
         # a re-parsed `b.Describe()` finds no extension and gets no edge
         # (issue #3275).
@@ -4243,12 +4299,6 @@ class GraphUpdater:
                 namespace if isinstance(namespace, str) else "",
                 arity if isinstance(arity, int) else 0,
             )
-        # Record the defining file so _is_cpp_defined can language-check
-        # rehydrated candidates (deferred C++ INHERITS resolution runs
-        # after this and must reach bases in UNCHANGED headers).
-        if isinstance(path := row.get(cs.KEY_PATH), str):
-            self._rehydrate_definition_path(node_type, qn, path, row)
-        return True
 
     def _rehydrate_go_method_sets(self, rows: list[ResultRow]) -> None:
         # An unchanged Go file's methods and interfaces still count toward
@@ -4401,6 +4451,8 @@ class GraphUpdater:
             NodeType.METHOD,
         ) and path.endswith(cs.EXT_CS):
             self._rehydrate_csharp_declared_form(qn, path, row)
+        if path.endswith(cs.EXT_CS):
+            self._rehydrate_csharp_ranking_facts(node_type, qn, path, row)
         # Persisted annotations of UNCHANGED definitions rejoin the
         # type-edge queue (issue #1527): a changed file can add the
         # first resolvable type an old annotation names, and MERGE
@@ -4438,6 +4490,40 @@ class GraphUpdater:
             clause := read_package_clause(self.repo_path / path)
         ):
             clauses[module_qn] = clause
+
+    def _csharp_type_scopes(
+        self, type_qn: str, member_parameters: Collection[str]
+    ) -> Scope | None:
+        # Where a C# declaration in `type_qn` resolves the type names it
+        # writes (PR 2814 review); the engine is built only when a C#
+        # override asks.
+        return self.factory.type_inference.csharp_type_inference.scope_of(
+            type_qn, member_parameters
+        )
+
+    def _rehydrate_csharp_ranking_facts(
+        self, node_type: NodeType, qn: str, path: str, row: ResultRow
+    ) -> None:
+        """Restore what C# overload ranking reads of an unchanged definition.
+
+        Only a parse fills these tables, so an edited caller ranked the
+        overloads of an unchanged file without them and bound other
+        overloads than a fresh index did (PR 2814 review).
+        """
+        processor = self.factory.definition_processor
+        if node_type == NodeType.METHOD:
+            _restore_csharp_method_facts(processor, qn, row)
+            return
+        # The file a type's member and operator types resolve in.
+        if module := csharp_module_qn_from_graph(qn, path, self.project_name):
+            processor.csharp_class_owner_module[qn] = module
+        if (shape := csharp_graph_facts.type_shape(row)) is not None:
+            processor.csharp_generic_shapes[qn] = shape
+            if shape.parameters:
+                processor.csharp_class_generic_arity[qn] = len(shape.parameters)
+        # A field's type types a receiver read through it (`Holder.F.M()`).
+        if fields := csharp_graph_facts.type_field_types(row):
+            processor.class_field_types.setdefault(qn, fields)
 
     def _rehydrate_csharp_declared_form(
         self, qn: str, path: str, row: ResultRow
@@ -9280,7 +9366,7 @@ class GraphUpdater:
         self._emit_csharp_query_calls()
         self._write_unresolved_references()
         self.factory.definition_processor.process_all_method_overrides(
-            self.known_module_paths()
+            self._csharp_type_scopes, self.known_module_paths()
         )
         # Endpoints and route registrations, scoped to the re-parsed modules:
         # the project-wide passes would load every route-capable module's

@@ -1,13 +1,18 @@
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from functools import lru_cache
 from types import MappingProxyType
 
 from tree_sitter import Node
 
 from ... import constants as cs
-from ...types_defs import PropertyDict
+from ...types_defs import (
+    CSharpCallShape,
+    CSharpGenericBase,
+    CSharpGenericShape,
+    PropertyDict,
+)
 from ..utils import safe_decode_text
 
 
@@ -182,12 +187,99 @@ def split_type_ref(name: str) -> tuple[str, int]:
     return name, 0
 
 
+def normalize_csharp_type_text(text: str) -> str:
+    """A written type's normalized name (`normalize_csharp_type_name`)."""
+    return _normalize_type_name(text)
+
+
 def normalize_csharp_type_name(type_node: Node) -> str | None:
     # A type node's normalized name (generic-free, nullable-stripped) or
     # None for unnameable types (`void` callers never chain off it, but a
     # void return is recorded harmlessly and simply never resolves).
     text = safe_decode_text(type_node)
     return _normalize_type_name(text) if text else None
+
+
+def written_parameter_type(text: str) -> str:
+    """A parameter's type as overload ranking reads it: as a signature
+    spells it (`signature_type_name`), without a `params` mark, and with the
+    trailing `?` a signature drops kept, since a struct's or a type
+    parameter's `?` may be `Nullable<T>` (`M<T>(T? x) where T : struct`)."""
+    written = text.strip().removeprefix(cs.CSHARP_PARAMS_PREFIX).strip()
+    spelled = signature_type_name(written)
+    if written.endswith(cs.CHAR_QUESTION_MARK) and not spelled.endswith(
+        cs.CHAR_QUESTION_MARK
+    ):
+        return f"{spelled}{cs.CHAR_QUESTION_MARK}"
+    return spelled
+
+
+def signature_type_name(text: str, lifts: Mapping[str, bool] | None = None) -> str:
+    """A type as a method signature spells it: `Ctx< T >?` -> `Ctx<T>`.
+
+    Generic arguments are kept, because `Validate(Ctx<T>)` and
+    `Validate(Ctx)` are two overloads and erasing them made the second a
+    line-suffixed duplicate of the first (issue #2619). They get one
+    canonical spacing so two spellings of a type name one overload. A
+    trailing nullable `?` is dropped as the type maps drop it, except on a
+    known value type: `int?` is `Nullable<int>`, so `F(int)` and `F(int?)`
+    are two overloads (CodeRabbit, PR 2814). `lifts` are the type parameters
+    in scope where the type is written (`nullable_lifts`): a `?` on one is
+    kept as its constraint makes it `Nullable<T>`, whatever type its name
+    also names (`M<String>(String?) where String : struct`; Greptile review
+    of PR 2814).
+    """
+    collapsed = cs.CHAR_SPACE.join(text.split())
+    out: list[str] = []
+    depth = 0
+    for index, char in enumerate(collapsed):
+        if char == cs.CHAR_SPACE:
+            if _drops_signature_space(out, collapsed[index + 1 : index + 2], depth):
+                continue
+        elif char == cs.CHAR_ANGLE_OPEN:
+            depth += 1
+        elif char == cs.CHAR_ANGLE_CLOSE and depth:
+            depth -= 1
+        out.append(char)
+        if char == cs.CHAR_COMMA and depth:
+            out.append(cs.CHAR_SPACE)
+    return _nullable_spelled("".join(out).strip(), lifts)
+
+
+def _nullable_spelled(spelled: str, lifts: Mapping[str, bool] | None) -> str:
+    # `spelled` with its trailing `?` kept only where it makes the type
+    # `Nullable<T>`: on a type parameter in scope as `lifts` say, else on a
+    # known value type.
+    underlying = spelled.rstrip(cs.CHAR_QUESTION_MARK)
+    if underlying == spelled:
+        return underlying
+    lifted = lifts.get(underlying) if lifts is not None else None
+    if lifted is None:
+        lifted = _is_nullable_value_type(underlying)
+    return f"{underlying}{cs.CSHARP_NULLABLE_SUFFIX}" if lifted else underlying
+
+
+def _is_nullable_value_type(underlying: str) -> bool:
+    # A value tuple (`(int, string)?`) or a known value type, however
+    # qualified (`System.Int32?`).
+    if underlying.startswith(cs.CHAR_PAREN_OPEN):
+        return True
+    return (
+        underlying.removeprefix(cs.CSHARP_SYSTEM_PREFIX)
+        in cs.CSHARP_NULLABLE_VALUE_TYPES
+    )
+
+
+def _drops_signature_space(out: list[str], following: str, depth: int) -> bool:
+    # Whether `signature_type_name` leaves out the space between what it has
+    # written so far and `following`, the character after that space.
+    if following == cs.CHAR_ANGLE_OPEN:
+        return True
+    if not depth:
+        return False
+    if out and out[-1] in cs.CSHARP_SIGNATURE_TIGHT_CHARS + cs.CHAR_SPACE:
+        return True
+    return following in cs.CSHARP_SIGNATURE_TIGHT_CHARS
 
 
 def extract_parameter_type_names(method_node: Node) -> list[str]:
@@ -198,6 +290,7 @@ def extract_parameter_type_names(method_node: Node) -> list[str]:
     param_list = method_node.child_by_field_name(cs.FIELD_PARAMETERS)
     if param_list is None:
         return []
+    lifts = lifts_in_scope(method_node)
     types: list[str] = []
     for child in param_list.children:
         type_node: Node | None = None
@@ -207,8 +300,402 @@ def extract_parameter_type_names(method_node: Node) -> list[str]:
             type_node = child
         if type_node is not None and type_node.text:
             if name := safe_decode_text(type_node):
-                types.append(_normalize_type_name(name))
+                types.append(signature_type_name(name, lifts))
     return types
+
+
+def nullable_lifts(
+    names: Iterable[str], constraints: Iterable[tuple[str, str]], lifted: bool
+) -> dict[str, bool]:
+    """Whether a `?` on each of `names`, the type parameters one declaration
+    declares, makes it `Nullable<T>` (True) or only annotates it (False), as
+    its `where` clauses (`constraints`) say: `struct` and `unmanaged` make
+    it `Nullable<T>`, and C# 9 reads a `?` on any other type parameter as an
+    annotation, save in an override or an explicit implementation
+    (`lifted`), where it is `Nullable<T>` short of a `class` or `default`
+    constraint (Greptile review of PR 2814)."""
+    kinds: dict[str, set[str]] = {name: set() for name in names}
+    for name, bound in constraints:
+        if name in kinds:
+            kinds[name].add(bound)
+    return {
+        name: bool(bound & cs.CSHARP_LIFTING_CONSTRAINTS)
+        or (lifted and not bound & cs.CSHARP_ANNOTATING_CONSTRAINTS)
+        for name, bound in kinds.items()
+    }
+
+
+def declared_lifts(declaration: Node) -> dict[str, bool]:
+    """`nullable_lifts` of the type parameters a declaration declares."""
+    names = [
+        name
+        for child in declaration.children
+        if child.type == cs.TS_CSHARP_TYPE_PARAMETER_LIST
+        for name in type_parameter_names(child)
+    ]
+    if not names:
+        return {}
+    return nullable_lifts(
+        names, type_parameter_constraints(declaration), _reads_base_member(declaration)
+    )
+
+
+def _reads_base_member(declaration: Node) -> bool:
+    # Whether a declaration overrides or explicitly implements a member,
+    # whose `T?` C# 9 reads as `Nullable<T>` when nothing else is said.
+    if declaration.type != cs.TS_CSHARP_METHOD_DECLARATION:
+        return False
+    return explicit_interface_name(declaration) is not None or any(
+        child.type == cs.TS_CSHARP_MODIFIER
+        and safe_decode_text(child) == cs.TS_CSHARP_MODIFIER_OVERRIDE
+        for child in declaration.children
+    )
+
+
+def call_shape_lifts(shape: CSharpCallShape | None, method_qn: str) -> dict[str, bool]:
+    """`nullable_lifts` of the type parameters a method declares itself, as
+    its call shape records them; none when the shape is not known."""
+    if shape is None:
+        return {}
+    return nullable_lifts(
+        shape.type_parameters,
+        shape.constraints,
+        shape.overrides or is_explicit_member_qn(method_qn),
+    )
+
+
+def lifts_in_scope(node: Node) -> dict[str, bool]:
+    """`declared_lifts` of every declaration from `node` out, which shadows
+    a type parameter of the same name further out."""
+    found: dict[str, bool] = {}
+    current: Node | None = node
+    while current is not None:
+        if current.type in cs.CSHARP_GENERIC_DECLARATIONS:
+            for name, lifted in declared_lifts(current).items():
+                found.setdefault(name, lifted)
+        current = current.parent
+    return found
+
+
+def explicit_interface_name(member_node: Node) -> str | None:
+    """The interface an explicit implementation names, as written:
+    `int IValidator.Validate(Ctx c)` -> `IValidator`; None for any other
+    member."""
+    for child in member_node.children:
+        if child.type == cs.TS_CSHARP_EXPLICIT_INTERFACE_SPECIFIER:
+            named = child.named_children
+            text = safe_decode_text(named[0]) if named else None
+            return signature_type_name(text) if text else None
+    return None
+
+
+def member_qn_leaf(member_node: Node) -> str | None:
+    """The leaf a C# member registers under when its bare name is not enough.
+
+    Parameters give `Validate(Ctx<T>)`, keeping overloads apart. An explicit
+    interface implementation is prefixed with its interface,
+    `IValidator#Validate(Ctx)`: C# reaches it only through that interface,
+    so it is not an overload of the class's own `Validate` and must not
+    share their name (issue #2619). None for a parameterless member that
+    implements nothing explicitly, whose bare name is its leaf.
+    """
+    name, params = extract_method_signature(member_node)
+    if not name:
+        return None
+    if interface := explicit_interface_name(member_node):
+        separator = cs.CSHARP_EXPLICIT_IMPL_SEPARATOR
+        name = f"{interface.replace(cs.SEPARATOR_DOT, separator)}{separator}{name}"
+    elif not params:
+        return None
+    signature = (
+        f"{cs.CHAR_PAREN_OPEN}{cs.SEPARATOR_COMMA_SPACE.join(params)}{cs.CHAR_PAREN_CLOSE}"
+        if params
+        else ""
+    )
+    return f"{name}{signature}"
+
+
+def _base_type_name(node: Node | None) -> Node | None:
+    # The name a base list entry writes its type arguments on: a qualified
+    # base's last segment, a record's positional base's type.
+    while node is not None and node.type in (
+        cs.TS_CSHARP_QUALIFIED_NAME,
+        cs.TS_CSHARP_PRIMARY_CONSTRUCTOR_BASE_TYPE,
+    ):
+        node = (
+            node.child_by_field_name(cs.FIELD_NAME)
+            if node.type == cs.TS_CSHARP_QUALIFIED_NAME
+            else next(iter(node.named_children), None)
+        )
+    return node
+
+
+def _generic_base(entry: Node, lifts: Mapping[str, bool]) -> CSharpGenericBase | None:
+    # A base list entry that passes type arguments, else None: a plain base
+    # binds no parameter.
+    node = _base_type_name(entry)
+    if node is None or node.type != cs.TS_CSHARP_GENERIC_NAME:
+        return None
+    name_node = next(
+        (c for c in node.children if c.type == cs.TS_CSHARP_IDENTIFIER), None
+    )
+    arg_list = next(
+        (c for c in node.children if c.type == cs.TS_CSHARP_TYPE_ARGUMENT_LIST), None
+    )
+    name = safe_decode_text(name_node) if name_node is not None else None
+    if not name or arg_list is None:
+        return None
+    arguments = tuple(
+        signature_type_name(text, lifts)
+        for arg in arg_list.named_children
+        if (text := safe_decode_text(arg))
+    )
+    return CSharpGenericBase(name, arguments) if arguments else None
+
+
+def type_parameter_constraints(declaration: Node) -> tuple[tuple[str, str], ...]:
+    """(type parameter, type) for each type a declaration's `where` clauses
+    write: `where T : Shape, IThing, new()` -> (("T", "Shape"), ("T",
+    "IThing")). `new()`, `class`, `struct` and the like name no type."""
+    constraints: list[tuple[str, str]] = []
+    for clause in declaration.children:
+        if clause.type != cs.TS_CSHARP_TYPE_PARAMETER_CONSTRAINTS_CLAUSE:
+            continue
+        target = next(
+            (c for c in clause.named_children if c.type == cs.TS_CSHARP_IDENTIFIER),
+            None,
+        )
+        name = safe_decode_text(target) if target is not None else None
+        if name:
+            constraints.extend((name, bound) for bound in _constraint_types(clause))
+    return tuple(constraints)
+
+
+def _constraint_types(clause: Node) -> list[str]:
+    # The types one `where` clause constrains its parameter to, and the
+    # kind it constrains it to (`struct`, `class`, `unmanaged`).
+    types: list[str] = []
+    for constraint in clause.named_children:
+        if constraint.type != cs.TS_CSHARP_TYPE_PARAMETER_CONSTRAINT:
+            continue
+        inner = next(iter(constraint.named_children), None)
+        if inner is None:
+            if kind := _kind_constraint(constraint):
+                types.append(kind)
+            continue
+        if inner.type == cs.TS_CSHARP_CONSTRUCTOR_CONSTRAINT:
+            continue
+        text = safe_decode_text(inner)
+        if text in cs.CSHARP_KIND_CONSTRAINTS:
+            types.append(text)
+        elif text and text not in cs.CSHARP_KEYWORD_CONSTRAINTS:
+            types.append(signature_type_name(text))
+    return types
+
+
+def _kind_constraint(constraint: Node) -> str | None:
+    # The kind a keyword constraint writes: `class?` is `class`.
+    keyword = next(iter(constraint.children), None)
+    text = safe_decode_text(keyword) if keyword is not None else None
+    return text if text in cs.CSHARP_KIND_CONSTRAINTS else None
+
+
+def type_parameter_names(parameter_list: Node | None) -> tuple[str, ...]:
+    """The names a `type_parameter_list` declares: `<[A] T, out U>` ->
+    ("T", "U"); () for no list."""
+    if parameter_list is None:
+        return ()
+    return tuple(
+        name
+        for param in parameter_list.named_children
+        if (name := safe_decode_text(param.child_by_field_name(cs.FIELD_NAME)))
+    )
+
+
+def type_parameter_variances(parameter_list: Node | None) -> tuple[str, ...]:
+    """The variance each parameter of a `type_parameter_list` declares, in
+    order: `<out T, in U, V>` -> ("out", "in", ""). () when none varies, as
+    a class's or a method's never do."""
+    if parameter_list is None:
+        return ()
+    variances = tuple(
+        next((c.type for c in param.children if c.type in cs.CSHARP_VARIANCES), "")
+        for param in parameter_list.named_children
+        if safe_decode_text(param.child_by_field_name(cs.FIELD_NAME))
+    )
+    return variances if any(variances) else ()
+
+
+def is_value_type_declaration(type_node: Node) -> bool:
+    """Whether a type declaration declares a value type: a struct, or a
+    `record struct`, which tree-sitter parses as a record."""
+    if type_node.type == cs.TS_CSHARP_STRUCT_DECLARATION:
+        return True
+    return type_node.type == cs.TS_CSHARP_RECORD_DECLARATION and any(
+        child.type == cs.TS_CSHARP_STRUCT_KEYWORD for child in type_node.children
+    )
+
+
+def generic_shape(type_node: Node) -> CSharpGenericShape | None:
+    """`class PersonValidator : Inline<Person>` -> no parameters and the
+    base `Inline<Person>`; `class Inline<T> : Validator<T>` -> `T` and
+    `Validator<T>`; `interface IBox<out T>` -> `T`, covariant; a struct ->
+    a value type. None for a reference type that takes and passes no type
+    argument, which is most of them."""
+    parameters: list[str] = []
+    variances: tuple[str, ...] = ()
+    entries: list[Node] = []
+    for child in type_node.children:
+        if child.type == cs.TS_CSHARP_TYPE_PARAMETER_LIST:
+            parameters.extend(type_parameter_names(child))
+            variances = type_parameter_variances(child)
+        elif child.type == cs.TS_CSHARP_BASE_LIST:
+            entries.extend(child.named_children)
+    lifts = lifts_in_scope(type_node)
+    bases = tuple(
+        base for entry in entries if (base := _generic_base(entry, lifts)) is not None
+    )
+    # An enum's base list writes its underlying type, which is no base.
+    written = [
+        text
+        for entry in entries
+        if type_node.type != cs.TS_CSHARP_ENUM_DECLARATION
+        and (text := _written_base(entry))
+    ]
+    if (implicit := _implicit_base(type_node, parameters)) is not None:
+        written.append(implicit)
+    value_type = is_value_type_declaration(type_node)
+    indexers = _declared_indexers(type_node)
+    if not (parameters or bases or value_type or written or indexers):
+        return None
+    return CSharpGenericShape(
+        tuple(parameters),
+        bases,
+        variances,
+        value_type,
+        tuple(written),
+        indexers,
+        type_parameter_constraints(type_node),
+    )
+
+
+def _declared_indexers(type_node: Node) -> tuple[str, ...]:
+    # Each indexer the type's body declares, as `indexer_entry` stores it.
+    # Local import: the parameter readers import this module.
+    from ..parameter_nodes import csharp_call_shape
+
+    body = type_node.child_by_field_name(cs.FIELD_BODY)
+    if body is None:
+        return ()
+    indexers: list[str] = []
+    for member in body.named_children:
+        # An explicit interface implementation (`Left IA.this[int i]`) is
+        # reached through the interface alone, never the type's own index.
+        if member.type != cs.TS_CSHARP_INDEXER_DECLARATION or any(
+            child.type == cs.TS_CSHARP_EXPLICIT_INTERFACE_SPECIFIER
+            for child in member.children
+        ):
+            continue
+        returned = safe_decode_text(member.child_by_field_name(cs.FIELD_TYPE))
+        if not returned or member.child_by_field_name(cs.FIELD_PARAMETERS) is None:
+            continue
+        indexers.append(
+            indexer_entry(written_parameter_type(returned), csharp_call_shape(member))
+        )
+    return tuple(indexers)
+
+
+def indexer_entry(returned: str, shape: CSharpCallShape) -> str:
+    """An indexer as a type's shape keeps it: its return type, then each
+    parameter's passing mode, written type and name, the name marked as
+    `positional_params` marks a method's (`b?` defaulted, `...xs` a `params`
+    tail), so a named, defaulted or expanded index binds it as a call's
+    arguments bind a method: `Left this[in int a, string b = "x"]` ->
+    `Left=>in int a, string b?`."""
+    last = len(shape.types) - 1
+    parameters = []
+    for index, (written, name) in enumerate(
+        zip(shape.types, shape.names, strict=False)
+    ):
+        if shape.variadic and index == last:
+            marked = f"{cs.POSITIONAL_REST_PREFIX}{name}"
+        elif index >= shape.required:
+            marked = f"{name}{cs.POSITIONAL_OPTIONAL_SUFFIX}"
+        else:
+            marked = name
+        mode = shape.modes[index] if index < len(shape.modes) else ""
+        parameters.append(" ".join(part for part in (mode, written, marked) if part))
+    return (
+        f"{returned}{cs.CSHARP_STORED_PAIR_SEPARATOR}"
+        f"{cs.SEPARATOR_COMMA_SPACE.join(parameters)}"
+    )
+
+
+def _implicit_base(type_node: Node, parameters: list[str]) -> str | None:
+    # A record's `IEquatable<>` of itself, which no base list writes; None
+    # for any other type.
+    if type_node.type != cs.TS_CSHARP_RECORD_DECLARATION:
+        return None
+    name = safe_decode_text(type_node.child_by_field_name(cs.FIELD_NAME))
+    if not name:
+        return None
+    own = (
+        f"{cs.CHAR_ANGLE_OPEN}{cs.SEPARATOR_COMMA_SPACE.join(parameters)}{cs.CHAR_ANGLE_CLOSE}"
+        if parameters
+        else ""
+    )
+    return f"{cs.CSHARP_RECORD_EQUATABLE}{cs.CHAR_ANGLE_OPEN}{name}{own}{cs.CHAR_ANGLE_CLOSE}"
+
+
+def _written_base(entry: Node) -> str | None:
+    # A base list entry's type as written: a record's positional base
+    # (`Animal(Name)`) by its type alone.
+    if entry.type == cs.TS_CSHARP_PRIMARY_CONSTRUCTOR_BASE_TYPE:
+        entry = next(iter(entry.named_children), entry)
+    text = safe_decode_text(entry)
+    return signature_type_name(text) if text else None
+
+
+def is_explicit_member_qn(qn: str) -> bool:
+    """Whether a C# method qn names an explicit interface implementation:
+    its last segment, cut before the parameter list, spells the interface
+    with `#` (`Runner.IRun#Go(int)`), which no C# identifier holds."""
+    head = qn.split(cs.CHAR_PAREN_OPEN, 1)[0]
+    return cs.CSHARP_EXPLICIT_IMPL_SEPARATOR in head.rpartition(cs.SEPARATOR_DOT)[2]
+
+
+def split_explicit_member(leaf: str) -> tuple[str, str] | None:
+    """(`IValidator`, `Validate(Ctx)`) for the leaf `IValidator#Validate(Ctx)`.
+
+    The interface comes back with its dots restored; None for a leaf that
+    is not an explicit interface implementation.
+    """
+    head, paren, params = leaf.partition(cs.CHAR_PAREN_OPEN)
+    interface, separator, name = head.rpartition(cs.CSHARP_EXPLICIT_IMPL_SEPARATOR)
+    if not (separator and interface and name):
+        return None
+    return (
+        interface.replace(separator, cs.SEPARATOR_DOT),
+        f"{name}{paren}{params}",
+    )
+
+
+def names_interface(written: str, interface_path: str, interface_arity: int) -> bool:
+    """Whether the interface an explicit implementation spells (`IRun`,
+    `B.IRun`, `IRun<T>`) can be the one whose namespace-qualified name is
+    `interface_path` (`B.IRun`).
+
+    Every segment the spelling writes must agree, so `A.IRun.Go` and
+    `B.IRun.Go` on one class stay with their own interfaces (issue #2619),
+    and so must the generic arity.
+    """
+    path = written.rpartition(cs.SEPARATOR_DOUBLE_COLON)[2]
+    segments = strip_generic_arguments(path).split(cs.SEPARATOR_DOT)
+    target = strip_generic_arguments(interface_path).split(cs.SEPARATOR_DOT)
+    return (
+        target[-len(segments) :] == segments
+        and generic_arity_of_type_text(path) == interface_arity
+    )
 
 
 _CSHARP_TYPE_DECLARATIONS = frozenset(
@@ -525,6 +1012,33 @@ def _declared_fields(member: Node) -> list[tuple[str, str]]:
     return declared
 
 
+def member_type_map(type_node: Node) -> dict[str, str]:
+    """{field or property name: type name} of a type declaration: its body's
+    members (`build_field_type_map`) and, for a record, its positional
+    parameters, which are public properties of it."""
+    field_types = build_field_type_map(type_node) or {}
+    if type_node.type == cs.TS_CSHARP_RECORD_DECLARATION:
+        _record_parameter_types(type_node, field_types)
+    return field_types
+
+
+def _record_parameter_types(member_node: Node, field_types: dict[str, str]) -> None:
+    # A record's positional parameters ARE public properties of
+    # the record type; record them as members so receiver typing
+    # and the delegate-invoke gate see them (`Callback();` on a
+    # record param is Action.Invoke, not a first-party call).
+    for pl in member_node.children:
+        if pl.type != cs.TS_CSHARP_PARAMETER_LIST:
+            continue
+        for prm in pl.children:
+            if prm.type != cs.TS_CSHARP_PARAMETER:
+                continue
+            pname = safe_decode_text(prm.child_by_field_name(cs.FIELD_NAME))
+            ptype = safe_decode_text(prm.child_by_field_name(cs.FIELD_TYPE))
+            if pname and ptype:
+                field_types.setdefault(pname, annotate_type_ref(ptype))
+
+
 def build_field_type_map(class_node: Node) -> dict[str, str]:
     # {field-or-property name: type name} for members declared directly on
     # this class body, recorded at ingestion so a receiver typed to a field
@@ -541,6 +1055,28 @@ def build_field_type_map(class_node: Node) -> dict[str, str]:
         elif member.type == cs.TS_CSHARP_FIELD_DECLARATION:
             fields.update(_declared_fields(member))
     return fields
+
+
+def implicit_conversion(method_node: Node) -> tuple[str, str] | None:
+    """(source, target) as written for `implicit operator Target(Source s)`;
+    None for any other member, an `explicit` operator included."""
+    if method_node.type != cs.TS_CSHARP_CONVERSION_OPERATOR_DECLARATION or not any(
+        child.type == cs.TS_CSHARP_IMPLICIT_KEYWORD for child in method_node.children
+    ):
+        return None
+    target = safe_decode_text(method_node.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE))
+    params = method_node.child_by_field_name(cs.FIELD_PARAMETERS)
+    source = next(
+        (
+            safe_decode_text(c.child_by_field_name(cs.FIELD_TYPE))
+            for c in (params.named_children if params is not None else ())
+            if c.type == cs.TS_CSHARP_PARAMETER
+        ),
+        None,
+    )
+    if not (target and source):
+        return None
+    return signature_type_name(source), signature_type_name(target)
 
 
 def _operator_name(method_node: Node) -> str | None:
@@ -696,15 +1232,16 @@ def _binding(node: Node) -> str | None:
 
 
 @lru_cache(maxsize=_SCOPE_CACHE_SIZE)
-def _member_values(member: Node) -> Mapping[str, tuple[Node, ...]]:
+def _member_values(member: Node) -> Mapping[str, tuple[tuple[Node, Node], ...]]:
     """Every value name bound inside one type member, nested types aside,
-    with the nodes it is in scope over: the scope nearest each binder."""
-    scopes: dict[str, list[Node]] = {}
+    with each binder and the node it is in scope over: the scope nearest
+    it."""
+    scopes: dict[str, list[tuple[Node, Node]]] = {}
     stack = [(member, member)]
     while stack:
         node, scope = stack.pop()
         if (name := _binding(node)) is not None:
-            scopes.setdefault(name, []).append(scope)
+            scopes.setdefault(name, []).append((scope, node))
         inner = node if node.type in _VALUE_SCOPES else scope
         stack.extend(
             (child, _child_scope(node, child, inner))
@@ -736,10 +1273,18 @@ def _child_scope(node: Node, child: Node, inner: Node) -> Node:
 
 def _member_binds(member: Node, name: str, site: Node) -> bool:
     """Whether a binder of `name` in `member` is in scope at `site`."""
-    return any(
-        scope.start_byte <= site.start_byte and site.end_byte <= scope.end_byte
-        for scope in _member_values(member).get(name, ())
-    )
+    return _member_binder(member, name, site) is not None
+
+
+def _member_binder(member: Node, name: str, site: Node) -> Node | None:
+    """The binder of `name` in `member` in scope at `site`, the one whose
+    scope is nearest it."""
+    holding = [
+        (scope, binder)
+        for scope, binder in _member_values(member).get(name, ())
+        if scope.start_byte <= site.start_byte and site.end_byte <= scope.end_byte
+    ]
+    return max(holding, key=lambda held: held[0].start_byte)[1] if holding else None
 
 
 def _first_named_child(node: Node, node_type: str) -> Node | None:
@@ -789,22 +1334,37 @@ def _type_values(type_node: Node) -> frozenset[str]:
 
 def binds_value(site: Node, name: str) -> bool:
     """Whether `name` at `site` may name a parameter, local or member value."""
+    current = site.parent
+    while current is not None:
+        if current.type in _TYPE_DECLARATIONS and name in _type_values(current):
+            return True
+        current = current.parent
+    return binds_local(site, name)
+
+
+def binds_local(site: Node, name: str) -> bool:
+    """Whether `name` at `site` may name a parameter or local in scope there:
+    of the type member holding it, or a top-level statement's."""
+    return local_binder(site, name) is not None
+
+
+def local_binder(site: Node, name: str) -> Node | None:
+    """The binder of the parameter or local `name` in scope at `site`, of
+    the type member holding it or a top-level statement's; None when none
+    is."""
     child: Node = site
     current = site.parent
     top_level = False
     while current is not None:
-        if current.type in _TYPE_DECLARATIONS:
-            if name in _type_values(current):
-                return True
-        elif (
+        if (
             current.type == cs.TS_CSHARP_DECLARATION_LIST
             and child.type not in _TYPE_DECLARATIONS
             and current.parent is not None
             and current.parent.type in _TYPE_DECLARATIONS
-            and _member_binds(child, name, site)
+            and (binder := _member_binder(child, name, site)) is not None
         ):
-            return True
+            return binder
         top_level = top_level or current.type == cs.TS_CSHARP_GLOBAL_STATEMENT
         child, current = current, current.parent
     # Top-level statements share their outermost locals across the file.
-    return top_level and _member_binds(child, name, site)
+    return _member_binder(child, name, site) if top_level else None

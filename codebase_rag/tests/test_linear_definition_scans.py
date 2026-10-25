@@ -31,7 +31,13 @@ from tree_sitter import Node
 
 from codebase_rag import constants as cs
 from codebase_rag import function_registry
-from codebase_rag.parsers import call_processor, definition_docstring, export_detection
+from codebase_rag.parsers import (
+    call_processor,
+    call_resolver,
+    definition_docstring,
+    export_detection,
+)
+from codebase_rag.parsers.class_ingest import method_override
 from codebase_rag.parsers.csharp import type_inference as cs_type_inference
 from codebase_rag.parsers.java import variable_analyzer
 from codebase_rag.parsers.js_ts import type_inference as js_type_inference
@@ -307,6 +313,66 @@ def test_csharp_bare_call_lookup_is_linear_in_class_members(
     expected = {f"large.Big.N.Big.Handle{i}" for i in range(LARGE)}
     missing = expected - _calls_targets(mock_ingestor)
     assert not missing, f"bare calls lost their method: {sorted(missing)[:5]}"
+
+
+def _csharp_override_source(n: int) -> dict[str, str]:
+    base = "".join(f"    public virtual void M{i}(int x) {{ }}\n" for i in range(n))
+    derived = "".join(f"    public override void M{i}(int x) {{ }}\n" for i in range(n))
+    return {
+        "Big.cs": (
+            "namespace N {\n  public class Base {\n"
+            f"{base}  }}\n  public class Derived : Base {{\n{derived}  }}\n}}\n"
+        )
+    }
+
+
+def test_csharp_override_matching_is_linear_in_base_members(
+    tmp_path: Path, mock_ingestor: MagicMock
+) -> None:
+    """PR 2814 on #2453's indexes: pairing each C# method with its base's
+    members enumerated every member of the base, per method."""
+    scan = _Scan(
+        _csharp_override_source, "c_sharp", (method_override, function_registry)
+    )
+    small, large = _growth(tmp_path, scan, mock_ingestor)
+    _assert_linear(small, large, "C# override matching")
+    linked = {
+        (str(c.args[0][2]), str(c.args[2][2]))
+        for c in get_relationships(mock_ingestor, "OVERRIDES")
+    }
+    assert len(linked) == LARGE, sorted(linked)[:5]
+
+
+def _csharp_explicit_source(n: int) -> dict[str, str]:
+    members = "".join(f"    void M{i}(int x);\n" for i in range(n))
+    bodies = "".join(f"    void IRun.M{i}(int x) {{ }}\n" for i in range(n))
+    calls = "".join(f"      r.M{i}(1);\n" for i in range(n))
+    return {
+        "Big.cs": (
+            f"namespace N {{\n  public interface IRun {{\n{members}  }}\n"
+            f"  public class Runner : IRun {{\n{bodies}  }}\n"
+            f"  public class Use {{\n    public void Go(IRun r) {{\n{calls}"
+            "    }\n  }\n}\n"
+        )
+    }
+
+
+def test_csharp_explicit_body_lookup_is_linear_in_implementer_members(
+    tmp_path: Path, mock_ingestor: MagicMock
+) -> None:
+    """PR 2814 on #2453's indexes: each interface-typed call looked for the
+    sole implementer's explicit body among every member it declares."""
+    scan = _Scan(
+        _csharp_explicit_source,
+        "c_sharp",
+        (call_resolver,),
+        functions=frozenset({"_explicit_members", "_explicit_implementation"}),
+    )
+    small, large = _growth(tmp_path, scan, mock_ingestor)
+    _assert_linear(small, large, "C# explicit-body lookup")
+    expected = {f"large.Big.N.Runner.IRun#M{i}(int)" for i in range(LARGE)}
+    missing = expected - _calls_targets(mock_ingestor)
+    assert not missing, f"explicit bodies lost: {sorted(missing)[:5]}"
 
 
 def test_method_call_ownership_is_linear_in_class_methods(

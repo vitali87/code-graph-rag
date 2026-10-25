@@ -77,6 +77,15 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     "Module": frozenset(
         {"absolute_path", "broken_links", "interface_fingerprint", "php_namespace"}
     ),
+    # `type_parameters`, `type_constraints`, `generic_bases`, `base_types`,
+    # `indexer_types` and `field_types` on a C# type, its interface's
+    # `type_parameter_variances`,
+    # a struct's `value_type`, and
+    # `type_parameters`, `type_constraints`, `implicit_conversion` and
+    # `parameter_modes` on a C# method (PR 2814 review), are what overload
+    # ranking reads, read back only by an incremental run's rehydration;
+    # absent reads as a non-generic declaration taking every argument by
+    # value, as every run did before them, until the file is next parsed.
     # `decorated_start_line` (issue #2428): a graph round-tripped through
     # protobuf answers `definition` with the span below the decorators,
     # exactly as a graph indexed before the property existed does; the
@@ -94,9 +103,16 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     "Class": frozenset(
         {
             "absolute_path",
+            "base_types",
             "decorated_start_line",
+            "field_types",
+            "generic_bases",
+            "indexer_types",
             "non_method_members",
             "type_checking_only",
+            "type_constraints",
+            "type_parameters",
+            "value_type",
         }
     ),
     "Field": frozenset({"absolute_path"}),
@@ -121,7 +137,11 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
             "extension_namespace",
             "extension_receiver",
             "extension_receiver_arity",
+            "implicit_conversion",
             "member_aliases",
+            "parameter_modes",
+            "type_constraints",
+            "type_parameters",
         }
     ),
     # `embeds` (issue #2483) is read back only by an incremental run's
@@ -129,7 +149,19 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     # whole. A graph round-tripped through protobuf loses it, and an absent
     # list reads as unknown, so the interface gains no implementer by name
     # until its file is parsed again.
-    "Interface": frozenset({"decorated_start_line", "embeds"}),
+    "Interface": frozenset(
+        {
+            "base_types",
+            "decorated_start_line",
+            "embeds",
+            "field_types",
+            "generic_bases",
+            "indexer_types",
+            "type_constraints",
+            "type_parameter_variances",
+            "type_parameters",
+        }
+    ),
     "Enum": frozenset({"decorated_start_line"}),
     "Type": frozenset({"absolute_path", "decorated_start_line"}),
     "Union": frozenset({"absolute_path", "decorated_start_line"}),
