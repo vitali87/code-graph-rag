@@ -35,6 +35,7 @@ from ..types_defs import (
 )
 from ..utils import qn_markers
 from ..utils.path_utils import cached_relative_path
+from ..utils.source_encoding import grammar_bytes
 from .call_resolver import PY_EXTERNAL_TARGET, CallResolver
 from .class_ingest.identity import build_nested_qualified_name_for_class
 from .cpp import local_types as cpp_local_types
@@ -3152,7 +3153,7 @@ class CallProcessor:
         # The module runs the DDL, so it is the caller, as for a CHECK
         # constraint's `invocation`. The site is the routine's name in the
         # clause; no node spans it when the statement did not parse.
-        text = root_node.text
+        text = self._sql_source_text(root_node)
         if not text:
             return
         self._site_node = None
@@ -3163,6 +3164,22 @@ class CallProcessor:
             self._link_sql_routine(
                 module_qn, module_spec, reference.name, reference.site
             )
+
+    def _sql_source_text(self, root_node: Node) -> bytes | None:
+        # The file as written, not the tree's text: a statement-isolated
+        # parse (issue #3180) blanks each statement that fails on its own,
+        # and most of the DDL read here is such a statement. That copy keeps
+        # every offset, so the root's span cuts the same text from the file.
+        path = self._call_file
+        if path is None:
+            return root_node.text
+        try:
+            source = grammar_bytes(path.read_bytes(), cs.SupportedLanguage.SQL, path)
+        except OSError:
+            return root_node.text
+        if len(source) < root_node.end_byte:
+            return root_node.text
+        return source[root_node.start_byte : root_node.end_byte]
 
     @_site_scoped
     def _ingest_java_enum_constant_ctor_calls(
