@@ -4198,6 +4198,12 @@ class GraphUpdater:
         # value that only its object reaches (issue #2435).
         if row.get(cs.KEY_IS_OBJECT_MEMBER):
             self.function_registry.mark_object_member(qn)
+        # ...and the binding its object is reached through, or a re-parsed
+        # file's `api.fetchUser()` finds no member in an unchanged file
+        # (issue #2763).
+        binding_qn, key = row.get(cs.KEY_OBJECT_BINDING), row.get(cs.KEY_NAME)
+        if isinstance(binding_qn, str) and isinstance(key, str):
+            self.function_registry.mark_object_binding(qn, binding_qn, key)
         # Restore a C++ member's overload signature for unchanged headers, or
         # a re-parsed out-of-class definition cannot tell which overload it
         # defines and lands every one on the plain-named node (issue #2455).
