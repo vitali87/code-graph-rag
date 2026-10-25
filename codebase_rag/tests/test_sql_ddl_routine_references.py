@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.config import settings
 from codebase_rag.dead_code import collect_dead_code, default_dead_code_config
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -330,8 +331,9 @@ def test_a_routine_added_later_links_the_unchanged_ddl_naming_it(
             "SFUNC = first_sfunc,": "SFUNC = first_fin  ,",
             "CREATE TABLE settings": "CREATE TABLE settingz",
         },
+        {"SFUNC = first_sfunc,": "SFUNC = first_fin  ,"},
     ],
-    ids=["shorter", "same-length"],
+    ids=["shorter", "same-length", "same-length-inside-a-blanked-statement"],
 )
 def test_ddl_edited_after_the_parse_is_not_read_against_the_old_tree(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, edit: dict[str, str]
@@ -356,3 +358,40 @@ def test_ddl_edited_after_the_parse_is_not_read_against_the_old_tree(
         tmp_path / PROJECT, {"routines.sql": _ROUTINES, "wiring.sql": _WIRING}
     )
     assert 5 not in {line for _c, line, _col in _sites(store, "routines.first_fin")}
+
+
+def test_ddl_after_a_leading_blank_line_and_comment_references_its_routine(
+    tmp_path: Path,
+) -> None:
+    # The root starts at the first comment, not at byte 0, so the DDL text
+    # is cut by the root's span from the bytes the file was parsed from.
+    store = _index(
+        tmp_path / PROJECT,
+        {"routines.sql": _ROUTINES, "wiring.sql": "\n-- wiring\n" + _WIRING},
+    )
+    assert 7 in {line for _c, line, _col in _sites(store, "routines.first_sfunc")}
+
+
+def test_an_evicted_tree_reloaded_from_an_edited_file_reads_the_reload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A one-entry cache evicts wiring.sql's tree before the call pass, which
+    # reloads it from disk after the edit below; its DDL must be read from
+    # the bytes of that reload, so the edited SFUNC is the one linked.
+    monkeypatch.setattr(settings, "CACHE_MAX_ENTRIES", 1)
+    edited = _WIRING.replace("SFUNC = first_sfunc,", "SFUNC = first_fin  ,")
+    process = CallProcessor.process_calls_in_file
+
+    def edit_then_process(
+        self: CallProcessor, file_path: Path, *args: Any, **kwargs: Any
+    ) -> None:
+        wiring = file_path.with_name("wiring.sql")
+        if file_path.name == "routines.sql":
+            wiring.write_text(edited, encoding="utf-8")
+        process(self, file_path, *args, **kwargs)
+
+    monkeypatch.setattr(CallProcessor, "process_calls_in_file", edit_then_process)
+    store = _index(
+        tmp_path / PROJECT, {"routines.sql": _ROUTINES, "wiring.sql": _WIRING}
+    )
+    assert 5 in {line for _c, line, _col in _sites(store, "routines.first_fin")}

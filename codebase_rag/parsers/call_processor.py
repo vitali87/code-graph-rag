@@ -35,7 +35,6 @@ from ..types_defs import (
 )
 from ..utils import qn_markers
 from ..utils.path_utils import cached_relative_path
-from ..utils.source_encoding import grammar_bytes
 from .call_resolver import PY_EXTERNAL_TARGET, CallResolver
 from .class_ingest.identity import build_nested_qualified_name_for_class
 from .cpp import local_types as cpp_local_types
@@ -72,7 +71,6 @@ from .rpc_exposure import GoRpcExposureProcessor
 from .rs import utils as rs_utils
 from .scala import utils as scala_utils
 from .sql_ddl import ddl_routine_references
-from .sql_recovery import is_parsed_from
 from .string_call import load_string_call_specs, string_call_target
 from .type_inference import TypeInferenceEngine
 from .utils import (
@@ -2137,6 +2135,7 @@ class CallProcessor:
         "_package_index",
         "_package_index_size",
         "_go_package_names",
+        "_sql_sources",
         "cpp_out_of_class_methods",
         "function_locations",
         "macro_qns",
@@ -2180,6 +2179,7 @@ class CallProcessor:
         macro_qns: set[str] | None = None,
         ast_cache: ASTCacheProtocol | None = None,
         go_package_names: Mapping[str, str] | None = None,
+        sql_sources: Mapping[Path, bytes] | None = None,
         rehydrated_definition_paths: dict[str, str] | None = None,
         rust_function_modules: dict[str, str] | None = None,
         declared_module_qns: set[str] | None = None,
@@ -2210,6 +2210,11 @@ class CallProcessor:
         self._package_index: dict[Path, list[str]] = {}
         self._package_index_size = -1
         self._go_package_names: Mapping[str, str] = go_package_names or {}
+        # The definition pass fills this map after the processor exists, so
+        # it is held as given, never replaced by an empty copy.
+        self._sql_sources: Mapping[Path, bytes] = (
+            sql_sources if sql_sources is not None else {}
+        )
         self.cpp_out_of_class_methods = cpp_out_of_class_methods or {}
         self.function_locations = function_locations or {}
         self.macro_qns = macro_qns if macro_qns is not None else set()
@@ -3170,19 +3175,13 @@ class CallProcessor:
         # The tree's own text can be the statement-isolated re-parse's copy,
         # which blanks every statement the grammar cannot read on its own
         # (#3180), and most DDL that names a routine is such a statement. The
-        # file holds them, and is read only while it is still what this tree
-        # was parsed from: an edit since the parse (mid-sync, or before an
-        # evicted tree is reloaded) would put other text's DDL at this
-        # tree's offsets, so then the tree's text is all there is.
-        text = root_node.text
+        # bytes that tree was parsed from hold them, and the copy keeps every
+        # offset, so the root's span cuts the same text from them.
         path = self._call_file
-        if text is None or path is None:
-            return text
-        try:
-            source = grammar_bytes(path.read_bytes(), cs.SupportedLanguage.SQL, path)
-        except OSError:
-            return text
-        return source if is_parsed_from(text, source) else text
+        source = self._sql_sources.get(path) if path is not None else None
+        if source is None:
+            return root_node.text
+        return source[root_node.start_byte : root_node.end_byte]
 
     @_site_scoped
     def _ingest_java_enum_constant_ctor_calls(

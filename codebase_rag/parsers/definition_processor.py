@@ -130,6 +130,12 @@ class DefinitionProcessor(
         # {go module qn: its `package` clause name}; Go package membership is
         # (directory, clause), so receiver binding needs both.
         self.go_package_names: dict[str, str] = {}
+        # {SQL file: the bytes its tree was parsed from}, kept only where the
+        # tree's text is the statement-isolated copy (issue #3180), which
+        # blanks the DDL the call pass reads routine references from (issue
+        # #3181). Written at every parse, an evicted tree's reload included,
+        # so they always belong to the tree the call pass walks.
+        self.sql_sources: dict[Path, bytes] = {}
         # Each Go file's build constraint, for telling a name each build
         # declares again (`i_linux.go`, `i_windows.go`) from a redeclaration
         # (shared with the call resolver and type inference).
@@ -629,15 +635,23 @@ class DefinitionProcessor(
                 return None
 
             self._handler = get_handler(language)
+            if language == cs.SupportedLanguage.SQL and source_bytes is None:
+                # Read once: the call pass reads DDL from the bytes parsed.
+                source_bytes = file_path.read_bytes()
             parsed = self._parse_file_root(
                 file_path, language, queries, source_bytes, pre_parsed
             )
             if parsed is None:
                 return None
             root_node, pre_combined_captures = parsed
-            if language == cs.SupportedLanguage.SQL:
+            if language == cs.SupportedLanguage.SQL and source_bytes is not None:
                 self._warn_lost_sql_functions(
                     file_path, relative_path_str, root_node, source_bytes
+                )
+                self.keep_sql_source(
+                    file_path,
+                    root_node,
+                    grammar_bytes(source_bytes, language, file_path),
                 )
 
             module_qn = base_module_qn(relative_path, self.project_name)
@@ -794,6 +808,15 @@ class DefinitionProcessor(
             root_node = tree.root_node
             pre_combined_captures = None
         return root_node, pre_combined_captures
+
+    def keep_sql_source(
+        self, file_path: Path, root_node: ASTNode, parsed: bytes
+    ) -> None:
+        """Note the bytes a SQL tree was parsed from, when its text is not them."""
+        if root_node.text == parsed[root_node.start_byte : root_node.end_byte]:
+            self.sql_sources.pop(file_path, None)
+        else:
+            self.sql_sources[file_path] = parsed
 
     @staticmethod
     def _warn_lost_sql_functions(
