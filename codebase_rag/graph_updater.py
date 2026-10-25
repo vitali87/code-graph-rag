@@ -1844,6 +1844,10 @@ class GraphUpdater:
             exclude_paths=self.exclude_paths,
             capture=self.capture,
         )
+        # A file's captures pin its tree, so they leave the moment the AST
+        # cache evicts it; Pass 3 recomputes absent captures from the tree it
+        # re-loads, as it already does after `_load_ast_from_disk` (#2926).
+        self.ast_cache.on_evict = self._forget_evicted_captures
         # Fallback structural tier for languages with no tree-sitter
         # LanguageSpec (e.g. Ruby), driven by ast-grep pattern configs.
         self.ast_grep_tier = AstGrepTier(self._sink, self.repo_path, self.project_name)
@@ -7361,7 +7365,9 @@ class GraphUpdater:
                     self._process_single_file(
                         filepath,
                         file_bytes=file_bytes,
-                        pre_parsed=pre_parsed.get(filepath),
+                        # Popped, not read: a consumed tree is the AST
+                        # cache's to keep or evict from here on.
+                        pre_parsed=pre_parsed.pop(filepath, None),
                     )
                 except Exception as exc:
                     logger.error(ls.INCREMENTAL_FILE_FAILED, path=filepath, error=exc)
@@ -8151,11 +8157,23 @@ class GraphUpdater:
                 repo_path=self.repo_path, capture=self.capture, state_dir=self.state_dir
             )
 
+    def _forget_evicted_captures(self, file_path: Path) -> None:
+        self.factory._func_class_captures_cache.pop(file_path, None)
+
     def _pre_parse_changed_files(
         self,
         changed_entries: list[tuple[Path, str, bool, bytes]],
     ) -> dict[Path, tuple[Node, dict[str, list] | None]]:
+        # Every changed file parses here, before any stale subtree is
+        # deleted, so a parse failure leaves the old graph in place. Only
+        # trees within the AST cache's bounds (entry count AND its memory
+        # measure, source bytes spanned) are KEPT for the loop to consume:
+        # holding all of them pinned every tree of a first index for the
+        # whole pass (microsoft/vscode: OOM at 11.5 GB, issue #2926). The
+        # rest parse again when the loop reaches them.
         result: dict[Path, tuple[Node, dict[str, list] | None]] = {}
+        retain = self.ast_cache.max_entries
+        retained_bytes = 0
         for filepath, _file_key, _is_new, file_bytes in changed_entries:
             language = self._tree_sitter_language(filepath)
             if language is None:
@@ -8172,6 +8190,13 @@ class GraphUpdater:
                 parser, grammar_bytes(file_bytes, language, filepath), language
             )
             root_node = tree.root_node
+            size = root_node.end_byte
+            if (
+                len(result) >= retain
+                or retained_bytes + size > self.ast_cache.max_memory_bytes
+            ):
+                continue
+            retained_bytes += size
             combined_query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language)
             combined_captures: dict[str, list] | None = None
             if combined_query:
