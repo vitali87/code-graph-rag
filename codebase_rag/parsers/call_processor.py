@@ -35,7 +35,6 @@ from ..types_defs import (
 )
 from ..utils import qn_markers
 from ..utils.path_utils import cached_relative_path
-from ..utils.source_encoding import grammar_bytes
 from .call_resolver import PY_EXTERNAL_TARGET, CallResolver
 from .class_ingest.identity import build_nested_qualified_name_for_class
 from .cpp import local_types as cpp_local_types
@@ -2136,6 +2135,7 @@ class CallProcessor:
         "_package_index",
         "_package_index_size",
         "_go_package_names",
+        "_sql_sources",
         "cpp_out_of_class_methods",
         "function_locations",
         "macro_qns",
@@ -2179,6 +2179,7 @@ class CallProcessor:
         macro_qns: set[str] | None = None,
         ast_cache: ASTCacheProtocol | None = None,
         go_package_names: Mapping[str, str] | None = None,
+        sql_sources: Mapping[Path, bytes] | None = None,
         rehydrated_definition_paths: dict[str, str] | None = None,
         rust_function_modules: dict[str, str] | None = None,
         declared_module_qns: set[str] | None = None,
@@ -2209,6 +2210,11 @@ class CallProcessor:
         self._package_index: dict[Path, list[str]] = {}
         self._package_index_size = -1
         self._go_package_names: Mapping[str, str] = go_package_names or {}
+        # The definition pass fills this map after the processor exists, so
+        # it is held as given, never replaced by an empty copy.
+        self._sql_sources: Mapping[Path, bytes] = (
+            sql_sources if sql_sources is not None else {}
+        )
         self.cpp_out_of_class_methods = cpp_out_of_class_methods or {}
         self.function_locations = function_locations or {}
         self.macro_qns = macro_qns if macro_qns is not None else set()
@@ -3153,33 +3159,30 @@ class CallProcessor:
         # The module runs the DDL, so it is the caller, as for a CHECK
         # constraint's `invocation`. The site is the routine's name in the
         # clause; no node spans it when the statement did not parse.
-        text = self._sql_source_text(root_node)
+        text, row, col = self._sql_source_as_written(root_node)
         if not text:
             return
         self._site_node = None
         module_spec = (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn)
-        row, col = root_node.start_point
         for reference in ddl_routine_references(text, row, col):
             self._resolution = cs.EdgeResolution.EXACT
             self._link_sql_routine(
                 module_qn, module_spec, reference.name, reference.site
             )
 
-    def _sql_source_text(self, root_node: Node) -> bytes | None:
-        # The file as written, not the tree's text: a statement-isolated
-        # parse (issue #3180) blanks each statement that fails on its own,
-        # and most of the DDL read here is such a statement. That copy keeps
-        # every offset, so the root's span cuts the same text from the file.
+    def _sql_source_as_written(self, root_node: Node) -> tuple[bytes | None, int, int]:
+        # The text to scan and the point it starts at. The tree's own text can
+        # be the statement-isolated re-parse's copy, which blanks every
+        # statement the grammar cannot read on its own (#3180), and most DDL
+        # that names a routine is such a statement. The bytes that tree was
+        # parsed from hold them, whole: a blanked statement that opens or
+        # closes the file lies outside the root's span.
         path = self._call_file
-        if path is None:
-            return root_node.text
-        try:
-            source = grammar_bytes(path.read_bytes(), cs.SupportedLanguage.SQL, path)
-        except OSError:
-            return root_node.text
-        if len(source) < root_node.end_byte:
-            return root_node.text
-        return source[root_node.start_byte : root_node.end_byte]
+        source = self._sql_sources.get(path) if path is not None else None
+        if source is None:
+            row, col = root_node.start_point
+            return root_node.text, row, col
+        return source, 0, 0
 
     @_site_scoped
     def _ingest_java_enum_constant_ctor_calls(

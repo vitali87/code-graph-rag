@@ -25,6 +25,13 @@ if git rev-parse "${TAG}" >/dev/null 2>&1; then
   exit 1
 fi
 
+# Nothing ships that main's CI has not passed, here as in publish.yml. It
+# asks about HEAD before the server.json sync below, whose commit only ever
+# exists locally; that commit changes nothing but version strings.
+echo "==> Requiring green CI on main at HEAD"
+GH_TOKEN="${GH_TOKEN:-$(gh auth token 2>/dev/null || true)}" \
+  uv run --no-project --python ">=3.12" python scripts/require_green_ci.py "$(git rev-parse HEAD)"
+
 # code-graph-rag requires cgr-graph-rs, whose wheels this machine cannot build
 # for every platform; publishing without them would make this version
 # uninstallable, so stop before anything is committed or uploaded.

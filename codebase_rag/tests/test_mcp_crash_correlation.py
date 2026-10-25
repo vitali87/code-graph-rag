@@ -79,6 +79,8 @@ def _registry(
 
     ingestor = MagicMock()
     ingestor.fetch_all = fetch_all
+    # The server's root is indexed: an unindexed one is refused (#3193).
+    ingestor.list_projects.return_value = [project]
     return MCPToolsRegistry(
         project_root=str(tmp_path),
         ingestor=ingestor,
