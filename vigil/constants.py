@@ -121,6 +121,10 @@ FROZEN_PREFIXES: tuple[str, ...] = (
     ".github/",
 )
 TESTS_PREFIX = "codebase_rag/tests/"
+VIGIL_PREFIX = "vigil/"
+# Candidates are cut from what ships, so a READY branch is one commit on
+# main and never carries vigil's own history.
+DEFAULT_BASE_REF = "origin/main"
 PY_SUFFIX = ".py"
 TEST_WORKERS = "4"
 TEST_TIMEOUT_S = 3600

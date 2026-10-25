@@ -66,7 +66,13 @@ def _failed_ids(junit: Path) -> tuple[int, list[str]]:
 
 def run_tests(worktree: Path, tests: list[str], label: str) -> SuiteRun:
     """Run `tests` in `worktree`'s venv; a failed collection counts as a
-    failure of every selected file, since none of them was exercised."""
+    failure of every selected file, since none of them was exercised.
+
+    The selection comes from the graph of the checkout vigil runs in, which
+    can hold test files a worktree cut from main does not; those are not
+    this worktree's tests and are left out rather than reported missing.
+    """
+    tests = [t for t in tests if (worktree / t).is_file()]
     if not tests:
         return SuiteRun(selected=0, passed=0, failed=[])
     junit = work_dir() / "junit" / f"{label}.xml"

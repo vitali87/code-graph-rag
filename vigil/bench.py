@@ -8,6 +8,8 @@ from . import constants as vc
 from .measure import digest
 from .types_defs import Comparison, GraphDelta, Measurement
 
+VIGIL_ROOT = Path(__file__).resolve().parent.parent
+
 
 def venv_python(worktree: Path) -> Path:
     return worktree / ".venv" / "bin" / "python"
@@ -20,6 +22,8 @@ def measure(
 
     The child runs that worktree's interpreter with the worktree first on
     the path, so the code measured is the candidate's, not the parent's.
+    vigil itself comes after it: a candidate cut from main does not carry
+    vigil, and the measuring harness must not be the candidate's to change.
     """
     cmd = [
         str(venv_python(worktree)),
@@ -32,7 +36,8 @@ def measure(
     ]
     if dump is not None:
         cmd += ["--dump", str(dump)]
-    env = {**os.environ, "PYTHONPATH": str(worktree)}
+    path = os.pathsep.join([str(worktree), str(VIGIL_ROOT)])
+    env = {**os.environ, "PYTHONPATH": path}
     done = subprocess.run(
         cmd,
         cwd=worktree,

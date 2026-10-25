@@ -18,6 +18,9 @@ class Findings(NamedTuple):
     comparison: Comparison | None = None
     widened: str | None = None
     reach: str | None = None
+    # Why uv.lock cannot take the release although the published range
+    # admits it; the candidate was then installed the way pip users get it.
+    lock_blocked: str | None = None
 
 
 class Decision(NamedTuple):
@@ -58,6 +61,9 @@ def evidence(f: Findings) -> list[str]:
     lines: list[str] = []
     if f.reach:
         lines.append(f.reach)
+    if f.lock_blocked:
+        lines.append(f"uv.lock cannot take it: {f.lock_blocked}")
+        lines.append("tested as pip users get it: installed over the current lock")
     if f.baseline_tests is not None and f.candidate_tests is not None:
         lines.append(tests_line(f.baseline_tests, f.candidate_tests, f.new_failures))
         lines += [f"failing: {t}" for t in f.new_failures[: vc.FAILURE_SAMPLE]]
@@ -126,6 +132,12 @@ def decide_upgrade(f: Findings) -> Decision:
     if c is not None and c.speed == vc.Speed.SLOWER:
         verdict = vc.Verdict.ACT if it.in_range else vc.Verdict.WATCHING
         return Decision(verdict, f"{move}: builds {_pct(c.relative)} slower", ev)
+    if f.lock_blocked:
+        return Decision(
+            vc.Verdict.WATCHING,
+            f"{move}: fresh installs get it and it is green; uv.lock is blocked",
+            ev,
+        )
     faster = (
         f", builds {_pct(c.relative)}"
         if c is not None and c.speed == vc.Speed.FASTER

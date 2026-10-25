@@ -104,7 +104,7 @@ def upgrade(
         list[str] | None, typer.Argument(help="Items to run; default all new.")
     ] = None,
     repo: Repo = Path("."),
-    base_ref: BaseRef = "HEAD",
+    base_ref: BaseRef = vc.DEFAULT_BASE_REF,
     limit: Annotated[int, typer.Option(help="Run at most this many items.")] = 0,
 ) -> None:
     """Move each new dependency release into a candidate and judge it."""
@@ -125,7 +125,9 @@ def upgrade(
 
 
 @app.command()
-def candidate(name: str, repo: Repo = Path("."), base_ref: BaseRef = "HEAD") -> None:
+def candidate(
+    name: str, repo: Repo = Path("."), base_ref: BaseRef = vc.DEFAULT_BASE_REF
+) -> None:
     """Make a synced worktree for an agent to edit, cut from the base."""
     night = Night(repo.resolve(), tonight(), base_ref)
     path, branch = new_candidate(night, name)
@@ -139,7 +141,7 @@ def gate(
     item: Annotated[str, typer.Option(help="The item that prompted the idea.")],
     idea: Annotated[str, typer.Option(help="One line: what the candidate changes.")],
     repo: Repo = Path("."),
-    base_ref: BaseRef = "HEAD",
+    base_ref: BaseRef = vc.DEFAULT_BASE_REF,
 ) -> None:
     """Judge an edited candidate: frozen paths, tools, tests, graph, speed."""
     night = Night(repo.resolve(), tonight(), base_ref)
@@ -181,7 +183,7 @@ def report(
     night: Annotated[
         str | None, typer.Option(help="YYYY-MM-DD; default tonight.")
     ] = None,
-    base_ref: BaseRef = "HEAD",
+    base_ref: BaseRef = vc.DEFAULT_BASE_REF,
     considered: Annotated[int, typer.Option(help="Items looked at tonight.")] = 0,
 ) -> None:
     """Render and save the morning standing for a night."""

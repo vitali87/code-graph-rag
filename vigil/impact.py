@@ -121,7 +121,13 @@ def cone(repo: Path, package: str, imports: list[str]) -> Cone:
                 {"root": root, "root_dot": f"{root}.", "project_prefix": prefix},
             )
         ]
-        source = {qn: path for qn, path in rows if not _is_test(path)}
+        # vigil's own modules import packaging and httpx too, but they are
+        # the harness, not the product a release can break for users.
+        source = {
+            qn: path
+            for qn, path in rows
+            if not _is_test(path) and not path.startswith(vc.VIGIL_PREFIX)
+        }
         tests = _tests_importing(ingestor, prefix, source)
     tests |= {path for _qn, path in rows if _is_test(path)}
     return Cone(

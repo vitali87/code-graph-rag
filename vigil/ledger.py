@@ -67,14 +67,19 @@ class Ledger:
                 fh.write(f"  - {line}\n")
 
     def night(self, night: str) -> list[Outcome]:
+        """The night's outcomes, the latest per item and experiment: a
+        re-run replaces the verdict it was run to revisit, while results.tsv
+        keeps every attempt."""
         path = self._path(vc.NIGHTS_DIR) / f"{night}.jsonl"
         if not path.exists():
             return []
-        return [
-            Outcome.model_validate_json(line)
-            for line in path.read_text(encoding=vc.ENCODING).splitlines()
-            if line.strip()
-        ]
+        latest: dict[tuple[str, str], Outcome] = {}
+        for line in path.read_text(encoding=vc.ENCODING).splitlines():
+            if line.strip():
+                o = Outcome.model_validate_json(line)
+                latest.pop((o.item_id, o.experiment), None)
+                latest[(o.item_id, o.experiment)] = o
+        return list(latest.values())
 
     def write_report(self, night: str, text: str) -> Path:
         path = self._path(vc.NIGHTS_DIR) / f"{night}.md"

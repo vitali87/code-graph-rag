@@ -11,11 +11,13 @@ from .impact import cone, import_roots, installed_files, tests_for_paths
 from .ledger import Ledger
 from .types_defs import Cone, Item, Outcome, SuiteRun
 from .workspace import (
+    LockConflict,
     WorkspaceError,
     add_worktree,
     changed_paths,
     commit_all,
     corpus_checkout,
+    install_direct,
     lock_upgrade,
     remove_worktree,
     rewrite_requirement,
@@ -191,8 +193,19 @@ def run_upgrade(night: Night, item: Item) -> Outcome:
                 f = f._replace(
                     widened=rewrite_requirement(cand, item.requirement, item.latest)
                 )
-            lock_upgrade(cand, item.package, item.latest)
-            sync(cand, extras, groups)
+            try:
+                lock_upgrade(cand, item.package, item.latest)
+                sync(cand, extras, groups)
+            except LockConflict as conflict:
+                # Out of range, a lock that cannot resolve means no install
+                # gets the release either. In range, pip users get it today
+                # whatever uv.lock can hold, so it is tested as they get it.
+                if not item.in_range:
+                    raise
+                run(["git", "checkout", "--", vc.UV_LOCK], cand)
+                sync(cand, extras, groups)
+                install_direct(cand, item.package, item.latest)
+                f = f._replace(lock_blocked=str(conflict))
             base = night.base(extras, groups)
         except WorkspaceError as exc:
             decision = decide_upgrade(f._replace(error=str(exc)))

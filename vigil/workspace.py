@@ -126,8 +126,37 @@ def sync(worktree: Path, extras: tuple[str, ...], groups: tuple[str, ...] = ()) 
     _must(cmd, worktree)
 
 
+class LockConflict(WorkspaceError):
+    pass
+
+
 def lock_upgrade(worktree: Path, package: str, version: str) -> None:
-    _must(["uv", "lock", "--upgrade-package", f"{package}=={version}"], worktree)
+    done = run(["uv", "lock", "--upgrade-package", f"{package}=={version}"], worktree)
+    if done.returncode != 0:
+        raise LockConflict(conflict_summary(done.stderr or done.stdout))
+
+
+def conflict_summary(text: str, limit: int = 320) -> str:
+    """uv's derivation, from its first "Because", on one line.
+
+    The first clause names the packages that pin the conflict, which is the
+    part worth reading in a report; the tail of uv's message is generic
+    advice about requires-python.
+    """
+    flat = " ".join(text.replace("│", " ").replace("╰─▶", " ").split())
+    start = flat.find("Because")
+    summary = flat[start:] if start >= 0 else flat
+    return summary if len(summary) <= limit else summary[: limit - 1] + "…"
+
+
+def install_direct(worktree: Path, package: str, version: str) -> None:
+    """Put `version` in the worktree's venv over its synced lock, the way a
+    fresh `pip install code-graph-rag` resolves it when the lock cannot."""
+    python = worktree / ".venv" / "bin" / "python"
+    _must(
+        ["uv", "pip", "install", "--python", str(python), f"{package}=={version}"],
+        worktree,
+    )
 
 
 def widen(written: str, latest: str) -> str:

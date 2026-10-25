@@ -21,7 +21,7 @@ from vigil.types_defs import (
     SuiteRun,
 )
 from vigil.watch import Declared, declared, latest_release, outdated
-from vigil.workspace import WorkspaceError, widen
+from vigil.workspace import WorkspaceError, conflict_summary, widen
 
 
 def _item(in_range: bool = True, requirement: str = "protobuf>=6.33.5") -> Item:
@@ -434,3 +434,56 @@ class TestReport:
 
     def test_a_quiet_night_says_so(self) -> None:
         assert "Nothing new" in render("2026-10-26", [], "8f34219", 0)
+
+
+class TestLockBlocked:
+    def _f(self, **kw: object) -> Findings:
+        base = Findings(
+            item=_item(),
+            experiment=vc.Experiment.UPGRADE,
+            baseline_tests=_run(3, []),
+            candidate_tests=_run(3, []),
+            comparison=_cmp(vc.Speed.WITHIN_NOISE),
+            lock_blocked="Because semgrep depends on click<8.2",
+        )
+        return base._replace(**kw)
+
+    def test_green_for_pip_users_but_unlockable_is_watching(self) -> None:
+        d = decide_upgrade(self._f())
+        assert d.verdict == vc.Verdict.WATCHING
+        assert any("semgrep" in e for e in d.evidence)
+
+    def test_broken_for_pip_users_is_act_whatever_the_lock_says(self) -> None:
+        assert decide_upgrade(self._f(new_failures=["t::a"])).verdict == vc.Verdict.ACT
+
+    def test_the_summary_starts_at_the_first_because(self) -> None:
+        text = (
+            "  × No solution found when resolving dependencies:\n"
+            "  ╰─▶ Because semgrep==1.182.1 depends on click<8.2 and\n"
+            "      you require click==8.5.0, we can conclude that\n"
+        )
+        assert conflict_summary(text) == (
+            "Because semgrep==1.182.1 depends on click<8.2 and you require "
+            "click==8.5.0, we can conclude that"
+        )
+        assert conflict_summary("x" * 500, limit=10) == "x" * 9 + "…"
+
+
+class TestLedgerRerun:
+    def test_a_rerun_replaces_the_nights_verdict_but_not_the_notebook(
+        self, tmp_path: Path
+    ) -> None:
+        ledger = Ledger(tmp_path)
+        for verdict in (vc.Verdict.WATCHING, vc.Verdict.READY):
+            ledger.record(
+                Outcome(
+                    item_id="pypi:click:8.5.0",
+                    experiment=vc.Experiment.UPGRADE,
+                    verdict=verdict,
+                    headline="h",
+                    night="2026-10-26",
+                )
+            )
+        assert [o.verdict for o in ledger.night("2026-10-26")] == [vc.Verdict.READY]
+        rows = (tmp_path / vc.STATE_DIR / vc.RESULTS_FILE).read_text().splitlines()
+        assert len(rows) == 3
