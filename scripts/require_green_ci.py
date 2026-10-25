@@ -13,8 +13,9 @@ A commit passes when the CI workflow's run for its push to main concluded
 `success`. A version bump whose own run has not concluded passes on its
 parent's run instead: version-bump.yml tags and ships the bump before CI on
 it can finish, and the bump changes nothing but code-graph-rag's version
-strings. Anything else fails, including every answer GitHub could not give:
-an unreadable or incomplete reply is not a pass.
+strings and the release's news, or nothing at all. Anything else fails,
+including every answer GitHub could not give: an unreadable or incomplete
+reply is not a pass.
 
 Usage:  python3 scripts/require_green_ci.py <tag|sha>
 Reads GH_TOKEN (or GITHUB_TOKEN) and GITHUB_REPOSITORY. Exit 0 when the
@@ -61,6 +62,10 @@ VERSION_LINES = {
 }
 NAMED_FILES = frozenset({"pyproject.toml", "uv.lock"})
 OWN_NAME_CONTEXT = ' name = "code-graph-rag"'
+# What a release's bump commits besides the version: its news, and the
+# README re-rendered from it. Neither is built into anything that ships (the
+# package's readme is PYPI_README.md).
+RELEASE_DOCS = frozenset({"NEWS.md", "README.md"})
 
 USAGE = "usage: require_green_ci.py <tag|sha>"
 PASSED = "CI passed at {sha}; it may ship."
@@ -122,13 +127,20 @@ def _is_main_push_run(run: object, repo: str, sha: str) -> bool:
 
 
 def is_version_bump(files: object) -> bool:
-    """Whether a commit's changed files hold nothing but a version bump."""
-    if not isinstance(files, list) or not files:
+    """Whether a commit's changed files hold nothing but a version bump.
+
+    That is what version-bump.yml commits: code-graph-rag's version lines,
+    the release's news, or nothing at all (a version set by hand still gets
+    its empty bump commit).
+    """
+    if not isinstance(files, list):
         return False
     for entry in files:
         if not isinstance(entry, dict):
             return False
         name = entry.get("filename")
+        if name in RELEASE_DOCS and entry.get("status") == "modified":
+            continue
         pattern = VERSION_LINES.get(name) if isinstance(name, str) else None
         patch = entry.get("patch")
         if pattern is None or entry.get("status") != "modified":

@@ -147,6 +147,14 @@ class TestVerdict:
         )
         assert gate.verdict(fetch, REPO, "v0.3.11")[:2] == (True, BUMP)
 
+    def test_a_fresh_release_bump_with_news_ships_on_its_parent(self) -> None:
+        news = {"filename": "NEWS.md", "status": "modified", "patch": "+- new"}
+        fetch = _fetcher(
+            {"v0.3.11": _bump_commit([*BUMP_FILES, news])},
+            {BUMP: [], SOURCE: [_run(SOURCE)]},
+        )
+        assert gate.verdict(fetch, REPO, "v0.3.11")[:2] == (True, BUMP)
+
     def test_a_bump_of_a_red_commit_is_refused(self) -> None:
         fetch = _fetcher(
             {"v0.3.11": _bump_commit()},
@@ -257,9 +265,30 @@ class TestIsVersionBump:
     def test_anything_else_is_not(self, entry: dict[str, Any]) -> None:
         assert gate.is_version_bump([entry]) is False
 
-    def test_no_files_is_not(self) -> None:
-        assert gate.is_version_bump([]) is False
+    def test_a_release_bump_with_its_news_is_one(self) -> None:
+        # version-bump.yml commits NEWS.md and the README re-rendered from it
+        # with the version whenever the release has highlights.
+        docs = [
+            {"filename": name, "status": "modified", "patch": "+- a highlight"}
+            for name in ("NEWS.md", "README.md")
+        ]
+        assert gate.is_version_bump([*BUMP_FILES, *docs]) is True
+
+    def test_an_empty_bump_is_one(self) -> None:
+        # A version set by hand still gets its bump commit, with no change.
+        assert gate.is_version_bump([]) is True
+
+    def test_an_unreadable_file_list_is_not(self) -> None:
         assert gate.is_version_bump(None) is False
+
+    def test_it_admits_every_file_version_bump_yml_commits(self) -> None:
+        steps = _workflow("version-bump.yml")["jobs"]["bump-version"]["steps"]
+        commit = next(step for step in steps if step.get("id") == "commit")
+        added = re.search(r"^\s*git add (.+)$", commit["run"], re.MULTILINE)
+        assert added is not None
+        assert set(added.group(1).split()) <= (
+            set(gate.VERSION_LINES) | gate.RELEASE_DOCS
+        )
 
 
 class TestMain:
