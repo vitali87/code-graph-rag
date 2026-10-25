@@ -154,7 +154,7 @@ A value read from one resource reaches a write to another within a function
 body. No `via`.
 
 ```
-Resource(ENV::K) -FLOWS_TO {kind: resource}-> Resource(STDOUT::<dynamic>)
+Resource(ENV::K) -FLOWS_TO {kind: resource, scope: flow.leak}-> Resource(STDOUT::<dynamic>)
 ```
 
 `x` is read from `ENV::K`, then passed to `print(x)`, which writes `STDOUT`. Both
@@ -165,13 +165,20 @@ The source and the sink need not share a body. `t` carries `ENV::T` into
 `forward`, whose `print(v)` writes `STDOUT`, so the same body also records
 
 ```
-Resource(ENV::T) -FLOWS_TO {kind: resource}-> Resource(STDOUT::<dynamic>)
+Resource(ENV::T) -FLOWS_TO {kind: resource, scope: flow.leak}-> Resource(STDOUT::<dynamic>)
 ```
 
 beside the shape 2 edge for the call itself (see the forward argument taint
 under [Scope of the current phase](#scope-of-the-current-phase)). `print(r)`
 adds no fifth edge: `r` carries `ENV::K` back from `build`, the same
-`ENV::K → STDOUT` pair as `print(x)`, and an edge is recorded once per pair.
+`ENV::K → STDOUT` pair as `print(x)` in the same `scope`, and an edge is
+recorded once per pair and scope.
+
+`scope` is the qualified name of the function whose body produced the flow, or
+the module's for top-level code. Both endpoints are shared Resource nodes, so
+the edge is owned through it. Two functions that leak the same value give two
+edges. Each edge is removed when its function's file is re-parsed or its
+project is deleted, so a fixed leak does not stay in the graph.
 
 ### Shape 2 — caller to callee (`kind = arg`)
 
@@ -372,9 +379,10 @@ the provenance questions the edges are designed for:
 
 ```cypher
 // Every value that flows from an environment variable to standard output.
+// One edge per producing function, so DISTINCT for the pairs alone.
 MATCH (a:Resource)-[r:FLOWS_TO {kind: 'resource'}]->(b:Resource)
 WHERE a.kind = 'ENV' AND b.kind = 'STDOUT'
-RETURN a.qualified_name, b.qualified_name;
+RETURN DISTINCT a.qualified_name, b.qualified_name;
 
 // Multi-hop reachability: does any source reach any sink across calls?
 MATCH p = (src:Resource)-[:FLOWS_TO*1..8]->(dst:Resource)

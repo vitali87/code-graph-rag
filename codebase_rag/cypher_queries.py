@@ -29,6 +29,7 @@ from collections.abc import Iterable
 from .constants import (
     ANCHOR_HASH_VERSION,
     CYPHER_DEFAULT_LIMIT,
+    CYPHER_DELETE_OWNED_WITH_RESOURCE_FLOWS,
     DEFINITION_NODE_LABELS,
     KEY_FROM_MISSING,
     KEY_FROM_VAL,
@@ -287,14 +288,18 @@ _DEFINITION_RELS = (
 
 
 def _belongs_to_p(var: str) -> str:
+    return _name_belongs_to_p(f"{var}.qualified_name")
+
+
+def _name_belongs_to_p(name: str) -> str:
     # A qualified name is `p`'s when it is `p` or sits under `p.`, but not
     # under a longer registered name such as `p.v2` (issue #1985): the rule
     # CYPHER_DELETE_MODULE applies. `nested` is bound to those longer names.
     return (
-        f"({var}.qualified_name = p.name "
-        f"OR {var}.qualified_name STARTS WITH (p.name + '.')) "
-        f"AND NOT any(q IN nested WHERE {var}.qualified_name = q "
-        f"OR {var}.qualified_name STARTS WITH (q + '.'))"
+        f"({name} = p.name "
+        f"OR {name} STARTS WITH (p.name + '.')) "
+        f"AND NOT any(q IN nested WHERE {name} = q "
+        f"OR {name} STARTS WITH (q + '.'))"
     )
 
 
@@ -364,14 +369,17 @@ CYPHER_PROJECT_SYNC_TIMES = (
 # Module's qn the bare project name, so the prefix test alone would miss them
 # (review of PR 2497); the trailing dot of the prefix still keeps a project
 # whose name only starts with this one (`acme.webapp` beside `acme.web`).
-CYPHER_RETIRE_PROJECT = """
+CYPHER_RETIRE_PROJECT = (
+    """
 MATCH (p:Project {name: $project_name})
 OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
 WHERE container.qualified_name = $project_name
    OR container.qualified_name STARTS WITH $project_prefix
 OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT*]->(defined)
-DETACH DELETE p, container, defined
+WITH collect(DISTINCT p) + collect(DISTINCT container) + collect(DISTINCT defined) AS owned
 """
+    + CYPHER_DELETE_OWNED_WITH_RESOURCE_FLOWS
+)
 
 # Deletes what `p` claims, except a Folder or File another project claims
 # too: that one only loses `p`'s edges. The named nodes go first, so the
@@ -379,9 +387,21 @@ DETACH DELETE p, container, defined
 # large list is ever a grouping key, which cost seconds per thousand nodes.
 # Another project `q` claims a Folder/File it reaches through Folders and
 # Files from itself or from one of its own Packages, the same two walks as
-# _CYPHER_PROJECT_CLAIMS taken upward.
+# _CYPHER_PROJECT_CLAIMS taken upward. The resource-to-resource flows go
+# before any of that: both ends of one are shared Resource nodes, so no
+# detach of what `p` claims reaches it, and its `scope` names the function
+# or module that produced it, one of `p`'s qualified names (issue #2746).
+# Matching the scope by name rather than against `owned` takes a flow of a
+# unit cut off from `p` too, and keeps `owned` out of a grouping key.
 CYPHER_DELETE_PROJECT = f"""
 MATCH (p:Project {{name: $project_name}})
+OPTIONAL MATCH (longer:Project) WHERE longer.name STARTS WITH (p.name + '.')
+WITH p, collect(longer.name) AS nested
+OPTIONAL MATCH (:Resource)-[rf:FLOWS_TO]->(:Resource)
+WHERE {_name_belongs_to_p("rf.scope")}
+WITH p, collect(rf) AS flows
+FOREACH (r IN flows | DELETE r)
+WITH p
 {_CYPHER_PROJECT_CLAIMS}
 WITH [c IN owned WHERE c:Folder OR c:File] AS shareable,
 [c IN owned WHERE NOT (c:Folder OR c:File)] AS named
