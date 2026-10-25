@@ -120,6 +120,7 @@ class _CallSite(NamedTuple):
     language: cs.SupportedLanguage | None
     call_point: int | None
     constructing: bool
+    receiver_rebound: bool = False
 
 
 def _rust_assoc_path(call: _CallSite) -> tuple[list[str], str] | None:
@@ -638,7 +639,11 @@ class CallResolver:
         return self._rust_scope_type(followed) or followed
 
     def _try_resolve_method(
-        self, class_qn: str, method_name: str, separator: str = cs.SEPARATOR_DOT
+        self,
+        class_qn: str,
+        method_name: str,
+        separator: str = cs.SEPARATOR_DOT,
+        c3: bool = False,
     ) -> tuple[str, str] | None:
         # A class-body alias of the name (issue #2620) lists every method
         # the member may hold, its own `def` included when that survives.
@@ -647,7 +652,7 @@ class CallResolver:
         method_qn = f"{class_qn}{separator}{method_name}"
         if method_qn in self.function_registry:
             return self.function_registry[method_qn], method_qn
-        return self._resolve_inherited_method(class_qn, method_name)
+        return self._resolve_inherited_method(class_qn, method_name, c3=c3)
 
     def reset_resolution_caches(self) -> None:
         # The watch pass deletes EVERY CALLS edge and recomputes them
@@ -704,10 +709,13 @@ class CallResolver:
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
         constructing: bool = False,
+        receiver_rebound: bool = False,
     ) -> tuple[str, str] | None:
         """`constructing`: the call is a Java/C# `new X(...)`, so `call_name`
         names a TYPE and the simple-name fallback must not offer a method or
-        function that merely shares the name."""
+        function that merely shares the name. `receiver_rebound`: a Python
+        `self = pick()` the type map leaves untyped may run before this
+        `self.m()`, so the receiver may not be the enclosing class's."""
         self.last_resolution = cs.EdgeResolution.EXACT
         result = self._reject_class_via_value_receiver(
             self._redirect_protocol_method(
@@ -720,6 +728,7 @@ class CallResolver:
                     language,
                     call_point,
                     constructing,
+                    receiver_rebound,
                 )
             ),
             call_name,
@@ -753,6 +762,52 @@ class CallResolver:
         return guessed is not None and (
             call_name.split(cs.SEPARATOR_DOT, 1)[0] in guessed
         )
+
+    def _resolve_python_self_method(self, call: _CallSite) -> tuple[str, str] | None:
+        """`self.m()` / `cls.m()` on the method the enclosing class defines or
+        inherits: the static target, `exact` as `this.m()` is in Java or C#.
+
+        Without it the call fell to the bare-name trie and was labelled
+        `heuristic` unless the class had a subclass, so `rename` refused
+        nearly every Python method (issue #2475). Answered from the class,
+        ahead of the module-keyed cache a sibling class would share. An
+        abstract stub never runs, so it is left to the dispatch path, which
+        prefers the concrete implementation; a name the class does not have
+        (a sibling mixin's) keeps the paths below.
+        """
+        if (
+            not call.class_context
+            or call.constructing
+            or not self._is_python_call(call)
+        ):
+            return None
+        receiver, _, method_name = call.call_name.partition(cs.SEPARATOR_DOT)
+        if (
+            receiver not in _PY_SELF_RECEIVERS
+            or not method_name
+            or cs.SEPARATOR_DOT in method_name
+            # An annotated receiver (`self: B` in a method of `A`) names its
+            # own type; the typed-receiver lookup below honours it, where
+            # the enclosing class would bind `A.m` (Greptile, PR #2953).
+            or (call.local_var_types and receiver in call.local_var_types)
+            # After an untyped `self = pick()` the call may run on whatever
+            # `pick()` returned, which the enclosing class does not name
+            # (CodeRabbit, PR #2951); the paths below guess, as before.
+            or call.receiver_rebound
+        ):
+            return None
+        own_qn = f"{call.class_context}{cs.SEPARATOR_DOT}{method_name}"
+        target = (
+            (self.function_registry[own_qn], own_qn)
+            if own_qn in self.function_registry
+            else self._resolve_inherited_method(
+                call.class_context, method_name, c3=True
+            )
+        )
+        if target is None or self.function_registry.is_abstract(target[1]):
+            return None
+        self.last_resolution = cs.EdgeResolution.EXACT
+        return target
 
     def _is_python_local_name(self, call: _CallSite) -> bool:
         if not call.caller_qn or cs.SEPARATOR_DOT in call.call_name:
@@ -1399,7 +1454,7 @@ class CallResolver:
         return targets
 
     def self_dispatch_targets(
-        self, class_context: str, method_name: str
+        self, class_context: str, method_name: str, c3: bool = False
     ) -> set[tuple[str, str]]:
         # self.M()/cls.M() statically targets the enclosing class's own or inherited
         # M, and dynamically dispatches to any concrete subclass override of M. Anchor
@@ -1415,7 +1470,7 @@ class CallResolver:
         # override does), so it must not be a call target; a concrete sibling/impl
         # wins. Abstract methods only "reached" polymorphically are handled as
         # dead-code roots, not by a spurious CALLS edge.
-        if (base := self._try_resolve_method(class_context, method_name)) and (
+        if (base := self._try_resolve_method(class_context, method_name, c3=c3)) and (
             not self.function_registry.is_abstract(base[1])
         ):
             targets.add(base)
@@ -2025,6 +2080,7 @@ class CallResolver:
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
         constructing: bool = False,
+        receiver_rebound: bool = False,
     ) -> tuple[str, str] | None:
         call = _CallSite(
             call_name,
@@ -2037,6 +2093,7 @@ class CallResolver:
             language,
             call_point,
             constructing,
+            receiver_rebound,
         )
         handled, result = self._resolve_caller_scoped_stages(call)
         if handled:
@@ -2048,6 +2105,8 @@ class CallResolver:
         # answers are caller-independent.
         if self._is_python_local_name(call):
             return None
+        if (result := self._resolve_python_self_method(call)) is not None:
+            return result
 
         cache_key = self._resolution_cache_key(call)
         if cache_key is not None and cache_key in self._simple_resolution_cache:
@@ -7380,7 +7439,11 @@ class CallResolver:
         return order
 
     def _resolve_inherited_method(
-        self, class_qn: str, method_name: str, own_members: bool = True
+        self,
+        class_qn: str,
+        method_name: str,
+        own_members: bool = True,
+        c3: bool = False,
     ) -> tuple[str, str] | None:
         # Every caller has already looked for a def of the name on class_qn
         # itself. A class-body alias there (`run = _plain`, issue #2620) is
@@ -7393,6 +7456,14 @@ class CallResolver:
                 return alias
             if self.function_registry.binds_non_method(class_qn, method_name):
                 return None
+        if c3:
+            # A Python lookup the caller marks exact goes in Python's own
+            # order: `class A(X, Y)` with `X(Z)` reaches Z's `m` through X
+            # before Y's, where the breadth-first walk takes Y's
+            # (CodeRabbit, PR #2951).
+            return self._resolve_inherited_along_mro(
+                self._c3_mro(class_qn), method_name
+            )
         if found := self._go_variant_method(class_qn, method_name):
             return found
         if class_qn not in self.class_inheritance:
