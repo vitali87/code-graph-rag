@@ -35,6 +35,10 @@ rules:
                 stopBy: end
                 regex: '(?i)(select\b.*\bfrom\b|insert\b.*\binto\b|update\b.*\bset\b|delete\b.*\bfrom\b)'
   - id: hardcoded_secret
+    # The credential word must END the name, optionally followed by key
+    # words and digits (SECRET_KEY, secret_key_base, AWS_SECRET_ACCESS_KEY,
+    # password2): `tokenizer`, `token_count` and `password_prompt` only
+    # contain one, and name no credential (issue #2870).
     # Security rule: favour recall. A credential-named field, property, or
     # assignment target bound to a non-trivial (>=8 char) plain string literal.
     # Name regex intentionally broadened beyond the literal api_key spelling to
@@ -48,7 +52,7 @@ rules:
         # field: private string password = "....";
         - kind: variable_declarator
           all:
-            - has: { kind: identifier, regex: '(?i)(password|passwd|secret|api_?key|token)' }
+            - has: { kind: identifier, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
             - has:
                 kind: string_literal
                 all:
@@ -60,7 +64,7 @@ rules:
         # property: public string ApiKey { get; set; } = "....";
         - kind: property_declaration
           all:
-            - has: { field: name, regex: '(?i)(password|passwd|secret|api_?key|token)' }
+            - has: { field: name, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
             - has:
                 kind: string_literal
                 all:
@@ -72,7 +76,7 @@ rules:
         # assignment: token = "....";
         - kind: assignment_expression
           all:
-            - has: { kind: identifier, regex: '(?i)(password|passwd|secret|api_?key|token)' }
+            - has: { kind: identifier, regex: '(?i)(password|passwd|secret|api_?key|access_?key|token)(_?(access|key|base|value))*[_0-9]*([^A-Za-z0-9_]|$)' }
             - has:
                 kind: string_literal
                 all:
