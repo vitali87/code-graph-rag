@@ -1070,6 +1070,47 @@ class _StatefulIngestor:
                     row[key] = _result(props.get(key))
                 return [row]
             return []
+        if query == cq.CYPHER_RENAME_OVERRIDE_FACTS:
+            for target in targets:
+                props = self.nodes[target]
+                row = {
+                    key: _result(props.get(key))
+                    for key in (
+                        cs.KEY_QUALIFIED_NAME,
+                        cs.KEY_NAME,
+                        cs.KEY_PATH,
+                        cs.KEY_OVERRIDES_EXTERNAL,
+                        cs.KEY_DECORATORS,
+                        cs.KEY_MODIFIERS,
+                    )
+                }
+                row[cs.KEY_LABEL] = target[0]
+                row[cs.RENAME_FACT_BASES] = sum(
+                    edge[2] == cs.RelationshipType.OVERRIDES.value
+                    for edge in self._out.get(target, ())
+                )
+                owners = [
+                    (edge[0], edge[1])
+                    for edge in self._in.get(target, ())
+                    if edge[2] == cs.RelationshipType.DEFINES_METHOD.value
+                ]
+                row[cs.RENAME_FACT_OUTSIDE_SUPERTYPES] = list[ResultScalar](
+                    sorted(
+                        {
+                            str(edge[4])
+                            for owner in owners
+                            for edge in self._out.get(owner, ())
+                            if edge[2]
+                            in (
+                                cs.RelationshipType.INHERITS.value,
+                                cs.RelationshipType.IMPLEMENTS.value,
+                            )
+                            and not self._in_project((edge[3], edge[4]), prefix)
+                        }
+                    )
+                )
+                return [row]
+            return []
         rows: list[ResultRow] = []
         if query in (
             cq.CYPHER_GRAPH_CALLERS,
@@ -1388,6 +1429,7 @@ class _StatefulIngestor:
                 return self._mark_claimed_project(params or {})
             case (
                 cq.CYPHER_GRAPH_DEFINITION
+                | cq.CYPHER_RENAME_OVERRIDE_FACTS
                 | cq.CYPHER_GRAPH_CALLERS
                 | cq.CYPHER_GRAPH_REFERENCES
                 | cq.CYPHER_GRAPH_TYPE_EDGES

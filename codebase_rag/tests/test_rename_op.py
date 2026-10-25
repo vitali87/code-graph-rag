@@ -81,6 +81,40 @@ class RecordedGraph:
             return []
         if query == cq.CYPHER_GRAPH_DEFINITION:
             return [self._node_row(qn)] if qn in self.nodes else []
+        if query == cq.CYPHER_RENAME_OVERRIDE_FACTS:
+            if qn not in self.nodes:
+                return []
+            node = self.nodes[qn]
+            owners = {
+                src
+                for src, rel, dst, _props in self.edges
+                if rel == "DEFINES_METHOD" and dst == qn
+            }
+            prefix = str(p.get(cs.KEY_PROJECT_PREFIX, ""))
+            return [
+                {
+                    cs.KEY_LABEL: node[cs.KEY_LABEL],
+                    cs.KEY_QUALIFIED_NAME: qn,
+                    cs.KEY_NAME: node.get(cs.KEY_NAME),
+                    cs.KEY_PATH: node.get(cs.KEY_PATH),
+                    cs.KEY_OVERRIDES_EXTERNAL: node.get(cs.KEY_OVERRIDES_EXTERNAL),
+                    cs.KEY_DECORATORS: node.get(cs.KEY_DECORATORS),
+                    cs.KEY_MODIFIERS: node.get(cs.KEY_MODIFIERS),
+                    cs.RENAME_FACT_BASES: sum(
+                        rel == "OVERRIDES" and src == qn
+                        for src, rel, _dst, _props in self.edges
+                    ),
+                    cs.RENAME_FACT_OUTSIDE_SUPERTYPES: sorted(
+                        {
+                            dst
+                            for src, rel, dst, _props in self.edges
+                            if src in owners
+                            and rel in ("INHERITS", "IMPLEMENTS")
+                            and not dst.startswith(prefix)
+                        }
+                    ),
+                }
+            ]
         if query == cq.CYPHER_GRAPH_RESOLVE_NAME:
             # The rename's cross-check asks for the symbol's namesakes, whose
             # sites are theirs and not unplanned occurrences (issue #2564).
