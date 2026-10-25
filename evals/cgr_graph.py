@@ -1580,6 +1580,7 @@ class _StatefulIngestor:
                         ),
                         cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
                         cs.KEY_START_LINE: _int(props.get(cs.KEY_START_LINE)),
+                        cs.KEY_START_COL: _int(props.get(cs.KEY_START_COL)),
                         cs.KEY_END_LINE: _int(props.get(cs.KEY_END_LINE)),
                         cs.KEY_MODIFIERS: [_text(m) for m in raw_modifiers]
                         if isinstance(
