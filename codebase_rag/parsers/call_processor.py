@@ -3159,29 +3159,30 @@ class CallProcessor:
         # The module runs the DDL, so it is the caller, as for a CHECK
         # constraint's `invocation`. The site is the routine's name in the
         # clause; no node spans it when the statement did not parse.
-        text = self._sql_source_as_written(root_node)
+        text, row, col = self._sql_source_as_written(root_node)
         if not text:
             return
         self._site_node = None
         module_spec = (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn)
-        row, col = root_node.start_point
         for reference in ddl_routine_references(text, row, col):
             self._resolution = cs.EdgeResolution.EXACT
             self._link_sql_routine(
                 module_qn, module_spec, reference.name, reference.site
             )
 
-    def _sql_source_as_written(self, root_node: Node) -> bytes | None:
-        # The tree's own text can be the statement-isolated re-parse's copy,
-        # which blanks every statement the grammar cannot read on its own
-        # (#3180), and most DDL that names a routine is such a statement. The
-        # bytes that tree was parsed from hold them, and the copy keeps every
-        # offset, so the root's span cuts the same text from them.
+    def _sql_source_as_written(self, root_node: Node) -> tuple[bytes | None, int, int]:
+        # The text to scan and the point it starts at. The tree's own text can
+        # be the statement-isolated re-parse's copy, which blanks every
+        # statement the grammar cannot read on its own (#3180), and most DDL
+        # that names a routine is such a statement. The bytes that tree was
+        # parsed from hold them, whole: a blanked statement that opens or
+        # closes the file lies outside the root's span.
         path = self._call_file
         source = self._sql_sources.get(path) if path is not None else None
         if source is None:
-            return root_node.text
-        return source[root_node.start_byte : root_node.end_byte]
+            row, col = root_node.start_point
+            return root_node.text, row, col
+        return source, 0, 0
 
     @_site_scoped
     def _ingest_java_enum_constant_ctor_calls(

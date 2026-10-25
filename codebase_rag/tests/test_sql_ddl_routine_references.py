@@ -395,3 +395,23 @@ def test_an_evicted_tree_reloaded_from_an_edited_file_reads_the_reload(
         tmp_path / PROJECT, {"routines.sql": _ROUTINES, "wiring.sql": _WIRING}
     )
     assert 5 in {line for _c, line, _col in _sites(store, "routines.first_fin")}
+
+
+def test_a_blanked_statement_that_opens_the_file_references_its_routine(
+    tmp_path: Path,
+) -> None:
+    # The EVENT TRIGGER's ERROR swallows the function after it, so recovery
+    # blanks the trigger and the recovered root starts after it: the scan
+    # reads the whole file the tree was parsed from, not the root's span.
+    store = _index(
+        tmp_path / PROJECT,
+        {
+            "routines.sql": _ROUTINES,
+            "events.sql": (
+                "CREATE EVENT TRIGGER watch ON ddl_command_end"
+                " EXECUTE FUNCTION process_ddl_event();\n"
+                "CREATE FUNCTION later() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;\n"
+            ),
+        },
+    )
+    assert _callers(store, "routines.process_ddl_event") == {"events": (1, 63)}

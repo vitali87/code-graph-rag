@@ -831,7 +831,14 @@ class DefinitionProcessor(
         self, file_path: Path, root_node: ASTNode, parsed: bytes
     ) -> None:
         """Note the bytes a SQL tree was parsed from, when its text is not them."""
-        if root_node.text == parsed[root_node.start_byte : root_node.end_byte]:
+        start, end = root_node.start_byte, root_node.end_byte
+        # A blanked statement that opens or closes the file lies outside the
+        # root's span, where an unrecovered parse leaves only whitespace.
+        if (
+            root_node.text == parsed[start:end]
+            and not parsed[:start].strip()
+            and not parsed[end:].strip()
+        ):
             self.sql_sources.pop(file_path, None)
         else:
             self.sql_sources[file_path] = parsed
