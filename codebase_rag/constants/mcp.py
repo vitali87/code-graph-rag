@@ -115,6 +115,7 @@ class MCPParamName(StrEnum):
     DELETED = "deleted"
     TARGET = "target"
     DEPTH = "depth"
+    MAX_DEPTH = "max_depth"
     BODY = "body"
     KIND = "kind"
     MENTIONS = "mentions"
@@ -201,6 +202,19 @@ REINGEST_OUTSIDE_REPO = "Path is outside the repository: {path}"
 REINGEST_IS_DIRECTORY = "Path is a directory, not a file: {path}"
 MCP_GRAPH_QUERY_ERROR = "Error running {tool}: {error}"
 GRAPH_QUERY_MAX_DEPTH = 5
+# Rows a graph tool returns before it truncates (issue #2815). django's
+# `tests_reaching` on QuerySet.filter was 20,244 rows (~1.5M tokens), which an
+# MCP host rejects or cuts at an arbitrary point. Rows come sorted nearest
+# first, so the cap keeps the closest, and the envelope says what was cut.
+MCP_GRAPH_ROW_LIMIT = 200
+KEY_MCP_ROWS = "rows"
+KEY_MCP_TOTAL = "total"
+KEY_MCP_TRUNCATED = "truncated"
+KEY_MCP_HINT = "hint"
+MCP_GRAPH_TRUNCATED_HINT = (
+    "Showing the {shown} nearest of {total} rows. Pass a larger `limit` for "
+    "more, or a smaller `depth` / `max_depth` to narrow the walk."
+)
 # A `path:line` target whose file the project does not hold (issue #2611).
 # Answered with `[]`, it read as "no definition spans that line", and an
 # agent holding an absolute path concluded nothing was defined there. A file
