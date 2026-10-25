@@ -49,6 +49,71 @@ class MCPToolName(StrEnum):
     GLOSSES = "glosses"
 
 
+# The tools that only read: the graph, the project's files, or an agent
+# answer whose writes `ask_agent` always denies. Named this way round so a new
+# tool counts as writing, and `--read-only` withholds it, until someone adds
+# it here; `test_every_tool_is_classified` keeps these sets in step (#3458).
+MCP_READ_ONLY_TOOLS = frozenset(
+    {
+        MCPToolName.LIST_PROJECTS,
+        MCPToolName.RESOLVE,
+        MCPToolName.DEFINITION,
+        MCPToolName.CALLERS,
+        MCPToolName.CALLEES,
+        MCPToolName.IMPLEMENTORS,
+        MCPToolName.OVERRIDES,
+        MCPToolName.IMPORTERS,
+        MCPToolName.TESTS_REACHING,
+        MCPToolName.ENDPOINTS,
+        MCPToolName.ENDPOINT_CALLERS,
+        MCPToolName.REMOTE_DEPENDENCIES,
+        MCPToolName.CONTEXT,
+        MCPToolName.QUERY_CODE_GRAPH,
+        MCPToolName.GET_CODE_SNIPPET,
+        MCPToolName.READ_FILE,
+        MCPToolName.LIST_DIRECTORY,
+        MCPToolName.SEMANTIC_SEARCH,
+        MCPToolName.STRUCTURAL_SEARCH,
+        MCPToolName.FIND_DUPLICATE_CODE,
+        MCPToolName.GET_FUNCTION_SOURCE,
+        MCPToolName.ASK_AGENT,
+        MCPToolName.FLOW_VERDICT,
+        MCPToolName.EXPLAIN_TRACEBACK,
+        MCPToolName.RANK_ROOT_CAUSES,
+        MCPToolName.GLOSSES,
+    }
+)
+# Writers that overwrite or remove what was there: source files, a project's
+# graph, the whole database. The other writers add a note or sync the graph
+# with the files.
+MCP_DESTRUCTIVE_TOOLS = frozenset(
+    {
+        MCPToolName.DELETE_PROJECT,
+        MCPToolName.WIPE_DATABASE,
+        MCPToolName.INDEX_REPOSITORY,
+        MCPToolName.RENAME,
+        MCPToolName.SURGICAL_REPLACE_CODE,
+        MCPToolName.WRITE_FILE,
+        MCPToolName.STRUCTURAL_REPLACE,
+    }
+)
+# Writers that change nothing more when called again with the same arguments.
+MCP_IDEMPOTENT_TOOLS = frozenset(
+    {
+        MCPToolName.DELETE_PROJECT,
+        MCPToolName.WIPE_DATABASE,
+        MCPToolName.INDEX_REPOSITORY,
+        MCPToolName.UPDATE_REPOSITORY,
+        MCPToolName.REINGEST,
+        MCPToolName.WRITE_FILE,
+    }
+)
+MCP_READ_ONLY_REFUSED = (
+    "{name} writes, and this server runs read-only (--read-only or "
+    "MCP_READ_ONLY=true), so it was not run."
+)
+
+
 class MCPTransport(StrEnum):
     STDIO = "stdio"
     HTTP = "http"

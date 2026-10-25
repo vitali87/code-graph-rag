@@ -299,6 +299,7 @@ cgr mcp-server
 | `--host` | HTTP bind host. Used only with --transport http. |
 | `--port` | HTTP bind port. Used only with --transport http. |
 | `--workspace` | Serve the projects of workspace NAME: `list_projects` shows them, a `project` argument, when given, must name one (omitted, the server takes the project rooted at its directory, or the workspace's only one), and source is read from each repo's own root. Also read from the MCP_WORKSPACE environment variable. |
+| `--read-only` | Serve only the tools that read (graph queries, file reads, ask_agent); write_file, the edit tools, indexing, annotate and the delete tools are neither listed nor run. Also set by MCP_READ_ONLY=true. |
 <!-- /SECTION:cli_options_mcp_server -->
 
 ### `cgr index`

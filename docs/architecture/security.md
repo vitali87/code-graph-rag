@@ -65,7 +65,7 @@ is a separate trust boundary between project changes and distributed artifacts.
 | Prompt injection steers the agent through repository or web content | CLI web research uses a separate agent with only the search tool; its summary is marked as untrusted data. A repository's `.cgr.md` reaches the system prompt only after the user approves its current content. | The main agent still interprets repository content and research summaries. These measures do not guarantee that it ignores malicious instructions; review proposed actions. |
 | Tool use modifies unintended files or executes unwanted commands | File tools validate project paths; default CLI shell execution uses command filtering and approval checks. | Commands are not OS-sandboxed, and YOLO mode relaxes checks. Keep approvals enabled and restrict the account's privileges. |
 | Source code, queries or credentials reach an unintended recipient | Provider configuration controls destinations; CLI research/search checks queries against recorded repository content. Reads that need no approval refuse files that look like credentials. | Remote inference intentionally sends data, and text matching is not comprehensive data-loss prevention. Audit providers, MCP clients and tool egress; keep secrets out of inputs. |
-| Unauthorized access to graph data or privileged MCP tools | New database stacks bind loopback by default; HTTP MCP requires a bearer token for a non-loopback bind. | Old Compose files can remain exposed; loopback is not per-user isolation. Protect remote transport, tokens and host access. |
+| Unauthorized access to graph data or privileged MCP tools | New database stacks bind loopback by default; HTTP MCP requires a bearer token for a non-loopback bind. Every MCP tool says whether it writes, and `--read-only` serves only the readers. | Old Compose files can remain exposed; loopback is not per-user isolation. Protect remote transport, tokens and host access. |
 | Large inputs, queries or tool calls exhaust resources | Shell pipelines, search requests and several toolchain calls have timeouts. | These are not global CPU, memory, disk or request quotas. Apply resource limits and avoid exposing the service to untrusted workloads. |
 | Compromised dependencies or publishing access distribute malicious code | Dependency scanning, PyPI trusted publishing, and binary signing/provenance provide detection and traceability. | A compromised authorized build can still produce signed artifacts. Verify provenance and follow the incident response plan for suspect releases. |
 
@@ -199,6 +199,14 @@ binds `127.0.0.1` by default and refuses a non-loopback bind without
 This is a shared bearer credential, not per-user authorization. Authorized
 clients can use privileged tools, including file modification and project
 deletion; treat client access accordingly.
+
+Every tool carries MCP annotations a client can key its own approval rules on:
+`readOnlyHint` on the tools that only read, `destructiveHint` on those that
+overwrite or delete files, a project or the database. A client that needs only
+queries should get a read-only server (`cgr mcp-server --read-only`, or
+`MCP_READ_ONLY=true`): the writers are then neither listed nor run, even when
+called by name. `read_file` refuses files that look like credentials in either
+mode (see below) unless `CGR_ALLOW_SENSITIVE_READS=true`.
 
 ![cgr mcp-server --transport http refusing --host 0.0.0.0 without MCP_HTTP_AUTH_TOKEN, then serving on 127.0.0.1 by default](../assets/demos/security-mcp-bind.gif)
 

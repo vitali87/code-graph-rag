@@ -588,6 +588,11 @@ HELP_QUERY_OUTPUT_FORMAT = "Format --ask-agent output as table or json."
 HELP_MCP_TRANSPORT = "Transport to serve: stdio or http."
 HELP_MCP_HTTP_HOST = "HTTP bind host. Used only with --transport http."
 HELP_MCP_HTTP_PORT = "HTTP bind port. Used only with --transport http."
+HELP_MCP_READ_ONLY = (
+    "Serve only the tools that read (graph queries, file reads, ask_agent); "
+    "write_file, the edit tools, indexing, annotate and the delete tools are "
+    "neither listed nor run. Also set by MCP_READ_ONLY=true."
+)
 HELP_MCP_WORKSPACE = (
     "Serve the projects of workspace NAME: `list_projects` shows them, a "
     "`project` argument, when given, must name one (omitted, the server "

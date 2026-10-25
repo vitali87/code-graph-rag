@@ -631,6 +631,9 @@ class AppConfig(BaseSettings):
     # auth, so exposing it beyond the host must be an explicit operator
     # choice via MCP_HTTP_HOST (issue #808).
     MCP_HTTP_HOST: str = "127.0.0.1"
+    # Serve only the tools that read (`cgr mcp-server --read-only`), for a
+    # client that needs queries and nothing else (issue #3458).
+    MCP_READ_ONLY: bool = False
     MCP_HTTP_PORT: int = 8080
     MCP_HTTP_ENDPOINT_PATH: str = "/mcp"
     # Bearer token for the HTTP MCP endpoint; unset means loopback-only

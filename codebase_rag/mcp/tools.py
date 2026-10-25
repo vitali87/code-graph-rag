@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
+from mcp.types import ToolAnnotations
 from pydantic_ai import Agent, DeferredToolRequests, Tool
 from pydantic_ai.tools import ToolFuncPlain
 
@@ -3842,11 +3843,29 @@ class MCPToolsRegistry:
                 inputSchema=metadata.input_schema,
             )
             for metadata in self._tools.values()
+            if self.serves(metadata.name)
         ]
+
+    def serves(self, name: str) -> bool:
+        """Whether this server offers `name`: every tool, or under read-only
+        mode only those that never write (issue #3458)."""
+        return not settings.MCP_READ_ONLY or name in cs.MCP_READ_ONLY_TOOLS
 
     def get_tool_handler(self, name: str) -> tuple[MCPHandlerType, bool] | None:
         metadata = self._tools.get(name)
         return None if metadata is None else (metadata.handler, metadata.returns_json)
+
+
+def tool_annotations(name: str) -> ToolAnnotations:
+    """What a client may assume of tool `name` before calling it, so its own
+    approval rules can tell `callers` from `wipe_database` (issue #3458).
+    Every tool works on this server's graph and files, never the open web."""
+    return ToolAnnotations(
+        readOnlyHint=name in cs.MCP_READ_ONLY_TOOLS,
+        destructiveHint=name in cs.MCP_DESTRUCTIVE_TOOLS,
+        idempotentHint=name in cs.MCP_IDEMPOTENT_TOOLS,
+        openWorldHint=False,
+    )
 
 
 def create_mcp_tools_registry(

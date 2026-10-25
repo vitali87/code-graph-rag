@@ -18,7 +18,7 @@ from codebase_rag import exceptions as ex
 from codebase_rag import logs as lg
 from codebase_rag import tool_errors as te
 from codebase_rag.config import settings
-from codebase_rag.mcp.tools import create_mcp_tools_registry
+from codebase_rag.mcp.tools import create_mcp_tools_registry, tool_annotations
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.services.llm import LazyCypherGenerator
 from codebase_rag.types_defs import MCPToolArguments
@@ -160,6 +160,7 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
                 name=schema.name,
                 description=schema.description,
                 inputSchema={**schema.inputSchema},
+                annotations=tool_annotations(schema.name),
             )
             for schema in schemas
         ]
@@ -176,6 +177,11 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
                 error_msg = cs.MCP_UNKNOWN_TOOL_ERROR.format(name=name)
                 logger.error(lg.MCP_SERVER_UNKNOWN_TOOL.format(name=name))
                 return _create_error_content(error_msg)
+            # A client can call a tool it was never listed, so read-only mode
+            # refuses here too, before the handler runs (issue #3458).
+            if not tools.serves(name):
+                logger.warning(lg.MCP_SERVER_READ_ONLY_REFUSED.format(name=name))
+                return _create_error_content(cs.MCP_READ_ONLY_REFUSED.format(name=name))
 
             handler, returns_json = handler_info
 
