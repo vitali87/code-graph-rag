@@ -220,6 +220,7 @@ class ProcessorFactory:
                 macro_qns=self.definition_processor.macro_qns,
                 ast_cache=self.ast_cache,
                 go_package_names=self.definition_processor.go_package_names,
+                sql_sources=self.definition_processor.sql_sources,
                 rehydrated_definition_paths=(
                     self.definition_processor.rehydrated_definition_paths
                 ),
