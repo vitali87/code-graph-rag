@@ -147,6 +147,20 @@ PY_STATEMENT_CONTAINERS = frozenset(
         TS_PY_DECORATED_DEFINITION,
     }
 )
+# Module-level statements whose bodies still run at import, where an
+# `__all__` update counts (issue #2855).
+PY_MODULE_LEVEL_BLOCKS = frozenset(
+    {
+        TS_PY_IF_STATEMENT,
+        TS_PY_ELIF_CLAUSE,
+        TS_PY_ELSE_CLAUSE,
+        TS_PY_TRY_STATEMENT,
+        TS_PY_EXCEPT_CLAUSE,
+        TS_PY_FINALLY_CLAUSE,
+        TS_PY_WITH_STATEMENT,
+        TS_PY_BLOCK,
+    }
+)
 # `typing.overload` and the modules exporting it: a stub it decorates is
 # folded into the implementation that follows (issue #2590).
 PY_OVERLOAD = "overload"
@@ -459,6 +473,9 @@ PY_DUNDER_ALL_ENTRY_PATTERN = r"""(['"])(?P<name>[A-Za-z_]\w*)\1"""
 PY_DUNDER_ALL = "__all__"
 PY_LIST_EXTEND = "extend"
 PY_LIST_APPEND = "append"
+# The list methods that add to a module's declared API, `__all__`, so a name
+# they list is exported (issue #2855).
+PY_DUNDER_ALL_MUTATORS = frozenset({PY_LIST_APPEND, PY_LIST_EXTEND})
 PY_PRIVATE_PREFIX = "_"
 
 # Forward references in an annotation (`n: "Node"`, issue #2837): the quotes
