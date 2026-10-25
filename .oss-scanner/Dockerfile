@@ -32,6 +32,14 @@ ENV UV_LINK_MODE=copy \
 COPY --from=go /usr/local/go /usr/local/go
 COPY --from=jdk /opt/java/openjdk /opt/java/openjdk
 
+# curl, cargo and go fetch through the system store: upgrade it, then deselect
+# the eMudhra roots Debian still ships.
+COPY --chmod=755 scripts/distrust_ca_roots.sh /usr/local/sbin/
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && distrust_ca_roots.sh
+
 # cgr-graph-rs (rust/cgr_graph_rs) is a path dependency, so the sync below
 # builds it. rustup is checked against the SHA-256 it publishes and pinned to
 # the toolchain .clusterfuzzlite/Dockerfile builds the crate with.

@@ -1,16 +1,18 @@
-"""The build and release tooling must not trust the distrusted emSign root.
+"""The build and release tooling must not trust the distrusted eMudhra roots.
 
-eMudhra's emSign ECC Root CA - G3 was removed from the CA bundles after a
-security incident with intermediates under it, so a client that still carries
-it can be handed a forged certificate for PyPI, GitHub or anything it fetches.
-The first fixed releases are uv 0.13.4, pip 26.2.2 and
-pypa/gh-action-pypi-publish v1.14.3, which bundles certifi 2026.10.19 and
-sigstore 4.5.1. A pinned base image is a snapshot of its ca-certificates
-package, and the LLM clients reach the system store through httpx2's
-truststore context, so every stage that installs packages names
-ca-certificates, which upgrades it. pip trusts the system store on top of its
-own certifi, and Ubuntu 20.04's archive still ships the root, so wherever pip
-fetches, the root is first deselected in the store.
+The private keys of eight eMudhra intermediates were compromised. They chain
+to emSign ECC Root CA - G3 and, through Sectigo cross-signs, to AAA
+Certificate Services, so a client that still trusts either can be handed a
+forged certificate for PyPI, GitHub or anything it fetches. Mozilla has since
+dropped emSign ECC Root CA - C3 and emSign Root CA - C1 as well. The first
+fixed releases are uv 0.13.4, pip 26.2.2 and pypa/gh-action-pypi-publish
+v1.14.3 (certifi 2026.10.19, sigstore 4.5.1). A pinned base image is a snapshot of its ca-certificates package, and the LLM
+clients reach the system store through httpx2's truststore context, so every
+stage that installs packages upgrades ca-certificates and then deselects the
+distrusted roots with scripts/distrust_ca_roots.sh: Debian and Ubuntu still
+ship some of them, and Ubuntu 20.04 ships all four. pip trusts the system
+store on top of its own certifi, so wherever pip fetches, the script runs
+first.
 
 Each check is a function run against the repository and against text it must
 reject, so a pattern that matches nothing cannot pass for compliance.
@@ -37,9 +39,20 @@ CI_WORKFLOW = WORKFLOWS_DIR / "ci.yml"
 UNLOCKED_JOB = "wheel-fresh-resolution"
 UNLOCKED_STEP = "Install the wheel with unlocked resolution"
 
+DISTRUST_SCRIPT = REPO_ROOT / "scripts" / "distrust_ca_roots.sh"
+
 UV_FLOOR = Version("0.13.4")
 PIP_FLOOR = Version("26.2.2")
 PYPI_PUBLISH_FLOOR = Version("1.14.3")
+# By the names Debian and Ubuntu file them under in /etc/ca-certificates.conf.
+DISTRUSTED_ROOTS = frozenset(
+    {
+        "emSign_ECC_Root_CA_-_G3",
+        "emSign_ECC_Root_CA_-_C3",
+        "emSign_Root_CA_-_C1",
+        "Comodo_AAA_Services_root",
+    }
+)
 
 DIGEST = "sha256:" + "a" * 64
 GOOD_PIP_BOOTSTRAP = (
@@ -47,9 +60,14 @@ GOOD_PIP_BOOTSTRAP = (
     f'3f/06/pip-26.2.2-py3-none-any.whl#sha256={"b" * 64}"'
 )
 SHA = "c" * 40
-DESELECT_G3 = (
-    r"sed -i 's|^mozilla/emSign_ECC_Root_CA_-_G3\.crt$|!&|' /etc/ca-certificates.conf"
-    " && update-ca-certificates --fresh"
+COPY_SCRIPT = "COPY scripts/distrust_ca_roots.sh /usr/local/sbin/"
+RUN_SCRIPT = "sudo bash scripts/distrust_ca_roots.sh"
+GOOD_SCRIPT = (
+    f'ROOTS="{" ".join(sorted(DISTRUSTED_ROOTS))}"\n'
+    "for root in $ROOTS; do\n"
+    '    sed -i "s|^mozilla/$root\\.crt$|!&|" /etc/ca-certificates.conf\n'
+    "done\n"
+    "update-ca-certificates --fresh > /dev/null\n"
 )
 
 
@@ -126,27 +144,74 @@ def pypi_publish_problems(text: str) -> list[str]:
     return problems
 
 
-_G3_ROOT = re.compile(r"(?<![\w-])emSign_ECC_Root_CA_-_G3\\?\.crt(?![\w-])")
+_SCRIPT_ROOTS = re.compile(r'^ROOTS="(?P<roots>[^"]*)"', re.MULTILINE)
+_SCRIPT_CALL = re.compile(r"(?:^|[\s/])distrust_ca_roots\.sh(?=$|[\s;&|])")
 
 
-def g3_deselect_problems(commands: list[str]) -> list[str]:
-    """pip verifies TLS against the system store through truststore and loads
-    its own certifi on top, so even a fixed pip trusts emSign ECC Root CA - G3
-    while the system store still carries it. Wherever pip fetches, the root is
-    first deselected in /etc/ca-certificates.conf and the store rebuilt."""
-    pips = [i for i, c in enumerate(commands) if _PIP_INSTALL.search(c)]
-    if not pips:
-        return ["no pip install found"]
-    before_pip = commands[: pips[0]]
-    deselects = [
-        i
-        for i, c in enumerate(before_pip)
-        if _G3_ROOT.search(c) and "!" in c and "/etc/ca-certificates.conf" in c
+def script_problems(text: str) -> list[str]:
+    """A `!` before a root in /etc/ca-certificates.conf deselects it, and
+    survives a later ca-certificates upgrade; the store only drops it once
+    update-ca-certificates rebuilds it."""
+    listed = _SCRIPT_ROOTS.search(text)
+    roots = set(listed["roots"].split()) if listed else set()
+    problems = [
+        f"does not deselect {root}" for root in sorted(DISTRUSTED_ROOTS - roots)
     ]
-    if not deselects:
-        return ["emSign ECC Root CA - G3 not deselected before the first pip install"]
-    if not any("update-ca-certificates" in c for c in before_pip[deselects[0] :]):
-        return ["the CA store is not rebuilt after deselecting emSign ECC Root CA - G3"]
+    deselect = text.find("|!&|")
+    if deselect < 0:
+        problems.append(
+            "does not mark the roots deselected in /etc/ca-certificates.conf"
+        )
+    if text.find("update-ca-certificates --fresh", max(deselect, 0)) < 0:
+        problems.append("does not rebuild the store after deselecting the roots")
+    return problems
+
+
+def stage_distrust_problems(text: str) -> list[str]:
+    """Each stage that upgrades ca-certificates runs the script after that
+    upgrade, in the same RUN, from a copy the stage brought in first."""
+    problems = []
+    stages = re.split(r"(?m)^FROM ", "\n".join(logical_lines(text)))[1:]
+    for index, stage in enumerate(stages):
+        lines = stage.splitlines()
+        for n, line in enumerate(lines):
+            upgrades = [
+                m
+                for m in _APT_INSTALL_ARGS.finditer(line)
+                if _CA_CERTIFICATES.search(m[1])
+            ]
+            if not upgrades:
+                continue
+            where = f"stage {index} (FROM {lines[0]})"
+            if not _SCRIPT_CALL.search(line, upgrades[-1].end()):
+                problems.append(f"{where} upgrades ca-certificates and keeps the roots")
+            elif not any(
+                c.startswith("COPY") and "scripts/distrust_ca_roots.sh" in c
+                for c in lines[:n]
+            ):
+                problems.append(
+                    f"{where} runs distrust_ca_roots.sh without copying it in"
+                )
+    return problems
+
+
+# What reaches the network through the system store: pip under any of its
+# names, curl, cargo, go fetching modules, and uv building or syncing, which
+# runs cargo for the crate.
+_FETCH = re.compile(
+    r"\bpip(?:3(?:\.\d+)?)? install\b|\bcurl\b|\bcargo (?:build|fetch|install)\b"
+    r"|\bgo (?:build|get|install|mod download)\b|\buv (?:build|sync)\b"
+)
+
+
+def distrust_before_fetch_problems(commands: list[str]) -> list[str]:
+    commands = [c for c in commands if not c.lstrip().startswith("#")]
+    fetches = [i for i, c in enumerate(commands) if _FETCH.search(c)]
+    if not fetches:
+        return ["nothing fetches"]
+    runs = [c for c in commands[: fetches[0]] if not re.match(r"(?:COPY|ADD)\s", c)]
+    if not any(_SCRIPT_CALL.search(c) for c in runs):
+        return ["distrust_ca_roots.sh does not run before the first fetch"]
     return []
 
 
@@ -403,46 +468,131 @@ def test_every_pypi_upload_uses_a_fixed_action() -> None:
 
 
 @pytest.mark.parametrize(
+    "text",
+    [
+        GOOD_SCRIPT.replace("Comodo_AAA_Services_root", ""),
+        GOOD_SCRIPT.replace("emSign_ECC_Root_CA_-_G3", "emSign_ECC_Root_CA_-_G2"),
+        GOOD_SCRIPT.replace("update-ca-certificates --fresh > /dev/null\n", ""),
+        "update-ca-certificates --fresh\n"
+        + GOOD_SCRIPT.split("update-", maxsplit=1)[0],
+        GOOD_SCRIPT.replace("|!&|", "|&|"),
+    ],
+    ids=["misses-aaa", "near-miss-root", "no-rebuild", "rebuild-first", "no-deselect"],
+)
+def test_a_script_that_leaves_a_root_trusted_is_rejected(text: str) -> None:
+    assert text != GOOD_SCRIPT
+    assert script_problems(text)
+
+
+def test_a_script_that_deselects_every_root_is_accepted() -> None:
+    assert script_problems(GOOD_SCRIPT) == []
+
+
+def test_the_distrust_script_deselects_every_root() -> None:
+    assert DISTRUST_SCRIPT.is_file()
+    assert script_problems(DISTRUST_SCRIPT.read_text(encoding="utf-8")) == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "FROM base\nRUN apt-get install -y ca-certificates\n",
+        f"FROM base\n{COPY_SCRIPT}\n"
+        "RUN distrust_ca_roots.sh && apt-get install -y ca-certificates\n",
+        "FROM base\nRUN apt-get install -y ca-certificates && distrust_ca_roots.sh\n",
+        f"FROM base\n{COPY_SCRIPT}\n"
+        "RUN apt-get install -y ca-certificates && distrust_ca_roots.sh.orig\n",
+        f"FROM base AS builder\n{COPY_SCRIPT}\n"
+        "RUN apt-get install -y ca-certificates && distrust_ca_roots.sh\n"
+        "FROM base\nRUN apt-get install -y ca-certificates ripgrep\n",
+    ],
+    ids=["upgrade-only", "before-upgrade", "not-copied", "near-miss", "second-stage"],
+)
+def test_a_stage_that_upgrades_without_distrusting_is_rejected(text: str) -> None:
+    assert stage_distrust_problems(text)
+
+
+def test_a_stage_that_distrusts_after_upgrading_is_accepted() -> None:
+    text = (
+        f"FROM base\n{COPY_SCRIPT}\n"
+        "RUN apt-get install -y \\\n    ca-certificates git && \\\n"
+        "    distrust_ca_roots.sh\nFROM other AS copied\n"
+    )
+    assert stage_distrust_problems(text) == []
+
+
+def test_every_stage_that_upgrades_ca_certificates_distrusts_the_roots() -> None:
+    texts = {p: p.read_text(encoding="utf-8") for p in DOCKERFILES}
+    upgrading = [
+        p
+        for p, t in texts.items()
+        if any(_CA_CERTIFICATES.search(a) for a in _APT_INSTALL_ARGS.findall(t))
+    ]
+    assert upgrading == DOCKERFILES
+    assert {
+        str(p): stage_distrust_problems(t)
+        for p, t in texts.items()
+        if stage_distrust_problems(t)
+    } == {}
+
+
+@pytest.mark.parametrize(
     "commands",
     [
         ["apt-get install -y ca-certificates", GOOD_PIP_BOOTSTRAP],
-        [GOOD_PIP_BOOTSTRAP, DESELECT_G3],
-        [DESELECT_G3.split(" && ", maxsplit=1)[0], GOOD_PIP_BOOTSTRAP],
-        [DESELECT_G3.replace("_G3", "_C3"), GOOD_PIP_BOOTSTRAP],
-        [
-            "rm /etc/ssl/certs/emSign_ECC_Root_CA_-_G3.pem && update-ca-certificates",
-            GOOD_PIP_BOOTSTRAP,
-        ],
+        [GOOD_PIP_BOOTSTRAP, RUN_SCRIPT],
+        [RUN_SCRIPT.replace("roots.sh", "roots_v2.sh"), GOOD_PIP_BOOTSTRAP],
+        # Copying the script into an image does not run it.
+        [COPY_SCRIPT, GOOD_PIP_BOOTSTRAP],
+        # Building the crate fetches through cargo before pip ever runs.
+        ["uv build --wheel rust/cgr_graph_rs", RUN_SCRIPT, GOOD_PIP_BOOTSTRAP],
+        # pip fetches under its versioned names too.
+        ["pip3 install pkg", RUN_SCRIPT, GOOD_PIP_BOOTSTRAP],
+        ["pip3.12 install pkg", RUN_SCRIPT, GOOD_PIP_BOOTSTRAP],
+        ["go mod download", RUN_SCRIPT, GOOD_PIP_BOOTSTRAP],
     ],
-    ids=["upgrade-only", "after-pip", "no-rebuild", "near-miss-root", "pem-removed"],
+    ids=[
+        "upgrade-only",
+        "after-pip",
+        "near-miss",
+        "copied-not-run",
+        "build-first",
+        "pip3-first",
+        "pip3.12-first",
+        "go-first",
+    ],
 )
-def test_pip_on_a_store_that_still_trusts_g3_is_rejected(commands: list[str]) -> None:
-    assert g3_deselect_problems(commands)
+def test_a_fetch_from_a_store_that_still_trusts_the_roots_is_rejected(
+    commands: list[str],
+) -> None:
+    assert distrust_before_fetch_problems(commands)
 
 
-def test_deselecting_g3_before_pip_is_accepted() -> None:
-    commands = [DESELECT_G3, GOOD_PIP_BOOTSTRAP, "python -m pip install pkg"]
-    assert g3_deselect_problems(commands) == []
+def test_distrusting_before_the_first_fetch_is_accepted() -> None:
+    # A comment that names a fetching tool fetches nothing.
+    commands = ["# curl fetches through the store", RUN_SCRIPT, "uv build --wheel"]
+    assert distrust_before_fetch_problems(commands) == []
 
 
-def test_every_build_image_deselects_g3_before_pip() -> None:
-    """Ubuntu 20.04, the fuzz image's base, still ships the root in its
-    newest ca-certificates (20240203~20.04.1), so upgrading cannot drop it."""
-    checked = {}
-    for dockerfile in DOCKERFILES:
-        commands = logical_lines(dockerfile.read_text(encoding="utf-8"))
-        if any(_PIP_INSTALL.search(c) for c in commands):
-            checked[dockerfile] = g3_deselect_problems(commands)
-    assert FUZZ_IMAGE in checked
+def test_every_build_image_distrusts_the_roots_before_fetching() -> None:
+    """Ubuntu 20.04, the fuzz image's base, still ships all four roots in its
+    newest ca-certificates (20240203~20.04.1), so upgrading cannot drop them."""
+    checked = {
+        dockerfile: distrust_before_fetch_problems(
+            logical_lines(dockerfile.read_text(encoding="utf-8"))
+        )
+        for dockerfile in DOCKERFILES
+    }
     assert {path: problems for path, problems in checked.items() if problems} == {}
 
 
-def test_the_unlocked_wheel_job_deselects_g3_before_pip() -> None:
-    """The runner image's ca-certificates is whatever it was built with."""
+def test_the_unlocked_wheel_job_distrusts_the_roots_before_fetching() -> None:
+    """The runner image's ca-certificates is whatever it was built with, and
+    the crate's wheel build fetches through cargo before pip runs."""
     workflow = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
     commands = [
         line
         for step in workflow["jobs"][UNLOCKED_JOB]["steps"]
         for line in step.get("run", "").splitlines()
     ]
-    assert g3_deselect_problems(commands) == []
+    assert distrust_before_fetch_problems(commands) == []
