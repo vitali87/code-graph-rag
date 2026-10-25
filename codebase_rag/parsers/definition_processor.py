@@ -635,23 +635,16 @@ class DefinitionProcessor(
                 return None
 
             self._handler = get_handler(language)
-            if language == cs.SupportedLanguage.SQL and source_bytes is None:
-                # Read once: the call pass reads DDL from the bytes parsed.
-                source_bytes = file_path.read_bytes()
+            source_bytes = self._read_sql_once(file_path, language, source_bytes)
             parsed = self._parse_file_root(
                 file_path, language, queries, source_bytes, pre_parsed
             )
             if parsed is None:
                 return None
             root_node, pre_combined_captures = parsed
-            if language == cs.SupportedLanguage.SQL and source_bytes is not None:
-                self._warn_lost_sql_functions(
+            if language == cs.SupportedLanguage.SQL:
+                self._settle_sql_file(
                     file_path, relative_path_str, root_node, source_bytes
-                )
-                self.keep_sql_source(
-                    file_path,
-                    root_node,
-                    grammar_bytes(source_bytes, language, file_path),
                 )
 
             module_qn = base_module_qn(relative_path, self.project_name)
@@ -808,6 +801,31 @@ class DefinitionProcessor(
             root_node = tree.root_node
             pre_combined_captures = None
         return root_node, pre_combined_captures
+
+    @staticmethod
+    def _read_sql_once(
+        file_path: Path, language: cs.SupportedLanguage, source_bytes: bytes | None
+    ) -> bytes | None:
+        # Read once: the call pass reads DDL from the bytes parsed (#3181).
+        if language == cs.SupportedLanguage.SQL and source_bytes is None:
+            return file_path.read_bytes()
+        return source_bytes
+
+    def _settle_sql_file(
+        self,
+        file_path: Path,
+        relative_path: str,
+        root_node: ASTNode,
+        source: bytes | None,
+    ) -> None:
+        if source is None:
+            return
+        self._warn_lost_sql_functions(file_path, relative_path, root_node, source)
+        self.keep_sql_source(
+            file_path,
+            root_node,
+            grammar_bytes(source, cs.SupportedLanguage.SQL, file_path),
+        )
 
     def keep_sql_source(
         self, file_path: Path, root_node: ASTNode, parsed: bytes
