@@ -243,8 +243,9 @@ written by whoever can commit to it, and it goes into the system prompt, so it
 loads only in the exact form the user approved: an interactive session
 (`cgr start`, `cgr optimize`) shows the file, with control characters escaped,
 and asks, defaulting to no. The approval is a SHA-256 of the content, kept in
-`$CGR_HOME/trusted_instructions.json` (owner-only), and a changed file is shown
-again. Sessions with nobody to ask (`cgr start -a`, MCP `ask_agent`) load it
+`$CGR_HOME/trusted_instructions.json` (owner-only; in `~/.cgr` when `CGR_HOME`
+comes from the working directory's `.env`, so a repository cannot ship its own
+store), and a changed file is shown again. Sessions with nobody to ask (`cgr start -a`, MCP `ask_agent`) load it
 only when its current content was approved before.
 `CGR_TRUST_PROJECT_INSTRUCTIONS=true` skips the question for every
 repository; use it only for CI on repositories you control. It counts only when

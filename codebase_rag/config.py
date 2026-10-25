@@ -989,8 +989,29 @@ class RepoInstructions(NamedTuple):
         return settings.TRUST_PROJECT_INSTRUCTIONS or self.approved == self.digest
 
 
+def set_by_dotenv(
+    name: str, inherited_env: Collection[str], dotenv_names: Collection[str]
+) -> bool:
+    """Whether `name` comes from the working directory's `.env` rather than
+    from the environment the user started cgr with."""
+    exported = {variable.upper() for variable in inherited_env}
+    in_file = {variable.upper() for variable in dotenv_names}
+    return name.upper() in in_file and name.upper() not in exported
+
+
+# The names the working directory's `.env` sets, merged or not:
+# pydantic-settings reads the file itself.
+_DOTENV_NAMES = frozenset(DotEnv(Path.cwd() / ".env", encoding=cs.ENCODING_UTF8).dict())
+_DEFAULT_CGR_HOME = Path.home() / cs.CGR_HOME_DIRNAME
+_CGR_HOME_FROM_DOTENV = set_by_dotenv(cs.ENV_CGR_HOME, _INHERITED_ENV, _DOTENV_NAMES)
+
+
 def _trust_store() -> Path:
-    return settings.CGR_HOME.expanduser() / cs.TRUSTED_INSTRUCTIONS_FILENAME
+    # Approvals live where the repository cannot point them: a CGR_HOME set by
+    # the working directory's `.env` could hold a store that approves that
+    # repository's own .cgr.md (Greptile review on PR #3471).
+    home = _DEFAULT_CGR_HOME if _CGR_HOME_FROM_DOTENV else settings.CGR_HOME
+    return home.expanduser() / cs.TRUSTED_INSTRUCTIONS_FILENAME
 
 
 def repo_instructions(repo_path: Path) -> RepoInstructions | None:

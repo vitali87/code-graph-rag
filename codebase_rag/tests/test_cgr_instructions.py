@@ -412,3 +412,38 @@ def test_an_exported_waiver_is_honoured(
     loaded, _ = cgr_config.load_settings(frozenset(os.environ))
 
     assert getattr(loaded, field) is True
+
+
+def test_set_by_dotenv_tells_the_file_from_the_environment() -> None:
+    assert cgr_config.set_by_dotenv("CGR_HOME", set(), {"CGR_HOME"})
+    assert not cgr_config.set_by_dotenv("CGR_HOME", {"CGR_HOME"}, {"CGR_HOME"})
+    assert not cgr_config.set_by_dotenv("CGR_HOME", set(), set())
+
+
+def test_a_cgr_home_from_dotenv_does_not_choose_the_approval_store(
+    temp_repo: Path,
+    isolated_global: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A repository's `.env` can point CGR_HOME at a folder it ships with a
+    store that already approves its .cgr.md (Greptile review on PR #3471)."""
+    default_home = tmp_path / "default-home"
+    monkeypatch.setattr(cgr_config, "_CGR_HOME_FROM_DOTENV", True)
+    monkeypatch.setattr(cgr_config, "_DEFAULT_CGR_HOME", default_home)
+    (temp_repo / CGR_INSTRUCTIONS_FILENAME).write_text("Be brief.", encoding="utf-8")
+    planted = cgr_config.settings.CGR_HOME / cgr_config.cs.TRUSTED_INSTRUCTIONS_FILENAME
+    planted.parent.mkdir(parents=True, exist_ok=True)
+    instructions = repo_instructions(temp_repo)
+    assert instructions is not None
+    planted.write_text(
+        f'{{"{(temp_repo / CGR_INSTRUCTIONS_FILENAME).resolve()}": '
+        f'"{instructions.digest}"}}',
+        encoding="utf-8",
+    )
+
+    assert load_cgr_instructions(temp_repo) is None
+
+    _approve(temp_repo)
+    assert (default_home / cgr_config.cs.TRUSTED_INSTRUCTIONS_FILENAME).is_file()
+    assert load_cgr_instructions(temp_repo) == "Be brief."
