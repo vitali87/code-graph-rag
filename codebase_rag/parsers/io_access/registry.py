@@ -164,6 +164,28 @@ _JS_TS_SINKS: tuple[IOSink, ...] = (
     IOSink("fs.writeFileSync", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
     IOSink("fs.appendFile", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
     IOSink("fs.appendFileSync", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
+    # The promise API (issue #2775). One key set covers a named import from
+    # `(node:)fs/promises` (which maps to `fs.promises.<fn>`), a namespace
+    # import of it, and the `fs.promises.<fn>(...)` member call.
+    IOSink("fs.promises.readFile", ResourceKind.FILE, IODirection.READ, target_arg=0),
+    IOSink("fs.promises.writeFile", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
+    IOSink(
+        "fs.promises.appendFile", ResourceKind.FILE, IODirection.WRITE, target_arg=0
+    ),
+    IOSink("fs.promises.rm", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
+    IOSink("fs.promises.unlink", ResourceKind.FILE, IODirection.WRITE, target_arg=0),
+    # Node's open flags ('r', 'w', 'a', 'r+', ...) read like Python modes;
+    # no flags is 'r'.
+    IOSink(
+        "fs.promises.open",
+        ResourceKind.FILE,
+        IODirection.READ,
+        target_arg=0,
+        mode_arg=1,
+    ),
+    # What CLIs and loggers use to write without console.log's newline.
+    IOSink("process.stdout.write", ResourceKind.STDOUT, IODirection.WRITE),
+    IOSink("process.stderr.write", ResourceKind.STDERR, IODirection.WRITE),
 )
 
 # Go direct-call I/O sinks (issue #714). Keyed by the FULL import path plus the
