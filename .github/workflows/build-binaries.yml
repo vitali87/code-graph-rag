@@ -36,8 +36,35 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # A release tag's binaries go onto its GitHub release (the upload creates
+  # one if none exists), so on a tag nothing builds until main's CI is shown
+  # to have passed at that commit. PR, scheduled and branch builds publish
+  # nothing and skip it.
+  ci-gate:
+    name: Require green CI at the release commit
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Require green CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/require_green_ci.py "$GITHUB_SHA"
+
   build:
     name: Build ${{ matrix.platform }}-${{ matrix.arch }}
+    needs: ci-gate
+    if: >-
+      !cancelled()
+      && (needs.ci-gate.result == 'success' || !startsWith(github.ref, 'refs/tags/v'))
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
