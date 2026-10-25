@@ -2340,10 +2340,12 @@ class GraphUpdater:
             # resolving it would re-attribute in-function uses to the Module.
             if call.rel_path not in self._reparsed_file_keys:
                 continue
+            # By column too: the edge is located at the use, so a use in the
+            # second of two definitions sharing a line must not join the first.
             containing = [
                 s
                 for s in spans.get(call.rel_path, ())
-                if s.start_line <= call.line <= s.end_line
+                if s.contains(call.line, call.col)
                 and s.qualified_name != call.callee_qn
             ]
             if containing:
@@ -2352,10 +2354,22 @@ class GraphUpdater:
             else:
                 caller_label = cs.NodeLabel.MODULE.value
                 caller_qn = call.fallback_module_qn
+            # The use's site joins the CALLS MERGE key: tree-sitter parses a
+            # function-like use as a call at the same site and emits its own
+            # edge, so the two collapse into one located edge rather than a
+            # located and a site-less one (issue #2944). An object-like use is
+            # an identifier to tree-sitter, so this edge is its only one.
             self._sink.ensure_relationship_batch(
                 (caller_label, cs.KEY_QUALIFIED_NAME, caller_qn),
                 cs.RelationshipType.CALLS,
                 (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, call.callee_qn),
+                {
+                    cs.KEY_LINE: call.line,
+                    cs.KEY_COL: call.col,
+                    cs.KEY_END_LINE: call.end_line,
+                    cs.KEY_END_COL: call.end_col,
+                    cs.KEY_RESOLUTION: cs.EdgeResolution.EXACT,
+                },
             )
             emitted += 1
         logger.info(ls.CPP_FRONTEND_MACRO_CALLS.format(count=emitted))
