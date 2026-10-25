@@ -42,7 +42,6 @@ from .duplicates import _jaccard
 from .graph_query import QueryFn, _longer_project_prefixes, _opt_int, _prefix
 from .language_spec import get_language_for_extension
 from .parser_loader import load_parsers
-from .parsers.js_ts.utils import this_names_class_at
 from .types_defs import PropertyDict, ReingestReport, ResultRow
 from .utils.source_encoding import grammar_bytes
 
@@ -2525,7 +2524,10 @@ def _own_receiver(caller: Definition | None) -> str | None:
 def _js_this(root: Node, this: Node) -> str | None:
     # An arrow takes `this` from where it is written, though the graph makes
     # it a definition of its own: in a static method it is the class (bot
-    # review on PR #3311). A plain function's own `this` is neither.
+    # review on PR #3311). A plain function's own `this` is neither. The
+    # parsers package is deferred: the CLI imports this module at startup.
+    from .parsers.js_ts.utils import this_names_class_at
+
     names_class = this_names_class_at(root, this.start_byte)
     if names_class is None:
         return None
