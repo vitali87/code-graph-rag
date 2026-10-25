@@ -20,6 +20,7 @@ from codebase_rag import constants as cs
 from codebase_rag.dead_code import collect_dead_code, default_dead_code_config
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.call_processor import CallProcessor
 from codebase_rag.parsers.sql_recovery import parse_sql
 from codebase_rag.tests.test_incremental_added_dependents import _add_after_cache
 from codebase_rag.tests.test_incremental_deleted_dependents import (
@@ -300,6 +301,25 @@ def test_ddl_a_statement_isolated_parse_blanks_still_references_its_routine(
     assert b"EVENT TRIGGER" not in tree.root_node.text
     store = _index(tmp_path / PROJECT, {"events.sql": source})
     assert _callers(store, "events.on_ddl") == {"events": (2, 63)}
+
+
+@pytest.mark.parametrize(
+    "case", ["no-file-being-walked", "file-gone", "file-shorter-than-its-tree"]
+)
+def test_the_ddl_scan_reads_the_tree_when_the_file_cannot_stand_in_for_it(
+    tmp_path: Path, case: str
+) -> None:
+    # Negative: without a readable file covering the tree's span, the scan
+    # reads the tree's own text instead of failing or cutting a short file.
+    source = b"CREATE TRIGGER t AFTER INSERT ON items EXECUTE FUNCTION touch();\n"
+    parsers, _ = load_parsers()
+    root = parse_sql(parsers[cs.SupportedLanguage.SQL], source).root_node
+    path = tmp_path / "wiring.sql"
+    if case == "file-shorter-than-its-tree":
+        path.write_bytes(source[:10])
+    processor = CallProcessor.__new__(CallProcessor)
+    processor._call_file = None if case == "no-file-being-walked" else path
+    assert processor._sql_source_text(root) == root.text == source
 
 
 def test_a_routine_added_later_links_the_unchanged_ddl_naming_it(
