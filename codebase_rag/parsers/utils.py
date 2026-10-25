@@ -1760,6 +1760,18 @@ def _record_member_aliases(
         )
 
 
+def _go_chain_return_props(method_node: ASTNode) -> PropertyDict:
+    # A Go method's chained-call return type, stored so an incremental run
+    # restores it for a file it does not re-parse (issue #3272); only that
+    # name, the first-result map is free functions'.
+    # Local import, like type_facts': the Go helpers import this module.
+    from .go.utils import extract_return_type_name
+
+    if chain := extract_return_type_name(method_node):
+        return {cs.KEY_CHAIN_RETURN_TYPE: chain}
+    return {}
+
+
 def _method_positional_params_props(
     method_node: ASTNode, language: cs.SupportedLanguage
 ) -> PropertyDict:
@@ -1797,6 +1809,8 @@ def _language_method_props(
 
         if java_utils.is_main_declaration(method_node):
             return {cs.KEY_IS_PROGRAM_MAIN: True}
+    if language == cs.SupportedLanguage.GO:
+        return _go_chain_return_props(method_node)
     return {}
 
 

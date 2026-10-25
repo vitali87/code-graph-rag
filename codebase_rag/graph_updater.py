@@ -3977,6 +3977,7 @@ class GraphUpdater:
         # After the loop: whether a method's owner is a trait needs the whole
         # registry, and its rows arrive in no particular order.
         self._rehydrate_rust_return_types(restored)
+        self._rehydrate_go_return_types(restored)
         self._rehydrate_go_method_sets(restored)
         # Module qns from unchanged files: deferred import verification and
         # C++20 module-impl resolution must count them as real targets, or
@@ -4138,6 +4139,11 @@ class GraphUpdater:
                 self.factory.definition_processor.cpp_module_interfaces.add(qn)
             else:
                 self._rehydrated_module_qns.add(qn)
+            # An unchanged Go file's package clause, which same-package
+            # visibility compares a re-parsed requester against (#3272).
+            # setdefault: a file this run re-parsed recorded its own.
+            if isinstance(package := row.get(cs.KEY_GO_PACKAGE), str) and package:
+                dp.go_package_names.setdefault(qn, package)
             # An unchanged PHP file's declared namespace, which a
             # `use function App\\Util\\slug` is matched against (issue #3277).
             if (
@@ -4249,6 +4255,37 @@ class GraphUpdater:
         if isinstance(path := row.get(cs.KEY_PATH), str):
             self._rehydrate_definition_path(node_type, qn, path, row)
         return True
+
+    def _rehydrate_go_return_types(self, rows: list[ResultRow]) -> None:
+        # The result type names ingest records only while parsing the
+        # definition's own file: a re-parsed Go caller of an unchanged
+        # `NewBox` typed `b, _ := NewBox(2)` from nothing, and `b.Size()`
+        # bound by name to another type's `Size` (issue #3272). Only rows
+        # this run did not parse reach here (the caller skips registered
+        # qns), so a re-parsed definition keeps what it recorded itself.
+        type_inference = self.factory.type_inference
+        methods: dict[str, str] = {}
+        for row in sorted(rows, key=_registration_order):
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            if not isinstance(qn, str):
+                continue
+            first = row.get(cs.KEY_FIRST_RETURN_TYPE)
+            if isinstance(first, str) and first:
+                type_inference.go_function_return_types[qn] = first
+            chain = row.get(cs.KEY_CHAIN_RETURN_TYPE)
+            if not isinstance(chain, str) or not chain:
+                continue
+            if row.get(cs.KEY_LABEL) != cs.NodeLabel.METHOD.value:
+                type_inference.method_return_types[qn] = chain
+                continue
+            # Parsing keys a method's result by its natural qn, which each
+            # build file declaring it again (`Self`, `Self@5`) shares, and
+            # writes each over the last in registration order: replayed in
+            # that order, the last one stands, as a clean index has it.
+            methods[_natural_qn(qn)] = chain
+        for natural, chain in methods.items():
+            # A re-parsed build file's own record is current; keep it.
+            type_inference.method_return_types.setdefault(natural, chain)
 
     def _rehydrate_go_method_sets(self, rows: list[ResultRow]) -> None:
         # An unchanged Go file's methods and interfaces still count toward
