@@ -859,6 +859,9 @@ SHELL_CONTENT_READS = frozenset({"cat", "head", "tail", "sort", "uniq", "cut", "
 # ripgrep skips hidden and ignored files, which is where .env and keys live,
 # unless one of these switches tells it not to.
 SHELL_RG_HIDDEN_SWITCHES = frozenset({"-.", "-u", "--hidden", "--unrestricted"})
+# `--no-ignore`, `--no-ignore-vcs`, `--no-ignore-dot` and the rest: each makes
+# ripgrep search files its ignore rules would skip.
+SHELL_RG_NO_IGNORE_PREFIX = "--no-ignore"
 # With none of these, ripgrep's first operand is the pattern, not a file.
 SHELL_RG_PATTERN_OPTIONS = frozenset({"-e", "--regexp", "-f", "--file"})
 SHELL_CMD_RG = "rg"

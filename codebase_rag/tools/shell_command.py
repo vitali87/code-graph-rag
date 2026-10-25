@@ -2206,7 +2206,14 @@ def _reaches_sensitive_file(parts: list[str], root: Path) -> bool:
     kinds = _CONFINED_READ_OPTION_KINDS.get(command, {})
     options = list(_parse_getopt_options(parts, kinds))
     names = {option.name for option in options}
-    if command == cs.SHELL_CMD_RG and names & cs.SHELL_RG_HIDDEN_SWITCHES:
+    # Switches that widen what ripgrep searches are refused outright rather than
+    # mirrored into the file-list check below; `--no-ignore` reached an ignored
+    # `server.pem` (CodeRabbit review on PR #3471). Matched by prefix, so a
+    # newer `--no-ignore-*` counts too.
+    if command == cs.SHELL_CMD_RG and (
+        names & cs.SHELL_RG_HIDDEN_SWITCHES
+        or any(name.startswith(cs.SHELL_RG_NO_IGNORE_PREFIX) for name in names)
+    ):
         return True
     files = [
         option.value.removeprefix("=")

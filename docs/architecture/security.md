@@ -267,8 +267,8 @@ keys and certificates (`id_rsa`, `*.pem`, `*.key`, `*.p12`, ...), `.npmrc`,
 `.docker/config.json`, `.kube/config`, Terraform state, and anything under
 `.ssh/` or `.gnupg/`, judged by a symlink's target as well as its name. The
 chat asks before reading one, and a run with nobody to ask is denied; a shell
-read that names one, or an `rg` with `--hidden`, `-.`, `-u` or
-`--unrestricted`, needs approval the same way. This is a name-based list, not
+read that names one, or an `rg` with `--hidden`, `-.`, `-u`, `--unrestricted`
+or a `--no-ignore` switch, needs approval the same way. This is a name-based list, not
 secret scanning: a credential pasted into `settings.py` is read like any other
 source. A recursive `rg` (no path, or a directory) is checked against the files
 it would search, as `rg --files` lists them with the same roots and filters.

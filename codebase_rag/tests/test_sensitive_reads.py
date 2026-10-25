@@ -270,6 +270,24 @@ class TestRecursiveRipgrep:
 
         assert _noninteractive_denial("rg KEY", tree) is None
 
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "rg --no-ignore KEY .",
+            "rg --no-ignore-dot KEY",
+            "rg --no-ignore-vcs KEY",
+            "rg --no-ignore-files KEY src",
+        ],
+    )
+    def test_a_switch_that_unignores_files_is_not_confined(
+        self, tree: Path, command: str
+    ) -> None:
+        """The file list cannot vouch for files an ignore rule hid from it
+        (CodeRabbit review on PR #3471)."""
+        (tree / ".ignore").write_text("*.pem\n")
+
+        assert _noninteractive_denial(command, tree) is not None
+
     def test_without_ripgrep_nothing_is_read(
         self, tree: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
