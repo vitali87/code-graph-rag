@@ -1286,11 +1286,11 @@ class CSharpTypeInferenceEngine:
         if unwrapped is None:
             return None
         receiver = unwrapped
-        # `((Widget)o).Ext()`: the cast target IS the receiver type, so an
-        # extension-only method still binds on a cast receiver; same for a
-        # `new Widget(...)` receiver.
+        # `((Widget)o).Ext()` or `(o as Widget).Ext()`: the cast target IS the
+        # receiver type, so an extension-only method still binds on a cast
+        # receiver; same for a `new Widget(...)` receiver.
         if receiver.type in (
-            cs.TS_CSHARP_CAST_EXPRESSION,
+            *cs.TS_CSHARP_CAST_RECEIVERS,
             cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION,
         ):
             return self._annotated_type_field(receiver)
@@ -1311,7 +1311,7 @@ class CSharpTypeInferenceEngine:
         return None
 
     def _annotated_type_field(self, receiver: Node) -> str | None:
-        type_node = receiver.child_by_field_name(cs.FIELD_TYPE)
+        type_node = _receiver_type_node(receiver)
         raw = safe_decode_text(type_node) if type_node else None
         return annotate_type_ref(raw) if raw else None
 
@@ -1406,9 +1406,9 @@ class CSharpTypeInferenceEngine:
         receiver = unwrapped
         if receiver.type in (
             cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION,
-            cs.TS_CSHARP_CAST_EXPRESSION,
+            *cs.TS_CSHARP_CAST_RECEIVERS,
         ):
-            type_node = receiver.child_by_field_name(cs.FIELD_TYPE)
+            type_node = _receiver_type_node(receiver)
             raw = safe_decode_text(type_node) if type_node else None
             return generic_arity_of_type_text(raw) if raw else None
         if receiver.type == cs.TS_CSHARP_INVOCATION_EXPRESSION:
@@ -1507,14 +1507,15 @@ class CSharpTypeInferenceEngine:
         caller_qn: str | None,
     ) -> str | None:
         # A cast receiver `((Component)s!).Reload()` (Polly's
-        # CancellationToken.Register callback): the cast TYPE is the
+        # CancellationToken.Register callback), or the safe cast
+        # `(s as Component).Reload()` (issue #2892): the cast TYPE is the
         # receiver's type by construction (mirrors the Java cast-receiver
         # handling).
         unwrapped = self._unwrap_receiver(receiver)
         if unwrapped is None:
             return None
         receiver = unwrapped
-        if receiver.type == cs.TS_CSHARP_CAST_EXPRESSION:
+        if receiver.type in cs.TS_CSHARP_CAST_RECEIVERS:
             return self._cast_receiver_qn(receiver, module_qn)
         # `new Builder().Add()`: an object-creation receiver IS its type.
         if receiver.type == cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION:
@@ -1549,7 +1550,7 @@ class CSharpTypeInferenceEngine:
         return None
 
     def _cast_receiver_qn(self, receiver: Node, module_qn: str) -> str | None:
-        type_node = receiver.child_by_field_name(cs.FIELD_TYPE)
+        type_node = _receiver_type_node(receiver)
         return self._written_type_qn(type_node, module_qn) if type_node else None
 
     def _written_type_qn(self, type_node: Node, module_qn: str) -> str | None:
@@ -2216,3 +2217,11 @@ class CSharpTypeInferenceEngine:
                 found.append(current)
             stack.extend(current.children)
         return found
+
+
+def _receiver_type_node(receiver: Node) -> Node | None:
+    # The type a receiver names: a C-style cast's and a `new`'s `type` field,
+    # an `as` cast's right operand (issue #2892).
+    if receiver.type == cs.TS_CSHARP_AS_EXPRESSION:
+        return receiver.child_by_field_name(cs.TS_FIELD_RIGHT)
+    return receiver.child_by_field_name(cs.FIELD_TYPE)
