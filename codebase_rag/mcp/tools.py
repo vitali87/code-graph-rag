@@ -18,7 +18,7 @@ from codebase_rag import gloss, graph_query
 from codebase_rag import logs as lg
 from codebase_rag import structural_delta as sd
 from codebase_rag import tool_errors as te
-from codebase_rag.config import load_ignore_patterns
+from codebase_rag.config import load_ignore_patterns, settings
 from codebase_rag.gloss_anchor import ParsedSource, SourceReader, parse_source
 from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
 from codebase_rag.models import ToolMetadata
@@ -46,7 +46,11 @@ from codebase_rag.tools.directory_lister import (
 )
 from codebase_rag.tools.duplicate_detection import create_find_duplicates_tool
 from codebase_rag.tools.file_editor import FileEditor, create_file_editor_tool
-from codebase_rag.tools.file_reader import FileReader, create_file_reader_tool
+from codebase_rag.tools.file_reader import (
+    FileReader,
+    create_file_reader_tool,
+    read_file_text,
+)
 from codebase_rag.tools.file_writer import FileWriter, create_file_writer_tool
 from codebase_rag.tools.semantic_search import (
     create_get_function_source_tool,
@@ -3777,6 +3781,10 @@ class MCPToolsRegistry:
             return te.failure(cs.MCP_READ_OFFSET_NEGATIVE.format(offset=offset))
         if limit is not None and limit < cs.MCP_READ_LIMIT_MINIMUM:
             return te.failure(cs.MCP_READ_LIMIT_NOT_POSITIVE.format(limit=limit))
+        if not settings.ALLOW_SENSITIVE_READS and self.file_reader.is_sensitive(
+            file_path
+        ):
+            return te.failure(cs.MCP_READ_SENSITIVE_REFUSED.format(path=file_path))
         try:
             if offset is not None or limit is not None:
                 project_root = Path(self.project_root).resolve()
@@ -3791,9 +3799,9 @@ class MCPToolsRegistry:
                 )
             else:
                 # Returned as is: a ToolFailure must stay one (issue #2650).
-                return await _plain_function(self._file_reader_tool)(
-                    file_path=file_path
-                )
+                # Not through the agent's tool: that one defers a credential
+                # file for approval, and this path has already decided.
+                return await read_file_text(self.file_reader, file_path)
 
         except Exception as e:
             logger.error(lg.MCP_ERROR_READ.format(error=e))

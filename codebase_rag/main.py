@@ -76,6 +76,7 @@ from .services.llm import (
     run_to_text_answer,
 )
 from .taint import ReadContentRecord
+from .tools import tool_descriptions as td
 from .tools.ast_grep_service import AstGrepService
 from .tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
 from .tools.codebase_query import create_query_tool
@@ -105,6 +106,7 @@ from .types_defs import (
     GraphData,
     QueryJsonOutput,
     RawToolArgs,
+    ReadFileArgs,
     ReplaceCodeArgs,
     ShellCommandArgs,
     StructuralReplaceArgs,
@@ -266,6 +268,8 @@ def _to_tool_args(
             )
         case tool_names.shell_command:
             return ShellCommandArgs(command=raw_args.command)
+        case td.AgenticToolName.READ_FILE:
+            return ReadFileArgs(file_path=raw_args.file_path)
         case tool_names.structural_replace:
             return StructuralReplaceArgs(
                 pattern=raw_args.pattern,
@@ -302,6 +306,16 @@ def _display_tool_call_diff(
             app_context.console.print(f"\n{cs.UI_SHELL_COMMAND_HEADER}")
             app_context.console.print(
                 style(f"$ {command}", cs.Color.YELLOW, cs.StyleModifier.NONE)
+            )
+
+        case td.AgenticToolName.READ_FILE:
+            app_context.console.print(f"\n{cs.UI_SENSITIVE_READ_HEADER}")
+            app_context.console.print(
+                style(
+                    str(tool_args.get(cs.ARG_FILE_PATH, "")),
+                    cs.Color.YELLOW,
+                    cs.StyleModifier.NONE,
+                )
             )
 
         case tool_names.structural_replace:

@@ -142,6 +142,12 @@ MCP_READ_LIMIT_MINIMUM = 1
 MCP_READ_OFFSET_NEGATIVE = "offset {offset} is negative"
 MCP_READ_LIMIT_NOT_POSITIVE = "limit {limit} is not positive"
 MCP_READ_PAST_END = "offset {offset} is past the end of {path} ({total} lines)"
+# A likely credential store is not served: the client's model would read
+# it, and repository text can ask for it as easily as for source (#3457).
+MCP_READ_SENSITIVE_REFUSED = (
+    "{path} looks like a credential file, so it is not served over MCP. "
+    "Set CGR_ALLOW_SENSITIVE_READS=true to serve it."
+)
 # A `path:line` target whose line no source file can reach; sent on, it
 # overflows the 64-bit Bolt integer in the driver.
 MCP_RESOLVE_LINE_OUT_OF_RANGE = "Line {line} of {path} is out of range."

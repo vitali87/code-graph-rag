@@ -48,6 +48,7 @@ The controls and remaining risks are described below.
 3. The MCP server must not expose the graph or the tools to other hosts unauthenticated.
 4. Network paths carrying source code or queries must be documented so operators can choose permitted providers and restrict egress.
 5. File-tool path checks, command filtering and approval controls must limit unintended actions. These application-level checks are not an operating-system sandbox.
+6. Repository content must not reach the agent's system prompt, and files that look like credentials must not reach the model, without the user's consent.
 
 ## Trust boundaries and threat model
 
@@ -63,7 +64,7 @@ is a separate trust boundary between project changes and distributed artifacts.
 | Repository build logic executes during indexing | C# defaults to Tree-sitter; Roslyn-backed modes require an explicit configuration choice. | Toolchain-backed analysis and preprocessing run with host privileges. Review the modes below and isolate untrusted workloads. |
 | Prompt injection steers the agent through repository or web content | CLI web research uses a separate agent with only the search tool; its summary is marked as untrusted data. A repository's `.cgr.md` reaches the system prompt only after the user approves its current content. | The main agent still interprets repository content and research summaries. These measures do not guarantee that it ignores malicious instructions; review proposed actions. |
 | Tool use modifies unintended files or executes unwanted commands | File tools validate project paths; default CLI shell execution uses command filtering and approval checks. | Commands are not OS-sandboxed, and YOLO mode relaxes checks. Keep approvals enabled and restrict the account's privileges. |
-| Source code, queries or credentials reach an unintended recipient | Provider configuration controls destinations; CLI research/search checks queries against recorded repository content. | Remote inference intentionally sends data, and text matching is not comprehensive data-loss prevention. Audit providers, MCP clients and tool egress; keep secrets out of inputs. |
+| Source code, queries or credentials reach an unintended recipient | Provider configuration controls destinations; CLI research/search checks queries against recorded repository content. Reads that need no approval refuse files that look like credentials. | Remote inference intentionally sends data, and text matching is not comprehensive data-loss prevention. Audit providers, MCP clients and tool egress; keep secrets out of inputs. |
 | Unauthorized access to graph data or privileged MCP tools | New database stacks bind loopback by default; HTTP MCP requires a bearer token for a non-loopback bind. | Old Compose files can remain exposed; loopback is not per-user isolation. Protect remote transport, tokens and host access. |
 | Large inputs, queries or tool calls exhaust resources | Shell pipelines, search requests and several toolchain calls have timeouts. | These are not global CPU, memory, disk or request quotas. Apply resource limits and avoid exposing the service to untrusted workloads. |
 | Compromised dependencies or publishing access distribute malicious code | Dependency scanning, PyPI trusted publishing, and binary signing/provenance provide detection and traceability. | A compromised authorized build can still produce signed artifacts. Verify provenance and follow the incident response plan for suspect releases. |
@@ -242,6 +243,23 @@ repository; use it only for CI on repositories you control. The prompt tells
 the model that these instructions cannot grant permissions or skip approvals,
 but approval of the file, not that wording, is the control: GHSA-2rr7-8xrw-gmhr
 was a `.cgr.md` that asked the agent to plant a git backdoor without asking.
+
+### Credential files
+
+Some reads run without approval: `read_file`, shell reads confined to the
+project (`cat`, `head`, `rg`, ...) and MCP `read_file`. What they return goes to
+the model provider. Files that look like credentials are therefore taken out of
+that set: `.env` and `.env.*` (not templates such as `.env.example`), private
+keys and certificates (`id_rsa`, `*.pem`, `*.key`, `*.p12`, ...), `.npmrc`,
+`.pypirc`, `.netrc`, `.git-credentials`, `.git/config`, `.aws/credentials`,
+`.docker/config.json`, `.kube/config`, Terraform state, and anything under
+`.ssh/` or `.gnupg/`, judged by a symlink's target as well as its name. The
+chat asks before reading one, and a run with nobody to ask is denied; a shell
+read that names one, or an `rg` with `--hidden`, `-.`, `-u` or
+`--unrestricted`, needs approval the same way. This is a name-based list, not
+secret scanning: a credential pasted into `settings.py` is read like any other
+source, and an `rg` over a directory still searches files that are neither
+hidden nor ignored.
 
 Commands run with the host user's privileges and inherited environment.
 Working-directory and argument checks are not an OS sandbox. Repository text,

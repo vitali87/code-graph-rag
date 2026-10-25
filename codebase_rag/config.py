@@ -613,6 +613,13 @@ class AppConfig(BaseSettings):
 
     CGR_CAPTURE: str = Field("", validation_alias="CGR_CAPTURE")
 
+    # MCP read_file refuses a likely credential file (.env, keys,
+    # .git/config): the client's model would read it (issue #3457). The CLI
+    # agent asks instead, so this only matters to the MCP server.
+    ALLOW_SENSITIVE_READS: bool = Field(
+        False, validation_alias="CGR_ALLOW_SENSITIVE_READS"
+    )
+
     # A repository's .cgr.md loads only once the user approved its content
     # (issue #3456). True trusts every repository's file without asking:
     # for CI on repositories you control, never for code you did not write.

@@ -21,6 +21,7 @@ from .. import tool_errors as te
 from ..config import settings
 from ..decorators import async_timing_decorator
 from ..schemas import ShellCommandResult
+from ..sensitive_paths import is_sensitive_path
 from ..taint import ReadContentRecord
 from . import tool_descriptions as td
 
@@ -2186,7 +2187,56 @@ def _noninteractive_segment_denial(
         )
     if reason := _confined_option_denial(parts, root):
         return te.COMMAND_NONINTERACTIVE_DENIED.format(command=segment, reason=reason)
+    if _reaches_sensitive_file(parts, root):
+        return te.COMMAND_NONINTERACTIVE_DENIED.format(
+            command=segment, reason=te.NONINTERACTIVE_SENSITIVE_FILE
+        )
     return None
+
+
+def _reaches_sensitive_file(parts: list[str], root: Path) -> bool:
+    """Whether this read would print a likely credential file: an operand or
+    path option naming one, or a ripgrep switch that searches the hidden and
+    ignored files such files live in. Confined reads run without approval, so
+    without this `cat .env` would reach the model unasked (issue #3457)."""
+    command = parts[0]
+    if command not in cs.SHELL_CONTENT_READS:
+        return False
+    kinds = _CONFINED_READ_OPTION_KINDS.get(command, {})
+    options = list(_parse_getopt_options(parts, kinds))
+    names = {option.name for option in options}
+    if command == cs.SHELL_CMD_RG and names & cs.SHELL_RG_HIDDEN_SWITCHES:
+        return True
+    files = [
+        option.value.removeprefix("=")
+        for option in options
+        if option.kind == cs.ReadOptionKind.PATH and option.value
+    ]
+    operands = _read_operands(parts, kinds)
+    if command == cs.SHELL_CMD_RG and not names & cs.SHELL_RG_PATTERN_OPTIONS:
+        operands = operands[1:]
+    return any(is_sensitive_path(root / name) for name in files + operands)
+
+
+def _read_operands(parts: list[str], kinds: dict[str, cs.ReadOptionKind]) -> list[str]:
+    # The arguments `_parse_getopt_options` passes over: it consumes each
+    # option's value from the same iterator, so what is left are operands.
+    operands: list[str] = []
+    rest = iter(parts[1:])
+    for arg in rest:
+        if arg == "--":
+            operands.extend(rest)
+            break
+        if not arg.startswith("-"):
+            operands.append(arg)
+        elif arg == cs.SHELL_STDIN_OPERAND:
+            continue
+        elif arg.startswith("--"):
+            _parse_long_option(parts[0], arg, kinds, rest)
+        elif not (parts[0] in cs.SHELL_NUMERIC_COUNT_READS and arg[1:].isdigit()):
+            for _ in _parse_short_option_cluster(arg, kinds, rest):
+                pass
+    return operands
 
 
 def _noninteractive_path_escapes(parts: list[str], root: Path) -> bool:

@@ -543,6 +543,10 @@ CLI_MSG_AUTO_EXCLUDE = (
 UI_DIFF_FILE_HEADER = "[bold cyan]File: {path}[/bold cyan]"
 UI_NEW_FILE_HEADER = "[bold cyan]New file: {path}[/bold cyan]"
 UI_SHELL_COMMAND_HEADER = "[bold cyan]Shell command:[/bold cyan]"
+UI_SENSITIVE_READ_HEADER = (
+    "[bold cyan]Read a file that may hold credentials "
+    "(its content goes to the model provider):[/bold cyan]"
+)
 UI_TOOL_APPROVAL = "[bold yellow]⚠️  Tool '{tool_name}' requires approval:[/bold yellow]"
 # The repository's .cgr.md, shown before it may reach the system prompt
 # (issue #3456). The titles are plain text: the path is not markup.
