@@ -13,6 +13,7 @@ are read lexically, outside comments, strings and routine bodies.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -20,6 +21,7 @@ from codebase_rag import constants as cs
 from codebase_rag.dead_code import collect_dead_code, default_dead_code_config
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.call_processor import CallProcessor
 from codebase_rag.tests.test_incremental_added_dependents import _add_after_cache
 from codebase_rag.tests.test_incremental_deleted_dependents import (
     _index as _index_into,
@@ -318,3 +320,39 @@ def test_a_routine_added_later_links_the_unchanged_ddl_naming_it(
         == ddl_edges(clean)
         == {("proj.db.wiring", "proj.db.touch.touch", 2)}
     )
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        {"SFUNC = first_sfunc,": "SFUNC = first_fin,"},
+        {
+            "SFUNC = first_sfunc,": "SFUNC = first_fin  ,",
+            "CREATE TABLE settings": "CREATE TABLE settingz",
+        },
+    ],
+    ids=["shorter", "same-length"],
+)
+def test_ddl_edited_after_the_parse_is_not_read_against_the_old_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, edit: dict[str, str]
+) -> None:
+    # Negative: an edit landing between the parse and the call pass (a sync
+    # racing the editor) is not the text the tree holds, so its DDL must not
+    # be read at the tree's offsets: no `first_fin` site on line 5.
+    edited = _WIRING
+    for old, new in edit.items():
+        edited = edited.replace(old, new)
+    process = CallProcessor.process_calls_in_file
+
+    def edit_then_process(
+        self: CallProcessor, file_path: Path, *args: Any, **kwargs: Any
+    ) -> None:
+        if file_path.name == "wiring.sql":
+            file_path.write_text(edited, encoding="utf-8")
+        process(self, file_path, *args, **kwargs)
+
+    monkeypatch.setattr(CallProcessor, "process_calls_in_file", edit_then_process)
+    store = _index(
+        tmp_path / PROJECT, {"routines.sql": _ROUTINES, "wiring.sql": _WIRING}
+    )
+    assert 5 not in {line for _c, line, _col in _sites(store, "routines.first_fin")}

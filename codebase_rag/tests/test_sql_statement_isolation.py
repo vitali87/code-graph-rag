@@ -19,6 +19,7 @@ from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.cpp.preproc_recovery import parse_with_preproc_recovery
+from codebase_rag.parsers.sql_recovery import is_parsed_from
 from codebase_rag.tests.test_incremental_added_dependents import _add_after_cache
 from codebase_rag.tests.test_incremental_deleted_dependents import (
     _index as _index_into,
@@ -264,3 +265,19 @@ def test_a_recovered_routine_reaches_a_caller_added_before_it(tmp_path: Path) ->
         if edge[2] == cs.RelationshipType.CALLS
     }
     assert ("proj.db.caller.uses_calc", "proj.db.schema.calc") in edges
+
+
+def test_a_recovered_tree_is_known_to_be_parsed_from_its_source() -> None:
+    # The call pass reads a recovered file's DDL from the file only while it
+    # is still the source of the tree; a file edited since is not.
+    parsers, _ = load_parsers()
+    source = _REPRO.encode()
+    text = parse_with_preproc_recovery(
+        parsers[cs.SupportedLanguage.SQL], source, cs.SupportedLanguage.SQL
+    ).root_node.text
+    assert text is not None
+    assert text != source
+    assert is_parsed_from(text, source)
+    assert not is_parsed_from(text, source.replace(b"report", b"rep0rt"))
+    assert not is_parsed_from(text, source + b"\n")
+    assert not is_parsed_from(text, source.replace(b"\n", b" ", 1))

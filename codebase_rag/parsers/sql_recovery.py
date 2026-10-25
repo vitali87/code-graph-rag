@@ -50,6 +50,9 @@ _PARAM_PLACEHOLDER = 0x5F  # _
 _BLANK = 0x20
 _NEWLINE = 0x0A
 _QUOTE = 0x27
+# Every byte the statement-isolated copy writes over its source.
+_REWRITTEN = frozenset({_PARAM_PLACEHOLDER, _BLANK, _QUOTE})
+_COMPARE_CHUNK = 4096
 
 
 class _Statement(NamedTuple):
@@ -144,6 +147,27 @@ def lost_sql_functions(source: bytes, root: Node) -> int:
     """How many of `source`'s `CREATE FUNCTION` statements `root` lacks."""
     expected = [s.lead for s in _statements(source) if s.is_function]
     return len(expected) - len(set(expected) & _function_starts(root))
+
+
+def is_parsed_from(text: bytes, source: bytes) -> bool:
+    """Whether a tree whose text is `text` was parsed from `source`.
+
+    `parse_sql` returns either `source` itself or the statement-isolated
+    copy of it, which keeps the length, every newline and every byte it does
+    not blank, hollow or turn into a placeholder. Any other difference means
+    `source` is not the text the tree was parsed from.
+    """
+    if len(text) != len(source):
+        return False
+    for lo in range(0, len(text), _COMPARE_CHUNK):
+        parsed = text[lo : lo + _COMPARE_CHUNK]
+        written = source[lo : lo + _COMPARE_CHUNK]
+        if parsed != written and not all(
+            p == w or (p in _REWRITTEN and w != _NEWLINE)
+            for p, w in zip(parsed, written)
+        ):
+            return False
+    return True
 
 
 def _standalone_function(

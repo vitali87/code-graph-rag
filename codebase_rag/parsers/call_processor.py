@@ -72,6 +72,7 @@ from .rpc_exposure import GoRpcExposureProcessor
 from .rs import utils as rs_utils
 from .scala import utils as scala_utils
 from .sql_ddl import ddl_routine_references
+from .sql_recovery import is_parsed_from
 from .string_call import load_string_call_specs, string_call_target
 from .type_inference import TypeInferenceEngine
 from .utils import (
@@ -3169,17 +3170,19 @@ class CallProcessor:
         # The tree's own text can be the statement-isolated re-parse's copy,
         # which blanks every statement the grammar cannot read on its own
         # (#3180), and most DDL that names a routine is such a statement. The
-        # copy keeps every offset, so the file as the grammar read it lines
-        # up with the tree; the tree's text is the fallback only when the
-        # file is gone.
+        # file holds them, and is read only while it is still what this tree
+        # was parsed from: an edit since the parse (mid-sync, or before an
+        # evicted tree is reloaded) would put other text's DDL at this
+        # tree's offsets, so then the tree's text is all there is.
+        text = root_node.text
         path = self._call_file
-        if path is not None:
-            try:
-                source = path.read_bytes()
-            except OSError:
-                return root_node.text
-            return grammar_bytes(source, cs.SupportedLanguage.SQL, path)
-        return root_node.text
+        if text is None or path is None:
+            return text
+        try:
+            source = grammar_bytes(path.read_bytes(), cs.SupportedLanguage.SQL, path)
+        except OSError:
+            return text
+        return source if is_parsed_from(text, source) else text
 
     @_site_scoped
     def _ingest_java_enum_constant_ctor_calls(
