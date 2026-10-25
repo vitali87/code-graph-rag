@@ -33,6 +33,7 @@ from .extract import (
 )
 from .models import ArgHandleSink, HandleBinding, HandleConstructor, IOSink
 from .processor import IOAccessProcessor
+from .py_handles import python_stream_target
 from .registry import (
     FLOW_REGISTERED_LANGUAGES,
     IO_HANDLE_CONSTRUCTORS,
@@ -79,6 +80,7 @@ __all__ = [
     "python_locally_assigned_names",
     "python_name_binding_sites",
     "python_name_shadowed_at",
+    "python_stream_target",
     "registry_match",
     "rust_unwrap_result",
     "scope_seed_nodes",
