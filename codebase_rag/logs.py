@@ -399,6 +399,13 @@ CGRIGNORE_READ_FAILED = "Failed to read {path}: {error}"
 
 CGR_INSTRUCTIONS_LOADED = "Loaded project instructions from {path} ({chars} chars)"
 CGR_INSTRUCTIONS_READ_FAILED = "Failed to read project instructions {path}: {error}"
+CGR_INSTRUCTIONS_UNAPPROVED = (
+    "Skipped {path}: its current content has not been approved. Approve it in an "
+    "interactive session (cgr start), or set CGR_TRUST_PROJECT_INSTRUCTIONS=true"
+)
+CGR_INSTRUCTIONS_STORE_UNREADABLE = (
+    "Ignoring unreadable instruction approvals {path}: {error}"
+)
 
 # File watcher logs
 WATCHER_ACTIVE = "File watcher is now active."

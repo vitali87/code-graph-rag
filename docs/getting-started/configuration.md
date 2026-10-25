@@ -143,6 +143,7 @@ Get your MiniMax API key from the [MiniMax Platform](https://platform.minimax.io
 | `CGR_CAPTURE_LOCAL_DEFINITIONS` | `true` | Capture methods of classes defined inside function bodies (function-local definitions). On by default for exhaustive structure capture; set to `false` to keep the graph free of throwaway helpers and test mocks. |
 | `CGR_CONTEXT_COMPACTION_ENABLED` | `true` | Drop old tool output once the context passes the critical threshold, keeping a long session inside the model's window. Set to `false` to keep every tool result and accept the ceiling instead; the agent prints a notice whenever it compacts. |
 | `CGR_SPONSOR_PLEDGE` | `true` | After a command finishes in a terminal, print one dimmed line on stderr pointing to the project's [GitHub Sponsors](https://github.com/sponsors/vitali87) page. It never appears when stderr is not a terminal, after `cgr help` or `cgr mcp-server`, or under `--quiet`; set to `false` to drop it while keeping the rest of the output. |
+| `CGR_TRUST_PROJECT_INSTRUCTIONS` | `false` | Load every repository's `.cgr.md` without asking. By default a repository's `.cgr.md` reaches the agent's system prompt only after you approve its current content in an interactive session, and a changed file is shown again; see [Project instructions](../architecture/security.md#project-instructions). Set to `true` only for CI on repositories you control. |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Base URL for the local Ollama server (`/v1` is appended for the OpenAI-compatible endpoint) |
 
 ## Setting Up Ollama

@@ -337,6 +337,12 @@ EDIT_MODE_MASK = 0o7777
 # Mode of the exclusively created temp sibling before the target's mode is
 # copied onto it: owner-only, so nothing reads staged bytes mid-write.
 EDIT_TEMP_FILE_MODE = 0o600
+# Approvals of repositories' .cgr.md files, under CGR_HOME (issue #3456).
+TRUSTED_INSTRUCTIONS_FILENAME = "trusted_instructions.json"
+TRUST_STORE_FILE_MODE = 0o600
+TRUST_STORE_DIR_MODE = 0o700
+# Between ~/.cgr.md and the repository's .cgr.md in the system prompt.
+CGR_INSTRUCTIONS_SEPARATOR = "\n\n---\n\n"
 # Every file cgr keeps about one checkout. They live in that checkout's
 # directory under CGR_HOME / CGR_STATE_DIRNAME rather than in the working
 # tree, and a copy an older cgr left in the tree is moved there, so a name

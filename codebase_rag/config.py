@@ -9,7 +9,7 @@ import subprocess
 from collections.abc import Collection, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, TypedDict, Unpack
+from typing import Any, NamedTuple, TypedDict, Unpack
 
 from dotenv.main import DotEnv
 from loguru import logger
@@ -20,7 +20,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from . import constants as cs
 from . import exceptions as ex
-from . import logs
+from . import instructions_trust, logs
 from .graph_dialects import DIALECT_SQLITE, available_dialects
 from .types_defs import CgrignorePatterns, ModelConfigKwargs
 
@@ -613,6 +613,13 @@ class AppConfig(BaseSettings):
 
     CGR_CAPTURE: str = Field("", validation_alias="CGR_CAPTURE")
 
+    # A repository's .cgr.md loads only once the user approved its content
+    # (issue #3456). True trusts every repository's file without asking:
+    # for CI on repositories you control, never for code you did not write.
+    TRUST_PROJECT_INSTRUCTIONS: bool = Field(
+        False, validation_alias="CGR_TRUST_PROJECT_INSTRUCTIONS"
+    )
+
     # Loopback by default: the StreamableHTTP endpoint has no built-in
     # auth, so exposing it beyond the host must be an explicit operator
     # choice via MCP_HTTP_HOST (issue #808).
@@ -941,19 +948,64 @@ def _read_cgr_instructions_file(path: Path) -> str | None:
     except OSError as e:
         logger.warning(logs.CGR_INSTRUCTIONS_READ_FAILED.format(path=path, error=e))
         return None
-    if not body:
+    return body or None
+
+
+class RepoInstructions(NamedTuple):
+    path: Path
+    body: str
+    digest: str
+    # What the user approved for this path before, if anything: None is a
+    # file never seen, a different digest is one changed since.
+    approved: str | None
+
+    @property
+    def trusted(self) -> bool:
+        return settings.TRUST_PROJECT_INSTRUCTIONS or self.approved == self.digest
+
+
+def _trust_store() -> Path:
+    return settings.CGR_HOME.expanduser() / cs.TRUSTED_INSTRUCTIONS_FILENAME
+
+
+def repo_instructions(repo_path: Path) -> RepoInstructions | None:
+    """The repository's own .cgr.md with its approval state, if it has one."""
+    path = repo_path / CGR_INSTRUCTIONS_FILENAME
+    if (body := _read_cgr_instructions_file(path)) is None:
         return None
-    logger.info(logs.CGR_INSTRUCTIONS_LOADED.format(path=path, chars=len(body)))
-    return body
+    return RepoInstructions(
+        path,
+        body,
+        instructions_trust.instructions_digest(body),
+        instructions_trust.approved_digest(_trust_store(), path),
+    )
+
+
+def approve_repo_instructions(instructions: RepoInstructions) -> None:
+    instructions_trust.approve(_trust_store(), instructions.path, instructions.digest)
 
 
 def load_cgr_instructions(repo_path: Path | None) -> str | None:
-    global_body = _read_cgr_instructions_file(GLOBAL_CGR_INSTRUCTIONS_PATH)
-    repo_body = (
-        _read_cgr_instructions_file(repo_path / CGR_INSTRUCTIONS_FILENAME)
-        if repo_path is not None
-        else None
-    )
-    if global_body and repo_body:
-        return f"{global_body}\n\n---\n\n{repo_body}"
-    return global_body or repo_body
+    """The instructions for the agent's system prompt: the user's own
+    ~/.cgr.md, then the repository's .cgr.md when the user approved its
+    current content. Anyone who can commit to the repository writes that
+    file, so an unapproved or changed one is skipped (issue #3456)."""
+    bodies: list[str] = []
+    if global_body := _read_cgr_instructions_file(GLOBAL_CGR_INSTRUCTIONS_PATH):
+        logger.info(
+            logs.CGR_INSTRUCTIONS_LOADED.format(
+                path=GLOBAL_CGR_INSTRUCTIONS_PATH, chars=len(global_body)
+            )
+        )
+        bodies.append(global_body)
+    if repo_path is not None and (repo := repo_instructions(repo_path)):
+        if repo.trusted:
+            logger.info(
+                logs.CGR_INSTRUCTIONS_LOADED.format(
+                    path=repo.path, chars=len(repo.body)
+                )
+            )
+            bodies.append(repo.body)
+        else:
+            logger.warning(logs.CGR_INSTRUCTIONS_UNAPPROVED.format(path=repo.path))
+    return cs.CGR_INSTRUCTIONS_SEPARATOR.join(bodies) or None

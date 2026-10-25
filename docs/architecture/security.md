@@ -61,7 +61,7 @@ is a separate trust boundary between project changes and distributed artifacts.
 | --- | --- | --- |
 | Malicious input exploits a parser or corrupts analysis | Tree-sitter paths parse rather than run the analysed program; XML parsing uses `defusedxml`. | Parser bugs and incorrect results remain possible. Keep dependencies updated and verify security-sensitive conclusions. |
 | Repository build logic executes during indexing | C# defaults to Tree-sitter; Roslyn-backed modes require an explicit configuration choice. | Toolchain-backed analysis and preprocessing run with host privileges. Review the modes below and isolate untrusted workloads. |
-| Prompt injection steers the agent through repository or web content | CLI web research uses a separate agent with only the search tool; its summary is marked as untrusted data. | The main agent still interprets repository content and research summaries. These measures do not guarantee that it ignores malicious instructions; review proposed actions. |
+| Prompt injection steers the agent through repository or web content | CLI web research uses a separate agent with only the search tool; its summary is marked as untrusted data. A repository's `.cgr.md` reaches the system prompt only after the user approves its current content. | The main agent still interprets repository content and research summaries. These measures do not guarantee that it ignores malicious instructions; review proposed actions. |
 | Tool use modifies unintended files or executes unwanted commands | File tools validate project paths; default CLI shell execution uses command filtering and approval checks. | Commands are not OS-sandboxed, and YOLO mode relaxes checks. Keep approvals enabled and restrict the account's privileges. |
 | Source code, queries or credentials reach an unintended recipient | Provider configuration controls destinations; CLI research/search checks queries against recorded repository content. | Remote inference intentionally sends data, and text matching is not comprehensive data-loss prevention. Audit providers, MCP clients and tool egress; keep secrets out of inputs. |
 | Unauthorized access to graph data or privileged MCP tools | New database stacks bind loopback by default; HTTP MCP requires a bearer token for a non-loopback bind. | Old Compose files can remain exposed; loopback is not per-user isolation. Protect remote transport, tokens and host access. |
@@ -226,6 +226,22 @@ but the driver documents that mode as routing rather than access control, so
 it is not relied on. For defence in depth on a shared or networked database,
 connect with a user that has no write privileges for querying. Ingestion and
 other built-in writes use fixed queries and are not affected.
+
+### Project instructions
+
+`~/.cgr.md` is the user's own and always loads. A repository's `.cgr.md` is
+written by whoever can commit to it, and it goes into the system prompt, so it
+loads only in the exact form the user approved: an interactive session
+(`cgr start`, `cgr optimize`) shows the file, with control characters escaped,
+and asks, defaulting to no. The approval is a SHA-256 of the content, kept in
+`$CGR_HOME/trusted_instructions.json` (owner-only), and a changed file is shown
+again. Sessions with nobody to ask (`cgr start -a`, MCP `ask_agent`) load it
+only when its current content was approved before.
+`CGR_TRUST_PROJECT_INSTRUCTIONS=true` skips the question for every
+repository; use it only for CI on repositories you control. The prompt tells
+the model that these instructions cannot grant permissions or skip approvals,
+but approval of the file, not that wording, is the control: GHSA-2rr7-8xrw-gmhr
+was a `.cgr.md` that asked the agent to plant a git backdoor without asking.
 
 Commands run with the host user's privileges and inherited environment.
 Working-directory and argument checks are not an OS sandbox. Repository text,
