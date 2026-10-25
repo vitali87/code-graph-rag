@@ -1,0 +1,14 @@
+{
+  "pypi:click:8.5.0": {
+    "night": "2026-10-25",
+    "verdict": "WATCHING"
+  },
+  "pypi:coverage:7.17.0": {
+    "night": "2026-10-25",
+    "verdict": "WATCHING"
+  },
+  "pypi:regex:2026.9.29": {
+    "night": "2026-10-25",
+    "verdict": "READY"
+  }
+}

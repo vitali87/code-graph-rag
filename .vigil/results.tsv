@@ -1,0 +1,4 @@
+night	item	experiment	verdict	headline	branch	minutes
+2026-10-25	pypi:regex:2026.9.29	upgrade	READY	2026.9.10 -> 2026.9.29: lock bump green, graphs identical	vigil/regex-2026.9.29	4.0
+2026-10-25	pypi:click:8.5.0	upgrade	WATCHING	8.4.2 -> 8.5.0: the resolver cannot take it yet		0.0
+2026-10-25	pypi:coverage:7.17.0	upgrade	WATCHING	7.16.2 -> 7.17.0: not run, no gate defined for the contributor tool coverage		0.0
