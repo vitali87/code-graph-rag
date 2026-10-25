@@ -335,6 +335,7 @@ class AstGrepTier:
         "_configs",
         "_languages_without_extra",
         "_unparsed",
+        "module_qn_to_file_path",
     )
 
     def __init__(
@@ -349,6 +350,10 @@ class AstGrepTier:
         # as bare File nodes instead of warning before it has seen a file.
         self._languages_without_extra: dict[str, str] = {}
         self._unparsed: Counter[str] = Counter()
+        # Every Module this tier emitted, as the definition processor keeps
+        # its own: the findings pass visits only the modules it is handed, so
+        # without this the Ruby rule packs never ran (issue #2781).
+        self.module_qn_to_file_path: dict[str, Path] = {}
         try:
             configs = load_pattern_configs()
         except ImportError:
@@ -418,6 +423,7 @@ class AstGrepTier:
             return
 
         module_qn = self._emit_module(file_path, structural_elements)
+        self.module_qn_to_file_path[module_qn] = file_path
         relative_path = cached_relative_path(file_path, self._repo_path).as_posix()
         absolute_path = cached_resolve_posix(file_path)
 

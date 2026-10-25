@@ -3024,10 +3024,9 @@ class GraphUpdater:
         self._record_exposes_cleanup(cleared_by_this_run=True)
 
         # ast-grep findings post-pass (opt-in FINDINGS group). Links to the
-        # Modules the definition pass already emitted, so no dangling edges.
-        self.finding_analyzer.analyze(
-            self.factory.definition_processor.module_qn_to_file_path
-        )
+        # Modules the definition pass already emitted, and to those the
+        # ast-grep tier did, so no dangling edges.
+        self.finding_analyzer.analyze(self._analysable_modules())
 
         # Once per sync, after every file was seen: files the ast-grep tier
         # would parse but could not, for want of its extra (issue #2634).
@@ -6365,6 +6364,12 @@ class GraphUpdater:
         for qn in [qn for qn, path in qn_to_path.items() if path == file_path]:
             del qn_to_path[qn]
             self._rehydrated_module_qns.discard(qn)
+        # The ast-grep tier's modules go too: the findings pass reads its map
+        # as well, so a file excluded on a reused updater would keep writing
+        # findings for the Module the delete just removed (issue #2781).
+        tier_map = self.ast_grep_tier.module_qn_to_file_path
+        for qn in [qn for qn, path in tier_map.items() if path == file_path]:
+            del tier_map[qn]
         # The paths read back from the graph for an earlier incremental run
         # go with the registry entries: `_module_language` falls through to
         # them for a definition qn, and a replacement in another language
@@ -9671,15 +9676,23 @@ class GraphUpdater:
         change. The analyzer already takes a module map, so the scope is the
         argument and needs no new machinery.
         """
-        processor = self.factory.definition_processor
         touched = set(reparse.values())
         scoped = {
             module_qn: path
-            for module_qn, path in processor.module_qn_to_file_path.items()
+            for module_qn, path in self._analysable_modules().items()
             if path in touched
         }
         if scoped:
             self.finding_analyzer.analyze(scoped)
+
+    def _analysable_modules(self) -> dict[str, Path]:
+        """Every module the findings pass can analyse: the definition pass's
+        and the ast-grep tier's, whose Ruby files the shipped rule packs
+        cover (issue #2781)."""
+        return {
+            **self.ast_grep_tier.module_qn_to_file_path,
+            **self.factory.definition_processor.module_qn_to_file_path,
+        }
 
     def _reanchor_glosses(self) -> None:
         """Re-attach this project's Glosses to the definitions their own records
