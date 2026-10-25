@@ -382,11 +382,54 @@ def resolve(fetch_all: QueryFn, project_name: str, target: str) -> list[SymbolRo
     a location returns the innermost definitions spanning that line, and
     nothing when `resolve_or_refuse` would refuse it.
     """
-    prefix = _prefix(project_name)
-    owns = _owner_check(fetch_all, project_name)
     if parse_location(target) is not None:
+        owns = _owner_check(fetch_all, project_name)
         found = _resolve_location(fetch_all, project_name, target, owns)
         return found if isinstance(found, list) else []
+    ordered: list[SymbolRow] = []
+    for bucket in _resolve_name_tiers(fetch_all, project_name, target):
+        ordered.extend(sorted(bucket, key=_symbol_key))
+    return ordered
+
+
+def resolve_one(
+    fetch_all: QueryFn, project_name: str, target: str
+) -> list[str] | TargetRefusal:
+    """The qualified names `target` names most directly, for a query that
+    takes one definition (issue #2861).
+
+    A `path:line` names the definitions with the innermost span there, or
+    is refused as `resolve_or_refuse` refuses it; a name, the qualified
+    names it is a dotted suffix of, else, when it has no dot, the
+    definitions it is the name of. A dotted name that is no qualified
+    name's suffix names nothing: `app.total` is not `app.shapes.total`,
+    however unique its last part. One answer is the definition; several
+    mean the name is ambiguous.
+    """
+    if parse_location(target) is not None:
+        owns = _owner_check(fetch_all, project_name)
+        found = _resolve_location(fetch_all, project_name, target, owns)
+        if not isinstance(found, list):
+            return found
+        tier = [s for s in found if _span_width(s) == _span_width(found[0])]
+    else:
+        exact, suffix, by_name = _resolve_name_tiers(fetch_all, project_name, target)
+        bare = cs.SEPARATOR_DOT not in target
+        tier = exact or suffix or (by_name if bare else [])
+    return sorted({s["qualified_name"] for s in tier})
+
+
+def _span_width(symbol: SymbolRow) -> int:
+    return (symbol["end_line"] or 0) - (symbol["start_line"] or 0)
+
+
+def _resolve_name_tiers(
+    fetch_all: QueryFn, project_name: str, target: str
+) -> tuple[list[SymbolRow], list[SymbolRow], list[SymbolRow]]:
+    """The definitions a name matches: by qualified name, by dotted suffix,
+    and by name alone."""
+    prefix = _prefix(project_name)
+    owns = _owner_check(fetch_all, project_name)
     rows = fetch_all(
         cq.CYPHER_GRAPH_RESOLVE_NAME,
         {
@@ -418,10 +461,7 @@ def resolve(fetch_all: QueryFn, project_name: str, target: str) -> list[SymbolRo
         )
     ]
     by_name = [s for s in symbols if s not in exact and s not in suffix]
-    ordered: list[SymbolRow] = []
-    for bucket in (exact, suffix, by_name):
-        ordered.extend(sorted(bucket, key=_symbol_key))
-    return ordered
+    return exact, suffix, by_name
 
 
 def resolve_or_refuse(
@@ -477,12 +517,7 @@ def _definitions_at(
     )
     symbols = [_symbol_row(r) for r in rows if owns(_text_qn(r))]
     # Innermost first: the tightest span is what the line "is in".
-    symbols.sort(
-        key=lambda s: (
-            (s["end_line"] or 0) - (s["start_line"] or 0),
-            s["qualified_name"],
-        )
-    )
+    symbols.sort(key=lambda s: (_span_width(s), s["qualified_name"]))
     return symbols
 
 
