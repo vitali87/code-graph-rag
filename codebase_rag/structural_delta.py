@@ -2494,18 +2494,25 @@ def _member_access(
 ) -> Node | None:
     """The one access to `name` the site's recorded position starts.
 
-    A call is recorded at its first character, which every enclosing link
-    of a chain shares (`Cart().total()`), so the access is found among the
-    nodes starting there; two such accesses to the same name are ambiguous.
+    A member call is recorded at its name (issue #3166): the access whose
+    member starts there. A graph indexed before that recorded the call's
+    first character, which every enclosing link of a chain shares
+    (`Cart().total()`), so the access is also found among the nodes
+    starting there; two such accesses to the same name are ambiguous.
     """
     assert site.line is not None
     assert site.col is not None
     point = (site.line - 1, site.col)
     node: Node | None = root.descendant_for_point_range(point, point)
     found: list[Node] = []
-    while node is not None and node.start_point == point:
+    while node is not None:
         field = fields.get(node.type)
-        if field is not None and _node_text(node.child_by_field_name(field)) == name:
+        member = node.child_by_field_name(field) if field is not None else None
+        if (
+            member is not None
+            and _node_text(member) == name
+            and point in (node.start_point, member.start_point)
+        ):
             found.append(node)
         node = node.parent
     return found[0] if len(found) == 1 else None

@@ -338,6 +338,15 @@ def read():
         # `tax` start where the chain does, so neither is the site's.
         pytest.param(18, 11, _SiteForm(True, None), id="factory-unread"),
         pytest.param(22, 11, None, id="chain-ambiguous"),
+        # A graph indexed since issue #3166 sites a member call at its name,
+        # so each hop of the chain is its own site.
+        pytest.param(
+            6, 20, _SiteForm(True, cs.DELTA_RECEIVER_INSTANCE), id="self-at-name"
+        ),
+        pytest.param(
+            22, 18, _SiteForm(True, cs.DELTA_RECEIVER_INSTANCE), id="chain-first-hop"
+        ),
+        pytest.param(22, 25, _SiteForm(True, None), id="chain-second-hop"),
         pytest.param(
             26, 11, _SiteForm(False, cs.DELTA_RECEIVER_INSTANCE), id="read-not-call"
         ),
