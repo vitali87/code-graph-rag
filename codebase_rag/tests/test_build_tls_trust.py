@@ -40,6 +40,7 @@ UNLOCKED_JOB = "wheel-fresh-resolution"
 UNLOCKED_STEP = "Install the wheel with unlocked resolution"
 
 DISTRUST_SCRIPT = REPO_ROOT / "scripts" / "distrust_ca_roots.sh"
+PIP_REQUIREMENTS = REPO_ROOT / "scripts" / "pip-requirements.txt"
 
 UV_FLOOR = Version("0.13.4")
 PIP_FLOOR = Version("26.2.2")
@@ -56,8 +57,11 @@ DISTRUSTED_ROOTS = frozenset(
 
 DIGEST = "sha256:" + "a" * 64
 GOOD_PIP_BOOTSTRAP = (
-    'python -m pip install "pip @ https://files.pythonhosted.org/packages/'
-    f'3f/06/pip-26.2.2-py3-none-any.whl#sha256={"b" * 64}"'
+    "python -m pip install --require-hashes -r scripts/pip-requirements.txt"
+)
+GOOD_PIP_REQUIREMENTS = (
+    "# pip alone, checked by hash.\n"
+    f"pip==26.2.2 \\\n    --hash=sha256:{'b' * 64} \\\n    --hash=sha256:{'d' * 64}\n"
 )
 SHA = "c" * 40
 COPY_SCRIPT = "COPY scripts/distrust_ca_roots.sh /usr/local/sbin/"
@@ -83,10 +87,8 @@ _UV_PIN = re.compile(
     re.MULTILINE,
 )
 _PIP_INSTALL = re.compile(r"\bpip install\b")
-_HASHED_PIP = re.compile(
-    r"pip @ https://files\.pythonhosted\.org/\S+/"
-    r"pip-(?P<version>\d+\.\d+\.\d+)-py3-none-any\.whl#sha256=[0-9a-f]{64}\b"
-)
+_REQUIREMENTS_FILE = re.compile(r"(?<!\S)(?:-r|--requirement)[\s=](?P<path>\S+)")
+_HASHED_PIP = re.compile(r"pip==(?P<version>\S+)(?:\s+--hash=sha256:[0-9a-f]{64})+")
 _CA_CERTIFICATES = re.compile(r"(?<![\w-])ca-certificates(?![\w-])")
 # An `apt-get install`'s arguments up to the next shell operator, so a path
 # such as /etc/ca-certificates.conf later in the same RUN is not an install.
@@ -108,19 +110,41 @@ def fails_floor(pinned: str, floor: Version) -> bool:
     return Version(pinned) < floor
 
 
-def pip_bootstrap_problems(commands: list[str]) -> list[str]:
+def pip_pin_problems(requirements: str) -> list[str]:
+    """The bootstrap's requirements file pins pip and nothing else, to an
+    exact release at the floor, with the SHA-256s --require-hashes checks."""
+    entries = [
+        entry
+        for line in logical_lines(requirements)
+        if (entry := re.sub(r"(?:^|\s)#.*", "", line).strip())
+    ]
+    if len(entries) != 1:
+        return [f"expected pip alone, found {len(entries)} requirements"]
+    pin = _HASHED_PIP.fullmatch(entries[0])
+    if pin is None:
+        return [f"pip is not pinned by hash: {entries[0]}"]
+    if fails_floor(pin["version"], PIP_FLOOR):
+        return [f"bootstrap pip {pin['version']} is below {PIP_FLOOR}"]
+    return []
+
+
+def pip_bootstrap_problems(commands: list[str], requirements: str) -> list[str]:
     """Until pip has replaced itself, the interpreter's bundled pip, which
     still trusts the distrusted root, is what talks to the index, so its
-    first install must be pip from a wheel URL whose SHA-256 it checks."""
+    first install must be pip alone, from scripts/pip-requirements.txt read
+    with --require-hashes, so that pip checks the SHA-256s pinned there.
+    `requirements` is that file's text."""
     installs = [c for c in commands if _PIP_INSTALL.search(c)]
     if not installs:
         return ["no pip install found"]
-    bootstrap = _HASHED_PIP.search(installs[0])
-    if bootstrap is None:
-        return [f"first pip install is not a hash-pinned pip wheel: {installs[0]}"]
-    if fails_floor(bootstrap["version"], PIP_FLOOR):
-        return [f"bootstrap pip {bootstrap['version']} is below {PIP_FLOOR}"]
-    return []
+    requirements_file = _REQUIREMENTS_FILE.search(installs[0])
+    if (
+        "--require-hashes" not in installs[0].split()
+        or requirements_file is None
+        or Path(requirements_file["path"]).name != PIP_REQUIREMENTS.name
+    ):
+        return [f"first pip install is not the hash-pinned pip: {installs[0]}"]
+    return pip_pin_problems(requirements)
 
 
 def ca_store_problems(text: str) -> list[str]:
@@ -243,19 +267,43 @@ def test_every_build_image_pins_a_fixed_uv(dockerfile: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "commands",
+    ("commands", "requirements"),
     [
-        ["python -m pip install --upgrade pip", "python -m pip install pkg"],
-        [GOOD_PIP_BOOTSTRAP.split("#sha256=", maxsplit=1)[0] + '"'],
-        [GOOD_PIP_BOOTSTRAP.replace("pip-26.2.2", "pip-26.2.1")],
-        ["python -m pip install pkg", GOOD_PIP_BOOTSTRAP],
+        (
+            ["python -m pip install --upgrade pip", "python -m pip install pkg"],
+            GOOD_PIP_REQUIREMENTS,
+        ),
+        # pip checks a file's hashes unasked once a line carries one, but only
+        # --require-hashes refuses the file once they are gone.
+        ([GOOD_PIP_BOOTSTRAP.replace(" --require-hashes", "")], GOOD_PIP_REQUIREMENTS),
+        (
+            [GOOD_PIP_BOOTSTRAP.replace("pip-requirements", "requirements")],
+            GOOD_PIP_REQUIREMENTS,
+        ),
+        ([GOOD_PIP_BOOTSTRAP], "pip==26.2.2\n"),
+        ([GOOD_PIP_BOOTSTRAP], GOOD_PIP_REQUIREMENTS.replace("26.2.2", "26.2.1")),
+        ([GOOD_PIP_BOOTSTRAP], GOOD_PIP_REQUIREMENTS.replace("pip==", "pip>=")),
+        (
+            [GOOD_PIP_BOOTSTRAP],
+            GOOD_PIP_REQUIREMENTS + f"pkg==1.0 --hash=sha256:{'e' * 64}\n",
+        ),
+        (["python -m pip install pkg", GOOD_PIP_BOOTSTRAP], GOOD_PIP_REQUIREMENTS),
     ],
-    ids=["unhashed-upgrade", "no-hash", "below-floor", "not-first"],
+    ids=[
+        "unhashed-upgrade",
+        "hashes-not-required",
+        "other-file",
+        "no-hash",
+        "below-floor",
+        "not-exact",
+        "not-pip-alone",
+        "not-first",
+    ],
 )
 def test_a_pip_that_is_not_bootstrapped_first_is_rejected(
-    commands: list[str],
+    commands: list[str], requirements: str
 ) -> None:
-    assert pip_bootstrap_problems(commands)
+    assert pip_bootstrap_problems(commands, requirements)
 
 
 def test_a_hashed_pip_bootstrap_at_the_floor_is_accepted() -> None:
@@ -264,7 +312,7 @@ def test_a_hashed_pip_bootstrap_at_the_floor_is_accepted() -> None:
         "python -m pip install --upgrade pip",
         "python -m pip install pkg",
     ]
-    assert pip_bootstrap_problems(commands) == []
+    assert pip_bootstrap_problems(commands, GOOD_PIP_REQUIREMENTS) == []
 
 
 def test_every_build_image_bootstraps_pip_before_using_it() -> None:
@@ -278,7 +326,9 @@ def test_every_build_image_bootstraps_pip_before_using_it() -> None:
             if re.search(r"\bpip install\b", line)
         ]
         if commands:
-            checked[dockerfile] = pip_bootstrap_problems(commands)
+            checked[dockerfile] = pip_bootstrap_problems(
+                commands, PIP_REQUIREMENTS.read_text(encoding="utf-8")
+            )
     assert FUZZ_IMAGE in checked
     assert {path: problems for path, problems in checked.items() if problems} == {}
 
@@ -292,7 +342,12 @@ def test_the_unlocked_wheel_job_bootstraps_pip() -> None:
         for s in workflow["jobs"][UNLOCKED_JOB]["steps"]
         if s.get("name") == UNLOCKED_STEP
     ]
-    assert pip_bootstrap_problems(step["run"].splitlines()) == []
+    assert (
+        pip_bootstrap_problems(
+            step["run"].splitlines(), PIP_REQUIREMENTS.read_text(encoding="utf-8")
+        )
+        == []
+    )
 
 
 @pytest.mark.parametrize(

@@ -11,13 +11,14 @@
 # of CUDA wheels, and the embedding model it would load must come from
 # HuggingFace, which the offline audit cannot reach anyway.
 
+# Every base is pinned by digest, which Dependabot moves along with its tag.
 # gotypes/go.mod sets the floor at 1.27.2.
-FROM golang:1.27.2-trixie AS go
-FROM eclipse-temurin:21-jdk AS jdk
+FROM golang:1.27.2-trixie@sha256:47667934874913a449b96faa7ef4777fa285d9ec29126ee80ed61c45b7cccf0e AS go
+FROM eclipse-temurin:21-jdk@sha256:23cc5734ff46e776f51ce66eb9ee08444fd47caabec0a95b7eb6e94be2d3696d AS jdk
 
 # The full image brings a C toolchain, git and the common -dev headers, for the
 # crate's bundled SQLite and anything else built from source.
-FROM python:3.12-trixie
+FROM python:3.12-trixie@sha256:0d0db5b17f11b1b7d1aafa74ceadaa64ba0944b267ff6fc22008a197acd6b9ad
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
