@@ -457,11 +457,14 @@ jobs:
         run: |
           python -m venv .fresh-venv
           # The venv's bundled pip may predate the emSign distrust (pip
-          # 26.2.2), so it fetches only pip itself, checked against a pinned
-          # SHA-256, before the upgrade to the newest release.
-          ./.fresh-venv/bin/python -m pip install "pip @ https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl#sha256=fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70"
-          ./.fresh-venv/bin/python -m pip install --upgrade pip
-          ./.fresh-venv/bin/python -m pip install dist/*.whl --find-links dist-rust
+          # 26.2.2), so it fetches only pip itself, the release
+          # scripts/pip-requirements.txt pins by SHA-256 and Dependabot keeps
+          # current.
+          ./.fresh-venv/bin/python -m pip install --require-hashes -r scripts/pip-requirements.txt
+          # Both wheels are named, so pip has to take this build of the crate
+          # even when PyPI carries a newer one in range; everything else
+          # resolves unlocked.
+          ./.fresh-venv/bin/python -m pip install dist/*.whl dist-rust/*.whl
 
       - name: Record resolved dependency versions
         run: ./.fresh-venv/bin/python -m pip list

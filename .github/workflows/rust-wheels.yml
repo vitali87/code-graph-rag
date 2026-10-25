@@ -322,10 +322,14 @@ jobs:
           uv pip install wheel-gnu/*.whl
           uv run --no-sync python scripts/rust_wheel_parity.py record parity
 
+      # The root-user warning is silenced through the environment rather than
+      # --root-user-action=ignore: Scorecard counts a pip install of local
+      # wheels as pinned only while every other argument is a bare flag.
       - name: Ask the musl wheel the same in Alpine
         run: |
           docker run --rm \
+            -e PIP_ROOT_USER_ACTION=ignore \
             -v "$PWD/parity:/parity" -v "$PWD/wheel-musl:/wheel:ro" \
             -v "$PWD/scripts:/scripts:ro" \
             python:3.12-alpine@sha256:1b668429b3511ab407d8e00648891631b0b1a4d7e15e3ca70f38ab5b91ad4ab4 \
-            sh -c "pip install --quiet --root-user-action=ignore --no-index /wheel/*.whl && python /scripts/rust_wheel_parity.py check /parity"
+            sh -c "pip install --quiet --no-index /wheel/*.whl && python /scripts/rust_wheel_parity.py check /parity"

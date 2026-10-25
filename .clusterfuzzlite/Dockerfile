@@ -71,21 +71,25 @@ RUN ln -sf "$(uv python find 3.12)" /usr/local/bin/python3 && \
     python3 --version
 
 # The interpreter's bundled pip may predate the emSign distrust (pip 26.2.2),
-# so the first thing it fetches is pip itself, from a wheel it checks against
-# a pinned SHA-256. The installs below and build.sh's then run on that pip.
+# so the first thing it fetches is pip itself, the release
+# scripts/pip-requirements.txt pins, checked against its SHA-256s. The installs
+# below and build.sh's then run on that pip.
+COPY scripts/pip-requirements.txt /tmp/
 RUN python3 -m pip install --no-cache-dir --break-system-packages \
-        "pip @ https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl#sha256=fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70"
+        --require-hashes -r /tmp/pip-requirements.txt
 
 # atheris and pyinstaller belong to the base image's 3.11 and are invisible to
 # 3.12, so install them for the interpreter that will actually freeze the
-# targets. atheris links the image's libFuzzer rather than building its own,
+# targets, from requirements.txt, which pins them and what they pull in by
+# hash. atheris links the image's libFuzzer rather than building its own,
 # the same way base-builder's install_python.sh does it.
 # uv's standalone interpreters ship an EXTERNALLY-MANAGED marker; this image
 # has no other Python for 3.12, so installing into it directly is intended.
+COPY .clusterfuzzlite/requirements.txt /tmp/fuzz-requirements.txt
 RUN LIBFUZZER_LIB=$(echo /usr/local/lib/clang/*/lib/x86_64-unknown-linux-gnu/libclang_rt.fuzzer_no_main.a) \
     PYI_STATIC_ZLIB=1 \
     python3 -m pip install --no-cache-dir --break-system-packages \
-        "atheris>=2.3.0" "pyinstaller==6.10.0"
+        --require-hashes -r /tmp/fuzz-requirements.txt
 
 COPY . $SRC/code-graph-rag
 WORKDIR $SRC/code-graph-rag
