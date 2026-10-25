@@ -17,8 +17,7 @@ permissions: read-all
 jobs:
   # Nothing below ships a commit main's CI has not passed. A release created
   # by hand, a tag pushed by hand and a dispatch all start here, not only the
-  # tag version-bump.yml pushes after its own gate; every later job builds
-  # the exact commit this one checked.
+  # tag version-bump.yml pushes after its own gate.
   ci-gate:
     name: Require green CI at the release commit
     runs-on: ubuntu-latest
@@ -26,8 +25,6 @@ jobs:
     permissions:
       contents: read
       actions: read
-    outputs:
-      sha: ${{ steps.gate.outputs.sha }}
     steps:
       - name: Validate dispatched tag
         if: github.event_name == 'workflow_dispatch'
@@ -44,7 +41,6 @@ jobs:
           persist-credentials: false
 
       - name: Require green CI
-        id: gate
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_REF: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.sha }}
@@ -66,7 +62,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.ci-gate.outputs.sha }}
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
           persist-credentials: false
 
       - name: Look the version up
@@ -90,7 +86,7 @@ jobs:
       contents: read
     uses: ./.github/workflows/rust-wheels.yml
     with:
-      ref: ${{ needs.ci-gate.outputs.sha }}
+      ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
 
   publish-rust:
     name: Publish cgr-graph-rs to PyPI
@@ -135,7 +131,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.ci-gate.outputs.sha }}
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
           persist-credentials: false
 
       - name: Key the uv cache on dependencies, not the project version

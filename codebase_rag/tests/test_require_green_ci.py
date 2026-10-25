@@ -23,6 +23,9 @@ REPO = "vitali87/code-graph-rag"
 BUMP = "e790ff55eab17cd39d144db99e66dd463f84bd60"
 SOURCE = "0db39cb3d96b0ac8c5038ee9646ad684040eba21"
 GATE_SCRIPT = "scripts/require_green_ci.py"
+RELEASE_TAG_REF = (
+    "${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}"
+)
 # The actions that put something where users install it from.
 SHIPPING_ACTIONS = (
     "pypa/gh-action-pypi-publish",
@@ -260,29 +263,19 @@ class TestIsVersionBump:
 
 
 class TestMain:
-    def test_a_pass_hands_the_checked_commit_on(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        output = tmp_path / "output"
-        monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    def test_a_pass_exits_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("GITHUB_REPOSITORY", REPO)
         fetch = _fetcher(
             {"v0.3.11": _bump_commit()}, {BUMP: [], SOURCE: [_run(SOURCE)]}
         )
         assert gate.main(["gate", "refs/tags/v0.3.11"], fetch) == 0
-        assert output.read_text(encoding="utf-8") == f"sha={BUMP}\n"
 
-    def test_a_refusal_exits_non_zero_and_hands_nothing_on(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        output = tmp_path / "output"
-        monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    def test_a_refusal_exits_non_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("GITHUB_REPOSITORY", REPO)
         fetch = _fetcher(
             {SOURCE: {"sha": SOURCE}}, {SOURCE: [_run(SOURCE, conclusion="failure")]}
         )
         assert gate.main(["gate", SOURCE], fetch) == 1
-        assert not output.exists()
 
     def test_an_unreachable_github_is_a_refusal(
         self, monkeypatch: pytest.MonkeyPatch
@@ -321,20 +314,24 @@ class TestEveryShippingPathIsGated:
             if any(action in text for action in SHIPPING_ACTIONS):
                 assert GATE_SCRIPT in text, f"{path.name} ships without the gate"
 
-    def test_publish_builds_only_the_commit_the_gate_passed(self) -> None:
+    def test_publish_ships_nothing_until_the_gate_passes(self) -> None:
         jobs = _workflow("publish.yml")["jobs"]
-        gate_job = jobs["ci-gate"]
-        assert any(_runs_gate(step) for step in gate_job["steps"])
-        assert gate_job["outputs"]["sha"] == "${{ steps.gate.outputs.sha }}"
+        assert any(_runs_gate(step) for step in jobs["ci-gate"]["steps"])
         for name, job in jobs.items():
             if name == "ci-gate":
                 continue
             assert "ci-gate" in _needs(job), f"{name} does not wait for the gate"
-            for step in job.get("steps", []):
-                if "actions/checkout" in str(step.get("uses", "")):
-                    assert step["with"]["ref"] == "${{ needs.ci-gate.outputs.sha }}"
+            # The release tag, never a job output: CodeQL reads a ref taken
+            # from another job's output as untrusted code checked out in a
+            # privileged run (cache poisoning).
+            refs = [
+                step["with"]["ref"]
+                for step in job.get("steps", [])
+                if "actions/checkout" in str(step.get("uses", ""))
+            ]
             if "uses" in job:
-                assert job["with"]["ref"] == "${{ needs.ci-gate.outputs.sha }}"
+                refs.append(job["with"]["ref"])
+            assert all(RELEASE_TAG_REF == ref for ref in refs), name
         assert "needs.ci-gate.result == 'success'" in jobs["publish"]["if"]
 
     def test_docker_checks_the_commit_it_builds_before_pushing(self) -> None:

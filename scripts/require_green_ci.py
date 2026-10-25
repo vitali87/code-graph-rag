@@ -17,9 +17,8 @@ strings. Anything else fails, including every answer GitHub could not give:
 an unreadable or incomplete reply is not a pass.
 
 Usage:  python3 scripts/require_green_ci.py <tag|sha>
-Reads GH_TOKEN (or GITHUB_TOKEN) and GITHUB_REPOSITORY. On a pass it writes
-`sha=<commit>` to GITHUB_OUTPUT when that is set, so later jobs build exactly
-the commit checked. Exit 0 when the commit may ship, 1 otherwise.
+Reads GH_TOKEN (or GITHUB_TOKEN) and GITHUB_REPOSITORY. Exit 0 when the
+commit may ship, 1 otherwise.
 """
 
 from __future__ import annotations
@@ -247,17 +246,12 @@ def main(argv: list[str], fetch: Fetch | None = None) -> int:
             os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
         )
     try:
-        ok, sha, message = verdict(fetch, repo, ref)
+        ok, _sha, message = verdict(fetch, repo, ref)
     except (GateError, urllib.error.URLError, TimeoutError, ValueError) as error:
         _report(UNPROVEN.format(ref=ref, error=error), error=True)
         return 1
     _report(message, error=not ok)
-    if not ok:
-        return 1
-    if output := os.environ.get("GITHUB_OUTPUT"):
-        with open(output, "a", encoding="utf-8") as handle:
-            handle.write(f"sha={sha}\n")
-    return 0
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":
