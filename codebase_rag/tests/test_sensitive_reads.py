@@ -9,6 +9,7 @@ source.
 from __future__ import annotations
 
 import asyncio
+import io
 import os
 import shutil
 from pathlib import Path
@@ -280,3 +281,44 @@ class TestRecursiveRipgrep:
         )
 
         assert _noninteractive_denial("rg KEY", tree) is None
+
+
+def test_a_credential_directory_named_itself_is_sensitive() -> None:
+    assert is_sensitive_path(Path(".ssh"))
+    assert is_sensitive_path(Path("home/.gnupg"))
+
+
+@pytest.mark.skipif(shutil.which("rg") is None, reason="ripgrep not installed")
+def test_a_search_of_a_named_hidden_credential_directory_is_not_confined(
+    tmp_path: Path,
+) -> None:
+    """ripgrep searches a hidden directory it is given by name (Greptile
+    review on PR #3471)."""
+    (tmp_path / ".ssh").mkdir()
+    (tmp_path / ".ssh" / "id_rsa").write_text(f"{SECRET}\n")
+
+    assert _noninteractive_denial("rg -e . .ssh", tmp_path) is not None
+
+
+def test_the_approval_prompt_shows_the_path_as_written(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The model chooses the path, so markup in it must not hide part of what
+    the operator approves (CodeRabbit review on PR #3471)."""
+    from rich.console import Console
+
+    from codebase_rag import main
+    from codebase_rag.types_defs import ConfirmationToolNames
+
+    buffer = io.StringIO()
+    monkeypatch.setattr(
+        main.app_context,
+        "console",
+        Console(file=buffer, force_terminal=False, no_color=True, width=200),
+    )
+    names = ConfirmationToolNames("replace_code", "create_file", "shell", "sg")
+    path = "notes[/][conceal]/../.env"
+
+    main._display_tool_call_diff("read_file", {"file_path": path}, names)
+
+    assert path in buffer.getvalue()

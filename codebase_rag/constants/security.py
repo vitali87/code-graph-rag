@@ -888,6 +888,7 @@ SHELL_RG_FILE_FILTERS = frozenset(
     }
 )
 SHELL_RG_LIST_TIMEOUT_SECONDS = 10
+SHELL_RG_LIST_DECODE_ERRORS = "surrogateescape"
 SHELL_RG_LIST_OK_CODES = frozenset({0, 1})
 
 

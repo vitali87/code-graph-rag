@@ -310,11 +310,12 @@ def _display_tool_call_diff(
 
         case td.AgenticToolName.READ_FILE:
             app_context.console.print(f"\n{cs.UI_SENSITIVE_READ_HEADER}")
+            # Literal text, never markup: the model chose this path, and markup
+            # in it could hide part of what the operator approves.
             app_context.console.print(
-                style(
-                    str(tool_args.get(cs.ARG_FILE_PATH, "")),
-                    cs.Color.YELLOW,
-                    cs.StyleModifier.NONE,
+                Text(
+                    _visible(str(tool_args.get(cs.ARG_FILE_PATH, ""))),
+                    style=cs.Color.YELLOW,
                 )
             )
 

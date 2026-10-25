@@ -2259,6 +2259,9 @@ def _rg_searches_sensitive_file(
             cwd=root,
             capture_output=True,
             text=True,
+            encoding=cs.ENCODING_UTF8,
+            # A file name that is not UTF-8 still maps back to the same path.
+            errors=cs.SHELL_RG_LIST_DECODE_ERRORS,
             timeout=cs.SHELL_RG_LIST_TIMEOUT_SECONDS,
             check=False,
         )

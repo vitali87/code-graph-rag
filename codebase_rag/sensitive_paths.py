@@ -24,7 +24,10 @@ def is_sensitive_path(path: Path) -> bool:
 def _is_sensitive_name(path: Path) -> bool:
     name = path.name.lower()
     parents = [part.lower() for part in path.parts[:-1]]
-    if any(part in cs.SENSITIVE_DIR_NAMES for part in parents):
+    # The directory itself too: `rg -e . .ssh` searches everything in it.
+    if name in cs.SENSITIVE_DIR_NAMES or any(
+        part in cs.SENSITIVE_DIR_NAMES for part in parents
+    ):
         return True
     if parents and (parents[-1], name) in cs.SENSITIVE_PARENT_FILES:
         return True
