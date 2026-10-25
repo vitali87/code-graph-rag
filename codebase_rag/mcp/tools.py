@@ -906,7 +906,7 @@ class MCPToolsRegistry:
                 properties={
                     cs.MCPParamName.PROJECT: MCPInputSchemaProperty(
                         type=cs.MCPSchemaType.STRING,
-                        description=td.MCP_PARAM_PROJECT,
+                        description=self._project_default_description(),
                     ),
                     cs.MCPParamName.THRESHOLD: MCPInputSchemaProperty(
                         type=cs.MCPSchemaType.NUMBER,
@@ -2496,8 +2496,14 @@ class MCPToolsRegistry:
                 cs.MCPToolName.FIND_DUPLICATE_CODE,
             ):
                 return refusal
+            # The same default the other graph tools take (issue #2757). Left
+            # as None, the tool refused on any multi-project graph with every
+            # project's name.
             result = await _plain_function(self._find_duplicates_tool)(
-                project=project, threshold=threshold, min_size=min_size, limit=limit
+                project=dup_project,
+                threshold=threshold,
+                min_size=min_size,
+                limit=limit,
             )
         if isinstance(result, te.ToolFailure):
             return result
@@ -2742,7 +2748,8 @@ class MCPToolsRegistry:
             for key, description in params.items()
         }
         properties[cs.MCPParamName.PROJECT] = MCPInputSchemaProperty(
-            type=cs.MCPSchemaType.STRING, description=td.MCP_PARAM_PROJECT
+            type=cs.MCPSchemaType.STRING,
+            description=self._project_default_description(),
         )
         return ToolMetadata(
             name=name,
@@ -2963,6 +2970,17 @@ class MCPToolsRegistry:
         return graph_query.resolve_or_refuse(
             self.ingestor.fetch_all, project_name, target
         )
+
+    def _project_default_description(self) -> str:
+        """The `project` description for a tool that reads one project: it
+        names the project an omitted argument means (issue #2757)."""
+        if self.workspace is None:
+            default = td.MCP_PROJECT_DEFAULT_SERVER.format(
+                project=derive_project_name(Path(self.project_root))
+            )
+        else:
+            default = td.MCP_PROJECT_DEFAULT_WORKSPACE
+        return td.MCP_PARAM_PROJECT_DEFAULT.format(default=default)
 
     def _workspace_scope(self, project: str | None) -> tuple[str | None, str | None]:
         """(the project a request means, why it is refused) under a workspace.
@@ -3393,7 +3411,8 @@ class MCPToolsRegistry:
                         cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_RENAME_DRY_RUN
                     ),
                     cs.MCPParamName.PROJECT: prop(
-                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
+                        cs.MCPSchemaType.STRING,
+                        self._project_default_description(),
                     ),
                 },
                 required=[cs.MCPParamName.QUALIFIED_NAME, cs.MCPParamName.NEW_NAME],
