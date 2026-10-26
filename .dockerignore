@@ -21,6 +21,5 @@ site
 .qdrant_code_embeddings
 CLAUDE.md
 AGENTS.md
-GEMINI.md
 PROJECT.md
 rust/**/target
