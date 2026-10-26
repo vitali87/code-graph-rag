@@ -271,7 +271,8 @@ read that names one, or an `rg` with `--hidden`, `-.`, `-u`, `--unrestricted`
 or a `--no-ignore` switch, needs approval the same way. This is a name-based list, not
 secret scanning: a credential pasted into `settings.py` is read like any other
 source. A recursive `rg` (no path, or a directory) is checked against the files
-it would search, as `rg --files` lists them with the same roots and filters.
+it would search, as `rg --files` lists them with the same roots, filters and
+`--no-*` switches.
 
 Commands run with the host user's privileges and inherited environment.
 Working-directory and argument checks are not an OS sandbox. Repository text,

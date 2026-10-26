@@ -2260,7 +2260,11 @@ def _rg_searches_sensitive_file(
     filters = [
         token
         for option in options
+        # A `--no-*` switch can undo what a ripgrep config set: `--no-config`
+        # searched a `server.pem` the config's `--glob=!*.pem` left out of the
+        # list (CodeRabbit review on PR #3471).
         if option.name in cs.SHELL_RG_FILE_FILTERS
+        or option.name.startswith(cs.SHELL_NEGATION_PREFIX)
         for token in option.spelling
     ]
     try:

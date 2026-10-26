@@ -274,6 +274,7 @@ class TestRecursiveRipgrep:
             "rg -t py KEY",
             "rg --files",
             "rg -g '=*.pem' KEY",
+            "rg --no-heading -n KEY src",
         ],
     )
     def test_a_search_that_leaves_it_out_stays_confined(
@@ -302,6 +303,28 @@ class TestRecursiveRipgrep:
         (CodeRabbit review on PR #3471)."""
         (tree / ".ignore").write_text("*.pem\n")
 
+        assert _noninteractive_denial(command, tree) is not None
+
+    @pytest.mark.parametrize(
+        ("config", "command"),
+        [
+            ("--glob=!*.pem", "rg --no-config KEY"),
+            (
+                "--glob-case-insensitive\n--glob=!*.PEM",
+                "rg --no-glob-case-insensitive KEY",
+            ),
+        ],
+    )
+    def test_a_switch_that_undoes_the_ripgrep_config_reaches_the_file_list(
+        self, tree: Path, monkeypatch: pytest.MonkeyPatch, config: str, command: str
+    ) -> None:
+        """The file list reads the same ripgrep config as the search, so a
+        switch that overrides the config must reach it too (CodeRabbit review
+        on PR #3471)."""
+        (tree / "ripgreprc").write_text(f"{config}\n")
+        monkeypatch.setenv("RIPGREP_CONFIG_PATH", str(tree / "ripgreprc"))
+
+        assert _noninteractive_denial("rg KEY", tree) is None
         assert _noninteractive_denial(command, tree) is not None
 
     def test_without_ripgrep_nothing_is_read(
