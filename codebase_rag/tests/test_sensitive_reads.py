@@ -250,7 +250,16 @@ class TestRecursiveRipgrep:
         return tmp_path
 
     @pytest.mark.parametrize(
-        "command", ["rg KEY", "rg KEY certs", "rg -n '' certs/", "rg -i KEY ."]
+        "command",
+        [
+            "rg KEY",
+            "rg KEY certs",
+            "rg -n '' certs/",
+            "rg -i KEY .",
+            "rg -g='*.pem' KEY",
+            "rg -ig='*.pem' KEY",
+            "rg --glob='*.pem' KEY",
+        ],
     )
     def test_a_search_that_reaches_a_credential_file_is_not_confined(
         self, tree: Path, command: str
@@ -258,7 +267,14 @@ class TestRecursiveRipgrep:
         assert _noninteractive_denial(command, tree) is not None
 
     @pytest.mark.parametrize(
-        "command", ["rg KEY src", "rg -g '*.py' KEY", "rg -t py KEY", "rg --files"]
+        "command",
+        [
+            "rg KEY src",
+            "rg -g '*.py' KEY",
+            "rg -t py KEY",
+            "rg --files",
+            "rg -g '=*.pem' KEY",
+        ],
     )
     def test_a_search_that_leaves_it_out_stays_confined(
         self, tree: Path, command: str

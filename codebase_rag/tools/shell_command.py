@@ -2012,6 +2012,10 @@ class _ReadOption(NamedTuple):
     # None when SHELL_CONFINED_READ_OPTIONS does not list the option.
     kind: cs.ReadOptionKind | None
     value: str
+    # The arguments as written, so ripgrep can re-read the option its own
+    # way: it drops the `=` in `-g=*.pem`, where `value` keeps it (Greptile
+    # review on PR #3471).
+    spelling: tuple[str, ...] = ()
 
 
 def _confined_option_denial(parts: list[str], root: Path) -> str | None:
@@ -2063,6 +2067,7 @@ def _parse_long_option(
     rest: Iterator[str],
 ) -> _ReadOption:
     name, attached, value = arg.partition("=")
+    spelling = (arg,)
     kind = kinds.get(name)
     if (
         kind is None
@@ -2075,7 +2080,8 @@ def _parse_long_option(
         kind = None
     elif kind in _VALUED_OPTION_KINDS and not attached:
         value = next(rest, "")
-    return _ReadOption(name, kind, value)
+        spelling = (name, value)
+    return _ReadOption(name, kind, value, spelling)
 
 
 def _parse_short_option_cluster(
@@ -2085,9 +2091,13 @@ def _parse_short_option_cluster(
         name = f"-{arg[offset]}"
         kind = kinds.get(name)
         if kind in _VALUED_OPTION_KINDS:
-            yield _ReadOption(name, kind, arg[offset + 1 :] or next(rest, ""))
+            if attached := arg[offset + 1 :]:
+                yield _ReadOption(name, kind, attached, (name + attached,))
+            else:
+                value = next(rest, "")
+                yield _ReadOption(name, kind, value, (name, value))
             return
-        yield _ReadOption(name, kind, "")
+        yield _ReadOption(name, kind, "", (name,))
 
 
 def _parse_find_options(
@@ -2251,8 +2261,7 @@ def _rg_searches_sensitive_file(
         token
         for option in options
         if option.name in cs.SHELL_RG_FILE_FILTERS
-        for token in (option.name, option.value)
-        if token
+        for token in option.spelling
     ]
     try:
         listed = subprocess.run(
