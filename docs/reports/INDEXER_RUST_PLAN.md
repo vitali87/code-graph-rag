@@ -292,7 +292,9 @@ stays Python.
   runtime against the `tree-sitter` crate, and a crate bump with it. Until
   then the bridge turns itself off and the Python twins run: slower, never
   different. `test_native_trees.py` fails when the extension carries the
-  bridge but it is off, so a bump cannot lose the speed silently.
+  bridge but it is off, and when either pin differs from the pair the bridge
+  was checked with, so a bump cannot lose the speed silently. `AGENTS.md`
+  ("Bumping tree-sitter") has the procedure.
 - **Two implementations.** Every ported walk keeps its Python twin for
   platforms without wheels. A change to one needs the same change to the
   other; the parity tests enforce it, and the probe re-checks it in every
