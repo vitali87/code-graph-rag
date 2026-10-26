@@ -18,10 +18,14 @@ from codebase_rag import exceptions as ex
 from codebase_rag import logs as lg
 from codebase_rag import tool_errors as te
 from codebase_rag.config import settings
-from codebase_rag.mcp.tools import create_mcp_tools_registry, tool_annotations
+from codebase_rag.mcp.tools import (
+    MCPToolsRegistry,
+    create_mcp_tools_registry,
+    tool_annotations,
+)
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.services.llm import LazyCypherGenerator
-from codebase_rag.types_defs import MCPToolArguments
+from codebase_rag.types_defs import MCPHandlerType, MCPToolArguments
 from codebase_rag.utils.path_utils import derive_project_name
 from codebase_rag.vector_store import close_qdrant_client
 from codebase_rag.workspaces import WorkspaceConfig, WorkspaceError, load_workspace
@@ -172,16 +176,9 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
         logger.info(lg.MCP_SERVER_CALLING_TOOL.format(name=name))
 
         try:
-            handler_info = tools.get_tool_handler(name)
-            if not handler_info:
-                error_msg = cs.MCP_UNKNOWN_TOOL_ERROR.format(name=name)
-                logger.error(lg.MCP_SERVER_UNKNOWN_TOOL.format(name=name))
-                return _create_error_content(error_msg)
-            # A client can call a tool it was never listed, so read-only mode
-            # refuses here too, before the handler runs (issue #3458).
-            if not tools.serves(name):
-                logger.warning(lg.MCP_SERVER_READ_ONLY_REFUSED.format(name=name))
-                return _create_error_content(cs.MCP_READ_ONLY_REFUSED.format(name=name))
+            handler_info = _callable_handler(tools, name)
+            if isinstance(handler_info, str):
+                return _create_error_content(handler_info)
 
             handler, returns_json = handler_info
 
@@ -205,6 +202,23 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
             return _create_error_content(error_msg)
 
     return server, ingestor
+
+
+def _callable_handler(
+    tools: MCPToolsRegistry, name: str
+) -> tuple[MCPHandlerType, bool] | str:
+    """Tool `name`'s handler and whether it returns JSON, or why it cannot
+    be called on this server."""
+    handler_info = tools.get_tool_handler(name)
+    if not handler_info:
+        logger.error(lg.MCP_SERVER_UNKNOWN_TOOL.format(name=name))
+        return cs.MCP_UNKNOWN_TOOL_ERROR.format(name=name)
+    # A client can call a tool it was never listed, so read-only mode
+    # refuses here too, before the handler runs (issue #3458).
+    if not tools.serves(name):
+        logger.warning(lg.MCP_SERVER_READ_ONLY_REFUSED.format(name=name))
+        return cs.MCP_READ_ONLY_REFUSED.format(name=name)
+    return handler_info
 
 
 def _reports_failure(result: object) -> bool:

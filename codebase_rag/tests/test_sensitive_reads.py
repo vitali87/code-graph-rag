@@ -104,9 +104,10 @@ class TestReadFileTool:
     async def test_a_credential_file_waits_for_approval(self, tmp_path: Path) -> None:
         (tmp_path / ".env").write_text(f"KEY={SECRET}\n", encoding="utf-8")
         tool = create_file_reader_tool(FileReader(str(tmp_path)))
+        ctx = _ctx(approved=False)
 
         with pytest.raises(ApprovalRequired):
-            await tool.function(_ctx(approved=False), file_path=".env")
+            await tool.function(ctx, file_path=".env")
 
     async def test_an_approved_read_returns_the_file(self, tmp_path: Path) -> None:
         (tmp_path / ".env").write_text(f"KEY={SECRET}\n", encoding="utf-8")

@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import time
+from collections import deque
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -2309,8 +2310,8 @@ def _read_operands(parts: list[str], kinds: dict[str, cs.ReadOptionKind]) -> lis
         elif arg.startswith("--"):
             _parse_long_option(parts[0], arg, kinds, rest)
         elif not (parts[0] in cs.SHELL_NUMERIC_COUNT_READS and arg[1:].isdigit()):
-            for _ in _parse_short_option_cluster(arg, kinds, rest):
-                pass
+            # Drained only for the values it takes from `rest`.
+            deque(_parse_short_option_cluster(arg, kinds, rest), maxlen=0)
     return operands
 
 
