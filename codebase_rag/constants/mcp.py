@@ -246,6 +246,12 @@ MCP_ROOT_NOT_INDEXED = (
     "No project is indexed for this server's root {path}; run "
     "index_repository or update_repository first, or pass `project`."
 )
+# flow_verdict, explain_traceback and rank_root_causes take no `project`, so
+# their refusal cannot advise passing one (issue #3193).
+MCP_FIXED_ROOT_NOT_INDEXED = (
+    "No project is indexed for this server's root {path}; run "
+    "index_repository or update_repository first."
+)
 # An empty answer for a name the graph does not hold read as "nothing calls
 # it" / "no test reaches it" (issue #2461).
 MCP_UNKNOWN_TARGET = "{qualified_name!r} is not in the graph."
