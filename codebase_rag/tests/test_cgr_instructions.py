@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import os
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -225,6 +226,9 @@ def test_the_environment_trusts_every_repo_file(
     assert load_cgr_instructions(temp_repo) == "Be brief."
 
 
+@pytest.mark.skipif(
+    sys.platform == cgr_config.cs.PLATFORM_WINDOWS, reason="no POSIX file modes"
+)
 def test_approvals_are_owner_only(temp_repo: Path, isolated_global: Path) -> None:
     (temp_repo / CGR_INSTRUCTIONS_FILENAME).write_text("Be brief.", encoding="utf-8")
     _approve(temp_repo)
