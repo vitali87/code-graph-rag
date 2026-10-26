@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from fnmatch import fnmatch
 from pathlib import Path
 
 import pytest
@@ -95,6 +96,35 @@ def test_atheris_updates_still_reach_the_fuzz_image() -> None:
     # hold is on pyinstaller alone.
     ignores = _ignores_for("pip", "/.clusterfuzzlite")
     assert not any(i.get("dependency-name") == "atheris" for i in ignores)
+
+
+def _github_actions_update() -> dict[str, object]:
+    config = yaml.safe_load(
+        (REPO_ROOT / ".github" / "dependabot.yml").read_text(encoding=cs.ENCODING_UTF8)
+    )
+    return next(
+        u for u in config["updates"] if u["package-ecosystem"] == "github-actions"
+    )
+
+
+def _codeql_group_patterns() -> list[str]:
+    groups = _github_actions_update().get("groups") or {}
+    return list(groups["codeql-action"]["patterns"])
+
+
+@pytest.mark.parametrize("step", ["init", "analyze", "upload-sarif"])
+def test_the_codeql_action_steps_move_together(step: str) -> None:
+    # analyze refuses a configuration init wrote under another release, so
+    # init bumped alone to 4.39.1 failed every CodeQL job (#3455).
+    name = f"github/codeql-action/{step}"
+    assert any(fnmatch(name, p) for p in _codeql_group_patterns())
+
+
+@pytest.mark.parametrize("action", ["actions/checkout", "github/super-linter"])
+def test_other_actions_are_not_grouped_with_codeql(action: str) -> None:
+    # Negative: the group is for CodeQL's own steps, so every other action
+    # still arrives in a PR of its own.
+    assert not any(fnmatch(action, p) for p in _codeql_group_patterns())
 
 
 _ROSLYN_DIR = "/codebase_rag/parsers/csharp_frontend/roslyn"
