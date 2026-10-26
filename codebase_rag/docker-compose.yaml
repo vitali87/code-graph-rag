@@ -34,7 +34,7 @@ services:
     # ran different servers, and resolving the tag needs a Docker Hub
     # manifest request the pull rate limit can refuse (issue #2409).
     # Dependabot proposes bumps.
-    image: memgraph/lab:3.13.2@sha256:c6c205e240ac27b09d75877788650f5ff1d4c640b0a96af27dcc6e06ce25620c
+    image: memgraph/lab:3.14.0@sha256:1c6291e53fafda8d0d399dab3548e36e25f4516532c0b4ca7f2181c49a4efaa1
     ports:
       - "${CGR_STACK_BIND_HOST:-127.0.0.1}:${LAB_PORT:-3000}:3000"
     environment:
@@ -44,7 +44,7 @@ services:
     # auth) must not reach users untested, and a volume written by a newer
     # server may not open after a downgrade (issue #2409). Bump deliberately
     # and run the integration suite against the new digest.
-    image: qdrant/qdrant:v1.19.2@sha256:b7b0444c4c351c970b98e90a6f89c2ee4287c65b44e52b4cb503fa5b2aa927ad
+    image: qdrant/qdrant:v1.20.0@sha256:9bfc89f9914fc14876a88c05270685921a55b8877b254a98bcc1cc2f0a424cd2
     ports:
       - "${CGR_STACK_BIND_HOST:-127.0.0.1}:${QDRANT_HTTP_PORT:-6333}:6333"
       - "${CGR_STACK_BIND_HOST:-127.0.0.1}:${QDRANT_GRPC_PORT:-6334}:6334"

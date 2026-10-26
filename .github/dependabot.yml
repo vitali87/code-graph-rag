@@ -9,8 +9,23 @@ updates:
     directories:
       - "/"
       - "/.clusterfuzzlite"
+      - "/.oss-scanner"
     schedule:
       interval: "weekly"
+
+  # The hash-pinned requirements the build images and the unlocked-resolution
+  # CI job install with --require-hashes: pip's own bootstrap, and the fuzz
+  # image's atheris and pyinstaller.
+  - package-ecosystem: "pip"
+    directories:
+      - "/scripts"
+      - "/.clusterfuzzlite"
+    schedule:
+      interval: "weekly"
+    ignore:
+      # The fuzz image installs the pyinstaller base-builder's
+      # install_python.sh pins; it moves when OSS-Fuzz's does.
+      - dependency-name: "pyinstaller"
 
   # The stack `cgr daemon up` renders from codebase_rag/docker-compose.yaml:
   # every image is pinned by digest, so bumps arrive here (issue #2409).

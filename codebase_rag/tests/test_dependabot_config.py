@@ -13,6 +13,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 _WATCHED_MANIFESTS = [
     ("uv", "/"),
+    ("docker", "/"),
+    ("docker", "/.clusterfuzzlite"),
+    ("docker", "/.oss-scanner"),
+    ("pip", "/scripts"),
+    ("pip", "/.clusterfuzzlite"),
     ("npm", "/evals/oracles/lua_oracle"),
     ("npm", "/evals/oracles/php_oracle"),
     ("npm", "/evals/oracles/ruby_oracle"),
@@ -51,13 +56,13 @@ def test_the_uv_project_is_not_watched_as_pip() -> None:
     assert ("pip", "/") not in _watched()
 
 
-def _npm_ignores_for(directory: str) -> list[dict[str, object]]:
+def _ignores_for(ecosystem: str, directory: str) -> list[dict[str, object]]:
     config = yaml.safe_load(
         (REPO_ROOT / ".github" / "dependabot.yml").read_text(encoding=cs.ENCODING_UTF8)
     )
     for update in config["updates"]:
         directories = update.get("directories") or [update["directory"]]
-        if update["package-ecosystem"] == "npm" and directory in directories:
+        if update["package-ecosystem"] == ecosystem and directory in directories:
             return list(update.get("ignore") or [])
     return []
 
@@ -65,17 +70,31 @@ def _npm_ignores_for(directory: str) -> list[dict[str, object]]:
 def test_the_ts_oracle_is_held_below_typescript_7() -> None:
     # TypeScript 7 is the native port: its package no longer exports the
     # compiler API (`createSourceFile`, `ScriptTarget`) the oracle is built on.
-    ignores = _npm_ignores_for("/evals/oracles/ts_oracle")
+    ignores = _ignores_for("npm", "/evals/oracles/ts_oracle")
     assert {"dependency-name": "typescript", "versions": [">=7"]} in ignores
 
 
 def test_typescript_6_updates_still_reach_the_ts_oracle() -> None:
     # Negative: the hold is on the major that broke the API, not on every
     # TypeScript release, so 6.x patches keep arriving.
-    ignores = _npm_ignores_for("/evals/oracles/ts_oracle")
+    ignores = _ignores_for("npm", "/evals/oracles/ts_oracle")
     typescript = [i for i in ignores if i.get("dependency-name") == "typescript"]
     assert all(i.get("versions") == [">=7"] for i in typescript)
     assert all("update-types" not in i for i in typescript)
+
+
+def test_the_fuzz_image_keeps_the_pyinstaller_oss_fuzz_pins() -> None:
+    # base-builder's install_python.sh pins pyinstaller==6.10.0, and the fuzz
+    # image installs the same one for its own Python 3.12.
+    ignores = _ignores_for("pip", "/.clusterfuzzlite")
+    assert {"dependency-name": "pyinstaller"} in ignores
+
+
+def test_atheris_updates_still_reach_the_fuzz_image() -> None:
+    # Negative: install_python.sh asks for any atheris from 2.3.0 on, so the
+    # hold is on pyinstaller alone.
+    ignores = _ignores_for("pip", "/.clusterfuzzlite")
+    assert not any(i.get("dependency-name") == "atheris" for i in ignores)
 
 
 _ROSLYN_DIR = "/codebase_rag/parsers/csharp_frontend/roslyn"
