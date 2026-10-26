@@ -61,7 +61,11 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **SBOM**: CycloneDX SBOM and Docker image attestation published with each release.
+- **Security Enhancements**: Incorporates an OSS Scanner build image and threat model.
+- **Data Export**: Ensures all node properties within the graph are exported.
+- **SQL Fixes**: Addresses several SQL-related issues including grammar errors and dead-code roots.
+- **Rust Fixes**: Improves indexing of methods and handling of types in Rust code.
+- **Build Fixes**: Repairs build issues related to eMudhra root certificates and distrusted components.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
