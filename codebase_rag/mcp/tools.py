@@ -1231,6 +1231,8 @@ class MCPToolsRegistry:
         # the check and the read leaves an approved read running against the
         # partial graph (Greptile, PR #1547).
         async with self._ingestor_lock:
+            if refusal := await _run_in_thread(self._unindexed_refusal, project):
+                return {cs.DICT_KEY_ERROR: refusal}
             if refusal := await _run_in_thread(
                 self._incomplete_refusal, project, cs.MCPToolName.FLOW_VERDICT
             ):
@@ -1266,6 +1268,8 @@ class MCPToolsRegistry:
         if project is None:
             return {cs.DICT_KEY_ERROR: workspace_refusal}
         async with self._ingestor_lock:
+            if refusal := await _run_in_thread(self._unindexed_refusal, project):
+                return {cs.DICT_KEY_ERROR: refusal}
             if refusal := await _run_in_thread(
                 self._incomplete_refusal, project, cs.MCPToolName.EXPLAIN_TRACEBACK
             ):
@@ -1293,6 +1297,8 @@ class MCPToolsRegistry:
         if project is None:
             return {cs.DICT_KEY_ERROR: workspace_refusal}
         async with self._ingestor_lock:
+            if refusal := await _run_in_thread(self._unindexed_refusal, project):
+                return {cs.DICT_KEY_ERROR: refusal}
             if refusal := await _run_in_thread(
                 self._incomplete_refusal, project, cs.MCPToolName.RANK_ROOT_CAUSES
             ):
@@ -2868,7 +2874,12 @@ class MCPToolsRegistry:
             project=project, workspace=self.workspace.name, known=listed
         )
 
-    def _root_not_indexed_error(self, project_name: str, known: list[str]) -> str:
+    def _root_not_indexed_error(
+        self,
+        project_name: str,
+        known: list[str],
+        message: str = cs.MCP_ROOT_NOT_INDEXED,
+    ) -> str:
         root = Path(self.project_root)
         # A repository indexed under a name of its own is the likeliest
         # meaning, then names spelled close to the derived one; both only
@@ -2877,9 +2888,9 @@ class MCPToolsRegistry:
             graph_query.projects_rooted_at(self.ingestor.list_project_roots(), root)
         )
         close = graph_query.close_project_names(project_name, self._nameable(known))
-        return cs.MCP_ROOT_NOT_INDEXED.format(
-            path=root.resolve()
-        ) + graph_query.did_you_mean(list(dict.fromkeys([*rooted, *close])))
+        return message.format(path=root.resolve()) + graph_query.did_you_mean(
+            list(dict.fromkeys([*rooted, *close]))
+        )
 
     def _flow_endpoint_refusal(
         self, project_name: str, source: str, sink: str
@@ -3004,6 +3015,26 @@ class MCPToolsRegistry:
             workspace=self.workspace.name,
             count=len(names),
             known=cs.SEPARATOR_COMMA_SPACE.join(names),
+        )
+
+    def _unindexed_refusal(self, project: str) -> str | None:
+        """Why a fixed-root handler must not read `project`, or None.
+
+        `_fixed_root_project` derives the name without asking the graph. A
+        project the graph does not hold has no FLOWS_TO edge and no Module
+        to report as uncovered, so flow_verdict answered NO_FLOW, the
+        verified absence, and the traceback tools resolved nothing with no
+        note (issue #3193). The check `_graph_query` makes, with its
+        messages: a workspace default is a named project, a derived one is
+        the server's root.
+        """
+        known = self.ingestor.list_projects()
+        if project in known:
+            return None
+        if self.workspace is not None:
+            return self._unknown_project_error(project, known)
+        return self._root_not_indexed_error(
+            project, known, cs.MCP_FIXED_ROOT_NOT_INDEXED
         )
 
     def _workspace_default_project(self) -> str | None:
