@@ -4,6 +4,12 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) first: its rules apply to every
 change. This file holds procedures that are easy to get wrong and that a test
 alone cannot explain.
 
+Every coding agent reads this file. Codex, Cursor, Windsurf and Copilot's
+coding agent read it directly; Claude Code reads it through `CLAUDE.md`,
+Gemini CLI through `GEMINI.md`, and Copilot chat and code review through
+`.github/copilot-instructions.md`. Those files only point here, so edit this
+one.
+
 ## Bumping tree-sitter
 
 The Rust extension (`rust/cgr_graph_rs`) walks the syntax trees py-tree-sitter

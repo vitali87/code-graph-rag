@@ -19,7 +19,6 @@ wheels/
 .pytest_cache/
 .claude/
 .qdrant_code_embeddings/
-CLAUDE.md
 PROJECT.md
 .coverage
 .envrc
