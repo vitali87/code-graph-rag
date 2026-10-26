@@ -190,10 +190,11 @@ class TestFallback:
     def test_a_node_it_cannot_read_runs_the_python_twin(
         self, bridge: native_trees.TreeBridge
     ) -> None:
+        node = MagicMock(spec=Node)
         with pytest.raises(native_trees.NotBorrowed):
-            bridge.anchor_hash(MagicMock(spec=Node), ())
+            bridge.anchor_hash(node, ())
         with pytest.raises(native_trees.NotBorrowed):
-            bridge.ast_fingerprint(MagicMock(spec=Node))
+            bridge.ast_fingerprint(node)
 
     def test_a_source_that_is_not_bytes_runs_the_python_twin(
         self, bridge: native_trees.TreeBridge
