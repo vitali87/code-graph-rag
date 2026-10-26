@@ -4,17 +4,21 @@
 must return exactly what `python_anchor_hash` and `python_ast_fingerprint`
 return. These parse sources in every language with a grammar installed, plus
 cgr's own parser package, and compare the two on every named node; they
-also pin when the bridge must step aside for the Python twin.
+also pin when the bridge must step aside for the Python twin, and that the
+py-tree-sitter and tree-sitter crate pins name the pair the bridge was
+checked with (AGENTS.md, "Bumping tree-sitter").
 """
 
 import importlib
 import importlib.metadata
+import tomllib
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import NoReturn
 from unittest.mock import MagicMock
 
 import pytest
+from packaging.requirements import Requirement
 from tree_sitter import Node
 
 from codebase_rag import constants as cs
@@ -33,6 +37,9 @@ ANCHOR_MODULE = importlib.import_module("codebase_rag.parsers.anchor_hash")
 FINGERPRINT_MODULE = importlib.import_module("codebase_rag.parsers.ast_fingerprint")
 PARSERS, _ = load_parsers()
 PARSERS_DIR = Path(native_trees.__file__).parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CRATE_DIR = REPO_ROOT / "rust" / "cgr_graph_rs"
+BUMP_GUIDE = "see AGENTS.md, 'Bumping tree-sitter'"
 
 # A build from before the bridge has none of it.
 needs_bridge = pytest.mark.skipif(
@@ -132,7 +139,10 @@ def _assert_twins_agree(bridge: native_trees.TreeBridge, root: Node) -> int:
 def bridge() -> native_trees.TreeBridge:
     native_trees._bridge.cache_clear()
     found = native_trees.tree_bridge()
-    assert found is not None, "the extension carries the bridge but it is off"
+    assert found is not None, (
+        "the extension carries the bridge but it is off; if py-tree-sitter or "
+        f"the tree-sitter crate moved, {BUMP_GUIDE}"
+    )
     return found
 
 
@@ -254,3 +264,47 @@ class TestFallback:
             assert native_trees.tree_bridge() is None
         finally:
             native_trees._bridge.cache_clear()
+
+
+def _toml(path: Path) -> dict:
+    with path.open("rb") as handle:
+        return tomllib.load(handle)
+
+
+def _exact_pin(name: str) -> str | None:
+    """The version `pyproject.toml` pins `name` to exactly, if it does."""
+    for dependency in _toml(REPO_ROOT / "pyproject.toml")["project"]["dependencies"]:
+        requirement = Requirement(dependency)
+        if requirement.name != name:
+            continue
+        specifiers = list(requirement.specifier)
+        if len(specifiers) == 1 and specifiers[0].operator == "==":
+            return specifiers[0].version
+        return None
+    return None
+
+
+@needs_bridge
+class TestVersionPair:
+    """Both runtimes read one tree, so both pins must name the checked pair."""
+
+    def test_pyproject_pins_the_py_tree_sitter_the_bridge_reads(self) -> None:
+        checked = getattr(RUST, cs.EG_RUST_TREE_BRIDGE).PY_TREE_SITTER
+        assert _exact_pin("tree-sitter") == checked, (
+            f"pyproject.toml must pin tree-sitter=={checked}, the release the "
+            f"bridge was checked against; {BUMP_GUIDE}"
+        )
+
+    def test_the_crate_pins_the_runtime_checked_with_it(self) -> None:
+        checked = getattr(RUST, cs.EG_RUST_TREE_BRIDGE).TREE_SITTER_CRATE
+        pinned = _toml(CRATE_DIR / "Cargo.toml")["dependencies"]["tree-sitter"]
+        locked = [
+            package["version"]
+            for package in _toml(CRATE_DIR / "Cargo.lock")["package"]
+            if package["name"] == "tree-sitter"
+        ]
+        assert (pinned, locked) == (f"={checked}", [checked]), (
+            f"rust/cgr_graph_rs must pin and lock the tree-sitter crate at "
+            f"exactly {checked}, the release checked to walk py-tree-sitter's "
+            f"trees; {BUMP_GUIDE}"
+        )

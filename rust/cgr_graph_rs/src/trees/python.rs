@@ -37,6 +37,11 @@ use super::{anchor_hash, ast_fingerprint, kind, Rules, Source, DIGEST_SIZE};
 /// The py-tree-sitter release whose object layout and C runtime this was
 /// checked against; any other turns the bridge off.
 const PY_TREE_SITTER: &str = "0.26.0";
+/// The `tree-sitter` crate release whose tree-walking C sources were found
+/// identical to that py-tree-sitter's. Cargo.toml pins exactly this one, and
+/// test_native_trees.py holds both pins to this pair (AGENTS.md says how to
+/// move it).
+const TREE_SITTER_CRATE: &str = "0.26.8";
 const POINTER: usize = size_of::<usize>();
 
 pyo3::create_exception!(
@@ -126,6 +131,20 @@ impl TreeBridge {
 
 #[pymethods]
 impl TreeBridge {
+    /// The py-tree-sitter release the bridge reads.
+    #[classattr]
+    #[pyo3(name = "PY_TREE_SITTER")]
+    fn py_tree_sitter() -> &'static str {
+        PY_TREE_SITTER
+    }
+
+    /// The tree-sitter crate release checked to walk that release's trees.
+    #[classattr]
+    #[pyo3(name = "TREE_SITTER_CRATE")]
+    fn tree_sitter_crate() -> &'static str {
+        TREE_SITTER_CRATE
+    }
+
     /// A bridge applying `rules`, the Python twins' constants by name; raises
     /// when this py-tree-sitter is not laid out as the bridge reads it.
     #[new]
