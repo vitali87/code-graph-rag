@@ -40,7 +40,9 @@ To move them:
 4. Update both pins and both constants, then bump the crate's own version
    (`rust/cgr_graph_rs/pyproject.toml` and `Cargo.toml`, plus the
    `cgr-graph-rs` floor in `pyproject.toml`), as CI requires for any change
-   to the library.
+   to the library. If the new crate needs a newer Rust than
+   `RUST_TOOLCHAIN` in `.clusterfuzzlite/Dockerfile`, raise that too: the
+   fuzz build compiles the crate with it and fails otherwise.
 5. Run `codebase_rag/tests/test_native_trees.py` and
    `cargo test --manifest-path rust/cgr_graph_rs/Cargo.toml`.
 
