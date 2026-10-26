@@ -1598,3 +1598,11 @@ CHECKOUT_STATE_HISTORY_DROPPED = (
 EG_NATIVE_WRITE_FAILED = (
     "The Rust extension could not write a batch ({error}); the engine writes it"
 )
+# The Rust extension's tree walks (parsers/native_trees.py).
+NATIVE_TREES_UNAVAILABLE = (
+    "Rust tree walks unavailable ({error}); Python walks the trees"
+)
+NATIVE_TREES_DISAGREE = (
+    "The Rust tree walks read the probe tree differently from py-tree-sitter "
+    "({check}, at a {node_type} node); Python walks the trees"
+)

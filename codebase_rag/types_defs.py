@@ -150,6 +150,41 @@ NodeIdentifier = tuple[NodeLabel | str, str, str | None]
 type ASTNode = Node
 
 
+class TreeRules(TypedDict):
+    """The classification constants the Rust tree bridge applies, under the
+    names `rules_from` in rust/cgr_graph_rs/src/trees/python.rs reads."""
+
+    anchor_version: str
+    comment: str
+    punct: list[str]
+    id_token: str
+    lit_token: str
+    id_substring: str
+    id_extras: list[str]
+    lit_substrings: list[str]
+    lit_extras: list[str]
+    block_substrings: list[str]
+    block_extras: list[str]
+    min_branch_nodes: int
+    wrapped_def_substring: str
+    expression_body_types: list[str]
+    self_body_types: list[str]
+    hash_open: bytes
+    hash_close: bytes
+    digest_size: int
+    body_field: str
+    dart_signature_types: list[str]
+    dart_signature_wrappers: list[str]
+    dart_function_body: str
+
+
+# One node as the tree bridge's probe compares it: symbol, type, named flag,
+# byte range, start and end points, child count and field name.
+type DescribedNode = tuple[
+    int, str, bool, int, int, tuple[int, int], tuple[int, int], int, str | None
+]
+
+
 class NodeType(StrEnum):
     FUNCTION = "Function"
     METHOD = "Method"
