@@ -223,13 +223,49 @@ class TestCache:
         first = _parse(source).children[0]
         second = _parse(source).children[0]
         assert scope_facts(first) == scope_facts(second)
-        assert scope_facts.cache_info().currsize == 2
+        assert scope_facts.trees == 2
 
-    def test_the_cache_is_bounded(self) -> None:
-        assert scope_facts.cache_info().maxsize == cs.PY_SCOPE_FACTS_CACHE_SIZE
-        assert ast_analyzer._inner_scope_only_names.cache_info().maxsize == (
-            cs.PY_SCOPE_FACTS_CACHE_SIZE
-        )
+    @pytest.mark.parametrize(
+        ("cached", "twin"),
+        [
+            ("scope_facts", "python_scope_facts"),
+            ("_inner_scope_only_names", "python_inner_scope_only_names"),
+        ],
+    )
+    def test_it_keeps_the_trees_read_last(
+        self, monkeypatch: pytest.MonkeyPatch, cached: str, twin: str
+    ) -> None:
+        # A cached scope keeps its whole tree alive, outside the AST cache's
+        # memory cap, so the bound is on trees: past it, the tree read
+        # longest ago lets go of every scope it holds.
+        monkeypatch.setattr(native_trees, "ENABLED", False)
+        walk = getattr(ANALYZER, cached)
+        walked: list[Node] = []
+        reference = getattr(ANALYZER, twin)
+
+        def counting(node: Node) -> ScopeFacts | frozenset[str]:
+            walked.append(node)
+            return reference(node)
+
+        monkeypatch.setattr(ANALYZER, twin, counting)
+        source = b"def f(a):\n    b = a\ndef g(c):\n    return [d for d in c]\n"
+        roots = [_parse(source) for _ in range(cs.PY_SCOPE_CACHE_TREES + 1)]
+        for root in roots[:-1]:
+            for function in root.children:
+                walk(function)
+        assert walk.trees == cs.PY_SCOPE_CACHE_TREES
+        oldest, newest = roots[0].children, roots[-1].children
+        walk(oldest[0])
+        for function in newest:
+            walk(function)
+        assert walk.trees == cs.PY_SCOPE_CACHE_TREES
+        walked.clear()
+        # Reading the oldest tree again kept it, so the second tree went.
+        walk(oldest[1])
+        assert walked == []
+        for function in roots[1].children:
+            walk(function)
+        assert walked == roots[1].children
 
 
 @needs_scope_walks

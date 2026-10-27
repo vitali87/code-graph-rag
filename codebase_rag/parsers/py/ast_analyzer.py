@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import re
 from abc import abstractmethod
-from collections.abc import Iterable, Iterator
-from functools import lru_cache
+from collections import OrderedDict
+from collections.abc import Callable, Iterable, Iterator
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -401,23 +401,76 @@ def _scope_facts_record(
     )
 
 
-@lru_cache(maxsize=cs.PY_SCOPE_FACTS_CACHE_SIZE)
-def scope_facts(scope: Node) -> ScopeFacts:
-    """What `scope`'s own body binds, walked once per scope (issue #3473).
+def _root_of(node: Node) -> Node:
+    while (parent := node.parent) is not None:
+        node = parent
+    return node
 
-    Call resolution asks about each function twice (its shadowed imports and
-    its locals), type inference asks about the scope of every assignment it
-    reads, and each enclosing def is asked about again for every function
-    inside it; each asking walked the body anew. The Rust bridge walks it
-    when it can. A cached scope keeps its tree alive, so the cache is
-    bounded and is dropped with the per-pass caches (`clear_scope_facts`).
+
+class _TreeBoundedCache[T]:
+    """One walk's answer per node, kept for the trees read last.
+
+    A cached node keeps its whole tree alive where the AST cache's memory
+    cap (`CACHE_MAX_MEMORY_MB`) cannot see it: on a repository larger than
+    that cache, an entry would hold a tree the cache had evicted, or a
+    second copy of one it re-parsed. So the bound is on trees, not nodes:
+    the answers for the last `max_trees` trees read are kept, and letting go
+    of a tree drops all of them. Indexing asks about one file's scopes
+    together, so the repeated questions still find their answer.
     """
+
+    __slots__ = ("_answers", "_max_trees", "_trees", "_walk")
+
+    def __init__(self, walk: Callable[[Node], T], max_trees: int) -> None:
+        self._walk = walk
+        self._max_trees = max_trees
+        self._answers: dict[Node, tuple[Node, T]] = {}
+        # Each tree's root, least recently read first, with the nodes whose
+        # answers it holds.
+        self._trees: OrderedDict[Node, list[Node]] = OrderedDict()
+
+    def __call__(self, node: Node) -> T:
+        if (cached := self._answers.get(node)) is not None:
+            root, answer = cached
+            self._trees.move_to_end(root)
+            return answer
+        answer = self._walk(node)
+        root = _root_of(node)
+        if (held := self._trees.get(root)) is None:
+            held = self._trees[root] = []
+            while len(self._trees) > self._max_trees:
+                for evicted in self._trees.popitem(last=False)[1]:
+                    del self._answers[evicted]
+        else:
+            self._trees.move_to_end(root)
+        held.append(node)
+        self._answers[node] = (root, answer)
+        return answer
+
+    @property
+    def trees(self) -> int:
+        return len(self._trees)
+
+    def clear(self) -> None:
+        self._answers.clear()
+        self._trees.clear()
+
+
+def _walk_scope_facts(scope: Node) -> ScopeFacts:
     if (bridge := native_trees.scope_bridge()) is not None:
         try:
             return scope_facts_from_native(bridge.scope_facts(scope))
         except native_trees.NotBorrowed:
             pass
     return python_scope_facts(scope)
+
+
+# What a scope's own body binds, walked once per scope (issue #3473). Call
+# resolution asks about each function twice (its shadowed imports and its
+# locals), type inference asks about the scope of every assignment it reads,
+# and each enclosing def is asked about again for every function inside it;
+# each asking walked the body anew. The Rust bridge walks it when it can.
+scope_facts = _TreeBoundedCache(_walk_scope_facts, cs.PY_SCOPE_CACHE_TREES)
 
 
 def _locally_bound_names(caller: Node, import_map: dict[str, str]) -> frozenset[str]:
@@ -507,10 +560,7 @@ def python_inner_scope_only_names(caller: Node) -> frozenset[str]:
     return frozenset(bound - read_outside)
 
 
-@lru_cache(maxsize=cs.PY_SCOPE_FACTS_CACHE_SIZE)
-def _inner_scope_only_names(caller: Node) -> frozenset[str]:
-    """`python_inner_scope_only_names`, walked once per caller, and in Rust
-    when the bridge can."""
+def _walk_inner_scope_only_names(caller: Node) -> frozenset[str]:
     if (bridge := native_trees.scope_bridge()) is not None:
         try:
             return frozenset(bridge.inner_scope_only_names(caller))
@@ -519,10 +569,17 @@ def _inner_scope_only_names(caller: Node) -> frozenset[str]:
     return python_inner_scope_only_names(caller)
 
 
+# `python_inner_scope_only_names`, walked once per caller, and in Rust when
+# the bridge can.
+_inner_scope_only_names = _TreeBoundedCache(
+    _walk_inner_scope_only_names, cs.PY_SCOPE_CACHE_TREES
+)
+
+
 def clear_scope_facts() -> None:
     """Drop the cached scope walks, and with them the trees their keys hold."""
-    scope_facts.cache_clear()
-    _inner_scope_only_names.cache_clear()
+    scope_facts.clear()
+    _inner_scope_only_names.clear()
 
 
 def local_names(caller: Node, import_map: dict[str, str]) -> frozenset[str]:

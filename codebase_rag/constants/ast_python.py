@@ -513,6 +513,7 @@ PY_COMPREHENSION_TYPES = frozenset(
         TS_PY_GENERATOR_EXPRESSION,
     }
 )
-# Scopes whose facts stay cached (`ast_analyzer.scope_facts`). Each entry
-# keeps its tree alive, so the bound is also how many trees it can hold.
-PY_SCOPE_FACTS_CACHE_SIZE = 2048
+# Trees whose scope walks stay cached (`ast_analyzer.scope_facts`). A cached
+# tree stays alive outside the AST cache's memory cap, so the cache holds a
+# few trees, all of whose scopes it keeps, rather than a number of scopes.
+PY_SCOPE_CACHE_TREES = 8

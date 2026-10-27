@@ -217,10 +217,11 @@ and `nonlocal` declarations), and `ast_analyzer.scope_facts` keeps them per
 scope node. The scope functions read the facts instead of walking. The
 bridge reads them in Rust when it is on, with `python_scope_facts` as the
 twin; `_inner_scope_only_names`, the comprehension and lambda walk, moved
-the same way. A cached scope keeps its tree alive, so the cache is bounded
-(`PY_SCOPE_FACTS_CACHE_SIZE`) and dropped with the per-pass caches. The
-node types and fields the walks read are handed to the bridge from
-`constants/`, as stage 1's are.
+the same way. A cached scope keeps its whole tree alive, where the AST
+cache's memory cap cannot see it, so the cache holds the scopes of the last
+few trees read (`PY_SCOPE_CACHE_TREES`), not a number of scopes, and is
+dropped with the per-pass caches. The node types and fields the walks read
+are handed to the bridge from `constants/`, as stage 1's are.
 
 **Parity.** Every def, class, lambda and module of 1,821 files (37,810
 scopes: `codebase_rag/`, `evals/`, `scripts/`) and every one of the 537,090
