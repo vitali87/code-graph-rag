@@ -29,6 +29,7 @@ pub mod json_text;
 #[cfg(feature = "python")]
 mod reader;
 pub mod snapshot;
+pub mod trees;
 pub mod walk;
 
 const DEFAULT_ITERATIONS: u32 = 100;
@@ -548,6 +549,7 @@ pub(crate) mod python {
         crate::reader::register(m)?;
         crate::ingest::python::register(m)?;
         crate::decode::register(m)?;
+        crate::trees::python::register(m)?;
         Ok(())
     }
 }
