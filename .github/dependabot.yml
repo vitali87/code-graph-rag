@@ -15,9 +15,20 @@ updates:
     directories:
       - "/"
       - "/.clusterfuzzlite"
-      - "/.oss-scanner"
     schedule:
       interval: "weekly"
+
+  # The OSS Scanner image mirrors CI's Linux unit-test job on the Python 3.12
+  # floor: UV_PYTHON names python3.12 and downloads are off, so a newer python
+  # base leaves `uv sync` no interpreter and the image cannot build. Digest
+  # updates to 3.12 still arrive; the tag moves when the floor does.
+  - package-ecosystem: "docker"
+    directory: "/.oss-scanner"
+    schedule:
+      interval: "weekly"
+    ignore:
+      - dependency-name: "python"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
 
   # The hash-pinned requirements the build images and the unlocked-resolution
   # CI job install with --require-hashes: pip's own bootstrap, and the fuzz

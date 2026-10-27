@@ -84,6 +84,33 @@ def test_typescript_6_updates_still_reach_the_ts_oracle() -> None:
     assert all("update-types" not in i for i in typescript)
 
 
+def test_the_scanner_image_stays_on_python_3_12() -> None:
+    # The image pins UV_PYTHON=python3.12 with downloads off, so the 3.15 base
+    # Dependabot proposed (#3461) left `uv sync` no interpreter to build with.
+    ignores = _ignores_for("docker", "/.oss-scanner")
+    assert {
+        "dependency-name": "python",
+        "update-types": [
+            "version-update:semver-minor",
+            "version-update:semver-major",
+        ],
+    } in ignores
+
+
+def test_the_production_image_still_gets_python_updates() -> None:
+    # Negative: the hold is the scanner image's alone, so the production
+    # image's python base keeps moving.
+    ignores = _ignores_for("docker", "/")
+    assert not any(i.get("dependency-name") == "python" for i in ignores)
+
+
+@pytest.mark.parametrize("image", ["golang", "eclipse-temurin"])
+def test_the_scanner_images_other_bases_are_not_held(image: str) -> None:
+    # Negative: Go and the JDK are copied in whole, so their bumps still land.
+    ignores = _ignores_for("docker", "/.oss-scanner")
+    assert not any(i.get("dependency-name") == image for i in ignores)
+
+
 def test_the_fuzz_image_keeps_the_pyinstaller_oss_fuzz_pins() -> None:
     # base-builder's install_python.sh pins pyinstaller==6.10.0, and the fuzz
     # image installs the same one for its own Python 3.12.
