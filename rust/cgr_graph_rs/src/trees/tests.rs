@@ -135,3 +135,105 @@ fn text_clamps_like_a_python_slice() {
     assert_eq!(Source { bytes: Some(b"def") }.text(node), b"def");
     assert_eq!(Source { bytes: None }.text(node), b"");
 }
+
+// ------------------------------------------------------------------ scopes
+
+/// The constants `native_trees._scope_rules()` hands over, as they stand.
+fn scope_rules() -> scopes::ScopeRules {
+    scopes::ScopeRules {
+        identifier: b"identifier".to_vec(),
+        nested_scopes: set(&["function_definition", "class_definition", "lambda"]),
+        left_binders: set(&["assignment", "augmented_assignment", "for_statement"]),
+        name_binders: set(&["named_expression", "function_definition", "class_definition"]),
+        imports: set(&["import_statement", "import_from_statement"]),
+        patterns: set(&[
+            "pattern_list", "tuple_pattern", "list_pattern", "list_splat_pattern", "as_pattern_target", "tuple",
+            "list",
+        ]),
+        declarations: set(&["global_statement", "nonlocal_statement"]),
+        comprehensions: set(&["list_comprehension", "set_comprehension", "dictionary_comprehension", "generator_expression"]),
+        nonlocal_statement: b"nonlocal_statement".to_vec(),
+        with_statement: b"with_statement".to_vec(),
+        except_clause: b"except_clause".to_vec(),
+        case_pattern: b"case_pattern".to_vec(),
+        as_pattern: b"as_pattern".to_vec(),
+        aliased_import: b"aliased_import".to_vec(),
+        dotted_name: b"dotted_name".to_vec(),
+        wildcard: "_".into(),
+        function_definition: b"function_definition".to_vec(),
+        class_definition: b"class_definition".to_vec(),
+        lambda: b"lambda".to_vec(),
+        for_in_clause: b"for_in_clause".to_vec(),
+        attribute: b"attribute".to_vec(),
+        keyword_argument: b"keyword_argument".to_vec(),
+        separator: ".".into(),
+        left_field: b"left".to_vec(),
+        name_field: b"name".to_vec(),
+        value_field: b"value".to_vec(),
+        alias_field: b"alias".to_vec(),
+        module_field: b"module_name".to_vec(),
+        parameters_field: b"parameters".to_vec(),
+        body_field: b"body".to_vec(),
+        attribute_field: b"attribute".to_vec(),
+    }
+}
+
+const SCOPES: &str = "\
+def outer(p, q=1, *args, key=None, **kw):
+    global g
+    import os.path as osp
+    try:
+        from .pkg import helpers
+    except ImportError:
+        helpers = None
+    a, (b, *c) = p
+    with open(p) as fh:
+        for i in args:
+            d = [k for k in kw]
+    sel = lambda item: key(item)
+    def middle(v):
+        nonlocal q, v
+    return [e for e in args], e
+";
+
+fn strings(items: &[&str]) -> Vec<String> {
+    items.iter().map(|s| (*s).to_owned()).collect()
+}
+
+#[test]
+fn scope_facts_match_the_python_twin() {
+    let tree = parse(SCOPES);
+    let outer = first_function(&tree);
+    let facts = scopes::scope_facts(outer, SCOPES.as_bytes(), &scope_rules());
+    assert_eq!(
+        facts,
+        scopes::ScopeFacts {
+            params: strings(&["p", "q", "args", "key", "kw"]),
+            plain: strings(&["a", "b", "c", "d", "fh", "i", "middle", "sel"]),
+            conditional: vec![
+                ("helpers".into(), strings(&["pkg.helpers"])),
+                ("osp".into(), strings(&["os.path"])),
+            ],
+            declared: strings(&["g"]),
+            nonlocals: Vec::new(),
+        }
+    );
+    let body = outer.child_by_field_name("body").unwrap();
+    let mut cursor = body.walk();
+    let middle = body.children(&mut cursor).find(|n| n.kind() == "function_definition").unwrap();
+    let facts = scopes::scope_facts(middle, SCOPES.as_bytes(), &scope_rules());
+    assert_eq!(facts.params, strings(&["v"]));
+    assert_eq!(facts.declared, strings(&["q", "v"]));
+    assert_eq!(facts.nonlocals, strings(&["q", "v"]));
+    assert!(facts.plain.is_empty() && facts.conditional.is_empty());
+}
+
+#[test]
+fn inner_scope_only_names_match_the_python_twin() {
+    let tree = parse(SCOPES);
+    // `e` is the comprehension's, but read again after it: the module's `e`.
+    assert_eq!(
+        scopes::inner_scope_only_names(first_function(&tree), SCOPES.as_bytes(), &scope_rules()),
+        strings(&["item", "k"])
+    );
+}

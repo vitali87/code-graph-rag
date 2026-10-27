@@ -1,4 +1,4 @@
-//! Hashes of tree-sitter subtrees, computed on the trees the indexer parsed.
+//! Walks of tree-sitter subtrees, computed on the trees the indexer parsed.
 //!
 //! The indexer parses each file once, in Python, with py-tree-sitter, and
 //! its passes walk that tree node by node: every `node.children`,
@@ -12,11 +12,14 @@
 //!
 //! - `anchor_hash`: `codebase_rag/parsers/anchor_hash.py`;
 //! - `ast_fingerprint`: `compute_ast_fingerprint` in
-//!   `codebase_rag/parsers/ast_fingerprint.py`.
+//!   `codebase_rag/parsers/ast_fingerprint.py`;
+//! - `scopes`: the Python scope walks in
+//!   `codebase_rag/parsers/py/ast_analyzer.py`.
 //!
 //! What they classify (which node types are punctuation, identifiers,
-//! literals, blocks, ...) is not spelled here: Python hands over its own
-//! constants as `Rules`, so the two twins cannot disagree on them.
+//! literals, blocks, bindings, ...) is not spelled here: Python hands over
+//! its own constants as `Rules` and `scopes::ScopeRules`, so the two twins
+//! cannot disagree on them.
 
 use std::collections::HashSet;
 use std::ffi::CStr;
@@ -28,6 +31,7 @@ use tree_sitter::{ffi, Node};
 
 #[cfg(feature = "python")]
 pub mod python;
+pub mod scopes;
 
 /// The constants the Python twins read, as UTF-8 bytes.
 pub struct Rules {

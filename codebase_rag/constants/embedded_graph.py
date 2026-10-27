@@ -484,6 +484,8 @@ EG_RUST_DECODE_ROWS = "decode_rows"
 # they raise for a node they cannot read exactly.
 EG_RUST_TREE_BRIDGE = "TreeBridge"
 EG_RUST_NOT_BORROWED = "NotBorrowed"
+# A bridge method a build from before the scope walks lacks.
+EG_RUST_SCOPE_FACTS = "scope_facts"
 
 
 class TreeBridgeCheck(StrEnum):
@@ -492,11 +494,13 @@ class TreeBridgeCheck(StrEnum):
     LAYOUT = "node layout"
     ANCHOR_HASH = "anchor hash"
     FINGERPRINT = "fingerprint"
+    SCOPE_FACTS = "scope facts"
+    INNER_SCOPE_NAMES = "inner scope names"
 
 
 # The probe: definitions the two hashes walk, decorators, comments, f-strings,
-# non-ASCII text (byte and column offsets part ways there) and a syntax error
-# (ERROR and MISSING nodes).
+# non-ASCII text (byte and column offsets part ways there), every binding
+# form the scope walks read, and a syntax error (ERROR and MISSING nodes).
 TREE_BRIDGE_PROBE = """\
 import os  # comment
 @decorator(arg=1)
@@ -522,6 +526,30 @@ async def top(a, /, b, *, c):
         nonlocal b
         b += 1
     return inner
+
+def scopes(p, *rest, key=None, **kw):
+    global counter
+    import os.path as osp, json
+    from . import helpers
+    try:
+        from .pkg import mod as alias
+    except ImportError:
+        alias = None
+    match p:
+        case [first, *others] if first:
+            pass
+        case Point(x=_, y=yy) | _:
+            pass
+    total = [v for v in rest if (w := v)] + list({k: k for k in kw})
+    fn = lambda a, b=1: a + b
+    with open(p) as (h, i):
+        for j, (k, *l) in enumerate(h):
+            q: int = 1
+            q += j
+    class Inner:
+        nonlocal key
+        z = lambda: key
+    return total, fn, Inner, w
 
 def broken(x:
     return x +
