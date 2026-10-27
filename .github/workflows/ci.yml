@@ -35,13 +35,13 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -109,13 +109,13 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -123,9 +123,11 @@ jobs:
         run: |
           uv sync --extra treesitter-full --extra semantic --extra milvus --extra test --group dev
 
+      # evals/ too: the pre-commit hook checks it, so a type error there failed
+      # every local commit while this job stayed green (issue #3436).
       - name: Run type checking
         run: |
-          uv run ty check codebase_rag --exclude codebase_rag/tests/
+          uv run ty check codebase_rag evals --exclude codebase_rag/tests/
 
       # Again with the optional `neo4j` extra installed: its package types
       # every statement `LiteralString`, so a checkout with all extras saw
@@ -133,7 +135,7 @@ jobs:
       - name: Run type checking with the neo4j extra
         run: |
           uv sync --extra treesitter-full --extra semantic --extra milvus --extra test --extra neo4j --group dev
-          uv run ty check codebase_rag --exclude codebase_rag/tests/
+          uv run ty check codebase_rag evals --exclude codebase_rag/tests/
 
   test-unit:
     name: Unit Tests (${{ matrix.os }}, py${{ matrix.python-version }}, shard ${{ matrix.shard }})
@@ -159,6 +161,14 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      - name: Set up Go
+        # The go/types helper's tests build it with the Go on PATH, and the
+        # runner image's Go is older than the floor in gotypes/go.mod.
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ">=1.27.2"
+          cache-dependency-path: codebase_rag/parsers/go_frontend/gotypes/go.sum
+
       - name: Key the uv cache on dependencies, not the project version
         shell: bash
         run: |
@@ -167,13 +177,13 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -255,6 +265,14 @@ jobs:
           # into the local Git config.
           persist-credentials: false
 
+      - name: Set up Go
+        # The go/types helper's tests build it with the Go on PATH, and the
+        # runner image's Go is older than the floor in gotypes/go.mod.
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ">=1.27.2"
+          cache-dependency-path: codebase_rag/parsers/go_frontend/gotypes/go.sum
+
       - name: Key the uv cache on dependencies, not the project version
         shell: bash
         run: |
@@ -263,13 +281,13 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -314,13 +332,13 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -371,13 +389,13 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -412,12 +430,18 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
+
+      # cargo (under the crate's wheel build) and pip trust the system store,
+      # and the runner's ca-certificates may still carry distrusted eMudhra
+      # roots: deselect them before anything is fetched.
+      - name: Distrust the eMudhra roots
+        run: sudo bash scripts/distrust_ca_roots.sh
 
       - name: Build wheel
         run: uv build --wheel
@@ -432,8 +456,15 @@ jobs:
       - name: Install the wheel with unlocked resolution
         run: |
           python -m venv .fresh-venv
-          ./.fresh-venv/bin/python -m pip install --upgrade pip
-          ./.fresh-venv/bin/python -m pip install dist/*.whl --find-links dist-rust
+          # The venv's bundled pip may predate the emSign distrust (pip
+          # 26.2.2), so it fetches only pip itself, the release
+          # scripts/pip-requirements.txt pins by SHA-256 and Dependabot keeps
+          # current.
+          ./.fresh-venv/bin/python -m pip install --require-hashes -r scripts/pip-requirements.txt
+          # Both wheels are named, so pip has to take this build of the crate
+          # even when PyPI carries a newer one in range; everything else
+          # resolves unlocked.
+          ./.fresh-venv/bin/python -m pip install dist/*.whl dist-rust/*.whl
 
       - name: Record resolved dependency versions
         run: ./.fresh-venv/bin/python -m pip list
@@ -494,7 +525,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: ">=1.26.6"
+          go-version: ">=1.27.2"
           cache-dependency-path: codebase_rag/parsers/go_frontend/gotypes/go.sum
 
       - name: Key the uv cache on dependencies, not the project version
@@ -505,13 +536,13 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -558,13 +589,13 @@ jobs:
             uv.lock > "$RUNNER_TEMP/uv-deps.lock"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
           cache-dependency-glob: ${{ runner.temp }}/uv-deps.lock
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 

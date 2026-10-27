@@ -8,7 +8,11 @@ wheels/
 
 # Virtual environments
 .venv
+# Local secrets (.env.local, .env.production, ...); .env.example is the
+# committed template
 .env
+.env.*
+!.env.example
 .tmp
 .ruff_cache/
 .mypy_cache/

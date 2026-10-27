@@ -21,18 +21,23 @@
 # So: stay on the 20.04 base (glibc 2.31, matching the runner) and get 3.12
 # from uv's standalone CPython, which is built for an ancient glibc floor --
 # `objdump -T` on its libpython reports a maximum requirement of GLIBC_2.9.
-FROM gcr.io/oss-fuzz-base/base-builder-python@sha256:79cc75a68ab65120da54f35d53f10c7536554ffe684eea5bae078a9a5ff82923
+FROM gcr.io/oss-fuzz-base/base-builder-python@sha256:21f6fab17ace4dc76e1c56de91ee95d3d03da021df94b41056ba036f6c6f55e9
 
+# pip trusts this store as well as its own certifi, and Ubuntu 20.04's newest
+# ca-certificates (20240203~20.04.1) still carries every distrusted eMudhra
+# root, so they are deselected and the store rebuilt before anything is fetched.
+COPY --chmod=755 scripts/distrust_ca_roots.sh /usr/local/sbin/
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends git && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y --no-install-recommends ca-certificates git && \
+    rm -rf /var/lib/apt/lists/* && \
+    distrust_ca_roots.sh
 
 # uv is fetched as a pinned release artifact and checked against the SHA-256
 # its publisher ships, rather than by piping https://astral.sh/uv/install.sh
 # into a root shell: that URL is mutable, and the image build runs as root, so
 # a compromised script would get root code execution during CI.
-ARG UV_VERSION=0.12.10
-ARG UV_SHA256=173d95a0c32d18c896c46ba6fafbf3cf9c14ab74b033f81b76c883ef492a976b
+ARG UV_VERSION=0.13.5
+ARG UV_SHA256=f68d291c75783122dad58ab77def0e13f3233f358731db5d6d7e8715603b928f
 RUN curl -fsSLO "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-x86_64-unknown-linux-gnu.tar.gz" && \
     echo "${UV_SHA256}  uv-x86_64-unknown-linux-gnu.tar.gz" | sha256sum -c - && \
     tar -xzf uv-x86_64-unknown-linux-gnu.tar.gz && \
@@ -65,16 +70,26 @@ RUN curl -fsSLO "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/x
 RUN ln -sf "$(uv python find 3.12)" /usr/local/bin/python3 && \
     python3 --version
 
+# The interpreter's bundled pip may predate the emSign distrust (pip 26.2.2),
+# so the first thing it fetches is pip itself, the release
+# scripts/pip-requirements.txt pins, checked against its SHA-256s. The installs
+# below and build.sh's then run on that pip.
+COPY scripts/pip-requirements.txt /tmp/
+RUN python3 -m pip install --no-cache-dir --break-system-packages \
+        --require-hashes -r /tmp/pip-requirements.txt
+
 # atheris and pyinstaller belong to the base image's 3.11 and are invisible to
 # 3.12, so install them for the interpreter that will actually freeze the
-# targets. atheris links the image's libFuzzer rather than building its own,
+# targets, from requirements.txt, which pins them and what they pull in by
+# hash. atheris links the image's libFuzzer rather than building its own,
 # the same way base-builder's install_python.sh does it.
 # uv's standalone interpreters ship an EXTERNALLY-MANAGED marker; this image
 # has no other Python for 3.12, so installing into it directly is intended.
+COPY .clusterfuzzlite/requirements.txt /tmp/fuzz-requirements.txt
 RUN LIBFUZZER_LIB=$(echo /usr/local/lib/clang/*/lib/x86_64-unknown-linux-gnu/libclang_rt.fuzzer_no_main.a) \
     PYI_STATIC_ZLIB=1 \
     python3 -m pip install --no-cache-dir --break-system-packages \
-        "atheris>=2.3.0" "pyinstaller==6.10.0"
+        --require-hashes -r /tmp/fuzz-requirements.txt
 
 COPY . $SRC/code-graph-rag
 WORKDIR $SRC/code-graph-rag

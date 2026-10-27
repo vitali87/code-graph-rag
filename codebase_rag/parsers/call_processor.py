@@ -71,9 +71,11 @@ from .py.receiver_rebinding import ReceiverRebinding, receiver_rebinding
 from .rpc_exposure import GoRpcExposureProcessor
 from .rs import utils as rs_utils
 from .scala import utils as scala_utils
+from .sql_ddl import ddl_routine_references
 from .string_call import load_string_call_specs, string_call_target
 from .type_inference import TypeInferenceEngine
 from .utils import (
+    call_site_start,
     callable_parameter_invocations,
     cpp_parameter_names,
     enclosing_class_node,
@@ -986,6 +988,43 @@ def _body_function_nodes(
     return captures.get(cs.CAPTURE_FUNCTION, [])
 
 
+def _next_macro_token(token: Node) -> Node | None:
+    # The token after `token` in a macro's stream, comments skipped.
+    following = token.next_sibling
+    while following is not None and following.type in cs.RS_COMMENT_TYPES:
+        following = following.next_sibling
+    return following
+
+
+def _macro_turbofish_reaches_args(ident: Node) -> bool:
+    """Whether a macro-token identifier is a call, through any turbofish.
+
+    `make::<u64>()` in a macro is the flat stream `make :: < u64 > ( )`, so
+    the query's identifier-then-`(` shape missed it and every turbofish call
+    inside `assert!`/`println!` lost its edge (issue #3212). An identifier
+    followed by `::<` is a call only when the generic arguments close straight
+    into an argument group; `a::<B>::c()` continues the path instead. A
+    comment between them (`make::<u64> /* type */ ()`) is a token too.
+    """
+    scope = _next_macro_token(ident)
+    if scope is None or scope.type != cs.TS_RS_TOKEN_SCOPE:
+        return True
+    depth = 0
+    token = _next_macro_token(scope)
+    while token is not None:
+        depth += cs.RS_MACRO_ANGLE_DEPTH.get(token.type, 0)
+        if depth <= 0:
+            break
+        token = _next_macro_token(token)
+    if token is None or depth != 0 or (args := _next_macro_token(token)) is None:
+        return False
+    return (
+        args.type == cs.TS_RS_TOKEN_TREE
+        and args.child_count > 0
+        and args.children[0].type == cs.CHAR_PAREN_OPEN
+    )
+
+
 def _find_call_arguments_node(call_node: Node) -> Node | None:
     args_node = call_node.child_by_field_name(cs.FIELD_ARGUMENTS)
     if args_node is not None:
@@ -1120,6 +1159,13 @@ def call_site_properties(node: Node) -> PropertyDict:
     the callback passes read argument slots from it.
     """
     props = node_site_properties(node)
+    # A member call's node spans its receiver, so every hop of a chain began
+    # where the chain begins: callers showed the wrong line for a multi-line
+    # chain, and two `.put(...)` hops of one chain merged into one edge on
+    # their shared (line, col) (issue #3166). The site starts at the name.
+    row, col = call_site_start(node)
+    props[cs.KEY_LINE] = row + 1
+    props[cs.KEY_COL] = col
     args_node = _find_call_arguments_node(node)
     if args_node is not None:
         positional, keyword = _split_call_arguments(args_node)
@@ -2097,6 +2143,7 @@ class CallProcessor:
         "_package_index",
         "_package_index_size",
         "_go_package_names",
+        "_sql_sources",
         "cpp_out_of_class_methods",
         "function_locations",
         "macro_qns",
@@ -2106,6 +2153,8 @@ class CallProcessor:
         "_go_type_declarations",
         "_callable_flow",
         "_flow_bucket",
+        "failed_call_files",
+        "_call_file",
         "_io_processor",
         "_flow_processor",
         "_rpc_exposure",
@@ -2138,6 +2187,7 @@ class CallProcessor:
         macro_qns: set[str] | None = None,
         ast_cache: ASTCacheProtocol | None = None,
         go_package_names: Mapping[str, str] | None = None,
+        sql_sources: Mapping[Path, bytes] | None = None,
         rehydrated_definition_paths: dict[str, str] | None = None,
         rust_function_modules: dict[str, str] | None = None,
         declared_module_qns: set[str] | None = None,
@@ -2168,6 +2218,11 @@ class CallProcessor:
         self._package_index: dict[Path, list[str]] = {}
         self._package_index_size = -1
         self._go_package_names: Mapping[str, str] = go_package_names or {}
+        # The definition pass fills this map after the processor exists, so
+        # it is held as given, never replaced by an empty copy.
+        self._sql_sources: Mapping[Path, bytes] = (
+            sql_sources if sql_sources is not None else {}
+        )
         self.cpp_out_of_class_methods = cpp_out_of_class_methods or {}
         self.function_locations = function_locations or {}
         self.macro_qns = macro_qns if macro_qns is not None else set()
@@ -2227,6 +2282,10 @@ class CallProcessor:
         # file being walked writes into `_flow_bucket`.
         self._callable_flow: dict[Path, _FileCallableFlow] = {}
         self._flow_bucket = _FileCallableFlow()
+        # Files whose call pass failed this run, whole or in one caller, for
+        # the sync summary (issue #3173); `_call_file` is the file being walked.
+        self.failed_call_files: set[Path] = set()
+        self._call_file: Path | None = None
         selection = capture if capture is not None else ALL_ENABLED
         self._io_processor = IOAccessProcessor(
             ingestor,
@@ -2235,6 +2294,7 @@ class CallProcessor:
             module_paths=self.module_qn_to_file_path,
             ast_cache=ast_cache,
             go_package_names=self._go_package_names,
+            project_name=project_name,
         )
         self._dispatch_registry = DispatchRegistryProcessor(
             ingestor=ingestor,
@@ -2258,6 +2318,7 @@ class CallProcessor:
             self._resolver,
             selection=selection,
             function_locations=self.function_locations,
+            project_name=project_name,
         )
 
     def _emit_rel(
@@ -2666,6 +2727,7 @@ class CallProcessor:
             for call_node in call_nodes:
                 self._record_call_field_bindings(call_node, module_qn)
         except Exception as e:
+            self.failed_call_files.add(file_path)
             logger.error(ls.CALL_PROCESSING_FAILED, path=file_path, error=e)
 
     def _record_call_field_bindings(self, call_node: Node, module_qn: str) -> None:
@@ -2876,6 +2938,7 @@ class CallProcessor:
         # A re-walk describes the file's current source; appending to the old
         # records kept a removed call site's callback edge alive forever.
         self._flow_bucket = self._callable_flow[file_path] = _FileCallableFlow()
+        self._call_file = file_path
 
         module_qn: str | None = None
         try:
@@ -2971,8 +3034,10 @@ class CallProcessor:
             )
 
         except Exception as e:
+            self.failed_call_files.add(file_path)
             logger.error(ls.CALL_PROCESSING_FAILED, path=file_path, error=e)
         finally:
+            self._call_file = None
             # The receiver binding index is only ever consulted by sites in
             # the SAME file; evicting here (errors and early returns
             # included) keeps the map from retaining one parse tree per
@@ -3094,6 +3159,41 @@ class CallProcessor:
             self._ingest_java_enum_constant_ctor_calls(
                 module_qn, combined_captures.get(cs.CAPTURE_CLASS) or [], queries
             )
+        if language == cs.SupportedLanguage.SQL:
+            # A trigger, aggregate, cast, type or handler clause runs the
+            # routine it names without an `invocation`; a schema file often
+            # holds no call at all (issue #3181).
+            self._ingest_sql_ddl_references(root_node, module_qn)
+
+    @_site_scoped
+    def _ingest_sql_ddl_references(self, root_node: Node, module_qn: str) -> None:
+        # The module runs the DDL, so it is the caller, as for a CHECK
+        # constraint's `invocation`. The site is the routine's name in the
+        # clause; no node spans it when the statement did not parse.
+        text, row, col = self._sql_source_as_written(root_node)
+        if not text:
+            return
+        self._site_node = None
+        module_spec = (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn)
+        for reference in ddl_routine_references(text, row, col):
+            self._resolution = cs.EdgeResolution.EXACT
+            self._link_sql_routine(
+                module_qn, module_spec, reference.name, reference.site
+            )
+
+    def _sql_source_as_written(self, root_node: Node) -> tuple[bytes | None, int, int]:
+        # The text to scan and the point it starts at. The tree's own text can
+        # be the statement-isolated re-parse's copy, which blanks every
+        # statement the grammar cannot read on its own (#3180), and most DDL
+        # that names a routine is such a statement. The bytes that tree was
+        # parsed from hold them, whole: a blanked statement that opens or
+        # closes the file lies outside the root's span.
+        path = self._call_file
+        source = self._sql_sources.get(path) if path is not None else None
+        if source is None:
+            row, col = root_node.start_point
+            return root_node.text, row, col
+        return source, 0, 0
 
     @_site_scoped
     def _ingest_java_enum_constant_ctor_calls(
@@ -3451,18 +3551,29 @@ class CallProcessor:
             func_name = self._caller_func_name(func_node, language, module_qn)
             if func_name is None:
                 continue
-            self._ingest_func_node_calls(
-                func_node,
-                func_name,
-                module_qn,
-                language,
-                queries,
-                lang_config,
-                all_call_nodes,
-                call_starts,
-                owned_func_nodes,
-                call_name_cache,
-            )
+            try:
+                self._ingest_func_node_calls(
+                    func_node,
+                    func_name,
+                    module_qn,
+                    language,
+                    queries,
+                    lang_config,
+                    all_call_nodes,
+                    call_starts,
+                    owned_func_nodes,
+                    call_name_cache,
+                )
+            except Exception as e:
+                # One pathological function costs its own edges, not every
+                # other function's in the file (issue #3173).
+                loc = self._recorded_caller(func_node, module_qn)
+                caller = (
+                    loc.qualified_name
+                    if loc is not None
+                    else f"{module_qn}{cs.SEPARATOR_DOT}{func_name}"
+                )
+                self._record_caller_failure(ls.CALLER_CALLS_FAILED, caller, e)
 
     def _caller_func_name(
         self, func_node: Node, language: cs.SupportedLanguage, module_qn: str
@@ -3917,17 +4028,21 @@ class CallProcessor:
                 if all_call_nodes is not None and call_starts is not None
                 else None
             )
-            self._ingest_function_calls(
-                method_node,
-                caller_qn,
-                caller_label,
-                module_qn,
-                language,
-                queries,
-                class_context,
-                call_nodes=filtered,
-                call_name_cache=call_name_cache,
-            )
+            try:
+                self._ingest_function_calls(
+                    method_node,
+                    caller_qn,
+                    caller_label,
+                    module_qn,
+                    language,
+                    queries,
+                    class_context,
+                    call_nodes=filtered,
+                    call_name_cache=call_name_cache,
+                )
+            except Exception as e:
+                # Contained to this method, as for a free function (#3173).
+                self._record_caller_failure(ls.CALLER_CALLS_FAILED, caller_qn, e)
 
     def _class_member_qn_and_label(
         self,
@@ -4332,6 +4447,16 @@ class CallProcessor:
             )
         return None
 
+    def _macro_token_call_name(self, ident: Node) -> str | None:
+        # Attribute arguments share the token_tree shape (`skip(self)` in
+        # `#[instrument(skip(self))]`) but name no function; binding them
+        # by bare name invented module-level CALLS (issue #2541).
+        if rs_utils.in_attribute_arguments(ident):
+            return None
+        if not _macro_turbofish_reaches_args(ident):
+            return None
+        return self._macro_call_name(ident)
+
     def _get_call_target_name(
         self, call_node: Node, language: cs.SupportedLanguage | None = None
     ) -> str | None:
@@ -4343,12 +4468,7 @@ class CallProcessor:
         # mis-resolves (`server.run()` in tokio::select! to the same-module free
         # fn `run` instead of Listener.run).
         if call_node.type == cs.TS_IDENTIFIER and call_node.text is not None:
-            # Attribute arguments share the token_tree shape (`skip(self)` in
-            # `#[instrument(skip(self))]`) but name no function; binding them
-            # by bare name invented module-level CALLS (issue #2541).
-            if rs_utils.in_attribute_arguments(call_node):
-                return None
-            return self._macro_call_name(call_node)
+            return self._macro_token_call_name(call_node)
         # A SQL `invocation` names its routine through an unnamed
         # `object_reference` child (no `function` or `name` field), so every
         # SQL call site fell through nameless and was dropped (issue #2449).
@@ -4950,31 +5070,13 @@ class CallProcessor:
         call_nodes: list[Node] | None = None,
         call_name_cache: dict[int, str | None] | None = None,
     ) -> None:
-        if language in _TYPED_LANGUAGES:
-            local_var_types = (
-                self._resolver.type_inference.build_local_variable_type_map(
-                    caller_node, module_qn, language, class_context
-                )
-            )
-        else:
-            local_var_types = None
-        cpp_spans: list[tuple[int, int, str, str]] = []
-        if language == cs.SupportedLanguage.CPP and local_var_types:
-            cpp_spans = self._bind_cpp_local_types(
-                caller_node, module_qn, local_var_types
-            )
+        local_var_types, span_bindings, cpp_spans = self._caller_local_types(
+            caller_node, caller_qn, module_qn, language, class_context
+        )
         if language == cs.SupportedLanguage.PYTHON:
             self._record_python_shadowed_imports(caller_node, caller_qn, module_qn)
         elif language == cs.SupportedLanguage.GO:
             self._record_go_local_names(caller_node, caller_qn, caller_type)
-
-        # Rust match arms and iterator-adaptor closures both reuse one binding
-        # name for different types at different byte ranges (`cmd` per arm;
-        # `|x|` per collection); the flat map keeps only one. These span-scoped
-        # bindings let each call resolve against the binding containing it.
-        span_bindings = self._span_bindings(
-            caller_node, module_qn, class_context, language, local_var_types
-        )
 
         caller_spec = (caller_type, cs.KEY_QUALIFIED_NAME, caller_qn)
 
@@ -5052,6 +5154,59 @@ class CallProcessor:
         # dispatch) are exact bindings; they must not carry the verdict the
         # last call node of this loop left behind.
         self._resolution = cs.EdgeResolution.EXACT
+
+    def _caller_local_types(
+        self,
+        caller_node: Node,
+        caller_qn: str,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        class_context: str | None,
+    ) -> tuple[
+        dict[str, str] | None,
+        list[tuple[int, int, str, str]],
+        list[tuple[int, int, str, str]],
+    ]:
+        """The caller's local types, its span-scoped bindings and its C++
+        declaration windows."""
+        if language not in _TYPED_LANGUAGES:
+            return None, [], []
+        try:
+            local_var_types = (
+                self._resolver.type_inference.build_local_variable_type_map(
+                    caller_node, module_qn, language, class_context
+                )
+            )
+            cpp_spans: list[tuple[int, int, str, str]] = []
+            if language == cs.SupportedLanguage.CPP and local_var_types:
+                cpp_spans = self._bind_cpp_local_types(
+                    caller_node, module_qn, local_var_types
+                )
+            # Rust match arms and iterator-adaptor closures both reuse one
+            # binding name for different types at different byte ranges (`cmd`
+            # per arm; `|x|` per collection); the flat map keeps only one. These
+            # span-scoped bindings let each call resolve against the binding
+            # containing it.
+            span_bindings = self._span_bindings(
+                caller_node, module_qn, class_context, language, local_var_types
+            )
+        except Exception as e:
+            # A walk that still fails on some shape costs this caller its local
+            # types, not the file its calls: they resolve untyped (#3173).
+            self._record_caller_failure(ls.CALLER_LOCAL_TYPES_FAILED, caller_qn, e)
+            return {}, [], []
+        return local_var_types, span_bindings, cpp_spans
+
+    def _record_caller_failure(
+        self, message: str, caller: str, error: Exception
+    ) -> None:
+        path = self._call_file
+        rel_path = None
+        if path is not None:
+            self.failed_call_files.add(path)
+            # POSIX on every OS, like the other paths the logs name.
+            rel_path = cached_relative_path(path, self.repo_path).as_posix()
+        logger.error(message, caller=caller, path=rel_path, error=error)
 
     def _ingest_call_nodes(
         self,
@@ -5608,6 +5763,15 @@ class CallProcessor:
         self._ingest_named_call(ctx, call_node, call_name)
 
     def _ingest_sql_routine_call(self, ctx: _CallScanContext, call_name: str) -> None:
+        self._link_sql_routine(ctx.module_qn, ctx.caller_spec, call_name)
+
+    def _link_sql_routine(
+        self,
+        module_qn: str,
+        caller_spec: tuple[str, str, str],
+        call_name: str,
+        site: PropertyDict | None = None,
+    ) -> None:
         # A SQL routine call has no receiver, import or type to resolve
         # through. The generic resolver reads `billing.fee` as a receiver and
         # a method, drops the receiver and binds `fee` by bare name, so a
@@ -5620,7 +5784,7 @@ class CallProcessor:
         # that file to this caller, so only the waiter list (issue #1568) can
         # send it back for a re-parse. The whole normalized name is recorded:
         # `billing.fee` waits on that routine only, never on `audit.fee`.
-        self._note_unresolved(ctx.module_qn, call_name)
+        self._note_unresolved(module_qn, call_name)
         targets = self._resolver.sql_routine_targets(call_name)
         if not targets:
             # A builtin (`count`, `now`) or a routine no indexed file defines.
@@ -5633,10 +5797,11 @@ class CallProcessor:
             # One routine with overloads the call site's types would choose.
             self._resolution = cs.EdgeResolution.OVERLOAD
         for target_qn in targets:
-            ctx.ensure_rel(
-                ctx.caller_spec,
+            self._emit_rel(
+                caller_spec,
                 cs.RelationshipType.CALLS,
                 (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
+                site,
             )
 
     def _scan_call_name(self, ctx: _CallScanContext, call_node: Node) -> str | None:
@@ -8946,6 +9111,7 @@ class CallProcessor:
                 scope.class_context,
                 scope.resolve_func,
                 scope.ensure_rel,
+                scope.caller_qn,
             )
 
     @_site_scoped
@@ -9623,6 +9789,7 @@ class CallProcessor:
         class_context: str | None,
         resolve_func,
         ensure_rel,
+        caller_qn: str | None = None,
     ) -> None:
         # A value cast for typing (`persistImpl as unknown as Persist`) is
         # transparent for reference resolution, and `fn.bind(ctx)` /
@@ -9650,6 +9817,9 @@ class CallProcessor:
         # Go selector, JS/TS member expression).
         if node.type not in _FLOW_ARG_REF_TYPES:
             return
+        # Resolved in the enclosing scope, as a call or a callback argument
+        # is: a function declared a few lines above binds before a same-named
+        # one in an unimported module (issue #3199).
         self._emit_callback_edge(
             caller_spec,
             node,
@@ -9658,6 +9828,7 @@ class CallProcessor:
             class_context,
             resolve_func,
             ensure_rel,
+            caller_qn,
         )
 
     def _unwrap_ts_value(self, node: Node) -> Node:
@@ -12049,6 +12220,7 @@ class CallProcessor:
                     self._collect_symbol_subscript_assignment(node, module_qn)
                 stack.extend(node.children)
         except Exception as e:
+            self.failed_call_files.add(file_path)
             logger.error(ls.CALL_PROCESSING_FAILED, path=file_path, error=e)
 
     @staticmethod

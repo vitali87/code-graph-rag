@@ -20,11 +20,20 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+      actions: read
       packages: write
       attestations: write
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # No image of a commit main's CI has not passed: a release created by
+      # hand and a dispatch reach this job too, not only version-bump.yml's
+      # gated tag. The checkout above is this same commit.
+      - name: Require green CI at this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/require_green_ci.py "$GITHUB_SHA"
 
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
@@ -54,6 +63,9 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # BuildKit scans each platform's final image (Debian and Python
+          # packages) and pushes the SPDX SBOM as an attestation beside it.
+          sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

@@ -61,8 +61,11 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **Contextual Queries**: Support for more detailed context queries has been added, including reasons and evaluation ingestor reads, enhancing the understanding of code interactions.
-- **Graph Improvements**: The graph analysis capabilities have been expanded to follow cross-service links and implementors/overrides, providing a more comprehensive view of code dependencies.
+- **Security Enhancements**: Incorporates an OSS Scanner build image and threat model.
+- **Data Export**: Ensures all node properties within the graph are exported.
+- **SQL Fixes**: Addresses several SQL-related issues including grammar errors and dead-code roots.
+- **Rust Fixes**: Improves indexing of methods and handling of types in Rust code.
+- **Build Fixes**: Repairs build issues related to eMudhra root certificates and distrusted components.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
@@ -119,13 +122,14 @@ Three version lines exist and they intentionally differ:
 | where | what it tracks |
 |---|---|
 | git tags | every version, one per merge |
-| GitHub Releases (binaries, signatures) | every 50th version, plus any security fix |
-| PyPI | every 50th version, plus any security fix |
+| GitHub Releases (binaries, signatures) | every 50th version, plus any security fix, breaking change or merge labelled `release now` |
+| PyPI | every 50th version, plus any security fix, breaking change or merge labelled `release now` |
 
 So the newest tag on `main` usually runs ahead of the newest release, often by
 tens of patch versions; they coincide only just after a release. Nothing is
-stuck, the cadences differ by design. A security fix does NOT wait for the
-cadence: it ships a release and a PyPI upload immediately.
+stuck, the cadences differ by design. A security fix, a breaking change or a
+merge a maintainer labels `release now` does NOT wait for the cadence: each ships
+a release and a PyPI upload immediately.
 
 `uv tool install` and `pipx install` give you the newest PyPI version, which is the
 newest RELEASE, not the newest tag. Interim tags exist so every merge is
@@ -188,6 +192,7 @@ Code-Graph-RAG runs as an [MCP](https://modelcontextprotocol.io) server so Claud
 - [Real-Time Updates](docs/guide/realtime-updates.md)
 - [C/C++ Semantic Mode](docs/guide/cpp-semantic-mode.md)
 - [MCP Server](docs/guide/mcp-server.md)
+- [Porting Between Languages](docs/guide/porting.md)
 
 **Architecture**
 - [Overview](docs/architecture/overview.md)
@@ -226,6 +231,8 @@ Please see [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines. Good 
 ## Support
 
 For issues or questions, check the [Troubleshooting](docs/advanced/troubleshooting.md) guide first, then open an issue.
+
+If cgr is useful to you, please consider pledging support on [GitHub Sponsors](https://github.com/sponsors/vitali87). cgr links the page under `cgr --version` and, in a terminal, after most commands finish; set `CGR_SPONSOR_PLEDGE=false` to hide that line.
 
 ## License
 

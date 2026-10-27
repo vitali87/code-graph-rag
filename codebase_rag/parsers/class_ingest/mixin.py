@@ -2630,7 +2630,16 @@ class ClassIngestMixin:
         # A bodied inline module is physically located in this file; give
         # it the real path so it joins containment on (file, line).
         file_path = self.module_qn_to_file_path.get(module_qn)
-        if file_path is not None:
+        owner = self.module_qn_to_file_path.get(inline_module_qn)
+        if owner is not None and owner != file_path:
+            # A cfg twin of another file's module (`mod b { .. }` here,
+            # `mod b;` and b.rs under the other cfg) shares that file's qn,
+            # and the node is the file's, as for a bodyless declaration.
+            # Given this file's path, b.rs's own re-parse delete missed it
+            # and the graph seed handed its qn to this file, filing a
+            # re-parsed b.rs under `<qn>.rs`. Only the identity is merged.
+            module_props = {cs.KEY_QUALIFIED_NAME: inline_module_qn}
+        elif file_path is not None:
             module_props[cs.KEY_PATH] = cached_relative_path(
                 file_path, self.repo_path
             ).as_posix()
