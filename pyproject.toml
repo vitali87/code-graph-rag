@@ -39,7 +39,7 @@ dependencies = [
     # mcp 2.x removed the Server.list_tools()/call_tool() decorators that
     # codebase_rag/mcp/server.py registers its handlers with, and every
     # documented install resolves this range rather than uv.lock (#2519).
-    "mcp>=1.30.0,<2",
+    "mcp>=1.30.0,<3",
     # Only the providers codebase_rag/providers imports. The `pydantic-ai`
     # meta-package also installs logfire, evals, a CLI and a web UI, none used.
     "pydantic-ai-slim[anthropic,google,openai]>=2.0.0",
@@ -97,7 +97,7 @@ package = true
 # semgrep release accepts opentelemetry-api>=1.45.1.
 override-dependencies = [
     "pyjwt[crypto]>=2.14.0",
-    "mcp>=1.30.0,<2",
+    "mcp>=1.30.0,<3",
     "opentelemetry-api>=1.45.1,<2",
     "opentelemetry-sdk>=1.45.1,<2",
     "opentelemetry-exporter-otlp-proto-http>=1.45.1,<2",
