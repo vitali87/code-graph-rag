@@ -330,6 +330,14 @@ def _declared_non_local(scope: Node) -> set[str]:
     return declared
 
 
+def _declared_names(statement: Node) -> Iterator[str]:
+    for identifier in statement.named_children:
+        if identifier.type == cs.TS_PY_IDENTIFIER and (
+            name := safe_decode_text(identifier)
+        ):
+            yield name
+
+
 def _nonlocal_declarations(scope: Node) -> Iterator[str]:
     """The names `scope`'s own `nonlocal` statements declare: a nested def,
     class or lambda declares for itself."""
@@ -339,14 +347,10 @@ def _nonlocal_declarations(scope: Node) -> Iterator[str]:
         for child in current.named_children:
             if child.type in cs.PY_NESTED_SCOPE_TYPES:
                 continue
-            if child.type != cs.TS_PY_NONLOCAL_STATEMENT:
+            if child.type == cs.TS_PY_NONLOCAL_STATEMENT:
+                yield from _declared_names(child)
+            else:
                 stack.append(child)
-                continue
-            for identifier in child.named_children:
-                if identifier.type == cs.TS_PY_IDENTIFIER and (
-                    name := safe_decode_text(identifier)
-                ):
-                    yield name
 
 
 def python_scope_facts(scope: Node) -> ScopeFacts:

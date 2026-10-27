@@ -330,4 +330,5 @@ class TestFallback:
     ) -> None:
         monkeypatch.setattr(ANALYZER, twin, lambda _node: None)
         found = native_trees._disagreement(bridge)
-        assert found is not None and found[0] == check
+        assert found is not None
+        assert found[0] == check

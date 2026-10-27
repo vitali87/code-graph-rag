@@ -181,13 +181,7 @@ def describe(node: Node) -> list[DescribedNode]:
 def _disagreement(bridge: TreeBridge) -> tuple[cs.TreeBridgeCheck, str] | None:
     """What the bridge reads differently from Python on the probe, and at
     which node type, if anything."""
-    # Imported here: these modules ask this one for the bridge.
     import tree_sitter_python
-
-    from .anchor_hash import python_anchor_hash
-    from .ast_fingerprint import python_ast_fingerprint
-    from .py.ast_analyzer import python_inner_scope_only_names, python_scope_facts
-    from .py.ast_analyzer import scope_facts_from_native as native_facts
 
     probe = Parser(Language(tree_sitter_python.language())).parse(cs.TREE_BRIDGE_PROBE)
     root = probe.root_node
@@ -197,20 +191,34 @@ def _disagreement(bridge: TreeBridge) -> tuple[cs.TreeBridgeCheck, str] | None:
     while stack:
         node = stack.pop()
         stack.extend(node.children)
-        if bridge.anchor_hash(node, ()) != python_anchor_hash(node, ()):
-            return cs.TreeBridgeCheck.ANCHOR_HASH, node.type
-        native = bridge.ast_fingerprint(node)
-        python = python_ast_fingerprint(node)
-        if (None if native is None else tuple(native)) != (
-            None if python is None else tuple(python)
-        ):
-            return cs.TreeBridgeCheck.FINGERPRINT, node.type
-        if not hasattr(bridge, cs.EG_RUST_SCOPE_FACTS):
-            continue
-        if native_facts(bridge.scope_facts(node)) != python_scope_facts(node):
-            return cs.TreeBridgeCheck.SCOPE_FACTS, node.type
-        if frozenset(bridge.inner_scope_only_names(node)) != (
-            python_inner_scope_only_names(node)
-        ):
-            return cs.TreeBridgeCheck.INNER_SCOPE_NAMES, node.type
+        if (check := _node_disagreement(bridge, node)) is not None:
+            return check, node.type
+    return None
+
+
+def _node_disagreement(bridge: TreeBridge, node: Node) -> cs.TreeBridgeCheck | None:
+    """Which of the bridge's walks reads `node` differently from its Python
+    twin, if any."""
+    # Imported here: these modules ask this one for the bridge.
+    from .anchor_hash import python_anchor_hash
+    from .ast_fingerprint import python_ast_fingerprint
+    from .py.ast_analyzer import python_inner_scope_only_names, python_scope_facts
+    from .py.ast_analyzer import scope_facts_from_native as native_facts
+
+    if bridge.anchor_hash(node, ()) != python_anchor_hash(node, ()):
+        return cs.TreeBridgeCheck.ANCHOR_HASH
+    native = bridge.ast_fingerprint(node)
+    python = python_ast_fingerprint(node)
+    if (None if native is None else tuple(native)) != (
+        None if python is None else tuple(python)
+    ):
+        return cs.TreeBridgeCheck.FINGERPRINT
+    if not hasattr(bridge, cs.EG_RUST_SCOPE_FACTS):
+        return None
+    if native_facts(bridge.scope_facts(node)) != python_scope_facts(node):
+        return cs.TreeBridgeCheck.SCOPE_FACTS
+    if frozenset(bridge.inner_scope_only_names(node)) != (
+        python_inner_scope_only_names(node)
+    ):
+        return cs.TreeBridgeCheck.INNER_SCOPE_NAMES
     return None
