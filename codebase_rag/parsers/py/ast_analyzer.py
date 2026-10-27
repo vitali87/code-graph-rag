@@ -465,11 +465,12 @@ def _walk_scope_facts(scope: Node) -> ScopeFacts:
     return python_scope_facts(scope)
 
 
-# What a scope's own body binds, walked once per scope (issue #3473). Call
-# resolution asks about each function twice (its shadowed imports and its
-# locals), type inference asks about the scope of every assignment it reads,
-# and each enclosing def is asked about again for every function inside it;
-# each asking walked the body anew. The Rust bridge walks it when it can.
+# What a scope's own body binds, walked once while its file is being read
+# (issue #3473). Call resolution asks about each function twice (its
+# shadowed imports and its locals), type inference asks about the scope of
+# every assignment it reads, and each enclosing def is asked about again for
+# every function inside it; each asking walked the body anew. The Rust
+# bridge walks it when it can.
 scope_facts = _TreeBoundedCache(_walk_scope_facts, cs.PY_SCOPE_CACHE_TREES)
 
 
@@ -569,8 +570,8 @@ def _walk_inner_scope_only_names(caller: Node) -> frozenset[str]:
     return python_inner_scope_only_names(caller)
 
 
-# `python_inner_scope_only_names`, walked once per caller, and in Rust when
-# the bridge can.
+# `python_inner_scope_only_names`, walked once per caller while its file is
+# being read, and in Rust when the bridge can.
 _inner_scope_only_names = _TreeBoundedCache(
     _walk_inner_scope_only_names, cs.PY_SCOPE_CACHE_TREES
 )
