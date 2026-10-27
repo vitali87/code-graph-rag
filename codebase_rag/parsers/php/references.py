@@ -18,7 +18,6 @@ from ..call_resolver import CallResolver, _php_fold
 from ..php import namespaces as php_namespaces
 from . import callables as php_callables
 
-_METHOD_TYPES = frozenset({NodeType.METHOD, NodeType.FUNCTION})
 _CLASS_LABELS = frozenset(
     {NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM, NodeType.TYPE}
 )
@@ -309,19 +308,8 @@ def _method_qn(resolver: CallResolver, class_qn: str, method: str) -> str | None
 
 
 def _declared_method(resolver: CallResolver, class_qn: str, method: str) -> str | None:
-    registry = resolver.function_registry
-    exact = f"{class_qn}{cs.SEPARATOR_DOT}{method}"
-    if registry.get(exact) in _METHOD_TYPES:
-        return exact
-    folded = _php_fold(method)
-    prefix = f"{class_qn}{cs.SEPARATOR_DOT}"
-    for qn, node_type in registry.find_with_prefix(prefix):
-        if node_type not in _METHOD_TYPES:
-            continue
-        rest = qn[len(prefix) :]
-        if cs.SEPARATOR_DOT not in rest and _php_fold(rest) == folded:
-            return qn
-    return None
+    # A prefix walk misses a folded name and a method that starts with `__`.
+    return resolver._php_declared_method(class_qn, method, _php_fold(method))
 
 
 def _emit_constructions(

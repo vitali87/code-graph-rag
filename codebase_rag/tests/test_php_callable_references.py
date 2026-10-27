@@ -657,6 +657,181 @@ class Quiet
     assert f"{quiet}.unused" in dead, sorted(dead)
 
 
+def test_callable_array_requires_indexes_zero_and_one() -> None:
+    from codebase_rag.parsers.php.callables import callable_array
+
+    parsers, _queries = load_parsers()
+    root = (
+        parsers[cs.SupportedLanguage.PHP]
+        .parse(
+            b"<?php\n"
+            b"$ok = [$this, 'delete'];\n"
+            b"$keyed = array(0 => $this, 1 => 'delete');\n"
+            b"$numeric = array('0' => $this, '1' => 'delete');\n"
+            b"$swapped = [1 => 'delete', 0 => $this];\n"
+            b"$explicit = [$this, 1 => 'delete'];\n"
+            b"$hex = [0x0 => $this, 0x1 => 'delete'];\n"
+            b"$bits = [0b0 => $this, 0b1 => 'delete'];\n"
+            b"$octal = [0o0 => $this, 0o1 => 'delete'];\n"
+            b"$signed = [-0 => $this, +1 => 'delete'];\n"
+            b"$flags = [false => $this, true => 'delete'];\n"
+            b"$floats = [0.0 => $this, 1.0 => 'delete'];\n"
+            b"$named = ['object' => $this, 'action' => 'delete'];\n"
+            b"$padded = ['01' => $this, '1' => 'delete'];\n"
+            b"$gap = [2 => $this, 'delete'];\n"
+        )
+        .root_node
+    )
+    arrays = []
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_PHP_ARRAY_CREATION_EXPRESSION:
+            arrays.append(node)
+        stack.extend(reversed(node.children))
+    parsed = [callable_array(node) for node in arrays]
+    assert [item[1] if item else None for item in parsed] == [
+        "delete",
+        "delete",
+        "delete",
+        "delete",
+        "delete",
+        "delete",
+        "delete",
+        "delete",
+        "delete",
+        "delete",
+        "delete",
+        None,
+        None,
+        None,
+    ]
+    for item in parsed[:11]:
+        assert item is not None
+        assert item[0].text == b"$this"
+
+
+def test_grouped_alias_callback_binds_the_imported_class(tmp_path: Path) -> None:
+    # `use App\{Resolver as R}` must not fall back to a class named `R` in
+    # the enclosing namespace. The private method on Resolver stays live.
+    ingestor = _index(
+        tmp_path,
+        {
+            "src/Grouped.php": r"""<?php
+namespace App;
+
+use App\{Resolver as R};
+
+class Caller
+{
+    public function go(): void
+    {
+        $cb = [R::class, 'hidden'];
+    }
+}
+
+class R
+{
+    private function hidden(): void {}
+}
+
+class Resolver
+{
+    private function hidden(): void {}
+}
+"""
+        },
+    )
+    caller = f"{_PROJECT}.src.Grouped.Caller.go"
+    refs = _edges(ingestor, cs.RelationshipType.REFERENCES.value)
+    hidden = {dst for src, dst in refs if src == caller and dst.endswith(".hidden")}
+    assert hidden == {f"{_PROJECT}.src.Grouped.Resolver.hidden"}
+    dead = _dead(ingestor)
+    assert f"{_PROJECT}.src.Grouped.Resolver.hidden" not in dead, sorted(dead)
+    assert f"{_PROJECT}.src.Grouped.R.hidden" in dead, sorted(dead)
+
+
+def test_cased_method_and_constructor_stay_bound(tmp_path: Path) -> None:
+    # `self::normalize()` names `Normalize`, and `new static` includes a
+    # subclass whose constructor is spelled `__CONSTRUCT`.
+    ingestor = _index(
+        tmp_path,
+        {
+            "src/Cased.php": r"""<?php
+namespace App;
+
+class Base
+{
+    public function early(): void
+    {
+        self::normalize();
+    }
+
+    public function make(): static
+    {
+        return new static();
+    }
+
+    private static function Normalize(): void {}
+
+    public function __construct() {}
+}
+
+class Child extends Base
+{
+    public function __CONSTRUCT()
+    {
+        parent::__construct();
+    }
+}
+"""
+        },
+    )
+    base = f"{_PROJECT}.src.Cased.Base"
+    child = f"{_PROJECT}.src.Cased.Child"
+    calls = _edges(ingestor, cs.RelationshipType.CALLS.value)
+    instantiates = _edges(ingestor, cs.RelationshipType.INSTANTIATES.value)
+    assert (f"{base}.early", f"{base}.Normalize") in calls
+    assert (f"{base}.make", base) in instantiates
+    assert (f"{base}.make", child) in instantiates
+    assert (f"{base}.make", f"{base}.__construct") in calls
+    assert (f"{base}.make", f"{child}.__CONSTRUCT") in calls
+    assert (f"{child}.__CONSTRUCT", f"{base}.__construct") in calls
+    dead = _dead(ingestor)
+    assert f"{base}.Normalize" not in dead, sorted(dead)
+
+
+def test_string_keyed_array_does_not_keep_the_method(tmp_path: Path) -> None:
+    ingestor = _index(
+        tmp_path,
+        {
+            "src/Keyed.php": r"""<?php
+namespace App;
+
+class Box
+{
+    public function hold(): void
+    {
+        $named = ['object' => $this, 'action' => 'delete'];
+        $real = [1 => 'keep', 0 => $this];
+    }
+
+    private function delete(): void {}
+
+    private function keep(): void {}
+}
+"""
+        },
+    )
+    box = f"{_PROJECT}.src.Keyed.Box"
+    refs = _edges(ingestor, cs.RelationshipType.REFERENCES.value)
+    assert (f"{box}.hold", f"{box}.keep") in refs
+    assert (f"{box}.hold", f"{box}.delete") not in refs
+    dead = _dead(ingestor)
+    assert f"{box}.delete" in dead, sorted(dead)
+    assert f"{box}.keep" not in dead, sorted(dead)
+
+
 def test_function_import_does_not_redirect_construction(tmp_path: Path) -> None:
     _import_does_not_redirect_construction(
         tmp_path,

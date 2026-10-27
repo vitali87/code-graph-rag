@@ -172,6 +172,36 @@ def test_use_clause_binding_reads_path_and_local_name() -> None:
     assert _php_use_clause_binding(plain) == ("A.D", "D")
 
 
+def test_grouped_use_records_prefixed_class_function_and_const(tmp_path: Path) -> None:
+    # `use App\{Resolver as R}` is not a direct child clause. The alias has
+    # to be the grouped class, or `[R::class, 'm']` resolves to `App.R`.
+    parsers, queries = load_parsers()
+    if cs.SupportedLanguage.PHP not in parsers:
+        pytest.skip("php tree-sitter grammar not installed")
+    php = parsers[cs.SupportedLanguage.PHP]
+    processor = ImportProcessor(tmp_path, "proj")
+    source = php.parse(
+        b"<?php\nnamespace App;\n"
+        b"use App\\{Resolver as R, Models\\Crate as C, function foo, const BAR};\n"
+        b"use function Other\\{alpha, beta as b};\n"
+    ).root_node
+    processor.parse_imports(source, "proj.mod", cs.SupportedLanguage.PHP, queries)
+    classes = processor.php_class_imports["proj.mod"]
+    assert classes["R"] == "App.Resolver"
+    assert classes["C"] == "App.Models.Crate"
+    assert "foo" not in classes
+    assert "BAR" not in classes
+    assert processor.php_function_imports["proj.mod"] == {"foo", "alpha", "b"}
+    assert processor.php_const_imports["proj.mod"] == {"BAR"}
+    mapping = processor.import_mapping["proj.mod"]
+    assert mapping["R"] == "App.Resolver"
+    assert mapping["C"] == "App.Models.Crate"
+    assert mapping["foo"] == "App.foo"
+    assert mapping["BAR"] == "App.BAR"
+    assert mapping["alpha"] == "Other.alpha"
+    assert mapping["b"] == "Other.beta"
+
+
 def test_use_clause_without_a_qualified_name_binds_nothing() -> None:
     # `use Foo;` parses to a bare `name`, which the import map has never bound.
     (clause,) = _use_clauses(b"<?php\nuse Foo;\n")

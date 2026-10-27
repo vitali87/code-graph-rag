@@ -6,6 +6,7 @@ even inside namespace App, and a `use` alias is not applied. `Foo::class` and
 leading `\\` is absolute. The two resolvers must not be shared.
 """
 
+import math
 import re
 from typing import NamedTuple
 
@@ -20,6 +21,9 @@ _STRING_CALLABLE = re.compile(
     rf"^\\?(?P<class>{_IDENT}(?:\\{_IDENT})*)::(?P<method>{_IDENT})$"
 )
 _METHOD_NAME = re.compile(rf"^{_IDENT}$")
+# PHP casts a string key to int only when the text is already the canonical
+# decimal form. "0" and "1" are indexes 0 and 1; "01" and "object" are not.
+_CANONICAL_INT_KEY = re.compile(r"0|-?[1-9][0-9]*")
 _VALUE_CALLS = frozenset(
     {
         cs.TS_PHP_FUNCTION_CALL_EXPRESSION,
@@ -120,8 +124,10 @@ def relative_scoped_call(node: Node) -> tuple[cs.PhpRelativeScope, str] | None:
 def callable_array(node: Node) -> tuple[Node, str] | None:
     """Receiver node and method name of `[$recv, 'm']` or `array($recv, 'm')`.
 
-    Exactly two elements. A key (`0 => $this`) is not the value. A spread or
-    a non-literal method name is not this shape.
+    PHP reads a callable array at indexes 0 and 1, whatever order the
+    elements are written in. A string key (`'action' => 'delete'`) is not
+    one of those indexes. A spread or a non-literal method name is not
+    this shape either.
     """
     if node.type != cs.TS_PHP_ARRAY_CREATION_EXPRESSION:
         return None
@@ -132,9 +138,17 @@ def callable_array(node: Node) -> tuple[Node, str] | None:
     ]
     if len(elements) != 2 or len(node.named_children) != 2:
         return None
-    receiver = _element_value(elements[0])
-    method_node = _element_value(elements[1])
-    if receiver is None or method_node is None:
+    slots: dict[int, Node] = {}
+    next_key = 0
+    for element in elements:
+        key, value = _element_slot(element, next_key)
+        if key is None or value is None or key in slots:
+            return None
+        next_key = max(next_key, key + 1)
+        slots[key] = value
+    receiver = slots.get(0)
+    method_node = slots.get(1)
+    if receiver is None or method_node is None or set(slots) != {0, 1}:
         return None
     if receiver.type == cs.TS_PHP_VARIADIC_UNPACKING:
         return None
@@ -284,11 +298,106 @@ def _creation_target(node: Node) -> Node | None:
     return None
 
 
-def _element_value(element: Node) -> Node | None:
+def _element_slot(element: Node, implicit: int) -> tuple[int | None, Node | None]:
+    # The value is the last named child. A missing key takes the next integer
+    # index, which moves past an earlier explicit integer key.
     named = element.named_children
     if not named or named[-1].type == cs.TS_PHP_VARIADIC_UNPACKING:
+        return None, None
+    if len(named) == 1:
+        return implicit, named[-1]
+    key = _array_key(named[0])
+    if not isinstance(key, int):
+        return None, None
+    return key, named[-1]
+
+
+def _array_key(node: Node) -> int | str | None:
+    # PHP casts the key before it stores the element. A callable reads
+    # indexes 0 and 1 after that cast, so the literal's spelling has to
+    # become the same integer PHP would store.
+    if node.type == cs.TS_PHP_UNARY_OP_EXPRESSION:
+        return _unary_int_key(node)
+    if node.type == cs.TS_PHP_INTEGER:
+        return _integer_literal(safe_decode_text(node))
+    if node.type == cs.TS_PHP_FLOAT:
+        return _float_key(safe_decode_text(node))
+    if node.type == cs.TS_PHP_BOOLEAN:
+        return _boolean_key(safe_decode_text(node))
+    text = php_literal_text(node)
+    if text is None:
         return None
-    return named[-1]
+    if _CANONICAL_INT_KEY.fullmatch(text):
+        return int(text)
+    return text
+
+
+def _unary_int_key(node: Node) -> int | None:
+    # `+1` and `-0`. The sign is not part of the integer token. `-0` is 0.
+    op = next((child.type for child in node.children if child.type in {"+", "-"}), None)
+    operand = next(
+        (
+            child
+            for child in node.named_children
+            if child.type in {cs.TS_PHP_INTEGER, cs.TS_PHP_FLOAT}
+        ),
+        None,
+    )
+    if op is None or operand is None:
+        return None
+    if operand.type == cs.TS_PHP_INTEGER:
+        value = _integer_literal(safe_decode_text(operand))
+    else:
+        value = _float_key(safe_decode_text(operand))
+    if value is None:
+        return None
+    return -value if op == "-" else value
+
+
+def _integer_literal(text: str | None) -> int | None:
+    if not text:
+        return None
+    body = text.replace("_", "").lower()
+    for prefix, base in (("0x", 16), ("0b", 2), ("0o", 8)):
+        if not body.startswith(prefix):
+            continue
+        digits = body[len(prefix) :]
+        if not digits:
+            return None
+        try:
+            return int(digits, base)
+        except ValueError:
+            return None
+    if not body.isdigit():
+        return None
+    # A leading zero is still octal. `01` is 1; a digit 8 or 9 is not a key.
+    if len(body) > 1 and body[0] == "0":
+        try:
+            return int(body, 8)
+        except ValueError:
+            return None
+    return int(body)
+
+
+def _float_key(text: str | None) -> int | None:
+    if not text:
+        return None
+    try:
+        value = float(text.replace("_", ""))
+    except ValueError:
+        return None
+    if not math.isfinite(value):
+        return None
+    return int(value)
+
+
+def _boolean_key(text: str | None) -> int | None:
+    folded = _php_fold(text or "")
+    if folded == "true":
+        return 1
+    if folded == "false":
+        return 0
+    return None
 
 
 def _unwrap_parens(node: Node) -> Node:

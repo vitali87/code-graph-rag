@@ -797,18 +797,74 @@ def _cpp_include_local_name(include_path: str) -> str:
     return header_name
 
 
-def _php_use_clause_binding(clause: Node) -> tuple[str, str] | None:
-    """Return (imported dotted path, local name) for one `use` clause."""
+def _php_use_group(use_node: Node) -> tuple[str, list[Node]] | None:
+    """`(dotted prefix, clauses)` for `use App\\{Resolver as R}`, else None.
+
+    The clauses are children of the group, not of the declaration, and each
+    path is relative to the prefix. A plain `use Vendor\\Widget` has no group.
+    """
+    group = next(
+        (
+            child
+            for child in use_node.named_children
+            if child.type == cs.TS_PHP_NAMESPACE_USE_GROUP
+        ),
+        None,
+    )
+    if group is None:
+        return None
+    prefix_node = next(
+        (
+            child
+            for child in use_node.named_children
+            if child.type == cs.TS_PHP_NAMESPACE_NAME
+        ),
+        None,
+    )
+    prefix_text = safe_decode_with_fallback(prefix_node).lstrip("\\")
+    parts = [part for part in prefix_text.split(cs.PHP_NAMESPACE_SEPARATOR) if part]
+    clauses = [
+        child
+        for child in group.named_children
+        if child.type == cs.TS_PHP_NAMESPACE_USE_CLAUSE
+    ]
+    return cs.SEPARATOR_DOT.join(parts), clauses
+
+
+def _php_use_clause_binding(clause: Node, prefix: str = "") -> tuple[str, str] | None:
+    """Return (imported dotted path, local name) for one `use` clause.
+
+    `prefix` is the group head (`App` in `use App\\{Resolver as R}`). A bare
+    name is a class only under that prefix: a top-level `use Foo` has never
+    been bound.
+    """
     qn_node = next(
         (c for c in clause.named_children if c.type == cs.TS_PHP_QUALIFIED_NAME),
         None,
     )
-    if not qn_node:
+    if qn_node is not None:
+        imported_path = safe_decode_with_fallback(qn_node)
+        if not imported_path:
+            return None
+        imported_path = imported_path.replace("\\", cs.SEPARATOR_DOT)
+    elif prefix:
+        alias_node = clause.child_by_field_name(cs.FIELD_ALIAS)
+        alias_at = alias_node.start_byte if alias_node is not None else None
+        name_node = next(
+            (
+                child
+                for child in clause.named_children
+                if child.type == cs.TS_PHP_NAME and child.start_byte != alias_at
+            ),
+            None,
+        )
+        imported_path = safe_decode_with_fallback(name_node)
+        if not imported_path:
+            return None
+    else:
         return None
-    imported_path = safe_decode_with_fallback(qn_node)
-    if not imported_path:
-        return None
-    imported_path = imported_path.replace("\\", cs.SEPARATOR_DOT)
+    if prefix:
+        imported_path = f"{prefix}{cs.SEPARATOR_DOT}{imported_path}"
     alias_node = clause.child_by_field_name(cs.FIELD_ALIAS)
     if alias_node and alias_node.text:
         return imported_path, safe_decode_with_fallback(alias_node)
@@ -6685,10 +6741,21 @@ class ImportProcessor:
         # declaration (older grammar) or inside each clause (current grammar).
         decl_is_function = any(c.type == cs.TS_PHP_FUNCTION for c in use_node.children)
         decl_is_const = any(c.type == cs.TS_PHP_CONST for c in use_node.children)
-        for child in use_node.named_children:
-            if child.type != cs.TS_PHP_NAMESPACE_USE_CLAUSE:
-                continue
-            binding = _php_use_clause_binding(child)
+        # A grouped `use` stores its clauses under the group. Reading only the
+        # declaration's children drops `use App\{Resolver as R}` and the
+        # callback resolves `R` as a class in the enclosing namespace.
+        grouped = _php_use_group(use_node)
+        if grouped is None:
+            prefix = ""
+            clauses = [
+                child
+                for child in use_node.named_children
+                if child.type == cs.TS_PHP_NAMESPACE_USE_CLAUSE
+            ]
+        else:
+            prefix, clauses = grouped
+        for child in clauses:
+            binding = _php_use_clause_binding(child, prefix)
             if binding is None:
                 continue
             imported_path, local_name = binding
