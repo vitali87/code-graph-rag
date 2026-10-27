@@ -15,8 +15,8 @@ It provides:
   connected components, betweenness centrality, ancestors and descendants);
 - the ingestor's batch writes;
 - decoding of query results;
-- the indexer's definition hashes, computed on the trees py-tree-sitter
-  parsed.
+- the indexer's definition hashes and Python scope walks, computed on the
+  trees py-tree-sitter parsed.
 
 It is not meant to be used on its own. See
 [Graph Backends](https://github.com/vitali87/code-graph-rag/blob/main/docs/architecture/embedded-graph.md)
