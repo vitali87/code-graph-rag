@@ -76,7 +76,7 @@ def _updater_factory(clock: FakeClock, in_sync: bool) -> Callable[..., MagicMock
         # The name the updater writes on the Project node.
         updater.project_name = kwargs["project_name"].strip()
         updater.skipped_because_in_sync = in_sync
-        updater.run.side_effect = lambda: clock.advance(SYNC_SECONDS)
+        updater.run.side_effect = lambda force=False: clock.advance(SYNC_SECONDS)
         return updater
 
     return build

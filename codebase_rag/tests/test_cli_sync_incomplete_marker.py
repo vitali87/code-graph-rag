@@ -61,7 +61,7 @@ def ingestor(events: list[str]) -> MagicMock:
 @pytest.fixture
 def updater(events: list[str]) -> MagicMock:
     instance = MagicMock()
-    instance.run.side_effect = lambda: events.append("run")
+    instance.run.side_effect = lambda force=False: events.append("run")
     instance.skipped_because_in_sync = False
     # A bare MagicMock attribute is truthy, which would read every interrupt
     # as one that landed after the run committed.
@@ -132,7 +132,7 @@ def test_a_sync_marks_before_writing_and_clears_after_running(
 def test_a_failed_sync_keeps_its_marker(
     tmp_path: Path, sync_env: MagicMock, updater: MagicMock, events: list[str]
 ) -> None:
-    def interrupted() -> None:
+    def interrupted(force: bool = False) -> None:
         events.append("run")
         raise KeyboardInterrupt
 
@@ -141,6 +141,88 @@ def test_a_failed_sync_keeps_its_marker(
         _sync(tmp_path)
 
     assert events == ["mark", "constraints", "run"], events
+
+
+def _strand(ingestor: MagicMock, events: list[str], run_ids: list[str]) -> None:
+    """Runs of other writers that stopped after their first write (PR #3493).
+
+    The MCP server marks with a run id of its own, and nothing but that run
+    cleared its marker, so one whose process died left the project refused
+    for good.
+    """
+    marker_write = ingestor.execute_write.side_effect
+
+    def read(query: str, params: dict | None = None) -> list[dict]:
+        if query == cq.CYPHER_STRANDED_RUN_IDS:
+            events.append("stranded")
+            return [{cs.KEY_RUN_ID: run_id} for run_id in run_ids]
+        return []
+
+    def write(query: str, params: dict | None = None) -> None:
+        if query == cq.CYPHER_RETIRE_STRANDED_RUNS:
+            events.append("retire")
+        marker_write(query, params)
+
+    ingestor.fetch_all.side_effect = read
+    ingestor.execute_write.side_effect = write
+
+
+def test_a_sync_over_stranded_runs_rebuilds_then_retires_them(
+    tmp_path: Path,
+    sync_env: MagicMock,
+    ingestor: MagicMock,
+    updater: MagicMock,
+    events: list[str],
+) -> None:
+    _strand(ingestor, events, ["mcp-dead"])
+
+    _sync(tmp_path)
+
+    # Read before this sync marks; retired only once its own marker is off.
+    assert events == ["stranded", "mark", "constraints", "run", "clear", "retire"]
+    # Forced: a stopped re-ingest may have deleted an unchanged dependent's
+    # definitions, which an incremental run skips by its saved hash.
+    updater.run.assert_called_once_with(force=True)
+    (read,) = [
+        call.args[1]
+        for call in ingestor.fetch_all.call_args_list
+        if call.args[0] == cq.CYPHER_STRANDED_RUN_IDS
+    ]
+    assert read == {cs.KEY_PROJECT_NAME: "proj", cs.KEY_RUN_ID: cs.CLI_SYNC_RUN_ID}
+    assert _marker_writes(ingestor, cq.CYPHER_RETIRE_STRANDED_RUNS) == [
+        {cs.KEY_PROJECT_NAME: "proj", cs.KEY_RUN_IDS: ["mcp-dead"]}
+    ]
+
+
+def test_a_sync_with_nothing_stranded_stays_incremental(
+    tmp_path: Path,
+    sync_env: MagicMock,
+    ingestor: MagicMock,
+    updater: MagicMock,
+    events: list[str],
+) -> None:
+    _strand(ingestor, events, [])
+
+    _sync(tmp_path)
+
+    updater.run.assert_called_once_with(force=False)
+    assert "retire" not in events
+
+
+def test_a_sync_that_stops_short_retires_nothing(
+    tmp_path: Path,
+    sync_env: MagicMock,
+    ingestor: MagicMock,
+    updater: MagicMock,
+    events: list[str],
+) -> None:
+    _strand(ingestor, events, ["mcp-dead"])
+    updater.run.side_effect = RuntimeError("killed mid-sync")
+
+    with pytest.raises(RuntimeError):
+        _sync(tmp_path)
+
+    assert "retire" not in events
 
 
 def test_a_clean_sync_marks_after_the_wipe(

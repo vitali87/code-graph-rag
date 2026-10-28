@@ -277,6 +277,8 @@ KEY_WRITING = "writing"
 # keyed only by project let the second run's clear delete the first run's
 # marker (issue #1709).
 KEY_RUN_ID = "run_id"
+# The runs whose markers a full rebuild supersedes, retired once it commits.
+KEY_RUN_IDS = "run_ids"
 # Who wrote the CLI sync's incomplete-run marker (PR #2532 review): the host
 # (machine and pid namespace) and pid of its process, and a token unique to
 # that one sync, so `delete-project` clears it only once that sync provably

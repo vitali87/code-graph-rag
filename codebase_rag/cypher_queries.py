@@ -260,6 +260,26 @@ CYPHER_PROJECT_IS_INCOMPLETE = (
     "RETURN coalesce(m.run_incomplete, false) AS run_incomplete, "
     "coalesce(m.writing, true) AS writing"
 )
+# The runs a full rebuild of the project supersedes (review of PR #3493): no
+# other path removes a marker its run left after its first write, so one
+# whose process died stayed down for good. Read with the checkout's sync lock
+# held, before the rebuild marks. Every writer of the checkout writes under
+# that lock and marks `writing` from its own `before_write`, so none of these
+# runs is writing while the rebuild holds it, and a later write of a live one
+# marks again first. A marker from before run ids existed is left alone, as
+# `CYPHER_CLEAR_LEGACY_PROJECT_INCOMPLETE` leaves it: an old-version writer
+# may not take the lock.
+CYPHER_STRANDED_RUN_IDS = (
+    "MATCH (m:IncompleteRun {project: $project_name}) "
+    "WHERE m.run_id IS NOT NULL AND m.run_id <> $run_id "
+    "AND coalesce(m.writing, true) RETURN m.run_id AS run_id"
+)
+# Deletes exactly the runs `CYPHER_STRANDED_RUN_IDS` returned, once the forced
+# rebuild that supersedes them has committed and cleared its own marker.
+CYPHER_RETIRE_STRANDED_RUNS = (
+    "MATCH (m:IncompleteRun {project: $project_name}) "
+    "WHERE m.run_id IN $run_ids DELETE m"
+)
 
 # Every project with an outstanding marker, whichever path wrote it: `cgr
 # status` reports them so a sync that was interrupted is visible there, not

@@ -141,6 +141,15 @@ class _Memgraph(_StatefulIngestor):
             if claimed:
                 self._mark(params)
             return claimed
+        if params and query == cq.CYPHER_STRANDED_RUN_IDS:
+            project = str(params[cs.KEY_PROJECT_NAME])
+            return [
+                {cs.KEY_RUN_ID: run_id}
+                for marked, run_id in sorted(self.markers)
+                if marked == project
+                and run_id != params[cs.KEY_RUN_ID]
+                and self.writing.get((marked, run_id), True)
+            ]
         return super().fetch_all(query, params)
 
     def _release_project_claim(self, params: PropertyDict) -> None:
@@ -185,6 +194,13 @@ class _Memgraph(_StatefulIngestor):
             token = self.owners.get(run, {}).get(cs.KEY_OWNER_TOKEN)
             if token == params[cs.KEY_OWNER_TOKEN]:
                 self._clear(run)
+            return
+        if params and query == cq.CYPHER_RETIRE_STRANDED_RUNS:
+            project = str(params[cs.KEY_PROJECT_NAME])
+            run_ids = params[cs.KEY_RUN_IDS]
+            assert isinstance(run_ids, list)
+            for run_id in run_ids:
+                self._clear((project, run_id))
             return
         if params and query == cq.CYPHER_RECOVER_PROJECT_INCOMPLETE:
             project = str(params[cs.KEY_PROJECT_NAME])
@@ -355,7 +371,7 @@ def _fail_sync(
 ) -> None:
     """A sync that stops short, after doing `mid_sync` while it still runs."""
 
-    def run(_updater: GraphUpdater) -> None:
+    def run(_updater: GraphUpdater, force: bool = False) -> None:
         if mid_sync is not None:
             mid_sync()
         raise RuntimeError("killed mid-sync")
@@ -396,6 +412,70 @@ def _gone_pid() -> int:
     child = subprocess.Popen([sys.executable, "-c", ""])
     child.wait()
     return child.pid
+
+
+def _mcp_marker(graph: _Memgraph, project: str, run_id: str, *, writing: bool) -> None:
+    """The marker an MCP server's run put down under its own run id."""
+    graph.execute_write(
+        cq.CYPHER_MARK_PROJECT_INCOMPLETE,
+        {cs.KEY_PROJECT_NAME: project, cs.KEY_RUN_ID: run_id, cs.KEY_WRITING: writing},
+    )
+
+
+class TestAFullSyncRetiresRunsItSupersedes:
+    # Review of PR #3493: an MCP run that died after its first write left its
+    # marker under a run id nothing else clears, so `cgr status` and every
+    # later edit kept refusing however many times the project was re-synced.
+    def test_a_crashed_mcp_runs_marker_goes_with_the_next_full_sync(
+        self, graphs: dict[int, _Memgraph], tmp_path: Path
+    ) -> None:
+        _sync(tmp_path, "billing")
+        graph = graphs[THIS_GRAPH]
+        _mcp_marker(graph, "billing", "mcp-crashed", writing=True)
+        marker = f"({cs.CLI_STATUS_SYNC_INCOMPLETE})"
+        assert marker in _listed(_cgr("status"))["billing"]
+
+        _sync(tmp_path, "billing")
+
+        assert graph.markers == set()
+        assert marker not in _listed(_cgr("status"))["billing"]
+
+    def test_a_failed_sync_leaves_the_crashed_runs_marker(
+        self, graphs: dict[int, _Memgraph], tmp_path: Path
+    ) -> None:
+        _sync(tmp_path, "billing")
+        graph = graphs[THIS_GRAPH]
+        _mcp_marker(graph, "billing", "mcp-crashed", writing=True)
+
+        _fail_sync(tmp_path, "billing")
+
+        assert ("billing", "mcp-crashed") in graph.markers
+
+    def test_a_run_that_never_wrote_is_left_to_its_own_recovery(
+        self, graphs: dict[int, _Memgraph], tmp_path: Path
+    ) -> None:
+        # It left the graph as it found it, so nothing needs rebuilding; the
+        # MCP server clears such a marker when it next reads the project.
+        _sync(tmp_path, "billing")
+        graph = graphs[THIS_GRAPH]
+        _mcp_marker(graph, "billing", "mcp-idle", writing=False)
+
+        _sync(tmp_path, "billing")
+
+        assert graph.markers == {("billing", "mcp-idle")}
+
+    def test_only_the_synced_projects_runs_are_retired(
+        self, graphs: dict[int, _Memgraph], tmp_path: Path
+    ) -> None:
+        _sync(tmp_path, "billing")
+        _sync(tmp_path, "ledger")
+        graph = graphs[THIS_GRAPH]
+        _mcp_marker(graph, "billing", "mcp-crashed", writing=True)
+        _mcp_marker(graph, "ledger", "mcp-crashed", writing=True)
+
+        _sync(tmp_path, "billing")
+
+        assert graph.markers == {("ledger", "mcp-crashed")}
 
 
 class TestDeletingAProjectAfterAFailedSync:

@@ -259,3 +259,54 @@ def sync_marker_down(ingestor: QueryProtocol, project_name: str) -> bool:
             cq.CYPHER_CLI_SYNC_MARKER_OWNER, sync_marker_params(project_name)
         )
     )
+
+
+def stranded_runs(
+    ingestor: QueryProtocol, project_name: str, own_run_id: str
+) -> list[str]:
+    """The other runs whose markers a full rebuild of the project supersedes.
+
+    Asked with the checkout's sync lock held, before the rebuild marks;
+    `CYPHER_STRANDED_RUN_IDS` says why none of them can still be writing.
+    The rebuild must then be forced: a stopped re-ingest may have deleted an
+    unchanged dependent's definitions, which an incremental run skips by its
+    saved hash, as `cgr watch`'s `_marked_run` says. A store that cannot
+    answer yields none, so the rebuild runs as before and those markers stay
+    for the next one.
+    """
+    try:
+        rows = ingestor.fetch_all(
+            cq.CYPHER_STRANDED_RUN_IDS,
+            {cs.KEY_PROJECT_NAME: project_name, cs.KEY_RUN_ID: own_run_id},
+        )
+    except Exception as exc:
+        logger.warning(
+            ls.STRANDED_RUNS_UNREADABLE.format(project=project_name, error=exc)
+        )
+        return []
+    return [run_id for row in rows if isinstance(run_id := row.get(cs.KEY_RUN_ID), str)]
+
+
+def retire_stranded_runs(
+    ingestor: QueryProtocol, project_name: str, run_ids: list[str]
+) -> None:
+    """Take off the markers of `run_ids` once a forced rebuild committed.
+
+    Never fails the rebuild, which is complete by now: a marker that stays
+    only refuses until the next full sync retires it.
+    """
+    if not run_ids:
+        return
+    try:
+        ingestor.execute_write(
+            cq.CYPHER_RETIRE_STRANDED_RUNS,
+            {cs.KEY_PROJECT_NAME: project_name, cs.KEY_RUN_IDS: run_ids},
+        )
+    except Exception as exc:
+        logger.warning(
+            ls.STRANDED_RUNS_NOT_RETIRED.format(project=project_name, error=exc)
+        )
+        return
+    logger.info(
+        ls.STRANDED_RUNS_RETIRED.format(project=project_name, count=len(run_ids))
+    )
