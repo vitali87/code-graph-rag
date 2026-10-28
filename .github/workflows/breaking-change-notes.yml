@@ -12,10 +12,11 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
+# No concurrency group. Dependabot opens a pull request and labels it within a
+# second, so one commit gets three runs at once; a group kept one of them and
+# cancelled the rest, and GitHub counts each cancelled run left on the commit as
+# a check that did not pass. The kept run need not be the latest event's
+# either. Every run takes seconds, so all of them finish.
 jobs:
   breaking-change-notes:
     name: Breaking Change Notes

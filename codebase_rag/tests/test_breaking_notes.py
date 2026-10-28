@@ -180,6 +180,18 @@ def test_the_check_reruns_when_the_label_or_title_changes() -> None:
             assert "${{" not in step.get("run", "")
 
 
+def test_no_run_cancels_another_on_the_same_commit() -> None:
+    # A Dependabot pull request is opened and labelled at once; a concurrency
+    # group cancelled all but one of those runs, and the cancelled ones left
+    # the pull request with checks that did not pass (#3481).
+    workflow = yaml.safe_load(
+        (_WORKFLOWS / "breaking-change-notes.yml").read_text("utf-8")
+    )
+    assert "concurrency" not in workflow
+    for job in workflow["jobs"].values():
+        assert "concurrency" not in job
+
+
 def _git(cwd: Path, *args: str) -> None:
     subprocess.run(
         ["git", *args],
