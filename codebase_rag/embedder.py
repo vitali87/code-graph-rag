@@ -16,7 +16,7 @@ from .config import API_KEY_INFO, normalised_credential, settings
 from .utils.dependencies import has_torch, has_transformers
 
 
-def _cache_namespace() -> str:
+def _cache_namespace(max_length: int | None = None) -> str:
     # Embeddings from different providers/models live in different vector
     # spaces; namespacing cache keys prevents a provider or model switch
     # from replaying stale vectors of the wrong space.
@@ -25,7 +25,14 @@ def _cache_namespace() -> str:
         if settings.OPENAI_EMBEDDING_DIMENSIONS is not None:
             namespace = f"{namespace}:{settings.OPENAI_EMBEDDING_DIMENSIONS}"
         return namespace
-    return f"{cs.EmbeddingProvider.UNIXCODER}:{cs.UNIXCODER_MODEL}"
+    namespace = f"{cs.EmbeddingProvider.UNIXCODER}:{cs.UNIXCODER_MODEL}"
+    # UniXcoder truncates at the token limit, so a snippet longer than one
+    # limit embeds differently under another. A non-default limit keys apart;
+    # the shipped default keeps the bare namespace every earlier cache used.
+    limit = settings.EMBEDDING_MAX_LENGTH if max_length is None else max_length
+    if limit != cs.EMBEDDING_DEFAULT_MAX_LENGTH:
+        namespace = f"{namespace}:{limit}"
+    return namespace
 
 
 class EmbeddingCache:
@@ -36,25 +43,35 @@ class EmbeddingCache:
         self._path = path
 
     @staticmethod
-    def _content_hash(content: str) -> str:
-        return hashlib.sha256(f"{_cache_namespace()}\x00{content}".encode()).hexdigest()
+    def _content_hash(content: str, max_length: int | None) -> str:
+        namespace = _cache_namespace(max_length)
+        return hashlib.sha256(f"{namespace}\x00{content}".encode()).hexdigest()
 
-    def get(self, content: str) -> list[float] | None:
-        return self._cache.get(self._content_hash(content))
+    def get(self, content: str, max_length: int | None = None) -> list[float] | None:
+        return self._cache.get(self._content_hash(content, max_length))
 
-    def put(self, content: str, embedding: list[float]) -> None:
-        self._cache[self._content_hash(content)] = embedding
+    def put(
+        self, content: str, embedding: list[float], max_length: int | None = None
+    ) -> None:
+        self._cache[self._content_hash(content, max_length)] = embedding
 
-    def get_many(self, snippets: list[str]) -> dict[int, list[float]]:
+    def get_many(
+        self, snippets: list[str], max_length: int | None = None
+    ) -> dict[int, list[float]]:
         results: dict[int, list[float]] = {}
         for i, snippet in enumerate(snippets):
-            if (cached := self.get(snippet)) is not None:
+            if (cached := self.get(snippet, max_length)) is not None:
                 results[i] = cached
         return results
 
-    def put_many(self, snippets: list[str], embeddings: list[list[float]]) -> None:
+    def put_many(
+        self,
+        snippets: list[str],
+        embeddings: list[list[float]],
+        max_length: int | None = None,
+    ) -> None:
         for snippet, embedding in zip(snippets, embeddings):
-            self.put(snippet, embedding)
+            self.put(snippet, embedding, max_length)
 
     def save(self) -> None:
         if self._path is None:
@@ -289,8 +306,13 @@ else:
 
 
 def embed_code(code: str, max_length: int | None = None) -> list[float]:
+    """Embed one snippet, through the persistent cache.
+
+    `max_length` is UniXcoder's token limit (default EMBEDDING_MAX_LENGTH);
+    the OpenAI provider has no such limit and ignores it.
+    """
     cache = get_embedding_cache()
-    if (cached := cache.get(code)) is not None:
+    if (cached := cache.get(code, max_length)) is not None:
         return cached
     try:
         if settings.EMBEDDING_PROVIDER == cs.EmbeddingProvider.OPENAI:
@@ -300,7 +322,7 @@ def embed_code(code: str, max_length: int | None = None) -> list[float]:
     except Exception:
         logger.exception(ls.EMBEDDING_SNIPPET_FAILED, length=len(code))
         raise
-    cache.put(code, result)
+    cache.put(code, result, max_length)
     return result
 
 
@@ -309,11 +331,17 @@ def embed_code_batch(
     max_length: int | None = None,
     batch_size: int = cs.EMBEDDING_DEFAULT_BATCH_SIZE,
 ) -> list[list[float]]:
+    """Embed many snippets, through the persistent cache.
+
+    `max_length` and `batch_size` tune the local UniXcoder model. The OpenAI
+    provider ignores both: it has no token limit here and batches by
+    OPENAI_EMBEDDING_BATCH_SIZE.
+    """
     if not snippets:
         return []
 
     cache = get_embedding_cache()
-    cached_results = cache.get_many(snippets)
+    cached_results = cache.get_many(snippets, max_length)
 
     if len(cached_results) == len(snippets):
         logger.debug(ls.EMBEDDING_CACHE_HIT, count=len(snippets))
@@ -329,7 +357,7 @@ def embed_code_batch(
             uncached_snippets, max_length, batch_size
         )
 
-    cache.put_many(uncached_snippets, all_new_embeddings)
+    cache.put_many(uncached_snippets, all_new_embeddings, max_length)
 
     results: list[list[float]] = [[] for _ in snippets]
     for i, emb in cached_results.items():

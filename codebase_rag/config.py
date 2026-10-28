@@ -499,7 +499,7 @@ class AppConfig(BaseSettings):
     OPENAI_EMBEDDING_DIMENSIONS: int | None = Field(default=None, gt=0)
     OPENAI_EMBEDDING_BATCH_SIZE: int = Field(default=128, gt=0)
     OPENAI_EMBEDDING_TIMEOUT: float = Field(default=60.0, gt=0)
-    EMBEDDING_MAX_LENGTH: int = 512
+    EMBEDDING_MAX_LENGTH: int = cs.EMBEDDING_DEFAULT_MAX_LENGTH
     EMBEDDING_PROGRESS_INTERVAL: int = 10
     SKIP_EMBEDDINGS: bool = Field(False, validation_alias="CGR_SKIP_EMBEDDINGS")
     EMBEDDING_DEVICE: cs.EmbeddingDevice | None = Field(

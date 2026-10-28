@@ -587,3 +587,50 @@ def test_embedding_cache_persistence_roundtrip() -> None:
         assert cache2.get("fn_b") == [0.3, 0.4]
         assert cache2.get("fn_c") is None
         assert len(cache2) == 2
+
+
+def test_embedding_cache_keys_a_non_default_max_length_apart() -> None:
+    # A vector truncated at one token limit was replayed for every other
+    # limit, including after EMBEDDING_MAX_LENGTH changed.
+    cache = EmbeddingCache()
+    cache.put("long_code", [32.0], max_length=32)
+    assert cache.get("long_code") is None
+    assert cache.get("long_code", max_length=cs.EMBEDDING_DEFAULT_MAX_LENGTH) is None
+    assert cache.get("long_code", max_length=32) == [32.0]
+
+
+def test_embedding_cache_default_max_length_keeps_the_bare_key() -> None:
+    # Caches written before the limit was keyed hold default-limit vectors
+    # under the bare namespace; the default must still find them.
+    cache = EmbeddingCache()
+    cache.put("code", [1.0])
+    assert cache.get("code", max_length=cs.EMBEDDING_DEFAULT_MAX_LENGTH) == [1.0]
+
+
+def test_embedding_cache_follows_the_configured_max_length(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from codebase_rag.config import settings
+
+    cache = EmbeddingCache()
+    cache.put("code", [1.0])
+    monkeypatch.setattr(settings, "EMBEDDING_MAX_LENGTH", 256)
+    assert cache.get("code") is None
+
+
+def test_embed_code_does_not_replay_another_max_length(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from codebase_rag import embedder
+    from codebase_rag.config import settings
+
+    monkeypatch.setattr(settings, "EMBEDDING_PROVIDER", cs.EmbeddingProvider.UNIXCODER)
+    monkeypatch.setattr(embedder, "_embedding_cache", EmbeddingCache())
+    monkeypatch.setattr(
+        embedder,
+        "_unixcoder_embed_code",
+        lambda code, max_length: [float(max_length or settings.EMBEDDING_MAX_LENGTH)],
+    )
+    assert embedder.embed_code("snippet", max_length=32) == [32.0]
+    assert embedder.embed_code("snippet", max_length=512) == [512.0]
+    assert embedder.embed_code("snippet") == [512.0]
