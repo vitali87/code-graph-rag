@@ -113,7 +113,19 @@ def test_a_host_name_without_both_parts_identifies_no_process_table(
 
 @pytest.mark.usefixtures("fresh_identity")
 @pytest.mark.skipif(
-    sys.platform != "linux", reason="only Linux exposes a boot id and pid namespace"
+    sys.platform == cs.PLATFORM_WINDOWS,
+    reason="creating a symbolic link takes a privilege on Windows",
 )
-def test_linux_identifies_its_process_table() -> None:
+def test_a_boot_id_and_a_pid_namespace_identify_the_process_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Controlled paths, as Linux lays them out: a container that hides the
+    # real ones is not identified, and must not fail this test.
+    boot_id = tmp_path / "boot_id"
+    boot_id.write_text("6b1c2f0e\n", encoding="utf-8")
+    namespace = tmp_path / "pid"
+    namespace.symlink_to("pid:[4026531836]")
+    monkeypatch.setattr(cs, "PROCESS_BOOT_ID_PATH", str(boot_id))
+    monkeypatch.setattr(cs, "PROCESS_PID_NAMESPACE_PATH", str(namespace))
+
     assert process_table_identified()
