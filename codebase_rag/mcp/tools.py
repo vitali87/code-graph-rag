@@ -6,6 +6,7 @@ import sys
 import uuid
 from collections.abc import Callable, Collection
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from loguru import logger
 from pydantic_ai import Agent, DeferredToolRequests, Tool
@@ -25,8 +26,13 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services import QueryProtocol
 from codebase_rag.services.gloss_cleanup import prune_orphaned_glosses
 from codebase_rag.services.graph_service import MemgraphIngestor
-from codebase_rag.services.llm import CypherQueryGenerator, create_rag_orchestrator
+from codebase_rag.services.llm import (
+    CypherQueryGenerator,
+    create_rag_orchestrator,
+    run_to_text_answer,
+)
 from codebase_rag.services.provenance import head_commit
+from codebase_rag.sync_lock import repo_sync_lock
 from codebase_rag.tools import tool_descriptions as td
 from codebase_rag.tools.ast_grep_service import AstGrepService
 from codebase_rag.tools.code_retrieval import (
@@ -69,15 +75,33 @@ from codebase_rag.types_defs import (
     StructuralReplaceChange,
 )
 from codebase_rag.utils.dependencies import has_ast_grep, has_semantic_dependencies
-from codebase_rag.utils.path_utils import derive_project_name
+from codebase_rag.utils.path_utils import derive_project_name, nested_project_names
 from codebase_rag.utils.terminal_console import terminal_aware_console
 from codebase_rag.vector_store import clear_all_embeddings, delete_project_embeddings
 from codebase_rag.workspaces import WorkspaceConfig
 
+if TYPE_CHECKING:
+    from codebase_rag.crash_correlation import (
+        FrameResolutionRate,
+        RootCauseReport,
+        TracebackReport,
+    )
 
-def _read_file_slice(full_path: Path, start: int, limit: int | None) -> str:
+
+def _found_nothing(result: object) -> bool:
+    """An empty walk, or a lookup that answered `found: false`."""
+    return result == [] or (
+        isinstance(result, dict) and result.get(cs.MCP_KEY_FOUND) is False
+    )
+
+
+def _read_file_slice(
+    full_path: Path, start: int, limit: int | None, file_path: str
+) -> str:
     with open(full_path, encoding=cs.ENCODING_UTF8) as f:
-        skipped_count = sum(1 for _ in itertools.islice(f, start))
+        # islice() refuses a count past sys.maxsize; no file has that many
+        # lines, so the clamped skip reads to the same end.
+        skipped_count = sum(1 for _ in itertools.islice(f, min(start, sys.maxsize)))
 
         if limit is not None:
             sliced_lines = [line for _, line in zip(range(limit), f)]
@@ -88,6 +112,12 @@ def _read_file_slice(full_path: Path, start: int, limit: int | None) -> str:
         remaining_lines_count = sum(1 for _ in f)
 
     total_lines = skipped_count + len(sliced_lines) + remaining_lines_count
+    # Offset 0 is the start even of an empty file; any other offset must
+    # land on a line.
+    if start >= total_lines and start > 0:
+        return te.failure(
+            cs.MCP_READ_PAST_END.format(offset=start, path=file_path, total=total_lines)
+        )
     header = cs.MCP_PAGINATION_HEADER.format(
         start=start + 1,
         end=start + len(sliced_lines),
@@ -172,6 +202,28 @@ _READS_THE_GRAPH = frozenset(
     }
 )
 
+# The relationships each cross-service tool needs for a non-empty answer:
+# every one its queries MATCH, not the ones they only count or optionally
+# join. All sit in the opt-in `io` group, so on a project synced without one
+# an empty answer means "never recorded", not "none" (issue #2521).
+_CAPTURE_READ_BY: dict[cs.MCPToolName, frozenset[cs.RelationshipType]] = {
+    cs.MCPToolName.ENDPOINTS: frozenset({cs.RelationshipType.EXPOSES}),
+    # A caller reaches the handler's EXPOSES through its own READS_FROM or
+    # WRITES_TO, by way of RESOLVES_TO for a URL: with any of them left out
+    # some callers could never have been recorded (bot review on PR #2596).
+    cs.MCPToolName.ENDPOINT_CALLERS: frozenset(
+        {
+            cs.RelationshipType.EXPOSES,
+            cs.RelationshipType.READS_FROM,
+            cs.RelationshipType.WRITES_TO,
+            cs.RelationshipType.RESOLVES_TO,
+        }
+    ),
+    cs.MCPToolName.REMOTE_DEPENDENCIES: frozenset(
+        {cs.RelationshipType.READS_FROM, cs.RelationshipType.WRITES_TO}
+    ),
+}
+
 
 async def _run_in_thread[**P, T](
     fn: Callable[P, T], /, *args: P.args, **kwargs: P.kwargs
@@ -215,6 +267,45 @@ def _plain_function(tool: Tool) -> ToolFuncPlain[...]:
     # this registry calls directly is built without one, which this states
     # once instead of at each call site.
     return tool.function
+
+
+def _resolution_section(resolution: "FrameResolutionRate") -> dict:
+    # `rate` is a property, so `_asdict()` omits it; mapped explicitly
+    # because the ratio is the number the caller acts on (issue #227).
+    return {
+        "total": resolution.total,
+        "resolved": resolution.resolved,
+        "rate": resolution.rate,
+    }
+
+
+def _explained_section(report: "TracebackReport") -> dict:
+    """One exception of an explained traceback: the one that propagated, or
+    a member of an ExceptionGroup, with members of its own (issue #3235)."""
+    return {
+        "exception_type": report.exception_type,
+        "exception_message": report.exception_message,
+        "frames": [frame._asdict() for frame in report.frames],
+        "resolution": _resolution_section(report.resolution),
+        "note": report.note,
+        "members": [_explained_section(member) for member in report.members],
+        "omitted_members": report.omitted_members,
+    }
+
+
+def _ranked_section(report: "RootCauseReport") -> dict:
+    """One exception's ranking, as `_explained_section` lays it out."""
+    return {
+        "exception_type": report.exception_type,
+        "exception_message": report.exception_message,
+        "failing": report.failing,
+        "anchor_is_crash_site": report.anchor_is_crash_site,
+        "candidates": [candidate._asdict() for candidate in report.candidates],
+        "resolution": _resolution_section(report.resolution),
+        "note": report.note,
+        "members": [_ranked_section(member) for member in report.members],
+        "omitted_members": report.omitted_members,
+    }
 
 
 class MCPToolsRegistry:
@@ -525,15 +616,23 @@ class MCPToolsRegistry:
             ),
             cs.MCPToolName.IMPLEMENTORS: self._graph_tool(
                 cs.MCPToolName.IMPLEMENTORS,
-                {cs.MCPParamName.QUALIFIED_NAME: td.MCP_PARAM_QUALIFIED_NAME},
+                {
+                    cs.MCPParamName.QUALIFIED_NAME: td.MCP_PARAM_QUALIFIED_NAME,
+                    cs.MCPParamName.DEPTH: td.MCP_PARAM_DEPTH,
+                },
                 [cs.MCPParamName.QUALIFIED_NAME],
                 self.implementors,
+                integer_params={cs.MCPParamName.DEPTH},
             ),
             cs.MCPToolName.OVERRIDES: self._graph_tool(
                 cs.MCPToolName.OVERRIDES,
-                {cs.MCPParamName.QUALIFIED_NAME: td.MCP_PARAM_QUALIFIED_NAME},
+                {
+                    cs.MCPParamName.QUALIFIED_NAME: td.MCP_PARAM_QUALIFIED_NAME,
+                    cs.MCPParamName.DEPTH: td.MCP_PARAM_DEPTH,
+                },
                 [cs.MCPParamName.QUALIFIED_NAME],
                 self.overrides,
+                integer_params={cs.MCPParamName.DEPTH},
             ),
             cs.MCPToolName.ANNOTATE: self._graph_tool(
                 cs.MCPToolName.ANNOTATE,
@@ -555,9 +654,13 @@ class MCPToolsRegistry:
             ),
             cs.MCPToolName.IMPORTERS: self._graph_tool(
                 cs.MCPToolName.IMPORTERS,
-                {cs.MCPParamName.MODULE_QN: td.MCP_PARAM_MODULE_QN},
+                {
+                    cs.MCPParamName.MODULE_QN: td.MCP_PARAM_MODULE_QN,
+                    cs.MCPParamName.THROUGH_REEXPORTS: td.MCP_PARAM_THROUGH_REEXPORTS,
+                },
                 [cs.MCPParamName.MODULE_QN],
                 self.importers,
+                boolean_params={cs.MCPParamName.THROUGH_REEXPORTS},
             ),
             cs.MCPToolName.TESTS_REACHING: self._graph_tool(
                 cs.MCPToolName.TESTS_REACHING,
@@ -659,10 +762,12 @@ class MCPToolsRegistry:
                         cs.MCPParamName.OFFSET: MCPInputSchemaProperty(
                             type=cs.MCPSchemaType.INTEGER,
                             description=td.MCP_PARAM_OFFSET,
+                            minimum=cs.MCP_READ_OFFSET_MINIMUM,
                         ),
                         cs.MCPParamName.LIMIT: MCPInputSchemaProperty(
                             type=cs.MCPSchemaType.INTEGER,
                             description=td.MCP_PARAM_LIMIT,
+                            minimum=cs.MCP_READ_LIMIT_MINIMUM,
                         ),
                     },
                     required=[cs.MCPParamName.FILE_PATH],
@@ -1126,8 +1231,17 @@ class MCPToolsRegistry:
         # the check and the read leaves an approved read running against the
         # partial graph (Greptile, PR #1547).
         async with self._ingestor_lock:
+            if refusal := await _run_in_thread(self._unindexed_refusal, project):
+                return {cs.DICT_KEY_ERROR: refusal}
             if refusal := await _run_in_thread(
                 self._incomplete_refusal, project, cs.MCPToolName.FLOW_VERDICT
+            ):
+                return {cs.DICT_KEY_ERROR: refusal}
+            if refusal := await _run_in_thread(
+                self._flow_endpoint_refusal,
+                project,
+                source_qualified_name,
+                sink_qualified_name,
             ):
                 return {cs.DICT_KEY_ERROR: refusal}
             result = await _run_in_thread(
@@ -1154,6 +1268,8 @@ class MCPToolsRegistry:
         if project is None:
             return {cs.DICT_KEY_ERROR: workspace_refusal}
         async with self._ingestor_lock:
+            if refusal := await _run_in_thread(self._unindexed_refusal, project):
+                return {cs.DICT_KEY_ERROR: refusal}
             if refusal := await _run_in_thread(
                 self._incomplete_refusal, project, cs.MCPToolName.EXPLAIN_TRACEBACK
             ):
@@ -1167,19 +1283,9 @@ class MCPToolsRegistry:
                 path_prefix_map,
             )
         return {
-            "exception_type": report.exception_type,
-            "exception_message": report.exception_message,
-            "frames": [frame._asdict() for frame in report.frames],
+            **_explained_section(report),
             "flow_gaps": list(report.flow_gaps),
-            # `rate` is a property, so `_asdict()` omits it; mapped explicitly
-            # because the ratio is the number the caller acts on (issue #227).
-            "resolution": {
-                "total": report.resolution.total,
-                "resolved": report.resolution.resolved,
-                "rate": report.resolution.rate,
-            },
             "inferred_checkout_root": report.inferred_root,
-            "note": report.note,
         }
 
     async def rank_root_causes(
@@ -1191,6 +1297,8 @@ class MCPToolsRegistry:
         if project is None:
             return {cs.DICT_KEY_ERROR: workspace_refusal}
         async with self._ingestor_lock:
+            if refusal := await _run_in_thread(self._unindexed_refusal, project):
+                return {cs.DICT_KEY_ERROR: refusal}
             if refusal := await _run_in_thread(
                 self._incomplete_refusal, project, cs.MCPToolName.RANK_ROOT_CAUSES
             ):
@@ -1204,20 +1312,10 @@ class MCPToolsRegistry:
                 path_prefix_map,
             )
         return {
-            "exception_type": report.exception_type,
-            "exception_message": report.exception_message,
-            "failing": report.failing,
-            "anchor_is_crash_site": report.anchor_is_crash_site,
-            "candidates": [candidate._asdict() for candidate in report.candidates],
+            **_ranked_section(report),
             "flow_used": report.flow_used,
             "flow_gaps": list(report.flow_gaps),
-            "resolution": {
-                "total": report.resolution.total,
-                "resolved": report.resolution.resolved,
-                "rate": report.resolution.rate,
-            },
             "inferred_checkout_root": report.inferred_root,
-            "note": report.note,
         }
 
     async def list_projects(self) -> ListProjectsResult:
@@ -1250,9 +1348,10 @@ class MCPToolsRegistry:
                 result.append(node_id)
         return result
 
-    def _cleanup_project_embeddings(self, project_name: str) -> None:
-        node_ids = self._get_project_node_ids(project_name)
-        delete_project_embeddings(project_name, node_ids)
+    def _nested_projects(self, project_name: str) -> list[str]:
+        # A project nested under this one (`svc.v2` under `svc`) keeps its
+        # vectors, which the prefix-scoped node-id read also names.
+        return nested_project_names(project_name, self.ingestor.list_projects())
 
     def _delete_project_sync(self, project_name: str) -> DeleteProjectResult:
         projects = self.ingestor.list_projects()
@@ -1453,10 +1552,19 @@ class MCPToolsRegistry:
         logger.info(start_log.format(path=self.project_root))
         try:
             async with self._ingestor_lock:
-                return await _run_in_thread(sync_fn)
+                return await _run_in_thread(self._under_sync_lock, sync_fn)
         except Exception as e:
             logger.error(error_log.format(error=e))
             return error_message.format(error=e)
+
+    def _under_sync_lock(self, sync_fn: Callable[[], str]) -> str:
+        # Taken before the `:IncompleteRun` marker and the project delete, so
+        # a sync refused because another writer holds the checkout changes
+        # nothing, not even the marker (issue #2441). `GraphUpdater.run`
+        # re-enters it on this thread.
+        root = Path(self.project_root)
+        with repo_sync_lock(root, derive_project_name(root)):
+            return sync_fn()
 
     async def index_repository(self) -> str:
         return await self._run_ingest(
@@ -1770,12 +1878,13 @@ class MCPToolsRegistry:
         """
         try:
             node_ids = self._get_project_node_ids(project_name)
+            nested = self._nested_projects(project_name)
         except Exception:
             self._abandon_before_writing(project_name)
             raise
         if (refusal := self._require_writing(project_name)) is not None:
             raise RuntimeError(refusal)
-        delete_project_embeddings(project_name, node_ids)
+        delete_project_embeddings(project_name, node_ids, nested)
 
     def _invalidate_graph_for(self, project_name: str) -> None:
         """Raise the incomplete flag and attribute it to `project_name`.
@@ -2600,8 +2709,15 @@ class MCPToolsRegistry:
                     )
                 ) is not None:
                     return {cs.DICT_KEY_ERROR: refusal}
-                response = await self.rag_agent.run(question, message_history=[])
-            return {"output": str(response.output)}
+                # No operator to ask: an edit or a non-read-only command is
+                # denied, and the model answers without it.
+                answer = await run_to_text_answer(
+                    self.rag_agent,
+                    question,
+                    approve=False,
+                    denial=cs.MCP_ASK_AGENT_APPROVAL_DENIED,
+                )
+            return {"output": answer}
         except Exception as e:
             logger.error(lg.MCP_ASK_AGENT_ERROR.format(error=e))
             return {"error": cs.MCP_ASK_AGENT_ERROR.format(error=e)}
@@ -2615,13 +2731,13 @@ class MCPToolsRegistry:
         required: list[str],
         handler: MCPHandlerType,
         integer_params: set[str] | None = None,
+        boolean_params: set[str] | None = None,
     ) -> ToolMetadata:
+        kinds = dict.fromkeys(integer_params or (), cs.MCPSchemaType.INTEGER)
+        kinds |= dict.fromkeys(boolean_params or (), cs.MCPSchemaType.BOOLEAN)
         properties = {
             key: MCPInputSchemaProperty(
-                type=cs.MCPSchemaType.INTEGER
-                if integer_params and key in integer_params
-                else cs.MCPSchemaType.STRING,
-                description=description,
+                type=kinds.get(key, cs.MCPSchemaType.STRING), description=description
             )
             for key, description in params.items()
         }
@@ -2706,10 +2822,14 @@ class MCPToolsRegistry:
                 ):
                     return {cs.DICT_KEY_ERROR: refusal}
                 result = await _run_in_thread(run, project_name)
-                if target is not None and result == []:
+                if target is not None and _found_nothing(result):
                     if unknown := await _run_in_thread(
                         self._unknown_target_error, project_name, target
                     ):
+                        # A `found: false` row keeps its fields beside the
+                        # refusal, for a client that reads `found`.
+                        if isinstance(result, dict):
+                            return {**result, cs.DICT_KEY_ERROR: unknown}
                         return {cs.DICT_KEY_ERROR: unknown}
                 return result
         except Exception as e:
@@ -2718,30 +2838,96 @@ class MCPToolsRegistry:
                 cs.DICT_KEY_ERROR: cs.MCP_GRAPH_QUERY_ERROR.format(tool=tool, error=e)
             }
 
-    @staticmethod
-    def _unknown_project_error(project: str, known: list[str]) -> str:
+    def _nameable(self, projects: Collection[str]) -> list[str]:
+        """The `projects` a refusal may name: under a workspace, only the
+        ones it serves; without one, all of them.
+
+        The graph is shared, and a workspace project that is not indexed
+        passes the allow-list and is refused as unknown, so its "did you
+        mean" and its fallback list were drawn from every indexed project and
+        named ones outside the workspace (CodeRabbit, PR #2562; CWE-200).
+        """
+        if self.workspace is None:
+            return list(projects)
+        served = set(self.workspace.project_names())
+        return [name for name in projects if name in served]
+
+    def _unknown_project_error(self, project: str, known: list[str]) -> str:
         # The close matches when there are any; a shared graph lists dozens
         # of `<dir>__<hash>` names, and the one meant is the one to name.
+        known = self._nameable(known)
         close = graph_query.close_project_names(project, known)
         if close:
             return cs.MCP_UNKNOWN_PROJECT_NAMED.format(
                 project=project
             ) + graph_query.did_you_mean(close)
-        return cs.MCP_UNKNOWN_PROJECT.format(
-            project=project, known=cs.SEPARATOR_COMMA_SPACE.join(known)
+        listed = cs.SEPARATOR_COMMA_SPACE.join(known)
+        if self.workspace is None:
+            return cs.MCP_UNKNOWN_PROJECT.format(project=project, known=listed)
+        # Labelled as the workspace's, so a short list does not read as the
+        # whole graph, and an empty one is said rather than left blank.
+        if not known:
+            return cs.MCP_UNKNOWN_WORKSPACE_PROJECT_NONE_INDEXED.format(
+                project=project, workspace=self.workspace.name
+            )
+        return cs.MCP_UNKNOWN_WORKSPACE_PROJECT.format(
+            project=project, workspace=self.workspace.name, known=listed
         )
 
-    def _root_not_indexed_error(self, project_name: str, known: list[str]) -> str:
+    def _root_not_indexed_error(
+        self,
+        project_name: str,
+        known: list[str],
+        message: str = cs.MCP_ROOT_NOT_INDEXED,
+    ) -> str:
         root = Path(self.project_root)
         # A repository indexed under a name of its own is the likeliest
-        # meaning, then names spelled close to the derived one.
-        rooted = graph_query.projects_rooted_at(
-            self.ingestor.list_project_roots(), root
+        # meaning, then names spelled close to the derived one; both only
+        # among the projects this server may name.
+        rooted = self._nameable(
+            graph_query.projects_rooted_at(self.ingestor.list_project_roots(), root)
         )
-        close = graph_query.close_project_names(project_name, known)
-        return cs.MCP_ROOT_NOT_INDEXED.format(
-            path=root.resolve()
-        ) + graph_query.did_you_mean(list(dict.fromkeys([*rooted, *close])))
+        close = graph_query.close_project_names(project_name, self._nameable(known))
+        return message.format(path=root.resolve()) + graph_query.did_you_mean(
+            list(dict.fromkeys([*rooted, *close]))
+        )
+
+    def _flow_endpoint_refusal(
+        self, project_name: str, source: str, sink: str
+    ) -> str | None:
+        """Why `flow_verdict` cannot answer for these names (issue #2939).
+
+        A name that is no node has no flow edges, so the walk found no path
+        and, on a fully covered project, answered NO_FLOW: the verified
+        absence a taint question reads as safe, for a typo. The source must
+        also be this project's own, or a resource no project owns: only this
+        project's flow edges are walked from it. A sink may sit across a
+        service boundary, in another project.
+        """
+        problems = [
+            cs.MCP_FLOW_ENDPOINT.format(side=side, problem=problem)
+            for side, qualified_name in (
+                (cs.MCP_FLOW_SOURCE, source),
+                (cs.MCP_FLOW_SINK, sink),
+            )
+            if (problem := self._unknown_target_error(project_name, qualified_name))
+        ]
+        if not problems and (owner := self._other_owner(project_name, source)):
+            problems.append(
+                cs.MCP_FLOW_SOURCE_ELSEWHERE.format(
+                    qualified_name=source, owner=owner, project=project_name
+                )
+            )
+        return " ".join(problems) or None
+
+    def _other_owner(self, project_name: str, qualified_name: str) -> str | None:
+        # The longest registered project the name sits under, when it is not
+        # this one: project names may contain dots, so a name under this
+        # project's prefix can still belong to `<project>.v2`.
+        owner = self._name_owner(
+            qualified_name, [*self.ingestor.list_projects(), project_name]
+        )
+        return owner if owner != project_name else None
 
     def _unknown_target_error(self, project_name: str, target: str) -> str | None:
         fetch_all = self.ingestor.fetch_all
@@ -2760,7 +2946,22 @@ class MCPToolsRegistry:
         return await self._graph_query(
             cs.MCPToolName.RESOLVE,
             project,
-            lambda name: graph_query.resolve(self.ingestor.fetch_all, name, target),
+            lambda name: self._resolve_rows(name, target),
+        )
+
+    def _resolve_rows(self, project_name: str, target: str) -> object:
+        # A line no file can have is refused as such (issue #3244); the
+        # graph would only be asked about it to overflow a Bolt integer.
+        location = graph_query.parse_location(target)
+        if location is not None and location[1] > cs.GRAPH_MAX_SOURCE_LINE:
+            path, line = location
+            return {
+                cs.DICT_KEY_ERROR: cs.MCP_RESOLVE_LINE_OUT_OF_RANGE.format(
+                    path=path, line=line
+                )
+            }
+        return graph_query.resolve_or_refuse(
+            self.ingestor.fetch_all, project_name, target
         )
 
     def _workspace_scope(self, project: str | None) -> tuple[str | None, str | None]:
@@ -2816,6 +3017,26 @@ class MCPToolsRegistry:
             known=cs.SEPARATOR_COMMA_SPACE.join(names),
         )
 
+    def _unindexed_refusal(self, project: str) -> str | None:
+        """Why a fixed-root handler must not read `project`, or None.
+
+        `_fixed_root_project` derives the name without asking the graph. A
+        project the graph does not hold has no FLOWS_TO edge and no Module
+        to report as uncovered, so flow_verdict answered NO_FLOW, the
+        verified absence, and the traceback tools resolved nothing with no
+        note (issue #3193). The check `_graph_query` makes, with its
+        messages: a workspace default is a named project, a derived one is
+        the server's root.
+        """
+        known = self.ingestor.list_projects()
+        if project in known:
+            return None
+        if self.workspace is not None:
+            return self._unknown_project_error(project, known)
+        return self._root_not_indexed_error(
+            project, known, cs.MCP_FIXED_ROOT_NOT_INDEXED
+        )
+
     def _workspace_default_project(self) -> str | None:
         """The workspace project a request without `project` means.
 
@@ -2849,6 +3070,28 @@ class MCPToolsRegistry:
             self.ingestor.fetch_all, project_name, candidate
         )
 
+    def _uncaptured_refusal[T](
+        self, tool: cs.MCPToolName, project_name: str, rows: list[T]
+    ) -> list[T] | dict[str, str]:
+        # Only an EMPTY answer is questioned, so a project with rows pays no
+        # extra read, and a graph with no recorded capture keeps its `[]`.
+        if rows:
+            return rows
+        gap = graph_query.capture_gap(
+            self.ingestor.fetch_all, project_name, _CAPTURE_READ_BY[tool]
+        )
+        if gap is None:
+            return rows
+        return {
+            cs.DICT_KEY_ERROR: cs.MCP_CAPTURE_GROUP_MISSING.format(
+                tool=tool,
+                project=project_name,
+                groups=cs.CHAR_COMMA.join(gap["groups"]),
+                relationships=cs.SEPARATOR_COMMA_SPACE.join(gap["relationships"]),
+                root=gap["root_path"] or cs.MCP_DEFAULT_DIRECTORY,
+            )
+        }
+
     async def definition(
         self, qualified_name: str, project: str | None = None
     ) -> object:
@@ -2861,29 +3104,53 @@ class MCPToolsRegistry:
                 qualified_name,
                 self._source_root_for(name),
             ),
+            # Refused as `callers` refuses an unknown name (issue #3244).
+            target=qualified_name,
         )
 
     async def endpoints(self, project: str | None = None) -> object:
         return await self._graph_query(
             cs.MCPToolName.ENDPOINTS,
             project,
-            lambda name: graph_query.endpoints(self.ingestor.fetch_all, name),
+            lambda name: self._uncaptured_refusal(
+                cs.MCPToolName.ENDPOINTS,
+                name,
+                graph_query.endpoints(self.ingestor.fetch_all, name),
+            ),
         )
 
     async def endpoint_callers(self, target: str, project: str | None = None) -> object:
         return await self._graph_query(
             cs.MCPToolName.ENDPOINT_CALLERS,
             project,
-            lambda name: graph_query.endpoint_callers(
-                self.ingestor.fetch_all, name, target
-            ),
+            lambda name: self._endpoint_callers(name, target),
         )
+
+    def _endpoint_callers(self, project_name: str, target: str) -> object:
+        # A target that names no endpoint is refused, as `callers` refuses an
+        # unknown name: `[]` means the endpoint exists and nothing reaches it
+        # (issue #3186). A project synced without what the tool reads holds no
+        # endpoint at all, so that refusal names the missing capture instead.
+        tool = cs.MCPToolName.ENDPOINT_CALLERS
+        try:
+            rows = graph_query.endpoint_callers(
+                self.ingestor.fetch_all, project_name, target
+            )
+        except graph_query.UnknownEndpointError as unknown:
+            return self._uncaptured_refusal(tool, project_name, []) or {
+                cs.DICT_KEY_ERROR: str(unknown)
+            }
+        return self._uncaptured_refusal(tool, project_name, rows)
 
     async def remote_dependencies(self, project: str | None = None) -> object:
         return await self._graph_query(
             cs.MCPToolName.REMOTE_DEPENDENCIES,
             project,
-            lambda name: graph_query.remote_dependencies(self.ingestor.fetch_all, name),
+            lambda name: self._uncaptured_refusal(
+                cs.MCPToolName.REMOTE_DEPENDENCIES,
+                name,
+                graph_query.remote_dependencies(self.ingestor.fetch_all, name),
+            ),
         )
 
     async def callers(
@@ -2911,38 +3178,46 @@ class MCPToolsRegistry:
         )
 
     async def implementors(
-        self, qualified_name: str, project: str | None = None
+        self, qualified_name: str, project: str | None = None, depth: int | None = None
     ) -> object:
         return await self._graph_query(
             cs.MCPToolName.IMPLEMENTORS,
             project,
             lambda name: graph_query.implementors(
-                self.ingestor.fetch_all, name, qualified_name
+                self.ingestor.fetch_all, name, qualified_name, self._depth(depth)
             ),
             target=qualified_name,
         )
 
     async def overrides(
-        self, qualified_name: str, project: str | None = None
+        self, qualified_name: str, project: str | None = None, depth: int | None = None
     ) -> object:
         return await self._graph_query(
             cs.MCPToolName.OVERRIDES,
             project,
             lambda name: graph_query.overrides(
-                self.ingestor.fetch_all, name, qualified_name
+                self.ingestor.fetch_all, name, qualified_name, self._depth(depth)
             ),
             target=qualified_name,
         )
 
     async def importers(
-        self, module_qualified_name: str, project: str | None = None
+        self,
+        module_qualified_name: str,
+        project: str | None = None,
+        through_reexports: bool = False,
     ) -> object:
+        # A single `return await` keeps the handler a pure delegation to the
+        # locked `_graph_query`, so the read is serialised against a rebuild
+        # (issue #1471) whichever query the flag picks.
         return await self._graph_query(
             cs.MCPToolName.IMPORTERS,
             project,
-            lambda name: graph_query.importers(
-                self.ingestor.fetch_all, name, module_qualified_name
-            ),
+            lambda name: (
+                graph_query.importers_through_reexports
+                if through_reexports
+                else graph_query.importers
+            )(self.ingestor.fetch_all, name, module_qualified_name),
             target=module_qualified_name,
         )
 
@@ -3304,6 +3579,7 @@ class MCPToolsRegistry:
                 cs.DICT_KEY_ERROR: str(refused),
                 cs.KEY_AMBIGUOUS: sites_for(refused.ambiguous),
                 cs.KEY_UNLOCATABLE: list(refused.unlocatable),
+                cs.KEY_UNPLANNED: sites_for(refused.unplanned),
             }
         payload_marker_error: str | None = None
         if getattr(report, "graph_incomplete", False):
@@ -3323,6 +3599,7 @@ class MCPToolsRegistry:
         payload = dict(report._asdict())
         payload[cs.KEY_SITES] = sites_for(report.sites)
         payload[cs.KEY_AMBIGUOUS] = sites_for(report.ambiguous)
+        payload[cs.KEY_UNPLANNED] = sites_for(report.unplanned)
         payload["verdict"] = report.verdict._asdict() if report.verdict else None
         if payload_marker_error is not None:
             # The graph is partial AND the record of it could not be written.
@@ -3429,9 +3706,10 @@ class MCPToolsRegistry:
             # The guard is inside the lock so an update cannot land between
             # the check and the read (Greptile, PR #1547).
             async with self._ingestor_lock:
+                project_name = derive_project_name(Path(self.project_root))
                 if refusal := await _run_in_thread(
                     self._incomplete_refusal,
-                    derive_project_name(Path(self.project_root)),
+                    project_name,
                     cs.MCPToolName.GET_CODE_SNIPPET,
                 ):
                     return CodeSnippetResultDict(
@@ -3440,18 +3718,29 @@ class MCPToolsRegistry:
                 snippet = await _plain_function(self._code_tool)(
                     qualified_name=qualified_name
                 )
-            if isinstance(snippet, str):
-                # The workspace guard answered instead of the retriever.
-                return CodeSnippetResultDict(
-                    error=snippet, found=False, error_message=snippet
-                )
-            result: CodeSnippetResultDict | None = snippet.model_dump()
-            if result is None:
-                return CodeSnippetResultDict(
-                    error=te.MCP_TOOL_RETURNED_NONE,
-                    found=False,
-                    error_message=te.MCP_INVALID_RESPONSE,
-                )
+                if isinstance(snippet, str):
+                    # The workspace guard answered instead of the retriever.
+                    return CodeSnippetResultDict(
+                        error=snippet, found=False, error_message=snippet
+                    )
+                result: CodeSnippetResultDict | None = snippet.model_dump()
+                if result is None:
+                    return CodeSnippetResultDict(
+                        error=te.MCP_TOOL_RETURNED_NONE,
+                        found=False,
+                        error_message=te.MCP_INVALID_RESPONSE,
+                    )
+                if result.get(cs.MCP_KEY_FOUND) is False:
+                    # No snippet is a refusal, worded as `callers` words an
+                    # unknown name when the graph has none (issue #3244).
+                    unknown = await _run_in_thread(
+                        self._unknown_target_error, project_name, qualified_name
+                    )
+                    result[cs.DICT_KEY_ERROR] = (
+                        unknown
+                        or result.get(cs.MCP_KEY_ERROR_MESSAGE)
+                        or te.CODE_ENTITY_NOT_FOUND
+                    )
             return result
         except Exception as e:
             logger.error(lg.MCP_ERROR_CODE_SNIPPET.format(error=e))
@@ -3484,6 +3773,10 @@ class MCPToolsRegistry:
         self, file_path: str, offset: int | None = None, limit: int | None = None
     ) -> str:
         logger.info(lg.MCP_READ_FILE.format(path=file_path, offset=offset, limit=limit))
+        if offset is not None and offset < cs.MCP_READ_OFFSET_MINIMUM:
+            return te.failure(cs.MCP_READ_OFFSET_NEGATIVE.format(offset=offset))
+        if limit is not None and limit < cs.MCP_READ_LIMIT_MINIMUM:
+            return te.failure(cs.MCP_READ_LIMIT_NOT_POSITIVE.format(limit=limit))
         try:
             if offset is not None or limit is not None:
                 project_root = Path(self.project_root).resolve()
@@ -3493,7 +3786,9 @@ class MCPToolsRegistry:
                 except (ValueError, RuntimeError):
                     return te.failure(lg.FILE_OUTSIDE_ROOT.format(action="access"))
                 start = offset if offset is not None else 0
-                return await _run_in_thread(_read_file_slice, full_path, start, limit)
+                return await _run_in_thread(
+                    _read_file_slice, full_path, start, limit, file_path
+                )
             else:
                 # Returned as is: a ToolFailure must stay one (issue #2650).
                 return await _plain_function(self._file_reader_tool)(

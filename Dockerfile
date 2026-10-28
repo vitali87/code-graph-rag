@@ -1,13 +1,19 @@
-FROM ghcr.io/astral-sh/uv:0.12@sha256:a7aed3216253ee804de3e2d8afa5073baa1a177335345d43845cd4165e43b711 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.6@sha256:af22a52f5eafef3d78e551599d405c02df61919d18028f0cea8eda93bc9986d0 AS uv
 
-FROM python:3.14-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d AS builder
+FROM python:3.14-slim@sha256:35caba83af2fe6da9a5d922f9b0156f21d1246a48278c58a08bd253303ba42e8 AS builder
 
 COPY --from=uv /uv /uvx /bin/
+COPY --chmod=755 scripts/distrust_ca_roots.sh /usr/local/sbin/
 
+# Naming ca-certificates upgrades it to the archive's current release: the
+# pinned base is a snapshot whose CA store can predate a root's removal, as
+# with emSign ECC Root CA - G3 in October 2026. The eMudhra roots the archive
+# still ships are then deselected. cargo fetches through this store.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        cmake build-essential git libssl-dev zlib1g-dev libzstd-dev && \
-    rm -rf /var/lib/apt/lists/*
+        ca-certificates cmake build-essential git libssl-dev zlib1g-dev libzstd-dev cargo && \
+    rm -rf /var/lib/apt/lists/* && \
+    distrust_ca_roots.sh
 
 WORKDIR /app
 
@@ -26,17 +32,28 @@ WORKDIR /app
 ENV UV_PYTHON_INSTALL_DIR=/app/.uv-python
 ENV UV_PYTHON_PREFERENCE=only-managed
 
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --extra treesitter-full --no-install-project --no-binary-package pymgclient
+# .python-version must arrive with the manifests: without it this first sync
+# falls back to the newest managed Python allowed by requires-python (which
+# moves with each uv release), and the later sync, once COPY . . brings in the
+# pin, rebuilds .venv on the pinned version. --no-install-local leaves out
+# the project and cgr-graph-rs, a path dependency built from rust/ (with the
+# cargo above), as neither source is here until COPY . . brings it.
+COPY pyproject.toml uv.lock .python-version ./
+RUN uv sync --frozen --no-dev --extra treesitter-full --extra memgraph --no-install-local --no-binary-package pymgclient
 
 COPY . .
-RUN uv sync --frozen --no-dev --extra treesitter-full --no-binary-package pymgclient
+RUN uv sync --frozen --no-dev --extra treesitter-full --extra memgraph --no-binary-package pymgclient
 
-FROM python:3.14-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d
+FROM python:3.14-slim@sha256:35caba83af2fe6da9a5d922f9b0156f21d1246a48278c58a08bd253303ba42e8
 
+COPY --chmod=755 scripts/distrust_ca_roots.sh /usr/local/sbin/
+
+# The CA store as in the builder: the LLM clients verify TLS against it
+# through httpx2's truststore context, not certifi.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ripgrep libssl3 zlib1g libzstd1 && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y --no-install-recommends ca-certificates ripgrep libssl3 zlib1g libzstd1 && \
+    rm -rf /var/lib/apt/lists/* && \
+    distrust_ca_roots.sh
 
 RUN useradd --create-home appuser
 USER appuser

@@ -4,6 +4,12 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      # CodeQL's analyze step refuses a configuration that init wrote under a
+      # different release, so a bump to one step alone fails the CodeQL job.
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
 
   - package-ecosystem: "docker"
     directories:
@@ -11,6 +17,32 @@ updates:
       - "/.clusterfuzzlite"
     schedule:
       interval: "weekly"
+
+  # The OSS Scanner image mirrors CI's Linux unit-test job on the Python 3.12
+  # floor: UV_PYTHON names python3.12 and downloads are off, so a newer python
+  # base leaves `uv sync` no interpreter and the image cannot build. Digest
+  # updates to 3.12 still arrive; the tag moves when the floor does.
+  - package-ecosystem: "docker"
+    directory: "/.oss-scanner"
+    schedule:
+      interval: "weekly"
+    ignore:
+      - dependency-name: "python"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+
+  # The hash-pinned requirements the build images and the unlocked-resolution
+  # CI job install with --require-hashes: pip's own bootstrap, and the fuzz
+  # image's atheris and pyinstaller.
+  - package-ecosystem: "pip"
+    directories:
+      - "/scripts"
+      - "/.clusterfuzzlite"
+    schedule:
+      interval: "weekly"
+    ignore:
+      # The fuzz image installs the pyinstaller base-builder's
+      # install_python.sh pins; it moves when OSS-Fuzz's does.
+      - dependency-name: "pyinstaller"
 
   # The stack `cgr daemon up` renders from codebase_rag/docker-compose.yaml:
   # every image is pinned by digest, so bumps arrive here (issue #2409).
@@ -49,6 +81,14 @@ updates:
     directory: "/codebase_rag/parsers/go_frontend/gotypes"
     schedule:
       interval: "monthly"
+    # Every x/tools minor release raises its `go` directive to the newest Go,
+    # and taking it raised the helper's with it: the helper builds with
+    # GOTOOLCHAIN=local, so every older Go lost the go/types frontend (issue
+    # #2395). Patch releases still arrive; a minor bump is taken by hand when
+    # the supported Go floor moves.
+    ignore:
+      - dependency-name: "golang.org/x/tools"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
 
   - package-ecosystem: "nuget"
     directory: "/codebase_rag/parsers/csharp_frontend/roslyn"

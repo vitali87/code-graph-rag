@@ -7,9 +7,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag import constants as cs
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.py import ast_analyzer, variable_analyzer
 from codebase_rag.parsers.py.type_inference import PythonTypeInferenceEngine
+from codebase_rag.types_defs import NodeType
 
 if TYPE_CHECKING:
     from tree_sitter import Language, Parser, Query
@@ -330,6 +332,53 @@ def flatten() -> None:
 
 
 class TestSelfAssignmentAnalysisWithRealParsing:
+    @pytest.mark.parametrize("use_query", [False, True])
+    @pytest.mark.parametrize(
+        ("assignment", "expected"),
+        [
+            ("self._s: Store = None", "Store"),
+            ("self._s: Store | None = None", "Store"),
+            ("self._s: Optional[Store] = None", "Store"),
+            ("self._s: Union[Store, None] = None", "Store"),
+            ('self._s: "Store" = None', "Store"),
+            ("self._s: Store", "Store"),
+            ("self._s: Store = Cache()", "Store"),
+            ("self._s: Missing = Store()", None),
+            ("self._s: Missing", None),
+            ("self._s: ext.Store = Store()", None),
+            ("self._s = None", None),
+            ("self._s = None\n        self._s = Store()", "Store"),
+            ("self._s = Store()\n        self._s = None", "Store"),
+            ("self._s = store", "Store"),
+        ],
+    )
+    def test_self_attribute_type(
+        self,
+        python_parser: Parser,
+        engine: PythonTypeInferenceEngine,
+        assignment: str,
+        expected: str | None,
+        use_query: bool,
+    ) -> None:
+        engine.import_processor.import_mapping["test.module"] = {
+            "Store": "models.Store",
+            "Cache": "models.Cache",
+        }
+        engine.function_registry.get.side_effect = lambda name: (
+            NodeType.CLASS if name in {"models.Store", "models.Cache"} else None
+        )
+        if use_query:
+            engine.queries = {
+                cs.SupportedLanguage.PYTHON: {"language": python_parser.language}
+            }
+        tree = python_parser.parse(
+            f"class App:\n    def __init__(self, store: Store):\n        {assignment}\n".encode()
+        )
+        init_node = self._find_method_in_class(tree.root_node, "App", "__init__")
+        result = {"store": "Store"}
+        engine._analyze_self_assignments(init_node, result, "test.module")
+        assert result.get("self._s") == expected
+
     def test_init_with_self_assignments(
         self,
         python_parser: Parser,

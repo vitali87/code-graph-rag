@@ -8,19 +8,19 @@
 # line so the site is still locatable. Symbol-level linkage is a follow-up.
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from loguru import logger
+
 from .. import constants as cs
+from .. import logs as ls
 from ..utils.path_utils import cached_relative_path
 
 if TYPE_CHECKING:
     from ..capture import CaptureSelection
     from ..services import IngestorProtocol
-
-logger = logging.getLogger(__name__)
 
 _RULES_DIR = Path(__file__).parent / "ast_grep_rules"
 _SNIPPET_MAX = 200
@@ -118,11 +118,12 @@ class FindingAnalyzer:
 
             self._rules = load_finding_rules()
         except ImportError:
-            # ast-grep/pyyaml are the [ast-grep] extra; no-op if absent.
-            logger.warning("ast-grep-py unavailable; finding analyzer disabled")
+            # ast-grep/pyyaml are the [ast-grep] extra; no-op if absent. Only
+            # reached when findings were asked for, so it is worth a warning.
+            logger.warning(ls.AST_GREP_FINDINGS_UNAVAILABLE)
         except Exception as exc:  # noqa: BLE001
             # a malformed shipped rule file must not crash indexing.
-            logger.warning("ast-grep finding analyzer disabled: %s", exc)
+            logger.warning(ls.AST_GREP_FINDINGS_DISABLED, error=exc)
 
     def analyze(self, module_qn_to_file_path: dict[str, Path]) -> None:
         if not self._enabled or not self._rules:
@@ -143,7 +144,7 @@ class FindingAnalyzer:
             try:
                 root = SgRoot(source, lang_rules.ast_grep_id).root()
             except (RuntimeError, ValueError) as exc:
-                logger.warning("ast-grep failed to parse %s: %s", file_path, exc)
+                logger.warning(ls.AST_GREP_PARSE_FAILED, path=file_path, error=exc)
                 continue
             relative_path = cached_relative_path(file_path, self._repo_path).as_posix()
             for rule in lang_rules.rules:
@@ -161,7 +162,7 @@ class FindingAnalyzer:
             matches = root.find_all(**rule.body)
         except (RuntimeError, TypeError, ValueError) as exc:
             logger.warning(
-                "bad ast-grep rule %r for %s: %s", rule.rule_id, file_path, exc
+                ls.AST_GREP_BAD_RULE, rule=rule.rule_id, path=file_path, error=exc
             )
             return
         for node in matches:

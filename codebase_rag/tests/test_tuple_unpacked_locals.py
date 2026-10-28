@@ -25,6 +25,9 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.py.type_inference import PythonTypeInferenceEngine
 from evals.cgr_graph import _StatefulIngestor
 
+# Every case holds on the Rust scope walks and on their Python twins.
+pytestmark = pytest.mark.usefixtures("both_scope_walks")
+
 _DECOY_COLLIDES = "class Engine:\n    def resolve(self) -> int:\n        return 1\n"
 _DECOY_CONTROL = "class Engine:\n    def compute(self) -> int:\n        return 1\n"
 

@@ -113,6 +113,7 @@ class ProcessorFactory:
                 function_registry=self.function_registry,
                 exclude_paths=self.exclude_paths,
                 unignore_paths=self.unignore_paths,
+                module_qn_to_file_path=self.module_qn_to_file_path,
             )
         return self._import_processor
 
@@ -167,6 +168,10 @@ class ProcessorFactory:
                 class_field_element_types=self.definition_processor.class_field_element_types,
                 method_return_types=self.definition_processor.method_return_types,
                 go_function_return_types=self.definition_processor.go_function_return_types,
+                go_package_names=self.definition_processor.go_package_names,
+                go_declaration_variants=(
+                    self.definition_processor.go_declaration_variants
+                ),
                 go_call_sites=self.definition_processor.go_call_sites,
                 python_call_sites=self.definition_processor.python_call_sites,
                 python_external_sites=self.definition_processor.python_external_sites,
@@ -215,10 +220,15 @@ class ProcessorFactory:
                 macro_qns=self.definition_processor.macro_qns,
                 ast_cache=self.ast_cache,
                 go_package_names=self.definition_processor.go_package_names,
+                sql_sources=self.definition_processor.sql_sources,
                 rehydrated_definition_paths=(
                     self.definition_processor.rehydrated_definition_paths
                 ),
                 rust_function_modules=(self.definition_processor.rust_function_modules),
                 declared_module_qns=self.definition_processor.declared_module_qns,
+                rehydrated_interface_implementers=(
+                    self.definition_processor.rehydrated_interface_implementers
+                ),
+                go_links=self.definition_processor.go_link_state(),
             )
         return self._call_processor

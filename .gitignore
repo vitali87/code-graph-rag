@@ -8,15 +8,17 @@ wheels/
 
 # Virtual environments
 .venv
+# Local secrets (.env.local, .env.production, ...); .env.example is the
+# committed template
 .env
+.env.*
+!.env.example
 .tmp
 .ruff_cache/
 .mypy_cache/
 .pytest_cache/
 .claude/
 .qdrant_code_embeddings/
-CLAUDE.md
-AGENTS.md
 PROJECT.md
 .coverage
 .envrc
@@ -56,6 +58,7 @@ evals/oracles/scala_oracle/.bsp/
 .cgr-delombok-state.json
 .cgr-edit-history.json
 .cgr-edit-lock
+.cgr-sync-lock
 
 # Runtime call traces (pytest --cgr-trace default output)
 cgr-trace.jsonl
