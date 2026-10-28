@@ -232,7 +232,7 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         return None
 
     def _extract_full_method_call(self, attr_node: Node) -> str | None:
-        return safe_decode_text(attr_node) if attr_node.text else None
+        return safe_decode_text(attr_node) or None
 
     @recursion_guard(
         key_func=lambda self, method_call, module_qn, *_, **__: (

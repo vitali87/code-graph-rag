@@ -225,10 +225,8 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         for constructor_node, method_node, func_node in zip(
             constructor_names, method_names, method_functions
         ):
-            constructor_name = (
-                safe_decode_text(constructor_node) if constructor_node.text else None
-            )
-            method_name = safe_decode_text(method_node) if method_node.text else None
+            constructor_name = safe_decode_text(constructor_node) or None
+            method_name = safe_decode_text(method_node) or None
 
             if constructor_name and method_name:
                 constructor_qn = f"{module_qn}{cs.SEPARATOR_DOT}{constructor_name}"
@@ -857,7 +855,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             cs.TS_PROPERTY_IDENTIFIER,
         ):
             return None
-        return safe_decode_text(binding) if binding.text else None
+        return safe_decode_text(binding) or None
 
     def _js_format_qualified_name(
         self, module_qn: str, path_parts: list[str], final_name: str

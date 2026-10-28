@@ -413,7 +413,7 @@ def extension_receiver_type(method_node: Node) -> str | None:
     if not has_this:
         return None
     type_node = first.child_by_field_name(cs.FIELD_TYPE)
-    name = safe_decode_text(type_node) if type_node and type_node.text else None
+    name = safe_decode_text(type_node) or None
     return annotate_type_ref(name) if name else None
 
 
@@ -556,7 +556,7 @@ def _operator_name(method_node: Node) -> str | None:
     else:
         return None
     node = method_node.child_by_field_name(field)
-    symbol = safe_decode_text(node) if node is not None and node.text else None
+    symbol = safe_decode_text(node) or None
     return cs.TS_CSHARP_OPERATOR_NAME_PREFIX + symbol if symbol else None
 
 
@@ -572,7 +572,7 @@ def synthesize_method_name(method_node: Node) -> str | None:
     ):
         return _operator_name(method_node)
     name_node = method_node.child_by_field_name(cs.FIELD_NAME)
-    name = safe_decode_text(name_node) if name_node and name_node.text else None
+    name = safe_decode_text(name_node) or None
     if name and method_node.type == cs.TS_CSHARP_DESTRUCTOR_DECLARATION:
         return cs.TS_CSHARP_DESTRUCTOR_NAME_PREFIX + name
     # A reserved keyword as the name means tree-sitter parse-recovered a broken

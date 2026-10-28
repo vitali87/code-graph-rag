@@ -126,10 +126,7 @@ class JsTsModuleSystemMixin:
         if not function_node or function_node.type != cs.TS_IDENTIFIER:
             return None
 
-        if (
-            function_node.text is None
-            or safe_decode_text(function_node) != cs.JS_REQUIRE_KEYWORD
-        ):
+        if safe_decode_text(function_node) != cs.JS_REQUIRE_KEYWORD:
             return None
 
         arguments_node = value_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
@@ -153,7 +150,7 @@ class JsTsModuleSystemMixin:
         language: cs.SupportedLanguage,
     ) -> None:
         if child.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN:
-            if child.text is not None and (name := safe_decode_text(child)):
+            if name := safe_decode_text(child):
                 self._process_commonjs_import(name, module_name, module_qn, language)
             return
 

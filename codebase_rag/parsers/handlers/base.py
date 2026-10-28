@@ -57,7 +57,7 @@ class BaseLanguageHandler:
         return f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
 
     def extract_base_class_name(self, base_node: ASTNode) -> str | None:
-        return safe_decode_text(base_node) if base_node.text else None
+        return safe_decode_text(base_node) or None
 
     def extract_decorators(self, node: ASTNode) -> list[str]:
         return []

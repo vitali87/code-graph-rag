@@ -59,4 +59,4 @@ class CppHandler(BaseLanguageHandler):
         ):
             return safe_decode_text(name_node)
 
-        return safe_decode_text(base_node) if base_node.text else None
+        return safe_decode_text(base_node) or None

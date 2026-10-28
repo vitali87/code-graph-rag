@@ -28,7 +28,7 @@ def php_base_simple_name(node: Node) -> str | None:
         for child in node.children:
             if child.type == cs.TS_PHP_NAME:
                 last = child
-        return safe_decode_text(last) if last and last.text else None
+        return safe_decode_text(last) or None
     return None
 
 
@@ -40,10 +40,10 @@ def _csharp_base_written_name(node: Node) -> str | None:
     # punctuation (`:`, `,`) yield None so they are dropped.
     match node.type:
         case cs.TS_CSHARP_IDENTIFIER:
-            return safe_decode_text(node) if node.text else None
+            return safe_decode_text(node) or None
         case cs.TS_CSHARP_GENERIC_NAME:
             ident = find_child_by_type(node, cs.TS_CSHARP_IDENTIFIER)
-            return safe_decode_text(ident) if ident and ident.text else None
+            return safe_decode_text(ident) or None
         case cs.TS_CSHARP_QUALIFIED_NAME:
             return _csharp_qualified_base_name(node)
         case cs.TS_CSHARP_PRIMARY_CONSTRUCTOR_BASE_TYPE:
@@ -114,7 +114,7 @@ def _csharp_base_arity(node: Node) -> int:
             ),
             0,
         )
-    text = safe_decode_text(node) if node.text else None
+    text = safe_decode_text(node) or None
     return csharp_utils.generic_arity_of_type_text(text) if text else 0
 
 
@@ -333,7 +333,7 @@ def _scala_base_written_name(node: Node) -> str | None:
                 cs.TS_SCALA_STABLE_TYPE_IDENTIFIER,
                 cs.TS_TYPE_IDENTIFIER,
             ):
-                return safe_decode_text(child) if child.text else None
+                return safe_decode_text(child) or None
         return None
     if node.type == cs.TS_TYPE_IDENTIFIER and node.text:
         return safe_decode_text(node)
