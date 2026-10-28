@@ -1260,18 +1260,6 @@ HASH_CACHE_SAVE_FAILED = (
     "Failed to save hash cache to {path}: {error} "
     "(errno={errno} strerror={strerror} failing_path={failing_path})"
 )
-# A scoped re-ingest backdates the hash cache to the instant it observed
-# (`_reingest_update_hashes`); these name that step, distinct from the
-# atomic publish's own temporary-file cleanup below.
-REINGEST_CACHE_STAMP_FAILED = (
-    "Could not backdate {path} to the observed instant ({error}); removing it so "
-    "the next run rebuilds rather than trusting a stamp that can hide edits"
-)
-REINGEST_CACHE_STAMP_CLEANUP_FAILED = (
-    "Could not remove {path} after its backdate failed ({error}); it keeps a write "
-    "time later than any edit made during this run, so the next run may skip that "
-    "file. Delete it by hand, or re-run once the path is writable"
-)
 CACHE_STAMP_CLEANUP_FAILED = (
     "Could not remove the temporary cache file {path} ({error}); it is inert, since "
     "nothing reads a .tmp path, but it can be deleted by hand"

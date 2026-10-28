@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from codebase_rag import constants as cs
-from codebase_rag.graph_updater import _hash_file, _load_hash_cache, _save_hash_cache
+from codebase_rag.graph_updater import _hash_file, _load_hash_cache, _publish_hash_cache
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.utils import safe_decode_with_fallback
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
@@ -256,7 +256,7 @@ def profile_hash_cache_io():
         cache_data = {f"path/to/file_{i}.py": hashlib.sha256(f"content_{i}".encode()).hexdigest() for i in range(1000)}
         cache_path = tmp / ".file_hashes.json"
 
-        r = benchmark(_save_hash_cache, cache_path, cache_data, runs=5, label=f"save hash cache ({len(cache_data)} entries)")
+        r = benchmark(_publish_hash_cache, cache_path, cache_data, None, runs=5, label=f"save hash cache ({len(cache_data)} entries)")
         results.append(r)
         print(f"  {r['label']}: avg={r['avg_ms']:.2f}ms, size={cache_path.stat().st_size/1024:.1f}KB")
 

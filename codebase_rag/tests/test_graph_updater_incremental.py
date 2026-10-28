@@ -1,6 +1,7 @@
 import errno
 import json
 import os
+import sys
 import time
 from collections import Counter
 from pathlib import Path
@@ -19,7 +20,7 @@ from codebase_rag.graph_updater import (
     _hash_file,
     _hash_file_with_bytes,
     _load_hash_cache,
-    _save_hash_cache,
+    _publish_hash_cache,
 )
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import force_mtime_after_cache
@@ -184,7 +185,7 @@ class TestHashCacheIO:
     def test_save_and_load_cache(self, temp_repo: Path) -> None:
         cache_path = state_file(temp_repo, cs.HASH_CACHE_FILENAME)
         data = {"module_a.py": "abc123", "module_b.py": "def456"}
-        _save_hash_cache(cache_path, data)
+        _publish_hash_cache(cache_path, data, None)
 
         assert cache_path.is_file()
         loaded = _load_hash_cache(cache_path)
@@ -201,13 +202,13 @@ class TestHashCacheIO:
 
     def test_save_creates_parent_dirs(self, temp_repo: Path) -> None:
         cache_path = temp_repo / "subdir" / "nested" / cs.HASH_CACHE_FILENAME
-        _save_hash_cache(cache_path, {"a.py": "hash1"})
+        _publish_hash_cache(cache_path, {"a.py": "hash1"}, None)
         assert cache_path.is_file()
 
     def test_cache_file_is_valid_json(self, temp_repo: Path) -> None:
         cache_path = state_file(temp_repo, cs.HASH_CACHE_FILENAME)
         data = {"file.py": "sha256hash"}
-        _save_hash_cache(cache_path, data)
+        _publish_hash_cache(cache_path, data, None)
         with cache_path.open() as f:
             parsed = json.load(f)
         assert parsed == data
@@ -2479,3 +2480,42 @@ class TestHashCachePublishSymlinkSafety:
         assert graph_updater_module._publish_hash_cache(
             tmp_path / "cache3.json", {"a.py": "z"}, None
         ), "an unstamped publish must not be refused"
+
+
+class TestReingestHashCachePublish:
+    """A scoped re-ingest publishes the cache the way `run()` does (#1700)."""
+
+    @staticmethod
+    def _reingest(cache_path: Path, data: bytes) -> None:
+        GraphUpdater._reingest_update_hashes(
+            MagicMock(),
+            cache_path,
+            {"a.py": "old"},
+            {"a.py": Path("a.py")},
+            {"a.py": data},
+            {},
+        )
+
+    def test_the_cache_keeps_the_instant_it_was_observed_at(
+        self, temp_repo: Path
+    ) -> None:
+        cache_path = state_file(temp_repo, cs.HASH_CACHE_FILENAME)
+        _publish_hash_cache(cache_path, {"a.py": "old"}, 1_700_000_000.0)
+        self._reingest(cache_path, b"x = 1\n")
+        assert cache_path.stat().st_mtime == 1_700_000_000.0
+        assert _load_hash_cache(cache_path)["a.py"] != "old"
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privilege")
+    def test_a_link_at_the_cache_path_is_replaced_not_written_through(
+        self, temp_repo: Path, tmp_path: Path
+    ) -> None:
+        # The old path opened the cache with Path.open("w"), which followed a
+        # link planted at its name and truncated the link's target.
+        victim = tmp_path / "victim.txt"
+        victim.write_text("keep me", encoding="utf-8")
+        cache_path = state_file(temp_repo, cs.HASH_CACHE_FILENAME)
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.symlink_to(victim)
+        self._reingest(cache_path, b"x = 1\n")
+        assert victim.read_text(encoding="utf-8") == "keep me"
+        assert not cache_path.is_symlink()

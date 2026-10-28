@@ -480,57 +480,37 @@ def _warnings_during(action: Callable[[], object]) -> list[str]:
     return lines
 
 
-def test_reingest_removes_the_cache_when_it_cannot_backdate_it(
+def test_reingest_keeps_the_previous_cache_when_it_cannot_stamp_the_new_one(
     fixture_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # A cache stamped with the wrong instant hides edits from the next run,
-    # so a failed backdate removes it and says so with its own message.
+    # A cache stamped with the wrong instant hides edits from the next run.
+    # The new cache is stamped before it is published, so a failed stamp
+    # publishes nothing: the previous cache stays exactly as it was, which
+    # costs the next run a rescan of the re-ingested files and nothing else.
     store = _StatefulIngestor()
     updater = _updater(store, fixture_root)
     updater.run(force=True)
     cache = state_file(fixture_root, cs.HASH_CACHE_FILENAME)
+    before, mtime_before = cache.read_bytes(), cache.stat().st_mtime
     changed, deleted = edit_rename_callee(fixture_root)
 
     def failing_utime(path: object, times: object = None, **kwargs: object) -> None:
         raise OSError(1, "EPERM utime")
 
+    # Registered as descriptor-capable like the real one, so the publish takes
+    # its usual stamp-through-the-descriptor branch and that call fails.
     monkeypatch.setattr(os, "utime", failing_utime)
+    monkeypatch.setattr(os, "supports_fd", os.supports_fd | {failing_utime})
     warnings = _warnings_during(lambda: updater.reingest(changed, deleted=deleted))
 
-    assert not cache.exists()
+    assert cache.read_bytes() == before
+    assert cache.stat().st_mtime == mtime_before
     assert any(
-        "Could not backdate" in line and "EPERM utime" in line for line in warnings
+        "Failed to save hash cache" in line and "EPERM utime" in line
+        for line in warnings
     )
-
-
-def test_reingest_reports_a_cache_it_could_neither_backdate_nor_remove(
-    fixture_root: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    store = _StatefulIngestor()
-    updater = _updater(store, fixture_root)
-    updater.run(force=True)
-    cache = state_file(fixture_root, cs.HASH_CACHE_FILENAME)
-    changed, deleted = edit_rename_callee(fixture_root)
-
-    def failing_utime(path: object, times: object = None, **kwargs: object) -> None:
-        raise OSError(1, "EPERM utime")
-
-    real_unlink = Path.unlink
-
-    def failing_unlink(self: Path, missing_ok: bool = False) -> None:
-        if self == cache:
-            raise OSError(1, "EPERM unlink")
-        real_unlink(self, missing_ok=missing_ok)
-
-    monkeypatch.setattr(os, "utime", failing_utime)
-    monkeypatch.setattr(Path, "unlink", failing_unlink)
-    warnings = _warnings_during(lambda: updater.reingest(changed, deleted=deleted))
-
-    assert cache.exists()
-    assert any("Could not backdate" in line for line in warnings)
-    assert any(
-        "Could not remove" in line and "EPERM unlink" in line for line in warnings
-    )
+    # Nor is the temporary the new cache was built in left behind.
+    assert not list(cache.parent.glob(f"{cache.name}.*.tmp"))
 
 
 TYPED_FILES = {

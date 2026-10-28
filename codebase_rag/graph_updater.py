@@ -355,9 +355,12 @@ def _vanished(filepath: Path) -> bool:
     return False
 
 
-def _hash_file(filepath: Path) -> str:
-    data = filepath.read_bytes()
+def _digest(data: bytes) -> str:
     return hashlib.md5(data, usedforsecurity=False).hexdigest()
+
+
+def _hash_file(filepath: Path) -> str:
+    return _digest(filepath.read_bytes())
 
 
 def _opens_for_reading(path: Path) -> bool:
@@ -375,7 +378,7 @@ def _hash_file_with_bytes(filepath: Path) -> tuple[str, bytes] | None:
     except OSError as e:
         logger.warning(ls.FILE_UNREADABLE, path=filepath, error=e)
         return None
-    return hashlib.md5(data, usedforsecurity=False).hexdigest(), data
+    return _digest(data), data
 
 
 def _load_hash_cache(cache_path: Path) -> FileHashCache:
@@ -542,23 +545,6 @@ def _save_exclusion_state(state_path: Path, state: dict[str, list[str] | str]) -
         )
     except OSError:
         return None
-
-
-def _save_hash_cache(cache_path: Path, hashes: FileHashCache) -> None:
-    try:
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        with cache_path.open("w", encoding="utf-8") as f:
-            json.dump(hashes, f, indent=2)
-        logger.info(ls.HASH_CACHE_SAVED, count=len(hashes), path=cache_path)
-    except OSError as e:
-        logger.warning(
-            ls.HASH_CACHE_SAVE_FAILED,
-            path=cache_path,
-            error=e,
-            errno=getattr(e, "errno", None),
-            strerror=getattr(e, "strerror", None),
-            failing_path=getattr(e, "filename", None),
-        )
 
 
 # Bounded so a directory that somehow rejects every candidate ends the publish
@@ -9326,31 +9312,20 @@ class GraphUpdater:
             if data is None:
                 hashes.pop(key, None)
             else:
-                hashes[key] = hashlib.md5(data, usedforsecurity=False).hexdigest()
+                hashes[key] = _digest(data)
         for key in gone:
             hashes.pop(key, None)
-        _save_hash_cache(cache_path, hashes)
         # The cache's mtime is the instant every file NOT in it was last
         # judged (`_is_already_in_sync` and the walk skip files no newer
         # than it). Writing moves it to now, which would hide an edit made
         # before this call to a file this call was not told about: the next
         # update would read it as older than the cache and keep the stale
-        # hash. Put the previous instant back; the files re-ingested here
-        # are newer than it, so the next run re-hashes them and finds them
-        # already current. Fail closed like `run()`: a cache stamped with
-        # the wrong time is worse than no cache.
-        try:
-            os.utime(cache_path, (observed_at, observed_at))
-        except OSError as e:
-            logger.warning(ls.REINGEST_CACHE_STAMP_FAILED, path=cache_path, error=e)
-            try:
-                cache_path.unlink(missing_ok=True)
-            except OSError as unlink_error:
-                logger.warning(
-                    ls.REINGEST_CACHE_STAMP_CLEANUP_FAILED,
-                    path=cache_path,
-                    error=unlink_error,
-                )
+        # hash. So the cache is published carrying the previous instant; the
+        # files re-ingested here are newer than it, so the next run re-hashes
+        # them and finds them already current. Published as `run()` publishes
+        # it, atomically and without following links (#1700): a failure leaves
+        # the previous cache, which costs only a rescan.
+        _publish_hash_cache(cache_path, hashes, observed_at)
 
     def has_indexed(self, path: Path) -> bool:
         """Whether the last run or re-ingest indexed the file at `path`.
