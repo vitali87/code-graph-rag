@@ -11,6 +11,8 @@ from loguru import logger
 from .. import constants as cs
 from .. import logs as ls
 from ..models import Dependency
+from ..types_defs import JsonValue
+from ..utils.json_io import load_json
 
 
 def _extract_pep508_package_name(dep_string: str) -> tuple[str, str]:
@@ -150,23 +152,39 @@ class RequirementsTxtParser(DependencyParser):
                     dependencies.append(Dependency(dep_name, version_spec))
 
 
+def _load_json_manifest(file_path: Path) -> JsonValue:
+    # load_json, not json.load: a manifest nested too deep for the stdlib
+    # decoder must read as unparsable content like any other bad JSON, not
+    # as a parser fault (#2261).
+    with open(file_path, encoding=cs.ENCODING_UTF8_SIG) as f:
+        return load_json(f)
+
+
+def _json_dependencies(data: JsonValue, key: str) -> list[Dependency]:
+    # npm and Composer both declare a dependency as name -> version string;
+    # anything else under the key is not a dependency either tool installs.
+    section = data.get(key) if isinstance(data, dict) else None
+    if not isinstance(section, dict):
+        return []
+    return [
+        Dependency(name, spec)
+        for name, spec in section.items()
+        if isinstance(spec, str)
+    ]
+
+
 class PackageJsonParser(DependencyParser):
     __slots__ = ()
     failure_message = ls.DEP_PARSE_ERROR_PACKAGE_JSON
 
     def _collect(self, file_path: Path, dependencies: list[Dependency]) -> None:
-        with open(file_path, encoding=cs.ENCODING_UTF8_SIG) as f:
-            data = json.load(f)
-
-        dependencies.extend(
-            Dependency(dep_name, dep_spec)
-            for key in (
-                cs.DEP_KEY_DEPENDENCIES,
-                cs.DEP_KEY_DEV_DEPS_JSON,
-                cs.DEP_KEY_PEER_DEPS,
-            )
-            for dep_name, dep_spec in data.get(key, {}).items()
-        )
+        data = _load_json_manifest(file_path)
+        for key in (
+            cs.DEP_KEY_DEPENDENCIES,
+            cs.DEP_KEY_DEV_DEPS_JSON,
+            cs.DEP_KEY_PEER_DEPS,
+        ):
+            dependencies.extend(_json_dependencies(data, key))
 
 
 class CargoTomlParser(DependencyParser):
@@ -262,19 +280,13 @@ class ComposerJsonParser(DependencyParser):
     failure_message = ls.DEP_PARSE_ERROR_COMPOSER
 
     def _collect(self, file_path: Path, dependencies: list[Dependency]) -> None:
-        with open(file_path, encoding=cs.ENCODING_UTF8_SIG) as f:
-            data = json.load(f)
-
-        deps = data.get(cs.DEP_KEY_REQUIRE, {})
+        data = _load_json_manifest(file_path)
         dependencies.extend(
-            Dependency(dep_name, dep_spec)
-            for dep_name, dep_spec in deps.items()
-            if dep_name != cs.DEP_EXCLUDE_PHP
+            dep
+            for dep in _json_dependencies(data, cs.DEP_KEY_REQUIRE)
+            if dep.name != cs.DEP_EXCLUDE_PHP
         )
-        dev_deps = data.get(cs.DEP_KEY_REQUIRE_DEV, {})
-        dependencies.extend(
-            Dependency(dep_name, dep_spec) for dep_name, dep_spec in dev_deps.items()
-        )
+        dependencies.extend(_json_dependencies(data, cs.DEP_KEY_REQUIRE_DEV))
 
 
 class CsprojParser(DependencyParser):

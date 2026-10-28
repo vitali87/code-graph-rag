@@ -993,3 +993,54 @@ class TestPubspecYamlParser:
             Dependency("http", "^1.0.0"),
             Dependency("test", "^1.24.0"),
         ]
+
+
+# Nested past the stdlib decoder's recursion limit: json.load raised
+# RecursionError, which skipped the unparsable-content branch.
+_TOO_DEEP_JSON = '{"dependencies": ' + "[" * 10_000 + "]" * 10_000 + "}"
+
+
+@pytest.mark.parametrize(
+    ("parser", "name"),
+    [(PackageJsonParser(), "package.json"), (ComposerJsonParser(), "composer.json")],
+    ids=["package.json", "composer.json"],
+)
+def test_a_too_deep_json_manifest_reads_as_unparsable(
+    tmp_path: Path, parser: PackageJsonParser | ComposerJsonParser, name: str
+) -> None:
+    manifest = tmp_path / name
+    manifest.write_text(_TOO_DEEP_JSON, encoding="utf-8")
+    parsed = parser.read(manifest)
+    assert parsed.dependencies == []
+    assert parsed.unparsable is not None
+
+
+@pytest.mark.parametrize(
+    ("parser", "name", "key"),
+    [
+        (PackageJsonParser(), "package.json", "dependencies"),
+        (ComposerJsonParser(), "composer.json", "require"),
+    ],
+    ids=["package.json", "composer.json"],
+)
+def test_a_json_manifest_keeps_only_string_version_specs(
+    tmp_path: Path,
+    parser: PackageJsonParser | ComposerJsonParser,
+    name: str,
+    key: str,
+) -> None:
+    manifest = tmp_path / name
+    manifest.write_text(
+        json.dumps({key: {"good": "^1.0.0", "odd": {"version": "1"}, "num": 2}}),
+        encoding="utf-8",
+    )
+    assert parser.parse(manifest) == [Dependency("good", "^1.0.0")]
+
+
+def test_a_json_manifest_that_is_not_an_object_declares_nothing(
+    tmp_path: Path,
+) -> None:
+    manifest = tmp_path / "package.json"
+    manifest.write_text("[1, 2, 3]", encoding="utf-8")
+    parsed = PackageJsonParser().read(manifest)
+    assert parsed.dependencies == []
