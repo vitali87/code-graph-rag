@@ -362,7 +362,7 @@ class StackManager:
                 raise StackError(
                     scs.ERR_COMPOSE_FILE_MISSING.format(path=self.package_compose)
                 )
-            logger.info(scs.MSG_RENDERING_COMPOSE.format(path=target))
+            logger.info(ls.STACK_RENDERING_COMPOSE.format(path=target))
             shutil.copyfile(self.package_compose, target)
         else:
             self._warn_if_ports_are_public(target)
@@ -388,7 +388,7 @@ class StackManager:
         if not floating:
             return
         logger.warning(
-            scs.WARN_COMPOSE_IMAGES_FLOATING.format(
+            ls.STACK_COMPOSE_IMAGES_FLOATING.format(
                 path=compose_file,
                 pins="; ".join(
                     scs.IMAGE_PIN_PAIR.format(
@@ -448,7 +448,7 @@ class StackManager:
         if not public:
             return
         logger.warning(
-            scs.WARN_COMPOSE_PORTS_PUBLIC.format(
+            ls.STACK_COMPOSE_PORTS_PUBLIC.format(
                 path=compose_file, mappings=", ".join(public)
             )
         )
@@ -699,14 +699,14 @@ class StackManager:
         try:
             return memgraph_accepts_anonymous(self.memgraph_host, self.memgraph_port)
         except ChildProcessError as e:
-            logger.warning(scs.WARN_MEMGRAPH_ACCESS_UNCHECKED.format(detail=e))
+            logger.warning(ls.STACK_MEMGRAPH_ACCESS_UNCHECKED.format(detail=e))
             return True
 
     def _memgraph_anonymous_access(self) -> scs.AnonymousAccess:
         try:
             return memgraph_anonymous_access(self.memgraph_host, self.memgraph_port)
         except ChildProcessError as e:
-            logger.warning(scs.WARN_MEMGRAPH_ACCESS_UNCHECKED.format(detail=e))
+            logger.warning(ls.STACK_MEMGRAPH_ACCESS_UNCHECKED.format(detail=e))
             return scs.AnonymousAccess.ALLOWED
 
     def _compose_env(self) -> dict[str, str]:
@@ -790,7 +790,7 @@ class StackManager:
         # is only this start's to stop if `up -d` created or started it.
         self._raise_if_open(self._services_accepting_anonymous())
         self._containers_before_start = self._running_containers()
-        logger.info(scs.MSG_STARTING_STACK)
+        logger.info(ls.STACK_STARTING)
         # `up -d` that fails or is cut short may already have started some
         # containers, and the credential check in wait_healthy never runs.
         try:
@@ -810,10 +810,10 @@ class StackManager:
             output = "\n".join(
                 part for part in (result.stdout.strip(), result.stderr.strip()) if part
             )
-            logger.debug(scs.MSG_COMPOSE_UP_OUTPUT.format(output=output))
+            logger.debug(ls.STACK_COMPOSE_UP_OUTPUT.format(output=output))
             detail, service = _compose_failure(output, self.project_name)
             if service == scs.SERVICE_LAB and self._core_services_running():
-                logger.warning(scs.WARN_LAB_NOT_STARTED.format(detail=detail))
+                logger.warning(ls.STACK_LAB_NOT_STARTED.format(detail=detail))
                 return
             if service is not None:
                 detail = scs.ERR_SERVICE_NOT_STARTED.format(
@@ -847,7 +847,7 @@ class StackManager:
             return
         if shutil.which(scs.DOCKER_BIN) is None:
             raise StackError(scs.ERR_DOCKER_NOT_INSTALLED)
-        logger.info(scs.MSG_STOPPING_STACK)
+        logger.info(ls.STACK_STOPPING)
         result = subprocess.run(
             self._compose_cmd(command, *services),
             capture_output=True,
@@ -884,7 +884,7 @@ class StackManager:
         return completed.returncode
 
     def restart(self) -> None:
-        logger.info(scs.MSG_RESTARTING_STACK)
+        logger.info(ls.STACK_RESTARTING)
         self.down()
         self.up()
 
@@ -921,7 +921,7 @@ class StackManager:
 
     def _wait_for_memgraph(self, timeout: float) -> None:
         logger.info(
-            scs.MSG_WAITING_FOR_HEALTH.format(
+            ls.STACK_WAITING_FOR_HEALTH.format(
                 service=scs.SERVICE_MEMGRAPH,
                 host=self.memgraph_host,
                 port=self.memgraph_port,
@@ -942,7 +942,7 @@ class StackManager:
 
     def _wait_for_qdrant(self, timeout: float) -> None:
         logger.info(
-            scs.MSG_WAITING_FOR_HEALTH.format(
+            ls.STACK_WAITING_FOR_HEALTH.format(
                 service=scs.SERVICE_QDRANT,
                 host=self.qdrant_host,
                 port=self.qdrant_port,
@@ -971,9 +971,7 @@ class StackManager:
             access = {service: self._anonymous_access(service) for service in pending}
             if open_services := _with_access(access, scs.AnonymousAccess.ALLOWED):
                 logger.warning(
-                    scs.WARN_START_LEFT_STACK_OPEN.format(
-                        services=", ".join(open_services)
-                    )
+                    ls.STACK_START_LEFT_OPEN.format(services=", ".join(open_services))
                 )
                 self._stop_open_services(open_services)
             pending = _with_access(access, scs.AnonymousAccess.NO_ANSWER)
@@ -981,7 +979,7 @@ class StackManager:
                 return
             if not waiting:
                 logger.info(
-                    scs.MSG_CHECKING_STARTED_SERVICES.format(
+                    ls.STACK_CHECKING_STARTED_SERVICES.format(
                         timeout=scs.STARTED_SERVICES_CHECK_TIMEOUT_S,
                         services=", ".join(pending),
                     )
@@ -1006,7 +1004,7 @@ class StackManager:
         started, found_running = self._started_here(open_services)
         if found_running:
             logger.warning(
-                scs.WARN_OPEN_SERVICES_LEFT_RUNNING.format(
+                ls.STACK_OPEN_SERVICES_LEFT_RUNNING.format(
                     services=", ".join(found_running)
                 )
             )
@@ -1017,7 +1015,7 @@ class StackManager:
             self.stop(*started)
         except (StackError, subprocess.TimeoutExpired, OSError) as e:
             logger.warning(
-                scs.WARN_OPEN_SERVICES_NOT_STOPPED.format(
+                ls.STACK_OPEN_SERVICES_NOT_STOPPED.format(
                     services=", ".join(started), detail=e
                 )
             )
@@ -1110,7 +1108,7 @@ class StackManager:
         self.locate_published_qdrant()
         current = self.status()
         if current.state == scs.StackState.RUNNING:
-            logger.info(scs.MSG_STACK_ALREADY_RUNNING)
+            logger.info(ls.STACK_ALREADY_RUNNING)
             # The start path warns via ensure_compose_file; a stack that is
             # already up never reaches it, and its long-lived compose file is
             # exactly the profile of a pre-#1012 public binding (issue #1380).
@@ -1124,7 +1122,7 @@ class StackManager:
         self.wait_healthy()
         final = self.status()
         logger.info(
-            scs.MSG_STACK_HEALTHY.format(
+            ls.STACK_HEALTHY.format(
                 memgraph=final.memgraph_endpoint,
                 qdrant=final.qdrant_endpoint,
             )

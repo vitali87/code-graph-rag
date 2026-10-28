@@ -28,6 +28,7 @@ from urllib.parse import unquote, urlparse
 from loguru import logger
 
 from .. import constants as cs
+from .. import logs as ls
 from .records import (
     CallRecord,
     FramePoint,
@@ -193,7 +194,7 @@ def _report_resolution(stats: Counter[SourceMapOutcome]) -> None:
         return
     resolved = stats[SourceMapOutcome.RESOLVED]
     logger.info(
-        cs.TRACE_MSG_SOURCEMAP_RESOLUTION.format(
+        ls.TRACE_SOURCEMAP_RESOLUTION.format(
             resolved=resolved, total=total, rate=f"{resolved / total:.0%}"
         )
     )
@@ -201,7 +202,7 @@ def _report_resolution(stats: Counter[SourceMapOutcome]) -> None:
         count = stats[outcome]
         if outcome is not SourceMapOutcome.RESOLVED and count:
             logger.info(
-                cs.TRACE_MSG_SOURCEMAP_DETAIL.format(outcome=outcome.value, count=count)
+                ls.TRACE_SOURCEMAP_DETAIL.format(outcome=outcome.value, count=count)
             )
 
 

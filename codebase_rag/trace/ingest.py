@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Protocol
 from loguru import logger
 
 from .. import constants as cs
+from .. import logs as ls
 from ..cypher_queries import (
     CYPHER_TRACE_CALLABLES,
     CYPHER_TRACE_EXISTING_CALLS,
@@ -220,7 +221,7 @@ def ingest_trace(
         )
     ingestor.flush_all()
     logger.info(
-        cs.TRACE_MSG_INGEST_SUMMARY.format(
+        ls.TRACE_INGEST_SUMMARY.format(
             records=summary.records,
             edges=summary.edges,
             confirmed=summary.confirmed_static,

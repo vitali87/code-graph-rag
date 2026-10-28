@@ -98,10 +98,6 @@ TRACE_ERR_ADDRS_UNWOUND = (
     "under clang++), so some calls may name the wrong caller and the trace "
     "cannot honour exact invocation counts."
 )
-TRACE_MSG_ADDRS_UNRESOLVED = (
-    "{count} of {total} instrumented addresses did not symbolise to a source "
-    "position (missing debug info or stripped symbols); their edges were dropped."
-)
 TRACE_ERR_BAD_XDEBUG = (
     "{path} is not an Xdebug computerized trace (expected 'File format: 4')."
 )
@@ -223,25 +219,7 @@ TRACE_ERR_VERSION = (
 )
 TRACE_ERR_BAD_RECORD = "Trace file {path} line {line}: malformed record."
 
-TRACE_MSG_INGEST_SUMMARY = (
-    "records={records} edges={edges} confirmed_static={confirmed} "
-    "static_missed={missed} unresolved={unresolved}"
-)
-TRACE_MSG_UNRESOLVED_DETAIL = "  unresolved[{reason}]={count}"
-
-TRACE_MSG_SOURCEMAP_RESOLUTION = (
-    "source-map resolution: {resolved}/{total} project frames resolved to "
-    "source ({rate})"
-)
-TRACE_MSG_SOURCEMAP_DETAIL = "  source_map[{outcome}]={count}"
 
 TRACE_ERR_EBPF_LANGUAGE = (
     "Unsupported eBPF profile language {language!r}; supported: {supported}."
-)
-TRACE_MSG_EBPF_UNSYMBOLIZED = (
-    "eBPF symbolisation: {count} unsymbolised locations across {mappings} mappings"
-)
-TRACE_MSG_EBPF_MAPPING_DETAIL = "  unsymbolised[{name}]={count}"
-TRACE_MSG_EBPF_UNMAPPED = (
-    "{count} frames at {paths} unmapped build paths (add --path-map to re-anchor)"
 )

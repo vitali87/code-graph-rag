@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 from .. import constants as cs
+from .. import logs as ls
 from .records import (
     CallRecord,
     FramePoint,
@@ -295,7 +296,7 @@ def convert_instrumented(
 
     if unresolved:
         logger.warning(
-            cs.TRACE_MSG_ADDRS_UNRESOLVED.format(
+            ls.TRACE_ADDRS_UNRESOLVED.format(
                 count=len(unresolved), total=len(addresses)
             )
         )

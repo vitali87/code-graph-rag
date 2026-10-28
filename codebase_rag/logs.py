@@ -1579,3 +1579,113 @@ NATIVE_TREES_DISAGREE = (
     "The Rust tree walks read the probe tree differently from py-tree-sitter "
     "({check}, at a {node_type} node); Python walks the trees"
 )
+
+# Graph build pass counts
+GO_RECEIVER_METHODS_RESOLVED = "Resolved {count} Go receiver methods"
+CPP_OUT_OF_CLASS_METHODS_RESOLVED = "Resolved {count} deferred C++ out-of-class methods"
+CPP_NESTED_CONTAINMENTS_RESOLVED = "Resolved {count} deferred C++ nested containments"
+CPP_ORPHAN_CTORS_REGISTERED = "Registered {count} recovery-orphaned C++ ctors"
+CPP_INHERITANCE_BASES_RESOLVED = "Resolved {count} deferred C++ inheritance bases"
+CPP_MODULE_IMPLS_RESOLVED = "Resolved {count} C++20 module implementation links"
+CONTAINMENT_PARENTS_RESOLVED = "Resolved {count} deferred containment parents"
+VERIFIED_IMPORTS_EMITTED = "Emitted {count} verified IMPORTS edges"
+CLIENT_URLS_RESOLVED = "Resolved {count} client request URLs to endpoints"
+CONTRACT_ARTEFACTS_ANCHORED = "Anchored {count} artefacts to contract operations"
+EXPOSES_CLEANUP_UNAVAILABLE = "Stale EXPOSES cleanup unavailable; emission continues"
+EXPOSES_MARKER_NOT_UPDATED = "EXPOSES cleanup marker not updated"
+CPP_FORWARD_TYPES_REGISTERED = (
+    "Registered {count} forward-declared C/C++ types with no definition"
+)
+CPP_PROTOTYPES_REGISTERED = (
+    "Registered {count} C/C++ function prototypes with no definition"
+)
+INHERITANCE_PARENTS_RESOLVED = (
+    "Resolved {count} deferred inheritance/implements parents"
+)
+
+# What a failed `docker compose up` printed, in full: its progress lines
+# ("Container cgr-lab-1 Started", "<layer> Extracting 1B") buried the cause
+# in the error, so they are kept for DEBUG and the error names the cause
+# (issue #2407).
+STACK_COMPOSE_UP_OUTPUT = "docker compose up output:\n{output}"
+# Lab is an optional UI: with Memgraph and Qdrant up the stack is usable, and
+# `cgr daemon status` already says "running" (issue #2407).
+STACK_LAB_NOT_STARTED = (
+    "Memgraph Lab could not start: {detail}. Memgraph and Qdrant are up; "
+    "Lab is an optional UI."
+)
+STACK_START_LEFT_OPEN = (
+    "The start did not finish, and these services accept connections without "
+    "the configured credentials: {services}. Run 'cgr daemon down' and then "
+    "'cgr daemon up', which keeps the data volumes."
+)
+STACK_OPEN_SERVICES_LEFT_RUNNING = (
+    "These services accept connections without the configured credentials "
+    "but were already running before this start, so they are left running: "
+    "{services}. Run 'cgr daemon down' and then 'cgr daemon up', which keeps "
+    "the data volumes."
+)
+STACK_CHECKING_STARTED_SERVICES = (
+    "The start did not finish; waiting up to {timeout:g}s for an answer from "
+    "{services} to check for access without the configured credentials..."
+)
+STACK_OPEN_SERVICES_NOT_STOPPED = (
+    "Could not stop the services that accept connections without the "
+    "configured credentials ({services}): {detail}. Run 'cgr daemon down' "
+    "before the stack is used."
+)
+STACK_STARTING = "Starting cgr stack..."
+STACK_HEALTHY = "Stack is healthy ({memgraph}, {qdrant})."
+STACK_ALREADY_RUNNING = "Stack already running."
+STACK_STOPPING = "Stopping cgr stack..."
+STACK_RESTARTING = "Restarting cgr stack..."
+STACK_RENDERING_COMPOSE = "Rendering compose file to {path}"
+STACK_WAITING_FOR_HEALTH = "Waiting for {service} on {host}:{port}..."
+STACK_MEMGRAPH_PROBE_OUTPUT = "mgclient output while probing Memgraph: {output}"
+STACK_MEMGRAPH_PROBE_TIMED_OUT = "Memgraph gave the probe no answer within {timeout}s"
+STACK_MEMGRAPH_ACCESS_UNCHECKED = (
+    "Could not check whether Memgraph refuses connections without credentials, "
+    "so it is treated as accepting them: {detail}"
+)
+STACK_COMPOSE_IMAGES_FLOATING = (
+    "The compose file at {path} runs images without a pinned digest, so each "
+    "resolves to whatever is newest when it is pulled. The packaged stack "
+    "pins them: {pins}. To take the pins, run 'cgr daemon down', replace "
+    "those image lines (or delete the file to re-render it), then run "
+    "'cgr daemon up'."
+)
+STACK_COMPOSE_PORTS_PUBLIC = (
+    "The compose file at {path} publishes these ports on ALL interfaces, so "
+    "any host on your network can read the code graph from these "
+    "unauthenticated services: {mappings}. Run 'cgr daemon down' first, then "
+    "delete the file and run 'cgr daemon up' to re-render it with the loopback "
+    "bind, or add a '127.0.0.1:' prefix to each published port listed above "
+    "and then run 'cgr daemon down' followed by 'cgr daemon up'. Editing the "
+    "file alone changes nothing either: Docker fixes a container's published "
+    "ports when it is CREATED, so the running containers keep the old "
+    "bindings until they are recreated. "
+    "Deleting the file while the stack is UP changes nothing: the running "
+    "containers keep the old bindings and 'cgr daemon up' returns early "
+    "without re-rendering."
+)
+
+TRACE_ADDRS_UNRESOLVED = (
+    "{count} of {total} instrumented addresses did not symbolise to a source "
+    "position (missing debug info or stripped symbols); their edges were dropped."
+)
+TRACE_INGEST_SUMMARY = (
+    "records={records} edges={edges} confirmed_static={confirmed} "
+    "static_missed={missed} unresolved={unresolved}"
+)
+TRACE_SOURCEMAP_RESOLUTION = (
+    "source-map resolution: {resolved}/{total} project frames resolved to "
+    "source ({rate})"
+)
+TRACE_SOURCEMAP_DETAIL = "  source_map[{outcome}]={count}"
+TRACE_EBPF_UNSYMBOLIZED = (
+    "eBPF symbolisation: {count} unsymbolised locations across {mappings} mappings"
+)
+TRACE_EBPF_MAPPING_DETAIL = "  unsymbolised[{name}]={count}"
+TRACE_EBPF_UNMAPPED = (
+    "{count} frames at {paths} unmapped build paths (add --path-map to re-anchor)"
+)

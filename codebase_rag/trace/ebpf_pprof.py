@@ -58,6 +58,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 from .. import constants as cs
+from .. import logs as ls
 from .instrumented import _bare_name as _cpp_bare_name
 from .pprof import (
     _backfill_start_lines,
@@ -544,16 +545,16 @@ def _report(unsymbolised: Counter[str], unmapped_paths: Counter[str]) -> None:
     total_unsymbolised = sum(unsymbolised.values())
     if total_unsymbolised:
         logger.info(
-            cs.TRACE_MSG_EBPF_UNSYMBOLIZED.format(
+            ls.TRACE_EBPF_UNSYMBOLIZED.format(
                 count=total_unsymbolised, mappings=len(unsymbolised)
             )
         )
         for name, count in unsymbolised.most_common():
-            logger.info(cs.TRACE_MSG_EBPF_MAPPING_DETAIL.format(name=name, count=count))
+            logger.info(ls.TRACE_EBPF_MAPPING_DETAIL.format(name=name, count=count))
     total_unmapped = sum(unmapped_paths.values())
     if total_unmapped:
         logger.info(
-            cs.TRACE_MSG_EBPF_UNMAPPED.format(
+            ls.TRACE_EBPF_UNMAPPED.format(
                 count=total_unmapped, paths=len(unmapped_paths)
             )
         )

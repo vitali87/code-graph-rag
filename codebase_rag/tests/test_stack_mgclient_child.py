@@ -41,6 +41,7 @@ import pytest
 from loguru import logger
 
 from codebase_rag import constants as root_cs
+from codebase_rag import logs as ls
 from codebase_rag import mgclient_probe
 from codebase_rag.stack import constants as cs
 from codebase_rag.stack import health
@@ -821,7 +822,9 @@ def test_a_child_that_never_answers_is_not_reachable_and_says_so_at_debug(
     assert debug_records == [
         (
             "DEBUG",
-            cs.MSG_MEMGRAPH_PROBE_TIMED_OUT.format(timeout=cs.MGCLIENT_PROBE_TIMEOUT_S),
+            ls.STACK_MEMGRAPH_PROBE_TIMED_OUT.format(
+                timeout=cs.MGCLIENT_PROBE_TIMEOUT_S
+            ),
         )
     ]
 

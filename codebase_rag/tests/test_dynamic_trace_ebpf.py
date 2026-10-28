@@ -15,6 +15,7 @@ import pytest
 from loguru import logger
 
 from codebase_rag import constants as cs
+from codebase_rag import logs as ls
 from codebase_rag.trace.ebpf_pprof import (
     _prefix_matches,
     _reanchor,
@@ -959,7 +960,7 @@ def test_jvm_stem_matching_both_java_and_scala_is_ambiguous(tmp_path):
     # leaf, lambda) join the JDK class and the VM blob in the unmapped report,
     # 6 frames across 3 distinct paths, where the unambiguous fixture reports
     # only the 2 non-project frames.
-    expected = cs.TRACE_MSG_EBPF_UNMAPPED.format(count=6, paths=3)
+    expected = ls.TRACE_EBPF_UNMAPPED.format(count=6, paths=3)
     assert any(expected in m for m in messages)
 
 

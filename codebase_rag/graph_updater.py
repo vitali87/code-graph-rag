@@ -2458,7 +2458,7 @@ class GraphUpdater:
 
         go_methods = self.factory.definition_processor.resolve_deferred_go_methods()
         if go_methods:
-            logger.info("Resolved {} Go receiver methods", go_methods)
+            logger.info(ls.GO_RECEIVER_METHODS_RESOLVED.format(count=go_methods))
 
         if rehydrate:
             self._rehydrate_registry_from_graph()
@@ -2475,11 +2475,11 @@ class GraphUpdater:
         # parse-order-dependent way (issue #1552).
         corrected = self.factory.definition_processor.resolve_deferred_cpp_methods()
         if corrected:
-            logger.info("Resolved {} deferred C++ out-of-class methods", corrected)
+            logger.info(ls.CPP_OUT_OF_CLASS_METHODS_RESOLVED.format(count=corrected))
 
         contained = self.factory.definition_processor.resolve_deferred_cpp_containment()
         if contained:
-            logger.info("Resolved {} deferred C++ nested containments", contained)
+            logger.info(ls.CPP_NESTED_CONTAINMENTS_RESOLVED.format(count=contained))
 
         # After resolve_deferred_cpp_methods: an out-of-class method's span
         # is recorded only once its class binding resolves, and a macro use
@@ -2498,10 +2498,7 @@ class GraphUpdater:
             self.factory.definition_processor.resolve_deferred_forward_declarations()
         )
         if kept_forwards:
-            logger.info(
-                "Registered {} forward-declared C/C++ types with no definition",
-                kept_forwards,
-            )
+            logger.info(ls.CPP_FORWARD_TYPES_REGISTERED.format(count=kept_forwards))
 
         # After rehydration (an incremental run's class may live in an
         # unchanged header) and after forward declarations (a kept
@@ -2511,7 +2508,7 @@ class GraphUpdater:
             self.factory.definition_processor.resolve_deferred_cpp_artifacts()
         )
         if orphan_ctors:
-            logger.info("Registered {} recovery-orphaned C++ ctors", orphan_ctors)
+            logger.info(ls.CPP_ORPHAN_CTORS_REGISTERED.format(count=orphan_ctors))
 
         # After artifact resolution so a recovery-registered definition also
         # counts; a prototype duplicating any bodied definition is dropped.
@@ -2519,16 +2516,13 @@ class GraphUpdater:
             self.factory.definition_processor.resolve_deferred_cpp_prototypes()
         )
         if kept_prototypes:
-            logger.info(
-                "Registered {} C/C++ function prototypes with no definition",
-                kept_prototypes,
-            )
+            logger.info(ls.CPP_PROTOTYPES_REGISTERED.format(count=kept_prototypes))
 
         # After forward declarations so a base whose only representation is
         # a kept forward declaration still resolves to a real node.
         inherits = self.factory.definition_processor.resolve_deferred_cpp_inherits()
         if inherits:
-            logger.info("Resolved {} deferred C++ inheritance bases", inherits)
+            logger.info(ls.CPP_INHERITANCE_BASES_RESOLVED.format(count=inherits))
 
         # IMPORTS edges and the Rust sub-scope arbitration verify against
         # every module qn this run produced (files, inline modules,
@@ -2549,10 +2543,7 @@ class GraphUpdater:
         # unresolvable parent emits no edge instead of a phantom.
         generic_inherits = self.factory.definition_processor.resolve_deferred_inherits()
         if generic_inherits:
-            logger.info(
-                "Resolved {} deferred inheritance/implements parents",
-                generic_inherits,
-            )
+            logger.info(ls.INHERITANCE_PARENTS_RESOLVED.format(count=generic_inherits))
 
         # Every Go type and method is registered by now, rehydrated ones
         # included, so method sets are complete (issue #2483).
@@ -2562,14 +2553,14 @@ class GraphUpdater:
             self.factory.definition_processor.resolve_deferred_cpp_module_impls()
         )
         if module_impls:
-            logger.info("Resolved {} C++20 module implementation links", module_impls)
+            logger.info(ls.CPP_MODULE_IMPLS_RESOLVED.format(count=module_impls))
 
         # Last containment step: every node-registering pass above (deferred
         # C++ methods, Go receivers, kept forward declarations) must finish
         # before parent qns are verified against the registry.
         linked = self.factory.definition_processor.resolve_deferred_parent_links()
         if linked:
-            logger.info("Resolved {} deferred containment parents", linked)
+            logger.info(ls.CONTAINMENT_PARENTS_RESOLVED.format(count=linked))
         self._ungroup_rehydrated_non_partials()
         # Return/parameter annotations resolve against the complete registry
         # (issue #1527), so a type defined in a later file still gets its edge.
@@ -2971,7 +2962,7 @@ class GraphUpdater:
             known_module_paths
         )
         if imports_emitted:
-            logger.info("Emitted {} verified IMPORTS edges", imports_emitted)
+            logger.info(ls.VERIFIED_IMPORTS_EMITTED.format(count=imports_emitted))
 
         # LINQ query-operator edges join AFTER Pass 3 with the complete
         # function-location registry (both ends must be registered nodes).
@@ -3345,7 +3336,7 @@ class GraphUpdater:
         except Exception:
             # A delete that failed is owed exactly like one that was skipped.
             self._exposes_cleanup_skipped = True
-            logger.debug("Stale EXPOSES cleanup unavailable; emission continues")
+            logger.debug(ls.EXPOSES_CLEANUP_UNAVAILABLE)
 
     def _record_prune_pending(self, pending: bool) -> None:
         """Owe a cut-short orphan prune to the next run, or mark it settled.
@@ -3393,7 +3384,7 @@ class GraphUpdater:
         except OSError:
             # Best effort, as every other state file here: a read-only tree
             # must not lose the run to a marker it could not write.
-            logger.debug("EXPOSES cleanup marker not updated")
+            logger.debug(ls.EXPOSES_MARKER_NOT_UPDATED)
 
     def _emit_route_call_endpoints(self, only: set[str] | None = None) -> None:
         if not self.capture.rel_enabled(cs.RelationshipType.EXPOSES):
@@ -3694,7 +3685,7 @@ class GraphUpdater:
             return
         created = link_endpoints(self.ingestor)
         if created:
-            logger.info("Resolved {} client request URLs to endpoints", created)
+            logger.info(ls.CLIENT_URLS_RESOLVED.format(count=created))
             self.ingestor.flush_all()
         # Contract files name the operations the generated artefacts on both
         # sides implement, so they anchor after the artefacts exist.
@@ -3706,7 +3697,7 @@ class GraphUpdater:
             self.unignore_paths,
         )
         if anchored:
-            logger.info("Anchored {} artefacts to contract operations", anchored)
+            logger.info(ls.CONTRACT_ARTEFACTS_ANCHORED.format(count=anchored))
             self.ingestor.flush_all()
 
     def _recorded_module_qn(self, path: str) -> str:

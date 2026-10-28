@@ -56,11 +56,6 @@ ERR_DOCKER_DAEMON_DOWN = (
 )
 ERR_COMPOSE_NOT_AVAILABLE = "`docker compose` plugin not available. Install Docker Desktop v2+ or the compose plugin."
 ERR_STACK_START_FAILED = "Failed to bring stack up: {detail}"
-# What a failed `docker compose up` printed, in full: its progress lines
-# ("Container cgr-lab-1 Started", "<layer> Extracting 1B") buried the cause
-# in the error, so they are kept for DEBUG and the error names the cause
-# (issue #2407).
-MSG_COMPOSE_UP_OUTPUT = "docker compose up output:\n{output}"
 COMPOSE_ERROR_LINE = re.compile(r"\berror\b", re.IGNORECASE)
 # The failing container, named by the daemon's error ("endpoint cgr-lab-1")
 # or by Compose's own state line ("Container cgr-lab-1 Error"); the progress
@@ -75,54 +70,18 @@ COMPOSE_PORT_IN_USE = re.compile(
 )
 ERR_PORT_IN_USE = "{address} is already in use (set {variables} to move it)"
 ERR_SERVICE_NOT_STARTED = "{service} could not start: {detail}"
-# Lab is an optional UI: with Memgraph and Qdrant up the stack is usable, and
-# `cgr daemon status` already says "running" (issue #2407).
-WARN_LAB_NOT_STARTED = (
-    "Memgraph Lab could not start: {detail}. Memgraph and Qdrant are up; "
-    "Lab is an optional UI."
-)
 ERR_STACK_STOP_FAILED = "Failed to bring stack down: {detail}"
 COMPOSE_STOP_COMMAND = "stop"
-WARN_START_LEFT_STACK_OPEN = (
-    "The start did not finish, and these services accept connections without "
-    "the configured credentials: {services}. Run 'cgr daemon down' and then "
-    "'cgr daemon up', which keeps the data volumes."
-)
-WARN_OPEN_SERVICES_LEFT_RUNNING = (
-    "These services accept connections without the configured credentials "
-    "but were already running before this start, so they are left running: "
-    "{services}. Run 'cgr daemon down' and then 'cgr daemon up', which keeps "
-    "the data volumes."
-)
 # The running containers of one service, one ID per line.
 COMPOSE_PS_RUNNING_ARGS = ("ps", "--quiet", "--status", "running")
 # How long a start that did not finish waits for the services it started to
 # answer, so that one still initialising is checked too before it returns.
 STARTED_SERVICES_CHECK_TIMEOUT_S = 15.0
-MSG_CHECKING_STARTED_SERVICES = (
-    "The start did not finish; waiting up to {timeout:g}s for an answer from "
-    "{services} to check for access without the configured credentials..."
-)
-WARN_OPEN_SERVICES_NOT_STOPPED = (
-    "Could not stop the services that accept connections without the "
-    "configured credentials ({services}): {detail}. Run 'cgr daemon down' "
-    "before the stack is used."
-)
 ERR_STACK_NOT_HEALTHY = (
     "Stack started but {service} did not become healthy within {timeout}s."
 )
 ERR_COMPOSE_FILE_MISSING = "Compose file not found at {path}."
 
-MSG_USING_COMPOSE_FILE = "Using compose file at {path}"
-MSG_STARTING_STACK = "Starting cgr stack..."
-MSG_STACK_HEALTHY = "Stack is healthy ({memgraph}, {qdrant})."
-MSG_STACK_ALREADY_RUNNING = "Stack already running."
-MSG_STOPPING_STACK = "Stopping cgr stack..."
-MSG_STACK_STOPPED = "Stack stopped."
-MSG_RESTARTING_STACK = "Restarting cgr stack..."
-MSG_RENDERING_COMPOSE = "Rendering compose file to {path}"
-MSG_WAITING_FOR_HEALTH = "Waiting for {service} on {host}:{port}..."
-MSG_MEMGRAPH_PROBE_OUTPUT = "mgclient output while probing Memgraph: {output}"
 # The descriptor C code writes stderr to, whatever sys.stderr is bound to.
 NATIVE_STDERR_FD = 2
 # pymgclient's Windows wheels are MinGW builds, linked against this C runtime
@@ -131,16 +90,11 @@ MGCLIENT_WINDOWS_C_RUNTIME = "msvcrt"
 # Generous for a handshake and `RETURN 1` on this machine; a Memgraph that has
 # not answered by then is reported as not answering, as a refusal is.
 MGCLIENT_PROBE_TIMEOUT_S = 30.0
-MSG_MEMGRAPH_PROBE_TIMED_OUT = "Memgraph gave the probe no answer within {timeout}s"
 ERR_MGCLIENT_PROBE_CHILD_FAILED = (
     "The process probing Memgraph failed with exit code {code}: {output}"
 )
 ERR_MGCLIENT_PROBE_TIMED_OUT = (
     "The process probing Memgraph gave no answer within {timeout}s"
-)
-WARN_MEMGRAPH_ACCESS_UNCHECKED = (
-    "Could not check whether Memgraph refuses connections without credentials, "
-    "so it is treated as accepting them: {detail}"
 )
 # PyInstaller sets this attribute on sys in a frozen build.
 FROZEN_APP_ATTR = "frozen"
@@ -257,25 +211,4 @@ COMPOSE_QDRANT_HTTP_PORT_VAR = "QDRANT_HTTP_PORT"
 COMPOSE_DOTENV_FILENAME = ".env"
 # An image pinned by digest; the packaged compose file pins every service.
 IMAGE_DIGEST_MARKER = "@sha256:"
-WARN_COMPOSE_IMAGES_FLOATING = (
-    "The compose file at {path} runs images without a pinned digest, so each "
-    "resolves to whatever is newest when it is pulled. The packaged stack "
-    "pins them: {pins}. To take the pins, run 'cgr daemon down', replace "
-    "those image lines (or delete the file to re-render it), then run "
-    "'cgr daemon up'."
-)
 IMAGE_PIN_PAIR = "{service} {floating} -> {pinned}"
-WARN_COMPOSE_PORTS_PUBLIC = (
-    "The compose file at {path} publishes these ports on ALL interfaces, so "
-    "any host on your network can read the code graph from these "
-    "unauthenticated services: {mappings}. Run 'cgr daemon down' first, then "
-    "delete the file and run 'cgr daemon up' to re-render it with the loopback "
-    "bind, or add a '127.0.0.1:' prefix to each published port listed above "
-    "and then run 'cgr daemon down' followed by 'cgr daemon up'. Editing the "
-    "file alone changes nothing either: Docker fixes a container's published "
-    "ports when it is CREATED, so the running containers keep the old "
-    "bindings until they are recreated. "
-    "Deleting the file while the stack is UP changes nothing: the running "
-    "containers keep the old bindings and 'cgr daemon up' returns early "
-    "without re-rendering."
-)

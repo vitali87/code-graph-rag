@@ -17,6 +17,7 @@ from typing import IO, NamedTuple, Protocol
 from loguru import logger
 
 from .. import constants as cs
+from .. import logs as ls
 from .. import mgclient_probe
 from ..mgclient_compat import mgclient
 from ..types_defs import MgclientProbeReport, MgclientProbeRequest
@@ -119,7 +120,7 @@ def _log_mgclient_output(output: str) -> None:
     # Kept rather than dropped, for whoever is chasing a Memgraph that never
     # answers; the probe's own result is what reports it.
     if output := output.strip():
-        logger.debug(scs.MSG_MEMGRAPH_PROBE_OUTPUT.format(output=output))
+        logger.debug(ls.STACK_MEMGRAPH_PROBE_OUTPUT.format(output=output))
 
 
 def _mgclient_probe_command() -> list[str]:
@@ -166,7 +167,7 @@ def _mgclient_session_in_child(
         # depends on the probe, so each caller decides.
         _log_mgclient_output(_printed_before_the_timeout(e))
         logger.debug(
-            scs.MSG_MEMGRAPH_PROBE_TIMED_OUT.format(
+            ls.STACK_MEMGRAPH_PROBE_TIMED_OUT.format(
                 timeout=scs.MGCLIENT_PROBE_TIMEOUT_S
             )
         )
