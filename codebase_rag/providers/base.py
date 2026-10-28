@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import difflib
-import importlib.util
 import os
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, ClassVar
@@ -33,7 +32,7 @@ class ModelProvider(ABC):
 
     @abstractmethod
     def create_model(
-        self, model_id: str, **kwargs: str | int | None
+        self, model_id: str
     ) -> GoogleModel | OpenAIResponsesModel | OpenAIChatModel | AnthropicModel:
         pass
 
@@ -105,18 +104,21 @@ class GoogleProvider(ModelProvider):
     def __init__(
         self,
         api_key: str | None = None,
-        provider_type: cs.GoogleProviderType = cs.GoogleProviderType.GLA,
+        provider_type: cs.GoogleProviderType | None = None,
         project_id: str | None = None,
-        region: str = cs.DEFAULT_REGION,
+        region: str | None = None,
         service_account_file: str | None = None,
         thinking_budget: int | None = None,
         **kwargs: str | int | None,
     ) -> None:
         super().__init__(**kwargs)
         self.api_key = _resolve_api_key(api_key, cs.ENV_GOOGLE_API_KEY)
-        self.provider_type = provider_type
+        # `or`, not parameter defaults: get_provider_from_config passes every
+        # ModelConfig key, so an unset one arrives as None and a default would
+        # never apply (with no type, validate_config checked nothing).
+        self.provider_type = provider_type or cs.GoogleProviderType.GLA
         self.project_id = project_id
-        self.region = region
+        self.region = region or cs.DEFAULT_REGION
         self.service_account_file = service_account_file
         self.thinking_budget = thinking_budget
 
@@ -130,7 +132,7 @@ class GoogleProvider(ModelProvider):
         if self.provider_type == cs.GoogleProviderType.VERTEX and not self.project_id:
             raise ValueError(ex.GOOGLE_VERTEX_NO_PROJECT)
 
-    def create_model(self, model_id: str, **kwargs: str | int | None) -> GoogleModel:
+    def create_model(self, model_id: str) -> GoogleModel:
         from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
         from pydantic_ai.providers.google import (
             GoogleProvider as PydanticGoogleProvider,
@@ -180,20 +182,18 @@ class OpenAIProvider(ApiKeyProvider):
     def __init__(
         self,
         api_key: str | None = None,
-        endpoint: str = cs.OPENAI_DEFAULT_ENDPOINT,
+        endpoint: str | None = None,
         **kwargs: str | int | None,
     ) -> None:
         super().__init__(**kwargs)
         self.api_key = _resolve_api_key(api_key, cs.ENV_OPENAI_API_KEY)
-        self.endpoint = endpoint
+        self.endpoint = endpoint or cs.OPENAI_DEFAULT_ENDPOINT
 
     @property
     def provider_name(self) -> cs.Provider:
         return cs.Provider.OPENAI
 
-    def create_model(
-        self, model_id: str, **kwargs: str | int | None
-    ) -> OpenAIResponsesModel:
+    def create_model(self, model_id: str) -> OpenAIResponsesModel:
         from pydantic_ai.models.openai import OpenAIResponsesModel
         from pydantic_ai.providers.openai import (
             OpenAIProvider as PydanticOpenAIProvider,
@@ -211,12 +211,12 @@ class OllamaProvider(ModelProvider):
     def __init__(
         self,
         endpoint: str | None = None,
-        api_key: str = cs.DEFAULT_API_KEY,
+        api_key: str | None = None,
         **kwargs: str | int | None,
     ) -> None:
         super().__init__(**kwargs)
         self.endpoint = endpoint or settings.ollama_endpoint
-        self.api_key = api_key
+        self.api_key = api_key or cs.DEFAULT_API_KEY
 
     @property
     def provider_name(self) -> cs.Provider:
@@ -228,9 +228,7 @@ class OllamaProvider(ModelProvider):
         if not check_ollama_running(base_url):
             raise ValueError(ex.OLLAMA_NOT_RUNNING.format(endpoint=base_url))
 
-    def create_model(
-        self, model_id: str, **kwargs: str | int | None
-    ) -> OpenAIChatModel:
+    def create_model(self, model_id: str) -> OpenAIChatModel:
         from pydantic_ai.models.openai import OpenAIChatModel
         from pydantic_ai.providers.openai import (
             OpenAIProvider as PydanticOpenAIProvider,
@@ -258,7 +256,7 @@ class AnthropicProvider(ApiKeyProvider):
     def provider_name(self) -> cs.Provider:
         return cs.Provider.ANTHROPIC
 
-    def create_model(self, model_id: str, **kwargs: str | int | None) -> AnthropicModel:
+    def create_model(self, model_id: str) -> AnthropicModel:
         from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
         from pydantic_ai.providers.anthropic import (
             AnthropicProvider as PydanticAnthropicProvider,
@@ -304,9 +302,7 @@ class AzureOpenAIProvider(ApiKeyProvider):
         if not self.endpoint:
             raise ValueError(ex.AZURE_NO_ENDPOINT)
 
-    def create_model(
-        self, model_id: str, **kwargs: str | int | None
-    ) -> OpenAIChatModel:
+    def create_model(self, model_id: str) -> OpenAIChatModel:
         from pydantic_ai.models.openai import OpenAIChatModel
         from pydantic_ai.providers.azure import AzureProvider as PydanticAzureProvider
 
@@ -340,9 +336,7 @@ class MiniMaxProvider(ApiKeyProvider):
     def provider_name(self) -> cs.Provider:
         return cs.Provider.MINIMAX
 
-    def create_model(
-        self, model_id: str, **kwargs: str | int | None
-    ) -> OpenAIChatModel | AnthropicModel:
+    def create_model(self, model_id: str) -> OpenAIChatModel | AnthropicModel:
         from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
         from pydantic_ai.models.openai import OpenAIChatModel
         from pydantic_ai.providers.anthropic import (
@@ -381,27 +375,6 @@ PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
     cs.Provider.AZURE: AzureOpenAIProvider,
     cs.Provider.MINIMAX: MiniMaxProvider,
 }
-
-
-def _litellm_importable() -> bool:
-    # `LiteLLMProvider` imports pydantic-ai's LiteLLM support only when it
-    # builds a model, so importing it cannot tell whether that support exists.
-    # Ask the import system instead, without loading the module.
-    try:
-        return importlib.util.find_spec(cs.PYDANTIC_AI_LITELLM_MODULE) is not None
-    except ImportError:
-        return False
-
-
-# Import LiteLLM provider after base classes are defined to avoid circular import
-if _litellm_importable():
-    from .litellm import LiteLLMProvider
-
-    PROVIDER_REGISTRY[cs.Provider.LITELLM_PROXY] = LiteLLMProvider
-    _litellm_available = True
-else:
-    logger.debug("LiteLLM provider not available")
-    _litellm_available = False
 
 
 def unknown_provider_message(provider_name: str) -> str | None:

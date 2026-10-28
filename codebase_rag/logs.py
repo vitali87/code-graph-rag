@@ -1,5 +1,6 @@
 # Provider logs
 PROVIDER_REGISTERED = "Registered provider: {name}"
+LITELLM_PROVIDER_UNAVAILABLE = "LiteLLM provider not available"
 
 # Graph loading logs
 LOADING_GRAPH = "Loading graph from {path}"

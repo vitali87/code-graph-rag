@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -8,10 +10,13 @@ from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 
-from codebase_rag.config import settings
+from codebase_rag.config import ModelConfig, settings
 from codebase_rag.constants import (
+    DEFAULT_API_KEY,
+    DEFAULT_REGION,
     ENV_MINIMAX_API_KEY,
     MODEL_CONTEXT_WINDOWS,
+    OPENAI_DEFAULT_ENDPOINT,
     GoogleProviderType,
     Provider,
 )
@@ -24,6 +29,7 @@ from codebase_rag.providers.base import (
     OllamaProvider,
     OpenAIProvider,
     get_provider,
+    get_provider_from_config,
     list_providers,
     register_provider,
 )
@@ -110,6 +116,53 @@ class TestProviderRegistry:
 
         custom_provider = get_provider("custom")
         assert isinstance(custom_provider, CustomProvider)
+
+    def test_litellm_module_imports_first_in_a_fresh_interpreter(self) -> None:
+        # base.py used to register LiteLLM at its own bottom, so importing the
+        # litellm module before base failed on a partially initialised module.
+        code = (
+            "import codebase_rag.providers.litellm as m; "
+            "from codebase_rag.providers.base import PROVIDER_REGISTRY; "
+            "assert PROVIDER_REGISTRY['litellm_proxy'] is m.LiteLLMProvider"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code], capture_output=True, text=True, check=False
+        )
+        assert result.returncode == 0, result.stderr
+
+
+class TestConfigFactoryDefaults:
+    """get_provider_from_config passes every ModelConfig key, unset ones as
+    None, so each constructor default has to survive an explicit None."""
+
+    def test_google_defaults_to_gla_and_the_default_region(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+        provider = get_provider_from_config(
+            ModelConfig(provider=Provider.GOOGLE, model_id="gemini-2.5-pro")
+        )
+        assert isinstance(provider, GoogleProvider)
+        assert provider.provider_type == GoogleProviderType.GLA
+        assert provider.region == DEFAULT_REGION
+        # With provider_type None neither branch ran, so a missing key passed
+        # validation and create_model died on a bare assert.
+        with pytest.raises(ValueError, match="Gemini GLA provider requires api_key"):
+            provider.validate_config()
+
+    def test_openai_keeps_its_default_endpoint(self) -> None:
+        provider = get_provider_from_config(
+            ModelConfig(provider=Provider.OPENAI, model_id="gpt-4o", api_key="sk-x")
+        )
+        assert isinstance(provider, OpenAIProvider)
+        assert provider.endpoint == OPENAI_DEFAULT_ENDPOINT
+
+    def test_ollama_keeps_its_default_api_key(self) -> None:
+        provider = get_provider_from_config(
+            ModelConfig(provider=Provider.OLLAMA, model_id="llama3")
+        )
+        assert isinstance(provider, OllamaProvider)
+        assert provider.api_key == DEFAULT_API_KEY
 
 
 class TestGoogleProvider:

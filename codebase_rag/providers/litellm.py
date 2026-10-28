@@ -8,7 +8,8 @@ from loguru import logger
 from codebase_rag import constants as cs
 from codebase_rag import exceptions as ex
 
-from .base import ModelProvider, strip_v1_suffix
+from ..utils.endpoints import strip_v1_suffix
+from .base import ModelProvider, check_litellm_proxy_running
 
 if TYPE_CHECKING:
     from pydantic_ai.models.openai import OpenAIChatModel
@@ -34,15 +35,11 @@ class LiteLLMProvider(ModelProvider):
         return cs.Provider.LITELLM_PROXY
 
     def validate_config(self) -> None:
-        from .base import check_litellm_proxy_running
-
         base_url = strip_v1_suffix(self.endpoint)
         if not check_litellm_proxy_running(base_url, api_key=self.api_key):
             raise ValueError(ex.LITELLM_NOT_RUNNING.format(endpoint=base_url))
 
-    def create_model(
-        self, model_id: str, **kwargs: str | int | None
-    ) -> OpenAIChatModel:
+    def create_model(self, model_id: str) -> OpenAIChatModel:
         # Imported here so that loading the provider registry pulls in no SDK
         # (issue #2253).
         from pydantic_ai.models.openai import OpenAIChatModel
