@@ -14,6 +14,7 @@ from codebase_rag.config import ModelConfig, settings
 from codebase_rag.constants import (
     DEFAULT_API_KEY,
     DEFAULT_REGION,
+    ENCODING_UTF8,
     ENV_MINIMAX_API_KEY,
     MODEL_CONTEXT_WINDOWS,
     OPENAI_DEFAULT_ENDPOINT,
@@ -126,7 +127,10 @@ class TestProviderRegistry:
             "assert PROVIDER_REGISTRY['litellm_proxy'] is m.LiteLLMProvider"
         )
         result = subprocess.run(
-            [sys.executable, "-c", code], capture_output=True, text=True, check=False
+            [sys.executable, "-c", code],
+            capture_output=True,
+            encoding=ENCODING_UTF8,
+            check=False,
         )
         assert result.returncode == 0, result.stderr
 

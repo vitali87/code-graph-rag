@@ -125,6 +125,9 @@ def test_services_package_does_not_load_the_filtering_wrapper() -> None:
         "assert 'codebase_rag.services.filtering' not in sys.modules"
     )
     result = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, check=False
+        [sys.executable, "-c", code],
+        capture_output=True,
+        encoding=cs.ENCODING_UTF8,
+        check=False,
     )
     assert result.returncode == 0, result.stderr
