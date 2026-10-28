@@ -1,9 +1,9 @@
-import asyncio
-import inspect
 import time
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from functools import wraps
+from pathlib import Path
+from typing import Concatenate
 
 from loguru import logger
 
@@ -17,9 +17,11 @@ from .types_defs import (
 from .utils.path_utils import resolve_in_root
 
 
-def ensure_loaded[T](func: Callable[..., T]) -> Callable[..., T]:
+def ensure_loaded[S: LoadableProtocol, **P, T](
+    func: Callable[Concatenate[S, P], T],
+) -> Callable[Concatenate[S, P], T]:
     @wraps(func)
-    def wrapper(self: LoadableProtocol, *args, **kwargs) -> T:
+    def wrapper(self: S, *args: P.args, **kwargs: P.kwargs) -> T:
         self._ensure_loaded()
         return func(self, *args, **kwargs)
 
@@ -43,34 +45,38 @@ def async_timing_decorator[**P, T](
     return wrapper
 
 
-def validate_project_path[T](
+def validate_project_path[S: PathValidatorProtocol, **P, T](
     result_factory: PathResultFactory[T],
-    path_arg_name: str,
-) -> Callable[[Callable[..., Awaitable[T]]], Callable[..., Awaitable[T]]]:
-    def decorator(func: Callable[..., Awaitable[T]]) -> Callable[..., Awaitable[T]]:
-        sig = inspect.signature(func)
+) -> Callable[
+    [Callable[Concatenate[S, Path, P], Awaitable[T]]],
+    Callable[Concatenate[S, str, P], Awaitable[T]],
+]:
+    """The method called with its first argument, the path a caller gave,
+    resolved inside the project root; a path outside it is answered with
+    `result_factory` instead. The caller passes a string, the method receives
+    the resolved Path, and both signatures stay visible to the checker."""
 
+    def decorator(
+        func: Callable[Concatenate[S, Path, P], Awaitable[T]],
+    ) -> Callable[Concatenate[S, str, P], Awaitable[T]]:
         @wraps(func)
-        async def wrapper(self: PathValidatorProtocol, *args, **kwargs) -> T:
-            bound = sig.bind(self, *args, **kwargs)
-            bound.apply_defaults()
-            file_path_str = bound.arguments.get(path_arg_name)
-
+        async def wrapper(
+            self: S, file_path: str, *args: P.args, **kwargs: P.kwargs
+        ) -> T:
+            # A tool call's arguments arrive as JSON, so a number can get here.
             full_path = (
-                resolve_in_root(self.project_root, file_path_str)
-                if isinstance(file_path_str, str)
+                resolve_in_root(self.project_root, file_path)
+                if isinstance(file_path, str)
                 else None
             )
             if full_path is None:
                 return result_factory(
-                    file_path=str(file_path_str),
+                    file_path=str(file_path),
                     error_message=te.PATH_OUTSIDE_ROOT.format(
-                        path=file_path_str, root=self.project_root
+                        path=file_path, root=self.project_root
                     ),
                 )
-
-            bound.arguments[path_arg_name] = full_path
-            return await func(*bound.args, **bound.kwargs)
+            return await func(self, full_path, *args, **kwargs)
 
         return wrapper
 
@@ -160,38 +166,3 @@ def depth_exhausted(guard_name: str, max_depth: int) -> bool:
     """
     context_var = _DEPTH_REGISTRY.get(guard_name)
     return context_var is not None and context_var.get() >= max_depth
-
-
-def log_operation[T](
-    start_msg: str,
-    end_msg: str,
-) -> Callable[[Callable[..., T]], Callable[..., T]]:
-    def decorator(func: Callable[..., T]) -> Callable[..., T]:
-        @wraps(func)
-        def wrapper(*args, **kwargs) -> T:
-            logger.info(start_msg)
-            result = func(*args, **kwargs)
-            logger.info(end_msg)
-            return result
-
-        return wrapper
-
-    return decorator
-
-
-def mcp_try_except[T](
-    error_factory: Callable[[str], T],
-) -> Callable[[Callable[..., Awaitable[T]]], Callable[..., Awaitable[T]]]:
-    def decorator(func: Callable[..., Awaitable[T]]) -> Callable[..., Awaitable[T]]:
-        @wraps(func)
-        async def wrapper(*args, **kwargs) -> T:
-            try:
-                return await func(*args, **kwargs)
-            except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
-                raise
-            except Exception as e:
-                return error_factory(str(e))
-
-        return wrapper
-
-    return decorator

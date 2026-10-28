@@ -27,7 +27,7 @@ class FileReader:
         logger.info(ls.TOOL_FILE_READ.format(path=file_path))
         return await self._read_validated(file_path)
 
-    @validate_project_path(FileReadResult, path_arg_name="file_path")
+    @validate_project_path(FileReadResult)
     async def _read_validated(self, file_path: Path) -> FileReadResult:
         """Read a path already checked to be inside the project root."""
         # On a thread, as FileEditor reads: a large file read on the event

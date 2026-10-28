@@ -10,8 +10,6 @@ from codebase_rag.decorators import (
     async_timing_decorator,
     depth_guard,
     ensure_loaded,
-    log_operation,
-    mcp_try_except,
     recursion_guard,
     validate_project_path,
 )
@@ -122,13 +120,13 @@ class TestValidateProjectPath:
         class MockService:
             project_root = Path("/project")
 
-            @validate_project_path(ResultType, "file_path")
+            @validate_project_path(ResultType)
             async def read(self, file_path: Path) -> ResultType:
                 return ResultType(file_path=str(file_path))
 
         service = MockService()
         with patch.object(Path, "resolve", return_value=Path("/project/src/file.py")):
-            result = asyncio.run(service.read(file_path="src/file.py"))
+            result = asyncio.run(service.read("src/file.py"))
 
         assert result.error_message is None
 
@@ -143,12 +141,12 @@ class TestValidateProjectPath:
         class MockService:
             project_root = Path("/project")
 
-            @validate_project_path(ResultType, "file_path")
+            @validate_project_path(ResultType)
             async def read(self, file_path: Path) -> ResultType:
                 return ResultType(file_path=str(file_path))
 
         service = MockService()
-        result = asyncio.run(service.read(file_path="../etc/passwd"))
+        result = asyncio.run(service.read("../etc/passwd"))
 
         assert result.error_message is not None
         assert "outside" in result.error_message.lower()
@@ -164,16 +162,16 @@ class TestValidateProjectPath:
         class MockService:
             project_root = Path("/project")
 
-            @validate_project_path(ResultType, "file_path")
+            @validate_project_path(ResultType)
             async def read(self, file_path: Path) -> ResultType:
                 return ResultType(file_path=str(file_path))
 
         service = MockService()
-        result = asyncio.run(service.read(file_path=123))  # type: ignore[arg-type]
+        result = asyncio.run(service.read(123))  # ty: ignore[invalid-argument-type]
 
         assert result.error_message is not None
 
-    def test_handles_path_not_first_positional_arg(self) -> None:
+    def test_passes_the_arguments_after_the_path_through(self) -> None:
         class ResultType:
             def __init__(
                 self, file_path: str, error_message: str | None = None
@@ -184,16 +182,37 @@ class TestValidateProjectPath:
         class MockService:
             project_root = Path("/project")
 
-            @validate_project_path(ResultType, "file_path")
-            async def save(self, content: str, file_path: Path) -> ResultType:
-                return ResultType(file_path=str(file_path))
+            @validate_project_path(ResultType)
+            async def save(self, file_path: Path, content: str) -> ResultType:
+                return ResultType(file_path=f"{file_path}:{content}")
 
         service = MockService()
         with patch.object(Path, "resolve", return_value=Path("/project/test.txt")):
-            result = asyncio.run(service.save("my content", "test.txt"))
+            result = asyncio.run(service.save("test.txt", "my content"))
 
         assert result.error_message is None
-        assert "test.txt" in result.file_path
+        assert result.file_path == "/project/test.txt:my content"
+
+    def test_a_resolved_path_is_what_the_method_receives(self, tmp_path: Path) -> None:
+        received: list[object] = []
+
+        class ResultType:
+            def __init__(
+                self, file_path: str, error_message: str | None = None
+            ) -> None:
+                self.file_path = file_path
+                self.error_message = error_message
+
+        class Service:
+            project_root = tmp_path
+
+            @validate_project_path(ResultType)
+            async def read(self, file_path: Path) -> ResultType:
+                received.append(file_path)
+                return ResultType(file_path=str(file_path))
+
+        asyncio.run(Service().read("a/../b.txt"))
+        assert received == [(tmp_path / "b.txt").resolve()]
 
 
 class TestRecursionGuard:
@@ -381,112 +400,6 @@ class TestRecursionGuard:
 
         assert result is None
         assert call_count == 1
-
-
-class TestLogOperation:
-    def test_logs_start_and_end_messages(self) -> None:
-        with patch("codebase_rag.decorators.logger") as mock_logger:
-
-            @log_operation("Starting...", "Finished!")
-            def operation() -> str:
-                return "result"
-
-            result = operation()
-
-            assert result == "result"
-            assert mock_logger.info.call_count == 2
-            calls = [call[0][0] for call in mock_logger.info.call_args_list]
-            assert calls == ["Starting...", "Finished!"]
-
-    def test_logs_end_even_on_success(self) -> None:
-        with patch("codebase_rag.decorators.logger") as mock_logger:
-
-            @log_operation("Start", "End")
-            def success_op() -> int:
-                return 42
-
-            result = success_op()
-
-            assert result == 42
-            assert mock_logger.info.call_count == 2
-
-    def test_preserves_function_metadata(self) -> None:
-        @log_operation("Start", "End")
-        def named_op() -> None:
-            pass
-
-        assert named_op.__name__ == "named_op"
-
-
-class TestMcpTryExcept:
-    def test_returns_result_on_success(self) -> None:
-        @mcp_try_except(lambda e: f"error: {e}")
-        async def successful_handler() -> str:
-            return "success"
-
-        result = asyncio.run(successful_handler())
-        assert result == "success"
-
-    def test_returns_error_on_exception(self) -> None:
-        @mcp_try_except(lambda e: f"error: {e}")
-        async def failing_handler() -> str:
-            raise ValueError("something went wrong")
-
-        result = asyncio.run(failing_handler())
-        assert result == "error: something went wrong"
-
-    def test_works_with_dict_error_factory(self) -> None:
-        def error_factory(msg: str) -> dict[str, str]:
-            return {"error": msg, "status": "failed"}
-
-        @mcp_try_except(error_factory)
-        async def handler() -> dict[str, str]:
-            raise RuntimeError("db error")
-
-        result = asyncio.run(handler())
-        assert result == {"error": "db error", "status": "failed"}
-
-    def test_preserves_function_metadata(self) -> None:
-        @mcp_try_except(lambda e: e)
-        async def named_handler() -> str:
-            return "ok"
-
-        assert named_handler.__name__ == "named_handler"
-
-    def test_passes_arguments_correctly(self) -> None:
-        @mcp_try_except(lambda e: f"error: {e}")
-        async def handler_with_args(a: int, b: str) -> str:
-            return f"{a}-{b}"
-
-        result = asyncio.run(handler_with_args(1, "test"))
-        assert result == "1-test"
-
-    def test_reraises_keyboard_interrupt(self) -> None:
-        @mcp_try_except(lambda e: f"error: {e}")
-        async def handler_with_interrupt() -> str:
-            raise KeyboardInterrupt()
-
-        handler = handler_with_interrupt()
-        with pytest.raises(KeyboardInterrupt):
-            asyncio.run(handler)
-
-    def test_reraises_system_exit(self) -> None:
-        @mcp_try_except(lambda e: f"error: {e}")
-        async def handler_with_exit() -> str:
-            raise SystemExit(1)
-
-        handler = handler_with_exit()
-        with pytest.raises(SystemExit):
-            asyncio.run(handler)
-
-    def test_reraises_cancelled_error(self) -> None:
-        @mcp_try_except(lambda e: f"error: {e}")
-        async def handler_with_cancel() -> str:
-            raise asyncio.CancelledError()
-
-        handler = handler_with_cancel()
-        with pytest.raises(asyncio.CancelledError):
-            asyncio.run(handler)
 
 
 class TestDepthGuard:

@@ -26,7 +26,7 @@ class FileWriter:
         logger.info(ls.FILE_WRITER_CREATE.format(path=file_path))
         return await self._create_validated(file_path, content)
 
-    @validate_project_path(FileCreationResult, path_arg_name="file_path")
+    @validate_project_path(FileCreationResult)
     async def _create_validated(
         self, file_path: Path, content: str
     ) -> FileCreationResult:
