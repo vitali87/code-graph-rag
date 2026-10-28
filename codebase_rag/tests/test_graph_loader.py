@@ -193,3 +193,47 @@ class TestLoadGraphFunction:
         loader = load_graph(graph_file)
         assert loader._data is not None
         assert len(loader.nodes) == 4
+
+
+class TestGraphLoaderContracts:
+    def test_summary_on_an_unloaded_loader_loads_first(self, graph_file: str) -> None:
+        # summary() read the label index before anything triggered the lazy
+        # load, so a fresh GraphLoader reported nodes but no labels.
+        summary = GraphLoader(graph_file).summary()
+        assert summary["total_nodes"] == 4
+        assert summary["node_labels"] == {"Function": 2, "Class": 1, "Module": 1}
+
+    def test_reloading_does_not_double_the_indexes(self, loader: GraphLoader) -> None:
+        loader.load()
+        assert len(loader.find_nodes_by_label("Function")) == 2
+        assert len(loader.get_outgoing_relationships(4)) == 3
+        assert loader.summary()["node_labels"]["Function"] == 2
+
+    def test_reloading_drops_property_indexes_built_before(
+        self, loader: GraphLoader
+    ) -> None:
+        assert len(loader.find_nodes_by_property("name", "foo")) == 1
+        loader.load()
+        assert len(loader.find_nodes_by_property("name", "foo")) == 1
+
+    def test_finders_return_copies_of_their_indexes(self, loader: GraphLoader) -> None:
+        loader.find_nodes_by_label("Function").clear()
+        loader.find_nodes_by_property("name", "foo").clear()
+        loader.get_outgoing_relationships(4).clear()
+        loader.get_incoming_relationships(1).clear()
+        assert len(loader.find_nodes_by_label("Function")) == 2
+        assert len(loader.find_nodes_by_property("name", "foo")) == 1
+        assert len(loader.get_outgoing_relationships(4)) == 3
+        assert len(loader.get_incoming_relationships(1)) == 1
+
+    def test_a_self_loop_is_reported_once(self, tmp_path: Path) -> None:
+        data = create_test_graph()
+        data["relationships"] = [
+            {"from_id": 1, "to_id": 1, "type": "CALLS", "properties": {}}
+        ]
+        path = tmp_path / "graph.json"
+        path.write_text(json.dumps(data))
+        assert len(load_graph(str(path)).get_relationships_for_node(1)) == 1
+
+    def test_singular_property_finder_is_the_plural_one(self) -> None:
+        assert GraphLoader.find_node_by_property is GraphLoader.find_nodes_by_property

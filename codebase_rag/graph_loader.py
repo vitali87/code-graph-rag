@@ -48,7 +48,11 @@ class GraphLoader:
         self._data: GraphData | None = None
         self._nodes: list[GraphNode] | None = None
         self._relationships: list[GraphRelationship] | None = None
+        self._reset_indexes()
 
+    def _reset_indexes(self) -> None:
+        # Called again by every load(): the indexes are appended to while
+        # loading, so a second load() would otherwise double every entry.
         self._nodes_by_id: dict[int, GraphNode] = {}
         self._nodes_by_label: defaultdict[str, list[GraphNode]] = defaultdict(list)
         self._outgoing_rels: defaultdict[int, list[GraphRelationship]] = defaultdict(
@@ -87,6 +91,7 @@ class GraphLoader:
             metadata=metadata,
         )
 
+        self._reset_indexes()
         self._nodes = []
         for node_data in raw[cs.KEY_NODES]:
             node = GraphNode(
@@ -191,34 +196,44 @@ class GraphLoader:
         assert self._data is not None, ex.DATA_NOT_LOADED
         return self._data[cs.KEY_METADATA]
 
+    # The finders return copies: handing out an index list let a caller's
+    # `.clear()` or `.append()` change every later answer.
     @ensure_loaded
     def find_nodes_by_label(self, label: str) -> list[GraphNode]:
-        return self._nodes_by_label.get(label, [])
+        return list(self._nodes_by_label.get(label, ()))
 
     @ensure_loaded
-    def find_node_by_property(
+    def find_nodes_by_property(
         self, property_name: str, value: PropertyValue
     ) -> list[GraphNode]:
         self._build_property_index(property_name)
-        return self._property_indexes[property_name].get(value, [])
+        return list(self._property_indexes[property_name].get(value, ()))
+
+    # The singular spelling predates the plural one, which says what it returns.
+    find_node_by_property = find_nodes_by_property
 
     @ensure_loaded
     def get_node_by_id(self, node_id: int) -> GraphNode | None:
         return self._nodes_by_id.get(node_id)
 
     def get_relationships_for_node(self, node_id: int) -> list[GraphRelationship]:
-        return self.get_outgoing_relationships(
-            node_id
-        ) + self.get_incoming_relationships(node_id)
+        # A self-loop (a recursive CALLS) is both outgoing and incoming; it is
+        # one relationship, so the incoming side skips it.
+        return self.get_outgoing_relationships(node_id) + [
+            rel
+            for rel in self.get_incoming_relationships(node_id)
+            if rel.from_id != node_id
+        ]
 
     @ensure_loaded
     def get_outgoing_relationships(self, node_id: int) -> list[GraphRelationship]:
-        return self._outgoing_rels.get(node_id, [])
+        return list(self._outgoing_rels.get(node_id, ()))
 
     @ensure_loaded
     def get_incoming_relationships(self, node_id: int) -> list[GraphRelationship]:
-        return self._incoming_rels.get(node_id, [])
+        return list(self._incoming_rels.get(node_id, ()))
 
+    @ensure_loaded
     def summary(self) -> GraphSummary:
         node_labels = {
             label: len(nodes) for label, nodes in self._nodes_by_label.items()
