@@ -209,7 +209,8 @@ could speed up, measured stage by stage, is in
 [the indexer's Rust plan](../reports/INDEXER_RUST_PLAN.md).
 
 The indexer uses the extension too. Each definition's anchor hash and
-clone-detection fingerprint, and which names each Python function binds, are
+clone-detection fingerprint, which names each Python function binds, and each
+file's interface fingerprint (what the files that depend on it can see) are
 computed in Rust on the very tree py-tree-sitter parsed: the extension reads
 the C node inside the Python `Node` and walks it with the same tree-sitter
 runtime, so nothing is parsed twice and no grammar is compiled into the
