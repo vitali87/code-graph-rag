@@ -14,6 +14,8 @@ wheels/
 .env.*
 !.env.example
 .tmp
+# desloppify scan state (local, per checkout)
+.desloppify/
 .ruff_cache/
 .mypy_cache/
 .pytest_cache/
