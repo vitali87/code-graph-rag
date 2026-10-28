@@ -67,7 +67,6 @@ GOMOD_COMMENT_PREFIX = "//"
 GEMFILE_GEM_PREFIX = "gem "
 
 IMPORT_CACHE_TTL = 3600
-IMPORT_CACHE_DIR = ".cache/codebase_rag"
 IMPORT_CACHE_FILE = "stdlib_cache.json"
 IMPORT_CACHE_KEY = "cache"
 IMPORT_TIMESTAMPS_KEY = "timestamps"

@@ -5,15 +5,19 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.config import settings
 from codebase_rag.parsers import stdlib_extractor as se
 from codebase_rag.parsers.stdlib_extractor import StdlibExtractor
 
 
 @pytest.fixture(autouse=True)
-def reset_caches() -> None:
+def reset_caches(monkeypatch: pytest.MonkeyPatch) -> None:
     se._STDLIB_CACHE.clear()
     se._CACHE_TIMESTAMPS.clear()
     se._EXTERNAL_TOOLS.clear()
+    # As in a fresh process: the file not yet read, nothing added.
+    monkeypatch.setattr(se, "_cache_loaded", False)
+    monkeypatch.setattr(se, "_cache_dirty", False)
 
 
 class TestCacheHelpers:
@@ -80,48 +84,76 @@ class TestToolAvailability:
 
 
 class TestCachePersistence:
-    def test_save_and_load_persistent_cache(self, tmp_path: Path) -> None:
-        cache_dir = tmp_path / ".cache" / "codebase_rag"
+    def test_save_and_load_persistent_cache(self) -> None:
+        se._cache_stdlib_result("python", "pathlib.Path", "pathlib")
+        se._cache_stdlib_result("javascript", "fs.readFile", "fs")
 
-        with patch.object(Path, "home", return_value=tmp_path):
-            se._cache_stdlib_result("python", "pathlib.Path", "pathlib")
-            se._cache_stdlib_result("javascript", "fs.readFile", "fs")
+        se.save_persistent_cache()
 
-            se.save_persistent_cache()
+        assert se._cache_file().exists()
 
-            assert (cache_dir / "stdlib_cache.json").exists()
+        se._STDLIB_CACHE.clear()
+        se._CACHE_TIMESTAMPS.clear()
+        se._cache_loaded = False
 
-            se._STDLIB_CACHE.clear()
-            se._CACHE_TIMESTAMPS.clear()
+        # Read back on the first lookup, not when a processor is built.
+        assert se._get_cached_stdlib_result("python", "pathlib.Path") == "pathlib"
+        assert "javascript:fs.readFile" in se._STDLIB_CACHE
 
-            se.load_persistent_cache()
+    def test_the_cache_lives_under_cgr_home_not_the_home_directory(
+        self, tmp_path: Path
+    ) -> None:
+        # Under Path.home() the suite's CGR_HOME isolation did not cover it,
+        # so a test that cleared the cache unlinked the developer's own file.
+        home = tmp_path / "home"
+        legacy = home / ".cache" / "codebase_rag" / cs.IMPORT_CACHE_FILE
+        legacy.parent.mkdir(parents=True)
+        legacy.write_text("{}", encoding="utf-8")
 
-            assert "python:pathlib.Path" in se._STDLIB_CACHE
-            assert "javascript:fs.readFile" in se._STDLIB_CACHE
-
-    def test_clear_stdlib_cache(self, tmp_path: Path) -> None:
-        with patch.object(Path, "home", return_value=tmp_path):
-            cache_dir = tmp_path / ".cache" / "codebase_rag"
-            cache_dir.mkdir(parents=True, exist_ok=True)
-            cache_file = cache_dir / "stdlib_cache.json"
-            cache_file.write_text(encoding="utf-8", data="{}")
-
-            se._cache_stdlib_result("python", "test.module", "test")
-
+        with patch.object(Path, "home", return_value=home):
+            se._cache_stdlib_result("python", "test.func", "test")
+            se.flush_stdlib_cache()
+            assert (settings.CGR_HOME / cs.IMPORT_CACHE_FILE).exists()
             se.clear_stdlib_cache()
 
-            assert len(se._STDLIB_CACHE) == 0
-            assert len(se._CACHE_TIMESTAMPS) == 0
-            assert not cache_file.exists()
+        assert not (settings.CGR_HOME / cs.IMPORT_CACHE_FILE).exists()
+        assert legacy.read_text(encoding="utf-8") == "{}"
 
-    def test_flush_stdlib_cache_calls_save(self, tmp_path: Path) -> None:
-        with patch.object(Path, "home", return_value=tmp_path):
-            se._cache_stdlib_result("python", "test.func", "test")
+    def test_clear_stdlib_cache(self) -> None:
+        cache_file = se._cache_file()
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        cache_file.write_text(encoding="utf-8", data="{}")
 
-            se.flush_stdlib_cache()
+        se._cache_stdlib_result("python", "test.module", "test")
 
-            cache_file = tmp_path / ".cache" / "codebase_rag" / "stdlib_cache.json"
-            assert cache_file.exists()
+        se.clear_stdlib_cache()
+
+        assert len(se._STDLIB_CACHE) == 0
+        assert len(se._CACHE_TIMESTAMPS) == 0
+        assert not cache_file.exists()
+
+    def test_flush_writes_only_once_a_lookup_added_an_entry(self) -> None:
+        se.flush_stdlib_cache()
+        assert not se._cache_file().exists()
+
+        se._cache_stdlib_result("python", "test.func", "test")
+        se.flush_stdlib_cache()
+        assert se._cache_file().exists()
+
+    def test_a_save_keeps_the_entries_already_on_disk(self) -> None:
+        se._cache_stdlib_result("python", "json.loads", "json")
+        se.save_persistent_cache()
+        se._STDLIB_CACHE.clear()
+        se._CACHE_TIMESTAMPS.clear()
+        se._cache_loaded = False
+
+        # A new process adds an entry before any lookup reads the file.
+        se._cache_stdlib_result("python", "os.path", "os")
+        se.save_persistent_cache()
+
+        se._STDLIB_CACHE.clear()
+        se._cache_loaded = False
+        assert se._get_cached_stdlib_result("python", "json.loads") == "json"
 
 
 class TestGetStdlibCacheStats:
@@ -733,3 +765,14 @@ class TestJsExtractorWithMockedNode:
             )
 
             assert result == "http"
+
+
+def test_a_sync_writes_the_cache_back_once(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    from codebase_rag.tests.conftest import create_and_run_updater
+
+    (temp_repo / "app.py").write_text("import json\n", encoding="utf-8")
+    with patch("codebase_rag.graph_updater.flush_stdlib_cache") as flush:
+        create_and_run_updater(temp_repo, mock_ingestor)
+    flush.assert_called_once_with()

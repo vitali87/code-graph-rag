@@ -8,7 +8,6 @@ from tree_sitter import Language, Parser
 
 from codebase_rag.graph_updater import FunctionRegistryTrie, GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.parsers import import_processor as import_processor_module
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.types_defs import NodeType
 
@@ -241,15 +240,24 @@ class TestImportProcessorCacheUtilities:
     ) -> None:
         ImportProcessor.flush_stdlib_cache()
 
-    def test_del_does_not_raise_when_the_cache_save_fails(
-        self, import_processor: ImportProcessor, monkeypatch: pytest.MonkeyPatch
+    def test_building_a_processor_does_not_read_the_cache_file(
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        def fail_save() -> None:
-            raise OSError("disk full")
+        # The file was re-read by every ImportProcessor and written back from
+        # __del__; it is now read on first lookup and saved once per sync.
+        from codebase_rag.parsers import stdlib_extractor
 
-        monkeypatch.setattr(import_processor_module, "save_persistent_cache", fail_save)
+        def fail_load() -> None:
+            raise AssertionError("the stdlib cache was read eagerly")
 
-        import_processor.__del__()
+        monkeypatch.setattr(stdlib_extractor, "load_persistent_cache", fail_load)
+        ImportProcessor(
+            repo_path=Path("/test"),
+            project_name="test_project",
+            ingestor=None,
+            function_registry=None,
+        )
+        assert not hasattr(ImportProcessor, "__del__")
 
     def test_cache_stats_after_clear(self, import_processor: ImportProcessor) -> None:
         ImportProcessor.clear_stdlib_cache()

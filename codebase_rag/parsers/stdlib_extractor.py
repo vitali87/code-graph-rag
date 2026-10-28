@@ -8,6 +8,7 @@ from loguru import logger
 
 from .. import constants as cs
 from .. import logs as ls
+from ..config import settings
 from ..types_defs import FunctionRegistryTrieProtocol
 
 
@@ -38,6 +39,10 @@ class StdlibCacheStats(TypedDict):
 _STDLIB_CACHE: dict[str, dict[str, str]] = {}
 _CACHE_TTL = cs.IMPORT_CACHE_TTL
 _CACHE_TIMESTAMPS: dict[str, float] = {}
+# The file is read once per process, on the first lookup, and written back by
+# `flush_stdlib_cache` at the end of a sync, only when a lookup added to it.
+_cache_loaded = False
+_cache_dirty = False
 
 _EXTERNAL_TOOLS: dict[str, bool] = {}
 
@@ -62,7 +67,17 @@ def _is_tool_available(tool_name: str) -> bool:
         return False
 
 
+def _cache_file() -> Path:
+    return settings.CGR_HOME.expanduser() / cs.IMPORT_CACHE_FILE
+
+
+def _ensure_cache_loaded() -> None:
+    if not _cache_loaded:
+        load_persistent_cache()
+
+
 def _get_cached_stdlib_result(language: str, full_qualified_name: str) -> str | None:
+    _ensure_cache_loaded()
     cache_key = f"{language}:{full_qualified_name}"
 
     if cache_key not in _STDLIB_CACHE:
@@ -80,14 +95,19 @@ def _get_cached_stdlib_result(language: str, full_qualified_name: str) -> str | 
 
 
 def _cache_stdlib_result(language: str, full_qualified_name: str, result: str) -> None:
+    global _cache_dirty
+    _ensure_cache_loaded()
     cache_key = f"{language}:{full_qualified_name}"
     _STDLIB_CACHE.setdefault(cache_key, {})[full_qualified_name] = result
     _CACHE_TIMESTAMPS[cache_key] = time.time()
+    _cache_dirty = True
 
 
 def load_persistent_cache() -> None:
+    global _cache_loaded
+    _cache_loaded = True
     try:
-        cache_file = Path.home() / cs.IMPORT_CACHE_DIR / cs.IMPORT_CACHE_FILE
+        cache_file = _cache_file()
         if cache_file.exists():
             with cache_file.open() as f:
                 data = json.load(f)
@@ -99,10 +119,11 @@ def load_persistent_cache() -> None:
 
 
 def save_persistent_cache() -> None:
+    global _cache_dirty
+    _ensure_cache_loaded()
     try:
-        cache_dir = Path.home() / cs.IMPORT_CACHE_DIR
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_file = cache_dir / cs.IMPORT_CACHE_FILE
+        cache_file = _cache_file()
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
 
         with cache_file.open("w", encoding="utf-8") as f:
             json.dump(
@@ -113,20 +134,26 @@ def save_persistent_cache() -> None:
                 f,
                 indent=2,
             )
+        _cache_dirty = False
         logger.debug(ls.IMP_CACHE_SAVED, path=cache_file)
     except OSError as e:
         logger.debug(ls.IMP_CACHE_SAVE_ERROR, error=e)
 
 
 def flush_stdlib_cache() -> None:
-    save_persistent_cache()
+    """Write the cache back if a lookup added to it; called once per sync."""
+    if _cache_dirty:
+        save_persistent_cache()
 
 
 def clear_stdlib_cache() -> None:
+    global _cache_loaded, _cache_dirty
     _STDLIB_CACHE.clear()
     _CACHE_TIMESTAMPS.clear()
+    _cache_loaded = True
+    _cache_dirty = False
     try:
-        cache_file = Path.home() / cs.IMPORT_CACHE_DIR / cs.IMPORT_CACHE_FILE
+        cache_file = _cache_file()
         if cache_file.exists():
             cache_file.unlink()
             logger.debug(ls.IMP_CACHE_CLEARED)

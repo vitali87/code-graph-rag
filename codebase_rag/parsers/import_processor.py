@@ -86,8 +86,6 @@ from .stdlib_extractor import (
     clear_stdlib_cache,
     flush_stdlib_cache,
     get_stdlib_cache_stats,
-    load_persistent_cache,
-    save_persistent_cache,
 )
 from .utils import (
     follow_reexports,
@@ -1627,14 +1625,6 @@ class ImportProcessor:
         self._is_local_module_cached = _is_local_module_cached
         self._is_local_java_import_cached = _is_local_java_import_cached
         self._java_source_root_prefix_cached = _java_source_root_prefix_cached
-
-        load_persistent_cache()
-
-    def __del__(self) -> None:
-        try:
-            save_persistent_cache()
-        except Exception:  # noqa: S110 - a destructor must not raise
-            pass
 
     @staticmethod
     def flush_stdlib_cache() -> None:

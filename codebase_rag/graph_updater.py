@@ -107,6 +107,7 @@ from .parsers.notebook import NotebookSkipped, is_notebook_path, read_notebook
 from .parsers.parameter_nodes import PendingParameterType
 from .parsers.py.ast_analyzer import clear_scope_facts
 from .parsers.rs import utils as rs_utils
+from .parsers.stdlib_extractor import flush_stdlib_cache
 from .parsers.structure_processor import StructureProcessor
 from .parsers.utils import mark_js_ts_module_private, sorted_captures
 from .path_filters import matches_test_path
@@ -3215,6 +3216,7 @@ class GraphUpdater:
                 logger.warning(ls.EXCLUSION_STATE_NOT_RECORDED)
             else:
                 self._stamp_exclusion_state()
+        flush_stdlib_cache()
         self._record_sync_time()
         # Last, so an interrupt anywhere above still reads as a partial run.
         self.committed = True
@@ -9600,6 +9602,7 @@ class GraphUpdater:
         # for good rather than retried (raised by CodeRabbit on #1852).
         self.ingestor.flush_all()
         self._reingest_update_hashes(cache_path, hashes, reparse, parsed, gone)
+        flush_stdlib_cache()
 
         report = ReingestReport(
             # `parsed`, not `present`: a file that became unreadable between
