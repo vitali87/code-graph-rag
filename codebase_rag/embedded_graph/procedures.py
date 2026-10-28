@@ -33,7 +33,7 @@ from . import native
 from . import sql as sq
 from . import types as ty
 from .limits import check_deadline
-from .types import SqlValue, T
+from .types import SqlValue, ValueType
 
 # A record field: a node (its id), a number, or nodes in a list or lists.
 type ProcValue = int | float | list[int] | list[list[int]]
@@ -49,7 +49,7 @@ _MAX_CYCLES = 1000
 
 @dataclass(frozen=True)
 class ProcSpec:
-    columns: tuple[tuple[str, T], ...]
+    columns: tuple[tuple[str, ValueType], ...]
     fn: Callable[[sqlite3.Connection, Sequence[SqlValue]], Iterable[Record]]
 
 

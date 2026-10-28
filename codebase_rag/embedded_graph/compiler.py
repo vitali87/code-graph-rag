@@ -46,7 +46,7 @@ from .expressions import (
     free_vars,
     is_aggregate,
 )
-from .types import Kind, T
+from .types import Kind, ValueType
 
 ALL_LIVE = EG_ALL_LIVE
 
@@ -54,7 +54,7 @@ ALL_LIVE = EG_ALL_LIVE
 @dataclass
 class VarInfo:
     col: str
-    t: T
+    t: ValueType
     names: tuple[str, ...] = ()
     # Set for a value read from a single-row stage: the SQL that reads it.
     const_sql: str | None = None
@@ -116,7 +116,7 @@ class Pipeline:
         return sq.with_ctes(sq.cte(name, sql) for name, sql in self.ctes)
 
 
-def decode_for(t: T) -> EgDecode:
+def decode_for(t: ValueType) -> EgDecode:
     if t.kind == Kind.BOOL:
         return EgDecode.BOOL
     if t.kind == Kind.NULL:
@@ -244,7 +244,7 @@ def live_after(clauses: tuple[a.Clause, ...]) -> list[set[str]]:
 class QueryCompiler:
     def __init__(self, ctx: Ctx) -> None:
         self.ctx = ctx
-        self.x = ExprCompiler(ctx)
+        self.exprs = ExprCompiler(ctx)
 
     def start_stage(self, pipeline: Pipeline) -> Stage:
         name = self.ctx.fresh(sq.STAGE_PREFIX)
@@ -303,7 +303,7 @@ class QueryCompiler:
             builder.add_pattern(pattern)
         conds = list(builder.conds)
         if m.where is not None:
-            conds.append(self.x.boolean(self.x.compile(m.where, builder.scope)))
+            conds.append(self.exprs.boolean(self.exprs.compile(m.where, builder.scope)))
         conds.extend(builder.uniqueness())
         added = [
             (var, ce.sql, VarInfo(self._new_col(), ce.t, ce.names))
@@ -357,14 +357,17 @@ class QueryCompiler:
     def _unwind(
         self, pipeline: Pipeline, stage: Stage, u: a.Unwind, live: set[str]
     ) -> Stage:
-        source = self.x.compile(u.expr, stage.scope(sq.INPUT))
+        source = self.exprs.compile(u.expr, stage.scope(sq.INPUT))
         alias = self.ctx.fresh(sq.EACH_PREFIX)
         elem = (source.t.elem if source.t.kind == Kind.LIST else None) or ty.ANY
         if source.t.kind not in (Kind.LIST, Kind.ANY, Kind.NULL):
             elem = source.t
         added = [(u.var, each_value_sql(alias, elem), VarInfo(self._new_col(), elem))]
         from_sql = sq.commas(
-            [sq.table(stage.name, sq.INPUT), sq.json_each(self.x.jsonv(source), alias)]
+            [
+                sq.table(stage.name, sq.INPUT),
+                sq.json_each(self.exprs.jsonv(source), alias),
+            ]
         )
         # Flattened into the next MATCH, the unwound rows had SQLite put
         # json_each innermost and scan the whole label per row (6 s for 200
@@ -388,7 +391,9 @@ class QueryCompiler:
         alias_scope = Scope(scope.binds)
         for alias, ce, agg in items:
             col = self._new_col()
-            select.append(sq.aliased(self.x.output(ce) if for_output else ce.sql, col))
+            select.append(
+                sq.aliased(self.exprs.output(ce) if for_output else ce.sql, col)
+            )
             # A constant key is the same in every group: grouping by it
             # would only make SQLite compare a large value per row.
             if aggregating and not agg and not ce.const:
@@ -415,15 +420,19 @@ class QueryCompiler:
             items.extend((var, scope.get(var), False) for var in stage.vars)
         for item in proj.items:
             items.append(
-                (item.alias, self.x.compile(item.expr, scope), is_aggregate(item.expr))
+                (
+                    item.alias,
+                    self.exprs.compile(item.expr, scope),
+                    is_aggregate(item.expr),
+                )
             )
         return items
 
     def _order_by(self, proj: a.Projection, scope: Scope) -> list[str]:
         parts = []
         for item in proj.order:
-            ce = self.x.compile(item.expr, scope)
-            key = ce.sql if ce.t.is_entity else self.x.native(ce)
+            ce = self.exprs.compile(item.expr, scope)
+            key = ce.sql if ce.t.is_entity else self.exprs.native(ce)
             parts.append(sq.descending(key) if item.descending else sq.ascending(key))
         return parts
 
@@ -431,12 +440,12 @@ class QueryCompiler:
         if proj.limit is None and proj.skip is None:
             return sq.NOTHING
         count = (
-            self.x.native(self.x.compile(proj.limit, scope))
+            self.exprs.native(self.exprs.compile(proj.limit, scope))
             if proj.limit
             else sq.ALL_ROWS
         )
         skip = (
-            self.x.native(self.x.compile(proj.skip, scope))
+            self.exprs.native(self.exprs.compile(proj.skip, scope))
             if proj.skip
             else sq.NO_ROWS_SKIPPED
         )
@@ -466,7 +475,7 @@ class QueryCompiler:
         if proj.where is None:
             return out
         filtered = self.ctx.fresh(sq.STAGE_PREFIX)
-        cond = self.x.boolean(self.x.compile(proj.where, out.scope(sq.INPUT)))
+        cond = self.exprs.boolean(self.exprs.compile(proj.where, out.scope(sq.INPUT)))
         pipeline.add(
             filtered, sq.select(out.cols, sq.table(name, sq.INPUT), sq.where([cond]))
         )
@@ -498,7 +507,7 @@ class _MatchBuilder:
         stage: Stage,
         where: list[a.Expr],
     ) -> None:
-        self.x = qc.x
+        self.exprs = qc.exprs
         self.ctx = qc.ctx
         self.pipeline = pipeline
         self.stage = stage
@@ -578,7 +587,7 @@ class _MatchBuilder:
                 EG_ERR_UNSUPPORTED.format(what=EG_WHAT_PARAM_PATTERN_PROPS)
             )
         for key, value in props.items:
-            rhs = self.x.native(self.x.compile(value, self.scope))
+            rhs = self.exprs.native(self.exprs.compile(value, self.scope))
             if is_node and _is_key(names, key):
                 self.conds.append(sq.eq(sq.column(alias, sq.KEY), rhs))
             else:
@@ -668,7 +677,7 @@ class _MatchBuilder:
         for key, value in np.props.items:
             if free_vars(value):
                 continue
-            rhs = self.x.native(self.x.compile(value, Scope()))
+            rhs = self.exprs.native(self.exprs.compile(value, Scope()))
             if _is_key(np.labels, key):
                 conds.append(sq.eq(sq.column(sq.SEED, sq.KEY), rhs))
             else:
@@ -682,7 +691,7 @@ class _MatchBuilder:
         node = CE(sq.column(sq.SEED, sq.ID), ty.NODE, sq.SEED, np.labels)
         scope = Scope().with_var(np.var, node)
         return [
-            self.x.boolean(self.x.compile(cond, scope))
+            self.exprs.boolean(self.exprs.compile(cond, scope))
             for cond in self.where
             if free_vars(cond) == {np.var}
         ]
@@ -739,7 +748,7 @@ class _MatchBuilder:
                 raise CompileError(
                     EG_ERR_UNSUPPORTED.format(what=EG_WHAT_VARLEN_ROW_PROPS)
                 )
-            rhs = self.x.native(self.x.compile(value, Scope()))
+            rhs = self.exprs.native(self.exprs.compile(value, Scope()))
             conds.append(sq.eq(sq.prop_of(sq.EDGE, key), rhs))
         return conds
 

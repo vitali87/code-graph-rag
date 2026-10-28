@@ -93,7 +93,7 @@ from .limits import Deadline, QueryTimeout, running_until
 from .native import NativeGraph, decode_rows, with_walks
 from .parser import parse
 from .procedures import PROCEDURES, ProcValue, run_procedure
-from .types import Kind, SqlValue, T
+from .types import Kind, SqlValue, ValueType
 
 
 @dataclass
@@ -124,7 +124,7 @@ _SQL_REFRESH_KEY = sq.refresh_key(NODE_UNIQUE_CONSTRAINTS)
 # ---------------------------------------------------------------- parameters
 
 
-def value_type(value: CypherParamValue) -> T:
+def value_type(value: CypherParamValue) -> ValueType:
     if value is None:
         return ty.NULL
     if isinstance(value, bool):
@@ -244,7 +244,7 @@ def _mutates(query: a.Query) -> bool:
 @lru_cache(maxsize=EG_COMPILE_CACHE_SIZE)
 def compile_read(
     text: str,
-    param_sig: tuple[tuple[str, T], ...],
+    param_sig: tuple[tuple[str, ValueType], ...],
     json_arrow: bool,
     native_walks: bool = False,
 ) -> ReadPlan:
@@ -389,7 +389,7 @@ class Executor:
         self,
         stmt: a.Query,
         text: str,
-        sig: tuple[tuple[str, T], ...],
+        sig: tuple[tuple[str, ValueType], ...],
         params: CypherParams,
         writes: bool,
         walks: bool = False,
@@ -554,16 +554,16 @@ class _Run:
         scope = stage.scope(sq.INPUT)
         parts = []
         for expr, form in exprs:
-            ce = self.qc.x.compile(expr, scope)
+            ce = self.qc.exprs.compile(expr, scope)
             parts.append(self._form(ce, form))
         sql = sq.in_row_order(parts, stage.name, sq.INPUT)
         return [list(r) for r in self.conn.execute(sql, self._binds()).fetchall()]
 
     def _form(self, ce: CE, form: EgForm) -> str:
         if form == EgForm.JSON:
-            return self.qc.x.jsonv(ce)
+            return self.qc.exprs.jsonv(ce)
         if form == EgForm.NATIVE:
-            return self.qc.x.native(ce)
+            return self.qc.exprs.native(ce)
         return ce.sql
 
     def _new_col(self) -> str:
@@ -592,7 +592,7 @@ class _Run:
             return self._call(stage, clause)
         raise CompileError(EG_ERR_UNSUPPORTED.format(what=type(clause).__name__))
 
-    def _table_of(self, t: T) -> str:
+    def _table_of(self, t: ValueType) -> str:
         return sq.EDGES if t.kind == Kind.REL else sq.NODES
 
     def _set(
@@ -623,7 +623,9 @@ class _Run:
             if target is not None:
                 self._apply_set(item, stage.vars[item.var].t, _entity_id(target), value)
 
-    def _apply_set(self, item: a.SetItem, t: T, target: int, value: SqlValue) -> None:
+    def _apply_set(
+        self, item: a.SetItem, t: ValueType, target: int, value: SqlValue
+    ) -> None:
         table = self._table_of(t)
         if item.kind == EgSetKind.PROP:
             key = str(item.key)
@@ -671,7 +673,7 @@ class _Run:
     def _delete(self, stage: Stage, clause: a.Delete) -> None:
         exprs = [(e, EgForm.RAW) for e in clause.exprs]
         scope = stage.scope(sq.INPUT)
-        types = [self.qc.x.compile(e, scope).t for e in clause.exprs]
+        types = [self.qc.exprs.compile(e, scope).t for e in clause.exprs]
         values = self._eval(stage, exprs)
         nodes: list[int] = []
         rels: list[int] = []
@@ -803,7 +805,7 @@ class _Run:
         stage: Stage,
         rows: list[list[SqlValue]],
         var: str | None,
-        t: T,
+        t: ValueType,
         name: str,
         bound: Sequence[int | None],
     ) -> Stage:
@@ -931,7 +933,7 @@ class _Run:
 
     def _foreach(self, stage: Stage, clause: a.Foreach) -> None:
         scope = stage.scope(sq.INPUT)
-        source = self.qc.x.compile(clause.source, scope)
+        source = self.qc.exprs.compile(clause.source, scope)
         elem = (source.t.elem if source.t.kind == Kind.LIST else None) or ty.ANY
         values = self._eval(stage, [(clause.source, EgForm.JSON)])
         rows = self._rows(stage)
@@ -977,7 +979,9 @@ class _Run:
         out = self._store(new_vars, out_rows)
         if clause.where is None:
             return out
-        cond = self.qc.x.boolean(self.qc.x.compile(clause.where, out.scope(sq.INPUT)))
+        cond = self.qc.exprs.boolean(
+            self.qc.exprs.compile(clause.where, out.scope(sq.INPUT))
+        )
         name = self.ex.fresh_temp()
         self.conn.execute(sq.filtered_copy(name, out.name, cond), self._binds())
         self.temps.append(name)
@@ -1011,9 +1015,9 @@ def _create_props(
     return exprs
 
 
-def _pattern_vars(clause: a.Create) -> list[tuple[str, T, tuple[str, ...]]]:
+def _pattern_vars(clause: a.Create) -> list[tuple[str, ValueType, tuple[str, ...]]]:
     """Each variable a CREATE's patterns name, as often as they name it."""
-    found: list[tuple[str, T, tuple[str, ...]]] = []
+    found: list[tuple[str, ValueType, tuple[str, ...]]] = []
     for pattern in clause.patterns:
         found.extend((n.var, ty.NODE, n.labels) for n in pattern.nodes if n.var)
         found.extend((r.var, ty.REL, r.types) for r in pattern.rels if r.var)
@@ -1040,7 +1044,7 @@ def _node_match_arg(value: JsonValue) -> JsonValue:
     return value
 
 
-def _entities(t: T, value: SqlValue) -> list[tuple[Kind, int]]:
+def _entities(t: ValueType, value: SqlValue) -> list[tuple[Kind, int]]:
     if value is None:
         return []
     if t.kind in (Kind.NODE, Kind.REL):
@@ -1056,7 +1060,7 @@ def _entities(t: T, value: SqlValue) -> list[tuple[Kind, int]]:
     return []
 
 
-def _to_column(t: T, value: JsonValue | ProcValue) -> SqlValue:
+def _to_column(t: ValueType, value: JsonValue | ProcValue) -> SqlValue:
     """A Python value in the column representation of type `t`."""
     if value is None:
         return None

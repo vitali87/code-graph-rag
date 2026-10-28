@@ -37,7 +37,7 @@ from ..constants.graph import NODE_UNIQUE_CONSTRAINTS
 from . import cypher_ast as a
 from . import sql as sq
 from . import types as ty
-from .types import Kind, T
+from .types import Kind, ValueType
 
 
 class CompileError(ValueError):
@@ -49,7 +49,7 @@ class CE:
     """A compiled expression: SQL text plus what the compiler knows of it."""
 
     sql: str
-    t: T
+    t: ValueType
     # For a node or relationship joined into the current FROM: its alias,
     # so property reads use the joined row instead of a lookup by id.
     alias: str | None = None
@@ -100,7 +100,7 @@ class ParamSpec:
 class Ctx:
     """Per-compilation state shared by every expression of one query."""
 
-    param_types: dict[str, T]
+    param_types: dict[str, ValueType]
     json_arrow: bool
     # Variable-length walks call the Rust extension (native.py) instead of
     # a recursive CTE.
@@ -217,7 +217,7 @@ class ExprCompiler:
         """SQL whose value the executor decodes into the Python result."""
         return self._output(ce.sql, ce.t)
 
-    def _output(self, sql: str, t: T) -> str:
+    def _output(self, sql: str, t: ValueType) -> str:
         # Nodes and relationships travel as ids; a result shows them whole,
         # at any depth: `nxalg.strongly_connected_components` yields lists
         # of lists of nodes.
@@ -241,7 +241,7 @@ class ExprCompiler:
     def exact_json_at(self, doc: str, path: str) -> str:
         return sq.json_at(doc, path, self.ctx.json_arrow)
 
-    def typed_extract(self, doc: str, key: str, t: T) -> CE:
+    def typed_extract(self, doc: str, key: str, t: ValueType) -> CE:
         path = sq.json_path(key)
         if t.is_json and t.kind == Kind.ANY:
             return CE(self.exact_json_at(doc, path), t)
@@ -335,7 +335,7 @@ class ExprCompiler:
         elem = subject.t.elem or ty.ANY
         return self._element_at(subject.sql, path, elem)
 
-    def _element_at(self, doc: str, path: str, elem: T) -> CE:
+    def _element_at(self, doc: str, path: str, elem: ValueType) -> CE:
         if elem.kind in (Kind.NODE, Kind.REL, Kind.INT, Kind.FLOAT, Kind.STRING):
             return CE(sq.json_extract(doc, path), elem)
         if elem.kind == Kind.BOOL:
@@ -577,7 +577,7 @@ class ExprCompiler:
         return CE(sq.aggregate(e.name, native, e.distinct), arg.t)
 
 
-def _holds_entities(t: T) -> bool:
+def _holds_entities(t: ValueType) -> bool:
     if t.kind in (Kind.NODE, Kind.REL):
         return True
     return t.kind == Kind.LIST and t.elem is not None and _holds_entities(t.elem)
@@ -605,7 +605,7 @@ def _calls_volatile(e: a.Expr) -> bool:
     )
 
 
-def each_value_sql(alias: str, elem: T) -> str:
+def each_value_sql(alias: str, elem: ValueType) -> str:
     """One element of a `json_each` row, in the representation of `elem`."""
     if elem.kind in (Kind.NODE, Kind.REL, Kind.INT, Kind.FLOAT, Kind.STRING, Kind.BOOL):
         return sq.column(alias, sq.VALUE)
@@ -728,7 +728,9 @@ def _f_reverse(c: ExprCompiler, args: list[CE]) -> CE:
     return CE(sq.call(EgSqlFn.REVERSE_LIST, c.jsonv(arg)), arg.t)
 
 
-def _converter(sql_name: EgSqlFn, out: T) -> Callable[[ExprCompiler, list[CE]], CE]:
+def _converter(
+    sql_name: EgSqlFn, out: ValueType
+) -> Callable[[ExprCompiler, list[CE]], CE]:
     def handler(c: ExprCompiler, args: list[CE]) -> CE:
         return CE(sq.call(sql_name, c.jsonv(args[0])), out)
 
@@ -736,7 +738,7 @@ def _converter(sql_name: EgSqlFn, out: T) -> Callable[[ExprCompiler, list[CE]], 
 
 
 def _math(
-    sql_name: EgSqlFn, out: T | None = None
+    sql_name: EgSqlFn, out: ValueType | None = None
 ) -> Callable[[ExprCompiler, list[CE]], CE]:
     def handler(c: ExprCompiler, args: list[CE]) -> CE:
         arg = args[0]

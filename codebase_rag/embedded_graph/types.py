@@ -28,9 +28,9 @@ from ..types_defs import RELATIONSHIP_PROPERTY_SCHEMAS
 
 
 @dataclass(frozen=True)
-class T:
+class ValueType:
     kind: Kind
-    elem: T | None = None
+    elem: ValueType | None = None
 
     @property
     def is_entity(self) -> bool:
@@ -45,22 +45,22 @@ class T:
         return self.kind in (Kind.BOOL, Kind.INT, Kind.FLOAT, Kind.STRING, Kind.NULL)
 
 
-NODE = T(Kind.NODE)
-REL = T(Kind.REL)
-MAP = T(Kind.MAP)
-BOOL = T(Kind.BOOL)
-INT = T(Kind.INT)
-FLOAT = T(Kind.FLOAT)
-STRING = T(Kind.STRING)
-ANY = T(Kind.ANY)
-NULL = T(Kind.NULL)
+NODE = ValueType(Kind.NODE)
+REL = ValueType(Kind.REL)
+MAP = ValueType(Kind.MAP)
+BOOL = ValueType(Kind.BOOL)
+INT = ValueType(Kind.INT)
+FLOAT = ValueType(Kind.FLOAT)
+STRING = ValueType(Kind.STRING)
+ANY = ValueType(Kind.ANY)
+NULL = ValueType(Kind.NULL)
 
 
-def list_of(elem: T | None) -> T:
-    return T(Kind.LIST, elem or ANY)
+def list_of(elem: ValueType | None) -> ValueType:
+    return ValueType(Kind.LIST, elem or ANY)
 
 
-def unify(types: list[T]) -> T:
+def unify(types: list[ValueType]) -> ValueType:
     """The one type all of `types` share, NULL aside; ANY when they differ."""
     real = [t for t in types if t.kind != Kind.NULL]
     if not real:
@@ -75,7 +75,7 @@ def unify(types: list[T]) -> T:
     return ANY
 
 
-_DECLARED: dict[str, T] = {
+_DECLARED: dict[str, ValueType] = {
     EG_SCHEMA_STRING: STRING,
     EG_SCHEMA_INT: INT,
     EG_SCHEMA_BOOLEAN: BOOL,
@@ -83,7 +83,7 @@ _DECLARED: dict[str, T] = {
 }
 
 
-def _declared_type(type_name: str) -> T:
+def _declared_type(type_name: str) -> ValueType:
     if type_name.startswith(EG_SCHEMA_LIST_OPEN) and type_name.endswith(
         EG_SCHEMA_LIST_CLOSE
     ):
@@ -93,7 +93,7 @@ def _declared_type(type_name: str) -> T:
 
 
 @cache
-def _node_property_types() -> dict[str, dict[str, T]]:
+def _node_property_types() -> dict[str, dict[str, ValueType]]:
     return {
         label: {spec.name: _declared_type(spec.type_name) for spec in specs}
         for label, specs in parsed_node_schemas().items()
@@ -101,8 +101,8 @@ def _node_property_types() -> dict[str, dict[str, T]]:
 
 
 @cache
-def _rel_property_types() -> dict[str, dict[str, T]]:
-    out: dict[str, dict[str, T]] = {}
+def _rel_property_types() -> dict[str, dict[str, ValueType]]:
+    out: dict[str, dict[str, ValueType]] = {}
     for schema in RELATIONSHIP_PROPERTY_SCHEMAS:
         props = {
             spec.name: _declared_type(spec.type_name)
@@ -114,7 +114,9 @@ def _rel_property_types() -> dict[str, dict[str, T]]:
     return out
 
 
-def _resolve(table: dict[str, dict[str, T]], names: tuple[str, ...], key: str) -> T:
+def _resolve(
+    table: dict[str, dict[str, ValueType]], names: tuple[str, ...], key: str
+) -> ValueType:
     # A property declared with one type everywhere it is declared keeps that
     # type even when the variable's label is unknown; otherwise its values
     # travel as exact JSON.
@@ -125,11 +127,11 @@ def _resolve(table: dict[str, dict[str, T]], names: tuple[str, ...], key: str) -
     return ANY
 
 
-def node_property_type(labels: tuple[str, ...], key: str) -> T:
+def node_property_type(labels: tuple[str, ...], key: str) -> ValueType:
     return _resolve(_node_property_types(), labels, key)
 
 
-def rel_property_type(types: tuple[str, ...], key: str) -> T:
+def rel_property_type(types: tuple[str, ...], key: str) -> ValueType:
     return _resolve(_rel_property_types(), types, key)
 
 
