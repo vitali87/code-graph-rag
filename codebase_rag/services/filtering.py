@@ -3,7 +3,7 @@ from __future__ import annotations
 from ..capture import CaptureSelection
 from ..constants import NodeLabel, RelationshipType
 from ..types_defs import PropertyDict, PropertyParams, PropertyValue, ResultRow
-from . import IngestorProtocol, QueryProtocol
+from . import IngestorProtocol, QueryingIngestorProtocol
 
 
 class FilteringIngestor:
@@ -41,13 +41,35 @@ class FilteringIngestor:
     def rel_enabled(self, rel_type: RelationshipType) -> bool:
         return self._selection.rel_enabled(rel_type)
 
+
+class QueryingFilteringIngestor(FilteringIngestor):
+    """The filter over a sink that can also be read.
+
+    Separate from FilteringIngestor so `isinstance(sink, QueryProtocol)` tells
+    the truth: the plain wrapper answered every read with [] and dropped every
+    write when its sink was a write-only export, while still claiming to be
+    queryable, so a caller's capability check could not tell the two apart.
+    """
+
+    def __init__(
+        self, inner: QueryingIngestorProtocol, selection: CaptureSelection
+    ) -> None:
+        super().__init__(inner, selection)
+        self._reader = inner
+
     def fetch_all(
         self, query: str, params: PropertyParams | None = None
     ) -> list[ResultRow]:
-        if isinstance(self._inner, QueryProtocol):
-            return self._inner.fetch_all(query, params)
-        return []
+        return self._reader.fetch_all(query, params)
 
     def execute_write(self, query: str, params: PropertyParams | None = None) -> None:
-        if isinstance(self._inner, QueryProtocol):
-            self._inner.execute_write(query, params)
+        self._reader.execute_write(query, params)
+
+
+def filtering_ingestor(
+    inner: IngestorProtocol, selection: CaptureSelection
+) -> FilteringIngestor:
+    """The capture filter over `inner`, queryable exactly when `inner` is."""
+    if isinstance(inner, QueryingIngestorProtocol):
+        return QueryingFilteringIngestor(inner, selection)
+    return FilteringIngestor(inner, selection)

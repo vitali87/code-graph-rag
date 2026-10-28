@@ -117,7 +117,7 @@ from .services import (
     QueryingIngestorProtocol,
     QueryProtocol,
 )
-from .services.filtering import FilteringIngestor
+from .services.filtering import filtering_ingestor
 from .services.resource_cleanup import prune_unanchored_resources
 from .sync_lock import holds_sync_lock
 from .trace.carry import CapturedTraceEdge, capture_trace_edges, carry_trace_edges
@@ -1660,7 +1660,7 @@ class GraphUpdater:
         # parser emission sites stay untouched. All emission goes through
         # `_sink`; everything else uses `ingestor`.
         self.ingestor = ingestor
-        self._sink: IngestorProtocol = FilteringIngestor(ingestor, self.capture)
+        self._sink: IngestorProtocol = filtering_ingestor(ingestor, self.capture)
         self._single_file: Path | None = None
         # True while the current sync re-parses EVERY file (no cache/force):
         # such a run re-resolves all edges itself, so graph reads may degrade

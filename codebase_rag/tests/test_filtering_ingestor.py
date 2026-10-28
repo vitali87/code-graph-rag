@@ -6,7 +6,8 @@ from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
-from codebase_rag.services.filtering import FilteringIngestor
+from codebase_rag.services import QueryProtocol
+from codebase_rag.services.filtering import FilteringIngestor, filtering_ingestor
 
 RT = cs.RelationshipType
 NL = cs.NodeLabel
@@ -107,13 +108,29 @@ class _QueryableInner:
 
 def test_passthrough_methods_forwarded() -> None:
     inner = _QueryableInner()
-    ing = FilteringIngestor(inner, resolve_capture([]))
+    ing = filtering_ingestor(inner, resolve_capture([]))
+    assert isinstance(ing, QueryProtocol)
     ing.flush_all()
     inner.flush_all.assert_called_once()
     ing.fetch_all("MATCH (n) RETURN n")
     inner.fetch_all.assert_called_once()
     ing.execute_write("CREATE (n)")
     inner.execute_write.assert_called_once()
+
+
+class _WriteOnlyInner:
+    def __init__(self) -> None:
+        self.ensure_node_batch = MagicMock()
+        self.ensure_relationship_batch = MagicMock()
+        self.flush_all = MagicMock()
+
+
+def test_a_write_only_sink_is_not_reported_as_queryable() -> None:
+    # The wrapper defined fetch_all and execute_write unconditionally, so it
+    # passed every QueryProtocol check while answering [] and dropping writes
+    # over an export sink; a reader could not tell it from a real graph.
+    ing = filtering_ingestor(_WriteOnlyInner(), resolve_capture([]))
+    assert not isinstance(ing, QueryProtocol)
 
 
 def test_services_package_does_not_load_the_filtering_wrapper() -> None:
