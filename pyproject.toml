@@ -44,7 +44,9 @@ dependencies = [
     # meta-package also installs logfire, evals, a CLI and a web UI, none used.
     "pydantic-ai-slim[anthropic,google,openai]>=2.0.0",
     "pydantic-settings>=2.12.0",
-    "python-dotenv>=1.2.1",
+    # Capped: config.py reads .env through dotenv.main.DotEnv, which the
+    # package does not export, at import time of every command.
+    "python-dotenv>=1.2.1,<1.3",
     "tiktoken>=0.12.0",
     "tomli-w>=1.2.0",
     "tree-sitter-python>=0.25.0",
@@ -56,7 +58,13 @@ dependencies = [
     "click>=8.3.3",
     "protobuf>=6.33.5",
     "defusedxml>=0.7.1",
-    "huggingface-hub[hf-xet]>=1.7.2",
+    # Imported at the top of the CLI's stack module, so every `cgr` needs it.
+    "pyyaml>=6.0",
+    # Imported directly by the providers, the embedder and the web tools;
+    # their SDKs no longer all bring it.
+    "httpx>=0.28",
+    # Read by services/usage_cost.py; pre-1.0, so held to its minor.
+    "genai-prices>=0.1.9,<0.2",
     "pathspec>=1.0.4",
     "pygments>=2.20.0",
     # certifi is the CA bundle httpx and requests verify against; 2026.10.23
@@ -208,6 +216,9 @@ semantic = [
     "sqlite-vec>=0.1.9; (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')) or sys_platform == 'darwin' or (sys_platform == 'win32' and platform_machine == 'AMD64')",
     "torch>=2.6.0",
     "transformers>=5.0.0",
+    # transformers downloads the UniXcoder weights through it; hf-xet is the
+    # faster transfer backend for them.
+    "huggingface-hub[hf-xet]>=1.7.2",
 ]
 
 milvus = [

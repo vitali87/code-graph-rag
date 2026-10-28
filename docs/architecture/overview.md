@@ -51,4 +51,3 @@ User Query → AI Model (Cypher Gen) → Cypher Query → Graph Results → Resp
 | `rich` | Terminal rendering |
 | `prompt-toolkit` | Interactive command line |
 | `watchdog` | Filesystem events monitoring |
-| `huggingface-hub` | UniXcoder model download |

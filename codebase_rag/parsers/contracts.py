@@ -20,10 +20,9 @@ from pathlib import Path
 from typing import NamedTuple
 from urllib.parse import urlparse
 
-from loguru import logger
+import yaml
 
 from .. import constants as cs
-from .. import logs as ls
 from ..types_defs import JsonValue
 from ..utils.json_io import loads_json
 from ..utils.path_utils import is_symlink_entry, should_skip_path
@@ -204,11 +203,6 @@ def _parse_document(path: Path, text: str) -> JsonValue:
             return loads_json(text)
         except ValueError:
             return None
-    try:
-        import yaml
-    except ImportError:
-        logger.debug(ls.CONTRACT_YAML_UNAVAILABLE, path=str(path))
-        return None
     try:
         return yaml.safe_load(text)
     except yaml.YAMLError:

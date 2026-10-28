@@ -307,7 +307,9 @@ This checks that all required dependencies and services are available.
 - **click**: Composable command line interface toolkit
 - **protobuf**
 - **defusedxml**: XML bomb protection for Python stdlib modules
-- **huggingface-hub**: Client library to download and publish models, datasets and other repos on the huggingface.co hub
+- **pyyaml**: YAML parser and emitter for Python
+- **httpx**: The next generation HTTP client.
+- **genai-prices**: Calculate prices for calling LLM inference APIs.
 - **pathspec**: Utility library for gitignore style pattern matching of file paths.
 - **pygments**: Pygments is a syntax highlighting package written in Python.
 - **certifi**: Python package for providing Mozilla's CA Bundle.

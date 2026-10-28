@@ -21,11 +21,13 @@ def price_run(usage: RunUsage, provider: str, model_id: str) -> Decimal | None:
     from the model id, so a proxy provider name (e.g. litellm) still prices a
     recognizable model.
     """
+    # Outside the try: a missing package is a fault to see, not an unpriced
+    # model.
+    from genai_prices import calc_price
+
     model_ref = model_id.split(":", 1)[-1]
     for provider_id in (provider or None, None):
         try:
-            from genai_prices import calc_price
-
             return calc_price(usage, model_ref, provider_id=provider_id).total_price
         except Exception:  # noqa: BLE001, S112  # pricing is display-only, never fatal
             continue
