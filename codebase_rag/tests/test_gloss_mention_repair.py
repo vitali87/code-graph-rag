@@ -13,7 +13,14 @@ from __future__ import annotations
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.embedded_graph.connection import EmbeddedConnection
-from codebase_rag.gloss_repair import repair_mentions
+from codebase_rag.gloss_anchor import TextAnchor
+from codebase_rag.gloss_repair import (
+    _Mention,
+    _MentionPlacer,
+    _Placed,
+    _QuoteCandidate,
+    repair_mentions,
+)
 from codebase_rag.types_defs import PropertyDict, ResultRow
 
 P = "proj"
@@ -132,6 +139,66 @@ def test_a_mention_edited_in_place_renews_its_recorded_hash() -> None:
     assert params[cs.KEY_ATTACH_KEYS] == []
     assert report.moved == []
     assert report.lost == []
+
+
+def test_a_mention_whose_code_has_two_homes_leaves_the_reused_name() -> None:
+    # `run`'s recorded code is now in c and in d, and b.run holds other code.
+    # The code went somewhere, just not to one place, so this is no edit in
+    # place: the name must not keep the mention, and neither copy is a guess
+    # worth binding (bot review on PR #3329).
+    edited = f"{cs.ANCHOR_HASH_VERSION}edited"
+    store = _Store(
+        _note([RUN]),
+        [_definition(RUN, edited)],
+        [_definition(f"{P}.c.run", RUN_HASH), _definition(f"{P}.d.run", RUN_HASH)],
+    )
+
+    report = repair_mentions(store.fetch_all, store.execute_write)
+
+    ((_query, params),) = store.writes
+    assert params is not None
+    assert params[cs.KEY_MENTION_QNS] == [RUN]
+    assert params[cs.KEY_MENTION_HASHES] == [RUN_HASH]
+    assert params[cs.KEY_MENTIONS_LOST] == [RUN]
+    assert params[cs.KEY_ATTACH_QNS] == []
+    assert params[cs.KEY_ATTACH_KEYS] == []
+    assert report.lost == ["gloss:n"]
+
+
+class _Quotes:
+    """The quote tier's answers, without a source reader behind them."""
+
+    def __init__(self, rows: list[_QuoteCandidate]) -> None:
+        self.rows = rows
+
+    def candidates(self, project: str, quote: str) -> list[_QuoteCandidate]:
+        return [r for r in self.rows if r.anchor.quote == quote]
+
+    def anchor_of(self, project: str, qualified_name: str) -> TextAnchor | None:
+        found = [r.anchor for r in self.rows if r.qualified_name == qualified_name]
+        return found[0] if len(found) == 1 else None
+
+
+def test_a_name_among_several_quote_homes_keeps_its_mention() -> None:
+    # A decorator change moves the hash but not the quote, so b.run itself is
+    # one of the quote's homes, with an identical twin in c. The recorded code
+    # is still under the name: renewed there, not lost.
+    anchor = TextAnchor(quote="q-run", prefix="", suffix="")
+    decorated = f"{cs.ANCHOR_HASH_VERSION}decorated"
+    twin = f"{P}.c.run"
+    quotes = _Quotes(
+        [
+            _QuoteCandidate(RUN, anchor, "b.py", 1, 2, decorated),
+            _QuoteCandidate(twin, anchor, "c.py", 1, 2, f"{cs.ANCHOR_HASH_VERSION}c"),
+        ]
+    )
+    placer = _MentionPlacer(
+        _Store(_note([RUN]), [], []).fetch_all, {RUN: [decorated]}, quotes
+    )
+
+    placed = placer.place(_Mention(RUN, RUN_HASH, "q-run", lost=False), P)
+
+    assert placed == _Placed(RUN, decorated, "q-run", lost=False)
 
 
 def test_the_set_statement_re_validates_a_moved_binding() -> None:

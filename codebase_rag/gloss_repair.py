@@ -618,11 +618,16 @@ class _MentionPlacer:
                 expect_hash=anchor_hash,
                 moved=qn != mention.qualified_name,
             )
-        if hashes and not mention.lost:
+        if (
+            hashes
+            and not mention.lost
+            and (not found or any(qn == mention.qualified_name for qn, _ in found))
+        ):
             # The name holds other code and the recorded code went nowhere
-            # one can point to: the definition was edited in place, or the
-            # note is from before mentions recorded anchors. Its anchors are
-            # renewed so a later move is followed from here.
+            # else: the definition was edited in place, or the note is from
+            # before mentions recorded anchors. Its anchors are renewed so a
+            # later move is followed from here. Code found in several places
+            # other than the name did go somewhere, so the name keeps nothing.
             return self._renewed(mention, project, hashes)
         return _Placed(
             mention.qualified_name,
@@ -693,9 +698,10 @@ def repair_mentions(
     the name is gone, or holds other code, the recorded code is looked for
     in the note's project, by content hash and then by text quote, as the
     subject is: exactly one home is followed, renaming the mention. Failing
-    that, a name that is still there was edited in place and keeps the
-    mention, with its anchors renewed; a name that is gone leaves the
-    mention in `mentions_lost`, with no edge, until its code comes back. A
+    that, a name that is still there, with the recorded code in no other
+    place, was edited in place and keeps the mention, with its anchors
+    renewed; otherwise the mention goes to `mentions_lost`, with no edge,
+    until its code has one home again. A
     name reused by unrelated code therefore never takes a mention by name
     alone: not while the recorded code is elsewhere, and not once the
     mention is lost.
