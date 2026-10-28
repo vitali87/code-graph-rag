@@ -949,10 +949,12 @@ class TestRemoveLanguageCommand:
             )
             config.write_text(original, encoding="utf-8")
 
-            real_open = open
+            real_open = Path.open
 
-            def failing_write_open(file, mode="r", *args, **kwargs):
-                handle = real_open(file, mode, *args, **kwargs)
+            # The temp file is created, then the write fails: the config must
+            # stay as it was and the temp file must not be left behind.
+            def failing_write_open(self, mode="r", *args, **kwargs):
+                handle = real_open(self, mode, *args, **kwargs)
                 if "w" in mode:
                     handle.close()
                     raise OSError("disk full")
@@ -962,11 +964,7 @@ class TestRemoveLanguageCommand:
                 patch(
                     "codebase_rag.tools.language.LANGUAGE_SPECS", {"foo": _spec("foo")}
                 ),
-                patch(
-                    "codebase_rag.tools.language.open",
-                    failing_write_open,
-                    create=True,
-                ),
+                patch.object(Path, "open", failing_write_open),
                 patch("codebase_rag.tools.language.subprocess.run") as run,
             ):
                 result = runner.invoke(remove_language, ["foo"])
