@@ -289,6 +289,16 @@ MCP_WORKSPACE_SOURCE_UNPROVEN = (
     "graph does not show that project indexed from the workspace's checkout; "
     "re-index it from there to read its source"
 )
+MCP_ROOT_OUTSIDE_WORKSPACE = (
+    "This server's directory {root} is not a repository of workspace "
+    "{workspace!r}, so this tool would act outside it. Start the server in "
+    "one of: {known}"
+)
+MCP_WIPE_REFUSED_IN_WORKSPACE = (
+    "wipe_database deletes every project in the graph, including ones "
+    "workspace {workspace!r} does not serve; use delete_project for each of: "
+    "{known}"
+)
 MCP_WORKSPACE_DEFAULT_AMBIGUOUS = (
     "Workspace {workspace!r} holds {count} projects and none is rooted at this "
     "server's directory; pass `project` (one of: {known})"

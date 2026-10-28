@@ -18,6 +18,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
+from codebase_rag import tool_errors as te
 from codebase_rag.mcp import server as mcp_server
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.workspaces import WorkspaceConfig, WorkspaceError, WorkspaceRepo
@@ -514,3 +515,88 @@ async def test_the_agent_query_tool_binds_an_indexed_default(
     # it and reading `str(...)` checked nothing: the real tool is async, so
     # the string was a coroutine's repr, never "Unknown project" (bot review).
     assert tool.function.__name__ == "query_codebase_knowledge_graph"
+
+
+def test_every_non_reader_is_classified_for_workspaces() -> None:
+    """A tool that does not read the graph either names its project, acts on
+    the server's directory, or is the one global wipe. A new non-reader must
+    be placed, or a workspace server would run it unguarded."""
+    from codebase_rag.mcp import tools as mcp_tools
+
+    assert mcp_tools._NOT_GRAPH_READERS == (
+        mcp_tools._ROOT_BOUND_TOOLS
+        | mcp_tools._PROJECT_NAMED_TOOLS
+        | {cs.MCPToolName.WIPE_DATABASE}
+    )
+
+
+@pytest.mark.anyio
+async def test_root_bound_tools_refuse_a_root_the_workspace_does_not_serve(
+    tmp_path: Path,
+) -> None:
+    """`index_repository`, the file tools and the agent act on the server's
+    directory, which no project argument names. With that directory outside
+    the workspace they rebuilt, read and edited a repository it does not
+    serve."""
+    from codebase_rag.mcp import tools as mcp_tools
+
+    ws = _workspace(tmp_path, ("a", ALPHA))
+    registry = _registry(tmp_path, ws, root="elsewhere")
+    refusal = cs.MCP_ROOT_OUTSIDE_WORKSPACE.format(
+        root=(tmp_path / "elsewhere").resolve(),
+        workspace="ws",
+        known=(tmp_path / "a").resolve(),
+    )
+    registered = [n for n in mcp_tools._ROOT_BOUND_TOOLS if n in registry._tools]
+    assert cs.MCPToolName.INDEX_REPOSITORY in registered
+    assert cs.MCPToolName.WRITE_FILE in registered
+    for name in registered:
+        info = registry.get_tool_handler(name)
+        assert info is not None
+        handler, returns_json = info
+        result = await handler(file_path="x.py", content="pwned")
+        assert (result[cs.DICT_KEY_ERROR] if returns_json else result) == refusal
+        assert isinstance(
+            result[cs.DICT_KEY_ERROR] if returns_json else result, te.ToolFailure
+        )
+    assert not (tmp_path / "elsewhere" / "x.py").exists()
+
+
+@pytest.mark.anyio
+async def test_root_bound_tools_run_when_the_root_is_a_workspace_repo(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "a").mkdir()
+    ws = _workspace(tmp_path, ("a", ALPHA), ("b", BETA))
+    registry = _registry(tmp_path, ws, root="a")
+    info = registry.get_tool_handler(cs.MCPToolName.INDEX_REPOSITORY)
+    assert info is not None
+    assert info[0] == registry.index_repository
+
+
+@pytest.mark.anyio
+async def test_wipe_database_is_refused_under_a_workspace(tmp_path: Path) -> None:
+    """`wipe_database` deletes every project in the shared graph, including
+    ones the workspace does not serve; `delete_project` is held to the
+    allow-list, the wipe was not."""
+    (tmp_path / "a").mkdir()
+    ws = _workspace(tmp_path, ("a", ALPHA))
+    registry = _registry(tmp_path, ws, root="a")
+    info = registry.get_tool_handler(cs.MCPToolName.WIPE_DATABASE)
+    assert info is not None
+    result = await info[0](confirm=True)
+    assert isinstance(result, te.ToolFailure)
+    assert result == cs.MCP_WIPE_REFUSED_IN_WORKSPACE.format(
+        workspace="ws", known=ALPHA
+    )
+    registry.ingestor.clean_database.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_a_server_without_a_workspace_keeps_every_handler(
+    tmp_path: Path,
+) -> None:
+    registry = _registry(tmp_path, None)
+    info = registry.get_tool_handler(cs.MCPToolName.WIPE_DATABASE)
+    assert info is not None
+    assert info[0] == registry.wipe_database

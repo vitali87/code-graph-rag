@@ -126,6 +126,13 @@ def _read_file_slice(
     return header + paginated_content
 
 
+def _refusing_handler(refusal: te.ToolFailure, returns_json: bool) -> MCPHandlerType:
+    async def refuse(**_kwargs: object) -> object:
+        return {cs.DICT_KEY_ERROR: refusal} if returns_json else refusal
+
+    return refuse
+
+
 # The read-only tools routed through `_graph_query`. Listed rather than
 # inferred: `rename` shares that path for the ingestor lock but is a WRITE,
 # and refusing it here would replace its own refusal payload (which carries
@@ -165,6 +172,37 @@ _NOT_GRAPH_READERS = frozenset(
         cs.MCPToolName.STRUCTURAL_SEARCH,
         cs.MCPToolName.STRUCTURAL_REPLACE,
         cs.MCPToolName.ASK_AGENT,
+    }
+)
+
+# The non-readers that act on this server's directory rather than on a
+# project they name. Under a workspace that does not serve that directory
+# they are refused: they would index, read or edit a repository outside the
+# allow-list. `test_every_non_reader_is_classified_for_workspaces` fails
+# until a new non-reader is placed here or in the set below it.
+_ROOT_BOUND_TOOLS = frozenset(
+    {
+        cs.MCPToolName.INDEX_REPOSITORY,
+        cs.MCPToolName.UPDATE_REPOSITORY,
+        cs.MCPToolName.REINGEST,
+        cs.MCPToolName.SURGICAL_REPLACE_CODE,
+        cs.MCPToolName.READ_FILE,
+        cs.MCPToolName.WRITE_FILE,
+        cs.MCPToolName.LIST_DIRECTORY,
+        cs.MCPToolName.STRUCTURAL_SEARCH,
+        cs.MCPToolName.STRUCTURAL_REPLACE,
+        # The agent's file, shell and edit tools are bound to the same root.
+        cs.MCPToolName.ASK_AGENT,
+    }
+)
+
+# The non-readers that name their project, and so take the allow-list
+# themselves.
+_PROJECT_NAMED_TOOLS = frozenset(
+    {
+        cs.MCPToolName.LIST_PROJECTS,
+        cs.MCPToolName.DELETE_PROJECT,
+        cs.MCPToolName.RENAME,
     }
 )
 
@@ -1012,6 +1050,51 @@ class MCPToolsRegistry:
             input_schema=traceback_schema,
             handler=self.rank_root_causes,
             returns_json=True,
+        )
+        self._hold_tools_to_workspace()
+
+    def _hold_tools_to_workspace(self) -> None:
+        """Refuse, under a workspace, the tools that would act outside it.
+
+        The project-taking tools apply the allow-list per call, but some act
+        on what no project argument names. `wipe_database` deletes every
+        project in the shared graph, so a workspace server never runs it.
+        The root-bound tools act on this server's directory, which a
+        workspace need not serve (`_fixed_root_project`); they run only when
+        that directory is one of its repositories.
+        """
+        if self.workspace is None:
+            return
+        root_refusal = self._workspace_root_refusal()
+        for name, metadata in self._tools.items():
+            if name == cs.MCPToolName.WIPE_DATABASE:
+                refusal: te.ToolFailure | None = te.ToolFailure(
+                    cs.MCP_WIPE_REFUSED_IN_WORKSPACE.format(
+                        workspace=self.workspace.name,
+                        known=cs.SEPARATOR_COMMA_SPACE.join(
+                            self.workspace.project_names()
+                        ),
+                    )
+                )
+            elif name in _ROOT_BOUND_TOOLS:
+                refusal = root_refusal
+            else:
+                refusal = None
+            if refusal is not None:
+                metadata.handler = _refusing_handler(refusal, metadata.returns_json)
+
+    def _workspace_root_refusal(self) -> te.ToolFailure | None:
+        assert self.workspace is not None
+        root = Path(self.project_root).resolve()
+        repos = [repo.repo_path() for repo in self.workspace.repos]
+        if root in repos:
+            return None
+        return te.ToolFailure(
+            cs.MCP_ROOT_OUTSIDE_WORKSPACE.format(
+                root=root,
+                workspace=self.workspace.name,
+                known=cs.SEPARATOR_COMMA_SPACE.join(map(str, repos)),
+            )
         )
 
     def _agent_query_tool(self) -> Tool:

@@ -202,6 +202,8 @@ claude mcp add --transport stdio code-graph-rag-workspace \
 
 A workspace server lists the workspace's indexed projects, refuses a `project` argument outside the workspace (naming the projects it serves), defaults a request without `project` to the repo rooted at `TARGET_REPO_PATH` or to the only repo, and reads source for each repo from its own root. The workspace narrows the choice only: a workspace repo that is not indexed is still refused as unknown, exactly as without a workspace, but the refusal's close matches and its list of indexed projects come from the workspace's own projects, never from others in the shared graph.
 
+The tools that act on the server's own directory rather than on a named project (`index_repository`, `update_repository`, `reingest`, the file tools, `surgical_replace_code`, the structural tools and `ask_agent`) run only when `TARGET_REPO_PATH` is one of the workspace's repositories, and refuse otherwise. `wipe_database` is refused under a workspace, because it removes projects the workspace does not serve; use `delete_project` for each served project instead.
+
 ## Troubleshooting
 
 | Issue | Solution |
