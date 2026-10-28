@@ -1,6 +1,6 @@
 [package]
 name = "cgr_graph_rs"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 description = "Native acceleration for code-graph-rag: its embedded graph, and its indexer's tree walks"
 license = "MIT"

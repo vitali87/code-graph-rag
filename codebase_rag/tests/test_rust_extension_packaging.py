@@ -30,13 +30,13 @@ PUBLISH_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "publish.yml"
 # What maturin names each wheel rust-wheels.yml builds, plus the sdist a
 # release could also carry.
 PUBLISHED_FILES = [
-    "cgr_graph_rs-0.1.3-cp312-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
-    "cgr_graph_rs-0.1.3-cp312-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl",
-    "cgr_graph_rs-0.1.3-cp312-abi3-musllinux_1_2_x86_64.whl",
-    "cgr_graph_rs-0.1.3-cp312-abi3-musllinux_1_2_aarch64.whl",
-    "cgr_graph_rs-0.1.3-cp312-abi3-macosx_10_13_x86_64.macosx_11_0_arm64.macosx_10_13_universal2.whl",
-    "cgr_graph_rs-0.1.3-cp312-abi3-win_amd64.whl",
-    "cgr_graph_rs-0.1.3.tar.gz",
+    "cgr_graph_rs-0.1.4-cp312-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+    "cgr_graph_rs-0.1.4-cp312-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl",
+    "cgr_graph_rs-0.1.4-cp312-abi3-musllinux_1_2_x86_64.whl",
+    "cgr_graph_rs-0.1.4-cp312-abi3-musllinux_1_2_aarch64.whl",
+    "cgr_graph_rs-0.1.4-cp312-abi3-macosx_10_13_x86_64.macosx_11_0_arm64.macosx_10_13_universal2.whl",
+    "cgr_graph_rs-0.1.4-cp312-abi3-win_amd64.whl",
+    "cgr_graph_rs-0.1.4.tar.gz",
 ]
 
 # What a Python on each wheel's platform reports to environment markers.
