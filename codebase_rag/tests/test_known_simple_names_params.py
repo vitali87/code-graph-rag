@@ -118,7 +118,7 @@ def test_an_incremental_sync_logs_no_failed_known_definitions_read(
     finally:
         logger.remove(sink)
 
-    failed = ls.PRUNE_QUERY_FAILED.format(label="known definitions")
+    failed = ls.PRUNE_QUERY_FAILED.format(label="known definitions", error="")
     assert not [w for w in warnings if failed in w]
 
 
@@ -137,5 +137,5 @@ def test_a_reingest_logs_no_failed_known_definitions_read(tmp_path: Path) -> Non
     finally:
         logger.remove(sink)
 
-    failed = ls.PRUNE_QUERY_FAILED.format(label="known definitions")
+    failed = ls.PRUNE_QUERY_FAILED.format(label="known definitions", error="")
     assert not [w for w in warnings if failed in w]

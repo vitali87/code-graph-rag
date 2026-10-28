@@ -1393,7 +1393,16 @@ PRUNE_SKIPPED_REGISTRY_UNREAD = (
     "run prunes them."
 )
 PRUNE_PENDING_NOT_UPDATED = "Orphan-prune pending marker not updated"
-PRUNE_QUERY_FAILED = "Could not read {label} paths from the graph; skipping its prune."
+PRUNE_QUERY_FAILED = (
+    "Could not read {label} paths from the graph; skipping its prune: {error}"
+)
+STATE_CACHE_UNREADABLE = "Could not read the state cache {path}: {error}"
+STATE_CACHE_UNWRITABLE = "Could not write the state cache {path}: {error}"
+# A read whose caller has a safe answer without it (empty, or "unknown").
+GRAPH_READ_UNAVAILABLE = "Could not read {label} from the graph: {error}"
+UNRESOLVED_REFERENCES_WRITE_FAILED = (
+    "Could not write modules' unresolved references to the graph: {error}"
+)
 PRUNE_FOUND = "Found {count} orphan {label} nodes to remove"
 PRUNE_DELETING = "Pruning orphan {label}: {path}"
 PRUNE_LEGACY_IDENTITIES = "Swept {count} legacy target-resolved File record(s)"

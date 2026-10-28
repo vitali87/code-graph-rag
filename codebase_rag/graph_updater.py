@@ -1052,8 +1052,9 @@ def _load_dir_mtimes(cache_path: Path) -> DirMtimesCache:
             data = load_json(f)
         if isinstance(data, dict):
             return {k: float(v) for k, v in data.items() if isinstance(v, int | float)}
-    except (OSError, ValueError):
-        pass
+    except (OSError, ValueError) as exc:
+        # A cache: without it the next run rescans every directory.
+        logger.debug(ls.STATE_CACHE_UNREADABLE, path=cache_path, error=exc)
     return {}
 
 
@@ -1062,8 +1063,8 @@ def _save_dir_mtimes(cache_path: Path, mtimes: DirMtimesCache) -> None:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         with cache_path.open("w", encoding="utf-8") as f:
             json.dump(mtimes, f)
-    except OSError:
-        pass
+    except OSError as exc:
+        logger.debug(ls.STATE_CACHE_UNWRITABLE, path=cache_path, error=exc)
 
 
 def _touch_empty_json(cache_path: Path) -> None:
@@ -1073,8 +1074,8 @@ def _touch_empty_json(cache_path: Path) -> None:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         with cache_path.open("w", encoding="utf-8") as f:
             f.write(cs.JSON_EMPTY_OBJECT)
-    except OSError:
-        pass
+    except OSError as exc:
+        logger.debug(ls.STATE_CACHE_UNWRITABLE, path=cache_path, error=exc)
 
 
 def _is_placeholder_hash_cache(cache_path: Path) -> bool:
@@ -3579,7 +3580,8 @@ class GraphUpdater:
         }
         try:
             rows = list(self.ingestor.fetch_all(CYPHER_PROJECT_MODULES, params))
-        except Exception:
+        except Exception as exc:
+            logger.debug(ls.GRAPH_READ_UNAVAILABLE, label="route modules", error=exc)
             return []
         out: list[tuple[str, Path]] = []
         for row in rows:
@@ -3627,7 +3629,8 @@ class GraphUpdater:
         params = {cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT}
         try:
             rows = list(self.ingestor.fetch_all(CYPHER_PROJECT_ROUTE_HANDLERS, params))
-        except Exception:
+        except Exception as exc:
+            logger.debug(ls.GRAPH_READ_UNAVAILABLE, label="route handlers", error=exc)
             return []
         out: list[tuple[cs.NodeLabel, str, list[str], str | None]] = []
         # `svc.` also selects `svc.v2`'s handlers (issue #2126).
@@ -3667,7 +3670,8 @@ class GraphUpdater:
         params = {cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT}
         try:
             rows = list(self.ingestor.fetch_all(CYPHER_PROJECT_PY_MODULES, params))
-        except Exception:
+        except Exception as exc:
+            logger.debug(ls.GRAPH_READ_UNAVAILABLE, label="Python modules", error=exc)
             return []
         out: list[tuple[str, Path]] = []
         for row in rows:
@@ -3855,8 +3859,10 @@ class GraphUpdater:
         names: set[str] = {self.project_name}
         try:
             rows = self._graph_rows(cq.CYPHER_LIST_PROJECTS, None)
-        except Exception:
-            logger.warning(ls.PRUNE_QUERY_FAILED, label="registered projects")
+        except Exception as exc:
+            logger.warning(
+                ls.PRUNE_QUERY_FAILED, label="registered projects", error=exc
+            )
             self._registry_unread = True
             rows = []
         for row in rows:
@@ -4946,8 +4952,8 @@ class GraphUpdater:
                     cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
                 },
             )
-        except Exception:
-            logger.warning(ls.PRUNE_QUERY_FAILED, label="affected callers")
+        except Exception as exc:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="affected callers", error=exc)
             return []
         return sorted(
             {
@@ -5122,8 +5128,8 @@ class GraphUpdater:
                     cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
                 },
             )
-        except Exception:
-            logger.warning(ls.PRUNE_QUERY_FAILED, label="linking documents")
+        except Exception as exc:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="linking documents", error=exc)
             return set()
         return {
             path
@@ -5206,8 +5212,10 @@ class GraphUpdater:
                     cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
                 },
             )
-        except Exception:
-            logger.warning(ls.PRUNE_QUERY_FAILED, label="unresolved importers")
+        except Exception as exc:
+            logger.warning(
+                ls.PRUNE_QUERY_FAILED, label="unresolved importers", error=exc
+            )
             return []
         return sorted(
             {
@@ -5248,8 +5256,10 @@ class GraphUpdater:
                     cs.CYPHER_PARAM_URI_PREFIX: cs.DART_SCHEME_PACKAGE,
                 },
             )
-        except Exception:
-            logger.warning(ls.PRUNE_QUERY_FAILED, label="Dart package importers")
+        except Exception as exc:
+            logger.warning(
+                ls.PRUNE_QUERY_FAILED, label="Dart package importers", error=exc
+            )
             return set()
         return {
             path
@@ -5308,8 +5318,10 @@ class GraphUpdater:
                     cs.KEY_PROJECT_NAME: self.project_name,
                 },
             )
-        except Exception:
-            logger.warning(ls.PRUNE_QUERY_FAILED, label="unresolved references")
+        except Exception as exc:
+            logger.warning(
+                ls.PRUNE_QUERY_FAILED, label="unresolved references", error=exc
+            )
             return []
         return sorted(
             {
@@ -5351,8 +5363,8 @@ class GraphUpdater:
                     cs.CYPHER_PARAM_PATHS: keys,
                 },
             )
-        except Exception:
-            logger.warning(ls.PRUNE_QUERY_FAILED, label="known definitions")
+        except Exception as exc:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="known definitions", error=exc)
             return {key: {"*"} for key in keys}
         for row in rows:
             qn, path = row.get(cs.KEY_QUALIFIED_NAME), row.get(cs.KEY_PATH)
@@ -5450,8 +5462,8 @@ class GraphUpdater:
                     cs.CYPHER_SET_UNRESOLVED_REFERENCES,
                     {cs.KEY_QN: module_qn, cs.CYPHER_PARAM_NAMES: names},
                 )
-        except Exception:
-            logger.warning(ls.PRUNE_QUERY_FAILED, label="unresolved references write")
+        except Exception as exc:
+            logger.warning(ls.UNRESOLVED_REFERENCES_WRITE_FAILED, error=exc)
 
     def _update_unresolved_reference_nodes(
         self, cleared: list[str], pending: list[tuple[str, list[str]]]
@@ -5545,14 +5557,14 @@ class GraphUpdater:
                     cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
                 },
             )
-        except Exception:
+        except Exception as exc:
             # The delete that follows takes these members with their type's
             # module, so an incremental run that read an outage as "none"
             # lost them for good under a completed hash commit; it aborts, as
             # the inbound capture does. A full build re-parses every file.
             if not self._is_full_build:
                 raise
-            logger.warning(ls.PRUNE_QUERY_FAILED, label="foreign members")
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="foreign members", error=exc)
             return []
         return sorted(
             {
@@ -5629,8 +5641,10 @@ class GraphUpdater:
                 cs.CYPHER_UNRESOLVED_SPECIFIER_IMPORTERS,
                 {cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT},
             )
-        except Exception:
-            logger.warning(ls.PRUNE_QUERY_FAILED, label="unresolved specifiers")
+        except Exception as exc:
+            logger.warning(
+                ls.PRUNE_QUERY_FAILED, label="unresolved specifiers", error=exc
+            )
             return set()
         wanted = _specifier_wanted_keys(present_keys)
         waiters: set[str] = set()
@@ -5661,8 +5675,8 @@ class GraphUpdater:
                 cs.CYPHER_BROKEN_LINK_DOCUMENTS,
                 {cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT},
             )
-        except Exception:
-            logger.warning(ls.PRUNE_QUERY_FAILED, label="broken links")
+        except Exception as exc:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="broken links", error=exc)
             return set()
         wanted = set(present_keys)
         waiters: set[str] = set()
@@ -5689,8 +5703,8 @@ class GraphUpdater:
                     cs.KEY_PROJECT_PREFIX: f"{self.project_name}{cs.SEPARATOR_DOT}",
                 },
             )
-        except Exception:
-            logger.warning(ls.PRUNE_QUERY_FAILED, label="Package")
+        except Exception as exc:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="Package", error=exc)
             return None
         paths: set[str] = set()
         for row in rows:
@@ -6513,7 +6527,8 @@ class GraphUpdater:
                     cs.KEY_PROJECT_PREFIX: self.project_name + ".",
                 },
             )
-        except Exception:
+        except Exception as exc:
+            logger.debug(ls.GRAPH_READ_UNAVAILABLE, label="module paths", error=exc)
             return None
         try:
             # A row without a qualified name (an older reader's shape) keeps
@@ -6696,7 +6711,8 @@ class GraphUpdater:
             roots = project_roots_from_rows(
                 self._graph_rows(cq.CYPHER_LIST_PROJECTS, None)
             )
-        except Exception:
+        except Exception as exc:
+            logger.debug(ls.GRAPH_READ_UNAVAILABLE, label="project roots", error=exc)
             return None
         root = roots.get(legacy)
         if root is None or Path(root).resolve() != self.repo_path.resolve():
@@ -9815,10 +9831,10 @@ class GraphUpdater:
         for query_all, scope, delete_query, label in prune_specs:
             try:
                 rows = self.ingestor.fetch_all(query_all, scope)
-            except Exception:
+            except Exception as exc:
                 # A graph that cannot be read cannot be pruned safely; the
                 # next healthy run sweeps whatever this one left behind.
-                logger.warning(ls.PRUNE_QUERY_FAILED, label=label)
+                logger.warning(ls.PRUNE_QUERY_FAILED, label=label, error=exc)
                 read_failed = True
                 continue
             orphans = self._orphan_rows(rows, label, repo_abs, packages_now, tally)
@@ -10056,8 +10072,10 @@ class GraphUpdater:
                     cs.KEY_PROJECT_NAME: self.project_name,
                 },
             )
-        except Exception:
-            logger.warning(ls.PRUNE_QUERY_FAILED, label="legacy File identities")
+        except Exception as exc:
+            logger.warning(
+                ls.PRUNE_QUERY_FAILED, label="legacy File identities", error=exc
+            )
             return 0
         candidates = [
             (path, abs_path)
@@ -10097,11 +10115,11 @@ class GraphUpdater:
             rows = self._graph_rows(
                 cs.CYPHER_FILE_CONTAINERS, {cs.CYPHER_PARAM_PATHS: keys}
             )
-        except Exception:
+        except Exception as exc:
             # Unreadable ownership is unknown ownership: never delete a
             # globally merged key on a failed read, and never let the
             # failure escape mid-update.
-            logger.warning(ls.PRUNE_QUERY_FAILED, label="File containers")
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="File containers", error=exc)
             return set()
         containers: dict[str, list[ResultRow]] = {}
         for row in rows:
