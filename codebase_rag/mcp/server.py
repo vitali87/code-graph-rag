@@ -15,7 +15,7 @@ from mcp.types import CallToolResult, TextContent, Tool
 
 from codebase_rag import constants as cs
 from codebase_rag import exceptions as ex
-from codebase_rag import logs as lg
+from codebase_rag import logs as ls
 from codebase_rag import tool_errors as te
 from codebase_rag.config import settings
 from codebase_rag.mcp.tools import MCPToolsRegistry
@@ -56,7 +56,7 @@ def get_project_root() -> Path:
     if not project_root.is_dir():
         raise ex.RepoPathError(te.MCP_PATH_NOT_DIR.format(path=project_root))
 
-    logger.info(lg.MCP_SERVER_ROOT_RESOLVED.format(path=project_root))
+    logger.info(ls.MCP_SERVER_ROOT_RESOLVED.format(path=project_root))
     return project_root
 
 
@@ -76,7 +76,7 @@ def get_workspace(name: str | None = None) -> WorkspaceConfig | None:
     except WorkspaceError as e:
         raise ValueError(str(e)) from e
     logger.info(
-        lg.MCP_SERVER_WORKSPACE.format(name=config.name, count=len(config.repos))
+        ls.MCP_SERVER_WORKSPACE.format(name=config.name, count=len(config.repos))
     )
     return config
 
@@ -86,10 +86,10 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
 
     try:
         project_root = get_project_root()
-        logger.info(lg.MCP_SERVER_USING_ROOT.format(path=project_root))
+        logger.info(ls.MCP_SERVER_USING_ROOT.format(path=project_root))
         workspace_config = get_workspace(workspace)
     except ValueError as e:
-        logger.error(lg.MCP_SERVER_CONFIG_ERROR.format(error=e))
+        logger.error(ls.MCP_SERVER_CONFIG_ERROR.format(error=e))
         raise
 
     # Fail at startup with the role-aware missing-key diagnostic rather than
@@ -100,10 +100,10 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
         settings.active_orchestrator_config.validate_api_key(cs.ModelRole.ORCHESTRATOR)
         settings.active_cypher_config.validate_api_key(cs.ModelRole.CYPHER)
     except ValueError as e:
-        logger.error(lg.MCP_SERVER_CONFIG_ERROR.format(error=e))
+        logger.error(ls.MCP_SERVER_CONFIG_ERROR.format(error=e))
         raise
 
-    logger.info(lg.MCP_SERVER_INIT_SERVICES)
+    logger.info(ls.MCP_SERVER_INIT_SERVICES)
 
     ingestor = MemgraphIngestor(
         host=settings.MEMGRAPH_HOST,
@@ -134,7 +134,7 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
         workspace=workspace_config,
     )
 
-    logger.info(lg.MCP_SERVER_INIT_SUCCESS)
+    logger.info(ls.MCP_SERVER_INIT_SUCCESS)
 
     server = Server(cs.MCP_SERVER_NAME)
 
@@ -157,13 +157,13 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
     async def call_tool(
         name: str, arguments: MCPToolArguments
     ) -> list[TextContent] | CallToolResult:
-        logger.info(lg.MCP_SERVER_CALLING_TOOL.format(name=name))
+        logger.info(ls.MCP_SERVER_CALLING_TOOL.format(name=name))
 
         try:
             handler_info = tools.get_tool_handler(name)
             if not handler_info:
                 error_msg = cs.MCP_UNKNOWN_TOOL_ERROR.format(name=name)
-                logger.error(lg.MCP_SERVER_UNKNOWN_TOOL.format(name=name))
+                logger.error(ls.MCP_SERVER_UNKNOWN_TOOL.format(name=name))
                 return _create_error_content(error_msg)
 
             handler, returns_json = handler_info
@@ -184,7 +184,7 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
 
         except Exception as e:
             error_msg = cs.MCP_TOOL_EXEC_ERROR.format(name=name, error=e)
-            logger.exception(lg.MCP_SERVER_TOOL_ERROR.format(name=name, error=e))
+            logger.exception(ls.MCP_SERVER_TOOL_ERROR.format(name=name, error=e))
             return _create_error_content(error_msg)
 
     return server, ingestor
@@ -228,7 +228,7 @@ def _service_lifecycle(ingestor: MemgraphIngestor) -> Iterator[None]:
     try:
         with ingestor:
             logger.info(
-                lg.MCP_SERVER_CONNECTED.format(
+                ls.MCP_SERVER_CONNECTED.format(
                     host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT
                 )
             )
@@ -238,10 +238,10 @@ def _service_lifecycle(ingestor: MemgraphIngestor) -> Iterator[None]:
 
 
 async def serve_stdio(workspace: str | None = None) -> None:
-    logger.info(lg.MCP_SERVER_STARTING)
+    logger.info(ls.MCP_SERVER_STARTING)
 
     server, ingestor = create_server(workspace)
-    logger.info(lg.MCP_SERVER_CREATED)
+    logger.info(ls.MCP_SERVER_CREATED)
 
     with _service_lifecycle(ingestor):
         try:
@@ -250,10 +250,10 @@ async def serve_stdio(workspace: str | None = None) -> None:
                     read_stream, write_stream, server.create_initialization_options()
                 )
         except Exception as e:
-            logger.error(lg.MCP_SERVER_FATAL_ERROR.format(error=e))
+            logger.error(ls.MCP_SERVER_FATAL_ERROR.format(error=e))
             raise
         finally:
-            logger.info(lg.MCP_SERVER_SHUTDOWN)
+            logger.info(ls.MCP_SERVER_SHUTDOWN)
 
 
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
@@ -266,7 +266,7 @@ def _validate_http_exposure(host: str, auth_token: str | None) -> None:
     # #808: the loopback default protects default deployments, this
     # protects intentional remote ones).
     if host not in _LOOPBACK_HOSTS and not auth_token:
-        raise ValueError(lg.MCP_HTTP_EXPOSURE_REFUSED.format(host=host))
+        raise ValueError(ls.MCP_HTTP_EXPOSURE_REFUSED.format(host=host))
 
 
 # Host and Origin values a loopback server answers, on any port.
@@ -343,7 +343,7 @@ async def serve_http(host: str, port: int, workspace: str | None = None) -> None
     auth_token = settings.MCP_HTTP_AUTH_TOKEN
     _validate_http_exposure(host, auth_token)
 
-    logger.info(lg.MCP_HTTP_SERVER_STARTING.format(host=host, port=port))
+    logger.info(ls.MCP_HTTP_SERVER_STARTING.format(host=host, port=port))
 
     server, ingestor = create_server(workspace)
 
@@ -357,7 +357,7 @@ async def serve_http(host: str, port: int, workspace: str | None = None) -> None
     @contextlib.asynccontextmanager
     async def lifespan(app: Starlette):
         async with session_manager.run():
-            logger.info(lg.MCP_HTTP_SERVER_READY.format(host=host, port=port))
+            logger.info(ls.MCP_HTTP_SERVER_READY.format(host=host, port=port))
             yield
 
     # With a token, bearer auth fronts the mount even on loopback

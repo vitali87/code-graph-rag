@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 from ... import constants as cs
-from ... import logs
+from ... import logs as ls
 from ...types_defs import NodeType, OverloadSignature
 from ...utils import qn_markers
 from ...utils.cpp_signatures import (
@@ -50,7 +50,7 @@ def process_all_method_overrides(
     # `linked_apart`: the types whose overrides another pass links (Go's
     # interfaces, link_go_interfaces), which neither walk below visits. A
     # walk per type up a chain of embeds was quadratic in its length.
-    logger.info(logs.CLASS_PASS_4)
+    logger.info(ls.CLASS_PASS_4)
 
     implemented_interfaces = _invert_implementers(interface_implementers or {})
     type_scopes = TypeScopes(function_registry, module_qns)
@@ -180,7 +180,7 @@ def _emit_shadow_override(ingestor: IngestorProtocol, pair: tuple[str, str]) -> 
         (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, pair[1]),
     )
     logger.debug(
-        logs.CLASS_METHOD_OVERRIDE,
+        ls.CLASS_METHOD_OVERRIDE,
         method_qn=pair[0],
         parent_method_qn=pair[1],
     )
@@ -261,7 +261,7 @@ def _emit_recorded_impl_override(
         (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, parent_method_qn),
     )
     logger.debug(
-        logs.CLASS_METHOD_OVERRIDE,
+        ls.CLASS_METHOD_OVERRIDE,
         method_qn=method_qn,
         parent_method_qn=parent_method_qn,
     )
@@ -539,7 +539,7 @@ def check_method_overrides(
                 (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, parent_method_qn),
             )
             logger.debug(
-                logs.CLASS_METHOD_OVERRIDE,
+                ls.CLASS_METHOD_OVERRIDE,
                 method_qn=method_qn,
                 parent_method_qn=parent_method_qn,
             )

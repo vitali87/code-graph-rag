@@ -9,7 +9,7 @@ from loguru import logger
 from tree_sitter import QueryCursor
 
 from ... import constants as cs
-from ... import logs as lg
+from ... import logs as ls
 from ...types_defs import (
     ASTNode,
     FunctionRegistryTrieProtocol,
@@ -121,7 +121,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                 language_obj, root_node, module_qn
             )
         except Exception as e:
-            logger.debug(lg.JS_PROTOTYPE_INHERITANCE_FAILED, error=e)
+            logger.debug(ls.JS_PROTOTYPE_INHERITANCE_FAILED, error=e)
 
     def _process_prototype_inheritance_captures(
         self, language_obj, root_node, module_qn
@@ -161,7 +161,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                 )
 
                 logger.debug(
-                    lg.JS_PROTOTYPE_INHERITANCE, child_qn=child_qn, parent_qn=parent_qn
+                    ls.JS_PROTOTYPE_INHERITANCE, child_qn=child_qn, parent_qn=parent_qn
                 )
 
     def _ingest_prototype_method_assignments(
@@ -184,7 +184,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                 language,
             )
         except Exception as e:
-            logger.debug(lg.JS_PROTOTYPE_METHODS_FAILED, error=e)
+            logger.debug(ls.JS_PROTOTYPE_METHODS_FAILED, error=e)
 
     def _lexical_defines_fallback(
         self,
@@ -246,7 +246,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                     self.repo_path,
                 )
                 logger.debug(
-                    lg.JS_PROTOTYPE_METHOD_FOUND,
+                    ls.JS_PROTOTYPE_METHOD_FOUND,
                     method_name=method_name,
                     method_qn=method_qn,
                 )
@@ -277,7 +277,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                 )
 
                 logger.debug(
-                    lg.JS_PROTOTYPE_METHOD_DEFINES,
+                    ls.JS_PROTOTYPE_METHOD_DEFINES,
                     constructor_qn=constructor_qn,
                     method_qn=method_qn,
                 )
@@ -343,7 +343,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             # The one catch per query: a failure is a bug, so it is reported,
             # and the other query and the rest of the module still ingest.
             logger.warning(
-                lg.JS_OBJECT_METHODS_PROCESS_FAILED, module_qn=module_qn, error=e
+                ls.JS_OBJECT_METHODS_PROCESS_FAILED, module_qn=module_qn, error=e
             )
 
     def _process_single_object_method(
@@ -420,7 +420,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         )
         self._mark_object_member(method_props, method_qn)
         logger.debug(
-            lg.JS_OBJECT_METHOD_FOUND, method_name=method_name, method_qn=method_qn
+            ls.JS_OBJECT_METHOD_FOUND, method_name=method_name, method_qn=method_qn
         )
         self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, method_props)
 
@@ -499,7 +499,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                 arrow_functions,
                 module_qn,
                 lang_config,
-                lg.JS_ASSIGNMENT_ARROW_FOUND,
+                ls.JS_ASSIGNMENT_ARROW_FOUND,
                 language,
             )
             self._process_member_expr_functions(
@@ -507,13 +507,13 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                 function_exprs,
                 module_qn,
                 lang_config,
-                lg.JS_ASSIGNMENT_FUNC_EXPR_FOUND,
+                ls.JS_ASSIGNMENT_FUNC_EXPR_FOUND,
                 language,
             )
         except Exception as e:
             # The one catch per query, as for object literal methods.
             logger.warning(
-                lg.JS_ASSIGNMENT_ARROW_QUERY_FAILED, module_qn=module_qn, error=e
+                ls.JS_ASSIGNMENT_ARROW_QUERY_FAILED, module_qn=module_qn, error=e
             )
 
     def _process_direct_arrow_functions(
@@ -541,7 +541,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                 function_qn,
                 arrow_function,
                 module_qn,
-                lg.JS_OBJECT_ARROW_FOUND,
+                ls.JS_OBJECT_ARROW_FOUND,
                 lang_config,
                 language,
                 object_member=True,

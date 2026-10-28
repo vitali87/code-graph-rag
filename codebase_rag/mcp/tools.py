@@ -15,7 +15,7 @@ from pydantic_ai.tools import ToolFuncPlain
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag import gloss, graph_query
-from codebase_rag import logs as lg
+from codebase_rag import logs as ls
 from codebase_rag import structural_delta as sd
 from codebase_rag import tool_errors as te
 from codebase_rag.config import project_ignore_sets
@@ -547,7 +547,7 @@ class MCPToolsRegistry:
 
             self._semantic_search_tool = create_semantic_search_tool(self.ingestor)
         else:
-            logger.info(lg.MCP_SEMANTIC_NOT_AVAILABLE)
+            logger.info(ls.MCP_SEMANTIC_NOT_AVAILABLE)
 
         self._tools: dict[str, ToolMetadata] = {
             cs.MCPToolName.LIST_PROJECTS: ToolMetadata(
@@ -1423,7 +1423,7 @@ class MCPToolsRegistry:
         }
 
     async def list_projects(self) -> ListProjectsResult:
-        logger.info(lg.MCP_LISTING_PROJECTS)
+        logger.info(ls.MCP_LISTING_PROJECTS)
         try:
             # Serialise against index/update, which delete and rebuild the
             # graph under this lock; an interleaved read mixes generations.
@@ -1437,7 +1437,7 @@ class MCPToolsRegistry:
                 projects = [p for p in projects if p in allowed]
             return ListProjectsSuccessResult(projects=projects, count=len(projects))
         except Exception as e:
-            logger.error(lg.MCP_ERROR_LIST_PROJECTS.format(error=e))
+            logger.error(ls.MCP_ERROR_LIST_PROJECTS.format(error=e))
             return ListProjectsErrorResult(error=str(e), projects=[], count=0)
 
     def _get_project_node_ids(self, project_name: str) -> list[int]:
@@ -1507,7 +1507,7 @@ class MCPToolsRegistry:
         )
 
     async def delete_project(self, project_name: str) -> DeleteProjectResult:
-        logger.info(lg.MCP_DELETING_PROJECT.format(project_name=project_name))
+        logger.info(ls.MCP_DELETING_PROJECT.format(project_name=project_name))
         # A workspace server may delete only what it serves (bot review on
         # PR #1972): the destructive path takes the same allow-list as the
         # reads, before any lock or write.
@@ -1518,13 +1518,13 @@ class MCPToolsRegistry:
             async with self._ingestor_lock:
                 return await _run_in_thread(self._delete_project_sync, project_name)
         except Exception as e:
-            logger.error(lg.MCP_ERROR_DELETE_PROJECT.format(error=e))
+            logger.error(ls.MCP_ERROR_DELETE_PROJECT.format(error=e))
             return DeleteProjectErrorResult(success=False, error=str(e))
 
     async def wipe_database(self, confirm: bool) -> str:
         if not confirm:
             return cs.MCP_WIPE_CANCELLED
-        logger.warning(lg.MCP_WIPING_DATABASE)
+        logger.warning(ls.MCP_WIPING_DATABASE)
         try:
             async with self._ingestor_lock:
                 self._live_updater = None
@@ -1557,7 +1557,7 @@ class MCPToolsRegistry:
             # project and writes no marker, so the in-process flag is the only
             # record and NO single project's successful clear may retire it.
             self._incomplete_unbounded = True
-            logger.error(lg.MCP_ERROR_WIPE.format(error=e))
+            logger.error(ls.MCP_ERROR_WIPE.format(error=e))
             return te.ToolFailure(cs.MCP_WIPE_ERROR.format(error=e))
 
     def _ignore_sets(self) -> tuple[frozenset[str] | None, frozenset[str] | None]:
@@ -1569,7 +1569,7 @@ class MCPToolsRegistry:
         # Same collision-resistant derivation as the CLI: a bare directory
         # name would let two repos named alike delete each other's graphs.
         project_name = derive_project_name(Path(self.project_root))
-        logger.info(lg.MCP_CLEARING_PROJECT.format(project_name=project_name))
+        logger.info(ls.MCP_CLEARING_PROJECT.format(project_name=project_name))
         # Before the first write, not after: the delete and the flushes are
         # autocommit writes that can fail part way. From here until the
         # rebuild completes, a later reingest must refuse rather than
@@ -1662,8 +1662,8 @@ class MCPToolsRegistry:
     async def index_repository(self) -> str:
         return await self._run_ingest(
             self._index_repository_sync,
-            lg.MCP_INDEXING_REPO,
-            lg.MCP_ERROR_INDEXING,
+            ls.MCP_INDEXING_REPO,
+            ls.MCP_ERROR_INDEXING,
             cs.MCP_INDEX_ERROR,
         )
 
@@ -1795,7 +1795,7 @@ class MCPToolsRegistry:
             self.ingestor.execute_write(query, params)
         except Exception as error:  # noqa: BLE001 -- see docstring
             logger.warning(
-                lg.MCP_INCOMPLETE_MARKER_FAILED.format(
+                ls.MCP_INCOMPLETE_MARKER_FAILED.format(
                     project=project_name, incomplete=incomplete, error=error
                 )
             )
@@ -1821,7 +1821,7 @@ class MCPToolsRegistry:
                 )
             except Exception as error:  # noqa: BLE001 -- best effort; see above
                 logger.warning(
-                    lg.MCP_INCOMPLETE_MARKER_FAILED.format(
+                    ls.MCP_INCOMPLETE_MARKER_FAILED.format(
                         project=project_name, incomplete=False, error=error
                     )
                 )
@@ -1846,7 +1846,7 @@ class MCPToolsRegistry:
             )
         except Exception as error:  # noqa: BLE001 -- same contract as _persist_incomplete
             logger.warning(
-                lg.MCP_INCOMPLETE_MARKER_FAILED.format(
+                ls.MCP_INCOMPLETE_MARKER_FAILED.format(
                     project=project_name, incomplete=False, error=error
                 )
             )
@@ -1949,7 +1949,7 @@ class MCPToolsRegistry:
             self._flag_from_failed_clear = attributed_before
         if not cleared:
             logger.warning(
-                lg.MCP_INCOMPLETE_MARKER_STUCK_AFTER_ABORT.format(project=project_name)
+                ls.MCP_INCOMPLETE_MARKER_STUCK_AFTER_ABORT.format(project=project_name)
             )
 
     def _cleanup_embeddings_then_begin_writing(self, project_name: str) -> None:
@@ -2166,7 +2166,7 @@ class MCPToolsRegistry:
             )
         except Exception as error:  # noqa: BLE001 -- same contract as the caller
             logger.warning(
-                lg.MCP_INCOMPLETE_MARKER_UNREADABLE.format(
+                ls.MCP_INCOMPLETE_MARKER_UNREADABLE.format(
                     project=project_name, error=error
                 )
             )
@@ -2190,7 +2190,7 @@ class MCPToolsRegistry:
             )
         except Exception as error:  # noqa: BLE001 -- see docstring
             logger.warning(
-                lg.MCP_INCOMPLETE_MARKER_UNREADABLE.format(
+                ls.MCP_INCOMPLETE_MARKER_UNREADABLE.format(
                     project=project_name, error=error
                 )
             )
@@ -2232,7 +2232,7 @@ class MCPToolsRegistry:
             if remaining is None or remaining:
                 return True
             logger.warning(
-                lg.MCP_INCOMPLETE_MARKER_RECOVERED.format(project=project_name)
+                ls.MCP_INCOMPLETE_MARKER_RECOVERED.format(project=project_name)
             )
         return False
 
@@ -2505,14 +2505,14 @@ class MCPToolsRegistry:
     async def reingest(
         self, paths: list[str], deleted: list[str] | None = None
     ) -> ReingestToolResult:
-        logger.info(lg.MCP_REINGESTING.format(count=len(paths)))
+        logger.info(ls.MCP_REINGESTING.format(count=len(paths)))
         try:
             async with self._ingestor_lock:
                 return await _run_in_thread(
                     self._reingest_sync, list(paths), list(deleted or ())
                 )
         except Exception as e:
-            logger.error(lg.MCP_ERROR_REINGEST.format(error=e))
+            logger.error(ls.MCP_ERROR_REINGEST.format(error=e))
             return ReingestToolResult(
                 error=cs.MCP_REINGEST_ERROR.format(error=e),
                 reparsed=[],
@@ -2525,8 +2525,8 @@ class MCPToolsRegistry:
     async def update_repository(self) -> str:
         return await self._run_ingest(
             self._update_repository_sync,
-            lg.MCP_UPDATING_REPO,
-            lg.MCP_ERROR_UPDATING,
+            ls.MCP_UPDATING_REPO,
+            ls.MCP_ERROR_UPDATING,
             cs.MCP_UPDATE_ERROR,
         )
 
@@ -2534,7 +2534,7 @@ class MCPToolsRegistry:
         self, natural_language_query: str, top_k: int = 5, project: str | None = None
     ) -> str:
         assert self._semantic_search_tool is not None
-        logger.info(lg.MCP_SEMANTIC_SEARCH.format(query=natural_language_query))
+        logger.info(ls.MCP_SEMANTIC_SEARCH.format(query=natural_language_query))
         # The underlying tool already accepted `project` and passes it to
         # `search_embeddings`, which filters in the vector store. Only this
         # handler failed to forward it, so scoping here is plumbing rather
@@ -2731,7 +2731,7 @@ class MCPToolsRegistry:
         except (ValueError, ReingestAborted) as e:
             # Raised before any graph change (validation, an abort while the
             # paths are split): the graph is whole and the updater reusable.
-            logger.warning(lg.MCP_DELTA_FAILED.format(error=e))
+            logger.warning(ls.MCP_DELTA_FAILED.format(error=e))
             # ...so the marker this call took must come off, or a graph that
             # was never touched goes on refusing every later scoped reingest
             # (raised by CodeRabbit on #1845). `_abandon_before_writing` is
@@ -2745,7 +2745,7 @@ class MCPToolsRegistry:
             # The re-ingest may have deleted a subtree it never rebuilt: the
             # same invalidation `_reingest_sync` applies, so no later query
             # or write reuses a partial graph (issue #1525).
-            logger.warning(lg.MCP_DELTA_FAILED.format(error=e))
+            logger.warning(ls.MCP_DELTA_FAILED.format(error=e))
             self._live_updater = None
             # This handler writes into THIS server's repository, so the
             # damage is confined to the project that root derives to -- but
@@ -2769,7 +2769,7 @@ class MCPToolsRegistry:
             # reported in place of the delta rather than silently retained --
             # this method never raises, so the message is the only channel.
             if (stuck := self._require_marker_cleared(marked_here)) is not None:
-                logger.warning(lg.MCP_DELTA_FAILED.format(error=stuck))
+                logger.warning(ls.MCP_DELTA_FAILED.format(error=stuck))
                 return "\n\n" + cs.MCP_DELTA_ERROR.format(error=stuck)
         return (
             "\n\n"
@@ -2779,7 +2779,7 @@ class MCPToolsRegistry:
         )
 
     async def ask_agent(self, question: str) -> dict[str, str]:
-        logger.info(lg.MCP_ASK_AGENT.format(question=question))
+        logger.info(ls.MCP_ASK_AGENT.format(question=question))
         try:
             # The agent is given the RAW tool objects (self._query_tool,
             # self._code_tool, the semantic search tool), not the locked
@@ -2818,7 +2818,7 @@ class MCPToolsRegistry:
                 )
             return {"output": answer}
         except Exception as e:
-            logger.error(lg.MCP_ASK_AGENT_ERROR.format(error=e))
+            logger.error(ls.MCP_ASK_AGENT_ERROR.format(error=e))
             return {"error": cs.MCP_ASK_AGENT_ERROR.format(error=e)}
 
     # --- deterministic graph queries (issue #1523) -------------------------------
@@ -2932,7 +2932,7 @@ class MCPToolsRegistry:
                         return {cs.DICT_KEY_ERROR: unknown}
                 return result
         except Exception as e:
-            logger.error(lg.MCP_GRAPH_QUERY_ERROR.format(tool=tool, error=e))
+            logger.error(ls.MCP_GRAPH_QUERY_ERROR.format(tool=tool, error=e))
             return {
                 cs.DICT_KEY_ERROR: cs.MCP_GRAPH_QUERY_ERROR.format(tool=tool, error=e)
             }
@@ -3726,7 +3726,7 @@ class MCPToolsRegistry:
     async def query_code_graph(
         self, natural_language_query: str, project: str | None = None
     ) -> QueryResultDict:
-        logger.info(lg.MCP_QUERY_CODE_GRAPH.format(query=natural_language_query))
+        logger.info(ls.MCP_QUERY_CODE_GRAPH.format(query=natural_language_query))
         try:
             # The workspace allow-list and default first (issue #1494), then
             # the graph's own check: a typo returning zero rows is
@@ -3797,13 +3797,13 @@ class MCPToolsRegistry:
             if graph_data.error is None:
                 result_dict.pop(cs.MCP_KEY_ERROR, None)
             logger.info(
-                lg.MCP_QUERY_RESULTS.format(
+                ls.MCP_QUERY_RESULTS.format(
                     count=len(result_dict.get(cs.DICT_KEY_RESULTS, []))
                 )
             )
             return result_dict
         except Exception as e:
-            logger.exception(lg.MCP_ERROR_QUERY.format(error=e))
+            logger.exception(ls.MCP_ERROR_QUERY.format(error=e))
             return QueryResultDict(
                 error=str(e),
                 query_used=cs.QUERY_NOT_AVAILABLE,
@@ -3814,7 +3814,7 @@ class MCPToolsRegistry:
             )
 
     async def get_code_snippet(self, qualified_name: str) -> CodeSnippetResultDict:
-        logger.info(lg.MCP_GET_CODE_SNIPPET.format(name=qualified_name))
+        logger.info(ls.MCP_GET_CODE_SNIPPET.format(name=qualified_name))
         try:
             # Serialise against index/update, which delete and rebuild the
             # graph under this lock; an interleaved read mixes generations.
@@ -3852,7 +3852,7 @@ class MCPToolsRegistry:
                     )
             return result
         except Exception as e:
-            logger.error(lg.MCP_ERROR_CODE_SNIPPET.format(error=e))
+            logger.error(ls.MCP_ERROR_CODE_SNIPPET.format(error=e))
             return CodeSnippetResultDict(
                 error=str(e),
                 found=False,
@@ -3862,7 +3862,7 @@ class MCPToolsRegistry:
     async def surgical_replace_code(
         self, file_path: str, target_code: str, replacement_code: str
     ) -> str:
-        logger.info(lg.MCP_SURGICAL_REPLACE.format(path=file_path))
+        logger.info(ls.MCP_SURGICAL_REPLACE.format(path=file_path))
         try:
             async with self._ingestor_lock:
                 result = await _plain_function(self._file_editor_tool)(
@@ -3875,13 +3875,13 @@ class MCPToolsRegistry:
                 delta = await _run_in_thread(self._delta_after_write, [file_path])
                 return str(result) + delta
         except Exception as e:
-            logger.error(lg.MCP_ERROR_REPLACE.format(error=e))
+            logger.error(ls.MCP_ERROR_REPLACE.format(error=e))
             return te.failure(e)
 
     async def read_file(
         self, file_path: str, offset: int | None = None, limit: int | None = None
     ) -> str:
-        logger.info(lg.MCP_READ_FILE.format(path=file_path, offset=offset, limit=limit))
+        logger.info(ls.MCP_READ_FILE.format(path=file_path, offset=offset, limit=limit))
         if offset is not None and offset < cs.MCP_READ_OFFSET_MINIMUM:
             return te.failure(cs.MCP_READ_OFFSET_NEGATIVE.format(offset=offset))
         if limit is not None and limit < cs.MCP_READ_LIMIT_MINIMUM:
@@ -3907,11 +3907,11 @@ class MCPToolsRegistry:
                 )
 
         except Exception as e:
-            logger.error(lg.MCP_ERROR_READ.format(error=e))
+            logger.error(ls.MCP_ERROR_READ.format(error=e))
             return te.failure(e)
 
     async def write_file(self, file_path: str, content: str) -> str:
-        logger.info(lg.MCP_WRITE_FILE.format(path=file_path))
+        logger.info(ls.MCP_WRITE_FILE.format(path=file_path))
         try:
             async with self._ingestor_lock:
                 result = await _plain_function(self._file_writer_tool)(
@@ -3922,20 +3922,20 @@ class MCPToolsRegistry:
                 delta = await _run_in_thread(self._delta_after_write, [file_path])
                 return cs.MCP_WRITE_SUCCESS.format(path=file_path) + delta
         except Exception as e:
-            logger.error(lg.MCP_ERROR_WRITE.format(error=e))
+            logger.error(ls.MCP_ERROR_WRITE.format(error=e))
             return te.failure(e)
 
     async def list_directory(
         self, directory_path: str = cs.MCP_DEFAULT_DIRECTORY
     ) -> str:
-        logger.info(lg.MCP_LIST_DIR.format(path=directory_path))
+        logger.info(ls.MCP_LIST_DIR.format(path=directory_path))
         try:
             return await _run_in_thread(
                 _plain_function(self._directory_lister_tool),
                 directory_path=directory_path,
             )
         except Exception as e:
-            logger.error(lg.MCP_ERROR_LIST_DIR.format(error=e))
+            logger.error(ls.MCP_ERROR_LIST_DIR.format(error=e))
             return te.failure(e)
 
     def get_tool_schemas(self) -> list[MCPToolSchema]:

@@ -11,7 +11,7 @@ from loguru import logger
 from tree_sitter import Node, QueryCursor
 
 from ... import constants as cs
-from ... import logs
+from ... import logs as ls
 from ...config import settings
 from ...language_spec import LanguageSpec, module_directory_qn
 from ...types_defs import (
@@ -2623,7 +2623,7 @@ class ClassIngestMixin:
             ).as_posix()
             module_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
         logger.debug(
-            logs.CLASS_FOUND_INLINE_MODULE.format(name=module_name, qn=inline_module_qn)
+            ls.CLASS_FOUND_INLINE_MODULE.format(name=module_name, qn=inline_module_qn)
         )
         # Same-qn bodied twins (mutually-exclusive cfg mods, or two impls
         # each declaring a method-local mod) upsert this ONE node: Module

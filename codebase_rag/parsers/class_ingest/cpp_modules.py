@@ -7,7 +7,7 @@ from loguru import logger
 from tree_sitter import Node
 
 from ... import constants as cs
-from ... import logs
+from ... import logs as ls
 from ...utils.path_utils import cached_relative_path, cached_resolve_posix
 from ..utils import safe_decode_text, safe_decode_with_fallback
 from .utils import decode_node_stripped
@@ -108,7 +108,7 @@ def _process_export_module(
         (cs.NodeLabel.MODULE_INTERFACE, cs.KEY_QUALIFIED_NAME, interface_qn),
     )
 
-    logger.debug(logs.CLASS_CPP_MODULE_INTERFACE.format(qn=interface_qn))
+    logger.debug(ls.CLASS_CPP_MODULE_INTERFACE.format(qn=interface_qn))
 
 
 def _process_module_implementation(
@@ -151,7 +151,7 @@ def _process_module_implementation(
     interface_qn = f"{project_name}.{module_name}"
     deferred_impls.append((impl_qn, interface_qn))
 
-    logger.debug(logs.CLASS_CPP_MODULE_IMPL.format(qn=impl_qn))
+    logger.debug(ls.CLASS_CPP_MODULE_IMPL.format(qn=impl_qn))
 
 
 def find_cpp_exported_classes(root_node: Node) -> list[Node]:

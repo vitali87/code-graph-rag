@@ -20,7 +20,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from . import constants as cs
 from . import exceptions as ex
-from . import logs
+from . import logs as ls
 from .graph_dialects import DIALECT_SQLITE, available_dialects
 from .types_defs import CgrignorePatterns, ModelConfigKwargs
 
@@ -798,7 +798,7 @@ def _load_ignore_file(ignore_file: Path) -> CgrignorePatterns:
                     exclude.add(line)
         if exclude or unignore:
             logger.info(
-                logs.CGRIGNORE_LOADED.format(
+                ls.CGRIGNORE_LOADED.format(
                     exclude_count=len(exclude),
                     unignore_count=len(unignore),
                     path=ignore_file,
@@ -809,7 +809,7 @@ def _load_ignore_file(ignore_file: Path) -> CgrignorePatterns:
             unignore=frozenset(unignore),
         )
     except (OSError, ValueError) as e:
-        logger.warning(logs.CGRIGNORE_READ_FAILED.format(path=ignore_file, error=e))
+        logger.warning(ls.CGRIGNORE_READ_FAILED.format(path=ignore_file, error=e))
         return EMPTY_CGRIGNORE
 
 
@@ -910,7 +910,7 @@ def _tracked_source_dirs(repo_path: Path) -> frozenset[str]:
     if kept_dirs and (repo_path, kept_dirs) not in _TRACKED_SOURCE_LOGGED:
         _TRACKED_SOURCE_LOGGED.add((repo_path, kept_dirs))
         logger.info(
-            logs.TRACKED_SOURCE_DIRS_KEPT.format(
+            ls.TRACKED_SOURCE_DIRS_KEPT.format(
                 dirs=", ".join(f"{d}/" for d in sorted(kept_dirs))
             )
         )
@@ -956,11 +956,11 @@ def _read_cgr_instructions_file(path: Path) -> str | None:
         with path.open(encoding="utf-8") as f:
             body = f.read().strip()
     except OSError as e:
-        logger.warning(logs.CGR_INSTRUCTIONS_READ_FAILED.format(path=path, error=e))
+        logger.warning(ls.CGR_INSTRUCTIONS_READ_FAILED.format(path=path, error=e))
         return None
     if not body:
         return None
-    logger.info(logs.CGR_INSTRUCTIONS_LOADED.format(path=path, chars=len(body)))
+    logger.info(ls.CGR_INSTRUCTIONS_LOADED.format(path=path, chars=len(body)))
     return body
 
 

@@ -978,7 +978,9 @@ public record Person(String name, int age) {
                 break
 
         if compact_constructor:
-            result = engine.build_local_variable_type_map(compact_constructor, "com.example")
+            result = engine.build_local_variable_type_map(
+                compact_constructor, "com.example"
+            )
             assert isinstance(result, dict)
 
     def _find_method_node(self, root_node, method_name: str):

@@ -7,7 +7,7 @@ from loguru import logger
 from tree_sitter import Node
 
 from ... import constants as cs
-from ... import logs
+from ... import logs as ls
 from ..cpp import utils as cpp_utils
 from ..csharp import utils as csharp_utils
 from ..utils import safe_decode_text
@@ -505,7 +505,7 @@ def parse_cpp_base_classes(
                 )
                 bases.append((written_name, parent_qn))
                 logger.debug(
-                    logs.CLASS_CPP_INHERITANCE,
+                    ls.CLASS_CPP_INHERITANCE,
                     parent_name=parent_name,
                     parent_qn=parent_qn,
                 )

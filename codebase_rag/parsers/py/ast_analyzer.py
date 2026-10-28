@@ -10,7 +10,7 @@ from loguru import logger
 from tree_sitter import Node, QueryCursor
 
 from ... import constants as cs
-from ... import logs as lg
+from ... import logs as ls
 from ...types_defs import (
     FunctionRegistryTrieProtocol,
     LanguageQueries,
@@ -1273,7 +1273,7 @@ class PythonAstAnalyzerMixin(_AstBase):
             right_node, module_qn
         ):
             local_var_types[var_name] = inferred_type
-            logger.debug(lg.PY_TYPE_SIMPLE, var=var_name, type=inferred_type)
+            logger.debug(ls.PY_TYPE_SIMPLE, var=var_name, type=inferred_type)
 
     def _process_assignment_complex(
         self, assignment_node: Node, local_var_types: dict[str, str], module_qn: str
@@ -1295,7 +1295,7 @@ class PythonAstAnalyzerMixin(_AstBase):
             right_node, module_qn, local_var_types
         ):
             local_var_types[var_name] = inferred_type
-            logger.debug(lg.PY_TYPE_COMPLEX, var=var_name, type=inferred_type)
+            logger.debug(ls.PY_TYPE_COMPLEX, var=var_name, type=inferred_type)
 
     def _process_assignment_annotation(
         self,
@@ -1973,15 +1973,15 @@ class PythonAstAnalyzerMixin(_AstBase):
                 # The call pass records a failing walk against its caller
                 # (#3173); return-type inference resolves no caller, so the
                 # return just stays untyped.
-                logger.debug(lg.PY_BUILD_VAR_MAP_FAILED, error=e)
+                logger.debug(ls.PY_BUILD_VAR_MAP_FAILED, error=e)
                 local_vars = {}
             if identifier in local_vars:
                 logger.debug(
-                    lg.PY_VAR_FROM_CONTEXT, var=identifier, type=local_vars[identifier]
+                    ls.PY_VAR_FROM_CONTEXT, var=identifier, type=local_vars[identifier]
                 )
                 return local_vars[identifier]
 
-        logger.debug(lg.PY_VAR_CANNOT_INFER, var=identifier)
+        logger.debug(ls.PY_VAR_CANNOT_INFER, var=identifier)
         return None
 
     def _analyze_attribute_return(self, expr_node: Node, method_qn: str) -> str | None:

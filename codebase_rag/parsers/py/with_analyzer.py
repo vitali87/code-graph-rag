@@ -6,7 +6,7 @@ from loguru import logger
 from tree_sitter import Node
 
 from ... import constants as cs
-from ... import logs as lg
+from ... import logs as ls
 from ...types_defs import FunctionRegistryTrieProtocol, NodeType
 from ..import_processor import ImportProcessor
 from ..utils import follow_reexports, safe_decode_text
@@ -152,7 +152,7 @@ class PythonWithBindingMixin(_WithBase):
                 continue
             if entered := self._entered_type(target, manager_type, module_qn):
                 local_var_types[target.name] = entered
-                logger.debug(lg.PY_TYPE_WITH, var=target.name, type=entered)
+                logger.debug(ls.PY_TYPE_WITH, var=target.name, type=entered)
         return pending
 
     def _manager_type(

@@ -9,7 +9,7 @@ from loguru import logger
 from tree_sitter import Language, Node, Query, QueryCursor
 
 from .. import constants as cs
-from .. import logs
+from .. import logs as ls
 from ..language_spec import decode_node_text
 from ..types_defs import (
     ASTNode,
@@ -1914,7 +1914,7 @@ def ingest_method(
         annotated_override_sink,
     )
 
-    logger.debug(logs.METHOD_FOUND.format(name=method_name, qn=method_qn))
+    logger.debug(ls.METHOD_FOUND.format(name=method_name, qn=method_qn))
     ingestor.ensure_node_batch(cs.NodeLabel.METHOD, method_props)
     # AFTER the Method node is queued: a batch flush writes nodes before
     # relationships, and a HAS_PARAMETER whose owner is still pending would
@@ -2086,7 +2086,7 @@ def ingest_exported_function(
     function_props[cs.KEY_IS_EXPORTED] = True
 
     logger.debug(
-        logs.EXPORT_FOUND.format(
+        ls.EXPORT_FOUND.format(
             export_type=export_type, name=function_name, qn=function_qn
         )
     )
@@ -2218,7 +2218,7 @@ def warn_if_name_truncated(
     # contains it, in any language, so this needs no adjacency test.
     if cs.UNICODE_REPLACEMENT_CHAR in name:
         logger.warning(
-            logs.TRUNCATED_SYMBOL_NAME.format(
+            ls.TRUNCATED_SYMBOL_NAME.format(
                 path=file_path if file_path is not None else "<unknown>",
                 name=name,
             )
@@ -2249,7 +2249,7 @@ def warn_if_name_truncated(
             continue
         if _has_invalid_byte(probe, at_end=at_end):
             logger.warning(
-                logs.TRUNCATED_SYMBOL_NAME.format(
+                ls.TRUNCATED_SYMBOL_NAME.format(
                     path=file_path if file_path is not None else "<unknown>",
                     name=name,
                 )

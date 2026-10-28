@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 from .. import constants as cs
-from .. import logs as lg
+from .. import logs as ls
 
 if TYPE_CHECKING:
     from . import QueryProtocol
@@ -89,6 +89,6 @@ def prune_orphaned_glosses(ingestor: QueryProtocol, project_name: str) -> bool:
             },
         )
     except Exception as error:  # noqa: BLE001 -- see docstring
-        logger.warning(lg.GLOSS_PRUNE_FAILED.format(error=error))
+        logger.warning(ls.GLOSS_PRUNE_FAILED.format(error=error))
         return False
     return True

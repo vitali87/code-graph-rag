@@ -31,7 +31,7 @@ from watchdog.observers import Observer
 
 from . import cli_help as ch
 from . import constants as cs
-from . import logs
+from . import logs as ls
 from .cli_runtime import connect_memgraph
 from .config import (
     CGRIGNORE_FILENAME,
@@ -189,15 +189,15 @@ class CodeChangeEventHandler(FileSystemEventHandler):
 
         if self.debounce_enabled:
             logger.info(
-                logs.WATCHER_DEBOUNCE_ACTIVE.format(
+                ls.WATCHER_DEBOUNCE_ACTIVE.format(
                     debounce=debounce_seconds, max_wait=max_wait_seconds
                 )
             )
         else:
-            logger.info(logs.WATCHER_ACTIVE)
+            logger.info(ls.WATCHER_ACTIVE)
 
     def _rebuild_after_failure(
-        self, notice: str = logs.WATCHER_REBUILDING_AFTER_FAILURE
+        self, notice: str = ls.WATCHER_REBUILDING_AFTER_FAILURE
     ) -> bool:
         """Re-index everything after a partial re-ingest. True when the graph is whole.
 
@@ -216,7 +216,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         try:
             self._full_run(force=True)
         except Exception as exc:  # noqa: BLE001
-            logger.error(logs.WATCHER_REBUILD_FAILED.format(error=exc))
+            logger.error(ls.WATCHER_REBUILD_FAILED.format(error=exc))
             return False
         self._needs_full_rebuild = False
         return True
@@ -255,7 +255,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         # was refused with a warning and an in-repo one re-ingested its
         # target; a deleted link is no longer a link, so its removal passes.
         if is_symlink_entry(path_str):
-            logger.debug(logs.WATCHER_SYMLINK_IGNORED.format(path=relative))
+            logger.debug(ls.WATCHER_SYMLINK_IGNORED.format(path=relative))
             return False
         return True
 
@@ -315,7 +315,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             # destination. If either fails, the files it covers are unknown,
             # so re-index everything rather than update part of the graph.
             # Nothing may escape here: this runs in the watchdog callback.
-            logger.error(logs.WATCHER_EXPANSION_FAILED.format(error=exc))
+            logger.error(ls.WATCHER_EXPANSION_FAILED.format(error=exc))
             with self._update_lock:
                 self._needs_full_rebuild = True
                 self._rebuild_after_failure()
@@ -354,7 +354,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         with self._update_lock:
             if not rules.reload():
                 return
-            logger.info(logs.WATCHER_IGNORE_RULES_CHANGED)
+            logger.info(ls.WATCHER_IGNORE_RULES_CHANGED)
             self.updater = rules.build_updater()
             if self._needs_full_rebuild:
                 self._rebuild_after_failure()
@@ -364,7 +364,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             except Exception as exc:  # noqa: BLE001
                 # Must not escape the watchdog callback; the next change
                 # re-indexes everything first, as after a failed re-ingest.
-                logger.error(logs.WATCHER_IGNORE_RULES_SYNC_FAILED.format(error=exc))
+                logger.error(ls.WATCHER_IGNORE_RULES_SYNC_FAILED.format(error=exc))
                 self._needs_full_rebuild = True
 
     def _file_events(self, event: FileSystemEvent) -> list[FileSystemEvent]:
@@ -453,7 +453,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             if relative_path_str not in self.first_event_time:
                 self.first_event_time[relative_path_str] = current_time
                 logger.info(
-                    logs.CHANGE_DEBOUNCING.format(
+                    ls.CHANGE_DEBOUNCING.format(
                         event_type=change.event_type,
                         name=path.name,
                         debounce=self.debounce_seconds,
@@ -462,14 +462,14 @@ class CodeChangeEventHandler(FileSystemEventHandler):
 
             if relative_path_str in self.timers:
                 self.timers[relative_path_str].cancel()
-                logger.debug(logs.DEBOUNCE_RESET.format(path=relative_path_str))
+                logger.debug(ls.DEBOUNCE_RESET.format(path=relative_path_str))
 
             time_since_first = current_time - self.first_event_time[relative_path_str]
 
             if time_since_first >= self.max_wait_seconds:
                 # Max wait exceeded: process immediately
                 logger.info(
-                    logs.DEBOUNCE_MAX_WAIT.format(
+                    ls.DEBOUNCE_MAX_WAIT.format(
                         max_wait=self.max_wait_seconds, path=relative_path_str
                     )
                 )
@@ -487,7 +487,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
                 timer.start()
 
                 logger.debug(
-                    logs.DEBOUNCE_SCHEDULED.format(
+                    ls.DEBOUNCE_SCHEDULED.format(
                         path=relative_path_str,
                         debounce=self.debounce_seconds,
                         remaining=f"{remaining_wait:.1f}",
@@ -513,10 +513,10 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             self.timers.pop(relative_path_str, None)
 
         if event is None:
-            logger.warning(logs.DEBOUNCE_NO_EVENT.format(path=relative_path_str))
+            logger.warning(ls.DEBOUNCE_NO_EVENT.format(path=relative_path_str))
             return
 
-        logger.info(logs.DEBOUNCE_PROCESSING.format(path=relative_path_str))
+        logger.info(ls.DEBOUNCE_PROCESSING.format(path=relative_path_str))
         self._process_change(event)
 
     def _process_change(self, event: FileSystemEvent) -> None:
@@ -541,7 +541,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
 
         path = Path(src_path)
         logger.warning(
-            logs.CHANGE_DETECTED.format(event_type=event.event_type, path=path)
+            ls.CHANGE_DETECTED.format(event_type=event.event_type, path=path)
         )
         # A previous scoped re-ingest died part way through, so the graph may be
         # missing the subtrees it deleted and never rebuilt. Resolving this
@@ -562,7 +562,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             if isinstance(exc.__cause__, UnfinishedSyncError):
                 self._rebuild_unfinished_sync()
                 return
-            logger.warning(logs.WATCHER_REINGEST_REFUSED.format(path=path, error=exc))
+            logger.warning(ls.WATCHER_REINGEST_REFUSED.format(path=path, error=exc))
             return
         except Exception as exc:  # noqa: BLE001
             # Anything else may have deleted the affected subtrees and never
@@ -571,10 +571,10 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             # that no longer matches its registry. Mirrors the MCP tool's
             # posture (`_reingest_sync`), adapted for a long-lived watcher:
             # recover on the next event rather than refusing for ever.
-            logger.error(logs.WATCHER_REINGEST_FAILED.format(path=path, error=exc))
+            logger.error(ls.WATCHER_REINGEST_FAILED.format(path=path, error=exc))
             self._needs_full_rebuild = True
             return
-        logger.success(logs.GRAPH_UPDATED.format(name=path.name))
+        logger.success(ls.GRAPH_UPDATED.format(name=path.name))
 
     def _reingest(self, path: Path, *, deleted: bool) -> None:
         """Re-ingest one path, under the marker when the watcher carries one.
@@ -612,7 +612,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         """
         self._needs_full_rebuild = True
         self._rebuild_after_failure(
-            logs.WATCHER_SYNC_UNFINISHED.format(project=self.updater.project_name)
+            ls.WATCHER_SYNC_UNFINISHED.format(project=self.updater.project_name)
         )
 
 
@@ -739,7 +739,7 @@ def effective_max_wait(debounce_seconds: float, max_wait_seconds: float) -> floa
     """
     if 0 < max_wait_seconds < debounce_seconds:
         logger.warning(
-            logs.DEBOUNCE_MAX_WAIT_ADJUSTED.format(
+            ls.DEBOUNCE_MAX_WAIT_ADJUSTED.format(
                 max_wait=max_wait_seconds, debounce=debounce_seconds
             )
         )
@@ -772,10 +772,10 @@ def _initial_scan(
     than refusing to start (issue #2441). `prepare_graph` runs under the
     scan's marker before it writes, as `cgr start` ensures its constraints.
     """
-    logger.info(logs.INITIAL_SCAN)
+    logger.info(ls.INITIAL_SCAN)
     with repo_sync_lock(updater.repo_path, updater.project_name, wait=True):
         marked_run(updater, marker, before_run=prepare_graph)
-    logger.success(logs.INITIAL_SCAN_DONE)
+    logger.success(ls.INITIAL_SCAN_DONE)
 
 
 def _run_watcher_loop(
@@ -817,7 +817,7 @@ def _run_watcher_loop(
     for directory in ignore_rules.outside_dirs():
         observer.schedule(event_handler, str(directory), recursive=False)
     observer.start()
-    logger.info(logs.WATCHING.format(path=repo_path_obj, project=updater.project_name))
+    logger.info(ls.WATCHING.format(path=repo_path_obj, project=updater.project_name))
 
     try:
         while True:

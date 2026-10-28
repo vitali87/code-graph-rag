@@ -5,7 +5,7 @@ from typing import NamedTuple
 from loguru import logger
 
 from .. import constants as cs
-from .. import logs
+from .. import logs as ls
 from ..language_spec import LANGUAGE_SPECS
 from ..services import IngestorProtocol
 from ..types_defs import LanguageQueries, NodeIdentifier
@@ -241,7 +241,7 @@ class StructureProcessor:
                 [self.project_name] + list(relative_root.parts)
             )
             self.structural_elements[relative_root] = package_qn
-            logger.debug(logs.STRUCT_IDENTIFIED_PACKAGE.format(package_qn=package_qn))
+            logger.debug(ls.STRUCT_IDENTIFIED_PACKAGE.format(package_qn=package_qn))
             if emit:
                 self._emit_package(
                     root,
@@ -261,7 +261,7 @@ class StructureProcessor:
         self.structural_elements[relative_root] = None
         if root == self.repo_path:
             return None
-        logger.debug(logs.STRUCT_IDENTIFIED_FOLDER.format(relative_root=relative_root))
+        logger.debug(ls.STRUCT_IDENTIFIED_FOLDER.format(relative_root=relative_root))
         if emit:
             self._emit_folder(root, relative_root, parent_rel_path, parent_container_qn)
         return cs.NodeLabel.FOLDER
