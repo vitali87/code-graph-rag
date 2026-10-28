@@ -60,8 +60,6 @@ class MCPEnvVar(StrEnum):
     # launch config has an environment and no flags, so the option has an
     # environment form too.
     MCP_WORKSPACE = "MCP_WORKSPACE"
-    CLAUDE_PROJECT_ROOT = "CLAUDE_PROJECT_ROOT"
-    PWD = "PWD"
 
 
 class MCPSchemaType(StrEnum):

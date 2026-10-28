@@ -17,7 +17,7 @@ import typer
 
 from codebase_rag import cli
 from codebase_rag import constants as cs
-from codebase_rag.config import AppConfig
+from codebase_rag.config import AppConfig, settings
 from codebase_rag.mcp import server as srv
 
 HINT = "TARGET_REPO_PATH environment variable"
@@ -27,7 +27,7 @@ HINT = "TARGET_REPO_PATH environment variable"
 def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     root = tmp_path / "repo"
     root.mkdir()
-    monkeypatch.setenv(cs.MCPEnvVar.TARGET_REPO_PATH, str(root))
+    monkeypatch.setattr(settings, "TARGET_REPO_PATH", str(root))
     monkeypatch.delenv(cs.MCPEnvVar.MCP_WORKSPACE, raising=False)
     with (
         patch.object(srv, "setup_logging"),
@@ -99,7 +99,7 @@ def test_a_missing_repo_path_still_gets_the_hint(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setenv(cs.MCPEnvVar.TARGET_REPO_PATH, str(repo / "missing"))
+    monkeypatch.setattr(settings, "TARGET_REPO_PATH", str(repo / "missing"))
 
     code = _serve()
 
@@ -116,7 +116,7 @@ def test_a_repo_path_that_is_a_file_still_gets_the_hint(
 ) -> None:
     afile = repo / "afile.txt"
     afile.write_text("x", encoding="utf-8")
-    monkeypatch.setenv(cs.MCPEnvVar.TARGET_REPO_PATH, str(afile))
+    monkeypatch.setattr(settings, "TARGET_REPO_PATH", str(afile))
 
     code = _serve()
 
@@ -131,7 +131,7 @@ def test_quiet_still_drops_the_hint(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setenv(cs.MCPEnvVar.TARGET_REPO_PATH, str(repo / "missing"))
+    monkeypatch.setattr(settings, "TARGET_REPO_PATH", str(repo / "missing"))
 
     with patch.object(cli.settings, "QUIET", True):
         code = _serve()

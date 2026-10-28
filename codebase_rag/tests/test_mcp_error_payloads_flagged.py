@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.config import settings
 from codebase_rag.mcp import server as mcp_server
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.services.graph_service import MemgraphIngestor
@@ -37,7 +38,7 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root = tmp_path / "proj"
     root.mkdir()
     (root / "lib.py").write_text("def helper(a):\n    return a\n", encoding="utf-8")
-    monkeypatch.setenv(cs.MCPEnvVar.TARGET_REPO_PATH, str(root))
+    monkeypatch.setattr(settings, "TARGET_REPO_PATH", str(root))
     return root
 
 

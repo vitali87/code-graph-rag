@@ -20,7 +20,7 @@ from pydantic_ai.exceptions import ModelAPIError
 
 from codebase_rag import constants as cs
 from codebase_rag import exceptions as ex
-from codebase_rag.config import ModelConfig
+from codebase_rag.config import ModelConfig, settings
 from codebase_rag.mcp import server as srv
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.services.graph_service import MemgraphIngestor
@@ -62,7 +62,7 @@ def _server_without_cypher_model(
     -- provider selection, CypherGenerator, the registry -- is the real code.
     """
     (tmp_path / "calc.py").write_text("def add(a, b):\n    return a + b\n")
-    monkeypatch.setenv(cs.MCPEnvVar.TARGET_REPO_PATH, str(tmp_path))
+    monkeypatch.setattr(settings, "TARGET_REPO_PATH", str(tmp_path))
     built: list[MCPToolsRegistry] = []
     real_registry = srv.MCPToolsRegistry
 
@@ -322,7 +322,7 @@ class TestCliKeepsStdoutForTheProtocol:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         missing = tmp_path / "missing"
-        monkeypatch.setenv(cs.MCPEnvVar.TARGET_REPO_PATH, str(missing))
+        monkeypatch.setattr(settings, "TARGET_REPO_PATH", str(missing))
         with patch.object(srv, "setup_logging"):
             code = _run_cli(AsyncMock(wraps=srv.serve_stdio))
 

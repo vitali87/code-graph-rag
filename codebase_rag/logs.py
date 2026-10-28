@@ -1148,10 +1148,6 @@ MCP_ASK_AGENT = "[MCP] ask_agent: {question}"
 MCP_ASK_AGENT_ERROR = "[MCP] Error running ask_agent: {error}"
 
 # MCP server logs
-MCP_SERVER_INFERRED_ROOT = "[GraphCode MCP] Using inferred project root: {path}"
-MCP_SERVER_NO_ROOT = (
-    "[GraphCode MCP] No project root configured, using current directory: {path}"
-)
 MCP_SERVER_ROOT_RESOLVED = "[GraphCode MCP] Project root resolved to: {path}"
 MCP_SERVER_USING_ROOT = "[GraphCode MCP] Using project root: {path}"
 MCP_SERVER_WORKSPACE = "MCP server scoped to workspace {name!r} ({count} repos)"

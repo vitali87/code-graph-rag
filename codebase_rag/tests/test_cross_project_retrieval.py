@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from codebase_rag.config import settings
 from codebase_rag.cypher_queries import (
     CYPHER_FIND_BY_QUALIFIED_NAME,
     CYPHER_GET_FUNCTION_SOURCE_LOCATION,
@@ -249,7 +250,7 @@ class TestMcpServerProjectScope:
     ) -> None:
         repo = tmp_path / "backend"
         repo.mkdir()
-        monkeypatch.setenv("TARGET_REPO_PATH", str(repo))
+        monkeypatch.setattr(settings, "TARGET_REPO_PATH", str(repo))
 
         from codebase_rag.mcp import server as srv
 

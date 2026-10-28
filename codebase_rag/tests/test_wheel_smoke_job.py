@@ -171,7 +171,7 @@ class TestMcpServerSmokeCheck:
             settings, "_active_orchestrator", settings._active_orchestrator
         )
         monkeypatch.setattr(settings, "_active_cypher", settings._active_cypher)
-        monkeypatch.setenv("TARGET_REPO_PATH", str(tmp_path))
+        monkeypatch.setattr(settings, "TARGET_REPO_PATH", str(tmp_path))
 
     def test_the_check_runs_in_the_wheel_job(self, smoke_module: ModuleType) -> None:
         assert smoke_module.check_mcp_server_lists_tools in smoke_module.CHECKS

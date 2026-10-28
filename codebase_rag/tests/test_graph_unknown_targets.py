@@ -25,6 +25,7 @@ from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag import graph_query
 from codebase_rag.cli import app
+from codebase_rag.config import settings
 from codebase_rag.graph_cli import cli as graph_cli
 from codebase_rag.mcp import server as mcp_server
 from codebase_rag.mcp.tools import MCPToolsRegistry
@@ -579,7 +580,7 @@ def _server_with(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Callable[[str], Awaitable[types.CallToolResult]]:
-    monkeypatch.setenv(cs.MCPEnvVar.TARGET_REPO_PATH, str(tmp_path))
+    monkeypatch.setattr(settings, "TARGET_REPO_PATH", str(tmp_path))
     monkeypatch.delenv(cs.MCPEnvVar.MCP_WORKSPACE, raising=False)
     tools = MagicMock()
     tools.get_tool_schemas.return_value = []

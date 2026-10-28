@@ -19,6 +19,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag import tool_errors as te
+from codebase_rag.config import settings
 from codebase_rag.mcp import server as mcp_server
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.workspaces import WorkspaceConfig, WorkspaceError, WorkspaceRepo
@@ -160,7 +161,7 @@ def test_the_server_scopes_cypher_generation_to_the_workspace(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ws = _workspace(tmp_path, ("a", ALPHA), ("b", BETA))
-    monkeypatch.setenv(cs.MCPEnvVar.TARGET_REPO_PATH, str(tmp_path))
+    monkeypatch.setattr(settings, "TARGET_REPO_PATH", str(tmp_path))
     with (
         patch.object(mcp_server, "setup_logging"),
         patch.object(mcp_server, "load_workspace", return_value=ws),

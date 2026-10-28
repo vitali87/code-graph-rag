@@ -1,9 +1,10 @@
 """MCP startup must fail with the role-aware missing-key diagnostic (issue #1125),
 not a wrapped provider error from the first tool call."""
 
+import contextlib
 import os
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -28,7 +29,8 @@ def _local_config() -> ModelConfig:
 _EXEMPTING_ENV_KEYS = tuple(PROVIDER_ENV_KEYS.values())
 
 
-def _isolated_env(tmp_path: Path) -> Any:
+@contextlib.contextmanager
+def _isolated_env(tmp_path: Path) -> Iterator[None]:
     """Set the repo path AND clear every provider key the validator consults.
 
     `patch.dict` MERGES into the real environment, and `validate_api_key`
@@ -53,8 +55,11 @@ def _isolated_env(tmp_path: Path) -> Any:
         for key, value in os.environ.items()
         if key not in _EXEMPTING_ENV_KEYS
     }
-    kept["TARGET_REPO_PATH"] = str(tmp_path)
-    return patch.dict(os.environ, kept, clear=True)
+    with (
+        patch.dict(os.environ, kept, clear=True),
+        patch.object(srv.settings, "TARGET_REPO_PATH", str(tmp_path)),
+    ):
+        yield
 
 
 def test_the_exemption_list_covers_every_provider_env_key(
@@ -177,7 +182,7 @@ class TestStartupKeyValidation:
 
     def test_local_providers_keep_their_keyless_exemption(self, tmp_path: Path) -> None:
         with (
-            patch.dict(os.environ, {"TARGET_REPO_PATH": str(tmp_path)}),
+            patch.object(srv.settings, "TARGET_REPO_PATH", str(tmp_path)),
             patch.object(
                 type(srv.settings),
                 "active_orchestrator_config",

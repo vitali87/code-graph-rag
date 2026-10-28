@@ -46,22 +46,9 @@ def setup_logging() -> None:
 
 
 def get_project_root() -> Path:
-    repo_path: str | None = (
-        os.environ.get(cs.MCPEnvVar.TARGET_REPO_PATH) or settings.TARGET_REPO_PATH
-    )
-
-    if not repo_path:
-        repo_path = os.environ.get(cs.MCPEnvVar.CLAUDE_PROJECT_ROOT) or os.environ.get(
-            cs.MCPEnvVar.PWD
-        )
-
-        if repo_path:
-            logger.info(lg.MCP_SERVER_INFERRED_ROOT.format(path=repo_path))
-        else:
-            repo_path = str(Path.cwd())
-            logger.info(lg.MCP_SERVER_NO_ROOT.format(path=repo_path))
-
-    project_root = Path(repo_path).resolve()
+    # settings already reads TARGET_REPO_PATH from the environment (and
+    # .env); its "." default is the directory the client launched us in.
+    project_root = Path(settings.TARGET_REPO_PATH).resolve()
 
     if not project_root.exists():
         raise ex.RepoPathError(te.MCP_PATH_NOT_EXISTS.format(path=project_root))
@@ -347,11 +334,7 @@ def _require_bearer_auth(app: ASGIApp, auth_token: str) -> ASGIApp:
     return guarded
 
 
-async def serve_http(
-    host: str = settings.MCP_HTTP_HOST,
-    port: int = settings.MCP_HTTP_PORT,
-    workspace: str | None = None,
-) -> None:
+async def serve_http(host: str, port: int, workspace: str | None = None) -> None:
     import uvicorn
     from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
     from starlette.applications import Starlette

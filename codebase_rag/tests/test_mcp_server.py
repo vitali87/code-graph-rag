@@ -2,7 +2,6 @@ import contextlib
 import os
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,115 +11,77 @@ from codebase_rag.mcp.server import get_project_root
 
 
 class TestGetProjectRoot:
-    """Test suite for get_project_root() function."""
+    """get_project_root() reads settings.TARGET_REPO_PATH, which pydantic
+    fills from the environment; "." (the default) is the launch directory."""
 
-    def test_uses_environment_variable_when_set(self, tmp_path: Path) -> None:
-        """Test that TARGET_REPO_PATH environment variable takes priority."""
-        test_path = tmp_path / "test_repo"
-        test_path.mkdir()
+    @staticmethod
+    def _configure(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+        monkeypatch.setattr(srv.settings, "TARGET_REPO_PATH", value)
 
-        with patch.dict(os.environ, {"TARGET_REPO_PATH": str(test_path)}):
-            result = get_project_root()
-
-        assert result == test_path.resolve()
-
-    def test_uses_settings_when_env_not_set(
+    def test_uses_the_configured_path(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Test that settings.TARGET_REPO_PATH is used when env var is not set."""
         test_path = tmp_path / "settings_repo"
         test_path.mkdir()
+        self._configure(monkeypatch, str(test_path))
 
-        monkeypatch.delenv("TARGET_REPO_PATH", raising=False)
-        with patch("codebase_rag.mcp.server.settings") as mock_settings:
-            mock_settings.TARGET_REPO_PATH = str(test_path)
-            result = get_project_root()
+        assert get_project_root() == test_path.resolve()
 
-        assert result == test_path.resolve()
-
-    def test_defaults_to_cwd_when_not_configured(
-        self, tmp_path: Path, monkeypatch: Any
+    def test_the_settings_value_is_the_only_source(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Test that current working directory is used when TARGET_REPO_PATH is not set."""
-        test_cwd = tmp_path / "current_dir"
-        test_cwd.mkdir()
-
-        monkeypatch.chdir(test_cwd)
-        monkeypatch.setenv("PWD", str(test_cwd))
-
-        if "TARGET_REPO_PATH" in os.environ:
-            monkeypatch.delenv("TARGET_REPO_PATH")
-
-        with patch("codebase_rag.mcp.server.settings") as mock_settings:
-            mock_settings.TARGET_REPO_PATH = None
-            result = get_project_root()
-
-        assert result == test_cwd.resolve()
-
-    def test_defaults_to_cwd_when_empty_string(
-        self, tmp_path: Path, monkeypatch: Any
-    ) -> None:
-        """Test that empty string in settings falls back to cwd."""
-        test_cwd = tmp_path / "current_dir"
-        test_cwd.mkdir()
-
-        monkeypatch.chdir(test_cwd)
-        monkeypatch.setenv("PWD", str(test_cwd))
-
-        if "TARGET_REPO_PATH" in os.environ:
-            monkeypatch.delenv("TARGET_REPO_PATH")
-
-        with patch("codebase_rag.mcp.server.settings") as mock_settings:
-            mock_settings.TARGET_REPO_PATH = ""
-            result = get_project_root()
-
-        assert result == test_cwd.resolve()
-
-    def test_env_var_takes_priority_over_settings(self, tmp_path: Path) -> None:
-        """Test that environment variable takes priority over settings."""
+        # The environment was read a second time, live, over the snapshot
+        # that pydantic had already taken from it.
         env_path = tmp_path / "env_repo"
         settings_path = tmp_path / "settings_repo"
         env_path.mkdir()
         settings_path.mkdir()
+        monkeypatch.setenv("TARGET_REPO_PATH", str(env_path))
+        self._configure(monkeypatch, str(settings_path))
 
-        with patch.dict(os.environ, {"TARGET_REPO_PATH": str(env_path)}):
-            with patch("codebase_rag.mcp.server.settings") as mock_settings:
-                mock_settings.TARGET_REPO_PATH = str(settings_path)
-                result = get_project_root()
+        assert get_project_root() == settings_path.resolve()
 
-        assert result == env_path.resolve()
+    def test_the_default_is_the_working_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        test_cwd = tmp_path / "current_dir"
+        test_cwd.mkdir()
+        monkeypatch.chdir(test_cwd)
+        self._configure(monkeypatch, ".")
 
-    def test_raises_error_when_path_does_not_exist(self) -> None:
-        """Test that ValueError is raised when the path does not exist."""
-        nonexistent_path = "/path/that/does/not/exist/at/all"
+        result = get_project_root()
 
-        with patch.dict(os.environ, {"TARGET_REPO_PATH": nonexistent_path}):
-            with pytest.raises(
-                ValueError, match="Target repository path does not exist"
-            ):
-                get_project_root()
+        assert result == test_cwd.resolve()
+        assert result.is_dir()
 
-    def test_raises_error_when_path_is_file(self, tmp_path: Path) -> None:
-        """Test that ValueError is raised when the path is a file, not a directory."""
+    def test_raises_error_when_path_does_not_exist(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._configure(monkeypatch, "/path/that/does/not/exist/at/all")
+        with pytest.raises(ValueError, match="Target repository path does not exist"):
+            get_project_root()
+
+    def test_raises_error_when_path_is_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         test_file = tmp_path / "test_file.txt"
         test_file.write_text(encoding="utf-8", data="test content")
+        self._configure(monkeypatch, str(test_file))
+        with pytest.raises(
+            ValueError, match="Target repository path is not a directory"
+        ):
+            get_project_root()
 
-        with patch.dict(os.environ, {"TARGET_REPO_PATH": str(test_file)}):
-            with pytest.raises(
-                ValueError, match="Target repository path is not a directory"
-            ):
-                get_project_root()
-
-    def test_resolves_relative_paths(self, tmp_path: Path, monkeypatch: Any) -> None:
-        """Test that relative paths are resolved to absolute paths."""
+    def test_resolves_relative_paths(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         parent = tmp_path / "parent"
         child = parent / "child"
         child.mkdir(parents=True)
-
         monkeypatch.chdir(parent)
+        self._configure(monkeypatch, "./child")
 
-        with patch.dict(os.environ, {"TARGET_REPO_PATH": "./child"}):
-            result = get_project_root()
+        result = get_project_root()
 
         assert result == child.resolve()
         assert result.is_absolute()
@@ -128,50 +89,16 @@ class TestGetProjectRoot:
     @pytest.mark.skipif(
         os.name == "nt", reason="Symlinks require special privileges on Windows"
     )
-    def test_handles_symlinks(self, tmp_path: Path) -> None:
-        """Test that symlinks are resolved correctly."""
+    def test_handles_symlinks(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         real_path = tmp_path / "real_repo"
         real_path.mkdir()
         symlink_path = tmp_path / "symlink_repo"
         symlink_path.symlink_to(real_path)
+        self._configure(monkeypatch, str(symlink_path))
 
-        with patch.dict(os.environ, {"TARGET_REPO_PATH": str(symlink_path)}):
-            result = get_project_root()
-
-        assert result == real_path.resolve()
-
-    def test_defaults_to_cwd_without_error(
-        self, tmp_path: Path, monkeypatch: Any
-    ) -> None:
-        """Test that defaulting to cwd works correctly without raising errors."""
-        test_cwd = tmp_path / "current_dir"
-        test_cwd.mkdir()
-        monkeypatch.chdir(test_cwd)
-        monkeypatch.setenv("PWD", str(test_cwd))
-
-        if "TARGET_REPO_PATH" in os.environ:
-            monkeypatch.delenv("TARGET_REPO_PATH")
-
-        with patch("codebase_rag.mcp.server.settings") as mock_settings:
-            mock_settings.TARGET_REPO_PATH = None
-            result = get_project_root()
-
-        assert result == test_cwd.resolve()
-        assert result.exists()
-        assert result.is_dir()
-
-    def test_works_with_actual_cwd(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Integration test: verify it works with the actual current working directory."""
-        actual_cwd = Path.cwd()
-
-        monkeypatch.delenv("TARGET_REPO_PATH", raising=False)
-        with patch("codebase_rag.mcp.server.settings") as mock_settings:
-            mock_settings.TARGET_REPO_PATH = None
-            result = get_project_root()
-
-        assert result == actual_cwd.resolve()
-        assert result.exists()
-        assert result.is_dir()
+        assert get_project_root() == real_path.resolve()
 
 
 class TestServiceLifecycle:
