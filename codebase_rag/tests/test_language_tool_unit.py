@@ -194,8 +194,8 @@ class TestFindNodeTypesPath:
             node_types_file = src_dir / "node-types.json"
             node_types_file.write_text(encoding="utf-8", data="[]")
 
-            result = _find_node_types_path(str(grammar_path), "python")
-            assert result == str(node_types_file)
+            result = _find_node_types_path(grammar_path, "python")
+            assert result == node_types_file
 
     def test_finds_in_language_subdirectory(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -205,8 +205,8 @@ class TestFindNodeTypesPath:
             node_types_file = lang_dir / "node-types.json"
             node_types_file.write_text(encoding="utf-8", data="[]")
 
-            result = _find_node_types_path(str(grammar_path), "python")
-            assert result == str(node_types_file)
+            result = _find_node_types_path(grammar_path, "python")
+            assert result == node_types_file
 
     def test_finds_with_underscore_language_name(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -216,12 +216,12 @@ class TestFindNodeTypesPath:
             node_types_file = lang_dir / "node-types.json"
             node_types_file.write_text(encoding="utf-8", data="[]")
 
-            result = _find_node_types_path(str(grammar_path), "type-script")
-            assert result == str(node_types_file)
+            result = _find_node_types_path(grammar_path, "type-script")
+            assert result == node_types_file
 
     def test_returns_none_when_not_found(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = _find_node_types_path(tmpdir, "nonexistent")
+            result = _find_node_types_path(Path(tmpdir), "nonexistent")
             assert result is None
 
 
@@ -241,7 +241,7 @@ class TestParseTreeSitterJson:
 
             with patch("click.echo"):
                 result = _parse_tree_sitter_json(
-                    str(config_path), "tree-sitter-python", None
+                    config_path, "tree-sitter-python", None
                 )
 
             assert result is not None
@@ -262,9 +262,7 @@ class TestParseTreeSitterJson:
             config_path.write_text(encoding="utf-8", data=json.dumps(config))
 
             with patch("click.echo"):
-                result = _parse_tree_sitter_json(
-                    str(config_path), "tree-sitter-rust", None
-                )
+                result = _parse_tree_sitter_json(config_path, "tree-sitter-rust", None)
 
             assert result is not None
             assert result.extensions == [".rs"]
@@ -284,7 +282,7 @@ class TestParseTreeSitterJson:
 
             with patch("click.echo"):
                 result = _parse_tree_sitter_json(
-                    str(config_path), "tree-sitter-python", None
+                    config_path, "tree-sitter-python", None
                 )
 
             assert result is not None
@@ -305,14 +303,16 @@ class TestParseTreeSitterJson:
 
             with patch("click.echo"):
                 result = _parse_tree_sitter_json(
-                    str(config_path), "tree-sitter-js", "custom-name"
+                    config_path, "tree-sitter-js", "custom-name"
                 )
 
             assert result is not None
             assert result.name == "custom-name"
 
     def test_returns_none_for_missing_file(self) -> None:
-        result = _parse_tree_sitter_json("/nonexistent/path.json", "grammar", None)
+        result = _parse_tree_sitter_json(
+            Path("/nonexistent/path.json"), "grammar", None
+        )
         assert result is None
 
     def test_returns_none_for_empty_grammars(self) -> None:
@@ -321,7 +321,7 @@ class TestParseTreeSitterJson:
             config_path = Path(tmpdir) / "tree-sitter.json"
             config_path.write_text(encoding="utf-8", data=json.dumps(config))
 
-            result = _parse_tree_sitter_json(str(config_path), "grammar", None)
+            result = _parse_tree_sitter_json(config_path, "grammar", None)
             assert result is None
 
     def test_returns_none_for_missing_grammars_key(self) -> None:
@@ -330,7 +330,7 @@ class TestParseTreeSitterJson:
             config_path = Path(tmpdir) / "tree-sitter.json"
             config_path.write_text(encoding="utf-8", data=json.dumps(config))
 
-            result = _parse_tree_sitter_json(str(config_path), "grammar", None)
+            result = _parse_tree_sitter_json(config_path, "grammar", None)
             assert result is None
 
 
@@ -462,7 +462,7 @@ class TestParseNodeTypesFile:
         node_types = tmp_path / "node-types.json"
         node_types.write_text(_node_types_payload(), encoding="utf-8")
 
-        categories = _parse_node_types_file(str(node_types))
+        categories = _parse_node_types_file(node_types)
 
         assert categories is not None
         assert "function_declaration" in categories.functions
@@ -474,7 +474,7 @@ class TestParseNodeTypesFile:
         node_types = tmp_path / "node-types.json"
         node_types.write_text("not json", encoding="utf-8")
 
-        assert _parse_node_types_file(str(node_types)) is None
+        assert _parse_node_types_file(node_types) is None
 
 
 class TestPromptHelpers:

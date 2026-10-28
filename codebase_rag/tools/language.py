@@ -4,7 +4,6 @@ import ast
 import io
 import json
 import os
-import pathlib
 import re
 import shutil
 import stat
@@ -14,6 +13,7 @@ import tokenize
 import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import NamedTuple, NoReturn
 
 import click
@@ -45,11 +45,11 @@ class SubmoduleResult:
     newly_added: bool = True
 
 
-def _package_dir() -> pathlib.Path:
-    return pathlib.Path(__file__).resolve().parent.parent
+def _package_dir() -> Path:
+    return Path(__file__).resolve().parent.parent
 
 
-def _source_checkout_root() -> pathlib.Path | None:
+def _source_checkout_root() -> Path | None:
     # Found from the running package, never from the cwd: an installed cgr run
     # inside someone's project must not take that project for the checkout
     # (issue #2422). The project name rules out a repo that merely vendors
@@ -60,7 +60,7 @@ def _source_checkout_root() -> pathlib.Path | None:
     if not (root / cs.LANG_GIT_DIR).exists():
         return None
     try:
-        with open(root / cs.PYPROJECT_PATH, "rb") as f:
+        with (root / cs.PYPROJECT_PATH).open("rb") as f:
             project = tomllib.load(f).get(cs.TOML_KEY_PROJECT)
     except (OSError, tomllib.TOMLDecodeError):
         return None
@@ -80,7 +80,7 @@ def _fail(message: str) -> NoReturn:
     sys.exit(1)
 
 
-def _require_source_checkout() -> pathlib.Path:
+def _require_source_checkout() -> Path:
     if (root := _source_checkout_root()) is not None:
         return root
     _fail(
@@ -93,7 +93,7 @@ def _require_source_checkout() -> pathlib.Path:
     )
 
 
-def _run_git(root: pathlib.Path, *args: str) -> subprocess.CompletedProcess[str]:
+def _run_git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     # A hook or wrapper may export another repository's GIT_DIR, which git
     # obeys over `cwd`; the checkout found above must be the one edited.
     env = {
@@ -112,7 +112,7 @@ def _run_git(root: pathlib.Path, *args: str) -> subprocess.CompletedProcess[str]
     )
 
 
-def _git_dir(root: pathlib.Path) -> pathlib.Path:
+def _git_dir(root: Path) -> Path:
     # In a linked worktree, or a checkout that is itself a submodule, `.git`
     # is a file naming the real git dir, relative to the checkout or not.
     dot_git = root / cs.LANG_GIT_DIR
@@ -127,7 +127,7 @@ def _git_dir(root: pathlib.Path) -> pathlib.Path:
     return root / text.removeprefix(cs.LANG_GITFILE_PREFIX).strip()
 
 
-def _modules_path(root: pathlib.Path, path: str) -> pathlib.Path:
+def _modules_path(root: Path, path: str) -> Path:
     # `modules/` is per worktree, as `git rev-parse --git-path modules`
     # reports: a linked worktree's grammars are not the main checkout's.
     return _git_dir(root) / cs.LANG_GIT_MODULES_DIR / path
@@ -140,12 +140,12 @@ def _retry_writable(func: Callable[[str], None], target: str, _: BaseException) 
     func(target)
 
 
-def _rmtree(path: pathlib.Path | str) -> None:
+def _rmtree(path: Path) -> None:
     shutil.rmtree(path, onexc=_retry_writable)
 
 
 def _add_git_submodule(
-    grammar_url: str, grammar_path: str, root: pathlib.Path
+    grammar_url: str, grammar_path: str, root: Path
 ) -> SubmoduleResult | None:
     try:
         click.echo(f"Adding submodule: {grammar_url}")
@@ -160,7 +160,7 @@ def _handle_submodule_error(
     error: subprocess.CalledProcessError,
     grammar_url: str,
     grammar_path: str,
-    root: pathlib.Path,
+    root: Path,
 ) -> SubmoduleResult | None:
     error_output = error.stderr or str(error)
 
@@ -177,7 +177,7 @@ def _handle_submodule_error(
 
 
 def _reinstall_existing_submodule(
-    grammar_url: str, grammar_path: str, root: pathlib.Path
+    grammar_url: str, grammar_path: str, root: Path
 ) -> SubmoduleResult | None:
     click.secho(
         f"Warning: {cs.LANG_MSG_SUBMODULE_EXISTS.format(path=grammar_path)}",
@@ -205,7 +205,7 @@ def _reinstall_existing_submodule(
 def _handle_reinstall_failure(
     error: subprocess.CalledProcessError | OSError,
     grammar_path: str,
-    root: pathlib.Path,
+    root: Path,
 ) -> None:
     error_msg = error.stderr if hasattr(error, "stderr") else str(error)
     _error(cs.LANG_ERR_REINSTALL_FAILED.format(error=error_msg))
@@ -216,12 +216,12 @@ def _handle_reinstall_failure(
 
 
 def _parse_tree_sitter_json(
-    json_path: str, grammar_dir_name: str, language_name: str | None
+    json_path: Path, grammar_dir_name: str, language_name: str | None
 ) -> LanguageInfo | None:
-    if not os.path.exists(json_path):
+    if not json_path.exists():
         return None
 
-    with open(json_path, encoding="utf-8") as f:
+    with json_path.open(encoding="utf-8") as f:
         config = json.load(f)
 
     if "grammars" not in config or len(config["grammars"]) == 0:
@@ -331,9 +331,9 @@ def _collect_type_names(obj: dict | list, out: set[str]) -> None:
             _collect_type_names(child, out)
 
 
-def _parse_node_types_file(node_types_path: str) -> NodeCategories | None:
+def _parse_node_types_file(node_types_path: Path) -> NodeCategories | None:
     try:
-        with open(node_types_path, encoding="utf-8") as f:
+        with node_types_path.open(encoding="utf-8") as f:
             node_types = json.load(f)
 
         all_node_names: set[str] = set()
@@ -393,25 +393,21 @@ def _prompt_for_node_categories() -> NodeCategories:
     return NodeCategories(functions, classes, modules, calls)
 
 
-def _find_node_types_path(grammar_path: str, language_name: str) -> str | None:
+def _find_node_types_path(grammar_path: Path, language_name: str) -> Path | None:
     possible_paths = [
-        os.path.join(grammar_path, cs.LANG_SRC_DIR, cs.LANG_NODE_TYPES_JSON),
-        os.path.join(
-            grammar_path, language_name, cs.LANG_SRC_DIR, cs.LANG_NODE_TYPES_JSON
-        ),
-        os.path.join(
-            grammar_path,
-            language_name.replace("-", "_"),
-            cs.LANG_SRC_DIR,
-            cs.LANG_NODE_TYPES_JSON,
-        ),
+        grammar_path / cs.LANG_SRC_DIR / cs.LANG_NODE_TYPES_JSON,
+        grammar_path / language_name / cs.LANG_SRC_DIR / cs.LANG_NODE_TYPES_JSON,
+        grammar_path
+        / language_name.replace("-", "_")
+        / cs.LANG_SRC_DIR
+        / cs.LANG_NODE_TYPES_JSON,
     ]
 
-    return next((path for path in possible_paths if os.path.exists(path)), None)
+    return next((path for path in possible_paths if path.exists()), None)
 
 
 def _update_config_file(
-    config_file: pathlib.Path, language_name: str, spec: LanguageSpec
+    config_file: Path, language_name: str, spec: LanguageSpec
 ) -> bool:
     config_entry = f"""    "{language_name}": LanguageSpec(
         language="{spec.language}",
@@ -433,23 +429,21 @@ def _update_config_file(
         return False
 
 
-def _read_config_text(config_file: pathlib.Path) -> tuple[str, str]:
+def _read_config_text(config_file: Path) -> tuple[str, str]:
     raw = config_file.read_bytes()
     newline = "\r\n" if b"\r\n" in raw else "\n"
     content = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
     return content, newline
 
 
-def _write_config_atomically(
-    config_file: pathlib.Path, new_content: str, newline: str
-) -> None:
-    temp_path = f"{config_file}{cs.LANG_CONFIG_TMP_SUFFIX}"
+def _write_config_atomically(config_file: Path, new_content: str, newline: str) -> None:
+    temp_path = config_file.with_name(config_file.name + cs.LANG_CONFIG_TMP_SUFFIX)
     try:
-        with open(temp_path, "w", encoding="utf-8", newline=newline) as f:
+        with temp_path.open("w", encoding="utf-8", newline=newline) as f:
             f.write(new_content)
-        os.replace(temp_path, config_file)
+        temp_path.replace(config_file)
     except Exception:
-        pathlib.Path(temp_path).unlink(missing_ok=True)
+        temp_path.unlink(missing_ok=True)
         raise
 
 
@@ -635,7 +629,7 @@ def _specs_entry_spans(
 
 
 def _write_language_config(
-    config_file: pathlib.Path, config_entry: str, language_name: str
+    config_file: Path, config_entry: str, language_name: str
 ) -> bool:
     config_content, newline = _read_config_text(config_file)
     closing_brace_pos = _specs_dict_span(config_content)[1]
@@ -680,7 +674,7 @@ def _write_language_config(
     return True
 
 
-def _show_review_hints(config_file: pathlib.Path) -> None:
+def _show_review_hints(config_file: Path) -> None:
     click.echo()
     click.echo(
         click.style(
@@ -748,7 +742,7 @@ def add_grammar(
     gitmodules_existed = (root / cs.LANG_GITMODULES_FILE).exists()
     grammars_dir.mkdir(exist_ok=True)
 
-    grammar_dir_name = os.path.basename(grammar_url).removesuffix(cs.LANG_GIT_SUFFIX)
+    grammar_dir_name = Path(grammar_url).name.removesuffix(cs.LANG_GIT_SUFFIX)
     grammar_path = f"{cs.LANG_GRAMMARS_DIR}/{grammar_dir_name}"
 
     result = _add_git_submodule(grammar_url, grammar_path, root)
@@ -775,16 +769,15 @@ def add_grammar(
 
 
 def _register_language(
-    root: pathlib.Path,
+    root: Path,
     grammar_path: str,
     grammar_dir_name: str,
     language_name: str | None,
 ) -> bool:
     grammar_dir = root / grammar_path
-    tree_sitter_json_path = str(grammar_dir / cs.LANG_TREE_SITTER_JSON)
 
     if lang_info := _parse_tree_sitter_json(
-        tree_sitter_json_path, grammar_dir_name, language_name
+        grammar_dir / cs.LANG_TREE_SITTER_JSON, grammar_dir_name, language_name
     ):
         language_name = lang_info.name
         file_extension = lang_info.extensions
@@ -796,7 +789,7 @@ def _register_language(
 
     assert language_name is not None
 
-    categories = _resolve_node_categories(str(grammar_dir), language_name)
+    categories = _resolve_node_categories(grammar_dir, language_name)
     new_language_spec = LanguageSpec(
         language=language_name,
         file_extensions=tuple(file_extension),
@@ -812,7 +805,7 @@ def _register_language(
 
 
 def _discard_added_submodule(
-    root: pathlib.Path,
+    root: Path,
     grammar_path: str,
     language_name: str,
     *,
@@ -830,12 +823,12 @@ def _discard_added_submodule(
         _error(cs.LANG_ERR_REMOVE_SUBMODULE.format(error=e.stderr or e))
 
 
-def _remove_if_empty(directory: pathlib.Path) -> None:
+def _remove_if_empty(directory: Path) -> None:
     if directory.is_dir() and not any(directory.iterdir()):
         directory.rmdir()
 
 
-def _resolve_node_categories(grammar_path: str, language_name: str) -> NodeCategories:
+def _resolve_node_categories(grammar_path: Path, language_name: str) -> NodeCategories:
     node_types_path = _find_node_types_path(grammar_path, language_name)
     if not node_types_path:
         click.echo(cs.LANG_ERR_NODE_TYPES_WARNING.format(name=language_name))
@@ -893,7 +886,7 @@ def remove_language(language_name: str, keep_submodule: bool = False) -> None:
     click.echo(f"Done: {cs.LANG_MSG_LANG_REMOVED.format(name=language_name)}")
 
 
-def _remove_language_from_config(config_file: pathlib.Path, language_name: str) -> bool:
+def _remove_language_from_config(config_file: Path, language_name: str) -> bool:
     try:
         original_content, newline = _read_config_text(config_file)
         spans = _specs_entry_spans(original_content, language_name)
@@ -912,7 +905,7 @@ def _remove_language_from_config(config_file: pathlib.Path, language_name: str) 
         return False
 
 
-def _remove_language_submodule(root: pathlib.Path, submodule_path: str) -> bool:
+def _remove_language_submodule(root: Path, submodule_path: str) -> bool:
     try:
         click.echo(
             f"Removing: {cs.LANG_MSG_REMOVING_SUBMODULE.format(path=submodule_path)}"
@@ -949,18 +942,15 @@ def cleanup_orphaned_modules() -> None:
 
     gitmodules_submodules: set[str] = set()
     try:
-        with open(root / cs.LANG_GITMODULES_FILE, encoding="utf-8") as f:
-            content = f.read()
-            paths = re.findall(cs.LANG_GITMODULES_REGEX, content)
-            gitmodules_submodules = set(paths)
+        content = (root / cs.LANG_GITMODULES_FILE).read_text(encoding="utf-8")
+        gitmodules_submodules = set(re.findall(cs.LANG_GITMODULES_REGEX, content))
     except FileNotFoundError:
         click.echo(f"Info: {cs.LANG_MSG_NO_GITMODULES}")
 
     orphaned = []
-    for item in os.listdir(modules_dir):
-        module_path = f"{cs.LANG_GRAMMARS_DIR}/{item}"
-        if module_path not in gitmodules_submodules:
-            orphaned.append(item)
+    for item in modules_dir.iterdir():
+        if f"{cs.LANG_GRAMMARS_DIR}/{item.name}" not in gitmodules_submodules:
+            orphaned.append(item.name)
 
     if not orphaned:
         click.echo(f"Clean: {cs.LANG_MSG_NO_ORPHANS}")
@@ -972,8 +962,7 @@ def cleanup_orphaned_modules() -> None:
 
     if click.confirm(cs.LANG_PROMPT_REMOVE_ORPHANS):
         for module in orphaned:
-            module_path = os.path.join(modules_dir, module)
-            _rmtree(module_path)
+            _rmtree(modules_dir / module)
             click.echo(f"Deleted: {cs.LANG_MSG_REMOVED_ORPHAN.format(module=module)}")
         click.echo(f"Done: {cs.LANG_MSG_CLEANUP_COMPLETE}")
     else:
