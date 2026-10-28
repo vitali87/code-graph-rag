@@ -6,6 +6,8 @@
 # while one wrongly left out of a "blocker" set can leave a caller stale.
 from __future__ import annotations
 
+from enum import StrEnum
+
 from .ast_java import (
     TS_CONSTRUCTOR_DECLARATION,
     TS_JAVA_BLOCK,
@@ -178,3 +180,13 @@ INTERFACE_FP_JS_BINDER_FIELDS: dict[str, tuple[str, ...]] = {
 INTERFACE_FP_JS_BOUND_NAMES = frozenset(
     {TS_IDENTIFIER, TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN}
 )
+
+
+class InterfaceFlavor(StrEnum):
+    """Which of `interface_fingerprint.py`'s language branches a language
+    takes: Python's readers, the JS/TS ones, or neither (Java). The tree
+    bridge is handed this per language rather than a language list."""
+
+    PYTHON = "python"
+    JS = "js"
+    OTHER = "other"
