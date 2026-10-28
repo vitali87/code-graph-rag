@@ -16,8 +16,8 @@ from .. import constants as cs
 from .. import logs as ls
 from .. import tool_errors as te
 from ..cypher_queries import CYPHER_LIST_PROJECTS
-from ..duplicates import collect_duplicates_with_coverage, default_duplicates_config
-from ..types_defs import DuplicateGroup, DuplicatesReport
+from ..duplicates import collect_duplicates_with_coverage
+from ..types_defs import DuplicateGroup, DuplicatesConfig, DuplicatesReport
 from . import tool_descriptions as td
 
 if TYPE_CHECKING:
@@ -141,7 +141,7 @@ async def _find_duplicates(
         return te.ToolFailure(cs.MSG_DUPLICATES_AMBIGUOUS.format(projects=projects))
 
     logger.info(ls.DUPLICATES_SCANNING.format(project_name=resolved))
-    config = default_duplicates_config(threshold=threshold, min_nodes=min_size)
+    config = DuplicatesConfig(threshold=threshold, min_nodes=min_size)
     report = await asyncio.to_thread(
         collect_duplicates_with_coverage, ingestor, resolved, config
     )

@@ -27,14 +27,18 @@ from codebase_rag.config import settings
 from codebase_rag.duplicates import (
     collect_duplicates,
     collect_duplicates_with_coverage,
-    default_duplicates_config,
 )
 from codebase_rag.tools.duplicate_detection import create_find_duplicates_tool
-from codebase_rag.types_defs import DuplicateGroup, PropertyValue, ResultRow
+from codebase_rag.types_defs import (
+    DuplicateGroup,
+    DuplicatesConfig,
+    PropertyValue,
+    ResultRow,
+)
 from codebase_rag.utils.terminal_console import terminal_aware_console
 from evals.duplicates import duplicate_pairs, score_duplicates
 
-_CONFIG = default_duplicates_config()
+_CONFIG = DuplicatesConfig()
 _SHARED = [f"s{i}" for i in range(9)]
 
 
@@ -110,7 +114,7 @@ class TestDisjointGroups:
     def test_chained_pairs_form_one_cluster(self) -> None:
         # A-B = 4/6 and B-C = 4/8 qualify at 0.5; A-C = 2/8 does not. Main
         # reported {A, B} and {B, C}, seating B twice.
-        config = default_duplicates_config(threshold=0.5)
+        config = DuplicatesConfig(threshold=0.5)
         rows = [
             _row("proj.a.one", "aaaa", ["b1", "b2", "b3", "b4"]),
             _row("proj.b.two", "bbbb", ["b1", "b2", "b3", "b4", "b5", "b6"]),
@@ -129,7 +133,7 @@ class TestDisjointGroups:
     def test_similarity_is_the_range_of_the_cluster_links(self) -> None:
         # A-B = 4/6 and A-C = 4/7 link the cluster; B-C = 4/9 is below the
         # threshold, so it is not one of the cluster's links.
-        config = default_duplicates_config(threshold=0.5)
+        config = DuplicatesConfig(threshold=0.5)
         rows = [
             _row("proj.a.one", "aaaa", ["b1", "b2", "b3", "b4"]),
             _row("proj.b.two", "bbbb", ["b1", "b2", "b3", "b4", "b5", "b6"]),
@@ -225,12 +229,12 @@ class TestNeighbouringBehaviourUnchanged:
         capped = collect_duplicates_with_coverage(
             FakeIngestor(rows),
             "proj",
-            default_duplicates_config(max_similar_groups=1),
+            DuplicatesConfig(max_similar_groups=1),
         )
         complete = collect_duplicates_with_coverage(
             FakeIngestor(rows),
             "proj",
-            default_duplicates_config(max_similar_groups=2),
+            DuplicatesConfig(max_similar_groups=2),
         )
 
         assert capped.truncated is True
@@ -333,7 +337,7 @@ class TestReport:
 # Review of the cluster change: A-C = 4/6 and B-C = 4/8 qualify at 0.5, A-B =
 # 2/8 does not, and the path order puts A and B first. Anything that reads a
 # cluster's members as pairs must see the two links only.
-_CHAIN_CONFIG = default_duplicates_config(threshold=0.5)
+_CHAIN_CONFIG = DuplicatesConfig(threshold=0.5)
 _A, _B, _C = "proj.a.one", "proj.b.two", "proj.c.three"
 
 

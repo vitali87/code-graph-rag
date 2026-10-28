@@ -8,9 +8,8 @@ from codebase_rag import cypher_queries as cq
 from codebase_rag.duplicates import (
     collect_duplicates,
     collect_duplicates_with_coverage,
-    default_duplicates_config,
 )
-from codebase_rag.types_defs import ResultRow
+from codebase_rag.types_defs import DuplicatesConfig, ResultRow
 
 _FUNCTION = cs.NodeLabel.FUNCTION.value
 _METHOD = cs.NodeLabel.METHOD.value
@@ -56,7 +55,7 @@ def _row(
     }
 
 
-_CONFIG = default_duplicates_config()
+_CONFIG = DuplicatesConfig()
 
 # Two clusters sharing no branch: the shape for the similar-group cap.
 _TWO_CLUSTERS = [
@@ -133,7 +132,7 @@ class TestExactGroups:
         }
 
     def test_exclude_glob_removes_members(self) -> None:
-        config = default_duplicates_config(exclude_patterns=("*_generated*",))
+        config = DuplicatesConfig(exclude_patterns=("*_generated*",))
         ingestor = FakeIngestor(
             [
                 _row("proj.a.total", "f3a9", ["b1"], path="proj/a.py"),
@@ -227,7 +226,7 @@ class TestSimilarGroups:
             _row(f"proj.m{i}.fn", f"fp{i}", ["b1", "b2", "b3"], nodes=20)
             for i in range(10)
         ]
-        config = default_duplicates_config(max_candidate_pairs=3)
+        config = DuplicatesConfig(max_candidate_pairs=3)
         report = collect_duplicates_with_coverage(FakeIngestor(rows), "proj", config)
         assert report.truncated is True
 
@@ -237,7 +236,7 @@ class TestSimilarGroups:
             _row(f"proj.m{i}.fn", f"fp{i}", ["b1", "b2", "b3"], nodes=20)
             for i in range(3)
         ]
-        config = default_duplicates_config(max_candidate_pairs=3)
+        config = DuplicatesConfig(max_candidate_pairs=3)
         report = collect_duplicates_with_coverage(FakeIngestor(rows), "proj", config)
         assert report.truncated is False
         assert len(report.groups) == 1
@@ -261,7 +260,7 @@ class TestSimilarGroups:
         # but A-C = 2/8 = 0.25 does not. Groups are disjoint clusters (issue
         # #2473): A and C meet through B instead of B being reported twice,
         # and the score range says the members are linked, not all similar.
-        config = default_duplicates_config(threshold=0.5)
+        config = DuplicatesConfig(threshold=0.5)
         ingestor = FakeIngestor(
             [
                 _row("proj.a.one", "aaaa", ["b1", "b2", "b3", "b4"]),
@@ -284,7 +283,7 @@ class TestSimilarGroups:
         # B-C = 4/9 ~ 0.444 does not. First-fit clustering would seat A with
         # B and silently lose the valid A-C pair; the cluster keeps both
         # links, and its weakest one is A-C.
-        config = default_duplicates_config(threshold=0.5)
+        config = DuplicatesConfig(threshold=0.5)
         ingestor = FakeIngestor(
             [
                 _row("proj.a.one", "aaaa", ["b1", "b2", "b3", "b4"]),
@@ -585,7 +584,7 @@ class TestSimilarGroups:
                 ),
             ]
         )
-        config = default_duplicates_config(threshold=0.5)
+        config = DuplicatesConfig(threshold=0.5)
         groups = collect_duplicates(ingestor, "proj", config)
         assert len(groups) == 1
         assert len(groups[0]["members"]) == 4
@@ -647,7 +646,7 @@ class TestSimilarGroups:
                 ),
             ]
         )
-        config = default_duplicates_config(threshold=0.5)
+        config = DuplicatesConfig(threshold=0.5)
         groups = collect_duplicates(ingestor, "proj", config)
         assert len(groups) == 1
         assert {m["qualified_name"] for m in groups[0]["members"]} == {
@@ -698,7 +697,7 @@ class TestSimilarGroups:
         assert [group["kind"] for group in groups] == [cs.KIND_EXACT]
 
     def test_exact_only_skips_similarity(self) -> None:
-        config = default_duplicates_config(exact_only=True)
+        config = DuplicatesConfig(exact_only=True)
         ingestor = FakeIngestor(
             [
                 _row("proj.a.orig", "aaaa", ["b1", "b2", "b3", "b4", "b5"]),
@@ -741,7 +740,7 @@ class TestOrderingAndCoverage:
         # Two disjoint clusters; with the cap at one group the second is cut
         # and the report must say so instead of passing the partial list off
         # as complete.
-        config = default_duplicates_config(max_similar_groups=1)
+        config = DuplicatesConfig(max_similar_groups=1)
         report = collect_duplicates_with_coverage(
             FakeIngestor(_TWO_CLUSTERS), "proj", config
         )
@@ -751,7 +750,7 @@ class TestOrderingAndCoverage:
     def test_cap_matching_group_count_is_not_flagged_truncated(self) -> None:
         # Same two clusters with the cap at exactly two: the scan is complete
         # and must not be reported as truncated.
-        config = default_duplicates_config(max_similar_groups=2)
+        config = DuplicatesConfig(max_similar_groups=2)
         report = collect_duplicates_with_coverage(
             FakeIngestor(_TWO_CLUSTERS), "proj", config
         )

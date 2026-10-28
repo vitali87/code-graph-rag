@@ -588,7 +588,7 @@ def _server_with(
         patch.object(mcp_server, "setup_logging"),
         patch.object(mcp_server, "MemgraphIngestor"),
         patch.object(mcp_server, "LazyCypherGenerator"),
-        patch.object(mcp_server, "create_mcp_tools_registry", return_value=tools),
+        patch.object(mcp_server, "MCPToolsRegistry", return_value=tools),
         patch.object(
             type(mcp_server.settings), "active_orchestrator_config", MagicMock()
         ),

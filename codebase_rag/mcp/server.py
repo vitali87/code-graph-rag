@@ -18,7 +18,7 @@ from codebase_rag import exceptions as ex
 from codebase_rag import logs as lg
 from codebase_rag import tool_errors as te
 from codebase_rag.config import settings
-from codebase_rag.mcp.tools import create_mcp_tools_registry
+from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.services.llm import LazyCypherGenerator
 from codebase_rag.types_defs import MCPToolArguments
@@ -138,7 +138,7 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
     # keep them from starting (issue #2518).
     cypher_generator = LazyCypherGenerator(active_projects=active_projects)
 
-    tools = create_mcp_tools_registry(
+    tools = MCPToolsRegistry(
         project_root=str(project_root),
         ingestor=ingestor,
         cypher_gen=cypher_generator,

@@ -64,7 +64,7 @@ def _server_without_cypher_model(
     (tmp_path / "calc.py").write_text("def add(a, b):\n    return a + b\n")
     monkeypatch.setenv(cs.MCPEnvVar.TARGET_REPO_PATH, str(tmp_path))
     built: list[MCPToolsRegistry] = []
-    real_registry = srv.create_mcp_tools_registry
+    real_registry = srv.MCPToolsRegistry
 
     def capture(
         project_root: str,
@@ -99,7 +99,7 @@ def _server_without_cypher_model(
         ) as ollama_up,
         patch("codebase_rag.services.llm.Agent") as agent_cls,
         patch.object(srv, "MemgraphIngestor", return_value=ingestor),
-        patch.object(srv, "create_mcp_tools_registry", side_effect=capture),
+        patch.object(srv, "MCPToolsRegistry", side_effect=capture),
     ):
         agent_cls.return_value.run = AsyncMock(
             return_value=MagicMock(output=GENERATED_QUERY)

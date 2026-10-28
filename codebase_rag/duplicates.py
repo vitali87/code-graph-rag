@@ -55,24 +55,6 @@ class _Cluster(NamedTuple):
     links: list[tuple[int, int, float]]
 
 
-def default_duplicates_config(
-    threshold: float = cs.DUPLICATES_DEFAULT_THRESHOLD,
-    min_nodes: int = cs.DUPLICATES_DEFAULT_MIN_NODES,
-    exact_only: bool = False,
-    exclude_patterns: tuple[str, ...] = (),
-    max_similar_groups: int = cs.DUPLICATES_MAX_SIMILAR_GROUPS,
-    max_candidate_pairs: int = cs.DUPLICATES_MAX_CANDIDATE_PAIRS,
-) -> DuplicatesConfig:
-    return DuplicatesConfig(
-        threshold=threshold,
-        min_nodes=min_nodes,
-        exact_only=exact_only,
-        exclude_patterns=exclude_patterns,
-        max_similar_groups=max_similar_groups,
-        max_candidate_pairs=max_candidate_pairs,
-    )
-
-
 def collect_duplicates(
     ingestor: GraphQueryClient, project_name: str, config: DuplicatesConfig
 ) -> list[DuplicateGroup]:

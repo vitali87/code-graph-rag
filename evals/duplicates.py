@@ -18,7 +18,6 @@ from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.duplicates import (
     collect_duplicates_with_coverage,
-    default_duplicates_config,
     expanded_links,
     reported_groups,
 )
@@ -181,7 +180,7 @@ def main(
     project = project_name or target.name
     logger.info(ls.DUPLICATES_TARGET.format(target=target, project=project))
 
-    config = default_duplicates_config(
+    config = DuplicatesConfig(
         threshold=threshold,
         min_nodes=min_size,
         exact_only=exact_only,

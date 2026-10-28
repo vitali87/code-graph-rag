@@ -3831,17 +3831,3 @@ class MCPToolsRegistry:
     def get_tool_handler(self, name: str) -> tuple[MCPHandlerType, bool] | None:
         metadata = self._tools.get(name)
         return None if metadata is None else (metadata.handler, metadata.returns_json)
-
-
-def create_mcp_tools_registry(
-    project_root: str,
-    ingestor: MemgraphIngestor,
-    cypher_gen: CypherQueryGenerator,
-    workspace: WorkspaceConfig | None = None,
-) -> MCPToolsRegistry:
-    return MCPToolsRegistry(
-        project_root=project_root,
-        ingestor=ingestor,
-        cypher_gen=cypher_gen,
-        workspace=workspace,
-    )

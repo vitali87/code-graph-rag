@@ -24,6 +24,8 @@ from typing import (
 )
 
 from .constants import (
+    DUPLICATES_DEFAULT_MIN_NODES,
+    DUPLICATES_DEFAULT_THRESHOLD,
     DUPLICATES_MAX_CANDIDATE_PAIRS,
     DUPLICATES_MAX_SIMILAR_GROUPS,
     AuditCheck,
@@ -874,9 +876,9 @@ class AstFingerprintResult(NamedTuple):
 
 
 class DuplicatesConfig(NamedTuple):
-    threshold: float
-    min_nodes: int
-    exact_only: bool
+    threshold: float = DUPLICATES_DEFAULT_THRESHOLD
+    min_nodes: int = DUPLICATES_DEFAULT_MIN_NODES
+    exact_only: bool = False
     exclude_patterns: tuple[str, ...] = ()
     max_similar_groups: int = DUPLICATES_MAX_SIMILAR_GROUPS
     max_candidate_pairs: int = DUPLICATES_MAX_CANDIDATE_PAIRS

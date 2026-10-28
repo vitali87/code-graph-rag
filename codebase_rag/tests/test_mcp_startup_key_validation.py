@@ -190,7 +190,7 @@ class TestStartupKeyValidation:
             ),
             patch.object(srv, "MemgraphIngestor"),
             patch.object(srv, "LazyCypherGenerator"),
-            patch.object(srv, "create_mcp_tools_registry"),
+            patch.object(srv, "MCPToolsRegistry"),
         ):
             server, _ = srv.create_server()
             assert server is not None

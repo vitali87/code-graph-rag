@@ -6,14 +6,14 @@
 from pathlib import Path
 
 from codebase_rag import constants as cs
-from codebase_rag.duplicates import default_duplicates_config
+from codebase_rag.types_defs import DuplicatesConfig
 from evals.duplicates import (
     cgr_duplicates,
     duplicate_pairs,
     score_duplicates,
 )
 
-_CONFIG = default_duplicates_config()
+_CONFIG = DuplicatesConfig()
 
 _LOOP_BODY_A = (
     "def total_price(items, tax, floor):\n"
@@ -172,7 +172,7 @@ def test_cgr_duplicates_honours_exclude_patterns(tmp_path: Path) -> None:
         src,
         {"real.py": _LOOP_BODY_A, "gen_client.py": _LOOP_BODY_B},
     )
-    config = default_duplicates_config(exclude_patterns=("*gen_*",))
+    config = DuplicatesConfig(exclude_patterns=("*gen_*",))
     report = cgr_duplicates(src, "proj", config)
     assert report.groups == []
 
