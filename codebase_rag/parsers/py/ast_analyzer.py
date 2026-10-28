@@ -1189,26 +1189,24 @@ class PythonAstAnalyzerMixin(_AstBase):
     ) -> tuple[list[Node], list[Node], list[Node], list[Node]]:
         """(assignments, comprehensions, for statements, with statements) under `node`.
 
-        Uses the cached query when the Python grammar is loaded, and falls
-        back to a plain tree walk when it is not or the query fails.
+        Uses the cached query when the Python grammar is loaded, and a plain
+        tree walk only when it is not (an analyzer built without queries). The
+        query is a constant compiled against the grammar that parsed `node`,
+        so a failure is a bug and is raised rather than hidden by the walk.
         """
         py_lang_queries = self.queries.get(cs.SupportedLanguage.PYTHON)
         py_lang_obj = py_lang_queries["language"] if py_lang_queries else None
         if py_lang_obj is not None:
-            try:
-                q = get_cached_query(py_lang_obj, _PY_TRAVERSE_QUERY)
-                cursor = QueryCursor(q)
-                captures = cursor.captures(node)
-                if return_stmts := captures.get("return_stmt"):
-                    self._return_stmt_cache[node] = return_stmts
-                return (
-                    captures.get("assignment", []),
-                    captures.get("comprehension", []),
-                    captures.get("for_stmt", []),
-                    captures.get(_WITH_STMT_CAPTURE, []),
-                )
-            except Exception:  # noqa: S110 - a failed query falls back to the walk below
-                pass
+            q = get_cached_query(py_lang_obj, _PY_TRAVERSE_QUERY)
+            captures = QueryCursor(q).captures(node)
+            if return_stmts := captures.get("return_stmt"):
+                self._return_stmt_cache[node] = return_stmts
+            return (
+                captures.get("assignment", []),
+                captures.get("comprehension", []),
+                captures.get("for_stmt", []),
+                captures.get(_WITH_STMT_CAPTURE, []),
+            )
 
         assignments: list[Node] = []
         comprehensions: list[Node] = []
@@ -1877,14 +1875,10 @@ class PythonAstAnalyzerMixin(_AstBase):
         py_lang_queries = self.queries.get(cs.SupportedLanguage.PYTHON)
         py_lang_obj = py_lang_queries["language"] if py_lang_queries else None
         if py_lang_obj is not None:
-            try:
-                q = get_cached_query(py_lang_obj, cs.PY_RETURN_QUERY)
-                cursor = QueryCursor(q)
-                captures = cursor.captures(node)
-                return_nodes.extend(captures.get("return_stmt", []))
-                return
-            except Exception:  # noqa: S110 - a failed query falls back to the walk below
-                pass
+            q = get_cached_query(py_lang_obj, cs.PY_RETURN_QUERY)
+            return_nodes.extend(QueryCursor(q).captures(node).get("return_stmt", []))
+            return
+        # No grammar loaded: walk the tree, as _collect_traverse_nodes does.
         stack: list[Node] = [node]
         while stack:
             current = stack.pop()

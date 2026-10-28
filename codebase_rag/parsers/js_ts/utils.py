@@ -377,14 +377,11 @@ def find_return_statements(
     node: Node, return_nodes: list[Node], language_obj=None
 ) -> None:
     if language_obj is not None:
-        try:
-            q = get_cached_query(language_obj, _JS_RETURN_QUERY)
-            cursor = QueryCursor(q)
-            captures = cursor.captures(node)
-            return_nodes.extend(captures.get("return_stmt", []))
-            return
-        except Exception:  # noqa: S110 - a failed query falls back to the walk below
-            pass
+        q = get_cached_query(language_obj, _JS_RETURN_QUERY)
+        return_nodes.extend(QueryCursor(q).captures(node).get("return_stmt", []))
+        return
+    # No grammar given: walk the tree. The query is a constant compiled against
+    # the grammar that parsed `node`, so its failure is a bug and is raised.
     stack: list[Node] = [node]
     while stack:
         current = stack.pop()

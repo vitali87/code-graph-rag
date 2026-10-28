@@ -423,17 +423,13 @@ class PythonVariableAnalyzerMixin(_VarBase):
         py_lang_queries = self.queries.get(cs.SupportedLanguage.PYTHON)
         py_lang_obj = py_lang_queries["language"] if py_lang_queries else None
         if py_lang_obj is not None:
-            try:
-                q = get_cached_query(py_lang_obj, cs.PY_ASSIGNMENT_QUERY)
-                cursor = QueryCursor(q)
-                captures = cursor.captures(node)
-                for assign_node in captures.get("assignment", []):
-                    self._process_self_assignment(
-                        assign_node, local_var_types, module_qn
-                    )
-                return
-            except Exception:  # noqa: S110 - a failed query falls back to the walk below
-                pass
+            # No catch: it also covered _process_self_assignment, so a failure
+            # part-way re-ran every assignment through the walk below.
+            q = get_cached_query(py_lang_obj, cs.PY_ASSIGNMENT_QUERY)
+            for assign_node in QueryCursor(q).captures(node).get("assignment", []):
+                self._process_self_assignment(assign_node, local_var_types, module_qn)
+            return
+        # No grammar loaded (an analyzer built without queries): walk the tree.
         stack: list[ASTNode] = [node]
         while stack:
             current = stack.pop()
