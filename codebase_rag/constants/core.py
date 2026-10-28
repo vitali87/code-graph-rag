@@ -472,3 +472,7 @@ IMPORT_RELATIONSHIP = "IMPORTS"
 
 # Delimiter tokens for argument parsing
 DELIMITER_TOKENS = frozenset({"(", ")", ","})
+
+# Distinct call names and candidate qualified names the call resolver keeps
+# split; bounded so a long-lived server indexing many projects does not grow.
+RESOLVER_NAME_CACHE_SIZE = 65536

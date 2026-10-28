@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from collections import defaultdict, deque
 from collections.abc import Collection, Iterable, Iterator, Mapping
+from functools import lru_cache
 from pathlib import Path, PurePath
 from typing import NamedTuple
 
@@ -45,7 +46,6 @@ _RustBlockScope = tuple[
     list[tuple[int, int]],
     list[tuple[int, int, dict[str, tuple[int, int]]]],
 ]
-_SEARCH_NAME_CACHE: dict[str, str] = {}
 _CHAINED_METHOD_PATTERN = re.compile(r"\.([^.()]+)$")
 # Chain bases whose value depends on the member they are written in.
 _JS_THIS_RECEIVERS = frozenset({cs.TS_THIS, cs.KEYWORD_SUPER})
@@ -70,7 +70,6 @@ def _bind_receiver(returned: str | None, receiver: str | None) -> str | None:
     return returned
 
 
-_QN_SPLIT_CACHE: dict[str, tuple[list[str], int]] = {}
 _CHAIN_OPEN_BRACKETS = "([{"
 _CHAIN_CLOSE_BRACKETS = ")]}"
 # Node labels a Rust receiver type name may resolve to: a struct (Class), an
@@ -162,13 +161,15 @@ def _drop_angle_groups(text: str) -> str:
     return "".join(kept)
 
 
+@lru_cache(maxsize=cs.RESOLVER_NAME_CACHE_SIZE)
 def _trie_search_name(call_name: str) -> str:
     # The last name segment, the only part the simple-name fallback matches on.
-    search_name = _SEARCH_NAME_CACHE.get(call_name)
-    if search_name is None:
-        search_name = _SEPARATOR_PATTERN.split(call_name)[-1]
-        _SEARCH_NAME_CACHE[call_name] = search_name
-    return search_name
+    return _SEPARATOR_PATTERN.split(call_name)[-1]
+
+
+@lru_cache(maxsize=cs.RESOLVER_NAME_CACHE_SIZE)
+def _qn_parts(qualified_name: str) -> tuple[str, ...]:
+    return tuple(qualified_name.split(cs.SEPARATOR_DOT))
 
 
 def _split_receiver_chain(expr: str) -> list[str] | None:
@@ -7497,12 +7498,8 @@ class CallResolver:
         caller_len: int,
         caller_parent_prefix: str,
     ) -> int:
-        if candidate_qn in _QN_SPLIT_CACHE:
-            candidate_parts, candidate_len = _QN_SPLIT_CACHE[candidate_qn]
-        else:
-            candidate_parts = candidate_qn.split(cs.SEPARATOR_DOT)
-            candidate_len = len(candidate_parts)
-            _QN_SPLIT_CACHE[candidate_qn] = (candidate_parts, candidate_len)
+        candidate_parts = _qn_parts(candidate_qn)
+        candidate_len = len(candidate_parts)
         common_prefix = 0
         for i in range(min(caller_len, candidate_len)):
             if caller_parts[i] == candidate_parts[i]:

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from functools import lru_cache
 from typing import NamedTuple
 
 from tree_sitter import Node, Parser
@@ -150,25 +151,27 @@ def stored_result_types(result: str, parser: Parser | None) -> tuple[str, ...] |
     text, parsed again as Go; None when it cannot be read."""
     if not result:
         return declared_types(None)
-    if result not in _STORED_RESULTS:
-        if parser is None:
-            return None
-        stub = cs.GO_RESULT_STUB.format(result=result)
-        root = parser.parse(stub.encode(cs.ENCODING_UTF8)).root_node
-        function = next(
-            (
-                child
-                for child in root.named_children
-                if child.type == cs.TS_GO_FUNCTION_DECLARATION
-            ),
-            None,
-        )
-        _STORED_RESULTS[result] = (
-            None
-            if function is None or root.has_error
-            else declared_types(function.child_by_field_name(cs.FIELD_RESULT))
-        )
-    return _STORED_RESULTS[result]
+    if parser is None:
+        return None
+    return _parsed_result_types(result, parser)
+
+
+# Parsed once per text: the same few result lists recur across a project.
+@lru_cache(maxsize=cs.GO_RESULT_CACHE_SIZE)
+def _parsed_result_types(result: str, parser: Parser) -> tuple[str, ...] | None:
+    stub = cs.GO_RESULT_STUB.format(result=result)
+    root = parser.parse(stub.encode(cs.ENCODING_UTF8)).root_node
+    function = next(
+        (
+            child
+            for child in root.named_children
+            if child.type == cs.TS_GO_FUNCTION_DECLARATION
+        ),
+        None,
+    )
+    if function is None or root.has_error:
+        return None
+    return declared_types(function.child_by_field_name(cs.FIELD_RESULT))
 
 
 def compatible(have: GoSignature, want: GoSignature) -> bool:
@@ -239,8 +242,6 @@ def _type_text(node: Node | None) -> str:
     return (safe_decode_text(node) or "").strip() if node is not None else ""
 
 
-# Parsed once per text: the same few result lists recur across a project.
-_STORED_RESULTS: dict[str, tuple[str, ...] | None] = {}
 _GO_DECLARATIONS = frozenset(
     {cs.TS_GO_PARAMETER_DECLARATION, cs.TS_GO_VARIADIC_PARAMETER_DECLARATION}
 )

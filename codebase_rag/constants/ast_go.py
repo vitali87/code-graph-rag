@@ -171,6 +171,8 @@ GO_BLANK_IDENTIFIER = "_"
 # A result list read back from the graph's `return_type` text is parsed again
 # in this stub, so it yields the declarations the file's own parse read.
 GO_RESULT_STUB = "package p\n\nfunc f() {result} {{}}\n"
+# Distinct result-list texts `stored_result_types` keeps parsed.
+GO_RESULT_CACHE_SIZE = 4096
 # Statements that bind the identifiers in their `left` list (`a, b := ...`,
 # `for k, v := range m`, a select arm's `case v := <-ch`), the declarations
 # whose specs bind names, and a `for` clause's `initializer` (`for i := ...`):
