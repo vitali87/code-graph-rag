@@ -261,8 +261,6 @@ _GO_TYPE_NODE_TYPES = frozenset({NodeType.CLASS, NodeType.TYPE, NodeType.INTERFA
 
 
 class FunctionIngestMixin:
-    # No __slots__: this mixin lazily creates _deferred_* registries on the
-    # host instance, which requires the host to provide a __dict__.
     ingestor: IngestorProtocol
     repo_path: Path
     project_name: str
@@ -926,8 +924,6 @@ class FunctionIngestMixin:
         # the time deferred methods are written out.
         props.update(fingerprint_props(func_node))
         props.update(anchor_hash_props(func_node, decorators))
-        if not hasattr(self, "_deferred_cpp_methods"):
-            self._deferred_cpp_methods = []
         self._deferred_cpp_methods.append(
             _DeferredMethod(
                 method_name=method_name,
@@ -954,7 +950,7 @@ class FunctionIngestMixin:
         is guaranteed to be in the registry.  Returns the number of
         methods that were ingested.
         """
-        deferred = getattr(self, "_deferred_cpp_methods", None)
+        deferred = self._deferred_cpp_methods
         if not deferred:
             return 0
 
@@ -1049,8 +1045,6 @@ class FunctionIngestMixin:
         receiver_type = go_utils.extract_receiver_type_name(func_node)
         if not receiver_type:
             return False
-        if not hasattr(self, "_deferred_go_methods"):
-            self._deferred_go_methods = []
         self._deferred_go_methods.append(
             _DeferredGoMethod(
                 method_node=func_node,
@@ -1296,7 +1290,7 @@ class FunctionIngestMixin:
         to the actual node label (``Class`` for structs, ``Type`` for defined
         types, ``Interface`` for interfaces). Returns the number ingested.
         """
-        deferred = getattr(self, "_deferred_go_methods", None)
+        deferred = self._deferred_go_methods
         if not deferred:
             return 0
 
@@ -2209,7 +2203,7 @@ class FunctionIngestMixin:
         unregistered parent qn is a phantom, so the child anchors to its
         module rather than losing the edge at the database MERGE.
         """
-        deferred = getattr(self, "_deferred_parent_links", None)
+        deferred = self._deferred_parent_links
         if not deferred:
             return 0
         emitted = 0
@@ -2284,7 +2278,7 @@ class FunctionIngestMixin:
         exist under their final class-anchored qns. Falls back to the file
         module rather than ever emitting a phantom parent.
         """
-        deferred = getattr(self, "_deferred_cpp_containment", None)
+        deferred = self._deferred_cpp_containment
         if not deferred:
             return 0
         emitted = 0

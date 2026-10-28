@@ -710,7 +710,7 @@ class ClassIngestMixin:
         # representation of the type -> register it now. Deterministic: the
         # deferred list is in file (sorted) order, and the first surviving forward
         # declaration of an only-declared type claims the name for the rest.
-        deferred = getattr(self, "_deferred_forward_decls", None)
+        deferred = self._deferred_forward_decls
         if not deferred:
             return 0
         self._deferred_forward_decls = []
