@@ -407,20 +407,21 @@ def test_search_embeddings_filters_null_payloads(
 
 
 @pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")
-def test_search_embeddings_handles_exception(
+def test_search_embeddings_propagates_a_failing_query(
     mock_qdrant_client: MagicMock, reset_global_client: None
 ) -> None:
     from codebase_rag.vector_store import search_embeddings
 
     mock_qdrant_client.query_points.side_effect = Exception("Connection failed")
 
-    with patch(
-        "codebase_rag.vector_store.get_qdrant_client",
-        return_value=mock_qdrant_client,
+    with (
+        patch(
+            "codebase_rag.vector_store.get_qdrant_client",
+            return_value=mock_qdrant_client,
+        ),
+        pytest.raises(Exception, match="Connection failed"),
     ):
-        results = search_embeddings([0.2] * 768)
-
-    assert results == []
+        search_embeddings([0.2] * 768)
 
 
 @pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")

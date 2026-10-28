@@ -475,17 +475,15 @@ class TestDeleteStaleEmbeddings:
 
 
 class TestFailures:
-    def test_a_failed_search_answers_no_hits(self) -> None:
+    def test_a_failed_search_raises_rather_than_answering_no_hits(self) -> None:
         client = MagicMock()
         client.search.side_effect = sqlite3.OperationalError("disk I/O error")
 
         with (
             patch.object(vs, "get_sqlite_vector_client", return_value=client),
-            patch.object(vs, "logger") as logger,
+            pytest.raises(sqlite3.OperationalError, match="disk I/O error"),
         ):
-            assert vs.search_embeddings([0.2] * _DIM) == []
-
-        logger.warning.assert_called_once()
+            vs.search_embeddings([0.2] * _DIM)
 
     def test_a_failed_batch_is_counted_as_nothing_stored(self) -> None:
         client = MagicMock()

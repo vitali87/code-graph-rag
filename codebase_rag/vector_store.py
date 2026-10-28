@@ -840,33 +840,29 @@ class QdrantVectorStore(VectorStore):
         project: str | None = None,
     ) -> list[tuple[int, float]]:
         effective_top_k = top_k if top_k is not None else settings.QDRANT_TOP_K
-        try:
-            client = get_qdrant_client()
+        client = get_qdrant_client()
 
-            def run_query(limit: int) -> list[tuple[int, float, Any]]:
-                result = client.query_points(
-                    collection_name=settings.QDRANT_COLLECTION_NAME,
-                    query=query_embedding,
-                    limit=limit,
+        def run_query(limit: int) -> list[tuple[int, float, Any]]:
+            result = client.query_points(
+                collection_name=settings.QDRANT_COLLECTION_NAME,
+                query=query_embedding,
+                limit=limit,
+            )
+            return [
+                (
+                    hit.payload[PAYLOAD_NODE_ID],
+                    hit.score,
+                    hit.payload.get(PAYLOAD_QUALIFIED_NAME),
                 )
-                return [
-                    (
-                        hit.payload[PAYLOAD_NODE_ID],
-                        hit.score,
-                        hit.payload.get(PAYLOAD_QUALIFIED_NAME),
-                    )
-                    for hit in result.points
-                    if hit.payload is not None
-                ]
+                for hit in result.points
+                if hit.payload is not None
+            ]
 
-            if project is None:
-                return [
-                    (node_id, score) for node_id, score, _ in run_query(effective_top_k)
-                ]
-            return _search_project_scoped(run_query, effective_top_k, project)
-        except Exception as e:
-            logger.warning(ls.EMBEDDING_SEARCH_FAILED.format(error=e))
-            return []
+        if project is None:
+            return [
+                (node_id, score) for node_id, score, _ in run_query(effective_top_k)
+            ]
+        return _search_project_scoped(run_query, effective_top_k, project)
 
 
 def _milvus_project_scope(project_name: str) -> str:
@@ -1022,39 +1018,35 @@ class MilvusVectorStore(VectorStore):
         output_fields = (
             [PAYLOAD_NODE_ID, PAYLOAD_QUALIFIED_NAME] if project else [PAYLOAD_NODE_ID]
         )
-        try:
-            client = get_milvus_client()
+        client = get_milvus_client()
 
-            def run_query(limit: int) -> list[tuple[int, float, Any]]:
-                result = client.search(
-                    collection_name=settings.MILVUS_COLLECTION_NAME,
-                    data=[query_embedding],
-                    anns_field=_MILVUS_VECTOR_FIELD,
-                    limit=limit,
-                    output_fields=output_fields,
+        def run_query(limit: int) -> list[tuple[int, float, Any]]:
+            result = client.search(
+                collection_name=settings.MILVUS_COLLECTION_NAME,
+                data=[query_embedding],
+                anns_field=_MILVUS_VECTOR_FIELD,
+                limit=limit,
+                output_fields=output_fields,
+            )
+            if not result:
+                return []
+            return [
+                (
+                    node_id,
+                    _normalize_milvus_score(float(hit.get("distance", 0.0))),
+                    _milvus_hit_qualified_name(cast(dict[str, Any], hit)),
                 )
-                if not result:
-                    return []
-                return [
-                    (
-                        node_id,
-                        _normalize_milvus_score(float(hit.get("distance", 0.0))),
-                        _milvus_hit_qualified_name(cast(dict[str, Any], hit)),
-                    )
-                    for hit in result[0]
-                    if isinstance(
-                        node_id := _milvus_hit_node_id(cast(dict[str, Any], hit)), int
-                    )
-                ]
+                for hit in result[0]
+                if isinstance(
+                    node_id := _milvus_hit_node_id(cast(dict[str, Any], hit)), int
+                )
+            ]
 
-            if project is None:
-                return [
-                    (node_id, score) for node_id, score, _ in run_query(effective_top_k)
-                ]
-            return _search_project_scoped(run_query, effective_top_k, project)
-        except Exception as e:
-            logger.warning(ls.EMBEDDING_SEARCH_FAILED.format(error=e))
-            return []
+        if project is None:
+            return [
+                (node_id, score) for node_id, score, _ in run_query(effective_top_k)
+            ]
+        return _search_project_scoped(run_query, effective_top_k, project)
 
 
 def _milvus_hit_qualified_name(hit: dict[str, Any]) -> str | None:
@@ -1213,23 +1205,19 @@ class SqliteVectorStore(VectorStore):
         project: str | None = None,
     ) -> list[tuple[int, float]]:
         effective_top_k = top_k if top_k is not None else settings.SQLITE_VECTOR_TOP_K
-        try:
-            client = get_sqlite_vector_client()
+        client = get_sqlite_vector_client()
 
-            def run_query(limit: int) -> list[tuple[int, float, str]]:
-                return [
-                    (hit.node_id, _cosine_similarity(hit.distance), hit.qualified_name)
-                    for hit in client.search(query_embedding, limit)
-                ]
+        def run_query(limit: int) -> list[tuple[int, float, str]]:
+            return [
+                (hit.node_id, _cosine_similarity(hit.distance), hit.qualified_name)
+                for hit in client.search(query_embedding, limit)
+            ]
 
-            if project is None:
-                return [
-                    (node_id, score) for node_id, score, _ in run_query(effective_top_k)
-                ]
-            return _search_project_scoped(run_query, effective_top_k, project)
-        except Exception as e:
-            logger.warning(ls.EMBEDDING_SEARCH_FAILED.format(error=e))
-            return []
+        if project is None:
+            return [
+                (node_id, score) for node_id, score, _ in run_query(effective_top_k)
+            ]
+        return _search_project_scoped(run_query, effective_top_k, project)
 
 
 def _configured_vector_dim(backend: VectorStoreBackend) -> int:

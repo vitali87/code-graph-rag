@@ -127,6 +127,7 @@ def test_cli_context_exits_nonzero_when_nothing_matches(
 ) -> None:
     from codebase_rag import graph_cli
     from codebase_rag.cli import app
+    from codebase_rag.tools import semantic_search
 
     local_root, store = graph
     monkeypatch.setattr(
@@ -134,6 +135,7 @@ def test_cli_context_exits_nonzero_when_nothing_matches(
         "_project_and_fetch",
         lambda project, repo_path: (LOCAL, store.fetch_all, contextlib.nullcontext()),
     )
+    monkeypatch.setattr(semantic_search, "semantic_code_search", lambda *_a, **_k: [])
     result = CliRunner().invoke(
         app, ["context", f"{LOCAL}.pkg.mod.missing", "--repo-path", str(local_root)]
     )
@@ -189,3 +191,66 @@ async def test_mcp_context_scopes_free_text_search_to_the_resolved_project(
     assert scopes == [derived]
     assert isinstance(payload, dict)
     assert payload["resolved"] == f"{derived}.pkg.mod.f"
+
+
+def test_cli_context_reports_a_failing_search_as_itself(
+    graph: tuple[Path, _StatefulIngestor], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A failed embedding search used to read as "Nothing in the graph matches".
+    from codebase_rag import graph_cli
+    from codebase_rag.cli import app
+    from codebase_rag.tools import semantic_search
+
+    local_root, store = graph
+    monkeypatch.setattr(
+        graph_cli,
+        "_project_and_fetch",
+        lambda project, repo_path: (LOCAL, store.fetch_all, contextlib.nullcontext()),
+    )
+
+    def failing_search(*_args: object, **_kwargs: object) -> list:
+        raise ConnectionError("vector store unreachable")
+
+    monkeypatch.setattr(semantic_search, "semantic_code_search", failing_search)
+    target = "return the checkout source"
+    result = CliRunner().invoke(
+        app, ["context", target, "--repo-path", str(local_root)]
+    )
+    assert result.exit_code == 1
+    assert (
+        cs.CONTEXT_SEARCH_FAILED.format(target=target, error="vector store unreachable")
+        in result.stderr
+    )
+    assert cs.CONTEXT_UNRESOLVED.format(target=target) not in result.stderr
+
+
+async def test_mcp_context_reports_a_failing_free_text_search(
+    graph: tuple[Path, _StatefulIngestor], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The embedding search used to swallow a store outage and answer [], so a
+    # free-text target came back "unresolved" as if nothing matched.
+    from codebase_rag.mcp import tools as mcp_tools
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+    from codebase_rag.utils.path_utils import derive_project_name
+
+    local_root, store = graph
+    ingestor = MagicMock()
+    ingestor.fetch_all = store.fetch_all
+    ingestor.list_projects.return_value = [
+        derive_project_name(local_root),
+        LOCAL,
+        OTHER,
+    ]
+    registry = MCPToolsRegistry(
+        project_root=str(local_root), ingestor=ingestor, cypher_gen=MagicMock()
+    )
+    registry._semantic_search_tool = MagicMock()
+
+    def failing_search(*_args: object, **_kwargs: object) -> list:
+        raise ConnectionError("vector store unreachable")
+
+    monkeypatch.setattr(mcp_tools, "semantic_code_search", failing_search)
+
+    payload = await registry.context(target="return the checkout source")
+    assert isinstance(payload, dict)
+    assert "vector store unreachable" in payload[cs.DICT_KEY_ERROR]

@@ -102,6 +102,7 @@ from .types_defs import (
     PropertyValue,
     ResultRow,
     ResultValue,
+    SemanticSearchResult,
 )
 from .utils.path_utils import (
     derive_project_name,
@@ -2583,6 +2584,15 @@ def context_command(
     from .tools.semantic_search import semantic_code_search
 
     name, fetch_all, ingestor = _project_and_fetch(project, repo_path)
+
+    def search(text: str) -> list[SemanticSearchResult]:
+        # A failed search is not "nothing matches": say why, and exit 1.
+        try:
+            return semantic_code_search(ingestor, text, project=name)
+        except Exception as e:
+            typer.echo(cs.CONTEXT_SEARCH_FAILED.format(target=text, error=e), err=True)
+            raise typer.Exit(code=1) from e
+
     with ingestor:
         payload = build_context(
             fetch_all,
@@ -2590,7 +2600,7 @@ def context_command(
             target,
             budget,
             graph_query.source_root_for(fetch_all, name, repo_path),
-            search=lambda text: semantic_code_search(ingestor, text, project=name),
+            search=search,
         )
     typer.echo(json.dumps(payload, indent=cs.MCP_JSON_INDENT))
     if payload["resolved"] is None:

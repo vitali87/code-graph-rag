@@ -1108,6 +1108,7 @@ CONTEXT_WHY_ACCEPTS = "type it accepts"
 CONTEXT_WHY_TEST = "test reaching it at depth {depth} through {through}"
 CONTEXT_WHY_DOC = "documentation section whose file links to it"
 CONTEXT_UNRESOLVED = "Nothing in the graph matches {target}"
+CONTEXT_SEARCH_FAILED = "Semantic search for {target} failed: {error}"
 # Postcondition contract (issue #1531).
 CONTRACT_OP_RENAME = "rename"
 CONTRACT_OP_CHANGE_SIGNATURE = "change_signature"
@@ -1226,10 +1227,8 @@ QUERY_CELL_CONTROL_CHARS = r"[\x00-\x08\x0b-\x1f\x7f-\x9f]"
 QUERY_CELL_CONTROL_ESCAPE = "\\x{code:02x}"
 
 MSG_SEMANTIC_NO_RESULTS = (
-    "No semantic matches found for query: '{query}'. This could mean:\n"
-    "1. No functions match this description\n"
-    "2. Semantic search dependencies are not installed\n"
-    "3. No embeddings have been generated yet"
+    "No semantic matches found for query: '{query}'. Either no functions "
+    "match this description, or no embeddings have been generated yet."
 )
 MSG_SEMANTIC_SOURCE_UNAVAILABLE = (
     "Could not retrieve source code for node ID {id}. "

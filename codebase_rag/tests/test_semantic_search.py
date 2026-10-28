@@ -204,15 +204,18 @@ def test_semantic_code_search_returns_empty_when_no_matches(
 @pytest.mark.skipif(
     not has_semantic_dependencies(), reason="semantic dependencies not installed"
 )
-def test_semantic_code_search_handles_exception(mock_embed_code: MagicMock) -> None:
+def test_semantic_code_search_propagates_a_failing_embedder(
+    mock_embed_code: MagicMock,
+) -> None:
     from codebase_rag.tools.semantic_search import semantic_code_search
 
     mock_embed_code.side_effect = Exception("Embedding failed")
 
-    with patch("codebase_rag.embedder.embed_code", mock_embed_code):
-        results = semantic_code_search(MagicMock(), "some query")
-
-    assert results == []
+    with (
+        patch("codebase_rag.embedder.embed_code", mock_embed_code),
+        pytest.raises(Exception, match="Embedding failed"),
+    ):
+        semantic_code_search(MagicMock(), "some query")
 
 
 @pytest.mark.skipif(
@@ -316,14 +319,15 @@ def test_get_function_source_code_returns_none_on_invalid_location(
 @pytest.mark.skipif(
     not has_semantic_dependencies(), reason="semantic dependencies not installed"
 )
-def test_get_function_source_code_handles_exception(mock_ingestor: MagicMock) -> None:
+def test_get_function_source_code_propagates_a_failing_read(
+    mock_ingestor: MagicMock,
+) -> None:
     from codebase_rag.tools.semantic_search import get_function_source_code
 
     mock_ingestor.fetch_all.side_effect = Exception("Database error")
 
-    result = get_function_source_code(mock_ingestor, 123)
-
-    assert result is None
+    with pytest.raises(Exception, match="Database error"):
+        get_function_source_code(mock_ingestor, 123)
 
 
 @pytest.mark.skipif(

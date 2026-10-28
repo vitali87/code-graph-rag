@@ -9,6 +9,7 @@ from pydantic_ai import Tool
 from .. import constants as cs
 from .. import exceptions as ex
 from .. import logs as ls
+from .. import tool_errors as te
 from ..cypher_queries import (
     CYPHER_GET_FUNCTION_SOURCE_LOCATION,
     CYPHER_LIST_PROJECTS,
@@ -38,63 +39,58 @@ def semantic_code_search(
         logger.warning(ex.SEMANTIC_EXTRA)
         return []
 
-    try:
-        from ..embedder import embed_code
-        from ..vector_store import search_embeddings
+    # No catch-all: a failing embedder, vector store or graph read must reach
+    # the caller as a failure, not as an empty list that reads "no matches".
+    from ..embedder import embed_code
+    from ..vector_store import search_embeddings
 
-        query_embedding = embed_code(query)
+    query_embedding = embed_code(query)
 
-        search_results = search_embeddings(
-            query_embedding, top_k=top_k, project=project
-        )
+    search_results = search_embeddings(query_embedding, top_k=top_k, project=project)
 
-        if not search_results:
-            logger.info(ls.SEMANTIC_NO_MATCH.format(query=query))
-            return []
-
-        node_ids = [node_id for node_id, _ in search_results]
-
-        cypher_query = build_nodes_by_ids_query(node_ids)
-        params = {str(i): node_id for i, node_id in enumerate(node_ids)}
-        results = ingestor.fetch_all(cypher_query, params)
-
-        results_map = {
-            node_id: res
-            for res in results
-            if isinstance((node_id := res.get("node_id")), int)
-        }
-
-        formatted_results: list[SemanticSearchResult] = []
-        for node_id, score in search_results:
-            if node_id in results_map:
-                result = results_map[node_id]
-                result_type = result.get("type")
-                first_label = (
-                    result_type[0]
-                    if isinstance(result_type, list) and result_type
-                    else None
-                )
-                type_str = (
-                    first_label
-                    if isinstance(first_label, str)
-                    else cs.SEMANTIC_TYPE_UNKNOWN
-                )
-                formatted_results.append(
-                    SemanticSearchResult(
-                        node_id=node_id,
-                        qualified_name=str(result.get("qualified_name", "")),
-                        name=str(result.get("name", "")),
-                        type=type_str,
-                        score=round(score, 3),
-                    )
-                )
-
-        logger.info(ls.SEMANTIC_FOUND.format(count=len(formatted_results), query=query))
-        return formatted_results
-
-    except Exception as e:
-        logger.error(ls.SEMANTIC_FAILED.format(query=query, error=e))
+    if not search_results:
+        logger.info(ls.SEMANTIC_NO_MATCH.format(query=query))
         return []
+
+    node_ids = [node_id for node_id, _ in search_results]
+
+    cypher_query = build_nodes_by_ids_query(node_ids)
+    params = {str(i): node_id for i, node_id in enumerate(node_ids)}
+    results = ingestor.fetch_all(cypher_query, params)
+
+    results_map = {
+        node_id: res
+        for res in results
+        if isinstance((node_id := res.get("node_id")), int)
+    }
+
+    formatted_results: list[SemanticSearchResult] = []
+    for node_id, score in search_results:
+        if node_id in results_map:
+            result = results_map[node_id]
+            result_type = result.get("type")
+            first_label = (
+                result_type[0]
+                if isinstance(result_type, list) and result_type
+                else None
+            )
+            type_str = (
+                first_label
+                if isinstance(first_label, str)
+                else cs.SEMANTIC_TYPE_UNKNOWN
+            )
+            formatted_results.append(
+                SemanticSearchResult(
+                    node_id=node_id,
+                    qualified_name=str(result.get("qualified_name", "")),
+                    name=str(result.get("name", "")),
+                    type=type_str,
+                    score=round(score, 3),
+                )
+            )
+
+    logger.info(ls.SEMANTIC_FOUND.format(count=len(formatted_results), query=query))
+    return formatted_results
 
 
 def _resolve_project_roots(
@@ -114,70 +110,63 @@ def get_function_source_code(
     node_id: int,
     roots_cache: dict[str, dict[str, str | None]] | None = None,
 ) -> str | None:
-    try:
-        from ..utils.source_extraction import (
-            extract_source_lines,
-            validate_source_location,
-        )
+    from ..utils.source_extraction import (
+        extract_source_lines,
+        validate_source_location,
+    )
 
-        results = ingestor.fetch_all(
-            CYPHER_GET_FUNCTION_SOURCE_LOCATION, {"node_id": node_id}
-        )
+    results = ingestor.fetch_all(
+        CYPHER_GET_FUNCTION_SOURCE_LOCATION, {"node_id": node_id}
+    )
 
-        if not results:
-            logger.warning(ls.SEMANTIC_NODE_NOT_FOUND.format(id=node_id))
-            return None
-
-        result = results[0]
-        file_path = result.get("path")
-        start_line = result.get("start_line")
-        end_line = result.get("end_line")
-        if (
-            not isinstance(file_path, str)
-            or type(start_line) is not int
-            or type(end_line) is not int
-        ):
-            logger.warning(ls.SEMANTIC_INVALID_LOCATION.format(id=node_id))
-            return None
-
-        is_valid, file_path_obj = validate_source_location(
-            file_path, start_line, end_line
-        )
-        if not is_valid or file_path_obj is None:
-            logger.warning(ls.SEMANTIC_INVALID_LOCATION.format(id=node_id))
-            return None
-
-        # The recorded absolute_path is authoritative: a same-named file in
-        # the process CWD must not shadow the indexed node. The relative
-        # path covers stale node paths and old graphs without the property
-        # (issue #425), but must satisfy the same known-project boundary.
-        qualified_name = str(result.get("qualified_name", ""))
-        project_roots = _resolve_project_roots(ingestor, roots_cache)
-        absolute_path = result.get("absolute_path")
-        located = locate_node_source(
-            qualified_name,
-            absolute_path if isinstance(absolute_path, str) else None,
-            file_path_obj,
-            project_roots,
-            None,
-        )
-        if located.path is None:
-            if located.miss == SourceMiss.STALE_ROOT:
-                logger.warning(
-                    ls.SEMANTIC_STALE_PROJECT_ROOT.format(
-                        id=node_id, project=located.project, root=located.root
-                    )
-                )
-            else:
-                logger.warning(ls.SEMANTIC_INVALID_LOCATION.format(id=node_id))
-            return None
-        file_path_obj = located.path
-
-        return extract_source_lines(file_path_obj, start_line, end_line)
-
-    except Exception as e:
-        logger.error(ls.SEMANTIC_SOURCE_FAILED.format(id=node_id, error=e))
+    if not results:
+        logger.warning(ls.SEMANTIC_NODE_NOT_FOUND.format(id=node_id))
         return None
+
+    result = results[0]
+    file_path = result.get("path")
+    start_line = result.get("start_line")
+    end_line = result.get("end_line")
+    if (
+        not isinstance(file_path, str)
+        or type(start_line) is not int
+        or type(end_line) is not int
+    ):
+        logger.warning(ls.SEMANTIC_INVALID_LOCATION.format(id=node_id))
+        return None
+
+    is_valid, file_path_obj = validate_source_location(file_path, start_line, end_line)
+    if not is_valid or file_path_obj is None:
+        logger.warning(ls.SEMANTIC_INVALID_LOCATION.format(id=node_id))
+        return None
+
+    # The recorded absolute_path is authoritative: a same-named file in
+    # the process CWD must not shadow the indexed node. The relative
+    # path covers stale node paths and old graphs without the property
+    # (issue #425), but must satisfy the same known-project boundary.
+    qualified_name = str(result.get("qualified_name", ""))
+    project_roots = _resolve_project_roots(ingestor, roots_cache)
+    absolute_path = result.get("absolute_path")
+    located = locate_node_source(
+        qualified_name,
+        absolute_path if isinstance(absolute_path, str) else None,
+        file_path_obj,
+        project_roots,
+        None,
+    )
+    if located.path is None:
+        if located.miss == SourceMiss.STALE_ROOT:
+            logger.warning(
+                ls.SEMANTIC_STALE_PROJECT_ROOT.format(
+                    id=node_id, project=located.project, root=located.root
+                )
+            )
+        else:
+            logger.warning(ls.SEMANTIC_INVALID_LOCATION.format(id=node_id))
+        return None
+    file_path_obj = located.path
+
+    return extract_source_lines(file_path_obj, start_line, end_line)
 
 
 def create_semantic_search_tool(ingestor: QueryProtocol) -> Tool:
@@ -192,10 +181,16 @@ def create_semantic_search_tool(ingestor: QueryProtocol) -> Tool:
     ) -> str:
         """Find functions by intent, returning qualified names and scores."""
         logger.info(ls.SEMANTIC_TOOL_SEARCH.format(query=query))
+        if not has_semantic_dependencies():
+            return te.failure(ex.SEMANTIC_EXTRA)
 
-        results = await asyncio.to_thread(
-            semantic_code_search, ingestor, query, top_k, project
-        )
+        try:
+            results = await asyncio.to_thread(
+                semantic_code_search, ingestor, query, top_k, project
+            )
+        except Exception as e:
+            logger.error(ls.SEMANTIC_FAILED.format(query=query, error=e))
+            return te.failure(e)
 
         if not results:
             return cs.MSG_SEMANTIC_NO_RESULTS.format(query=query)
@@ -232,12 +227,16 @@ def create_get_function_source_tool(
         """Fetch a function's source by node id, recording what it returns."""
         logger.info(ls.SEMANTIC_TOOL_SOURCE.format(id=node_id))
 
-        source_code = await asyncio.to_thread(
-            get_function_source_code, ingestor, node_id, roots_cache
-        )
+        try:
+            source_code = await asyncio.to_thread(
+                get_function_source_code, ingestor, node_id, roots_cache
+            )
+        except Exception as e:
+            logger.error(ls.SEMANTIC_SOURCE_FAILED.format(id=node_id, error=e))
+            return te.failure(e)
 
         if source_code is None:
-            return cs.MSG_SEMANTIC_SOURCE_UNAVAILABLE.format(id=node_id)
+            return te.ToolFailure(cs.MSG_SEMANTIC_SOURCE_UNAVAILABLE.format(id=node_id))
 
         if read_record is not None:
             # Feed the egress taint gate (issue #1128).

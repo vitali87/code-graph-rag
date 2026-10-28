@@ -250,7 +250,6 @@ EMBEDDING_STORE_FAILED = "Failed to store embedding for {name}: {error}"
 EMBEDDING_STORE_RETRY = "Vector store upsert failed (attempt {attempt}/{max_attempts}), retrying in {delay:.1f}s: {error}"
 EMBEDDING_BATCH_STORED = "Stored batch of {count} embeddings in vector store"
 EMBEDDING_BATCH_FAILED = "Failed to store embedding batch: {error}"
-EMBEDDING_SEARCH_FAILED = "Failed to search embeddings: {error}"
 EMBEDDING_RECONCILE_OK = (
     "Vector store reconciliation: all {count} expected embeddings found"
 )
