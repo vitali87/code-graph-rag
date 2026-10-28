@@ -484,17 +484,19 @@ def _call_bindings(
         if node.type not in rules.calls or not (arguments := _named_arguments(node)):
             continue
         callee = _callee(node)
-        items.append(_token(cs.INTERFACE_FP_CALL, _text(callee) or node.type.encode()))
+        items.append(
+            _token(cs.INTERFACE_FP_CALL, _node_bytes(callee) or node.type.encode())
+        )
         own = _caller_locals(node, language, scopes)
         for key, value in arguments:
             items.append(_token(cs.INTERFACE_FP_ARGUMENT, key.encode()))
-            items.append(_token(cs.INTERFACE_FP_ARGUMENT, _text(value)))
+            items.append(_token(cs.INTERFACE_FP_ARGUMENT, _node_bytes(value)))
             if value.type == cs.TS_IDENTIFIER and safe_decode_text(value) in own:
                 items.append(cs.INTERFACE_FP_LOCAL)
     return items
 
 
-def _text(node: Node | None) -> bytes:
+def _node_bytes(node: Node | None) -> bytes:
     return (node.text or b"") if node is not None else b""
 
 
