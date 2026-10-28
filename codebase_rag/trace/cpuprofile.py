@@ -22,7 +22,7 @@ from collections import Counter
 from dataclasses import dataclass
 from os.path import normcase
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from urllib.parse import unquote, urlparse
 
 from loguru import logger
@@ -35,7 +35,11 @@ from .records import (
     TraceHeader,
     write_trace_file,
 )
-from .sourcemap import SourceMapIndex, SourceMapOutcome
+from .sourcemap import SourceMapIndex, SourceMapOutcome, is_index
+
+if TYPE_CHECKING:
+    # Annotation-only, as in sourcemap.py.
+    from typing_extensions import TypeIs
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,10 +99,6 @@ def _url_to_path(url: str) -> str:
     return Path(path).as_posix()
 
 
-def _is_index(value: object) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
-
-
 def _project_frame(
     call_frame: dict[str, object],
     root_prefix: str,
@@ -110,9 +110,8 @@ def _project_frame(
         return None
     generated_path = _url_to_path(url)
     line = call_frame.get("lineNumber")
-    if not _is_index(line):
+    if not is_index(line):
         return None
-    line = cast("int", line)
     name = call_frame.get("functionName")
     if not isinstance(name, str) or not name:
         # V8 reports module toplevels as a nameless frame at line 0; other
@@ -123,10 +122,8 @@ def _project_frame(
     # original TypeScript/JavaScript position, so the frame lands on the source
     # node the graph indexed; without a map the generated position stands.
     column = call_frame.get("columnNumber")
-    if _is_index(column):
-        remapped, outcome = source_maps.remap_detailed(
-            generated_path, line, cast("int", column)
-        )
+    if is_index(column):
+        remapped, outcome = source_maps.remap_detailed(generated_path, line, column)
     else:
         remapped, outcome = None, SourceMapOutcome.NO_MAP
     if remapped is not None:
@@ -143,7 +140,7 @@ def _project_frame(
     return _ProfileFrame(path=path, qualname=name, line=source_line)
 
 
-def _int_ids(values: object) -> bool:
+def _int_ids(values: object) -> TypeIs[list[int]]:
     """Whether ``values`` is a list of plain (non-bool) integers."""
     return isinstance(values, list) and all(
         isinstance(v, int) and not isinstance(v, bool) for v in values
@@ -183,7 +180,7 @@ def _parse_nodes(
         frames[node_id] = _project_frame(
             cast("dict[str, object]", call_frame), root_prefix, source_maps, stats
         )
-        children[node_id] = list(cast("list[int]", raw_children))
+        children[node_id] = list(raw_children)
         hit_count = node.get("hitCount", 0)
         hits[node_id] = hit_count if isinstance(hit_count, int) else 0
     return frames, children, hits

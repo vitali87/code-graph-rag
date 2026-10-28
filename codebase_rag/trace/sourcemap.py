@@ -27,6 +27,10 @@ from urllib.parse import unquote, urlsplit
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    # Annotation-only: TypeIs reaches `typing` in 3.13, and the checker reads
+    # typing_extensions from its bundled stubs, so nothing imports it at runtime.
+    from typing_extensions import TypeIs
+
 
 class SourceMapOutcome(StrEnum):
     """The result of trying to relocate a generated frame to its source."""
@@ -153,7 +157,8 @@ def load_source_map(map_path: Path) -> SourceMap | None:
     return _from_document(raw, map_path.parent)
 
 
-def _nonneg_int(value: object) -> bool:
+def is_index(value: object) -> TypeIs[int]:
+    """Whether a JSON value is a line or column: a non-negative, non-bool int."""
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
@@ -170,12 +175,12 @@ def _parse_section(
     offset_fields = cast(_JsonObject, offset)
     offset_line = offset_fields.get("line")
     offset_column = offset_fields.get("column")
-    if not _nonneg_int(offset_line) or not _nonneg_int(offset_column):
+    if not is_index(offset_line) or not is_index(offset_column):
         return None
     inner = _from_document(section.get("map"), base_dir)
     if inner is None:
         return None
-    return cast("int", offset_line), cast("int", offset_column), inner
+    return offset_line, offset_column, inner
 
 
 def _place_section(
