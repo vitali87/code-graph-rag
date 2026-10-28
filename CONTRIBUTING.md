@@ -438,10 +438,10 @@ Standard files in each module:
 
 ```python
 # Bad
-from policy_digitization_tasks.srg_parser.editor import apply_edits
+from codebase_rag.workspaces.storage import load_workspace
 
 # Good
-from policy_digitization_tasks.srg_parser import apply_edits
+from codebase_rag.workspaces import load_workspace
 ```
 
 - Group imports: stdlib, third-party, local (separated by blank lines)
@@ -507,35 +507,18 @@ if status == Status.PENDING:
 
 #### Centralised Error Messages
 
-Use an Enum with `__call__` for parameterised error messages:
+Keep error message templates as plain strings in `exceptions.py` (errors that
+are raised) or `tool_errors.py` (what a tool returns), and fill them with
+`.format()`, through the module's two-letter alias:
 
 ```python
-from enum import Enum
-
-
-class Error(str, Enum):
-    NOT_FOUND = "Item '{id}' not found"
-    INVALID = "Invalid value"
-
-    def __call__(self, **kwargs) -> str:
-        return self.value.format(**kwargs) if kwargs else self.value
-
+# exceptions.py
+GRAPH_FILE_NOT_FOUND = "Graph file not found: {path}"
 
 # Usage
-raise ValueError(Error.NOT_FOUND(id="abc"))
-```
+from codebase_rag import exceptions as ex
 
-#### Error Codes as StrEnum
-
-Use `StrEnum` for error type names passed to exception classes:
-
-```python
-class ErrorCode(StrEnum):
-    VALIDATION = "ValidationError"
-    NOT_FOUND = "NotFoundError"
-
-
-raise CustomError(ErrorCode.VALIDATION, Error.INVALID())
+raise FileNotFoundError(ex.GRAPH_FILE_NOT_FOUND.format(path=graph_file))
 ```
 
 ### Code Style
@@ -568,14 +551,13 @@ parser.add_argument("name", type=str)
 parser.add_argument("--count", type=int, default=1)
 args = parser.parse_args()
 
-# Good
-from typing import Annotated
+# Good: options as parameter defaults, as the rest of the CLI declares them
 import typer
 
 
 def main(
-    name: Annotated[str, typer.Argument(help="Name")],
-    count: Annotated[int, typer.Option(help="Count")] = 1,
+    name: str = typer.Argument(..., help="Name"),
+    count: int = typer.Option(1, help="Count"),
 ) -> None: ...
 
 
