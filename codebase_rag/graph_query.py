@@ -37,18 +37,7 @@ from .utils.source_extraction import extract_source_lines
 
 QueryFn = Callable[[str, PropertyParams | None], list[ResultRow]]
 
-_DEFINITION_LABELS = frozenset(
-    {
-        cs.NodeLabel.FUNCTION.value,
-        cs.NodeLabel.METHOD.value,
-        cs.NodeLabel.CLASS.value,
-        cs.NodeLabel.INTERFACE.value,
-        cs.NodeLabel.ENUM.value,
-        cs.NodeLabel.TYPE.value,
-        cs.NodeLabel.UNION.value,
-        cs.NodeLabel.MODULE.value,
-    }
-)
+_DEFINITION_LABELS = frozenset(label.value for label in cs.DEFINITION_NODE_LABELS)
 _REACH_RELS = frozenset(
     {
         cs.RelationshipType.CALLS.value,

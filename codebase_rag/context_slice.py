@@ -34,17 +34,7 @@ Searcher = Callable[[str], list[SemanticSearchResult]]
 
 _LOCATION = re.compile(r"^(?P<path>[^:]+):(?P<line>\d+)$")
 _IDENTIFIER = r"(?<![\w.])%s(?!\w)"
-_DEFINITION_LABELS = frozenset(
-    {
-        cs.NodeLabel.FUNCTION.value,
-        cs.NodeLabel.METHOD.value,
-        cs.NodeLabel.CLASS.value,
-        cs.NodeLabel.INTERFACE.value,
-        cs.NodeLabel.ENUM.value,
-        cs.NodeLabel.TYPE.value,
-        cs.NodeLabel.UNION.value,
-    }
-)
+_DEFINITION_LABELS = frozenset(label.value for label in cs.SYMBOL_DEFINITION_LABELS)
 
 
 class Piece(TypedDict):

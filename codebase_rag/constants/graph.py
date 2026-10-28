@@ -636,6 +636,11 @@ DEFINITION_NODE_LABELS: frozenset[NodeLabel] = frozenset(
         NodeLabel.MODULE,
     }
 )
+# The definitions a symbol can resolve to: every definition label but MODULE,
+# which names a whole file rather than a symbol declared in one.
+SYMBOL_DEFINITION_LABELS: frozenset[NodeLabel] = DEFINITION_NODE_LABELS - {
+    NodeLabel.MODULE
+}
 
 
 # What `find_code_snippet` may return: a definition, plus every other node

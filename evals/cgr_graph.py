@@ -180,17 +180,7 @@ _MODULE_QN_LABELS = frozenset(
         cs.NodeLabel.MODULE_INTERFACE.value,
     }
 )
-_DEFINITION_LABELS = frozenset(
-    {
-        cs.NodeLabel.FUNCTION.value,
-        cs.NodeLabel.METHOD.value,
-        cs.NodeLabel.CLASS.value,
-        cs.NodeLabel.INTERFACE.value,
-        cs.NodeLabel.ENUM.value,
-        cs.NodeLabel.TYPE.value,
-        cs.NodeLabel.UNION.value,
-    }
-)
+_DEFINITION_LABELS = frozenset(label.value for label in cs.SYMBOL_DEFINITION_LABELS)
 _INBOUND_DEPENDENT_RELS = frozenset(
     {
         cs.RelationshipType.CALLS.value,

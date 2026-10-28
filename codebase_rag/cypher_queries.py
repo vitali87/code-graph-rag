@@ -37,6 +37,7 @@ from .constants import (
     KEY_TO_VAL,
     NODE_UNIQUE_CONSTRAINTS,
     SNIPPET_NODE_LABELS,
+    SYMBOL_DEFINITION_LABELS,
     GlossAnchorState,
     NodeLabel,
     RelationshipType,
@@ -661,11 +662,7 @@ _SNIPPET_LABELS = "|".join(sorted(label.value for label in SNIPPET_NODE_LABELS))
 # carries an `anchor_hash`, so the quote move could never bind one: a sole
 # module match would hold its note unattached on every pass instead of
 # grading it LOST (Copilot, PR #1966).
-_QUOTE_SPAN_LABELS = "|".join(
-    sorted(
-        label.value for label in DEFINITION_NODE_LABELS if label is not NodeLabel.MODULE
-    )
-)
+_QUOTE_SPAN_LABELS = "|".join(sorted(label.value for label in SYMBOL_DEFINITION_LABELS))
 
 
 def _any_label(var: str, labels: str) -> str:
@@ -1535,15 +1532,7 @@ RETURN n.qualified_name AS qualified_name"""
 # with the properties the delta compares, every call/reference site touching
 # them, and the project's module import graph.
 _DELTA_DEFINITION_LABELS = "|".join(
-    (
-        NodeLabel.FUNCTION.value,
-        NodeLabel.METHOD.value,
-        NodeLabel.CLASS.value,
-        NodeLabel.INTERFACE.value,
-        NodeLabel.ENUM.value,
-        NodeLabel.TYPE.value,
-        NodeLabel.UNION.value,
-    )
+    sorted(label.value for label in SYMBOL_DEFINITION_LABELS)
 )
 _DELTA_DEFINITION_FIELDS = """RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.name AS name,
        n.path AS path, n.start_line AS start_line, n.end_line AS end_line,

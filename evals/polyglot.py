@@ -25,17 +25,7 @@ from codebase_rag.language_spec import get_language_for_extension
 from .cgr_graph import _capture
 
 _MODULE = cs.NodeLabel.MODULE.value
-_DEFINITION_LABELS = frozenset(
-    {
-        cs.NodeLabel.FUNCTION.value,
-        cs.NodeLabel.METHOD.value,
-        cs.NodeLabel.CLASS.value,
-        cs.NodeLabel.INTERFACE.value,
-        cs.NodeLabel.ENUM.value,
-        cs.NodeLabel.TYPE.value,
-        cs.NodeLabel.UNION.value,
-    }
-)
+_DEFINITION_LABELS = frozenset(label.value for label in cs.SYMBOL_DEFINITION_LABELS)
 # Semantic def-to-def edges that must never cross a language boundary.
 # IMPORTS/CONTAINS/DEFINES are excluded: an import can point at an external
 # stub, and CONTAINS/DEFINES are module-internal by construction.
