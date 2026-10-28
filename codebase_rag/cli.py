@@ -1188,7 +1188,7 @@ def _run_graph_sync(
 
         # Read before this sync marks, with the checkout locked: the runs
         # whose markers its rebuild supersedes (review of PR #3493).
-        stranded = _stranded_runs(ingestor, project_name, cs.CLI_SYNC_RUN_ID)
+        stranded = _stranded_runs(ingestor, project_name, cs.CLI_SYNC_RUN_ID, repo)
         if stranded:
             logger.warning(
                 ls.REBUILD_OVER_STRANDED_RUNS.format(

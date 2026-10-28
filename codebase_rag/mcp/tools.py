@@ -1509,7 +1509,9 @@ class MCPToolsRegistry:
         # under the checkout lock `_under_sync_lock` holds (review of PR
         # #3493). It deletes the project before rebuilding it, so it is
         # already the full rebuild they need.
-        stranded = stranded_runs(self.ingestor, project_name, self._run_id)
+        stranded = stranded_runs(
+            self.ingestor, project_name, self._run_id, Path(self.project_root)
+        )
         if (refusal := self._require_marker(project_name, writing=False)) is not None:
             raise RuntimeError(refusal)
         self._cleanup_embeddings_then_begin_writing(project_name)
@@ -1614,7 +1616,9 @@ class MCPToolsRegistry:
         # The runs whose markers this update supersedes are read first, under
         # the checkout lock `_under_sync_lock` holds, and force a full
         # re-index (review of PR #3493).
-        stranded = stranded_runs(self.ingestor, project_name, self._run_id)
+        stranded = stranded_runs(
+            self.ingestor, project_name, self._run_id, Path(self.project_root)
+        )
         if (refusal := self._require_marker(project_name)) is not None:
             raise RuntimeError(refusal)
         self.ingestor.ensure_constraints()

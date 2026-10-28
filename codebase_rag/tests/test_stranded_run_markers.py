@@ -16,10 +16,16 @@ from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.sync_guard import retire_stranded_runs, stranded_runs
+from codebase_rag.sync_lock import repo_sync_lock
 from codebase_rag.types_defs import PropertyDict, ResultRow
 from codebase_rag.utils.path_utils import derive_project_name
 
 DEAD_RUN = "mcp-dead"
+
+
+def _unguarded(lock_path: Path) -> OSError:
+    """`_open_lock` where CGR_HOME cannot be written: the lock runs unguarded."""
+    return PermissionError(13, "read-only", str(lock_path))
 
 
 class Store:
@@ -123,6 +129,23 @@ async def test_an_update_that_fails_retires_nothing(project_root: Path) -> None:
     assert cq.CYPHER_RETIRE_STRANDED_RUNS not in store.queries()
 
 
+async def test_an_update_without_a_lock_file_leaves_other_runs_alone(
+    project_root: Path,
+) -> None:
+    store = Store([DEAD_RUN])
+    registry = _registry(project_root, store)
+
+    with (
+        patch("codebase_rag.sync_lock._open_lock", side_effect=_unguarded),
+        patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls,
+    ):
+        await registry.update_repository()
+
+    updater_cls.return_value.run.assert_called_once_with(force=False)
+    assert store.reads == []
+    assert cq.CYPHER_RETIRE_STRANDED_RUNS not in store.queries()
+
+
 async def test_a_reindex_retires_the_runs_it_supersedes(project_root: Path) -> None:
     store = Store([DEAD_RUN])
     registry = _registry(project_root, store)
@@ -157,20 +180,43 @@ async def test_a_reindex_that_fails_retires_nothing(project_root: Path) -> None:
 # --- the helpers ----------------------------------------------------------------
 
 
-def test_stranded_runs_reads_the_other_runs_that_wrote() -> None:
+def test_stranded_runs_reads_the_other_runs_that_wrote(tmp_path: Path) -> None:
     store = Store(["a", "b"])
 
-    assert stranded_runs(store.ingestor, "proj", "mine") == ["a", "b"]
+    with repo_sync_lock(tmp_path, "proj"):
+        assert stranded_runs(store.ingestor, "proj", "mine", tmp_path) == ["a", "b"]
     assert store.reads == [{cs.KEY_PROJECT_NAME: "proj", cs.KEY_RUN_ID: "mine"}]
 
 
-def test_a_store_that_cannot_answer_strands_nothing() -> None:
+def test_outside_the_checkout_lock_nothing_is_stranded(tmp_path: Path) -> None:
+    store = Store([DEAD_RUN])
+
+    assert stranded_runs(store.ingestor, "proj", "mine", tmp_path) == []
+    assert store.reads == []
+
+
+def test_a_lock_without_its_file_strands_nothing(tmp_path: Path) -> None:
+    # Review of PR #3496: CGR_HOME cannot be written, so the lock runs without
+    # a file and keeps no other process out. A run still writing elsewhere
+    # would lose its marker, and a partial graph it then left look whole.
+    store = Store([DEAD_RUN])
+
+    with (
+        patch("codebase_rag.sync_lock._open_lock", side_effect=_unguarded),
+        repo_sync_lock(tmp_path, "proj"),
+    ):
+        assert stranded_runs(store.ingestor, "proj", "mine", tmp_path) == []
+    assert store.reads == []
+
+
+def test_a_store_that_cannot_answer_strands_nothing(tmp_path: Path) -> None:
     # The rebuild then runs as it did before, and the markers stay for the
     # next one rather than being cleared on a guess.
     ingestor = MagicMock()
     ingestor.fetch_all.side_effect = ConnectionError("graph unreachable")
 
-    assert stranded_runs(ingestor, "proj", "mine") == []
+    with repo_sync_lock(tmp_path, "proj"):
+        assert stranded_runs(ingestor, "proj", "mine", tmp_path) == []
 
 
 def test_retiring_no_runs_writes_nothing() -> None:

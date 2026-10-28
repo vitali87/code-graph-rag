@@ -209,6 +209,28 @@ def test_a_sync_with_nothing_stranded_stays_incremental(
     assert "retire" not in events
 
 
+def test_a_sync_without_a_lock_file_leaves_other_runs_alone(
+    tmp_path: Path,
+    sync_env: MagicMock,
+    ingestor: MagicMock,
+    updater: MagicMock,
+    events: list[str],
+) -> None:
+    # Review of PR #3496: CGR_HOME cannot be written, so the checkout's lock
+    # runs without a file and another process may still be writing.
+    _strand(ingestor, events, ["mcp-dead"])
+
+    with patch(
+        "codebase_rag.sync_lock._open_lock",
+        side_effect=lambda path: PermissionError(13, "read-only", str(path)),
+    ):
+        _sync(tmp_path)
+
+    assert "stranded" not in events
+    assert "retire" not in events
+    updater.run.assert_called_once_with(force=False)
+
+
 def test_a_sync_that_stops_short_retires_nothing(
     tmp_path: Path,
     sync_env: MagicMock,

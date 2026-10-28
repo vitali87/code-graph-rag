@@ -318,6 +318,23 @@ def _release(key: str) -> None:
         os.close(hold.fd)
 
 
+def holds_lock_file(repo_path: Path) -> bool:
+    """Whether this thread holds the checkout's sync lock through its file.
+
+    False outside the lock, and while it runs without a file because CGR_HOME
+    cannot be written: nothing then keeps a writer in another process out, so
+    a caller may not conclude that no other run is writing (review of PR
+    #3496).
+    """
+    with _HELD_GUARD:
+        hold = _HELD.get(str(repo_path.resolve()))
+        return (
+            hold is not None
+            and hold.thread == threading.get_ident()
+            and hold.fd is not None
+        )
+
+
 def _reenter(key: str) -> bool:
     with _HELD_GUARD:
         hold = _HELD.get(key)

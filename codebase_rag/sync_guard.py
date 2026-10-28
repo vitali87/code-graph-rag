@@ -24,6 +24,7 @@ from . import constants as cs
 from . import cypher_queries as cq
 from . import logs as ls
 from .services import QueryProtocol
+from .sync_lock import holds_lock_file
 from .types_defs import PropertyValue
 from .utils.process_owner import process_host
 
@@ -262,18 +263,22 @@ def sync_marker_down(ingestor: QueryProtocol, project_name: str) -> bool:
 
 
 def stranded_runs(
-    ingestor: QueryProtocol, project_name: str, own_run_id: str
+    ingestor: QueryProtocol, project_name: str, own_run_id: str, repo: Path
 ) -> list[str]:
     """The other runs whose markers a full rebuild of the project supersedes.
 
-    Asked with the checkout's sync lock held, before the rebuild marks;
-    `CYPHER_STRANDED_RUN_IDS` says why none of them can still be writing.
+    Asked before the rebuild marks, holding the sync lock of the checkout at
+    `repo`; `CYPHER_STRANDED_RUN_IDS` says why none of them can still be
+    writing. That holds only through the lock file: a lock that runs without
+    one keeps no other process out, so there are none (review of PR #3496).
     The rebuild must then be forced: a stopped re-ingest may have deleted an
     unchanged dependent's definitions, which an incremental run skips by its
     saved hash, as `cgr watch`'s `_marked_run` says. A store that cannot
     answer yields none, so the rebuild runs as before and those markers stay
     for the next one.
     """
+    if not holds_lock_file(repo):
+        return []
     try:
         rows = ingestor.fetch_all(
             cq.CYPHER_STRANDED_RUN_IDS,
