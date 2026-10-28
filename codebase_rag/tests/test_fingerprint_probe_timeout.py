@@ -303,7 +303,7 @@ class TestATimedOutProbeIsNotAMissingTool:
         the real answer against it.
         """
         first = _sync(repo, mock_ingestor)
-        (first.state_dir / cs.TOOL_VERSION_PROBE_CACHE_FILENAME).unlink()
+        (first.prepared_state_dir / cs.TOOL_VERSION_PROBE_CACHE_FILENAME).unlink()
         _as_a_new_process(monkeypatch)
         go_probe.script(TIMED_OUT)
 
@@ -484,7 +484,7 @@ class TestRealChangesStillChangeTheFingerprint:
         check for parser code, grammars and capture selection for good.
         """
         first = _sync(repo, mock_ingestor)
-        (first.state_dir / cs.TOOL_VERSION_PROBE_CACHE_FILENAME).unlink()
+        (first.prepared_state_dir / cs.TOOL_VERSION_PROBE_CACHE_FILENAME).unlink()
         _as_a_new_process(monkeypatch)
         go_probe.script(TIMED_OUT)
 

@@ -2685,7 +2685,7 @@ class GraphUpdater:
         return True
 
     @property
-    def state_dir(self) -> Path:
+    def prepared_state_dir(self) -> Path:
         """Where this checkout's sync state is read and written.
 
         Under CGR_HOME rather than in the working tree, where it showed up in
@@ -2778,7 +2778,7 @@ class GraphUpdater:
             self._stored_project_root()
             if not force
             and self._single_file is None
-            and (self.state_dir / cs.HASH_CACHE_FILENAME).is_file()
+            and (self.prepared_state_dir / cs.HASH_CACHE_FILENAME).is_file()
             else None
         )
         self._embeddings_interrupted = False
@@ -3092,7 +3092,7 @@ class GraphUpdater:
         # Single-file runs never commit it.
         if self._delombok_state_changed and self._single_file is None:
             _save_delombok_state(
-                self.state_dir / cs.DELOMBOK_STATE_FILENAME,
+                self.prepared_state_dir / cs.DELOMBOK_STATE_FILENAME,
                 self._delombok_state_candidate,
             )
 
@@ -3108,7 +3108,7 @@ class GraphUpdater:
         # stamp and the warning with it.
         if self._pending_parser_fingerprint is not None:
             _save_parser_fingerprint(
-                self.state_dir / cs.PARSER_FINGERPRINT_FILENAME,
+                self.prepared_state_dir / cs.PARSER_FINGERPRINT_FILENAME,
                 self._pending_parser_fingerprint,
             )
             self._pending_parser_fingerprint = None
@@ -3216,7 +3216,7 @@ class GraphUpdater:
         `cgr check` reading the right owner; rewriting an identical stamp
         would only churn the file (CodeRabbit, PR #2251).
         """
-        path = self.state_dir / cs.EXCLUSION_STATE_FILENAME
+        path = self.prepared_state_dir / cs.EXCLUSION_STATE_FILENAME
         state = _exclusion_state(
             self.exclude_paths,
             self.unignore_paths,
@@ -3358,7 +3358,7 @@ class GraphUpdater:
         if not pending:
             return
         try:
-            (self.state_dir / cs.PRUNE_PENDING_FILENAME).touch()
+            (self.prepared_state_dir / cs.PRUNE_PENDING_FILENAME).touch()
         except OSError:
             # Best effort, like the EXPOSES marker: a read-only tree must not
             # lose the run to a marker it could not write.
@@ -3370,7 +3370,9 @@ class GraphUpdater:
             return
         self._prune_settled = False
         try:
-            (self.state_dir / cs.PRUNE_PENDING_FILENAME).unlink(missing_ok=True)
+            (self.prepared_state_dir / cs.PRUNE_PENDING_FILENAME).unlink(
+                missing_ok=True
+            )
         except OSError:
             logger.debug(ls.PRUNE_PENDING_NOT_UPDATED)
 
@@ -3381,7 +3383,7 @@ class GraphUpdater:
         its cleanups settles whatever an earlier run owed; any run that
         skipped one leaves the marker for the next (issue #2193).
         """
-        marker = self.state_dir / cs.EXPOSES_CLEANUP_PENDING_FILENAME
+        marker = self.prepared_state_dir / cs.EXPOSES_CLEANUP_PENDING_FILENAME
         try:
             if self._exposes_cleanup_skipped:
                 marker.touch()
@@ -6760,7 +6762,7 @@ class GraphUpdater:
         a cache trusted here would report the other code as in sync (#2411).
         A project with no recorded root proves nothing either way.
         """
-        cache_path = self.state_dir / cs.HASH_CACHE_FILENAME
+        cache_path = self.prepared_state_dir / cs.HASH_CACHE_FILENAME
         if not cache_path.is_file():
             return
         if (
@@ -6814,8 +6816,8 @@ class GraphUpdater:
         # to a file it only wanted to delete (issue #1647).
         for stale in (
             cache_path,
-            self.state_dir / cs.DIR_MTIMES_FILENAME,
-            self.state_dir / cs.EXPOSES_CLEANUP_PENDING_FILENAME,
+            self.prepared_state_dir / cs.DIR_MTIMES_FILENAME,
+            self.prepared_state_dir / cs.EXPOSES_CLEANUP_PENDING_FILENAME,
         ):
             try:
                 stale.unlink(missing_ok=True)
@@ -6843,9 +6845,9 @@ class GraphUpdater:
         built before the stamp existed has a cache naming its files, and a
         finished build that found no files stamps its parser all the same.
         """
-        stamp = self.state_dir / cs.PARSER_FINGERPRINT_FILENAME
+        stamp = self.prepared_state_dir / cs.PARSER_FINGERPRINT_FILENAME
         return _load_parser_fingerprint(stamp) is None and _is_placeholder_hash_cache(
-            self.state_dir / cs.HASH_CACHE_FILENAME
+            self.prepared_state_dir / cs.HASH_CACHE_FILENAME
         )
 
     def _reparse_all_if_parser_changed(self) -> None:
@@ -6861,7 +6863,7 @@ class GraphUpdater:
         this is not a clean rebuild; the warning says what survives.
         """
         # No hash cache means a full build is coming: nothing to compare.
-        if not (self.state_dir / cs.HASH_CACHE_FILENAME).is_file():
+        if not (self.prepared_state_dir / cs.HASH_CACHE_FILENAME).is_file():
             return
         if self._previous_build_unfinished():
             # The empty cache names no file to force, so this run is the full
@@ -6869,7 +6871,7 @@ class GraphUpdater:
             logger.info(ls.PREVIOUS_SYNC_UNFINISHED, project=self.project_name)
             return
         stored = _load_parser_fingerprint(
-            self.state_dir / cs.PARSER_FINGERPRINT_FILENAME
+            self.prepared_state_dir / cs.PARSER_FINGERPRINT_FILENAME
         )
         # A missing stamp on an existing graph means it was built by an
         # unknown (pre-fingerprint) parser: treat it as stale too, without
@@ -6877,7 +6879,9 @@ class GraphUpdater:
         # directory lets a toolchain probe that times out reuse an earlier
         # run's answer instead of reading as a missing toolchain.
         if stored is None or stored != compute_parser_fingerprint(
-            repo_path=self.repo_path, capture=self.capture, state_dir=self.state_dir
+            repo_path=self.repo_path,
+            capture=self.capture,
+            state_dir=self.prepared_state_dir,
         ):
             self._parser_changed = True
             logger.warning(ls.PARSER_FINGERPRINT_MISMATCH)
@@ -6888,7 +6892,9 @@ class GraphUpdater:
         # the same one the sync check acted on, logged once.
         if self._exclusion_match is not None:
             return self._exclusion_match
-        stored = _load_exclusion_state(self.state_dir / cs.EXCLUSION_STATE_FILENAME)
+        stored = _load_exclusion_state(
+            self.prepared_state_dir / cs.EXCLUSION_STATE_FILENAME
+        )
         current = _exclusion_state(self.exclude_paths, self.unignore_paths)
         if stored is not None:
             # The cache and directory mtimes are repository-scoped, but the
@@ -6923,7 +6929,7 @@ class GraphUpdater:
             # Only an index built before the stamp existed is being upgraded;
             # a repository never indexed has nothing to re-run "once", and a
             # first-time user was told otherwise (issue #2404).
-            if (self.state_dir / cs.HASH_CACHE_FILENAME).is_file():
+            if (self.prepared_state_dir / cs.HASH_CACHE_FILENAME).is_file():
                 logger.info(ls.EXCLUSION_STATE_MISSING)
             else:
                 logger.debug(ls.EXCLUSION_STATE_FIRST_INDEX)
@@ -6937,9 +6943,9 @@ class GraphUpdater:
     def _is_already_in_sync(self) -> bool:
         if self._sync_state_forces_reparse():
             return False
-        cache_path = self.state_dir / cs.HASH_CACHE_FILENAME
+        cache_path = self.prepared_state_dir / cs.HASH_CACHE_FILENAME
         cache_mtime = _trustworthy_cache_mtime(cache_path)
-        dir_mtimes_path = self.state_dir / cs.DIR_MTIMES_FILENAME
+        dir_mtimes_path = self.prepared_state_dir / cs.DIR_MTIMES_FILENAME
         old_hashes = (
             {}
             if self._cache_discarded_in_memory or self._parser_changed
@@ -6959,14 +6965,14 @@ class GraphUpdater:
             return True
         if self._single_file is not None:
             return True
-        if not (self.state_dir / cs.HASH_CACHE_FILENAME).is_file():
+        if not (self.prepared_state_dir / cs.HASH_CACHE_FILENAME).is_file():
             return True
         # A skipped EXPOSES cleanup is owed: nothing on disk changed, so no
         # hash below would send the run into the endpoint passes that owe it
         # (issue #2193).
-        if (self.state_dir / cs.EXPOSES_CLEANUP_PENDING_FILENAME).exists():
+        if (self.prepared_state_dir / cs.EXPOSES_CLEANUP_PENDING_FILENAME).exists():
             return True
-        if (self.state_dir / cs.PRUNE_PENDING_FILENAME).exists():
+        if (self.prepared_state_dir / cs.PRUNE_PENDING_FILENAME).exists():
             return True
         if self._embeddings_owed():
             return True
@@ -7036,7 +7042,9 @@ class GraphUpdater:
         # so without forcing them through a reparse the graph would keep
         # stale (or never gain) generated members.
         self._delombok_overlay = build_delombok_overlay(self.repo_path)
-        previous = _load_delombok_state(self.state_dir / cs.DELOMBOK_STATE_FILENAME)
+        previous = _load_delombok_state(
+            self.prepared_state_dir / cs.DELOMBOK_STATE_FILENAME
+        )
         current = {
             "identity": overlay_identity(self._delombok_overlay),
             "keys": sorted(self._delombok_overlay),
@@ -7117,8 +7125,8 @@ class GraphUpdater:
         self.factory.import_processor.reset_java_path_caches()
         self.factory.import_processor.reset_julia_path_caches()
         self.factory.import_processor.reset_dart_path_caches()
-        cache_path = self.state_dir / cs.HASH_CACHE_FILENAME
-        dir_mtimes_path = self.state_dir / cs.DIR_MTIMES_FILENAME
+        cache_path = self.prepared_state_dir / cs.HASH_CACHE_FILENAME
+        dir_mtimes_path = self.prepared_state_dir / cs.DIR_MTIMES_FILENAME
         baseline = self._hash_baseline(force, cache_path, dir_mtimes_path)
         old_hashes = baseline.old_hashes
         is_full_build = baseline.is_full_build
@@ -8117,7 +8125,9 @@ class GraphUpdater:
             is_full_build or (self._parser_changed and self._single_file is None)
         ):
             self._pending_parser_fingerprint = compute_parser_fingerprint(
-                repo_path=self.repo_path, capture=self.capture, state_dir=self.state_dir
+                repo_path=self.repo_path,
+                capture=self.capture,
+                state_dir=self.prepared_state_dir,
             )
 
     def _pre_parse_changed_files(
@@ -9324,7 +9334,7 @@ class GraphUpdater:
             key = path.relative_to(self.repo_path).as_posix()
         except ValueError:
             return False
-        return key in _load_hash_cache(self.state_dir / cs.HASH_CACHE_FILENAME)
+        return key in _load_hash_cache(self.prepared_state_dir / cs.HASH_CACHE_FILENAME)
 
     def indexed_files_under(self, directory: Path) -> list[Path]:
         """Files the last run or re-ingest indexed beneath `directory`.
@@ -9340,7 +9350,7 @@ class GraphUpdater:
             return []
         if prefix == ".":
             return []
-        hashes = _load_hash_cache(self.state_dir / cs.HASH_CACHE_FILENAME)
+        hashes = _load_hash_cache(self.prepared_state_dir / cs.HASH_CACHE_FILENAME)
         return [
             self.repo_path / key
             for key in sorted(hashes)
@@ -9430,7 +9440,7 @@ class GraphUpdater:
             # a watcher's updater lives across many events, so refresh them per
             # call (the batch path does the same through _delombok_stale_keys).
             self._register_generated_sources()
-            cache_path = self.state_dir / cs.HASH_CACHE_FILENAME
+            cache_path = self.prepared_state_dir / cs.HASH_CACHE_FILENAME
             hashes = _load_hash_cache(cache_path)
 
             # Same-stem reconciliation, as the batch path does it (issue #1569):
@@ -10162,14 +10172,14 @@ class GraphUpdater:
         )
 
     def _owes_embeddings(self) -> bool:
-        if _embeddings_marker(self.state_dir, self.project_name).exists():
+        if _embeddings_marker(self.prepared_state_dir, self.project_name).exists():
             return True
         if not _stamp_names_selected_store(
-            _embeddings_store_stamp(self.state_dir, self.project_name)
+            _embeddings_store_stamp(self.prepared_state_dir, self.project_name)
         ):
             return True
         shared = _load_shared_embeddings_owed(
-            self.state_dir / cs.EMBEDDINGS_PENDING_FILENAME
+            self.prepared_state_dir / cs.EMBEDDINGS_PENDING_FILENAME
         )
         return shared is None or self.project_name in shared
 
@@ -10191,10 +10201,10 @@ class GraphUpdater:
             logger.warning(ls.EMBEDDINGS_PENDING.format(project=self.project_name))
         else:
             _save_embeddings_store(
-                _embeddings_store_stamp(self.state_dir, self.project_name)
+                _embeddings_store_stamp(self.prepared_state_dir, self.project_name)
             )
         recorded = _save_embeddings_owed(
-            _embeddings_marker(self.state_dir, self.project_name),
+            _embeddings_marker(self.prepared_state_dir, self.project_name),
             self.project_name,
             pending,
         )
@@ -10211,7 +10221,7 @@ class GraphUpdater:
         disk refuses a new file but not a removal) leaves it for the next
         sync to split again (review of PR #3358).
         """
-        shared = self.state_dir / cs.EMBEDDINGS_PENDING_FILENAME
+        shared = self.prepared_state_dir / cs.EMBEDDINGS_PENDING_FILENAME
         owed = _load_shared_embeddings_owed(shared)
         if owed == frozenset():
             return
@@ -10219,13 +10229,15 @@ class GraphUpdater:
             # Naming no one, it is every project's debt: each one indexed
             # from this tree still retries once.
             owed = frozenset(
-                _load_project_stamps(self.state_dir / cs.EXCLUSION_STATE_FILENAME)
+                _load_project_stamps(
+                    self.prepared_state_dir / cs.EXCLUSION_STATE_FILENAME
+                )
             )
         failed = [
             project
             for project in sorted(owed - {self.project_name})
             if not _save_embeddings_owed(
-                _embeddings_marker(self.state_dir, project), project, True
+                _embeddings_marker(self.prepared_state_dir, project), project, True
             )
         ]
         if failed or not recorded:
