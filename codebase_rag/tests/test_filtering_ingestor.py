@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
-from codebase_rag.services import FilteringIngestor
+from codebase_rag.services.filtering import FilteringIngestor
 
 RT = cs.RelationshipType
 NL = cs.NodeLabel
@@ -112,3 +114,17 @@ def test_passthrough_methods_forwarded() -> None:
     inner.fetch_all.assert_called_once()
     ing.execute_write("CREATE (n)")
     inner.execute_write.assert_called_once()
+
+
+def test_services_package_does_not_load_the_filtering_wrapper() -> None:
+    # The package used to re-export FilteringIngestor from its bottom line,
+    # an import cycle with filtering.py that also loaded capture.py into every
+    # parser that only wanted a protocol.
+    code = (
+        "import sys, codebase_rag.services; "
+        "assert 'codebase_rag.services.filtering' not in sys.modules"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr

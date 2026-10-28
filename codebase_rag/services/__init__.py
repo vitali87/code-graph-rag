@@ -49,13 +49,10 @@ class NodeUpdateProtocol(Protocol):
     def update_node_properties(self, label: str, properties: PropertyDict) -> None: ...
 
 
-from .filtering import FilteringIngestor  # noqa: E402
-
 __all__ = [
     "IngestorProtocol",
     "NodeUpdateProtocol",
     "QueryingIngestorProtocol",
     "QueryProtocol",
     "ReadOnlyQueryProtocol",
-    "FilteringIngestor",
 ]

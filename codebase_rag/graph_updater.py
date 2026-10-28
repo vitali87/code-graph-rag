@@ -116,12 +116,12 @@ from .parsers.structure_processor import StructureProcessor
 from .parsers.utils import mark_js_ts_module_private, sorted_captures
 from .path_filters import matches_test_path
 from .services import (
-    FilteringIngestor,
     IngestorProtocol,
     NodeUpdateProtocol,
     QueryingIngestorProtocol,
     QueryProtocol,
 )
+from .services.filtering import FilteringIngestor
 from .services.resource_cleanup import prune_unanchored_resources
 from .sync_lock import holds_sync_lock
 from .trace.carry import CapturedTraceEdge, capture_trace_edges, carry_trace_edges
