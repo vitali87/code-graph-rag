@@ -88,6 +88,11 @@ class FileEditor:
         self._write_lock = asyncio.Lock()
         logger.info(ls.FILE_EDITOR_INIT.format(root=self.project_root))
 
+    @property
+    def write_lock(self) -> asyncio.Lock:
+        """The lock every write of this session takes, for a FileWriter to share."""
+        return self._write_lock
+
     def apply_code_block(
         self, file_path: str, target_block: str, replacement_block: str
     ) -> EditResult:

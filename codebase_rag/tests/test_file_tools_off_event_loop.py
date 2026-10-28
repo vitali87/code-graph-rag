@@ -7,6 +7,7 @@ the graph handlers already offloaded theirs.
 
 from __future__ import annotations
 
+import asyncio
 import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -62,3 +63,21 @@ async def test_a_directory_listing_runs_off_the_event_loop(tmp_path: Path) -> No
     registry._directory_lister_tool = MagicMock(function=lister)
     assert await registry.list_directory(".") == "listing"
     assert seen and loop_thread not in seen
+
+
+async def test_a_create_waits_for_an_edit_holding_the_shared_lock(
+    tmp_path: Path,
+) -> None:
+    # FileWriter took no lock, so a create and a surgical edit of one path
+    # from parallel tool calls were not serialised against each other.
+    from codebase_rag.tools.file_editor import FileEditor
+
+    editor = FileEditor(project_root=str(tmp_path))
+    writer = FileWriter(project_root=str(tmp_path), write_lock=editor.write_lock)
+    async with editor.write_lock:
+        task = asyncio.create_task(writer.create_file("a.py", "x = 1\n"))
+        await asyncio.sleep(0.05)
+        assert not task.done()
+        assert not (tmp_path / "a.py").exists()
+    result = await task
+    assert result.success

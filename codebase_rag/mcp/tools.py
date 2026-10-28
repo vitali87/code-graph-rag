@@ -486,7 +486,9 @@ class MCPToolsRegistry:
         self.code_retriever = CodeRetriever(project_root, ingestor)
         self.file_editor = FileEditor(project_root=project_root)
         self.file_reader = FileReader(project_root=project_root)
-        self.file_writer = FileWriter(project_root=project_root)
+        self.file_writer = FileWriter(
+            project_root=project_root, write_lock=self.file_editor.write_lock
+        )
         self.directory_lister = DirectoryLister(project_root=project_root)
         self.shell_commander = ShellCommander(project_root=project_root)
         self.ast_grep_service = AstGrepService(project_root=project_root)

@@ -16,15 +16,19 @@ from . import tool_descriptions as td
 
 
 class FileWriter:
-    __slots__ = ("project_root",)
+    __slots__ = ("project_root", "_write_lock")
 
-    def __init__(self, project_root: str = "."):
+    def __init__(self, project_root: str = ".", write_lock: asyncio.Lock | None = None):
         self.project_root = Path(project_root).resolve()
+        # The session's FileEditor lock when given, so a create and an edit of
+        # one path from parallel tool calls run one after the other.
+        self._write_lock = write_lock if write_lock is not None else asyncio.Lock()
         logger.info(ls.FILE_WRITER_INIT.format(root=self.project_root))
 
     async def create_file(self, file_path: str, content: str) -> FileCreationResult:
         logger.info(ls.FILE_WRITER_CREATE.format(path=file_path))
-        return await self._create_validated(file_path, content)
+        async with self._write_lock:
+            return await self._create_validated(file_path, content)
 
     @validate_project_path(FileCreationResult)
     async def _create_validated(

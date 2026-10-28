@@ -2051,8 +2051,8 @@ def _initialize_services_and_agent(
     cypher_generator = CypherGenerator(active_projects=active_projects)
     code_retriever = CodeRetriever(project_root=repo_path, ingestor=ingestor)
     file_reader = FileReader(project_root=repo_path)
-    file_writer = FileWriter(project_root=repo_path)
     file_editor = FileEditor(project_root=repo_path)
+    file_writer = FileWriter(project_root=repo_path, write_lock=file_editor.write_lock)
     shell_commander = ShellCommander(
         project_root=repo_path,
         timeout=settings.SHELL_COMMAND_TIMEOUT,
