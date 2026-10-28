@@ -356,6 +356,15 @@ def _vanished(filepath: Path) -> bool:
     return False
 
 
+def _caller_paths(rows: Iterable[ResultRow]) -> set[str]:
+    """The non-empty caller paths of rows read back from the graph."""
+    return {
+        path
+        for row in rows
+        if isinstance(path := row.get(cs.KEY_CALLER_PATH), str) and path
+    }
+
+
 def _digest(data: bytes) -> str:
     return hashlib.md5(data, usedforsecurity=False).hexdigest()
 
@@ -4935,25 +4944,31 @@ class GraphUpdater:
         """
         if not reindexed_keys or not isinstance(self.ingestor, QueryProtocol):
             return []
+        rows = self._project_read(
+            cs.CYPHER_AFFECTED_CALLER_PATHS,
+            "affected callers",
+            {cs.CYPHER_PARAM_PATHS: reindexed_keys},
+        )
+        if rows is None:
+            return []
+        return sorted(_caller_paths(rows) | self._linking_document_keys(reindexed_keys))
+
+    def _project_read(
+        self, query: str, label: str, params: PropertyParams
+    ) -> list[ResultRow] | None:
+        """A read scoped to this project, its prefix added to `params`; None,
+        reported, when the graph cannot answer it. Empty for a sink with no
+        query surface, which holds nothing to read back."""
+        if not isinstance(self.ingestor, QueryProtocol):
+            return []
         try:
-            rows = self.ingestor.fetch_all(
-                cs.CYPHER_AFFECTED_CALLER_PATHS,
-                {
-                    cs.CYPHER_PARAM_PATHS: reindexed_keys,
-                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
-                },
+            return self.ingestor.fetch_all(
+                query,
+                {**params, cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT},
             )
         except Exception as exc:
-            logger.warning(ls.PRUNE_QUERY_FAILED, label="affected callers", error=exc)
-            return []
-        return sorted(
-            {
-                path
-                for row in rows
-                if isinstance(path := row.get(cs.KEY_CALLER_PATH), str) and path
-            }
-            | self._linking_document_keys(reindexed_keys)
-        )
+            logger.warning(ls.PRUNE_QUERY_FAILED, label=label, error=exc)
+            return None
 
     def _dependent_keys(
         self,
@@ -5109,18 +5124,12 @@ class GraphUpdater:
         link to a File that still exists needs nothing: the node, and the
         edge with it, outlive its file's re-parse.
         """
-        if not isinstance(self.ingestor, QueryProtocol):
-            return set()
-        try:
-            rows = self.ingestor.fetch_all(
-                cs.CYPHER_LINKING_DOCUMENT_PATHS,
-                {
-                    cs.CYPHER_PARAM_PATHS: reindexed_keys,
-                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
-                },
-            )
-        except Exception as exc:
-            logger.warning(ls.PRUNE_QUERY_FAILED, label="linking documents", error=exc)
+        rows = self._project_read(
+            cs.CYPHER_LINKING_DOCUMENT_PATHS,
+            "linking documents",
+            {cs.CYPHER_PARAM_PATHS: reindexed_keys},
+        )
+        if rows is None:
             return set()
         return {
             path
@@ -5195,25 +5204,15 @@ class GraphUpdater:
         module_names = self._module_names_for(present_keys)
         if not module_names:
             return []
-        try:
-            rows = self.ingestor.fetch_all(
-                cs.CYPHER_UNRESOLVED_IMPORTER_PATHS,
-                {
-                    cs.CYPHER_PARAM_MODULE_NAMES: module_names,
-                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
-                },
-            )
-        except Exception as exc:
-            logger.warning(
-                ls.PRUNE_QUERY_FAILED, label="unresolved importers", error=exc
-            )
+        rows = self._project_read(
+            cs.CYPHER_UNRESOLVED_IMPORTER_PATHS,
+            "unresolved importers",
+            {cs.CYPHER_PARAM_MODULE_NAMES: module_names},
+        )
+        if rows is None:
             return []
         return sorted(
-            {
-                path
-                for row in rows
-                if isinstance(path := row.get(cs.KEY_CALLER_PATH), str) and path
-            }
+            _caller_paths(rows)
             | self._specifier_waiter_keys(present_keys)
             | self._broken_link_waiter_keys(present_keys)
         )
@@ -5239,18 +5238,12 @@ class GraphUpdater:
         # A scoped re-ingest resets the map only when it deletes the old
         # subtrees, after this lookup; the map judged must be the new one.
         import_processor.reset_dart_path_caches()
-        try:
-            rows = self.ingestor.fetch_all(
-                cs.CYPHER_PACKAGE_URI_IMPORTS,
-                {
-                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
-                    cs.CYPHER_PARAM_URI_PREFIX: cs.DART_SCHEME_PACKAGE,
-                },
-            )
-        except Exception as exc:
-            logger.warning(
-                ls.PRUNE_QUERY_FAILED, label="Dart package importers", error=exc
-            )
+        rows = self._project_read(
+            cs.CYPHER_PACKAGE_URI_IMPORTS,
+            "Dart package importers",
+            {cs.CYPHER_PARAM_URI_PREFIX: cs.DART_SCHEME_PACKAGE},
+        )
+        if rows is None:
             return set()
         return {
             path
@@ -5297,30 +5290,20 @@ class GraphUpdater:
             self._add_gained_simple_names(names, modified)
         if not names:
             return []
-        try:
-            rows = self.ingestor.fetch_all(
-                cs.CYPHER_UNRESOLVED_REFERENCE_WAITERS,
-                {
-                    cs.CYPHER_PARAM_NAMES: sorted(names),
-                    cs.CYPHER_PARAM_PREFIXES: sorted(prefixes),
-                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
-                    # The root module (`__init__.py`, `mod.rs`) IS the
-                    # project name, not under its prefix (bot review).
-                    cs.KEY_PROJECT_NAME: self.project_name,
-                },
-            )
-        except Exception as exc:
-            logger.warning(
-                ls.PRUNE_QUERY_FAILED, label="unresolved references", error=exc
-            )
-            return []
-        return sorted(
+        rows = self._project_read(
+            cs.CYPHER_UNRESOLVED_REFERENCE_WAITERS,
+            "unresolved references",
             {
-                path
-                for row in rows
-                if isinstance(path := row.get(cs.KEY_CALLER_PATH), str) and path
-            }
+                cs.CYPHER_PARAM_NAMES: sorted(names),
+                cs.CYPHER_PARAM_PREFIXES: sorted(prefixes),
+                # The root module (`__init__.py`, `mod.rs`) IS the
+                # project name, not under its prefix (bot review).
+                cs.KEY_PROJECT_NAME: self.project_name,
+            },
         )
+        if rows is None:
+            return []
+        return sorted(_caller_paths(rows))
 
     def _add_gained_simple_names(
         self, names: set[str], modified: list[tuple[str, bytes]]
@@ -5625,17 +5608,10 @@ class GraphUpdater:
         resolved here rather than in Cypher, where the arithmetic against
         `importer.path` would be far harder to read and to test.
         """
-        if not isinstance(self.ingestor, QueryProtocol):
-            return set()
-        try:
-            rows = self.ingestor.fetch_all(
-                cs.CYPHER_UNRESOLVED_SPECIFIER_IMPORTERS,
-                {cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT},
-            )
-        except Exception as exc:
-            logger.warning(
-                ls.PRUNE_QUERY_FAILED, label="unresolved specifiers", error=exc
-            )
+        rows = self._project_read(
+            cs.CYPHER_UNRESOLVED_SPECIFIER_IMPORTERS, "unresolved specifiers", {}
+        )
+        if rows is None:
             return set()
         wanted = _specifier_wanted_keys(present_keys)
         waiters: set[str] = set()
@@ -5659,15 +5635,8 @@ class GraphUpdater:
         the document keeps listing the link as broken, and keeps lacking the
         edge, until it is edited itself.
         """
-        if not isinstance(self.ingestor, QueryProtocol):
-            return set()
-        try:
-            rows = self.ingestor.fetch_all(
-                cs.CYPHER_BROKEN_LINK_DOCUMENTS,
-                {cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT},
-            )
-        except Exception as exc:
-            logger.warning(ls.PRUNE_QUERY_FAILED, label="broken links", error=exc)
+        rows = self._project_read(cs.CYPHER_BROKEN_LINK_DOCUMENTS, "broken links", {})
+        if rows is None:
             return set()
         wanted = set(present_keys)
         waiters: set[str] = set()
