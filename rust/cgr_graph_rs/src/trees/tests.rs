@@ -2,13 +2,11 @@
 //! the Python twins return for the same sources; the Python suite
 //! (test_native_trees.py) compares the two on py-tree-sitter's own trees.
 
-use std::collections::HashSet;
-
 use tree_sitter::{Node, Parser, Tree};
 
 use super::*;
 
-fn set(items: &[&str]) -> HashSet<Vec<u8>> {
+fn set(items: &[&str]) -> NodeTypes {
     items.iter().map(|s| s.as_bytes().to_vec()).collect()
 }
 
@@ -236,4 +234,177 @@ fn inner_scope_only_names_match_the_python_twin() {
         scopes::inner_scope_only_names(first_function(&tree), SCOPES.as_bytes(), &scope_rules()),
         strings(&["item", "k"])
     );
+}
+
+// --------------------------------------------------------------- interface
+
+fn names(items: &[&str]) -> std::collections::HashSet<String> {
+    items.iter().map(|s| (*s).to_owned()).collect()
+}
+
+/// `interface_fingerprint.bridge_rules()` as it stands, with Python its only
+/// language.
+fn interface_rules() -> interface::InterfaceRules {
+    let python = interface::LanguageRules {
+        flavor: interface::Flavor::Python,
+        functions: set(&["function_definition"]),
+        blocks: set(&["block"]),
+        definitions: set(&["class_definition", "function_definition"]),
+        blockers: set(&[
+            "delete_statement", "future_import_statement", "global_statement", "import_from_statement",
+            "import_statement", "nonlocal_statement", "yield",
+        ]),
+        kept_names: names(&[]),
+        calls: set(&["call"]),
+        returns: set(&["return_statement"]),
+    };
+    let function_binds = list(&["name", "parameters", "parameter"]);
+    let js_binder_fields: NodeMap<Vec<Vec<u8>>> = [
+        ("variable_declarator", list(&["name"])),
+        ("for_in_statement", list(&["left"])),
+        ("catch_clause", list(&["parameter"])),
+        ("class_declaration", list(&["name"])),
+        ("function_declaration", function_binds.clone()),
+        ("generator_function_declaration", function_binds.clone()),
+        ("generator_function", function_binds.clone()),
+        ("function_expression", function_binds.clone()),
+        ("arrow_function", function_binds.clone()),
+        ("method_definition", function_binds),
+    ]
+    .into_iter()
+    .map(|(node_type, fields)| (node_type.as_bytes().to_vec(), fields))
+    .collect();
+    interface::InterfaceRules {
+        languages: [("python".to_owned(), python)].into_iter().collect(),
+        version: b"interface-fingerprint/3".to_vec(),
+        open: b"\x01".to_vec(),
+        close: b"\x02".to_vec(),
+        leaf: b"\x03".to_vec(),
+        missing: b"\x04".to_vec(),
+        elided_body: b"\x05".to_vec(),
+        returned: b"\x06".to_vec(),
+        call: b"\x07".to_vec(),
+        argument: b"\x08".to_vec(),
+        local: b"\x09".to_vec(),
+        comment: b"comment".to_vec(),
+        dunder: "__".into(),
+        body_field: b"body".to_vec(),
+        name_field: "name".into(),
+        left_field: b"left".to_vec(),
+        arguments_field: b"arguments".to_vec(),
+        value_field: b"value".to_vec(),
+        key_field: b"key".to_vec(),
+        function_field: b"function".to_vec(),
+        property_field: b"property".to_vec(),
+        object_field: b"object".to_vec(),
+        parameters_field: b"parameters".to_vec(),
+        parameter_field: b"parameter".to_vec(),
+        pattern_field: b"pattern".to_vec(),
+        alias_field: b"alias".to_vec(),
+        callee_fields: list(&["function", "constructor"]),
+        identifier: b"identifier".to_vec(),
+        keyword_argument: b"keyword_argument".to_vec(),
+        name_arguments: set(&["attribute", "identifier", "member_expression"]),
+        cast_wrappers: set(&["as_expression", "non_null_expression", "satisfies_expression"]),
+        call_expression: b"call_expression".to_vec(),
+        member_expression: b"member_expression".to_vec(),
+        prototype_methods: names(&["apply", "bind", "call"]),
+        js_binder_fields,
+        js_bound_names: set(&["identifier", "shorthand_property_identifier_pattern"]),
+        js_return: b"return_statement".to_vec(),
+        js_pair: b"pair".to_vec(),
+        js_computed_property_name: b"computed_property_name".to_vec(),
+        js_require: "require".into(),
+        js_typed_parameters: set(&["optional_parameter", "required_parameter"]),
+        py_identifier: b"identifier".to_vec(),
+        py_call: b"call".to_vec(),
+        py_attribute: b"attribute".to_vec(),
+        py_return: b"return_statement".to_vec(),
+        py_read_returns: set(&["attribute", "call", "identifier"]),
+        receivers: names(&["self", "cls"]),
+        py_target_holders: set(&["assignment", "augmented_assignment", "for_statement"]),
+        py_target_wrappers: set(&["as_pattern_target"]),
+        py_member_targets: set(&["attribute", "subscript"]),
+        py_caller_scope: b"function_definition".to_vec(),
+        py_named_parameters: set(&["default_parameter", "typed_default_parameter"]),
+        py_typed_parameter: b"typed_parameter".to_vec(),
+        py_scope_boundaries: set(&["class_definition", "decorated_definition", "function_definition"]),
+        py_decorated_definition: b"decorated_definition".to_vec(),
+        py_decorated_definitions: set(&["class_definition", "function_definition"]),
+        py_shadow_binders: set(&["assignment", "for_statement"]),
+        py_as_pattern_target: b"as_pattern_target".to_vec(),
+        py_imports: set(&["import_from_statement", "import_statement"]),
+        py_global: b"global_statement".to_vec(),
+        py_case_pattern: b"case_pattern".to_vec(),
+        py_dotted_name: b"dotted_name".to_vec(),
+        py_aliased_import: b"aliased_import".to_vec(),
+        python_scan: interface::ScanRules {
+            call: b"call".to_vec(),
+            identifier: b"identifier".to_vec(),
+            closures: set(&["function_definition", "lambda"]),
+            opaque: set(&["class_definition"]),
+        },
+        js_scan: interface::ScanRules {
+            call: b"call_expression".to_vec(),
+            identifier: b"identifier".to_vec(),
+            closures: set(&["arrow_function", "function_declaration", "function_expression"]),
+            opaque: set(&["class_declaration"]),
+        },
+    }
+}
+
+/// `setup`'s body is elided (its calls hand names on, its returns read no
+/// local), `calls` keeps its body (it calls its parameter).
+const INTERFACE: &str = "\
+import os
+
+class Widget:
+    def area(self) -> int:
+        return self.size * 2
+
+def setup(spec, cb):
+    handler = make()
+    relay(handler, key=cb.run)  # a comment
+    if spec:
+        return spec.build()
+    return [handler]
+
+def calls(cb):
+    cb()
+";
+
+fn interface_of(source: &str) -> String {
+    let rules = interface_rules();
+    let tree = parse(source);
+    interface::interface_fingerprint(tree.root_node(), source.as_bytes(), &rules.languages["python"], &rules, &scope_rules())
+}
+
+#[test]
+fn interface_fingerprint_matches_the_python_twin() {
+    assert_eq!(interface_of(INTERFACE), "93f33e79336cce183143a8dd312ea511d4b40b1ac17afed7c4ce75437100be93");
+}
+
+#[test]
+fn interface_fingerprint_ignores_what_no_caller_reads() {
+    let base = interface_of(INTERFACE);
+    for edit in [
+        INTERFACE.replace("# a comment", "# another comment"),
+        INTERFACE.replace("import os\n", "import os\n\n\n"),
+        INTERFACE.replace("handler = make()", "handler = make(2)"),
+    ] {
+        assert_eq!(interface_of(&edit), base, "{edit}");
+    }
+}
+
+#[test]
+fn interface_fingerprint_sees_what_callers_read() {
+    let base = interface_of(INTERFACE);
+    for edit in [
+        INTERFACE.replace("    cb()\n", "    cb(1)\n"),
+        INTERFACE.replace("key=cb.run", "other=cb.run"),
+        INTERFACE.replace("return [handler]", "return handler"),
+        INTERFACE.replace("return spec.build()", "return spec.make()"),
+    ] {
+        assert_ne!(interface_of(&edit), base, "{edit}");
+    }
 }
