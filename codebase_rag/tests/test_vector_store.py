@@ -537,6 +537,39 @@ def test_milvus_client_omits_unset_credentials() -> None:
         assert vs._milvus_client_kwargs() == {"uri": "http://localhost:19530"}
 
 
+def test_a_milvus_token_is_refused_over_plain_http() -> None:
+    # The Qdrant key was refused over http:// while a Milvus token went out
+    # unencrypted to any http:// MILVUS_URI.
+    import codebase_rag.vector_store as vs
+
+    with (
+        patch.object(vs.settings, "MILVUS_URI", "http://milvus.example:19530"),
+        patch.object(vs.settings, "MILVUS_TOKEN", "root:secret"),
+        patch.object(vs.settings, "MILVUS_ALLOW_INSECURE_TOKEN", False),
+        pytest.raises(ValueError, match="MILVUS_ALLOW_INSECURE_TOKEN"),
+    ):
+        vs._milvus_client_kwargs()
+
+
+@pytest.mark.parametrize(
+    ("uri", "allowed"),
+    [("https://milvus.example:19530", False), ("http://localhost:19530", True)],
+    ids=["https", "opted-in-http"],
+)
+def test_a_milvus_token_is_sent_over_https_or_when_allowed(
+    uri: str, allowed: bool
+) -> None:
+    import codebase_rag.vector_store as vs
+
+    with (
+        patch.object(vs.settings, "MILVUS_URI", uri),
+        patch.object(vs.settings, "MILVUS_TOKEN", "root:secret"),
+        patch.object(vs.settings, "MILVUS_DB_NAME", None),
+        patch.object(vs.settings, "MILVUS_ALLOW_INSECURE_TOKEN", allowed),
+    ):
+        assert vs._milvus_client_kwargs() == {"uri": uri, "token": "root:secret"}
+
+
 def test_milvus_empty_search_response_returns_empty_list() -> None:
     import codebase_rag.vector_store as vs
 

@@ -327,14 +327,20 @@ def embedding_cache_dir() -> Path:
     return Path(settings.QDRANT_DB_PATH)
 
 
+def _refuse_credential_over_http(url: str, allowed: bool, refusal: str) -> None:
+    # Both credentialed backends send their secret with every request, so a
+    # plain http:// endpoint carries it unencrypted unless the user said the
+    # transport is protected another way.
+    if urlsplit(url).scheme == QDRANT_INSECURE_URL_SCHEME and not allowed:
+        raise ValueError(refusal)
+
+
 def _qdrant_api_key(url: str) -> str | None:
     api_key = settings.QDRANT_API_KEY or None
-    if (
-        api_key
-        and urlsplit(url).scheme == QDRANT_INSECURE_URL_SCHEME
-        and not settings.QDRANT_ALLOW_INSECURE_API_KEY
-    ):
-        raise ValueError(ex.QDRANT_API_KEY_OVER_HTTP)
+    if api_key:
+        _refuse_credential_over_http(
+            url, settings.QDRANT_ALLOW_INSECURE_API_KEY, ex.QDRANT_API_KEY_OVER_HTTP
+        )
     return api_key
 
 
@@ -384,6 +390,11 @@ class _MilvusClientKwargs(TypedDict, total=False):
 def _milvus_client_kwargs() -> _MilvusClientKwargs:
     kwargs = _MilvusClientKwargs(uri=settings.MILVUS_URI)
     if settings.MILVUS_TOKEN:
+        _refuse_credential_over_http(
+            settings.MILVUS_URI,
+            settings.MILVUS_ALLOW_INSECURE_TOKEN,
+            ex.MILVUS_TOKEN_OVER_HTTP,
+        )
         kwargs["token"] = settings.MILVUS_TOKEN
     if settings.MILVUS_DB_NAME:
         kwargs["db_name"] = settings.MILVUS_DB_NAME

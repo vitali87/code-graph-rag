@@ -460,6 +460,9 @@ class AppConfig(BaseSettings):
     )
     MILVUS_URI: str = "./.milvus_code_embeddings.db"
     MILVUS_TOKEN: str | None = None
+    # As for QDRANT_API_KEY: over a plain http:// MILVUS_URI the token would
+    # travel unencrypted, so it is refused unless this is set.
+    MILVUS_ALLOW_INSECURE_TOKEN: bool = False
     MILVUS_DB_NAME: str | None = None
     MILVUS_COLLECTION_NAME: str = "code_embeddings"
     MILVUS_VECTOR_DIM: int = 768

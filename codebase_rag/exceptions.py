@@ -106,6 +106,12 @@ QDRANT_VECTOR_DIM_MISMATCH = (
     "or re-index with --clean to rebuild the collection with the new size."
 )
 
+MILVUS_TOKEN_OVER_HTTP = (
+    "MILVUS_TOKEN is set but MILVUS_URI uses plain http, which would send the "
+    "token unencrypted. Use an https:// MILVUS_URI, or set "
+    "MILVUS_ALLOW_INSECURE_TOKEN=true if the connection is protected another "
+    "way (for example, it never leaves the machine)."
+)
 QDRANT_API_KEY_OVER_HTTP = (
     "QDRANT_API_KEY is set but QDRANT_URL uses plain http, which would send the "
     "key unencrypted. Use an https:// QDRANT_URL, or set "
