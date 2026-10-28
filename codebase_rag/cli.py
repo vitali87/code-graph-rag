@@ -82,7 +82,13 @@ from .stack.constants import SERVICE_MEMGRAPH, SERVICE_QDRANT, StackState
 from .stack.manager import StackError
 from .sync_guard import RUNNING_SYNC_TOKENS as _RUNNING_SYNC_TOKENS
 from .sync_guard import OwnerCheck as _OwnerCheck
-from .sync_guard import SyncRefusedError, mark_sync_incomplete, release_project_claim
+from .sync_guard import (
+    SyncRefusedError,
+    WriteMarker,
+    mark_sync_incomplete,
+    marked_reingest,
+    release_project_claim,
+)
 from .sync_guard import clear_sync_incomplete as _clear_sync_incomplete
 from .sync_guard import project_owner_refusal as _project_owner_refusal
 from .sync_guard import sync_marker_params as _sync_marker_params
@@ -2283,7 +2289,7 @@ def rename_command(
     from .graph_cli import _project_and_fetch
 
     name, fetch_all, ingestor = _project_and_fetch(project, repo_path)
-    with ingestor:
+    with ingestor, _sync_owner() as owner:
         parsers, queries = load_parsers()
         from .graph_updater import GraphUpdater
 
@@ -2306,7 +2312,9 @@ def rename_command(
                 new_name,
                 allow_heuristic=allow_heuristic,
                 dry_run=dry_run,
-                reingest=updater.reingest,
+                reingest=marked_reingest(
+                    updater, WriteMarker(ingestor, name, owner, None)
+                ),
                 heuristic_opt_in=cs.RENAME_CLI_ALLOW_HEURISTIC,
             )
         except RenameRefused as refused:

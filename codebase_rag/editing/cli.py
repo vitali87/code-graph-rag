@@ -176,13 +176,14 @@ def _reingest_restored(
     from ..config import project_ignore_sets
     from ..graph_updater import GraphUpdater
     from ..parser_loader import load_parsers
+    from ..sync_guard import WriteMarker, marked_reingest, sync_owner
 
     try:
         if name not in ingestor.list_projects():
             return False
         parsers, queries = load_parsers()
         exclude_paths, unignore_paths = project_ignore_sets(root)
-        GraphUpdater(
+        updater = GraphUpdater(
             ingestor=ingestor,
             repo_path=root,
             parsers=parsers,
@@ -190,7 +191,9 @@ def _reingest_restored(
             project_name=name,
             exclude_paths=exclude_paths,
             unignore_paths=unignore_paths,
-        ).reingest(paths)
+        )
+        with sync_owner() as owner:
+            marked_reingest(updater, WriteMarker(ingestor, name, owner, None))(paths)
     except Exception as error:
         return error
     return True

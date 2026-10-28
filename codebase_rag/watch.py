@@ -48,21 +48,20 @@ from .constants import (
 )
 from .graph_updater import GraphUpdater, ReingestAborted
 from .parser_loader import load_parsers
-from .services import IngestorProtocol, QueryProtocol
+from .services import IngestorProtocol
 from .services.graph_service import MemgraphIngestor
 from .sync_guard import (
     SyncRefusedError,
-    clear_own_sync_incomplete,
-    mark_sync_incomplete,
+    UnfinishedSyncError,
+    WriteMarker,
+    marked_run,
     project_claim,
-    sync_marker_down,
     sync_owner,
 )
 from .sync_lock import repo_sync_lock
 from .types_defs import (
     CgrignorePatterns,
     LanguageQueries,
-    PropertyValue,
     ReingestReport,
 )
 from .utils.path_utils import (
@@ -92,110 +91,6 @@ class PendingTimer(Protocol):
 # invoking it during `start()` — doing so deadlocks the handler.
 TimerFactory = Callable[..., PendingTimer]
 UpdaterFactory = Callable[[CgrignorePatterns], GraphUpdater]
-
-
-class UnfinishedSyncError(RuntimeError):
-    """A CLI sync of the project stopped part-way, so its graph may be partial."""
-
-
-class WriteMarker:
-    """`cgr start`'s `:IncompleteRun` marker around each watcher write (#2219).
-
-    Down before the initial scan, a full re-index or a re-ingest's first
-    write, and off once that write succeeded, so a watcher stopped part-way
-    leaves a graph `cgr status` and the MCP server know to be partial. It is
-    the CLI sync's own marker, so `cgr start` clears what the watcher left;
-    the watcher takes off only a marker it put down itself, so one another
-    writer put down since stays (review of PR 3365). Every mark holds to the
-    claim `cgr watch` took on its project (#2411): once another repository
-    has the name, the write is refused instead of replacing that
-    repository's graph.
-    """
-
-    def __init__(
-        self,
-        ingestor: QueryProtocol,
-        project_name: str,
-        owner: dict[str, PropertyValue],
-        owned_roots: list[str] | None,
-    ) -> None:
-        self._ingestor = ingestor
-        self._project_name = project_name
-        self._owner = owner
-        self._owned_roots = owned_roots
-
-    def mark(self) -> None:
-        mark_sync_incomplete(
-            self._ingestor, self._project_name, self._owner, self._owned_roots
-        )
-
-    def unfinished(self) -> bool:
-        """Whether a CLI sync's marker is already down: one did not finish.
-
-        Asked with the checkout lock held, so no writer of this checkout can
-        still be running behind it.
-        """
-        return sync_marker_down(self._ingestor, self._project_name)
-
-    def mark_scoped(self) -> None:
-        """Mark before a re-ingest writes, unless a sync left the graph partial.
-
-        A re-ingest resolves its files against the rest of the graph, and
-        clearing the shared marker after it would call whole a graph an
-        unfinished `cgr start` left partial. The MCP `reingest` refuses there
-        for the same reason (#1705); the watcher re-indexes instead.
-        """
-        if self.unfinished():
-            raise UnfinishedSyncError(self._project_name)
-        self.mark()
-
-    def clear(self) -> None:
-        clear_own_sync_incomplete(self._ingestor, self._project_name, self._owner)
-
-
-def _marked_run(
-    updater: GraphUpdater,
-    marker: WriteMarker | None,
-    force: bool = False,
-    before_run: Callable[[], None] | None = None,
-) -> None:
-    """Run the updater over the whole checkout between `marker`'s mark and clear.
-
-    The caller holds the checkout's sync lock, so the marker goes down after
-    a sync that held it first has taken its own off: they share one. It
-    comes off once the run committed, as `cgr start` takes its own off: a
-    Ctrl+C landing after the commit found the graph whole. Any other failure
-    leaves it down. `before_run` runs between the mark and the run, where
-    `cgr start` ensures the graph's constraints.
-
-    A marker already down is an earlier writer's that did not finish: a
-    watcher stopped part-way through a re-ingest may have deleted an
-    unchanged dependent's definitions, which an incremental run skips by
-    their saved hash. So the run is forced, and only that rebuild takes the
-    marker off (review of PR 3365).
-    """
-    if marker is None:
-        if before_run is not None:
-            before_run()
-        updater.run(force=force)
-        return
-    if not force and marker.unfinished():
-        logger.warning(
-            logs.WATCHER_FULL_RUN_OVER_UNFINISHED_SYNC.format(
-                project=updater.project_name
-            )
-        )
-        force = True
-    marker.mark()
-    try:
-        if before_run is not None:
-            before_run()
-        updater.run(force=force)
-    except KeyboardInterrupt:
-        if updater.committed:
-            marker.clear()
-        raise
-    marker.clear()
 
 
 class IgnoreRules:
@@ -337,7 +232,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         """
         updater = self.updater
         with repo_sync_lock(updater.repo_path, updater.project_name, wait=True):
-            _marked_run(updater, self._marker, force=force)
+            marked_run(updater, self._marker, force=force)
 
     def _is_relevant(self, path_str: str) -> bool:
         # The same predicate as the repository walk, not a restatement of it:
@@ -879,7 +774,7 @@ def _initial_scan(
     """
     logger.info(logs.INITIAL_SCAN)
     with repo_sync_lock(updater.repo_path, updater.project_name, wait=True):
-        _marked_run(updater, marker, before_run=prepare_graph)
+        marked_run(updater, marker, before_run=prepare_graph)
     logger.success(logs.INITIAL_SCAN_DONE)
 
 

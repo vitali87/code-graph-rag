@@ -41,9 +41,11 @@ def _reingest_with_interference(
 ) -> Callable[[list[str]], None]:
     reingest = updater.reingest
 
-    def interfere(paths: list[str]) -> None:
+    def interfere(
+        paths: list[str], before_write: Callable[[], None] | None = None
+    ) -> None:
         calls.append(paths)
-        reingest(paths)
+        reingest(paths, before_write=before_write)
         if len(calls) != 1:
             return
         match interference:
@@ -135,10 +137,13 @@ def test_cli_failed_contract_exits_nonzero_and_serializes_rollback_status(
     root, store, updater = collision
     calls: list[list[str]] = []
     reingest = _reingest_with_interference(root, updater, interference, calls)
+    # The connection the CLI's write marker goes through: no marker is down.
+    connection = MagicMock()
+    connection.fetch_all.return_value = []
     with (
         patch(
             "codebase_rag.graph_cli._project_and_fetch",
-            return_value=(PROJECT, store.fetch_all, MagicMock()),
+            return_value=(PROJECT, store.fetch_all, connection),
         ),
         patch("codebase_rag.graph_updater.GraphUpdater", return_value=updater),
         patch.object(updater, "reingest", side_effect=reingest),

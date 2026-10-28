@@ -21,6 +21,7 @@ from ..config import project_ignore_sets
 from ..graph_updater import GraphUpdater, ReingestAborted
 from ..parser_loader import load_parsers
 from ..services import IngestorProtocol, QueryProtocol
+from ..sync_guard import WriteMarker, marked_reingest, marked_run, sync_owner
 
 
 class GraphRefresher:
@@ -62,19 +63,34 @@ class GraphRefresher:
         return await asyncio.to_thread(self.refresh, paths)
 
     def refresh(self, paths: list[str]) -> str:
-        with self._lock:
+        with self._lock, sync_owner() as owner:
             try:
                 if not self._indexed():
                     # Nothing to keep in step: the first sync indexes it.
                     return ""
                 updater = self._session_updater()
-                if self._needs_full_sync:
+                # The CLI sync's marker, down around each write, so a session
+                # that dies part-way leaves the graph flagged partial.
+                marker = (
+                    WriteMarker(self._ingestor, self._project_name, owner, None)
+                    if isinstance(self._ingestor, QueryProtocol)
+                    else None
+                )
+                if self._needs_full_sync or (
+                    marker is not None and marker.unfinished()
+                ):
                     # force: the files a failed re-ingest left without their
                     # nodes are unchanged on disk, so an incremental run
                     # would skip exactly them (as `_rebuild_after_failure`).
-                    updater.run(force=True)
+                    # An earlier writer's unfinished marker is rebuilt over
+                    # the same way, as the watcher does.
+                    marked_run(updater, marker, force=True)
                     self._needs_full_sync = False
-                report = updater.reingest(paths)
+                report = (
+                    updater.reingest(paths)
+                    if marker is None
+                    else marked_reingest(updater, marker)(paths)
+                )
             except (ValueError, ReingestAborted) as exc:
                 # Refused, or aborted while still reading: nothing written.
                 return cs.MSG_CHAT_GRAPH_NOT_UPDATED.format(error=exc)
