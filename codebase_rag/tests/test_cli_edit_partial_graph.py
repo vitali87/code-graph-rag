@@ -18,6 +18,7 @@ from typer.testing import CliRunner, Result
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
+from codebase_rag import sync_lock
 from codebase_rag.cli import app
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -116,13 +117,14 @@ def _run(
     connection: MarkerConnection,
     *extra: str,
     reingest: Callable[..., ReingestReport] | None = None,
+    fetch_all: Callable[..., list[ResultRow]] | None = None,
 ) -> Result:
     root, store, updater = repo
     args, _applied = COMMANDS[command]
     with (
         patch(
             "codebase_rag.graph_cli._project_and_fetch",
-            return_value=(PROJECT, store.fetch_all, connection),
+            return_value=(PROJECT, fetch_all or store.fetch_all, connection),
         ),
         patch("codebase_rag.graph_updater.GraphUpdater", return_value=updater),
         patch.object(updater, "reingest", side_effect=reingest or updater.reingest),
@@ -192,6 +194,38 @@ def test_a_run_that_stopped_before_writing_does_not_refuse(
     result = _run(repo, command, MarkerConnection([STOPPED_BEFORE_WRITING]))
     assert result.exit_code == 0, result.output
     assert COMMANDS[command][1] in _app(repo)
+
+
+@pytest.mark.parametrize("command", COMMANDS)
+def test_the_check_and_the_plan_run_with_the_checkout_locked(
+    repo: Indexed, command: str
+) -> None:
+    # A sync taking the checkout between the marker check and the plan would
+    # leave the plan reading a graph it is rewriting (Greptile review, PR #3493).
+    # Reads before the check (change-signature's project root) are not the
+    # plan, so recording starts at the check.
+    root, store, _updater = repo
+    key = str(root.resolve())
+    locked: list[bool] = []
+
+    class Recording(MarkerConnection):
+        def fetch_all(
+            self, query: str, params: PropertyDict | None = None
+        ) -> list[ResultRow]:
+            if query == cq.CYPHER_PROJECT_IS_INCOMPLETE:
+                locked.append(key in sync_lock._HELD)
+            return super().fetch_all(query, params)
+
+    def plan_read(query: str, params: PropertyDict | None = None) -> list[ResultRow]:
+        if locked:
+            locked.append(key in sync_lock._HELD)
+        return store.fetch_all(query, params)
+
+    result = _run(repo, command, Recording(), fetch_all=plan_read)
+    assert result.exit_code == 0, result.output
+    # The check, then at least one read of the plan.
+    assert len(locked) > 1
+    assert all(locked)
 
 
 # --- the marker around the edit's own re-ingest ---------------------------------

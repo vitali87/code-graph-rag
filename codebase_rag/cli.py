@@ -2256,7 +2256,7 @@ EditReingest = Callable[[list[str]], ReingestReport]
 
 @contextmanager
 def _guarded_edit_reingest(
-    ingestor: MemgraphIngestor, updater: "GraphUpdater", project_name: str
+    ingestor: MemgraphIngestor, updater: "GraphUpdater", project_name: str, repo: Path
 ) -> Iterator[tuple[EditReingest, "WriteMarker"]]:
     """The re-ingest an applied edit is measured through, behind the marker.
 
@@ -2266,29 +2266,40 @@ def _guarded_edit_reingest(
     review, PR #2164). The MCP tools refuse the same graph through
     `_guarded_rename_reingest`.
 
+    The checkout's sync lock is held for the whole edit, from that check to
+    the marker's clear: a sync taking the checkout between the check and the
+    plan would leave the plan reading a graph it is rewriting (Greptile
+    review, PR #3493). It waits behind a running sync, as a scoped re-ingest
+    does, and the re-ingest re-enters it.
+
     The callback is `cgr watch`'s scoped re-ingest. The marker goes down from
     `before_write`, where the read-only prologue ends, and comes off once the
-    re-ingest returned, with the checkout's sync lock held from one to the
-    other. A failure after the first write leaves it down, so the next edit,
-    `cgr status` and the MCP server know the graph is partial; the edit's
-    `graph_incomplete` alone would not outlive this process.
+    re-ingest returned. A failure after the first write leaves it down, so
+    the next edit, `cgr status` and the MCP server know the graph is partial;
+    the edit's `graph_incomplete` alone would not outlive this process.
     """
-    if (refusal := _partial_graph_refusal(ingestor, project_name)) is not None:
-        typer.echo(refusal, err=True)
-        raise typer.Exit(code=1)
-    from .watch import WriteMarker
+    held = ExitStack()
+    try:
+        held.enter_context(repo_sync_lock(repo, project_name, wait=True))
+    except SyncLockError as refused:
+        typer.echo(str(refused), err=True)
+        raise typer.Exit(code=1) from None
+    with held:
+        if (refusal := _partial_graph_refusal(ingestor, project_name)) is not None:
+            typer.echo(refusal, err=True)
+            raise typer.Exit(code=1)
+        from .watch import WriteMarker
 
-    with _sync_owner() as owner:
-        marker = WriteMarker(ingestor, project_name, owner, None)
+        with _sync_owner() as owner:
+            marker = WriteMarker(ingestor, project_name, owner, None)
 
-        def reingest(paths: list[str]) -> ReingestReport:
-            with repo_sync_lock(updater.repo_path, project_name, wait=True):
+            def reingest(paths: list[str]) -> ReingestReport:
                 report = updater.reingest(paths, before_write=marker.mark_scoped)
                 if updater.reingest_mutated:
                     marker.clear()
-            return report
+                return report
 
-        yield reingest, marker
+            yield reingest, marker
 
 
 def _mark_edit_partial(marker: "WriteMarker", project_name: str) -> str | None:
@@ -2349,7 +2360,10 @@ def rename_command(
             queries=queries,
             project_name=name,
         )
-        with _guarded_edit_reingest(ingestor, updater, name) as (reingest, marker):
+        with _guarded_edit_reingest(ingestor, updater, name, repo_path.resolve()) as (
+            reingest,
+            marker,
+        ):
             try:
                 report = rename(
                     repo_path.resolve(),
@@ -2451,7 +2465,10 @@ def change_signature_command(
             queries=queries,
             project_name=name,
         )
-        with _guarded_edit_reingest(ingestor, updater, name) as (reingest, marker):
+        with _guarded_edit_reingest(ingestor, updater, name, repo_path.resolve()) as (
+            reingest,
+            marker,
+        ):
             try:
                 report = change_signature(
                     repo_path.resolve(),
