@@ -24,6 +24,9 @@ class KeyBinding(StrEnum):
 
 class PermissionMode(StrEnum):
     NORMAL = "normal"
+    # Not cycled to: what --no-confirm starts a session in. Approvals are
+    # granted without a prompt, and the shell allowlist still applies.
+    AUTO_APPROVE = "auto_approve"
     YOLO = "yolo"
 
 
@@ -659,7 +662,7 @@ SESSION_CONTEXT_START = (
 SESSION_CONTEXT_END = "\n[END SESSION CONTEXT]\n\n"
 
 CONFIRM_ENABLED = "Enabled"
-CONFIRM_DISABLED = "Disabled (YOLO Mode)"
+CONFIRM_DISABLED = "Disabled (auto-approve; shell allowlist still on)"
 
 DIFF_LABEL_BEFORE = "before"
 DIFF_LABEL_AFTER = "after"
@@ -701,6 +704,7 @@ MULTILINE_INPUT_HINT = (
     "(Press Ctrl+J or Ctrl+E to submit, Enter for new line, Shift+Tab to toggle mode)"
 )
 PERMISSION_MODE_NORMAL_LABEL = "● Normal mode (asks before destructive)"
+PERMISSION_MODE_AUTO_APPROVE_LABEL = "● Auto-approve mode (no prompts, allowlist on)"
 PERMISSION_MODE_YOLO_LABEL = "● YOLO mode (auto-approve, allowlist off)"
 PERMISSION_MODE_TOGGLED = "Permission mode: {label}"
 STATUS_BAR_BRANCH_CLEAN_HTML = (

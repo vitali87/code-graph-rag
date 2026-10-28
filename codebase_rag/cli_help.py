@@ -474,7 +474,10 @@ HELP_ORCHESTRATOR = (
     "(for example openai:gpt-5.6-terra or ollama:qwen2.5-coder)."
 )
 HELP_CYPHER_MODEL = "Model used to generate Cypher, in provider:model form."
-HELP_NO_CONFIRM = "Skip edit confirmation prompts."
+HELP_NO_CONFIRM = (
+    "Auto-approve file edits and shell commands that need approval "
+    "(the shell allowlist stays on)."
+)
 HELP_NO_INSTRUCTIONS = (
     "Do not load ~/.cgr.md or <repo>/.cgr.md into the session prompt."
 )

@@ -43,6 +43,19 @@ class SessionState:
     def is_yolo(self) -> bool:
         return self.permission_mode == PermissionMode.YOLO
 
+    def effective_permission_mode(self) -> PermissionMode:
+        """The mode the session actually approves in: YOLO when toggled on,
+        else AUTO_APPROVE when --no-confirm cleared `confirm_edits`, else
+        NORMAL. Every approval decision and every label reads this one value."""
+        if self.is_yolo():
+            return PermissionMode.YOLO
+        if not self.confirm_edits:
+            return PermissionMode.AUTO_APPROVE
+        return PermissionMode.NORMAL
+
+    def prompts_for_approval(self) -> bool:
+        return self.effective_permission_mode() == PermissionMode.NORMAL
+
     def cycle_permission_mode(self) -> PermissionMode:
         self.permission_mode = (
             PermissionMode.YOLO

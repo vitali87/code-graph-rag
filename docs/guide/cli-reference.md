@@ -102,7 +102,7 @@ cgr start --repo-path /path/to/repo [OPTIONS]
 | `--output`, `-o` | Write this repository's project graph to PATH as JSON. Requires --update-graph. Use cgr export for the whole shared graph. |
 | `--orchestrator` | Model for the planning assistant, in provider:model form (for example openai:gpt-5.6-terra or ollama:qwen2.5-coder). |
 | `--cypher` | Model used to generate Cypher, in provider:model form. |
-| `--no-confirm` | Skip edit confirmation prompts. |
+| `--no-confirm` | Auto-approve file edits and shell commands that need approval (the shell allowlist stays on). |
 | `--no-instructions` | Do not load ~/.cgr.md or &lt;repo>/.cgr.md into the session prompt. |
 | `--batch-size` | Flush to Memgraph after this many buffered nodes or relationships. [x>=1] |
 | `--project-name` | Project name to store in the graph. Defaults to the directory name plus an 8-hex hash of its absolute path (e.g. myrepo__1a2b3c4d), so two checkouts on one machine get different names barring a rare hash collision; machines that sync into one graph should each pass their own name, since the same path hashes alike on every machine. cgr status lists the names already stored. A chosen name has no hash: syncing a repository under a name another repository already indexes needs --yes and replaces that project. |
@@ -197,7 +197,7 @@ cgr optimize <language> --repo-path /path/to/repo [OPTIONS]
 | `--reference-document` | Reference document to use during optimisation. |
 | `--orchestrator` | Model for the planning assistant, in provider:model form (for example openai:gpt-5.6-terra or ollama:qwen2.5-coder). |
 | `--cypher` | Model used to generate Cypher, in provider:model form. |
-| `--no-confirm` | Skip edit confirmation prompts. |
+| `--no-confirm` | Auto-approve file edits and shell commands that need approval (the shell allowlist stays on). |
 | `--no-instructions` | Do not load ~/.cgr.md or &lt;repo>/.cgr.md into the session prompt. |
 | `--batch-size` | Flush to Memgraph after this many buffered nodes or relationships. [x>=1] |
 <!-- /SECTION:cli_options_optimize -->

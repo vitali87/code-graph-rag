@@ -349,9 +349,7 @@ async def _process_tool_approvals(
         tool_args = _to_tool_args(
             call.tool_name, RawToolArgs(**call.args_as_dict()), tool_names
         )
-        will_prompt = (
-            app_context.session.confirm_edits and not app_context.session.is_yolo()
-        )
+        will_prompt = app_context.session.prompts_for_approval()
 
         if will_prompt:
             app_context.console.print(
@@ -886,12 +884,15 @@ def _build_user_prompt(question: str) -> str | list[UserContent]:
     return content or question
 
 
+_PERMISSION_MODE_LABELS = {
+    cs.PermissionMode.NORMAL: cs.PERMISSION_MODE_NORMAL_LABEL,
+    cs.PermissionMode.AUTO_APPROVE: cs.PERMISSION_MODE_AUTO_APPROVE_LABEL,
+    cs.PermissionMode.YOLO: cs.PERMISSION_MODE_YOLO_LABEL,
+}
+
+
 def _permission_mode_label() -> str:
-    return (
-        cs.PERMISSION_MODE_YOLO_LABEL
-        if app_context.session.is_yolo()
-        else cs.PERMISSION_MODE_NORMAL_LABEL
-    )
+    return _PERMISSION_MODE_LABELS[app_context.session.effective_permission_mode()]
 
 
 def _git_state() -> tuple[str, bool] | None:
@@ -2162,7 +2163,7 @@ def main_single_query(
         )
         # The same rule as the chat loop's prompt, with no one to prompt:
         # --no-confirm (or YOLO) approves, anything else is denied.
-        approve = not app_context.session.confirm_edits or app_context.session.is_yolo()
+        approve = not app_context.session.prompts_for_approval()
         answer = asyncio.run(
             run_to_text_answer(
                 rag_agent,
