@@ -703,13 +703,13 @@ def js_ts_pattern_names(target: Node) -> set[str]:
     return names
 
 
-def js_ts_own_scope_names(func_node: Node) -> frozenset[str]:
+def js_ts_own_scope_names(func_node: Node, assigned: bool = True) -> frozenset[str]:
     """Every name a function binds itself rather than reads from the
     function around it: a function expression's own name, its parameters,
     its declarations, loop and catch variables, the functions and classes
     it declares, and a plain name it assigns (which may hold another type
-    by the time it is read). Nested functions are their own scopes and are
-    not entered (issue #3200)."""
+    by the time it is read), unless `assigned` is False. Nested functions
+    are their own scopes and are not entered (issue #3200)."""
     names: set[str] = set()
     if func_node.type in _JS_TS_SELF_NAMED_FUNCTIONS and (
         (name_node := func_node.child_by_field_name(cs.FIELD_NAME)) is not None
@@ -723,7 +723,7 @@ def js_ts_own_scope_names(func_node: Node) -> frozenset[str]:
     stack: list[Node] = list(body.children) if body is not None else []
     while stack:
         node = stack.pop()
-        names |= _js_ts_names_bound_by(node)
+        names |= _js_ts_names_bound_by(node, assigned)
         # A nested function binds its own name here, the rest in its scope.
         if node.type not in cs.JS_TS_FUNCTION_NODES:
             stack.extend(node.children)
@@ -738,7 +738,7 @@ _JS_TS_PATTERN_FIELDS = {
 }
 
 
-def _js_ts_names_bound_by(node: Node) -> set[str]:
+def _js_ts_names_bound_by(node: Node, assigned: bool = True) -> set[str]:
     # The names one node binds in the scope it sits in.
     names: set[str] = set()
     if node.type in _JS_TS_DECLARATION_NAMED:
@@ -748,7 +748,7 @@ def _js_ts_names_bound_by(node: Node) -> set[str]:
     if (field := _JS_TS_PATTERN_FIELDS.get(node.type)) is not None:
         if (target := node.child_by_field_name(field)) is not None:
             names |= js_ts_pattern_names(target)
-    elif node.type == cs.TS_JS_ASSIGNMENT_EXPRESSION:
+    elif assigned and node.type == cs.TS_JS_ASSIGNMENT_EXPRESSION:
         left = node.child_by_field_name(cs.FIELD_LEFT)
         if (
             left is not None

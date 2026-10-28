@@ -30,7 +30,7 @@ from .py.ast_analyzer import own_scope_names
 from .rs import RustTypeInferenceEngine
 from .rs import utils as rs_utils
 from .rs.type_inference import is_constructor_guess
-from .utils import follow_reexports
+from .utils import follow_reexports, safe_decode_text
 
 if TYPE_CHECKING:
     from .factory import ASTCacheProtocol
@@ -69,6 +69,37 @@ def _enclosing_function(
         if current.type in function_types:
             return current
         current = current.parent
+    return None
+
+
+def _nearest_python_class(node: ASTNode) -> ASTNode | None:
+    current = node.parent
+    while current is not None and current.type != cs.TS_PY_CLASS_DEFINITION:
+        current = current.parent
+    return current
+
+
+def _python_class_context(
+    scope: ASTNode, caller_node: ASTNode, class_context: str | None
+) -> str | None:
+    # The class whose `self` `scope` sees: the nearest class around it, as
+    # the call processor names it for a caller there. `class_context` is the
+    # one around the caller, which differs when the caller is a method of a
+    # class defined inside `scope` (Greptile on #3331). A qualified name is
+    # structural, so each def and class on the way out drops its own
+    # segment; one that does not match leaves the class unknown, not guessed.
+    target = _nearest_python_class(scope)
+    node = _nearest_python_class(caller_node)
+    qn = class_context
+    while node is not None and qn:
+        if target is not None and node.id == target.id:
+            return qn
+        if node.type in (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION):
+            head, _, leaf = qn.rpartition(cs.SEPARATOR_DOT)
+            if leaf != safe_decode_text(node.child_by_field_name(cs.FIELD_NAME)):
+                return None
+            qn = head
+        node = node.parent
     return None
 
 
@@ -241,7 +272,9 @@ class TypeInferenceEngine:
         # The own-scope types of each enclosing function, for the module
         # whose callers are being walked: every nested caller of a function
         # reads the same map, which would otherwise be rebuilt per caller.
-        self._scope_types_memo: dict[tuple[int, int, int], _ScopeBindings] = {}
+        self._scope_types_memo: dict[
+            tuple[int, int, int, str | None], _ScopeBindings
+        ] = {}
         self._scope_types_module: str | None = None
         # Shared reference (as with class_field_types): C# partial-class part
         # groups, populated during ingestion and read by the C# resolver to
@@ -514,11 +547,17 @@ class TypeInferenceEngine:
         hidden = set(self._own_scope_names(caller_node, language))
         captured: dict[str, str] = {}
         pos = caller_node.start_byte
+        python = language == cs.SupportedLanguage.PYTHON
         while scope is not None:
             # Both builders type only what `scope` itself binds, so every
             # entry is the enclosing scope's own variable (or `self.<attr>`).
             bindings = self._scope_variable_types(
-                scope, module_qn, language, class_context
+                scope,
+                module_qn,
+                language,
+                _python_class_context(scope, caller_node, class_context)
+                if python
+                else None,
             )
             # Only the spans around the caller, innermost first: a block's
             # `let r` hides the `r` of the block around it, and one in a
@@ -557,7 +596,7 @@ class TypeInferenceEngine:
         if module_qn != self._scope_types_module:
             self._scope_types_memo.clear()
             self._scope_types_module = module_qn
-        key = (scope.id, scope.start_byte, scope.end_byte)
+        key = (scope.id, scope.start_byte, scope.end_byte, class_context)
         if (cached := self._scope_types_memo.get(key)) is not None:
             return cached
         bindings: _ScopeBindings

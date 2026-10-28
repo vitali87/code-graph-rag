@@ -172,6 +172,28 @@ _CAPTURED = {
         "c.outer.inner",
         "c.Range.reset",
     ),
+    "js-rewritten-with-the-same-class": (
+        # A write that agrees keeps the type.
+        "c.js",
+        _JS_CLASSES + "function outer() {\n  let r = new Range();\n  r = new Range();\n"
+        "  function inner() { return r.reset(); }\n  return inner;\n}\n"
+        "module.exports = { outer };\n",
+        "c.outer.inner",
+        "c.Range.reset",
+    ),
+    "py-class-in-the-method": (
+        # `Inner.run` reads the method's `r`, which `self.make()` types
+        # through the method's own `self`, an `Outer`, not an `Inner`.
+        "a.py",
+        _PY_CLASSES + "class Outer:\n    def make(self):\n        return Range()\n\n"
+        "    def method(self):\n        r = self.make()\n\n"
+        "        class Inner:\n            def make(self):\n"
+        "                return Other()\n\n"
+        "            def run(self):\n                return r.reset()\n\n"
+        "        return Inner\n",
+        "a.Outer.method.Inner.run",
+        "a.Range.reset",
+    ),
 }
 
 
@@ -275,6 +297,23 @@ _HIDDEN = {
         "c.outer.cb",
         None,
     ),
+    "js-rewritten-in-the-enclosing-function": (
+        # `inner` may run after `r = new Other()`.
+        "c.js",
+        _JS_CLASSES + "function outer() {\n  let r = new Range();\n  r = new Other();\n"
+        "  function inner() { return r.reset(); }\n  return inner;\n}\n"
+        "module.exports = { outer };\n",
+        "c.outer.inner",
+        None,
+    ),
+    "js-rewritten-in-a-sibling-function": (
+        "c.js",
+        _JS_CLASSES + "function outer(o) {\n  let r = new Range();\n"
+        "  function swap() { r = o; }\n  function inner() { return r.reset(); }\n"
+        "  return [swap, inner];\n}\nmodule.exports = { outer };\n",
+        "c.outer.inner",
+        None,
+    ),
     "js-loop-variable-around": (
         "c.js",
         _JS_CLASSES + "function outer(items) {\n  const r = new Range();\n"
@@ -324,3 +363,35 @@ def test_a_nested_function_types_a_captured_interface_parameter(
     calls = _reset_calls(temp_repo, {"b.ts": text}, mock_ingestor)
     assert calls.get("b.outer.cb") == calls.get("b.outer"), calls
     assert ("b.IRange.reset", _EXACT) in calls.get("b.outer.cb", set()), calls
+
+
+def test_a_sibling_writing_its_own_variable_keeps_the_captured_type(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `swap` declares its own `r`, so its write is not to the one `inner`
+    # captures.
+    text = _JS_CLASSES + (
+        "function outer(o) {\n  let r = new Range();\n"
+        "  function swap() { let r; r = o; return r; }\n"
+        "  function inner() { return r.reset(); }\n  return [swap, inner];\n}\n"
+        "module.exports = { outer };\n"
+    )
+    calls = _reset_calls(temp_repo, {"c.js": text}, mock_ingestor)
+    assert calls.get("c.outer.inner") == {("c.Range.reset", _EXACT)}, calls
+
+
+def test_a_rewritten_annotated_variable_keeps_its_annotation(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `new Range()` types `r` as the class until `r` is written again; the
+    # declared `IRange` still holds for every value it is given.
+    text = _TS_INTERFACE_CLASSES + (
+        "class Spare implements IRange { reset(): number { return 3; } }\n"
+        "export function outer(): () => number {\n"
+        "  let r: IRange = new Range();\n  r = new Spare();\n"
+        "  const cb = (): number => r.reset();\n  return cb;\n}\n"
+    )
+    calls = _reset_calls(temp_repo, {"b.ts": text}, mock_ingestor)
+    targets = calls.get("b.outer.cb", set())
+    assert ("b.IRange.reset", _EXACT) in targets, calls
+    assert ("b.Range.reset", _EXACT) not in targets, calls
