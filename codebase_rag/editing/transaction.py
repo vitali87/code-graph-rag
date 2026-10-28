@@ -23,7 +23,7 @@ import os
 import shutil
 import tempfile
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
@@ -82,7 +82,7 @@ class TransactionError(ValueError):
 
 
 @contextmanager
-def _repo_lock(root: Path) -> Iterator[EditLock]:
+def _repo_lock(root: Path) -> Generator[EditLock]:
     """Hold the checkout's edit lock (see `EditLock`) until the block ends."""
     with EditLock(root) as lock:
         lock.acquire()
@@ -619,7 +619,7 @@ def _undo_newest(root: Path) -> TransactionOutcome | None:
 
 
 @contextmanager
-def transaction(repo_root: Path) -> Iterator[EditTransaction]:
+def transaction(repo_root: Path) -> Generator[EditTransaction]:
     """`with transaction(root) as tx: tx.stage(...)`; rolls back on exception."""
     tx = EditTransaction(repo_root)
     try:
