@@ -482,7 +482,6 @@ class MCPToolsRegistry:
         self._rag_agent: Agent[None, str | DeferredToolRequests] | None = None
 
         self._semantic_search_tool = None
-        self._semantic_search_available = False
 
         if has_semantic_dependencies():
             from codebase_rag.tools.semantic_search import (
@@ -490,7 +489,6 @@ class MCPToolsRegistry:
             )
 
             self._semantic_search_tool = create_semantic_search_tool(self.ingestor)
-            self._semantic_search_available = True
         else:
             logger.info(lg.MCP_SEMANTIC_NOT_AVAILABLE)
 
@@ -816,7 +814,7 @@ class MCPToolsRegistry:
                 returns_json=False,
             ),
         }
-        if self._semantic_search_available:
+        if self._semantic_search_tool is not None:
             self._tools[cs.MCPToolName.SEMANTIC_SEARCH] = ToolMetadata(
                 name=cs.MCPToolName.SEMANTIC_SEARCH,
                 description=td.MCP_TOOLS[cs.MCPToolName.SEMANTIC_SEARCH],
@@ -3723,13 +3721,7 @@ class MCPToolsRegistry:
                     return CodeSnippetResultDict(
                         error=snippet, found=False, error_message=snippet
                     )
-                result: CodeSnippetResultDict | None = snippet.model_dump()
-                if result is None:
-                    return CodeSnippetResultDict(
-                        error=te.MCP_TOOL_RETURNED_NONE,
-                        found=False,
-                        error_message=te.MCP_INVALID_RESPONSE,
-                    )
+                result: CodeSnippetResultDict = snippet.model_dump()
                 if result.get(cs.MCP_KEY_FOUND) is False:
                     # No snippet is a refusal, worded as `callers` words an
                     # unknown name when the graph has none (issue #3244).

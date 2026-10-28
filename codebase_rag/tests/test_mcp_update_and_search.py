@@ -98,7 +98,7 @@ class TestSemanticSearchRegistration:
             )
 
         assert cs.MCPToolName.SEMANTIC_SEARCH not in registry._tools
-        assert registry._semantic_search_available is False
+        assert registry._semantic_search_tool is None
 
     def test_semantic_search_registered_with_deps(
         self, temp_project_root: Path
@@ -125,7 +125,7 @@ class TestSemanticSearchRegistration:
             )
 
             assert cs.MCPToolName.SEMANTIC_SEARCH in registry._tools
-            assert registry._semantic_search_available is True
+            assert registry._semantic_search_tool is mock_tool
 
     async def test_semantic_search_calls_tool(self, temp_project_root: Path) -> None:
         mock_ingestor = MagicMock()
