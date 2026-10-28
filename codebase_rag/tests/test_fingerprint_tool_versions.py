@@ -202,7 +202,7 @@ def test_the_fingerprint_uses_the_frontends_own_applicability_predicate(
     silently wrong graph.
     """
     from codebase_rag import constants as cs
-    from codebase_rag.parsers.frontends import FRONTENDS
+    from codebase_rag.parsers.frontends.builtin import FRONTENDS
 
     (tmp_path / "go.mod").write_text("module example.com/x\n\ngo 1.23\n")
 

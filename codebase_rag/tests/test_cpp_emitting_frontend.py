@@ -14,7 +14,8 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.config import settings
-from codebase_rag.parsers.frontends import EMITTING_FRONTENDS, FrontendPhase
+from codebase_rag.parsers.frontends import FrontendPhase
+from codebase_rag.parsers.frontends.builtin import EMITTING_FRONTENDS
 
 
 def test_cpp_registers_an_emitting_frontend() -> None:

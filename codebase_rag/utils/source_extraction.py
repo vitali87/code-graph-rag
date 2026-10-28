@@ -106,8 +106,8 @@ def _notebook_source_lines(
     """Lines of a notebook's Python source, which the indexer recorded its
     lines against: the same lines of the JSON on disk would be JSON strings
     (issue #2480)."""
-    # Imported here: the parsers package loads every processor, which a
-    # snippet read of any other kind of file must not pay for.
+    # Imported here: this module loads at `cgr` start-up, which imports
+    # nothing from the parsers package (test_cli_startup_imports).
     from ..parsers.notebook import notebook_source_text
 
     try:

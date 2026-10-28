@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from codebase_rag import constants as cs
 from codebase_rag.parsers.frontends import (
-    FRONTENDS,
     LanguageFrontend,
     ResolvedCallSite,
     SemanticFacts,
     empty_facts,
     register_frontend,
 )
+from codebase_rag.parsers.frontends.builtin import FRONTENDS
 
 
 def test_csharp_frontend_is_registered() -> None:

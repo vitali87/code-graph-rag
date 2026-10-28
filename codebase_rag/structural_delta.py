@@ -1817,7 +1817,8 @@ def _call_starting_at(root: Node, row: int, col: int) -> Node | None:
     # A member call's site starts at its name, `__init__` in
     # `Base.__init__(self, a)`, not where the call node starts (issue #3166);
     # a graph indexed before that recorded the node's start, so both name it.
-    # Local import: the parsers package pulls in every language processor.
+    # Local import: this module loads at `cgr` start-up (through editing),
+    # which imports nothing from the parsers package.
     from .parsers.utils import call_site_start
 
     point = (row, col)

@@ -17,12 +17,9 @@ never worse.
 
 from __future__ import annotations
 
-# Import for side effect: each frontend module self-registers into the registry.
-from . import cpp as _cpp  # noqa: E402,F401  (registers CppLibclangFrontend)
-from . import csharp as _csharp  # noqa: E402,F401  (registers CSharpFrontend)
-from . import go as _go  # noqa: E402,F401  (registers GoFrontend)
-from . import java as _java  # noqa: E402,F401  (registers JavaJavacFrontend)
-from . import python as _python  # noqa: E402,F401  (registers PythonJediFrontend)
+# The bundled frontends register from `builtin`, not from here: each one loads
+# its language package, which imports this package's protocol, so registering
+# on package import closed a cycle whenever a language package loaded first.
 from .protocol import (
     CallSiteKey,
     EmittingFrontend,

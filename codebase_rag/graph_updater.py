@@ -84,13 +84,8 @@ from .parsers.endpoints import (
 )
 from .parsers.factory import ProcessorFactory
 from .parsers.field_nodes import PendingFieldType
-from .parsers.frontends import (
-    EMITTING_FRONTENDS,
-    FRONTENDS,
-    FrontendEmitContext,
-    FrontendPhase,
-    SemanticFacts,
-)
+from .parsers.frontends import FrontendEmitContext, FrontendPhase, SemanticFacts
+from .parsers.frontends.builtin import EMITTING_FRONTENDS, FRONTENDS
 from .parsers.frontends.protocol import QueryCall
 from .parsers.go import interfaces as go_ifaces
 from .parsers.go import read_package_clause

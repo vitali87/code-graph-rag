@@ -17,11 +17,11 @@ from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.frontends import (
-    EMITTING_FRONTENDS,
     FrontendEmitContext,
     FrontendEmitResult,
     FrontendPhase,
 )
+from codebase_rag.parsers.frontends.builtin import EMITTING_FRONTENDS
 
 _MARKER_LABEL = cs.NodeLabel.MODULE.value
 

@@ -12,7 +12,8 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.parsers.frontends import FRONTENDS, SemanticFacts
+from codebase_rag.parsers.frontends import SemanticFacts
+from codebase_rag.parsers.frontends.builtin import FRONTENDS
 from codebase_rag.parsers.frontends.go import GoFrontend, _adapt_go_semantic_facts
 from codebase_rag.parsers.frontends.protocol import (
     ImplementsPair,
