@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 from tree_sitter import Language, Node, QueryCursor
 
 from ... import constants as cs
-from ..utils import get_cached_query, safe_decode_text
+from ..utils import get_cached_query, note_query_fallback, safe_decode_text
 
 if TYPE_CHECKING:
     from ...types_defs import LanguageQueries
@@ -377,11 +377,14 @@ def find_return_statements(
     node: Node, return_nodes: list[Node], language_obj=None
 ) -> None:
     if language_obj is not None:
-        q = get_cached_query(language_obj, _JS_RETURN_QUERY)
-        return_nodes.extend(QueryCursor(q).captures(node).get("return_stmt", []))
-        return
-    # No grammar given: walk the tree. The query is a constant compiled against
-    # the grammar that parsed `node`, so its failure is a bug and is raised.
+        try:
+            q = get_cached_query(language_obj, _JS_RETURN_QUERY)
+            captures = QueryCursor(q).captures(node)
+        except Exception as exc:
+            note_query_fallback(_JS_RETURN_QUERY, exc)
+        else:
+            return_nodes.extend(captures.get("return_stmt", []))
+            return
     stack: list[Node] = [node]
     while stack:
         current = stack.pop()

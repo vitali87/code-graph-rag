@@ -1689,3 +1689,6 @@ TRACE_EBPF_MAPPING_DETAIL = "  unsymbolised[{name}]={count}"
 TRACE_EBPF_UNMAPPED = (
     "{count} frames at {paths} unmapped build paths (add --path-map to re-anchor)"
 )
+TRAVERSAL_QUERY_FALLBACK = (
+    "A traversal query failed, so its tree walk runs instead: {query}: {error}"
+)

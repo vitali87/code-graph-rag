@@ -16,7 +16,7 @@ from ...types_defs import (
     NodeType,
 )
 from ..import_processor import ImportProcessor
-from ..utils import get_cached_query, safe_decode_text
+from ..utils import get_cached_query, note_query_fallback, safe_decode_text
 from .forward_refs import unquote_forward_refs
 from .utils import resolve_class_name, resolve_dotted_class
 
@@ -423,13 +423,19 @@ class PythonVariableAnalyzerMixin(_VarBase):
         py_lang_queries = self.queries.get(cs.SupportedLanguage.PYTHON)
         py_lang_obj = py_lang_queries["language"] if py_lang_queries else None
         if py_lang_obj is not None:
-            # No catch: it also covered _process_self_assignment, so a failure
-            # part-way re-ran every assignment through the walk below.
-            q = get_cached_query(py_lang_obj, cs.PY_ASSIGNMENT_QUERY)
-            for assign_node in QueryCursor(q).captures(node).get("assignment", []):
-                self._process_self_assignment(assign_node, local_var_types, module_qn)
-            return
-        # No grammar loaded (an analyzer built without queries): walk the tree.
+            # Only the query is guarded. Covering the processing too re-ran
+            # every assignment through the walk after a failure part-way.
+            try:
+                q = get_cached_query(py_lang_obj, cs.PY_ASSIGNMENT_QUERY)
+                captures = QueryCursor(q).captures(node)
+            except Exception as exc:
+                note_query_fallback(cs.PY_ASSIGNMENT_QUERY, exc)
+            else:
+                for assign_node in captures.get("assignment", []):
+                    self._process_self_assignment(
+                        assign_node, local_var_types, module_qn
+                    )
+                return
         stack: list[ASTNode] = [node]
         while stack:
             current = stack.pop()

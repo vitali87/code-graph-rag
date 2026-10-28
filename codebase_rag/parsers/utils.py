@@ -166,6 +166,24 @@ _QUERY_CACHE: dict[tuple[Language, str], Query] = {}
 _QUERY_LAST: tuple[tuple[Language, str], Query] | None = None
 
 
+# The traversal queries whose failure has been reported; reported once each,
+# since every later call falls back the same way.
+_FALLBACK_REPORTED: set[str] = set()
+
+
+def note_query_fallback(query_text: str, error: Exception) -> None:
+    """Report, once per query, that a traversal query failed and its tree
+    walk, which gives the same answer more slowly, ran instead."""
+    if query_text in _FALLBACK_REPORTED:
+        return
+    _FALLBACK_REPORTED.add(query_text)
+    logger.warning(
+        ls.TRAVERSAL_QUERY_FALLBACK.format(
+            query=query_text.strip().splitlines()[0], error=error
+        )
+    )
+
+
 def get_cached_query(language_obj: Language, query_text: str) -> Query:
     # Key by the Language itself, never id(): Language hashes by grammar pointer,
     # so wrappers dedupe, and the dict pins the key so a GC'd wrapper's address

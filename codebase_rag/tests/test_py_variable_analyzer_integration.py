@@ -770,3 +770,47 @@ class Service:
 
         assert with_queries[0]["self.name"] == "str"
         assert infer() == with_queries
+
+    def test_a_processing_error_is_not_rerun_through_the_walk(
+        self,
+        python_parser: Parser,
+        engine_with_queries: PythonTypeInferenceEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The query's try also covered processing its assignments, so an
+        # error part-way re-processed every assignment through the walk.
+        tree = python_parser.parse(
+            b"class S:\n    def __init__(self):\n        self.a = 1\n        self.b = 2\n"
+        )
+        init = _find_func_node(tree.root_node, "__init__")
+        assert init is not None
+        calls: list[object] = []
+
+        def explode(*args: object, **kwargs: object) -> None:
+            calls.append(args)
+            raise ValueError("processing failed")
+
+        monkeypatch.setattr(
+            PythonTypeInferenceEngine, "_process_self_assignment", explode
+        )
+        with pytest.raises(ValueError, match="processing failed"):
+            engine_with_queries._analyze_self_assignments(init, {}, "test.module")
+        assert len(calls) == 1
+
+    def test_a_failing_query_is_reported_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from loguru import logger
+
+        from codebase_rag.parsers import utils as parser_utils
+
+        monkeypatch.setattr(parser_utils, "_FALLBACK_REPORTED", set())
+        messages: list[str] = []
+        sink = logger.add(messages.append, level="WARNING", format="{message}")
+        try:
+            for _ in range(3):
+                parser_utils.note_query_fallback("(x) @y", RuntimeError("bad"))
+        finally:
+            logger.remove(sink)
+        assert len(messages) == 1
+        assert "(x) @y" in messages[0]
