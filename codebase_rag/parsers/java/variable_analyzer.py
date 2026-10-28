@@ -114,10 +114,12 @@ class JavaVariableAnalyzerMixin:
     _lookup_in_progress: set[str]
     # Annotation only, never a def: this mixin precedes JavaMethodResolverMixin
     # in the MRO, so even an @abstractmethod stub here would SHADOW the real
-    # implementation and silently resolve every call to None.
+    # implementation and silently resolve every call to None. `...` because a
+    # Callable's parameters are positional-only, and ty rejects that as an
+    # override of the resolver's methods, whose parameters have names.
     _do_resolve_java_method_call: Callable[..., tuple[str, str] | None]
-    _declared_return_type_of: Callable[[str], str | None]
-    _resolve_java_method_return_type: Callable[[str, str], str | None]
+    _declared_return_type_of: Callable[..., str | None]
+    _resolve_java_method_return_type: Callable[..., str | None]
 
     @abstractmethod
     def _resolve_java_type_name(self, type_name: str, module_qn: str) -> str: ...
