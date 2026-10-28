@@ -433,7 +433,7 @@ wheels = [
 
 [[package]]
 name = "code-graph-rag"
-version = "0.3.20"
+version = "0.3.21"
 source = { editable = "." }
 dependencies = [
     { name = "certifi" },
