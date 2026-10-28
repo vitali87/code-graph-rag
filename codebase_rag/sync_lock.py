@@ -60,7 +60,7 @@ import os
 import sys
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -330,7 +330,7 @@ def _reenter(key: str) -> bool:
 @contextmanager
 def repo_sync_lock(
     repo_path: Path, project_name: str, *, wait: bool = False
-) -> Iterator[None]:
+) -> Generator[None]:
     """Hold the sync lock of the checkout at `repo_path` for the block.
 
     Raises `SyncInProgressError`, naming the holder, when another writer
