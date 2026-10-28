@@ -1087,15 +1087,6 @@ def _is_placeholder_hash_cache(cache_path: Path) -> bool:
         return False
 
 
-def _natural_qn(qualified_name: str) -> str:
-    """`pkg.T.M@3` -> `pkg.T.M`: the duplicate marker lives in the last segment.
-
-    Delegates so the marker grammar has one definition. Cutting at the first
-    `@` destroys a C# verbatim identifier (`@event` -> ``), issue #2017.
-    """
-    return qn_markers.natural_qn(qualified_name)
-
-
 def _walk_position(rel_path: str) -> tuple[tuple[str, ...], str]:
     """Where `walk_eligible_files` yields a file, which is the order a clean
     build parses in: a directory's files by name, then its subdirectories'."""
@@ -4349,7 +4340,7 @@ class GraphUpdater:
             return None
         # Pass 2 keys an impl method by its impl target and name, which the
         # natural qn spells, and records none for a trait's own methods.
-        natural = _natural_qn(qn)
+        natural = qn_markers.natural_qn(qn)
         owner = natural.rpartition(cs.SEPARATOR_DOT)[0]
         if self.function_registry.get(owner) == NodeType.INTERFACE:
             return None
@@ -6298,12 +6289,12 @@ class GraphUpdater:
             type_inference.method_return_types.keys()
             | type_inference.csharp_method_return_types.keys()
         )
-        owned_natural = {_natural_qn(qn) for qn in owned_qns}
+        owned_natural = {qn_markers.natural_qn(qn) for qn in owned_qns}
         stale_method_qns = [
             qn
             for qn in method_return_types
             if qn in qns_to_remove
-            or _natural_qn(qn) in owned_natural
+            or qn_markers.natural_qn(qn) in owned_natural
             or (
                 qn not in foreign_qns
                 and any(
@@ -6388,7 +6379,7 @@ class GraphUpdater:
         def owned(qn: str) -> bool:
             return (
                 qn in qns_to_remove
-                or _natural_qn(qn) in owned_natural
+                or qn_markers.natural_qn(qn) in owned_natural
                 or (qn not in foreign_qns and self._under(qn, module_qn_prefixes))
             )
 

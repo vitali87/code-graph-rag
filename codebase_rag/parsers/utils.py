@@ -254,7 +254,7 @@ def extract_modifiers_and_decorators(
     if not query:
         return [], []
 
-    cursor = get_query_cursor(query)
+    cursor = QueryCursor(query)
 
     body_node = node.child_by_field_name(cs.FIELD_BODY)
     header_end_byte = body_node.start_byte if body_node else node.end_byte
@@ -450,10 +450,6 @@ def safe_decode_text(node: ASTNode | TreeSitterNodeProtocol | None) -> str | Non
     if isinstance(text_bytes, bytes):
         return _cached_decode_bytes(text_bytes)
     return str(text_bytes)
-
-
-def get_query_cursor(query: Query) -> QueryCursor:
-    return QueryCursor(query)
 
 
 def safe_decode_with_fallback(node: ASTNode | None, fallback: str = "") -> str:

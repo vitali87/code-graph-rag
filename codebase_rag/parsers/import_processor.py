@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from loguru import logger
-from tree_sitter import Node, Parser
+from tree_sitter import Node, Parser, QueryCursor
 
 from .. import constants as cs
 from .. import logs as ls
@@ -89,7 +89,6 @@ from .stdlib_extractor import (
 )
 from .utils import (
     follow_reexports,
-    get_query_cursor,
     node_site_properties,
     safe_decode_text,
     safe_decode_with_fallback,
@@ -1819,7 +1818,7 @@ class ImportProcessor:
             if pre_captures is not None:
                 captures = pre_captures
             else:
-                cursor = get_query_cursor(imports_query)
+                cursor = QueryCursor(imports_query)
                 captures = sorted_captures(cursor, root_node)
 
             match language:
@@ -6799,7 +6798,7 @@ class ImportProcessor:
                         module_qn,
                         call_node,
                         module_path,
-                        self._lua_extract_pcall_assignment_lhs(call_node),
+                        lua_utils.extract_pcall_second_identifier(call_node),
                     )
 
             elif self._lua_is_stdlib_call(call_node):
@@ -7373,9 +7372,6 @@ class ImportProcessor:
         return lua_utils.extract_assigned_name(
             call_node, accepted_var_types=(cs.TS_IDENTIFIER,)
         )
-
-    def _lua_extract_pcall_assignment_lhs(self, call_node: Node) -> str | None:
-        return lua_utils.extract_pcall_second_identifier(call_node)
 
     def _resolve_lua_module_path(self, import_path: str, current_module: str) -> str:
         if import_path.startswith(cs.PATH_RELATIVE_PREFIX) or import_path.startswith(

@@ -44,9 +44,8 @@ def test_the_readers_agree_with_the_table(
     name: str, end: str, every: str, line: int | None
 ) -> None:
     from codebase_rag.duplicates import _qn_normalized
-    from codebase_rag.trace.resolution import _natural_qualified_name
 
-    assert _natural_qualified_name(name) == end
+    assert qn_markers.strip_dup_marker(name) == end
     assert _qn_normalized(name) == every
 
 

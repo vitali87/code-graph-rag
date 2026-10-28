@@ -64,7 +64,7 @@ class RustTypeInferenceEngine:
             if name_node is None or type_node is None:
                 continue
             if (name := safe_decode_text(name_node)) and (
-                type_name := self._bare_type_name(type_node)
+                type_name := _rust_bare_type_name(type_node)
             ):
                 fields[name] = type_name
         return fields
@@ -299,7 +299,7 @@ class RustTypeInferenceEngine:
         if body is not None and body.type == cs.TS_RS_STRUCT_EXPRESSION:
             struct_name = body.child_by_field_name(cs.FIELD_NAME)
             if struct_name is not None:
-                return self._bare_type_name(struct_name)
+                return _rust_bare_type_name(struct_name)
         return None
 
     def collect_closure_param_bindings(
@@ -346,7 +346,7 @@ class RustTypeInferenceEngine:
                 and pattern.type == cs.TS_IDENTIFIER
                 and type_node is not None
                 and (name := safe_decode_text(pattern))
-                and (type_name := self._bare_type_name(type_node))
+                and (type_name := _rust_bare_type_name(type_node))
             ):
                 bindings.append((closure.start_byte, closure.end_byte, name, type_name))
 
@@ -474,7 +474,7 @@ class RustTypeInferenceEngine:
         if inner is None:
             return None
         if outer_name in cs.RS_GUARD_WRAPPERS:
-            return self._bare_type_name(inner)
+            return _rust_bare_type_name(inner)
         if outer_name in cs.RS_DEREF_WRAPPERS:
             return self._guard_inner_type(inner)
         return None
@@ -745,9 +745,6 @@ class RustTypeInferenceEngine:
         while node.type == cs.TS_RS_TRY_EXPRESSION and node.child_count:
             node = node.children[0]
         return node
-
-    def _bare_type_name(self, type_node: Node) -> str | None:
-        return _rust_bare_type_name(type_node)
 
     def _binding_type_name(self, type_node: Node) -> str | None:
         # A local's declared type keeps a module path it is written with

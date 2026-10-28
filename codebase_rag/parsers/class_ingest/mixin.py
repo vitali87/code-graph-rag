@@ -594,9 +594,6 @@ class ClassIngestMixin:
             emitted += 1
         return emitted
 
-    def _find_cpp_exported_classes(self, root_node: Node) -> list[Node]:
-        return cpp_modules.find_cpp_exported_classes(root_node)
-
     def _ingest_classes_and_methods(
         self,
         root_node: Node,
@@ -618,7 +615,7 @@ class ClassIngestMixin:
             class_nodes = captures.get(cs.CAPTURE_CLASS, [])
 
         if language == cs.SupportedLanguage.CPP:
-            class_nodes.extend(self._find_cpp_exported_classes(root_node))
+            class_nodes.extend(cpp_modules.find_cpp_exported_classes(root_node))
 
         file_path = self.module_qn_to_file_path.get(module_qn)
 
@@ -2887,9 +2884,6 @@ class ClassIngestMixin:
         return csharp_utils.unique_carrier(
             self.csharp_namespaced_qns.get(class_name), self.csharp_partial_groups
         )
-
-    def _extract_cpp_base_class_name(self, parent_text: str) -> str:
-        return pe.extract_cpp_base_class_name(parent_text)
 
     def _get_node_type_for_inheritance(self, qualified_name: str) -> str:
         return rel.get_node_type_for_inheritance(qualified_name, self.function_registry)

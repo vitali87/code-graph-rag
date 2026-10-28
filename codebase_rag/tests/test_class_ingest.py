@@ -5,6 +5,7 @@ import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.class_ingest import parent_extraction as pe
 from codebase_rag.tests.conftest import get_relationships, run_updater
 
 
@@ -1385,57 +1386,33 @@ class TestExtractCppBaseClassName:
         )
 
     def test_extracts_simple_class_name(self, mixin_instance: GraphUpdater) -> None:
-        result = (
-            mixin_instance.factory.definition_processor._extract_cpp_base_class_name(
-                "BaseClass"
-            )
-        )
+        result = pe.extract_cpp_base_class_name("BaseClass")
         assert result == "BaseClass"
 
     def test_strips_template_parameters(self, mixin_instance: GraphUpdater) -> None:
-        result = (
-            mixin_instance.factory.definition_processor._extract_cpp_base_class_name(
-                "Container<int>"
-            )
-        )
+        result = pe.extract_cpp_base_class_name("Container<int>")
         assert result == "Container"
 
     def test_strips_nested_template_parameters(
         self, mixin_instance: GraphUpdater
     ) -> None:
-        result = (
-            mixin_instance.factory.definition_processor._extract_cpp_base_class_name(
-                "Container<std::vector<int>>"
-            )
-        )
+        result = pe.extract_cpp_base_class_name("Container<std::vector<int>>")
         assert result == "Container"
 
     def test_extracts_last_namespace_component(
         self, mixin_instance: GraphUpdater
     ) -> None:
-        result = (
-            mixin_instance.factory.definition_processor._extract_cpp_base_class_name(
-                "std::vector"
-            )
-        )
+        result = pe.extract_cpp_base_class_name("std::vector")
         assert result == "vector"
 
     def test_handles_namespaced_template(self, mixin_instance: GraphUpdater) -> None:
-        result = (
-            mixin_instance.factory.definition_processor._extract_cpp_base_class_name(
-                "std::vector<std::string>"
-            )
-        )
+        result = pe.extract_cpp_base_class_name("std::vector<std::string>")
         assert result == "vector"
 
     def test_handles_deeply_nested_namespace(
         self, mixin_instance: GraphUpdater
     ) -> None:
-        result = (
-            mixin_instance.factory.definition_processor._extract_cpp_base_class_name(
-                "boost::asio::ip::tcp"
-            )
-        )
+        result = pe.extract_cpp_base_class_name("boost::asio::ip::tcp")
         assert result == "tcp"
 
 

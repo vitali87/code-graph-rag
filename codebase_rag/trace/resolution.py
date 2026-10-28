@@ -246,11 +246,6 @@ class ResolutionStats:
         return sum(self.unresolved.values())
 
 
-def _natural_qualified_name(qualified_name: str) -> str:
-    """Strip the duplicate-definition marker (``qn@line`` or ``qn@line_col``)."""
-    return qn_markers.strip_dup_marker(qualified_name)
-
-
 class FrameResolver:
     """Maps runtime frame identities of one project to graph nodes."""
 
@@ -391,7 +386,7 @@ def _named_by(candidates: list[CallableNode], parts: list[str]) -> list[Callable
     return [
         n
         for n in candidates
-        if _natural_qualified_name(n.qualified_name).endswith(suffix)
+        if qn_markers.strip_dup_marker(n.qualified_name).endswith(suffix)
     ]
 
 
@@ -469,7 +464,7 @@ class JsFrameResolver:
             by_name = [
                 n
                 for n in candidates
-                if _natural_qualified_name(n.qualified_name).rsplit(
+                if qn_markers.strip_dup_marker(n.qualified_name).rsplit(
                     cs.SEPARATOR_DOT, 1
                 )[-1]
                 == frame.qualname
@@ -577,7 +572,7 @@ class PhpFrameResolver:
             node
             for nodes in self._callables_by_path.values()
             for node in nodes
-            if _natural_qualified_name(node.qualified_name).endswith(tail)
+            if qn_markers.strip_dup_marker(node.qualified_name).endswith(tail)
         ]
         if not matches:
             stats.record(cs.TraceUnresolvedReason.NO_MATCH)
@@ -719,7 +714,7 @@ class DotnetFrameResolver:
         matches = [
             n
             for n in self._nodes
-            if _signatureless(_natural_qualified_name(n.qualified_name)).endswith(
+            if _signatureless(qn_markers.strip_dup_marker(n.qualified_name)).endswith(
                 suffix
             )
         ]
@@ -776,9 +771,9 @@ class JvmFrameResolver:
             by_name = [
                 n
                 for n in candidates
-                if _signatureless(_natural_qualified_name(n.qualified_name)).endswith(
-                    suffix
-                )
+                if _signatureless(
+                    qn_markers.strip_dup_marker(n.qualified_name)
+                ).endswith(suffix)
             ]
         chosen = (
             _innermost_span_containing_line(by_name, frame.line)

@@ -10,7 +10,7 @@ helper that is correct in isolation says nothing about a caller that never
 invokes it -- the gap that let this bug survive #2014's partial fix.
 
 Three of the ten routed readers are reachable without graph fixtures and are
-tested behaviourally (`graph_updater._natural_qn`,
+tested behaviourally (`qn_markers.natural_qn`, which graph_updater calls,
 `call_processor._scope_qn_candidates`, `dead_code._is_root`). The remaining
 five are methods on parser classes whose fixtures would cost far more than
 the assertion is worth; `TestEveryRoutedReaderUsesTheHelper` is a structural
@@ -74,24 +74,19 @@ class TestHelperGrammar:
 
 
 class TestGraphUpdaterNaturalQn:
-    """`graph_updater._natural_qn`, the reader the issue names first."""
+    """`qn_markers.natural_qn`, the reader graph_updater calls, which the
+    issue names first."""
 
     def test_a_marked_qn_still_loses_its_marker(self) -> None:
-        from codebase_rag.graph_updater import _natural_qn
-
-        assert _natural_qn("pkg.T.M@3") == "pkg.T.M"
+        assert natural_qn("pkg.T.M@3") == "pkg.T.M"
 
     def test_a_verbatim_leaf_survives(self) -> None:
         """Was `pkg.` before the fix: the leaf was destroyed entirely."""
-        from codebase_rag.graph_updater import _natural_qn
-
-        assert _natural_qn("pkg.@event") == "pkg.@event"
+        assert natural_qn("pkg.@event") == "pkg.@event"
 
     def test_a_bare_verbatim_name_survives(self) -> None:
         """Was `''` before the fix -- an empty qualified name."""
-        from codebase_rag.graph_updater import _natural_qn
-
-        assert _natural_qn(VERBATIM) == VERBATIM
+        assert natural_qn(VERBATIM) == VERBATIM
 
     def test_a_duplicate_verbatim_type_keeps_its_name_and_loses_its_marker(
         self,
@@ -102,21 +97,7 @@ class TestGraphUpdaterNaturalQn:
         checking for digits yields `pkg.@event` only by luck here, and
         `pkg.` again for `pkg.@event@12`.
         """
-        from codebase_rag.graph_updater import _natural_qn
-
-        assert _natural_qn("pkg.@event@12") == "pkg.@event"
-
-    def test_the_reader_delegates_to_the_shared_helper_by_result(self) -> None:
-        """Pins the PROPERTY (same answer as the helper), not the call shape.
-
-        A reader that reimplemented the grammar correctly would pass; one
-        that drifted from it would not. That is the thing worth protecting --
-        issue #2017 is a family of readers that each spelled it themselves.
-        """
-        from codebase_rag.graph_updater import _natural_qn
-
-        for qn in (MARKED, VERBATIM, VERBATIM_MARKED, "pkg.@event", "pkg.T.M@3"):
-            assert _natural_qn(qn) == natural_qn(qn), qn
+        assert natural_qn("pkg.@event@12") == "pkg.@event"
 
 
 class TestScopeCandidateReaders:
