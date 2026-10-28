@@ -167,7 +167,7 @@ class JavaTypeInferenceEngine(
 
         return fqn_map
 
-    def build_variable_type_map(
+    def build_local_variable_type_map(
         self, scope_node: ASTNode, module_qn: str
     ) -> dict[str, str]:
         local_var_types: dict[str, str] = {}

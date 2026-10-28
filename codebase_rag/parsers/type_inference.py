@@ -14,9 +14,12 @@ from ..types_defs import (
     SimpleNameLookup,
 )
 from .cpp import CppTypeInferenceEngine
+
+# From its module, not the package: the C# engine imports the import
+# processor, and a re-export would load it for every `parsers.csharp` import.
 from .csharp.type_inference import CSharpTypeInferenceEngine
 from .csharp_frontend import CallSiteKey
-from .dart.type_inference import DartTypeInferenceEngine
+from .dart import DartTypeInferenceEngine
 from .frontends.protocol import ResolvedCallSite
 from .go import GoTypeInferenceEngine
 from .go import utils as go_utils
@@ -1247,11 +1250,13 @@ class TypeInferenceEngine:
                     caller_node, module_qn, language
                 )
             case cs.SupportedLanguage.JAVA:
-                return self.java_type_inference.build_variable_type_map(
+                return self.java_type_inference.build_local_variable_type_map(
                     caller_node, module_qn
                 )
             case cs.SupportedLanguage.CSHARP:
-                return self.csharp_type_inference.build_variable_type_map(caller_node)
+                return self.csharp_type_inference.build_local_variable_type_map(
+                    caller_node
+                )
             case cs.SupportedLanguage.DART:
                 return self.dart_type_inference.build_local_variable_type_map(
                     caller_node
@@ -1281,4 +1286,6 @@ class TypeInferenceEngine:
     def _build_java_variable_type_map(
         self, caller_node: ASTNode, module_qn: str
     ) -> dict[str, str]:
-        return self.java_type_inference.build_variable_type_map(caller_node, module_qn)
+        return self.java_type_inference.build_local_variable_type_map(
+            caller_node, module_qn
+        )

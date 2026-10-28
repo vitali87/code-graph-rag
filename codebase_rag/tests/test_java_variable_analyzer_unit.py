@@ -80,7 +80,7 @@ def test_build_variable_type_map_handles_deep_java_ast(
         body = "String value = " + '"text" + ' * depth + '"end";'
     method = _parse_java_method(body + 'String after = "done";')
 
-    result = engine.build_variable_type_map(method, "com.example")
+    result = engine.build_local_variable_type_map(method, "com.example")
 
     assert result == {"value": "java.lang.String", "after": "java.lang.String"}
 
@@ -90,7 +90,7 @@ def test_build_variable_type_map_preserves_declaration_order(
 ) -> None:
     method = _parse_java_method('String value = "text"; var copy = value;')
 
-    result = engine.build_variable_type_map(method, "com.example")
+    result = engine.build_local_variable_type_map(method, "com.example")
 
     assert result == {"value": "java.lang.String", "copy": "java.lang.String"}
 
@@ -755,7 +755,7 @@ class TestBuildVariableTypeMap:
         )
         scope_node = create_mock_node("method_declaration", children=[decl])
 
-        result = engine.build_variable_type_map(scope_node, "com.example")
+        result = engine.build_local_variable_type_map(scope_node, "com.example")
 
         assert "myVar" in result
         assert result["myVar"] == "java.lang.String"
@@ -765,7 +765,7 @@ class TestBuildVariableTypeMap:
     ) -> None:
         scope_node = create_mock_node("method_declaration", children=[])
 
-        result = engine.build_variable_type_map(scope_node, "com.example")
+        result = engine.build_local_variable_type_map(scope_node, "com.example")
 
         assert result == {}
 

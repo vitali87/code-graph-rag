@@ -353,7 +353,7 @@ class CSharpTypeInferenceEngine:
 
     # --- variable/field/parameter type map -------------------------------
 
-    def build_variable_type_map(self, scope_node: Node) -> dict[str, str]:
+    def build_local_variable_type_map(self, scope_node: Node) -> dict[str, str]:
         # Parameters and locals only. Field types are looked up at resolve
         # time against class_field_types (keyed by class qn), which also
         # reaches fields inherited from a base class in another file; the

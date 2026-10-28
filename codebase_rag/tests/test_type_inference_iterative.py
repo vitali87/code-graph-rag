@@ -227,7 +227,7 @@ class TestBuildLocalVariableTypeMapDispatch:
 
         with patch.object(
             JavaTypeInferenceEngine,
-            "build_variable_type_map",
+            "build_local_variable_type_map",
             mock_method,
         ):
             result = engine.build_local_variable_type_map(
@@ -334,7 +334,7 @@ class TestBuildJavaVariableTypeMap:
 
         with patch.object(
             JavaTypeInferenceEngine,
-            "build_variable_type_map",
+            "build_local_variable_type_map",
             mock_method,
         ):
             result = engine._build_java_variable_type_map(

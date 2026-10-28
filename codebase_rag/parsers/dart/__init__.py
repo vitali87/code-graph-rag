@@ -1,4 +1,5 @@
 from .package_paths import discover_dart_packages
+from .type_inference import DartTypeInferenceEngine
 from .utils import (
     dart_binding_spans,
     dart_body_node,
@@ -16,6 +17,7 @@ from .utils import (
 )
 
 __all__ = [
+    "DartTypeInferenceEngine",
     "dart_binding_spans",
     "dart_body_node",
     "dart_call_name",

@@ -126,7 +126,7 @@ class JavaVariableAnalyzerMixin:
     def _find_containing_java_class(self, node: ASTNode) -> ASTNode | None: ...
 
     @abstractmethod
-    def build_variable_type_map(
+    def build_local_variable_type_map(
         self, scope_node: ASTNode, module_qn: str
     ) -> dict[str, str]: ...
 
@@ -632,7 +632,7 @@ class JavaVariableAnalyzerMixin:
         if not root_node:
             return None
 
-        variable_types = self.build_variable_type_map(root_node, module_qn)
+        variable_types = self.build_local_variable_type_map(root_node, module_qn)
 
         this_var = f"{cs.JAVA_KEYWORD_THIS}{cs.SEPARATOR_DOT}{var_name}"
         return variable_types.get(var_name) or variable_types.get(this_var)

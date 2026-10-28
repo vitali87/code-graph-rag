@@ -99,7 +99,7 @@ public class UserService {
         tree = java_parser.parse(java_code)
         method_node = self._find_method_node(tree.root_node, "processUser")
 
-        result = engine.build_variable_type_map(method_node, "com.example")
+        result = engine.build_local_variable_type_map(method_node, "com.example")
 
         assert "username" in result
         assert result["username"] == "java.lang.String"
@@ -121,7 +121,7 @@ public class Calculator {
         tree = java_parser.parse(java_code)
         method_node = self._find_method_node(tree.root_node, "calculate")
 
-        result = engine.build_variable_type_map(method_node, "com.example")
+        result = engine.build_local_variable_type_map(method_node, "com.example")
 
         assert result["first"] == "int"
         assert result["second"] == "double"
@@ -144,7 +144,7 @@ public class Logger {
         tree = java_parser.parse(java_code)
         method_node = self._find_method_node(tree.root_node, "log")
 
-        result = engine.build_variable_type_map(method_node, "com.example")
+        result = engine.build_local_variable_type_map(method_node, "com.example")
 
         assert "format" in result
         assert result["format"] == "java.lang.String"
@@ -171,7 +171,7 @@ public class User {
         tree = java_parser.parse(java_code)
         constructor_node = self._find_constructor_node(tree.root_node)
 
-        result = engine.build_variable_type_map(constructor_node, "com.example")
+        result = engine.build_local_variable_type_map(constructor_node, "com.example")
 
         assert result["name"] == "java.lang.String"
         assert result["age"] == "int"
@@ -223,7 +223,7 @@ public class Example {
         tree = java_parser.parse(java_code)
         method_node = self._find_method_node(tree.root_node, "process")
 
-        result = engine.build_variable_type_map(method_node, "com.example")
+        result = engine.build_local_variable_type_map(method_node, "com.example")
 
         assert result["message"] == "java.lang.String"
         assert result["count"] == "int"
@@ -250,7 +250,7 @@ public class Example {
         tree = java_parser.parse(java_code)
         method_node = self._find_method_node(tree.root_node, "process")
 
-        result = engine.build_variable_type_map(method_node, "com.example")
+        result = engine.build_local_variable_type_map(method_node, "com.example")
 
         assert "names" in result
         assert "builder" in result
@@ -273,7 +273,7 @@ public class Example {
         tree = java_parser.parse(java_code)
         method_node = self._find_method_node(tree.root_node, "process")
 
-        result = engine.build_variable_type_map(method_node, "com.example")
+        result = engine.build_local_variable_type_map(method_node, "com.example")
 
         assert result.get("a") == "int" or "a" in result
 
@@ -295,7 +295,7 @@ public class Example {
         tree = java_parser.parse(java_code)
         method_node = self._find_method_node(tree.root_node, "process")
 
-        result = engine.build_variable_type_map(method_node, "com.example")
+        result = engine.build_local_variable_type_map(method_node, "com.example")
 
         assert "numbers" in result
         assert "names" in result
@@ -337,7 +337,7 @@ public class User {
         tree = java_parser.parse(java_code)
         method_node = self._find_method_node(tree.root_node, "printInfo")
 
-        result = engine.build_variable_type_map(method_node, "com.example")
+        result = engine.build_local_variable_type_map(method_node, "com.example")
 
         assert "this.name" in result or "name" in result
 
@@ -361,7 +361,7 @@ public class Constants {
         tree = java_parser.parse(java_code)
         method_node = self._find_method_node(tree.root_node, "process")
 
-        result = engine.build_variable_type_map(method_node, "com.example")
+        result = engine.build_local_variable_type_map(method_node, "com.example")
 
         assert isinstance(result, dict)
 
@@ -400,7 +400,7 @@ public class Person {
         tree = java_parser.parse(java_code)
         constructor_node = self._find_constructor_node(tree.root_node)
 
-        result = engine.build_variable_type_map(constructor_node, "com.example")
+        result = engine.build_local_variable_type_map(constructor_node, "com.example")
 
         assert "name" in result or "this.name" in result
 
@@ -424,7 +424,7 @@ public class Example {
         tree = java_parser.parse(java_code)
         method_node = self._find_method_node(tree.root_node, "process")
 
-        result = engine.build_variable_type_map(method_node, "com.example")
+        result = engine.build_local_variable_type_map(method_node, "com.example")
 
         assert "text" in result
         assert "number" in result
@@ -447,7 +447,7 @@ public class Example {
         tree = java_parser.parse(java_code)
         method_node = self._find_method_node(tree.root_node, "process")
 
-        result = engine.build_variable_type_map(method_node, "com.example")
+        result = engine.build_local_variable_type_map(method_node, "com.example")
 
         assert isinstance(result, dict)
 
@@ -500,7 +500,7 @@ public class Example {
         tree = java_parser.parse(java_code)
         method_node = self._find_method_node(tree.root_node, "process")
 
-        result = engine.build_variable_type_map(method_node, "com.example")
+        result = engine.build_local_variable_type_map(method_node, "com.example")
 
         assert "item" in result
         assert result["item"] == "java.lang.String"
@@ -524,7 +524,7 @@ public class Example {
         tree = java_parser.parse(java_code)
         method_node = self._find_method_node(tree.root_node, "process")
 
-        result = engine.build_variable_type_map(method_node, "com.example")
+        result = engine.build_local_variable_type_map(method_node, "com.example")
 
         assert "num" in result
         assert result["num"] == "int"
@@ -552,7 +552,7 @@ public class Example {
         tree = java_parser.parse(java_code)
         method_node = self._find_method_node(tree.root_node, "process")
 
-        result = engine.build_variable_type_map(method_node, "com.example")
+        result = engine.build_local_variable_type_map(method_node, "com.example")
 
         assert "cell" in result
         assert result["cell"] == "java.lang.String"
@@ -578,7 +578,7 @@ public class Example {
         tree = java_parser.parse(java_code)
         method_node = self._find_method_node(tree.root_node, "processUsers")
 
-        result = engine.build_variable_type_map(method_node, "com.example")
+        result = engine.build_local_variable_type_map(method_node, "com.example")
 
         assert "user" in result
         assert "User" in result["user"]
@@ -620,7 +620,7 @@ public class Example {
         tree = java_parser.parse(java_code)
         method_node = self._find_method_node(tree.root_node, "process")
 
-        result = engine.build_variable_type_map(method_node, "com.example")
+        result = engine.build_local_variable_type_map(method_node, "com.example")
 
         assert "map" in result
         assert "sb" in result
@@ -646,7 +646,7 @@ public class Example {
         tree = java_parser.parse(java_code)
         method_node = self._find_method_node(tree.root_node, "process")
 
-        result = engine.build_variable_type_map(method_node, "com.example")
+        result = engine.build_local_variable_type_map(method_node, "com.example")
 
         assert isinstance(result, dict)
 
@@ -698,7 +698,7 @@ public class ComplexExample {
         tree = java_parser.parse(java_code)
         method_node = self._find_method_node(tree.root_node, "complexMethod")
 
-        result = engine.build_variable_type_map(method_node, "com.example")
+        result = engine.build_local_variable_type_map(method_node, "com.example")
 
         assert "param1" in result
         assert "param2" in result
@@ -729,7 +729,7 @@ public class Outer {
         tree = java_parser.parse(java_code)
         method_node = self._find_method_node(tree.root_node, "innerMethod")
 
-        result = engine.build_variable_type_map(method_node, "com.example")
+        result = engine.build_local_variable_type_map(method_node, "com.example")
 
         assert "innerParam" in result
         assert "localInner" in result
@@ -754,7 +754,7 @@ public class StaticExample {
         tree = java_parser.parse(java_code)
         method_node = self._find_method_node(tree.root_node, "staticMethod")
 
-        result = engine.build_variable_type_map(method_node, "com.example")
+        result = engine.build_local_variable_type_map(method_node, "com.example")
 
         assert "arg" in result
         assert "local" in result
@@ -789,7 +789,7 @@ public class ExceptionExample {
         tree = java_parser.parse(java_code)
         method_node = self._find_method_node(tree.root_node, "riskyMethod")
 
-        result = engine.build_variable_type_map(method_node, "com.example")
+        result = engine.build_local_variable_type_map(method_node, "com.example")
 
         assert isinstance(result, dict)
 
@@ -816,7 +816,7 @@ public class LambdaExample {
         tree = java_parser.parse(java_code)
         method_node = self._find_method_node(tree.root_node, "process")
 
-        result = engine.build_variable_type_map(method_node, "com.example")
+        result = engine.build_local_variable_type_map(method_node, "com.example")
 
         assert "prefix" in result
         assert result["prefix"] == "java.lang.String"
@@ -851,7 +851,7 @@ public class SwitchExample {
         tree = java_parser.parse(java_code)
         method_node = self._find_method_node(tree.root_node, "process")
 
-        result = engine.build_variable_type_map(method_node, "com.example")
+        result = engine.build_local_variable_type_map(method_node, "com.example")
 
         assert "day" in result
         assert "dayName" in result
@@ -888,7 +888,7 @@ public class Empty {
         tree = java_parser.parse(java_code)
         method_node = self._find_method_node(tree.root_node, "emptyMethod")
 
-        result = engine.build_variable_type_map(method_node, "com.example")
+        result = engine.build_local_variable_type_map(method_node, "com.example")
 
         assert result == {}
 
@@ -907,7 +907,7 @@ public abstract class AbstractClass {
         tree = java_parser.parse(java_code)
         method_node = self._find_method_node(tree.root_node, "abstractMethod")
 
-        result = engine.build_variable_type_map(method_node, "com.example")
+        result = engine.build_local_variable_type_map(method_node, "com.example")
 
         assert "param" in result
 
@@ -926,7 +926,7 @@ public interface MyInterface {
         tree = java_parser.parse(java_code)
         method_node = self._find_method_node(tree.root_node, "interfaceMethod")
 
-        result = engine.build_variable_type_map(method_node, "com.example")
+        result = engine.build_local_variable_type_map(method_node, "com.example")
 
         assert "input" in result
 
@@ -949,7 +949,7 @@ public class GenericExample {
         tree = java_parser.parse(java_code)
         method_node = self._find_method_node(tree.root_node, "genericMethod")
 
-        result = engine.build_variable_type_map(method_node, "com.example")
+        result = engine.build_local_variable_type_map(method_node, "com.example")
 
         assert "item" in result
         assert "items" in result
@@ -978,7 +978,7 @@ public record Person(String name, int age) {
                 break
 
         if compact_constructor:
-            result = engine.build_variable_type_map(compact_constructor, "com.example")
+            result = engine.build_local_variable_type_map(compact_constructor, "com.example")
             assert isinstance(result, dict)
 
     def _find_method_node(self, root_node, method_name: str):
@@ -1026,7 +1026,7 @@ def test_a_pathologically_deep_expression_keeps_the_methods_other_variable_types
     ).encode()
     method = _only_method(java_parser.parse(code).root_node)
 
-    var_types = engine.build_variable_type_map(method, "test_project.A")
+    var_types = engine.build_local_variable_type_map(method, "test_project.A")
 
     assert var_types["b"] == "B"
     assert "after" in var_types
@@ -1058,7 +1058,7 @@ def test_a_call_refused_for_depth_does_not_take_the_name_based_fallback(
         return original(self, call_string, module_qn)
 
     with patch.object(JavaTypeInferenceEngine, "_resolve_java_method_return_type", spy):
-        engine.build_variable_type_map(method, "test_project.A")
+        engine.build_local_variable_type_map(method, "test_project.A")
 
     assert at_limit, "the fallback never ran, so the test proves nothing"
     assert not any(at_limit)
