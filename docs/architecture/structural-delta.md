@@ -104,13 +104,15 @@ keeps `from new_home import name` behind, or a rename that keeps
 `old = new`, still serves every caller reaching the name through that
 module, whether it imported the name, imported the module, or sits in the
 module itself. The binding is read as for `dangling_importers`, following
-re-exports into modules the edit left alone. An import under `if
-TYPE_CHECKING:`, or in the `else` of `if not TYPE_CHECKING:`, never runs,
-so it binds nothing for either check. A caller needs more than an
-importable name: a name only assigned a literal (`name = None`) cannot be
-called, and a JS/TS module serves a name it imports only through an
+re-exports into modules the edit left alone. An import or a definition
+under `if TYPE_CHECKING:`, or in the `else` of `if not TYPE_CHECKING:`,
+never runs, so it binds nothing for either check. A caller needs more than
+an importable name: a name only assigned a literal (`name = None`) cannot
+be called, and a JS/TS module serves a name it imports only through an
 `export` of it: `export { name } from "./home"`, or `export { local as
-name }` naming the import. A method is reached through its class, which no
+name }` naming the import. A type-only import or export (`export type {
+name }`, `export { type name }`, `import type { name }`) is erased from the
+emitted JavaScript and serves no caller. A method is reached through its class, which no
 module binding stands in for, so its callers are listed as before.
 
 ### Arity verdicts

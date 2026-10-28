@@ -269,6 +269,62 @@ def test_a_re_export_in_the_body_of_a_negated_guard_is_not_dangling(
     assert _runs(temp_repo) == "hello-world"
 
 
+def test_a_re_export_of_a_definition_only_type_checkers_see_leaves_its_callers_dangling(
+    temp_repo: Path,
+) -> None:
+    # Negative (Greptile, CodeRabbit, PR #3312): the graph records the `def`
+    # under `if TYPE_CHECKING:`, but it never runs, so the re-export raises
+    # ImportError and binds nothing for `from py.util import slug`.
+    store, updater = _index(temp_repo, FILES)
+    (temp_repo / "py/text.py").write_text(
+        "from typing import TYPE_CHECKING\n\nif TYPE_CHECKING:\n\n"
+        + "".join(f"    {line}\n" for line in UTIL.splitlines()),
+        encoding="utf-8",
+    )
+    (temp_repo / "py/util.py").write_text(REEXPORT, encoding="utf-8")
+    paths = ["py/util.py", "py/text.py"]
+
+    delta = observe(
+        store.fetch_all,
+        PROJECT,
+        paths,
+        lambda: updater.reingest(paths),
+        repo_root=temp_repo,
+    )
+
+    assert _callers(delta) == [("page", "util")]
+    assert (f"{PROJECT}.py.app", "slug") in [
+        (d["importer"], d["name"]) for d in delta["dangling_importers"]
+    ]
+    assert "ImportError" in _runs(temp_repo)
+
+
+def test_a_definition_in_the_running_branch_of_a_guard_is_not_dangling(
+    temp_repo: Path,
+) -> None:
+    # The `else` of `if TYPE_CHECKING:` runs, so its `def` binds the name.
+    store, updater = _index(temp_repo, FILES)
+    (temp_repo / "py/text.py").write_text(
+        "from typing import TYPE_CHECKING\n\nif TYPE_CHECKING:\n    pass\nelse:\n\n"
+        + "".join(f"    {line}\n" for line in UTIL.splitlines()),
+        encoding="utf-8",
+    )
+    (temp_repo / "py/util.py").write_text(REEXPORT, encoding="utf-8")
+    paths = ["py/util.py", "py/text.py"]
+
+    delta = observe(
+        store.fetch_all,
+        PROJECT,
+        paths,
+        lambda: updater.reingest(paths),
+        repo_root=temp_repo,
+    )
+
+    assert delta["dangling_callers"] == []
+    assert delta["dangling_importers"] == []
+    assert _runs(temp_repo) == "hello-world"
+
+
 def test_a_removed_method_is_dangling_whatever_its_module_binds(
     temp_repo: Path,
 ) -> None:
@@ -350,6 +406,39 @@ def _move_ts(root: Path, util_after: str) -> StructuralDelta:
         # Negative: nothing left behind, so `import { slug } from "./util"`
         # binds nothing.
         pytest.param("", [("page", "util")], id="nothing-left"),
+        # Negative (Greptile, PR #3312): a type-only export is erased from
+        # the emitted JavaScript, so no caller can import `slug` through it.
+        pytest.param(
+            'export type { slug } from "./text";\n',
+            [("page", "util")],
+            id="type-only-re-export",
+        ),
+        pytest.param(
+            'export { type slug } from "./text";\n',
+            [("page", "util")],
+            id="type-only-re-export-specifier",
+        ),
+        pytest.param(
+            'import { slug } from "./text";\n\nexport type { slug };\n',
+            [("page", "util")],
+            id="type-only-export",
+        ),
+        pytest.param(
+            'import { slug } from "./text";\n\nexport { type slug };\n',
+            [("page", "util")],
+            id="type-only-export-specifier",
+        ),
+        pytest.param(
+            'import type { slug } from "./text";\n\nexport { slug };\n',
+            [("page", "util")],
+            id="type-only-import",
+        ),
+        # A type-only specifier beside it leaves the value one exported.
+        pytest.param(
+            'export { type Other, slug } from "./text";\n',
+            [],
+            id="value-specifier-beside-a-type-only-one",
+        ),
     ],
 )
 def test_a_typescript_move_with_a_re_export(

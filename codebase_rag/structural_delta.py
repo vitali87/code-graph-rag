@@ -1190,8 +1190,7 @@ class _AfterBindings:
         }
         self._sources: dict[str, str | None] = {}
         self._names: dict[str, _SourceNames | None] = {}
-        self._rows: dict[str, list[str] | None] = {}
-        self._exports: dict[str, dict[str, str]] = {}
+        self._exports: dict[str, _JsExports] = {}
 
     def source(self, path: str) -> str | None:
         if path not in self._sources:
@@ -1247,7 +1246,10 @@ class _AfterBindings:
             return qn not in self._gone
         definitions, bindings = self._facts(path)
         names = self._source_names(path)
-        if qn in definitions or (
+        # A Python module's source says which of its definitions run: the
+        # graph also holds a `def` under `if TYPE_CHECKING:`, which binds
+        # nothing at run time.
+        if (names is None and qn in definitions) or (
             names is not None and _binds_itself(names, name, for_callers)
         ):
             return True
@@ -1297,22 +1299,17 @@ class _AfterBindings:
         Any module-level name of a Python module can be imported. A JS/TS
         module shares only what it exports: `export { slug } from "./text"`
         shares `slug`, `import { slug } from "./text"` keeps it to itself
-        unless an `export { slug }` names it (`_exports_locally`).
-        The IMPORTS edge starts where its statement does, so the statement's
-        first word tells them apart. Another language's import is not taken
-        to re-export anything.
+        unless an `export { slug }` names it (`_exports_locally`), and a
+        type-only export (`export type { slug }`) is erased from the emitted
+        JavaScript. Another language's import is not taken to re-export
+        anything.
         """
         language = _language(binding.importer_path)
         if language == cs.SupportedLanguage.PYTHON:
             return True
-        if language not in cs.JS_TS_LANGUAGES or self._repo_root is None:
+        if language not in cs.JS_TS_LANGUAGES:
             return False
-        path = binding.importer_path
-        if path not in self._rows:
-            text = _read_source(self._repo_root, path)
-            self._rows[path] = None if text is None else text.split("\n")
-        rows = self._rows[path]
-        return rows is not None and _opens_export(rows, binding.line, binding.col)
+        return self._js_exports(binding.importer_path).exports(binding)
 
     def _exports_locally(
         self,
@@ -1329,9 +1326,11 @@ class _AfterBindings:
         declaration, or a name it imports, so `import { slug } from
         "./text"; export { slug };` shares `slug` as `export { slug } from
         "./text"` does, and `export { s as slug }` shares the `s` it imports
-        under that name. The graph records no edge for such a clause.
+        under that name. The graph records no edge for such a clause. An
+        `import type { slug }` binds no value for it to export.
         """
-        local = self._local_exports(path).get(name)
+        exports = self._js_exports(path)
+        local = exports.local.get(name)
         if local is None:
             return False
         if f"{module}{cs.SEPARATOR_DOT}{local}" in self._facts(path)[0]:
@@ -1339,20 +1338,21 @@ class _AfterBindings:
         # `import * as ns` binds a module object, never one of its names.
         return any(
             binding.imported_name != cs.IMPORTED_NAME_WILDCARD
+            and not exports.erased(binding)
             and self._resolves(binding, local, seen, for_callers)
             for binding in bindings
         )
 
-    def _local_exports(self, path: str) -> dict[str, str]:
+    def _js_exports(self, path: str) -> _JsExports:
         if path not in self._exports:
             language = _language(path)
             text = None
             if language in cs.JS_TS_LANGUAGES and self._repo_root is not None:
                 text = _read_source(self._repo_root, path)
             self._exports[path] = (
-                {}
+                _JsExports()
                 if text is None or language is None
-                else _js_local_exports(text, language)
+                else _js_exports(text, language)
             )
         return self._exports[path]
 
@@ -1376,47 +1376,86 @@ def _typing_only(names: _SourceNames | None, line: int | None) -> bool:
     )
 
 
-def _js_local_exports(text: str, language: cs.SupportedLanguage) -> dict[str, str]:
-    """`{exported: local}` for each top-level `export { local as exported }`.
+class _JsExports(NamedTuple):
+    """What a JS/TS module's top-level import and export statements share.
 
-    A clause with `from` re-exports another module's name and is left out:
-    the graph holds it as an IMPORTS edge.
+    Statements are keyed by the (1-based line, byte column) they start at,
+    where the graph puts the IMPORTS edge of each name they bind.
     """
+
+    # Where each export statement starts that exports a value, not a type.
+    starts: frozenset[tuple[int, int]] = frozenset()
+    # (line, col, None) for a type-only statement (`export type { T }`,
+    # `import type { T }`), (line, col, name) for a type-only specifier
+    # (`export { type T }`) binding `name`: TypeScript erases both.
+    type_only: frozenset[tuple[int, int, str | None]] = frozenset()
+    # `{exported: local}` for each value `export { local as exported }` without
+    # `from`; a clause with `from` is an IMPORTS edge in the graph.
+    local: dict[str, str] = {}
+
+    def erased(self, binding: ImportBinding) -> bool:
+        if binding.line is None or binding.col is None:
+            return False
+        at = (binding.line, binding.col)
+        return (*at, None) in self.type_only or (*at, binding.bound) in self.type_only
+
+    def exports(self, binding: ImportBinding) -> bool:
+        return (binding.line, binding.col) in self.starts and not self.erased(binding)
+
+
+def _js_exports(text: str, language: cs.SupportedLanguage) -> _JsExports:
+    """Read a JS/TS module's top-level statements for what they export."""
     parser = load_parsers()[0].get(language)
     if parser is None:
-        return {}
+        return _JsExports()
     root = parser.parse(text.encode(cs.ENCODING_UTF8)).root_node
-    clauses = (
-        clause
-        for statement in root.children
-        if statement.type == cs.TS_EXPORT_STATEMENT
-        and statement.child_by_field_name(cs.FIELD_SOURCE) is None
-        for clause in statement.named_children
-        if clause.type == cs.TS_EXPORT_CLAUSE
-    )
-    exported: dict[str, str] = {}
-    for clause in clauses:
-        # A comment between the braces has no name and is skipped.
-        for specifier in clause.named_children:
-            local = _field_text(specifier, cs.FIELD_NAME)
+    starts: set[tuple[int, int]] = set()
+    type_only: set[tuple[int, int, str | None]] = set()
+    local: dict[str, str] = {}
+    for statement in root.children:
+        if statement.type not in (cs.TS_EXPORT_STATEMENT, cs.TS_IMPORT_STATEMENT):
+            continue
+        at = (statement.start_point[0] + 1, statement.start_point[1])
+        if _has_type_token(statement):
+            type_only.add((*at, None))
+            continue
+        exports = statement.type == cs.TS_EXPORT_STATEMENT
+        if exports:
+            starts.add(at)
+        reexports = statement.child_by_field_name(cs.FIELD_SOURCE) is not None
+        for specifier in _js_specifiers(statement):
+            name = _field_text(specifier, cs.FIELD_NAME)
             alias = _field_text(specifier, cs.FIELD_ALIAS)
-            if local:
-                exported[alias or local] = local
-    return exported
+            # A comment between the braces has no name and is skipped.
+            if not name:
+                continue
+            if _has_type_token(specifier):
+                type_only.add((*at, alias or name))
+            elif exports and not reexports:
+                local[alias or name] = name
+    return _JsExports(frozenset(starts), frozenset(type_only), local)
+
+
+def _js_specifiers(statement: Node) -> Iterator[Node]:
+    """The `{ ... }` specifiers of an import or export statement."""
+    for child in statement.named_children:
+        if child.type == cs.TS_EXPORT_CLAUSE:
+            yield from child.named_children
+        elif child.type == cs.TS_IMPORT_CLAUSE:
+            for part in child.named_children:
+                if part.type == cs.TS_NAMED_IMPORTS:
+                    yield from part.named_children
+
+
+def _has_type_token(node: Node) -> bool:
+    """Whether `node` carries TypeScript's `type` modifier as its own child."""
+    return any(child.type == cs.TS_TYPE_ONLY_TOKEN for child in node.children)
 
 
 def _field_text(node: Node, field: str) -> str:
     """The text of `node`'s `field` child, empty when it has none."""
     child = node.child_by_field_name(field)
     return _node_text(child) if child is not None else ""
-
-
-def _opens_export(rows: list[str], line: int | None, col: int | None) -> bool:
-    """Whether the statement at 1-based `line`, byte `col`, is an `export`."""
-    if line is None or col is None or not 0 < line <= len(rows):
-        return False
-    rest = rows[line - 1].encode(cs.ENCODING_UTF8)[col:]
-    return re.match(cs.JS_EXPORT_STATEMENT_PATTERN, rest) is not None
 
 
 def _unfollowed_import(
