@@ -6,7 +6,9 @@ new parameter list and rendering the rewritten text, for `change_signature`
 from __future__ import annotations
 
 import re
+import symtable
 from collections.abc import Iterable, Mapping, Sequence
+from itertools import product
 
 from tree_sitter import Node
 
@@ -486,6 +488,21 @@ def _value_at_site(
     raise _Unmapped(cs.SIGNATURE_SITE_NO_VALUE.format(name=spec.name))
 
 
+def _refuse_dropped_effects(
+    sources: Sequence[_Source | None], bound: Mapping[int, _Binding]
+) -> None:
+    """A value no new parameter takes must run no code.
+
+    Rendering leaves it out, so `helper(1, save())` with `b` dropped would
+    become `helper(1)` and stop calling `save()`. A name or a plain literal
+    is safe to leave out (Greptile, PR #2166).
+    """
+    taken = {s.index for s in sources if s is not None and s.literal is None}
+    for index, binding in sorted(bound.items()):
+        if index not in taken and not binding.inert:
+            raise _Unmapped(cs.SIGNATURE_SITE_DROPS_EFFECT.format(text=binding.text))
+
+
 def _render_site(
     candidate: _Candidate,
     new: Sequence[ParamSpec],
@@ -498,6 +515,7 @@ def _render_site(
     the mapping cannot complete keeps the inner rewrites as they were.
     """
     bound, consumed = _fold(candidate, edits)
+    _refuse_dropped_effects(sources, bound)
     text = _render_arguments(new, sources, bound)
     for edit in consumed:
         edits.remove(edit)
@@ -523,6 +541,40 @@ def _check_hierarchy(
             )
 
 
+def _refuse_body_conflicts(
+    headers: Sequence[_Header],
+    old_names: Sequence[str],
+    new: Sequence[ParamSpec],
+    renamed: Sequence[tuple[str, str]],
+) -> None:
+    """Refuse a parameter list a member's body would no longer agree with.
+
+    A dropped parameter the body still reads leaves an unresolved name:
+    `def f(a): return a` emptied writes `def f(): return a`, which PARSES
+    and raises NameError only when called, so neither the syntax nor the
+    arity postcondition catches it. Renamed names are excluded: the body
+    rewrite follows those (Copilot, PR #1533).
+
+    The other way round, a genuinely new parameter shadows whatever the
+    body read under that name, so `return len(a)` with a new `len=None`
+    calls the parameter. Renamed targets are checked by the body rewrite
+    itself (Greptile, PR #2166).
+    """
+    kept = {spec.name for spec in new} | {old for old, _new in renamed}
+    dropped = [name for name in old_names if name not in kept]
+    added = [spec.name for spec in new if spec.name not in old_names]
+    for header, name in product(headers, dropped):
+        if _body_reads(header, name):
+            raise SignatureRefused(
+                cs.SIGNATURE_DROPPED_STILL_READ.format(name=name, qn=header.qn)
+            )
+    for header, name in product(headers, added):
+        if _body_reads(header, name):
+            raise SignatureRefused(
+                cs.SIGNATURE_NEW_NAME_TAKEN.format(name=name, qn=header.qn)
+            )
+
+
 def _definition_edits(
     header: _Header,
     new: Sequence[ParamSpec],
@@ -534,9 +586,9 @@ def _definition_edits(
     texts = [own[spec.name].text if spec.name in carried else spec.text for spec in new]
     if header.receiver is not None:
         texts.insert(0, header.receiver)
-    edits = [
-        _Edit(header.path, header.span, f"({cs.SEPARATOR_COMMA_SPACE.join(texts)})")
-    ]
+    params = f"({cs.SEPARATOR_COMMA_SPACE.join(texts)})"
+    _refuse_invalid_header(header, params)
+    edits = [_Edit(header.path, header.span, params)]
     renamed_away = {old for old, _new in renamed}
     for old_name, new_name in renamed:
         # A default is evaluated at DEFINITION time, in the enclosing scope,
@@ -549,6 +601,26 @@ def _definition_edits(
             for span in _body_references(header, old_name, new_name, renamed_away)
         )
     return edits
+
+
+def _refuse_invalid_header(header: _Header, params: str) -> None:
+    """Refuse a parameter list Python would reject when loading the module.
+
+    `_new_specs` orders the PRIMARY's parameters, but an override keeps its
+    own defaults and the receiver is put back here: `Sub.f(self, a, b, c=2)`
+    reordered to `a, c, b` reads `(self, a, c=2, b)`, and a new `self=None`
+    repeats the receiver. Tree-sitter parses both, so the parse gate passes
+    them (Greptile, PR #2166). The symbol table pass is the compiler's own
+    check, and it neither builds nor runs any code.
+    """
+    try:
+        symtable.symtable(f"def _{params}: pass", header.path, "exec")
+    except SyntaxError as error:
+        raise SignatureRefused(
+            cs.SIGNATURE_INVALID_HEADER.format(
+                qn=header.qn, error=error.msg, text=params
+            )
+        ) from error
 
 
 def _refuse_default_reading(

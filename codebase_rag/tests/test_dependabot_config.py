@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from fnmatch import fnmatch
 from pathlib import Path
 
 import pytest
@@ -83,6 +84,33 @@ def test_typescript_6_updates_still_reach_the_ts_oracle() -> None:
     assert all("update-types" not in i for i in typescript)
 
 
+def test_the_scanner_image_stays_on_python_3_12() -> None:
+    # The image pins UV_PYTHON=python3.12 with downloads off, so the 3.15 base
+    # Dependabot proposed (#3461) left `uv sync` no interpreter to build with.
+    ignores = _ignores_for("docker", "/.oss-scanner")
+    assert {
+        "dependency-name": "python",
+        "update-types": [
+            "version-update:semver-minor",
+            "version-update:semver-major",
+        ],
+    } in ignores
+
+
+def test_the_production_image_still_gets_python_updates() -> None:
+    # Negative: the hold is the scanner image's alone, so the production
+    # image's python base keeps moving.
+    ignores = _ignores_for("docker", "/")
+    assert not any(i.get("dependency-name") == "python" for i in ignores)
+
+
+@pytest.mark.parametrize("image", ["golang", "eclipse-temurin"])
+def test_the_scanner_images_other_bases_are_not_held(image: str) -> None:
+    # Negative: Go and the JDK are copied in whole, so their bumps still land.
+    ignores = _ignores_for("docker", "/.oss-scanner")
+    assert not any(i.get("dependency-name") == image for i in ignores)
+
+
 def test_the_fuzz_image_keeps_the_pyinstaller_oss_fuzz_pins() -> None:
     # base-builder's install_python.sh pins pyinstaller==6.10.0, and the fuzz
     # image installs the same one for its own Python 3.12.
@@ -95,6 +123,35 @@ def test_atheris_updates_still_reach_the_fuzz_image() -> None:
     # hold is on pyinstaller alone.
     ignores = _ignores_for("pip", "/.clusterfuzzlite")
     assert not any(i.get("dependency-name") == "atheris" for i in ignores)
+
+
+def _github_actions_update() -> dict[str, object]:
+    config = yaml.safe_load(
+        (REPO_ROOT / ".github" / "dependabot.yml").read_text(encoding=cs.ENCODING_UTF8)
+    )
+    return next(
+        u for u in config["updates"] if u["package-ecosystem"] == "github-actions"
+    )
+
+
+def _codeql_group_patterns() -> list[str]:
+    groups = _github_actions_update().get("groups") or {}
+    return list(groups["codeql-action"]["patterns"])
+
+
+@pytest.mark.parametrize("step", ["init", "analyze", "upload-sarif"])
+def test_the_codeql_action_steps_move_together(step: str) -> None:
+    # analyze refuses a configuration init wrote under another release, so
+    # init bumped alone to 4.39.1 failed every CodeQL job (#3455).
+    name = f"github/codeql-action/{step}"
+    assert any(fnmatch(name, p) for p in _codeql_group_patterns())
+
+
+@pytest.mark.parametrize("action", ["actions/checkout", "github/super-linter"])
+def test_other_actions_are_not_grouped_with_codeql(action: str) -> None:
+    # Negative: the group is for CodeQL's own steps, so every other action
+    # still arrives in a PR of its own.
+    assert not any(fnmatch(action, p) for p in _codeql_group_patterns())
 
 
 _ROSLYN_DIR = "/codebase_rag/parsers/csharp_frontend/roslyn"

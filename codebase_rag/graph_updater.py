@@ -110,6 +110,7 @@ from .parsers.java_lombok import (
 )
 from .parsers.notebook import NotebookSkipped, is_notebook_path, read_notebook
 from .parsers.parameter_nodes import PendingParameterType
+from .parsers.py.ast_analyzer import clear_scope_facts
 from .parsers.rs import utils as rs_utils
 from .parsers.structure_processor import StructureProcessor
 from .parsers.utils import mark_js_ts_module_private, sorted_captures
@@ -3100,6 +3101,7 @@ class GraphUpdater:
             py_engine._method_return_type_cache.clear()
             py_engine._self_assignment_cache.clear()
             py_engine._class_member_type_cache.clear()
+        clear_scope_facts()
 
     def _finish_in_sync_run(self) -> None:
         logger.info(ls.GRAPH_ALREADY_IN_SYNC)

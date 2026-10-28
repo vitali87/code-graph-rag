@@ -52,10 +52,12 @@ RUN uv python install 3.12
 # wrapper but no toolchain behind it, so install one where the wrapper looks
 # (/rust/bin), checked against the SHA-256 rustup publishes, as uv is above.
 # That wrapper sits at /usr/local/bin/cargo, which rustup-init would otherwise
-# take for another Rust install.
+# take for another Rust install. cargo refuses a toolchain older than any
+# locked dependency's rust-version; tree-sitter-language, which the tree-sitter
+# crate pulls in, needs 1.90.
 ARG RUSTUP_VERSION=1.28.2
 ARG RUSTUP_SHA256=20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c
-ARG RUST_TOOLCHAIN=1.85.0
+ARG RUST_TOOLCHAIN=1.97.0
 ENV CARGO_HOME=/rust RUSTUP_HOME=/rust/rustup PATH=$PATH:/rust/bin
 RUN curl -fsSLO "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/x86_64-unknown-linux-gnu/rustup-init" && \
     echo "${RUSTUP_SHA256}  rustup-init" | sha256sum -c - && \

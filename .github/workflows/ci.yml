@@ -569,7 +569,8 @@ jobs:
     # rust/cgr_graph_rs (published as cgr-graph-rs, a default dependency on
     # the platforms it has wheels for) runs the embedded graph's whole-graph
     # procedures, its Cypher parser, the ingestor's batch writes and result
-    # decoding (issue #386). Its own tests check the algorithms and the
+    # decoding (issue #386), and the indexer's definition hashes on
+    # py-tree-sitter's own trees. Its own tests check the algorithms and the
     # grammar; the Python tests check it returns and writes exactly what
     # the Python implementations it replaces do, and run the engine's
     # suites with it installed. rust-wheels.yml builds and tests the wheels.
@@ -613,7 +614,7 @@ jobs:
 
       - name: Check it against the Python procedures and parser
         run: |
-          uv run --no-sync pytest codebase_rag/tests/test_embedded_graph_rust.py codebase_rag/tests/test_embedded_graph_rust_parser.py codebase_rag/tests/test_embedded_graph_native.py --tb=short
+          uv run --no-sync pytest codebase_rag/tests/test_embedded_graph_rust.py codebase_rag/tests/test_embedded_graph_rust_parser.py codebase_rag/tests/test_embedded_graph_native.py codebase_rag/tests/test_native_trees.py --tb=short
 
       - name: Run the engine's tests on the Rust parser
         run: |
