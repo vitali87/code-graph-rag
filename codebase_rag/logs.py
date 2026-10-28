@@ -656,8 +656,6 @@ TOOL_FILE_READ_SUCCESS = "[FileReader] Successfully read text from {path}"
 TOOL_FILE_BINARY = "[FileReader] {message}"
 TOOL_FILE_WRITE = "[FileWriter] Creating file: {path}"
 TOOL_FILE_WRITE_SUCCESS = "[FileWriter] Successfully wrote {chars} characters to {path}"
-TOOL_FILE_EDIT = "[FileEditor] Attempting full file replacement: {path}"
-TOOL_FILE_EDIT_SUCCESS = "[FileEditor] Successfully replaced entire file: {path}"
 TOOL_FILE_EDIT_SURGICAL = (
     "[FileEditor] Attempting surgical block replacement in: {path}"
 )
@@ -699,23 +697,10 @@ SHELL_TIMING = "'{func}' executed in {time:.2f}ms"
 FUNC_TIMING = "{func} completed in {time:.2f}ms"
 
 # File editor logs
-EDITOR_NO_PARSER = "No parser available for {path}"
-EDITOR_NO_LANG_CONFIG = "No language config found for extension {ext}"
-EDITOR_FUNC_NOT_FOUND_AT_LINE = "No function '{name}' found at line {line}"
-EDITOR_FUNC_NOT_FOUND_QN = "No function found with qualified name '{name}'"
-EDITOR_AMBIGUOUS = (
-    "Ambiguous function name '{name}' in {path}. "
-    "Found {count} matches: {details}. "
-    "Using first match. Consider using qualified name (e.g., 'ClassName.{name}') "
-    "or specify line number for precise targeting."
-)
 EDITOR_FUNC_NOT_IN_FILE = "Function '{name}' not found in {path}."
 EDITOR_PATCHES_NOT_CLEAN = "Patches for function '{name}' did not apply cleanly."
 EDITOR_NO_CHANGES = "No changes detected after replacement."
 EDITOR_REPLACE_SUCCESS = "Successfully replaced function '{name}' in {path}."
-EDITOR_PATCH_FAILED = "Some patches failed to apply cleanly to {path}"
-EDITOR_PATCH_SUCCESS = "Successfully applied patch to {path}"
-EDITOR_PATCH_ERROR = "Error applying patch to {path}: {error}"
 EDITOR_FILE_NOT_FOUND = "File not found: {path}"
 EDITOR_BLOCK_NOT_FOUND = "Target block not found in {path}"
 EDITOR_LOOKING_FOR = "Looking for: {block}"
@@ -725,7 +710,6 @@ EDITOR_MULTIPLE_OCCURRENCES = (
 EDITOR_NO_CHANGES_IDENTICAL = (
     "No changes detected - target and replacement are identical"
 )
-EDITOR_SURGICAL_FAILED = "Surgical patches failed to apply cleanly"
 EDITOR_SURGICAL_ERROR = "Error during surgical block replacement: {error}"
 
 # Directory lister logs
@@ -758,9 +742,7 @@ FILE_READER_INIT = "FileReader initialized with root: {root}"
 SHELL_COMMANDER_INIT = "ShellCommander initialized with root: {root}"
 
 # Tool error logs
-FILE_EDITOR_WARN = "[FileEditor] {msg}"
 FILE_EDITOR_ERR = "[FileEditor] {msg}"
-FILE_EDITOR_ERR_EDIT = "[FileEditor] Error editing file {path}: {error}"
 FILE_READER_ERR = "Error reading file {path}: {error}"
 
 # File writer logs

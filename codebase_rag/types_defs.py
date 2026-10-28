@@ -62,14 +62,6 @@ type ResultValue = (
 type ResultRow = dict[str, ResultValue]
 
 
-class FunctionMatch(TypedDict):
-    node: Node
-    simple_name: str
-    qualified_name: str
-    parent_class: str | None
-    line_number: int
-
-
 class MgclientProbeRequest(TypedDict):
     """One Memgraph probe, as the parent hands it to the probe's own process."""
 

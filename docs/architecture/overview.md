@@ -50,6 +50,5 @@ User Query → AI Model (Cypher Gen) → Cypher Query → Graph Results → Resp
 | `typer` | CLI framework |
 | `rich` | Terminal rendering |
 | `prompt-toolkit` | Interactive command line |
-| `diff-match-patch` | Code patching |
 | `watchdog` | Filesystem events monitoring |
 | `huggingface-hub` | UniXcoder model download |

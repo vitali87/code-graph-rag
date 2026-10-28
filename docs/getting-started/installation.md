@@ -304,7 +304,6 @@ This checks that all required dependencies and services are available.
 - **typer**: Typer, build great CLIs. Easy to code. Based on Python type hints.
 - **rich**: Render rich text, tables, progress bars, syntax highlighting, markdown and more to the terminal
 - **prompt-toolkit**: Library for building powerful interactive command lines in Python
-- **diff-match-patch**: Repackaging of Google's Diff Match and Patch libraries.
 - **click**: Composable command line interface toolkit
 - **protobuf**
 - **defusedxml**: XML bomb protection for Python stdlib modules

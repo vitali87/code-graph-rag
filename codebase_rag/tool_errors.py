@@ -19,7 +19,6 @@ def failure(message: str | Exception | None) -> ToolFailure:
 
 # File operation errors
 FILE_NOT_FOUND = "File not found."
-FILE_NOT_FOUND_OR_DIR = "File not found or is a directory: {path}"
 BINARY_FILE = "File '{path}' is a binary file. Ask the user to attach it inline if they want it analyzed."
 UNICODE_DECODE = (
     "File '{path}' could not be read as text. It may be a binary file. "

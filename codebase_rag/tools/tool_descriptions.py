@@ -394,7 +394,7 @@ _MCP_DELTA_NOTE = (
     "Read it before the next edit."
 )
 MCP_SURGICAL_REPLACE_CODE = (
-    "Surgically replace an exact code block in a file using diff-match-patch. "
+    "Surgically replace an exact code block in a file. "
     "Only modifies the exact target block, leaving the rest unchanged."
     + _MCP_DELTA_NOTE
 )

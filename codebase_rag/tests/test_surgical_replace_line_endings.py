@@ -37,9 +37,9 @@ def _editor(root: Path, files: dict[str, bytes]) -> FileEditor:
 def test_a_crlf_file_keeps_its_line_endings(tmp_path: Path) -> None:
     editor = _editor(tmp_path, {"crlf.py": CRLF})
 
-    ok = editor.replace_code_block(
+    ok = editor.apply_code_block(
         "crlf.py", "def b():\n    return 1", "def b():\n    return 2"
-    )
+    ).success
 
     assert ok is True
     assert (tmp_path / "crlf.py").read_bytes() == CRLF.replace(
@@ -50,7 +50,7 @@ def test_a_crlf_file_keeps_its_line_endings(tmp_path: Path) -> None:
 def test_new_lines_in_a_crlf_file_are_written_with_crlf(tmp_path: Path) -> None:
     editor = _editor(tmp_path, {"crlf.py": CRLF})
 
-    editor.replace_code_block(
+    editor.apply_code_block(
         "crlf.py", "def b():\n    return 1", "def b():\n    value = 2\n    return value"
     )
 
@@ -63,9 +63,9 @@ def test_new_lines_in_a_crlf_file_are_written_with_crlf(tmp_path: Path) -> None:
 def test_a_target_copied_with_crlf_matches_a_crlf_file(tmp_path: Path) -> None:
     editor = _editor(tmp_path, {"crlf.py": CRLF})
 
-    ok = editor.replace_code_block(
+    ok = editor.apply_code_block(
         "crlf.py", "def b():\r\n    return 1", "def b():\r\n    return 2"
-    )
+    ).success
 
     assert ok is True
     assert (tmp_path / "crlf.py").read_bytes().count(b"\r\n") == CRLF.count(b"\r\n")
@@ -75,7 +75,7 @@ def test_lines_outside_the_target_keep_their_own_endings(tmp_path: Path) -> None
     mixed = b"a = 1\nb = 2\r\nc = 3\n"
     editor = _editor(tmp_path, {"mixed.py": mixed})
 
-    editor.replace_code_block("mixed.py", "a = 1", "a = 10")
+    editor.apply_code_block("mixed.py", "a = 1", "a = 10")
 
     assert (tmp_path / "mixed.py").read_bytes() == b"a = 10\nb = 2\r\nc = 3\n"
 
@@ -85,7 +85,7 @@ def test_an_ambiguous_target_is_refused_and_the_file_is_untouched(
 ) -> None:
     editor = _editor(tmp_path, {"dup.py": DUP})
 
-    ok = editor.replace_code_block("dup.py", "    total = 0", "    total = 10")
+    ok = editor.apply_code_block("dup.py", "    total = 0", "    total = 10").success
 
     assert ok is False
     assert (tmp_path / "dup.py").read_bytes() == DUP
@@ -95,7 +95,7 @@ def test_overlapping_matches_are_ambiguous(tmp_path: Path) -> None:
     repeated = b"x = 1\nx = 1\nx = 1\n"
     editor = _editor(tmp_path, {"rep.py": repeated})
 
-    ok = editor.replace_code_block("rep.py", "x = 1\nx = 1", "x = 2")
+    ok = editor.apply_code_block("rep.py", "x = 1\nx = 1", "x = 2").success
 
     assert ok is False
     assert (tmp_path / "rep.py").read_bytes() == repeated
@@ -134,9 +134,9 @@ async def test_an_mcp_client_is_told_the_edit_was_ambiguous(tmp_path: Path) -> N
 def test_an_lf_file_keeps_lf_and_everything_but_the_target(tmp_path: Path) -> None:
     editor = _editor(tmp_path, {"dup.py": DUP})
 
-    ok = editor.replace_code_block(
+    ok = editor.apply_code_block(
         "dup.py", "def y():\n    total = 0", "def y():\n    total = 5"
-    )
+    ).success
 
     assert ok is True
     assert (tmp_path / "dup.py").read_bytes() == DUP.replace(
@@ -147,7 +147,7 @@ def test_an_lf_file_keeps_lf_and_everything_but_the_target(tmp_path: Path) -> No
 def test_a_file_without_a_trailing_newline_keeps_none(tmp_path: Path) -> None:
     editor = _editor(tmp_path, {"t.py": b"a = 1\nb = 2"})
 
-    editor.replace_code_block("t.py", "b = 2", "b = 3")
+    editor.apply_code_block("t.py", "b = 2", "b = 3")
 
     assert (tmp_path / "t.py").read_bytes() == b"a = 1\nb = 3"
 
@@ -157,7 +157,7 @@ def test_a_replacement_that_contains_the_target_is_applied_once(
 ) -> None:
     editor = _editor(tmp_path, {"t.py": b"a = 1\n"})
 
-    ok = editor.replace_code_block("t.py", "a = 1", "a = 1\nb = 2")
+    ok = editor.apply_code_block("t.py", "a = 1", "a = 1\nb = 2").success
 
     assert ok is True
     assert (tmp_path / "t.py").read_bytes() == b"a = 1\nb = 2\n"
@@ -166,7 +166,7 @@ def test_a_replacement_that_contains_the_target_is_applied_once(
 def test_a_missing_target_is_still_refused(tmp_path: Path) -> None:
     editor = _editor(tmp_path, {"crlf.py": CRLF})
 
-    assert editor.replace_code_block("crlf.py", "def c():", "def d():") is False
+    assert editor.apply_code_block("crlf.py", "def c():", "def d():").success is False
     assert (tmp_path / "crlf.py").read_bytes() == CRLF
 
 
