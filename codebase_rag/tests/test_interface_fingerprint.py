@@ -12,6 +12,8 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.interface_fingerprint import interface_fingerprint
 from codebase_rag.types_defs import ResultRow
 
+pytestmark = pytest.mark.usefixtures("both_interface_walks")
+
 PY = cs.SupportedLanguage.PYTHON
 JAVA = cs.SupportedLanguage.JAVA
 TS = cs.SupportedLanguage.TS

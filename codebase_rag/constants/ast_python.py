@@ -521,3 +521,24 @@ PY_COMPREHENSION_TYPES = frozenset(
 # tree stays alive outside the AST cache's memory cap, so the cache holds a
 # few trees, all of whose scopes it keeps, rather than a number of scopes.
 PY_SCOPE_CACHE_TREES = 8
+# The callable-parameter scan (`parsers/utils.py`, and the tree bridge's port
+# of it for the interface fingerprint): the scopes that capture an enclosing
+# def's parameters, and the ones it never enters.
+PY_CALLABLE_CLOSURE_TYPES = frozenset({TS_PY_FUNCTION_DEFINITION, TS_PY_LAMBDA})
+PY_CALLABLE_OPAQUE_TYPES = frozenset({TS_PY_CLASS_DEFINITION})
+# Parameters whose name sits in their `name` field.
+PY_NAMED_PARAMETER_TYPES = frozenset(
+    {TS_PY_DEFAULT_PARAMETER, TS_PY_TYPED_DEFAULT_PARAMETER}
+)
+# A nested def or class: its name binds in the enclosing body, its body is a
+# scope of its own.
+PY_SCOPE_BOUNDARY_TYPES = frozenset(
+    {TS_PY_FUNCTION_DEFINITION, TS_PY_CLASS_DEFINITION, TS_PY_DECORATED_DEFINITION}
+)
+# Statements whose `left` binds names in a nested function that shadow a
+# parameter it would otherwise capture (the callable-parameter scan).
+PY_CAPTURE_SHADOW_BINDERS = frozenset({TS_PY_ASSIGNMENT, TS_PY_FOR_STATEMENT})
+# The definitions a `decorated_definition` wraps, whose name it binds.
+PY_DECORATED_DEFINITION_TYPES = frozenset(
+    {TS_PY_FUNCTION_DEFINITION, TS_PY_CLASS_DEFINITION}
+)

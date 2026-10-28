@@ -250,6 +250,71 @@ gained more than those shares alone predict (about 11%); `main`'s own two
 runs differ by 16 s. The tree has grown since stage 1 was measured: `main`
 now takes 261 s to 277 s, where stage 1's `main` took 222 s.
 
+## Stage 3, landed: the interface fingerprints
+
+A sync decides whether the files that depend on an edited file must be read
+again from that file's interface fingerprint (issue #2531), a hash of what
+they can see of it. `interface_fingerprint` walks every node of the file
+and, for each function, checks whether anything outside reads its body: a
+call of one of its own parameters, a returned name it binds, a name it
+hands on to another call. A body nothing reads is replaced by a short
+projection of it (the definitions inside, what it returns, the calls that
+hand a name on). That was 12.9% of the code-graph-rag run on stage 2.
+
+The bridge now computes it in Rust, with `python_interface_fingerprint` as
+the twin. The per-language rules (`_RULES`: which node types are functions,
+blocks, definitions, calls and returns) and every node type and field the
+checks read are handed to the bridge from `constants/` (`bridge_rules`), as
+stages 1 and 2 hand theirs; a length prefix or byte order the Rust side
+does not write turns the bridge off. The checks ask which names a function
+binds; the Rust walk answers from stage 2's scope facts in Rust instead of
+calling back into Python. The startup probe also fingerprints its sample
+file both ways, and while it runs the twin's scope lookups stay in Python,
+so the probe compares two separate computations, not Rust with itself.
+
+The walk never asks a node for its parent, because tree-sitter answers
+that by walking down from the root; it keeps the enclosing definitions on
+its own stack. Its node-type sets are hashed with FNV, which is about a
+third cheaper per lookup than Rust's default hasher and safe here, because
+their keys are the grammar's type names, never text from the file being
+read.
+
+**Parity.** 2,656 files in five languages fingerprinted both ways:
+code-graph-rag's `codebase_rag/` (1,743 Python files) and its 7 Java
+files, rich (213) and click (91) in Python, express (142, JavaScript), ky
+(98 as TypeScript, and the same 98 as TSX) and gson (264, Java): no
+difference. `codebase_rag/tests/test_native_interface.py` keeps the
+comparison in the suite, over a sample in each language, every definition
+in them and every file of the package, and the tests of
+`test_interface_fingerprint.py` run on both paths (the
+`both_interface_walks` fixture). Indexing code-graph-rag on `main` and on
+this stage, alternating, gave the same graph pair by pair, byte for byte,
+fingerprints included (215,163 and 215,164 nodes and edges: the two pairs
+differ by one `CALLS` edge, on both sides). rich's five runs on each side
+wrote the same set of lines, and click's six runs the same graph.
+
+**Speed.** Over those 2,656 files the Python fingerprint takes 58.5 s and
+the Rust one 6.8 s (8.6x). Most of what is left is tree-sitter's cursor:
+93 ns a node in the table above, about 125 ns with every tree of a run in
+memory. And the walk visits a function's body more than once: to check
+what reads it, then to project it.
+
+End to end, without embeddings, sync time. This container ran about 1.6
+times slower than when stage 2 was measured: stage 2's own code took 214 s
+to 224 s on code-graph-rag then and 335 s to 358 s now, on the same tree.
+Compare within the table only.
+
+| Repository | `main` | Stage 3 | Gain |
+|---|---|---|---|
+| rich, median of 5 alternating runs | 19.8 s | 17.0 s | 1.16x |
+| click, median of 3 alternating runs | 12.1 s | 11.3 s | 1.07x |
+| code-graph-rag, 2 alternating runs | 358.2 s, 335.0 s | 300.4 s, 312.3 s | 1.07x to 1.19x, 1.13x on the means |
+
+Stage 2's profile predicted 1.13x for code-graph-rag (12.9% at 8.6x).
+Under the profiler `interface_fingerprint` fell from 12.9% of the run to
+1.9%, and the scope walks from 6.6% to 3.2%, since the fingerprint no
+longer calls them from Python.
+
 ## The plan
 
 Every step is its own PR, re-measured with `benchmarks/index_profile.py`
@@ -272,18 +337,15 @@ Import `pydantic_ai` and `prompt_toolkit` where the agent uses them, so
 `qdrant_client` and `pymilvus` there too when the `semantic` extra is
 installed.
 
-### 3. Rust: interface fingerprints (12.9% after stage 2)
+### 3. Rust: interface fingerprints
 
-The scope walks of this step landed as stage 2. What is left is
-`interface_fingerprint` itself, 12.9% of the code-graph-rag run on stage 2:
-its walk over every node of a file (`_expand`, 11.5%), the checks of what a
-function body holds (`_body_is_read`, `names_bound_within`) and the calls
-it records (`_call_bindings`). It hashes, like stage 1, so SHA-256 bounds
-its speed-up as it bounds `anchor_hash`'s.
+Landed: the scope walks as stage 2, `interface_fingerprint` as stage 3.
 
-### 4. Rust: call-site extraction (about 5%)
+### 4. Rust: call-site extraction (2% to 5%)
 
 `_scan_invoked_parameters` and the call collection in `call_processor.py`.
+`_scan_invoked_parameters` alone fell from 3.7% to 1.9% with stage 3, which
+stopped calling it from the fingerprint.
 Rust returns the call sites as nodes the caller already holds or as spans;
 resolution (`call_resolver.py`, the function registry) stays in Python,
 because it reads and writes registry state every language shares.
@@ -305,11 +367,23 @@ Half the parse time re-parses trees the bounded AST cache evicted. Size its
 bound from the run's file count, or order the call pass so that a file's
 callers follow it, before porting any of it.
 
+### 7. Python: the Java registry scan (9.5% after stage 3)
+
+`_find_registry_entries_under` in `java/type_resolver.py` asks the function
+registry's trie for the names under a prefix, and when it finds none, as
+for a type declared outside the repository, it scans every registered name
+instead. On code-graph-rag's run that scan is 9.5% (5.5% on stage 2's
+profile), almost all of it in the scan itself, for the run's 7 Java files
+(`_methods_named`, under instance-method resolution). Answering from the trie alone, or remembering the empty
+answers, needs no Rust; whether the scan can ever find what the trie does
+not is the thing to check first.
+
 ## What the steps add up to
 
 The code-graph-rag run without embeddings, timed without the profiler. The
-tree grew between the two stages, so each is measured against the `main`
-of its day. The steps not taken yet are projected from stage 2's profile,
+tree grew between stages 1 and 2, and the container slowed between stages 2
+and 3, so each stage is measured against the `main` of its day. The steps
+not taken yet are projected from stage 3's profile, from its measured mean,
 at 6x per ported walk:
 
 | After | Time |
@@ -318,11 +392,13 @@ at 6x per ported walk:
 | Stage 1 (landed) | 206 s, measured |
 | Stage 2's `main` | 261 s to 277 s, measured |
 | Stage 2 (landed) | 214 s to 224 s, measured |
-| Step 1 (Python lookups, 19.8% of stage 2's run) | about 180 s |
-| Step 3 (interface fingerprints, 12.9%) | about 160 s |
-| Step 4 (call sites, about 5%) | about 150 s |
+| Stage 3's `main`, in a container about 1.6x slower | 335 s to 358 s, measured |
+| Stage 3 (landed) | 300 s to 312 s, measured |
+| Step 1 (Python lookups, 22.6% of stage 3's run) | about 235 s |
+| Step 7 (Java registry scan, 9.5%) | about 210 s |
+| Step 4 (call sites, 2% to 5%) | about 200 s |
 
-That is about 1.7x end to end on one core against stage 2's `main`, before
+That is about 1.7x end to end on one core against stage 3's `main`, before
 step 5. Most of what remains is call resolution and the passes' own control
 flow in Python, which share registries across files and languages; they are
 the part that stays Python.

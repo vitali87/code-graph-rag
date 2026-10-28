@@ -221,6 +221,24 @@ CLI_ERR_GRAPH_CONSTRAINTS_FAILED = (
     "marked as an unfinished sync until one finishes. Check the graph "
     "connection and retry."
 )
+# `cgr rename` and `cgr change-signature` plan their call sites from the graph,
+# so one a stopped run left partial hides callers the edit then never rewrites
+# (Greptile review, PR #2164).
+CLI_ERR_EDIT_GRAPH_PARTIAL = (
+    "Refusing to edit '{project}': a sync or re-ingest of its graph stopped "
+    "part-way, so call sites may be missing from it. Once no sync is running, "
+    "re-index it ('cgr start --update-graph', or update_repository on the MCP "
+    "server whose run stopped), then retry."
+)
+CLI_ERR_EDIT_MARKER_UNREADABLE = (
+    "Refusing to edit '{project}': could not read whether its last sync "
+    "finished ({error}). Check the graph connection and retry."
+)
+CLI_ERR_EDIT_MARKER_FAILED = (
+    "The graph for '{project}' may be partial after this edit, and the "
+    "incomplete-run marker that says so could not be written ({error}). Run "
+    "'cgr start --update-graph' before the next edit or MCP session."
+)
 CLI_STATUS_SYNC_INCOMPLETE = (
     "sync interrupted or in progress -- re-run if no sync is active"
 )
@@ -974,6 +992,10 @@ RENAME_CONTRACT_UNMEASURED = (
 )
 # Change signature (issue #1533).
 SIGNATURE_PARAM_PROBE = "def _({text}): pass"
+SIGNATURE_CLI_WRONG_ROOT = (
+    "Project {project} was not indexed from {root}; "
+    "pass the --repo-path it was indexed from"
+)
 SIGNATURE_NOT_PYTHON = (
     "Cannot change the signature of {qn}: {path} is not Python, and only Python "
     "definitions are supported for now (issue #{issue})"

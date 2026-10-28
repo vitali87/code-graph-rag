@@ -187,6 +187,103 @@ class ScopeRules(TypedDict):
     attribute_field: str
 
 
+class InterfaceLanguageRules(TypedDict):
+    """One language's `_Rules` in parsers/interface_fingerprint.py, and
+    which of its language branches the language takes."""
+
+    flavor: str
+    functions: list[str]
+    blocks: list[str]
+    definitions: list[str]
+    blockers: list[str]
+    kept_names: list[str]
+    calls: list[str]
+    returns: list[str]
+
+
+class CallableScanRules(TypedDict):
+    """`_CallableScanConfig` in parsers/utils.py."""
+
+    call: str
+    identifier: str
+    closures: list[str]
+    opaque: list[str]
+
+
+class InterfaceRules(TypedDict):
+    """The constants parsers/interface_fingerprint.py and the callable-
+    parameter scan it asks read, under the names `interface_rules_from` in
+    rust/cgr_graph_rs/src/trees/python.rs reads."""
+
+    languages: dict[str, InterfaceLanguageRules]
+    version: str
+    open: bytes
+    close: bytes
+    leaf: bytes
+    missing: bytes
+    elided_body: bytes
+    returned: bytes
+    call: bytes
+    argument: bytes
+    local: bytes
+    length_bytes: int
+    byte_order: str
+    comment: str
+    dunder: str
+    body_field: str
+    name_field: str
+    left_field: str
+    arguments_field: str
+    value_field: str
+    key_field: str
+    function_field: str
+    property_field: str
+    object_field: str
+    parameters_field: str
+    parameter_field: str
+    pattern_field: str
+    alias_field: str
+    callee_fields: list[str]
+    identifier: str
+    keyword_argument: str
+    name_arguments: list[str]
+    cast_wrappers: list[str]
+    call_expression: str
+    member_expression: str
+    prototype_methods: list[str]
+    js_binder_fields: dict[str, list[str]]
+    js_bound_names: list[str]
+    js_return: str
+    js_pair: str
+    js_computed_property_name: str
+    js_require: str
+    js_typed_parameters: list[str]
+    py_identifier: str
+    py_call: str
+    py_attribute: str
+    py_return: str
+    py_read_returns: list[str]
+    receivers: list[str]
+    py_target_holders: list[str]
+    py_target_wrappers: list[str]
+    py_member_targets: list[str]
+    py_caller_scope: str
+    py_named_parameters: list[str]
+    py_typed_parameter: str
+    py_scope_boundaries: list[str]
+    py_decorated_definition: str
+    py_decorated_definitions: list[str]
+    py_shadow_binders: list[str]
+    py_as_pattern_target: str
+    py_imports: list[str]
+    py_global: str
+    py_case_pattern: str
+    py_dotted_name: str
+    py_aliased_import: str
+    python_scan: CallableScanRules
+    js_scan: CallableScanRules
+
+
 class TreeRules(TypedDict):
     """The classification constants the Rust tree bridge applies, under the
     names `rules_from` in rust/cgr_graph_rs/src/trees/python.rs reads."""
@@ -214,6 +311,7 @@ class TreeRules(TypedDict):
     dart_signature_wrappers: list[str]
     dart_function_body: str
     scopes: ScopeRules
+    interface: InterfaceRules
 
 
 class ScopeFacts(NamedTuple):
