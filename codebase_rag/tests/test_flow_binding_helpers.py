@@ -50,7 +50,7 @@ def _texts(nodes: list[Node]) -> list[str]:
 def test_a_pair_pattern_binds_its_value_side() -> None:
     processor = FlowProcessor.__new__(FlowProcessor)
     pair = _first(_js_root(b"const { key: local } = obj;\n"), cs.TS_PAIR_PATTERN)
-    assert _texts(processor._js_binding_children(pair)) == ["local"]
+    assert _texts(processor._lean_binding_children(pair)) == ["local"]
 
 
 def test_an_assignment_pattern_binds_its_left_side() -> None:
@@ -58,16 +58,16 @@ def test_an_assignment_pattern_binds_its_left_side() -> None:
     default = _first(
         _js_root(b"function f(a = 1) { return a; }\n"), cs.TS_ASSIGNMENT_PATTERN
     )
-    assert _texts(processor._js_binding_children(default)) == ["a"]
+    assert _texts(processor._lean_binding_children(default)) == ["a"]
 
 
 def test_destructuring_patterns_bind_every_named_child() -> None:
     processor = FlowProcessor.__new__(FlowProcessor)
     array = _first(_js_root(b"const [x, y] = pair;\n"), cs.TS_ARRAY_PATTERN)
-    assert _texts(processor._js_binding_children(array)) == ["x", "y"]
+    assert _texts(processor._lean_binding_children(array)) == ["x", "y"]
 
 
 def test_an_unrelated_node_binds_nothing() -> None:
     processor = FlowProcessor.__new__(FlowProcessor)
     number = _first(_js_root(b"const n = 1;\n"), "number")
-    assert processor._js_binding_children(number) == []
+    assert processor._lean_binding_children(number) == []

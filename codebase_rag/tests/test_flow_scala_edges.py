@@ -1,6 +1,6 @@
 """FLOWS_TO lean-walk coverage for Scala (issues #1256/#1176). The walk
 routed Scala but the descriptor's subscript_type was wired to call_expression,
-so _js_expr_taint's member/subscript branch swallowed every nested source
+so _lean_expr_taint's member/subscript branch swallowed every nested source
 call and Scala emitted zero FLOWS_TO edges; the #1190 corpus caught it.
 These tests pin the fixed wiring for the direct-nesting and val-bound
 shapes."""
