@@ -134,19 +134,22 @@ class TestProcessCommonjsImport:
 
         assert mock_import_processor.defer_import_edge.call_count == 1
 
-    def test_handles_resolution_error_gracefully(
+    def test_a_resolution_error_reaches_the_pass_boundary(
         self,
         mixin: ConcreteModuleSystemMixin,
         mock_ingestor: MagicMock,
         mock_import_processor: MagicMock,
     ) -> None:
+        # Caught once, in `_ingest_missing_import_patterns`, and reported
+        # there; this helper used to swallow it at debug level as well.
         mock_import_processor._resolve_js_module_path.side_effect = Exception(
             "Resolution failed"
         )
 
-        mixin._process_commonjs_import(
-            "readFile", "fs", "my_module", cs.SupportedLanguage.JS
-        )
+        with pytest.raises(Exception, match="Resolution failed"):
+            mixin._process_commonjs_import(
+                "readFile", "fs", "my_module", cs.SupportedLanguage.JS
+            )
 
         mock_ingestor.ensure_node_batch.assert_not_called()
         mock_import_processor.defer_import_edge.assert_not_called()

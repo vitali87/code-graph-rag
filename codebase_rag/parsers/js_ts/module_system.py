@@ -94,24 +94,19 @@ class JsTsModuleSystemMixin:
         if not language_obj:
             return
 
+        # The one catch for the pass: a failure here is a bug, so it is
+        # reported, and the rest of the module's definitions still ingest.
         try:
-            try:
-                query = get_cached_query(language_obj, cs.JS_COMMONJS_DESTRUCTURE_QUERY)
-                cursor = QueryCursor(query)
-                captures = sorted_captures(cursor, root_node)
-
-                variable_declarators = captures.get(cs.CAPTURE_VARIABLE_DECLARATOR, [])
-
-                for declarator in variable_declarators:
-                    self._process_variable_declarator_for_commonjs(
-                        declarator, module_qn, language
-                    )
-
-            except Exception as e:
-                logger.debug(ls.JS_COMMONJS_DESTRUCTURE_FAILED, error=e)
-
+            query = get_cached_query(language_obj, cs.JS_COMMONJS_DESTRUCTURE_QUERY)
+            captures = sorted_captures(QueryCursor(query), root_node)
+            for declarator in captures.get(cs.CAPTURE_VARIABLE_DECLARATOR, []):
+                self._process_variable_declarator_for_commonjs(
+                    declarator, module_qn, language
+                )
         except Exception as e:
-            logger.debug(ls.JS_MISSING_IMPORT_PATTERNS_FAILED, error=e)
+            logger.warning(
+                ls.JS_COMMONJS_DESTRUCTURE_FAILED, module_qn=module_qn, error=e
+            )
 
     def _extract_require_module_name(self, declarator: ASTNode) -> str | None:
         name_node = declarator.child_by_field_name(cs.FIELD_NAME)
@@ -173,22 +168,16 @@ class JsTsModuleSystemMixin:
     def _process_variable_declarator_for_commonjs(
         self, declarator: ASTNode, module_qn: str, language: cs.SupportedLanguage
     ) -> None:
-        try:
-            module_name = self._extract_require_module_name(declarator)
-            if not module_name:
-                return
+        module_name = self._extract_require_module_name(declarator)
+        if not module_name:
+            return
 
-            name_node = declarator.child_by_field_name(cs.FIELD_NAME)
-            if not name_node:
-                return
+        name_node = declarator.child_by_field_name(cs.FIELD_NAME)
+        if not name_node:
+            return
 
-            for child in name_node.children:
-                self._process_destructured_child(
-                    child, module_name, module_qn, language
-                )
-
-        except Exception as e:
-            logger.debug(ls.JS_COMMONJS_VAR_DECLARATOR_FAILED, error=e)
+        for child in name_node.children:
+            self._process_destructured_child(child, module_name, module_qn, language)
 
     def _process_commonjs_import(
         self,
@@ -197,38 +186,32 @@ class JsTsModuleSystemMixin:
         module_qn: str,
         language: cs.SupportedLanguage,
     ) -> None:
-        try:
-            # A destructured `require()` reads a dual-package exports map from
-            # the require side, so the CommonJS condition, not the ESM one,
-            # names the source module.
-            resolved_source_module = self.import_processor._resolve_js_module_path(
-                module_name, module_qn, require=True
+        # A destructured `require()` reads a dual-package exports map from
+        # the require side, so the CommonJS condition, not the ESM one,
+        # names the source module.
+        resolved_source_module = self.import_processor._resolve_js_module_path(
+            module_name, module_qn, require=True
+        )
+
+        import_key = f"{module_qn}->{resolved_source_module}"
+        if import_key not in self._processed_imports:
+            # Route through the same deferred verification as every
+            # other IMPORTS edge: an internal target must be a real
+            # module, an external one gets its ExternalModule node at
+            # flush (issue #652: this path emitted directly and was the
+            # last source of phantom import targets).
+            self.import_processor.defer_import_edge(
+                module_qn, resolved_source_module, language
             )
 
-            import_key = f"{module_qn}->{resolved_source_module}"
-            if import_key not in self._processed_imports:
-                # Route through the same deferred verification as every
-                # other IMPORTS edge: an internal target must be a real
-                # module, an external one gets its ExternalModule node at
-                # flush (issue #652: this path emitted directly and was the
-                # last source of phantom import targets).
-                self.import_processor.defer_import_edge(
-                    module_qn, resolved_source_module, language
-                )
-
-                logger.debug(
-                    ls.JS_MISSING_IMPORT_PATTERN,
-                    module_qn=module_qn,
-                    imported_name=imported_name,
-                    resolved_source_module=resolved_source_module,
-                )
-
-                self._processed_imports.add(import_key)
-
-        except Exception as e:
             logger.debug(
-                ls.JS_COMMONJS_IMPORT_FAILED, imported_name=imported_name, error=e
+                ls.JS_MISSING_IMPORT_PATTERN,
+                module_qn=module_qn,
+                imported_name=imported_name,
+                resolved_source_module=resolved_source_module,
             )
+
+            self._processed_imports.add(import_key)
 
     def _ingest_export_function(
         self,

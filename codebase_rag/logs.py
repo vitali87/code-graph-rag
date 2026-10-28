@@ -1074,8 +1074,9 @@ JS_PROTOTYPE_METHOD_FOUND = "  Found Prototype Method: {method_name} (qn: {metho
 JS_PROTOTYPE_METHOD_DEFINES = "Prototype method: {constructor_qn} DEFINES {method_qn}"
 JS_PROTOTYPE_METHODS_FAILED = "Failed to detect prototype methods: {error}"
 JS_OBJECT_METHOD_FOUND = "  Found Object Method: {method_name} (qn: {method_qn})"
-JS_OBJECT_METHODS_PROCESS_FAILED = "Failed to process object literal methods: {error}"
-JS_OBJECT_METHODS_DETECT_FAILED = "Failed to detect object literal methods: {error}"
+JS_OBJECT_METHODS_PROCESS_FAILED = (
+    "Failed to process object literal methods in {module_qn}: {error}"
+)
 JS_OBJECT_ARROW_FOUND = (
     "  Found Object Arrow Function: {function_name} (qn: {function_qn})"
 )
@@ -1086,21 +1087,13 @@ JS_ASSIGNMENT_FUNC_EXPR_FOUND = (
     "  Found Assignment Function Expression: {function_name} (qn: {function_qn})"
 )
 JS_ASSIGNMENT_ARROW_QUERY_FAILED = (
-    "Failed to process assignment arrow functions query: {error}"
-)
-JS_ASSIGNMENT_ARROW_DETECT_FAILED = (
-    "Failed to detect assignment arrow functions: {error}"
+    "Failed to process assignment arrow functions in {module_qn}: {error}"
 )
 
 # JS/TS module system logs
 JS_COMMONJS_DESTRUCTURE_FAILED = (
-    "Failed to process CommonJS destructuring pattern: {error}"
+    "Failed to process CommonJS destructuring in {module_qn}: {error}"
 )
-JS_MISSING_IMPORT_PATTERNS_FAILED = "Failed to detect missing import patterns: {error}"
-JS_COMMONJS_VAR_DECLARATOR_FAILED = (
-    "Failed to process variable declarator for CommonJS: {error}"
-)
-JS_COMMONJS_IMPORT_FAILED = "Failed to process CommonJS import {imported_name}: {error}"
 JS_MISSING_IMPORT_PATTERN = (
     "Missing pattern: {module_qn} IMPORTS {imported_name} from {resolved_source_module}"
 )

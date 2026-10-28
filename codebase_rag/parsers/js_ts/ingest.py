@@ -294,18 +294,15 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             return
 
         lang_config = queries[language].get(cs.QUERY_CONFIG)
-        try:
-            for query_text in [cs.JS_OBJECT_METHOD_QUERY, cs.JS_METHOD_DEF_QUERY]:
-                self._process_object_method_query(
-                    language_obj,
-                    query_text,
-                    root_node,
-                    module_qn,
-                    lang_config,
-                    language,
-                )
-        except Exception as e:
-            logger.debug(lg.JS_OBJECT_METHODS_DETECT_FAILED, error=e)
+        for query_text in [cs.JS_OBJECT_METHOD_QUERY, cs.JS_METHOD_DEF_QUERY]:
+            self._process_object_method_query(
+                language_obj,
+                query_text,
+                root_node,
+                module_qn,
+                lang_config,
+                language,
+            )
 
     def _process_object_method_query(
         self,
@@ -343,7 +340,11 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                     method_name_node, method_func_node, module_qn, lang_config, language
                 )
         except Exception as e:
-            logger.debug(lg.JS_OBJECT_METHODS_PROCESS_FAILED, error=e)
+            # The one catch per query: a failure is a bug, so it is reported,
+            # and the other query and the rest of the module still ingest.
+            logger.warning(
+                lg.JS_OBJECT_METHODS_PROCESS_FAILED, module_qn=module_qn, error=e
+            )
 
     def _process_single_object_method(
         self,
@@ -460,20 +461,16 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         if language not in cs.JS_TS_LANGUAGES:
             return
 
-        try:
-            lang_query = queries[language][cs.QUERY_LANGUAGE]
-            lang_config = queries[language].get(cs.QUERY_CONFIG)
-
-            for query_text in [
-                cs.JS_OBJECT_ARROW_QUERY,
-                cs.JS_ASSIGNMENT_ARROW_QUERY,
-                cs.JS_ASSIGNMENT_FUNCTION_QUERY,
-            ]:
-                self._process_arrow_query(
-                    lang_query, query_text, root_node, module_qn, lang_config, language
-                )
-        except Exception as e:
-            logger.debug(lg.JS_ASSIGNMENT_ARROW_DETECT_FAILED, error=e)
+        lang_query = queries[language][cs.QUERY_LANGUAGE]
+        lang_config = queries[language].get(cs.QUERY_CONFIG)
+        for query_text in [
+            cs.JS_OBJECT_ARROW_QUERY,
+            cs.JS_ASSIGNMENT_ARROW_QUERY,
+            cs.JS_ASSIGNMENT_FUNCTION_QUERY,
+        ]:
+            self._process_arrow_query(
+                lang_query, query_text, root_node, module_qn, lang_config, language
+            )
 
     def _process_arrow_query(
         self,
@@ -514,7 +511,10 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                 language,
             )
         except Exception as e:
-            logger.debug(lg.JS_ASSIGNMENT_ARROW_QUERY_FAILED, error=e)
+            # The one catch per query, as for object literal methods.
+            logger.warning(
+                lg.JS_ASSIGNMENT_ARROW_QUERY_FAILED, module_qn=module_qn, error=e
+            )
 
     def _process_direct_arrow_functions(
         self,
