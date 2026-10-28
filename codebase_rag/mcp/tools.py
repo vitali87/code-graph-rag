@@ -1075,7 +1075,7 @@ class MCPToolsRegistry:
 
     def _workspace_name_refusal(
         self, qualified_name: str, indexed: list[str] | None = None
-    ) -> str | None:
+    ) -> te.ToolFailure | None:
         """Why a qualified name is refused under a workspace: it belongs to
         no served project. The agent's source readers take a name, not a
         project, so the allow-list is applied to the name's project prefix
@@ -1089,10 +1089,12 @@ class MCPToolsRegistry:
         owner = self._name_owner(qualified_name, [*names, *indexed])
         if owner is not None and owner in names:
             return None
-        return cs.MCP_NAME_OUTSIDE_WORKSPACE.format(
-            name=qualified_name,
-            workspace=self.workspace.name,
-            known=cs.SEPARATOR_COMMA_SPACE.join(names),
+        return te.ToolFailure(
+            cs.MCP_NAME_OUTSIDE_WORKSPACE.format(
+                name=qualified_name,
+                workspace=self.workspace.name,
+                known=cs.SEPARATOR_COMMA_SPACE.join(names),
+            )
         )
 
     @staticmethod
@@ -1110,7 +1112,7 @@ class MCPToolsRegistry:
         ]
         return max(owners)[1] if owners else None
 
-    def _workspace_source_refusal(self, qualified_name: str) -> str | None:
+    def _workspace_source_refusal(self, qualified_name: str) -> te.ToolFailure | None:
         """Why a source read of `qualified_name` is refused under a
         workspace: the name is outside it, or its project is served but the
         graph does not show it indexed from the workspace's checkout. The
@@ -1129,8 +1131,10 @@ class MCPToolsRegistry:
         owner = self._name_owner(qualified_name, [*names, *indexed])
         if owner is not None and self._source_root_for(owner) is not None:
             return None
-        return cs.MCP_WORKSPACE_SOURCE_UNPROVEN.format(
-            name=qualified_name, project=owner, workspace=self.workspace.name
+        return te.ToolFailure(
+            cs.MCP_WORKSPACE_SOURCE_UNPROVEN.format(
+                name=qualified_name, project=owner, workspace=self.workspace.name
+            )
         )
 
     def _workspace_scoped_by_name(self, tool: Tool) -> Tool:
@@ -1452,7 +1456,7 @@ class MCPToolsRegistry:
             # record and NO single project's successful clear may retire it.
             self._incomplete_unbounded = True
             logger.error(lg.MCP_ERROR_WIPE.format(error=e))
-            return cs.MCP_WIPE_ERROR.format(error=e)
+            return te.ToolFailure(cs.MCP_WIPE_ERROR.format(error=e))
 
     def _ignore_sets(self) -> tuple[frozenset[str] | None, frozenset[str] | None]:
         # The CLI resolves `.cgrignore` and the root `.gitignore` through
@@ -1553,7 +1557,7 @@ class MCPToolsRegistry:
                 return await _run_in_thread(self._under_sync_lock, sync_fn)
         except Exception as e:
             logger.error(error_log.format(error=e))
-            return error_message.format(error=e)
+            return te.ToolFailure(error_message.format(error=e))
 
     def _under_sync_lock(self, sync_fn: Callable[[], str]) -> str:
         # Taken before the `:IncompleteRun` marker and the project delete, so
@@ -2016,7 +2020,7 @@ class MCPToolsRegistry:
 
     def _incomplete_refusal(
         self, project_name: str, tool: cs.MCPToolName
-    ) -> str | None:
+    ) -> te.ToolFailure | None:
         """The refusal for a graph read while the graph is known partial.
 
         Returns the message, or None to proceed. The eight tools behind
@@ -2030,7 +2034,9 @@ class MCPToolsRegistry:
             project_name,
         )
         if in_process or self._marker_says_incomplete(project_name):
-            return cs.MCP_QUERY_AFTER_FAILED_RUN.format(project=project_name, tool=tool)
+            return te.ToolFailure(
+                cs.MCP_QUERY_AFTER_FAILED_RUN.format(project=project_name, tool=tool)
+            )
         return None
 
     def _marker_says_incomplete(self, project_name: str) -> bool:
@@ -2466,6 +2472,8 @@ class MCPToolsRegistry:
             result = await _plain_function(self._semantic_search_tool)(
                 query=natural_language_query, top_k=top_k, project=project
             )
+        if isinstance(result, te.ToolFailure):
+            return result
         return str(result)
 
     async def find_duplicate_code(
@@ -2517,6 +2525,8 @@ class MCPToolsRegistry:
             ):
                 return refusal
             result = await _plain_function(self._function_source_tool)(node_id=node_id)
+        if isinstance(result, te.ToolFailure):
+            return result
         return str(result)
 
     async def structural_search(self, pattern: str, language: str | None = None) -> str:
@@ -2850,26 +2860,33 @@ class MCPToolsRegistry:
         served = set(self.workspace.project_names())
         return [name for name in projects if name in served]
 
-    def _unknown_project_error(self, project: str, known: list[str]) -> str:
+    def _unknown_project_error(self, project: str, known: list[str]) -> te.ToolFailure:
         # The close matches when there are any; a shared graph lists dozens
         # of `<dir>__<hash>` names, and the one meant is the one to name.
         known = self._nameable(known)
         close = graph_query.close_project_names(project, known)
         if close:
-            return cs.MCP_UNKNOWN_PROJECT_NAMED.format(
-                project=project
-            ) + graph_query.did_you_mean(close)
+            return te.ToolFailure(
+                cs.MCP_UNKNOWN_PROJECT_NAMED.format(project=project)
+                + graph_query.did_you_mean(close)
+            )
         listed = cs.SEPARATOR_COMMA_SPACE.join(known)
         if self.workspace is None:
-            return cs.MCP_UNKNOWN_PROJECT.format(project=project, known=listed)
+            return te.ToolFailure(
+                cs.MCP_UNKNOWN_PROJECT.format(project=project, known=listed)
+            )
         # Labelled as the workspace's, so a short list does not read as the
         # whole graph, and an empty one is said rather than left blank.
         if not known:
-            return cs.MCP_UNKNOWN_WORKSPACE_PROJECT_NONE_INDEXED.format(
-                project=project, workspace=self.workspace.name
+            return te.ToolFailure(
+                cs.MCP_UNKNOWN_WORKSPACE_PROJECT_NONE_INDEXED.format(
+                    project=project, workspace=self.workspace.name
+                )
             )
-        return cs.MCP_UNKNOWN_WORKSPACE_PROJECT.format(
-            project=project, workspace=self.workspace.name, known=listed
+        return te.ToolFailure(
+            cs.MCP_UNKNOWN_WORKSPACE_PROJECT.format(
+                project=project, workspace=self.workspace.name, known=listed
+            )
         )
 
     def _root_not_indexed_error(
@@ -2877,7 +2894,7 @@ class MCPToolsRegistry:
         project_name: str,
         known: list[str],
         message: str = cs.MCP_ROOT_NOT_INDEXED,
-    ) -> str:
+    ) -> te.ToolFailure:
         root = Path(self.project_root)
         # A repository indexed under a name of its own is the likeliest
         # meaning, then names spelled close to the derived one; both only
@@ -2886,8 +2903,9 @@ class MCPToolsRegistry:
             graph_query.projects_rooted_at(self.ingestor.list_project_roots(), root)
         )
         close = graph_query.close_project_names(project_name, self._nameable(known))
-        return message.format(path=root.resolve()) + graph_query.did_you_mean(
-            list(dict.fromkeys([*rooted, *close]))
+        return te.ToolFailure(
+            message.format(path=root.resolve())
+            + graph_query.did_you_mean(list(dict.fromkeys([*rooted, *close])))
         )
 
     def _flow_endpoint_refusal(
@@ -2962,7 +2980,9 @@ class MCPToolsRegistry:
             self.ingestor.fetch_all, project_name, target
         )
 
-    def _workspace_scope(self, project: str | None) -> tuple[str | None, str | None]:
+    def _workspace_scope(
+        self, project: str | None
+    ) -> tuple[str | None, te.ToolFailure | None]:
         """(the project a request means, why it is refused) under a workspace.
 
         The one decision every project-taking tool applies (issue #1494,
@@ -2978,21 +2998,25 @@ class MCPToolsRegistry:
         if project is not None:
             if project in names:
                 return project, None
-            return None, cs.MCP_PROJECT_OUTSIDE_WORKSPACE.format(
-                project=project,
-                workspace=self.workspace.name,
-                known=cs.SEPARATOR_COMMA_SPACE.join(names),
+            return None, te.ToolFailure(
+                cs.MCP_PROJECT_OUTSIDE_WORKSPACE.format(
+                    project=project,
+                    workspace=self.workspace.name,
+                    known=cs.SEPARATOR_COMMA_SPACE.join(names),
+                )
             )
         default = self._workspace_default_project()
         if default is None:
-            return None, cs.MCP_WORKSPACE_DEFAULT_AMBIGUOUS.format(
-                workspace=self.workspace.name,
-                count=len(names),
-                known=cs.SEPARATOR_COMMA_SPACE.join(names),
+            return None, te.ToolFailure(
+                cs.MCP_WORKSPACE_DEFAULT_AMBIGUOUS.format(
+                    workspace=self.workspace.name,
+                    count=len(names),
+                    known=cs.SEPARATOR_COMMA_SPACE.join(names),
+                )
             )
         return default, None
 
-    def _fixed_root_project(self) -> tuple[str, None] | tuple[None, str]:
+    def _fixed_root_project(self) -> tuple[str, None] | tuple[None, te.ToolFailure]:
         """(project, refusal) for a handler that takes no `project` argument.
 
         flow_verdict, explain_traceback and rank_root_causes derive their
@@ -3009,13 +3033,15 @@ class MCPToolsRegistry:
         if default is not None:
             return default, None
         names = self.workspace.project_names()
-        return None, cs.MCP_WORKSPACE_DEFAULT_AMBIGUOUS.format(
-            workspace=self.workspace.name,
-            count=len(names),
-            known=cs.SEPARATOR_COMMA_SPACE.join(names),
+        return None, te.ToolFailure(
+            cs.MCP_WORKSPACE_DEFAULT_AMBIGUOUS.format(
+                workspace=self.workspace.name,
+                count=len(names),
+                known=cs.SEPARATOR_COMMA_SPACE.join(names),
+            )
         )
 
-    def _unindexed_refusal(self, project: str) -> str | None:
+    def _unindexed_refusal(self, project: str) -> te.ToolFailure | None:
         """Why a fixed-root handler must not read `project`, or None.
 
         `_fixed_root_project` derives the name without asking the graph. A

@@ -21,6 +21,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.mcp import server as mcp_server
 from codebase_rag.mcp.tools import MCPToolsRegistry
+from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.tests.test_mcp_tool_errors_flagged import _call, _text
 
 pytestmark = [pytest.mark.anyio]
@@ -167,3 +168,56 @@ async def test_a_success_is_not_flagged(
     with patch.object(MCPToolsRegistry, method, AsyncMock(return_value=payload)):
         result = await _call(tool, arguments)
     assert result.isError is False, _text(result)
+
+
+@pytest.mark.parametrize(
+    ("tool", "arguments"),
+    [
+        pytest.param(cs.MCPToolName.INDEX_REPOSITORY, {}, id="index"),
+        pytest.param(cs.MCPToolName.UPDATE_REPOSITORY, {}, id="update"),
+    ],
+)
+async def test_a_failed_sync_is_flagged(
+    repo: Path, no_llm: None, tool: str, arguments: dict[str, object]
+) -> None:
+    # The sync body's failure came back as plain text, an isError:false
+    # success that said "Error indexing repository" in its prose.
+    with patch.object(
+        MCPToolsRegistry,
+        "_under_sync_lock",
+        MagicMock(side_effect=RuntimeError("disk on fire")),
+    ):
+        result = await _call(tool, arguments)
+    assert result.isError is True, _text(result)
+    assert "disk on fire" in _text(result)
+
+
+async def test_a_failed_wipe_is_flagged(repo: Path, no_llm: None) -> None:
+    with patch.object(
+        MemgraphIngestor,
+        "clean_database",
+        MagicMock(side_effect=RuntimeError("store refused")),
+    ):
+        result = await _call(cs.MCPToolName.WIPE_DATABASE, {"confirm": True})
+    assert result.isError is True, _text(result)
+    assert "store refused" in _text(result)
+
+
+@pytest.mark.parametrize(
+    ("tool", "arguments"),
+    [
+        pytest.param(cs.MCPToolName.GET_FUNCTION_SOURCE, {"node_id": 1}, id="source"),
+        pytest.param(cs.MCPToolName.FIND_DUPLICATE_CODE, {}, id="duplicates"),
+    ],
+)
+async def test_an_incomplete_graph_refusal_from_a_text_tool_is_flagged(
+    repo: Path, no_llm: None, tool: str, arguments: dict[str, object]
+) -> None:
+    # The JSON tools already flagged this refusal under `error`; the text
+    # tools returned the same sentence as a success.
+    with patch.object(
+        MCPToolsRegistry, "_marker_says_incomplete", MagicMock(return_value=True)
+    ):
+        result = await _call(tool, arguments)
+    assert result.isError is True, _text(result)
+    assert tool in _text(result)
