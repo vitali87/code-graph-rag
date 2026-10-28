@@ -9965,15 +9965,14 @@ class GraphUpdater:
         packages_now: set[str],
     ) -> str | None:
         """The delete key of a node that is stale or whose path is gone."""
+        is_folder = label == cs.NodeLabel.FOLDER
         stale_kind = (
-            (label == "Folder" and path in packages_now)
-            or (label == "Package" and path not in packages_now)
+            (is_folder and path in packages_now)
+            or (label == cs.NodeLabel.PACKAGE and path not in packages_now)
             # No node is derived at a link's path any more (issue #2451). A
             # Folder is exempt: one is keyed on its absolute path, and a link
             # to a directory shared its target's node.
-            or (
-                label != "Folder" and path_utils.is_symlink_entry(self.repo_path / path)
-            )
+            or (not is_folder and path_utils.is_symlink_entry(self.repo_path / path))
         )
         # `_vanished`, not `exists()`: since 3.12 `Path.exists()`
         # re-raises PermissionError instead of reading it as

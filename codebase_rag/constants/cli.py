@@ -860,7 +860,20 @@ EDIT_UNDO_RESYNC_COMMAND = "cgr start --repo-path {repo} --update-graph"
 EDIT_UNDO_RESYNC_PROJECT = " --project-name {project}"
 EDIT_SHOW_NONE = "No recorded edit transactions"
 EDIT_SHOW_HEADER = "{tx}  {at}  {count} file(s)  verification={ok}"
+
+
 # Rename (issue #1532).
+class RenameSiteKind(StrEnum):
+    """What a rename site is: where the old name is written, or a site the
+    graph names that no token could be found for."""
+
+    DEFINITION = "definition"
+    CALL = "call"
+    REFERENCE = "reference"
+    IMPORT = "import"
+    UNLOCATABLE = "unlocatable"
+
+
 RENAME_UNKNOWN = "No definition named {qn} in the graph"
 RENAME_NO_DEFINITION_TOKEN = "Could not locate the name of {qn} in {path}"
 RENAME_DEFINITION_UNREADABLE = (

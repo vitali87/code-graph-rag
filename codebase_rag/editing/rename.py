@@ -125,7 +125,7 @@ _TS_LANGUAGES = frozenset({cs.SupportedLanguage.TS, cs.SupportedLanguage.TSX})
 class RenameSite(NamedTuple):
     """One place the old name is written and must become the new one."""
 
-    kind: str  # definition | call | reference | import
+    kind: cs.RenameSiteKind
     path: str
     line: int
     col: int
@@ -550,7 +550,7 @@ def _jsx_closing_token(
 
 def _add_jsx_closing_site(
     sites: list[RenameSite],
-    kind: str,
+    kind: cs.RenameSiteKind,
     path: str,
     source: bytes,
     token: tuple[int, int],
@@ -573,7 +573,7 @@ def _add_jsx_closing_site(
 
 
 def _chain_link_sites(
-    kind: str,
+    kind: cs.RenameSiteKind,
     path: str,
     source: bytes,
     line: int,
@@ -743,7 +743,9 @@ class Renamer:
         sites.extend(_overload_stub_sites(sites[0], patcher))
         # Calls, references and constructions.
         for row in graph_query.callers(self.fetch_all, self.project, qn):
-            self._add_site(sites, unlocatable, "call", row, old_name, patcher)
+            self._add_site(
+                sites, unlocatable, cs.RenameSiteKind.CALL, row, old_name, patcher
+            )
         params = {
             cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
             cs.KEY_QN: qn,
@@ -756,7 +758,9 @@ class Renamer:
         for row in self.fetch_all(cq.CYPHER_GRAPH_REFERENCES, params):
             if not owns(str(row.get(cs.KEY_QUALIFIED_NAME) or "")):
                 continue
-            self._add_site(sites, unlocatable, "reference", row, old_name, patcher)
+            self._add_site(
+                sites, unlocatable, cs.RenameSiteKind.REFERENCE, row, old_name, patcher
+            )
         self._add_type_edge_sites(
             sites,
             unlocatable,
@@ -794,7 +798,7 @@ class Renamer:
         barrels: set[str] = set()
         for site in sites:
             if (
-                site.kind not in ("call", "reference")
+                site.kind not in (cs.RenameSiteKind.CALL, cs.RenameSiteKind.REFERENCE)
                 or site.path == path
                 or get_language_for_extension(Path(site.path).suffix)
                 not in cs.JS_TS_LANGUAGES
@@ -953,7 +957,9 @@ class Renamer:
             if qn in self._guessed_members
             else cs.EdgeResolution.EXACT
         )
-        return RenameSite("definition", path, token[0], token[1], qn, resolution)
+        return RenameSite(
+            cs.RenameSiteKind.DEFINITION, path, token[0], token[1], qn, resolution
+        )
 
     def _add_type_edge_sites(
         self,
@@ -975,7 +981,7 @@ class Renamer:
             ):
                 sites.append(
                     RenameSite(
-                        "unlocatable",
+                        cs.RenameSiteKind.UNLOCATABLE,
                         str(row.get("path") or ""),
                         0,
                         0,
@@ -984,7 +990,9 @@ class Renamer:
                     )
                 )
                 continue
-            self._add_site(sites, unlocatable, "reference", row, old_name, patcher)
+            self._add_site(
+                sites, unlocatable, cs.RenameSiteKind.REFERENCE, row, old_name, patcher
+            )
 
     @staticmethod
     def _record_unlocatable(
@@ -1010,7 +1018,11 @@ class Renamer:
         unlocatable.append(
             cs.RENAME_UNLOCATABLE_SITE.format(owner=owner, resolution=resolution)
         )
-        sites.append(RenameSite("unlocatable", path, line, col, owner, site_resolution))
+        sites.append(
+            RenameSite(
+                cs.RenameSiteKind.UNLOCATABLE, path, line, col, owner, site_resolution
+            )
+        )
 
     def _via_param(self, row: ResultRow | graph_query.CallSiteRow) -> str | None:
         """The parameter the row's owner runs the renamed symbol through.
@@ -1145,7 +1157,7 @@ class Renamer:
         self,
         sites: list[RenameSite],
         unlocatable: list[str],
-        kind: str,
+        kind: cs.RenameSiteKind,
         row: ResultRow | graph_query.CallSiteRow,
         old_name: str,
         patcher: Patcher,
@@ -1192,7 +1204,7 @@ class Renamer:
             end_col if isinstance(end_col, int) else None,
             old_name,
             get_language_for_extension(Path(path).suffix),
-            is_call=kind == "call",
+            is_call=kind == cs.RenameSiteKind.CALL,
         )
         if token == _STALE_CALL:
             self._record_unlocatable(
@@ -1213,7 +1225,7 @@ class Renamer:
             return
         sites.append(RenameSite(kind, path, token[0], token[1], owner, resolution_text))
         _add_jsx_closing_site(sites, kind, path, source, token, owner, resolution_text)
-        if kind == "call":
+        if kind == cs.RenameSiteKind.CALL:
             sites.extend(
                 _chain_link_sites(kind, path, source, line, col, old_name, owner, token)
             )
@@ -1288,7 +1300,7 @@ class Renamer:
         """The imports of `qn` in TS files that also use its type-space twin."""
         typed = [
             RenameSite(
-                "import",
+                cs.RenameSiteKind.IMPORT,
                 site.path,
                 site.line,
                 site.col,
@@ -1405,7 +1417,7 @@ class Renamer:
         # Every graph-known occurrence without a rewrite location blocks,
         # whatever bound it: `allow_heuristic` accepts rewriting through a
         # guessed site, not leaving a known one under the old name.
-        siteless = [s for s in sites if s.kind == "unlocatable"]
+        siteless = [s for s in sites if s.kind == cs.RenameSiteKind.UNLOCATABLE]
         if siteless:
             raise RenameRefused(
                 cs.RENAME_SITELESS.format(qn=qn, count=len(siteless)),
@@ -1454,7 +1466,7 @@ class Renamer:
         sites.extend(unplanned)
         sites.extend(
             RenameSite(
-                "import",
+                cs.RenameSiteKind.IMPORT,
                 site.path,
                 site.line,
                 site.col,
@@ -1503,7 +1515,7 @@ class Renamer:
         (issue #2564). An occurrence the graph gives to ANOTHER symbol of the
         same name is not one: that symbol keeps its name.
         """
-        definitions = [s for s in sites if s.kind == "definition"]
+        definitions = [s for s in sites if s.kind == cs.RenameSiteKind.DEFINITION]
         definition = definitions[0].path
         language = get_language_for_extension(Path(definition).suffix)
         if language is None:
@@ -1542,7 +1554,9 @@ class Renamer:
         namesakes = self._namesakes(old_name, hierarchy, target)
         unplanned = [
             RenameSite(
-                "call" if occurrence.called else "reference",
+                cs.RenameSiteKind.CALL
+                if occurrence.called
+                else cs.RenameSiteKind.REFERENCE,
                 occurrence.path,
                 occurrence.line,
                 occurrence.col,
@@ -1647,7 +1661,9 @@ class Renamer:
                 # over a namesake's stale graph is safer than crediting it
                 # with an occurrence that may be ours.
                 continue
-            declared = next((s for s in other_sites if s.kind == "definition"), None)
+            declared = next(
+                (s for s in other_sites if s.kind == cs.RenameSiteKind.DEFINITION), None
+            )
             if declared is not None and declares_target(
                 self.repo_root, target, declared.path, declared.line, declared.col
             ):
@@ -1702,7 +1718,10 @@ class Renamer:
         done: set[tuple[str, int, int]] = set()
         for site in report.sites:
             key = (site.path, site.line, site.col)
-            if key in done or site.kind in ("unlocatable", "import"):
+            if key in done or site.kind in (
+                cs.RenameSiteKind.UNLOCATABLE,
+                cs.RenameSiteKind.IMPORT,
+            ):
                 continue
             done.add(key)
             patcher.replace_identifier_at(
@@ -1849,7 +1868,7 @@ class Renamer:
         for site in report.sites:
             # An `unlocatable` site has no usable position at all, so nothing
             # can be read at it either way.
-            if site.kind == "unlocatable":
+            if site.kind == cs.RenameSiteKind.UNLOCATABLE:
                 continue
             # An `import` site IS rewritten -- by `ImportRewriter.retarget`,
             # not by the identifier patcher -- so it must show a reversal like
@@ -1859,7 +1878,7 @@ class Renamer:
             # Excluding it outright let a tree whose import still carried the
             # NEW name report as fully reversed (Greptile, PR #1547), so it is
             # checked by LINE CONTENT instead of by column.
-            if site.kind == "import":
+            if site.kind == cs.RenameSiteKind.IMPORT:
                 import_sites.append(site)
                 continue
             by_path.setdefault(site.path, []).append(site)
@@ -2131,7 +2150,7 @@ class Renamer:
             rewritten=[
                 (f"{site.path}:{site.line}", site.resolution)
                 for site in report.sites
-                if site.kind != "unlocatable"
+                if site.kind != cs.RenameSiteKind.UNLOCATABLE
             ],
         )
         if verdict.ok:
