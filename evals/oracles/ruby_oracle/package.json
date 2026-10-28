@@ -5,6 +5,6 @@
   "description": "Authoritative Ruby structure oracle for the cgr eval harness",
   "bin": { "ruby_oracle": "ruby_ast.js" },
   "dependencies": {
-    "@ruby/prism": "^1.9.0"
+    "@ruby/prism": "^2.0.0"
   }
 }

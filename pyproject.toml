@@ -1,6 +1,6 @@
 [project]
 name = "code-graph-rag"
-version = "0.3.8"
+version = "0.3.21"
 description = "The ultimate RAG for your monorepo. Query, understand, and edit multi-language codebases with the power of AI and knowledge graphs"
 readme = "PYPI_README.md"
 requires-python = ">=3.12"
@@ -72,7 +72,7 @@ dependencies = [
     # abi3 wheels for exactly these platforms; elsewhere the engine runs its
     # Python twin of every part. The floor is the crate version this code
     # was written against, raised with each crate release.
-    "cgr-graph-rs>=0.1.0,<0.2; platform_python_implementation == 'CPython' and ((sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')) or sys_platform == 'darwin' or (sys_platform == 'win32' and platform_machine == 'AMD64'))",
+    "cgr-graph-rs>=0.1.2,<0.2; platform_python_implementation == 'CPython' and ((sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')) or sys_platform == 'darwin' or (sys_platform == 'win32' and platform_machine == 'AMD64'))",
 ]
 
 [project.scripts]
@@ -343,7 +343,7 @@ dev = [
 ]
 docs = [
     # Exact pin while Zensical is pre-1.0.
-    "zensical==0.0.65",
+    "zensical==0.0.72",
 ]
 fuzz = [
     "atheris>=2.3.0",

@@ -70,9 +70,11 @@ from .py.receiver_rebinding import ReceiverRebinding, receiver_rebinding
 from .rpc_exposure import GoRpcExposureProcessor
 from .rs import utils as rs_utils
 from .scala import utils as scala_utils
+from .sql_ddl import ddl_routine_references
 from .string_call import load_string_call_specs, string_call_target
 from .type_inference import TypeInferenceEngine
 from .utils import (
+    call_site_start,
     callable_parameter_invocations,
     cpp_parameter_names,
     enclosing_class_node,
@@ -1149,6 +1151,13 @@ def call_site_properties(node: Node) -> PropertyDict:
     the callback passes read argument slots from it.
     """
     props = node_site_properties(node)
+    # A member call's node spans its receiver, so every hop of a chain began
+    # where the chain begins: callers showed the wrong line for a multi-line
+    # chain, and two `.put(...)` hops of one chain merged into one edge on
+    # their shared (line, col) (issue #3166). The site starts at the name.
+    row, col = call_site_start(node)
+    props[cs.KEY_LINE] = row + 1
+    props[cs.KEY_COL] = col
     args_node = _find_call_arguments_node(node)
     if args_node is not None:
         positional, keyword = _split_call_arguments(args_node)
@@ -2126,6 +2135,7 @@ class CallProcessor:
         "_package_index",
         "_package_index_size",
         "_go_package_names",
+        "_sql_sources",
         "cpp_out_of_class_methods",
         "function_locations",
         "macro_qns",
@@ -2169,6 +2179,7 @@ class CallProcessor:
         macro_qns: set[str] | None = None,
         ast_cache: ASTCacheProtocol | None = None,
         go_package_names: Mapping[str, str] | None = None,
+        sql_sources: Mapping[Path, bytes] | None = None,
         rehydrated_definition_paths: dict[str, str] | None = None,
         rust_function_modules: dict[str, str] | None = None,
         declared_module_qns: set[str] | None = None,
@@ -2199,6 +2210,11 @@ class CallProcessor:
         self._package_index: dict[Path, list[str]] = {}
         self._package_index_size = -1
         self._go_package_names: Mapping[str, str] = go_package_names or {}
+        # The definition pass fills this map after the processor exists, so
+        # it is held as given, never replaced by an empty copy.
+        self._sql_sources: Mapping[Path, bytes] = (
+            sql_sources if sql_sources is not None else {}
+        )
         self.cpp_out_of_class_methods = cpp_out_of_class_methods or {}
         self.function_locations = function_locations or {}
         self.macro_qns = macro_qns if macro_qns is not None else set()
@@ -3132,6 +3148,41 @@ class CallProcessor:
             self._ingest_java_enum_constant_ctor_calls(
                 module_qn, combined_captures.get(cs.CAPTURE_CLASS) or [], queries
             )
+        if language == cs.SupportedLanguage.SQL:
+            # A trigger, aggregate, cast, type or handler clause runs the
+            # routine it names without an `invocation`; a schema file often
+            # holds no call at all (issue #3181).
+            self._ingest_sql_ddl_references(root_node, module_qn)
+
+    @_site_scoped
+    def _ingest_sql_ddl_references(self, root_node: Node, module_qn: str) -> None:
+        # The module runs the DDL, so it is the caller, as for a CHECK
+        # constraint's `invocation`. The site is the routine's name in the
+        # clause; no node spans it when the statement did not parse.
+        text, row, col = self._sql_source_as_written(root_node)
+        if not text:
+            return
+        self._site_node = None
+        module_spec = (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn)
+        for reference in ddl_routine_references(text, row, col):
+            self._resolution = cs.EdgeResolution.EXACT
+            self._link_sql_routine(
+                module_qn, module_spec, reference.name, reference.site
+            )
+
+    def _sql_source_as_written(self, root_node: Node) -> tuple[bytes | None, int, int]:
+        # The text to scan and the point it starts at. The tree's own text can
+        # be the statement-isolated re-parse's copy, which blanks every
+        # statement the grammar cannot read on its own (#3180), and most DDL
+        # that names a routine is such a statement. The bytes that tree was
+        # parsed from hold them, whole: a blanked statement that opens or
+        # closes the file lies outside the root's span.
+        path = self._call_file
+        source = self._sql_sources.get(path) if path is not None else None
+        if source is None:
+            row, col = root_node.start_point
+            return root_node.text, row, col
+        return source, 0, 0
 
     @_site_scoped
     def _ingest_java_enum_constant_ctor_calls(
@@ -5681,6 +5732,15 @@ class CallProcessor:
         self._ingest_named_call(ctx, call_node, call_name)
 
     def _ingest_sql_routine_call(self, ctx: _CallScanContext, call_name: str) -> None:
+        self._link_sql_routine(ctx.module_qn, ctx.caller_spec, call_name)
+
+    def _link_sql_routine(
+        self,
+        module_qn: str,
+        caller_spec: tuple[str, str, str],
+        call_name: str,
+        site: PropertyDict | None = None,
+    ) -> None:
         # A SQL routine call has no receiver, import or type to resolve
         # through. The generic resolver reads `billing.fee` as a receiver and
         # a method, drops the receiver and binds `fee` by bare name, so a
@@ -5693,7 +5753,7 @@ class CallProcessor:
         # that file to this caller, so only the waiter list (issue #1568) can
         # send it back for a re-parse. The whole normalized name is recorded:
         # `billing.fee` waits on that routine only, never on `audit.fee`.
-        self._note_unresolved(ctx.module_qn, call_name)
+        self._note_unresolved(module_qn, call_name)
         targets = self._resolver.sql_routine_targets(call_name)
         if not targets:
             # A builtin (`count`, `now`) or a routine no indexed file defines.
@@ -5706,10 +5766,11 @@ class CallProcessor:
             # One routine with overloads the call site's types would choose.
             self._resolution = cs.EdgeResolution.OVERLOAD
         for target_qn in targets:
-            ctx.ensure_rel(
-                ctx.caller_spec,
+            self._emit_rel(
+                caller_spec,
                 cs.RelationshipType.CALLS,
                 (cs.NodeLabel.FUNCTION, cs.KEY_QUALIFIED_NAME, target_qn),
+                site,
             )
 
     def _scan_call_name(self, ctx: _CallScanContext, call_node: Node) -> str | None:
