@@ -31,7 +31,7 @@ def _ingestor_with_two_groups() -> MemgraphIngestor:
 def test_serial_flush_sums_every_group() -> None:
     ingestor = _ingestor_with_two_groups()
     with patch.object(
-        MemgraphIngestor, "_flush_rel_pattern_group", return_value=(1, 1)
+        MemgraphIngestor, "_flush_rel_pattern_group", return_value=1
     ) as flush:
         ingestor.flush_relationships()
     assert flush.call_count == 2
@@ -45,7 +45,7 @@ def test_serial_flush_runs_every_group_then_raises_the_first_failure() -> None:
         patch.object(
             MemgraphIngestor,
             "_flush_rel_pattern_group",
-            side_effect=[boom, (1, 1)],
+            side_effect=[boom, 1],
         ) as flush,
         pytest.raises(RuntimeError) as raised,
     ):
@@ -62,11 +62,11 @@ def test_parallel_flush_runs_every_group_then_raises_the_first_failure() -> None
 
     def flush_group(
         pattern: tuple[str, str, str, str, str], params: list[RelBatchRow]
-    ) -> tuple[int, int]:
+    ) -> int:
         calls.append(pattern)
         if pattern[2] == "CALLS":
             raise boom
-        return 1, 1
+        return 1
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         ingestor._executor = executor

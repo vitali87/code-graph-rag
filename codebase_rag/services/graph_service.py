@@ -868,7 +868,7 @@ class MemgraphIngestor:
         self,
         pattern: tuple[str, str, str, str, str],
         params_list: list[RelBatchRow],
-    ) -> tuple[int, int]:
+    ) -> int:
         conn = self._create_connection()
         try:
             return self._flush_rel_pattern_group(pattern, params_list, conn=conn)
@@ -971,7 +971,8 @@ class MemgraphIngestor:
         pattern: tuple[str, str, str, str, str],
         params_list: list[RelBatchRow],
         conn: ConnectionProtocol | None = None,
-    ) -> tuple[int, int]:
+    ) -> int:
+        """The number of rows written for one relationship pattern."""
         from_label, from_key, rel_type, to_label, to_key = pattern
         has_props = any(p[KEY_PROPS] for p in params_list)
         if self._use_merge:
@@ -982,11 +983,10 @@ class MemgraphIngestor:
                 # a prop absent from one row is not dropped from the key for the
                 # rest, which would re-collapse the parallel provenance edges.
                 # Pass `conn` through unchanged to preserve the lock semantics.
-                totals = [
+                return sum(
                     self._flush_rel_pattern_group(pattern, rows, conn=conn)
                     for rows in by_keys.values()
-                ]
-                return sum(t for t, _ in totals), sum(s for _, s in totals)
+                )
             merge_key_props = next(iter(by_keys), ())
             query = build_merge_relationship_query(
                 from_label,
@@ -1012,11 +1012,11 @@ class MemgraphIngestor:
         params_list: list[RelBatchRow],
         conn: ConnectionProtocol | None,
         merge: RelMerge | None = None,
-    ) -> tuple[int, int]:
+    ) -> int:
         target_conn = conn or self.conn
         if not target_conn:
             logger.warning(ls.MG_NO_CONN_RELS.format(pattern=pattern))
-            return len(params_list), 0
+            return 0
         lock = self._conn_lock if conn is None else nullcontext()
         indexed = [
             RelBatchRow(**row, row_index=index) for index, row in enumerate(params_list)
@@ -1046,7 +1046,7 @@ class MemgraphIngestor:
             pattern, len(params_list), batch_successful, failed_rows
         )
 
-        return len(params_list), batch_successful
+        return batch_successful
 
     def _missing_endpoint_rows(
         self,
@@ -1072,11 +1072,11 @@ class MemgraphIngestor:
             return
 
         if self._executor and len(self._rel_groups) > 1:
-            _attempted, total_successful, first_error = self._flush_rel_groups_parallel(
+            total_successful, first_error = self._flush_rel_groups_parallel(
                 self._executor
             )
         else:
-            _attempted, total_successful, first_error = self._flush_rel_groups_serial()
+            total_successful, first_error = self._flush_rel_groups_serial()
 
         # Failed is what the total lacks, so the rows of a group whose write
         # raised (never attempted) count too, and the three numbers add up.
@@ -1095,7 +1095,7 @@ class MemgraphIngestor:
 
     def _flush_rel_groups_parallel(
         self, executor: ThreadPoolExecutor
-    ) -> tuple[int, int, Exception | None]:
+    ) -> tuple[int, Exception | None]:
         # Each pattern group on its own connection; every group still runs
         # when one fails, and the first failure is re-raised by the caller.
         logger.debug(
@@ -1110,39 +1110,33 @@ class MemgraphIngestor:
             ): pattern
             for pattern, params_list in self._rel_groups.items()
         }
-        total_attempted = 0
         total_successful = 0
         first_error: Exception | None = None
         for future in as_completed(futures):
             pattern = futures[future]
             try:
-                attempted, successful = future.result()
+                successful = future.result()
             except Exception as e:
                 logger.error(ls.MG_REL_FLUSH_ERROR.format(pattern=pattern, error=e))
                 if first_error is None:
                     first_error = e
                 continue
-            total_attempted += attempted
             total_successful += successful
-        return total_attempted, total_successful, first_error
+        return total_successful, first_error
 
-    def _flush_rel_groups_serial(self) -> tuple[int, int, Exception | None]:
-        total_attempted = 0
+    def _flush_rel_groups_serial(self) -> tuple[int, Exception | None]:
         total_successful = 0
         first_error: Exception | None = None
         for pattern, params_list in self._rel_groups.items():
             try:
-                attempted, successful = self._flush_rel_pattern_group(
-                    pattern, params_list
-                )
+                successful = self._flush_rel_pattern_group(pattern, params_list)
             except Exception as e:
                 logger.error(ls.MG_REL_FLUSH_ERROR.format(pattern=pattern, error=e))
                 if first_error is None:
                     first_error = e
                 continue
-            total_attempted += attempted
             total_successful += successful
-        return total_attempted, total_successful, first_error
+        return total_successful, first_error
 
     def flush_all(self) -> None:
         logger.debug(ls.MG_FLUSH_START)

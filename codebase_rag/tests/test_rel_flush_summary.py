@@ -56,10 +56,10 @@ def test_rows_of_a_group_that_raised_count_as_failed(
         pattern: tuple[str, str, str, str, str],
         params_list: list[RelBatchRow],
         conn: ConnectionProtocol | None = None,
-    ) -> tuple[int, int]:
+    ) -> int:
         if pattern[0] == "Method":
             raise RuntimeError("write failed")
-        return len(params_list), len(params_list)
+        return len(params_list)
 
     monkeypatch.setattr(MemgraphIngestor, "_flush_rel_pattern_group", flush)
     summary = _summary(ingestor)
