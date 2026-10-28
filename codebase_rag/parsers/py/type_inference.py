@@ -3,11 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from loguru import logger
 from tree_sitter import Node
 
 from ... import constants as cs
-from ... import logs as lg
 from ...types_defs import (
     FunctionRegistryTrieProtocol,
     LanguageQueries,
@@ -376,64 +374,63 @@ class PythonTypeInferenceEngine(
     ) -> dict[str, str]:
         local_var_types: dict[str, str] = {}
 
-        try:
-            self._infer_parameter_types(caller_node, local_var_types, module_qn)
-            # A method's `self` (a classmethod's `cls`) IS the enclosing
-            # class. Seeded HERE, before the assignment walk, because that
-            # walk types `w = self.parse()` through the receiver's entry:
-            # without one the local stayed untyped and a later `w.render()`
-            # fell to the bare-name fallback (issue #1901). Only a name that
-            # is the FIRST PARAMETER of this def or of an enclosing def under
-            # the class is seeded: a staticmethod has neither, and a body
-            # binding `cls = pick()` in any def must keep the type the alias
-            # pass gives it, which it could not with a seed already present
-            # (that pass yields to an existing entry). The seed is an aid to
-            # the walk only and is removed again below: `self.m()` CALLS keep
-            # their own resolution (the concrete-sibling-over-abstract-stub
-            # policy the resolver applies to self calls), which a typed `self`
-            # in the returned map would override. An annotated parameter of
-            # that name is kept as it is.
-            seeded: list[str] = []
-            if class_context:
-                for name in self._receiver_parameter_names(caller_node):
-                    if name not in local_var_types:
-                        local_var_types[name] = class_context
-                        seeded.append(name)
-            # Single-pass traversal avoids O(5*N) traversals for type inference.
-            comprehensions, for_statements = self._traverse_single_pass(
-                caller_node, local_var_types, module_qn
-            )
-            self._infer_instance_attributes_from_init(
-                caller_node, local_var_types, module_qn
-            )
-            self._infer_property_return_types(caller_node, local_var_types, module_qn)
-            self._infer_class_annotation_types(caller_node, local_var_types, module_qn)
-            # Attribute-backed iterables (`for w in self.widgets`) only type
-            # after the attribute passes above populated `self.x`; re-running
-            # the loop analyzers picks them up (they never downgrade a type).
-            self.analyze_scoped_comprehensions(
-                caller_node, comprehensions, local_var_types, module_qn
-            )
-            for for_stmt in for_statements:
-                self._analyze_for_loop(for_stmt, local_var_types, module_qn)
-            aliases = self._collect_local_aliases(caller_node)
-            self._expand_chained_attribute_types(local_var_types, module_qn, aliases)
-            # The seed itself goes (a body binding that replaced it stays), and
-            # so do the `cls.<field>` entries the chained-attribute pass
-            # derives from a seeded `cls`, which no pass produces otherwise.
-            # `self.<attr>` entries are KEPT: the instance-attribute passes
-            # produce them without any seed and the property / chained-
-            # attribute resolution reads them, so removing them broke it.
-            cls_prefix = f"{cs.PY_KEYWORD_CLS}{cs.SEPARATOR_DOT}"
-            for key in [
-                k
-                for k in local_var_types
-                if (k in seeded and local_var_types[k] == class_context)
-                or (cs.PY_KEYWORD_CLS in seeded and k.startswith(cls_prefix))
-            ]:
-                del local_var_types[key]
-
-        except Exception as e:
-            logger.debug(lg.PY_BUILD_VAR_MAP_FAILED, error=e)
+        # No catch: a failing pass reaches the call pass, which records the
+        # caller in the sync summary (#3173), as with every sibling engine.
+        # Catching here returned a half-built map that kept the seeds.
+        self._infer_parameter_types(caller_node, local_var_types, module_qn)
+        # A method's `self` (a classmethod's `cls`) IS the enclosing
+        # class. Seeded HERE, before the assignment walk, because that
+        # walk types `w = self.parse()` through the receiver's entry:
+        # without one the local stayed untyped and a later `w.render()`
+        # fell to the bare-name fallback (issue #1901). Only a name that
+        # is the FIRST PARAMETER of this def or of an enclosing def under
+        # the class is seeded: a staticmethod has neither, and a body
+        # binding `cls = pick()` in any def must keep the type the alias
+        # pass gives it, which it could not with a seed already present
+        # (that pass yields to an existing entry). The seed is an aid to
+        # the walk only and is removed again below: `self.m()` CALLS keep
+        # their own resolution (the concrete-sibling-over-abstract-stub
+        # policy the resolver applies to self calls), which a typed `self`
+        # in the returned map would override. An annotated parameter of
+        # that name is kept as it is.
+        seeded: list[str] = []
+        if class_context:
+            for name in self._receiver_parameter_names(caller_node):
+                if name not in local_var_types:
+                    local_var_types[name] = class_context
+                    seeded.append(name)
+        # Single-pass traversal avoids O(5*N) traversals for type inference.
+        comprehensions, for_statements = self._traverse_single_pass(
+            caller_node, local_var_types, module_qn
+        )
+        self._infer_instance_attributes_from_init(
+            caller_node, local_var_types, module_qn
+        )
+        self._infer_property_return_types(caller_node, local_var_types, module_qn)
+        self._infer_class_annotation_types(caller_node, local_var_types, module_qn)
+        # Attribute-backed iterables (`for w in self.widgets`) only type
+        # after the attribute passes above populated `self.x`; re-running
+        # the loop analyzers picks them up (they never downgrade a type).
+        self.analyze_scoped_comprehensions(
+            caller_node, comprehensions, local_var_types, module_qn
+        )
+        for for_stmt in for_statements:
+            self._analyze_for_loop(for_stmt, local_var_types, module_qn)
+        aliases = self._collect_local_aliases(caller_node)
+        self._expand_chained_attribute_types(local_var_types, module_qn, aliases)
+        # The seed itself goes (a body binding that replaced it stays), and
+        # so do the `cls.<field>` entries the chained-attribute pass
+        # derives from a seeded `cls`, which no pass produces otherwise.
+        # `self.<attr>` entries are KEPT: the instance-attribute passes
+        # produce them without any seed and the property / chained-
+        # attribute resolution reads them, so removing them broke it.
+        cls_prefix = f"{cs.PY_KEYWORD_CLS}{cs.SEPARATOR_DOT}"
+        for key in [
+            k
+            for k in local_var_types
+            if (k in seeded and local_var_types[k] == class_context)
+            or (cs.PY_KEYWORD_CLS in seeded and k.startswith(cls_prefix))
+        ]:
+            del local_var_types[key]
 
         return local_var_types

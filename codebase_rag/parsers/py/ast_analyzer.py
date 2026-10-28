@@ -1971,9 +1971,16 @@ class PythonAstAnalyzerMixin(_AstBase):
             class_context = (
                 owner if self.function_registry.get(owner) == NodeType.CLASS else None
             )
-            local_vars = self.build_local_variable_type_map(
-                method_node, module_qn, class_context
-            )
+            try:
+                local_vars = self.build_local_variable_type_map(
+                    method_node, module_qn, class_context
+                )
+            except Exception as e:
+                # The call pass records a failing walk against its caller
+                # (#3173); return-type inference resolves no caller, so the
+                # return just stays untyped.
+                logger.debug(lg.PY_BUILD_VAR_MAP_FAILED, error=e)
+                local_vars = {}
             if identifier in local_vars:
                 logger.debug(
                     lg.PY_VAR_FROM_CONTEXT, var=identifier, type=local_vars[identifier]
