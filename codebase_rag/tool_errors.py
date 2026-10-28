@@ -19,6 +19,11 @@ def failure(message: str | Exception | None) -> ToolFailure:
 
 # File operation errors
 FILE_NOT_FOUND = "File not found."
+# Every file tool's denial for a path outside the project root.
+PATH_OUTSIDE_ROOT = (
+    "'{path}' is outside the project root ({root}). "
+    "Use a relative path from the project root, or the full absolute path within it."
+)
 BINARY_FILE = "File '{path}' is a binary file. Ask the user to attach it inline if they want it analyzed."
 UNICODE_DECODE = (
     "File '{path}' could not be read as text. It may be a binary file. "
@@ -29,10 +34,6 @@ UNICODE_DECODE = (
 DIRECTORY_INVALID = "Error: '{path}' is not a valid directory."
 DIRECTORY_EMPTY = "Error: The directory '{path}' is empty."
 DIRECTORY_LIST_FAILED = "Error: Could not list contents of '{path}'."
-DIRECTORY_PATH_OUTSIDE_ROOT = (
-    "Error: '{path}' is outside the project root ({root}). "
-    "Use a relative path from the project root, or the full absolute path within it."
-)
 
 # Shell command errors
 COMMAND_NOT_ALLOWED = "Command '{cmd}' is not in the allowlist.{suggestion} Available commands: {available}"

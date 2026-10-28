@@ -46,7 +46,11 @@ from codebase_rag.tools.directory_lister import (
 )
 from codebase_rag.tools.duplicate_detection import create_find_duplicates_tool
 from codebase_rag.tools.file_editor import FileEditor, create_file_editor_tool
-from codebase_rag.tools.file_reader import FileReader, create_file_reader_tool
+from codebase_rag.tools.file_reader import (
+    FileReader,
+    create_file_reader_tool,
+    read_refusal,
+)
 from codebase_rag.tools.file_writer import FileWriter, create_file_writer_tool
 from codebase_rag.tools.semantic_search import (
     create_get_function_source_tool,
@@ -75,7 +79,12 @@ from codebase_rag.types_defs import (
     StructuralReplaceChange,
 )
 from codebase_rag.utils.dependencies import has_ast_grep, has_semantic_dependencies
-from codebase_rag.utils.path_utils import derive_project_name, nested_project_names
+from codebase_rag.utils.path_utils import (
+    derive_project_name,
+    nested_project_names,
+    resolve_in_root,
+)
+from codebase_rag.utils.source_encoding import source_codec
 from codebase_rag.utils.terminal_console import terminal_aware_console
 from codebase_rag.vector_store import clear_all_embeddings, delete_project_embeddings
 from codebase_rag.workspaces import WorkspaceConfig
@@ -98,7 +107,17 @@ def _found_nothing(result: object) -> bool:
 def _read_file_slice(
     full_path: Path, start: int, limit: int | None, file_path: str
 ) -> str:
-    with open(full_path, encoding=cs.ENCODING_UTF8) as f:
+    # The checks and the decoding a whole-file read applies (FileReader).
+    if refusal := read_refusal(full_path):
+        return te.failure(refusal)
+    try:
+        return _paginate(full_path, start, limit, file_path)
+    except UnicodeDecodeError:
+        return te.failure(te.UNICODE_DECODE.format(path=full_path))
+
+
+def _paginate(full_path: Path, start: int, limit: int | None, file_path: str) -> str:
+    with open(full_path, encoding=source_codec(full_path)) as f:
         # islice() refuses a count past sys.maxsize; no file has that many
         # lines, so the clamped skip reads to the same end.
         skipped_count = sum(1 for _ in itertools.islice(f, min(start, sys.maxsize)))
@@ -3869,12 +3888,14 @@ class MCPToolsRegistry:
             return te.failure(cs.MCP_READ_LIMIT_NOT_POSITIVE.format(limit=limit))
         try:
             if offset is not None or limit is not None:
-                project_root = Path(self.project_root).resolve()
-                try:
-                    full_path = (project_root / file_path).resolve()
-                    full_path.relative_to(project_root)
-                except (ValueError, RuntimeError):
-                    return te.failure(lg.FILE_OUTSIDE_ROOT.format(action="access"))
+                project_root = Path(self.project_root)
+                full_path = resolve_in_root(project_root, file_path)
+                if full_path is None:
+                    return te.failure(
+                        te.PATH_OUTSIDE_ROOT.format(
+                            path=file_path, root=project_root.resolve()
+                        )
+                    )
                 start = offset if offset is not None else 0
                 return await _run_in_thread(
                     _read_file_slice, full_path, start, limit, file_path

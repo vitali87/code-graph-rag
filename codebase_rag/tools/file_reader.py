@@ -35,17 +35,22 @@ class FileReader:
         return await asyncio.to_thread(_read_file_sync, file_path)
 
 
+def read_refusal(file_path: Path) -> str | None:
+    """Why `file_path` is not read as text, or None: it is missing, or a
+    binary format. Checked by every read, whole or paginated."""
+    if not file_path.is_file():
+        return te.FILE_NOT_FOUND
+    if file_path.suffix.lower() in cs.BINARY_EXTENSIONS:
+        error_msg = te.BINARY_FILE.format(path=file_path)
+        logger.warning(ls.TOOL_FILE_BINARY.format(message=error_msg))
+        return error_msg
+    return None
+
+
 def _read_file_sync(file_path: Path) -> FileReadResult:
     try:
-        if not file_path.is_file():
-            return FileReadResult(
-                file_path=str(file_path), error_message=te.FILE_NOT_FOUND
-            )
-
-        if file_path.suffix.lower() in cs.BINARY_EXTENSIONS:
-            error_msg = te.BINARY_FILE.format(path=file_path)
-            logger.warning(ls.TOOL_FILE_BINARY.format(message=error_msg))
-            return FileReadResult(file_path=str(file_path), error_message=error_msg)
+        if refusal := read_refusal(file_path):
+            return FileReadResult(file_path=str(file_path), error_message=refusal)
 
         try:
             # In the encoding a Python file declares, as the indexer

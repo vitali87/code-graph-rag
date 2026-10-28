@@ -7,6 +7,7 @@ import pytest
 from pydantic_ai import Tool
 
 from codebase_rag import constants as cs
+from codebase_rag import tool_errors as te
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tools.file_editor import (
     EditResult,
@@ -124,10 +125,24 @@ class TestReplaceCodeBlock:
         assert success is False
 
     def test_replace_block_outside_root(self, file_editor: FileEditor) -> None:
-        success = file_editor.apply_code_block(
+        # It used to answer the generic "target not found" here.
+        result = file_editor.apply_code_block(
             "../../../etc/passwd", "target", "replacement"
-        ).success
-        assert success is False
+        )
+        assert result.success is False
+        assert result.error_message == te.PATH_OUTSIDE_ROOT.format(
+            path="../../../etc/passwd", root=file_editor.project_root
+        )
+
+    def test_an_undecodable_file_is_not_reported_as_outside_the_root(
+        self, file_editor: FileEditor, temp_project_root: Path
+    ) -> None:
+        # UnicodeDecodeError is a ValueError, and the `except ValueError`
+        # meant for the containment check wrapped the whole edit.
+        (temp_project_root / "latin.py").write_bytes(b"name = '\xe9'\n")
+        result = file_editor.apply_code_block("latin.py", "name", "other")
+        assert result.success is False
+        assert result.error_message == cs.MSG_SURGICAL_FAILED.format(path="latin.py")
 
     def test_replace_identical_content(
         self, file_editor: FileEditor, temp_project_root: Path

@@ -7,13 +7,14 @@ from functools import wraps
 
 from loguru import logger
 
-from . import exceptions as ex
 from . import logs as ls
+from . import tool_errors as te
 from .types_defs import (
     LoadableProtocol,
     PathResultFactory,
     PathValidatorProtocol,
 )
+from .utils.path_utils import resolve_in_root
 
 
 def ensure_loaded[T](func: Callable[..., T]) -> Callable[..., T]:
@@ -55,18 +56,17 @@ def validate_project_path[T](
             bound.apply_defaults()
             file_path_str = bound.arguments.get(path_arg_name)
 
-            if not isinstance(file_path_str, str):
+            full_path = (
+                resolve_in_root(self.project_root, file_path_str)
+                if isinstance(file_path_str, str)
+                else None
+            )
+            if full_path is None:
                 return result_factory(
-                    file_path=str(file_path_str), error_message=ex.ACCESS_DENIED
-                )
-            try:
-                full_path = (self.project_root / file_path_str).resolve()
-                project_root = self.project_root.resolve()
-                full_path.relative_to(project_root)
-            except (ValueError, RuntimeError):
-                return result_factory(
-                    file_path=file_path_str,
-                    error_message=ls.FILE_OUTSIDE_ROOT.format(action="access"),
+                    file_path=str(file_path_str),
+                    error_message=te.PATH_OUTSIDE_ROOT.format(
+                        path=file_path_str, root=self.project_root
+                    ),
                 )
 
             bound.arguments[path_arg_name] = full_path

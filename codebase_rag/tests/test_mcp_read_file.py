@@ -180,7 +180,8 @@ class TestReadFilePathTraversal:
         result = await mcp_registry.read_file(str(secret), offset=0, limit=5)
 
         assert "TOP SECRET" not in result
-        assert "outside of project root" in result
+        assert "is outside the project root" in result
+        assert isinstance(result, te.ToolFailure)
 
     async def test_relative_traversal_outside_root_is_blocked(
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
@@ -192,7 +193,8 @@ class TestReadFilePathTraversal:
         result = await mcp_registry.read_file("../secret2.txt", offset=0, limit=5)
 
         assert "TOP SECRET" not in result
-        assert "outside of project root" in result
+        assert "is outside the project root" in result
+        assert isinstance(result, te.ToolFailure)
 
 
 class TestReadFileEdgeCases:
@@ -244,3 +246,38 @@ class TestReadFileEdgeCases:
         assert "Привет мир" in result
         assert "مرحبا بالعالم" in result
         assert "Hello 世界" not in result
+
+
+class TestPaginatedReadAppliesTheReaderChecks:
+    """With `offset` or `limit` the read skipped FileReader: a binary file
+    was decoded as UTF-8 text and a Python file's declared encoding was
+    ignored, so one tool answered differently with and without paging."""
+
+    async def test_a_binary_file_is_refused(
+        self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
+    ) -> None:
+        (temp_project_root / "doc.pdf").write_bytes(b"%PDF-1.4\nline two\n")
+
+        paged = await mcp_registry.read_file("doc.pdf", offset=0, limit=1)
+
+        assert isinstance(paged, te.ToolFailure)
+        assert paged == te.failure(
+            te.BINARY_FILE.format(path=(temp_project_root / "doc.pdf").resolve())
+        )
+
+    async def test_a_declared_encoding_is_honoured(
+        self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
+    ) -> None:
+        source = "# -*- coding: latin-1 -*-\nname = 'caf\xe9'\n"
+        (temp_project_root / "latin.py").write_bytes(source.encode("latin-1"))
+
+        paged = await mcp_registry.read_file("latin.py", offset=1, limit=1)
+
+        assert not isinstance(paged, te.ToolFailure)
+        assert "name = 'caf\xe9'" in paged
+
+    async def test_a_missing_file_is_reported_as_not_found(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        paged = await mcp_registry.read_file("absent.py", offset=0, limit=1)
+        assert paged == te.failure(te.FILE_NOT_FOUND)

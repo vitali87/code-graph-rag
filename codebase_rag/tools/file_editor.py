@@ -13,6 +13,7 @@ from .. import logs as ls
 from .. import tool_errors as te
 from ..schemas import EditResult
 from ..types_defs import AfterWrite
+from ..utils.path_utils import resolve_in_root
 from . import tool_descriptions as td
 
 _LINE_BREAK = re.compile(r"\r\n?")
@@ -95,10 +96,16 @@ class FileEditor:
             file_path=file_path,
             error_message=cs.MSG_SURGICAL_FAILED.format(path=file_path),
         )
+        full_path = resolve_in_root(self.project_root, file_path)
+        if full_path is None:
+            logger.error(ls.FILE_OUTSIDE_ROOT.format(action=cs.FileAction.EDIT))
+            return EditResult(
+                file_path=file_path,
+                error_message=te.PATH_OUTSIDE_ROOT.format(
+                    path=file_path, root=self.project_root
+                ),
+            )
         try:
-            full_path = (self.project_root / file_path).resolve()
-            full_path.relative_to(self.project_root)
-
             if not full_path.is_file():
                 logger.error(ls.EDITOR_FILE_NOT_FOUND.format(path=file_path))
                 return failed
@@ -157,9 +164,6 @@ class FileEditor:
             logger.success(ls.TOOL_FILE_EDIT_SURGICAL_SUCCESS.format(path=file_path))
             return EditResult(file_path=file_path)
 
-        except ValueError:
-            logger.error(ls.FILE_OUTSIDE_ROOT.format(action=cs.FileAction.EDIT))
-            return failed
         except Exception as e:
             logger.error(ls.EDITOR_SURGICAL_ERROR.format(error=e))
             return failed

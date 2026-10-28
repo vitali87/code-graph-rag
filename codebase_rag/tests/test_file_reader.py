@@ -99,7 +99,7 @@ class TestReadFile:
         result = await file_reader.read_file("../../../etc/passwd")
         assert result.content is None
         assert result.error_message is not None
-        assert "security" in result.error_message.lower()
+        assert "outside the project root" in result.error_message
 
     async def test_read_binary_pdf_file(
         self, file_reader: FileReader, temp_project_root: Path

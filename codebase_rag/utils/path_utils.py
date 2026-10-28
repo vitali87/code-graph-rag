@@ -17,6 +17,18 @@ _PROJECT_NAME_FALLBACK_BASE = "repo"
 _PROJECT_NAME_SEPARATORS = re.compile(r"\.+")
 
 
+def resolve_in_root(root: Path, path: str | Path) -> Path | None:
+    """`path`, relative to `root` or absolute, resolved; None when it lies
+    outside `root` or cannot be resolved at all (a link loop, an unreadable
+    component). The one containment check the file tools share."""
+    try:
+        resolved = (root / path).resolve()
+        resolved.relative_to(root.resolve())
+    except (ValueError, RuntimeError, OSError):
+        return None
+    return resolved
+
+
 def derive_project_name(repo_path: Path) -> str:
     resolved = repo_path.resolve()
     digest = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[

@@ -11,6 +11,7 @@ from codebase_rag.tools.directory_lister import (
     DirectoryLister,
     create_directory_lister_tool,
 )
+from codebase_rag.utils.path_utils import resolve_in_root
 
 
 @pytest.fixture
@@ -130,8 +131,10 @@ class TestListDirectoryContents:
         self, directory_lister: DirectoryLister
     ) -> None:
         result = directory_lister.list_directory_contents("../../../etc")
-        expected = te.DIRECTORY_PATH_OUTSIDE_ROOT.format(
-            path="../../../etc", root=directory_lister.project_root
+        expected = te.failure(
+            te.PATH_OUTSIDE_ROOT.format(
+                path="../../../etc", root=directory_lister.project_root
+            )
         )
         assert result == expected
 
@@ -139,37 +142,50 @@ class TestListDirectoryContents:
         self, directory_lister: DirectoryLister
     ) -> None:
         result = directory_lister.list_directory_contents("/etc/passwd")
-        expected = te.DIRECTORY_PATH_OUTSIDE_ROOT.format(
-            path="/etc/passwd", root=directory_lister.project_root
+        expected = te.failure(
+            te.PATH_OUTSIDE_ROOT.format(
+                path="/etc/passwd", root=directory_lister.project_root
+            )
         )
         assert result == expected
 
 
-class TestGetSafePath:
-    def test_safe_path_with_relative_path(
-        self, directory_lister: DirectoryLister, temp_project_root: Path
+class TestResolveInRoot:
+    def test_a_relative_path_resolves_under_the_root(
+        self, temp_project_root: Path
     ) -> None:
-        safe_path = directory_lister._get_safe_path("subdir")
-        assert safe_path == (temp_project_root / "subdir").resolve()
+        resolved = resolve_in_root(temp_project_root, "subdir")
+        assert resolved == (temp_project_root / "subdir").resolve()
 
-    def test_safe_path_with_absolute_path_within_root(
-        self, directory_lister: DirectoryLister, temp_project_root: Path
+    def test_an_absolute_path_within_the_root_resolves(
+        self, temp_project_root: Path
     ) -> None:
         abs_path = str(temp_project_root / "subdir")
-        safe_path = directory_lister._get_safe_path(abs_path)
-        assert safe_path == (temp_project_root / "subdir").resolve()
+        resolved = resolve_in_root(temp_project_root, abs_path)
+        assert resolved == (temp_project_root / "subdir").resolve()
 
-    def test_safe_path_rejects_path_outside_root(
+    def test_a_traversal_out_of_the_root_is_none(self, temp_project_root: Path) -> None:
+        assert resolve_in_root(temp_project_root, "../../../etc") is None
+
+    def test_an_absolute_path_outside_the_root_is_none(
+        self, temp_project_root: Path
+    ) -> None:
+        assert resolve_in_root(temp_project_root, "/etc/passwd") is None
+
+    def test_an_unresolvable_path_is_none_not_an_exception(
+        self, temp_project_root: Path
+    ) -> None:
+        # The lister caught only ValueError, so resolve()'s RuntimeError on
+        # a link loop escaped the tool.
+        with patch.object(Path, "resolve", side_effect=RuntimeError("loop")):
+            assert resolve_in_root(temp_project_root, "loop") is None
+
+    def test_the_lister_refuses_an_unresolvable_path(
         self, directory_lister: DirectoryLister
     ) -> None:
-        with pytest.raises(PermissionError):
-            directory_lister._get_safe_path("../../../etc")
-
-    def test_safe_path_rejects_absolute_path_outside_root(
-        self, directory_lister: DirectoryLister
-    ) -> None:
-        with pytest.raises(PermissionError):
-            directory_lister._get_safe_path("/etc/passwd")
+        with patch.object(Path, "resolve", side_effect=RuntimeError("loop")):
+            result = directory_lister.list_directory_contents("loop")
+        assert isinstance(result, te.ToolFailure)
 
 
 class TestCreateDirectoryListerTool:
