@@ -14,11 +14,11 @@ import yaml
 from dotenv import dotenv_values
 from loguru import logger
 
-from .. import constants as root_cs
+from .. import constants as cs
 from .. import logs as ls
 from ..config import settings
 from ..types_defs import JsonValue
-from . import constants as cs
+from . import constants as scs
 from .health import (
     memgraph_accepts_anonymous,
     memgraph_anonymous_access,
@@ -82,19 +82,21 @@ def _compose_variable(project_dir: Path, name: str) -> str | None:
     if name in os.environ:
         value = os.environ[name]
     else:
-        value = dotenv_values(project_dir / cs.COMPOSE_DOTENV_FILENAME).get(name)
+        value = dotenv_values(project_dir / scs.COMPOSE_DOTENV_FILENAME).get(name)
     return value or None
 
 
 def _bind_host(project_dir: Path) -> str:
     """The address the compose file publishes the stack's ports on, resolved
     as Compose resolves `${CGR_STACK_BIND_HOST:-127.0.0.1}`."""
-    return _compose_variable(project_dir, cs.COMPOSE_BIND_HOST_VAR) or cs.LOOPBACK_HOST
+    return (
+        _compose_variable(project_dir, scs.COMPOSE_BIND_HOST_VAR) or scs.LOOPBACK_HOST
+    )
 
 
 def _bundled_qdrant_probe_host(bind: str) -> str:
     """Where this machine reaches the bundled Qdrant."""
-    return cs.LOOPBACK_HOST if not bind or bind in cs.WILDCARD_BIND_HOSTS else bind
+    return scs.LOOPBACK_HOST if not bind or bind in scs.WILDCARD_BIND_HOSTS else bind
 
 
 def _is_local_address(host: str) -> bool:
@@ -146,9 +148,9 @@ def _names_published_qdrant(url: str | None, bind: str, port: int) -> bool:
     except ValueError:
         return False
     host = parts.hostname if parts else None
-    if host is None or (url_port or cs.QDRANT_CLIENT_DEFAULT_PORT) != port:
+    if host is None or (url_port or scs.QDRANT_CLIENT_DEFAULT_PORT) != port:
         return False
-    if not bind or bind in cs.WILDCARD_BIND_HOSTS:
+    if not bind or bind in scs.WILDCARD_BIND_HOSTS:
         return _is_local_address(host)
     return bind in _addresses_of(host)
 
@@ -171,7 +173,9 @@ def _bundled_qdrant_api_key(bind: str, port: int) -> str | None:
 
 def _resolved_service(config: JsonValue, service: str) -> dict[str, JsonValue]:
     """One service's definition in `docker compose config` output."""
-    services = config.get(cs.COMPOSE_SERVICES_KEY) if isinstance(config, dict) else None
+    services = (
+        config.get(scs.COMPOSE_SERVICES_KEY) if isinstance(config, dict) else None
+    )
     spec = services.get(service) if isinstance(services, dict) else None
     return spec if isinstance(spec, dict) else {}
 
@@ -182,7 +186,7 @@ def _resolved_environment(config: JsonValue, service: str) -> dict[str, JsonValu
     Compose renders `environment` as a mapping there, with a variable it could
     not resolve as null.
     """
-    environment = _resolved_service(config, service).get(cs.COMPOSE_ENVIRONMENT_KEY)
+    environment = _resolved_service(config, service).get(scs.COMPOSE_ENVIRONMENT_KEY)
     return environment if isinstance(environment, dict) else {}
 
 
@@ -196,14 +200,14 @@ def _published_port(
     entry leaves it out; the port can also be a range or 0, which Docker
     resolves only when the container starts.
     """
-    ports = _resolved_service(config, service).get(cs.COMPOSE_PORTS_KEY)
+    ports = _resolved_service(config, service).get(scs.COMPOSE_PORTS_KEY)
     for entry in ports if isinstance(ports, list) else []:
         if not isinstance(entry, dict):
             continue
-        if entry.get(cs.COMPOSE_PORT_TARGET_KEY) != target:
+        if entry.get(scs.COMPOSE_PORT_TARGET_KEY) != target:
             continue
-        host_ip = entry.get(cs.COMPOSE_PORT_HOST_IP_KEY)
-        published = entry.get(cs.COMPOSE_PORT_PUBLISHED_KEY)
+        host_ip = entry.get(scs.COMPOSE_PORT_HOST_IP_KEY)
+        published = entry.get(scs.COMPOSE_PORT_PUBLISHED_KEY)
         return (
             host_ip if isinstance(host_ip, str) else "",
             "" if published is None else str(published),
@@ -219,7 +223,7 @@ def _fixed_port(published: str) -> int | None:
 
 
 def _with_access(
-    access: dict[str, cs.AnonymousAccess], answer: cs.AnonymousAccess
+    access: dict[str, scs.AnonymousAccess], answer: scs.AnonymousAccess
 ) -> list[str]:
     return [service for service, given in access.items() if given is answer]
 
@@ -231,8 +235,8 @@ def _container_ids(command: list[str], env: dict[str, str]) -> str | None:
             command,
             capture_output=True,
             text=True,
-            encoding=root_cs.ENCODING_UTF8,
-            timeout=cs.DEFAULT_STATUS_TIMEOUT_S,
+            encoding=cs.ENCODING_UTF8,
+            timeout=scs.DEFAULT_STATUS_TIMEOUT_S,
             check=False,
             env=env,
         )
@@ -253,22 +257,22 @@ def _compose_failure(output: str, project_name: str) -> tuple[str, str | None]:
     recognisable error line is reported whole rather than lost.
     """
     failed = re.search(
-        cs.COMPOSE_FAILED_SERVICE.format(project=re.escape(project_name)), output
+        scs.COMPOSE_FAILED_SERVICE.format(project=re.escape(project_name)), output
     )
     service = (
         (failed.group("endpoint") or failed.group("container")) if failed else None
     )
-    if (clash := cs.COMPOSE_PORT_IN_USE.search(output)) is not None:
-        detail = cs.ERR_PORT_IN_USE.format(
+    if (clash := scs.COMPOSE_PORT_IN_USE.search(output)) is not None:
+        detail = scs.ERR_PORT_IN_USE.format(
             address=clash.group("address"),
-            variables=" or ".join(cs.SERVICE_PORT_VARIABLES.get(service or "", ()))
+            variables=" or ".join(scs.SERVICE_PORT_VARIABLES.get(service or "", ()))
             or "its port",
         )
     else:
         errors = [
             line.strip()
             for line in output.splitlines()
-            if cs.COMPOSE_ERROR_LINE.search(line)
+            if scs.COMPOSE_ERROR_LINE.search(line)
         ]
         detail = "\n".join(dict.fromkeys(errors)) or output.strip()
     return detail, service
@@ -292,7 +296,7 @@ def _service_images(compose_file: Path) -> dict[str, str]:
 
 @dataclass
 class StackStatus:
-    state: cs.StackState
+    state: scs.StackState
     memgraph_reachable: bool
     qdrant_reachable: bool
     compose_file: Path
@@ -308,8 +312,8 @@ class StackManager:
         memgraph_host: str | None = None,
         memgraph_port: int | None = None,
         qdrant_port: int = 6333,
-        project_name: str = cs.COMPOSE_PROJECT_NAME,
-        services: tuple[str, ...] = cs.CORE_SERVICES,
+        project_name: str = scs.COMPOSE_PROJECT_NAME,
+        services: tuple[str, ...] = scs.CORE_SERVICES,
     ) -> None:
         self.home = (home or settings.CGR_HOME).expanduser()
         # The services this manager starts and checks. A graph backend other
@@ -318,7 +322,9 @@ class StackManager:
         self.services = services
         self.package_compose = (
             package_compose
-            or (Path(__file__).resolve().parent / cs.PACKAGE_COMPOSE_RELATIVE).resolve()
+            or (
+                Path(__file__).resolve().parent / scs.PACKAGE_COMPOSE_RELATIVE
+            ).resolve()
         )
         self.memgraph_host = memgraph_host or settings.MEMGRAPH_HOST
         self.memgraph_port = memgraph_port or settings.MEMGRAPH_PORT
@@ -343,7 +349,7 @@ class StackManager:
 
     @property
     def compose_file(self) -> Path:
-        return self.home / cs.COMPOSE_FILENAME
+        return self.home / scs.COMPOSE_FILENAME
 
     def ensure_home(self) -> None:
         self.home.mkdir(parents=True, exist_ok=True)
@@ -354,9 +360,9 @@ class StackManager:
         if not target.exists():
             if not self.package_compose.exists():
                 raise StackError(
-                    cs.ERR_COMPOSE_FILE_MISSING.format(path=self.package_compose)
+                    scs.ERR_COMPOSE_FILE_MISSING.format(path=self.package_compose)
                 )
-            logger.info(cs.MSG_RENDERING_COMPOSE.format(path=target))
+            logger.info(scs.MSG_RENDERING_COMPOSE.format(path=target))
             shutil.copyfile(self.package_compose, target)
         else:
             self._warn_if_ports_are_public(target)
@@ -376,16 +382,16 @@ class StackManager:
         floating = {
             service: image
             for service, image in rendered.items()
-            if cs.IMAGE_DIGEST_MARKER not in image
-            and cs.IMAGE_DIGEST_MARKER in packaged.get(service, "")
+            if scs.IMAGE_DIGEST_MARKER not in image
+            and scs.IMAGE_DIGEST_MARKER in packaged.get(service, "")
         }
         if not floating:
             return
         logger.warning(
-            cs.WARN_COMPOSE_IMAGES_FLOATING.format(
+            scs.WARN_COMPOSE_IMAGES_FLOATING.format(
                 path=compose_file,
                 pins="; ".join(
-                    cs.IMAGE_PIN_PAIR.format(
+                    scs.IMAGE_PIN_PAIR.format(
                         service=service, floating=image, pinned=packaged[service]
                     )
                     for service, image in floating.items()
@@ -442,7 +448,7 @@ class StackManager:
         if not public:
             return
         logger.warning(
-            cs.WARN_COMPOSE_PORTS_PUBLIC.format(
+            scs.WARN_COMPOSE_PORTS_PUBLIC.format(
                 path=compose_file, mappings=", ".join(public)
             )
         )
@@ -452,12 +458,12 @@ class StackManager:
         wanted: dict[str, dict[str, str]] = {}
         if self.memgraph_credentials:
             username, password = self.memgraph_credentials
-            wanted[cs.SERVICE_MEMGRAPH] = {
-                cs.ENV_MEMGRAPH_USER: username,
-                cs.ENV_MEMGRAPH_PASSWORD: password,
+            wanted[scs.SERVICE_MEMGRAPH] = {
+                scs.ENV_MEMGRAPH_USER: username,
+                scs.ENV_MEMGRAPH_PASSWORD: password,
             }
         if self.qdrant_api_key:
-            wanted[cs.SERVICE_QDRANT] = {cs.ENV_QDRANT_API_KEY: self.qdrant_api_key}
+            wanted[scs.SERVICE_QDRANT] = {scs.ENV_QDRANT_API_KEY: self.qdrant_api_key}
         return wanted
 
     def _verify_resolved_auth(self, config: dict[str, JsonValue]) -> None:
@@ -476,14 +482,14 @@ class StackManager:
         }
         mismatched = [
             f"{service}: {name}"
-            for service, names in cs.STACK_AUTH_VARIABLES.items()
+            for service, names in scs.STACK_AUTH_VARIABLES.items()
             if service in self.services
             for name in names
             if _resolved_environment(config, service).get(name) != configured.get(name)
         ]
         if mismatched:
             raise StackError(
-                cs.ERR_COMPOSE_AUTH_MISMATCH.format(
+                scs.ERR_COMPOSE_AUTH_MISMATCH.format(
                     variables=", ".join(mismatched), path=self.compose_file
                 )
             )
@@ -496,7 +502,7 @@ class StackManager:
         chosen, a stack set up here. Then `cgr start` starts the stack even
         for a graph backend that needs nothing from it.
         """
-        if settings.VECTOR_STORE_BACKEND != root_cs.VectorStoreBackend.QDRANT:
+        if settings.VECTOR_STORE_BACKEND != cs.VectorStoreBackend.QDRANT:
             return False
         if settings.QDRANT_URL:
             # Only an address of this machine can be where the stack publishes
@@ -507,7 +513,7 @@ class StackManager:
                 settings.QDRANT_URL, self._qdrant_bind, self.qdrant_port
             )
         return (
-            root_cs.SETTING_QDRANT_DB_PATH not in settings.model_fields_set
+            cs.SETTING_QDRANT_DB_PATH not in settings.model_fields_set
             and self.compose_file.exists()
         )
 
@@ -521,7 +527,7 @@ class StackManager:
         publishes Qdrant on no fixed port, leaves the default to compare
         against, as before this check.
         """
-        if not self.compose_file.exists() or shutil.which(cs.DOCKER_BIN) is None:
+        if not self.compose_file.exists() or shutil.which(scs.DOCKER_BIN) is None:
             return
         try:
             self._adopt_published_qdrant(self._resolved_config())
@@ -540,7 +546,7 @@ class StackManager:
         if (
             settings.QDRANT_API_KEY
             and self.compose_file.exists()
-            and shutil.which(cs.DOCKER_BIN) is not None
+            and shutil.which(scs.DOCKER_BIN) is not None
         ):
             self._adopt_published_qdrant(self._resolved_config())
 
@@ -555,8 +561,8 @@ class StackManager:
         one that changes whenever the container is recreated. Returns whether
         the endpoint changed the Qdrant key decision.
         """
-        target = cs.QDRANT_CONTAINER_HTTP_PORT
-        published = _published_port(config, cs.SERVICE_QDRANT, target)
+        target = scs.QDRANT_CONTAINER_HTTP_PORT
+        published = _published_port(config, scs.SERVICE_QDRANT, target)
         if published is None:
             return False
         key_before = self.qdrant_api_key
@@ -564,9 +570,9 @@ class StackManager:
         port = _fixed_port(host_port)
         if port is None:
             raise StackError(
-                cs.ERR_QDRANT_PORT_NOT_FIXED.format(
+                scs.ERR_QDRANT_PORT_NOT_FIXED.format(
                     target=target,
-                    published=repr(host_port) if host_port else cs.COMPOSE_PORT_UNSET,
+                    published=repr(host_port) if host_port else scs.COMPOSE_PORT_UNSET,
                     path=self.compose_file,
                 )
             )
@@ -576,7 +582,7 @@ class StackManager:
         return self.qdrant_api_key != key_before
 
     def _resolved_config(
-        self, failure: str = cs.ERR_AUTH_NOT_VERIFIED
+        self, failure: str = scs.ERR_AUTH_NOT_VERIFIED
     ) -> dict[str, JsonValue]:
         """The project as `docker compose config` resolves it, or StackError.
 
@@ -589,13 +595,13 @@ class StackManager:
         that is not starting it.
         """
         detail = ""
-        for args in cs.COMPOSE_CONFIG_ATTEMPTS:
+        for args in scs.COMPOSE_CONFIG_ATTEMPTS:
             result = subprocess.run(
                 self._compose_cmd(*args),
                 capture_output=True,
                 text=True,
-                encoding=root_cs.ENCODING_UTF8,
-                timeout=cs.DEFAULT_STATUS_TIMEOUT_S,
+                encoding=cs.ENCODING_UTF8,
+                timeout=scs.DEFAULT_STATUS_TIMEOUT_S,
                 check=False,
                 env=self._compose_env(),
             )
@@ -621,23 +627,23 @@ class StackManager:
         project's own Qdrant container is running. StackError when Docker or
         Compose cannot tell, or Compose publishes Qdrant on no fixed port.
         """
-        if shutil.which(cs.DOCKER_BIN) is None:
-            raise StackError(cs.ERR_DOCKER_NOT_INSTALLED)
-        config = self._resolved_config(cs.ERR_COMPOSE_CONFIG_FAILED)
-        target = cs.QDRANT_CONTAINER_HTTP_PORT
-        if _published_port(config, cs.SERVICE_QDRANT, target) is None:
+        if shutil.which(scs.DOCKER_BIN) is None:
+            raise StackError(scs.ERR_DOCKER_NOT_INSTALLED)
+        config = self._resolved_config(scs.ERR_COMPOSE_CONFIG_FAILED)
+        target = scs.QDRANT_CONTAINER_HTTP_PORT
+        if _published_port(config, scs.SERVICE_QDRANT, target) is None:
             raise StackError(
-                cs.ERR_QDRANT_NOT_PUBLISHED.format(
+                scs.ERR_QDRANT_NOT_PUBLISHED.format(
                     path=self.compose_file, target=target
                 )
             )
         self._adopt_published_qdrant(config)
         running = _container_ids(
-            self._compose_cmd(*cs.COMPOSE_PS_RUNNING_ARGS, cs.SERVICE_QDRANT),
+            self._compose_cmd(*scs.COMPOSE_PS_RUNNING_ARGS, scs.SERVICE_QDRANT),
             self._compose_env(),
         )
         if running is None:
-            raise StackError(cs.ERR_COMPOSE_PS_FAILED)
+            raise StackError(scs.ERR_COMPOSE_PS_FAILED)
         return bool(running)
 
     def raise_if_auth_not_enforced(self) -> None:
@@ -657,7 +663,9 @@ class StackManager:
     def _raise_if_open(self, open_services: list[str]) -> None:
         if open_services:
             raise StackError(
-                cs.ERR_STACK_ACCEPTS_ANONYMOUS.format(services=", ".join(open_services))
+                scs.ERR_STACK_ACCEPTS_ANONYMOUS.format(
+                    services=", ".join(open_services)
+                )
             )
 
     def _raise_if_qdrant_rejects_key(self) -> None:
@@ -669,18 +677,18 @@ class StackManager:
             and settings.QDRANT_ALLOW_INSECURE_API_KEY
             and not qdrant_accepts_key(self.qdrant_port, api_key, host=self.qdrant_host)
         ):
-            raise StackError(cs.ERR_QDRANT_REJECTS_KEY)
+            raise StackError(scs.ERR_QDRANT_REJECTS_KEY)
 
     def _services_accepting_anonymous(self) -> list[str]:
         """The services that accept connections without their configured credentials."""
         open_services: list[str] = []
         credentialed = self._services_with_credentials()
-        if cs.SERVICE_MEMGRAPH in credentialed and self._memgraph_accepts_anonymous():
-            open_services.append(cs.SERVICE_MEMGRAPH)
-        if cs.SERVICE_QDRANT in credentialed and qdrant_accepts_anonymous(
+        if scs.SERVICE_MEMGRAPH in credentialed and self._memgraph_accepts_anonymous():
+            open_services.append(scs.SERVICE_MEMGRAPH)
+        if scs.SERVICE_QDRANT in credentialed and qdrant_accepts_anonymous(
             self.qdrant_port, host=self.qdrant_host
         ):
-            open_services.append(cs.SERVICE_QDRANT)
+            open_services.append(scs.SERVICE_QDRANT)
         return open_services
 
     # On Windows a Memgraph probe runs mgclient in a child process, and a child
@@ -691,15 +699,15 @@ class StackManager:
         try:
             return memgraph_accepts_anonymous(self.memgraph_host, self.memgraph_port)
         except ChildProcessError as e:
-            logger.warning(cs.WARN_MEMGRAPH_ACCESS_UNCHECKED.format(detail=e))
+            logger.warning(scs.WARN_MEMGRAPH_ACCESS_UNCHECKED.format(detail=e))
             return True
 
-    def _memgraph_anonymous_access(self) -> cs.AnonymousAccess:
+    def _memgraph_anonymous_access(self) -> scs.AnonymousAccess:
         try:
             return memgraph_anonymous_access(self.memgraph_host, self.memgraph_port)
         except ChildProcessError as e:
-            logger.warning(cs.WARN_MEMGRAPH_ACCESS_UNCHECKED.format(detail=e))
-            return cs.AnonymousAccess.ALLOWED
+            logger.warning(scs.WARN_MEMGRAPH_ACCESS_UNCHECKED.format(detail=e))
+            return scs.AnonymousAccess.ALLOWED
 
     def _compose_env(self) -> dict[str, str]:
         """The environment `docker compose up` runs in.
@@ -711,7 +719,7 @@ class StackManager:
         env = {
             name: value
             for name, value in os.environ.items()
-            if name not in cs.STACK_AUTH_ENV_VARS
+            if name not in scs.STACK_AUTH_ENV_VARS
         }
         for variables in self._auth_variables().values():
             env.update(variables)
@@ -728,33 +736,33 @@ class StackManager:
             self._warn_if_ports_are_public(self.compose_file)
 
     def check_docker(self) -> None:
-        if shutil.which(cs.DOCKER_BIN) is None:
-            raise StackError(cs.ERR_DOCKER_NOT_INSTALLED)
+        if shutil.which(scs.DOCKER_BIN) is None:
+            raise StackError(scs.ERR_DOCKER_NOT_INSTALLED)
         info = subprocess.run(
-            [cs.DOCKER_BIN, "info"],
+            [scs.DOCKER_BIN, "info"],
             capture_output=True,
             text=True,
-            encoding=root_cs.ENCODING_UTF8,
-            timeout=cs.DEFAULT_STATUS_TIMEOUT_S,
+            encoding=cs.ENCODING_UTF8,
+            timeout=scs.DEFAULT_STATUS_TIMEOUT_S,
             check=False,
         )
         if info.returncode != 0:
-            raise StackError(cs.ERR_DOCKER_DAEMON_DOWN)
+            raise StackError(scs.ERR_DOCKER_DAEMON_DOWN)
         compose = subprocess.run(
-            [cs.DOCKER_BIN, cs.DOCKER_COMPOSE_SUBCOMMAND, "version"],
+            [scs.DOCKER_BIN, scs.DOCKER_COMPOSE_SUBCOMMAND, "version"],
             capture_output=True,
             text=True,
-            encoding=root_cs.ENCODING_UTF8,
-            timeout=cs.DEFAULT_STATUS_TIMEOUT_S,
+            encoding=cs.ENCODING_UTF8,
+            timeout=scs.DEFAULT_STATUS_TIMEOUT_S,
             check=False,
         )
         if compose.returncode != 0:
-            raise StackError(cs.ERR_COMPOSE_NOT_AVAILABLE)
+            raise StackError(scs.ERR_COMPOSE_NOT_AVAILABLE)
 
     def _compose_cmd(self, *args: str) -> list[str]:
         return [
-            cs.DOCKER_BIN,
-            cs.DOCKER_COMPOSE_SUBCOMMAND,
+            scs.DOCKER_BIN,
+            scs.DOCKER_COMPOSE_SUBCOMMAND,
             "-p",
             self.project_name,
             "-f",
@@ -765,9 +773,9 @@ class StackManager:
     def _compose_targets(self) -> tuple[str, ...]:
         # No names starts the whole project, Lab included; a start narrowed to
         # some services names them, so Compose leaves the others alone.
-        return () if self.services == cs.CORE_SERVICES else self.services
+        return () if self.services == scs.CORE_SERVICES else self.services
 
-    def up(self, timeout: float = cs.DEFAULT_DOCKER_TIMEOUT_S) -> None:
+    def up(self, timeout: float = scs.DEFAULT_DOCKER_TIMEOUT_S) -> None:
         self.check_docker()
         self.ensure_compose_file()
         config = self._resolved_config()
@@ -782,7 +790,7 @@ class StackManager:
         # is only this start's to stop if `up -d` created or started it.
         self._raise_if_open(self._services_accepting_anonymous())
         self._containers_before_start = self._running_containers()
-        logger.info(cs.MSG_STARTING_STACK)
+        logger.info(scs.MSG_STARTING_STACK)
         # `up -d` that fails or is cut short may already have started some
         # containers, and the credential check in wait_healthy never runs.
         try:
@@ -790,7 +798,7 @@ class StackManager:
                 self._compose_cmd("up", "-d", *self._compose_targets()),
                 capture_output=True,
                 text=True,
-                encoding=root_cs.ENCODING_UTF8,
+                encoding=cs.ENCODING_UTF8,
                 timeout=timeout,
                 check=False,
                 env=self._compose_env(),
@@ -802,53 +810,55 @@ class StackManager:
             output = "\n".join(
                 part for part in (result.stdout.strip(), result.stderr.strip()) if part
             )
-            logger.debug(cs.MSG_COMPOSE_UP_OUTPUT.format(output=output))
+            logger.debug(scs.MSG_COMPOSE_UP_OUTPUT.format(output=output))
             detail, service = _compose_failure(output, self.project_name)
-            if service == cs.SERVICE_LAB and self._core_services_running():
-                logger.warning(cs.WARN_LAB_NOT_STARTED.format(detail=detail))
+            if service == scs.SERVICE_LAB and self._core_services_running():
+                logger.warning(scs.WARN_LAB_NOT_STARTED.format(detail=detail))
                 return
             if service is not None:
-                detail = cs.ERR_SERVICE_NOT_STARTED.format(
-                    service=cs.SERVICE_DISPLAY_NAMES.get(service, service),
+                detail = scs.ERR_SERVICE_NOT_STARTED.format(
+                    service=scs.SERVICE_DISPLAY_NAMES.get(service, service),
                     detail=detail,
                 )
             self._stop_if_left_open()
-            raise StackError(cs.ERR_STACK_START_FAILED.format(detail=detail))
+            raise StackError(scs.ERR_STACK_START_FAILED.format(detail=detail))
 
     def _core_services_running(self) -> bool:
         """Whether Memgraph and Qdrant each have a running container."""
         env = self._compose_env()
         return all(
-            _container_ids(self._compose_cmd(*cs.COMPOSE_PS_RUNNING_ARGS, service), env)
-            for service in cs.CORE_SERVICES
+            _container_ids(
+                self._compose_cmd(*scs.COMPOSE_PS_RUNNING_ARGS, service), env
+            )
+            for service in scs.CORE_SERVICES
         )
 
-    def down(self, timeout: float = cs.DEFAULT_DOCKER_TIMEOUT_S) -> None:
+    def down(self, timeout: float = scs.DEFAULT_DOCKER_TIMEOUT_S) -> None:
         self._stop_containers("down", timeout)
 
     def stop(
-        self, *services: str, timeout: float = cs.DEFAULT_DOCKER_TIMEOUT_S
+        self, *services: str, timeout: float = scs.DEFAULT_DOCKER_TIMEOUT_S
     ) -> None:
         """Stop the containers of `services`, or all, keeping logs and volumes."""
-        self._stop_containers(cs.COMPOSE_STOP_COMMAND, timeout, *services)
+        self._stop_containers(scs.COMPOSE_STOP_COMMAND, timeout, *services)
 
     def _stop_containers(self, command: str, timeout: float, *services: str) -> None:
         if not self.compose_file.exists():
             return
-        if shutil.which(cs.DOCKER_BIN) is None:
-            raise StackError(cs.ERR_DOCKER_NOT_INSTALLED)
-        logger.info(cs.MSG_STOPPING_STACK)
+        if shutil.which(scs.DOCKER_BIN) is None:
+            raise StackError(scs.ERR_DOCKER_NOT_INSTALLED)
+        logger.info(scs.MSG_STOPPING_STACK)
         result = subprocess.run(
             self._compose_cmd(command, *services),
             capture_output=True,
             text=True,
-            encoding=root_cs.ENCODING_UTF8,
+            encoding=cs.ENCODING_UTF8,
             timeout=timeout,
             check=False,
         )
         if result.returncode != 0:
             raise StackError(
-                cs.ERR_STACK_STOP_FAILED.format(
+                scs.ERR_STACK_STOP_FAILED.format(
                     detail=result.stderr.strip() or result.stdout.strip()
                 )
             )
@@ -860,7 +870,9 @@ class StackManager:
         tail: int | None = 200,
     ) -> int:
         if not self.compose_file.exists():
-            raise StackError(cs.ERR_COMPOSE_FILE_MISSING.format(path=self.compose_file))
+            raise StackError(
+                scs.ERR_COMPOSE_FILE_MISSING.format(path=self.compose_file)
+            )
         args: list[str] = ["logs"]
         if follow:
             args.append("-f")
@@ -872,13 +884,13 @@ class StackManager:
         return completed.returncode
 
     def restart(self) -> None:
-        logger.info(cs.MSG_RESTARTING_STACK)
+        logger.info(scs.MSG_RESTARTING_STACK)
         self.down()
         self.up()
 
     def wait_healthy(
         self,
-        timeout: float = cs.DEFAULT_HEALTH_TIMEOUT_S,
+        timeout: float = scs.DEFAULT_HEALTH_TIMEOUT_S,
     ) -> None:
         # Every caller has just started the stack, after `up` refused one that
         # was already open. A start whose wait fails or is interrupted never
@@ -902,15 +914,15 @@ class StackManager:
         self._raise_if_qdrant_rejects_key()
 
     def _wait_for_services(self, timeout: float) -> None:
-        if cs.SERVICE_MEMGRAPH in self.services:
+        if scs.SERVICE_MEMGRAPH in self.services:
             self._wait_for_memgraph(timeout)
-        if cs.SERVICE_QDRANT in self.services:
+        if scs.SERVICE_QDRANT in self.services:
             self._wait_for_qdrant(timeout)
 
     def _wait_for_memgraph(self, timeout: float) -> None:
         logger.info(
-            cs.MSG_WAITING_FOR_HEALTH.format(
-                service=cs.SERVICE_MEMGRAPH,
+            scs.MSG_WAITING_FOR_HEALTH.format(
+                service=scs.SERVICE_MEMGRAPH,
                 host=self.memgraph_host,
                 port=self.memgraph_port,
             )
@@ -923,23 +935,23 @@ class StackManager:
         ):
             self._raise_if_memgraph_rejects_credentials()
             raise StackError(
-                cs.ERR_STACK_NOT_HEALTHY.format(
-                    service=cs.SERVICE_MEMGRAPH, timeout=timeout
+                scs.ERR_STACK_NOT_HEALTHY.format(
+                    service=scs.SERVICE_MEMGRAPH, timeout=timeout
                 )
             )
 
     def _wait_for_qdrant(self, timeout: float) -> None:
         logger.info(
-            cs.MSG_WAITING_FOR_HEALTH.format(
-                service=cs.SERVICE_QDRANT,
+            scs.MSG_WAITING_FOR_HEALTH.format(
+                service=scs.SERVICE_QDRANT,
                 host=self.qdrant_host,
                 port=self.qdrant_port,
             )
         )
         if not wait_for_qdrant(self.qdrant_port, timeout, host=self.qdrant_host):
             raise StackError(
-                cs.ERR_STACK_NOT_HEALTHY.format(
-                    service=cs.SERVICE_QDRANT, timeout=timeout
+                scs.ERR_STACK_NOT_HEALTHY.format(
+                    service=scs.SERVICE_QDRANT, timeout=timeout
                 )
             )
 
@@ -952,41 +964,41 @@ class StackManager:
         merely slow to start is left running. Either way, the error that ended
         the start is the one reported.
         """
-        deadline = time.monotonic() + cs.STARTED_SERVICES_CHECK_TIMEOUT_S
+        deadline = time.monotonic() + scs.STARTED_SERVICES_CHECK_TIMEOUT_S
         pending = self._services_with_credentials()
         waiting = False
         while pending:
             access = {service: self._anonymous_access(service) for service in pending}
-            if open_services := _with_access(access, cs.AnonymousAccess.ALLOWED):
+            if open_services := _with_access(access, scs.AnonymousAccess.ALLOWED):
                 logger.warning(
-                    cs.WARN_START_LEFT_STACK_OPEN.format(
+                    scs.WARN_START_LEFT_STACK_OPEN.format(
                         services=", ".join(open_services)
                     )
                 )
                 self._stop_open_services(open_services)
-            pending = _with_access(access, cs.AnonymousAccess.NO_ANSWER)
+            pending = _with_access(access, scs.AnonymousAccess.NO_ANSWER)
             if not pending or time.monotonic() >= deadline:
                 return
             if not waiting:
                 logger.info(
-                    cs.MSG_CHECKING_STARTED_SERVICES.format(
-                        timeout=cs.STARTED_SERVICES_CHECK_TIMEOUT_S,
+                    scs.MSG_CHECKING_STARTED_SERVICES.format(
+                        timeout=scs.STARTED_SERVICES_CHECK_TIMEOUT_S,
                         services=", ".join(pending),
                     )
                 )
                 waiting = True
-            time.sleep(cs.DEFAULT_HEALTH_INTERVAL_S)
+            time.sleep(scs.DEFAULT_HEALTH_INTERVAL_S)
 
     def _services_with_credentials(self) -> list[str]:
         services: list[str] = []
-        if cs.SERVICE_MEMGRAPH in self.services and self.memgraph_credentials:
-            services.append(cs.SERVICE_MEMGRAPH)
-        if cs.SERVICE_QDRANT in self.services and self.qdrant_api_key:
-            services.append(cs.SERVICE_QDRANT)
+        if scs.SERVICE_MEMGRAPH in self.services and self.memgraph_credentials:
+            services.append(scs.SERVICE_MEMGRAPH)
+        if scs.SERVICE_QDRANT in self.services and self.qdrant_api_key:
+            services.append(scs.SERVICE_QDRANT)
         return services
 
-    def _anonymous_access(self, service: str) -> cs.AnonymousAccess:
-        if service == cs.SERVICE_MEMGRAPH:
+    def _anonymous_access(self, service: str) -> scs.AnonymousAccess:
+        if service == scs.SERVICE_MEMGRAPH:
             return self._memgraph_anonymous_access()
         return qdrant_anonymous_access(self.qdrant_port, host=self.qdrant_host)
 
@@ -994,7 +1006,7 @@ class StackManager:
         started, found_running = self._started_here(open_services)
         if found_running:
             logger.warning(
-                cs.WARN_OPEN_SERVICES_LEFT_RUNNING.format(
+                scs.WARN_OPEN_SERVICES_LEFT_RUNNING.format(
                     services=", ".join(found_running)
                 )
             )
@@ -1005,7 +1017,7 @@ class StackManager:
             self.stop(*started)
         except (StackError, subprocess.TimeoutExpired, OSError) as e:
             logger.warning(
-                cs.WARN_OPEN_SERVICES_NOT_STOPPED.format(
+                scs.WARN_OPEN_SERVICES_NOT_STOPPED.format(
                     services=", ".join(started), detail=e
                 )
             )
@@ -1035,7 +1047,7 @@ class StackManager:
         containers: dict[str, str] = {}
         for service in self._services_with_credentials():
             ids = _container_ids(
-                self._compose_cmd(*cs.COMPOSE_PS_RUNNING_ARGS, service),
+                self._compose_cmd(*scs.COMPOSE_PS_RUNNING_ARGS, service),
                 self._compose_env(),
             )
             if ids is None:
@@ -1051,40 +1063,40 @@ class StackManager:
         changes every probe is refused by a Memgraph that is otherwise fine.
         """
         if (
-            cs.SERVICE_MEMGRAPH in self.services
+            scs.SERVICE_MEMGRAPH in self.services
             and self.memgraph_credentials
             and memgraph_rejects_credentials(
                 self.memgraph_host, self.memgraph_port, self.memgraph_credentials
             )
         ):
-            raise StackError(cs.ERR_MEMGRAPH_REJECTS_CREDENTIALS)
+            raise StackError(scs.ERR_MEMGRAPH_REJECTS_CREDENTIALS)
 
     def status(self) -> StackStatus:
-        memgraph_ok = cs.SERVICE_MEMGRAPH in self.services and wait_for_memgraph(
+        memgraph_ok = scs.SERVICE_MEMGRAPH in self.services and wait_for_memgraph(
             self.memgraph_host,
             self.memgraph_port,
             timeout=0.1,
             interval=0.0,
             credentials=self.memgraph_credentials,
         )
-        qdrant_ok = cs.SERVICE_QDRANT in self.services and wait_for_qdrant(
+        qdrant_ok = scs.SERVICE_QDRANT in self.services and wait_for_qdrant(
             self.qdrant_port, timeout=0.1, interval=0.0, host=self.qdrant_host
         )
         # Only the services this manager runs decide the state.
         reachable = [
             ok
             for service, ok in (
-                (cs.SERVICE_MEMGRAPH, memgraph_ok),
-                (cs.SERVICE_QDRANT, qdrant_ok),
+                (scs.SERVICE_MEMGRAPH, memgraph_ok),
+                (scs.SERVICE_QDRANT, qdrant_ok),
             )
             if service in self.services
         ]
         if all(reachable):
-            state = cs.StackState.RUNNING
+            state = scs.StackState.RUNNING
         elif not any(reachable):
-            state = cs.StackState.STOPPED
+            state = scs.StackState.STOPPED
         else:
-            state = cs.StackState.PARTIAL
+            state = scs.StackState.PARTIAL
         return StackStatus(
             state=state,
             memgraph_reachable=memgraph_ok,
@@ -1097,8 +1109,8 @@ class StackManager:
     def ensure_running(self) -> StackStatus:
         self.locate_published_qdrant()
         current = self.status()
-        if current.state == cs.StackState.RUNNING:
-            logger.info(cs.MSG_STACK_ALREADY_RUNNING)
+        if current.state == scs.StackState.RUNNING:
+            logger.info(scs.MSG_STACK_ALREADY_RUNNING)
             # The start path warns via ensure_compose_file; a stack that is
             # already up never reaches it, and its long-lived compose file is
             # exactly the profile of a pre-#1012 public binding (issue #1380).
@@ -1112,7 +1124,7 @@ class StackManager:
         self.wait_healthy()
         final = self.status()
         logger.info(
-            cs.MSG_STACK_HEALTHY.format(
+            scs.MSG_STACK_HEALTHY.format(
                 memgraph=final.memgraph_endpoint,
                 qdrant=final.qdrant_endpoint,
             )
@@ -1178,16 +1190,16 @@ def bundled_qdrant_url(home: Path | None = None) -> str | None:
         return None
     host, port = manager.qdrant_host, manager.qdrant_port
     url = qdrant_base_url(host, port)
-    timeout = cs.BUNDLED_QDRANT_PROBE_TIMEOUT_S
+    timeout = scs.BUNDLED_QDRANT_PROBE_TIMEOUT_S
     match qdrant_anonymous_access(port, timeout=timeout, host=host):
-        case cs.AnonymousAccess.ALLOWED if qdrant_identifies(
+        case scs.AnonymousAccess.ALLOWED if qdrant_identifies(
             port, timeout=timeout, host=host
         ):
             return url
-        case cs.AnonymousAccess.ALLOWED:
+        case scs.AnonymousAccess.ALLOWED:
             logger.warning(ls.QDRANT_BUNDLED_NOT_QDRANT.format(url=url, path=path))
             return None
-        case cs.AnonymousAccess.REFUSED:
+        case scs.AnonymousAccess.REFUSED:
             logger.warning(ls.QDRANT_BUNDLED_WANTS_KEY.format(url=url, path=path))
             return None
         case _:

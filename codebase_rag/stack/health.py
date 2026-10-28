@@ -16,11 +16,11 @@ from typing import IO, NamedTuple, Protocol
 
 from loguru import logger
 
-from .. import constants as root_cs
+from .. import constants as cs
 from .. import mgclient_probe
 from ..mgclient_compat import mgclient
 from ..types_defs import MgclientProbeReport, MgclientProbeRequest
-from . import constants as cs
+from . import constants as scs
 
 # pymgclient 1.6 re-exports its C extension through `import *`, which a type
 # checker cannot see into, so the exception type is bound once here.
@@ -112,25 +112,25 @@ def _mgclient_own_c_runtime() -> _CRuntimeLibrary | None:
     """
     if sys.platform != "win32":
         return None
-    return _CRuntimeLibrary(cs.MGCLIENT_WINDOWS_C_RUNTIME)
+    return _CRuntimeLibrary(scs.MGCLIENT_WINDOWS_C_RUNTIME)
 
 
 def _log_mgclient_output(output: str) -> None:
     # Kept rather than dropped, for whoever is chasing a Memgraph that never
     # answers; the probe's own result is what reports it.
     if output := output.strip():
-        logger.debug(cs.MSG_MEMGRAPH_PROBE_OUTPUT.format(output=output))
+        logger.debug(scs.MSG_MEMGRAPH_PROBE_OUTPUT.format(output=output))
 
 
 def _mgclient_probe_command() -> list[str]:
-    if getattr(sys, cs.FROZEN_APP_ATTR, False):
-        return [sys.executable, root_cs.MGCLIENT_PROBE_CHILD_ARG]
+    if getattr(sys, scs.FROZEN_APP_ATTR, False):
+        return [sys.executable, cs.MGCLIENT_PROBE_CHILD_ARG]
     # -P keeps the working directory off the child's sys.path, so a
     # codebase_rag checkout there cannot stand in for the installed package.
     return [
         sys.executable,
-        cs.PYTHON_SAFE_PATH_FLAG,
-        cs.PYTHON_RUN_MODULE_FLAG,
+        scs.PYTHON_SAFE_PATH_FLAG,
+        scs.PYTHON_RUN_MODULE_FLAG,
         mgclient_probe.__name__,
     ]
 
@@ -156,9 +156,9 @@ def _mgclient_session_in_child(
             _mgclient_probe_command(),
             input=json.dumps(request),
             capture_output=True,
-            encoding=root_cs.ENCODING_UTF8,
+            encoding=cs.ENCODING_UTF8,
             errors="replace",
-            timeout=cs.MGCLIENT_PROBE_TIMEOUT_S,
+            timeout=scs.MGCLIENT_PROBE_TIMEOUT_S,
             check=False,
         )
     except subprocess.TimeoutExpired as e:
@@ -166,7 +166,9 @@ def _mgclient_session_in_child(
         # depends on the probe, so each caller decides.
         _log_mgclient_output(_printed_before_the_timeout(e))
         logger.debug(
-            cs.MSG_MEMGRAPH_PROBE_TIMED_OUT.format(timeout=cs.MGCLIENT_PROBE_TIMEOUT_S)
+            scs.MSG_MEMGRAPH_PROBE_TIMED_OUT.format(
+                timeout=scs.MGCLIENT_PROBE_TIMEOUT_S
+            )
         )
         raise
     if child.returncode != 0:
@@ -174,7 +176,7 @@ def _mgclient_session_in_child(
         # stack's authentication, and a probe that could not run must not
         # pass for a Memgraph that refused it.
         raise ChildProcessError(
-            cs.ERR_MGCLIENT_PROBE_CHILD_FAILED.format(
+            scs.ERR_MGCLIENT_PROBE_CHILD_FAILED.format(
                 code=child.returncode, output=child.stderr.strip()
             )
         )
@@ -187,7 +189,7 @@ def _printed_before_the_timeout(error: subprocess.TimeoutExpired) -> str:
     # kill; elsewhere the bytes read before the timeout, if any.
     printed = error.stderr
     if isinstance(printed, bytes):
-        return printed.decode(root_cs.ENCODING_UTF8, errors="replace")
+        return printed.decode(cs.ENCODING_UTF8, errors="replace")
     return printed or ""
 
 
@@ -195,13 +197,13 @@ def _login_refused(report: MgclientProbeReport) -> bool:
     # Memgraph refuses a login at connect, with the same exception type as a
     # refused connection, so only the message tells the two apart.
     error = report["connect_error"]
-    return error is not None and cs.MEMGRAPH_AUTH_FAILURE in error
+    return error is not None and scs.MEMGRAPH_AUTH_FAILURE in error
 
 
 @contextmanager
 def _stderr_into(runtime: _CRuntime, capture: IO[bytes]) -> Iterator[None]:
     try:
-        saved: int | None = runtime.dup(cs.NATIVE_STDERR_FD)
+        saved: int | None = runtime.dup(scs.NATIVE_STDERR_FD)
     except OSError:
         # fd 2 is closed, or holds a handle that can no longer be duplicated.
         # There is no terminal to put back, but the message still belongs in
@@ -212,9 +214,9 @@ def _stderr_into(runtime: _CRuntime, capture: IO[bytes]) -> Iterator[None]:
         try:
             target = runtime.open_file(capture)
             # With fd 2 free, the capture's descriptor is given that number.
-            if target != cs.NATIVE_STDERR_FD:
+            if target != scs.NATIVE_STDERR_FD:
                 try:
-                    runtime.dup2(target, cs.NATIVE_STDERR_FD)
+                    runtime.dup2(target, scs.NATIVE_STDERR_FD)
                 finally:
                     runtime.close(target)
             redirected = True
@@ -225,10 +227,10 @@ def _stderr_into(runtime: _CRuntime, capture: IO[bytes]) -> Iterator[None]:
         yield
     finally:
         if saved is not None:
-            runtime.dup2(saved, cs.NATIVE_STDERR_FD)
+            runtime.dup2(saved, scs.NATIVE_STDERR_FD)
             runtime.close(saved)
         elif redirected:
-            runtime.close(cs.NATIVE_STDERR_FD)
+            runtime.close(scs.NATIVE_STDERR_FD)
 
 
 @contextmanager
@@ -244,7 +246,7 @@ def _mgclient_stderr_to_debug_log() -> Iterator[None]:
         finally:
             capture.seek(0)
             _log_mgclient_output(
-                capture.read().decode(root_cs.ENCODING_UTF8, errors="replace")
+                capture.read().decode(cs.ENCODING_UTF8, errors="replace")
             )
 
 
@@ -255,7 +257,7 @@ def _bolt_reachable(
         return _bolt_reachable_in_process(host, port, credentials)
     try:
         report = _mgclient_session_in_child(
-            runtime, host, port, credentials, cs.BOLT_PROBE_QUERY
+            runtime, host, port, credentials, scs.BOLT_PROBE_QUERY
         )
     except subprocess.TimeoutExpired:
         # Not reachable yet, like a refused connection: the wait asks again.
@@ -277,7 +279,7 @@ def _bolt_reachable_in_process(
             conn = mgclient.connect(host=host, port=port)
         try:
             cursor = conn.cursor()
-            cursor.execute(cs.BOLT_PROBE_QUERY)
+            cursor.execute(scs.BOLT_PROBE_QUERY)
             cursor.fetchall()
         finally:
             conn.close()
@@ -299,8 +301,8 @@ def _http_reachable(url: str, timeout: float = 1.5) -> bool:
 def wait_for_memgraph(
     host: str,
     port: int,
-    timeout: float = cs.DEFAULT_HEALTH_TIMEOUT_S,
-    interval: float = cs.DEFAULT_HEALTH_INTERVAL_S,
+    timeout: float = scs.DEFAULT_HEALTH_TIMEOUT_S,
+    interval: float = scs.DEFAULT_HEALTH_INTERVAL_S,
     credentials: tuple[str, str] | None = None,
 ) -> bool:
     deadline = time.monotonic() + timeout
@@ -312,51 +314,53 @@ def wait_for_memgraph(
 
 
 def memgraph_accepts_anonymous(host: str, port: int) -> bool:
-    return memgraph_anonymous_access(host, port) is cs.AnonymousAccess.ALLOWED
+    return memgraph_anonymous_access(host, port) is scs.AnonymousAccess.ALLOWED
 
 
-def memgraph_anonymous_access(host: str, port: int) -> cs.AnonymousAccess:
+def memgraph_anonymous_access(host: str, port: int) -> scs.AnonymousAccess:
     if (runtime := _mgclient_own_c_runtime()) is None:
         return _anonymous_access_in_process(host, port)
     try:
         report = _mgclient_session_in_child(
-            runtime, host, port, None, cs.BOLT_PROBE_QUERY
+            runtime, host, port, None, scs.BOLT_PROBE_QUERY
         )
     except subprocess.TimeoutExpired as e:
         # A Memgraph that took the connection and never answered may still
         # accept anonymous logins. Like a child that failed, this has no
         # answer to give the check that the stack enforces its credentials.
         raise ChildProcessError(
-            cs.ERR_MGCLIENT_PROBE_TIMED_OUT.format(timeout=cs.MGCLIENT_PROBE_TIMEOUT_S)
+            scs.ERR_MGCLIENT_PROBE_TIMED_OUT.format(
+                timeout=scs.MGCLIENT_PROBE_TIMEOUT_S
+            )
         ) from e
     if report["succeeded"]:
-        return cs.AnonymousAccess.ALLOWED
+        return scs.AnonymousAccess.ALLOWED
     if _login_refused(report):
-        return cs.AnonymousAccess.REFUSED
-    return cs.AnonymousAccess.NO_ANSWER
+        return scs.AnonymousAccess.REFUSED
+    return scs.AnonymousAccess.NO_ANSWER
 
 
 @_mgclient_stderr_to_debug_log()
-def _anonymous_access_in_process(host: str, port: int) -> cs.AnonymousAccess:
+def _anonymous_access_in_process(host: str, port: int) -> scs.AnonymousAccess:
     # Memgraph refuses a login at connect, with the same exception type as a
     # refused connection, so only the message tells the two apart.
     try:
         conn = mgclient.connect(host=host, port=port)
     except _MgclientError as e:
-        if cs.MEMGRAPH_AUTH_FAILURE in str(e):
-            return cs.AnonymousAccess.REFUSED
-        return cs.AnonymousAccess.NO_ANSWER
+        if scs.MEMGRAPH_AUTH_FAILURE in str(e):
+            return scs.AnonymousAccess.REFUSED
+        return scs.AnonymousAccess.NO_ANSWER
     except OSError:
-        return cs.AnonymousAccess.NO_ANSWER
+        return scs.AnonymousAccess.NO_ANSWER
     try:
         cursor = conn.cursor()
-        cursor.execute(cs.BOLT_PROBE_QUERY)
+        cursor.execute(scs.BOLT_PROBE_QUERY)
         cursor.fetchall()
     except (_MgclientError, OSError):
-        return cs.AnonymousAccess.NO_ANSWER
+        return scs.AnonymousAccess.NO_ANSWER
     finally:
         conn.close()
-    return cs.AnonymousAccess.ALLOWED
+    return scs.AnonymousAccess.ALLOWED
 
 
 def memgraph_rejects_credentials(
@@ -382,7 +386,7 @@ def _rejects_credentials_in_process(
             host=host, port=port, username=username, password=password
         )
     except _MgclientError as e:
-        return cs.MEMGRAPH_AUTH_FAILURE in str(e)
+        return scs.MEMGRAPH_AUTH_FAILURE in str(e)
     except OSError:
         return False
     conn.close()
@@ -390,32 +394,34 @@ def _rejects_credentials_in_process(
 
 
 def qdrant_accepts_anonymous(
-    port: int, timeout: float = 1.5, host: str = cs.LOOPBACK_HOST
+    port: int, timeout: float = 1.5, host: str = scs.LOOPBACK_HOST
 ) -> bool:
-    request = urllib.request.Request(_qdrant_url(host, port, cs.QDRANT_DATA_PROBE_PATH))  # noqa: S310 - _qdrant_url fixes the http scheme
+    url = _qdrant_url(host, port, scs.QDRANT_DATA_PROBE_PATH)
+    request = urllib.request.Request(url)  # noqa: S310 - _qdrant_url fixes the http scheme
     return _qdrant_answers(request, timeout)
 
 
 def qdrant_anonymous_access(
-    port: int, timeout: float = 1.5, host: str = cs.LOOPBACK_HOST
-) -> cs.AnonymousAccess:
-    request = urllib.request.Request(_qdrant_url(host, port, cs.QDRANT_DATA_PROBE_PATH))  # noqa: S310 - _qdrant_url fixes the http scheme
+    port: int, timeout: float = 1.5, host: str = scs.LOOPBACK_HOST
+) -> scs.AnonymousAccess:
+    url = _qdrant_url(host, port, scs.QDRANT_DATA_PROBE_PATH)
+    request = urllib.request.Request(url)  # noqa: S310 - _qdrant_url fixes the http scheme
     try:
         with _DIRECT_OPENER.open(request, timeout=timeout) as resp:
             status = resp.status
     except urllib.error.HTTPError as e:
         status = e.code
     except OSError:
-        return cs.AnonymousAccess.NO_ANSWER
+        return scs.AnonymousAccess.NO_ANSWER
     if status == 200:
-        return cs.AnonymousAccess.ALLOWED
-    if status in cs.HTTP_AUTH_REFUSED_STATUSES:
-        return cs.AnonymousAccess.REFUSED
-    return cs.AnonymousAccess.NO_ANSWER
+        return scs.AnonymousAccess.ALLOWED
+    if status in scs.HTTP_AUTH_REFUSED_STATUSES:
+        return scs.AnonymousAccess.REFUSED
+    return scs.AnonymousAccess.NO_ANSWER
 
 
 def qdrant_accepts_key(
-    port: int, api_key: str, timeout: float = 1.5, host: str = cs.LOOPBACK_HOST
+    port: int, api_key: str, timeout: float = 1.5, host: str = scs.LOOPBACK_HOST
 ) -> bool:
     """Whether the key lets the app write, as indexing needs.
 
@@ -424,19 +430,19 @@ def qdrant_accepts_key(
     write access for it, and it changes nothing.
     """
     request = urllib.request.Request(  # noqa: S310 - _qdrant_url fixes the http scheme
-        _qdrant_url(host, port, cs.QDRANT_WRITE_PROBE_PATH),
-        data=cs.QDRANT_WRITE_PROBE_BODY,
+        _qdrant_url(host, port, scs.QDRANT_WRITE_PROBE_PATH),
+        data=scs.QDRANT_WRITE_PROBE_BODY,
         headers={
-            cs.QDRANT_API_KEY_HEADER: api_key,
-            cs.HTTP_CONTENT_TYPE_HEADER: cs.JSON_CONTENT_TYPE,
+            scs.QDRANT_API_KEY_HEADER: api_key,
+            scs.HTTP_CONTENT_TYPE_HEADER: scs.JSON_CONTENT_TYPE,
         },
-        method=cs.HTTP_METHOD_POST,
+        method=scs.HTTP_METHOD_POST,
     )
     return _qdrant_answers(request, timeout)
 
 
 def qdrant_identifies(
-    port: int, timeout: float = 1.5, host: str = cs.LOOPBACK_HOST
+    port: int, timeout: float = 1.5, host: str = scs.LOOPBACK_HOST
 ) -> bool:
     """Whether the server answers Qdrant's root as Qdrant does.
 
@@ -444,21 +450,21 @@ def qdrant_identifies(
     give one. Qdrant's root names it and its version, which another service
     has no reason to imitate.
     """
-    request = urllib.request.Request(_qdrant_url(host, port, cs.QDRANT_ROOT_PATH))  # noqa: S310 - _qdrant_url fixes the http scheme
+    request = urllib.request.Request(_qdrant_url(host, port, scs.QDRANT_ROOT_PATH))  # noqa: S310 - _qdrant_url fixes the http scheme
     try:
         with _DIRECT_OPENER.open(request, timeout=timeout) as resp:
             if resp.status != 200:
                 return False
-            body = json.loads(resp.read(cs.QDRANT_ROOT_MAX_BYTES))
+            body = json.loads(resp.read(scs.QDRANT_ROOT_MAX_BYTES))
     except (OSError, ValueError):
         return False
     if not isinstance(body, dict):
         return False
-    title = body.get(cs.QDRANT_ROOT_TITLE_KEY)
-    version = body.get(cs.QDRANT_ROOT_VERSION_KEY)
+    title = body.get(scs.QDRANT_ROOT_TITLE_KEY)
+    version = body.get(scs.QDRANT_ROOT_VERSION_KEY)
     return (
         isinstance(title, str)
-        and cs.QDRANT_ROOT_TITLE_MARKER in title.lower()
+        and scs.QDRANT_ROOT_TITLE_MARKER in title.lower()
         and isinstance(version, str)
         and bool(version)
     )
@@ -487,13 +493,13 @@ def _qdrant_answers(request: urllib.request.Request, timeout: float) -> bool:
 
 def wait_for_qdrant(
     port: int,
-    timeout: float = cs.DEFAULT_HEALTH_TIMEOUT_S,
-    interval: float = cs.DEFAULT_HEALTH_INTERVAL_S,
-    host: str = cs.LOOPBACK_HOST,
+    timeout: float = scs.DEFAULT_HEALTH_TIMEOUT_S,
+    interval: float = scs.DEFAULT_HEALTH_INTERVAL_S,
+    host: str = scs.LOOPBACK_HOST,
 ) -> bool:
     # Plain HTTP is deliberate: the stack manager only launches containers on
     # this machine, so the probe targets an address of this machine.
-    url = _qdrant_url(host, port, cs.QDRANT_READY_PATH)
+    url = _qdrant_url(host, port, scs.QDRANT_READY_PATH)
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if _http_reachable(url):

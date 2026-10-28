@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from ..config import settings
 from ..utils.path_utils import derive_project_name, project_name_error
-from . import constants as cs
+from . import constants as wcs
 from .models import WorkspaceConfig, WorkspaceRepo
 
 
@@ -19,12 +19,12 @@ class WorkspaceError(RuntimeError):
 
 def workspaces_dir(home: Path | None = None) -> Path:
     base = (home or settings.CGR_HOME).expanduser()
-    return base / cs.WORKSPACES_SUBDIR
+    return base / wcs.WORKSPACES_SUBDIR
 
 
 def validate_workspace_name(name: str) -> str:
-    if re.fullmatch(cs.WORKSPACE_NAME_PATTERN, name) is None:
-        raise WorkspaceError(cs.ERR_WORKSPACE_INVALID_NAME.format(name=name))
+    if re.fullmatch(wcs.WORKSPACE_NAME_PATTERN, name) is None:
+        raise WorkspaceError(wcs.ERR_WORKSPACE_INVALID_NAME.format(name=name))
     return name
 
 
@@ -33,33 +33,33 @@ def workspace_path(name: str, home: Path | None = None) -> Path:
     # keeps delete/create --force/load from touching a file outside the
     # workspaces directory.
     validate_workspace_name(name)
-    return workspaces_dir(home) / f"{name}{cs.WORKSPACE_EXTENSION}"
+    return workspaces_dir(home) / f"{name}{wcs.WORKSPACE_EXTENSION}"
 
 
 def list_workspaces(home: Path | None = None) -> list[str]:
     root = workspaces_dir(home)
     if not root.exists():
         return []
-    return sorted(p.stem for p in root.glob(f"*{cs.WORKSPACE_EXTENSION}"))
+    return sorted(p.stem for p in root.glob(f"*{wcs.WORKSPACE_EXTENSION}"))
 
 
 def load_workspace(name: str, home: Path | None = None) -> WorkspaceConfig:
     path = workspace_path(name, home)
     if not path.exists():
-        raise WorkspaceError(cs.ERR_WORKSPACE_NOT_FOUND.format(name=name, path=path))
+        raise WorkspaceError(wcs.ERR_WORKSPACE_NOT_FOUND.format(name=name, path=path))
     try:
         with path.open("rb") as f:
             data = tomllib.load(f)
     except tomllib.TOMLDecodeError as e:
         raise WorkspaceError(
-            cs.ERR_WORKSPACE_INVALID_TOML.format(name=name, error=e)
+            wcs.ERR_WORKSPACE_INVALID_TOML.format(name=name, error=e)
         ) from e
     body = data.get("workspace", data)
     try:
         return WorkspaceConfig.model_validate(body)
     except ValidationError as e:
         raise WorkspaceError(
-            cs.ERR_WORKSPACE_INVALID_SCHEMA.format(name=name, error=e)
+            wcs.ERR_WORKSPACE_INVALID_SCHEMA.format(name=name, error=e)
         ) from e
 
 
@@ -82,7 +82,7 @@ def create_workspace(
     path = workspace_path(name, home)
     if path.exists() and not overwrite:
         raise WorkspaceError(
-            cs.ERR_WORKSPACE_ALREADY_EXISTS.format(name=name, path=path)
+            wcs.ERR_WORKSPACE_ALREADY_EXISTS.format(name=name, path=path)
         )
     config = WorkspaceConfig(name=name, description=description, repos=repos or [])
     saved = save_workspace(config, home=home)
@@ -92,7 +92,7 @@ def create_workspace(
 def delete_workspace(name: str, home: Path | None = None) -> Path:
     path = workspace_path(name, home)
     if not path.exists():
-        raise WorkspaceError(cs.ERR_WORKSPACE_NOT_FOUND.format(name=name, path=path))
+        raise WorkspaceError(wcs.ERR_WORKSPACE_NOT_FOUND.format(name=name, path=path))
     path.unlink()
     return path
 
@@ -105,23 +105,23 @@ def add_repo(
 ) -> tuple[WorkspaceConfig, WorkspaceRepo]:
     resolved = Path(repo_path).expanduser().resolve()
     if not resolved.exists():
-        raise WorkspaceError(cs.ERR_WORKSPACE_REPO_PATH_MISSING.format(path=resolved))
+        raise WorkspaceError(wcs.ERR_WORKSPACE_REPO_PATH_MISSING.format(path=resolved))
     if not resolved.is_dir():
         raise WorkspaceError(
-            cs.ERR_WORKSPACE_REPO_NOT_A_DIRECTORY.format(path=resolved)
+            wcs.ERR_WORKSPACE_REPO_NOT_A_DIRECTORY.format(path=resolved)
         )
     if project_name and (error := project_name_error(project_name)) is not None:
         raise WorkspaceError(error)
     config = load_workspace(name, home=home)
     if config.find_repo(str(resolved)) is not None:
         raise WorkspaceError(
-            cs.ERR_WORKSPACE_REPO_DUPLICATE.format(path=resolved, name=name)
+            wcs.ERR_WORKSPACE_REPO_DUPLICATE.format(path=resolved, name=name)
         )
     for member in config.repos:
         member_path = member.repo_path()
         if resolved.is_relative_to(member_path) or member_path.is_relative_to(resolved):
             raise WorkspaceError(
-                cs.ERR_WORKSPACE_REPO_OVERLAPS.format(
+                wcs.ERR_WORKSPACE_REPO_OVERLAPS.format(
                     path=resolved, member=member_path, name=name
                 )
             )
@@ -142,7 +142,7 @@ def remove_repo(
     found = config.find_repo(repo_path)
     if found is None:
         raise WorkspaceError(
-            cs.ERR_WORKSPACE_REPO_NOT_IN_WORKSPACE.format(
+            wcs.ERR_WORKSPACE_REPO_NOT_IN_WORKSPACE.format(
                 path=Path(repo_path).expanduser().resolve(), name=name
             )
         )
