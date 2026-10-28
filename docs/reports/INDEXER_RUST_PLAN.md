@@ -7,227 +7,354 @@ what order? It answers from measurements of the current pipeline, not from
 estimates, and splits the work into separate PRs. Each PR is measured again
 before the next one starts.
 
+Python stays the shell: the CLI, the MCP server, the agent, the passes'
+control flow and every registry the passes share remain Python. What moves
+is the per-node work of walking a syntax tree, one function at a time, each
+behind a Python twin that stays the reference.
+
 `docs/reports/REWRITE_RECOMMENDATIONS.md` found a Rust rewrite unjustified,
 because tree-sitter work was 3.1% of CPU time in its profile. That profile
 predates the current pipeline and the embedded graph. On today's code the
-analysis passes are 90% of a large repository's run, so the question needs
+analysis passes are 94% of a large repository's run, so the question needs
 answering again.
+
+This is the second version of the plan. The first assumed Rust would parse
+each file again with grammars compiled into the wheel, that parsing costs
+0.2% to 0.3% of a run, and that a ported walk runs about 10 times faster.
+Measuring the first port showed all three wrong; the sections below say
+what replaced them.
 
 ## How it was measured
 
 Each repository was indexed from scratch:
 
 ```
-cgr start --update-graph --clean --yes [--no-embeddings]
+cgr start --update-graph --clean --yes --no-embeddings
 ```
 
 The runs used the embedded graph, the native extension on, Python 3.12 and
-x86_64 Linux. py-spy sampled each one at 200 Hz. Sampling leaves the
-interpreter untouched, whereas cProfile inflates pure-Python code against C
-two- to three-fold. `benchmarks/index_profile.py` turns a recording into the
-tables below, and its docstring has the exact commands.
+a 4-core x86_64 Linux machine. py-spy sampled each one (200 Hz for rich, 100
+Hz for code-graph-rag). Sampling leaves the interpreter untouched, whereas
+cProfile inflates pure-Python code against C two- to three-fold.
+`benchmarks/index_profile.py` turns a recording into the stage table below,
+and its docstring has the exact commands.
 
-The corpus has three repositories:
-
-| Repository | Source files | Python lines |
+| Repository | Python files | Sync time under the profiler |
 |---|---|---|
-| click | 17 | 12 k |
-| rich | 100 | 39 k |
-| code-graph-rag (its own tree) | 1,728 | 707 k |
-
-Some runs shared the machine with a PyInstaller build, so absolute times are
-noisy. Shares of samples are not, and the plan sizes everything by share.
+| rich | 213 | 13 s |
+| code-graph-rag (its own tree) | 1,846 | 231 s |
 
 ## Where the time goes
 
-### With embeddings (the default)
+### By stage
 
-| Stage | click | rich |
+| Stage | rich | code-graph-rag |
 |---|---|---|
-| Embedding model inference (torch) | 42.0% | 34.1% |
-| Calls pass | 11.6% | 25.3% |
-| Definitions pass | 10.0% | 13.3% |
-| Source extraction for embeddings | 8.8% | 6.6% |
-| Imports and startup | 17.4% | 11.0% |
-| Graph store (Rust ingest and SQLite) | 1.6% | 2.0% |
-| Other | 8.7% | 7.6% |
+| Calls pass | 44.2% | 59.7% |
+| Definitions pass | 25.0% | 34.4% |
+| Imports and startup | 23.2% | 0.8% |
+| Graph store (Rust ingest and SQLite) | 2.9% | 2.2% |
+| Other | 4.6% | 2.9% |
 
-### Without embeddings
+A default run also embeds every definition; model inference was 34% to 42%
+of such a run in the first version's profile, and is native code in torch.
 
-| Stage | click | rich | code-graph-rag |
+### By function, inclusive
+
+Each row counts every sample with that function anywhere on the stack, so
+rows overlap where one calls another.
+
+| Function | rich | code-graph-rag | What it is |
 |---|---|---|---|
-| Calls pass | 29.6% | 38.9% | 52.9% |
-| Definitions pass | 17.9% | 23.9% | 37.3% |
-| Imports and startup | 38.7% | 29.2% | 1.8% |
-| Graph store (Rust ingest and SQLite) | 4.4% | 2.1% | 1.4% |
-| Other | 9.4% | 5.9% | 6.6% |
+| `_find_python_method_in_ast`, `_find_function_ast_node`, `_find_class_node` | 11.0% | 15.0% | rerun a whole-file query per lookup |
+| Python scope analysis (`_binding_targets`, `_declared_non_local`, `_nonlocal_names`, `_inner_scope_only_names`, `_bindings_in`) | 8.4% | 13.6% | name binding walks |
+| `interface_fingerprint.py` | 9.6% | 11.9% | what a file's callers can see |
+| the two rows above together | 16.8% | 21.9% | they share the scope walks |
+| `call_resolver.py` | 8.4% | 7.8% | resolution against the registries |
+| `anchor_hash.py` | 3.8% | 4.9% | definition content hash |
+| `ast_fingerprint.py` | 1.9% | 4.5% | clone-detection skeleton |
+| tree-sitter parsing (`parse_with_preproc_recovery`) | 0.7% | 4.9% | half of it re-parses evicted trees |
+| `_scan_invoked_parameters` | 2.3% | 4.2% | call-site walk |
+| `safe_decode_text` | 2.1% | 3.0% | node text decoding |
+| `java/type_resolver.py:_find_registry_entries_under` | below 0.3% | 2.5% | registry scan |
 
-Indexing code-graph-rag's own tree took 288 s without embeddings.
+Of the startup share on rich, importing `pydantic_ai` is 6.8% and
+`prompt_toolkit` 1.7%; the indexer uses neither.
 
-### Hottest functions, indexing code-graph-rag
+## Two corrections to the first version
 
-These are self-time shares, attributed to the innermost code-graph-rag frame:
+**Parsing is not free.** It is 4.9% of the code-graph-rag run. Half of that
+is `_load_ast_from_disk` parsing again a tree the bounded AST cache evicted;
+the other half is the first parse. A Rust path that parsed every file again
+would add most of that back.
 
-| Share | Function | What it is |
-|---|---|---|
-| 15.1% | `parsers/utils.py:sorted_captures` | tree-sitter query execution, mostly on behalf of the lookup below |
-| 5.0% | `parsers/cpp/preproc_recovery.py:parse_with_preproc_recovery` | C/C++ preprocessor recovery |
-| 4.1% | `parsers/anchor_hash.py:anchor_hash` | subtree hashing |
-| 3.9% | `parsers/stdlib_extractor.py:_python_module_has_entity` | stdlib membership checks |
-| 3.3% | `parsers/utils.py:_scan_invoked_parameters` | tree walk |
-| 3.2% | `parsers/py/ast_analyzer.py:_binding_targets` | Python scope analysis |
-| 2.6% | `parsers/py/ast_analyzer.py:_declared_non_local` | Python scope analysis |
-| 2.4% | `graph_updater.py:_hash_file_with_bytes` | file hashing |
-| 2.3% | `parsers/py/ast_analyzer.py:_nonlocal_names` | Python scope analysis |
-| about 4.3% | `parsers/ast_fingerprint.py` (three functions) | subtree fingerprints |
-| about 3.0% | `parsers/interface_fingerprint.py` (four functions) | interface fingerprints |
+**A ported walk does not run 10 times faster.** On the 33,418 function and
+class definitions of code-graph-rag's own tree (5.8 million nodes walked):
 
-Of the `sorted_captures` time, 9.4 points come from
-`_find_python_method_in_ast`. It reruns the class query over the whole file,
-and the function query over each matching class body, every time a call's
-return type needs a method node.
+| Per node | Cost |
+|---|---|
+| Python twin of `anchor_hash` | about 890 ns |
+| Python walk alone, over `children` lists py-tree-sitter has cached | 109 ns |
+| Rust tree-sitter cursor walk alone | 93 ns |
+| one SHA-256 update (SHA-NI) | about 12 ns |
+| one BLAKE2b-64 hash of a node (one compression) | about 147 ns |
 
-## What Rust can and cannot speed up
+The Python cost is the per-node work (attribute reads, string encodes, set
+lookups, tuple allocations), not the traversal; the Rust cursor is no faster
+at walking than Python's cached lists. A port therefore gains what that work
+costs and no more. Hash-bound walks gain least: the fingerprint must compute
+one BLAKE2b per kept node, as its graph format fixes, and a SIMD BLAKE2b
+(`blake2b_simd`) is no faster on one-block messages. Size the next stages at
+**5x to 8x per ported walk**, not 10x.
 
-- **Embedding inference** is 34% to 42% of a default run. It is already
-  native code in torch, so Rust gains nothing there. Batching, a smaller or
-  quantised model, or ONNX Runtime are the levers, and they are out of scope
-  here.
-- **Imports and startup** are 29% to 39% of a small repository's run without
-  embeddings. Most of that is `vector_store.py` importing `qdrant_client` and
-  `pymilvus` at module load, even when the backend is SQLite. On click that is
-  14.1% and 7.5% of the run; on rich, 10.0% and 9.6%. `main.py` also imports
-  `pydantic_ai` (3.8% to 8.0%). This is fixed in Python by importing them where
-  they are used.
-- **The graph store** is already Rust and SQLite, at 1.4% to 4.4%. Nothing is
-  left to gain there.
-- **The analysis passes** (calls and definitions) are what remains. They are
-  90% of a large repository's run, and they are pure-Python tree walks: every
-  `node.children`, `node.type` and `node.text` crosses into C and allocates a
-  Python object. This is the work Rust does well. Parsing itself is cheap:
-  `Parser.parse` is 0.2% to 0.3% of the run.
+## How Rust gets the tree: it borrows Python's
+
+The first version had Rust parse each file again with grammars compiled into
+the wheel, because py-tree-sitter exposes no handle on its C tree. It does
+not need one. A py-tree-sitter `Node` is a C struct with the C `TSNode`
+inline (`tree_sitter/binding/types.h` in its source):
+
+```c
+typedef struct { PyObject_HEAD TSNode node; PyObject *children; PyObject *tree; } Node;
+typedef struct { PyObject_HEAD TSTree *tree; PyObject *source; PyObject *language; } Tree;
+```
+
+`TreeBridge` (`rust/cgr_graph_rs/src/trees/python.rs`) copies the `TSNode`
+out of the object it is handed and walks it with the `tree-sitter` crate's
+runtime. That runtime has to be the same C code py-tree-sitter compiled in:
+code-graph-rag pins py-tree-sitter 0.26.0, whose bundled `node.c`, `tree.c`,
+`tree_cursor.c`, `subtree.h` and `language.c` are byte-identical to those of
+the `tree-sitter` crate 0.26.8 the extension pins (only `query.c`,
+`unicode.h` and `wasm_store.c` differ, none of which a walk calls).
+
+What this buys over parsing again:
+
+- **No second parse**, and so none of the 4.9% above.
+- **No grammar in the wheel.** The runtime reads any language's tree,
+  because the grammar it consults is the one Python loaded. All 15 grammars
+  are covered at once; the stripped library grew by 109 KB (3.7%), where the
+  first version budgeted 0.5 MB to 5 MB per grammar.
+- **No grammar version skew.** There is one grammar per language, Python's.
+- **Drop-in ports.** Each ported function keeps its Python signature and is
+  called where it was, per node; nothing is regrouped into per-file batches.
+
+What guards it, since the bridge reads memory py-tree-sitter owns:
+
+- It refuses any py-tree-sitter but the release it was checked against, and
+  any build whose `Node` and `Tree` sizes (`__basicsize__`) differ from what
+  the structs above imply.
+- On every call it checks that the object is exactly a `tree_sitter.Node`,
+  that its `tree` field is exactly a `tree_sitter.Tree`, and that both name
+  the same `TSTree`, all before reading through a pointer.
+- Before first use, `parsers/native_trees.py` parses a probe source and
+  compares every node as the two runtimes read it (symbol, type, named
+  flag, byte range, points, child count, field name) and both hashes of
+  every node with the Python twins. Any difference turns the bridge off for
+  the process, and the Python twins run.
+- A node it cannot read exactly (a test double, a tree parsed from a
+  callback rather than `bytes`, decorators that are not a list of `str`)
+  raises `NotBorrowed`, and that call runs the Python twin.
+
+The tree is only read, never freed or edited, and the `Node` the caller
+passes keeps the tree and its source alive for the whole call. This stage
+never releases the GIL.
+
+## Stage 1, landed: the definition hashes
+
+`anchor_hash` and `compute_ast_fingerprint` now run through the bridge when
+it is on. Their Python bodies are `python_anchor_hash` and
+`python_ast_fingerprint`, the reference twins. The classification constants
+(punctuation, identifier and literal types, block types, ...) are handed to
+the bridge from `constants/` when it is built, so the twins cannot drift
+apart on them; a constant the Rust side cannot apply, such as another
+`AST_FP_DIGEST_SIZE`, turns the bridge off.
+
+**Parity.** Every named node of 3,309 files in 14 languages (C, C++, C#,
+Dart, Go, Java, JavaScript, Julia, Lua, PHP, Python, Rust, Scala,
+TypeScript; about 3.0 million nodes) hashed both ways, with and without
+decorators: no difference. Indexing rich and code-graph-rag with the bridge
+on and off gave identical nodes, hashes included. Edges differed only in
+the `resolution` label of a few `CALLS` edges, which differs as much between
+two runs with the bridge off. `codebase_rag/tests/test_native_trees.py`
+keeps the per-language and per-node comparison in the suite, and the Rust
+crate's own tests pin the Python twins' values.
+
+**Speed**, per definition on code-graph-rag's own tree, over four runs:
+
+| | Python | Rust | Gain |
+|---|---|---|---|
+| `anchor_hash` | 148 to 169 us | 17 to 24 us | 7x to 9.5x |
+| `compute_ast_fingerprint` | 214 to 237 us | 38 to 43 us | 5x to 6x |
+| both | | | 6.3x in every run |
+
+End to end, without embeddings (sync time, best of the runs):
+
+| Repository | Bridge off | Bridge on | Gain |
+|---|---|---|---|
+| rich | 12.2 s | 11.0 s | 1.10x |
+| code-graph-rag | 222.5 s | 206.0 s | 1.08x |
+
+The first version gated this stage on 1.1x end to end on code-graph-rag.
+Stage 1 alone measures 1.08x, short of that gate, because it holds the two
+hashes (9.4% of the run) and not `interface_fingerprint` (11.9%), which
+shares the scope walks of step 3 below and moves there. The saving matched
+what the profile predicted (7.8% at 6x; 7.4% measured), which is the check
+the later steps' estimates rest on.
+
+## Stage 2, landed: the Python scope walks
+
+For every Python function it reads, call resolution asks which names the
+function binds itself, and type inference asks which scope each of its
+assignments belongs to (issue #3473). Each question walked the function's
+body again, and the bodies of the defs around it: call resolution asked
+twice per function (`shadowed_import_names`, then `locally_bound_names`),
+an enclosing def was walked again for every function inside it, and the
+`nonlocal` check walked a nested binding's whole body once per binding.
+
+Now one walk reads a scope's facts (its parameters, what its own body
+binds, the import paths that can make a binding a re-import, its `global`
+and `nonlocal` declarations), and `ast_analyzer.scope_facts` keeps them per
+scope node. The scope functions read the facts instead of walking. The
+bridge reads them in Rust when it is on, with `python_scope_facts` as the
+twin; `_inner_scope_only_names`, the comprehension and lambda walk, moved
+the same way. A cached scope keeps its whole tree alive, where the AST
+cache's memory cap cannot see it, so the cache holds the scopes of the last
+few trees read (`PY_SCOPE_CACHE_TREES`), not a number of scopes, and is
+dropped with the per-pass caches. The node types and fields the walks read
+are handed to the bridge from `constants/`, as stage 1's are.
+
+**Parity.** Every def, class, lambda and module of 1,821 files (37,810
+scopes: `codebase_rag/`, `evals/`, `scripts/`) and every one of the 537,090
+nodes of rich and click, read both ways: no difference.
+`codebase_rag/tests/test_native_scopes.py` keeps the comparison in the
+suite, and the regression tests of #1907, #1922, #1928, #2124 and #2666 run
+on both paths (the `both_scope_walks` fixture). Indexing code-graph-rag
+twice with this stage gave the same graph as `main`'s second run, byte for
+byte (215,163 nodes and edges); `main`'s first run had one `CALLS` edge
+more, which its own second run did not have. Indexing rich seven times on
+each wrote the same set of lines: none is missing from the other set, and
+the few that vary from run to run vary on `main` too.
+
+**Speed.** Over those 37,810 scopes the Python walks take 18.2 s and the
+Rust ones 3.9 s (4.7x, with each answer converted to Python). End to end,
+without embeddings, from the same environment:
+
+| Repository | `main` | Stage 2 | Gain |
+|---|---|---|---|
+| rich, median of 5 alternating runs | 14.2 s | 11.8 s | 1.20x |
+| code-graph-rag, 2 alternating runs | 277.5 s, 261.1 s | 224.4 s, 214.3 s | 1.22x to 1.24x |
+
+Under the profiler the scope walks fell from 14.2% of the code-graph-rag
+run to 6.6%, and with `interface_fingerprint` from 20.8% to 16.6%. The run
+gained more than those shares alone predict (about 11%); `main`'s own two
+runs differ by 16 s. The tree has grown since stage 1 was measured: `main`
+now takes 261 s to 277 s, where stage 1's `main` took 222 s.
 
 ## The plan
 
-Every step is its own PR. Each one re-records the three repositories with
-`benchmarks/index_profile.py` and puts the before-and-after table in its
-description. Python fixes go first: they are cheaper, and they change the
-shares the Rust steps are sized by.
+Every step is its own PR, re-measured with `benchmarks/index_profile.py`
+before the next starts. The Python fixes come first where they are larger:
+they are cheaper, and they change the shares the Rust steps are sized by.
 
-### 1. Python: lazy vector-store and agent imports
+### 1. Python: index definitions once per tree (about 15%)
 
-Import `qdrant_client`, `pymilvus` and `pydantic_ai` in the functions that
-use them, not at module load. The type-only names already sit behind
-`TYPE_CHECKING`. The module-level bindings that the tests patch need a small
-accessor instead.
+`_find_python_method_in_ast`, `_find_function_ast_node` and
+`_find_class_node` rerun the class or function query over a whole file every
+time a call's return type needs a definition node. Build one map per tree on
+first use (class name to its methods by name, top-level function name to
+node), kept beside the cached AST and dropped with it. This is the largest
+single item in the profile and needs no Rust.
 
-Expected gain: 17% to 22% off a small repository's run without embeddings
-(about 1.5 s per run on click), and nothing measurable on a large one.
+### 2. Python: lazy agent imports (up to 9% of a small repository's run)
 
-### 2. Python: index definitions once per parsed file
+Import `pydantic_ai` and `prompt_toolkit` where the agent uses them, so
+`cgr start --update-graph` does not load them. The first version found
+`qdrant_client` and `pymilvus` there too when the `semantic` extra is
+installed.
 
-Replace the repeated queries in `_find_python_method_in_ast`,
-`_find_function_ast_node` and `_find_class_node` with one map per tree,
-built on first use:
+### 3. Rust: interface fingerprints (12.9% after stage 2)
 
-```
-class name → {method name → node}
-function name → node
-```
+The scope walks of this step landed as stage 2. What is left is
+`interface_fingerprint` itself, 12.9% of the code-graph-rag run on stage 2:
+its walk over every node of a file (`_expand`, 11.5%), the checks of what a
+function body holds (`_body_is_read`, `names_bound_within`) and the calls
+it records (`_call_bindings`). It hashes, like stage 1, so SHA-256 bounds
+its speed-up as it bounds `anchor_hash`'s.
 
-Cache it beside the parsed file. Also memoise
-`_python_module_has_entity` per (module, entity).
+### 4. Rust: call-site extraction (about 5%)
 
-Expected gain: about 13 points of the code-graph-rag run (9.4 + 2.5 + 0.9
-from the query lookups, plus up to 3.9 from the stdlib checks, minus the cost
-of building the map).
+`_scan_invoked_parameters` and the call collection in `call_processor.py`.
+Rust returns the call sites as nodes the caller already holds or as spans;
+resolution (`call_resolver.py`, the function registry) stays in Python,
+because it reads and writes registry state every language shares.
 
-Parity: the indexer's existing test suite, plus a graph dump of the three
-repositories before and after, compared node for node and edge for edge.
+### 5. Parallel walks
 
-### 3. Rust: the parity harness and the first stage, fingerprints and anchor hashes
+Once the per-file walks are Rust, compute them for every changed file at
+once in the pre-parse stage (`_pre_parse_changed_files`), with the GIL
+released: the bridge only reads trees nothing else mutates, and holding the
+Python nodes across the release keeps the trees alive. The serial passes
+then look the results up. On N cores this divides what is left of the
+ported share by about N. py-tree-sitter already releases the GIL while
+parsing (`Parser.parse`), so the first parse can move onto a thread pool
+before any of this.
 
-These go in the same crate, behind the same switch-per-path design as the
-graph engine (`EG_RUST_*`): each Rust path has a Python twin, and the twin is
-the fallback.
+### 6. The AST cache
 
-**How Rust gets the tree.** Rust parses the source itself with the
-`tree-sitter` crate, using the grammar versions the Python wheels pin
-(`tree-sitter` 0.26.0, `tree-sitter-python` 0.25.0 today). py-tree-sitter
-exposes no stable pointer to its `TSTree`, so the tree cannot be shared, and
-parsing again costs less than 0.3% of the run. Python passes the source bytes
-and the byte ranges of the nodes it wants. Rust returns plain tuples (hashes,
-names, spans), so no Python objects are allocated per node.
-
-**Stage 1** covers `anchor_hash`, `ast_fingerprint` and
-`interface_fingerprint` for Python sources. Each is a pure function of a
-subtree, about 11 points of the code-graph-rag run, and has no dependency on
-registry state. That makes it the cheapest place to prove the harness.
-
-**The harness** is a differential test. It runs both implementations over the
-repository's own fixtures and the three corpus repositories and requires
-byte-identical output. It also adds a fuzz target, under `fuzz/` beside the
-existing ClusterFuzzLite ones, that feeds the same source to both.
-
-**Gate.** Identical output on the corpus, and at least 1.1x end to end on
-the code-graph-rag run, or the stage does not ship.
-
-### 4. Rust stage 2: Python scope analysis
-
-Port the binding and scope walks in `parsers/py/ast_analyzer.py`:
-`_binding_targets`, `_declared_non_local`, `_nonlocal_names`,
-`_inner_scope_only_names` and `_bindings_in`. Also port the local-alias
-collection in `variable_analyzer.py`. Together these are about 15% to 18% of
-the code-graph-rag run. The output is name sets per scope, keyed by node
-span. Same harness, same gate.
-
-### 5. Rust stage 3: call-site extraction
-
-Port the walk that finds call nodes and their parts:
-`_scan_invoked_parameters`, the call collection in `call_processor.py` and
-`_collect_all_call_nodes`. These are about 12% of the run. Resolution
-(`call_resolver.py` and the function registry) stays in Python, because it
-reads and writes registry state that every language shares. Rust hands back
-call sites as tuples, and Python resolves them as it does today.
-
-### 6. Other languages, by measured share
-
-Each further grammar adds roughly 0.5 MB to 5 MB of compiled parser to every wheel. A language gets a Rust
-path only when a corpus where it dominates shows its passes above 10% of the
-run. The first candidate is C/C++ preprocessor recovery (5.0% of the
-code-graph-rag run).
+Half the parse time re-parses trees the bounded AST cache evicted. Size its
+bound from the run's file count, or order the call pass so that a file's
+callers follow it, before porting any of it.
 
 ## What the steps add up to
 
-Take the code-graph-rag run without embeddings (288 s) and assume a ported
-walk runs 10x faster than its Python twin. Every step has to confirm that
-factor.
+The code-graph-rag run without embeddings, timed without the profiler. The
+tree grew between the two stages, so each is measured against the `main`
+of its day. The steps not taken yet are projected from stage 2's profile,
+at 6x per ported walk:
 
-| After | Remaining share | Estimated time |
-|---|---|---|
-| Today | 100% | 288 s |
-| Steps 1 and 2 (Python) | about 87% | about 250 s |
-| Step 3 (fingerprints) | about 77% | about 220 s |
-| Step 4 (scope analysis) | about 62% | about 180 s |
-| Step 5 (call sites) | about 51% | about 145 s |
+| After | Time |
+|---|---|
+| Stage 1's `main` | 222 s, measured |
+| Stage 1 (landed) | 206 s, measured |
+| Stage 2's `main` | 261 s to 277 s, measured |
+| Stage 2 (landed) | 214 s to 224 s, measured |
+| Step 1 (Python lookups, 19.8% of stage 2's run) | about 180 s |
+| Step 3 (interface fingerprints, 12.9%) | about 160 s |
+| Step 4 (call sites, about 5%) | about 150 s |
 
-That is about 2x end to end on a large repository. Most of what remains is
-call resolution and registry work in Python. That is the next thing to
-measure once these steps land.
+That is about 1.7x end to end on one core against stage 2's `main`, before
+step 5. Most of what remains is call resolution and the passes' own control
+flow in Python, which share registries across files and languages; they are
+the part that stays Python.
 
-Step 1 matters most for small repositories. On a default run with
-embeddings, model inference bounds everything, and no amount of Rust in the
-passes moves it.
+## Beyond the indexer
+
+- **Embeddings** are a third or more of a default run and already native.
+  Rust would not make torch faster. What a Rust embedder (UniXcoder through
+  `candle` or ONNX Runtime) inside `cgr-graph-rs` could do is remove torch
+  from the `semantic` extra, which is most of its install size and of its
+  import time. That is worth measuring on its own, against ONNX Runtime from
+  Python, before any port.
+- **Queries** already run their hot paths in Rust (see
+  [Graph Backends](../architecture/embedded-graph.md)).
 
 ## Risks
 
-- **Grammar skew.** The Rust grammar crates and the Python grammar wheels
-  must be the same versions, or the two trees differ. Bump them together in
-  one PR. The differential harness fails on any skew.
-- **Two implementations.** Every ported walk keeps its Python twin as the
-  fallback for platforms without wheels, as the graph engine does. A change
-  to one needs the same change to the other, and the harness enforces it.
-- **Wheel size and build time.** The grammars are compiled C. Measure wheel
-  size in each PR and keep the languages to the measured ones (step 6).
-- **The boundary.** A port that returns per-node Python objects saves
-  nothing. Each stage returns one batch per file.
+- **Layout coupling.** The bridge reads py-tree-sitter's objects, so a
+  py-tree-sitter bump must come with a check of its `types.h` and of the C
+  runtime against the `tree-sitter` crate, and a crate bump with it. Until
+  then the bridge turns itself off and the Python twins run: slower, never
+  different. `test_native_trees.py` fails when the extension carries the
+  bridge but it is off, and when either pin differs from the pair the bridge
+  was checked with, so a bump cannot lose the speed silently. `AGENTS.md`
+  ("Bumping tree-sitter") has the procedure.
+- **Two implementations.** Every ported walk keeps its Python twin for
+  platforms without wheels. A change to one needs the same change to the
+  other; the parity tests enforce it, and the probe re-checks it in every
+  process.
+- **The boundary.** A port that returns a Python object per node saves
+  little. Each port returns one value per call: a hash, a set of names, a
+  list of spans.
+- **Unsafe code.** The bridge is the crate's first code to read Python
+  objects' memory directly. It stays in one function (`with_node`), with
+  every check made before a pointer is followed.

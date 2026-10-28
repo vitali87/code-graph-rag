@@ -214,6 +214,11 @@ ACCESS_DENIED = "Access denied: Cannot access files outside the project root."
 
 
 # Exception classes
+class NoTreeBridge(Exception):
+    """Stands in for the Rust extension's `NotBorrowed` when it has no tree
+    bridge, so callers always have a class to catch; nothing raises it."""
+
+
 class UnknownProviderError(ValueError):
     """A model role names a provider nothing serves (issue #2897).
 

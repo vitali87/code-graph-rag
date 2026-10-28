@@ -993,6 +993,10 @@ SIGNATURE_UNUSUAL_RECEIVER = (
     "it to self or cls first"
 )
 SIGNATURE_STAGE_FAILED = "Cannot stage the signature change: {error}"
+SIGNATURE_SOURCE_CHANGED = (
+    "Cannot stage the signature change: {files} changed on disk after the "
+    "change was planned; retry once the tree is settled"
+)
 SIGNATURE_BAD_PARAM = (
     "Not a parameter: `{text}` (expected `name`, `name: type`, `name = default` "
     "or `name: type = default`)"
@@ -1000,6 +1004,9 @@ SIGNATURE_BAD_PARAM = (
 SIGNATURE_DUPLICATE_NEW = "Parameter {name} is listed twice"
 SIGNATURE_REQUIRED_AFTER_DEFAULT = (
     "Parameter {name} has no default but comes after a defaulted parameter"
+)
+SIGNATURE_INVALID_HEADER = (
+    "The new parameter list of {qn} is not valid Python ({error}): `{text}`"
 )
 SIGNATURE_BODY_REBINDS = (
     "Cannot rename parameter {old} of {qn} to {new}: `{old}` is used inside a "
@@ -1018,6 +1025,10 @@ SIGNATURE_DROPPED_STILL_READ = (
 SIGNATURE_BODY_NAME_TAKEN = (
     "Cannot rename parameter {old} of {qn} to {new}: `{new}` is already used "
     "in its body"
+)
+SIGNATURE_NEW_NAME_TAKEN = (
+    "Cannot add parameter {name} to {qn}: `{name}` is already used in its "
+    "body, which would start reading the parameter instead"
 )
 SIGNATURE_HIERARCHY_MISMATCH = (
     "Cannot change the signature of {qn}: its override {member} declares "
@@ -1057,6 +1068,14 @@ SIGNATURE_SITE_TOO_MANY = (
 )
 SIGNATURE_SITE_NO_VALUE = "no value for `{name}`; map it or give it a default"
 SIGNATURE_SITE_OVERLAPS = "its arguments overlap another edit of this change"
+SIGNATURE_SITE_DROPS_EFFECT = (
+    "passes `{text}` for a dropped parameter, and leaving it out would skip "
+    "the code it runs"
+)
+SIGNATURE_SITE_EXPLICIT_RECEIVER = (
+    "reaches the method through its class and passes the receiver as an "
+    "argument (`{text}`); rewrite it by hand"
+)
 SIGNATURE_PLANNED = "{count} site(s) would be rewritten, {skipped} left unmapped"
 SIGNATURE_PARSE_FAILED = "Signature change rolled back: {files} would no longer parse"
 SIGNATURE_CONTRACT_FAILED = (
