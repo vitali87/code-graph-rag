@@ -50,7 +50,7 @@ def measure_object_sizes() -> dict:
     results = {}
 
     # 1. FunctionRegistryTrie: dict + trie node overhead
-    from codebase_rag.graph_updater import FunctionRegistryTrie
+    from codebase_rag.function_registry import FunctionRegistryTrie
 
     trie = FunctionRegistryTrie()
     gc.collect()
@@ -99,7 +99,7 @@ def measure_object_sizes() -> dict:
     )
 
     # 3. BoundedASTCache with OrderedDict
-    from codebase_rag.graph_updater import BoundedASTCache
+    from codebase_rag.ast_cache import BoundedASTCache
 
     cache = BoundedASTCache(max_entries=5000, max_memory_mb=512)
     gc.collect()
@@ -500,7 +500,7 @@ def measure_peak_usage_full_pipeline() -> dict:
     snap_baseline = tracemalloc.take_snapshot()
 
     # Phase 1: Build FunctionRegistryTrie
-    from codebase_rag.graph_updater import FunctionRegistryTrie
+    from codebase_rag.function_registry import FunctionRegistryTrie
 
     simple_name_lookup: defaultdict[str, set[str]] = defaultdict(set)
     trie = FunctionRegistryTrie(simple_name_lookup=simple_name_lookup)

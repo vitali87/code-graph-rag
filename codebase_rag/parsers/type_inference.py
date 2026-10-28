@@ -35,7 +35,7 @@ from .rs.type_inference import is_constructor_guess
 from .utils import follow_reexports
 
 if TYPE_CHECKING:
-    from .factory import ASTCacheProtocol
+    from ..types_defs import ASTCacheProtocol
 
 
 def _shared[T](value: T | None, empty: Callable[[], T]) -> T:

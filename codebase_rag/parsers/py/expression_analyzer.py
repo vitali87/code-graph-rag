@@ -44,7 +44,7 @@ _OWN_SCOPE_BOUNDARIES = frozenset(
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ..factory import ASTCacheProtocol
+    from ...types_defs import ASTCacheProtocol
     from .variable_analyzer import _Alias
 
     # A plain class, not a Protocol: a protocol's stub methods count as

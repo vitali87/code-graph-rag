@@ -20,7 +20,7 @@ from .with_analyzer import PythonWithBindingMixin
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
-    from ..factory import ASTCacheProtocol
+    from ...types_defs import ASTCacheProtocol
     from ..js_ts import JsTypeInferenceEngine
 
 

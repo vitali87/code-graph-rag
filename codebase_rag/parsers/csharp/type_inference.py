@@ -36,7 +36,7 @@ from .utils import (
 )
 
 if TYPE_CHECKING:
-    from ..factory import ASTCacheProtocol
+    from ...types_defs import ASTCacheProtocol
 
 _TYPE_DECLS = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
 

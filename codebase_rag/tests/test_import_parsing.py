@@ -6,7 +6,8 @@ import pytest
 import tree_sitter_python as tsp
 from tree_sitter import Language, Parser
 
-from codebase_rag.graph_updater import FunctionRegistryTrie, GraphUpdater
+from codebase_rag.function_registry import FunctionRegistryTrie
+from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.types_defs import NodeType

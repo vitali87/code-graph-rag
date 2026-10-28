@@ -3,7 +3,7 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
-from codebase_rag.graph_updater import FunctionRegistryTrie
+from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.types_defs import NodeType, SimpleNameLookup
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))

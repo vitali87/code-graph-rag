@@ -24,7 +24,7 @@ from .utils import find_package_start_index
 from .variable_analyzer import JavaVariableAnalyzerMixin
 
 if TYPE_CHECKING:
-    from ..factory import ASTCacheProtocol
+    from ...types_defs import ASTCacheProtocol
 
 
 # The sentinel a proven-external call resolves to: not a target, an instruction

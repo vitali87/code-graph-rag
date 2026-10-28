@@ -13,7 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from codebase_rag.graph_updater import FunctionRegistryTrie
+from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.parsers.class_ingest.method_override import check_method_overrides
 from codebase_rag.types_defs import NodeType
 from evals.cgr_graph import _capture

@@ -1,7 +1,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from codebase_rag.graph_updater import FunctionRegistryTrie
+from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.parsers.call_resolver import CallResolver
 from codebase_rag.types_defs import NodeType
 from evals.cgr_graph import _capture

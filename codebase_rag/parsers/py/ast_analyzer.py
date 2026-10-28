@@ -927,7 +927,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
     from pathlib import Path
 
-    from ..factory import ASTCacheProtocol
+    from ...types_defs import ASTCacheProtocol
     from ..import_processor import ImportProcessor
     from ..js_ts.type_inference import JsTypeInferenceEngine
 
