@@ -14,24 +14,57 @@
 //! - `ast_fingerprint`: `compute_ast_fingerprint` in
 //!   `codebase_rag/parsers/ast_fingerprint.py`;
 //! - `scopes`: the Python scope walks in
-//!   `codebase_rag/parsers/py/ast_analyzer.py`.
+//!   `codebase_rag/parsers/py/ast_analyzer.py`;
+//! - `interface`: `codebase_rag/parsers/interface_fingerprint.py`, for every
+//!   language it has rules for.
 //!
 //! What they classify (which node types are punctuation, identifiers,
 //! literals, blocks, bindings, ...) is not spelled here: Python hands over
-//! its own constants as `Rules` and `scopes::ScopeRules`, so the two twins
-//! cannot disagree on them.
+//! its own constants as `Rules`, `scopes::ScopeRules` and
+//! `interface::InterfaceRules`, so the two twins cannot disagree on them.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::CStr;
+use std::hash::{BuildHasherDefault, Hasher};
 
 use blake2::digest::consts::U8;
 use blake2::Blake2b;
 use sha2::{Digest, Sha256};
 use tree_sitter::{ffi, Node};
 
+pub mod interface;
 #[cfg(feature = "python")]
 pub mod python;
 pub mod scopes;
+
+/// FNV-1a. A set of node types is asked about nearly every node a walk
+/// visits, and its keys are a grammar's own type names, never text from the
+/// file, so it needs no defence against chosen collisions and can skip
+/// SipHash's cost. Sets of names read from the source keep the default.
+pub struct Fnv(u64);
+
+impl Default for Fnv {
+    fn default() -> Fnv {
+        Fnv(0xcbf2_9ce4_8422_2325)
+    }
+}
+
+impl Hasher for Fnv {
+    fn write(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.0 = (self.0 ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+/// A set of node types (or field names), as the rules hold them.
+pub type NodeTypes = HashSet<Vec<u8>, BuildHasherDefault<Fnv>>;
+/// A map keyed by node type.
+pub type NodeMap<V> = HashMap<Vec<u8>, V, BuildHasherDefault<Fnv>>;
 
 /// The constants the Python twins read, as UTF-8 bytes.
 pub struct Rules {
@@ -40,27 +73,27 @@ pub struct Rules {
     /// `AST_FP_COMMENT_SUBSTRING`: a node whose type holds it is dropped.
     pub comment: Vec<u8>,
     /// `AST_FP_PUNCT_TYPES`: unnamed tokens that are layout only.
-    pub punct: HashSet<Vec<u8>>,
+    pub punct: NodeTypes,
     pub id_token: Vec<u8>,
     pub lit_token: Vec<u8>,
     pub id_substring: Vec<u8>,
-    pub id_extras: HashSet<Vec<u8>>,
+    pub id_extras: NodeTypes,
     pub lit_substrings: Vec<Vec<u8>>,
-    pub lit_extras: HashSet<Vec<u8>>,
+    pub lit_extras: NodeTypes,
     pub block_substrings: Vec<Vec<u8>>,
-    pub block_extras: HashSet<Vec<u8>>,
+    pub block_extras: NodeTypes,
     pub min_branch_nodes: u64,
     pub wrapped_def_substring: Vec<u8>,
-    pub expression_body_types: HashSet<Vec<u8>>,
-    pub self_body_types: HashSet<Vec<u8>>,
+    pub expression_body_types: NodeTypes,
+    pub self_body_types: NodeTypes,
     pub hash_open: Vec<u8>,
     pub hash_close: Vec<u8>,
     /// `FIELD_BODY`, the field `_resolve_body` asks for first.
     pub body_field: Vec<u8>,
     /// `DART_SIGNATURE_TYPES`, `DART_SIGNATURE_WRAPPERS` and
     /// `TS_DART_FUNCTION_BODY`, for `dart_body_node`.
-    pub dart_signature_types: HashSet<Vec<u8>>,
-    pub dart_signature_wrappers: HashSet<Vec<u8>>,
+    pub dart_signature_types: NodeTypes,
+    pub dart_signature_wrappers: NodeTypes,
     pub dart_function_body: Vec<u8>,
 }
 
@@ -110,6 +143,61 @@ fn children<'t>(node: Node<'t>) -> Vec<Node<'t>> {
 
 fn named_children<'t>(node: Node<'t>) -> impl Iterator<Item = Node<'t>> {
     children(node).into_iter().filter(|child| child.is_named())
+}
+
+/// `root`'s subtree, `root` first, in source order: the order a Python walk
+/// that pops a stack it refills with `reversed(node.children)` visits it in.
+/// One cursor serves the whole walk, where `children` allocates one (and a
+/// list) per node; `skip_children` leaves the last node's subtree unvisited.
+pub struct Preorder<'t> {
+    cursor: tree_sitter::TreeCursor<'t>,
+    depth: usize,
+    started: bool,
+    descend: bool,
+    done: bool,
+}
+
+impl<'t> Preorder<'t> {
+    pub fn new(root: Node<'t>) -> Preorder<'t> {
+        Preorder { cursor: root.walk(), depth: 0, started: false, descend: true, done: false }
+    }
+
+    /// Leave the children of the node `next` returned last unvisited.
+    pub fn skip_children(&mut self) {
+        self.descend = false;
+    }
+
+    /// How far below the root the node `next` returned last is.
+    pub fn depth(&self) -> usize {
+        self.depth
+    }
+}
+
+impl<'t> Iterator for Preorder<'t> {
+    type Item = Node<'t>;
+
+    fn next(&mut self) -> Option<Node<'t>> {
+        if self.done {
+            return None;
+        }
+        if !self.started {
+            self.started = true;
+            return Some(self.cursor.node());
+        }
+        if std::mem::replace(&mut self.descend, true) && self.cursor.goto_first_child() {
+            self.depth += 1;
+            return Some(self.cursor.node());
+        }
+        while self.depth > 0 {
+            if self.cursor.goto_next_sibling() {
+                return Some(self.cursor.node());
+            }
+            self.cursor.goto_parent();
+            self.depth -= 1;
+        }
+        self.done = true;
+        None
+    }
 }
 
 pub fn hex(bytes: &[u8]) -> String {

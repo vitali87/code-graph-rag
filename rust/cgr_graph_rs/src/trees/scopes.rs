@@ -7,7 +7,9 @@
 //! - `scope_facts`: what `_parameter_names`, `_bindings_in` and
 //!   `_declared_non_local` find in one scope, and the import paths that can
 //!   make a binding a re-import rather than a shadow (`_excusing_paths`);
-//! - `inner_scope_only_names`: `_inner_scope_only_names`.
+//! - `inner_scope_only_names`: `_inner_scope_only_names`;
+//! - `names_bound_within`, and `add_locals` for `local_names(caller, {})`,
+//!   which the interface fingerprint (`super::interface`) reads.
 //!
 //! Both return exactly what their Python twin returns. Node types and field
 //! names are Python's own constants (`ScopeRules`), as in `super`.
@@ -17,23 +19,23 @@ use std::collections::{BTreeSet, HashSet};
 
 use tree_sitter::Node;
 
-use super::kind;
+use super::{kind, NodeTypes, Preorder};
 
 /// The constants the Python scope walks read, as UTF-8 bytes.
 pub struct ScopeRules {
     pub identifier: Vec<u8>,
     /// `PY_NESTED_SCOPE_TYPES`: a body of its own, not entered.
-    pub nested_scopes: HashSet<Vec<u8>>,
+    pub nested_scopes: NodeTypes,
     /// `PY_LEFT_BINDERS`: statements binding their `left` field.
-    pub left_binders: HashSet<Vec<u8>>,
+    pub left_binders: NodeTypes,
     /// `PY_NAME_BINDERS`: nodes binding their `name` field.
-    pub name_binders: HashSet<Vec<u8>>,
-    pub imports: HashSet<Vec<u8>>,
+    pub name_binders: NodeTypes,
+    pub imports: NodeTypes,
     /// `PY_BINDING_PATTERN_TYPES`: targets descended into for names.
-    pub patterns: HashSet<Vec<u8>>,
+    pub patterns: NodeTypes,
     /// `global` and `nonlocal` statements.
-    pub declarations: HashSet<Vec<u8>>,
-    pub comprehensions: HashSet<Vec<u8>>,
+    pub declarations: NodeTypes,
+    pub comprehensions: NodeTypes,
     pub nonlocal_statement: Vec<u8>,
     pub with_statement: Vec<u8>,
     pub except_clause: Vec<u8>,
@@ -84,11 +86,6 @@ fn text<'a>(node: Node, source: &'a [u8]) -> Cow<'a, str> {
     let end = node.end_byte().min(source.len());
     let start = node.start_byte().min(end);
     String::from_utf8_lossy(&source[start..end])
-}
-
-fn children<'t>(node: Node<'t>) -> Vec<Node<'t>> {
-    let mut cursor = node.walk();
-    node.children(&mut cursor).collect()
 }
 
 fn named_children<'t>(node: Node<'t>) -> Vec<Node<'t>> {
@@ -301,9 +298,17 @@ pub fn scope_facts(scope: Node, source: &[u8], rules: &ScopeRules) -> ScopeFacts
     let mut above = None;
     let mut targets = Vec::new();
     let mut identifiers = Vec::new();
-    // `_bindings_in`: each node with the nearest except clause above it.
-    let mut stack: Vec<(Node, Option<Node>)> = children(scope).into_iter().map(|child| (child, None)).collect();
-    while let Some((node, inner)) = stack.pop() {
+    // `_bindings_in`: each node with the nearest except clause above it,
+    // from the clauses on the path down to the node, kept with their depth.
+    let mut clauses: Vec<(usize, Node)> = Vec::new();
+    let mut nodes = Preorder::new(scope);
+    nodes.next();
+    while let Some(node) = nodes.next() {
+        let depth = nodes.depth();
+        while clauses.last().is_some_and(|(above, _)| *above >= depth) {
+            clauses.pop();
+        }
+        let inner = clauses.last().map(|(_, clause)| *clause);
         targets.clear();
         binding_targets(node, source, rules, &mut targets);
         identifiers.clear();
@@ -322,9 +327,10 @@ pub fn scope_facts(scope: Node, source: &[u8], rules: &ScopeRules) -> ScopeFacts
                 conditional.insert((name.into_owned(), paths));
             }
         }
-        if !rules.nested_scopes.contains(kind(node)) {
-            let below = if is(node, &rules.except_clause) { Some(node) } else { inner };
-            stack.extend(children(node).into_iter().map(|child| (child, below)));
+        if rules.nested_scopes.contains(kind(node)) {
+            nodes.skip_children();
+        } else if is(node, &rules.except_clause) {
+            clauses.push((depth, node));
         }
     }
     let (declared, nonlocals) = declarations(scope, source, rules);
@@ -342,28 +348,30 @@ pub fn scope_facts(scope: Node, source: &[u8], rules: &ScopeRules) -> ScopeFacts
 fn declarations(scope: Node, source: &[u8], rules: &ScopeRules) -> (Vec<String>, Vec<String>) {
     let mut declared: BTreeSet<String> = BTreeSet::new();
     let mut nonlocals: BTreeSet<String> = BTreeSet::new();
-    let mut stack = vec![scope];
-    while let Some(node) = stack.pop() {
-        for child in named_children(node) {
-            let child_type = kind(child);
-            if rules.nested_scopes.contains(child_type) {
+    let mut nodes = Preorder::new(scope);
+    nodes.next();
+    while let Some(child) = nodes.next() {
+        let child_type = kind(child);
+        // The twin walks named children only: an anonymous node, and
+        // anything an alias may hang under one, is never read.
+        if !child.is_named() || rules.nested_scopes.contains(child_type) {
+            nodes.skip_children();
+            continue;
+        }
+        if !rules.declarations.contains(child_type) {
+            continue;
+        }
+        nodes.skip_children();
+        let is_nonlocal = child_type == rules.nonlocal_statement.as_slice();
+        for declared_name in named_children(child) {
+            let name = text(declared_name, source);
+            if name.is_empty() {
                 continue;
             }
-            if !rules.declarations.contains(child_type) {
-                stack.push(child);
-                continue;
+            if is_nonlocal && is(declared_name, &rules.identifier) {
+                nonlocals.insert(name.clone().into_owned());
             }
-            let is_nonlocal = child_type == rules.nonlocal_statement.as_slice();
-            for declared_name in named_children(child) {
-                let name = text(declared_name, source);
-                if name.is_empty() {
-                    continue;
-                }
-                if is_nonlocal && is(declared_name, &rules.identifier) {
-                    nonlocals.insert(name.clone().into_owned());
-                }
-                declared.insert(name.into_owned());
-            }
+            declared.insert(name.into_owned());
         }
     }
     (declared.into_iter().collect(), nonlocals.into_iter().collect())
@@ -390,6 +398,46 @@ fn inner_scope_bindings<'a>(scope: Node, source: &'a [u8], rules: &ScopeRules) -
     names
 }
 
+/// `names_bound_within(node)`: every name anything under `node` binds, and,
+/// unlike a scope's facts, everything its nested defs, lambdas and
+/// comprehensions bind, their parameters included.
+pub fn names_bound_within(node: Node, source: &[u8], rules: &ScopeRules) -> HashSet<String> {
+    let mut names = HashSet::new();
+    let mut targets = Vec::new();
+    let mut identifiers = Vec::new();
+    for current in Preorder::new(node) {
+        targets.clear();
+        binding_targets(current, source, rules, &mut targets);
+        identifiers.clear();
+        for target in &targets {
+            identifiers_in(*target, rules, &mut identifiers);
+        }
+        for identifier in &identifiers {
+            let name = text(*identifier, source);
+            if !name.is_empty() {
+                names.insert(name.into_owned());
+            }
+        }
+        if is(current, &rules.function_definition) {
+            names.extend(parameter_names(current, source, rules));
+        } else if is(current, &rules.lambda) || rules.comprehensions.contains(kind(current)) {
+            names.extend(inner_scope_bindings(current, source, rules).into_iter().map(Cow::into_owned));
+        }
+    }
+    names
+}
+
+/// What one scope adds to `local_names(caller, {})`, read for the caller
+/// and each def around it (`_locally_bound_names`): its parameters and the
+/// names it binds but declares `global` or `nonlocal`. With no import map,
+/// no binding is a re-import.
+pub fn add_locals(facts: &ScopeFacts, names: &mut HashSet<String>) {
+    let local = |name: &&String| facts.declared.binary_search(name).is_err();
+    names.extend(facts.params.iter().cloned());
+    names.extend(facts.plain.iter().filter(local).cloned());
+    names.extend(facts.conditional.iter().map(|(name, _paths)| name).filter(local).cloned());
+}
+
 /// `_is_name_read(identifier)`: not the attribute of `x.name` and not the
 /// keyword of `f(name=...)`. `parent` is the identifier's parent.
 fn is_name_read(identifier: Node, parent: Node, rules: &ScopeRules) -> bool {
@@ -410,9 +458,17 @@ pub fn inner_scope_only_names(caller: Node, source: &[u8], rules: &ScopeRules) -
     let mut read_outside: HashSet<Cow<str>> = HashSet::new();
     // The names each enclosing comprehension or lambda binds; 0 is none.
     let mut enclosing: Vec<HashSet<Cow<str>>> = vec![HashSet::new()];
-    let mut stack: Vec<(Node, Node, usize)> = children(caller).into_iter().map(|child| (child, caller, 0)).collect();
-    while let Some((node, parent, outer)) = stack.pop() {
+    // Each node on the path down from `caller`, with the comprehension or
+    // lambda scope its children are read in.
+    let mut path: Vec<(Node, usize)> = vec![(caller, 0)];
+    let mut nodes = Preorder::new(caller);
+    nodes.next();
+    while let Some(node) = nodes.next() {
+        let depth = nodes.depth();
+        path.truncate(depth);
+        let (parent, outer) = path[depth - 1];
         if is(node, &rules.function_definition) || is(node, &rules.class_definition) {
+            nodes.skip_children();
             continue;
         }
         let mut scope = outer;
@@ -429,7 +485,7 @@ pub fn inner_scope_only_names(caller: Node, source: &[u8], rules: &ScopeRules) -
                 read_outside.insert(name);
             }
         }
-        stack.extend(children(node).into_iter().map(|child| (child, node, scope)));
+        path.push((node, scope));
     }
     let mut names: Vec<String> = bound
         .into_iter()

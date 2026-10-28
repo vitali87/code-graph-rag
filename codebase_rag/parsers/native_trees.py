@@ -2,7 +2,8 @@
 
 The definitions pass hashes every definition it ingests twice over, once
 for its anchor (`anchor_hash.py`) and once for its clone-detection skeleton
-(`ast_fingerprint.py`), and call resolution and type inference ask which
+(`ast_fingerprint.py`), and every module once for its interface
+(`interface_fingerprint.py`); call resolution and type inference ask which
 names each Python function binds (`py/ast_analyzer.py`). Each walks the
 subtree node by node through py-tree-sitter: every `node.children`,
 `node.type` and `node.text` crosses into C and builds a Python object.
@@ -33,11 +34,22 @@ from .. import constants as cs
 from .. import exceptions as ex
 from .. import logs as ls
 from ..embedded_graph.extension import rust_extension
-from ..types_defs import DescribedNode, NativeScopeFacts, ScopeRules, TreeRules
+from ..types_defs import (
+    DescribedNode,
+    InterfaceRules,
+    NativeScopeFacts,
+    ScopeRules,
+    TreeRules,
+)
 
 # Whether the indexer may use the bridge; the parity tests and benchmarks
 # flip it to compare the two paths.
 ENABLED: bool = True
+# Set while the probe compares a new bridge with the Python twins: those
+# twins ask for the bridge themselves (the interface fingerprint's reads the
+# scope walks), and must get the Python walks rather than the bridge under
+# test.
+_checking: bool = False
 
 
 class TreeBridge(Protocol):
@@ -50,6 +62,8 @@ class TreeBridge(Protocol):
     def scope_facts(self, scope: Node) -> NativeScopeFacts: ...
 
     def inner_scope_only_names(self, caller: Node) -> list[str]: ...
+
+    def interface_fingerprint(self, root_node: Node, language: str) -> str | None: ...
 
 
 NotBorrowed: type[Exception] = getattr(
@@ -83,6 +97,7 @@ def rules() -> TreeRules:
         dart_signature_wrappers=sorted(cs.DART_SIGNATURE_WRAPPERS),
         dart_function_body=cs.TS_DART_FUNCTION_BODY,
         scopes=_scope_rules(),
+        interface=_interface_rules(),
     )
 
 
@@ -122,9 +137,16 @@ def _scope_rules() -> ScopeRules:
     )
 
 
+def _interface_rules() -> InterfaceRules:
+    # Imported here: the interface fingerprint asks this module for the bridge.
+    from .interface_fingerprint import bridge_rules
+
+    return bridge_rules()
+
+
 def tree_bridge() -> TreeBridge | None:
     """The bridge, or None when the Python twins must walk the trees."""
-    return _bridge() if ENABLED else None
+    return _bridge() if ENABLED and not _checking else None
 
 
 def scope_bridge() -> TreeBridge | None:
@@ -132,6 +154,13 @@ def scope_bridge() -> TreeBridge | None:
     before them does not, or None."""
     bridge = tree_bridge()
     return bridge if hasattr(bridge, cs.EG_RUST_SCOPE_FACTS) else None
+
+
+def interface_bridge() -> TreeBridge | None:
+    """The bridge when it also computes interface fingerprints, which a
+    build from before them does not, or None."""
+    bridge = tree_bridge()
+    return bridge if hasattr(bridge, cs.EG_RUST_INTERFACE_FINGERPRINT) else None
 
 
 @cache
@@ -181,7 +210,20 @@ def describe(node: Node) -> list[DescribedNode]:
 def _disagreement(bridge: TreeBridge) -> tuple[cs.TreeBridgeCheck, str] | None:
     """What the bridge reads differently from Python on the probe, and at
     which node type, if anything."""
+    global _checking
+    checking, _checking = _checking, True
+    try:
+        return _probe_disagreement(bridge)
+    finally:
+        _checking = checking
+
+
+def _probe_disagreement(
+    bridge: TreeBridge,
+) -> tuple[cs.TreeBridgeCheck, str] | None:
     import tree_sitter_python
+
+    from .interface_fingerprint import python_interface_fingerprint
 
     probe = Parser(Language(tree_sitter_python.language())).parse(cs.TREE_BRIDGE_PROBE)
     root = probe.root_node
@@ -193,6 +235,12 @@ def _disagreement(bridge: TreeBridge) -> tuple[cs.TreeBridgeCheck, str] | None:
         stack.extend(node.children)
         if (check := _node_disagreement(bridge, node)) is not None:
             return check, node.type
+    python = cs.SupportedLanguage.PYTHON
+    if hasattr(bridge, cs.EG_RUST_INTERFACE_FINGERPRINT) and (
+        bridge.interface_fingerprint(root, python)
+        != python_interface_fingerprint(root, python)
+    ):
+        return cs.TreeBridgeCheck.INTERFACE_FINGERPRINT, root.type
     return None
 
 
