@@ -152,6 +152,17 @@ def _gone_pid() -> int:
     return child.pid
 
 
+@pytest.fixture
+def identified_process_table() -> Generator[None, None, None]:
+    """A host whose name tells its process table apart, as Linux's does.
+
+    On macOS and Windows the name is the hostname alone, and no run is
+    stranded there (review of PR #3496).
+    """
+    with patch("codebase_rag.sync_guard.process_table_identified", return_value=True):
+        yield
+
+
 def _strand(ingestor: MagicMock, events: list[str], runs: list[dict]) -> None:
     """Markers of other writers' runs that got past their first write (PR #3493).
 
@@ -184,6 +195,7 @@ def _run(run_id: str, pid: int, host: str | None = None) -> dict:
     }
 
 
+@pytest.mark.usefixtures("identified_process_table")
 def test_a_sync_over_a_run_whose_process_exited_rebuilds_then_retires_it(
     tmp_path: Path,
     sync_env: MagicMock,
@@ -213,6 +225,7 @@ def test_a_sync_over_a_run_whose_process_exited_rebuilds_then_retires_it(
     ]
 
 
+@pytest.mark.usefixtures("identified_process_table")
 def test_a_sync_with_nothing_stranded_stays_incremental(
     tmp_path: Path,
     sync_env: MagicMock,
@@ -228,6 +241,7 @@ def test_a_sync_with_nothing_stranded_stays_incremental(
     assert "retire" not in events
 
 
+@pytest.mark.usefixtures("identified_process_table")
 @pytest.mark.parametrize(
     "run",
     [
@@ -256,6 +270,7 @@ def test_a_sync_leaves_a_run_that_may_still_be_writing(
     updater.run.assert_called_once_with(force=False)
 
 
+@pytest.mark.usefixtures("identified_process_table")
 def test_a_sync_that_stops_short_retires_nothing(
     tmp_path: Path,
     sync_env: MagicMock,

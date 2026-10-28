@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -24,6 +25,17 @@ from codebase_rag.utils.path_utils import derive_project_name
 from codebase_rag.utils.process_owner import process_host
 
 DEAD_RUN = "mcp-dead"
+
+
+@pytest.fixture(autouse=True)
+def _identified_process_table() -> Iterator[None]:
+    """A host whose name tells its process table apart, as Linux's does.
+
+    On macOS and Windows the name is the hostname alone, so nothing is
+    stranded there; these tests are about what follows once a run is.
+    """
+    with patch("codebase_rag.sync_guard.process_table_identified", return_value=True):
+        yield
 
 
 def _gone_pid() -> int:
@@ -230,6 +242,15 @@ def test_stranded_runs_are_the_other_runs_whose_process_exited() -> None:
         StrandedRun("dead", process_host(), dead)
     ]
     assert store.reads == [{cs.KEY_PROJECT_NAME: "proj", cs.KEY_RUN_ID: "own"}]
+
+
+def test_where_the_process_table_cannot_be_told_apart_nothing_is_stranded() -> None:
+    # Review of PR #3496: under a hostname alone, a run on another machine of
+    # the same name reads as local, and its pid, absent here, as exited.
+    store = Store([_marker(DEAD_RUN, _gone_pid())])
+
+    with patch("codebase_rag.sync_guard.process_table_identified", return_value=False):
+        assert stranded_runs(store.ingestor, "proj", "own") == []
 
 
 def test_a_store_that_cannot_answer_strands_nothing() -> None:

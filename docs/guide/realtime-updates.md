@@ -112,7 +112,11 @@ the whole repository first, then retires that marker with its own. It does so
 only once the process that wrote the marker has exited on this machine. A run
 still going, even one from another checkout under the same project name, keeps
 its marker, and so does a run on another machine or in another container. A
-marker an older release wrote names no process, so it stays too.
+marker an older release wrote names no process, so it stays too. The check
+needs a machine whose processes cannot be mistaken for another machine's:
+Linux, where the boot id and the pid namespace tell them apart. On macOS and
+Windows, which name the machine by its hostname alone, such a marker stays,
+as it did before.
 
 ### One sync of a checkout at a time
 

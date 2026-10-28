@@ -25,7 +25,11 @@ from . import cypher_queries as cq
 from . import logs as ls
 from .services import QueryProtocol
 from .types_defs import PropertyValue, ResultRow
-from .utils.process_owner import pid_has_exited, process_host
+from .utils.process_owner import (
+    pid_has_exited,
+    process_host,
+    process_table_identified,
+)
 
 
 class SyncRefusedError(RuntimeError):
@@ -277,16 +281,19 @@ def run_owner() -> dict[str, PropertyValue]:
 def _stopped_run(row: ResultRow) -> StrandedRun | None:
     """The run a marker names if its process provably exited.
 
-    Only a process in this process table can be checked. A marker from
-    another host, from a live process (this one included), or from before
-    markers named their process is kept: it may guard a graph its run is
-    still writing, as `cli._stopped_sync_token` reasons.
+    Only a process in this process table can be checked, and only where the
+    host's name tells this table from every other (`process_table_identified`):
+    a hostname alone may be another machine's, whose pid is no process here.
+    A marker from another host, from a live process (this one included), or
+    from before markers named their process is kept: it may guard a graph its
+    run is still writing, as `cli._stopped_sync_token` reasons.
     """
     run_id = row.get(cs.KEY_RUN_ID)
     pid = row.get(cs.KEY_OWNER_PID)
     here = process_host()
     if (
         not isinstance(run_id, str)
+        or not process_table_identified()
         or row.get(cs.KEY_OWNER_HOST) != here
         or not isinstance(pid, int)
         or pid == os.getpid()

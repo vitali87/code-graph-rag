@@ -10,12 +10,13 @@ import os
 import subprocess
 import sys
 from collections.abc import Iterator
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.utils.process_owner import pid_has_exited
+from codebase_rag.utils.process_owner import pid_has_exited, process_table_identified
 
 
 def _gone_pid() -> int:
@@ -78,3 +79,41 @@ def test_windows_never_signals_the_process_it_asks_about(running_pid: int) -> No
         assert not pid_has_exited(running_pid)
         assert not pid_has_exited(os.getpid())
         assert pid_has_exited(_gone_pid())
+
+
+# Review of PR #3496: a full sync retires another run's marker once that
+# run's pid has exited here, which says something only when the host's name
+# cannot also be another machine's or another pid namespace's.
+
+
+@pytest.fixture
+def fresh_identity() -> Iterator[None]:
+    process_table_identified.cache_clear()
+    yield
+    process_table_identified.cache_clear()
+
+
+@pytest.mark.usefixtures("fresh_identity")
+@pytest.mark.parametrize("missing", ["boot-id", "pid-namespace"])
+def test_a_host_name_without_both_parts_identifies_no_process_table(
+    missing: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Negative: the hostname alone, or a container hiding its pid namespace.
+    boot_id = tmp_path / "boot_id"
+    boot_id.write_text("6b1c2f0e\n", encoding="utf-8")
+    absent = str(tmp_path / "absent")
+    monkeypatch.setattr(
+        cs, "PROCESS_BOOT_ID_PATH", absent if missing == "boot-id" else str(boot_id)
+    )
+    if missing == "pid-namespace":
+        monkeypatch.setattr(cs, "PROCESS_PID_NAMESPACE_PATH", absent)
+
+    assert not process_table_identified()
+
+
+@pytest.mark.usefixtures("fresh_identity")
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="only Linux exposes a boot id and pid namespace"
+)
+def test_linux_identifies_its_process_table() -> None:
+    assert process_table_identified()

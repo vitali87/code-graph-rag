@@ -453,6 +453,16 @@ class TestAFullSyncRetiresRunsItSupersedes:
     # Review of PR #3493: an MCP run that died after its first write left its
     # marker under a run id nothing else clears, so `cgr status` and every
     # later edit kept refusing however many times the project was re-synced.
+
+    @pytest.fixture(autouse=True)
+    def _identified_process_table(self) -> Generator[None, None, None]:
+        # As on Linux. On macOS and Windows the host's name is the hostname
+        # alone, so nothing is retired there (review of PR #3496).
+        with patch(
+            "codebase_rag.sync_guard.process_table_identified", return_value=True
+        ):
+            yield
+
     def test_a_crashed_mcp_runs_marker_goes_with_the_next_full_sync(
         self, graphs: dict[int, _Memgraph], tmp_path: Path
     ) -> None:
