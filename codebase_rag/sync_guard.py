@@ -259,3 +259,26 @@ def sync_marker_down(ingestor: QueryProtocol, project_name: str) -> bool:
             cq.CYPHER_CLI_SYNC_MARKER_OWNER, sync_marker_params(project_name)
         )
     )
+
+
+def partial_graph_refusal(ingestor: QueryProtocol, project_name: str) -> str | None:
+    """Why a CLI edit may not plan from the project's graph, or None if it may.
+
+    Any run's marker counts, the MCP server's as well as a CLI writer's. One
+    whose run reached its first write may sit over a graph that lost
+    definitions and calls. One that stopped before writing (`writing=false`)
+    left the graph as it was, so it does not refuse; the MCP server clears it.
+    A store that cannot answer refuses, as the MCP server's
+    `_persisted_incomplete` does: "cannot tell" is not "finished".
+    """
+    try:
+        rows = ingestor.fetch_all(
+            cq.CYPHER_PROJECT_IS_INCOMPLETE, {cs.KEY_PROJECT_NAME: project_name}
+        )
+    except Exception as exc:
+        return cs.CLI_ERR_EDIT_MARKER_UNREADABLE.format(project=project_name, error=exc)
+    if any(
+        row.get(cs.KEY_RUN_INCOMPLETE) and row.get(cs.KEY_WRITING, True) for row in rows
+    ):
+        return cs.CLI_ERR_EDIT_GRAPH_PARTIAL.format(project=project_name)
+    return None
