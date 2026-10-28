@@ -1769,7 +1769,7 @@ class ImportProcessor:
         module_qn: str,
         language: cs.SupportedLanguage,
         queries: Mapping[cs.SupportedLanguage, LanguageQueries],
-        pre_captures: dict | None = None,
+        pre_captures: dict[str, list[Node]] | None = None,
         *,
         defer_edges: bool = True,
     ) -> None:
@@ -3046,7 +3046,9 @@ class ImportProcessor:
             return True
         return path.endswith(tuple(spec.file_extensions))
 
-    def _parse_python_imports(self, captures: dict, module_qn: str) -> None:
+    def _parse_python_imports(
+        self, captures: dict[str, list[Node]], module_qn: str
+    ) -> None:
         all_imports = captures.get(cs.CAPTURE_IMPORT, []) + captures.get(
             cs.CAPTURE_IMPORT_FROM, []
         )
@@ -4843,7 +4845,7 @@ class ImportProcessor:
         return cs.SEPARATOR_DOT.join(target_parts)
 
     def _parse_js_ts_imports(
-        self, captures: dict, module_qn: str, root_node: Node
+        self, captures: dict[str, list[Node]], module_qn: str, root_node: Node
     ) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type == cs.TS_IMPORT_STATEMENT:
@@ -5409,7 +5411,9 @@ class ImportProcessor:
         if exported:
             self.js_export_bindings.setdefault(module_qn, {}).update(exported)
 
-    def _parse_java_imports(self, captures: dict, module_qn: str) -> None:
+    def _parse_java_imports(
+        self, captures: dict[str, list[Node]], module_qn: str
+    ) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type != cs.TS_IMPORT_DECLARATION:
                 continue
@@ -5538,7 +5542,9 @@ class ImportProcessor:
                     import_node, module_qn, imported_path, alias_node, global_only=True
                 )
 
-    def _parse_csharp_imports(self, captures: dict, module_qn: str) -> None:
+    def _parse_csharp_imports(
+        self, captures: dict[str, list[Node]], module_qn: str
+    ) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type != cs.TS_CSHARP_USING_DIRECTIVE:
                 continue
@@ -5761,7 +5767,9 @@ class ImportProcessor:
         self.rust_impl_self_paths.setdefault(impl_qn, set()).add(written_path)
         self._rust_impl_self_path_keys.setdefault(module_qn, set()).add(impl_qn)
 
-    def _parse_rust_imports(self, captures: dict, module_qn: str) -> None:
+    def _parse_rust_imports(
+        self, captures: dict[str, list[Node]], module_qn: str
+    ) -> None:
         self.drop_rust_module_import_state(module_qn)
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type == cs.TS_USE_DECLARATION:
@@ -6115,7 +6123,9 @@ class ImportProcessor:
         if scopes:
             self.rust_block_items[module_qn] = scopes
 
-    def _parse_scala_imports(self, captures: dict, module_qn: str) -> None:
+    def _parse_scala_imports(
+        self, captures: dict[str, list[Node]], module_qn: str
+    ) -> None:
         """Scala imports: plain, selector group, rename and wildcard.
 
         Scala writes the package path as loose `identifier` and `.` children
@@ -6279,7 +6289,9 @@ class ImportProcessor:
                     )
                     self._record_import_site(module_qn, name, import_node, name)
 
-    def _parse_go_imports(self, captures: dict, module_qn: str) -> None:
+    def _parse_go_imports(
+        self, captures: dict[str, list[Node]], module_qn: str
+    ) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type == cs.TS_GO_IMPORT_DECLARATION:
                 self._parse_go_import_declaration(import_node, module_qn)
@@ -6330,7 +6342,9 @@ class ImportProcessor:
                 self._record_import_site(module_qn, package_name, spec_node)
             logger.debug(ls.IMP_GO, package=package_name, path=import_path)
 
-    def _parse_cpp_imports(self, captures: dict, module_qn: str) -> None:
+    def _parse_cpp_imports(
+        self, captures: dict[str, list[Node]], module_qn: str
+    ) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type == cs.TS_PREPROC_INCLUDE:
                 self._parse_cpp_include(import_node, module_qn)
@@ -6586,7 +6600,10 @@ class ImportProcessor:
             self.php_module_namespaces[module_qn] = declared
 
     def _parse_php_imports(
-        self, captures: dict, module_qn: str, root_node: Node | None = None
+        self,
+        captures: dict[str, list[Node]],
+        module_qn: str,
+        root_node: Node | None = None,
     ) -> None:
         if root_node is not None:
             self._record_php_namespace(root_node, module_qn)
@@ -6640,7 +6657,9 @@ class ImportProcessor:
                 self._record_import_site(module_qn, local_name, node, path_str)
                 return
 
-    def _parse_generic_imports(self, captures: dict, lang_config: LanguageSpec) -> None:
+    def _parse_generic_imports(
+        self, captures: dict[str, list[Node]], lang_config: LanguageSpec
+    ) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             logger.debug(
                 ls.IMP_GENERIC,
@@ -6649,7 +6668,10 @@ class ImportProcessor:
             )
 
     def _parse_dart_imports(
-        self, captures: dict, module_qn: str, root_node: Node | None = None
+        self,
+        captures: dict[str, list[Node]],
+        module_qn: str,
+        root_node: Node | None = None,
     ) -> None:
         # Dart import/export/part directives carry a URI string. `dart:` and
         # `package:` targets are external (kept verbatim); relative paths and part
@@ -6759,7 +6781,9 @@ class ImportProcessor:
         self.import_mapping[module_qn][local_name] = resolved
         self._record_import_site(module_qn, local_name, call_node, module_path)
 
-    def _parse_lua_imports(self, captures: dict, module_qn: str) -> None:
+    def _parse_lua_imports(
+        self, captures: dict[str, list[Node]], module_qn: str
+    ) -> None:
         for call_node in captures.get(cs.CAPTURE_IMPORT, []):
             if self._lua_is_require_call(call_node):
                 if module_path := self._lua_extract_require_arg(call_node):
@@ -6806,7 +6830,9 @@ class ImportProcessor:
             node = node.parent
         return cs.SEPARATOR_DOT.join(reversed(names)) if names else None
 
-    def _parse_julia_imports(self, captures: dict, module_qn: str) -> None:
+    def _parse_julia_imports(
+        self, captures: dict[str, list[Node]], module_qn: str
+    ) -> None:
         # `using A.B` / `using A.B as C` / `import A: b, c as d` / `using .S`:
         # the local name is the alias / selected member / last path segment,
         # the target the dotted path. Relative `.`/`..` stay in the
