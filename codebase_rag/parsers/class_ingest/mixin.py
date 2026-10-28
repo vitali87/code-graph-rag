@@ -43,6 +43,7 @@ from ..go import GoTypeInferenceEngine
 from ..go import interfaces as go_ifaces
 from ..java import utils as java_utils
 from ..js_ts import utils as js_ts_utils
+from ..method_ingest import ingest_method
 from ..parameter_nodes import PendingParameterType, csharp_call_shape
 from ..php import namespaces as php_namespaces
 from ..py import (
@@ -57,7 +58,6 @@ from ..utils import (
     decorated_start_props,
     extract_modifiers_and_decorators,
     function_span_key,
-    ingest_method,
     mark_js_ts_module_private,
     module_qn_for_entity,
     record_cpp_definition_span,

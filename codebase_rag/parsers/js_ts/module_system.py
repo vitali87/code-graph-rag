@@ -12,10 +12,10 @@ from tree_sitter import Language, QueryCursor
 from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import ASTNode
+from ..method_ingest import ingest_exported_function
 from ..utils import (
     function_span_key,
     get_cached_query,
-    ingest_exported_function,
     safe_decode_text,
     safe_decode_with_fallback,
     sorted_captures,

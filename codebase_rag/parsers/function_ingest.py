@@ -46,6 +46,7 @@ from .go import utils as go_utils
 from .go.builds import GoBuilds
 from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
+from .method_ingest import ingest_method
 from .parameter_nodes import (
     PendingParameterType,
     csharp_call_shape,
@@ -61,7 +62,6 @@ from .utils import (
     extract_modifiers_and_decorators,
     function_span_key,
     get_function_captures,
-    ingest_method,
     is_method_node,
     mark_js_ts_module_private,
     python_positional_parameter_names,

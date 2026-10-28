@@ -21,7 +21,7 @@ from codebase_rag.editing.rename import RenameRefused, rename
 from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.parsers import utils as parser_utils
+from codebase_rag.parsers import method_ingest
 from codebase_rag.parsers.class_ingest import mixin as class_mixin
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 from codebase_rag.tests.conftest import get_relationships, run_updater
@@ -715,7 +715,7 @@ class TestMethodContainerOnATwin:
         member = _first_of_type(tree.root_node, cs.TS_METHOD_SIGNATURE)
         assert member is not None
         ingestor = MagicMock()
-        parser_utils.ingest_method(
+        method_ingest.ingest_method(
             member,
             container_qn,
             label,

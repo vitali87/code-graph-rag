@@ -36,8 +36,8 @@ from ..class_ingest.relationships import (
     create_implements_relationship,
     create_inheritance_relationship,
 )
+from ..method_ingest import ingest_method
 from ..parameter_nodes import PendingParameterType
-from ..utils import ingest_method
 from . import interfaces as go_ifaces
 from . import utils as go_utils
 from .builds import (

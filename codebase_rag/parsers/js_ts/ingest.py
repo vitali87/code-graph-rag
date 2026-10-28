@@ -17,10 +17,10 @@ from ...types_defs import (
     PropertyDict,
     SimpleNameLookup,
 )
+from ..method_ingest import module_function_props
 from ..utils import (
     get_cached_query,
     mark_js_ts_module_private,
-    module_function_props,
     safe_decode_text,
     safe_decode_with_fallback,
     sorted_captures,
