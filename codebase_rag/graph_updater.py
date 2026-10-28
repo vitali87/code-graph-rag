@@ -1941,15 +1941,8 @@ class GraphUpdater:
             )
         )
         if settings.CPP_FRONTEND == cs.CppFrontend.HYBRID:
-            # FrontendEmitResult keeps these as list[object] so the protocol
-            # need not import cpp_frontend internals; narrowing here is the
-            # "the C++ frontend adapter narrows them" its docstring describes.
-            self._pending_cpp_macro_calls = cast(
-                "list[PendingMacroCall]", result.pending_macro_calls
-            )
-            self._pending_cpp_expansion_calls = cast(
-                "list[PendingExpansionCall]", result.pending_expansion_calls
-            )
+            self._pending_cpp_macro_calls = result.pending_macro_calls
+            self._pending_cpp_expansion_calls = result.pending_expansion_calls
             logger.info(
                 ls.CPP_FRONTEND_HYBRID_PENDING.format(
                     count=len(self._pending_cpp_macro_calls)

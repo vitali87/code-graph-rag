@@ -11,7 +11,12 @@ from typing import Protocol, runtime_checkable
 
 from ...constants.languages import SupportedLanguage
 from ...services import IngestorProtocol
-from ...types_defs import FunctionRegistryTrieProtocol, SimpleNameLookup
+from ...types_defs import (
+    FunctionRegistryTrieProtocol,
+    PendingExpansionCall,
+    PendingMacroCall,
+    SimpleNameLookup,
+)
 
 # Call-site join key: (rel_file, name_token_line, name_token_byte_col, simple_name).
 # The NAME token, not the expression start: nested invocations (`Make().Handle(x)`)
@@ -190,13 +195,11 @@ class FrontendEmitContext:
 class FrontendEmitResult:
     """What an emitting frontend returns to the graph builder: the set of files it
     fully covered (so the definition pass skips them, LIBCLANG mode) and any calls
-    to be joined to tree-sitter spans in a later phase (HYBRID mode). The pending
-    lists stay untyped here to avoid importing the cpp_frontend internals; the C++
-    frontend adapter narrows them."""
+    to be joined to tree-sitter spans in a later phase (HYBRID mode)."""
 
     covered_files: frozenset[str] = frozenset()
-    pending_macro_calls: list[object] = field(default_factory=list)
-    pending_expansion_calls: list[object] = field(default_factory=list)
+    pending_macro_calls: list[PendingMacroCall] = field(default_factory=list)
+    pending_expansion_calls: list[PendingExpansionCall] = field(default_factory=list)
 
 
 @runtime_checkable
