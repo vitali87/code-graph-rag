@@ -3826,8 +3826,9 @@ class MCPToolsRegistry:
     ) -> str:
         logger.info(lg.MCP_LIST_DIR.format(path=directory_path))
         try:
-            return _plain_function(self._directory_lister_tool)(
-                directory_path=directory_path
+            return await _run_in_thread(
+                _plain_function(self._directory_lister_tool),
+                directory_path=directory_path,
             )
         except Exception as e:
             logger.error(lg.MCP_ERROR_LIST_DIR.format(error=e))

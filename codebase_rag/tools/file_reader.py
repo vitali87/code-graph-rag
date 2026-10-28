@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from loguru import logger
@@ -29,34 +30,40 @@ class FileReader:
     @validate_project_path(FileReadResult, path_arg_name="file_path")
     async def _read_validated(self, file_path: Path) -> FileReadResult:
         """Read a path already checked to be inside the project root."""
-        try:
-            if not file_path.is_file():
-                return FileReadResult(
-                    file_path=str(file_path), error_message=te.FILE_NOT_FOUND
-                )
+        # On a thread, as FileEditor reads: a large file read on the event
+        # loop stalls every other request the server is handling.
+        return await asyncio.to_thread(_read_file_sync, file_path)
 
-            if file_path.suffix.lower() in cs.BINARY_EXTENSIONS:
-                error_msg = te.BINARY_FILE.format(path=file_path)
-                logger.warning(ls.TOOL_FILE_BINARY.format(message=error_msg))
-                return FileReadResult(file_path=str(file_path), error_message=error_msg)
 
-            try:
-                # In the encoding a Python file declares, as the indexer
-                # read it (issue #2901).
-                content = file_path.read_text(encoding=source_codec(file_path))
-                logger.info(ls.TOOL_FILE_READ_SUCCESS.format(path=file_path))
-                return FileReadResult(file_path=str(file_path), content=content)
-            except UnicodeDecodeError:
-                error_msg = te.UNICODE_DECODE.format(path=file_path)
-                logger.warning(ls.TOOL_FILE_BINARY.format(message=error_msg))
-                return FileReadResult(file_path=str(file_path), error_message=error_msg)
-
-        except Exception as e:
-            logger.error(ls.FILE_READER_ERR.format(path=file_path, error=e))
+def _read_file_sync(file_path: Path) -> FileReadResult:
+    try:
+        if not file_path.is_file():
             return FileReadResult(
-                file_path=str(file_path),
-                error_message=ls.UNEXPECTED.format(error=e),
+                file_path=str(file_path), error_message=te.FILE_NOT_FOUND
             )
+
+        if file_path.suffix.lower() in cs.BINARY_EXTENSIONS:
+            error_msg = te.BINARY_FILE.format(path=file_path)
+            logger.warning(ls.TOOL_FILE_BINARY.format(message=error_msg))
+            return FileReadResult(file_path=str(file_path), error_message=error_msg)
+
+        try:
+            # In the encoding a Python file declares, as the indexer
+            # read it (issue #2901).
+            content = file_path.read_text(encoding=source_codec(file_path))
+            logger.info(ls.TOOL_FILE_READ_SUCCESS.format(path=file_path))
+            return FileReadResult(file_path=str(file_path), content=content)
+        except UnicodeDecodeError:
+            error_msg = te.UNICODE_DECODE.format(path=file_path)
+            logger.warning(ls.TOOL_FILE_BINARY.format(message=error_msg))
+            return FileReadResult(file_path=str(file_path), error_message=error_msg)
+
+    except Exception as e:
+        logger.error(ls.FILE_READER_ERR.format(path=file_path, error=e))
+        return FileReadResult(
+            file_path=str(file_path),
+            error_message=ls.UNEXPECTED.format(error=e),
+        )
 
 
 def create_file_reader_tool(
