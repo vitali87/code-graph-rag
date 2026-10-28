@@ -834,6 +834,20 @@ def load_ignore_patterns(repo_path: Path) -> CgrignorePatterns:
     )
 
 
+def project_ignore_sets(
+    repo_path: Path,
+) -> tuple[frozenset[str] | None, frozenset[str] | None]:
+    """(exclude_paths, unignore_paths) for a GraphUpdater syncing `repo_path`.
+
+    The repository's own ignore policy, which every sync applies so that two
+    paths indexing one repository build one graph (#1616). Only the CLI adds
+    to it, with `--exclude` and interactive setup. `or None` is the updater's
+    own default for an empty set.
+    """
+    patterns = load_ignore_patterns(repo_path)
+    return patterns.exclude or None, patterns.unignore or None
+
+
 _TRACKED_SOURCE_LOGGED: set[tuple[Path, frozenset[str]]] = set()
 
 

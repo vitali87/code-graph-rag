@@ -45,7 +45,12 @@ from .capture import (
 )
 from .checkout_state import prepare_state_dir
 from .cli_runtime import app_context, connect_memgraph, dim, style
-from .config import load_ignore_patterns, settings, settings_errors
+from .config import (
+    load_ignore_patterns,
+    project_ignore_sets,
+    settings,
+    settings_errors,
+)
 from .console_marks import status_mark
 from .editing.cli import cli as edits_cli
 from .editor_links import (
@@ -2281,12 +2286,15 @@ def rename_command(
         parsers, queries = load_parsers()
         from .graph_updater import GraphUpdater
 
+        exclude_paths, unignore_paths = project_ignore_sets(repo_path.resolve())
         updater = GraphUpdater(
             ingestor=ingestor,
             repo_path=repo_path.resolve(),
             parsers=parsers,
             queries=queries,
             project_name=name,
+            exclude_paths=exclude_paths,
+            unignore_paths=unignore_paths,
         )
         try:
             report = rename(

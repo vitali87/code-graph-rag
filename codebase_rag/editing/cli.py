@@ -173,6 +173,7 @@ def _reingest_restored(
     failure is returned, not raised, because leaving the connection's
     context on an exception logs it as a crash, traceback and all.
     """
+    from ..config import project_ignore_sets
     from ..graph_updater import GraphUpdater
     from ..parser_loader import load_parsers
 
@@ -180,12 +181,15 @@ def _reingest_restored(
         if name not in ingestor.list_projects():
             return False
         parsers, queries = load_parsers()
+        exclude_paths, unignore_paths = project_ignore_sets(root)
         GraphUpdater(
             ingestor=ingestor,
             repo_path=root,
             parsers=parsers,
             queries=queries,
             project_name=name,
+            exclude_paths=exclude_paths,
+            unignore_paths=unignore_paths,
         ).reingest(paths)
     except Exception as error:
         return error

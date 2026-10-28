@@ -34,7 +34,7 @@ from . import cypher_queries as cq
 from .capture import CaptureSelection, default_capture
 from .check_isolation import GraphStore, IsolationGuard
 from .checkout_state import state_file
-from .config import load_ignore_patterns
+from .config import project_ignore_sets
 from .graph_updater import GraphUpdater, _load_exclusion_state, _load_project_stamps
 from .services import QueryingIngestorProtocol
 from .structural_delta import StructuralDelta, normalise_paths, observe
@@ -256,8 +256,7 @@ def indexed_scope(
             frozenset(exclude) or None,
             frozenset(unignore) or None,
         )
-    cgrignore = load_ignore_patterns(repo_root)
-    return cgrignore.exclude or None, cgrignore.unignore or None
+    return project_ignore_sets(repo_root)
 
 
 class _FileSnapshot:

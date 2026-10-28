@@ -17,6 +17,7 @@ from loguru import logger
 from .. import constants as cs
 from .. import cypher_queries as cq
 from .. import logs as ls
+from ..config import project_ignore_sets
 from ..graph_updater import GraphUpdater, ReingestAborted
 from ..parser_loader import load_parsers
 from ..services import IngestorProtocol, QueryProtocol
@@ -97,6 +98,7 @@ class GraphRefresher:
     def _session_updater(self) -> GraphUpdater:
         if self._updater is None:
             parsers, queries = load_parsers()
+            exclude_paths, unignore_paths = project_ignore_sets(self._repo_path)
             self._updater = GraphUpdater(
                 ingestor=self._ingestor,
                 repo_path=self._repo_path,
@@ -104,5 +106,7 @@ class GraphRefresher:
                 queries=queries,
                 project_name=self._project_name,
                 project_named=self._project_named,
+                exclude_paths=exclude_paths,
+                unignore_paths=unignore_paths,
             )
         return self._updater
