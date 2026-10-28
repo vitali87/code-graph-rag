@@ -272,6 +272,9 @@ KEY_NESTED_PROJECTS = "nested_projects"
 # The incomplete-run marker's phase (#1705 review): whether the run it records
 # had reached its first graph write when the marker was last updated.
 KEY_WRITING = "writing"
+# Whether a marker `CYPHER_PROJECT_IS_INCOMPLETE` returns records a run that
+# has not finished.
+KEY_RUN_INCOMPLETE = "run_incomplete"
 # Identifies ONE run's incomplete-run marker. Two registries can index the
 # same project concurrently (the ingestor lock is per instance), and a marker
 # keyed only by project let the second run's clear delete the first run's

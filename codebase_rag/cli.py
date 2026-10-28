@@ -79,6 +79,7 @@ from .sync_guard import RUNNING_SYNC_TOKENS as _RUNNING_SYNC_TOKENS
 from .sync_guard import OwnerCheck as _OwnerCheck
 from .sync_guard import SyncRefusedError, mark_sync_incomplete, release_project_claim
 from .sync_guard import clear_sync_incomplete as _clear_sync_incomplete
+from .sync_guard import partial_graph_refusal as _partial_graph_refusal
 from .sync_guard import project_owner_refusal as _project_owner_refusal
 from .sync_guard import sync_marker_params as _sync_marker_params
 from .sync_guard import sync_owner as _sync_owner
@@ -95,6 +96,7 @@ from .types_defs import (
     DuplicatesReport,
     ProjectSync,
     PropertyValue,
+    ReingestReport,
     ResultRow,
     ResultValue,
 )
@@ -115,6 +117,7 @@ from .workspaces.cli import cli as workspace_cli
 
 if TYPE_CHECKING:
     from .graph_updater import GraphUpdater
+    from .watch import WriteMarker
 
 
 def _vendored_click_exception() -> type[click.ClickException]:
@@ -2248,6 +2251,64 @@ def check_command(
         raise typer.Exit(code=1)
 
 
+EditReingest = Callable[[list[str]], ReingestReport]
+
+
+@contextmanager
+def _guarded_edit_reingest(
+    ingestor: MemgraphIngestor, updater: "GraphUpdater", project_name: str
+) -> Iterator[tuple[EditReingest, "WriteMarker"]]:
+    """The re-ingest an applied edit is measured through, behind the marker.
+
+    Refuses before anything is planned when a run left the project's graph
+    partial: the plan reads its call sites from the graph, so a caller a
+    stopped sync deleted would be neither rewritten nor reported (Greptile
+    review, PR #2164). The MCP tools refuse the same graph through
+    `_guarded_rename_reingest`.
+
+    The callback is `cgr watch`'s scoped re-ingest. The marker goes down from
+    `before_write`, where the read-only prologue ends, and comes off once the
+    re-ingest returned, with the checkout's sync lock held from one to the
+    other. A failure after the first write leaves it down, so the next edit,
+    `cgr status` and the MCP server know the graph is partial; the edit's
+    `graph_incomplete` alone would not outlive this process.
+    """
+    if (refusal := _partial_graph_refusal(ingestor, project_name)) is not None:
+        typer.echo(refusal, err=True)
+        raise typer.Exit(code=1)
+    from .watch import WriteMarker
+
+    with _sync_owner() as owner:
+        marker = WriteMarker(ingestor, project_name, owner, None)
+
+        def reingest(paths: list[str]) -> ReingestReport:
+            with repo_sync_lock(updater.repo_path, project_name, wait=True):
+                report = updater.reingest(paths, before_write=marker.mark_scoped)
+                if updater.reingest_mutated:
+                    marker.clear()
+            return report
+
+        yield reingest, marker
+
+
+def _mark_edit_partial(marker: "WriteMarker", project_name: str) -> str | None:
+    """Mark the graph partial after an edit reported `graph_incomplete`.
+
+    The edit's report decides, as in the MCP tools: a rollback whose
+    re-ingest stopped before its first write put no marker down, yet left
+    the graph describing files the rollback has since restored. Returns the
+    error to print after the edit's JSON when the marker cannot go down, so
+    the report of what changed is not lost.
+    """
+    try:
+        marker.mark()
+    except SyncRefusedError as refused:
+        return cs.CLI_ERR_EDIT_MARKER_FAILED.format(
+            project=project_name, error=refused.__cause__ or refused
+        )
+    return None
+
+
 @app.command(
     name=ch.CLICommandName.RENAME,
     help=ch.CMD_RENAME,
@@ -2288,31 +2349,38 @@ def rename_command(
             queries=queries,
             project_name=name,
         )
-        try:
-            report = rename(
-                repo_path.resolve(),
-                fetch_all,
-                name,
-                qualified_name,
-                new_name,
-                allow_heuristic=allow_heuristic,
-                dry_run=dry_run,
-                reingest=updater.reingest,
-                heuristic_opt_in=cs.RENAME_CLI_ALLOW_HEURISTIC,
+        with _guarded_edit_reingest(ingestor, updater, name) as (reingest, marker):
+            try:
+                report = rename(
+                    repo_path.resolve(),
+                    fetch_all,
+                    name,
+                    qualified_name,
+                    new_name,
+                    allow_heuristic=allow_heuristic,
+                    dry_run=dry_run,
+                    reingest=reingest,
+                    heuristic_opt_in=cs.RENAME_CLI_ALLOW_HEURISTIC,
+                )
+            except RenameRefused as refused:
+                typer.echo(str(refused), err=True)
+                for site in sites_for([*refused.ambiguous, *refused.unplanned]):
+                    typer.echo(f"  {site}", err=True)
+                for entry in refused.unlocatable:
+                    typer.echo(f"  {entry}", err=True)
+                raise typer.Exit(code=1) from refused
+            marker_error = (
+                _mark_edit_partial(marker, name) if report.graph_incomplete else None
             )
-        except RenameRefused as refused:
-            typer.echo(str(refused), err=True)
-            for site in sites_for([*refused.ambiguous, *refused.unplanned]):
-                typer.echo(f"  {site}", err=True)
-            for entry in refused.unlocatable:
-                typer.echo(f"  {entry}", err=True)
-            raise typer.Exit(code=1) from refused
     payload = dict(report._asdict())
     payload[cs.KEY_SITES] = sites_for(report.sites)
     payload[cs.KEY_AMBIGUOUS] = sites_for(report.ambiguous)
     payload[cs.KEY_UNPLANNED] = sites_for(report.unplanned)
     payload["verdict"] = report.verdict._asdict() if report.verdict else None
     typer.echo(json.dumps(payload, indent=cs.MCP_JSON_INDENT, sort_keys=True))
+    if marker_error is not None:
+        typer.echo(marker_error, err=True)
+        raise typer.Exit(code=1)
     if not report.applied and not dry_run:
         raise typer.Exit(code=1)
 
@@ -2383,26 +2451,33 @@ def change_signature_command(
             queries=queries,
             project_name=name,
         )
-        try:
-            report = change_signature(
-                repo_path.resolve(),
-                fetch_all,
-                name,
-                qualified_name,
-                new_params,
-                parsed,
-                allow_heuristic=allow_heuristic,
-                dry_run=dry_run,
-                reingest=updater.reingest,
+        with _guarded_edit_reingest(ingestor, updater, name) as (reingest, marker):
+            try:
+                report = change_signature(
+                    repo_path.resolve(),
+                    fetch_all,
+                    name,
+                    qualified_name,
+                    new_params,
+                    parsed,
+                    allow_heuristic=allow_heuristic,
+                    dry_run=dry_run,
+                    reingest=reingest,
+                )
+            except SignatureRefused as refused:
+                typer.echo(str(refused), err=True)
+                raise typer.Exit(code=1) from refused
+            marker_error = (
+                _mark_edit_partial(marker, name) if report.graph_incomplete else None
             )
-        except SignatureRefused as refused:
-            typer.echo(str(refused), err=True)
-            raise typer.Exit(code=1) from refused
     payload = dict(report._asdict())
     payload[cs.KEY_SITES] = sites_for(report.sites)
     payload[cs.KEY_UNMAPPED] = unmapped_for(report.unmapped)
     payload[cs.KEY_VERDICT] = report.verdict._asdict() if report.verdict else None
     typer.echo(json.dumps(payload, indent=cs.MCP_JSON_INDENT, sort_keys=True))
+    if marker_error is not None:
+        typer.echo(marker_error, err=True)
+        raise typer.Exit(code=1)
     if not report.applied and not dry_run:
         raise typer.Exit(code=1)
 
