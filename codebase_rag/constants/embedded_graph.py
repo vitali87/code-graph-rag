@@ -484,6 +484,10 @@ EG_RUST_DECODE_ROWS = "decode_rows"
 # they raise for a node they cannot read exactly.
 EG_RUST_TREE_BRIDGE = "TreeBridge"
 EG_RUST_NOT_BORROWED = "NotBorrowed"
+# Bridge methods a build from before the scope walks, or from before the
+# interface fingerprint, lacks.
+EG_RUST_SCOPE_FACTS = "scope_facts"
+EG_RUST_INTERFACE_FINGERPRINT = "interface_fingerprint"
 
 
 class TreeBridgeCheck(StrEnum):
@@ -492,10 +496,15 @@ class TreeBridgeCheck(StrEnum):
     LAYOUT = "node layout"
     ANCHOR_HASH = "anchor hash"
     FINGERPRINT = "fingerprint"
+    SCOPE_FACTS = "scope facts"
+    INNER_SCOPE_NAMES = "inner scope names"
+    INTERFACE_FINGERPRINT = "interface fingerprint"
 
 
 # The probe: definitions the two hashes walk, decorators, comments, f-strings,
-# non-ASCII text (byte and column offsets part ways there) and a syntax error
+# non-ASCII text (byte and column offsets part ways there), every binding
+# form the scope walks read, bodies the interface fingerprint keeps whole and
+# one it summarises by its calls and returns (`relay`), and a syntax error
 # (ERROR and MISSING nodes).
 TREE_BRIDGE_PROBE = """\
 import os  # comment
@@ -522,6 +531,40 @@ async def top(a, /, b, *, c):
         nonlocal b
         b += 1
     return inner
+
+def scopes(p, *rest, key=None, **kw):
+    global counter
+    import os.path as osp, json
+    from . import helpers
+    try:
+        from .pkg import mod as alias
+    except ImportError:
+        alias = None
+    match p:
+        case [first, *others] if first:
+            pass
+        case Point(x=_, y=yy) | _:
+            pass
+    total = [v for v in rest if (w := v)] + list({k: k for k in kw})
+    fn = lambda a, b=1: a + b
+    with open(p) as (h, i):
+        for j, (k, *l) in enumerate(h):
+            q: int = 1
+            q += j
+    class Inner:
+        nonlocal key
+        z = lambda: key
+    return total, fn, Inner, w
+
+def relay(r, cb):
+    handler = make()
+    r.register(handler, key=cb.run)
+    Spec(handler=helper, retries=3)
+    def later():
+        return 1
+    if r:
+        return r.build()
+    return [r.done]
 
 def broken(x:
     return x +
