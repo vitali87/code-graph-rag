@@ -957,6 +957,8 @@ def create_query_tool(
                 error=message,
             )
         except ex.LLMGenerationError as e:
+            # A model that answered badly is not a refusal: the caller can
+            # rephrase, so the failure stays in `summary` alone.
             return QueryGraphData(
                 query_used=QUERY_NOT_AVAILABLE,
                 results=[],
@@ -968,17 +970,15 @@ def create_query_tool(
                     timeout=settings.QUERY_TIMEOUT_S, query=attempt.query
                 )
             )
+            message = QUERY_SUMMARY_TIMEOUT.format(timeout=settings.QUERY_TIMEOUT_S)
             return QueryGraphData(
-                query_used=attempt.query,
-                results=[],
-                summary=QUERY_SUMMARY_TIMEOUT.format(timeout=settings.QUERY_TIMEOUT_S),
+                query_used=attempt.query, results=[], summary=message, error=message
             )
         except Exception as e:
             logger.exception(ls.TOOL_QUERY_ERROR.format(error=e))
+            message = QUERY_SUMMARY_DB_ERROR.format(error=e)
             return QueryGraphData(
-                query_used=attempt.query,
-                results=[],
-                summary=QUERY_SUMMARY_DB_ERROR.format(error=e),
+                query_used=attempt.query, results=[], summary=message, error=message
             )
 
     return Tool(

@@ -9,11 +9,11 @@ class QueryGraphData(BaseModel):
     query_used: str
     results: list[ResultRow]
     summary: str
-    # Set only when the request could not be served at all -- the requested
-    # scope could not be honoured, or no Cypher model is available -- so a
-    # caller can tell a refusal from a genuine empty result. Execution
-    # failures (translation, timeout, database) stay in `summary`, as they
-    # always did.
+    # Set when the request could not be served -- the scope could not be
+    # honoured, no Cypher model is available, or the query timed out or the
+    # database failed -- so a caller can tell a failure from a genuine empty
+    # result, and MCP reports it with isError. A translation the model got
+    # wrong stays in `summary` only: the caller can rephrase.
     error: str | None = None
 
     @field_validator("results", mode="before")

@@ -162,6 +162,8 @@ class TestQueryCodebaseKnowledgeGraph:
         result = await tool.function(natural_language_query="Find functions")
         assert result.results == []
         assert "error" in result.summary.lower()
+        # Flagged, so an MCP client is not handed an empty success.
+        assert result.error == result.summary
 
     async def test_query_timeout_handled(
         self,
@@ -181,6 +183,7 @@ class TestQueryCodebaseKnowledgeGraph:
         assert result.results == []
         assert "timeout" in result.summary.lower()
         assert result.query_used == "MATCH (n) RETURN n"
+        assert result.error == result.summary
 
 
 class TestQueryResultFormatting:
