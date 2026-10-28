@@ -32,7 +32,7 @@ from codebase_rag.services.llm import (
     run_to_text_answer,
 )
 from codebase_rag.services.provenance import head_commit
-from codebase_rag.sync_guard import retire_stranded_runs, stranded_runs
+from codebase_rag.sync_guard import retire_stranded_runs, run_owner, stranded_runs
 from codebase_rag.sync_lock import repo_sync_lock
 from codebase_rag.tools import tool_descriptions as td
 from codebase_rag.tools.ast_grep_service import AstGrepService
@@ -1505,13 +1505,10 @@ class MCPToolsRegistry:
         # than refuse until a full update (#1705 review). The phase advances
         # to writing immediately before `delete_project`.
         #
-        # The runs whose markers this re-index supersedes are read first,
-        # under the checkout lock `_under_sync_lock` holds (review of PR
-        # #3493). It deletes the project before rebuilding it, so it is
-        # already the full rebuild they need.
-        stranded = stranded_runs(
-            self.ingestor, project_name, self._run_id, Path(self.project_root)
-        )
+        # The runs whose markers this re-index supersedes are read first
+        # (review of PR #3493). It deletes the project before rebuilding it,
+        # so it is already the full rebuild they need.
+        stranded = stranded_runs(self.ingestor, project_name, self._run_id)
         if (refusal := self._require_marker(project_name, writing=False)) is not None:
             raise RuntimeError(refusal)
         self._cleanup_embeddings_then_begin_writing(project_name)
@@ -1613,12 +1610,9 @@ class MCPToolsRegistry:
         # survives a restart; nothing has been touched yet, so stopping costs
         # nothing.
         #
-        # The runs whose markers this update supersedes are read first, under
-        # the checkout lock `_under_sync_lock` holds, and force a full
-        # re-index (review of PR #3493).
-        stranded = stranded_runs(
-            self.ingestor, project_name, self._run_id, Path(self.project_root)
-        )
+        # The runs whose markers this update supersedes are read first, and
+        # force a full re-index (review of PR #3493).
+        stranded = stranded_runs(self.ingestor, project_name, self._run_id)
         if (refusal := self._require_marker(project_name)) is not None:
             raise RuntimeError(refusal)
         self.ingestor.ensure_constraints()
@@ -1718,7 +1712,10 @@ class MCPToolsRegistry:
             cs.KEY_RUN_ID: self._run_id,
         }
         if incomplete:
-            query = cq.CYPHER_MARK_PROJECT_INCOMPLETE
+            # Naming this process lets a full rebuild retire the marker once
+            # it has exited without clearing it (review of PR #3496).
+            query = cq.CYPHER_MARK_RUN_INCOMPLETE
+            params |= run_owner()
             params[cs.KEY_WRITING] = writing
         else:
             query = cq.CYPHER_CLEAR_PROJECT_INCOMPLETE

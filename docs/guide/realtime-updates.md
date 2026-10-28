@@ -108,7 +108,11 @@ instead of applying that change alone. A full sync (`cgr start
 --update-graph`, or the MCP server's `update_repository` and
 `index_repository`) also takes off the marker an MCP server's run left when
 it stopped part-way through a write, which nothing else clears: it rebuilds
-the whole repository first, then retires that marker with its own.
+the whole repository first, then retires that marker with its own. It does so
+only once the process that wrote the marker has exited on this machine. A run
+still going, even one from another checkout under the same project name, keeps
+its marker, and so does a run on another machine or in another container. A
+marker an older release wrote names no process, so it stays too.
 
 ### One sync of a checkout at a time
 

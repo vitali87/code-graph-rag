@@ -142,14 +142,24 @@ class _Memgraph(_StatefulIngestor):
                 self._mark(params)
             return claimed
         if params and query == cq.CYPHER_STRANDED_RUN_IDS:
-            project = str(params[cs.KEY_PROJECT_NAME])
-            return [
-                {cs.KEY_RUN_ID: run_id}
-                for marked, run_id in sorted(self.markers)
-                if marked == project
-                and run_id != params[cs.KEY_RUN_ID]
-                and self.writing.get((marked, run_id), True)
-            ]
+            rows: list[ResultRow] = []
+            for run in sorted(self.markers):
+                project, run_id = run
+                if (
+                    project != params[cs.KEY_PROJECT_NAME]
+                    or run_id == params[cs.KEY_RUN_ID]
+                    or not self.writing.get(run, True)
+                ):
+                    continue
+                owner = self.owners.get(run, {})
+                rows.append(
+                    {
+                        cs.KEY_RUN_ID: run_id,
+                        cs.KEY_OWNER_HOST: owner.get(cs.KEY_OWNER_HOST),
+                        cs.KEY_OWNER_PID: owner.get(cs.KEY_OWNER_PID),
+                    }
+                )
+            return rows
         return super().fetch_all(query, params)
 
     def _release_project_claim(self, params: PropertyDict) -> None:
@@ -171,8 +181,10 @@ class _Memgraph(_StatefulIngestor):
         self.writing[run] = self.writing.get(run, False) or bool(
             params.get(cs.KEY_WRITING)
         )
-        if cs.KEY_OWNER_TOKEN in params:
-            self.owners[run] = {key: params[key] for key in _OWNER_KEYS}
+        if cs.KEY_OWNER_PID in params:
+            self.owners[run] = {
+                key: params[key] for key in _OWNER_KEYS if key in params
+            }
 
     def _clear(self, run: tuple[str, str]) -> None:
         self.markers.discard(run)
@@ -183,6 +195,7 @@ class _Memgraph(_StatefulIngestor):
         if params and query in (
             cq.CYPHER_MARK_PROJECT_INCOMPLETE,
             cq.CYPHER_MARK_CLI_SYNC_INCOMPLETE,
+            cq.CYPHER_MARK_RUN_INCOMPLETE,
         ):
             self._mark(params)
             return
@@ -195,12 +208,14 @@ class _Memgraph(_StatefulIngestor):
             if token == params[cs.KEY_OWNER_TOKEN]:
                 self._clear(run)
             return
-        if params and query == cq.CYPHER_RETIRE_STRANDED_RUNS:
-            project = str(params[cs.KEY_PROJECT_NAME])
-            run_ids = params[cs.KEY_RUN_IDS]
-            assert isinstance(run_ids, list)
-            for run_id in run_ids:
-                self._clear((project, run_id))
+        if params and query == cq.CYPHER_RETIRE_STRANDED_RUN:
+            run = self._run(params)
+            owner = self.owners.get(run, {})
+            if all(
+                owner.get(key) == params[key]
+                for key in (cs.KEY_OWNER_HOST, cs.KEY_OWNER_PID)
+            ):
+                self._clear(run)
             return
         if params and query == cq.CYPHER_RECOVER_PROJECT_INCOMPLETE:
             project = str(params[cs.KEY_PROJECT_NAME])
@@ -414,12 +429,24 @@ def _gone_pid() -> int:
     return child.pid
 
 
-def _mcp_marker(graph: _Memgraph, project: str, run_id: str, *, writing: bool) -> None:
-    """The marker an MCP server's run put down under its own run id."""
-    graph.execute_write(
-        cq.CYPHER_MARK_PROJECT_INCOMPLETE,
-        {cs.KEY_PROJECT_NAME: project, cs.KEY_RUN_ID: run_id, cs.KEY_WRITING: writing},
-    )
+def _mcp_marker(
+    graph: _Memgraph, project: str, run_id: str, *, writing: bool, pid: int | None
+) -> None:
+    """The marker an MCP server's run put down under its own run id.
+
+    It names the run's process, as the server does since review of PR #3496;
+    without a `pid` it is one an older release wrote, naming none.
+    """
+    params: PropertyDict = {
+        cs.KEY_PROJECT_NAME: project,
+        cs.KEY_RUN_ID: run_id,
+        cs.KEY_WRITING: writing,
+    }
+    if pid is None:
+        graph.execute_write(cq.CYPHER_MARK_PROJECT_INCOMPLETE, params)
+        return
+    params |= {cs.KEY_OWNER_HOST: process_host(), cs.KEY_OWNER_PID: pid}
+    graph.execute_write(cq.CYPHER_MARK_RUN_INCOMPLETE, params)
 
 
 class TestAFullSyncRetiresRunsItSupersedes:
@@ -431,7 +458,7 @@ class TestAFullSyncRetiresRunsItSupersedes:
     ) -> None:
         _sync(tmp_path, "billing")
         graph = graphs[THIS_GRAPH]
-        _mcp_marker(graph, "billing", "mcp-crashed", writing=True)
+        _mcp_marker(graph, "billing", "mcp-crashed", writing=True, pid=_gone_pid())
         marker = f"({cs.CLI_STATUS_SYNC_INCOMPLETE})"
         assert marker in _listed(_cgr("status"))["billing"]
 
@@ -445,7 +472,7 @@ class TestAFullSyncRetiresRunsItSupersedes:
     ) -> None:
         _sync(tmp_path, "billing")
         graph = graphs[THIS_GRAPH]
-        _mcp_marker(graph, "billing", "mcp-crashed", writing=True)
+        _mcp_marker(graph, "billing", "mcp-crashed", writing=True, pid=_gone_pid())
 
         _fail_sync(tmp_path, "billing")
 
@@ -458,11 +485,32 @@ class TestAFullSyncRetiresRunsItSupersedes:
         # MCP server clears such a marker when it next reads the project.
         _sync(tmp_path, "billing")
         graph = graphs[THIS_GRAPH]
-        _mcp_marker(graph, "billing", "mcp-idle", writing=False)
+        _mcp_marker(graph, "billing", "mcp-idle", writing=False, pid=_gone_pid())
 
         _sync(tmp_path, "billing")
 
         assert graph.markers == {("billing", "mcp-idle")}
+
+    @pytest.mark.parametrize(
+        "pid",
+        [
+            # Review of PR #3496: a run of the project from another checkout,
+            # which this checkout's lock does not hold off, may still be
+            # writing; so may one that names no process.
+            pytest.param(os.getppid(), id="process-still-running"),
+            pytest.param(None, id="names-no-process"),
+        ],
+    )
+    def test_a_run_that_may_still_be_writing_keeps_its_marker(
+        self, graphs: dict[int, _Memgraph], tmp_path: Path, pid: int | None
+    ) -> None:
+        _sync(tmp_path, "billing")
+        graph = graphs[THIS_GRAPH]
+        _mcp_marker(graph, "billing", "mcp-elsewhere", writing=True, pid=pid)
+
+        _sync(tmp_path, "billing")
+
+        assert graph.markers == {("billing", "mcp-elsewhere")}
 
     def test_only_the_synced_projects_runs_are_retired(
         self, graphs: dict[int, _Memgraph], tmp_path: Path
@@ -470,8 +518,8 @@ class TestAFullSyncRetiresRunsItSupersedes:
         _sync(tmp_path, "billing")
         _sync(tmp_path, "ledger")
         graph = graphs[THIS_GRAPH]
-        _mcp_marker(graph, "billing", "mcp-crashed", writing=True)
-        _mcp_marker(graph, "ledger", "mcp-crashed", writing=True)
+        _mcp_marker(graph, "billing", "mcp-crashed", writing=True, pid=_gone_pid())
+        _mcp_marker(graph, "ledger", "mcp-crashed", writing=True, pid=_gone_pid())
 
         _sync(tmp_path, "billing")
 

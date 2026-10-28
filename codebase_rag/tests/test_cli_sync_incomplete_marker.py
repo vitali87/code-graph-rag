@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
+import sys
 from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -143,8 +145,15 @@ def test_a_failed_sync_keeps_its_marker(
     assert events == ["mark", "constraints", "run"], events
 
 
-def _strand(ingestor: MagicMock, events: list[str], run_ids: list[str]) -> None:
-    """Runs of other writers that stopped after their first write (PR #3493).
+def _gone_pid() -> int:
+    """The pid of a process that has exited and been reaped."""
+    child = subprocess.Popen([sys.executable, "-c", ""])
+    child.wait()
+    return child.pid
+
+
+def _strand(ingestor: MagicMock, events: list[str], runs: list[dict]) -> None:
+    """Markers of other writers' runs that got past their first write (PR #3493).
 
     The MCP server marks with a run id of its own, and nothing but that run
     cleared its marker, so one whose process died left the project refused
@@ -155,11 +164,11 @@ def _strand(ingestor: MagicMock, events: list[str], run_ids: list[str]) -> None:
     def read(query: str, params: dict | None = None) -> list[dict]:
         if query == cq.CYPHER_STRANDED_RUN_IDS:
             events.append("stranded")
-            return [{cs.KEY_RUN_ID: run_id} for run_id in run_ids]
+            return runs
         return []
 
     def write(query: str, params: dict | None = None) -> None:
-        if query == cq.CYPHER_RETIRE_STRANDED_RUNS:
+        if query == cq.CYPHER_RETIRE_STRANDED_RUN:
             events.append("retire")
         marker_write(query, params)
 
@@ -167,14 +176,23 @@ def _strand(ingestor: MagicMock, events: list[str], run_ids: list[str]) -> None:
     ingestor.execute_write.side_effect = write
 
 
-def test_a_sync_over_stranded_runs_rebuilds_then_retires_them(
+def _run(run_id: str, pid: int, host: str | None = None) -> dict:
+    return {
+        cs.KEY_RUN_ID: run_id,
+        cs.KEY_OWNER_HOST: process_host() if host is None else host,
+        cs.KEY_OWNER_PID: pid,
+    }
+
+
+def test_a_sync_over_a_run_whose_process_exited_rebuilds_then_retires_it(
     tmp_path: Path,
     sync_env: MagicMock,
     ingestor: MagicMock,
     updater: MagicMock,
     events: list[str],
 ) -> None:
-    _strand(ingestor, events, ["mcp-dead"])
+    dead = _gone_pid()
+    _strand(ingestor, events, [_run("mcp-dead", dead)])
 
     _sync(tmp_path)
 
@@ -189,8 +207,9 @@ def test_a_sync_over_stranded_runs_rebuilds_then_retires_them(
         if call.args[0] == cq.CYPHER_STRANDED_RUN_IDS
     ]
     assert read == {cs.KEY_PROJECT_NAME: "proj", cs.KEY_RUN_ID: cs.CLI_SYNC_RUN_ID}
-    assert _marker_writes(ingestor, cq.CYPHER_RETIRE_STRANDED_RUNS) == [
-        {cs.KEY_PROJECT_NAME: "proj", cs.KEY_RUN_IDS: ["mcp-dead"]}
+    # Deleted only while it still names that process.
+    assert _marker_writes(ingestor, cq.CYPHER_RETIRE_STRANDED_RUN) == [
+        {cs.KEY_PROJECT_NAME: "proj"} | _run("mcp-dead", dead)
     ]
 
 
@@ -209,24 +228,30 @@ def test_a_sync_with_nothing_stranded_stays_incremental(
     assert "retire" not in events
 
 
-def test_a_sync_without_a_lock_file_leaves_other_runs_alone(
+@pytest.mark.parametrize(
+    "run",
+    [
+        # Review of PR #3496: a run of the same project from another checkout,
+        # or under another CGR_HOME, is not held off by this checkout's lock
+        # and may still be writing.
+        pytest.param(_run("mcp-live", os.getppid()), id="live-process"),
+        pytest.param(_run("mcp-mine", os.getpid()), id="this-process"),
+        pytest.param(_run("mcp-far", 4242, host="elsewhere"), id="other-host"),
+        pytest.param({cs.KEY_RUN_ID: "mcp-old"}, id="names-no-process"),
+    ],
+)
+def test_a_sync_leaves_a_run_that_may_still_be_writing(
     tmp_path: Path,
     sync_env: MagicMock,
     ingestor: MagicMock,
     updater: MagicMock,
     events: list[str],
+    run: dict,
 ) -> None:
-    # Review of PR #3496: CGR_HOME cannot be written, so the checkout's lock
-    # runs without a file and another process may still be writing.
-    _strand(ingestor, events, ["mcp-dead"])
+    _strand(ingestor, events, [run])
 
-    with patch(
-        "codebase_rag.sync_lock._open_lock",
-        side_effect=lambda path: PermissionError(13, "read-only", str(path)),
-    ):
-        _sync(tmp_path)
+    _sync(tmp_path)
 
-    assert "stranded" not in events
     assert "retire" not in events
     updater.run.assert_called_once_with(force=False)
 
@@ -238,7 +263,7 @@ def test_a_sync_that_stops_short_retires_nothing(
     updater: MagicMock,
     events: list[str],
 ) -> None:
-    _strand(ingestor, events, ["mcp-dead"])
+    _strand(ingestor, events, [_run("mcp-dead", _gone_pid())])
     updater.run.side_effect = RuntimeError("killed mid-sync")
 
     with pytest.raises(RuntimeError):

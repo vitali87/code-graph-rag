@@ -7,6 +7,9 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -15,23 +18,34 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.mcp.tools import MCPToolsRegistry
-from codebase_rag.sync_guard import retire_stranded_runs, stranded_runs
-from codebase_rag.sync_lock import repo_sync_lock
+from codebase_rag.sync_guard import StrandedRun, retire_stranded_runs, stranded_runs
 from codebase_rag.types_defs import PropertyDict, ResultRow
 from codebase_rag.utils.path_utils import derive_project_name
+from codebase_rag.utils.process_owner import process_host
 
 DEAD_RUN = "mcp-dead"
 
 
-def _unguarded(lock_path: Path) -> OSError:
-    """`_open_lock` where CGR_HOME cannot be written: the lock runs unguarded."""
-    return PermissionError(13, "read-only", str(lock_path))
+def _gone_pid() -> int:
+    """The pid of a process that has exited and been reaped."""
+    child = subprocess.Popen([sys.executable, "-c", ""])
+    child.wait()
+    return child.pid
+
+
+def _marker(run_id: str, pid: int | None, host: str | None = None) -> ResultRow:
+    """A marker row as `CYPHER_STRANDED_RUN_IDS` returns it."""
+    return {
+        cs.KEY_RUN_ID: run_id,
+        cs.KEY_OWNER_HOST: process_host() if host is None else host,
+        cs.KEY_OWNER_PID: pid,
+    }
 
 
 class Store:
-    """The ingestor double: one stranded run, and every marker write recorded."""
+    """The ingestor double: the other runs' markers, and every write recorded."""
 
-    def __init__(self, stranded: list[str]) -> None:
+    def __init__(self, stranded: list[ResultRow]) -> None:
         self.stranded = stranded
         self.reads: list[PropertyDict] = []
         self.writes: list[tuple[str, PropertyDict]] = []
@@ -44,7 +58,7 @@ class Store:
     ) -> list[ResultRow]:
         if query == cq.CYPHER_STRANDED_RUN_IDS:
             self.reads.append(dict(params or {}))
-            return [{cs.KEY_RUN_ID: run_id} for run_id in self.stranded]
+            return self.stranded
         return []
 
     def execute_write(self, query: str, params: PropertyDict | None = None) -> None:
@@ -74,7 +88,8 @@ def _registry(root: Path, store: Store) -> MCPToolsRegistry:
 async def test_an_update_over_a_stranded_run_rebuilds_then_retires_it(
     project_root: Path,
 ) -> None:
-    store = Store([DEAD_RUN])
+    dead = _gone_pid()
+    store = Store([_marker(DEAD_RUN, dead)])
     registry = _registry(project_root, store)
 
     with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
@@ -92,16 +107,36 @@ async def test_an_update_over_a_stranded_run_rebuilds_then_retires_it(
         }
     ]
     queries = store.queries()
-    assert queries.index(cq.CYPHER_RETIRE_STRANDED_RUNS) > queries.index(
+    assert queries.index(cq.CYPHER_RETIRE_STRANDED_RUN) > queries.index(
         cq.CYPHER_CLEAR_PROJECT_INCOMPLETE
     )
+    # Deleted only while the marker still names the process that exited.
     assert store.writes[-1] == (
-        cq.CYPHER_RETIRE_STRANDED_RUNS,
-        {
-            cs.KEY_PROJECT_NAME: derive_project_name(project_root),
-            cs.KEY_RUN_IDS: [DEAD_RUN],
-        },
+        cq.CYPHER_RETIRE_STRANDED_RUN,
+        {cs.KEY_PROJECT_NAME: derive_project_name(project_root)}
+        | _marker(DEAD_RUN, dead),
     )
+
+
+async def test_the_servers_marker_names_its_process(project_root: Path) -> None:
+    # Review of PR #3496: what lets a later rebuild tell a run whose process
+    # exited from one still writing.
+    store = Store([])
+    registry = _registry(project_root, store)
+
+    with patch("codebase_rag.mcp.tools.GraphUpdater"):
+        await registry.update_repository()
+
+    marks = [
+        params
+        for query, params in store.writes
+        if query == cq.CYPHER_MARK_RUN_INCOMPLETE
+    ]
+    assert marks
+    for params in marks:
+        assert params[cs.KEY_RUN_ID] == registry._run_id
+        assert params[cs.KEY_OWNER_HOST] == process_host()
+        assert params[cs.KEY_OWNER_PID] == os.getpid()
 
 
 async def test_an_update_with_nothing_stranded_stays_incremental(
@@ -114,11 +149,11 @@ async def test_an_update_with_nothing_stranded_stays_incremental(
         await registry.update_repository()
 
     updater_cls.return_value.run.assert_called_once_with(force=False)
-    assert cq.CYPHER_RETIRE_STRANDED_RUNS not in store.queries()
+    assert cq.CYPHER_RETIRE_STRANDED_RUN not in store.queries()
 
 
 async def test_an_update_that_fails_retires_nothing(project_root: Path) -> None:
-    store = Store([DEAD_RUN])
+    store = Store([_marker(DEAD_RUN, _gone_pid())])
     registry = _registry(project_root, store)
 
     with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
@@ -126,28 +161,27 @@ async def test_an_update_that_fails_retires_nothing(project_root: Path) -> None:
         result = await registry.update_repository()
 
     assert "update died" in result
-    assert cq.CYPHER_RETIRE_STRANDED_RUNS not in store.queries()
+    assert cq.CYPHER_RETIRE_STRANDED_RUN not in store.queries()
 
 
-async def test_an_update_without_a_lock_file_leaves_other_runs_alone(
+async def test_an_update_leaves_a_run_whose_process_still_runs(
     project_root: Path,
 ) -> None:
-    store = Store([DEAD_RUN])
+    # Review of PR #3496: the checkout's lock holds off only this checkout's
+    # writers under this CGR_HOME. A run of the project from anywhere else may
+    # still be writing, and would lose the marker guarding what it leaves.
+    store = Store([_marker("mcp-elsewhere", os.getppid())])
     registry = _registry(project_root, store)
 
-    with (
-        patch("codebase_rag.sync_lock._open_lock", side_effect=_unguarded),
-        patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls,
-    ):
+    with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
         await registry.update_repository()
 
     updater_cls.return_value.run.assert_called_once_with(force=False)
-    assert store.reads == []
-    assert cq.CYPHER_RETIRE_STRANDED_RUNS not in store.queries()
+    assert cq.CYPHER_RETIRE_STRANDED_RUN not in store.queries()
 
 
 async def test_a_reindex_retires_the_runs_it_supersedes(project_root: Path) -> None:
-    store = Store([DEAD_RUN])
+    store = Store([_marker(DEAD_RUN, _gone_pid())])
     registry = _registry(project_root, store)
 
     with (
@@ -158,13 +192,13 @@ async def test_a_reindex_retires_the_runs_it_supersedes(project_root: Path) -> N
 
     assert "Error" not in result, result
     queries = store.queries()
-    assert queries.index(cq.CYPHER_RETIRE_STRANDED_RUNS) > queries.index(
+    assert queries.index(cq.CYPHER_RETIRE_STRANDED_RUN) > queries.index(
         cq.CYPHER_CLEAR_PROJECT_INCOMPLETE
     )
 
 
 async def test_a_reindex_that_fails_retires_nothing(project_root: Path) -> None:
-    store = Store([DEAD_RUN])
+    store = Store([_marker(DEAD_RUN, _gone_pid())])
     registry = _registry(project_root, store)
 
     with (
@@ -174,49 +208,37 @@ async def test_a_reindex_that_fails_retires_nothing(project_root: Path) -> None:
         updater_cls.return_value.run.side_effect = RuntimeError("index died")
         await registry.index_repository()
 
-    assert cq.CYPHER_RETIRE_STRANDED_RUNS not in store.queries()
+    assert cq.CYPHER_RETIRE_STRANDED_RUN not in store.queries()
 
 
 # --- the helpers ----------------------------------------------------------------
 
 
-def test_stranded_runs_reads_the_other_runs_that_wrote(tmp_path: Path) -> None:
-    store = Store(["a", "b"])
+def test_stranded_runs_are_the_other_runs_whose_process_exited() -> None:
+    dead = _gone_pid()
+    store = Store(
+        [
+            _marker("dead", dead),
+            _marker("live", os.getppid()),
+            _marker("mine", os.getpid()),
+            _marker("far", dead, host="another-machine"),
+            {cs.KEY_RUN_ID: "old"},
+        ]
+    )
 
-    with repo_sync_lock(tmp_path, "proj"):
-        assert stranded_runs(store.ingestor, "proj", "mine", tmp_path) == ["a", "b"]
-    assert store.reads == [{cs.KEY_PROJECT_NAME: "proj", cs.KEY_RUN_ID: "mine"}]
-
-
-def test_outside_the_checkout_lock_nothing_is_stranded(tmp_path: Path) -> None:
-    store = Store([DEAD_RUN])
-
-    assert stranded_runs(store.ingestor, "proj", "mine", tmp_path) == []
-    assert store.reads == []
-
-
-def test_a_lock_without_its_file_strands_nothing(tmp_path: Path) -> None:
-    # Review of PR #3496: CGR_HOME cannot be written, so the lock runs without
-    # a file and keeps no other process out. A run still writing elsewhere
-    # would lose its marker, and a partial graph it then left look whole.
-    store = Store([DEAD_RUN])
-
-    with (
-        patch("codebase_rag.sync_lock._open_lock", side_effect=_unguarded),
-        repo_sync_lock(tmp_path, "proj"),
-    ):
-        assert stranded_runs(store.ingestor, "proj", "mine", tmp_path) == []
-    assert store.reads == []
+    assert stranded_runs(store.ingestor, "proj", "own") == [
+        StrandedRun("dead", process_host(), dead)
+    ]
+    assert store.reads == [{cs.KEY_PROJECT_NAME: "proj", cs.KEY_RUN_ID: "own"}]
 
 
-def test_a_store_that_cannot_answer_strands_nothing(tmp_path: Path) -> None:
+def test_a_store_that_cannot_answer_strands_nothing() -> None:
     # The rebuild then runs as it did before, and the markers stay for the
     # next one rather than being cleared on a guess.
     ingestor = MagicMock()
     ingestor.fetch_all.side_effect = ConnectionError("graph unreachable")
 
-    with repo_sync_lock(tmp_path, "proj"):
-        assert stranded_runs(ingestor, "proj", "mine", tmp_path) == []
+    assert stranded_runs(ingestor, "proj", "own") == []
 
 
 def test_retiring_no_runs_writes_nothing() -> None:
@@ -231,6 +253,28 @@ def test_a_retire_that_fails_does_not_fail_the_rebuild() -> None:
     ingestor = MagicMock()
     ingestor.execute_write.side_effect = ConnectionError("graph unreachable")
 
-    retire_stranded_runs(ingestor, "proj", [DEAD_RUN])
+    retire_stranded_runs(ingestor, "proj", [StrandedRun(DEAD_RUN, "host", 4242)])
 
     ingestor.execute_write.assert_called_once()
+
+
+def test_each_run_is_retired_against_the_process_it_named() -> None:
+    # The CLI sync's run id is shared by every CLI writer of the project, so
+    # one that started since re-marked it under its own process and keeps it.
+    store = Store([])
+    runs = [StrandedRun("run-a", "host", 4242), StrandedRun("run-b", "host", 4243)]
+
+    retire_stranded_runs(store.ingestor, "proj", runs)
+
+    assert store.writes == [
+        (
+            cq.CYPHER_RETIRE_STRANDED_RUN,
+            {
+                cs.KEY_PROJECT_NAME: "proj",
+                cs.KEY_RUN_ID: run.run_id,
+                cs.KEY_OWNER_HOST: run.owner_host,
+                cs.KEY_OWNER_PID: run.owner_pid,
+            },
+        )
+        for run in runs
+    ]
