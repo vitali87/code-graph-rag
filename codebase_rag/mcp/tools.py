@@ -3753,8 +3753,8 @@ class MCPToolsRegistry:
                     target_code=target_code,
                     replacement_code=replacement_code,
                 )
-                if str(result) != cs.MSG_SURGICAL_SUCCESS.format(path=file_path):
-                    return te.ToolFailure(result)
+                if isinstance(result, te.ToolFailure):
+                    return result
                 delta = await _run_in_thread(self._delta_after_write, [file_path])
                 return str(result) + delta
         except Exception as e:

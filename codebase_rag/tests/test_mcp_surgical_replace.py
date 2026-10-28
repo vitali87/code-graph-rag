@@ -3,6 +3,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from codebase_rag import constants as cs
+from codebase_rag import tool_errors as te
 from codebase_rag.mcp.tools import MCPToolsRegistry
 
 pytestmark = [pytest.mark.anyio]
@@ -218,7 +220,7 @@ class TestSurgicalReplaceErrorHandling:
     ) -> None:
         """Test replacing code in a nonexistent file."""
         mcp_registry._file_editor_tool.function.return_value = (  # ty: ignore[invalid-assignment]
-            "Error: File not found: nonexistent.py"
+            te.ToolFailure("Error: File not found: nonexistent.py")
         )
 
         result = await mcp_registry.surgical_replace_code(
@@ -232,7 +234,7 @@ class TestSurgicalReplaceErrorHandling:
     ) -> None:
         """Test replacing code that doesn't exist in the file."""
         mcp_registry._file_editor_tool.function.return_value = (  # ty: ignore[invalid-assignment]
-            "Error: Target code not found in file"
+            te.ToolFailure("Error: Target code not found in file")
         )
 
         target = "def nonexistent_function():"
@@ -267,7 +269,7 @@ class TestSurgicalReplaceErrorHandling:
         readonly_file.chmod(0o444)
 
         mcp_registry._file_editor_tool.function.return_value = (  # ty: ignore[invalid-assignment]
-            "Error: Permission denied"
+            te.ToolFailure("Error: Permission denied")
         )
 
         try:
@@ -307,7 +309,7 @@ class TestSurgicalReplacePathHandling:
     ) -> None:
         """Test that directory traversal is prevented."""
         mcp_registry._file_editor_tool.function.return_value = (  # ty: ignore[invalid-assignment]
-            "Error: Security risk - path traversal detected"
+            te.ToolFailure("Error: Security risk - path traversal detected")
         )
 
         result = await mcp_registry.surgical_replace_code(
@@ -372,3 +374,27 @@ class TestSurgicalReplaceIntegration:
             )
 
             assert result is not None
+
+
+class TestSurgicalReplaceOutcome:
+    """Success is the editor's verdict, not a match on its message text."""
+
+    async def test_a_tool_failure_comes_back_as_one(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        failure = te.ToolFailure("Error: Target code not found in file")
+        mcp_registry._file_editor_tool.function.return_value = failure  # ty: ignore[invalid-assignment]
+        result = await mcp_registry.surgical_replace_code("sample.py", "x", "y")
+        assert result is failure
+
+    async def test_a_success_with_more_text_is_still_a_success(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        # The editor tool appends a re-ingest report to its success message
+        # when it is given one; comparing to the bare message read that as a
+        # failure, with the file already changed on disk.
+        message = cs.MSG_SURGICAL_SUCCESS.format(path="sample.py") + " (report)"
+        mcp_registry._file_editor_tool.function.return_value = message  # ty: ignore[invalid-assignment]
+        result = await mcp_registry.surgical_replace_code("sample.py", "x", "y")
+        assert not isinstance(result, te.ToolFailure)
+        assert result.startswith(message)
