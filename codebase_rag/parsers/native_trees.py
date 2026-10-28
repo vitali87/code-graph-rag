@@ -2,10 +2,11 @@
 
 The definitions pass hashes every definition it ingests twice over, once
 for its anchor (`anchor_hash.py`) and once for its clone-detection skeleton
-(`ast_fingerprint.py`), walking each subtree node by node through
-py-tree-sitter: every `node.children`, `node.type` and `node.text` crosses
-into C and builds a Python object. `TreeBridge` (rust/cgr_graph_rs/src/trees)
-walks the same subtree in Rust. It is handed the Python `Node` itself and
+(`ast_fingerprint.py`), and call resolution and type inference ask which
+names each Python function binds (`py/ast_analyzer.py`). Each walks the
+subtree node by node through py-tree-sitter: every `node.children`,
+`node.type` and `node.text` crosses into C and builds a Python object.
+`TreeBridge` (rust/cgr_graph_rs/src/trees) walks the same subtree in Rust. It is handed the Python `Node` itself and
 reads the C node inside it, so nothing is parsed twice and no grammar is
 compiled into the extension; its tree-sitter runtime is the very C code
 compiled into the py-tree-sitter release cgr pins.
@@ -32,7 +33,7 @@ from .. import constants as cs
 from .. import exceptions as ex
 from .. import logs as ls
 from ..embedded_graph.extension import rust_extension
-from ..types_defs import DescribedNode, TreeRules
+from ..types_defs import DescribedNode, NativeScopeFacts, ScopeRules, TreeRules
 
 # Whether the indexer may use the bridge; the parity tests and benchmarks
 # flip it to compare the two paths.
@@ -45,6 +46,10 @@ class TreeBridge(Protocol):
     def ast_fingerprint(self, func_node: Node) -> tuple[str, int, list[str]] | None: ...
 
     def describe(self, node: Node) -> list[DescribedNode]: ...
+
+    def scope_facts(self, scope: Node) -> NativeScopeFacts: ...
+
+    def inner_scope_only_names(self, caller: Node) -> list[str]: ...
 
 
 NotBorrowed: type[Exception] = getattr(
@@ -77,12 +82,56 @@ def rules() -> TreeRules:
         dart_signature_types=sorted(cs.DART_SIGNATURE_TYPES),
         dart_signature_wrappers=sorted(cs.DART_SIGNATURE_WRAPPERS),
         dart_function_body=cs.TS_DART_FUNCTION_BODY,
+        scopes=_scope_rules(),
+    )
+
+
+def _scope_rules() -> ScopeRules:
+    return ScopeRules(
+        identifier=cs.TS_PY_IDENTIFIER,
+        nested_scopes=sorted(cs.PY_NESTED_SCOPE_TYPES),
+        left_binders=sorted(cs.PY_LEFT_BINDERS),
+        name_binders=sorted(cs.PY_NAME_BINDERS),
+        imports=sorted(cs.PY_IMPORT_TYPES),
+        patterns=sorted(cs.PY_BINDING_PATTERN_TYPES),
+        declarations=sorted(cs.PY_DECLARATION_TYPES),
+        comprehensions=sorted(cs.PY_COMPREHENSION_TYPES),
+        nonlocal_statement=cs.TS_PY_NONLOCAL_STATEMENT,
+        with_statement=cs.TS_PY_WITH_STATEMENT,
+        except_clause=cs.TS_PY_EXCEPT_CLAUSE,
+        case_pattern=cs.TS_PY_CASE_PATTERN,
+        as_pattern=cs.TS_PY_AS_PATTERN,
+        aliased_import=cs.TS_ALIASED_IMPORT,
+        dotted_name=cs.TS_DOTTED_NAME,
+        wildcard=cs.TS_PY_WILDCARD_NODE,
+        function_definition=cs.TS_PY_FUNCTION_DEFINITION,
+        class_definition=cs.TS_PY_CLASS_DEFINITION,
+        lambda_expression=cs.TS_PY_LAMBDA,
+        for_in_clause=cs.TS_PY_FOR_IN_CLAUSE,
+        attribute=cs.TS_PY_ATTRIBUTE,
+        keyword_argument=cs.TS_PY_KEYWORD_ARGUMENT,
+        separator=cs.SEPARATOR_DOT,
+        left_field=cs.TS_FIELD_LEFT,
+        name_field=cs.FIELD_NAME,
+        value_field=cs.FIELD_VALUE,
+        alias_field=cs.FIELD_ALIAS,
+        module_field=cs.FIELD_MODULE_NAME,
+        parameters_field=cs.TS_FIELD_PARAMETERS,
+        body_field=cs.FIELD_BODY,
+        attribute_field=cs.TS_PY_FIELD_ATTRIBUTE,
     )
 
 
 def tree_bridge() -> TreeBridge | None:
     """The bridge, or None when the Python twins must walk the trees."""
     return _bridge() if ENABLED else None
+
+
+def scope_bridge() -> TreeBridge | None:
+    """The bridge when it also walks Python scopes, which a build from
+    before them does not, or None."""
+    bridge = tree_bridge()
+    return bridge if hasattr(bridge, cs.EG_RUST_SCOPE_FACTS) else None
 
 
 @cache
@@ -132,11 +181,7 @@ def describe(node: Node) -> list[DescribedNode]:
 def _disagreement(bridge: TreeBridge) -> tuple[cs.TreeBridgeCheck, str] | None:
     """What the bridge reads differently from Python on the probe, and at
     which node type, if anything."""
-    # Imported here: both modules ask this one for the bridge.
     import tree_sitter_python
-
-    from .anchor_hash import python_anchor_hash
-    from .ast_fingerprint import python_ast_fingerprint
 
     probe = Parser(Language(tree_sitter_python.language())).parse(cs.TREE_BRIDGE_PROBE)
     root = probe.root_node
@@ -146,12 +191,34 @@ def _disagreement(bridge: TreeBridge) -> tuple[cs.TreeBridgeCheck, str] | None:
     while stack:
         node = stack.pop()
         stack.extend(node.children)
-        if bridge.anchor_hash(node, ()) != python_anchor_hash(node, ()):
-            return cs.TreeBridgeCheck.ANCHOR_HASH, node.type
-        native = bridge.ast_fingerprint(node)
-        python = python_ast_fingerprint(node)
-        if (None if native is None else tuple(native)) != (
-            None if python is None else tuple(python)
-        ):
-            return cs.TreeBridgeCheck.FINGERPRINT, node.type
+        if (check := _node_disagreement(bridge, node)) is not None:
+            return check, node.type
+    return None
+
+
+def _node_disagreement(bridge: TreeBridge, node: Node) -> cs.TreeBridgeCheck | None:
+    """Which of the bridge's walks reads `node` differently from its Python
+    twin, if any."""
+    # Imported here: these modules ask this one for the bridge.
+    from .anchor_hash import python_anchor_hash
+    from .ast_fingerprint import python_ast_fingerprint
+    from .py.ast_analyzer import python_inner_scope_only_names, python_scope_facts
+    from .py.ast_analyzer import scope_facts_from_native as native_facts
+
+    if bridge.anchor_hash(node, ()) != python_anchor_hash(node, ()):
+        return cs.TreeBridgeCheck.ANCHOR_HASH
+    native = bridge.ast_fingerprint(node)
+    python = python_ast_fingerprint(node)
+    if (None if native is None else tuple(native)) != (
+        None if python is None else tuple(python)
+    ):
+        return cs.TreeBridgeCheck.FINGERPRINT
+    if not hasattr(bridge, cs.EG_RUST_SCOPE_FACTS):
+        return None
+    if native_facts(bridge.scope_facts(node)) != python_scope_facts(node):
+        return cs.TreeBridgeCheck.SCOPE_FACTS
+    if frozenset(bridge.inner_scope_only_names(node)) != (
+        python_inner_scope_only_names(node)
+    ):
+        return cs.TreeBridgeCheck.INNER_SCOPE_NAMES
     return None

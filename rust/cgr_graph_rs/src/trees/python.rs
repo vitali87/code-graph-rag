@@ -32,6 +32,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyString, PyType};
 use tree_sitter::{ffi, Node};
 
+use super::scopes::{inner_scope_only_names, scope_facts, ScopeRules};
 use super::{anchor_hash, ast_fingerprint, kind, Rules, Source, DIGEST_SIZE};
 
 /// The py-tree-sitter release whose object layout and C runtime this was
@@ -55,6 +56,10 @@ pyo3::create_exception!(
 /// range, start and end points, child count and field name.
 type Described = (u16, String, bool, usize, usize, (usize, usize), (usize, usize), usize, Option<String>);
 
+/// `scope_facts` as Python receives it: parameters, plain names,
+/// (name, import paths) pairs, declared names and `nonlocal` names.
+type NativeScopeFacts = (Vec<String>, Vec<String>, Vec<(String, Vec<String>)>, Vec<String>, Vec<String>);
+
 #[pyclass(frozen, module = "cgr_graph_rs")]
 pub struct TreeBridge {
     node_type: Py<PyType>,
@@ -62,6 +67,7 @@ pub struct TreeBridge {
     /// `sizeof(PyObject)`: where each struct's own fields start.
     header: usize,
     rules: Rules,
+    scope_rules: ScopeRules,
 }
 
 /// Reads a `T` at `offset` bytes into a Python object.
@@ -127,6 +133,13 @@ impl TreeBridge {
         let ts_node = unsafe { Node::from_raw(raw) };
         Ok(f(ts_node, Source { bytes }))
     }
+
+    /// Runs `f` on the tree node `node` holds and its tree's source bytes;
+    /// a tree without them has no names to read.
+    fn with_source<R>(&self, node: &Bound<'_, PyAny>, f: impl FnOnce(Node, &[u8]) -> R) -> PyResult<R> {
+        self.with_node(node, |node, source| source.bytes.map(|bytes| f(node, bytes)))?
+            .ok_or_else(|| NotBorrowed::new_err("a tree without its source"))
+    }
 }
 
 #[pymethods]
@@ -173,6 +186,7 @@ impl TreeBridge {
             tree_type: tree_type.unbind(),
             header,
             rules: rules_from(rules)?,
+            scope_rules: scope_rules_from(&item(rules, "scopes")?.cast_into::<PyDict>()?)?,
         })
     }
 
@@ -191,6 +205,20 @@ impl TreeBridge {
             ast_fingerprint(node, &self.rules)
                 .map(|fp| (fp.fingerprint, fp.node_count, fp.branch_fingerprints))
         })
+    }
+
+    /// `ScopeFacts` of a Python scope: what `_parameter_names`,
+    /// `_bindings_in` and `_declared_non_local` find there.
+    fn scope_facts(&self, scope: &Bound<'_, PyAny>) -> PyResult<NativeScopeFacts> {
+        self.with_source(scope, |node, source| {
+            let facts = scope_facts(node, source, &self.scope_rules);
+            (facts.params, facts.plain, facts.conditional, facts.declared, facts.nonlocals)
+        })
+    }
+
+    /// `_inner_scope_only_names(caller)`, sorted.
+    fn inner_scope_only_names(&self, caller: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
+        self.with_source(caller, |node, source| inner_scope_only_names(node, source, &self.scope_rules))
     }
 
     /// Every node under `node` in a cursor's pre-order, as this runtime reads
@@ -279,6 +307,46 @@ fn rules_from(rules: &Bound<'_, PyDict>) -> PyResult<Rules> {
         dart_signature_types: set(rules, "dart_signature_types")?,
         dart_signature_wrappers: set(rules, "dart_signature_wrappers")?,
         dart_function_body: text(rules, "dart_function_body")?,
+    })
+}
+
+fn str_rule(rules: &Bound<'_, PyDict>, key: &str) -> PyResult<String> {
+    item(rules, key)?.extract()
+}
+
+fn scope_rules_from(rules: &Bound<'_, PyDict>) -> PyResult<ScopeRules> {
+    Ok(ScopeRules {
+        identifier: text(rules, "identifier")?,
+        nested_scopes: set(rules, "nested_scopes")?,
+        left_binders: set(rules, "left_binders")?,
+        name_binders: set(rules, "name_binders")?,
+        imports: set(rules, "imports")?,
+        patterns: set(rules, "patterns")?,
+        declarations: set(rules, "declarations")?,
+        comprehensions: set(rules, "comprehensions")?,
+        nonlocal_statement: text(rules, "nonlocal_statement")?,
+        with_statement: text(rules, "with_statement")?,
+        except_clause: text(rules, "except_clause")?,
+        case_pattern: text(rules, "case_pattern")?,
+        as_pattern: text(rules, "as_pattern")?,
+        aliased_import: text(rules, "aliased_import")?,
+        dotted_name: text(rules, "dotted_name")?,
+        wildcard: str_rule(rules, "wildcard")?,
+        function_definition: text(rules, "function_definition")?,
+        class_definition: text(rules, "class_definition")?,
+        lambda: text(rules, "lambda_expression")?,
+        for_in_clause: text(rules, "for_in_clause")?,
+        attribute: text(rules, "attribute")?,
+        keyword_argument: text(rules, "keyword_argument")?,
+        separator: str_rule(rules, "separator")?,
+        left_field: text(rules, "left_field")?,
+        name_field: text(rules, "name_field")?,
+        value_field: text(rules, "value_field")?,
+        alias_field: text(rules, "alias_field")?,
+        module_field: text(rules, "module_field")?,
+        parameters_field: text(rules, "parameters_field")?,
+        body_field: text(rules, "body_field")?,
+        attribute_field: text(rules, "attribute_field")?,
     })
 }
 

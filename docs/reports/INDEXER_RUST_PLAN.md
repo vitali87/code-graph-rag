@@ -201,6 +201,55 @@ shares the scope walks of step 3 below and moves there. The saving matched
 what the profile predicted (7.8% at 6x; 7.4% measured), which is the check
 the later steps' estimates rest on.
 
+## Stage 2, landed: the Python scope walks
+
+For every Python function it reads, call resolution asks which names the
+function binds itself, and type inference asks which scope each of its
+assignments belongs to (issue #3473). Each question walked the function's
+body again, and the bodies of the defs around it: call resolution asked
+twice per function (`shadowed_import_names`, then `locally_bound_names`),
+an enclosing def was walked again for every function inside it, and the
+`nonlocal` check walked a nested binding's whole body once per binding.
+
+Now one walk reads a scope's facts (its parameters, what its own body
+binds, the import paths that can make a binding a re-import, its `global`
+and `nonlocal` declarations), and `ast_analyzer.scope_facts` keeps them per
+scope node. The scope functions read the facts instead of walking. The
+bridge reads them in Rust when it is on, with `python_scope_facts` as the
+twin; `_inner_scope_only_names`, the comprehension and lambda walk, moved
+the same way. A cached scope keeps its whole tree alive, where the AST
+cache's memory cap cannot see it, so the cache holds the scopes of the last
+few trees read (`PY_SCOPE_CACHE_TREES`), not a number of scopes, and is
+dropped with the per-pass caches. The node types and fields the walks read
+are handed to the bridge from `constants/`, as stage 1's are.
+
+**Parity.** Every def, class, lambda and module of 1,821 files (37,810
+scopes: `codebase_rag/`, `evals/`, `scripts/`) and every one of the 537,090
+nodes of rich and click, read both ways: no difference.
+`codebase_rag/tests/test_native_scopes.py` keeps the comparison in the
+suite, and the regression tests of #1907, #1922, #1928, #2124 and #2666 run
+on both paths (the `both_scope_walks` fixture). Indexing code-graph-rag
+twice with this stage gave the same graph as `main`'s second run, byte for
+byte (215,163 nodes and edges); `main`'s first run had one `CALLS` edge
+more, which its own second run did not have. Indexing rich seven times on
+each wrote the same set of lines: none is missing from the other set, and
+the few that vary from run to run vary on `main` too.
+
+**Speed.** Over those 37,810 scopes the Python walks take 18.2 s and the
+Rust ones 3.9 s (4.7x, with each answer converted to Python). End to end,
+without embeddings, from the same environment:
+
+| Repository | `main` | Stage 2 | Gain |
+|---|---|---|---|
+| rich, median of 5 alternating runs | 14.2 s | 11.8 s | 1.20x |
+| code-graph-rag, 2 alternating runs | 277.5 s, 261.1 s | 224.4 s, 214.3 s | 1.22x to 1.24x |
+
+Under the profiler the scope walks fell from 14.2% of the code-graph-rag
+run to 6.6%, and with `interface_fingerprint` from 20.8% to 16.6%. The run
+gained more than those shares alone predict (about 11%); `main`'s own two
+runs differ by 16 s. The tree has grown since stage 1 was measured: `main`
+now takes 261 s to 277 s, where stage 1's `main` took 222 s.
+
 ## The plan
 
 Every step is its own PR, re-measured with `benchmarks/index_profile.py`
@@ -223,14 +272,14 @@ Import `pydantic_ai` and `prompt_toolkit` where the agent uses them, so
 `qdrant_client` and `pymilvus` there too when the `semantic` extra is
 installed.
 
-### 3. Rust: interface fingerprints and Python scope analysis (21.9% together)
+### 3. Rust: interface fingerprints (12.9% after stage 2)
 
-Port `interface_fingerprint` and the scope walks it shares with the
-definitions pass (`_binding_targets`, `_declared_non_local`,
-`_nonlocal_names`, `_inner_scope_only_names`, `_bindings_in`) through the
-bridge. They are pure functions of a subtree, like stage 1, but return name
-sets rather than hashes, so they are not hash-bound. At 5x to 8x this step
-takes 17 to 19 points off the code-graph-rag run.
+The scope walks of this step landed as stage 2. What is left is
+`interface_fingerprint` itself, 12.9% of the code-graph-rag run on stage 2:
+its walk over every node of a file (`_expand`, 11.5%), the checks of what a
+function body holds (`_body_is_read`, `names_bound_within`) and the calls
+it records (`_call_bindings`). It hashes, like stage 1, so SHA-256 bounds
+its speed-up as it bounds `anchor_hash`'s.
 
 ### 4. Rust: call-site extraction (about 5%)
 
@@ -258,21 +307,25 @@ callers follow it, before porting any of it.
 
 ## What the steps add up to
 
-The code-graph-rag run without embeddings, timed without the profiler,
-with the profile's shares and 6x per ported walk:
+The code-graph-rag run without embeddings, timed without the profiler. The
+tree grew between the two stages, so each is measured against the `main`
+of its day. The steps not taken yet are projected from stage 2's profile,
+at 6x per ported walk:
 
-| After | Remaining | Time |
-|---|---|---|
-| Before stage 1 | 100% | 222 s, measured |
-| Stage 1 (landed) | 93% | 206 s, measured |
-| Step 1 (Python lookups) | about 79% | about 175 s |
-| Step 3 (scope and interface) | about 60% | about 135 s |
-| Step 4 (call sites) | about 56% | about 125 s |
+| After | Time |
+|---|---|
+| Stage 1's `main` | 222 s, measured |
+| Stage 1 (landed) | 206 s, measured |
+| Stage 2's `main` | 261 s to 277 s, measured |
+| Stage 2 (landed) | 214 s to 224 s, measured |
+| Step 1 (Python lookups, 19.8% of stage 2's run) | about 180 s |
+| Step 3 (interface fingerprints, 12.9%) | about 160 s |
+| Step 4 (call sites, about 5%) | about 150 s |
 
-That is about 1.8x end to end on one core, before step 5. Most of what
-remains is call resolution and the passes' own control flow in Python,
-which share registries across files and languages; they are the part that
-stays Python.
+That is about 1.7x end to end on one core against stage 2's `main`, before
+step 5. Most of what remains is call resolution and the passes' own control
+flow in Python, which share registries across files and languages; they are
+the part that stays Python.
 
 ## Beyond the indexer
 
