@@ -68,7 +68,10 @@ def _read(root: Path, rel: str) -> str:
 
 def _cli(repo: Indexed, *args: str) -> tuple[Result, MagicMock]:
     root, store, updater = repo
-    project_and_fetch = MagicMock(return_value=(PROJECT, store.fetch_all, MagicMock()))
+    # The connection the command reads and writes the incomplete-run marker
+    # through: no run is outstanding.
+    connection = MagicMock(**{"fetch_all.return_value": []})
+    project_and_fetch = MagicMock(return_value=(PROJECT, store.fetch_all, connection))
     with (
         patch("codebase_rag.graph_cli._project_and_fetch", project_and_fetch),
         patch("codebase_rag.graph_updater.GraphUpdater", return_value=updater),
