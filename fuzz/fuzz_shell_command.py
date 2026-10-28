@@ -8,7 +8,7 @@ command that executes arbitrary code is a sandbox escape.
 
 `_classify` drives the same sequence the real tool path runs -- pipeline
 patterns, `_parse_command`, `_validate_segment` per segment, then
-`_is_dangerous_command` -- and three invariants are asserted against its
+`_dangerous_command_reason` -- and three invariants are asserted against its
 verdict: the classifier never raises, never calls a never-allowlisted program
 safe, and never lets a fuzzer-chosen prefix launder a dangerous trailing
 segment. The third is the interesting one: it is a property of the SEGMENTER,
@@ -41,10 +41,10 @@ with atheris.instrument_imports():
     from codebase_rag.tools.shell_command import (
         _check_pipeline_patterns,
         _check_segment_patterns,
-        _has_subshell,
-        _is_dangerous_command,
-        _is_dangerous_rm_path,
+        _dangerous_command_reason,
+        _dangerous_rm_reason,
         _parse_command,
+        _subshell_pattern,
         _validate_segment,
     )
 
@@ -77,8 +77,8 @@ ALWAYS_DANGEROUS = (
 
 # The project root reaches the two root-aware guards by DIFFERENT routes, and
 # they are not interchangeable. `_validate_segment` calls
-# `_git_escapes_project` itself when given a root, so passing one is enough.
-# `_is_dangerous_rm_path` has a single call site -- inside
+# `_git_escape_reason` itself when given a root, so passing one is enough.
+# `_dangerous_rm_reason` has a single call site -- inside
 # `ShellCommander.execute`, after `_validate_segment` -- so the harness has to
 # call it explicitly; passing a root does NOT reach it. An earlier version of
 # this file claimed it did, and `rm *`, `rm /` and
@@ -96,7 +96,7 @@ ALWAYS_DANGEROUS = (
 # verdicts stop being exercised -- while the target still exits 0 and looks
 # like it is fuzzing. A fixed root keeps local and bundled runs identical.
 #
-# The path need not exist: `_git_escapes_project` and `_is_dangerous_rm_path`
+# The path need not exist: `_git_escape_reason` and `_dangerous_rm_reason`
 # only ask whether a resolved TARGET lies inside the root, which is pure path
 # arithmetic. Verified that this root and the real checkout give identical
 # verdicts for `git -C /etc status`, `git -C . diff`,
@@ -110,10 +110,10 @@ def _classify(command: str) -> tuple[bool, str]:
     Mirrors `ShellCommander.execute`'s ordering exactly: the subshell guard
     runs FIRST on the whole command, then pipeline patterns, then each
     segment is validated and classified on its own. Passing `project_root`
-    is what brings `_git_escapes_project` and `_is_dangerous_rm_path` into
+    is what brings `_git_escape_reason` and `_dangerous_rm_reason` into
     coverage -- without it `_validate_segment` skips both.
     """
-    if pattern := _has_subshell(command):
+    if pattern := _subshell_pattern(command):
         return True, f"subshell: {pattern}"
 
     if reason := _check_pipeline_patterns(command):
@@ -149,11 +149,9 @@ def _classify(command: str) -> tuple[bool, str]:
             # `execute` runs this guard here, on the split segment, after
             # `_validate_segment` -- not from inside it. Mirrored rather than
             # reached via `project_root`, which does not reach it.
-            dangerous, reason = _is_dangerous_rm_path(parts, PROJECT_ROOT)
-            if dangerous:
+            if (reason := _dangerous_rm_reason(parts, PROJECT_ROOT)) is not None:
                 return True, reason
-            dangerous, reason = _is_dangerous_command(parts, segment)
-            if dangerous:
+            if (reason := _dangerous_command_reason(parts, segment)) is not None:
                 return True, reason
     return False, ""
 

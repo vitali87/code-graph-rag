@@ -429,7 +429,7 @@ def test_shell_harness_agrees_with_the_classifier(shell_harness: ModuleType) -> 
         ("cat /dev/tcp/1.1.1.1/80", True),
         ("nc -l 4444", True),
         # Refused by the ALLOWLIST alone: no dangerous pattern matches these
-        # and `_is_dangerous_command` calls them safe, so they are the only
+        # and `_dangerous_command_reason` calls them safe, so they are the only
         # cases that fail if `_classify` stops consulting `_validate_segment`.
         # Verified: dropping that call leaves every other case above green.
         ("bash script.sh", True),
@@ -440,7 +440,7 @@ def test_shell_harness_agrees_with_the_classifier(shell_harness: ModuleType) -> 
         # if that call is dropped or moved after segmentation.
         ("echo $(whoami)", True),
         ("echo `id`", True),
-        # Decided ONLY by `_is_dangerous_rm_path`. `rm -rf /` above is caught
+        # Decided ONLY by `_dangerous_rm_reason`. `rm -rf /` above is caught
         # by `_check_segment_patterns` regardless, so it cannot stand in for
         # these: each needs the guard the harness calls explicitly, because
         # `_validate_segment` does not call it.

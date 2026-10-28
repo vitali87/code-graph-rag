@@ -48,7 +48,7 @@ def _is_outside_single_quotes(command: str, pos: int) -> bool:
     return not in_single
 
 
-def _has_subshell(command: str) -> str | None:
+def _subshell_pattern(command: str) -> str | None:
     for pattern in cs.SHELL_SUBSHELL_PATTERNS:
         start = 0
         while True:
@@ -204,13 +204,13 @@ def _rm_operands(args: list[str]) -> list[str]:
     return []
 
 
-def _is_dangerous_rm_path(cmd_parts: list[str], project_root: Path) -> tuple[bool, str]:
+def _dangerous_rm_reason(cmd_parts: list[str], project_root: Path) -> str | None:
     if not cmd_parts or cmd_parts[0] != cs.SHELL_CMD_RM:
-        return False, ""
+        return None
     for path_arg in _rm_operands(cmd_parts[1:]):
         if (reason := _dangerous_rm_target(path_arg, project_root)) is not None:
-            return True, reason
-    return False, ""
+            return reason
+    return None
 
 
 def _dangerous_rm_target(path_arg: str, project_root: Path) -> str | None:
@@ -240,8 +240,8 @@ def _dangerous_rm_target(path_arg: str, project_root: Path) -> str | None:
     return None
 
 
-def _git_escapes_project(cmd_parts: list[str], project_root: Path) -> tuple[bool, str]:
-    """Whether git is pointed at a repository outside the project root.
+def _git_escape_reason(cmd_parts: list[str], project_root: Path) -> str | None:
+    """Why git is pointed at a repository outside the project root, or None.
 
     Git reads the target's config and EXECUTES what it finds -- an
     `alias.x = !cmd`, `core.fsmonitor`, `core.pager` -- so any writable
@@ -254,7 +254,7 @@ def _git_escapes_project(cmd_parts: list[str], project_root: Path) -> tuple[bool
     `git --git-dir x log` stay allowed.
     """
     if not cmd_parts or cmd_parts[0] != cs.SHELL_CMD_GIT:
-        return False, ""
+        return None
 
     index = 1
     while index < len(cmd_parts):
@@ -272,8 +272,8 @@ def _git_escapes_project(cmd_parts: list[str], project_root: Path) -> tuple[bool
             continue
 
         if target and (reason := _git_target_escape(target, project_root)):
-            return True, reason
-    return False, ""
+            return reason
+    return None
 
 
 def _git_target_escape(target: str, project_root: Path) -> str | None:
@@ -1318,48 +1318,48 @@ def _rg_exec_flag(cmd_parts: list[str]) -> str | None:
     return _program_naming_flag(cmd_parts, cs.SHELL_RG_EXEC_FLAGS)
 
 
-def _is_dangerous_command(
+def _dangerous_command_reason(
     cmd_parts: list[str], full_segment: str, bypass_allowlist: bool = False
-) -> tuple[bool, str]:
+) -> str | None:
     if not cmd_parts:
-        return False, ""
+        return None
 
     base_cmd = cmd_parts[0]
 
     if _is_blocked_command(base_cmd):
-        return True, f"blocked command: {base_cmd}"
+        return f"blocked command: {base_cmd}"
 
     if _is_dangerous_rm(cmd_parts):
-        return True, "rm with dangerous flags"
+        return "rm with dangerous flags"
 
     if reason := _unconfined_launcher_reason(cmd_parts, bypass_allowlist):
-        return True, reason
+        return reason
 
     if flag := _git_exec_flag(cmd_parts):
-        return True, f"git {flag} names a program git will run"
+        return f"git {flag} names a program git will run"
 
     if form := _git_exec_subcommand(cmd_parts):
-        return True, f"git {form} runs a caller-supplied command"
+        return f"git {form} runs a caller-supplied command"
 
     if flag := _rg_exec_flag(cmd_parts):
-        return True, f"rg {flag} names a program rg will run"
+        return f"rg {flag} names a program rg will run"
 
     if construct := _sed_exec_construct(cmd_parts):
-        return True, f"sed can run a command or write a file via {construct}"
+        return f"sed can run a command or write a file via {construct}"
 
     if construct := _awk_exec_construct(cmd_parts):
-        return True, f"awk can run a command via {construct}"
+        return f"awk can run a command via {construct}"
 
     if key := _git_dash_c_exec_key(cmd_parts):
-        return True, f"git -c sets '{key}', a key whose value git executes"
+        return f"git -c sets '{key}', a key whose value git executes"
 
     if key := _git_config_exec_key(cmd_parts):
-        return True, f"git config write to '{key}' plants a command git will run"
+        return f"git config write to '{key}' plants a command git will run"
 
     if reason := _check_segment_patterns(full_segment):
-        return True, reason
+        return reason
 
-    return False, ""
+    return None
 
 
 def _unconfined_launcher_reason(
@@ -1400,13 +1400,13 @@ def _xargs_launch_confined(cmd_parts: list[str], bypass_allowlist: bool) -> bool
     # itself allowlisted, so `xargs uv run python -c ...` would
     # otherwise pass the check that blocks `uv run python -c ...`.
     launched_parts = cmd_parts[index:]
-    nested_dangerous, _ = _is_dangerous_command(
+    nested_reason = _dangerous_command_reason(
         launched_parts,
         " ".join(launched_parts),
         bypass_allowlist,
     )
     return (
-        launched_parts[0] in settings.SHELL_COMMAND_ALLOWLIST and not nested_dangerous
+        launched_parts[0] in settings.SHELL_COMMAND_ALLOWLIST and nested_reason is None
     )
 
 
@@ -1464,8 +1464,9 @@ def _validate_segment(
     ):
         return refusal
 
-    is_dangerous, reason = _is_dangerous_command(cmd_parts, segment, bypass_allowlist)
-    if is_dangerous:
+    if (
+        reason := _dangerous_command_reason(cmd_parts, segment, bypass_allowlist)
+    ) is not None:
         return te.COMMAND_DANGEROUS_BLOCKED.format(cmd=base_cmd, reason=reason)
 
     # Inside the recursion, so `xargs git --git-dir=EVIL pwn` is caught too.
@@ -1475,8 +1476,7 @@ def _validate_segment(
     # prevent. Skipped when no root is supplied, as the direct unit tests of
     # other guards do.
     if project_root is not None:
-        is_dangerous, reason = _git_escapes_project(cmd_parts, project_root)
-        if is_dangerous:
+        if (reason := _git_escape_reason(cmd_parts, project_root)) is not None:
             return te.COMMAND_DANGEROUS_BLOCKED.format(cmd=base_cmd, reason=reason)
 
     return None
@@ -1724,10 +1724,9 @@ class ShellCommander:
                     cmd_parts = shlex.split(segment)
                 except ValueError:
                     continue
-                is_dangerous, reason = _is_dangerous_rm_path(
-                    cmd_parts, self.project_root
-                )
-                if is_dangerous:
+                if (
+                    reason := _dangerous_rm_reason(cmd_parts, self.project_root)
+                ) is not None:
                     return te.COMMAND_DANGEROUS_BLOCKED.format(
                         cmd=cmd_parts[0], reason=reason
                     )
@@ -1763,7 +1762,7 @@ class ShellCommander:
         or a danger check rejects is refused whatever the user answers, so
         prompting for it only interrupts them (issue #2359, comment).
         """
-        if subshell_pattern := _has_subshell(command):
+        if subshell_pattern := _subshell_pattern(command):
             return te.COMMAND_SUBSHELL_NOT_ALLOWED.format(pattern=subshell_pattern)
         if pattern_reason := _check_pipeline_patterns(command):
             return te.COMMAND_DANGEROUS_PATTERN.format(reason=pattern_reason)

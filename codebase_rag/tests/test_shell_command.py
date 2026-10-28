@@ -17,17 +17,17 @@ from codebase_rag.tools.shell_command import (
     ShellCommander,
     _check_pipeline_patterns,
     _check_segment_patterns,
-    _git_escapes_project,
+    _dangerous_command_reason,
+    _dangerous_rm_reason,
+    _git_escape_reason,
     _has_redirect_operators,
-    _has_subshell,
     _is_blocked_command,
-    _is_dangerous_command,
     _is_dangerous_rm,
-    _is_dangerous_rm_path,
     _parse_command,
     _requires_approval,
     _sed_cluster_tail,
     _sed_exec_construct,
+    _subshell_pattern,
     _validate_segment,
     _xargs_launched_command,
     create_noninteractive_shell_command_tool,
@@ -71,23 +71,35 @@ class TestShellCommanderInit:
 
 class TestIsDangerousCommand:
     def test_rm_rf_is_dangerous(self) -> None:
-        is_dangerous, _ = _is_dangerous_command(["rm", "-rf", "/"], "rm -rf /")
+        is_dangerous = (
+            _dangerous_command_reason(["rm", "-rf", "/"], "rm -rf /") is not None
+        )
         assert is_dangerous is True
-        is_dangerous, _ = _is_dangerous_command(["rm", "-rf", "."], "rm -rf .")
+        is_dangerous = (
+            _dangerous_command_reason(["rm", "-rf", "."], "rm -rf .") is not None
+        )
         assert is_dangerous is True
 
     def test_rm_without_rf_is_not_dangerous(self) -> None:
-        is_dangerous, _ = _is_dangerous_command(["rm", "file.txt"], "rm file.txt")
+        is_dangerous = (
+            _dangerous_command_reason(["rm", "file.txt"], "rm file.txt") is not None
+        )
         assert is_dangerous is False
-        is_dangerous, _ = _is_dangerous_command(["rm", "-r", "dir"], "rm -r dir")
+        is_dangerous = (
+            _dangerous_command_reason(["rm", "-r", "dir"], "rm -r dir") is not None
+        )
         assert is_dangerous is False
 
     def test_other_commands_not_dangerous(self) -> None:
-        is_dangerous, _ = _is_dangerous_command(["ls", "-la"], "ls -la")
+        is_dangerous = _dangerous_command_reason(["ls", "-la"], "ls -la") is not None
         assert is_dangerous is False
-        is_dangerous, _ = _is_dangerous_command(["cat", "file.txt"], "cat file.txt")
+        is_dangerous = (
+            _dangerous_command_reason(["cat", "file.txt"], "cat file.txt") is not None
+        )
         assert is_dangerous is False
-        is_dangerous, _ = _is_dangerous_command(["git", "status"], "git status")
+        is_dangerous = (
+            _dangerous_command_reason(["git", "status"], "git status") is not None
+        )
         assert is_dangerous is False
 
 
@@ -112,13 +124,18 @@ class TestGitConfigExecKeyBlocked:
                 if scope:
                     parts.append(scope)
                 parts += [key, "value"]
-                is_dangerous, _ = _is_dangerous_command(parts, " ".join(parts))
+                is_dangerous = (
+                    _dangerous_command_reason(parts, " ".join(parts)) is not None
+                )
                 assert is_dangerous is True, (key, scope)
 
     def test_credential_helper_and_alias_blocked(self) -> None:
         for key in ("credential.helper", "credential.https://x.helper", "alias.x"):
-            is_dangerous, _ = _is_dangerous_command(
-                ["git", "config", key, "!sh -c evil"], f"git config {key} ..."
+            is_dangerous = (
+                _dangerous_command_reason(
+                    ["git", "config", key, "!sh -c evil"], f"git config {key} ..."
+                )
+                is not None
             )
             assert is_dangerous is True, key
 
@@ -129,14 +146,17 @@ class TestGitConfigExecKeyBlocked:
             ["git", "config", "--list"],
             ["git", "config", "--global", "--unset", "core.sshCommand"],
         ):
-            is_dangerous, _ = _is_dangerous_command(args, " ".join(args))
+            is_dangerous = _dangerous_command_reason(args, " ".join(args)) is not None
             assert is_dangerous is False, args
 
     def test_benign_config_write_not_blocked_here(self) -> None:
         # Not an exec key -> not blocked by THIS guard (approval still applies).
-        is_dangerous, _ = _is_dangerous_command(
-            ["git", "config", "--global", "user.name", "x"],
-            "git config --global user.name x",
+        is_dangerous = (
+            _dangerous_command_reason(
+                ["git", "config", "--global", "user.name", "x"],
+                "git config --global user.name x",
+            )
+            is not None
         )
         assert is_dangerous is False
 
@@ -855,16 +875,16 @@ class TestRequiresApprovalWithRedirects:
 
 class TestHasSubshell:
     def test_command_substitution(self) -> None:
-        assert _has_subshell("echo $(whoami)") == "$("
+        assert _subshell_pattern("echo $(whoami)") == "$("
 
     def test_backtick_substitution(self) -> None:
-        assert _has_subshell("echo `whoami`") == "`"
+        assert _subshell_pattern("echo `whoami`") == "`"
 
     def test_no_subshell(self) -> None:
-        assert _has_subshell("ls -la | wc -l") is None
+        assert _subshell_pattern("ls -la | wc -l") is None
 
     def test_dollar_in_variable(self) -> None:
-        assert _has_subshell("echo $HOME") is None
+        assert _subshell_pattern("echo $HOME") is None
 
 
 class TestParseCommandEdgeCases:
@@ -972,20 +992,20 @@ class TestPipedCommandExecution:
 
 class TestQuoteAwareSubshellDetection:
     def test_subshell_in_single_quotes_not_detected(self) -> None:
-        assert _has_subshell("echo '$(whoami)'") is None
-        assert _has_subshell("rg '\\$\\('") is None
+        assert _subshell_pattern("echo '$(whoami)'") is None
+        assert _subshell_pattern("rg '\\$\\('") is None
 
     def test_subshell_in_double_quotes_detected(self) -> None:
-        assert _has_subshell('echo "$(whoami)"') == "$("
-        assert _has_subshell('echo "`id`"') == "`"
+        assert _subshell_pattern('echo "$(whoami)"') == "$("
+        assert _subshell_pattern('echo "`id`"') == "`"
 
     def test_subshell_outside_quotes_detected(self) -> None:
-        assert _has_subshell("echo $(whoami)") == "$("
-        assert _has_subshell("echo `id`") == "`"
+        assert _subshell_pattern("echo $(whoami)") == "$("
+        assert _subshell_pattern("echo `id`") == "`"
 
     def test_escaped_quote_bypass_detected(self) -> None:
-        assert _has_subshell("echo \\'$(whoami)") == "$("
-        assert _has_subshell("echo \\' `id`") == "`"
+        assert _subshell_pattern("echo \\'$(whoami)") == "$("
+        assert _subshell_pattern("echo \\' `id`") == "`"
 
     async def test_single_quoted_subshell_pattern_allowed(
         self, shell_commander: ShellCommander
@@ -1145,37 +1165,34 @@ class TestDangerousRmPath:
     def test_relative_path_to_system_dir(self, tmp_path: Path) -> None:
         project_root = tmp_path / "project"
         project_root.mkdir()
-        is_dangerous, reason = _is_dangerous_rm_path(
-            ["rm", "-rf", "../../etc"], project_root
-        )
-        assert is_dangerous
+        reason = _dangerous_rm_reason(["rm", "-rf", "../../etc"], project_root)
+        assert reason is not None
         assert "system directory" in reason or "outside project" in reason
 
     def test_absolute_system_dir(self, tmp_path: Path) -> None:
-        is_dangerous, reason = _is_dangerous_rm_path(["rm", "-rf", "/etc"], tmp_path)
-        assert is_dangerous
+        reason = _dangerous_rm_reason(["rm", "-rf", "/etc"], tmp_path)
+        assert reason is not None
         assert "system directory" in reason or "outside project" in reason
 
     def test_root_directory(self, tmp_path: Path) -> None:
-        is_dangerous, reason = _is_dangerous_rm_path(["rm", "-rf", "/"], tmp_path)
-        assert is_dangerous
+        reason = _dangerous_rm_reason(["rm", "-rf", "/"], tmp_path)
+        assert reason is not None
         reason_lower = reason.lower()
         assert "root" in reason_lower or "outside project" in reason_lower
 
     def test_path_outside_project(self, tmp_path: Path) -> None:
         project_root = tmp_path / "project"
         project_root.mkdir()
-        is_dangerous, reason = _is_dangerous_rm_path(
-            ["rm", "-rf", "../other"], project_root
-        )
-        assert is_dangerous
+        reason = _dangerous_rm_reason(["rm", "-rf", "../other"], project_root)
+        assert reason is not None
         assert "outside project" in reason or "system directory" in reason
 
     def test_safe_path_inside_project(self, tmp_path: Path) -> None:
         project_root = (tmp_path / "project").resolve()
         project_root.mkdir(exist_ok=True)
-        is_dangerous, _ = _is_dangerous_rm_path(
-            ["rm", "-rf", "subdir/file.txt"], project_root
+        is_dangerous = (
+            _dangerous_rm_reason(["rm", "-rf", "subdir/file.txt"], project_root)
+            is not None
         )
         assert not is_dangerous
 
@@ -1186,7 +1203,9 @@ class TestDangerousRmPath:
         project_root = (tmp_path / "project").resolve()
         project_root.mkdir(exist_ok=True)
         target = str(project_root / "subdir" / "file.txt")
-        is_dangerous, _ = _is_dangerous_rm_path(["rm", "-rf", target], project_root)
+        is_dangerous = (
+            _dangerous_rm_reason(["rm", "-rf", target], project_root) is not None
+        )
         assert not is_dangerous
 
     @pytest.mark.parametrize("target", ["absolute", "subdir/.."])
@@ -1197,11 +1216,9 @@ class TestDangerousRmPath:
         project_root.mkdir()
         path_arg = str(project_root) if target == "absolute" else target
 
-        is_dangerous, reason = _is_dangerous_rm_path(
-            ["rm", "-rf", path_arg], project_root
-        )
+        reason = _dangerous_rm_reason(["rm", "-rf", path_arg], project_root)
 
-        assert is_dangerous
+        assert reason is not None
         assert reason == "rm targeting the project root"
 
     def test_dash_prefixed_operand_after_end_of_options_is_checked(
@@ -1213,8 +1230,8 @@ class TestDangerousRmPath:
         project_root = (tmp_path / "project").resolve()
         project_root.mkdir(exist_ok=True)
         argv = ["rm", "-r", "--", "-x/../../outside/victim"]
-        is_dangerous, reason = _is_dangerous_rm_path(argv, project_root)
-        assert is_dangerous
+        reason = _dangerous_rm_reason(argv, project_root)
+        assert reason is not None
         assert "outside project" in reason or "system directory" in reason
 
     def test_dash_prefixed_operand_inside_project_still_passes(
@@ -1225,7 +1242,7 @@ class TestDangerousRmPath:
         project_root = (tmp_path / "project").resolve()
         project_root.mkdir(exist_ok=True)
         argv = ["rm", "-r", "--", "-in-root-file"]
-        assert _is_dangerous_rm_path(argv, project_root) == (False, "")
+        assert _dangerous_rm_reason(argv, project_root) is None
 
     def test_dash_prefixed_operand_after_first_operand_is_checked(
         self, tmp_path: Path
@@ -1236,8 +1253,8 @@ class TestDangerousRmPath:
         project_root = (tmp_path / "project").resolve()
         project_root.mkdir(exist_ok=True)
         argv = ["rm", "a", "-x/../../outside/victim"]
-        is_dangerous, reason = _is_dangerous_rm_path(argv, project_root)
-        assert is_dangerous
+        reason = _dangerous_rm_reason(argv, project_root)
+        assert reason is not None
         assert "outside project" in reason or "system directory" in reason
 
     def test_operand_text_is_not_read_as_rf_flags(self, tmp_path: Path) -> None:
@@ -1268,16 +1285,16 @@ class TestDangerousRmPath:
         project_root = (tmp_path / "project").resolve()
         project_root.mkdir(exist_ok=True)
         argv = ["rm", "-r", "-v", "--", "sub/file.txt"]
-        assert _is_dangerous_rm_path(argv, project_root) == (False, "")
+        assert _dangerous_rm_reason(argv, project_root) is None
 
     def test_wildcard_dangerous(self, tmp_path: Path) -> None:
-        is_dangerous, reason = _is_dangerous_rm_path(["rm", "-rf", "*"], tmp_path)
-        assert is_dangerous
+        reason = _dangerous_rm_reason(["rm", "-rf", "*"], tmp_path)
+        assert reason is not None
         assert "dangerous path" in reason
 
     def test_dot_dot_dangerous(self, tmp_path: Path) -> None:
-        is_dangerous, reason = _is_dangerous_rm_path(["rm", "-rf", ".."], tmp_path)
-        assert is_dangerous
+        reason = _dangerous_rm_reason(["rm", "-rf", ".."], tmp_path)
+        assert reason is not None
         assert "dangerous path" in reason
 
 
@@ -3758,8 +3775,8 @@ class TestGitRepoLocationEscape:
         ),
     )
     def test_a_target_outside_the_root_is_refused(self, argv: list[str]) -> None:
-        blocked, reason = _git_escapes_project(argv, self.ROOT)
-        assert blocked, argv
+        reason = _git_escape_reason(argv, self.ROOT)
+        assert reason is not None, argv
         assert "outside the project" in reason
 
     @pytest.mark.parametrize(
@@ -3777,10 +3794,10 @@ class TestGitRepoLocationEscape:
     def test_a_target_inside_the_root_still_passes(self, argv: list[str]) -> None:
         # Pointing git within the project is ordinary use and must keep its
         # pass; the guard keys on where the value resolves, not on the flag.
-        assert _git_escapes_project(argv, self.ROOT) == (False, "")
+        assert _git_escape_reason(argv, self.ROOT) is None
 
     def test_a_non_git_command_is_not_examined(self) -> None:
-        assert _git_escapes_project(["rm", "-C", "/tmp/evil"], self.ROOT) == (False, "")
+        assert _git_escape_reason(["rm", "-C", "/tmp/evil"], self.ROOT) is None
 
     @pytest.mark.skipif(sys.platform != "win32", reason="drive letters are Windows")
     def test_a_rooted_target_is_judged_on_the_root_drive(self) -> None:
@@ -3796,11 +3813,11 @@ class TestGitRepoLocationEscape:
         root = Path(f"{other_drive}/project/root")
         assert Path("/project/root/inside").resolve().drive.upper() == process_drive
         inside = ["git", "-C", "/project/root/inside", "status"]
-        assert _git_escapes_project(inside, root) == (False, "")
+        assert _git_escape_reason(inside, root) is None
         # The same drive-taking must not turn an escape into a pass.
         outside = ["git", "-C", "/tmp/evil", "pwn"]
-        blocked, reason = _git_escapes_project(outside, root)
-        assert blocked
+        reason = _git_escape_reason(outside, root)
+        assert reason is not None
         assert "outside the project" in reason
 
 
