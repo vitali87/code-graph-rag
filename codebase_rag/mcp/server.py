@@ -28,7 +28,9 @@ from codebase_rag.workspaces import WorkspaceConfig, WorkspaceError, load_worksp
 
 if TYPE_CHECKING:
     # starlette is a lazy dependency of the HTTP path only; its ASGI
-    # types are needed solely for annotations
+    # types, and the SDK's settings model that imports it, are needed
+    # solely for annotations
+    from mcp.server.transport_security import TransportSecuritySettings
     from starlette.types import ASGIApp, Receive, Scope, Send
 
 
@@ -280,6 +282,33 @@ def _validate_http_exposure(host: str, auth_token: str | None) -> None:
         raise ValueError(lg.MCP_HTTP_EXPOSURE_REFUSED.format(host=host))
 
 
+# Host and Origin values a loopback server answers, on any port.
+_LOOPBACK_HOST_HEADERS = ("127.0.0.1:*", "localhost:*", "[::1]:*")
+_LOOPBACK_ORIGINS = ("http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*")
+
+
+def _transport_security(host: str) -> TransportSecuritySettings | None:
+    """DNS-rebinding protection for a loopback bind.
+
+    A loopback server without a token trusts the bind address, and the SDK
+    checks neither Host nor Origin unless told to. A page the developer
+    visits could otherwise rebind its own hostname to 127.0.0.1 and drive
+    the write tools. The settings match what the SDK's FastMCP enables for
+    a loopback host. A non-loopback bind always has a bearer token, which a
+    rebinding page cannot present, and may sit behind a proxy that rewrites
+    Host, so it is left to the token.
+    """
+    if host not in _LOOPBACK_HOSTS:
+        return None
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=list(_LOOPBACK_HOST_HEADERS),
+        allowed_origins=list(_LOOPBACK_ORIGINS),
+    )
+
+
 def _require_bearer_auth(app: ASGIApp, auth_token: str) -> ASGIApp:
     import secrets
 
@@ -339,6 +368,7 @@ async def serve_http(
         app=server,
         json_response=False,
         stateless=False,
+        security_settings=_transport_security(host),
     )
 
     @contextlib.asynccontextmanager

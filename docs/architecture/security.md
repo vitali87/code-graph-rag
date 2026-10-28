@@ -199,6 +199,11 @@ This is a shared bearer credential, not per-user authorization. Authorized
 clients can use privileged tools, including file modification and project
 deletion; treat client access accordingly.
 
+A loopback bind also checks each request's `Host` and `Origin` headers, so a
+web page that rebinds its own hostname to `127.0.0.1` cannot drive the server
+from the developer's browser. Only `127.0.0.1`, `localhost` and `[::1]` are
+accepted, on any port.
+
 ![cgr mcp-server --transport http refusing --host 0.0.0.0 without MCP_HTTP_AUTH_TOKEN, then serving on 127.0.0.1 by default](../assets/demos/security-mcp-bind.gif)
 
 The server's HTTP configuration does not itself enable TLS. For remote access,

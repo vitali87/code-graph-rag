@@ -98,3 +98,74 @@ def test_loopback_bind_without_token_is_fine() -> None:
 
 def test_non_loopback_bind_with_token_is_fine() -> None:
     _validate_http_exposure("0.0.0.0", "sekrit")
+
+
+def _validated_status(host: str, headers: dict[str, str]) -> int | None:
+    from mcp.server.transport_security import TransportSecurityMiddleware
+    from starlette.requests import Request
+
+    from codebase_rag.mcp.server import _transport_security
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/mcp",
+        "headers": [
+            (key.encode(), value.encode())
+            for key, value in {"content-type": "application/json", **headers}.items()
+        ],
+    }
+    middleware = TransportSecurityMiddleware(_transport_security(host))
+    response = asyncio.run(middleware.validate_request(Request(scope), is_post=True))
+    return None if response is None else response.status_code
+
+
+def test_a_rebound_hostname_is_refused_on_a_loopback_bind() -> None:
+    # Tokenless loopback trusts the bind address; a page that rebinds its
+    # own hostname to 127.0.0.1 still sends that hostname as Host.
+    assert _validated_status("127.0.0.1", {"host": "evil.example:8080"}) == 421
+
+
+def test_a_foreign_origin_is_refused_on_a_loopback_bind() -> None:
+    status = _validated_status(
+        "127.0.0.1", {"host": "127.0.0.1:8080", "origin": "http://evil.example"}
+    )
+    assert status == 403
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1:8080", "localhost:8080", "[::1]:8080"])
+def test_a_local_client_passes_on_a_loopback_bind(host: str) -> None:
+    assert _validated_status("127.0.0.1", {"host": host}) is None
+
+
+def test_a_tokened_remote_bind_leaves_host_checks_to_the_token() -> None:
+    assert _validated_status("0.0.0.0", {"host": "mcp.internal:8080"}) is None
+
+
+def test_serve_http_passes_the_rebinding_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import MagicMock
+
+    from mcp.server import streamable_http_manager
+
+    from codebase_rag.mcp import server
+
+    captured: dict[str, Any] = {}
+
+    class _Stop(Exception):
+        pass
+
+    def fake_manager(**kwargs: Any) -> None:
+        captured.update(kwargs)
+        raise _Stop
+
+    monkeypatch.setattr(
+        streamable_http_manager, "StreamableHTTPSessionManager", fake_manager
+    )
+    monkeypatch.setattr(server, "create_server", lambda _ws: (MagicMock(), None))
+    with pytest.raises(_Stop):
+        asyncio.run(server.serve_http(host="127.0.0.1", port=8080))
+    settings = captured["security_settings"]
+    assert settings is not None
+    assert settings.enable_dns_rebinding_protection
