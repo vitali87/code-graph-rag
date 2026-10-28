@@ -2575,14 +2575,14 @@ def context_command(
     from .tools.semantic_search import semantic_code_search
 
     name, fetch_all, ingestor = _project_and_fetch(project, repo_path)
-    with ingestor:  # type: ignore[attr-defined]
+    with ingestor:
         payload = build_context(
             fetch_all,
             name,
             target,
             budget,
             graph_query.source_root_for(fetch_all, name, repo_path),
-            search=lambda text: semantic_code_search(ingestor, text, project=name),  # type: ignore[arg-type]
+            search=lambda text: semantic_code_search(ingestor, text, project=name),
         )
     typer.echo(json.dumps(payload, indent=cs.MCP_JSON_INDENT))
     if payload["resolved"] is None:

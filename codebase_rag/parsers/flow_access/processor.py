@@ -3116,7 +3116,7 @@ class FlowProcessor:
             # union their taint with the syntactic reading, so a builder
             # chain, cast, or conditional the walker cannot thread still
             # propagates. Additive only -- never removes a lexical edge.
-            for symbol in semantic.get(index, ()):  # type: ignore[union-attr]
+            for symbol in semantic.get(index, ()):
                 taint = _merge_optional_taints(taint, tainted.get(symbol))
             out.append((VIA_ARG_FORMAT.format(index=index), taint))
         return out

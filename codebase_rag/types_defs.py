@@ -1118,7 +1118,7 @@ class FunctionLocations(dict[FunctionSpanKey, FunctionLocation]):
         for key, value in pairs.items():
             self[key] = value
 
-    def setdefault(  # type: ignore[override]
+    def setdefault(
         self, key: FunctionSpanKey, default: FunctionLocation
     ) -> FunctionLocation:
         # dict.setdefault bypasses __setitem__ just like dict.update does, so a
