@@ -19,6 +19,8 @@ from .. import logs as ls
 from ..utils.path_utils import cached_relative_path
 
 if TYPE_CHECKING:
+    from ast_grep_py import SgNode
+
     from ..capture import CaptureSelection
     from ..services import IngestorProtocol
 
@@ -152,7 +154,7 @@ class FindingAnalyzer:
 
     def _emit_rule(
         self,
-        root: Any,
+        root: SgNode,
         rule: _Rule,
         module_qn: str,
         relative_path: str,
@@ -169,7 +171,7 @@ class FindingAnalyzer:
             self._emit_finding(rule, node, module_qn, relative_path)
 
     def _emit_finding(
-        self, rule: _Rule, node: Any, module_qn: str, relative_path: str
+        self, rule: _Rule, node: SgNode, module_qn: str, relative_path: str
     ) -> None:
         node_range = node.range()
         start_line = node_range.start.line + 1
