@@ -301,7 +301,6 @@ ERR_SUBSTR_ALREADY_EXISTS = "already exists"
 # 0.8 s, 1.6 s, then the error stands (issue #2441).
 MG_TRANSIENT_RETRY_ATTEMPTS = 5
 MG_TRANSIENT_RETRY_BASE_DELAY_S = 0.2
-ERR_SUBSTR_CONSTRAINT = "constraint"
 
 PROTOBUF_INDEX_FILE = "index.bin"
 PROTOBUF_PAYLOAD_ONEOF = "payload"

@@ -6,7 +6,7 @@ import threading
 import time
 import types
 from collections import defaultdict
-from collections.abc import Callable, Generator, Sequence
+from collections.abc import Callable, Generator, Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
@@ -27,7 +27,6 @@ from ..constants import (
     CYPHER_EXPLAIN_PREFIX,
     EG_MEMORY_PATH,
     ERR_SUBSTR_ALREADY_EXISTS,
-    ERR_SUBSTR_CONSTRAINT,
     FAILED_REL_ROWS_SHOWN,
     KEY_CREATED,
     KEY_FROM_MISSING,
@@ -494,10 +493,9 @@ class MemgraphIngestor:
                 _retry_transient(partial(cursor.execute, query, params))
                 return self._cursor_to_results(cursor)
             except Exception as e:
-                if (
-                    ERR_SUBSTR_ALREADY_EXISTS not in str(e).lower()
-                    and ERR_SUBSTR_CONSTRAINT not in str(e).lower()
-                ):
+                # Only "already exists" is expected (re-running schema DDL);
+                # a constraint violation is a write that did not happen.
+                if ERR_SUBSTR_ALREADY_EXISTS not in str(e).lower():
                     logger.error(ls.MG_CYPHER_ERROR.format(error=e))
                     logger.error(ls.MG_CYPHER_QUERY.format(query=query))
                     logger.error(ls.MG_CYPHER_PARAMS.format(params=params))
@@ -671,13 +669,31 @@ class MemgraphIngestor:
     def ensure_constraints(self) -> None:
         logger.info(ls.MG_ENSURING_CONSTRAINTS)
         self._migrate_legacy_path_keys()
-        for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
-            try:
-                self._execute_query(self._dialect.create_constraint(label, prop))
-            except Exception:  # noqa: S110 - _execute_query logged it; DDL failure must not stop ingestion
-                pass
-        logger.info(ls.MG_CONSTRAINTS_DONE)
+        failed = self._apply_schema_ddl(
+            self._dialect.create_constraint(label, prop)
+            for label, prop in NODE_UNIQUE_CONSTRAINTS.items()
+        )
+        if failed:
+            logger.warning(ls.MG_CONSTRAINTS_INCOMPLETE.format(count=failed))
+        else:
+            logger.info(ls.MG_CONSTRAINTS_DONE)
         self._ensure_indexes()
+
+    def _apply_schema_ddl(self, statements: Iterable[str]) -> int:
+        """Run each DDL statement and return how many failed.
+
+        None raises: a missing constraint or index must not stop ingestion.
+        `_execute_query` logs each failure but one saying the object already
+        exists, which is the expected answer once the schema is in place.
+        """
+        failed = 0
+        for statement in statements:
+            try:
+                self._execute_query(statement)
+            except Exception as e:
+                if ERR_SUBSTR_ALREADY_EXISTS not in str(e).lower():
+                    failed += 1
+        return failed
 
     def _migrate_legacy_path_keys(self) -> None:
         """Retire the superseded Folder/File relative-path keys (issue #897).
@@ -733,20 +749,25 @@ class MemgraphIngestor:
 
     def _ensure_indexes(self) -> None:
         logger.info(ls.MG_ENSURING_INDEXES)
-        for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
-            try:
-                self._execute_query(self._dialect.create_index(label, prop))
-            except Exception:  # noqa: S110 - _execute_query logged it; DDL failure must not stop ingestion
-                pass
         # The unique-key indexes serve MERGE at write time; generated Cypher
         # reads filter on bare `name`, which needs its own label+name index
         # or every lookup is a full label scan.
-        for label in NODE_NAME_INDEXES:
-            try:
-                self._execute_query(self._dialect.create_index(label, KEY_NAME))
-            except Exception:  # noqa: S110 - _execute_query logged it; DDL failure must not stop ingestion
-                pass
-        logger.info(ls.MG_INDEXES_DONE)
+        failed = self._apply_schema_ddl(
+            [
+                *(
+                    self._dialect.create_index(label, prop)
+                    for label, prop in NODE_UNIQUE_CONSTRAINTS.items()
+                ),
+                *(
+                    self._dialect.create_index(label, KEY_NAME)
+                    for label in NODE_NAME_INDEXES
+                ),
+            ]
+        )
+        if failed:
+            logger.warning(ls.MG_INDEXES_INCOMPLETE.format(count=failed))
+        else:
+            logger.info(ls.MG_INDEXES_DONE)
 
     def ensure_node_batch(
         self, label: str, properties: dict[str, PropertyValue]

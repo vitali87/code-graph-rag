@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -894,3 +895,75 @@ class TestCypherCreateQueries:
         )
         assert "MERGE" in query
         assert "CREATE" not in query.replace("MERGE", "")
+
+
+def _log_records(run: Callable[[], None]) -> list[tuple[str, str]]:
+    records: list[tuple[str, str]] = []
+    sink = logger.add(
+        lambda message: records.append(
+            (message.record["level"].name, message.record["message"])
+        ),
+        level="DEBUG",
+    )
+    try:
+        run()
+    finally:
+        logger.remove(sink)
+    return records
+
+
+class TestSchemaDdlFailures:
+    def test_a_refused_constraint_is_reported_not_called_done(self) -> None:
+        # The refusal names a constraint, which _execute_query used to keep
+        # out of its log, and the run then said "Constraints checked/created."
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor.conn = MagicMock()
+        cursor = ingestor.conn.cursor.return_value
+        refusal = "Unable to create unique constraint: existing nodes violate it"
+
+        def execute(query: str, params: object = None) -> None:
+            if query.startswith("CREATE CONSTRAINT"):
+                raise RuntimeError(refusal)
+
+        cursor.execute.side_effect = execute
+        cursor.description = None
+        records = _log_records(ingestor.ensure_constraints)
+
+        messages = [message for _, message in records]
+        assert ls.MG_CYPHER_ERROR.format(error=refusal) in messages
+        assert ls.MG_CONSTRAINTS_DONE not in messages
+        assert (
+            "WARNING",
+            ls.MG_CONSTRAINTS_INCOMPLETE.format(count=len(NODE_UNIQUE_CONSTRAINTS)),
+        ) in records
+
+    def test_an_existing_constraint_is_neither_logged_nor_counted(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+
+        def already_there(query: str) -> list[dict]:
+            if query.startswith("CREATE"):
+                raise RuntimeError("Constraint already exists")
+            return []
+
+        with patch.object(
+            MemgraphIngestor, "_execute_query", side_effect=already_there
+        ):
+            records = _log_records(ingestor.ensure_constraints)
+
+        messages = [message for _, message in records]
+        assert ls.MG_CONSTRAINTS_DONE in messages
+        assert ls.MG_INDEXES_DONE in messages
+        assert not [level for level, _ in records if level in ("WARNING", "ERROR")]
+
+    def test_a_constraint_violation_on_a_write_is_logged(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        ingestor.conn = MagicMock()
+        violation = "Unable to commit due to unique constraint violation"
+        ingestor.conn.cursor.return_value.execute.side_effect = RuntimeError(violation)
+
+        def write() -> None:
+            with pytest.raises(RuntimeError):
+                ingestor._execute_query("MERGE (n:Function {qualified_name: 'x'})")
+
+        records = _log_records(write)
+        assert ("ERROR", ls.MG_CYPHER_ERROR.format(error=violation)) in records

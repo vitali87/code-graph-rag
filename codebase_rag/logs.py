@@ -583,6 +583,10 @@ MG_DELETING_PROJECT = "--- Deleting project: {project_name} ---"
 MG_PROJECT_DELETED = "--- Project {project_name} deleted. ---"
 MG_ENSURING_CONSTRAINTS = "Ensuring constraints..."
 MG_CONSTRAINTS_DONE = "Constraints checked/created."
+MG_CONSTRAINTS_INCOMPLETE = (
+    "{count} uniqueness constraint(s) could not be created; ingestion goes on "
+    "without them (the errors are logged above)."
+)
 MG_LEGACY_PURGE = (
     "Purged {count} Folder/File node(s) written by the superseded "
     "relative-path key (issue #897); re-run with --update-graph for "
@@ -590,6 +594,10 @@ MG_LEGACY_PURGE = (
 )
 MG_ENSURING_INDEXES = "Ensuring label-property indexes for MERGE performance..."
 MG_INDEXES_DONE = "Indexes checked/created."
+MG_INDEXES_INCOMPLETE = (
+    "{count} index(es) could not be created; ingestion goes on without them "
+    "(the errors are logged above)."
+)
 MG_NODE_BUFFER_FLUSH = (
     "Node buffer reached batch size ({size}). Performing incremental flush."
 )
