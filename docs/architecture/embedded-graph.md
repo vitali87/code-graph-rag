@@ -208,6 +208,15 @@ indexer's own analysis, embedding inference and start-up. Which of those Rust
 could speed up, measured stage by stage, is in
 [the indexer's Rust plan](../reports/INDEXER_RUST_PLAN.md).
 
+The indexer uses the extension too. Each definition's anchor hash and
+clone-detection fingerprint, and which names each Python function binds, are
+computed in Rust on the very tree py-tree-sitter parsed: the extension reads
+the C node inside the Python `Node` and walks it with the same tree-sitter
+runtime, so nothing is parsed twice and no grammar is compiled into the
+wheel (`codebase_rag/parsers/native_trees.py` says how, and what guards it).
+The Python functions stay the reference, as everywhere else in the
+extension.
+
 ## Switching backends
 
 The engines do not share data. To keep using a Memgraph graph you already

@@ -83,6 +83,10 @@ PY_TYPING_UNION = "Union"
 # The first parameter of a method that names the instance or class; a
 # signature change keeps it in place and never remaps it.
 PY_RECEIVER_NAMES = frozenset({"self", "cls"})
+# A method reached through the class rather than an instance passes its
+# receiver explicitly: `type(obj).f(obj, a)`, `obj.__class__.f(obj, a)`.
+PY_TYPE_BUILTIN = "type"
+PY_CLASS_ATTRIBUTE = "__class__"
 TS_PY_SUBSCRIPT = "subscript"
 # The `subscript` node's index field (`os.environ["K"]` -> the `"K"` string).
 TS_PY_FIELD_SUBSCRIPT = "subscript"
@@ -470,3 +474,50 @@ PY_SINGLE_QUOTE = "'"
 PY_AST_EVAL_MODE = "eval"
 PY_TYPING_LITERAL = "Literal"
 PY_TYPING_ANNOTATED = "Annotated"
+
+# The Python scope walks (parsers/py/ast_analyzer.py), which the Rust tree
+# bridge applies too (native_trees.rules).
+# The def, class or module whose body a node sits in directly.
+PY_SCOPE_TYPES = frozenset(
+    {TS_PY_FUNCTION_DEFINITION, TS_PY_CLASS_DEFINITION, TS_PY_MODULE}
+)
+# Target shapes that bind plain names, and so are descended into for them:
+# `a, (b, c)`, `[a, b]`, `a, *rest`, and a with statement's `as` target,
+# which tree-sitter parses as a `tuple` / `list` EXPRESSION, not a pattern.
+# An attribute or subscript target (`self.x = ...`, `p[0] = ...`) binds no
+# local.
+PY_BINDING_PATTERN_TYPES = PY_UNPACKING_TARGET_TYPES | {
+    TS_PY_LIST_SPLAT_PATTERN,
+    TS_PY_AS_PATTERN_TARGET,
+    TS_PY_TUPLE,
+    TS_PY_LIST,
+}
+# Statements whose `left` field is the target they bind.
+PY_LEFT_BINDERS = frozenset(
+    {TS_PY_ASSIGNMENT, TS_PY_AUGMENTED_ASSIGNMENT, TS_PY_FOR_STATEMENT}
+)
+# Nodes whose `name` field is the one identifier they bind: a walrus, and a
+# def or class, whose NAME is the enclosing body's while its body is not.
+PY_NAME_BINDERS = frozenset(
+    {TS_PY_NAMED_EXPRESSION, TS_PY_FUNCTION_DEFINITION, TS_PY_CLASS_DEFINITION}
+)
+PY_IMPORT_TYPES = frozenset({TS_PY_IMPORT_STATEMENT, TS_PY_IMPORT_FROM_STATEMENT})
+# A body of its own: what is bound inside it is not the enclosing body's.
+PY_NESTED_SCOPE_TYPES = frozenset(
+    {TS_PY_FUNCTION_DEFINITION, TS_PY_CLASS_DEFINITION, TS_PY_LAMBDA}
+)
+PY_DECLARATION_TYPES = frozenset({TS_PY_GLOBAL_STATEMENT, TS_PY_NONLOCAL_STATEMENT})
+# A comprehension is a scope of its own; a lambda is one too, but unlike a
+# def its calls are the enclosing function's (issue #2666).
+PY_COMPREHENSION_TYPES = frozenset(
+    {
+        TS_PY_LIST_COMPREHENSION,
+        TS_PY_SET_COMPREHENSION,
+        TS_PY_DICTIONARY_COMPREHENSION,
+        TS_PY_GENERATOR_EXPRESSION,
+    }
+)
+# Trees whose scope walks stay cached (`ast_analyzer.scope_facts`). A cached
+# tree stays alive outside the AST cache's memory cap, so the cache holds a
+# few trees, all of whose scopes it keeps, rather than a number of scopes.
+PY_SCOPE_CACHE_TREES = 8
