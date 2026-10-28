@@ -508,10 +508,6 @@ Provide only the Cypher query.
 """
 
 
-# Backwards-compatible default (no project scope injected)
-CYPHER_SYSTEM_PROMPT = build_cypher_system_prompt()
-
-
 def build_cypher_repair_request(question: str, failed_query: str, error: str) -> str:
     return (
         f"{question}\n\n"
@@ -607,10 +603,6 @@ You are a Neo4j Cypher query generator. You ONLY respond with a valid Cypher que
     {CYPHER_EXAMPLE_PROJECT_SCOPED}
     ```
 """
-
-
-# Backwards-compatible default (no project scope injected)
-LOCAL_CYPHER_SYSTEM_PROMPT = build_local_cypher_system_prompt()
 
 
 OPTIMIZATION_PROMPT = """
