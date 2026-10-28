@@ -25,6 +25,8 @@ from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.language_spec import LANGUAGE_SPECS, get_language_for_extension
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers import native_trees
+from codebase_rag.parsers.py.ast_analyzer import clear_scope_facts
 from codebase_rag.types_defs import GraphNodeRecord, GraphRelRecord
 
 if TYPE_CHECKING:
@@ -171,6 +173,21 @@ def _fail_on_swallowed_pass_errors(
 
 def assert_no_pass_failures(failures: list[str]) -> None:
     assert not failures, "a per-file pass failed:\n" + "\n".join(failures)
+
+
+@pytest.fixture(params=[True, False], ids=["rust_scopes", "python_scopes"])
+def both_scope_walks(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Generator[None, None, None]:
+    """Runs a test once on the Rust scope walks and once on their Python
+    twins (issue #3473), so each behaviour the walks carry holds on both. A
+    build without the walks skips the Rust run."""
+    if request.param and native_trees.scope_bridge() is None:
+        pytest.skip("cgr_graph_rs without the scope walks is installed")
+    monkeypatch.setattr(native_trees, "ENABLED", request.param)
+    clear_scope_facts()
+    yield
+    clear_scope_facts()
 
 
 @pytest.fixture(autouse=True)

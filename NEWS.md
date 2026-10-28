@@ -11,8 +11,13 @@ the README. The release workflow prepends feature entries via
 (dropping non-feature themes), and moves the marker below the block it
 inserted; hand edits remain welcome between releases and render too.
 
-- **SBOM**: CycloneDX SBOM and Docker image attestation published with each release.
+- **Security Enhancements**: Incorporates an OSS Scanner build image and threat model.
+- **Data Export**: Ensures all node properties within the graph are exported.
+- **SQL Fixes**: Addresses several SQL-related issues including grammar errors and dead-code roots.
+- **Rust Fixes**: Improves indexing of methods and handling of types in Rust code.
+- **Build Fixes**: Repairs build issues related to eMudhra root certificates and distrusted components.
 <!-- latest-release-end -->
+- **SBOM**: CycloneDX SBOM and Docker image attestation published with each release.
 - **Vector Store**: Default to the SQLite vector store.
 - **Docker**: No longer starts Docker without embeddings.
 - **Feature**: Added support for a new feature.
