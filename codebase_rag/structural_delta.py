@@ -1249,9 +1249,12 @@ class _AfterBindings:
         # A Python module's source says which of its definitions run: the
         # graph also holds a `def` under `if TYPE_CHECKING:`, which binds
         # nothing at run time.
-        if (names is None and qn in definitions) or (
-            names is not None and _binds_itself(names, name, for_callers)
-        ):
+        defined = (
+            qn in definitions
+            if names is None
+            else _binds_itself(names, name, for_callers)
+        )
+        if defined:
             return True
         own = [
             binding
@@ -1419,25 +1422,32 @@ def _js_exports(text: str, language: cs.SupportedLanguage) -> _JsExports:
         if _has_type_token(statement):
             type_only.add((*at, None))
             continue
-        exports = statement.type == cs.TS_EXPORT_STATEMENT
-        if exports:
+        if statement.type == cs.TS_EXPORT_STATEMENT:
             starts.add(at)
-        reexports = statement.child_by_field_name(cs.FIELD_SOURCE) is not None
-        for specifier in _js_specifiers(statement):
-            name = _field_text(specifier, cs.FIELD_NAME)
-            alias = _field_text(specifier, cs.FIELD_ALIAS)
-            # A comment between the braces has no name and is skipped.
-            if not name:
-                continue
-            if _has_type_token(specifier):
-                type_only.add((*at, alias or name))
-            elif exports and not reexports:
-                local[alias or name] = name
+        # Only an `export { ... }` without `from` shares the module's own
+        # bindings: an import, like a re-export, always names its source.
+        shares_own = statement.child_by_field_name(cs.FIELD_SOURCE) is None
+        for name, bound, erased in _js_specifiers(statement):
+            if erased:
+                type_only.add((*at, bound))
+            elif shares_own:
+                local[bound] = name
     return _JsExports(frozenset(starts), frozenset(type_only), local)
 
 
-def _js_specifiers(statement: Node) -> Iterator[Node]:
-    """The `{ ... }` specifiers of an import or export statement."""
+def _js_specifiers(statement: Node) -> Iterator[tuple[str, str, bool]]:
+    """(name, name bound, type-only) for each `{ ... }` specifier of a statement.
+
+    A comment between the braces has no name and is skipped.
+    """
+    for specifier in _js_specifier_nodes(statement):
+        name = _field_text(specifier, cs.FIELD_NAME)
+        if name:
+            bound = _field_text(specifier, cs.FIELD_ALIAS) or name
+            yield name, bound, _has_type_token(specifier)
+
+
+def _js_specifier_nodes(statement: Node) -> Iterator[Node]:
     for child in statement.named_children:
         if child.type == cs.TS_EXPORT_CLAUSE:
             yield from child.named_children
