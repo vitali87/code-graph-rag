@@ -1049,7 +1049,9 @@ class DefinitionProcessor(
             cs.NodeLabel.EXTERNAL_PACKAGE, {cs.KEY_NAME: dep_name}
         )
 
-        rel_properties = {cs.KEY_VERSION_SPEC: dep_spec} if dep_spec else {}
+        rel_properties: PropertyDict = (
+            {cs.KEY_VERSION_SPEC: dep_spec} if dep_spec else {}
+        )
         if properties:
             rel_properties |= properties
 
