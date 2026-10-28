@@ -13,15 +13,47 @@ manifests, because field semantics may differ between schema versions.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import NamedTuple, TypedDict
+
+from google.protobuf.message import Message
 
 import codec.schema_pb2 as pb
 
 from .. import constants as cs
 from .provenance import MANIFEST_FILE, _coverage_from_nodes
 
-type JsonDict = dict[str, Any]
+# One node's or relationship's properties: protobuf scalars and string lists.
+type Fields = dict[str, object]
+
+
+class ValueChange(TypedDict):
+    old: object
+    new: object
+
+
+# The properties that differ between the two sides, by property name.
+type FieldChanges = dict[str, ValueChange]
+
+
+class EntityDelta(TypedDict):
+    added: list[str]
+    removed: list[str]
+    changed: dict[str, FieldChanges]
+
+
+class CoverageDelta(TypedDict):
+    flow_covered_flips: dict[str, ValueChange]
+    per_language: FieldChanges
+
+
+class GraphDiff(TypedDict):
+    nodes: EntityDelta
+    # Keyed by relationship type.
+    relationships: dict[str, EntityDelta]
+    coverage: CoverageDelta
+
 
 _NODE_FILES = (cs.PROTOBUF_INDEX_FILE, cs.PROTOBUF_NODES_FILE)
 _REL_FILES = (cs.PROTOBUF_INDEX_FILE, cs.PROTOBUF_RELS_FILE)
@@ -80,8 +112,8 @@ def _require_same_schema(old_dir: Path, new_dir: Path) -> None:
         )
 
 
-def _payload_fields(message) -> JsonDict:
-    fields: JsonDict = {}
+def _payload_fields(message: Message) -> Fields:
+    fields: Fields = {}
     # Iterate the DESCRIPTOR, not ListFields(): proto3 implicit-presence
     # scalars (flow_covered=false, start_line=0) are omitted by ListFields,
     # which would report one side of a boolean flip as null instead of its
@@ -115,8 +147,8 @@ def _node_key(node: pb.Node) -> NodeKey | None:
     return NodeKey(kind, identity, path)
 
 
-def _node_map(indexes: list[pb.GraphCodeIndex]) -> dict[NodeKey, JsonDict]:
-    nodes: dict[NodeKey, JsonDict] = {}
+def _node_map(indexes: list[pb.GraphCodeIndex]) -> dict[NodeKey, Fields]:
+    nodes: dict[NodeKey, Fields] = {}
     for index in indexes:
         for node in index.nodes:
             key = _node_key(node)
@@ -153,8 +185,8 @@ _SITE_PROPS = frozenset(
 )
 
 
-def _rel_map(indexes: list[pb.GraphCodeIndex]) -> dict[tuple[str, str, str], JsonDict]:
-    rels: dict[tuple[str, str, str], JsonDict] = {}
+def _rel_map(indexes: list[pb.GraphCodeIndex]) -> dict[tuple[str, str, str], Fields]:
+    rels: dict[tuple[str, str, str], Fields] = {}
     for index in indexes:
         for rel in index.relationships:
             key = (
@@ -167,39 +199,43 @@ def _rel_map(indexes: list[pb.GraphCodeIndex]) -> dict[tuple[str, str, str], Jso
     return rels
 
 
-def _changed_fields(old: JsonDict, new: JsonDict) -> JsonDict:
-    delta: JsonDict = {}
+def _changed_fields(
+    old: Mapping[str, object], new: Mapping[str, object]
+) -> FieldChanges:
+    delta: FieldChanges = {}
     for field in sorted(set(old) | set(new)):
         if old.get(field) != new.get(field):
-            delta[field] = {"old": old.get(field), "new": new.get(field)}
+            delta[field] = ValueChange(old=old.get(field), new=new.get(field))
     return delta
 
 
 def _node_delta(
-    old_nodes: dict[NodeKey, JsonDict], new_nodes: dict[NodeKey, JsonDict]
-) -> JsonDict:
+    old_nodes: dict[NodeKey, Fields], new_nodes: dict[NodeKey, Fields]
+) -> EntityDelta:
     added = sorted(set(new_nodes) - set(old_nodes))
     removed = sorted(set(old_nodes) - set(new_nodes))
-    changed = {}
+    changed: dict[str, FieldChanges] = {}
     for key in sorted(set(old_nodes) & set(new_nodes)):
         delta = _changed_fields(old_nodes[key], new_nodes[key])
         if delta:
             changed["::".join(key)] = delta
-    return {
-        "added": ["::".join(k) for k in added],
-        "removed": ["::".join(k) for k in removed],
-        "changed": changed,
-    }
+    return EntityDelta(
+        added=["::".join(k) for k in added],
+        removed=["::".join(k) for k in removed],
+        changed=changed,
+    )
 
 
 def _rel_delta(
-    old_rels: dict[tuple[str, str, str], JsonDict],
-    new_rels: dict[tuple[str, str, str], JsonDict],
-) -> JsonDict:
-    by_type: dict[str, dict[str, list[str] | JsonDict]] = {}
+    old_rels: dict[tuple[str, str, str], Fields],
+    new_rels: dict[tuple[str, str, str], Fields],
+) -> dict[str, EntityDelta]:
+    by_type: dict[str, EntityDelta] = {}
 
-    def _bucket(rel_type: str) -> dict:
-        return by_type.setdefault(rel_type, {"added": [], "removed": [], "changed": {}})
+    def _bucket(rel_type: str) -> EntityDelta:
+        return by_type.setdefault(
+            rel_type, EntityDelta(added=[], removed=[], changed={})
+        )
 
     for src, rel_type, dst in sorted(set(new_rels) - set(old_rels)):
         _bucket(rel_type)["added"].append(f"{src} -> {dst}")
@@ -215,12 +251,12 @@ def _rel_delta(
 
 def _coverage_delta(
     old_indexes: list[pb.GraphCodeIndex], new_indexes: list[pb.GraphCodeIndex]
-) -> JsonDict:
+) -> CoverageDelta:
     old_nodes = [n for i in old_indexes for n in i.nodes]
     new_nodes = [n for i in new_indexes for n in i.nodes]
     old_cov = _coverage_from_nodes(old_nodes)
     new_cov = _coverage_from_nodes(new_nodes)
-    flips = {}
+    flips: dict[str, ValueChange] = {}
     old_flow = {
         _node_key(n): n.module.flow_covered
         for n in old_nodes
@@ -235,31 +271,30 @@ def _coverage_delta(
             and key in old_flow
             and old_flow[key] != n.module.flow_covered
         ):
-            flips["::".join(key)] = {
-                "old": old_flow[key],
-                "new": n.module.flow_covered,
-            }
-    return {
-        "flow_covered_flips": flips,
-        "per_language": _changed_fields(old_cov, new_cov),
-    }
+            flips["::".join(key)] = ValueChange(
+                old=old_flow[key], new=n.module.flow_covered
+            )
+    return CoverageDelta(
+        flow_covered_flips=flips,
+        per_language=_changed_fields(old_cov, new_cov),
+    )
 
 
-def diff_indexes(old_dir: Path, new_dir: Path) -> JsonDict:
+def diff_indexes(old_dir: Path, new_dir: Path) -> GraphDiff:
     """The structural delta between two canonical exports, per category."""
     _require_same_schema(old_dir, new_dir)
     old_nodes_idx = _load_indexes(old_dir, _NODE_FILES)
     new_nodes_idx = _load_indexes(new_dir, _NODE_FILES)
     old_rels_idx = _load_indexes(old_dir, _REL_FILES)
     new_rels_idx = _load_indexes(new_dir, _REL_FILES)
-    return {
-        "nodes": _node_delta(_node_map(old_nodes_idx), _node_map(new_nodes_idx)),
-        "relationships": _rel_delta(_rel_map(old_rels_idx), _rel_map(new_rels_idx)),
-        "coverage": _coverage_delta(old_nodes_idx, new_nodes_idx),
-    }
+    return GraphDiff(
+        nodes=_node_delta(_node_map(old_nodes_idx), _node_map(new_nodes_idx)),
+        relationships=_rel_delta(_rel_map(old_rels_idx), _rel_map(new_rels_idx)),
+        coverage=_coverage_delta(old_nodes_idx, new_nodes_idx),
+    )
 
 
-def diff_is_empty(diff: JsonDict) -> bool:
+def diff_is_empty(diff: GraphDiff) -> bool:
     nodes = diff["nodes"]
     coverage = diff["coverage"]
     return (
