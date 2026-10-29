@@ -802,6 +802,7 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
     place: a stale alias kept resolving a name the file no longer binds
     (Copilot, PR #2040).
     """
+    from codebase_rag.parsers.csharp.imports import CSharpImporter
     from codebase_rag.parsers.import_processor import ImportProcessor
     from codebase_rag.parsers.java.imports import JavaImporter
     from codebase_rag.parsers.js_ts.imports import JsTsImporter
@@ -821,8 +822,9 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
     processor.dart_exposed_libraries = {"m": ["m.lib"]}
     processor._cpp_shadowed_include_targets = set()
     processor._cpp_declaration_mappings = set()
-    processor.csharp_static_imports = {}
-    processor.csharp_global_static_imports = {}
+    processor.csharp = object.__new__(CSharpImporter)
+    processor.csharp.csharp_static_imports = {}
+    processor.csharp.csharp_global_static_imports = {}
     processor.scala = object.__new__(ScalaImporter)
     processor.scala._scala_imports = {}
     processor.scala._scala_block_imports = {}

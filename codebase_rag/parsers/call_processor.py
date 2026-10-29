@@ -10021,7 +10021,7 @@ class CallProcessor:
             return
         target_module = module_qn_for_entity(entity_qn, self.module_qn_to_file_path)
         if target_module is not None and target_module != module_qn:
-            self._resolver.import_processor.record_resolved_cross_module_use(
+            self._resolver.import_processor.csharp.record_resolved_cross_module_use(
                 module_qn, target_module
             )
 

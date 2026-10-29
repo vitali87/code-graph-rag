@@ -209,7 +209,7 @@ public class RemoteStorageProvider
     processor.defer_import_edge(
         installer_qn, "Acme.Core.PlatformLib", SupportedLanguage.CSHARP
     )
-    processor.record_resolved_cross_module_use(installer_qn, provider_qn)
+    processor.csharp.record_resolved_cross_module_use(installer_qn, provider_qn)
     emitted = processor.flush_deferred_import_edges(
         {
             installer_qn: str(csharp_project / "HostApp" / "Installer.cs"),

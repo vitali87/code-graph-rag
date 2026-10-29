@@ -4172,7 +4172,7 @@ class CallResolver:
         import_map = self.import_processor.import_mapping.get(module_qn, {})
         namespaces = {
             namespace
-            for module_namespaces in self.import_processor.csharp_module_namespaces.values()
+            for module_namespaces in self.import_processor.csharp.csharp_module_namespaces.values()
             for namespace in module_namespaces
         }
         for cut in range(len(parts), 0, -1):
@@ -5168,7 +5168,7 @@ class CallResolver:
         .
         """
         declared_here = sorted(
-            self.import_processor.csharp_module_namespaces.get(module_qn, {}),
+            self.import_processor.csharp.csharp_module_namespaces.get(module_qn, {}),
             key=len,
         )
         if not declared_here or not all(

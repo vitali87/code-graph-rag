@@ -949,7 +949,7 @@ class CSharpTypeInferenceEngine:
         # written inside `namespace N { ... }` is in scope only there, which
         # the caller's qn shows: it embeds the namespace after the module qn
         # (PR #2036).
-        imports = self.import_processor
+        imports = self.import_processor.csharp
         scope = [
             (path, module_qn)
             for namespace, path in imports.csharp_static_imports.get(module_qn, ())

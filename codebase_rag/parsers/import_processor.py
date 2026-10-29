@@ -37,8 +37,8 @@ from ..utils.path_utils import (
     module_extension,
     should_skip_rel_file,
 )
-from ..utils.source_encoding import grammar_bytes
 from .cpp.qn import build_module_qn_map
+from .csharp.imports import CSharpImporter
 from .dart import discover_dart_packages
 from .dart import utils as dart_utils
 from .go import discover_go_module_paths, resolve_go_import_path
@@ -283,8 +283,6 @@ class ImportProcessor:
         "exclude_paths",
         "unignore_paths",
         "import_mapping",
-        "csharp_static_imports",
-        "csharp_global_static_imports",
         "commonjs_direct_exports",
         "conditional_imports",
         "python_import_rebinds",
@@ -305,9 +303,6 @@ class ImportProcessor:
         "_import_sites",
         "_import_site_owners",
         "_import_site_writers",
-        "_inferred_module_imports",
-        "csharp_module_namespaces",
-        "_csharp_module_identifiers",
         "_cpp_declaration_mappings",
         "_cpp_shadowed_include_targets",
         "_dart_packages",
@@ -315,6 +310,7 @@ class ImportProcessor:
         "js_ts",
         "java",
         "scala",
+        "csharp",
         "dart_prefix_shadows",
         "dart_import_aliases",
         "dart_exposed_libraries",
@@ -339,17 +335,6 @@ class ImportProcessor:
         self.exclude_paths = exclude_paths
         self.unignore_paths = unignore_paths
         self.import_mapping: dict[str, dict[str, str]] = {}
-        # `using static N.T;` brings T's MEMBERS into bare-call scope, which
-        # import_mapping cannot express: it maps the TYPE name (T -> N.T), so a
-        # bare `Member()` has no entry to resolve through. Module qn -> the set
-        # of (enclosing namespace, statically imported type path), probed as an
-        # extra bare-call scope (issue #2005). The namespace is "" for a
-        # file-level directive; one inside `namespace N { ... }` scopes only N.
-        self.csharp_static_imports: dict[str, set[tuple[str, str]]] = {}
-        # `global using static N.T;` is in scope in EVERY file of the
-        # compilation. Keyed by the DECLARING module, so a re-parse or a
-        # removal of that file drops exactly its own directives.
-        self.csharp_global_static_imports: dict[str, set[str]] = {}
         # CommonJS modules whose ENTIRE export is one function
         # (`module.exports = function (...) {...}`): module qn -> the
         # exported function's qn, so a whole-module require alias called
@@ -399,9 +384,6 @@ class ImportProcessor:
         # re-parse retracts only entries it still owns: a fn-local inline mod
         # in src/a.rs and src/a/b/mod.rs can share a scope key and a name.
         self._import_site_writers: dict[tuple[str, str], str] = {}
-        self._inferred_module_imports: dict[str, set[str]] = {}
-        self.csharp_module_namespaces: dict[str, dict[str, set[str]]] = {}
-        self._csharp_module_identifiers: dict[str, frozenset[str]] = {}
         # Rust's `use` parsing, its Cargo crate, workspace and target layout,
         # and the per-scope maps the call resolver reads: the importer writes
         # the import map and sites above and queues its edges through this
@@ -426,6 +408,16 @@ class ImportProcessor:
         # through once every module is known: the importer writes the import
         # map and reads the sites above, and queues its edges through this
         # processor, whose flush lands the project's own on their modules.
+        # C#'s `using` parsing, each file's declared namespaces and the
+        # evidence that pins a namespace `using` to the modules it uses: the
+        # importer writes the import map above and records its sites and
+        # requeued edges through this processor, whose flush emits them.
+        self.csharp = CSharpImporter(
+            self,
+            repo_path=repo_path,
+            project_name=project_name,
+            import_mapping=self.import_mapping,
+        )
         self.scala = ScalaImporter(
             self,
             repo_path=repo_path,
@@ -573,8 +565,8 @@ class ImportProcessor:
         """
         self.import_mapping[module_qn] = {}
         self.scala.drop_module_imports(module_qn)
-        self.csharp_static_imports.pop(module_qn, None)
-        self.csharp_global_static_imports.pop(module_qn, None)
+        self.csharp.csharp_static_imports.pop(module_qn, None)
+        self.csharp.csharp_global_static_imports.pop(module_qn, None)
         self.java.java_static_imports.pop(module_qn, None)
         self._julia_scope_map_keys.pop(module_qn, None)
         # Cleared with the mapping it shadows: these entries ADD edges, so a
@@ -704,16 +696,9 @@ class ImportProcessor:
         lang_config = queries[language]["config"]
 
         self._clear_module_import_state(module_qn)
-        # A watch-mode re-parse must not carry references the edited file no
-        # longer makes (issue #1347).
-        self._inferred_module_imports.pop(module_qn, None)
+        self.csharp.drop_resolved_cross_module_uses(module_qn)
         if language == cs.SupportedLanguage.CSHARP:
-            self.csharp_module_namespaces[module_qn] = self._collect_csharp_namespaces(
-                root_node
-            )
-            self._csharp_module_identifiers[module_qn] = (
-                self._collect_csharp_identifiers(root_node)
-            )
+            self.csharp.scan_module(module_qn, root_node)
         elif language == cs.SupportedLanguage.SCALA:
             self.scala.record_package_scan(module_qn, root_node)
         # A re-parsed module that no longer directly exports one function
@@ -772,7 +757,7 @@ class ImportProcessor:
                 case cs.SupportedLanguage.PHP:
                     self._parse_php_imports(captures, module_qn, root_node)
                 case cs.SupportedLanguage.CSHARP:
-                    self._parse_csharp_imports(captures, module_qn)
+                    self.csharp.parse_imports(captures, module_qn)
                 case cs.SupportedLanguage.DART:
                     self._parse_dart_imports(captures, module_qn, root_node)
                 case cs.SupportedLanguage.SCALA:
@@ -870,158 +855,12 @@ class ImportProcessor:
             )
         )
 
-    _CSHARP_TYPE_DECLARATIONS = (
-        cs.TS_CSHARP_CLASS_DECLARATION,
-        cs.TS_CSHARP_STRUCT_DECLARATION,
-        cs.TS_CSHARP_RECORD_DECLARATION,
-        cs.TS_CSHARP_INTERFACE_DECLARATION,
-        cs.TS_CSHARP_ENUM_DECLARATION,
-        cs.TS_CSHARP_DELEGATE_DECLARATION,
-    )
-
-    def _csharp_declared_type_names(self, container: Node) -> set[str]:
-        names: set[str] = set()
-        for child in container.named_children:
-            if child.type not in self._CSHARP_TYPE_DECLARATIONS:
-                continue
-            name_node = child.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
-            if name_node is not None and (name := safe_decode_with_fallback(name_node)):
-                names.add(name)
-        return names
-
-    def _walk_csharp_namespaces(
-        self, container: Node, prefix: str, found: dict[str, set[str]]
-    ) -> None:
-        for child in container.named_children:
-            if child.type not in (
-                cs.TS_CSHARP_NAMESPACE_DECLARATION,
-                cs.TS_CSHARP_FILE_SCOPED_NAMESPACE_DECLARATION,
-            ):
-                continue
-            name_node = child.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
-            if name_node is None or not (name := safe_decode_with_fallback(name_node)):
-                continue
-            full = f"{prefix}{cs.SEPARATOR_DOT}{name}" if prefix else name
-            if child.type == cs.TS_CSHARP_FILE_SCOPED_NAMESPACE_DECLARATION:
-                found.setdefault(full, set()).update(
-                    self._csharp_declared_type_names(container)
-                )
-                continue
-            body = child.child_by_field_name(cs.FIELD_BODY)
-            if body is None:
-                found.setdefault(full, set())
-                continue
-            found.setdefault(full, set()).update(self._csharp_declared_type_names(body))
-            self._walk_csharp_namespaces(body, full, found)
-
-    def _collect_csharp_namespaces(self, root_node: Node) -> dict[str, set[str]]:
-        # Namespaces appear only at the top level and inside namespace bodies,
-        # so the walk prunes into nothing else; nesting composes dotted names.
-        # Each namespace carries the TYPE NAMES it declares in this file: the
-        # name-level evidence that pins a type-only `using` to the module.
-        found: dict[str, set[str]] = {}
-        self._walk_csharp_namespaces(root_node, "", found)
-        return found
-
-    @staticmethod
-    def _csharp_field_of(node: Node) -> str | None:
-        parent = node.parent
-        if parent is None:
-            return None
-        for index, child in enumerate(parent.children):
-            if child.id == node.id:
-                return parent.field_name_for_child(index)
-        return None
-
-    def _collect_csharp_identifiers(self, root_node: Node) -> frozenset[str]:
-        # Three tiers of identifier occurrences: TYPE-POSITION mentions are
-        # definitive references (a namesake property, `Widget Widget`, is
-        # idiomatic C# and must keep its evidence); NAME-POSITION identifiers
-        # declare rather than reference; everything else is a plain mention
-        # whose spelling is withdrawn when the file also declares it, because
-        # such a mention binds to the local declaration.
-        type_positions: set[str] = set()
-        mentions: set[str] = set()
-        declared: set[str] = set()
-        stack = [root_node]
-        while stack:
-            node = stack.pop()
-            stack.extend(node.children)
-            if node.type != cs.TS_CSHARP_IDENTIFIER:
-                continue
-            text = safe_decode_text(node)
-            if not text:
-                continue
-            field = self._csharp_field_of(node)
-            parent_type = node.parent.type if node.parent is not None else None
-            if field == cs.TS_CSHARP_FIELD_TYPE or parent_type in (
-                cs.TS_CSHARP_BASE_LIST,
-                cs.TS_CSHARP_TYPE_ARGUMENT_LIST,
-            ):
-                type_positions.add(text)
-            elif field == cs.TS_CSHARP_FIELD_NAME:
-                declared.add(text)
-            else:
-                mentions.add(text)
-        return frozenset(type_positions | (mentions - declared))
-
     def drop_cpp_module_import_state(self, module_qn: str) -> None:
         """Retract a deleted C/C++ module without leaving an empty import mapping."""
         self._clear_module_import_state(module_qn)
         self.import_mapping.pop(module_qn, None)
         self._cpp_module_qn_map = None
         self._cpp_qn_to_rel.clear()
-
-    def drop_csharp_module_import_state(self, module_qn: str) -> None:
-        # A deleted C# file must stop declaring its namespaces, contributing
-        # identifier evidence, and queueing its using entries, or the requeue
-        # would rebuild edges a clean rebuild of the same tree never emits.
-        self.csharp_module_namespaces.pop(module_qn, None)
-        self._csharp_module_identifiers.pop(module_qn, None)
-        self._inferred_module_imports.pop(module_qn, None)
-        self.import_mapping.pop(module_qn, None)
-        self.csharp_static_imports.pop(module_qn, None)
-        self.csharp_global_static_imports.pop(module_qn, None)
-
-    def requeue_csharp_import_edges(self) -> None:
-        """Re-queue every parsed C# module's using entries for a fresh flush.
-
-        A watched edit to a PROVIDER file deletes and recreates its Module
-        node, severing edges from unchanged importers, whose deferred entries
-        were consumed by an earlier flush. The persistent import mapping still
-        holds their using directives, and re-emission is idempotent MERGEs
-        (issue #1347).
-        """
-        for module_qn in self.csharp_module_namespaces:
-            for imported_path in self.import_mapping.get(module_qn, {}).values():
-                self.defer_import_edge(
-                    module_qn, imported_path, cs.SupportedLanguage.CSHARP
-                )
-
-    def _csharp_namespace_modules(
-        self, known_module_qns: set[str]
-    ) -> dict[str, dict[str, set[str]]]:
-        # namespace -> {declaring module qn -> type names it declares there}.
-        # C# namespaces need not mirror directory names, so path-based
-        # guessing cannot answer "is this internal"; the per-file scans can.
-        namespace_modules: dict[str, dict[str, set[str]]] = {}
-        for module_qn, namespaces in self.csharp_module_namespaces.items():
-            if module_qn not in known_module_qns:
-                continue
-            for namespace, declared_types in namespaces.items():
-                namespace_modules.setdefault(namespace, {})[module_qn] = declared_types
-        return namespace_modules
-
-    def recover_unparsed_csharp_state(self, known_module_paths: dict[str, str]) -> None:
-        """Rebuild the per-file C# scans for modules this run did not parse.
-
-        An incremental run re-parses only CHANGED files, so an unchanged
-        file's declared namespaces, identifiers and `global using static`
-        directives are recovered here from a targeted parse of its source.
-        Run before Pass 3: a global static import in an unchanged file scopes
-        the bare calls of every re-parsed one (PR #2036).
-        """
-        self._recover_unparsed_csharp_namespaces(known_module_paths)
 
     def restore_unparsed_imports(
         self,
@@ -1047,43 +886,6 @@ class ImportProcessor:
             self.rust.finalise_rust_function_scope_uses(module_qn, function_locations)
             self.rust.retract_rust_mod_scope_uses(module_qn)
 
-    def _recover_unparsed_csharp_namespaces(
-        self, known_module_paths: dict[str, str]
-    ) -> None:
-        pending = [
-            (module_qn, path)
-            for module_qn, path in known_module_paths.items()
-            if module_qn not in self.csharp_module_namespaces
-            and str(path).endswith(cs.EXT_CS)
-        ]
-        if not pending:
-            return
-        from ..parser_loader import load_parsers
-
-        parsers, _queries = load_parsers()
-        if cs.SupportedLanguage.CSHARP not in parsers:
-            return
-        parser = parsers[cs.SupportedLanguage.CSHARP]
-        for module_qn, path in pending:
-            try:
-                source = Path(path).read_bytes()
-            except OSError:
-                self.csharp_module_namespaces[module_qn] = {}
-                self._csharp_module_identifiers[module_qn] = frozenset()
-                continue
-            # Parsed as the indexer parses it: a UTF-16 file's raw bytes read
-            # as no declarations at all (#3153).
-            tree = parser.parse(
-                grammar_bytes(source, cs.SupportedLanguage.CSHARP, Path(path))
-            )
-            self.csharp_module_namespaces[module_qn] = self._collect_csharp_namespaces(
-                tree.root_node
-            )
-            self._csharp_module_identifiers[module_qn] = (
-                self._collect_csharp_identifiers(tree.root_node)
-            )
-            self._collect_csharp_global_static_imports(tree.root_node, module_qn)
-
     def _emit_csharp_internal_imports(
         self,
         entry: DeferredImportEdge,
@@ -1101,26 +903,8 @@ class ImportProcessor:
         """
         if self.ingestor is None:
             return 0
-        inferred = self._inferred_module_imports.get(entry.module_qn, set())
-        # Names the importer DECLARES itself are not evidence: an unqualified
-        # mention binds to the local type, not the imported namespace's.
-        own_types: set[str] = set()
-        for own_declared in self.csharp_module_namespaces.get(
-            entry.module_qn, {}
-        ).values():
-            own_types.update(own_declared)
-        used = (
-            self._csharp_module_identifiers.get(entry.module_qn, frozenset())
-            - own_types
-        )
-        targets = {
-            target
-            for target, declared_types in declaring.items()
-            if target != entry.module_qn
-            and (target in inferred or not used.isdisjoint(declared_types))
-        }
         emitted = 0
-        for target_module_qn in sorted(targets):
+        for target_module_qn in self.csharp.using_targets(entry.module_qn, declaring):
             if target_module_qn not in known_module_qns:
                 continue
             self._emit_import_edge(entry, cs.NodeLabel.MODULE, target_module_qn)
@@ -1142,21 +926,6 @@ class ImportProcessor:
             self.ingestor.ensure_relationship_batch(
                 from_spec, cs.RelationshipType.IMPORTS, to_spec
             )
-
-    def record_resolved_cross_module_use(
-        self, importing_module_qn: str, target_module_qn: str
-    ) -> None:
-        """Remember that a resolved call/reference/inherit crossed modules.
-
-        A C# `using` names a NAMESPACE, not a file, so the import edge can
-        only be pinned to real Module nodes by observing which modules the
-        importing file actually resolved entities from (issue #1347).
-        """
-        if importing_module_qn == target_module_qn:
-            return
-        self._inferred_module_imports.setdefault(importing_module_qn, set()).add(
-            target_module_qn
-        )
 
     def drop_deferred_import_edges(
         self, module_qns: set[str], language: cs.SupportedLanguage
@@ -1197,8 +966,10 @@ class ImportProcessor:
         # modules recover their namespaces here from a targeted parse of
         # their source, or the internal detection would silently fail in
         # watch mode and resurrect the dead-end ExternalModule.
-        self._recover_unparsed_csharp_namespaces(known_module_paths)
-        csharp_namespace_modules = self._csharp_namespace_modules(known_module_qns)
+        self.csharp.recover_unparsed_csharp_state(known_module_paths)
+        csharp_namespace_modules = self.csharp.csharp_namespace_modules(
+            known_module_qns
+        )
         emitted = 0
         for entry in deferred:
             # `from pkg.transport import TTransport` is ambiguous in
@@ -1932,104 +1703,6 @@ class ImportProcessor:
         if separator and js_ts_module_qn(module_qn, module_paths) is not None:
             return self.js_ts.follow_js_reexports(qn, module_paths, function_registry)
         return follow_reexports(qn, self.import_mapping, function_registry)
-
-    @staticmethod
-    def _csharp_using_target(import_node: Node) -> tuple[str, Node | None] | None:
-        # `using Alias = Target;` marks the alias with a `name` field; the
-        # imported path is then the OTHER name node. Plain/static/global
-        # forms have no `name` field, so the sole name node is the path.
-        name_types = (cs.TS_CSHARP_QUALIFIED_NAME, cs.TS_CSHARP_IDENTIFIER)
-        alias_node = import_node.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
-        target = None
-        for child in import_node.children:
-            if child.type in name_types and child != alias_node:
-                target = child
-        if target is None:
-            return None
-        imported_path = safe_decode_with_fallback(target)
-        if not imported_path:
-            return None
-        return imported_path, alias_node
-
-    def _record_csharp_static_import(
-        self,
-        import_node: Node,
-        module_qn: str,
-        imported_path: str,
-        alias_node: Node | None,
-        global_only: bool = False,
-    ) -> None:
-        # `using static` is marked by a literal `static` child; an alias
-        # form (`using static X = N.T;`) is not a member import.
-        modifiers = {child.type for child in import_node.children}
-        if alias_node is not None or cs.TS_CSHARP_STATIC not in modifiers:
-            return
-        is_global = cs.TS_CSHARP_GLOBAL in modifiers
-        if global_only and not is_global:
-            return
-        if is_global:
-            self.csharp_global_static_imports.setdefault(module_qn, set()).add(
-                imported_path
-            )
-        else:
-            self.csharp_static_imports.setdefault(module_qn, set()).add(
-                (self._csharp_enclosing_namespace(import_node), imported_path)
-            )
-
-    @staticmethod
-    def _csharp_enclosing_namespace(node: Node) -> str:
-        # The dotted name of the `namespace N { ... }` blocks around `node`,
-        # outermost first. A file-scoped `namespace N;` covers the whole file,
-        # so a directive under it is file-level and is not counted.
-        parts: list[str] = []
-        parent = node.parent
-        while parent is not None:
-            if parent.type == cs.TS_CSHARP_NAMESPACE_DECLARATION:
-                name = safe_decode_with_fallback(
-                    parent.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
-                )
-                if name:
-                    parts.append(name)
-            parent = parent.parent
-        return cs.SEPARATOR_DOT.join(reversed(parts))
-
-    def _collect_csharp_global_static_imports(self, root: Node, module_qn: str) -> None:
-        # A `global using` must precede every other member of the file, so
-        # the directives are direct children of the compilation unit.
-        for import_node in root.children:
-            if import_node.type != cs.TS_CSHARP_USING_DIRECTIVE:
-                continue
-            if parsed := self._csharp_using_target(import_node):
-                imported_path, alias_node = parsed
-                self._record_csharp_static_import(
-                    import_node, module_qn, imported_path, alias_node, global_only=True
-                )
-
-    def _parse_csharp_imports(
-        self, captures: dict[str, list[Node]], module_qn: str
-    ) -> None:
-        for import_node in captures.get(cs.CAPTURE_IMPORT, []):
-            if import_node.type != cs.TS_CSHARP_USING_DIRECTIVE:
-                continue
-            parsed = self._csharp_using_target(import_node)
-            if parsed is None:
-                continue
-            imported_path, alias_node = parsed
-            if alias_node is not None and alias_node.text:
-                local_name = safe_decode_with_fallback(alias_node)
-            else:
-                local_name = imported_path.split(cs.SEPARATOR_DOT)[-1]
-            self.import_mapping[module_qn][local_name] = imported_path
-            self._record_csharp_static_import(
-                import_node, module_qn, imported_path, alias_node
-            )
-            self._record_import_site(
-                module_qn,
-                local_name,
-                import_node,
-                imported_path.split(cs.SEPARATOR_DOT)[-1],
-            )
-            logger.debug(ls.IMP_CSHARP, name=local_name, path=imported_path)
 
     def reset_julia_path_caches(self) -> None:
         # Same contract as reset_rust_path_caches: the stem and declared-

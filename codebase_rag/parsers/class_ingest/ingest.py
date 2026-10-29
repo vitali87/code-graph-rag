@@ -2028,7 +2028,7 @@ class ClassIngest:
         # module defining it (issue #1347).
         target_module = module_qn_for_entity(parent_qn, self.module_qn_to_file_path)
         if target_module is not None and target_module != entry.module_qn:
-            self.import_processor.record_resolved_cross_module_use(
+            self.import_processor.csharp.record_resolved_cross_module_use(
                 entry.module_qn, target_module
             )
 

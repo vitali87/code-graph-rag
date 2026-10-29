@@ -1782,7 +1782,9 @@ class GraphUpdater:
         if self._run.is_full_build:
             self.factory.call_processor.reset_callable_flow()
         logger.info(ls.PASS_3_CALLS)
-        self.factory.import_processor.recover_unparsed_csharp_state(known_module_paths)
+        self.factory.import_processor.csharp.recover_unparsed_csharp_state(
+            known_module_paths
+        )
         self._process_function_calls()
 
         # IMPORTS flush AFTER Pass 3: a C# namespace import lands on the
@@ -4323,9 +4325,10 @@ class GraphUpdater:
         # (issue #1347).
         if file_path.suffix == cs.EXT_CS:
             qn_to_path = self.factory.definition_processor.module_qn_to_file_path
+            csharp = self.factory.import_processor.csharp
             for qn, path in qn_to_path.items():
                 if path == file_path:
-                    self.factory.import_processor.drop_csharp_module_import_state(qn)
+                    csharp.drop_csharp_module_import_state(qn)
 
     def _span_ownership(
         self,
@@ -7173,12 +7176,14 @@ class GraphUpdater:
         # The re-parsed files' own CALLS edges went with their Module
         # subtrees; a moved use must not serve last pass's cached answer.
         self.factory.call_processor.reset_resolution_caches()
-        self.factory.import_processor.recover_unparsed_csharp_state(known_module_paths)
+        self.factory.import_processor.csharp.recover_unparsed_csharp_state(
+            known_module_paths
+        )
         self._process_function_calls(only=set(reparse.values()))
         # Editing a PROVIDER recreated its Module node and severed the
         # unchanged C# importers' edges (issue #1347).
         import_processor = self.factory.import_processor
-        import_processor.requeue_csharp_import_edges()
+        import_processor.csharp.requeue_csharp_import_edges()
         import_processor.flush_deferred_import_edges(known_module_paths)
         csharp_joins.emit_query_calls(
             self.factory.definition_processor, self.repo_path, self._sink
