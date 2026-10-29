@@ -5,8 +5,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from click.testing import CliRunner
 from loguru import logger
+from typer.testing import CliRunner
 
 from codebase_rag.stack import cli as stack_cli
 from codebase_rag.stack import constants as stack_cs
@@ -334,7 +334,7 @@ class TestDaemonStatusWarns:
             patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
             patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=True),
         ):
-            return _warnings_from(lambda: CliRunner().invoke(stack_cli.status_cmd, []))
+            return _warnings_from(lambda: CliRunner().invoke(stack_cli.cli, ["status"]))
 
     def test_status_reports_public_ports(
         self, stack_home: Path, tmp_path: Path

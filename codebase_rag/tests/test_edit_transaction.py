@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from click.testing import CliRunner
+from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
 from codebase_rag.editing import (

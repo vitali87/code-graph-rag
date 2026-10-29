@@ -6,9 +6,9 @@ import json
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Annotated, NamedTuple
 
-import click
+import typer
 
 from . import cli_help as ch
 from . import constants as cs
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 
 def _emit(payload: object) -> None:
-    click.echo(json.dumps(payload, indent=cs.MCP_JSON_INDENT, sort_keys=True))
+    typer.echo(json.dumps(payload, indent=cs.MCP_JSON_INDENT, sort_keys=True))
 
 
 def _project_and_fetch(
@@ -96,39 +96,50 @@ def _run_query_and_emit(
     # Reported after the connection closes: an exit raised inside it is
     # logged as a failed write with a traceback.
     if refusal is not None:
-        click.secho(refusal.message, fg=cs.Color.RED, err=True)
-        # sys.exit, not click's Exit: the group runs with standalone_mode off
-        # under typer, where click turns its own Exit into a return value and
-        # the status would be lost.
+        typer.secho(refusal.message, fg=cs.Color.RED, err=True)
         sys.exit(refusal.exit_code)
     _emit(result)
 
 
-def _graph_options[F: Callable[..., None]](fn: F) -> F:
-    fn = click.option("--project", "-p", default=None, help=ch.HELP_GRAPH_PROJECT)(fn)
-    return click.option(
+_Project = Annotated[
+    str | None, typer.Option("--project", "-p", help=ch.HELP_GRAPH_PROJECT)
+]
+_RepoPath = Annotated[
+    Path,
+    typer.Option(
         "--repo-path",
-        type=click.Path(exists=True, file_okay=False, path_type=Path),
-        default=Path(cs.MCP_DEFAULT_DIRECTORY),
+        exists=True,
+        file_okay=False,
         show_default=True,
         help=ch.HELP_GRAPH_REPO_PATH,
-    )(fn)
+    ),
+]
+_Depth = Annotated[
+    int,
+    typer.Option(
+        "--depth",
+        min=1,
+        max=cs.GRAPH_QUERY_MAX_DEPTH,
+        show_default=True,
+        help=ch.HELP_GRAPH_DEPTH,
+    ),
+]
+_DEFAULT_REPO = Path(cs.MCP_DEFAULT_DIRECTORY)
 
 
-@click.group(
+cli = typer.Typer(
     help=ch.CMD_GRAPH_GROUP,
     short_help=ch.CMD_GRAPH_GROUP,
     epilog=ch.EPILOG_GRAPH,
     no_args_is_help=True,
+    add_completion=False,
 )
-def cli() -> None:
-    """Group callback: subcommands carry the behaviour."""
 
 
 @cli.command("resolve", help=ch.CMD_GRAPH_RESOLVE, short_help=ch.CMD_GRAPH_RESOLVE)
-@click.argument("target")
-@_graph_options
-def resolve_cmd(target: str, project: str | None, repo_path: Path) -> None:
+def resolve_cmd(
+    target: str, repo_path: _RepoPath = _DEFAULT_REPO, project: _Project = None
+) -> None:
     _run_query_and_emit(
         project, repo_path, lambda f, n: graph_query.resolve_or_refuse(f, n, target)
     )
@@ -137,9 +148,11 @@ def resolve_cmd(target: str, project: str | None, repo_path: Path) -> None:
 @cli.command(
     "definition", help=ch.CMD_GRAPH_DEFINITION, short_help=ch.CMD_GRAPH_DEFINITION
 )
-@click.argument("qualified_name")
-@_graph_options
-def definition_cmd(qualified_name: str, project: str | None, repo_path: Path) -> None:
+def definition_cmd(
+    qualified_name: str,
+    repo_path: _RepoPath = _DEFAULT_REPO,
+    project: _Project = None,
+) -> None:
     _run_query_and_emit(
         project,
         repo_path,
@@ -149,22 +162,12 @@ def definition_cmd(qualified_name: str, project: str | None, repo_path: Path) ->
     )
 
 
-def _depth_option[F: Callable[..., None]](fn: F) -> F:
-    return click.option(
-        "--depth",
-        type=click.IntRange(min=1, max=cs.GRAPH_QUERY_MAX_DEPTH),
-        default=1,
-        show_default=True,
-        help=ch.HELP_GRAPH_DEPTH,
-    )(fn)
-
-
 @cli.command("callers", help=ch.CMD_GRAPH_CALLERS, short_help=ch.CMD_GRAPH_CALLERS)
-@click.argument("qualified_name")
-@_depth_option
-@_graph_options
 def callers_cmd(
-    qualified_name: str, depth: int, project: str | None, repo_path: Path
+    qualified_name: str,
+    depth: _Depth = 1,
+    repo_path: _RepoPath = _DEFAULT_REPO,
+    project: _Project = None,
 ) -> None:
     _run_query_and_emit(
         project,
@@ -175,11 +178,11 @@ def callers_cmd(
 
 
 @cli.command("callees", help=ch.CMD_GRAPH_CALLEES, short_help=ch.CMD_GRAPH_CALLEES)
-@click.argument("qualified_name")
-@_depth_option
-@_graph_options
 def callees_cmd(
-    qualified_name: str, depth: int, project: str | None, repo_path: Path
+    qualified_name: str,
+    depth: _Depth = 1,
+    repo_path: _RepoPath = _DEFAULT_REPO,
+    project: _Project = None,
 ) -> None:
     _run_query_and_emit(
         project,
@@ -192,11 +195,11 @@ def callees_cmd(
 @cli.command(
     "implementors", help=ch.CMD_GRAPH_IMPLEMENTORS, short_help=ch.CMD_GRAPH_IMPLEMENTORS
 )
-@click.argument("qualified_name")
-@_depth_option
-@_graph_options
 def implementors_cmd(
-    qualified_name: str, depth: int, project: str | None, repo_path: Path
+    qualified_name: str,
+    depth: _Depth = 1,
+    repo_path: _RepoPath = _DEFAULT_REPO,
+    project: _Project = None,
 ) -> None:
     _run_query_and_emit(
         project,
@@ -209,11 +212,11 @@ def implementors_cmd(
 @cli.command(
     "overrides", help=ch.CMD_GRAPH_OVERRIDES, short_help=ch.CMD_GRAPH_OVERRIDES
 )
-@click.argument("qualified_name")
-@_depth_option
-@_graph_options
 def overrides_cmd(
-    qualified_name: str, depth: int, project: str | None, repo_path: Path
+    qualified_name: str,
+    depth: _Depth = 1,
+    repo_path: _RepoPath = _DEFAULT_REPO,
+    project: _Project = None,
 ) -> None:
     _run_query_and_emit(
         project,
@@ -226,14 +229,13 @@ def overrides_cmd(
 @cli.command(
     "importers", help=ch.CMD_GRAPH_IMPORTERS, short_help=ch.CMD_GRAPH_IMPORTERS
 )
-@click.argument("module_qualified_name")
-@click.option("--through-reexports", is_flag=True, help=ch.HELP_GRAPH_THROUGH_REEXPORTS)
-@_graph_options
 def importers_cmd(
     module_qualified_name: str,
-    through_reexports: bool,
-    project: str | None,
-    repo_path: Path,
+    through_reexports: bool = typer.Option(
+        False, "--through-reexports", help=ch.HELP_GRAPH_THROUGH_REEXPORTS
+    ),
+    repo_path: _RepoPath = _DEFAULT_REPO,
+    project: _Project = None,
 ) -> None:
     if through_reexports:
         _run_query_and_emit(
@@ -258,10 +260,10 @@ def importers_cmd(
     help=ch.CMD_GRAPH_TESTS_REACHING,
     short_help=ch.CMD_GRAPH_TESTS_REACHING,
 )
-@click.argument("qualified_name")
-@_graph_options
 def tests_reaching_cmd(
-    qualified_name: str, project: str | None, repo_path: Path
+    qualified_name: str,
+    repo_path: _RepoPath = _DEFAULT_REPO,
+    project: _Project = None,
 ) -> None:
     _run_query_and_emit(
         project,

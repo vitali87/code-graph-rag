@@ -135,7 +135,7 @@ def test_help_command_shows_detailed_command_page() -> None:
         ),
         (
             ["workspace", "create", "--help"],
-            "Usage: cgr workspace create [OPTIONS] NAME",
+            "Usage: cgr workspace create [OPTIONS] {name}",
         ),
         (["help", "daemon", "logs"], "Usage: cgr daemon logs [OPTIONS]"),
     ],
@@ -147,13 +147,36 @@ def test_nested_help_preserves_full_command_path(args: list[str], usage: str) ->
     assert usage in result.stdout
 
 
-@pytest.mark.parametrize("group", ["daemon", "language", "workspace"])
-def test_group_help_lists_subcommands(group: str) -> None:
+@pytest.mark.parametrize(
+    ("group", "subcommand"),
+    [("daemon", "logs"), ("language", "add-grammar"), ("workspace", "add-repo")],
+)
+def test_group_help_lists_subcommands(group: str, subcommand: str) -> None:
     result = _RUNNER.invoke(app, [group, "--help"], prog_name="cgr")
 
     assert result.exit_code == 0
     assert f"Usage: cgr {group} [OPTIONS] COMMAND" in result.stdout
-    assert "Commands:" in result.stdout
+    plain = _normalized_help(result.stdout)
+    assert "Commands" in plain
+    assert f" {subcommand} " in plain
+
+
+def _listed_commands(stdout: str) -> list[str]:
+    # The first cell of each row of the help panels.
+    rows = (_ANSI_RE.sub("", line) for line in stdout.splitlines())
+    return [m.group(1) for row in rows if (m := re.match(r"^│ ([a-z][a-z-]*) ", row))]
+
+
+def test_root_help_lists_the_sub_apps_where_they_always_stood() -> None:
+    # typer lists the `add_typer` sub-apps after every plain command; the
+    # root group puts them back in `CLICommandName` order, so `port` still
+    # sits between `mcp-server` and `check` and the Manage panel above Help.
+    result = _RUNNER.invoke(app, ["--help"], prog_name="cgr")
+
+    assert result.exit_code == 0
+    assert _listed_commands(result.stdout) == [name.value for name in ch.CLICommandName]
+    plain = _normalized_help(result.stdout)
+    assert plain.index(ch.PANEL_MANAGE) < plain.index(ch.PANEL_HELP)
 
 
 def test_help_command_rejects_unknown_command() -> None:

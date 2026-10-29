@@ -26,8 +26,9 @@ from rich.text import Text
 from typer.core import TyperGroup
 
 if TYPE_CHECKING:
-    # What `TyperGroup.invoke` takes on the locked typer, which vendors click;
-    # an older typer passes click's own Context at runtime (#1409).
+    # The context `TyperGroup`'s methods take, for the overrides below to
+    # match them: typer exports only its subclass, which the root group is
+    # never handed.
     from typer._click import Context as _GroupContext
 
 from . import _cli_env  # noqa: F401  (must run before settings load)
@@ -208,7 +209,7 @@ class _CgrGroup(TyperGroup):
     def invoke(self, ctx: "_GroupContext") -> object:
         # Every command reaches the graph through the ingestor, which raises
         # this at connect time with the fix in its message; printing it here
-        # covers them all, the delegated groups and the chat included (#2443).
+        # covers them all, the sub-apps and the chat included (#2443).
         try:
             result = super().invoke(ctx)
         except GraphUnavailableError as e:
@@ -223,6 +224,15 @@ class _CgrGroup(TyperGroup):
                 dim(pledge), highlight=False, soft_wrap=True
             )
         return result
+
+    def list_commands(self, ctx: "_GroupContext") -> list[str]:
+        # typer lists the sub-apps (`daemon`, `graph`, ...) after every plain
+        # command, which would move them to the foot of their help panels and
+        # the Manage panel below Help; `CLICommandName` holds the order.
+        rank = {name: index for index, name in enumerate(ch.CLICommandName)}
+        return sorted(
+            super().list_commands(ctx), key=lambda name: rank.get(name, len(rank))
+        )
 
 
 # Help pages, and the MCP server, which speaks its protocol until the client
@@ -2091,115 +2101,19 @@ def graph_loader_command(
         raise typer.Exit(1) from e
 
 
-_DELEGATED_GROUP_CONTEXT = {
-    "allow_extra_args": True,
-    "allow_interspersed_args": False,
-    "ignore_unknown_options": True,
-}
-
-
-def _run_delegated_group(group: click.Group, ctx: typer.Context) -> None:
-    # The groups are the real click's and run non-standalone, so their usage
-    # errors and aborts reach typer, and a typer that vendors click handles
-    # only its own classes: they escaped as a traceback with exit 1. Reported
-    # here the way click's standalone mode would, whichever typer is
-    # installed (#2416).
-    try:
-        group.main(
-            args=list(ctx.args),
-            prog_name=ctx.command_path,
-            standalone_mode=False,
-        )
-    except click.ClickException as e:
-        e.show()
-        raise typer.Exit(e.exit_code) from e
-    except click.exceptions.Abort as e:
-        typer.echo(cs.CLI_MSG_ABORTED, err=True)
-        raise typer.Exit(1) from e
-
-
-@app.command(
-    name=ch.CLICommandName.LANGUAGE,
-    help=ch.CMD_LANGUAGE,
-    short_help=ch.CMD_LANGUAGE,
-    add_help_option=False,
-    context_settings=_DELEGATED_GROUP_CONTEXT,
-    rich_help_panel=ch.PANEL_MANAGE,
+app.add_typer(
+    language_cli, name=ch.CLICommandName.LANGUAGE, rich_help_panel=ch.PANEL_MANAGE
 )
-def language_command(ctx: typer.Context) -> None:
-    _run_delegated_group(language_cli, ctx)
-
-
-@app.command(
-    name=ch.CLICommandName.DAEMON,
-    help=ch.CMD_DAEMON,
-    short_help=ch.CMD_DAEMON,
-    add_help_option=False,
-    context_settings=_DELEGATED_GROUP_CONTEXT,
-    rich_help_panel=ch.PANEL_MANAGE,
+app.add_typer(
+    daemon_cli, name=ch.CLICommandName.DAEMON, rich_help_panel=ch.PANEL_MANAGE
 )
-def daemon_command(ctx: typer.Context) -> None:
-    _run_delegated_group(daemon_cli, ctx)
-
-
-@app.command(
-    name=ch.CLICommandName.WORKSPACE,
-    help=ch.CMD_WORKSPACE,
-    short_help=ch.CMD_WORKSPACE,
-    add_help_option=False,
-    context_settings=_DELEGATED_GROUP_CONTEXT,
-    rich_help_panel=ch.PANEL_MANAGE,
+app.add_typer(
+    workspace_cli, name=ch.CLICommandName.WORKSPACE, rich_help_panel=ch.PANEL_MANAGE
 )
-def workspace_command(ctx: typer.Context) -> None:
-    _run_delegated_group(workspace_cli, ctx)
-
-
-@app.command(
-    name=ch.CLICommandName.TRACE,
-    help=ch.CMD_TRACE,
-    short_help=ch.CMD_TRACE,
-    add_help_option=False,
-    context_settings=_DELEGATED_GROUP_CONTEXT,
-    rich_help_panel=ch.PANEL_GRAPH,
-)
-def trace_command(ctx: typer.Context) -> None:
-    _run_delegated_group(trace_cli, ctx)
-
-
-@app.command(
-    name=ch.CLICommandName.EDITS,
-    help=ch.CMD_EDITS,
-    short_help=ch.CMD_EDITS,
-    add_help_option=False,
-    context_settings=_DELEGATED_GROUP_CONTEXT,
-    rich_help_panel=ch.PANEL_GRAPH,
-)
-def edits_command(ctx: typer.Context) -> None:
-    _run_delegated_group(edits_cli, ctx)
-
-
-@app.command(
-    name=ch.CLICommandName.GRAPH,
-    help=ch.CMD_GRAPH,
-    short_help=ch.CMD_GRAPH,
-    add_help_option=False,
-    context_settings=_DELEGATED_GROUP_CONTEXT,
-    rich_help_panel=ch.PANEL_GRAPH,
-)
-def graph_command(ctx: typer.Context) -> None:
-    _run_delegated_group(graph_cli, ctx)
-
-
-@app.command(
-    name=ch.CLICommandName.PORT,
-    help=ch.CMD_PORT,
-    short_help=ch.CMD_PORT,
-    add_help_option=False,
-    context_settings=_DELEGATED_GROUP_CONTEXT,
-    rich_help_panel=ch.PANEL_USE,
-)
-def port_command(ctx: typer.Context) -> None:
-    _run_delegated_group(port_cli, ctx)
+app.add_typer(trace_cli, name=ch.CLICommandName.TRACE, rich_help_panel=ch.PANEL_GRAPH)
+app.add_typer(edits_cli, name=ch.CLICommandName.EDITS, rich_help_panel=ch.PANEL_GRAPH)
+app.add_typer(graph_cli, name=ch.CLICommandName.GRAPH, rich_help_panel=ch.PANEL_GRAPH)
+app.add_typer(port_cli, name=ch.CLICommandName.PORT, rich_help_panel=ch.PANEL_USE)
 
 
 @app.command(

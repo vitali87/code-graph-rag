@@ -4,22 +4,48 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Annotated
 
-import click
+import typer
 from loguru import logger
 
 from .. import cli_help as ch
 from . import constants as tcs
 
-
-@click.group(
+cli = typer.Typer(
     help=ch.CMD_TRACE_GROUP,
     short_help=ch.CMD_TRACE_GROUP,
     epilog=ch.EPILOG_TRACE,
     no_args_is_help=True,
+    add_completion=False,
 )
-def cli() -> None:
-    """Group callback: subcommands carry the behaviour."""
+
+_InputFile = Annotated[Path, typer.Argument(exists=True, dir_okay=False)]
+_RepoPath = Annotated[
+    Path | None,
+    typer.Option(
+        "--repo-path", exists=True, file_okay=False, help=ch.HELP_TRACE_REPO_PATH
+    ),
+]
+_Output = Annotated[
+    Path | None,
+    typer.Option("--output", "-o", dir_okay=False, help=ch.HELP_TRACE_OUTPUT),
+]
+_Workload = Annotated[
+    str | None, typer.Option("--workload", help=ch.HELP_TRACE_WORKLOAD)
+]
+_Language = Annotated[
+    str | None, typer.Option("--language", help=ch.HELP_TRACE_LANGUAGE)
+]
+_PathMap = Annotated[
+    list[str] | None, typer.Option("--path-map", help=ch.HELP_TRACE_PATH_MAP)
+]
+_BuildId = Annotated[
+    str | None, typer.Option("--build-id", help=ch.HELP_TRACE_BUILD_ID)
+]
+_Service = Annotated[str | None, typer.Option("--service", help=ch.HELP_TRACE_SERVICE)]
+_Label = Annotated[str | None, typer.Option("--label", help=ch.HELP_TRACE_LABEL)]
+_Commit = Annotated[str | None, typer.Option("--commit", help=ch.HELP_TRACE_COMMIT)]
 
 
 @cli.command(
@@ -28,20 +54,19 @@ def cli() -> None:
     short_help=ch.CMD_TRACE_INGEST,
     epilog=ch.EXAMPLES_TRACE_INGEST,
 )
-@click.argument(
-    "trace_file",
-    type=click.Path(exists=True, dir_okay=False, path_type=Path),
-)
-@click.option(
-    "--repo-path",
-    type=click.Path(exists=True, file_okay=False, path_type=Path),
-    required=True,
-    help=ch.HELP_TRACE_REPO_PATH,
-)
-@click.option(
-    "--project-name", "--project", "-p", default=None, help=ch.HELP_TRACE_PROJECT_NAME
-)
-def ingest_cmd(trace_file: Path, repo_path: Path, project_name: str | None) -> None:
+def ingest_cmd(
+    trace_file: _InputFile,
+    repo_path: Path = typer.Option(
+        ...,
+        "--repo-path",
+        exists=True,
+        file_okay=False,
+        help=ch.HELP_TRACE_REPO_PATH,
+    ),
+    project_name: str | None = typer.Option(
+        None, "--project-name", "--project", "-p", help=ch.HELP_TRACE_PROJECT_NAME
+    ),
+) -> None:
     from ..cli_runtime import connect_graph
     from ..config import settings
     from ..utils.path_utils import derive_project_name
@@ -59,10 +84,10 @@ def ingest_cmd(trace_file: Path, repo_path: Path, project_name: str | None) -> N
             )
     except TraceFormatError as e:
         logger.error(str(e))
-        click.secho(str(e), fg="red", err=True)
+        typer.secho(str(e), fg="red", err=True)
         sys.exit(1)
 
-    click.echo(
+    typer.echo(
         f"records:          {summary.records}\n"
         f"edges written:    {summary.edges}\n"
         f"confirmed static: {summary.confirmed_static}\n"
@@ -70,7 +95,7 @@ def ingest_cmd(trace_file: Path, repo_path: Path, project_name: str | None) -> N
         f"unresolved:       {summary.unresolved}"
     )
     for reason, count in sorted(summary.resolution.unresolved.items()):
-        click.echo(f"  unresolved[{reason}]: {count}")
+        typer.echo(f"  unresolved[{reason}]: {count}")
 
 
 class _ConvertUsageError(Exception):
@@ -148,7 +173,7 @@ def _warn_commit_mismatch(commit: str | None, repo_path: Path) -> None:
     if head and not head.startswith(commit) and not commit.startswith(head):
         message = ch.MSG_TRACE_COMMIT_MISMATCH.format(profiled=commit, head=head)
         logger.warning(message)
-        click.secho(message, fg="yellow", err=True)
+        typer.secho(message, fg="yellow", err=True)
 
 
 def _convert_ebpf(
@@ -367,45 +392,19 @@ def _convert_profile(
     short_help=ch.CMD_TRACE_CONVERT,
     epilog=ch.EXAMPLES_TRACE_CONVERT,
 )
-@click.argument(
-    "profile_file",
-    type=click.Path(exists=True, dir_okay=False, path_type=Path),
-)
-@click.option(
-    "--repo-path",
-    type=click.Path(exists=True, file_okay=False, path_type=Path),
-    default=None,
-    help=ch.HELP_TRACE_REPO_PATH,
-)
-@click.option(
-    "--output",
-    "-o",
-    type=click.Path(dir_okay=False, path_type=Path),
-    default=None,
-    help=ch.HELP_TRACE_OUTPUT,
-)
-@click.option("--include", default=None, help=ch.HELP_TRACE_INCLUDE)
-@click.option("--workload", default=None, help=ch.HELP_TRACE_WORKLOAD)
-@click.option("--language", default=None, help=ch.HELP_TRACE_LANGUAGE)
-@click.option("--format", "fmt", default=None, help=ch.HELP_TRACE_FORMAT)
-@click.option("--path-map", "path_map", multiple=True, help=ch.HELP_TRACE_PATH_MAP)
-@click.option("--build-id", default=None, help=ch.HELP_TRACE_BUILD_ID)
-@click.option("--service", default=None, help=ch.HELP_TRACE_SERVICE)
-@click.option("--label", default=None, help=ch.HELP_TRACE_LABEL)
-@click.option("--commit", default=None, help=ch.HELP_TRACE_COMMIT)
 def convert_cmd(
-    profile_file: Path,
-    repo_path: Path | None,
-    output: Path | None,
-    include: str | None,
-    workload: str | None,
-    language: str | None,
-    fmt: str | None,
-    path_map: tuple[str, ...],
-    build_id: str | None,
-    service: str | None,
-    label: str | None,
-    commit: str | None,
+    profile_file: _InputFile,
+    repo_path: _RepoPath = None,
+    output: _Output = None,
+    include: str | None = typer.Option(None, "--include", help=ch.HELP_TRACE_INCLUDE),
+    workload: _Workload = None,
+    language: _Language = None,
+    fmt: str | None = typer.Option(None, "--format", help=ch.HELP_TRACE_FORMAT),
+    path_map: _PathMap = None,
+    build_id: _BuildId = None,
+    service: _Service = None,
+    label: _Label = None,
+    commit: _Commit = None,
 ) -> None:
 
     resolved_output = output or Path(tcs.TRACE_DEFAULT_OUTPUT)
@@ -417,7 +416,7 @@ def convert_cmd(
                 resolved_output,
                 workload,
                 language,
-                path_map,
+                tuple(path_map or ()),
                 build_id,
                 service,
                 label,
@@ -433,9 +432,9 @@ def convert_cmd(
     # malformed-number / non-UTF-8 cases) without listing it redundantly.
     except (OSError, ValueError, _ConvertUsageError) as e:
         logger.error(str(e))
-        click.secho(str(e), fg="red", err=True)
+        typer.secho(str(e), fg="red", err=True)
         sys.exit(1)
-    click.echo(f"call records written: {count} -> {resolved_output}")
+    typer.echo(f"call records written: {count} -> {resolved_output}")
 
 
 @cli.command(
@@ -444,49 +443,26 @@ def convert_cmd(
     short_help=ch.CMD_TRACE_PULL,
     epilog=ch.EXAMPLES_TRACE_PULL,
 )
-@click.argument("url")
-@click.option(
-    "--repo-path",
-    type=click.Path(exists=True, file_okay=False, path_type=Path),
-    default=None,
-    help=ch.HELP_TRACE_REPO_PATH,
-)
-@click.option(
-    "--output",
-    "-o",
-    type=click.Path(dir_okay=False, path_type=Path),
-    default=None,
-    help=ch.HELP_TRACE_OUTPUT,
-)
-@click.option(
-    "--save",
-    type=click.Path(dir_okay=False, path_type=Path),
-    default=None,
-    help=ch.HELP_TRACE_PULL_SAVE,
-)
-@click.option("--header", "headers", multiple=True, help=ch.HELP_TRACE_PULL_HEADER)
-@click.option("--timeout", default=60.0, type=float, help=ch.HELP_TRACE_PULL_TIMEOUT)
-@click.option("--workload", default=None, help=ch.HELP_TRACE_WORKLOAD)
-@click.option("--language", default=None, help=ch.HELP_TRACE_LANGUAGE)
-@click.option("--path-map", "path_map", multiple=True, help=ch.HELP_TRACE_PATH_MAP)
-@click.option("--build-id", default=None, help=ch.HELP_TRACE_BUILD_ID)
-@click.option("--service", default=None, help=ch.HELP_TRACE_SERVICE)
-@click.option("--label", default=None, help=ch.HELP_TRACE_LABEL)
-@click.option("--commit", default=None, help=ch.HELP_TRACE_COMMIT)
 def pull_cmd(
     url: str,
-    repo_path: Path | None,
-    output: Path | None,
-    save: Path | None,
-    headers: tuple[str, ...],
-    timeout: float,
-    workload: str | None,
-    language: str | None,
-    path_map: tuple[str, ...],
-    build_id: str | None,
-    service: str | None,
-    label: str | None,
-    commit: str | None,
+    repo_path: _RepoPath = None,
+    output: _Output = None,
+    save: Path | None = typer.Option(
+        None, "--save", dir_okay=False, help=ch.HELP_TRACE_PULL_SAVE
+    ),
+    headers: list[str] | None = typer.Option(
+        None, "--header", help=ch.HELP_TRACE_PULL_HEADER
+    ),
+    timeout: float = typer.Option(
+        60.0, "--timeout", show_default=False, help=ch.HELP_TRACE_PULL_TIMEOUT
+    ),
+    workload: _Workload = None,
+    language: _Language = None,
+    path_map: _PathMap = None,
+    build_id: _BuildId = None,
+    service: _Service = None,
+    label: _Label = None,
+    commit: _Commit = None,
 ) -> None:
     import os
     import tempfile
@@ -495,7 +471,7 @@ def pull_cmd(
     try:
         if save is not None and save.resolve() == resolved_output.resolve():
             raise _ConvertUsageError(ch.ERR_TRACE_PULL_SAVE_EQUALS_OUTPUT)
-        data = _download_pprof(url, headers, timeout)
+        data = _download_pprof(url, tuple(headers or ()), timeout)
         # Persist the profile where the caller asked, else in a temp file that is
         # removed after conversion (a cron overlay does not need to keep it).
         # mkstemp returns an open fd; close it so Windows does not lock the file
@@ -514,7 +490,7 @@ def pull_cmd(
                 resolved_output,
                 workload,
                 language,
-                path_map,
+                tuple(path_map or ()),
                 build_id,
                 service,
                 label,
@@ -525,6 +501,6 @@ def pull_cmd(
                 profile_path.unlink(missing_ok=True)
     except (OSError, ValueError, _ConvertUsageError) as e:
         logger.error(str(e))
-        click.secho(str(e), fg="red", err=True)
+        typer.secho(str(e), fg="red", err=True)
         sys.exit(1)
-    click.echo(f"call records written: {count} -> {resolved_output}")
+    typer.echo(f"call records written: {count} -> {resolved_output}")

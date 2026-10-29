@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import subprocess
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from click.testing import CliRunner
+from typer.testing import CliRunner
 
 from codebase_rag.language import cli as language
 from codebase_rag.language.cli import (
@@ -25,12 +28,22 @@ from codebase_rag.language.cli import (
     _prompt_for_language_info,
     _prompt_for_node_categories,
     _update_config_file,
-    add_grammar,
-    cleanup_orphaned_modules,
-    list_languages,
-    remove_language,
+    cli,
 )
 from codebase_rag.language_spec import LanguageSpec
+
+
+@contextmanager
+def _isolated_filesystem() -> Iterator[Path]:
+    # click's `CliRunner.isolated_filesystem`, which typer's runner lacks: the
+    # commands lay their checkout out in a fresh cwd, removed afterwards.
+    previous = Path.cwd()
+    with tempfile.TemporaryDirectory() as tmp:
+        os.chdir(tmp)
+        try:
+            yield Path(tmp)
+        finally:
+            os.chdir(previous)
 
 
 @pytest.fixture(autouse=True)
@@ -239,7 +252,7 @@ class TestParseTreeSitterJson:
             config_path = Path(tmpdir) / "tree-sitter.json"
             config_path.write_text(encoding="utf-8", data=json.dumps(config))
 
-            with patch("click.echo"):
+            with patch("codebase_rag.language.cli.typer.echo"):
                 result = _parse_tree_sitter_json(
                     config_path, "tree-sitter-python", None
                 )
@@ -261,7 +274,7 @@ class TestParseTreeSitterJson:
             config_path = Path(tmpdir) / "tree-sitter.json"
             config_path.write_text(encoding="utf-8", data=json.dumps(config))
 
-            with patch("click.echo"):
+            with patch("codebase_rag.language.cli.typer.echo"):
                 result = _parse_tree_sitter_json(config_path, "tree-sitter-rust", None)
 
             assert result is not None
@@ -280,7 +293,7 @@ class TestParseTreeSitterJson:
             config_path = Path(tmpdir) / "tree-sitter.json"
             config_path.write_text(encoding="utf-8", data=json.dumps(config))
 
-            with patch("click.echo"):
+            with patch("codebase_rag.language.cli.typer.echo"):
                 result = _parse_tree_sitter_json(
                     config_path, "tree-sitter-python", None
                 )
@@ -301,7 +314,7 @@ class TestParseTreeSitterJson:
             config_path = Path(tmpdir) / "tree-sitter.json"
             config_path.write_text(encoding="utf-8", data=json.dumps(config))
 
-            with patch("click.echo"):
+            with patch("codebase_rag.language.cli.typer.echo"):
                 result = _parse_tree_sitter_json(
                     config_path, "tree-sitter-js", "custom-name"
                 )
@@ -480,7 +493,7 @@ class TestParseNodeTypesFile:
 class TestPromptHelpers:
     def test_prompt_for_language_info_asks_name_when_missing(self) -> None:
         with patch(
-            "codebase_rag.language.cli.click.prompt",
+            "codebase_rag.language.cli.typer.prompt",
             side_effect=["mylang", ".ml, .mli"],
         ):
             info = _prompt_for_language_info(None)
@@ -488,14 +501,14 @@ class TestPromptHelpers:
         assert info == LanguageInfo(name="mylang", extensions=[".ml", ".mli"])
 
     def test_prompt_for_language_info_keeps_given_name(self) -> None:
-        with patch("codebase_rag.language.cli.click.prompt", side_effect=[".zig"]):
+        with patch("codebase_rag.language.cli.typer.prompt", side_effect=[".zig"]):
             info = _prompt_for_language_info("zig")
 
         assert info == LanguageInfo(name="zig", extensions=[".zig"])
 
     def test_prompt_for_node_categories(self) -> None:
         with patch(
-            "codebase_rag.language.cli.click.prompt",
+            "codebase_rag.language.cli.typer.prompt",
             side_effect=[
                 "function_definition, method",
                 "class_definition",
@@ -727,7 +740,7 @@ class TestUpdateConfigFile:
 class TestAddGrammarCommand:
     def test_full_auto_detection_flow(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             grammar_dir = Path("grammars/tree-sitter-mylang")
             (grammar_dir / "src").mkdir(parents=True)
             (grammar_dir / "tree-sitter.json").write_text(
@@ -742,7 +755,7 @@ class TestAddGrammarCommand:
             config.write_text("LANGUAGE_SPECS = {\n}\n", encoding="utf-8")
 
             with patch("codebase_rag.language.cli.subprocess.run"):
-                result = runner.invoke(add_grammar, ["mylang"])
+                result = runner.invoke(cli, ["add-grammar", "mylang"])
 
             assert result.exit_code == 0
             content = config.read_text(encoding="utf-8")
@@ -751,12 +764,12 @@ class TestAddGrammarCommand:
 
     def test_prompts_for_name_when_no_arguments(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             with patch(
                 "codebase_rag.language.cli.subprocess.run",
                 side_effect=_proc_error("fatal: repository does not exist"),
             ):
-                result = runner.invoke(add_grammar, [], input="mylang\n")
+                result = runner.invoke(cli, ["add-grammar"], input="mylang\n")
 
             assert not Path("grammars").exists()
 
@@ -766,12 +779,17 @@ class TestAddGrammarCommand:
     def test_custom_url_declined(self) -> None:
         runner = CliRunner()
         with (
-            runner.isolated_filesystem(),
+            _isolated_filesystem(),
             patch("codebase_rag.language.cli.subprocess.run") as run,
         ):
             result = runner.invoke(
-                add_grammar,
-                ["mylang", "--grammar-url", "https://example.com/foo.git"],
+                cli,
+                [
+                    "add-grammar",
+                    "mylang",
+                    "--grammar-url",
+                    "https://example.com/foo.git",
+                ],
                 input="n\n",
             )
 
@@ -780,15 +798,15 @@ class TestAddGrammarCommand:
 
     def test_fallback_prompts_without_metadata(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             config = Path("codebase_rag/language_spec.py")
             config.parent.mkdir(parents=True)
             config.write_text("LANGUAGE_SPECS = {\n}\n", encoding="utf-8")
 
             with patch("codebase_rag.language.cli.subprocess.run"):
                 result = runner.invoke(
-                    add_grammar,
-                    ["mylang"],
+                    cli,
+                    ["add-grammar", "mylang"],
                     input=".ml\nfunction_definition\nclass_definition\nmodule\ncall\n",
                 )
 
@@ -800,7 +818,7 @@ class TestAddGrammarCommand:
 
 class TestListLanguagesCommand:
     def test_lists_known_languages(self) -> None:
-        result = CliRunner().invoke(list_languages, [])
+        result = CliRunner().invoke(cli, ["list-languages"])
 
         assert result.exit_code == 0
         assert "Supported Languages" in result.output
@@ -808,14 +826,16 @@ class TestListLanguagesCommand:
 
 class TestRemoveLanguageCommand:
     def test_unknown_language(self) -> None:
-        result = CliRunner().invoke(remove_language, ["definitely-not-a-language"])
+        result = CliRunner().invoke(
+            cli, ["remove-language", "definitely-not-a-language"]
+        )
 
         assert result.exit_code == 1
         assert "python" in result.output
 
     def test_removes_entry_keeping_submodule(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             config = Path("codebase_rag/language_spec.py")
             config.parent.mkdir(parents=True)
             config.write_text(
@@ -826,7 +846,9 @@ class TestRemoveLanguageCommand:
             with patch(
                 "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
-                result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
+                result = runner.invoke(
+                    cli, ["remove-language", "foo", "--keep-submodule"]
+                )
 
             assert result.exit_code == 0
             content = config.read_text(encoding="utf-8")
@@ -836,7 +858,7 @@ class TestRemoveLanguageCommand:
 
     def test_removes_single_line_entry(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             config = Path("codebase_rag/language_spec.py")
             config.parent.mkdir(parents=True)
             config.write_text(
@@ -847,7 +869,9 @@ class TestRemoveLanguageCommand:
             with patch(
                 "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
-                result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
+                result = runner.invoke(
+                    cli, ["remove-language", "foo", "--keep-submodule"]
+                )
 
             assert result.exit_code == 0
             assert "Error" not in result.output
@@ -857,7 +881,7 @@ class TestRemoveLanguageCommand:
 
     def test_removal_spares_matching_entry_outside_registry(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             config = Path("codebase_rag/language_spec.py")
             config.parent.mkdir(parents=True)
             config.write_text(
@@ -873,7 +897,9 @@ class TestRemoveLanguageCommand:
             with patch(
                 "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
-                result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
+                result = runner.invoke(
+                    cli, ["remove-language", "foo", "--keep-submodule"]
+                )
 
             assert result.exit_code == 0
             assert "Error" not in result.output
@@ -884,7 +910,7 @@ class TestRemoveLanguageCommand:
 
     def test_removes_multiline_entry_with_tuple_on_first_line(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             config = Path("codebase_rag/language_spec.py")
             config.parent.mkdir(parents=True)
             config.write_text(
@@ -899,7 +925,9 @@ class TestRemoveLanguageCommand:
             with patch(
                 "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
-                result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
+                result = runner.invoke(
+                    cli, ["remove-language", "foo", "--keep-submodule"]
+                )
 
             assert result.exit_code == 0
             content = config.read_text(encoding="utf-8")
@@ -909,7 +937,7 @@ class TestRemoveLanguageCommand:
 
     def test_invalid_removal_result_never_written(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             config = Path("codebase_rag/language_spec.py")
             config.parent.mkdir(parents=True)
             original = (
@@ -932,7 +960,7 @@ class TestRemoveLanguageCommand:
                 ),
                 patch("codebase_rag.language.cli.subprocess.run") as run,
             ):
-                result = runner.invoke(remove_language, ["foo"])
+                result = runner.invoke(cli, ["remove-language", "foo"])
 
             assert result.exit_code == 1
             assert "Error" in result.output
@@ -941,7 +969,7 @@ class TestRemoveLanguageCommand:
 
     def test_failed_write_leaves_config_intact(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             config = Path("codebase_rag/language_spec.py")
             config.parent.mkdir(parents=True)
             original = (
@@ -967,7 +995,7 @@ class TestRemoveLanguageCommand:
                 patch.object(Path, "open", failing_write_open),
                 patch("codebase_rag.language.cli.subprocess.run") as run,
             ):
-                result = runner.invoke(remove_language, ["foo"])
+                result = runner.invoke(cli, ["remove-language", "foo"])
 
             assert result.exit_code == 1
             assert "Error" in result.output
@@ -977,7 +1005,7 @@ class TestRemoveLanguageCommand:
 
     def test_removal_spares_matching_entry_after_registry(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             config = Path("codebase_rag/language_spec.py")
             config.parent.mkdir(parents=True)
             config.write_text(
@@ -993,7 +1021,9 @@ class TestRemoveLanguageCommand:
             with patch(
                 "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
-                result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
+                result = runner.invoke(
+                    cli, ["remove-language", "foo", "--keep-submodule"]
+                )
 
             assert result.exit_code == 0
             assert "Error" not in result.output
@@ -1004,7 +1034,7 @@ class TestRemoveLanguageCommand:
 
     def test_removal_refuses_when_entry_only_in_sibling_mapping(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             config = Path("codebase_rag/language_spec.py")
             config.parent.mkdir(parents=True)
             original = (
@@ -1023,7 +1053,7 @@ class TestRemoveLanguageCommand:
                 ),
                 patch("codebase_rag.language.cli.subprocess.run") as run,
             ):
-                result = runner.invoke(remove_language, ["foo"])
+                result = runner.invoke(cli, ["remove-language", "foo"])
 
             assert result.exit_code == 1
             assert "Error" in result.output
@@ -1032,7 +1062,7 @@ class TestRemoveLanguageCommand:
 
     def test_removal_deletes_every_duplicate_entry(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             config = Path("codebase_rag/language_spec.py")
             config.parent.mkdir(parents=True)
             config.write_text(
@@ -1043,7 +1073,9 @@ class TestRemoveLanguageCommand:
                 encoding="utf-8",
             )
 
-            result = runner.invoke(remove_language, ["python", "--keep-submodule"])
+            result = runner.invoke(
+                cli, ["remove-language", "python", "--keep-submodule"]
+            )
 
             assert result.exit_code == 0
             assert "Error" not in result.output
@@ -1055,7 +1087,7 @@ class TestRemoveLanguageCommand:
 
     def test_removal_on_shared_line_keeps_neighbour_comment(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             config = Path("codebase_rag/language_spec.py")
             config.parent.mkdir(parents=True)
             config.write_text(
@@ -1069,7 +1101,9 @@ class TestRemoveLanguageCommand:
             with patch(
                 "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
-                result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
+                result = runner.invoke(
+                    cli, ["remove-language", "foo", "--keep-submodule"]
+                )
 
             assert result.exit_code == 0
             assert "Error" not in result.output
@@ -1080,7 +1114,7 @@ class TestRemoveLanguageCommand:
 
     def test_removes_parenthesised_value_entry(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             config = Path("codebase_rag/language_spec.py")
             config.parent.mkdir(parents=True)
             config.write_text(
@@ -1097,7 +1131,9 @@ class TestRemoveLanguageCommand:
             with patch(
                 "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
-                result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
+                result = runner.invoke(
+                    cli, ["remove-language", "foo", "--keep-submodule"]
+                )
 
             assert result.exit_code == 0
             assert "Error" not in result.output
@@ -1107,7 +1143,7 @@ class TestRemoveLanguageCommand:
 
     def test_removes_parenthesised_value_with_inner_comment(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             config = Path("codebase_rag/language_spec.py")
             config.parent.mkdir(parents=True)
             config.write_text(
@@ -1125,7 +1161,9 @@ class TestRemoveLanguageCommand:
             with patch(
                 "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
-                result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
+                result = runner.invoke(
+                    cli, ["remove-language", "foo", "--keep-submodule"]
+                )
 
             assert result.exit_code == 0
             assert "Error" not in result.output
@@ -1135,7 +1173,7 @@ class TestRemoveLanguageCommand:
 
     def test_removes_parenthesised_key_entry(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             config = Path("codebase_rag/language_spec.py")
             config.parent.mkdir(parents=True)
             config.write_text(
@@ -1150,7 +1188,9 @@ class TestRemoveLanguageCommand:
             with patch(
                 "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
-                result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
+                result = runner.invoke(
+                    cli, ["remove-language", "foo", "--keep-submodule"]
+                )
 
             assert result.exit_code == 0
             assert "Error" not in result.output
@@ -1160,7 +1200,7 @@ class TestRemoveLanguageCommand:
 
     def test_removal_ignores_parens_and_colons_inside_comments(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             config = Path("codebase_rag/language_spec.py")
             config.parent.mkdir(parents=True)
             config.write_text(
@@ -1177,7 +1217,9 @@ class TestRemoveLanguageCommand:
             with patch(
                 "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
-                result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
+                result = runner.invoke(
+                    cli, ["remove-language", "foo", "--keep-submodule"]
+                )
 
             assert result.exit_code == 0
             assert "Error" not in result.output
@@ -1188,7 +1230,7 @@ class TestRemoveLanguageCommand:
 
     def test_removes_parenthesised_key_with_inner_comment(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             config = Path("codebase_rag/language_spec.py")
             config.parent.mkdir(parents=True)
             config.write_text(
@@ -1205,7 +1247,9 @@ class TestRemoveLanguageCommand:
             with patch(
                 "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
-                result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
+                result = runner.invoke(
+                    cli, ["remove-language", "foo", "--keep-submodule"]
+                )
 
             assert result.exit_code == 0
             assert "Error" not in result.output
@@ -1215,7 +1259,7 @@ class TestRemoveLanguageCommand:
 
     def test_removes_parenthesised_key_with_colon_in_comment(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             config = Path("codebase_rag/language_spec.py")
             config.parent.mkdir(parents=True)
             config.write_text(
@@ -1231,7 +1275,9 @@ class TestRemoveLanguageCommand:
             with patch(
                 "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
-                result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
+                result = runner.invoke(
+                    cli, ["remove-language", "foo", "--keep-submodule"]
+                )
 
             assert result.exit_code == 0
             assert "Error" not in result.output
@@ -1241,7 +1287,7 @@ class TestRemoveLanguageCommand:
 
     def test_removes_entry_with_comma_on_following_line(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             config = Path("codebase_rag/language_spec.py")
             config.parent.mkdir(parents=True)
             config.write_text(
@@ -1259,7 +1305,9 @@ class TestRemoveLanguageCommand:
             with patch(
                 "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
-                result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
+                result = runner.invoke(
+                    cli, ["remove-language", "foo", "--keep-submodule"]
+                )
 
             assert result.exit_code == 0
             assert "Error" not in result.output
@@ -1269,7 +1317,7 @@ class TestRemoveLanguageCommand:
 
     def test_removal_preserves_crlf_newlines(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             config = Path("codebase_rag/language_spec.py")
             config.parent.mkdir(parents=True)
             config.write_bytes(
@@ -1282,7 +1330,9 @@ class TestRemoveLanguageCommand:
             with patch(
                 "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
-                result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
+                result = runner.invoke(
+                    cli, ["remove-language", "foo", "--keep-submodule"]
+                )
 
             assert result.exit_code == 0
             assert "Error" not in result.output
@@ -1295,7 +1345,7 @@ class TestRemoveLanguageCommand:
 
     def test_removal_with_trailing_comment_spares_neighbour_entries(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             config = Path("codebase_rag/language_spec.py")
             config.parent.mkdir(parents=True)
             config.write_text(
@@ -1311,7 +1361,9 @@ class TestRemoveLanguageCommand:
             with patch(
                 "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
-                result = runner.invoke(remove_language, ["foo", "--keep-submodule"])
+                result = runner.invoke(
+                    cli, ["remove-language", "foo", "--keep-submodule"]
+                )
 
             assert result.exit_code == 0
             assert "Error" not in result.output
@@ -1321,7 +1373,7 @@ class TestRemoveLanguageCommand:
 
     def test_removes_enum_keyed_entry(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             config = Path("codebase_rag/language_spec.py")
             config.parent.mkdir(parents=True)
             config.write_text(
@@ -1335,7 +1387,9 @@ class TestRemoveLanguageCommand:
                 encoding="utf-8",
             )
 
-            result = runner.invoke(remove_language, ["python", "--keep-submodule"])
+            result = runner.invoke(
+                cli, ["remove-language", "python", "--keep-submodule"]
+            )
 
             assert result.exit_code == 0
             content = config.read_text(encoding="utf-8")
@@ -1344,7 +1398,7 @@ class TestRemoveLanguageCommand:
 
     def test_entry_missing_from_config_stops_before_submodule_removal(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             config = Path("codebase_rag/language_spec.py")
             config.parent.mkdir(parents=True)
             config.write_text("LANGUAGE_SPECS = {\n}\n", encoding="utf-8")
@@ -1357,7 +1411,7 @@ class TestRemoveLanguageCommand:
                 ),
                 patch("codebase_rag.language.cli.subprocess.run") as run,
             ):
-                result = runner.invoke(remove_language, ["foo"])
+                result = runner.invoke(cli, ["remove-language", "foo"])
 
             assert result.exit_code == 1
             assert "Error" in result.output
@@ -1365,7 +1419,7 @@ class TestRemoveLanguageCommand:
 
     def test_removes_submodule_directory(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             config = Path("codebase_rag/language_spec.py")
             config.parent.mkdir(parents=True)
             config.write_text(
@@ -1383,14 +1437,14 @@ class TestRemoveLanguageCommand:
                 ),
                 patch("codebase_rag.language.cli.subprocess.run"),
             ):
-                result = runner.invoke(remove_language, ["foo"])
+                result = runner.invoke(cli, ["remove-language", "foo"])
 
             assert result.exit_code == 0
             assert not modules.exists()
 
     def test_submodule_removal_error_prints_hints(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             config = Path("codebase_rag/language_spec.py")
             config.parent.mkdir(parents=True)
             config.write_text(
@@ -1408,14 +1462,14 @@ class TestRemoveLanguageCommand:
                     side_effect=_proc_error("deinit failed"),
                 ),
             ):
-                result = runner.invoke(remove_language, ["foo"])
+                result = runner.invoke(cli, ["remove-language", "foo"])
 
             assert result.exit_code == 1
             assert "submodule deinit -f grammars/tree-sitter-foo" in result.output
 
     def test_no_submodule_directory(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             config = Path("codebase_rag/language_spec.py")
             config.parent.mkdir(parents=True)
             config.write_text(
@@ -1426,17 +1480,17 @@ class TestRemoveLanguageCommand:
             with patch(
                 "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
-                result = runner.invoke(remove_language, ["foo"])
+                result = runner.invoke(cli, ["remove-language", "foo"])
 
             assert result.exit_code == 0
 
     def test_missing_config_file_reports_error(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             with patch(
                 "codebase_rag.language.cli.LANGUAGE_SPECS", {"foo": _spec("foo")}
             ):
-                result = runner.invoke(remove_language, ["foo"])
+                result = runner.invoke(cli, ["remove-language", "foo"])
 
             assert result.exit_code == 1
             assert "Error" in result.output
@@ -1445,14 +1499,14 @@ class TestRemoveLanguageCommand:
 class TestCleanupOrphanedModulesCommand:
     def test_no_modules_directory(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
-            result = runner.invoke(cleanup_orphaned_modules, [])
+        with _isolated_filesystem():
+            result = runner.invoke(cli, ["cleanup-orphaned-modules"])
 
         assert result.exit_code == 0
 
     def test_removes_confirmed_orphans(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             tracked = Path(".git/modules/grammars/tree-sitter-kept")
             tracked.mkdir(parents=True)
             orphan = Path(".git/modules/grammars/tree-sitter-orphan")
@@ -1463,7 +1517,7 @@ class TestCleanupOrphanedModulesCommand:
                 encoding="utf-8",
             )
 
-            result = runner.invoke(cleanup_orphaned_modules, [], input="y\n")
+            result = runner.invoke(cli, ["cleanup-orphaned-modules"], input="y\n")
 
             assert result.exit_code == 0
             assert not orphan.exists()
@@ -1471,18 +1525,18 @@ class TestCleanupOrphanedModulesCommand:
 
     def test_declined_cleanup_keeps_orphans(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             orphan = Path(".git/modules/grammars/tree-sitter-orphan")
             orphan.mkdir(parents=True)
 
-            result = runner.invoke(cleanup_orphaned_modules, [], input="n\n")
+            result = runner.invoke(cli, ["cleanup-orphaned-modules"], input="n\n")
 
             assert result.exit_code == 0
             assert orphan.exists()
 
     def test_crlf_gitmodules_keeps_tracked_modules(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             tracked = Path(".git/modules/grammars/tree-sitter-kept")
             tracked.mkdir(parents=True)
             Path(".gitmodules").write_bytes(
@@ -1490,14 +1544,14 @@ class TestCleanupOrphanedModulesCommand:
                 b"\tpath = grammars/tree-sitter-kept\r\n"
             )
 
-            result = runner.invoke(cleanup_orphaned_modules, [], input="y\n")
+            result = runner.invoke(cli, ["cleanup-orphaned-modules"], input="y\n")
 
             assert result.exit_code == 0
             assert tracked.exists()
 
     def test_no_orphans(self) -> None:
         runner = CliRunner()
-        with runner.isolated_filesystem():
+        with _isolated_filesystem():
             Path(".git/modules/grammars/tree-sitter-kept").mkdir(parents=True)
             Path(".gitmodules").write_text(
                 '[submodule "grammars/tree-sitter-kept"]\n'
@@ -1505,6 +1559,6 @@ class TestCleanupOrphanedModulesCommand:
                 encoding="utf-8",
             )
 
-            result = runner.invoke(cleanup_orphaned_modules, [])
+            result = runner.invoke(cli, ["cleanup-orphaned-modules"])
 
             assert result.exit_code == 0

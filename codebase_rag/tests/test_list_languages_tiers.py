@@ -14,11 +14,11 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from click.testing import CliRunner, Result
+from typer.testing import CliRunner, Result
 
 from codebase_rag import constants as cs
 from codebase_rag.config import settings
-from codebase_rag.language.cli import list_languages
+from codebase_rag.language.cli import cli
 from codebase_rag.language_spec import LANGUAGE_SPECS, LanguageSpec
 from codebase_rag.parser_loader import _get_language_library, grammar_installed
 from codebase_rag.parsers.ast_grep_tier import load_pattern_configs
@@ -45,7 +45,7 @@ _WIDTHS = (50, 80, 120, None)
 
 def _invoke(*args: str, columns: int | None = 80) -> Result:
     env = {"COLUMNS": None if columns is None else str(columns)}
-    result = CliRunner().invoke(list_languages, list(args), env=env)
+    result = CliRunner().invoke(cli, ["list-languages", *args], env=env)
     assert result.exit_code == 0, result.output
     return result
 

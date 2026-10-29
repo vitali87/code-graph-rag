@@ -12,7 +12,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from click.testing import CliRunner
+from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
@@ -819,7 +819,7 @@ def test_cli_depth_is_bounded(tmp_path: Path) -> None:
 
 
 def test_cli_every_subcommand_is_registered() -> None:
-    assert set(graph_cli.commands) == {
+    assert {command.name for command in graph_cli.registered_commands} == {
         "resolve",
         "definition",
         "callers",

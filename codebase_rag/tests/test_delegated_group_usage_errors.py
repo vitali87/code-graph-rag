@@ -1,141 +1,119 @@
-"""Issue #2416: a usage mistake inside a delegated command group is a usage
-message and exit 2, never a traceback.
+"""Issue #2416: a usage mistake inside a command group is a usage message and
+exit 2, never a traceback.
 
-`daemon`, `graph`, `workspace`, `language`, `trace` and `edits` are plain
-click groups run by `_run_delegated_group` with `standalone_mode=False`, so
-their usage errors propagate to typer. A typer that vendors click (the one
-`uv tool install` resolves) only handles its own exception classes, so the
-real click's `MissingParameter`/`NoSuchOption`/`NoSuchCommand` escaped as a
-50-120 line traceback with exit 1. The boundary handles them itself now, so
-the outcome does not depend on which typer is installed.
+`daemon`, `graph`, `workspace`, `language`, `trace`, `edits` and `port` were
+plain click groups run non-standalone under typer, and a typer that vendors
+click only handles its own exception classes, so the real click's
+`MissingParameter`/`NoSuchOption`/`NoSuchCommand` escaped as a 50-120 line
+traceback with exit 1. They are typer sub-apps of the root app now, built on
+the same click as every other command, so these drive them through `cgr`
+itself: the outcome a shell sees.
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import patch
 
-import click
 import pytest
-import typer
 from typer.testing import CliRunner
 
-from codebase_rag.cli import _run_delegated_group, app
-from codebase_rag.graph_cli import cli as graph_cli
-from codebase_rag.stack.cli import cli as daemon_cli
-from codebase_rag.workspaces.cli import cli as workspace_cli
+from codebase_rag.cli import app
+from codebase_rag.language import cli as language
+from codebase_rag.workspaces import storage
 
 runner = CliRunner()
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+# typer frames the error in a box; its borders land between wrapped words.
+_BOX_DRAWING_RE = re.compile(r"[─-╿]")
 
-def _ctx(path: str, args: list[str]) -> MagicMock:
-    ctx = MagicMock()
-    ctx.args = args
-    ctx.command_path = path
-    return ctx
+
+def _plain(text: str) -> str:
+    return " ".join(_BOX_DRAWING_RE.sub(" ", _ANSI_RE.sub("", text)).split())
 
 
 @pytest.mark.parametrize(
-    ("group", "path", "args", "usage", "error"),
+    ("args", "usage", "error"),
     [
         (
-            graph_cli,
-            "cgr graph",
-            ["callers"],
+            ["graph", "callers"],
             "Usage: cgr graph callers",
-            "Missing argument 'QUALIFIED_NAME'",
+            "Missing argument 'qualified_name'",
         ),
         (
-            workspace_cli,
-            "cgr workspace",
-            ["add", "myws", "."],
+            ["workspace", "add", "myws", "."],
             "Usage: cgr workspace",
             "No such command 'add'",
         ),
         (
-            workspace_cli,
-            "cgr workspace",
-            ["show"],
+            ["workspace", "show"],
             "Usage: cgr workspace show",
-            "Missing argument 'NAME'",
+            "Missing argument 'name'",
         ),
         (
-            daemon_cli,
-            "cgr daemon",
-            ["up", "--bogus"],
+            ["daemon", "up", "--bogus"],
             "Usage: cgr daemon up",
             "No such option",
         ),
     ],
 )
 def test_a_usage_error_is_a_usage_message_and_exit_2(
-    capsys: pytest.CaptureFixture[str],
-    group: click.Group,
-    path: str,
-    args: list[str],
-    usage: str,
-    error: str,
+    args: list[str], usage: str, error: str
 ) -> None:
-    ctx = _ctx(path, args)
-    with pytest.raises(typer.Exit) as raised:
-        _run_delegated_group(group, ctx)
+    result = runner.invoke(app, args, prog_name="cgr")
 
-    assert raised.value.exit_code == 2
-    err = capsys.readouterr().err
+    assert result.exit_code == 2
+    assert isinstance(result.exception, SystemExit)
+    err = _plain(result.stderr)
     assert usage in err
     assert error in err
-    assert "Traceback" not in err
-
-
-@click.group()
-def _prompting() -> None:
-    pass
-
-
-@_prompting.command()
-def ask() -> None:
-    raise click.Abort
-
-
-@_prompting.command()
-def boom() -> None:
-    raise RuntimeError("real failure")
-
-
-@_prompting.command()
-def fine() -> None:
-    click.echo("done")
+    assert "Traceback" not in result.output
 
 
 def test_an_aborted_prompt_is_aborted_and_exit_1(
-    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Ctrl+D at `click.confirm` (e.g. `cgr language add-grammar`).
-    ctx = _ctx("cgr prompting", ["ask"])
-    with pytest.raises(typer.Exit) as raised:
-        _run_delegated_group(_prompting, ctx)
+    # Ctrl+D at a prompt (`cgr language add-grammar` asks for the language
+    # name when given neither it nor a URL); nothing is asked of git first.
+    monkeypatch.setattr(language, "_source_checkout_root", lambda: tmp_path)
+    with patch.object(language, "_run_git") as run_git:
+        result = runner.invoke(app, ["language", "add-grammar"], prog_name="cgr")
 
-    assert raised.value.exit_code == 1
-    assert "Aborted!" in capsys.readouterr().err
+    assert result.exit_code == 1
+    assert "Aborted" in _plain(result.stderr)
+    assert "Traceback" not in result.output
+    run_git.assert_not_called()
 
 
 def test_a_real_failure_still_propagates() -> None:
-    # Negative: only click's own usage and abort signals are handled here.
-    ctx = _ctx("cgr prompting", ["boom"])
-    with pytest.raises(RuntimeError, match="real failure"):
-        _run_delegated_group(_prompting, ctx)
+    # Negative: only typer's own usage and abort signals are reported as such.
+    with patch(
+        "codebase_rag.stack.cli.StackManager", side_effect=RuntimeError("real failure")
+    ):
+        result = runner.invoke(app, ["daemon", "status"], prog_name="cgr")
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, RuntimeError)
+    assert str(result.exception) == "real failure"
 
 
-def test_a_valid_command_still_runs(capsys: pytest.CaptureFixture[str]) -> None:
+def test_a_valid_command_still_runs(monkeypatch: pytest.MonkeyPatch) -> None:
     # Negative.
-    _run_delegated_group(_prompting, _ctx("cgr prompting", ["fine"]))
+    monkeypatch.setattr(storage, "list_workspaces", lambda: ["done"])
 
-    assert capsys.readouterr().out == "done\n"
+    result = runner.invoke(app, ["workspace", "list"], prog_name="cgr")
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "done\n"
 
 
-@pytest.mark.parametrize("group", ["graph", "workspace", "daemon", "language"])
+@pytest.mark.parametrize(
+    "group", ["graph", "workspace", "daemon", "language", "trace", "edits", "port"]
+)
 def test_group_help_still_exits_0(group: str) -> None:
-    # Negative: `--help` ends in click's own Exit(0), not an error.
+    # Negative: `--help` ends in typer's own Exit(0), not an error.
     result = runner.invoke(app, [group, "--help"])
 
     assert result.exit_code == 0, result.output
@@ -146,4 +124,4 @@ def test_through_the_cli_the_usage_error_exits_2(tmp_path: Path) -> None:
     result = runner.invoke(app, ["graph", "callers"])
 
     assert result.exit_code == 2
-    assert "Missing argument" in click.unstyle(result.output)
+    assert "Missing argument" in _plain(result.output)

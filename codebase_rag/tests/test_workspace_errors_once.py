@@ -14,8 +14,8 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from click.testing import CliRunner, Result
 from loguru import logger
+from typer.testing import CliRunner, Result
 
 from codebase_rag.workspaces import (
     WorkspaceError,

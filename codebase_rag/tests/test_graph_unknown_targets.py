@@ -17,9 +17,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from click.testing import CliRunner
 from mcp import types
-from typer.testing import CliRunner as TyperRunner
+from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
@@ -446,9 +445,9 @@ class TestWhatStillAnswers:
 def test_through_cgr_the_exit_statuses_reach_the_shell(
     connected: FakeGraph, tmp_path: Path
 ) -> None:
-    # `graph` runs as a delegated click group inside typer; its status must
-    # survive that boundary rather than end as 0.
-    runner = TyperRunner()
+    # `graph` is a sub-app of the root app; its status must reach the shell
+    # rather than end as 0.
+    runner = CliRunner()
     project = runner.invoke(
         app,
         ["graph", "callers", TOTAL, "--project", "x", "--repo-path", str(tmp_path)],

@@ -14,7 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from click.testing import CliRunner
+from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
 from codebase_rag.graph_cli import cli as graph_cli

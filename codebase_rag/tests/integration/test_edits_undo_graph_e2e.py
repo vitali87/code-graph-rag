@@ -13,8 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from click.testing import Result
-from typer.testing import CliRunner
+from typer.testing import CliRunner, Result
 
 from codebase_rag.cli import app
 from codebase_rag.config import settings

@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from click.testing import CliRunner
+from typer.testing import CliRunner
 
 from codebase_rag import cypher_queries as cq
 from codebase_rag import graph_query

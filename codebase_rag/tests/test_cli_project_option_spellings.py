@@ -10,14 +10,19 @@ from __future__ import annotations
 
 import pytest
 import typer
+from typer.core import TyperGroup
 
 from codebase_rag import cli as cgr_cli
-from codebase_rag.trace import cli as trace_cli
-from codebase_rag.workspaces import cli as workspace_cli
 
 
 def _top(name: str) -> object:
     return typer.main.get_group(cgr_cli.app).commands[name]
+
+
+def _sub(group: str, name: str) -> object:
+    sub_app = _top(group)
+    assert isinstance(sub_app, TyperGroup), sub_app
+    return sub_app.commands[name]
 
 
 def _flags(command: object, name: str) -> tuple[list[str], bool]:
@@ -34,8 +39,8 @@ def _flags(command: object, name: str) -> tuple[list[str], bool]:
     [
         pytest.param(lambda: _top("start"), id="start"),
         pytest.param(lambda: _top("watch"), id="watch"),
-        pytest.param(lambda: trace_cli.ingest_cmd, id="trace-ingest"),
-        pytest.param(lambda: workspace_cli.add_repo_cmd, id="workspace-add-repo"),
+        pytest.param(lambda: _sub("trace", "ingest"), id="trace-ingest"),
+        pytest.param(lambda: _sub("workspace", "add-repo"), id="workspace-add-repo"),
     ],
 )
 def test_the_project_option_has_one_spelling_everywhere(command) -> None:

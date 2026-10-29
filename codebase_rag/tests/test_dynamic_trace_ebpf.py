@@ -223,7 +223,7 @@ def _write_profile(tmp_path):
 
 
 def test_cli_convert_format_ebpf_writes_records(tmp_path):
-    from click.testing import CliRunner
+    from typer.testing import CliRunner
 
     from codebase_rag.trace.cli import cli
 
@@ -255,7 +255,7 @@ def test_cli_convert_format_ebpf_writes_records(tmp_path):
 
 
 def test_cli_rejects_unknown_format(tmp_path):
-    from click.testing import CliRunner
+    from typer.testing import CliRunner
 
     from codebase_rag.trace.cli import cli
 
@@ -268,7 +268,7 @@ def test_cli_rejects_unknown_format(tmp_path):
 
 
 def test_cli_rejects_malformed_path_map(tmp_path):
-    from click.testing import CliRunner
+    from typer.testing import CliRunner
 
     from codebase_rag.trace.cli import cli
 
@@ -296,7 +296,7 @@ def test_cli_rejects_malformed_path_map(tmp_path):
 def test_cli_rejects_empty_option_key(tmp_path, option, error):
     # `--path-map =REPO` would re-anchor every path; `--service =VALUE` selects no
     # label. An empty key must be rejected, not silently accepted.
-    from click.testing import CliRunner
+    from typer.testing import CliRunner
 
     from codebase_rag.trace.cli import cli
 
@@ -404,7 +404,7 @@ def _pprof_server(payload: bytes, require_auth: str | None = None):
 
 
 def test_cli_pull_downloads_and_converts(tmp_path):
-    from click.testing import CliRunner
+    from typer.testing import CliRunner
 
     from codebase_rag.trace.cli import cli
 
@@ -438,7 +438,7 @@ def test_cli_pull_downloads_and_converts(tmp_path):
 
 
 def test_cli_pull_saves_profile_when_requested(tmp_path):
-    from click.testing import CliRunner
+    from typer.testing import CliRunner
 
     from codebase_rag.trace.cli import cli
 
@@ -466,7 +466,7 @@ def test_cli_pull_saves_profile_when_requested(tmp_path):
 
 
 def test_cli_pull_rejects_non_http_url(tmp_path):
-    from click.testing import CliRunner
+    from typer.testing import CliRunner
 
     from codebase_rag.trace.cli import cli
 
@@ -478,7 +478,7 @@ def test_cli_pull_rejects_non_http_url(tmp_path):
 
 
 def test_cli_pull_reports_download_failure(tmp_path):
-    from click.testing import CliRunner
+    from typer.testing import CliRunner
 
     from codebase_rag.trace.cli import cli
 
@@ -499,7 +499,7 @@ def test_cli_pull_reports_download_failure(tmp_path):
 
 
 def test_cli_pull_rejects_save_equal_output(tmp_path):
-    from click.testing import CliRunner
+    from typer.testing import CliRunner
 
     from codebase_rag.trace.cli import cli
 

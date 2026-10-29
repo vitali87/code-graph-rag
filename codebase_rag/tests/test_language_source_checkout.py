@@ -17,9 +17,8 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from click.testing import CliRunner
 from loguru import logger
-from typer.testing import CliRunner as TyperCliRunner
+from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
 from codebase_rag.cli import app
@@ -179,9 +178,8 @@ def _invoke(args: list[str]) -> tuple[int, str, BaseException | None]:
 
 
 def _invoke_cgr(args: list[str]) -> tuple[int, str]:
-    # Through the top-level app: the language group runs non-standalone there,
-    # so this is the exit status a shell actually sees.
-    result = TyperCliRunner().invoke(app, ["language", *args], prog_name="cgr")
+    # Through the top-level app, as a shell runs it.
+    result = CliRunner().invoke(app, ["language", *args], prog_name="cgr")
     return result.exit_code, result.output
 
 

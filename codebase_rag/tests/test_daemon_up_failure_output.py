@@ -16,8 +16,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from click.testing import CliRunner
 from loguru import logger
+from typer.testing import CliRunner
 
 from codebase_rag.stack import cli as stack_cli
 from codebase_rag.stack import constants as stack_cs

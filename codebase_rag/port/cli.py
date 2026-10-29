@@ -3,7 +3,7 @@
 import sys
 from pathlib import Path
 
-import click
+import typer
 
 from .. import cli_help as ch
 from .. import constants as cs
@@ -12,15 +12,13 @@ from ..graph_cli import _emit, _project_and_fetch, _unknown_project
 from ..project_selection import unknown_project
 from . import constants as pcs
 
-
-@click.group(
+cli = typer.Typer(
     help=ch.CMD_PORT_GROUP,
     short_help=ch.CMD_PORT_GROUP,
     epilog=ch.EPILOG_PORT,
     no_args_is_help=True,
+    add_completion=False,
 )
-def cli() -> None:
-    """Group callback: subcommands carry the behaviour."""
 
 
 @cli.command(
@@ -29,29 +27,32 @@ def cli() -> None:
     short_help=ch.CMD_PORT_CHECK,
     epilog=ch.EPILOG_PORT_CHECK,
 )
-@click.argument("old_scope")
-@click.argument("new_scope")
-@click.option("--project", "-p", default=None, help=ch.HELP_GRAPH_PROJECT)
-@click.option("--new-project", default=None, help=ch.HELP_PORT_NEW_PROJECT)
-@click.option(
-    "--repo-path",
-    type=click.Path(exists=True, file_okay=False, path_type=Path),
-    default=Path(cs.MCP_DEFAULT_DIRECTORY),
-    show_default=True,
-    help=ch.HELP_GRAPH_REPO_PATH,
-)
-@click.option("--pair", "pair_values", multiple=True, help=ch.HELP_PORT_PAIR)
-@click.option("--include-tests", is_flag=True, help=ch.HELP_PORT_INCLUDE_TESTS)
-@click.option("--fail-on-found", is_flag=True, help=ch.HELP_PORT_FAIL_ON_FOUND)
 def check_cmd(
     old_scope: str,
     new_scope: str,
-    project: str | None,
-    new_project: str | None,
-    repo_path: Path,
-    pair_values: tuple[str, ...],
-    include_tests: bool,
-    fail_on_found: bool,
+    project: str | None = typer.Option(
+        None, "--project", "-p", help=ch.HELP_GRAPH_PROJECT
+    ),
+    new_project: str | None = typer.Option(
+        None, "--new-project", help=ch.HELP_PORT_NEW_PROJECT
+    ),
+    repo_path: Path = typer.Option(
+        Path(cs.MCP_DEFAULT_DIRECTORY),
+        "--repo-path",
+        exists=True,
+        file_okay=False,
+        show_default=True,
+        help=ch.HELP_GRAPH_REPO_PATH,
+    ),
+    pair_values: list[str] | None = typer.Option(
+        None, "--pair", help=ch.HELP_PORT_PAIR
+    ),
+    include_tests: bool = typer.Option(
+        False, "--include-tests", help=ch.HELP_PORT_INCLUDE_TESTS
+    ),
+    fail_on_found: bool = typer.Option(
+        False, "--fail-on-found", help=ch.HELP_PORT_FAIL_ON_FOUND
+    ),
 ) -> None:
     from .parity import (
         ParityReport,
@@ -81,7 +82,7 @@ def check_cmd(
                     fetch_all,
                     PortScope(name, old_scope),
                     PortScope(new_project or name, new_scope),
-                    parse_pairs(pair_values),
+                    parse_pairs(pair_values or ()),
                     include_tests=include_tests,
                 )
             except PortCheckError as error:
@@ -89,9 +90,7 @@ def check_cmd(
     # Reported after the connection closes, as `cgr graph` does: an exit
     # raised inside it is logged as a failed write.
     if report is None:
-        click.secho(message, fg=cs.Color.RED, err=True)
-        # sys.exit, not click's Exit: the group runs with standalone_mode off
-        # under typer, where click turns its own Exit into a return value.
+        typer.secho(message, fg=cs.Color.RED, err=True)
         sys.exit(exit_code)
     _emit(report)
     if fail_on_found and has_differences(report):

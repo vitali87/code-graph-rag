@@ -15,7 +15,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from click.testing import CliRunner, Result
+from typer.testing import CliRunner, Result
 
 from codebase_rag import constants as cs
 from codebase_rag.config import settings

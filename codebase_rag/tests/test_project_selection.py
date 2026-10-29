@@ -19,7 +19,6 @@ from unittest.mock import MagicMock, patch
 
 import click
 import pytest
-from click.testing import CliRunner as ClickRunner
 from rich.console import Console
 from typer.testing import CliRunner
 
@@ -294,7 +293,7 @@ class TestProjectOption:
         self, checkout: Path, click_project: str, ingestor: MagicMock
     ) -> None:
         with patch("codebase_rag.cli_runtime.connect_graph", return_value=ingestor):
-            result = ClickRunner().invoke(
+            result = CliRunner().invoke(
                 graph_cli, ["resolve", "f", "-p", ACME, "--repo-path", str(checkout)]
             )
 
