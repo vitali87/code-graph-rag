@@ -17,7 +17,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.tests.conftest import _MockIngestor
+from evals.recorded_graph import RecordingIngestor
 
 A_CS = """namespace N
 {
@@ -61,7 +61,7 @@ def _create_graph_updater(root: Path) -> GraphUpdater:
     if cs.SupportedLanguage.CSHARP not in parsers:
         pytest.skip("csharp parser not available")
     return GraphUpdater(
-        ingestor=_MockIngestor(),
+        ingestor=RecordingIngestor(),
         repo_path=root,
         parsers=parsers,
         queries=queries,

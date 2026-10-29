@@ -29,7 +29,7 @@ from codebase_rag.tests.test_incremental_deleted_dependents import (
 )
 from codebase_rag.tests.test_incremental_deleted_dependents import _materialise
 from codebase_rag.types_defs import PropertyParams, PropertyValue, ResultRow
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 pytest.importorskip("tree_sitter_sql")
 
@@ -118,14 +118,14 @@ CREATE TRIGGER "audit;insert" AFTER INSERT ON items FOR EACH ROW EXECUTE FUNCTIO
 CREATE TRIGGER "EXECUTE FUNCTION ghost(" AFTER UPDATE ON items FOR EACH ROW EXECUTE FUNCTION quoted_trigger_fn();
 """
 
-_Graph = tuple[Path, _StatefulIngestor]
+_Graph = tuple[Path, StatefulIngestor]
 
 
-def _index(root: Path, files: dict[str, str]) -> _StatefulIngestor:
+def _index(root: Path, files: dict[str, str]) -> StatefulIngestor:
     for rel, text in files.items():
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(text, encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=store,
@@ -139,7 +139,7 @@ def _index(root: Path, files: dict[str, str]) -> _StatefulIngestor:
 
 class _Client:
     # `collect_dead_code` reads through the read-only client protocol.
-    def __init__(self, store: _StatefulIngestor) -> None:
+    def __init__(self, store: StatefulIngestor) -> None:
         self._store = store
 
     def fetch_all(
@@ -153,7 +153,7 @@ def _int(value: PropertyValue) -> int:
     return value
 
 
-def _sites(store: _StatefulIngestor, target: str) -> list[tuple[str, int, int]]:
+def _sites(store: StatefulIngestor, target: str) -> list[tuple[str, int, int]]:
     # Every CALLS site into `target`: (caller, line, col), one per site.
     sites = []
     for edge in store.keyed_edges:
@@ -164,24 +164,24 @@ def _sites(store: _StatefulIngestor, target: str) -> list[tuple[str, int, int]]:
     return sorted(sites)
 
 
-def _callers(store: _StatefulIngestor, target: str) -> dict[str, tuple[int, int]]:
+def _callers(store: StatefulIngestor, target: str) -> dict[str, tuple[int, int]]:
     return {caller: (line, col) for caller, line, col in _sites(store, target)}
 
 
 @pytest.fixture(scope="module")
-def issue(tmp_path_factory: pytest.TempPathFactory) -> _StatefulIngestor:
+def issue(tmp_path_factory: pytest.TempPathFactory) -> StatefulIngestor:
     return _index(tmp_path_factory.mktemp("sql3181") / PROJECT, {"schema.sql": _SCHEMA})
 
 
 @pytest.fixture(scope="module")
-def wiring(tmp_path_factory: pytest.TempPathFactory) -> _StatefulIngestor:
+def wiring(tmp_path_factory: pytest.TempPathFactory) -> StatefulIngestor:
     return _index(
         tmp_path_factory.mktemp("sql3181w") / PROJECT,
         {"routines.sql": _ROUTINES, "wiring.sql": _WIRING},
     )
 
 
-def test_the_issue_schema_has_no_dead_code(issue: _StatefulIngestor) -> None:
+def test_the_issue_schema_has_no_dead_code(issue: StatefulIngestor) -> None:
     config = default_dead_code_config(include_tests=True, include_classes=False)
     assert [
         row["qualified_name"]
@@ -189,7 +189,7 @@ def test_the_issue_schema_has_no_dead_code(issue: _StatefulIngestor) -> None:
     ] == []
 
 
-def test_every_sql_routine_is_exported(issue: _StatefulIngestor) -> None:
+def test_every_sql_routine_is_exported(issue: StatefulIngestor) -> None:
     assert {
         props[cs.KEY_NAME]: props.get(cs.KEY_IS_EXPORTED)
         for (label, _qn), props in issue.nodes.items()
@@ -207,7 +207,7 @@ def test_every_sql_routine_is_exported(issue: _StatefulIngestor) -> None:
     ids=["trigger", "aggregate-sfunc"],
 )
 def test_the_ddl_naming_a_routine_calls_it_from_its_line(
-    issue: _StatefulIngestor, target: str, site: tuple[int, int]
+    issue: StatefulIngestor, target: str, site: tuple[int, int]
 ) -> None:
     assert _callers(issue, target) == {"schema": site}
 
@@ -256,7 +256,7 @@ def test_the_ddl_naming_a_routine_calls_it_from_its_line(
     ],
 )
 def test_each_ddl_clause_references_its_routine(
-    wiring: _StatefulIngestor, target: str, line: int
+    wiring: StatefulIngestor, target: str, line: int
 ) -> None:
     sites = _sites(wiring, target)
     assert line in {
@@ -265,7 +265,7 @@ def test_each_ddl_clause_references_its_routine(
 
 
 def test_a_routine_named_only_in_comments_strings_or_bodies_is_not_called(
-    wiring: _StatefulIngestor,
+    wiring: StatefulIngestor,
 ) -> None:
     # Negative: the same clauses inside a `--` or `/* */` comment, a string
     # literal, a dollar-quoted routine body and a quoted trigger name are
@@ -275,7 +275,7 @@ def test_a_routine_named_only_in_comments_strings_or_bodies_is_not_called(
 
 
 def test_an_aggregate_counts_its_state_function_once_per_statement(
-    wiring: _StatefulIngestor,
+    wiring: StatefulIngestor,
 ) -> None:
     # Negative: `first_sfunc` is named by two aggregates; neither its
     # STYPE nor any other option adds a site.
@@ -297,7 +297,7 @@ def test_a_routine_added_later_links_the_unchanged_ddl_naming_it(
     )
     routine = "CREATE FUNCTION touch() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$;\n"
 
-    def ddl_edges(store: _StatefulIngestor) -> set[tuple[str, str, int]]:
+    def ddl_edges(store: StatefulIngestor) -> set[tuple[str, str, int]]:
         return {
             (str(edge[1]), str(edge[4]), _int(store.props_for(edge)[cs.KEY_LINE]))
             for edge in store.keyed_edges
@@ -306,7 +306,7 @@ def test_a_routine_added_later_links_the_unchanged_ddl_naming_it(
 
     root = tmp_path / "incremental"
     _materialise(root, {"db/wiring.sql": trigger})
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index_into(store, root, cs.SupportedLanguage.SQL, force=True)
     assert ddl_edges(store) == set()
     _add_after_cache(root, "db/touch.sql", routine)
@@ -314,7 +314,7 @@ def test_a_routine_added_later_links_the_unchanged_ddl_naming_it(
 
     clean_root = tmp_path / "clean"
     _materialise(clean_root, {"db/wiring.sql": trigger, "db/touch.sql": routine})
-    clean = _StatefulIngestor()
+    clean = StatefulIngestor()
     _index_into(clean, clean_root, cs.SupportedLanguage.SQL, force=True)
     assert (
         ddl_edges(store)

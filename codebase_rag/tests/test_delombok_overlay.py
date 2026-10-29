@@ -241,7 +241,7 @@ def test_a_forced_reparse_deletes_the_files_old_subtree_first(
     # The stateful evals store rather than a MagicMock: `_delete_module_entities`
     # runs only for a `QueryProtocol` ingestor, which a MagicMock is not, so a
     # mock cannot observe the delete in either state.
-    from evals.cgr_graph import _StatefulIngestor
+    from evals.cgr_graph import StatefulIngestor
 
     repo = tmp_path / "proj"
     _write_repo(repo)
@@ -251,7 +251,7 @@ def test_a_forced_reparse_deletes_the_files_old_subtree_first(
     # Default capture: the store models the graph, not the optional network
     # resource pass ALL_ENABLED would switch on, and the Widget nodes this
     # asserts on are in the default set.
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = GraphUpdater(
         ingestor=store, repo_path=repo, parsers=parsers, queries=queries
     )

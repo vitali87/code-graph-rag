@@ -27,7 +27,7 @@ from codebase_rag.tools.file_editor import FileEditor, create_file_editor_tool
 from codebase_rag.tools.file_writer import FileWriter
 from codebase_rag.utils.path_utils import derive_project_name
 from codebase_rag.workspaces import add_repo, create_workspace
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "proj"
 UTIL = "def log(msg):\n    print(msg)\n"
@@ -36,12 +36,12 @@ TARGET = '    return "started"\n'
 REPLACEMENT = '    log("starting")\n    return "started"\n'
 
 
-def _index(root: Path, project: str) -> _StatefulIngestor:
+def _index(root: Path, project: str) -> StatefulIngestor:
     root.mkdir()
     (root / "util.py").write_text(UTIL)
     (root / "plugins.py").write_text(PLUGINS)
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(
         ingestor=store,
         repo_path=root,
@@ -53,12 +53,12 @@ def _index(root: Path, project: str) -> _StatefulIngestor:
 
 
 @pytest.fixture
-def indexed(temp_repo: Path) -> tuple[Path, _StatefulIngestor]:
+def indexed(temp_repo: Path) -> tuple[Path, StatefulIngestor]:
     root = temp_repo / PROJECT
     return root, _index(root, PROJECT)
 
 
-def _callees(store: _StatefulIngestor, caller: str) -> set[str]:
+def _callees(store: StatefulIngestor, caller: str) -> set[str]:
     return {
         str(edge[4])
         for edge in store.keyed_edges
@@ -67,7 +67,7 @@ def _callees(store: _StatefulIngestor, caller: str) -> set[str]:
 
 
 async def test_an_approved_replace_code_reaches_the_graph(
-    indexed: tuple[Path, _StatefulIngestor],
+    indexed: tuple[Path, StatefulIngestor],
 ) -> None:
     from codebase_rag.tools.graph_refresh import GraphRefresher
 
@@ -83,7 +83,7 @@ async def test_an_approved_replace_code_reaches_the_graph(
 
 
 async def test_a_created_file_reaches_the_graph(
-    indexed: tuple[Path, _StatefulIngestor],
+    indexed: tuple[Path, StatefulIngestor],
 ) -> None:
     from codebase_rag.tools.file_writer import create_file_writer_tool
     from codebase_rag.tools.graph_refresh import GraphRefresher
@@ -102,7 +102,7 @@ async def test_a_created_file_reaches_the_graph(
 
 
 async def test_a_path_outside_the_repo_is_reported_not_raised(
-    indexed: tuple[Path, _StatefulIngestor],
+    indexed: tuple[Path, StatefulIngestor],
 ) -> None:
     from codebase_rag.tools.graph_refresh import GraphRefresher
 
@@ -112,7 +112,7 @@ async def test_a_path_outside_the_repo_is_reported_not_raised(
 
 
 async def test_an_unindexed_project_is_left_alone(
-    indexed: tuple[Path, _StatefulIngestor],
+    indexed: tuple[Path, StatefulIngestor],
 ) -> None:
     from codebase_rag.tools.graph_refresh import GraphRefresher
 
@@ -137,7 +137,7 @@ async def test_the_chat_session_reingests_an_approved_replace_code(
     store = _index(root, project)
 
     @asynccontextmanager
-    async def connect(_batch_size: int) -> AsyncIterator[_StatefulIngestor]:
+    async def connect(_batch_size: int) -> AsyncIterator[StatefulIngestor]:
         yield store
 
     async def one_approved_edit(*_args: object) -> None:
@@ -163,7 +163,7 @@ async def test_the_chat_session_reingests_an_approved_replace_code(
 
 
 async def test_a_failed_refresh_is_recovered_by_a_forced_full_sync(
-    indexed: tuple[Path, _StatefulIngestor],
+    indexed: tuple[Path, StatefulIngestor],
 ) -> None:
     # A re-ingest that died part way may have deleted definitions it never
     # rebuilt, under files whose hashes are unchanged: only a forced run
@@ -211,7 +211,7 @@ def test_a_workspace_session_refreshes_the_repos_registered_project(
 
 
 async def test_a_tool_built_without_a_hook_returns_the_plain_message(
-    indexed: tuple[Path, _StatefulIngestor],
+    indexed: tuple[Path, StatefulIngestor],
 ) -> None:
     # The MCP server builds the tools this way; it re-ingests on its own.
     root, _store = indexed
@@ -221,7 +221,7 @@ async def test_a_tool_built_without_a_hook_returns_the_plain_message(
 
 
 async def test_a_failed_replace_leaves_the_graph_alone(
-    indexed: tuple[Path, _StatefulIngestor],
+    indexed: tuple[Path, StatefulIngestor],
 ) -> None:
     root, store = indexed
     before = set(store.keyed_edges)

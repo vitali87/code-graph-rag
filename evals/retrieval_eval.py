@@ -21,7 +21,7 @@ from codebase_rag import constants as cs
 
 from . import constants as ec
 from . import logs as ls
-from .cgr_graph import _capture
+from .cgr_graph import capture
 from .oracle_guard import oracle_unavailable_exits, require_oracle
 from .oracles import (
     cpp_available,
@@ -223,7 +223,7 @@ def cgr_call_edges(
     `covered` restricts grading to the files the oracle parsed cleanly (its
     authoritative set); languages whose oracle covers everything pass None.
     """
-    ingestor = _capture(target, project)
+    ingestor = capture(target, project)
     caller_path: dict[tuple[str, str], str] = {
         (str(label), str(uid)): str(props[cs.KEY_PATH])
         for (label, uid), props in ingestor.nodes.items()

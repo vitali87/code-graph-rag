@@ -36,7 +36,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 # A named import through a directory entry point: the shape that needs the
 # module/symbol split to be made correctly.
@@ -47,7 +47,7 @@ DECL = "export declare function go(): number;\n"
 
 def _index(
     files: dict[str, str], exclude_paths: frozenset[str] | None = None
-) -> _StatefulIngestor:
+) -> StatefulIngestor:
     # `TemporaryDirectory`, not `mkdtemp`: this helper runs once per
     # parametrisation and there are twenty-odd of them, so an unremoved tree
     # per case accumulates in the system temp directory (CodeRabbit, #1728).
@@ -60,7 +60,7 @@ def _index(
             path = root / rel
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text, encoding="utf-8")
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         parsers, queries = load_parsers()
         GraphUpdater(
             ingestor=store,
@@ -73,11 +73,11 @@ def _index(
     return store
 
 
-def _imports(store: _StatefulIngestor) -> list[tuple[Any, ...]]:
+def _imports(store: StatefulIngestor) -> list[tuple[Any, ...]]:
     return [edge for edge in store.edges if edge[2] == "IMPORTS"]
 
 
-def _modules(store: _StatefulIngestor) -> list[str]:
+def _modules(store: StatefulIngestor) -> list[str]:
     return sorted(
         props[cs.KEY_QUALIFIED_NAME]
         for (label, _uid), props in store.nodes.items()

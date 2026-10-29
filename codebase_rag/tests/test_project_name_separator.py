@@ -37,7 +37,7 @@ from codebase_rag.workspaces import (
 )
 from codebase_rag.workspaces.models import WorkspaceRepo
 from evals import cgr_graph
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 runner = CliRunner()
 
@@ -204,7 +204,7 @@ def test_names_without_the_separator_have_no_error(name: str) -> None:
     assert project_name_error(name) is None
 
 
-def _index(root: Path, store: _StatefulIngestor, name: str | None) -> None:
+def _index(root: Path, store: StatefulIngestor, name: str | None) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=store,
@@ -215,7 +215,7 @@ def _index(root: Path, store: _StatefulIngestor, name: str | None) -> None:
     ).run(force=True)
 
 
-def _defined_by(store: _StatefulIngestor, module_qn: str) -> set[str]:
+def _defined_by(store: StatefulIngestor, module_qn: str) -> set[str]:
     return {
         str(edge[4])
         for edge in store.keyed_edges
@@ -236,7 +236,7 @@ def test_a_dotted_directory_does_not_merge_with_another_projects_package(
     (monorepo / "web").mkdir(parents=True)
     (monorepo / "web" / "__init__.py").write_text("")
     (monorepo / "web" / "views.py").write_text("def start_server():\n    return 2\n")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
 
     _index(frontend, store, None)
     _index(monorepo, store, "acme")
@@ -258,7 +258,7 @@ def test_dotted_and_underscored_checkouts_keep_distinct_default_names(
     for root, name in ((dotted, "render_page"), (underscored, "list_users")):
         root.mkdir()
         (root / "views.py").write_text(f"def {name}():\n    return 1\n")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
 
     _index(dotted, store, None)
     _index(underscored, store, None)
@@ -273,20 +273,20 @@ def test_a_plain_directory_keeps_its_name_as_the_default(tmp_path: Path) -> None
     root = tmp_path / "billing"
     root.mkdir()
     (root / "views.py").write_text("def charge():\n    return 1\n")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
 
     _index(root, store, None)
 
     assert (cs.NodeLabel.PROJECT, "billing") in store.nodes
 
 
-def _module_qns(store: _StatefulIngestor) -> set[str]:
+def _module_qns(store: StatefulIngestor) -> set[str]:
     return {
         str(uid) for label, uid in store.nodes if label == cs.NodeLabel.MODULE.value
     }
 
 
-class _Retiring(_StatefulIngestor):
+class _Retiring(StatefulIngestor):
     """Records the projects a run retires, and the modules present then."""
 
     def __init__(self) -> None:
@@ -320,7 +320,7 @@ class _Retiring(_StatefulIngestor):
         self._detach_delete(doomed)
 
 
-def _legacy_project(store: _StatefulIngestor, name: str, root: Path | None) -> None:
+def _legacy_project(store: StatefulIngestor, name: str, root: Path | None) -> None:
     properties: dict[str, str] = {cs.KEY_NAME: name}
     if root is not None:
         properties[cs.KEY_ROOT_PATH] = str(root.resolve())
@@ -603,7 +603,7 @@ def test_the_next_sync_retires_the_old_project_once_its_vectors_go(
     assert vector_client.delete.call_args.kwargs["points_selector"] == [7, 9]
 
 
-def _shared_module_graph(tmp_path: Path, store: _StatefulIngestor) -> Path:
+def _shared_module_graph(tmp_path: Path, store: StatefulIngestor) -> Path:
     # Projects `acme.web` (package `api`) and `acme.web.api`, both from before
     # #2412, wrote one Module `acme.web.api.views`.
     web = tmp_path / "acme.web"
@@ -658,7 +658,7 @@ def test_a_project_that_only_starts_with_the_old_name_does_not_block_it(
     assert (cs.NodeLabel.PROJECT, "acme.webapp") in store.nodes
 
 
-def _qns_of(store: _StatefulIngestor, project: str) -> set[str]:
+def _qns_of(store: StatefulIngestor, project: str) -> set[str]:
     # A project's qualified names: the bare name (its root Package and
     # Module) and everything under `<project>.`.
     return {
@@ -743,7 +743,7 @@ def test_check_reads_the_scope_an_unnamed_run_stamped_on_a_dotted_directory(
     (root / "views.py").write_text("def render_page():\n    return 1\n")
     parsers, queries = load_parsers()
     GraphUpdater(
-        ingestor=_StatefulIngestor(),
+        ingestor=StatefulIngestor(),
         repo_path=root,
         parsers=parsers,
         queries=queries,

@@ -31,7 +31,7 @@ from codebase_rag.tests.conftest import (
     get_nodes,
     get_relationships,
 )
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 # The issue's minimal reproduction, verbatim.
 _ISSUE_REPRO = (
@@ -251,14 +251,14 @@ def test_object_members_are_marked_and_bindings_are_not(
     assert marked == {f"{module}.arrow", f"{module}.fn", f"{module}.shorthand"}
 
 
-def _stateful_index(root: Path, store: _StatefulIngestor, force: bool) -> None:
+def _stateful_index(root: Path, store: StatefulIngestor, force: bool) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(ingestor=store, repo_path=root, parsers=parsers, queries=queries).run(
         force=force
     )
 
 
-def _stateful_calls_from(store: _StatefulIngestor, caller_suffix: str) -> set[str]:
+def _stateful_calls_from(store: StatefulIngestor, caller_suffix: str) -> set[str]:
     return {
         str(target)
         for _, source, rel, _, target in store.edges
@@ -281,7 +281,7 @@ def test_incremental_sync_of_the_caller_adds_no_edge(temp_repo: Path) -> None:
             "src/opts.ts": "export const opts = {retry: {delay: () => 0}};\n",
         },
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _stateful_index(temp_repo, store, force=True)
     assert not _stateful_calls_from(store, ".src.run.run")
 

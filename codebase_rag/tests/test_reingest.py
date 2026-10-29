@@ -28,7 +28,7 @@ from codebase_rag.graph_updater import (
 )
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import create_and_run_updater
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "reingest_fixture"
 
@@ -154,7 +154,7 @@ def _composite(seed: int) -> Edit:
 Snapshot = tuple[frozenset[tuple[str, str]], frozenset[tuple[str, ...]]]
 
 
-def _snapshot(store: _StatefulIngestor) -> Snapshot:
+def _snapshot(store: StatefulIngestor) -> Snapshot:
     nodes = frozenset((label, str(uid)) for (label, uid) in store.nodes)
     edges = frozenset(
         # keyed_edges, not edges: the endpoint view collapses every site
@@ -182,8 +182,8 @@ def test_the_snapshot_sees_a_call_site_that_disappeared() -> None:
     two graphs snapshotted identically and losing a call site was invisible.
     """
 
-    def build(sites: list[dict[str, object]]) -> _StatefulIngestor:
-        store = _StatefulIngestor()
+    def build(sites: list[dict[str, object]]) -> StatefulIngestor:
+        store = StatefulIngestor()
         store.ensure_node_batch("Function", {cs.KEY_QUALIFIED_NAME: "m.a"})
         store.ensure_node_batch("Function", {cs.KEY_QUALIFIED_NAME: "m.b"})
         for props in sites:
@@ -203,7 +203,7 @@ def test_the_snapshot_sees_a_call_site_that_disappeared() -> None:
     assert one[1] < both[1]
 
 
-def _updater(store: _StatefulIngestor, root: Path) -> GraphUpdater:
+def _updater(store: StatefulIngestor, root: Path) -> GraphUpdater:
     parsers, queries = load_parsers()
     return GraphUpdater(
         ingestor=store,
@@ -228,7 +228,7 @@ def fixture_root(temp_repo: Path) -> Path:
 
 
 def _clean_index(root: Path) -> Snapshot:
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(store, root).run(force=True)
     return _snapshot(store)
 
@@ -261,7 +261,7 @@ def test_reingest_matches_a_clean_index(
     `fresh` builds a new one on the existing graph (the MCP tool's shape,
     which must read the registry back before it can resolve anything).
     """
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, fixture_root)
     updater.run(force=True)
 
@@ -282,7 +282,7 @@ SIBLING_MAIN = (
 )
 
 
-def _sibling_updater(store: _StatefulIngestor, root: Path) -> GraphUpdater:
+def _sibling_updater(store: StatefulIngestor, root: Path) -> GraphUpdater:
     parsers, queries = load_parsers()
     return GraphUpdater(
         ingestor=store,
@@ -296,7 +296,7 @@ def _sibling_updater(store: _StatefulIngestor, root: Path) -> GraphUpdater:
 def _sibling_clean(root: Path) -> Snapshot:
     # The on-disk tree already holds the edited state; a fresh store on the
     # same root gives the graph a clean index of it.
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _sibling_updater(store, root).run(force=True)
     return _snapshot(store)
 
@@ -361,7 +361,7 @@ def test_reingest_gives_same_stem_siblings_their_clean_index_qns(
     root.mkdir()
     for rel, text in before.items():
         _write(root, rel, text)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _sibling_updater(store, root)
     updater.run(force=True)
     for rel in deleted:
@@ -394,7 +394,7 @@ def test_reingest_aborts_when_the_module_paths_cannot_be_read(
     _write(root, "util.js", SIBLING_JS)
     _write(root, "util.ts", SIBLING_TS)
     _write(root, "main.js", SIBLING_MAIN)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _sibling_updater(store, root).run(force=True)
     before = _snapshot(store)
     real_fetch_all = store.fetch_all
@@ -427,7 +427,7 @@ def test_a_fresh_updater_forgets_a_deleted_modules_rehydrated_qn(
     _write(
         root, "main.py", "from util import helper\n\n\ndef go():\n    return helper()\n"
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _sibling_updater(store, root).run(force=True)
     (root / "util.py").unlink()
     _write(root, "main.py", "def go():\n    return 1\n")
@@ -450,7 +450,7 @@ def test_reingest_reparses_in_walk_order_across_directories(
     layout = ["z.py", "a.py", "sub/b.py", "sub/a.py", "sub/deep/c.py", "b.py"]
     for rel in layout:
         _write(root, rel, "def f():\n    return 1\n")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _sibling_updater(store, root)
     updater.run(force=True)
     walk_order = [key for _fp, key in updater._collect_eligible_files()]
@@ -487,7 +487,7 @@ def test_reingest_keeps_the_previous_cache_when_it_cannot_stamp_the_new_one(
     # The new cache is stamped before it is published, so a failed stamp
     # publishes nothing: the previous cache stays exactly as it was, which
     # costs the next run a rescan of the re-ingested files and nothing else.
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, fixture_root)
     updater.run(force=True)
     cache = state_file(fixture_root, cs.HASH_CACHE_FILENAME)
@@ -530,7 +530,7 @@ def test_reingest_replaces_the_type_edges_of_a_changed_annotation(
     root.mkdir()
     for rel, text in TYPED_FILES.items():
         _write(root, rel, text)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, root)
     updater.run(force=True)
     _write(root, "mod.py", TYPED_FILES["mod.py"].replace("A", "B"))
@@ -567,7 +567,7 @@ def test_reingest_of_a_type_keeps_the_annotation_edges_of_a_non_importing_referr
     root.mkdir()
     _write(root, "types_.py", "class Widget:\n    pass\n")
     _write(root, "mod.py", "def f(x: Widget) -> Widget:\n    return x\n")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, root)
     updater.run(force=True)
     _write(root, "types_.py", "class Widget:\n    pass\n\n\nclass Other:\n    pass\n")
@@ -601,7 +601,7 @@ def test_reingest_of_a_type_keeps_the_annotation_edges_of_a_non_importing_referr
 
 
 def test_reingest_reports_dependents_and_removals(fixture_root: Path) -> None:
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, fixture_root)
     updater.run(force=True)
 
@@ -618,7 +618,7 @@ def test_reingest_reports_dependents_and_removals(fixture_root: Path) -> None:
 
 
 def test_reingest_absent_path_counts_as_removed(fixture_root: Path) -> None:
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, fixture_root)
     updater.run(force=True)
     (fixture_root / "pkg/unrelated.py").unlink()
@@ -630,7 +630,7 @@ def test_reingest_absent_path_counts_as_removed(fixture_root: Path) -> None:
 
 
 def test_reingest_refuses_paths_outside_the_repo(fixture_root: Path) -> None:
-    updater = _updater(_StatefulIngestor(), fixture_root)
+    updater = _updater(StatefulIngestor(), fixture_root)
     with pytest.raises(ValueError, match="outside the repository"):
         updater.reingest(["../escape.py"])
     with pytest.raises(ValueError, match="outside the repository"):
@@ -641,7 +641,7 @@ def test_reingest_refuses_a_directory(fixture_root: Path) -> None:
     # A directory sent as a path lands in `gone` (it is not a file) and the
     # delete queries match nothing, so without the refusal the report says
     # the package was removed while the graph is untouched.
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, fixture_root)
     updater.run(force=True)
     before = _snapshot(store)
@@ -668,7 +668,7 @@ def test_reingest_reindexes_a_deleted_path_that_is_present_on_disk(
     #
     # Both spellings of the event pair reproduce it, so the trigger is
     # "named deleted while existing", not the combination with `changed`.
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, fixture_root)
     updater.run(force=True)
     _write(fixture_root, "pkg/util.py", "def helper():\n    return 99\n")
@@ -687,7 +687,7 @@ def test_reingest_drops_definitions_the_reappeared_file_no_longer_has(
     # delete when the file is present": the graph holds the OLD file's
     # symbols. `other` is gone from the new source and must not survive the
     # re-ingest, so the delete has to happen AND be followed by a re-parse.
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, fixture_root)
     updater.run(force=True)
     assert (cs.NodeLabel.FUNCTION.value, f"{PROJECT}.pkg.util.other") in store.nodes
@@ -704,7 +704,7 @@ def test_reingest_reports_a_present_deleted_path_as_reparsed_not_removed(
 ) -> None:
     # The report drives the watcher's logging and the MCP tool's answer, so
     # it must say what happened: the file is still there and was re-indexed.
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, fixture_root)
     updater.run(force=True)
     _write(fixture_root, "pkg/util.py", "def helper():\n    return 99\n")
@@ -727,7 +727,7 @@ def test_reingest_does_not_report_an_unreadable_file_as_reparsed(
     # Pre-existing on the `paths` route (a path named in `paths` is classified
     # by is_file() the same way); the #1799 fix gives it a second entrance via
     # `deleted`, so it is closed here for both.
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, fixture_root)
     updater.run(force=True)
     assert (cs.NodeLabel.FUNCTION.value, f"{PROJECT}.pkg.util.helper") in store.nodes
@@ -762,7 +762,7 @@ def test_reingest_deletes_a_file_a_directory_has_replaced(fixture_root: Path) ->
     # The watcher's DELETE event can arrive after a directory of the same
     # name has been created; the deletion is an instruction, so the stale
     # Module still goes even though the name is now a directory.
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, fixture_root)
     updater.run(force=True)
     util = fixture_root / "pkg" / "util.py"
@@ -784,7 +784,7 @@ def test_reingest_with_nothing_to_do_is_a_no_op(fixture_root: Path) -> None:
 
 def test_reingest_keeps_the_hash_cache_current(fixture_root: Path) -> None:
     """A later update_repository must not re-parse what reingest applied."""
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, fixture_root)
     updater.run(force=True)
     cache = state_file(fixture_root, cs.HASH_CACHE_FILENAME)
@@ -894,7 +894,7 @@ def test_reingest_deletion_also_reruns_the_frontend(
 
 def test_full_and_scoped_call_pass_agree_on_a_subset(fixture_root: Path) -> None:
     """_process_function_calls(only=...) emits exactly the subset's edges."""
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, fixture_root)
     updater.run(force=True)
     before = {e for e in store.edges if e[2] == cs.RelationshipType.CALLS.value}
@@ -1042,7 +1042,7 @@ def test_cpp_reingest_keeps_deferred_relationships(
     parsers, _queries = load_parsers()
     if cs.SupportedLanguage.CPP not in parsers:
         pytest.skip("cpp parser not available")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, root)
     updater.run(force=True)
     before = _snapshot(store)
@@ -1139,7 +1139,7 @@ def test_reingest_does_not_hide_an_edit_it_was_not_told_about(
     update_repository reads that file as no newer than the cache and keeps
     its stale hash for good.
     """
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, fixture_root)
     updater.run(force=True)
     cache = state_file(fixture_root, cs.HASH_CACHE_FILENAME)
@@ -1194,7 +1194,7 @@ def test_reingest_does_not_hide_an_edit_it_was_not_told_about(
 def test_reingest_skips_paths_the_ignore_rules_exclude(
     fixture_root: Path, rel: str, exclude: frozenset[str] | None, via_deleted: bool
 ) -> None:
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
     updater = GraphUpdater(
         ingestor=store,
@@ -1229,7 +1229,7 @@ def test_a_warm_updater_aborts_when_the_inbound_capture_fails(
     # reingest must not inherit the previous run's full-build flag: with it
     # set, a failed inbound-edge capture is swallowed and the cross-file
     # edges into the re-parsed files are dropped under a success log.
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, fixture_root)
     updater.run(force=True)
     _write(

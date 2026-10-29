@@ -23,13 +23,13 @@ from codebase_rag.parsers.frontends import go as go_fe
 from codebase_rag.parsers.frontends import java as java_fe
 from codebase_rag.parsers.go_frontend import GoCallSite, GoSemanticFacts
 from codebase_rag.parsers.java_frontend import JavaCallSite, JavaSemanticFacts
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 _ABSOLUTE = {cs.NodeLabel.FOLDER.value, cs.NodeLabel.PACKAGE.value}
 Snapshot = tuple[frozenset[tuple[str, str]], frozenset[tuple[str, ...]]]
 
 
-def _snapshot(store: _StatefulIngestor, root: Path) -> Snapshot:
+def _snapshot(store: StatefulIngestor, root: Path) -> Snapshot:
     prefix = root.resolve().as_posix() + "/"
 
     def norm(label: str, uid: str) -> str:
@@ -59,7 +59,7 @@ def _materialise(root: Path, files: dict[str, str]) -> None:
 
 
 def _updater(
-    store: _StatefulIngestor, repo: Path, language: cs.SupportedLanguage
+    store: StatefulIngestor, repo: Path, language: cs.SupportedLanguage
 ) -> GraphUpdater:
     parsers, queries = load_parsers()
     if language not in parsers:
@@ -83,7 +83,7 @@ def _clean(
 ) -> Snapshot:
     root = temp_repo / "clean" / "proj"
     _materialise(root, files)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(store, root, language).run(force=True)
     return _snapshot(store, root)
 
@@ -111,7 +111,7 @@ def test_a_reused_updater_resolves_a_rename_against_the_new_module(
 ) -> None:
     root = temp_repo / "proj"
     _materialise(root, PY_BEFORE)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, root, cs.SupportedLanguage.PYTHON)
     updater.run(force=True)
     (root / "base.py").rename(root / "core.py")
@@ -133,7 +133,7 @@ def test_a_reused_updater_gives_a_same_stem_replacement_the_bare_qn(
 ) -> None:
     root = temp_repo / "proj"
     _materialise(root, JS_BEFORE)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, root, cs.SupportedLanguage.JS)
     updater.run(force=True)
     (root / "util.js").unlink()
@@ -168,7 +168,7 @@ def test_a_reused_updater_forgets_a_deleted_module_language(
     # Python -> Rust call a clean index resolves.
     root = temp_repo / "proj"
     _materialise(root, RS_PY_BEFORE)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, root, cs.SupportedLanguage.PYTHON)
     if cs.SupportedLanguage.RUST not in updater.parsers:
         pytest.skip("rust parser not available")
@@ -199,7 +199,7 @@ def test_a_rehydrated_updater_forgets_a_deleted_definitions_language(
     before = {**RS_PY_BEFORE, "other.py": "def x():\n    return 1\n"}
     after = {**RS_PY_AFTER, "other.py": "def x():\n    return 2\n"}
     _materialise(root, before)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     first = _updater(store, root, cs.SupportedLanguage.PYTHON)
     if cs.SupportedLanguage.RUST not in first.parsers:
         pytest.skip("rust parser not available")
@@ -242,7 +242,7 @@ def test_a_rehydrated_updater_forgets_a_deleted_module_qn(temp_repo: Path) -> No
         "other.py": "def x():\n    return 1\n",
     }
     _materialise(root, before)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(store, root, cs.SupportedLanguage.PYTHON).run(force=True)
 
     updater = _updater(store, root, cs.SupportedLanguage.PYTHON)
@@ -275,7 +275,7 @@ def test_a_deleted_mod_rs_is_swept_on_its_recorded_qn(temp_repo: Path) -> None:
     mod_rs = root / "src" / "a" / "mod.rs"
     mod_rs.write_text("pub fn helper() -> i32 { 42 }\n", encoding="utf-8")
 
-    updater = _updater(_StatefulIngestor(), root, cs.SupportedLanguage.PYTHON)
+    updater = _updater(StatefulIngestor(), root, cs.SupportedLanguage.PYTHON)
     updater.factory.definition_processor.module_qn_to_file_path["proj.src.a"] = mod_rs
     updater.function_registry.insert("proj.src.a.helper", "Function")
     updater.simple_name_lookup.setdefault("helper", set()).add("proj.src.a.helper")
@@ -306,7 +306,7 @@ def test_rehydration_rebuilds_module_qns_instead_of_accumulating(
             "other.py": "def x():\n    return 1\n",
         },
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(store, root, cs.SupportedLanguage.PYTHON).run(force=True)
 
     updater = _updater(store, root, cs.SupportedLanguage.PYTHON)
@@ -336,7 +336,7 @@ def test_a_failed_module_query_leaves_the_rehydrated_set_intact(
     # drop the set rather than rebuild it.
     root = temp_repo / "proj"
     _materialise(root, {"other.py": "def x():\n    return 1\n"})
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, root, cs.SupportedLanguage.PYTHON)
     updater.run(force=True)
     updater._rehydrated_module_qns.add("proj.stale")
@@ -361,7 +361,7 @@ def test_a_failed_module_query_leaves_the_rehydrated_set_intact(
     assert "proj.stale" in updater._rehydrated_module_qns
 
 
-class _BufferingIngestor(_StatefulIngestor):
+class _BufferingIngestor(StatefulIngestor):
     # Production batches node writes and flushes at batch_size, so a module
     # parsed in the current run is NOT visible to a query issued mid-run. A
     # write-through fake hides every bug that depends on that.
@@ -465,7 +465,7 @@ def test_rehydration_readds_an_interface_held_only_by_the_graph(
             "impl.cpp": "module M;\nint f() { return 1; }\n",
         },
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     first = _updater(store, root, cs.SupportedLanguage.CPP)
     if cs.SupportedLanguage.CPP not in first.parsers:
         pytest.skip("cpp parser not available")
@@ -535,7 +535,7 @@ def test_a_cpp_interface_the_graph_lost_is_forgotten(temp_repo: Path) -> None:
             "other.cpp": "int x() { return 1; }\n",
         },
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     first = _updater(store, root, cs.SupportedLanguage.CPP)
     if cs.SupportedLanguage.CPP not in first.parsers:
         pytest.skip("cpp parser not available")
@@ -578,7 +578,7 @@ def test_a_parsed_interface_is_not_revived_on_a_later_run(temp_repo: Path) -> No
             "other.cpp": "int x() { return 1; }\n",
         },
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, root, cs.SupportedLanguage.CPP)
     if cs.SupportedLanguage.CPP not in updater.parsers:
         pytest.skip("cpp parser not available")
@@ -613,7 +613,7 @@ def test_seeded_module_qns_are_pruned_when_the_graph_loses_them(
             "other.py": "def x():\n    return 1\n",
         },
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(store, root, cs.SupportedLanguage.PYTHON).run(force=True)
 
     updater = _updater(store, root, cs.SupportedLanguage.PYTHON)
@@ -639,7 +639,7 @@ def test_seeded_module_qns_are_pruned_when_the_graph_loses_them(
     assert "proj.other" in pruned
 
 
-def _seeded_updater(temp_repo: Path) -> tuple[GraphUpdater, _StatefulIngestor]:
+def _seeded_updater(temp_repo: Path) -> tuple[GraphUpdater, StatefulIngestor]:
     root = temp_repo / "proj"
     _materialise(
         root,
@@ -648,7 +648,7 @@ def _seeded_updater(temp_repo: Path) -> tuple[GraphUpdater, _StatefulIngestor]:
             "other.py": "def x():\n    return 1\n",
         },
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(store, root, cs.SupportedLanguage.PYTHON).run(force=True)
     updater = _updater(store, root, cs.SupportedLanguage.PYTHON)
     (root / "other.py").write_text("def x():\n    return 2\n", encoding="utf-8")
@@ -721,7 +721,7 @@ def test_a_file_parsed_this_run_survives_a_read_that_cannot_see_it(
             "other.py": "def x():\n    return 1\n",
         },
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(store, root, cs.SupportedLanguage.PYTHON).run(force=True)
 
     updater = _updater(store, root, cs.SupportedLanguage.PYTHON)
@@ -763,7 +763,7 @@ def test_a_forced_run_also_prunes_the_seeded_map(temp_repo: Path) -> None:
             "other.py": "def x():\n    return 1\n",
         },
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, root, cs.SupportedLanguage.PYTHON)
     updater.run(force=True)
     assert "proj.util" in updater.factory.definition_processor.module_qn_to_file_path
@@ -799,7 +799,7 @@ def test_a_stale_qn_is_pruned_even_though_its_file_still_exists(
             "other.py": "def x():\n    return 1\n",
         },
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, root, cs.SupportedLanguage.PYTHON)
     updater.run(force=True)
     assert "proj.util" in updater.factory.definition_processor.module_qn_to_file_path
@@ -845,7 +845,7 @@ def test_a_reused_updater_relearns_a_renamed_module_under_jedi(
     _materialise(
         root, {"base.py": JEDI_CORE, "main.py": JEDI_MAIN.format(module="base")}
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, root, cs.SupportedLanguage.PYTHON)
     updater.run(force=True)
     (root / "base.py").rename(root / "core.py")
@@ -892,7 +892,7 @@ def test_a_reused_updater_resolves_a_go_call_after_a_same_package_rename(
 ) -> None:
     root = temp_repo / "proj"
     _materialise(root, GO_BEFORE)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, root, cs.SupportedLanguage.GO)
     updater.run(force=True)
     (root / "pkg" / "util.go").rename(root / "pkg" / "helpers.go")
@@ -921,7 +921,7 @@ def test_a_reused_updater_keys_a_new_same_stem_module_by_its_own_qn(
 ) -> None:
     root = temp_repo / "proj"
     _materialise(root, JS_BEFORE)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, root, cs.SupportedLanguage.JS)
     updater.run(force=True)
     (root / "util.ts").write_text(JS_ADD_AFTER["util.ts"], encoding="utf-8")
@@ -977,7 +977,7 @@ def test_a_reused_updater_joins_a_go_fact_against_the_renamed_module(
 
     root = temp_repo / "proj"
     _materialise(root, GO_FACT_BEFORE)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, root, cs.SupportedLanguage.GO)
     updater.run(force=True)
     first = _calls(_snapshot(store, root))
@@ -1060,7 +1060,7 @@ def test_a_reused_updater_joins_a_java_fact_against_the_renamed_module(
     monkeypatch.setattr(java_fe, "run_java_frontend", facts)
 
     _materialise(root, JAVA_FACT_BEFORE)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, root, cs.SupportedLanguage.JAVA)
     holder["updater"] = updater
     updater.run(force=True)
@@ -1102,7 +1102,7 @@ def test_a_reused_updater_keeps_a_same_stem_replacements_commonjs_export(
 ) -> None:
     root = temp_repo / "proj"
     _materialise(root, CJS_BEFORE)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, root, cs.SupportedLanguage.JS)
     updater.run(force=True)
     first = _calls(_snapshot(store, root))
@@ -1139,7 +1139,7 @@ def test_re_parsing_a_go_file_does_not_duplicate_a_sibling_keyed_method(
     """
     root = temp_repo / "proj"
     _materialise(root, GO_BEFORE)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, root, cs.SupportedLanguage.GO)
     updater.run(force=True)
     # Renaming util.go joins methods.go to the run as a DEPENDENT, so it is
@@ -1185,7 +1185,7 @@ def test_renaming_the_go_file_holding_a_receiver_type_keeps_the_method_calls(
     """
     root = temp_repo / "proj"
     _materialise(root, GO_BEFORE)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, root, cs.SupportedLanguage.GO)
     updater.run(force=True)
     (root / "pkg" / "types.go").rename(root / "pkg" / "kinds.go")

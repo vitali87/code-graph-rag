@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
-from evals.cgr_graph import _capture
+from evals.cgr_graph import capture
 
 
 def _js_grammar_available() -> bool:
@@ -52,7 +52,7 @@ def test_call_inside_anonymous_callback_attributes_to_enclosing_method(
     # up to the nearest named scope (Plugin.apply). This callback pattern is
     # pervasive in real JS (e.g. webpack's hooks.tap(name, (x) => {...})).
     _make(tmp_path)
-    ingestor = _capture(tmp_path, "proj")
+    ingestor = capture(tmp_path, "proj")
     calls = {
         (str(from_val), str(to_val))
         for _fl, from_val, rel, _tl, to_val in ingestor.rels

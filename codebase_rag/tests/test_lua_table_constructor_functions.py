@@ -18,7 +18,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 SAY_LUA = (
     "local s = {\n"
@@ -39,7 +39,7 @@ def _functions(root: Path) -> dict[str, str]:
     parsers, queries = load_parsers()
     if cs.SupportedLanguage.LUA not in parsers:
         pytest.skip("lua parser not available")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(
         ingestor=store,
         repo_path=root,
@@ -92,7 +92,7 @@ REVIEW_LUA = (
 
 def _calls(root: Path) -> set[tuple[str, str]]:
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(
         ingestor=store,
         repo_path=root,

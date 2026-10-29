@@ -443,9 +443,9 @@ class TestFingerprintStamping:
         entries dropped, so a reused updater does not register every
         definition again as an `@N` duplicate beside the old one (caught by
         the delombok overlay test in CI on the #1977 fix)."""
-        from evals.cgr_graph import _StatefulIngestor
+        from evals.cgr_graph import StatefulIngestor
 
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         updater = _make_updater(py_project, store)  # type: ignore[arg-type]
         updater.run()
         _fingerprint_path(py_project).write_text(STALE_FINGERPRINT, encoding="utf-8")
@@ -468,9 +468,9 @@ class TestFingerprintStamping:
         """The cache's keys move into the forced re-parse set on a parser
         change, so a file the cache names and the walk no longer finds must
         still leave the graph: Module, definitions and File node."""
-        from evals.cgr_graph import _StatefulIngestor
+        from evals.cgr_graph import StatefulIngestor
 
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         (py_project / "module_b.py").write_text("def func_b():\n    pass\n")
         _make_updater(py_project, store).run()  # type: ignore[arg-type]
         module_b = base_module_qn(Path("module_b.py"), py_project.name)
@@ -522,9 +522,9 @@ class TestFingerprintStamping:
         force, so the run stays the full build it always was and asks the
         graph what it holds; a reused updater still ends with one node per
         definition (bot review)."""
-        from evals.cgr_graph import _StatefulIngestor
+        from evals.cgr_graph import StatefulIngestor
 
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         updater = _make_updater(py_project, store)  # type: ignore[arg-type]
         updater.run()
         state_file(py_project, cs.HASH_CACHE_FILENAME).write_text('{"module_a.py": "ab')
@@ -548,9 +548,9 @@ class TestFingerprintStamping:
         delete-before-reingest (bot review)."""
         import json
 
-        from evals.cgr_graph import _StatefulIngestor
+        from evals.cgr_graph import StatefulIngestor
 
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         (py_project / "module_b.py").write_text("def func_b():\n    pass\n")
         updater = _make_updater(py_project, store)  # type: ignore[arg-type]
         updater.run()

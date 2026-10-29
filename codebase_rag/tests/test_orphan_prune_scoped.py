@@ -18,10 +18,10 @@ from codebase_rag import cypher_queries as cq
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import PropertyDict, ResultRow
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 
-class _Counting(_StatefulIngestor):
+class _Counting(StatefulIngestor):
     def __init__(self) -> None:
         super().__init__()
         self.reads: list[tuple[str, PropertyDict | None, list[ResultRow]]] = []
@@ -47,7 +47,7 @@ def _repo(root: Path, name: str, files: int) -> Path:
     return repo
 
 
-def _sync(store: _StatefulIngestor, repo: Path, name: str, force: bool) -> None:
+def _sync(store: StatefulIngestor, repo: Path, name: str, force: bool) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=store,

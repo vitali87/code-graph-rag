@@ -58,7 +58,7 @@ from codebase_rag.types_defs import (
     ResultRow,
 )
 from codebase_rag.utils.path_utils import derive_project_name
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 if TYPE_CHECKING:
     from codebase_rag.watch import CodeChangeEventHandler
@@ -84,7 +84,7 @@ with repo_sync_lock(Path(sys.argv[1]), sys.argv[2]):
 """
 
 
-class _Graph(_StatefulIngestor):
+class _Graph(StatefulIngestor):
     """The evals' in-memory graph, answering the one call `cgr start` adds."""
 
     def ensure_constraints(self) -> None:

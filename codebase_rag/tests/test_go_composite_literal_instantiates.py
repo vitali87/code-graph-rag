@@ -18,7 +18,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 TYPES_GO = "package m\n\ntype Error struct {\n\tMsg string\n}\n\ntype Box[T any] struct {\n\tV T\n}\n"
 SVC_GO = (
@@ -40,11 +40,11 @@ SVC_GO = (
 OTHER_GO = 'package other\n\nimport "proj/m"\n\nfunc build() *m.Error { return &m.Error{Msg: "g"} }\n'
 
 
-def _index(root: Path) -> _StatefulIngestor:
+def _index(root: Path) -> StatefulIngestor:
     parsers, queries = load_parsers()
     if cs.SupportedLanguage.GO not in parsers:
         pytest.skip("go parser not available")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(
         ingestor=store,
         repo_path=root,
@@ -56,7 +56,7 @@ def _index(root: Path) -> _StatefulIngestor:
     return store
 
 
-def _instantiates(store: _StatefulIngestor) -> dict[str, set[str]]:
+def _instantiates(store: StatefulIngestor) -> dict[str, set[str]]:
     out: dict[str, set[str]] = {}
     for _sl, src, rel, _tl, dst in store.edges:
         if rel == cs.RelationshipType.INSTANTIATES.value:

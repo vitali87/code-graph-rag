@@ -30,7 +30,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers import call_processor as cp
 from codebase_rag.tests.conftest import create_and_run_updater
 from codebase_rag.types_defs import PropertyDict, PropertyParams, ResultRow
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "cbloc"
 DOUBLE = f"{PROJECT}.pkg.main.double"
@@ -115,10 +115,10 @@ def _index(
     return mock
 
 
-def _store(root: Path, files: dict[str, str]) -> _StatefulIngestor:
+def _store(root: Path, files: dict[str, str]) -> StatefulIngestor:
     _write(root, files)
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(
         ingestor=store,
         repo_path=root,
@@ -129,7 +129,7 @@ def _store(root: Path, files: dict[str, str]) -> _StatefulIngestor:
     return store
 
 
-def _query(store: _StatefulIngestor) -> QueryFn:
+def _query(store: StatefulIngestor) -> QueryFn:
     def fetch_all(query: str, params: PropertyParams | None) -> list[ResultRow]:
         return store.fetch_all(query, None if params is None else dict(params))
 

@@ -221,7 +221,9 @@ class TestCallSite:
 
     @staticmethod
     def _main_tree() -> ast.Module:
-        return ast.parse((Path(__file__).resolve().parents[1] / "agent_loop.py").read_text())
+        return ast.parse(
+            (Path(__file__).resolve().parents[1] / "agent_loop.py").read_text()
+        )
 
     @staticmethod
     def _prune_call(tree: ast.Module) -> ast.Call:

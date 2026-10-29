@@ -43,7 +43,7 @@ from codebase_rag.utils.dependencies import (
     has_qdrant_client,
     has_sqlite_vec,
 )
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 pytestmark = pytest.mark.skipif(
     not has_qdrant_client(), reason="qdrant-client not installed"
@@ -89,7 +89,7 @@ def _row(node_id: int, qualified_name: str, path: str = _MODULE) -> ResultRow:
     }
 
 
-class _Graph(_StatefulIngestor):
+class _Graph(StatefulIngestor):
     """The eval graph double, answering the embeddings query from `rows`.
 
     The double holds no internal node ids, which the embeddings query reads,

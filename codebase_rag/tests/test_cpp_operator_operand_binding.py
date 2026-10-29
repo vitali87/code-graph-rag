@@ -9,11 +9,11 @@
 # same-named overload in the project.
 from pathlib import Path
 
-from evals.cgr_graph import _capture
+from evals.cgr_graph import capture
 
 
 def _calls(tmp_path: Path) -> set[tuple[str, str]]:
-    ingestor = _capture(tmp_path, "proj")
+    ingestor = capture(tmp_path, "proj")
     return {
         (str(from_val), str(to_val))
         for _fl, from_val, rel, _tl, to_val in ingestor.rels

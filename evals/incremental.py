@@ -26,7 +26,7 @@ from codebase_rag.types_defs import LanguageQueries
 from . import constants as ec
 from . import logs as ls
 from .ast_oracle import _iter_py_files
-from .cgr_graph import _StatefulIngestor
+from .cgr_graph import StatefulIngestor
 from .score import _prf
 from .structure_report import render, write_outputs
 from .types_defs import DiffBucket, GraphState, LocationStats, ScoreResult, ScoreRow
@@ -42,7 +42,7 @@ def neutral_edit(content: bytes) -> bytes:
     return content + ec.NEUTRAL_EDIT_COMMENT.encode(cs.ENCODING_UTF8)
 
 
-def snapshot(store: _StatefulIngestor) -> GraphState:
+def snapshot(store: StatefulIngestor) -> GraphState:
     nodes = frozenset((label, str(uid)) for (label, uid) in store.nodes)
     edges = frozenset(
         (str(fl), str(fv), str(rel), str(tl), str(tv))
@@ -63,7 +63,7 @@ def _purge_index_state(work: Path) -> None:
 
 
 def _index(
-    store: _StatefulIngestor,
+    store: StatefulIngestor,
     repo: Path,
     project: str,
     parsers: _Parsers,
@@ -93,7 +93,7 @@ def run_neutral_edit_scenario(
     shutil.copytree(repo_src, work)
     _purge_index_state(work)
 
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, work, project, parsers, queries, force=False)
 
     # The neutral edit must read as "changed": bump its mtime past the hash
@@ -107,7 +107,7 @@ def run_neutral_edit_scenario(
     _index(store, work, project, parsers, queries, force=False)
     incremental = snapshot(store)
 
-    clean_store = _StatefulIngestor()
+    clean_store = StatefulIngestor()
     _index(clean_store, work, project, parsers, queries, force=True)
     clean = snapshot(clean_store)
     return incremental, clean

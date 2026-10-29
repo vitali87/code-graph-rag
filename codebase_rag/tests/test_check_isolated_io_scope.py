@@ -27,7 +27,7 @@ from codebase_rag.tests.test_check_isolated_wiring import (
     _state,
     indexed,  # noqa: F401  (fixture)
 )
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 _RESOURCE = cs.NodeLabel.RESOURCE.value
 _FUNCTION = cs.NodeLabel.FUNCTION.value
@@ -37,7 +37,7 @@ LOAD = "isosvc.server.load"
 GET_USER = "isosvc.server.getUser"
 
 
-def _link_other_service(store: _StatefulIngestor) -> None:
+def _link_other_service(store: StatefulIngestor) -> None:
     # Another project's cross-service link, as `--capture io` writes it:
     # load() fetches /users/1, which resolves to the route getUser exposes.
     for qn in (LOAD, GET_USER):
@@ -60,7 +60,7 @@ def _link_other_service(store: _StatefulIngestor) -> None:
         )
 
 
-def _isolated(root: Path, store: _StatefulIngestor) -> dict:
+def _isolated(root: Path, store: StatefulIngestor) -> dict:
     parsers, queries = load_parsers()
     return dict(
         run_check(
@@ -77,13 +77,13 @@ def _isolated(root: Path, store: _StatefulIngestor) -> dict:
     )
 
 
-def _io_edges(store: _StatefulIngestor) -> set[tuple]:
+def _io_edges(store: StatefulIngestor) -> set[tuple]:
     io = {cs.RelationshipType.RESOLVES_TO.value, cs.RelationshipType.EXPOSES.value}
     return {edge for edge in store.edges if edge[2] in io}
 
 
 def test_another_projects_io_links_do_not_refuse_the_check(
-    indexed: tuple[Path, _StatefulIngestor],  # noqa: F811
+    indexed: tuple[Path, StatefulIngestor],  # noqa: F811
 ) -> None:
     root, store = indexed
     _link_other_service(store)
@@ -99,7 +99,7 @@ def test_another_projects_io_links_do_not_refuse_the_check(
 
 
 def test_a_link_on_a_resource_the_project_touches_still_refuses(
-    indexed: tuple[Path, _StatefulIngestor],  # noqa: F811
+    indexed: tuple[Path, StatefulIngestor],  # noqa: F811
 ) -> None:
     # Negative: once the checked project's own function reads the URL that
     # resolves to the route, cutting it could unanchor that link.
@@ -119,7 +119,7 @@ def test_a_link_on_a_resource_the_project_touches_still_refuses(
 
 
 def test_a_route_the_project_exposes_still_refuses(
-    indexed: tuple[Path, _StatefulIngestor],  # noqa: F811
+    indexed: tuple[Path, StatefulIngestor],  # noqa: F811
 ) -> None:
     # Negative: the endpoint end of a RESOLVES_TO counts as well.
     root, store = indexed
@@ -136,7 +136,7 @@ def test_a_route_the_project_exposes_still_refuses(
 
 
 def test_a_resource_the_root_module_touches_still_refuses(
-    indexed: tuple[Path, _StatefulIngestor],  # noqa: F811
+    indexed: tuple[Path, StatefulIngestor],  # noqa: F811
 ) -> None:
     # Negative: the root module (`__init__.py`, `mod.rs`) is the project name
     # itself, not under its prefix, and a change to it is cut all the same.
@@ -163,7 +163,7 @@ NESTED = f"{PROJECT}.v2"
 NESTED_LOAD = f"{NESTED}.client.load"
 
 
-def _link_from_nested_qn(store: _StatefulIngestor, *, registered: bool) -> None:
+def _link_from_nested_qn(store: StatefulIngestor, *, registered: bool) -> None:
     # The other service's link, read this time by a node under `PROJECT.v2.`:
     # the qualified-name prefix `PROJECT.` covers it either way.
     _link_other_service(store)
@@ -180,7 +180,7 @@ def _link_from_nested_qn(store: _StatefulIngestor, *, registered: bool) -> None:
 
 
 def test_a_nested_projects_io_links_do_not_refuse_the_check(
-    indexed: tuple[Path, _StatefulIngestor],  # noqa: F811
+    indexed: tuple[Path, StatefulIngestor],  # noqa: F811
 ) -> None:
     # A registered `PROJECT.v2` owns the names under it, so the module delete
     # spares its nodes and the link they anchor survives the run (#1985).
@@ -196,7 +196,7 @@ def test_a_nested_projects_io_links_do_not_refuse_the_check(
 
 
 def test_an_unregistered_nested_name_is_the_projects_own(
-    indexed: tuple[Path, _StatefulIngestor],  # noqa: F811
+    indexed: tuple[Path, StatefulIngestor],  # noqa: F811
 ) -> None:
     # Negative: with no `PROJECT.v2` project, a node under that name is the
     # checked project's own (a `v2/` package), so its link still refuses.

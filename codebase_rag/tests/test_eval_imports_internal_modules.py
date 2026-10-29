@@ -6,13 +6,13 @@
 from __future__ import annotations
 
 from codebase_rag import constants as cs
-from evals.cgr_graph import _CapturingIngestor, _to_graph_data
+from evals.cgr_graph import CapturingIngestor, _to_graph_data
 
 _MODULE = cs.NodeLabel.MODULE.value
 _IMPORTS = cs.RelationshipType.IMPORTS.value
 
 
-def _module(ingestor: _CapturingIngestor, qn: str, path: str) -> None:
+def _module(ingestor: CapturingIngestor, qn: str, path: str) -> None:
     ingestor.ensure_node_batch(
         _MODULE,
         {cs.KEY_QUALIFIED_NAME: qn, cs.KEY_NAME: qn, cs.KEY_PATH: path},
@@ -20,7 +20,7 @@ def _module(ingestor: _CapturingIngestor, qn: str, path: str) -> None:
 
 
 def test_import_placeholder_module_not_scored_as_internal() -> None:
-    ingestor = _CapturingIngestor()
+    ingestor = CapturingIngestor()
     _module(ingestor, "proj.src", "src.py")
     _module(ingestor, "proj.real", "pkg/real.py")
     # Placeholder for an unresolved import: path is the dotted name, not a file.

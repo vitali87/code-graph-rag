@@ -7,7 +7,7 @@
 # sibling is also referenced.
 from pathlib import Path
 
-from evals.cgr_graph import _capture
+from evals.cgr_graph import capture
 
 
 def test_build_variant_sibling_function_is_called(tmp_path: Path) -> None:
@@ -26,7 +26,7 @@ def test_build_variant_sibling_function_is_called(tmp_path: Path) -> None:
         "package p\nfunc caller() int { return validate(1) }\n",
         encoding="utf-8",
     )
-    ingestor = _capture(tmp_path, "proj")
+    ingestor = capture(tmp_path, "proj")
     calls = {
         (str(f), str(t)) for _fl, f, rel, _tl, t in ingestor.rels if rel == "CALLS"
     }
@@ -48,7 +48,7 @@ def test_different_package_same_name_is_not_fanned_out(tmp_path: Path) -> None:
         "package sub\nfunc validate(x int) int { return x }\n",
         encoding="utf-8",
     )
-    ingestor = _capture(tmp_path, "proj")
+    ingestor = capture(tmp_path, "proj")
     calls = {
         (str(f), str(t)) for _fl, f, rel, _tl, t in ingestor.rels if rel == "CALLS"
     }
@@ -71,7 +71,7 @@ def test_external_test_package_sibling_is_not_fanned_out(tmp_path: Path) -> None
         "package p_test\nfunc validate(x int) int { return x }\n",
         encoding="utf-8",
     )
-    ingestor = _capture(tmp_path, "proj")
+    ingestor = capture(tmp_path, "proj")
     calls = {
         (str(f), str(t)) for _fl, f, rel, _tl, t in ingestor.rels if rel == "CALLS"
     }

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 # The field is declared on the SECOND part; the decoy carries the same
 # member name so the bare-name fallback has a wrong answer to give.
@@ -29,7 +29,7 @@ def test_a_field_declared_on_the_other_same_file_part_types_its_receiver(
     (root / "src").mkdir(parents=True)
     (root / "src" / "App.cs").write_text(SOURCE, encoding="utf-8")
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(
         ingestor=store,  # type: ignore[arg-type]
         repo_path=root,
@@ -63,7 +63,7 @@ def test_verbatim_named_partial_types_stay_apart(tmp_path: Path) -> None:
     (root / "src").mkdir(parents=True)
     (root / "src" / "App.cs").write_text(VERBATIM, encoding="utf-8")
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(
         ingestor=store,  # type: ignore[arg-type]
         repo_path=root,

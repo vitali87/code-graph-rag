@@ -159,14 +159,14 @@ def test_a_prefix_edited_in_the_package_init_re_mounts_incrementally(
     # The scoped re-ingest of `__init__.py` alone must find the blueprint
     # module through the same package-relative import, or the unchanged
     # handler re-emits without any prefix.
-    from evals.cgr_graph import _StatefulIngestor
+    from evals.cgr_graph import StatefulIngestor
 
     root = tmp_path / PROJECT
     files = {**_blueprints(), "flaskr/__init__.py": _FLASK_INIT}
     for rel, text in files.items():
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(text, encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
     updater = GraphUpdater(
         ingestor=store,

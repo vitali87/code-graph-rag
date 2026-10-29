@@ -26,7 +26,7 @@ from codebase_rag.graph_updater import (
 )
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.utils.json_io import loads_json
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 _DEPTH = 100_000
 _DEEP = '{"name":"x","a":' + "[" * _DEPTH + "]" * _DEPTH + "}"
@@ -62,7 +62,7 @@ def test_one_deep_manifest_does_not_stop_the_run(
         "import { x } from './y';\nexport const a = 1;\n", encoding="utf-8"
     )
     (repo / manifest).write_text(_DEEP, encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
 
     GraphUpdater(

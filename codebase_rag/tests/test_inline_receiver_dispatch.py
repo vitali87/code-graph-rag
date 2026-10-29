@@ -24,7 +24,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 _DECOY_COLLIDES = "class Engine:\n    def resolve(self) -> int:\n        return 1\n"
 _DECOY_CONTROL = "class Engine:\n    def compute(self) -> int:\n        return 1\n"
@@ -110,7 +110,7 @@ _EXTERNAL_ATTRIBUTE_BODY = (
 
 def _decoy_resolve_edges(repo: Path) -> set[tuple[str, str]]:
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(ingestor=store, repo_path=repo, parsers=parsers, queries=queries).run(
         force=True
     )
@@ -205,7 +205,7 @@ def test_an_inline_operator_on_a_project_class_reaches_its_dunder(
         "    return (factory / config).run()\n"
     )
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(ingestor=store, repo_path=repo, parsers=parsers, queries=queries).run(
         force=True
     )
@@ -246,7 +246,7 @@ def test_constructor_only_and_shift_receivers_reach_the_rules(
         "    return (Factory() << 1).run()\n"
     )
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(ingestor=store, repo_path=repo, parsers=parsers, queries=queries).run(
         force=True
     )

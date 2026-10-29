@@ -17,7 +17,7 @@ from codebase_rag import constants as cs
 from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 CPP: dict[str, str] = {
     "shape.h": "namespace geo {\nclass Shape {\n public:\n  virtual int area();\n};\n}\n",
@@ -48,7 +48,7 @@ _ABSOLUTE = {cs.NodeLabel.FOLDER.value, cs.NodeLabel.PACKAGE.value}
 Snapshot = tuple[frozenset[tuple[str, str]], frozenset[tuple[str, ...]]]
 
 
-def _snapshot(store: _StatefulIngestor, root: Path) -> Snapshot:
+def _snapshot(store: StatefulIngestor, root: Path) -> Snapshot:
     prefix = root.resolve().as_posix() + "/"
 
     def norm(label: str, uid: str) -> str:
@@ -76,7 +76,7 @@ def _materialise(root: Path, files: dict[str, str]) -> None:
 
 
 def _index(
-    store: _StatefulIngestor, repo: Path, language: cs.SupportedLanguage, force: bool
+    store: StatefulIngestor, repo: Path, language: cs.SupportedLanguage, force: bool
 ) -> None:
     parsers, queries = load_parsers()
     if language not in parsers:
@@ -95,7 +95,7 @@ def _clean(
 ) -> Snapshot:
     root = temp_repo / name / "proj"
     _materialise(root, files)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, language, force=True)
     return _snapshot(store, root)
 
@@ -120,7 +120,7 @@ def test_deleting_the_bare_qn_holder_hands_the_qn_to_the_surviving_sibling(
 ) -> None:
     root = temp_repo / "proj"
     _materialise(root, fixture)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, language, force=True)
     assert bare_qn in _modules(_snapshot(store, root)), "the source owns the bare qn"
     (root / source).unlink()
@@ -145,7 +145,7 @@ def test_adding_a_sibling_that_wins_the_bare_qn_renames_the_existing_one(
     root = temp_repo / "proj"
     header_only = {rel: text for rel, text in fixture.items() if rel != source}
     _materialise(root, header_only)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, language, force=True)
     assert bare_qn in _modules(_snapshot(store, root)), "alone, the header owns it"
     added = root / source

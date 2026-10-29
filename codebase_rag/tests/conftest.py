@@ -13,7 +13,7 @@ from collections.abc import Generator, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, Self
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
 from loguru import logger
@@ -28,6 +28,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers import native_trees
 from codebase_rag.parsers.py.ast_analyzer import clear_scope_facts
 from codebase_rag.types_defs import GraphNodeRecord, GraphRelRecord
+from evals.recorded_graph import RecordingIngestor
 
 if TYPE_CHECKING:
     pass  # ty: ignore[unresolved-import]
@@ -857,44 +858,9 @@ def temp_repo() -> Generator[Path, None, None]:
     shutil.rmtree(temp_dir, onexc=_clear_readonly)
 
 
-class _MockIngestor:
-    _TRACKED = (
-        "fetch_all",
-        "execute_write",
-        "ensure_node_batch",
-        "ensure_relationship_batch",
-        "flush_all",
-    )
-
-    def __init__(self) -> None:
-        self.fetch_all = MagicMock()
-        self.execute_write = MagicMock()
-        self.ensure_node_batch = MagicMock()
-        self.ensure_relationship_batch = MagicMock()
-        self.flush_all = MagicMock()
-        self._fallback = MagicMock()
-
-    def reset_mock(self) -> None:
-        for name in (*self._TRACKED, "_fallback"):
-            getattr(self, name).reset_mock()
-
-    @property
-    def method_calls(self) -> list:
-        result = []
-        for name in self._TRACKED:
-            mock_attr = self.__dict__[name]
-            for c in mock_attr.call_args_list:
-                result.append(getattr(call, name)(*c.args, **c.kwargs))
-        result.extend(self._fallback.method_calls)
-        return result
-
-    def __getattr__(self, name: str) -> MagicMock:
-        return getattr(self._fallback, name)
-
-
 @pytest.fixture
-def mock_ingestor() -> _MockIngestor:
-    return _MockIngestor()
+def mock_ingestor() -> RecordingIngestor:
+    return RecordingIngestor()
 
 
 def run_updater(

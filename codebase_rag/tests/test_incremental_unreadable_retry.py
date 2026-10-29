@@ -18,10 +18,10 @@ from codebase_rag import graph_updater as gu
 from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 
-def _updater(root: Path, store: _StatefulIngestor) -> GraphUpdater:
+def _updater(root: Path, store: StatefulIngestor) -> GraphUpdater:
     # The derived project name: a NAMED project never took the fast path
     # on this base, which is issue #1981, not this one.
     parsers, queries = load_parsers()
@@ -45,7 +45,7 @@ def test_an_unreadable_file_is_retried_by_the_next_run(
     (root / "pkg").mkdir()
     (root / "pkg" / "__init__.py").write_text("")
     (root / "pkg" / "b.py").write_text("def b():\n    return 2\n")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     real = gu._hash_file_with_bytes
 
     # Portable unreadability: the read of `b.py` fails on this run only.
@@ -76,7 +76,7 @@ def test_a_run_that_reads_every_file_keeps_the_fast_path(tmp_path: Path) -> None
     root = tmp_path / "proj"
     root.mkdir()
     (root / "a.py").write_text("def a():\n    return 1\n")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(root, store).run(force=True)
     assert _updater(root, store)._is_already_in_sync() is True
 
@@ -95,7 +95,7 @@ def test_a_file_that_becomes_unreadable_after_a_healthy_run_is_retried(
     (root / "pkg").mkdir()
     (root / "pkg" / "__init__.py").write_text("")
     (root / "pkg" / "b.py").write_text("def b():\n    return 2\n")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(root, store).run(force=True)
     assert _updater(root, store)._is_already_in_sync() is True
 
@@ -138,7 +138,7 @@ def test_a_symbol_renamed_while_unreadable_leaves_no_stale_entity(
     (root / "pkg").mkdir()
     (root / "pkg" / "__init__.py").write_text("")
     (root / "pkg" / "b.py").write_text("def old_name():\n    return 2\n")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(root, store).run(force=True)
     project = next(uid for label, uid in store.nodes if label == "Project")
     assert ("Function", f"{project}.pkg.b.old_name") in store.nodes

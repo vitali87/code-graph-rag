@@ -22,7 +22,7 @@ from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.test_incremental_inbound_deferred_targets import _snapshot
 from codebase_rag.types_defs import PropertyDict, ResultRow
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 _GO = {
     "go.mod": "module example.com/split\n\ngo 1.21\n",
@@ -73,7 +73,7 @@ _CPP = {
 _CPP_GROW = "proj.box.h.Box.grow"
 
 
-class _MemberLookupOutage(_StatefulIngestor):
+class _MemberLookupOutage(StatefulIngestor):
     """Fails the foreign-member lookup once `down` is set, answers the rest."""
 
     def __init__(self) -> None:
@@ -94,7 +94,7 @@ def _write(root: Path, files: dict[str, str]) -> None:
         (root / rel).write_text(text, encoding="utf-8")
 
 
-def _updater(store: _StatefulIngestor, root: Path) -> GraphUpdater:
+def _updater(store: StatefulIngestor, root: Path) -> GraphUpdater:
     parsers, queries = load_parsers()
     return GraphUpdater(
         ingestor=store,
@@ -105,7 +105,7 @@ def _updater(store: _StatefulIngestor, root: Path) -> GraphUpdater:
     )
 
 
-def _index(store: _StatefulIngestor, root: Path, force: bool) -> None:
+def _index(store: StatefulIngestor, root: Path, force: bool) -> None:
     _updater(store, root).run(force=force)
 
 
@@ -117,7 +117,7 @@ def _edit_after_cache(path: Path, root: Path, marker: str) -> None:
     os.utime(path, (cache_mtime + 1, cache_mtime + 1))
 
 
-def _facts(store: _StatefulIngestor, qn: str) -> set[tuple[str, ...]]:
+def _facts(store: StatefulIngestor, qn: str) -> set[tuple[str, ...]]:
     # The node and every edge leaving it or its owner's link to it. Edges
     # INTO a re-indexed method from an unchanged file are #3270's restore.
     nodes, edges = _snapshot(store)
@@ -138,7 +138,7 @@ def go_root(temp_repo: Path) -> Path:
 def test_a_method_declared_in_another_file_survives_its_types_reparse(
     go_root: Path,
 ) -> None:
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, go_root, force=True)
     clean = _facts(store, _GROW)
     assert {_GROW_NODE, *_GROW_FACTS} <= clean, "fixture must define Grow"
@@ -156,7 +156,7 @@ def _parsed_on_sync(
 ) -> list[str]:
     # Indexes `root` clean, edits `edited`, and returns the file names the
     # incremental run re-parses.
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, force=True)
     parsed: list[str] = []
     original = GraphUpdater._process_single_file
@@ -235,7 +235,7 @@ def test_a_cpp_out_of_line_definition_survives_its_headers_reparse(
         pytest.skip("cpp parser not available")
     root = temp_repo / "proj"
     _write(root, _CPP)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, force=True)
     clean = store.nodes[(cs.NodeLabel.METHOD.value, _CPP_GROW)]
     assert clean.get(cs.KEY_PATH) == "box.cpp", clean
@@ -254,7 +254,7 @@ def test_a_scoped_reingest_keeps_an_out_of_line_definition(cpp_root: Path) -> No
     # dependent walk follows edges only: box.h joined as util.h's dependent
     # and its delete took box.cpp's grow, which nothing re-created.
     _write(cpp_root, _CPP)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, cpp_root, force=True)
     clean = store.nodes[(cs.NodeLabel.METHOD.value, _CPP_GROW)]
 
@@ -273,7 +273,7 @@ def test_a_single_file_run_keeps_an_out_of_line_definition(cpp_root: Path) -> No
     # but found no walked file to queue: box.h's delete took grow, and
     # box.cpp's unchanged hash kept every later sync from re-creating it.
     _write(cpp_root, _CPP)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, cpp_root, force=True)
     clean = _snapshot(store)
 
@@ -288,7 +288,7 @@ def test_a_single_file_run_keeps_a_method_declared_in_another_file(
 ) -> None:
     # box_extra.go joins for Grow, then tag_methods.go for the Tag.Label
     # that box_extra.go's own module holds.
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, go_root, force=True)
     clean = _facts(store, _GROW)
 

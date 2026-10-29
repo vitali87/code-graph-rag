@@ -16,7 +16,7 @@ from codebase_rag import constants as cs
 from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 FIXTURE: dict[str, str] = {
     "base.h": "class Base {\n public:\n  virtual int run();\n};\n",
@@ -30,7 +30,7 @@ FIXTURE: dict[str, str] = {
 Snapshot = tuple[frozenset[tuple[str, str]], frozenset[tuple[str, ...]]]
 
 
-def _snapshot(store: _StatefulIngestor) -> Snapshot:
+def _snapshot(store: StatefulIngestor) -> Snapshot:
     nodes = frozenset((label, str(uid)) for (label, uid) in store.nodes)
     edges = frozenset(
         (str(fl), str(fv), str(rel), str(tl), str(tv))
@@ -39,7 +39,7 @@ def _snapshot(store: _StatefulIngestor) -> Snapshot:
     return nodes, edges
 
 
-def _index(store: _StatefulIngestor, repo: Path, force: bool) -> None:
+def _index(store: StatefulIngestor, repo: Path, force: bool) -> None:
     parsers, queries = load_parsers()
     if cs.SupportedLanguage.CPP not in parsers:
         pytest.skip("cpp parser not available")
@@ -70,7 +70,7 @@ def test_incremental_reparse_registers_out_of_class_method_once(
     root.mkdir()
     for rel, text in FIXTURE.items():
         (root / rel).write_text(text, encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, force=True)
     clean = _snapshot(store)
     class_qn = "proj.derived.h.Derived"

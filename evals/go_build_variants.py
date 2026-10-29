@@ -60,10 +60,10 @@ import typer
 
 from codebase_rag import constants as cs
 from codebase_rag.graph_query import QueryFn
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 if TYPE_CHECKING:
-    from codebase_rag.tests.test_rename_op import RecordedGraph
+    from evals.recorded_graph import RecordedGraph
 
 PROJECT = "oracle"
 GOOS = ("linux", "windows", "darwin")
@@ -583,7 +583,7 @@ def build_status(root: Path, builds: tuple[Build, ...]) -> dict[str, bool]:
 # --- cgr's graph -------------------------------------------------------------
 
 
-def index(root: Path, frontend: str) -> _StatefulIngestor:
+def index(root: Path, frontend: str) -> StatefulIngestor:
     from codebase_rag import graph_updater as gu
     from codebase_rag.graph_updater import GraphUpdater
     from codebase_rag.parser_loader import load_parsers
@@ -597,7 +597,7 @@ def index(root: Path, frontend: str) -> _StatefulIngestor:
     )
     try:
         parsers, queries = load_parsers()
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         with _environment(GOOS=goos) if goos else _host():
             GraphUpdater(
                 ingestor=store,
@@ -625,7 +625,7 @@ class _Graph:
     edges: dict[tuple[str, str, str], list[str | None]]
 
 
-def _graph(store: _StatefulIngestor) -> _Graph:
+def _graph(store: StatefulIngestor) -> _Graph:
     nodes: dict[str, tuple[str, int, int, str]] = {}
     at: dict[tuple[str, int], str] = {}
     for (label, qn), props in store.nodes.items():
@@ -793,7 +793,7 @@ def _owner(qn: str) -> str:
 
 
 def compare(
-    store: _StatefulIngestor,
+    store: StatefulIngestor,
     truth: dict[str, BuildFacts],
     interfaces: dict[str, InterfaceTruth] | None = None,
 ) -> Findings:
@@ -1247,8 +1247,9 @@ def rename_check(
     and vetted before and fails after, and each neighbour file (see
     `neighbours`) it changed."""
     from codebase_rag.editing.rename import RenameRefused, rename
-    from codebase_rag.tests.conftest import _MockIngestor, create_and_run_updater
-    from codebase_rag.tests.test_rename_op import RecordedGraph
+    from codebase_rag.graph_updater import GraphUpdater
+    from codebase_rag.parser_loader import load_parsers
+    from evals.recorded_graph import RecordedGraph, RecordingIngestor
 
     root = workdir / f"rename{case:03d}" / PROJECT
     root.mkdir(parents=True)
@@ -1264,9 +1265,15 @@ def rename_check(
     for rel, text in _assertions(root, builds, truth).items():
         (root / rel).write_text(text, encoding="utf-8")
     before = build_status(root, builds)
-    ingestor = _MockIngestor()
-    create_and_run_updater(root, cast(MagicMock, ingestor))
-    graph = RecordedGraph(cast(MagicMock, ingestor), PROJECT)
+    ingestor = RecordingIngestor()
+    parsers, queries = load_parsers()
+    GraphUpdater(
+        ingestor=cast(MagicMock, ingestor),
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+    ).run()
+    graph = RecordedGraph(ingestor, PROJECT)
     graph.root_path = str(root.resolve())
     targets = _rename_targets(graph, own)
     if not targets:

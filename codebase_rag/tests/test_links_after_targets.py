@@ -20,10 +20,10 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.types_defs import PropertyDict, PropertyValue
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 
-class _OrderRecorder(_StatefulIngestor):
+class _OrderRecorder(StatefulIngestor):
     """Records when each File node and each LINKS_TO row reaches the buffer."""
 
     def __init__(self) -> None:
@@ -66,7 +66,7 @@ def docs_first_repo(tmp_path: Path) -> Path:
     return repo
 
 
-def _index(ingestor: _StatefulIngestor, repo: Path) -> None:
+def _index(ingestor: StatefulIngestor, repo: Path) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=ingestor,

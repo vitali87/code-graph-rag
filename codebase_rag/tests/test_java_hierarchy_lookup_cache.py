@@ -40,7 +40,7 @@ from codebase_rag.tests.conftest import (
     force_mtime_after_cache,
 )
 from codebase_rag.types_defs import PropertyValue
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 tree_sitter_java = pytest.importorskip("tree_sitter_java")
 
@@ -204,7 +204,7 @@ def _materialise(root: Path, files: dict[str, str]) -> None:
 
 
 def _updater(
-    store: _StatefulIngestor, root: Path, state: Path | None = None
+    store: StatefulIngestor, root: Path, state: Path | None = None
 ) -> GraphUpdater:
     parsers, queries = load_parsers()
     if cs.SupportedLanguage.JAVA not in parsers:
@@ -234,7 +234,7 @@ def _index_hierarchy(
     _materialise(root, files)
     with monkeypatch.context() as patch:
         counter = _count_hierarchy_walks(patch)
-        _updater(_StatefulIngestor(), root, tmp_path / f"state{depth}").run()
+        _updater(StatefulIngestor(), root, tmp_path / f"state{depth}").run()
     project_nodes = sum(_node_count(text) for text in files.values())
     return _HierarchyRun(counter, len(files), project_nodes)
 
@@ -547,7 +547,7 @@ def _props(props: dict[str, PropertyValue]) -> str:
     )
 
 
-def _full_snapshot(store: _StatefulIngestor, root: Path) -> _Snapshot:
+def _full_snapshot(store: StatefulIngestor, root: Path) -> _Snapshot:
     # Every node and every edge with all their properties. Paths are made
     # relative so two stores over the same tree compare in a readable diff.
     prefix = root.resolve().as_posix() + "/"
@@ -568,16 +568,16 @@ def _full_snapshot(store: _StatefulIngestor, root: Path) -> _Snapshot:
 
 def _index_project(
     tmp_path: Path, files: dict[str, str], name: str
-) -> tuple[_StatefulIngestor, Path]:
+) -> tuple[StatefulIngestor, Path]:
     root = tmp_path / "proj"
     if not root.exists():
         _materialise(root, files)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(store, root, tmp_path / f"state-{name}").run(force=True)
     return store, root
 
 
-def _calls(store: _StatefulIngestor) -> set[tuple[str, str]]:
+def _calls(store: StatefulIngestor) -> set[tuple[str, str]]:
     return {(str(e[1]), str(e[4])) for e in store.edges if e[2] == _CALLS}
 
 
@@ -856,8 +856,8 @@ def _edit_base(root: Path) -> None:
     force_mtime_after_cache(root, target)
 
 
-def _clean_index(tmp_path: Path, root: Path) -> _StatefulIngestor:
-    clean = _StatefulIngestor()
+def _clean_index(tmp_path: Path, root: Path) -> StatefulIngestor:
+    clean = StatefulIngestor()
     _updater(clean, root, tmp_path / "state-clean").run(force=True)
     return clean
 
@@ -865,10 +865,10 @@ def _clean_index(tmp_path: Path, root: Path) -> _StatefulIngestor:
 class TestEditedSuperclassIsReadAgain:
     def _indexed_then_edited(
         self, tmp_path: Path
-    ) -> tuple[_StatefulIngestor, GraphUpdater, Path]:
+    ) -> tuple[StatefulIngestor, GraphUpdater, Path]:
         root = tmp_path / "proj"
         _materialise(root, _EDIT_PROJECT)
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         updater = _updater(store, root)
         updater.run()
         before = _calls(store)

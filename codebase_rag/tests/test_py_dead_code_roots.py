@@ -24,22 +24,22 @@ from codebase_rag.dead_code import (
     dead_code_from_graph,
     default_dead_code_config,
 )
-from evals.cgr_graph import _capture, _CapturingIngestor
+from evals.cgr_graph import CapturingIngestor, capture
 
 _PROJECT = "pydc"
 
 
-def _index(tmp_path: Path, files: dict[str, str]) -> _CapturingIngestor:
+def _index(tmp_path: Path, files: dict[str, str]) -> CapturingIngestor:
     project = tmp_path / _PROJECT
     for rel, source in files.items():
         path = project / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(source, encoding="utf-8")
-    return _capture(project, _PROJECT)
+    return capture(project, _PROJECT)
 
 
 def _dead(
-    ingestor: _CapturingIngestor, public_roots: bool = True, include_tests: bool = True
+    ingestor: CapturingIngestor, public_roots: bool = True, include_tests: bool = True
 ) -> set[str]:
     # Only what the dead-code fetch returns reaches the engine in
     # production, so a rule keyed on any other property would pass here and
@@ -55,14 +55,14 @@ def _dead(
     )
 
 
-def _defined(ingestor: _CapturingIngestor, *qns: str) -> None:
+def _defined(ingestor: CapturingIngestor, *qns: str) -> None:
     # "Not dead" must never pass for a symbol that was not indexed at all.
     indexed = {str(uid) for _label, uid in ingestor.nodes}
     missing = [qn for qn in qns if qn not in indexed]
     assert not missing, f"not indexed: {missing}"
 
 
-def _class_props(ingestor: _CapturingIngestor, qn: str) -> dict:
+def _class_props(ingestor: CapturingIngestor, qn: str) -> dict:
     props = ingestor.nodes.get((cs.NodeLabel.CLASS.value, qn))
     assert props is not None, f"{qn} not indexed as a Class"
     return dict(props)

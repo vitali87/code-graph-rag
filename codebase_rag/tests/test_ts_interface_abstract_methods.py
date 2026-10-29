@@ -14,7 +14,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _capture, _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor, capture
 from evals.dead_code import cgr_dead_code, default_dead_code_config
 
 _METHOD = "Method"
@@ -47,7 +47,7 @@ export class Sq extends Base { area(): number { return 1; } }
 
 class _Graph:
     def __init__(self, root: Path) -> None:
-        ingestor = _capture(root, "proj")
+        ingestor = capture(root, "proj")
         self.nodes = ingestor.nodes
         self.rels = {(str(f), rel, str(t)) for _fl, f, rel, _tl, t in ingestor.rels}
 
@@ -479,7 +479,7 @@ def _use_calls_after_caller_only_sync(
         "use.ts": use,
     }.items():
         (root / name).write_text(body, encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
 
     def run(force: bool) -> set[str]:
@@ -546,7 +546,7 @@ def test_caller_only_sync_restores_the_abstract_mark(tmp_path: Path) -> None:
     }
     for name, body in files.items():
         (root / name).write_text(body, encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
 
     def updater() -> GraphUpdater:

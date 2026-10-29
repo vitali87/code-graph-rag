@@ -21,10 +21,10 @@ from codebase_rag.checkout_state import state_dir
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import PropertyDict, ResultRow
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 
-class _Buffered(_StatefulIngestor):
+class _Buffered(StatefulIngestor):
     """Reads see only flushed writes, as Memgraph's do.
 
     The suite's store is write-through, so a node the sync just buffered is
@@ -54,7 +54,7 @@ def _repo(root: Path, name: str) -> Path:
     return repo
 
 
-def _sync(store: _StatefulIngestor, repo: Path, name: str) -> list[str]:
+def _sync(store: StatefulIngestor, repo: Path, name: str) -> list[str]:
     parsers, queries = load_parsers()
     messages: list[str] = []
     sink = logger.add(messages.append, level="INFO", format="{level}|{message}")
@@ -80,7 +80,7 @@ def test_a_first_sync_on_an_empty_graph_logs_no_seed_prune_warning(
 
 
 def test_a_first_sync_says_nothing_about_an_existing_index(tmp_path: Path) -> None:
-    messages = _sync(_StatefulIngestor(), _repo(tmp_path, "myrepo"), "myrepo")
+    messages = _sync(StatefulIngestor(), _repo(tmp_path, "myrepo"), "myrepo")
 
     assert not [m for m in messages if ls.EXCLUSION_STATE_MISSING in m]
 
@@ -89,7 +89,7 @@ def test_an_index_built_before_the_stamp_still_gets_the_notice(
     tmp_path: Path,
 ) -> None:
     # Negative: the upgrade path the notice exists for keeps it.
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     repo = _repo(tmp_path, "myrepo")
     _sync(store, repo, "myrepo")
     (state_dir(repo) / cs.EXCLUSION_STATE_FILENAME).unlink()
@@ -105,7 +105,7 @@ def test_the_seed_prune_reads_only_this_projects_modules(
 ) -> None:
     # The prune pulled every module of every project in the shared graph on
     # each sync, so a three-file repo synced ten times slower beside others.
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _sync(store, _repo(tmp_path, "other"), "other")
     repo = _repo(tmp_path, "myrepo")
     _sync(store, repo, "myrepo")
@@ -149,7 +149,7 @@ def test_the_seed_prune_reads_only_this_projects_modules(
 def test_a_longer_named_project_is_not_read_as_this_ones(tmp_path: Path) -> None:
     # Negative: `myrepo.` also prefixes `myrepo.sub`'s modules; the read keeps
     # the longest-prefix ownership rule the other rehydration reads use.
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _sync(store, _repo(tmp_path, "sub"), "myrepo.sub")
     repo = _repo(tmp_path, "myrepo")
     _sync(store, repo, "myrepo")

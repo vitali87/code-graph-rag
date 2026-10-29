@@ -23,16 +23,16 @@ from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import PendingTypeFact
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 GADGET = "proj.models.Gadget"
 
 
-def _edges(store: _StatefulIngestor, rel: str) -> set[tuple[str, str]]:
+def _edges(store: StatefulIngestor, rel: str) -> set[tuple[str, str]]:
     return {(str(src), str(tgt)) for _sl, src, r, _tl, tgt in store.edges if r == rel}
 
 
-def _accepts_of(store: _StatefulIngestor, owner_suffix: str) -> set[str]:
+def _accepts_of(store: StatefulIngestor, owner_suffix: str) -> set[str]:
     return {
         tgt
         for src, tgt in _edges(store, cs.RelationshipType.ACCEPTS.value)
@@ -53,7 +53,7 @@ def _repo(tmp_path: Path, colliding_source: str) -> Path:
     return repo
 
 
-def _updater(repo: Path, store: _StatefulIngestor) -> GraphUpdater:
+def _updater(repo: Path, store: StatefulIngestor) -> GraphUpdater:
     parsers, queries = load_parsers()
     if "python" not in {str(k) for k in parsers}:
         pytest.skip("python parser not available")
@@ -62,7 +62,7 @@ def _updater(repo: Path, store: _StatefulIngestor) -> GraphUpdater:
     )
 
 
-def _touch_and_reingest(repo: Path, store: _StatefulIngestor) -> None:
+def _touch_and_reingest(repo: Path, store: StatefulIngestor) -> None:
     # The type's file changes (so Gadget is deleted and recreated and every
     # ACCEPTS into it is detached) together with the colliding SIBLING of the
     # unchanged file; the unchanged file itself is not named.
@@ -90,7 +90,7 @@ def test_the_unchanged_colliding_files_fact_survives_the_stale_filter(
     tmp_path: Path, colliding_source: str, owner_suffix: str
 ) -> None:
     repo = _repo(tmp_path, colliding_source)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(repo, store).run(force=True)
     # Fixture guard: the edge exists before the reingest.
     assert _accepts_of(store, owner_suffix) == {GADGET}
@@ -136,7 +136,7 @@ def test_a_fact_without_a_file_still_falls_back_to_the_module_key(
     # file; it keeps the old module-qn behaviour rather than surviving every
     # filter and emitting a stale edge.
     repo = _repo(tmp_path, "def other(gadget: Gadget) -> int:\n    return 1\n")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(repo, store)
     updater.run(force=True)
     pending = updater.factory.definition_processor.pending_type_facts
@@ -161,7 +161,7 @@ def test_every_producer_records_the_owning_file(tmp_path: Path) -> None:
         tmp_path,
         "class Holder:\n    def other(self, gadget: Gadget) -> int:\n        return 1\n",
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(repo, store)
     captured: list[PendingTypeFact] = []
     original = tf.emit_type_edges

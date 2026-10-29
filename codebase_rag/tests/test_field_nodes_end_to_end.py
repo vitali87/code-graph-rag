@@ -21,7 +21,7 @@ from codebase_rag.capture import resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.test_parameter_nodes_end_to_end import _edges, _nodes
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 _SRC = {
     "models.py": "class Widget:\n    pass\n\nclass Gadget:\n    pass\n",
@@ -59,14 +59,14 @@ _SRC = {
 }
 
 
-def _index(tmp_path: Path, tokens: list[str]) -> _StatefulIngestor:
+def _index(tmp_path: Path, tokens: list[str]) -> StatefulIngestor:
     repo = tmp_path / "proj"
     repo.mkdir(parents=True)
     (repo / "__init__.py").touch()
     for name, src in _SRC.items():
         (repo / name).write_text(src)
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(
         ingestor=store,
         repo_path=repo,
@@ -145,7 +145,7 @@ def test_a_field_node_is_never_left_without_its_edge(tmp_path: Path) -> None:
         assert set(_nodes(store, cs.NodeLabel.FIELD.value)) == owned
 
 
-def _reindex(store: _StatefulIngestor, repo: Path) -> None:
+def _reindex(store: StatefulIngestor, repo: Path) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=store,
@@ -203,7 +203,7 @@ def test_of_type_survives_on_a_reused_updater(tmp_path: Path) -> None:
     for name, src in _SRC.items():
         (repo / name).write_text(src)
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = GraphUpdater(
         ingestor=store,
         repo_path=repo,
@@ -244,7 +244,7 @@ def test_scoped_reingest_drops_the_old_field_annotation(tmp_path: Path) -> None:
         "class Old:\n    pass\n\nclass New:\n    pass\n\nclass Box:\n    x: Old\n"
     )
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     capture = resolve_capture(["+fields", "+parameters"])
     GraphUpdater(
         ingestor=store,
@@ -287,7 +287,7 @@ def test_scoped_reingest_keeps_a_colliding_modules_field_facts(tmp_path: Path) -
     (repo / "foo").mkdir()
     (repo / "foo" / "__init__.py").write_text("class Other:\n    gadget: Gadget\n")
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     capture = resolve_capture(["+fields", "+parameters"])
     GraphUpdater(
         ingestor=store,

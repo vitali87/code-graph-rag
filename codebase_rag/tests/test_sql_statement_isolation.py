@@ -25,7 +25,7 @@ from codebase_rag.tests.test_incremental_deleted_dependents import (
 )
 from codebase_rag.tests.test_incremental_deleted_dependents import _materialise
 from codebase_rag.types_defs import PropertyValue
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 pytest.importorskip("tree_sitter_sql")
 
@@ -77,11 +77,11 @@ _OUT_PARAMS = (
 )
 
 
-def _index(root: Path, files: dict[str, str]) -> _StatefulIngestor:
+def _index(root: Path, files: dict[str, str]) -> StatefulIngestor:
     for rel, text in files.items():
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(text, encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=store,
@@ -98,7 +98,7 @@ def _int(value: PropertyValue) -> int:
     return value
 
 
-def _functions(store: _StatefulIngestor) -> dict[str, tuple[int, int]]:
+def _functions(store: StatefulIngestor) -> dict[str, tuple[int, int]]:
     return {
         str(qn).removeprefix(f"{PROJECT}."): (
             _int(props[cs.KEY_START_LINE]),
@@ -109,7 +109,7 @@ def _functions(store: _StatefulIngestor) -> dict[str, tuple[int, int]]:
     }
 
 
-def _calls(store: _StatefulIngestor) -> set[tuple[str, str]]:
+def _calls(store: StatefulIngestor) -> set[tuple[str, str]]:
     return {
         (
             str(edge[1]).removeprefix(f"{PROJECT}."),
@@ -121,12 +121,12 @@ def _calls(store: _StatefulIngestor) -> set[tuple[str, str]]:
 
 
 @pytest.fixture(scope="module")
-def repro(tmp_path_factory: pytest.TempPathFactory) -> _StatefulIngestor:
+def repro(tmp_path_factory: pytest.TempPathFactory) -> StatefulIngestor:
     return _index(tmp_path_factory.mktemp("sql3180") / PROJECT, {"schema.sql": _REPRO})
 
 
 def test_every_repro_function_is_indexed_on_its_own_lines(
-    repro: _StatefulIngestor,
+    repro: StatefulIngestor,
 ) -> None:
     assert _functions(repro) == {
         "schema.add": (1, 2),
@@ -137,7 +137,7 @@ def test_every_repro_function_is_indexed_on_its_own_lines(
     }
 
 
-def test_every_repro_call_is_linked(repro: _StatefulIngestor) -> None:
+def test_every_repro_call_is_linked(repro: StatefulIngestor) -> None:
     # `add3`'s own `add($1,$2)` keeps its calls: a body that parses is not
     # hollowed.
     assert _calls(repro) == {
@@ -254,7 +254,7 @@ def test_a_recovered_routine_reaches_a_caller_added_before_it(tmp_path: Path) ->
     caller = "CREATE FUNCTION uses_calc() RETURNS integer LANGUAGE sql AS $$ SELECT calc(1) $$;\n"
     root = tmp_path / "incremental"
     _materialise(root, {"db/caller.sql": caller})
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index_into(store, root, cs.SupportedLanguage.SQL, force=True)
     _add_after_cache(root, "db/schema.sql", _REPRO)
     _index_into(store, root, cs.SupportedLanguage.SQL, force=False)

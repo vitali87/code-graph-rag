@@ -34,7 +34,7 @@ from codebase_rag.services.graph_diff import _SITE_PROPS
 from codebase_rag.structural_check import run_check
 from codebase_rag.structural_delta import StructuralDelta, has_findings, observe
 from codebase_rag.types_defs import PropertyDict
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "unpack"
 
@@ -91,7 +91,7 @@ def _app(call: str = NEUTRAL_CALL, method_call: str = NEUTRAL_METHOD_CALL) -> st
 
 def _index(
     root: Path, call: str = NEUTRAL_CALL
-) -> tuple[Path, _StatefulIngestor, GraphUpdater]:
+) -> tuple[Path, StatefulIngestor, GraphUpdater]:
     """Commit `lib.py` and `app.py` calling `call`, and index the commit."""
     root.mkdir()
     (root / "lib.py").write_text(LIB)
@@ -100,7 +100,7 @@ def _index(
     _git(root, "add", "-A")
     _git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "b")
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = GraphUpdater(
         ingestor=store,
         repo_path=root,
@@ -113,12 +113,12 @@ def _index(
 
 
 @pytest.fixture
-def indexed(temp_repo: Path) -> tuple[Path, _StatefulIngestor, GraphUpdater]:
+def indexed(temp_repo: Path) -> tuple[Path, StatefulIngestor, GraphUpdater]:
     return _index(temp_repo / PROJECT)
 
 
 def _observe(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater], changed: list[str]
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater], changed: list[str]
 ) -> StructuralDelta:
     root, store, updater = indexed
     return observe(
@@ -185,7 +185,7 @@ FUNCTION_CALLS_THAT_FIT = [
 
 @pytest.mark.parametrize("call", FUNCTION_CALLS_THAT_FIT)
 def test_an_unpacking_is_not_counted_as_a_positional(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater], call: str
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater], call: str
 ) -> None:
     root, _store, _updater = indexed
     assert _function_runs(call)
@@ -198,7 +198,7 @@ def test_an_unpacking_is_not_counted_as_a_positional(
 
 
 def test_a_kwargs_pass_through_on_self_is_not_too_many(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, _store, _updater = indexed
     call = "self.post(1, **opts)"
@@ -211,7 +211,7 @@ def test_a_kwargs_pass_through_on_self_is_not_too_many(
     assert not has_findings(delta)
 
 
-def _check(root: Path, store: _StatefulIngestor) -> Result:
+def _check(root: Path, store: StatefulIngestor) -> Result:
     cli_store = MagicMock(wraps=store)
     cli_store.list_projects = MagicMock(return_value=[PROJECT])
     context = MagicMock()
@@ -283,7 +283,7 @@ FUNCTION_CALLS_THAT_DO_NOT_FIT = [
 
 @pytest.mark.parametrize("call", FUNCTION_CALLS_THAT_DO_NOT_FIT)
 def test_too_many_written_positionals_are_still_too_many(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater], call: str
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater], call: str
 ) -> None:
     root, _store, _updater = indexed
     assert not _function_runs(call)
@@ -296,7 +296,7 @@ def test_too_many_written_positionals_are_still_too_many(
 
 
 def test_a_surplus_on_self_beside_kwargs_is_still_too_many(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, _store, _updater = indexed
     call = "self.post(1, 2, **opts)"
@@ -316,7 +316,7 @@ def test_a_surplus_on_self_beside_kwargs_is_still_too_many(
     ],
 )
 def test_calls_that_already_fit_stay_clean(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater], call: str
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater], call: str
 ) -> None:
     root, _store, _updater = indexed
     assert _function_runs(call)
@@ -328,7 +328,7 @@ def test_calls_that_already_fit_stay_clean(
 
 
 def test_named_keywords_on_self_stay_clean(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     """The case the issue says was already right: `self.send(1, stream=True)`."""
     root, _store, _updater = indexed
@@ -354,7 +354,7 @@ def _site_verdicts(delta: StructuralDelta, qn_suffix: str) -> list[str]:
 
 
 def _signature_change(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
     before: str,
     after: str,
     call: str,
@@ -373,7 +373,7 @@ def _signature_change(
 
 
 def test_a_dropped_parameter_a_kwargs_site_never_filled_is_ok(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     # `one(req, **opts)` passes one positional, which still fits `one(a)`.
     # Counted as two it was `too_many`, and the signature change failed the
@@ -388,7 +388,7 @@ def test_a_dropped_parameter_a_kwargs_site_never_filled_is_ok(
 
 
 def test_a_star_args_site_reads_unknown_when_its_floor_fits(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     # `one()` called as `one(*rest)` raises only when `rest` is not empty,
     # which the graph cannot see.
@@ -399,7 +399,7 @@ def test_a_star_args_site_reads_unknown_when_its_floor_fits(
 
 
 def test_a_star_args_site_is_never_ok_by_its_count_alone(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     # `one(req, *rest)` fills `one(a)` exactly only while `rest` is empty:
     # the written count fits, and that is not enough to say `ok`.
@@ -412,7 +412,7 @@ def test_a_star_args_site_is_never_ok_by_its_count_alone(
 
 
 def test_a_dropped_parameter_a_plain_site_passes_is_still_too_many(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     delta = _signature_change(indexed, "def one(a):", "def one():", "one(req)")
 
@@ -421,7 +421,7 @@ def test_a_dropped_parameter_a_plain_site_passes_is_still_too_many(
 
 
 def test_a_floor_over_the_new_signature_is_still_too_many(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     delta = _signature_change(indexed, "def one(a):", "def one():", "one(req, *rest)")
 
@@ -489,7 +489,7 @@ def test_the_flags_are_location_not_structure() -> None:
 
 
 def test_a_callable_passed_beside_an_unpacking_is_still_referenced(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     """The callback passes read the same argument split; keeping the
     unpacking out of the COUNT must not move `one` out of its slot."""

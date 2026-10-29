@@ -378,7 +378,7 @@ class TestIndexRepositoryConstraintsAndFlush:
     leak across calls and missing constraints/indexes corrupted node creation.
 
     NOTE: A full assertion that ``Class`` and ``Method`` nodes are persisted
-    requires a live Memgraph backend (the in-repo ``_MockIngestor`` does not
+    requires a live Memgraph backend (the in-repo ``RecordingIngestor`` does not
     persist a real graph, and ``GraphUpdater`` emits those node batches
     regardless of the orchestration bug). These tests instead pin the
     orchestration that the CLI path performs and the MCP path was missing.

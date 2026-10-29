@@ -47,7 +47,7 @@ def _site_key(rel_type: str, properties: PropertyDict | None) -> _SiteKey:
     return tuple((prop, properties[prop]) for prop in key_props if prop in properties)
 
 
-class _CapturingIngestor:
+class CapturingIngestor:
     def __init__(self) -> None:
         self.nodes: dict[_NodeId, PropertyDict] = {}
         self.rels: list[_RelTuple] = []
@@ -316,9 +316,9 @@ _REMOTE_NETWORK_KIND = "NETWORK"
 _REMOTE_DIRECT_KINDS = frozenset({"RPC", "DISPATCH"})
 
 
-class _StatefulIngestor:
+class StatefulIngestor:
     # A faithful in-memory stand-in for the persistent graph store. Unlike
-    # _CapturingIngestor it implements the QueryProtocol delete/fetch Cypher
+    # CapturingIngestor it implements the QueryProtocol delete/fetch Cypher
     # the incremental updater issues, so an incrementally mutated graph can be
     # compared against a clean re-index. Only the exact queries cgr emits are
     # emulated (matched by identity).
@@ -331,7 +331,7 @@ class _StatefulIngestor:
         self._in: dict[_NodeId, set[_EdgeKey]] = {}
 
     def ensure_node_batch(self, label: str, properties: PropertyDict) -> None:
-        # Same += merge semantics as _CapturingIngestor: partial re-emissions
+        # Same += merge semantics as CapturingIngestor: partial re-emissions
         # must never wipe the properties of an already-ingested node.
         uid = properties[cs.NODE_UNIQUE_CONSTRAINTS[label]]
         self.nodes.setdefault((str(label), uid), {}).update(properties)
@@ -2881,9 +2881,9 @@ class _StatefulIngestor:
                 self._in.get((edge[3], edge[4]), set()).discard(edge)
 
 
-def _capture(target: Path, project_name: str) -> _CapturingIngestor:
+def capture(target: Path, project_name: str) -> CapturingIngestor:
     parsers, queries = load_parsers()
-    ingestor = _CapturingIngestor()
+    ingestor = CapturingIngestor()
     exclude_paths, unignore_paths = ignore_rules(target)
     GraphUpdater(
         ingestor=ingestor,
@@ -2898,11 +2898,11 @@ def _capture(target: Path, project_name: str) -> _CapturingIngestor:
 
 
 def extract_cgr_graph(target: Path, project_name: str) -> GraphData:
-    return _to_graph_data(_capture(target, project_name), project_name)
+    return _to_graph_data(capture(target, project_name), project_name)
 
 
 def extract_cgr_calls(target: Path, project_name: str) -> set[tuple[str, str]]:
-    ingestor = _capture(target, project_name)
+    ingestor = capture(target, project_name)
     calls_value = cs.RelationshipType.CALLS.value
     return {
         (str(from_val), str(to_val))
@@ -2932,7 +2932,7 @@ def extract_cgr_lang_nodes(
     suffix: str | tuple[str, ...],
     kind_values: frozenset[str],
 ) -> dict[NodeKey, DefNode]:
-    ingestor = _capture(target, project_name)
+    ingestor = capture(target, project_name)
     nodes: dict[NodeKey, DefNode] = {}
     for (label, _uid), props in ingestor.nodes.items():
         if label not in kind_values:
@@ -2984,7 +2984,7 @@ def extract_cgr_lang_graph(
     kind_values: frozenset[str],
     exclude_suffix: str | None = None,
 ) -> GraphData:
-    ingestor = _capture(target, project_name)
+    ingestor = capture(target, project_name)
     nodes: dict[NodeKey, DefNode] = {}
     by_uid: dict[_NodeId, NodeKey] = {}
     for (label, uid), props in ingestor.nodes.items():
@@ -3138,7 +3138,7 @@ def extract_cgr_ts_graph(target: Path, project_name: str) -> GraphData:
 
 
 def extract_cgr_ts_nodes(target: Path, project_name: str) -> dict[NodeKey, DefNode]:
-    ingestor = _capture(target, project_name)
+    ingestor = capture(target, project_name)
     nodes: dict[NodeKey, DefNode] = {}
     for (label, _uid), props in ingestor.nodes.items():
         if label not in ec.TS_SCORED_NODE_KIND_VALUES:
@@ -3191,7 +3191,7 @@ def _internal_target_file(qn: str, internal_modules: dict[str, str]) -> str | No
     return None
 
 
-def _to_graph_data(ingestor: _CapturingIngestor, project_name: str) -> GraphData:
+def _to_graph_data(ingestor: CapturingIngestor, project_name: str) -> GraphData:
     nodes: dict[NodeKey, DefNode] = {}
     by_uid: dict[_NodeId, NodeKey] = {}
     for (label, uid), props in ingestor.nodes.items():

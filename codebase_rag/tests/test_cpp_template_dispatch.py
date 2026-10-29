@@ -6,11 +6,11 @@
 # method so no structural interface implementer is missed.
 from pathlib import Path
 
-from evals.cgr_graph import _capture
+from evals.cgr_graph import capture
 
 
 def _calls(tmp_path: Path) -> set[tuple[str, str]]:
-    ingestor = _capture(tmp_path, "crate")
+    ingestor = capture(tmp_path, "crate")
     return {
         (str(from_val), str(to_val))
         for _fl, from_val, rel, _tl, to_val in ingestor.rels

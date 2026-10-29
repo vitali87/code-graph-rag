@@ -48,7 +48,7 @@ from codebase_rag.tests.conftest import (
 from codebase_rag.types_defs import PropertyDict, ResultRow
 from codebase_rag.utils.source_encoding import grammar_bytes
 from codebase_rag.utils.source_extraction import extract_source_lines
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 _LATIN1_LEGACY = (
     b"# -*- coding: latin-1 -*-\n"
@@ -506,7 +506,7 @@ class TestStubOwnershipAcrossIncrementalRuns:
     _IMPL = b"def add(a, b):\n    return a + b\n"
 
     @staticmethod
-    def _updater(store: _StatefulIngestor, root: Path) -> GraphUpdater:
+    def _updater(store: StatefulIngestor, root: Path) -> GraphUpdater:
         parsers, queries = load_parsers()
         return GraphUpdater(
             ingestor=store,
@@ -517,7 +517,7 @@ class TestStubOwnershipAcrossIncrementalRuns:
         )
 
     def _sync(
-        self, store: _StatefulIngestor, root: Path, changed: str, scoped: bool
+        self, store: StatefulIngestor, root: Path, changed: str, scoped: bool
     ) -> None:
         # A walk finds the change itself; `reingest` (the watcher, the MCP
         # tool) is named only the changed file and must find the stub.
@@ -527,7 +527,7 @@ class TestStubOwnershipAcrossIncrementalRuns:
             self._updater(store, root).run(force=False)
 
     @staticmethod
-    def _state(store: _StatefulIngestor) -> tuple[dict[str, str], set[str]]:
+    def _state(store: StatefulIngestor) -> tuple[dict[str, str], set[str]]:
         modules = {
             str(uid): str(props.get(cs.KEY_PATH))
             for (label, uid), props in store.nodes.items()
@@ -545,7 +545,7 @@ class TestStubOwnershipAcrossIncrementalRuns:
     def test_an_added_implementation_takes_the_module_from_its_stub(
         self, project: Path, impl: str, scoped: bool
     ) -> None:
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         (project / "x.pyi").write_bytes(self._STUB)
         self._updater(store, project).run(force=True)
         modules, functions = self._state(store)
@@ -566,7 +566,7 @@ class TestStubOwnershipAcrossIncrementalRuns:
     def test_a_deleted_implementation_hands_the_module_to_its_stub(
         self, project: Path, impl: str, scoped: bool
     ) -> None:
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         _write(project, {"x.pyi": self._STUB, impl: self._IMPL})
         self._updater(store, project).run(force=True)
         assert self._state(store)[0]["proj.x"] == impl

@@ -27,7 +27,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 from codebase_rag.types_defs import LanguageQueries
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 PLAIN_SOURCE = (
     "public partial class PB\n{\n"
@@ -99,7 +99,7 @@ def _write(root: Path, files: dict[str, str]) -> None:
         path.write_text(text, encoding="utf-8")
 
 
-def _run(store: _StatefulIngestor, root: Path, force: bool) -> None:
+def _run(store: StatefulIngestor, root: Path, force: bool) -> None:
     parsers, queries = _parsers()
     GraphUpdater(
         ingestor=store,
@@ -110,15 +110,15 @@ def _run(store: _StatefulIngestor, root: Path, force: bool) -> None:
     ).run(force=force)
 
 
-def _index(root: Path, files: dict[str, str]) -> _StatefulIngestor:
+def _index(root: Path, files: dict[str, str]) -> StatefulIngestor:
     _write(root, files)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _run(store, root, force=True)
     return store
 
 
 def _targets(
-    store: _StatefulIngestor, rel: cs.RelationshipType, member: str
+    store: StatefulIngestor, rel: cs.RelationshipType, member: str
 ) -> set[str]:
     # A C# method qn carries its parameter signature; match on the name.
     return {
@@ -130,7 +130,7 @@ def _targets(
 
 
 def _resolutions(
-    store: _StatefulIngestor, rel: cs.RelationshipType, member: str
+    store: StatefulIngestor, rel: cs.RelationshipType, member: str
 ) -> set[object]:
     return {
         store.props_for(edge).get(cs.KEY_RESOLUTION)
@@ -140,7 +140,7 @@ def _resolutions(
     }
 
 
-def _class_nodes(store: _StatefulIngestor) -> dict[str, dict]:
+def _class_nodes(store: StatefulIngestor) -> dict[str, dict]:
     return {
         str(uid): props
         for (label, uid), props in store.nodes.items()
@@ -151,7 +151,7 @@ def _class_nodes(store: _StatefulIngestor) -> dict[str, dict]:
 USE_SOURCES = (".Explicit.", ".FromPlain", ".FromGeneric")
 
 
-def _pair_edges(store: _StatefulIngestor) -> set[tuple[object, ...]]:
+def _pair_edges(store: StatefulIngestor) -> set[tuple[object, ...]]:
     # Every edge leaving the using file, with its resolution, so a clean
     # index and an incremental one can be compared whole.
     rels = {rel.value for rel in PAIR_RELS}
@@ -170,7 +170,7 @@ def layout(request: pytest.FixtureRequest) -> tuple[dict[str, str], str, str]:
 @pytest.fixture
 def indexed(
     tmp_path: Path, layout: tuple[dict[str, str], str, str]
-) -> tuple[_StatefulIngestor, str, str]:
+) -> tuple[StatefulIngestor, str, str]:
     files, plain, generic = layout
     store = _index(tmp_path / "proj", {**files, USE_PATH: USE_SOURCE})
     return store, plain, generic
@@ -241,7 +241,7 @@ class TestTheGenericTwinIsItsOwnType:
 
 class TestEachReferenceBindsItsWrittenArity:
     def test_each_construction_instantiates_its_own_type(
-        self, indexed: tuple[_StatefulIngestor, str, str]
+        self, indexed: tuple[StatefulIngestor, str, str]
     ) -> None:
         store, plain, generic = indexed
         rel = cs.RelationshipType.INSTANTIATES
@@ -254,7 +254,7 @@ class TestEachReferenceBindsItsWrittenArity:
             ), member
 
     def test_each_construction_runs_its_own_constructor(
-        self, indexed: tuple[_StatefulIngestor, str, str]
+        self, indexed: tuple[StatefulIngestor, str, str]
     ) -> None:
         store, plain, generic = indexed
         rel = cs.RelationshipType.CALLS
@@ -269,7 +269,7 @@ class TestEachReferenceBindsItsWrittenArity:
         }
 
     def test_a_static_call_binds_the_written_arity(
-        self, indexed: tuple[_StatefulIngestor, str, str]
+        self, indexed: tuple[StatefulIngestor, str, str]
     ) -> None:
         store, plain, generic = indexed
         rel = cs.RelationshipType.CALLS
@@ -277,7 +277,7 @@ class TestEachReferenceBindsItsWrittenArity:
         assert _targets(store, rel, "Explicit.StaticGeneric") == {f"{generic}.Make"}
 
     def test_a_base_list_binds_the_written_arity(
-        self, indexed: tuple[_StatefulIngestor, str, str]
+        self, indexed: tuple[StatefulIngestor, str, str]
     ) -> None:
         store, plain, generic = indexed
         rel = cs.RelationshipType.INHERITS
@@ -285,7 +285,7 @@ class TestEachReferenceBindsItsWrittenArity:
         assert _targets(store, rel, "FromGeneric") == {generic}
 
     def test_parameter_and_return_types_bind_the_written_arity(
-        self, indexed: tuple[_StatefulIngestor, str, str]
+        self, indexed: tuple[StatefulIngestor, str, str]
     ) -> None:
         store, plain, generic = indexed
         accepts = cs.RelationshipType.ACCEPTS
@@ -309,7 +309,7 @@ def test_an_incremental_run_binds_like_a_clean_index(
     os.utime(use, (cache_mtime + 1, cache_mtime + 1))
     _run(store, root, force=False)
 
-    clean = _StatefulIngestor()
+    clean = StatefulIngestor()
     _run(clean, root, force=True)
     assert _pair_edges(store) == _pair_edges(clean)
     rel = cs.RelationshipType.INSTANTIATES

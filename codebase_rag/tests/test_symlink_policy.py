@@ -47,7 +47,7 @@ from codebase_rag.utils.path_utils import (
     walk_eligible_files,
 )
 from codebase_rag.watch import CodeChangeEventHandler
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 SECRET = "sk-live-123"
 # Every link in the `layout` fixture, by its path in the repository.
@@ -248,20 +248,20 @@ class TestIndex:
         assert functions == {"repo.pkg.core.helper"}
 
 
-def _stateful_updater(root: Path, store: _StatefulIngestor) -> GraphUpdater:
+def _stateful_updater(root: Path, store: StatefulIngestor) -> GraphUpdater:
     parsers, queries = load_parsers()
     return GraphUpdater(
         ingestor=store, repo_path=root, parsers=parsers, queries=queries
     )
 
 
-def _function_qns(store: _StatefulIngestor) -> set[str]:
+def _function_qns(store: StatefulIngestor) -> set[str]:
     return {
         str(uid) for label, uid in store.nodes if label == cs.NodeLabel.FUNCTION.value
     }
 
 
-def _file_paths(store: _StatefulIngestor) -> set[str]:
+def _file_paths(store: StatefulIngestor) -> set[str]:
     return {
         str(props[cs.KEY_PATH])
         for (label, _uid), props in store.nodes.items()
@@ -271,13 +271,13 @@ def _file_paths(store: _StatefulIngestor) -> set[str]:
 
 def _remove_indexed_file(
     tmp_path: Path, *, replace_with_link: bool
-) -> tuple[Path, _StatefulIngestor, GraphUpdater]:
+) -> tuple[Path, StatefulIngestor, GraphUpdater]:
     """Index `core.py` and `old.py`, then delete `old.py` or replace it with
     a link to `core.py`."""
     repo = tmp_path / "repo"
     _write(repo / "core.py", "def helper():\n    return 1\n")
     _write(repo / "old.py", "def old_fn():\n    return 2\n")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _stateful_updater(repo, store)
     updater.run(force=True)
     assert _file_paths(store) == {"core.py", "old.py"}
@@ -298,7 +298,7 @@ class TestIncrementalSync:
         _write(repo / "main.py", "def main():\n    return 0\n")
         _write(repo / "sub" / "own.py", "def own():\n    return 1\n")
         _link(repo / "sub" / "linked.py", "../../outside/x.py")
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         with monkeypatch.context() as patched:
             for module in (path_utils, structure_processor):
                 patched.setattr(
@@ -336,7 +336,7 @@ class TestIncrementalSync:
     def test_a_repository_with_links_stays_in_sync(self, layout: Path) -> None:
         # Negative: the in-sync listing skips the links the walk skips, or
         # every later sync would see them as new files and re-run.
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         _stateful_updater(layout, store).run(force=True)
         assert _stateful_updater(layout, store)._is_already_in_sync() is True
 
@@ -345,7 +345,7 @@ class TestIncrementalSync:
     ) -> None:
         # A graph built before the fix holds the links' modules; the next
         # ordinary sync removes them, leaving the target's.
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         with monkeypatch.context() as patched:
             for module in (path_utils, structure_processor):
                 patched.setattr(
@@ -471,7 +471,7 @@ class TestWatcherReplacement:
         repo = tmp_path / "repo"
         _write(repo / "core.py", "def helper():\n    return 1\n")
         _write(repo / "old.py", "def old_fn():\n    return 2\n")
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         updater = _stateful_updater(repo, store)
         updater.run(force=True)
         assert "repo.old.old_fn" in _function_qns(store)
@@ -539,7 +539,7 @@ def _package_repo(root: Path, name: str) -> Path:
     return repo
 
 
-def _sync(repo: Path, store: _StatefulIngestor, project: str, force: bool) -> None:
+def _sync(repo: Path, store: StatefulIngestor, project: str, force: bool) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=store,
@@ -550,7 +550,7 @@ def _sync(repo: Path, store: _StatefulIngestor, project: str, force: bool) -> No
     ).run(force=force)
 
 
-def _packages(store: _StatefulIngestor) -> set[str]:
+def _packages(store: StatefulIngestor) -> set[str]:
     return {
         str(uid) for label, uid in store.nodes if label == cs.NodeLabel.PACKAGE.value
     }
@@ -564,7 +564,7 @@ class TestPackagePruneScope:
     def test_pruning_one_project_leaves_another_projects_package(
         self, tmp_path: Path
     ) -> None:
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         alpha = _package_repo(tmp_path, "alpha")
         beta = _package_repo(tmp_path, "beta")
         _sync(alpha, store, "alpha", force=True)
@@ -583,7 +583,7 @@ class TestPackagePruneScope:
     ) -> None:
         # Two checkouts given one project name share every package qn, so the
         # upsert puts both on one node; the one that wrote it last owns it.
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         mine = _package_repo(tmp_path, "mine")
         other = _package_repo(tmp_path, "other")
         _sync(mine, store, "shared", force=True)
@@ -600,7 +600,7 @@ class TestPackagePruneScope:
         # The delete query refuses on its own, not only through the rows the
         # prune reads: another project's name or another checkout's path is
         # left alone, and the owner's own delete goes through.
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         other = _package_repo(tmp_path, "other")
         _sync(other, store, "shared", force=True)
         mine = _package_repo(tmp_path, "mine")
@@ -631,7 +631,7 @@ class TestPackagePruneScope:
         target = tmp_path / "outside" / "lib"
         _write(target / "__init__.py", "")
         _link(repo / "pkg" / "linkdir", "../../outside/lib", directory=True)
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         _sync(repo, store, "proj", force=True)
         package = cs.NodeLabel.PACKAGE.value
         store.ensure_node_batch(
@@ -675,7 +675,7 @@ class TestPackagePruneScope:
         # same name indexed: the node at `pkg` holds `other/pkg`, the shape
         # that checkout writes for its own directory, so it is not this
         # repository's link-derived leftover (#2451 review).
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         other = _package_repo(tmp_path, "other")
         mine = tmp_path / "mine"
         main = _write(mine / "main.py", "X = 1\n")
@@ -696,7 +696,7 @@ class TestPackagePruneScope:
     ) -> None:
         # Negative: a node an older build derived through this repository's
         # link to the same target still goes, and the other checkout's stays.
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         other = _package_repo(tmp_path, "other")
         mine = tmp_path / "mine"
         main = _write(mine / "main.py", "X = 1\n")
@@ -875,13 +875,13 @@ class TestStubBesideALinkedImplementation:
 
 def _stub_whose_implementation_becomes_a_link(
     tmp_path: Path,
-) -> tuple[Path, _StatefulIngestor, GraphUpdater]:
+) -> tuple[Path, StatefulIngestor, GraphUpdater]:
     """Index a real `x.py` beside `x.pyi`, then replace it with a link."""
     repo = tmp_path / "proj"
     _write(repo / "lib" / "x.py", _IMPL)
     _write(repo / "x.py", "def g():\n    return 2\n")
     _write(repo / "x.pyi", _STUB)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _stateful_updater(repo, store)
     updater.run(force=True)
     assert _stored_module_path(store, "proj.x") == "x.py"
@@ -890,7 +890,7 @@ def _stub_whose_implementation_becomes_a_link(
     return repo, store, updater
 
 
-def _stored_module_path(store: _StatefulIngestor, qn: str) -> object:
+def _stored_module_path(store: StatefulIngestor, qn: str) -> object:
     return store.nodes.get((cs.NodeLabel.MODULE.value, qn), {}).get(cs.KEY_PATH)
 
 
@@ -922,7 +922,7 @@ class TestReingestSkipsLinks:
         repo = tmp_path / "repo"
         _write(repo / "pkg" / "core.py", "def helper():\n    return 1\n")
         _link(repo / "pkg" / "alias.py", "core.py")
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         updater = _stateful_updater(repo, store)
         updater.run(force=True)
         assert _function_qns(store) == {"repo.pkg.core.helper"}
@@ -941,7 +941,7 @@ class TestReingestSkipsLinks:
         _write(repo / "web" / "m.js", "export function shown() {\n  return 1;\n}\n")
         (repo / "pkg").mkdir()
         _link(repo / "pkg" / "m.js", "../web/m.js")
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         updater = _stateful_updater(repo, store)
         updater.run(force=True)
         before = _function_qns(store)
@@ -957,7 +957,7 @@ class TestReingestSkipsLinks:
         # onto the new Package, as before.
         repo = tmp_path / "repo"
         _write(repo / "pkg" / "core.py", "def helper():\n    return 1\n")
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         updater = _stateful_updater(repo, store)
         updater.run(force=True)
 

@@ -13,7 +13,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 _LINKS = {cs.RelationshipType.CALLS.value, cs.RelationshipType.INSTANTIATES.value}
 
@@ -53,7 +53,7 @@ def edges(tmp_path_factory: pytest.TempPathFactory) -> set[tuple[str, str]]:
     parsers, queries = load_parsers()
     if cs.SupportedLanguage.TS not in parsers:
         pytest.skip("typescript parser not available")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(
         ingestor=store,
         repo_path=root,

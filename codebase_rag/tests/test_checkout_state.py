@@ -56,7 +56,7 @@ from codebase_rag.editing.transaction import (
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.structural_check import changed_since
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 SOURCES = {
     "pkg/__init__.py": "",
@@ -93,7 +93,7 @@ def repo(tmp_path: Path) -> Path:
     return root
 
 
-def _sync(repo: Path, ingestor: MagicMock | _StatefulIngestor) -> GraphUpdater:
+def _sync(repo: Path, ingestor: MagicMock | StatefulIngestor) -> GraphUpdater:
     parsers, queries = load_parsers()
     updater = GraphUpdater(
         ingestor=ingestor, repo_path=repo, parsers=parsers, queries=queries
@@ -301,7 +301,7 @@ def test_an_upgrade_keeps_the_hash_cache_and_stays_in_sync(
 
 def test_an_upgrade_reparses_only_the_file_that_changed(repo: Path) -> None:
     # A graph that answers the sync's reads, so the run is truly incremental.
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _sync(repo, store)
     _as_an_older_cgr_left_it(repo)
     edited = repo / "pkg" / "core.py"

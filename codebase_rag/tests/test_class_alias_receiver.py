@@ -16,7 +16,7 @@ from pathlib import Path
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 MOD_A = (
     "class Outer:\n"
@@ -43,7 +43,7 @@ MOD_B = (
 
 def _instantiates(root: Path) -> dict[str, set[str]]:
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(
         ingestor=store,
         repo_path=root,

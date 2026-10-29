@@ -6,7 +6,7 @@
 # sibling, the disambiguator only sees files processed this run, so the added
 # file re-claims the bare qn and silently overwrites the existing module
 # under the qualified_name uniqueness constraint (issue #652 class). This
-# needs the query-capable _StatefulIngestor: the mock harness never
+# needs the query-capable StatefulIngestor: the mock harness never
 # rehydrates, so the bug is invisible to every other test.
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from codebase_rag import constants as cs
 from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 _MODULE = cs.NodeLabel.MODULE.value
 
@@ -27,7 +27,7 @@ _RS = "pub struct Square;\n\npub fn describe() -> i32 {\n    1\n}\n"
 _CPP = "class Square {};\n\nint describe() { return 1; }\n"
 
 
-def _index(store: _StatefulIngestor, repo: Path, force: bool) -> None:
+def _index(store: StatefulIngestor, repo: Path, force: bool) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=store,
@@ -38,7 +38,7 @@ def _index(store: _StatefulIngestor, repo: Path, force: bool) -> None:
     ).run(force=force)
 
 
-def _shapes_modules(store: _StatefulIngestor) -> dict[str, str]:
+def _shapes_modules(store: StatefulIngestor) -> dict[str, str]:
     # path -> module qn, for every Module node whose file is a shapes.* file.
     out: dict[str, str] = {}
     for (label, _uid), props in store.nodes.items():
@@ -69,7 +69,7 @@ def test_incremental_add_of_cross_language_sibling_does_not_collide(
 ) -> None:
     (temp_repo / "shapes.rs").write_text(_RS, encoding="utf-8")
 
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, temp_repo, force=False)
 
     # rust owns the bare module qn after the first (full) index.
@@ -94,7 +94,7 @@ def test_incremental_add_of_cross_language_sibling_does_not_collide(
     )
     # Which sibling holds the bare qn follows the clean rule (walk order),
     # not index history: a clean index of the final tree agrees (issue #1569).
-    clean = _StatefulIngestor()
+    clean = StatefulIngestor()
     _index(clean, temp_repo, force=True)
     assert modules == _shapes_modules(clean)
 
@@ -109,7 +109,7 @@ def test_incremental_delete_then_add_sibling_matches_clean_index(
     # file that no longer exists on disk (Greptile #823 P1).
     (temp_repo / "shapes.rs").write_text(_RS, encoding="utf-8")
 
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, temp_repo, force=False)
     assert _shapes_modules(store) == {"shapes.rs": "proj.shapes"}
 
@@ -126,6 +126,6 @@ def test_incremental_delete_then_add_sibling_matches_clean_index(
     assert modules == {"shapes.cpp": "proj.shapes"}, modules
 
     # equivalence check: a clean index of the final tree agrees.
-    clean = _StatefulIngestor()
+    clean = StatefulIngestor()
     _index(clean, temp_repo, force=True)
     assert _shapes_modules(clean) == modules

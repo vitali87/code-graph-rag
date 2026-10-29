@@ -28,7 +28,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.document_tier import DocumentTier, parse_front_matter
 from codebase_rag.types_defs import GraphNodeRecord, GraphRelRecord, PropertyDict
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 pytest.importorskip(
     "tree_sitter_markdown",
@@ -487,7 +487,7 @@ class TestListFrontMatter:
         assert parse_front_matter(text) == {"keep": "x"}
 
 
-def _index(store: _StatefulIngestor, repo: Path, force: bool = False) -> None:
+def _index(store: StatefulIngestor, repo: Path, force: bool = False) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=store,
@@ -498,7 +498,7 @@ def _index(store: _StatefulIngestor, repo: Path, force: bool = False) -> None:
     ).run(force=force)
 
 
-def _stored_links(store: _StatefulIngestor) -> set[tuple]:
+def _stored_links(store: StatefulIngestor) -> set[tuple]:
     """LINKS_TO edges whose two ends exist, as a MATCH-based write keeps."""
     found = set()
     for edges in store._out.values():
@@ -517,7 +517,7 @@ def _stored_links(store: _StatefulIngestor) -> set[tuple]:
     return found
 
 
-def _broken(store: _StatefulIngestor) -> dict[str, list]:
+def _broken(store: StatefulIngestor) -> dict[str, list]:
     return {
         str(props[cs.KEY_PATH]): list(props.get(cs.KEY_BROKEN_LINKS) or [])
         for (label, _), props in store.nodes.items()
@@ -531,8 +531,8 @@ def _touch(path: Path, cache: Path) -> None:
     os.utime(path.parent, (future, future))
 
 
-def _clean(repo: Path) -> _StatefulIngestor:
-    clean = _StatefulIngestor()
+def _clean(repo: Path) -> StatefulIngestor:
+    clean = StatefulIngestor()
     _index(clean, repo, force=True)
     return clean
 
@@ -546,13 +546,13 @@ class TestIncrementalSyncMatchesACleanIndex:
         _write(repo, ISSUE_REPO)
         return repo
 
-    def _sync(self, store: _StatefulIngestor, repo: Path) -> None:
+    def _sync(self, store: StatefulIngestor, repo: Path) -> None:
         _index(store, repo)
 
     def test_editing_the_linked_document_keeps_the_anchor_edge(
         self, repo: Path
     ) -> None:
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         _index(store, repo)
         guide = repo / "docs" / "guide.md"
         guide.write_text(GUIDE + "\nMore text.\n", encoding="utf-8")
@@ -569,7 +569,7 @@ class TestIncrementalSyncMatchesACleanIndex:
     def test_renaming_the_linked_heading_falls_back_to_the_file(
         self, repo: Path
     ) -> None:
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         _index(store, repo)
         guide = repo / "docs" / "guide.md"
         guide.write_text(GUIDE.replace("## Setup", "## Install"), encoding="utf-8")
@@ -587,7 +587,7 @@ class TestIncrementalSyncMatchesACleanIndex:
         # re-parses README (it links into guide's Setup section), which
         # recreates README's sections; notes.md's edge must come back.
         _write(repo, {"notes.md": "# Notes\n\nSee [usage](README.md#usage).\n"})
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         _index(store, repo)
         guide = repo / "docs" / "guide.md"
         guide.write_text(GUIDE + "\nMore text.\n", encoding="utf-8")
@@ -602,7 +602,7 @@ class TestIncrementalSyncMatchesACleanIndex:
         assert _stored_links(store) == _stored_links(_clean(repo))
 
     def test_deleting_a_linked_file_lists_it_as_broken(self, repo: Path) -> None:
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         _index(store, repo)
         (repo / "pkg" / "core.py").unlink()
         _touch(repo / "pkg", state_file(repo, cs.HASH_CACHE_FILENAME))
@@ -615,7 +615,7 @@ class TestIncrementalSyncMatchesACleanIndex:
         assert _stored_links(store) == _stored_links(clean)
 
     def test_creating_a_missing_target_adds_its_edge(self, repo: Path) -> None:
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         _index(store, repo)
         nope = repo / "docs" / "nope.md"
         nope.write_text("# Nope\n", encoding="utf-8")
@@ -633,7 +633,7 @@ class TestIncrementalSyncMatchesACleanIndex:
     ) -> None:
         # Negative: a File target outlives its file's re-parse, so the
         # document linking it has nothing to recompute.
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         _index(store, repo)
         core = repo / "pkg" / "core.py"
         core.write_text(CORE + "\n\ndef other():\n    return 2\n", encoding="utf-8")
@@ -708,7 +708,7 @@ def test_the_context_slice_finds_a_document_that_links_from_a_section(
     # starts at its section, and the read must still find the document.
     repo = tmp_path / "proj"
     _write(repo, ISSUE_REPO)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, repo, force=True)
 
     rows = store.fetch_all(

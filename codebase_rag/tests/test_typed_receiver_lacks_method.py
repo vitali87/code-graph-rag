@@ -16,7 +16,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 _PRODUCT_WITHOUT_GO = "class Product:\n    def size(self) -> int:\n        return 1\n"
 _PRODUCT_WITH_GO = (
@@ -43,7 +43,7 @@ def _go_edges(repo: Path) -> set[str]:
     parsers, queries = load_parsers()
     if "python" not in {str(k) for k in parsers}:
         pytest.skip("python parser not available")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(ingestor=store, repo_path=repo, parsers=parsers, queries=queries).run(
         force=True
     )
@@ -136,7 +136,7 @@ def test_same_named_local_classes_are_left_to_the_fallback(tmp_path: Path) -> No
     parsers, queries = load_parsers()
     if "python" not in {str(k) for k in parsers}:
         pytest.skip("python parser not available")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(ingestor=store, repo_path=repo, parsers=parsers, queries=queries).run(
         force=True
     )
@@ -174,7 +174,7 @@ def test_an_optional_annotation_is_reduced_before_the_same_named_lookup(
     parsers, queries = load_parsers()
     if "python" not in {str(k) for k in parsers}:
         pytest.skip("python parser not available")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(ingestor=store, repo_path=repo, parsers=parsers, queries=queries).run(
         force=True
     )
@@ -231,7 +231,7 @@ def test_a_same_named_class_in_a_child_module_does_not_rescue_the_call(
     parsers, queries = load_parsers()
     if "python" not in {str(k) for k in parsers}:
         pytest.skip("python parser not available")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(ingestor=store, repo_path=repo, parsers=parsers, queries=queries).run(
         force=True
     )
@@ -267,7 +267,7 @@ def test_a_nested_function_named_like_the_type_does_not_rescue_the_call(
     parsers, queries = load_parsers()
     if "python" not in {str(k) for k in parsers}:
         pytest.skip("python parser not available")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(ingestor=store, repo_path=repo, parsers=parsers, queries=queries).run(
         force=True
     )
@@ -302,7 +302,7 @@ def test_a_child_modules_class_does_not_rescue_the_call_on_a_scoped_reingest(
     parsers, queries = load_parsers()
     if "python" not in {str(k) for k in parsers}:
         pytest.skip("python parser not available")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(ingestor=store, repo_path=repo, parsers=parsers, queries=queries).run(
         force=True
     )
@@ -353,7 +353,7 @@ def _rust_run_go_targets(tmp_path: Path, files: dict[str, str]) -> set[str]:
     )
     for name, source in files.items():
         (repo / "src" / name).write_text(source, encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(ingestor=store, repo_path=repo, parsers=parsers, queries=queries).run(
         force=True
     )

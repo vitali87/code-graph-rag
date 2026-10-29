@@ -23,10 +23,10 @@ from codebase_rag import graph_updater as graph_updater_module
 from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 
-def _create_graph_updater(target: Path, store: _StatefulIngestor) -> GraphUpdater:
+def _create_graph_updater(target: Path, store: StatefulIngestor) -> GraphUpdater:
     parsers, queries = load_parsers()
     return GraphUpdater(
         ingestor=store,
@@ -59,7 +59,7 @@ def test_a_single_file_target_gone_before_run_is_deleted_not_skipped(
 ) -> None:
     (temp_repo / "module_a.py").write_text("def func_a():\n    pass\n")
     (temp_repo / "module_b.py").write_text("def func_b():\n    pass\n")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _create_graph_updater(temp_repo, store).run()
     store.flush_all()
     before = _cache(temp_repo)
@@ -105,7 +105,7 @@ def test_a_single_file_target_that_still_exists_is_indexed_as_before(
 ) -> None:
     # The control: the deletion branch must not fire for a present target.
     (temp_repo / "module_a.py").write_text("def func_a():\n    pass\n")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _create_graph_updater(temp_repo, store).run()
     store.flush_all()
 
@@ -130,7 +130,7 @@ def test_a_target_deleted_during_hashing_is_a_deletion_too(temp_repo: Path) -> N
     # registry entry and republished the cache with the target in it.
     (temp_repo / "module_a.py").write_text("def func_a():\n    pass\n")
     (temp_repo / "module_b.py").write_text("def func_b():\n    pass\n")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _create_graph_updater(temp_repo, store).run()
     store.flush_all()
     before = _cache(temp_repo)
@@ -181,7 +181,7 @@ def test_an_unreadable_but_present_target_is_not_treated_as_deleted(
     # keep the target's state and cache entry.
     (temp_repo / "module_a.py").write_text("def func_a():\n    pass\n")
     (temp_repo / "module_b.py").write_text("def func_b():\n    pass\n")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _create_graph_updater(temp_repo, store).run()
     store.flush_all()
     before = _cache(temp_repo)

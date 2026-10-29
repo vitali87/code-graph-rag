@@ -33,7 +33,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import PropertyParams, ResultRow
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "unplanned"
 HELPER = f"{PROJECT}.pkg.util.helper"
@@ -82,13 +82,13 @@ NEXT_STRING = "mr.src.parse.Parse.next_string"
 
 def _indexed(
     root: Path, files: dict[str, str], project: str = PROJECT
-) -> tuple[_StatefulIngestor, GraphUpdater]:
+) -> tuple[StatefulIngestor, GraphUpdater]:
     for rel, text in files.items():
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = GraphUpdater(
         ingestor=store,
         repo_path=root,
@@ -100,14 +100,14 @@ def _indexed(
     return store, updater
 
 
-def _query(store: _StatefulIngestor) -> QueryFn:
+def _query(store: StatefulIngestor) -> QueryFn:
     def fetch_all(query: str, params: PropertyParams | None) -> list[ResultRow]:
         return store.fetch_all(query, None if params is None else dict(params))
 
     return fetch_all
 
 
-def _missing(store: _StatefulIngestor, *paths: str) -> QueryFn:
+def _missing(store: StatefulIngestor, *paths: str) -> QueryFn:
     """The graph as an indexer that missed every call and reference in `paths`."""
 
     def fetch_all(query: str, params: PropertyParams | None) -> list[ResultRow]:
@@ -132,7 +132,7 @@ def _site(site: tuple[str, str, int, int, str | None]) -> tuple[str, str, int, i
 
 
 @pytest.fixture
-def py_repo(tmp_path: Path) -> tuple[Path, _StatefulIngestor, GraphUpdater]:
+def py_repo(tmp_path: Path) -> tuple[Path, StatefulIngestor, GraphUpdater]:
     root = tmp_path / PROJECT
     root.mkdir()
     store, updater = _indexed(root, PY)
@@ -144,7 +144,7 @@ def py_repo(tmp_path: Path) -> tuple[Path, _StatefulIngestor, GraphUpdater]:
 
 @pytest.mark.parametrize("dry_run", [False, True], ids=["apply", "dry-run"])
 def test_a_call_site_the_graph_missed_refuses_the_rename(
-    py_repo: tuple[Path, _StatefulIngestor, GraphUpdater], dry_run: bool
+    py_repo: tuple[Path, StatefulIngestor, GraphUpdater], dry_run: bool
 ) -> None:
     root, store, _updater = py_repo
     before = _tree(root)
@@ -593,7 +593,7 @@ def test_the_refusal_names_ten_locations_and_counts_the_rest(tmp_path: Path) -> 
 
 
 def test_a_guessed_and_an_unplanned_site_are_both_reported(
-    py_repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+    py_repo: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, _updater = py_repo
     hidden = _missing(store, "pkg/late.py")
@@ -616,7 +616,7 @@ def test_a_guessed_and_an_unplanned_site_are_both_reported(
 
 
 def test_allow_heuristic_rewrites_the_unplanned_site_and_reports_it(
-    py_repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+    py_repo: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = py_repo
 
@@ -642,7 +642,7 @@ def test_allow_heuristic_rewrites_the_unplanned_site_and_reports_it(
 
 
 def test_cli_refusal_lists_the_unplanned_sites_and_exits_nonzero(
-    py_repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+    py_repo: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = py_repo
     before = _tree(root)
@@ -665,7 +665,7 @@ def test_cli_refusal_lists_the_unplanned_sites_and_exits_nonzero(
 
 
 def test_cli_payload_lists_what_allow_heuristic_rewrote(
-    py_repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+    py_repo: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = py_repo
     with (
@@ -697,7 +697,7 @@ def test_cli_payload_lists_what_allow_heuristic_rewrote(
 
 
 def test_mcp_refusal_payload_lists_the_unplanned_sites(
-    py_repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+    py_repo: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, _updater = py_repo
     ingestor = MagicMock()
@@ -724,7 +724,7 @@ def test_mcp_refusal_payload_lists_the_unplanned_sites(
 
 
 def test_a_complete_graph_renames_as_before_with_nothing_unplanned(
-    py_repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+    py_repo: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = py_repo
 
@@ -893,7 +893,7 @@ def test_another_language_ignored_dirs_and_cgrignore_are_not_scanned(
 
 
 def test_a_guessed_site_alone_still_refuses_with_the_heuristic_message(
-    py_repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+    py_repo: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, _updater = py_repo
 
@@ -2092,7 +2092,7 @@ def test_commonjs_code_makes_the_file_a_module(tmp_path: Path, code: str) -> Non
 # --- review of PR #2797, seventh round --------------------------------------
 
 
-def _without_imports(store: _StatefulIngestor, *paths: str) -> QueryFn:
+def _without_imports(store: StatefulIngestor, *paths: str) -> QueryFn:
     """The graph as an indexer that recorded no import statement in `paths`,
     though it kept their calls."""
 
@@ -2161,7 +2161,7 @@ def test_an_import_the_graph_did_not_record_is_held_to_the_plan(
 
 
 def test_allow_heuristic_rewrites_an_import_the_graph_did_not_record(
-    py_repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+    py_repo: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, _updater = py_repo
 
@@ -2880,7 +2880,7 @@ ALIAS_IMPORTERS = {
 }
 
 
-def _unseen(store: _StatefulIngestor, *paths: str) -> QueryFn:
+def _unseen(store: StatefulIngestor, *paths: str) -> QueryFn:
     """The graph as an indexer that recorded nothing in `paths`: no call,
     reference, type edge or import."""
     calls = _missing(store, *paths)

@@ -26,7 +26,7 @@ from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import PropertyDict, ResultRow
 from codebase_rag.utils.path_utils import derive_project_name
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 pytestmark = [pytest.mark.anyio]
 
@@ -45,7 +45,7 @@ def _registry(root: Path) -> MCPToolsRegistry:
     (root / "web").mkdir(parents=True, exist_ok=True)
     (root / "web/a.ts").write_text(A_TS, encoding="utf-8")
     project = derive_project_name(root)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=store,

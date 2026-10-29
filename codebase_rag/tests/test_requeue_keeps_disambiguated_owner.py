@@ -25,7 +25,7 @@ from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 # A `.d.ts` beside its `.ts` yields the bare name deterministically (#1720):
 # the declaration owns `proj.lib.d.ts`. Its return type and field name ITS
@@ -72,7 +72,7 @@ def _write(repo: Path, files: dict[str, str]) -> None:
         (repo / name).write_text(src)
 
 
-def _updater(repo: Path, store: _StatefulIngestor) -> GraphUpdater:
+def _updater(repo: Path, store: StatefulIngestor) -> GraphUpdater:
     parsers, queries = load_parsers()
     return GraphUpdater(
         ingestor=store,
@@ -83,7 +83,7 @@ def _updater(repo: Path, store: _StatefulIngestor) -> GraphUpdater:
     )
 
 
-def _typed_edges(store: _StatefulIngestor) -> set[Edge]:
+def _typed_edges(store: StatefulIngestor) -> set[Edge]:
     wanted = {cs.RelationshipType.OF_TYPE.value, cs.RelationshipType.RETURNS.value}
     return {(str(s), r, str(t)) for _sl, s, r, _tl, t in store.edges if r in wanted}
 
@@ -91,7 +91,7 @@ def _typed_edges(store: _StatefulIngestor) -> set[Edge]:
 def _clean(tmp_path: Path, files: dict[str, str]) -> set[Edge]:
     repo = tmp_path / "clean" / "proj"
     _write(repo, files)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(repo, store).run(force=True)
     return _typed_edges(store)
 
@@ -99,7 +99,7 @@ def _clean(tmp_path: Path, files: dict[str, str]) -> set[Edge]:
 def _incremental(tmp_path: Path, files: dict[str, str], touch: str) -> set[Edge]:
     repo = tmp_path / "inc" / "proj"
     _write(repo, files)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(repo, store).run(force=True)
     (repo / touch).write_text(files[touch] + "\n")
     _updater(repo, store).run(force=False)
@@ -264,7 +264,7 @@ def test_a_real_inline_module_named_file_is_seeded_so_an_add_cannot_take_its_qn(
         "inline_module_widget.py": "class Widget:\n    pass\n",
     }
     _write(repo, files)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(repo, store).run(force=True)
 
     # The real file owns the bare qn after a clean pass.

@@ -17,9 +17,10 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag.editing.rename import RenameRefused, RenameReport, rename
-from codebase_rag.tests.test_rename_op import RecordedGraph, _index
+from codebase_rag.tests.test_rename_op import _index
 from codebase_rag.tools.code_retrieval import CodeRetriever
 from codebase_rag.tools.file_reader import FileReader
+from evals.recorded_graph import RecordedGraph
 
 _MENU = """\
 # -*- coding: latin-1 -*-

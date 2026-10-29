@@ -4,7 +4,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _capture
+from evals.cgr_graph import capture
 
 
 def _ts_grammar_available() -> bool:
@@ -79,7 +79,7 @@ def test_tsconfig_paths_alias_in_subdirectory_resolves(tmp_path: Path) -> None:
         "export function useIt(): number { return aliasedHelper(); }\n",
         encoding="utf-8",
     )
-    ingestor = _capture(tmp_path, "proj")
+    ingestor = capture(tmp_path, "proj")
     calls = {
         (str(from_val), str(to_val))
         for _fl, from_val, rel, _tl, to_val in ingestor.rels
@@ -96,7 +96,7 @@ def test_tsconfig_paths_alias_calls_resolve_to_first_party_files(
     tmp_path: Path,
 ) -> None:
     _make(tmp_path)
-    ingestor = _capture(tmp_path, "proj")
+    ingestor = capture(tmp_path, "proj")
     calls = {
         (str(from_val), str(to_val))
         for _fl, from_val, rel, _tl, to_val in ingestor.rels

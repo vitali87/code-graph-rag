@@ -23,7 +23,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.language_spec import CSHARP_FQN_SPEC, csharp_namespaced_from_graph
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.utils.fqn_resolver import resolve_fqn_from_ast
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 MIRRORED = {
     "src/Serilog/Capturing/PropertyBinder.cs": (
@@ -125,10 +125,10 @@ def _write(root: Path, files: dict[str, str]) -> None:
         path.write_text(source, encoding="utf-8")
 
 
-def _index(root: Path, files: dict[str, str]) -> _StatefulIngestor:
+def _index(root: Path, files: dict[str, str]) -> StatefulIngestor:
     _write(root, files)
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(
         ingestor=store,  # type: ignore[arg-type]
         repo_path=root,
@@ -138,11 +138,11 @@ def _index(root: Path, files: dict[str, str]) -> _StatefulIngestor:
     return store
 
 
-def _qns(store: _StatefulIngestor, label: str) -> set[str]:
+def _qns(store: StatefulIngestor, label: str) -> set[str]:
     return {qn for node_label, qn in store.nodes if node_label == label}
 
 
-def _calls(store: _StatefulIngestor) -> set[tuple[str, str]]:
+def _calls(store: StatefulIngestor) -> set[tuple[str, str]]:
     return {
         (str(source), str(target))
         for _sl, source, rel, _tl, target in store.edges
@@ -442,7 +442,7 @@ class TestWrittenNamespaceQualifiedNames:
             },
         )
         parsers, queries = load_parsers()
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         for force in (True, False):
             GraphUpdater(
                 ingestor=store,  # type: ignore[arg-type]
@@ -478,7 +478,7 @@ class TestWrittenNamespaceQualifiedNames:
             },
         )
         parsers, queries = load_parsers()
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         for force in (True, False):
             GraphUpdater(
                 ingestor=store,  # type: ignore[arg-type]

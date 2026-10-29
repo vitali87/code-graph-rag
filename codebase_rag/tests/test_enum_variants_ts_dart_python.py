@@ -20,7 +20,7 @@ from codebase_rag.capture import resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import RELATIONSHIP_SCHEMAS
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 SOURCES: dict[str, str] = {
     "colors.ts": (
@@ -173,7 +173,7 @@ _LANGUAGES = (
 )
 
 
-def _index(tmp_path: Path, tokens: list[str]) -> _StatefulIngestor:
+def _index(tmp_path: Path, tokens: list[str]) -> StatefulIngestor:
     repo = tmp_path / "proj"
     repo.mkdir(parents=True)
     for name, src in SOURCES.items():
@@ -182,7 +182,7 @@ def _index(tmp_path: Path, tokens: list[str]) -> _StatefulIngestor:
     missing = [lang for lang in _LANGUAGES if lang not in parsers]
     if missing:
         pytest.skip(f"{missing[0]} parser not available")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(
         ingestor=store,
         repo_path=repo,
@@ -193,7 +193,7 @@ def _index(tmp_path: Path, tokens: list[str]) -> _StatefulIngestor:
     return store
 
 
-def _variants(store: _StatefulIngestor, owner_qn: str) -> dict[str, dict]:
+def _variants(store: StatefulIngestor, owner_qn: str) -> dict[str, dict]:
     """The owner's variants, in the order the index assigned them."""
     found = {
         str(props[cs.KEY_NAME]): props
@@ -207,12 +207,12 @@ def _variants(store: _StatefulIngestor, owner_qn: str) -> dict[str, dict]:
 
 
 def _owner_edges(
-    store: _StatefulIngestor, owner_qn: str
+    store: StatefulIngestor, owner_qn: str
 ) -> list[tuple[str, str, str, str, str]]:
     return [edge for edge in store.edges if edge[2] == REL and edge[1] == owner_qn]
 
 
-def _label_of(store: _StatefulIngestor, qn: str) -> set[str]:
+def _label_of(store: StatefulIngestor, qn: str) -> set[str]:
     return {
         label
         for (label, _uid), props in store.nodes.items()
@@ -221,7 +221,7 @@ def _label_of(store: _StatefulIngestor, qn: str) -> set[str]:
 
 
 @pytest.fixture(scope="module")
-def indexed(tmp_path_factory: pytest.TempPathFactory) -> _StatefulIngestor:
+def indexed(tmp_path_factory: pytest.TempPathFactory) -> StatefulIngestor:
     return _index(tmp_path_factory.mktemp("enums2583"), ["+enum_variants", "+fields"])
 
 
@@ -281,7 +281,7 @@ def indexed(tmp_path_factory: pytest.TempPathFactory) -> _StatefulIngestor:
     ],
 )
 def test_every_member_becomes_a_variant_in_declaration_order(
-    indexed: _StatefulIngestor,
+    indexed: StatefulIngestor,
     owner_qn: str,
     owner_label: cs.NodeLabel,
     names: list[str],
@@ -309,7 +309,7 @@ def test_every_member_becomes_a_variant_in_declaration_order(
         assert indexed.props_for(edge)[cs.KEY_INDEX] == names.index(name), edge
 
 
-def test_a_variant_is_positioned_at_its_name(indexed: _StatefulIngestor) -> None:
+def test_a_variant_is_positioned_at_its_name(indexed: StatefulIngestor) -> None:
     # `  Green = 5,` is line 4 of colors.ts; `    SAD: int = 2` line 11 of
     # mood.py; the Dart `  mars(0.5),` line 9.
     green = _variants(indexed, "proj.colors.Color")["Green"]
@@ -322,7 +322,7 @@ def test_a_variant_is_positioned_at_its_name(indexed: _StatefulIngestor) -> None
     assert (mars[cs.KEY_START_LINE], mars[cs.KEY_START_COL]) == (9, 2)
 
 
-def test_a_variant_carries_its_doc_comment(indexed: _StatefulIngestor) -> None:
+def test_a_variant_carries_its_doc_comment(indexed: StatefulIngestor) -> None:
     assert (
         _variants(indexed, "proj.colors.Color")["Green"][cs.KEY_DOCSTRING]
         == "The green one."
@@ -335,7 +335,7 @@ def test_a_variant_carries_its_doc_comment(indexed: _StatefulIngestor) -> None:
 
 
 def test_every_new_variant_edge_is_on_the_documented_schema(
-    indexed: _StatefulIngestor,
+    indexed: StatefulIngestor,
 ) -> None:
     # graph_audit flags an edge whose (source, type, target) triple the
     # schema does not list; the Python owner is a Class, so the schema has
@@ -363,7 +363,7 @@ def test_the_default_index_emits_no_variant_for_these_languages(
     assert not [1 for e in store.edges if e[2] == REL]
 
 
-def test_python_enum_non_members_are_not_variants(indexed: _StatefulIngestor) -> None:
+def test_python_enum_non_members_are_not_variants(indexed: StatefulIngestor) -> None:
     names = set(_variants(indexed, "proj.mood.Mood"))
     for excluded in (
         # the enum's own control attribute and the names it lists
@@ -396,7 +396,7 @@ def test_python_enum_non_members_are_not_variants(indexed: _StatefulIngestor) ->
 
 
 def test_a_ts_member_name_spelled_with_escapes_is_the_runtime_string(
-    indexed: _StatefulIngestor,
+    indexed: StatefulIngestor,
 ) -> None:
     variants = _variants(indexed, "proj.escaped.Esc")
     assert list(variants) == [
@@ -415,7 +415,7 @@ def test_a_ts_member_name_spelled_with_escapes_is_the_runtime_string(
 
 
 def test_python_enum_membership_follows_what_the_call_refers_to(
-    indexed: _StatefulIngestor,
+    indexed: StatefulIngestor,
 ) -> None:
     # REAL calls the module's own `nonmember`, so it is a member; `cp` is
     # functools.cached_property, a descriptor, as are the qualified spellings.
@@ -423,7 +423,7 @@ def test_python_enum_membership_follows_what_the_call_refers_to(
 
 
 def test_a_python_class_that_is_not_an_enum_gets_no_variants(
-    indexed: _StatefulIngestor,
+    indexed: StatefulIngestor,
 ) -> None:
     assert _variants(indexed, "proj.plain.Plain") == {}
     assert _owner_edges(indexed, "proj.plain.Plain") == []
@@ -433,7 +433,7 @@ def test_a_python_class_that_is_not_an_enum_gets_no_variants(
 
 
 def test_a_python_enum_keeps_its_class_label_bases_and_fields(
-    indexed: _StatefulIngestor,
+    indexed: StatefulIngestor,
 ) -> None:
     # Only variants are added: the class is not relabelled, its INHERITS
     # edge to enum.Enum is still there, and the `fields` group still records
@@ -459,12 +459,12 @@ def test_a_python_enum_keeps_its_class_label_bases_and_fields(
     assert plain_fields == {"proj.plain.Plain.RED", "proj.plain.Plain.GREEN"}
 
 
-def test_a_ts_const_object_literal_is_not_an_enum(indexed: _StatefulIngestor) -> None:
+def test_a_ts_const_object_literal_is_not_an_enum(indexed: StatefulIngestor) -> None:
     assert cs.NodeLabel.ENUM.value not in _label_of(indexed, "proj.colors.Palette")
     assert _variants(indexed, "proj.colors.Palette") == {}
 
 
-def test_dart_enum_body_members_are_not_variants(indexed: _StatefulIngestor) -> None:
+def test_dart_enum_body_members_are_not_variants(indexed: StatefulIngestor) -> None:
     # Constructors, the field, the static const and the method are all in
     # the enum body; only the constants are variants.
     names = set(_variants(indexed, "proj.status.Planet"))
@@ -485,7 +485,7 @@ def test_a_reparse_drops_variants_a_python_class_no_longer_declares(
     parsers, queries = load_parsers()
     if cs.SupportedLanguage.PYTHON not in parsers:
         pytest.skip("python parser not available")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
 
     def _run(text: str) -> set[str]:
         source.write_text(text, encoding="utf-8")

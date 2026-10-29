@@ -1,6 +1,6 @@
 """The eval double must answer every query cgr issues, or refuse (issue #1716).
 
-`_StatefulIngestor` stands in for the graph in the incremental and re-ingest
+`StatefulIngestor` stands in for the graph in the incremental and re-ingest
 tests. It matched queries by identity and answered anything unrecognised with
 `[]`, which is a valid result for most of them -- so an unemulated query was
 indistinguishable from a genuinely empty graph, and a test could pass because
@@ -36,7 +36,7 @@ from codebase_rag import graph_updater as gu
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from evals import cgr_graph
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 PREFIX = {cs.KEY_PROJECT_PREFIX: "proj."}
 
@@ -48,12 +48,12 @@ CS_SRC = {"Shapes.cs": "namespace Demo;\npublic class Circle { }\n"}
 GO_SRC = {"pkg/types.go": "package pkg\n\ntype T struct{}\n"}
 
 
-def _indexed(root: Path, files: dict[str, str]) -> _StatefulIngestor:
+def _indexed(root: Path, files: dict[str, str]) -> StatefulIngestor:
     for rel, text in files.items():
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=store,
@@ -66,7 +66,7 @@ def _indexed(root: Path, files: dict[str, str]) -> _StatefulIngestor:
 
 
 @pytest.fixture
-def python_store(tmp_path: Path) -> _StatefulIngestor:
+def python_store(tmp_path: Path) -> StatefulIngestor:
     root = tmp_path / "proj"
     root.mkdir()
     return _indexed(root, PY_SRC)
@@ -74,7 +74,7 @@ def python_store(tmp_path: Path) -> _StatefulIngestor:
 
 class TestTheDoubleAnswersWithRealRows:
     def test_function_locations_carry_their_module_and_qualified_name(
-        self, python_store: _StatefulIngestor
+        self, python_store: StatefulIngestor
     ) -> None:
         rows = python_store.fetch_all(cs.CYPHER_ALL_FUNCTION_LOCATIONS, PREFIX)
 
@@ -87,7 +87,7 @@ class TestTheDoubleAnswersWithRealRows:
         assert isinstance(helper[cs.KEY_START_LINE], int)
 
     def test_method_locations_carry_their_container(
-        self, python_store: _StatefulIngestor
+        self, python_store: StatefulIngestor
     ) -> None:
         rows = python_store.fetch_all(cs.CYPHER_ALL_METHOD_LOCATIONS, PREFIX)
 
@@ -99,7 +99,7 @@ class TestTheDoubleAnswersWithRealRows:
         assert draw[cs.KEY_LABEL] == cs.NodeLabel.METHOD.value
 
     def test_a_method_is_not_returned_as_a_function(
-        self, python_store: _StatefulIngestor
+        self, python_store: StatefulIngestor
     ) -> None:
         """The two queries select different labels, and conflating them would
         rehydrate a method under its module instead of its class."""
@@ -112,7 +112,7 @@ class TestTheDoubleAnswersWithRealRows:
         assert "proj.app.Widget.draw" not in functions
 
     def test_the_module_count_is_the_number_of_project_modules(
-        self, python_store: _StatefulIngestor
+        self, python_store: StatefulIngestor
     ) -> None:
         """A COUNT query returns exactly one row, and its caller reads
         `rows[0]["count"]`. Answering `[]` raised IndexError there, the handler
@@ -183,7 +183,7 @@ class TestTheDoubleAnswersWithRealRows:
         }
 
     def test_implements_pairs_name_the_implementer_and_its_interface(self) -> None:
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         store.ensure_node_batch(
             cs.NodeLabel.CLASS.value, {cs.KEY_QUALIFIED_NAME: "proj.m.Upper"}
         )
@@ -208,7 +208,7 @@ class TestTheDoubleAnswersWithRealRows:
         assert store.fetch_all(cs.CYPHER_ALL_IMPLEMENTS, other) == []
 
     def test_rust_overrides_come_only_from_rust_methods(self) -> None:
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         methods = {
             "proj.errors.u64.half": "src/errors.rs",
             "proj.errors.FloatErrors.half": "src/errors.rs",
@@ -240,7 +240,7 @@ class TestTheDoubleAnswersWithRealRows:
         ]
 
     def test_rust_traits_with_a_bodiless_method_are_listed(self) -> None:
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         declared = {
             "proj.lib.Closed": ("src/lib.rs", cs.NodeLabel.INTERFACE),
             "proj.lib.Open": ("src/lib.rs", cs.NodeLabel.INTERFACE),
@@ -268,7 +268,7 @@ class TestTheDoubleAnswersWithRealRows:
         assert rows == [{cs.KEY_QUALIFIED_NAME: "proj.lib.Closed"}]
 
     def test_definition_rows_carry_the_declared_name(
-        self, python_store: _StatefulIngestor
+        self, python_store: StatefulIngestor
     ) -> None:
         rows = python_store.fetch_all(cs.CYPHER_ALL_DEFINITION_QNS, PREFIX)
 
@@ -292,7 +292,7 @@ class TestQueriesWhoseCallersSwallowExceptions:
     """
 
     def test_project_modules_returns_the_matching_modules(
-        self, python_store: _StatefulIngestor
+        self, python_store: StatefulIngestor
     ) -> None:
         rows = python_store.fetch_all(
             gu.CYPHER_PROJECT_MODULES,
@@ -305,7 +305,7 @@ class TestQueriesWhoseCallersSwallowExceptions:
         }
 
     def test_project_modules_honours_the_extension_filter(
-        self, python_store: _StatefulIngestor
+        self, python_store: StatefulIngestor
     ) -> None:
         """The control. Ignoring `$extensions` would still look right above,
         because every module in that fixture is Python."""
@@ -317,7 +317,7 @@ class TestQueriesWhoseCallersSwallowExceptions:
         assert rows == []
 
     def test_project_py_modules_returns_python_modules(
-        self, python_store: _StatefulIngestor
+        self, python_store: StatefulIngestor
     ) -> None:
         rows = python_store.fetch_all(
             gu.CYPHER_PROJECT_PY_MODULES, {cs.KEY_PROJECT_PREFIX: "proj."}
@@ -366,7 +366,7 @@ class TestQueriesWhoseCallersSwallowExceptions:
 
 class TestTheDoubleRefusesWhatItDoesNotModel:
     def test_an_unemulated_query_raises_rather_than_answering_nothing(self) -> None:
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
 
         with pytest.raises(AssertionError, match="does not emulate this query"):
             store.fetch_all("MATCH (n:Invented) RETURN n.qualified_name AS qn", {})
@@ -375,7 +375,7 @@ class TestTheDoubleRefusesWhatItDoesNotModel:
         """The embeddings pass writes vectors to Qdrant, which this double does
         not model, and its caller already treats `[]` as "nothing to embed". It
         is named in `_NOT_MODELLED` so the refusal above cannot swallow it."""
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
 
         assert (
             store.fetch_all(cs.CYPHER_QUERY_EMBEDDINGS, {"project_name": "proj"}) == []
@@ -440,7 +440,7 @@ class TestTheModuleSubtreeWalkMirrorsTheDeleteQuery:
         re-parse here while production deletes it (issue #1426's own
         regression, seen from the emulator's side).
         """
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         store.ensure_node_batch(
             cs.NodeLabel.MODULE.value,
             {cs.KEY_QUALIFIED_NAME: "proj.doc", cs.KEY_PATH: "doc.md"},
@@ -468,7 +468,7 @@ class TestTheModuleSubtreeWalkMirrorsTheDeleteQuery:
         production walk is variable-length (`*0..`), so it reaches a
         sub-heading through its parent. A single-level fixture passes even if
         the double stops after one hop, so this drives the depth."""
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         store.ensure_node_batch(
             cs.NodeLabel.MODULE.value,
             {cs.KEY_QUALIFIED_NAME: "proj.doc", cs.KEY_PATH: "doc.md"},
@@ -508,8 +508,8 @@ class TestTheModuleDeleteIsProjectScoped:
     at the path, whichever project owned it (issue #2172)."""
 
     @staticmethod
-    def _store_with(*modules: tuple[str, str]) -> _StatefulIngestor:
-        store = _StatefulIngestor()
+    def _store_with(*modules: tuple[str, str]) -> StatefulIngestor:
+        store = StatefulIngestor()
         for qn, path in modules:
             store.ensure_node_batch(
                 cs.NodeLabel.MODULE.value,
@@ -518,7 +518,7 @@ class TestTheModuleDeleteIsProjectScoped:
         return store
 
     @staticmethod
-    def _module_qns(store: _StatefulIngestor) -> set[str]:
+    def _module_qns(store: StatefulIngestor) -> set[str]:
         return {
             str(props[cs.KEY_QUALIFIED_NAME])
             for (label, _uid), props in store.nodes.items()
@@ -526,7 +526,7 @@ class TestTheModuleDeleteIsProjectScoped:
         }
 
     @staticmethod
-    def _delete(store: _StatefulIngestor, path: str, project: str) -> None:
+    def _delete(store: StatefulIngestor, path: str, project: str) -> None:
         store.execute_write(
             cs.CYPHER_DELETE_MODULE,
             {

@@ -7,7 +7,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.tests.conftest import _MockIngestor
+from evals.recorded_graph import RecordingIngestor
 
 INCLUDES = "#include <widget>\n#include <widget.h>\n"
 
@@ -18,7 +18,7 @@ def _updater(root: Path) -> GraphUpdater:
         if language not in parsers:
             pytest.skip(f"{language} parser not available")
     updater = GraphUpdater(
-        ingestor=_MockIngestor(),
+        ingestor=RecordingIngestor(),
         repo_path=root,
         parsers=parsers,
         queries=queries,

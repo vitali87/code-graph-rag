@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from evals.cgr_graph import _capture
+from evals.cgr_graph import capture
 
 
 def _make_file(root: Path) -> None:
@@ -21,7 +21,7 @@ def test_java_method_caller_qn_carries_signature(tmp_path: Path) -> None:
     # and the edge would not attach in Memgraph. The caller qn must carry the
     # signature of the registered Method node.
     _make_file(tmp_path)
-    ingestor = _capture(tmp_path, "demo")
+    ingestor = capture(tmp_path, "demo")
     node_qns = {str(uid) for (_label, uid) in ingestor.nodes}
     calls = {
         (str(from_val), str(to_val))
@@ -56,7 +56,7 @@ def test_java_unimported_cross_package_static_call_does_not_resolve(
     # a different package (directory): the same-package fallback is exhausted,
     # so leave the receiver unlinked rather than emit a wrong cross-package edge.
     _make_cross_package(tmp_path)
-    ingestor = _capture(tmp_path, "demo")
+    ingestor = capture(tmp_path, "demo")
     calls = {
         (str(from_val), str(to_val))
         for _fl, from_val, rel, _tl, to_val in ingestor.rels

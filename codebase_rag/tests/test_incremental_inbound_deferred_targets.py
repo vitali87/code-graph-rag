@@ -18,7 +18,7 @@ from codebase_rag import constants as cs
 from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 GO_FIXTURE: dict[str, str] = {
     "go.mod": "module example.com/app\n\ngo 1.21\n",
@@ -42,7 +42,7 @@ CPP_CALL = ("proj.shape.use", "proj.shape.h.geo.Shape.area")
 Snapshot = tuple[frozenset[tuple[str, str]], frozenset[tuple[str, ...]]]
 
 
-def _snapshot(store: _StatefulIngestor) -> Snapshot:
+def _snapshot(store: StatefulIngestor) -> Snapshot:
     nodes = frozenset((label, str(uid)) for (label, uid) in store.nodes)
     edges = frozenset(
         (str(fl), str(fv), str(rel), str(tl), str(tv))
@@ -58,7 +58,7 @@ def _calls(snapshot: Snapshot) -> set[tuple[str, str]]:
 
 
 def _index(
-    store: _StatefulIngestor, repo: Path, language: cs.SupportedLanguage, force: bool
+    store: StatefulIngestor, repo: Path, language: cs.SupportedLanguage, force: bool
 ) -> None:
     parsers, queries = load_parsers()
     if language not in parsers:
@@ -101,7 +101,7 @@ def test_incremental_reindex_keeps_inbound_calls_to_deferred_targets(
     root.mkdir()
     for rel, text in fixture.items():
         (root / rel).write_text(text, encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, language, force=True)
     clean = _snapshot(store)
     assert call in _calls(clean), "fixture must produce the cross-file call"

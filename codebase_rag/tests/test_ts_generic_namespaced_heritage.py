@@ -14,7 +14,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _capture, _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor, capture
 
 _PROJECT = "proj"
 _IMPLEMENTS = cs.RelationshipType.IMPLEMENTS.value
@@ -93,7 +93,7 @@ def _heritage(root: Path) -> set[tuple[str, str, str, str, str]]:
             to_label,
             str(to_qn).removeprefix(prefix),
         )
-        for from_label, from_qn, rel, to_label, to_qn in _capture(root, _PROJECT).rels
+        for from_label, from_qn, rel, to_label, to_qn in capture(root, _PROJECT).rels
         if rel in (_IMPLEMENTS, _INHERITS)
     }
 
@@ -602,7 +602,7 @@ def test_a_private_declaration_stays_private_on_an_incremental_run(
     # ambiguous. (An unchanged barrel's own import map is not rebuilt on an
     # incremental run, so the barrel is touched too.)
     root = _write(tmp_path, _private_star_files())
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
 
     def run(force: bool) -> None:

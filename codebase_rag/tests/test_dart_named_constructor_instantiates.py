@@ -11,7 +11,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 SOURCE = """\
 class Box<T> {
@@ -52,7 +52,7 @@ def edges(tmp_path_factory: pytest.TempPathFactory) -> set[tuple[str, str, str]]
         # A module-scoped fixture runs before the per-test grammar skip
         # hook is installed, so a base install must skip here.
         pytest.skip("dart parser not available")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(
         ingestor=store,  # type: ignore[arg-type]
         repo_path=root,
@@ -102,11 +102,11 @@ TWINS = (
 )
 
 
-def _index(root: Path, source: str) -> tuple[GraphUpdater, _StatefulIngestor]:
+def _index(root: Path, source: str) -> tuple[GraphUpdater, StatefulIngestor]:
     (root / "lib").mkdir(parents=True, exist_ok=True)
     (root / "lib" / "box.dart").write_text(source, encoding="utf-8")
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = GraphUpdater(
         ingestor=store,  # type: ignore[arg-type]
         repo_path=root,

@@ -4,12 +4,12 @@ from unittest.mock import MagicMock
 from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.parsers.call_resolver import CallResolver
 from codebase_rag.types_defs import NodeType
-from evals.cgr_graph import _capture
+from evals.cgr_graph import capture
 
 
 def _calls(tmp_path: Path, name: str, body: str) -> set[tuple[str, str]]:
     (tmp_path / name).write_text(body, encoding="utf-8")
-    ingestor = _capture(tmp_path, "proj")
+    ingestor = capture(tmp_path, "proj")
     return {(str(f), str(t)) for _fl, f, rel, _tl, t in ingestor.rels if rel == "CALLS"}
 
 
@@ -119,7 +119,7 @@ def test_cross_file_interface_field_keeps_interface_edge(tmp_path: Path) -> None
         "}\n",
         encoding="utf-8",
     )
-    ingestor = _capture(tmp_path, "proj")
+    ingestor = capture(tmp_path, "proj")
     calls = {
         (str(f), str(t)) for _fl, f, rel, _tl, t in ingestor.rels if rel == "CALLS"
     }

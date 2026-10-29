@@ -14,7 +14,7 @@ import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.tests.conftest import _MockIngestor
+from evals.recorded_graph import RecordingIngestor
 
 PY_MAIN = """
 from helpers import shout
@@ -117,8 +117,8 @@ def _recorded_batches(ingestor: MagicMock) -> tuple[list, list]:
 
 
 @pytest.fixture
-def second_ingestor() -> _MockIngestor:
-    return _MockIngestor()
+def second_ingestor() -> RecordingIngestor:
+    return RecordingIngestor()
 
 
 def test_indexing_twice_is_deterministic(

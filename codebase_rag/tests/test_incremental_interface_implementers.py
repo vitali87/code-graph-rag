@@ -35,7 +35,7 @@ from codebase_rag.tests.test_incremental_duplicate_variants import (
     _touch_after_cache,
     _write,
 )
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "proj"
 
@@ -274,9 +274,9 @@ TYPESCRIPT: dict[str, str] = {
 
 def _clean_then_incremental(
     root: Path, files: dict[str, str], edited: str
-) -> tuple[_StatefulIngestor, set[CallEdge], Snapshot]:
+) -> tuple[StatefulIngestor, set[CallEdge], Snapshot]:
     _write(root, files)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, force=True)
     clean_calls, clean = _calls(store), _snapshot(store)
     _touch_after_cache(root / edited, root, _comment(edited))
@@ -383,14 +383,14 @@ def test_a_second_implementer_in_the_reparsed_file_retires_the_edge(
     # companion edge, where parsing alone saw `Lower` as the only one.
     root = temp_repo / PROJECT
     _write(root, JAVA)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, force=True)
     caller = root / "src/demo/Caller.java"
     caller.write_text(JAVA_CALLER + "\n" + JAVA_LOWER_CLASS, encoding="utf-8")
     _touch_after_cache(caller, root, "//")
     _index(store, root, force=False)
 
-    clean_store = _StatefulIngestor()
+    clean_store = StatefulIngestor()
     _index(clean_store, root, force=True)
     clean_calls = _calls(clean_store)
     assert {edge[1] for edge in _calls_from(clean_calls, JAVA_CALLER_QN)} == {
@@ -451,7 +451,7 @@ def test_edges_the_sync_already_matched_are_unchanged(
     assert _snapshot(store) == clean
 
 
-def _updater(store: _StatefulIngestor, root: Path) -> GraphUpdater:
+def _updater(store: StatefulIngestor, root: Path) -> GraphUpdater:
     parsers, queries = load_parsers()
     return GraphUpdater(
         ingestor=store,
@@ -479,7 +479,7 @@ def test_a_forced_build_on_a_reused_updater_matches_a_fresh_one(
     lower = root / "src/demo/Lower.java"
     _write(root, JAVA)
     _write(root, {"src/demo/Lower.java": "package demo;\n\npublic " + JAVA_LOWER_CLASS})
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, root)
     if full_build_on_the_same_updater:
         updater.run(force=True)
@@ -490,7 +490,7 @@ def test_a_forced_build_on_a_reused_updater_matches_a_fresh_one(
     lower.unlink()
     updater.run(force=True)
 
-    fresh = _StatefulIngestor()
+    fresh = StatefulIngestor()
     _index(fresh, root, force=True)
     fresh_calls = _calls(fresh)
     assert JAVA_UPPER_QN in {
@@ -536,7 +536,7 @@ RUST_PRIMITIVE_QN = f"{PROJECT}.src.prim.u64.translate"
 
 
 def _resync(
-    store: _StatefulIngestor,
+    store: StatefulIngestor,
     root: Path,
     updater: GraphUpdater,
     edits: dict[str, str],
@@ -564,7 +564,7 @@ def test_a_sync_retires_an_implementer_the_edit_removed(
 ) -> None:
     root = temp_repo / PROJECT
     _write(root, JAVA)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _index(store, root, force=True)
     assert JAVA_UPPER_QN in {
         edge[1] for edge in _calls_from(_calls(store), JAVA_CALLER_QN)
@@ -572,7 +572,7 @@ def test_a_sync_retires_an_implementer_the_edit_removed(
 
     _resync(store, root, updater, {"src/demo/Upper.java": JAVA_UPPER_UNBOUND}, mode)
 
-    clean_store = _StatefulIngestor()
+    clean_store = StatefulIngestor()
     _index(clean_store, root, force=True)
     clean_calls = _calls(clean_store)
     assert {edge[1] for edge in _calls_from(clean_calls, JAVA_CALLER_QN)} == {
@@ -625,7 +625,7 @@ def test_a_sync_keeps_the_pairs_a_clean_index_holds(
     # come out of the sync as a clean index has them.
     root = temp_repo / PROJECT
     _write(root, files)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _index(store, root, force=True)
     clean_calls, clean = _calls(store), _snapshot(store)
     edit = (root / edited).read_text(encoding="utf-8") + f"{_comment(edited)} x\n"
@@ -641,7 +641,7 @@ def test_the_unimported_primitive_impl_is_the_sole_implementer(
 ) -> None:
     root = temp_repo / PROJECT
     _write(root, RUST_QUALIFIED_PRIMITIVE)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, force=True)
     assert {edge[1] for edge in _calls_from(_calls(store), RUST_CALLER_QN)} == {
         f"{PROJECT}.src.strategy.Strategy.translate",
@@ -657,7 +657,7 @@ def test_a_sync_retires_a_primitive_impl_moved_to_another_trait(
     # from; the pair must still go with the impl that recorded it.
     root = temp_repo / PROJECT
     _write(root, RUST_QUALIFIED_PRIMITIVE)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _index(store, root, force=True)
     moved = RUST_QUALIFIED_PRIMITIVE["src/prim.rs"].replace(
         "crate::strategy::Strategy", "crate::other::Other"
@@ -665,7 +665,7 @@ def test_a_sync_retires_a_primitive_impl_moved_to_another_trait(
 
     _resync(store, root, updater, {"src/prim.rs": moved}, mode)
 
-    clean_store = _StatefulIngestor()
+    clean_store = StatefulIngestor()
     _index(clean_store, root, force=True)
     clean_calls = _calls(clean_store)
     assert {edge[1] for edge in _calls_from(clean_calls, RUST_CALLER_QN)} == {
@@ -688,7 +688,7 @@ def test_a_sync_forgets_an_untraceable_impl_the_edit_removed(
     # touched too: no edge makes it a dependent of the impl's file.
     root = temp_repo / PROJECT
     _write(root, RUST_EMPTY_PRIMITIVE_IMPL)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _index(store, root, force=True)
     upper_qn = f"{PROJECT}.src.upper.Upper.translate"
     assert upper_qn not in {
@@ -701,7 +701,7 @@ def test_a_sync_forgets_an_untraceable_impl_the_edit_removed(
     }
     _resync(store, root, updater, edits, mode)
 
-    clean_store = _StatefulIngestor()
+    clean_store = StatefulIngestor()
     _index(clean_store, root, force=True)
     clean_calls = _calls(clean_store)
     assert upper_qn in {edge[1] for edge in _calls_from(clean_calls, RUST_CALLER_QN)}
@@ -736,7 +736,7 @@ def test_a_sync_retires_the_enum_constant_fan_out(
 ) -> None:
     root = temp_repo / PROJECT
     _write(root, JAVA_ENUM)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _index(store, root, force=True)
     assert any(
         edge[1].startswith(f"{JAVA_POLICY_QN}{cs.DUP_QN_MARKER}")
@@ -746,7 +746,7 @@ def test_a_sync_retires_the_enum_constant_fan_out(
     caller = "src/demo/Caller.java"
     _resync(store, root, updater, {**edits, caller: JAVA_ENUM[caller] + "// x\n"}, mode)
 
-    clean_store = _StatefulIngestor()
+    clean_store = StatefulIngestor()
     _index(clean_store, root, force=True)
     clean_calls = _calls(clean_store)
     assert {edge[1] for edge in _calls_from(clean_calls, JAVA_CALLER_QN)} == {

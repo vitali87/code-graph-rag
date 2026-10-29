@@ -24,7 +24,7 @@ import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 UTIL = "def helper():\n    return 1\n"
 APP = "from pkg.util import helper\n\n\ndef run():\n    return helper()\n"
@@ -37,7 +37,7 @@ def _write_fixture_tree(root: Path) -> None:
     (root / "pkg" / "app.py").write_text(APP, encoding="utf-8")
 
 
-def _call_edges(store: _StatefulIngestor) -> set[tuple[str, str]]:
+def _call_edges(store: StatefulIngestor) -> set[tuple[str, str]]:
     return {
         (str(src), str(dst))
         for (_sl, src, rel, _tl, dst) in store.edges
@@ -45,11 +45,11 @@ def _call_edges(store: _StatefulIngestor) -> set[tuple[str, str]]:
     }
 
 
-def _indexed_project(root: Path) -> tuple[GraphUpdater, _StatefulIngestor]:
+def _indexed_project(root: Path) -> tuple[GraphUpdater, StatefulIngestor]:
     parsers, queries = load_parsers()
     if "python" not in {str(k) for k in parsers}:
         pytest.skip("python parser not available")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = GraphUpdater(
         ingestor=store,
         repo_path=root,

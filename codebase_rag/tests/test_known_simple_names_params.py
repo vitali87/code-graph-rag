@@ -21,12 +21,12 @@ from codebase_rag import logs as ls
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import PropertyDict, ResultRow
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 PARAM = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)")
 
 
-class _RecordingIngestor(_StatefulIngestor):
+class _RecordingIngestor(StatefulIngestor):
     def __init__(self) -> None:
         super().__init__()
         self.reads: list[tuple[str, PropertyDict | None]] = []
@@ -38,7 +38,7 @@ class _RecordingIngestor(_StatefulIngestor):
         return super().fetch_all(query, params)
 
 
-def _updater(store: _StatefulIngestor, repo: Path, project: str) -> GraphUpdater:
+def _updater(store: StatefulIngestor, repo: Path, project: str) -> GraphUpdater:
     parsers, queries = load_parsers()
     return GraphUpdater(
         ingestor=store,
@@ -49,7 +49,7 @@ def _updater(store: _StatefulIngestor, repo: Path, project: str) -> GraphUpdater
     )
 
 
-def _indexed(tmp_path: Path, store: _StatefulIngestor, project: str) -> Path:
+def _indexed(tmp_path: Path, store: StatefulIngestor, project: str) -> Path:
     repo = tmp_path / project
     repo.mkdir()
     (repo / "mod.py").write_text("def a():\n    return 1\n\nclass Box:\n    pass\n")
@@ -60,7 +60,7 @@ def _indexed(tmp_path: Path, store: _StatefulIngestor, project: str) -> Path:
 def test_known_names_come_from_the_graph_not_the_failure_fallback(
     tmp_path: Path,
 ) -> None:
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     repo = _indexed(tmp_path, store, "proj")
 
     known = _updater(store, repo, "proj")._known_simple_names_by_path(["mod.py"])
@@ -80,7 +80,7 @@ def test_the_read_binds_every_parameter_its_query_names(tmp_path: Path) -> None:
 
 
 def test_a_longer_projects_definitions_are_not_claimed(tmp_path: Path) -> None:
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     repo = _indexed(tmp_path, store, "proj")
     nested = tmp_path / "proj_sub_src"
     nested.mkdir()
@@ -94,7 +94,7 @@ def test_a_longer_projects_definitions_are_not_claimed(tmp_path: Path) -> None:
 
 
 def test_the_graph_double_refuses_an_unbound_parameter() -> None:
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
 
     with pytest.raises(ValueError, match="longer_project_prefixes"):
         store.fetch_all(
@@ -106,7 +106,7 @@ def test_the_graph_double_refuses_an_unbound_parameter() -> None:
 def test_an_incremental_sync_logs_no_failed_known_definitions_read(
     tmp_path: Path,
 ) -> None:
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     repo = _indexed(tmp_path, store, "proj")
     (repo / "mod.py").write_text(
         "def a():\n    return 2\n\ndef b():\n    return a()\n\nclass Box:\n    pass\n"
@@ -125,7 +125,7 @@ def test_an_incremental_sync_logs_no_failed_known_definitions_read(
 def test_a_reingest_logs_no_failed_known_definitions_read(tmp_path: Path) -> None:
     # `cgr check` and the MCP edit tools go through `reingest`, which runs
     # the same known-definitions read (issue #2392, comment).
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     repo = _indexed(tmp_path, store, "proj")
     (repo / "mod.py").write_text(
         "def a():\n    return 2\n\ndef b():\n    return a()\n\nclass Box:\n    pass\n"

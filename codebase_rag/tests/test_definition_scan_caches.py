@@ -26,7 +26,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import force_mtime_after_cache
 from codebase_rag.types_defs import PropertyDict, PropertyValue
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 _CALLS = cs.RelationshipType.CALLS.value
 _EXACT = cs.EdgeResolution.EXACT.value
@@ -271,7 +271,7 @@ def _write(root: Path, files: dict[str, str]) -> None:
 
 
 def _updater(
-    store: _StatefulIngestor, root: Path, language: cs.SupportedLanguage
+    store: StatefulIngestor, root: Path, language: cs.SupportedLanguage
 ) -> GraphUpdater:
     parsers, queries = load_parsers()
     if language not in parsers:
@@ -285,7 +285,7 @@ def _updater(
     )
 
 
-def _nodes(store: _StatefulIngestor) -> NodeSnapshot:
+def _nodes(store: StatefulIngestor) -> NodeSnapshot:
     # The sync stamp is the one property that differs between two runs.
     return {
         (label, str(uid)): {
@@ -295,7 +295,7 @@ def _nodes(store: _StatefulIngestor) -> NodeSnapshot:
     }
 
 
-def _edges(store: _StatefulIngestor) -> EdgeSnapshot:
+def _edges(store: StatefulIngestor) -> EdgeSnapshot:
     return {
         (str(fl), str(fv), str(rel), str(tl), str(tv)): store.props_for(
             (fl, fv, rel, tl, tv)
@@ -304,8 +304,8 @@ def _edges(store: _StatefulIngestor) -> EdgeSnapshot:
     }
 
 
-def _clean_index(root: Path, language: cs.SupportedLanguage) -> _StatefulIngestor:
-    clean = _StatefulIngestor()
+def _clean_index(root: Path, language: cs.SupportedLanguage) -> StatefulIngestor:
+    clean = StatefulIngestor()
     _updater(clean, root, language).run(force=True)
     return clean
 
@@ -317,12 +317,12 @@ def _edit(root: Path, case: EditCase) -> Path:
     return target
 
 
-def _assert_same_graph(store: _StatefulIngestor, clean: _StatefulIngestor) -> None:
+def _assert_same_graph(store: StatefulIngestor, clean: StatefulIngestor) -> None:
     assert _nodes(store) == _nodes(clean)
     assert _edges(store) == _edges(clean)
 
 
-def _assert_reflects_the_edit(store: _StatefulIngestor, case: EditCase) -> None:
+def _assert_reflects_the_edit(store: StatefulIngestor, case: EditCase) -> None:
     for qn, doc in case.docs.items():
         assert _docstring(store, qn) == doc, qn
     for (caller, callee), resolution in case.calls.items():
@@ -330,7 +330,7 @@ def _assert_reflects_the_edit(store: _StatefulIngestor, case: EditCase) -> None:
 
 
 def _assert_edit_changed_the_graph(
-    before: _StatefulIngestor, clean: _StatefulIngestor
+    before: StatefulIngestor, clean: StatefulIngestor
 ) -> None:
     # Fixture guard: an edit that changed nothing would let a stale table pass.
     assert (_nodes(before), _edges(before)) != (_nodes(clean), _edges(clean))
@@ -342,9 +342,9 @@ def test_a_sync_after_an_edit_matches_a_clean_index(
 ) -> None:
     root = temp_repo / "proj"
     _write(root, case.before)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(store, root, case.language).run()
-    before = _StatefulIngestor()
+    before = StatefulIngestor()
     _updater(before, root, case.language).run(force=True)
 
     _edit(root, case)
@@ -362,10 +362,10 @@ def test_a_reingest_on_the_same_updater_matches_a_clean_index(
 ) -> None:
     root = temp_repo / "proj"
     _write(root, case.before)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, root, case.language)
     updater.run()
-    before = _StatefulIngestor()
+    before = StatefulIngestor()
     _updater(before, root, case.language).run(force=True)
 
     updater.reingest([_edit(root, case)])
@@ -381,15 +381,15 @@ def test_a_reingest_on_the_same_updater_matches_a_clean_index(
 
 def _index(
     temp_repo: Path, files: dict[str, str], language: cs.SupportedLanguage
-) -> _StatefulIngestor:
+) -> StatefulIngestor:
     root = temp_repo / "proj"
     _write(root, files)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(store, root, language).run()
     return store
 
 
-def _calls_from(store: _StatefulIngestor, caller_qn: str) -> dict[str, PropertyValue]:
+def _calls_from(store: StatefulIngestor, caller_qn: str) -> dict[str, PropertyValue]:
     return {
         edge[4]: resolution
         for edge, resolution in _edges(store).items()
@@ -397,7 +397,7 @@ def _calls_from(store: _StatefulIngestor, caller_qn: str) -> dict[str, PropertyV
     }
 
 
-def _docstring(store: _StatefulIngestor, qn: str) -> PropertyValue:
+def _docstring(store: StatefulIngestor, qn: str) -> PropertyValue:
     for (_label, uid), props in store.nodes.items():
         if uid == qn:
             return props.get(cs.KEY_DOCSTRING)

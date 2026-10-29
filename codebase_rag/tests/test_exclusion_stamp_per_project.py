@@ -18,7 +18,7 @@ from codebase_rag.graph_updater import GraphUpdater, _load_exclusion_state
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.structural_check import indexed_scope
 from codebase_rag.utils.path_utils import derive_project_name
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 _SOURCE = {
     "pkg/__init__.py": "",
@@ -39,7 +39,7 @@ def root(temp_repo: Path) -> Path:
 
 def _updater(
     repo_path: Path,
-    store: _StatefulIngestor,
+    store: StatefulIngestor,
     project_name: str,
     *,
     named: bool | None = None,
@@ -58,7 +58,7 @@ def _updater(
 
 
 def test_check_reads_every_projects_own_scope_after_both_indexed(root: Path) -> None:
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(root, store, "project_a", exclude=frozenset({"gen_a"})).run(force=True)
     _updater(root, store, "project_b", exclude=frozenset({"gen_b"})).run(force=True)
 
@@ -81,7 +81,7 @@ def test_an_in_sync_named_run_refreshes_an_unnamed_stamp(root: Path) -> None:
     # given explicitly: the scope matches, so the run takes the in-sync fast
     # path, which used to return before the stamp was written and left it
     # unnamed -- `cgr check --project <name>` then refused.
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     name = derive_project_name(root)
     _updater(root, store, name, named=False).run(force=True)
 
@@ -93,7 +93,7 @@ def test_an_in_sync_named_run_refreshes_an_unnamed_stamp(root: Path) -> None:
 
 
 def test_an_unchanged_in_sync_run_does_not_rewrite_the_stamp(root: Path) -> None:
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(root, store, "project_a").run(force=True)
     stamp = state_file(root, cs.EXCLUSION_STATE_FILENAME)
     before = stamp.read_bytes()
@@ -115,7 +115,7 @@ def test_a_single_file_run_does_not_publish_into_another_projects_cache(
     # A single-file run for project_a must not merge its hash into
     # project_b's cache, or project_b's next sync reads the edited file as
     # current while its graph still holds the old parse.
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(root, store, "project_a").run(force=True)
     _updater(root, store, "project_b").run(force=True)
     cache = state_file(root, cs.HASH_CACHE_FILENAME)

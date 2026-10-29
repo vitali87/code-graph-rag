@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from evals.cgr_graph import _capture
+from evals.cgr_graph import capture
 
 
 def _make(root: Path) -> None:
@@ -23,7 +23,7 @@ def test_ts_exported_function_not_duplicated(tmp_path: Path) -> None:
     # re-register it: doing so makes a spurious `qn@line` duplicate that splits
     # CALLS edges onto it, mangling the callee qn.
     _make(tmp_path)
-    ingestor = _capture(tmp_path, "p")
+    ingestor = capture(tmp_path, "p")
     fn_qns = {str(uid) for (label, uid) in ingestor.nodes if label == "Function"}
 
     assert "p.util.parsedType" in fn_qns

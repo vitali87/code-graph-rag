@@ -22,7 +22,7 @@ from codebase_rag.tests.conftest import (
     get_relationships,
 )
 from codebase_rag.utils.fqn_resolver import extract_function_fqns
-from evals.cgr_graph import _capture
+from evals.cgr_graph import capture
 
 # The issue's repro. The anonymous class starts at row 19, col 25 (0-based,
 # the `class` keyword), inside Dispatcher::add.
@@ -497,7 +497,7 @@ def _dead(tmp_path: Path, source: str) -> tuple[set[str], set[str]]:
     project = tmp_path / "php_dead"
     project.mkdir()
     (project / "main.php").write_text(source, encoding="utf-8")
-    ingestor = _capture(project, "php_dead")
+    ingestor = capture(project, "php_dead")
     dead = dead_code_from_graph(
         ingestor.nodes,
         list(ingestor.rels),

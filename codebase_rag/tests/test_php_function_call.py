@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from evals.cgr_graph import _capture
+from evals.cgr_graph import capture
 
 
 def _make(root: Path) -> None:
@@ -20,7 +20,7 @@ def test_php_plain_function_call_resolves(tmp_path: Path) -> None:
     # the CALLS edge dropped; only method/static calls (which expose a `name`
     # field directly) resolved.
     _make(tmp_path)
-    ingestor = _capture(tmp_path, "p")
+    ingestor = capture(tmp_path, "p")
     calls = {
         (str(from_val), str(to_val))
         for _fl, from_val, rel, _tl, to_val in ingestor.rels

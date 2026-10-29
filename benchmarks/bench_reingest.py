@@ -99,7 +99,7 @@ def measure_reingest(
     from codebase_rag.graph_updater import GraphUpdater
     from codebase_rag.parser_loader import load_parsers
     from codebase_rag.structural_delta import observe
-    from evals.cgr_graph import _StatefulIngestor
+    from evals.cgr_graph import StatefulIngestor
 
     if iterations <= 0:
         raise ValueError(f"iterations must be positive, got {iterations}")
@@ -119,7 +119,7 @@ def measure_reingest(
     logger.remove()
     logger.add(sys.stderr, level=cs.LOG_LEVEL_INFO)
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = GraphUpdater(
         ingestor=store,
         repo_path=corpus,

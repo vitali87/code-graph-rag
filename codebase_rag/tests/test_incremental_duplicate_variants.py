@@ -27,7 +27,7 @@ from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import NodeType
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "proj"
 
@@ -158,7 +158,7 @@ def _write(root: Path, files: dict[str, str]) -> None:
         path.write_text(text, encoding="utf-8")
 
 
-def _index(store: _StatefulIngestor, root: Path, force: bool) -> GraphUpdater:
+def _index(store: StatefulIngestor, root: Path, force: bool) -> GraphUpdater:
     parsers, queries = load_parsers()
     updater = GraphUpdater(
         ingestor=store,
@@ -179,7 +179,7 @@ def _touch_after_cache(path: Path, root: Path, comment: str) -> None:
     os.utime(path, (cache_mtime + 1, cache_mtime + 1))
 
 
-def _calls(store: _StatefulIngestor) -> set[CallEdge]:
+def _calls(store: StatefulIngestor) -> set[CallEdge]:
     return {
         (
             str(edge[1]),
@@ -191,7 +191,7 @@ def _calls(store: _StatefulIngestor) -> set[CallEdge]:
     }
 
 
-def _snapshot(store: _StatefulIngestor) -> Snapshot:
+def _snapshot(store: StatefulIngestor) -> Snapshot:
     nodes = frozenset((label, str(uid)) for (label, uid) in store.nodes)
     edges = frozenset(tuple(str(part) for part in edge) for edge in store.edges)
     return nodes, edges
@@ -203,9 +203,9 @@ def _calls_from(calls: set[CallEdge], caller: str) -> set[CallEdge]:
 
 def _clean_then_incremental(
     root: Path, files: dict[str, str], edited: str, comment: str
-) -> tuple[_StatefulIngestor, set[CallEdge], Snapshot, GraphUpdater]:
+) -> tuple[StatefulIngestor, set[CallEdge], Snapshot, GraphUpdater]:
     _write(root, files)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, force=True)
     clean_calls, clean = _calls(store), _snapshot(store)
     _touch_after_cache(root / edited, root, comment)
@@ -446,7 +446,7 @@ def test_a_forced_build_on_a_reused_updater_drops_variants_it_read_back(
     )
     updater.run(force=True)
 
-    fresh = _StatefulIngestor()
+    fresh = StatefulIngestor()
     fresh_updater = _index(fresh, root, force=True)
     assert len(fresh_updater.function_registry.variants(JAVA_TARGET_QN)) == 2
 

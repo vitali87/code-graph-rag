@@ -35,7 +35,7 @@ from codebase_rag.tests.test_incremental_inbound_deferred_targets import (
     _calls,
     _snapshot,
 )
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 # The caller sits in another package: a sync re-parses every Go file of an
 # edited package (issue #2483), which would rebuild a same-package caller's
@@ -84,7 +84,7 @@ _PY = {
 _PY_MAIN_TO_SIZE = ("proj.main.main", "proj.box.Box.size")
 
 
-def _index(store: _StatefulIngestor, root: Path, force: bool) -> GraphUpdater:
+def _index(store: StatefulIngestor, root: Path, force: bool) -> GraphUpdater:
     parsers, queries = load_parsers()
     updater = GraphUpdater(
         ingestor=store,
@@ -112,7 +112,7 @@ def _fresh_and_incremental(
     for rel, text in files.items():
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(text, encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, force=True)
     clean = _snapshot(store)
     _edit_after_cache(root / edited, root, marker)
@@ -154,7 +154,7 @@ def test_a_run_stopped_after_pass_2_still_restores_the_inbound_edges(
     root.mkdir()
     for rel, text in _PY.items():
         (root / rel).write_text(text, encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, force=True)
     # box.py re-parses; main.py does not (box.py's interface is unchanged), so
     # only the restore can bring its edge into Box.size back.
@@ -179,7 +179,7 @@ def test_a_file_failing_in_pass_2_still_restores_the_inbound_edges(
     root.mkdir()
     for rel, text in _PY.items():
         (root / rel).write_text(text, encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, force=True)
     # box.py re-parses cleanly and needs main.py's edge restored; util.py,
     # edited too, is the one that fails.
@@ -214,7 +214,7 @@ def test_a_run_failing_after_pass_2_bookkeeping_still_restores_the_inbound_edges
     root.mkdir()
     for rel, text in _PY.items():
         (root / rel).write_text(text, encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, force=True)
     _edit_after_cache(root / "box.py", root, "#")
 
@@ -279,7 +279,7 @@ def test_a_run_stopped_before_the_go_methods_register_keeps_the_edges_into_them(
     for rel, text in _GO.items():
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(text, encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, force=True)
     clean = _snapshot(store)
     _edit_after_cache(root / "util.go", root, "//")
@@ -309,7 +309,7 @@ def test_a_failing_go_method_registration_still_restores_the_other_edges(
     for rel, text in _GO_WITH_CONSTRUCTOR.items():
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(text, encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, force=True)
     assert _MAIN_TO_NEW_BOX in _calls(_snapshot(store)), "fixture must produce it"
     _edit_after_cache(root / "util.go", root, "//")

@@ -41,10 +41,11 @@ from codebase_rag.tests.conftest import (
     get_relationships,
     shared_session_dir,
 )
-from codebase_rag.tests.test_rename_op import RecordedGraph, _write
 from codebase_rag.tests.test_rename_op import _index as _rename_index
+from codebase_rag.tests.test_rename_op import _write
 from codebase_rag.utils import qn_markers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
+from evals.recorded_graph import RecordedGraph
 
 # Every go/types test here shares one helper build per session, one helper
 # run per tree and GOOS (`_one_real_go_run_per_tree`) and one `go vet` per
@@ -665,7 +666,7 @@ func (c *Cube) Volume() float64 { return c.S * c.S * c.S }
 
 
 def _incremental_implements(
-    store: _StatefulIngestor,
+    store: StatefulIngestor,
 ) -> set[tuple[str, str, str]]:
     return {
         (
@@ -678,7 +679,7 @@ def _incremental_implements(
     }
 
 
-def _incremental_index(store: _StatefulIngestor, root: Path, force: bool) -> None:
+def _incremental_index(store: StatefulIngestor, root: Path, force: bool) -> None:
     parsers, queries = load_parsers()
     if cs.SupportedLanguage.GO not in parsers:
         pytest.skip("go parser not available")
@@ -705,7 +706,7 @@ def test_an_incremental_run_keeps_what_a_clean_index_links(
     (root / "go.mod").write_text("module proj\n\ngo 1.22\n", encoding="utf-8")
     for rel, text in INCREMENTAL.items():
         (root / rel).write_text(text, encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _incremental_index(store, root, force=True)
     clean = _incremental_implements(store)
     assert {(impl, iface) for impl, iface, _ in clean} == {
@@ -1043,7 +1044,7 @@ def test_two_embedded_interfaces_of_one_name_stay_apart_after_an_incremental_run
     for rel, text in files.items():
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(text, encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _incremental_index(store, root, force=True)
     clean = _incremental_implements(store)
     both = "proj.outer.outer.Both"
@@ -1384,7 +1385,7 @@ func (c Circle) Perimeter() float64 { return 3 }
 """
 
 
-def _interface_edges(store: _StatefulIngestor) -> set[tuple[str, ...]]:
+def _interface_edges(store: StatefulIngestor) -> set[tuple[str, ...]]:
     kinds = {
         cs.RelationshipType.IMPLEMENTS.value,
         cs.RelationshipType.OVERRIDES.value,
@@ -1425,7 +1426,7 @@ def _require_perimeter(root: Path) -> None:
     os.utime(path, (cache_mtime + 1, cache_mtime + 1))
 
 
-def _go_updater(store: _StatefulIngestor, root: Path) -> GraphUpdater:
+def _go_updater(store: StatefulIngestor, root: Path) -> GraphUpdater:
     parsers, queries = load_parsers()
     if cs.SupportedLanguage.GO not in parsers:
         pytest.skip("go parser not available")
@@ -1444,7 +1445,7 @@ def test_a_reused_updater_drops_an_implementer_that_no_longer_matches(
 ) -> None:
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
     root = _reconciled_repo(temp_repo / "reused")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _go_updater(store, root)
     updater.run(force=True)
     _require_perimeter(root)
@@ -1457,7 +1458,7 @@ def test_a_reused_updater_drops_an_implementer_that_no_longer_matches(
     (clean_root / "shape.go").write_text(
         (root / "shape.go").read_text(encoding="utf-8"), encoding="utf-8"
     )
-    clean = _StatefulIngestor()
+    clean = StatefulIngestor()
     _go_updater(clean, clean_root).run(force=True)
 
     assert _interface_edges(store) == _interface_edges(clean)
@@ -1608,7 +1609,7 @@ def test_a_pair_that_changes_source_stays_an_implementer(
         return path
 
     root = repo(temp_repo / "reused")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _go_updater(store, root)
     updater.run(force=True)
     current["facts"] = facts[second]
@@ -1623,7 +1624,7 @@ def test_a_pair_that_changes_source_stays_an_implementer(
 
     clean_root = repo(temp_repo / "clean")
     (clean_root / "app.go").write_text(PROVEN_GETTER + "// touched\n")
-    clean = _StatefulIngestor()
+    clean = StatefulIngestor()
     _go_updater(clean, clean_root).run(force=True)
 
     edges = _interface_edges(store)
@@ -2407,7 +2408,7 @@ def test_a_sync_reading_go_pairs_back_matches_a_clean_index(
     # or IMPLEMENTS the edit took away, and no unlabelled copy.
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
     root = _synced_repo(temp_repo / "synced")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     first = _go_updater(store, root)
     first.run(force=True)
     cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
@@ -2420,7 +2421,7 @@ def test_a_sync_reading_go_pairs_back_matches_a_clean_index(
     else:
         updater.run(force=False)
 
-    clean = _StatefulIngestor()
+    clean = StatefulIngestor()
     _go_updater(clean, _synced_repo(temp_repo / "clean", edit)).run(force=True)
     assert _interface_edges(store) == _interface_edges(clean)
 
@@ -2432,7 +2433,7 @@ def test_go_pairs_read_back_stay_out_of_the_generic_override_walk(
     # confidence, from the pairs it recomputes; the read-back copy of the
     # graph's edge may be one the edit took away. A Java pair read back
     # still joins the walk (#2503).
-    updater = _go_updater(_StatefulIngestor(), temp_repo)
+    updater = _go_updater(StatefulIngestor(), temp_repo)
     dp = updater.factory.definition_processor
     dp.rehydrated_definition_paths.update(
         {"proj.square.Square": "square.go", "proj.Upper.Upper": "Upper.java"}
@@ -2679,7 +2680,7 @@ def test_a_sync_reparsing_one_build_file_matches_a_clean_index(
         return root
 
     root = repo(temp_repo / "synced")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     first = _go_updater(store, root)
     first.run(force=True)
     cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
@@ -2696,7 +2697,7 @@ def test_a_sync_reparsing_one_build_file_matches_a_clean_index(
     (clean_root / touched).write_text(
         path.read_text(encoding="utf-8"), encoding="utf-8"
     )
-    clean = _StatefulIngestor()
+    clean = StatefulIngestor()
     _go_updater(clean, clean_root).run(force=True)
     assert _interface_edges(store) == _interface_edges(clean)
 
@@ -3116,7 +3117,7 @@ def test_a_sync_reads_a_stored_result_list_as_its_parse_did(
     root = temp_repo / "synced"
     root.mkdir()
     _sig_repo(root)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     first = _go_updater(store, root)
     first.run(force=True)
     cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
@@ -3129,7 +3130,7 @@ def test_a_sync_reads_a_stored_result_list_as_its_parse_did(
     clean_root.mkdir()
     _sig_repo(clean_root)
     (clean_root / "other" / "other.go").write_text(path.read_text(encoding="utf-8"))
-    clean = _StatefulIngestor()
+    clean = StatefulIngestor()
     _go_updater(clean, clean_root).run(force=True)
     assert _interface_edges(store) == _interface_edges(clean)
     assert (
@@ -3188,7 +3189,7 @@ def _caller_only_repo(root: Path) -> Path:
     return root
 
 
-def _total_calls(store: _StatefulIngestor) -> set[tuple[str, ...]]:
+def _total_calls(store: StatefulIngestor) -> set[tuple[str, ...]]:
     return {
         edge
         for edge in _interface_edges(store)
@@ -3208,7 +3209,7 @@ def test_a_sync_reparsing_only_the_caller_keeps_every_dispatch_target(
     # both, labelled as a clean index labels them.
     root = _caller_only_repo(temp_repo / "synced")
     _sig_frontend(monkeypatch, frontend, root)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     first = _go_updater(store, root)
     first.run(force=True)
     cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
@@ -3223,7 +3224,7 @@ def test_a_sync_reparsing_only_the_caller_keeps_every_dispatch_target(
 
     clean_root = _caller_only_repo(temp_repo / "clean")
     (clean_root / "app" / "app.go").write_text(path.read_text(encoding="utf-8"))
-    clean = _StatefulIngestor()
+    clean = StatefulIngestor()
     _go_updater(clean, clean_root).run(force=True)
     assert _interface_edges(store) == _interface_edges(clean)
     label = "heuristic" if frontend == "treesitter" else "overload"
@@ -3574,7 +3575,7 @@ def test_a_sync_reads_a_packages_own_error_back_as_its_parse_did(
     # `error` is errs' own interface, and Run still reaches T.N.
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
     root = _own_builtins_repo(temp_repo / "synced")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     first = _go_updater(store, root)
     first.run(force=True)
     cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
@@ -3585,7 +3586,7 @@ def test_a_sync_reads_a_packages_own_error_back_as_its_parse_did(
 
     clean_root = _own_builtins_repo(temp_repo / "clean")
     (clean_root / "other" / "other.go").write_text(path.read_text(encoding="utf-8"))
-    clean = _StatefulIngestor()
+    clean = StatefulIngestor()
     _go_updater(clean, clean_root).run(force=True)
     assert _interface_edges(store) == _interface_edges(clean)
     assert (
@@ -3789,7 +3790,7 @@ def test_a_sync_reads_a_shadow_back_by_its_package(
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
     files = {**_SHADOW_FILES[where], "other/other.go": SHADOW_CALLER}
     root = _shadow_repo(temp_repo / "synced", name, files)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     first = _go_updater(store, root)
     first.run(force=True)
     cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
@@ -3800,7 +3801,7 @@ def test_a_sync_reads_a_shadow_back_by_its_package(
 
     clean_root = _shadow_repo(temp_repo / "clean", name, files)
     (clean_root / "other" / "other.go").write_text(path.read_text(encoding="utf-8"))
-    clean = _StatefulIngestor()
+    clean = StatefulIngestor()
     _go_updater(clean, clean_root).run(force=True)
     synced = _interface_edges(store)
     assert synced == _interface_edges(clean)
@@ -3912,7 +3913,7 @@ def test_a_method_named_error_shadows_nothing(
     files = {"p/p.go": METHOD_NAMED_ERROR, "q/q.go": METHOD_NAMED_ERROR_USER}
     root = _shadow_repo(temp_repo / "synced", "error", files)
     _go_checks(root)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     first = _go_updater(store, root)
     first.run(force=True)
     cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
@@ -3923,7 +3924,7 @@ def test_a_method_named_error_shadows_nothing(
 
     clean_root = _shadow_repo(temp_repo / "clean", "error", files)
     (clean_root / "q" / "q.go").write_text(path.read_text(encoding="utf-8"))
-    clean = _StatefulIngestor()
+    clean = StatefulIngestor()
     _go_updater(clean, clean_root).run(force=True)
     synced = _interface_edges(store)
     assert synced == _interface_edges(clean)
@@ -4582,7 +4583,7 @@ def test_an_error_one_build_declares_shadows_it_in_that_build_alone(
     files = {**PARTIAL_SHADOW_FILES, "other/other.go": PARTIAL_SHADOW_CALLER}
     root = _variant_repo(temp_repo / "synced", files)
     _go_checks_on(root)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     first = _go_updater(store, root)
     first.run(force=True)
     if sync != "parse":
@@ -4593,7 +4594,7 @@ def test_an_error_one_build_declares_shadows_it_in_that_build_alone(
         (first if sync == "reused" else _go_updater(store, root)).run(force=False)
         clean_root = _variant_repo(temp_repo / "clean", files)
         (clean_root / "other" / "other.go").write_text(path.read_text(encoding="utf-8"))
-        clean = _StatefulIngestor()
+        clean = StatefulIngestor()
         _go_updater(clean, clean_root).run(force=True)
         assert _interface_edges(store) == _interface_edges(clean)
     edges = _interface_edges(store)
@@ -4630,7 +4631,7 @@ func Call(j q.J) { j.N() }
     }
     root = _variant_repo(temp_repo / "synced", files)
     _go_checks_on(root)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     first = _go_updater(store, root)
     first.run(force=True)
     cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
@@ -4640,7 +4641,7 @@ func Call(j q.J) { j.N() }
     (first if sync == "reused" else _go_updater(store, root)).run(force=False)
     clean_root = _variant_repo(temp_repo / "clean", files)
     (clean_root / "other" / "other.go").write_text(path.read_text(encoding="utf-8"))
-    clean = _StatefulIngestor()
+    clean = StatefulIngestor()
     _go_updater(clean, clean_root).run(force=True)
     synced = _interface_edges(store)
     assert synced == _interface_edges(clean)
@@ -4666,7 +4667,7 @@ func Call(j p.J) { j.N() }
 """,
     }
     root = _variant_repo(temp_repo / "synced", files)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     first = _go_updater(store, root)
     first.run(force=True)
     cache_mtime = state_file(root, cs.HASH_CACHE_FILENAME).stat().st_mtime
@@ -4676,7 +4677,7 @@ func Call(j p.J) { j.N() }
     (first if sync == "reused" else _go_updater(store, root)).run(force=False)
     clean_root = _variant_repo(temp_repo / "clean", files)
     (clean_root / "other" / "other.go").write_text(path.read_text(encoding="utf-8"))
-    clean = _StatefulIngestor()
+    clean = StatefulIngestor()
     _go_updater(clean, clean_root).run(force=True)
     synced = _interface_edges(store)
     assert synced == _interface_edges(clean)
@@ -4946,7 +4947,7 @@ def test_a_build_line_too_deep_to_read_stops_no_index(
         "p/j.go": LOCAL_EMBEDDER.replace("package p\n", "package p\n", 1),
     }
     root = _variant_repo(temp_repo / "proj", files)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _go_updater(store, root)
     updater.run(force=True)
     if how == "reingest":
@@ -5187,7 +5188,7 @@ def test_a_long_chain_of_embeds_indexes(
     monkeypatch.setattr(method_override, "_linearized_ancestors", linearize)
     files = _chain(links, order)
     root = _variant_repo(temp_repo / "proj", files)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _go_updater(store, root)
     started = time.monotonic()
     updater.run(force=True)
@@ -5230,7 +5231,7 @@ def _cascade_work(
     # The decisions the interface passes made and the links between
     # interface methods the index wrote, fresh or in a sync after a
     # comment-only edit, and how long that run took.
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     decided.clear()
     started = time.monotonic()
     _go_updater(store, root).run(force=True)
@@ -5590,7 +5591,7 @@ def _changed(root: Path, files: dict[str, str]) -> list[str]:
     ]
 
 
-def _unknown_marks(store: _StatefulIngestor) -> dict[str, object]:
+def _unknown_marks(store: StatefulIngestor) -> dict[str, object]:
     return {
         str(uid): props.get(cs.KEY_IMPLEMENTERS_UNKNOWN)
         for (label, uid), props in store.nodes.items()
@@ -5746,7 +5747,7 @@ def test_a_sync_marks_unknown_implementers_as_a_clean_index_does(
         "other/other.go": "package other\n\nfunc Other() {}\n",
     }
     root = _variant_repo(temp_repo / "synced", files)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     first = _go_updater(store, root)
     first.run(force=True)
     assert _unknown_marks(store)["proj.p.j.J"] == "builds"
@@ -5762,7 +5763,7 @@ def test_a_sync_marks_unknown_implementers_as_a_clean_index_does(
             (root / rel).write_text(text, encoding="utf-8")
             os.utime(root / rel, (cache_mtime + 1, cache_mtime + 1))
     (first if sync == "reused" else _go_updater(store, root)).run(force=False)
-    clean = _StatefulIngestor()
+    clean = StatefulIngestor()
     _go_updater(clean, _variant_repo(temp_repo / "clean", edited)).run(force=True)
     assert _unknown_marks(store) == _unknown_marks(clean)
     assert _unknown_marks(store)["proj.p.j.J"] == ("builds" if edit == "other" else "")

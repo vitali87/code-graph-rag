@@ -19,7 +19,7 @@ from codebase_rag import constants as cs
 from . import constants as ec
 from . import logs as ls
 from .ast_oracle import _from_base_parts, _iter_py_files, _module_dotted
-from .cgr_graph import _capture
+from .cgr_graph import capture
 from .score import _prf
 from .structure_report import render, write_outputs
 from .types_defs import DiffBucket, LocationStats, ScoreResult, ScoreRow
@@ -137,7 +137,7 @@ def oracle_static_calls(target: Path, project: str) -> set[CallEdge]:
 
 
 def cgr_static_calls(target: Path, project: str) -> set[CallEdge]:
-    ingestor = _capture(target, project)
+    ingestor = capture(target, project)
     return {
         (str(from_val), str(to_val))
         for _fl, from_val, rel_type, _tl, to_val in ingestor.rels

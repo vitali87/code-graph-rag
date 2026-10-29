@@ -59,7 +59,8 @@ def _entity_qns(mock_ingestor: MagicMock, project: str) -> set[tuple[str, str]]:
 def test_modern_and_classic_namespace_nesting_agree(
     tmp_path: Path,
 ) -> None:
-    from codebase_rag.tests.conftest import _MockIngestor, create_and_run_updater
+    from codebase_rag.tests.conftest import create_and_run_updater
+    from evals.recorded_graph import RecordingIngestor
 
     modern_repo = tmp_path / "modern"
     classic_repo = tmp_path / "classic"
@@ -70,9 +71,9 @@ def test_modern_and_classic_namespace_nesting_agree(
     (classic_repo / "Program.h").write_text(_classic(HDR_MODERN))
     (classic_repo / "Program.cpp").write_text(_classic(CPP_MODERN))
 
-    modern_ing = _MockIngestor()
+    modern_ing = RecordingIngestor()
     create_and_run_updater(modern_repo, modern_ing)
-    classic_ing = _MockIngestor()
+    classic_ing = RecordingIngestor()
     create_and_run_updater(classic_repo, classic_ing)
 
     modern = _entity_qns(modern_ing, "modern")

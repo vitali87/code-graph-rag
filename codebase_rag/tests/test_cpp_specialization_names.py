@@ -27,12 +27,12 @@ from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import (
-    _MockIngestor,
     create_and_run_updater,
     get_nodes,
     get_relationships,
     run_updater,
 )
+from evals.recorded_graph import RecordingIngestor
 
 _DOT = cs.CPP_TEMPLATE_ARG_DOT
 
@@ -154,7 +154,7 @@ def test_the_fmt_specialization_is_named_alike_however_it_is_wrapped(
     for label, source in (("wrapped", _FMT_SHAPE), ("flat", one_line)):
         repo = tmp_path / label
         repo.mkdir()
-        ingestor = _MockIngestor()
+        ingestor = RecordingIngestor()
         (repo / "spec.cpp").write_text(source, encoding="utf-8")
         create_and_run_updater(repo, ingestor, skip_if_missing="cpp")
         names.append(set(_class_names(ingestor).values()))
@@ -250,7 +250,7 @@ def test_the_call_pass_spells_an_unrecorded_caller_s_class_alike(
     parsers, queries = load_parsers()
     if cs.SupportedLanguage.CPP not in parsers:
         pytest.skip("cpp parser not available")
-    ingestor = _MockIngestor()
+    ingestor = RecordingIngestor()
     GraphUpdater(
         ingestor=ingestor, repo_path=temp_repo, parsers=parsers, queries=queries
     ).run()

@@ -210,18 +210,18 @@ def test_incremental_reparse_keeps_orphan_ctor_from_unchanged_header(
     # header is dropped as a macro artifact (PR #788 review finding).
     from codebase_rag.graph_updater import GraphUpdater
     from codebase_rag.parser_loader import load_parsers
-    from evals.cgr_graph import _StatefulIngestor
+    from evals.cgr_graph import StatefulIngestor
 
     (temp_repo / "pipe.h").write_text(PIPE_HDR)
     (temp_repo / "pipe.cc").write_text(PIPE_CC)
 
-    def index(store: _StatefulIngestor, force: bool) -> None:
+    def index(store: StatefulIngestor, force: bool) -> None:
         parsers, queries = load_parsers()
         GraphUpdater(
             ingestor=store, repo_path=temp_repo, parsers=parsers, queries=queries
         ).run(force=force)
 
-    def ctor_nodes(store: _StatefulIngestor) -> set[str]:
+    def ctor_nodes(store: StatefulIngestor) -> set[str]:
         # The kept orphan ctor registers as a METHOD reattached under the
         # rehydrated class (`...pipe.pipe`), no longer a module Function.
         return {
@@ -230,7 +230,7 @@ def test_incremental_reparse_keeps_orphan_ctor_from_unchanged_header(
             if label == cs.NodeLabel.METHOD.value and str(qn).endswith(".pipe.pipe")
         }
 
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     index(store, force=True)
     assert ctor_nodes(store), sorted(store.nodes)
 

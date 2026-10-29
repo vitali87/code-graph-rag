@@ -40,7 +40,7 @@ from codebase_rag.utils.path_utils import (
     project_roots_from_rows,
 )
 from codebase_rag.utils.process_owner import process_host
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 runner = CliRunner()
 
@@ -62,7 +62,7 @@ _PROJECT_TREE = frozenset(
 )
 
 
-class _Memgraph(_StatefulIngestor):
+class _Memgraph(StatefulIngestor):
     """One Memgraph instance, as `connect_memgraph` hands it to the CLI."""
 
     def __init__(self) -> None:
@@ -675,9 +675,7 @@ class TestWithoutTheGraph:
         assert cs.CLI_STATUS_SYNCS_NEED_GRAPH.format(endpoint=endpoint) in output
 
 
-def _updater(
-    target: Path, store: _StatefulIngestor, name: str = "proj"
-) -> GraphUpdater:
+def _updater(target: Path, store: StatefulIngestor, name: str = "proj") -> GraphUpdater:
     parsers, queries = load_parsers()
     return GraphUpdater(
         ingestor=store,

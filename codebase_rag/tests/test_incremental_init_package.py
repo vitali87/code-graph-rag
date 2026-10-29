@@ -15,7 +15,7 @@ from codebase_rag import constants as cs
 from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 FIXTURE: dict[str, str] = {
     "pkg/__init__.py": "",
@@ -31,7 +31,7 @@ _ABSOLUTE = {cs.NodeLabel.FOLDER.value, cs.NodeLabel.PACKAGE.value}
 Snapshot = tuple[frozenset[tuple[str, str]], frozenset[tuple[str, ...]]]
 
 
-def _snapshot(store: _StatefulIngestor, root: Path) -> Snapshot:
+def _snapshot(store: StatefulIngestor, root: Path) -> Snapshot:
     # File nodes are keyed by absolute path and Folder nodes too; the two
     # trees live in different directories, so Folder ids are made relative
     # and File nodes are left out (their containment mirrors the Folder's).
@@ -63,7 +63,7 @@ def _materialise(root: Path, files: dict[str, str]) -> None:
         path.write_text(text, encoding="utf-8")
 
 
-def _index(store: _StatefulIngestor, repo: Path, force: bool) -> None:
+def _index(store: StatefulIngestor, repo: Path, force: bool) -> None:
     parsers, queries = load_parsers()
     if cs.SupportedLanguage.PYTHON not in parsers:
         pytest.skip("python parser not available")
@@ -79,7 +79,7 @@ def _index(store: _StatefulIngestor, repo: Path, force: bool) -> None:
 def _clean(temp_repo: Path, name: str, files: dict[str, str]) -> Snapshot:
     root = temp_repo / name / "proj"
     _materialise(root, files)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, force=True)
     return _snapshot(store, root)
 
@@ -87,7 +87,7 @@ def _clean(temp_repo: Path, name: str, files: dict[str, str]) -> Snapshot:
 def test_deleting_init_py_turns_the_package_into_a_folder(temp_repo: Path) -> None:
     root = temp_repo / "proj"
     _materialise(root, FIXTURE)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, force=True)
     (root / INIT).unlink()
     _index(store, root, force=False)
@@ -103,7 +103,7 @@ def test_adding_init_py_turns_the_folder_into_a_package(temp_repo: Path) -> None
     root = temp_repo / "proj"
     without_init = {rel: text for rel, text in FIXTURE.items() if rel != INIT}
     _materialise(root, without_init)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, force=True)
     init = root / INIT
     init.write_text(FIXTURE[INIT], encoding="utf-8")
@@ -135,7 +135,7 @@ ROOT_FIXTURE: dict[str, str] = {ROOT_INIT: "", **FIXTURE}
 def test_deleting_the_root_init_py_prunes_the_root_package(temp_repo: Path) -> None:
     root = temp_repo / "proj"
     _materialise(root, ROOT_FIXTURE)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, force=True)
     # The root is a Package while its __init__.py exists: without this the
     # deletion below could pass by never having created the node at all.

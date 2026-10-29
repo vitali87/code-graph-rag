@@ -17,7 +17,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 # The decoy defines the colliding NAME; nothing in the fixture ever calls it.
 _DECOY_COLLIDES = (
@@ -114,7 +114,7 @@ def _render_targets(repo: Path, caller_suffix: str) -> set[str]:
     parsers, queries = load_parsers()
     if "python" not in {str(k) for k in parsers}:
         pytest.skip("python parser not available")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(ingestor=store, repo_path=repo, parsers=parsers, queries=queries).run(
         force=True
     )
@@ -238,7 +238,7 @@ def _method_maps(tmp_path: Path) -> dict[str, dict[str, str]]:
     if "python" not in {str(k) for k in parsers}:
         pytest.skip("python parser not available")
     repo = _build(tmp_path, _SHAPES, _DECOY_CONTROL)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = GraphUpdater(
         ingestor=store, repo_path=repo, parsers=parsers, queries=queries
     )
@@ -406,7 +406,7 @@ def _binding_form_maps(tmp_path: Path) -> dict[str, dict[str, str]]:
     if "python" not in {str(k) for k in parsers}:
         pytest.skip("python parser not available")
     repo = _build(tmp_path, _BINDING_FORMS, _DECOY_CONTROL)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = GraphUpdater(
         ingestor=store, repo_path=repo, parsers=parsers, queries=queries
     )
@@ -511,7 +511,7 @@ def test_the_seed_types_the_assigned_local_and_is_not_exported(tmp_path: Path) -
         _SELF_ASSIGN + "\n\ndef free() -> int:\n    return 1\n",
         _DECOY_CONTROL,
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = GraphUpdater(
         ingestor=store, repo_path=repo, parsers=parsers, queries=queries
     )

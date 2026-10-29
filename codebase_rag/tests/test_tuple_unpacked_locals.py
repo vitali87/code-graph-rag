@@ -23,7 +23,7 @@ from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.py.type_inference import PythonTypeInferenceEngine
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 # Every case holds on the Rust scope walks and on their Python twins.
 pytestmark = pytest.mark.usefixtures("both_scope_walks")
@@ -78,7 +78,7 @@ _SHAPES = {
 
 def _edges(repo: Path, *, method: str) -> set[tuple[str, str]]:
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(ingestor=store, repo_path=repo, parsers=parsers, queries=queries).run(
         force=True
     )
@@ -243,7 +243,7 @@ def _type_inference_engine(tmp_path: Path) -> PythonTypeInferenceEngine:
     (repo / "app.py").write_text(_TWO)
     parsers, queries = load_parsers()
     updater = GraphUpdater(
-        ingestor=_StatefulIngestor(), repo_path=repo, parsers=parsers, queries=queries
+        ingestor=StatefulIngestor(), repo_path=repo, parsers=parsers, queries=queries
     )
     updater.run(force=True)
     return updater.factory.type_inference.python_type_inference
@@ -274,7 +274,7 @@ def _local_types(
         (module_dir / filename).write_text(source)
     parsers, queries = load_parsers()
     updater = GraphUpdater(
-        ingestor=_StatefulIngestor(), repo_path=repo, parsers=parsers, queries=queries
+        ingestor=StatefulIngestor(), repo_path=repo, parsers=parsers, queries=queries
     )
     updater.run(force=True)
     tree = parsers[cs.SupportedLanguage.PYTHON].parse((_TWO + body).encode())

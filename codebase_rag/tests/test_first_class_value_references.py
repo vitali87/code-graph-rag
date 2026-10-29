@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from evals.cgr_graph import _capture
+from evals.cgr_graph import capture
 from evals.dead_code import cgr_dead_code, default_dead_code_config
 
 CLASS_BODY_PY = """\
@@ -66,7 +66,7 @@ def compile_it(flag):
 def _references(root: Path) -> set[tuple[str, str]]:
     # Dispatch-table values keep the historical CALLS edge; argument and
     # return passes record REFERENCES. Both keep a symbol reachable.
-    ingestor = _capture(root, "proj")
+    ingestor = capture(root, "proj")
     return {
         (str(f), str(t))
         for _fl, f, rel, _tl, t in ingestor.rels

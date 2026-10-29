@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from evals.cgr_graph import _capture
+from evals.cgr_graph import capture
 
 
 def _make_repo(root: Path) -> None:
@@ -23,7 +23,7 @@ def test_method_nested_function_call_uses_full_caller_qn(tmp_path: Path) -> None
     # nested function's real node qn (Class.method.nested), not to a
     # method-dropping qn (Class.nested) that matches no node.
     _make_repo(tmp_path)
-    ingestor = _capture(tmp_path / "proj", "proj")
+    ingestor = capture(tmp_path / "proj", "proj")
     calls = {
         (str(from_val), str(to_val))
         for _fl, from_val, rel, _tl, to_val in ingestor.rels

@@ -15,7 +15,7 @@ from codebase_rag import constants as cs
 from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 FIXTURE: dict[str, str] = {
     "Helpers.cs": (
@@ -30,7 +30,7 @@ FIXTURE: dict[str, str] = {
 }
 
 
-def _index(store: _StatefulIngestor, repo: Path, force: bool) -> None:
+def _index(store: StatefulIngestor, repo: Path, force: bool) -> None:
     parsers, queries = load_parsers()
     if cs.SupportedLanguage.CSHARP not in parsers:
         pytest.skip("c_sharp parser not available")
@@ -43,7 +43,7 @@ def _index(store: _StatefulIngestor, repo: Path, force: bool) -> None:
     ).run(force=force)
 
 
-def _calls(store: _StatefulIngestor) -> set[tuple[str, str]]:
+def _calls(store: StatefulIngestor) -> set[tuple[str, str]]:
     return {
         (str(fv), str(tv))
         for (_fl, fv, rel, _tl, tv) in store.edges
@@ -64,7 +64,7 @@ def test_an_unchanged_files_global_static_import_scopes_an_edited_caller(
     root.mkdir()
     for rel, text in FIXTURE.items():
         (root / rel).write_text(text, encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, force=True)
     assert _twice_call(_calls(store)), _calls(store)
 

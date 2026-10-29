@@ -18,7 +18,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.tests.conftest import _MockIngestor
+from evals.recorded_graph import RecordingIngestor
 
 TYPES_GO = "package pkg\n\ntype A struct{}\n\ntype B struct{}\n"
 # `Clone` is keyed by A's module (`proj.pkg.types.A.Clone`): no prefix of
@@ -32,7 +32,7 @@ def _updater(root: Path) -> GraphUpdater:
     if "go" not in {str(k) for k in parsers}:
         pytest.skip("go parser not available")
     return GraphUpdater(
-        ingestor=_MockIngestor(),
+        ingestor=RecordingIngestor(),
         repo_path=root,
         parsers=parsers,
         queries=queries,

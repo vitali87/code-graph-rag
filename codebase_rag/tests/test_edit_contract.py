@@ -25,7 +25,7 @@ from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.structural_delta import StructuralDelta
 from codebase_rag.types_defs import PropertyDict, ResultRow
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 # --- synthetic deltas --------------------------------------------------------------
 
@@ -575,13 +575,13 @@ def _write(root: Path, rel: str, text: str) -> None:
 
 
 @pytest.fixture
-def indexed(temp_repo: Path) -> tuple[Path, _StatefulIngestor, GraphUpdater]:
+def indexed(temp_repo: Path) -> tuple[Path, StatefulIngestor, GraphUpdater]:
     root = temp_repo / PROJECT
     root.mkdir()
     for rel, text in FIXTURE.items():
         _write(root, rel, text)
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = GraphUpdater(
         ingestor=store,
         repo_path=root,
@@ -594,7 +594,7 @@ def indexed(temp_repo: Path) -> tuple[Path, _StatefulIngestor, GraphUpdater]:
 
 
 def test_real_rename_passes_its_contract_and_lists_affected_tests(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     report = rename(
@@ -686,7 +686,7 @@ def test_real_rename_is_undone_when_the_contract_fails(
     for rel, text in fixture.items():
         _write(root, rel, text)
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = GraphUpdater(
         ingestor=store,
         repo_path=root,
@@ -723,11 +723,11 @@ def test_real_rename_is_undone_when_the_contract_fails(
 
 def _real_project(
     root: Path, files: dict[str, str]
-) -> tuple[_StatefulIngestor, GraphUpdater]:
+) -> tuple[StatefulIngestor, GraphUpdater]:
     for rel, text in files.items():
         _write(root, rel, text)
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = GraphUpdater(
         ingestor=store,
         repo_path=root,

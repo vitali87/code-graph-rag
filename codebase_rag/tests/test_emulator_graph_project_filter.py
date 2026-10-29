@@ -2,7 +2,7 @@ import pytest
 
 from codebase_rag import cypher_queries as cq
 from codebase_rag.constants import graph as cs
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 _FN = cs.NodeLabel.FUNCTION.value
 _MOD = cs.NodeLabel.MODULE.value
@@ -10,13 +10,13 @@ _EXT = cs.NodeLabel.EXTERNAL_MODULE.value
 _QN = cs.KEY_QUALIFIED_NAME
 
 
-def _node(store: _StatefulIngestor, label: str, qn: str) -> None:
+def _node(store: StatefulIngestor, label: str, qn: str) -> None:
     key = cs.NODE_UNIQUE_CONSTRAINTS[label]
     store.ensure_node_batch(label, {key: qn, _QN: qn})
 
 
 def _edge(
-    store: _StatefulIngestor, src: tuple[str, str], rel: str, dst: tuple[str, str]
+    store: StatefulIngestor, src: tuple[str, str], rel: str, dst: tuple[str, str]
 ) -> None:
     store.ensure_relationship_batch(
         (src[0], cs.NODE_UNIQUE_CONSTRAINTS[src[0]], src[1]),
@@ -25,7 +25,7 @@ def _edge(
     )
 
 
-def _names(store: _StatefulIngestor, query: str, qn: str) -> set[str]:
+def _names(store: StatefulIngestor, query: str, qn: str) -> set[str]:
     # `label` for the reads scoped to the node they start from, a Function
     # here: a TS type and a value share one qualified name (issue #2520).
     # `qns` for the reads of a whole level of the call walk (issue #2597).
@@ -57,7 +57,7 @@ def test_a_neighbour_outside_the_project_is_not_returned(
     """Every graph read filters the far endpoint with `STARTS WITH
     $project_prefix`; the emulator returned the out-of-project neighbour
     too, so a test on it passed on rows production never yields (#1604)."""
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     me, mine, theirs = "proj.a.f", "proj.b.g", "vendor.lib.h"
     for qn in (me, mine, theirs):
         _node(store, _FN, qn)
@@ -68,7 +68,7 @@ def test_a_neighbour_outside_the_project_is_not_returned(
 
 
 def test_an_importer_outside_the_project_is_not_returned() -> None:
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     target = "proj.util"
     for qn in (target, "proj.app", "other.app"):
         _node(store, _MOD, qn)
@@ -81,7 +81,7 @@ def test_an_importer_outside_the_project_is_not_returned() -> None:
 
 def test_an_external_callee_is_not_returned() -> None:
     """The case the issue names: a project function calling a dependency."""
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _node(store, _FN, "proj.a.f")
     _node(store, _EXT, "requests")
     _edge(store, (_FN, "proj.a.f"), cs.RelationshipType.CALLS.value, (_EXT, "requests"))
@@ -90,7 +90,7 @@ def test_an_external_callee_is_not_returned() -> None:
 
 def test_a_type_outside_the_project_is_not_a_context_type() -> None:
     """`CYPHER_CONTEXT_TYPES` filters the type by the project prefix too."""
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     cls = cs.NodeLabel.CLASS.value
     _node(store, _FN, "proj.a.f")
     for qn in ("proj.m.Mine", "vendor.m.Theirs"):

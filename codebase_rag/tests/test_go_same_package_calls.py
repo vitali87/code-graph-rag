@@ -448,7 +448,7 @@ def test_an_incremental_run_sees_unchanged_siblings_by_their_path(
     # graph with their paths but no `package` clause. The unchanged
     # production sibling still answers exactly, and the unchanged external
     # test file (a `_test.go`, by its path) still stays out.
-    from evals.cgr_graph import _StatefulIngestor
+    from evals.cgr_graph import StatefulIngestor
 
     root = temp_repo / "proj"
     _write(
@@ -459,7 +459,7 @@ def test_an_incremental_run_sees_unchanged_siblings_by_their_path(
             "p/app.go": "package p\n\nfunc Build() { NewRouter() }\n",
         },
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
 
     def run(force: bool) -> None:
@@ -567,10 +567,10 @@ def test_a_call_inside_the_locals_scope_is_still_not_the_package_function(
 
 
 def _incremental_calls(root: Path, files: dict[str, str], edit: tuple[str, str]):
-    from evals.cgr_graph import _StatefulIngestor
+    from evals.cgr_graph import StatefulIngestor
 
     _write(root, files)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
 
     def run(force: bool) -> None:

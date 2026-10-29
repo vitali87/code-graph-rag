@@ -12,7 +12,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.tests.test_rename_op import RecordedGraph, _index, _write
+from codebase_rag.tests.test_rename_op import _index, _write
+from evals.recorded_graph import RecordedGraph
 
 ADAPTER = """\
 package com.acme;

@@ -21,7 +21,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.structural_check import run_check
 from codebase_rag.structural_delta import StructuralDelta, has_findings, observe
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "cl"
 
@@ -33,11 +33,11 @@ NESTED = (
 SIBLING = "\n\ndef twice(x):\n    double = x * 2\n    return double\n"
 
 
-def _index(root: Path, files: dict[str, str]) -> tuple[_StatefulIngestor, GraphUpdater]:
+def _index(root: Path, files: dict[str, str]) -> tuple[StatefulIngestor, GraphUpdater]:
     for rel, text in files.items():
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(text, encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
     updater = GraphUpdater(
         ingestor=store,

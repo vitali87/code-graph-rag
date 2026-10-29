@@ -7,12 +7,12 @@ from pathlib import Path
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 _MODELS = "class Base:\n    pass\n\n\nclass Child(Base):\n    pass\n\n\ndef helper():\n    return 1\n"
 
 
-def _updater(root: Path, store: _StatefulIngestor, project: str) -> GraphUpdater:
+def _updater(root: Path, store: StatefulIngestor, project: str) -> GraphUpdater:
     parsers, queries = load_parsers()
     return GraphUpdater(
         ingestor=store,
@@ -23,8 +23,8 @@ def _updater(root: Path, store: _StatefulIngestor, project: str) -> GraphUpdater
     )
 
 
-def _two_projects(tmp_path: Path) -> tuple[_StatefulIngestor, Path]:
-    store = _StatefulIngestor()
+def _two_projects(tmp_path: Path) -> tuple[StatefulIngestor, Path]:
+    store = StatefulIngestor()
     for project in ("svc", "svc.v2"):
         root = tmp_path / project
         root.mkdir()
@@ -140,7 +140,7 @@ def test_the_qn_seed_skips_a_sibling_projects_module(tmp_path: Path) -> None:
     assert not [qn for qn in seeded if qn.startswith("svc.v2.")], seeded
 
 
-def _qns_under(store: _StatefulIngestor, project: str) -> set[str]:
+def _qns_under(store: StatefulIngestor, project: str) -> set[str]:
     return {
         qn
         for props in store.nodes.values()

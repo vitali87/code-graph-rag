@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from evals.cgr_graph import _capture
+from evals.cgr_graph import capture
 from evals.oracles import go_available
 
 needs_go = pytest.mark.skipif(not go_available(), reason="go toolchain not installed")
@@ -26,7 +26,7 @@ def test_go_method_call_caller_qn_includes_receiver(tmp_path: Path) -> None:
     # real node qn (p.m.T.callsFree), which binds to the receiver type, not a
     # receiver-dropping qn (p.m.callsFree) that matches no node.
     _make_repo(tmp_path)
-    ingestor = _capture(tmp_path / "p", "p")
+    ingestor = capture(tmp_path / "p", "p")
     calls = {
         (str(from_val), str(to_val))
         for _fl, from_val, rel, _tl, to_val in ingestor.rels
@@ -63,7 +63,7 @@ def test_go_receiver_method_dispatch_resolves(tmp_path: Path) -> None:
     # must each resolve to the method node `p.m.T.helper` via local-variable
     # type inference, not be dropped for lack of a typed receiver.
     _make_dispatch_repo(tmp_path)
-    ingestor = _capture(tmp_path / "p", "p")
+    ingestor = capture(tmp_path / "p", "p")
     calls = {
         (str(from_val), str(to_val))
         for _fl, from_val, rel, _tl, to_val in ingestor.rels

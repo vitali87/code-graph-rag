@@ -19,7 +19,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.structural_delta import RenameFinding, StructuralDelta
 from codebase_rag.types_defs import PropertyParams, ResultRow
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "anonren"
 
@@ -67,7 +67,7 @@ def _rename(
     for rel, text in files.items():
         _write(root, rel, text)
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = GraphUpdater(
         ingestor=store,
         repo_path=root,

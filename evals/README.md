@@ -194,7 +194,7 @@ sampled file the harness indexes a fresh copy, applies the neutral edit, runs an
 incremental update, then compares the mutated graph node for node and edge for
 edge against a clean forced re-index of the identical on-disk state.
 
-The comparison runs against a faithful in-memory store (`cgr_graph._StatefulIngestor`)
+The comparison runs against a faithful in-memory store (`cgr_graph.StatefulIngestor`)
 that implements the exact delete and fetch Cypher the incremental updater issues
 (`DETACH DELETE` of a changed file's `Module` subtree, file and folder deletes,
 orphan-external pruning, and the prune path queries), so deletions take real

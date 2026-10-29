@@ -26,7 +26,7 @@ from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 _TEST_CALLBACKS = (
     "var app = require('../lib/handler')\n"
@@ -214,14 +214,14 @@ def test_function_expression_stored_under_another_name_is_not_callable_by_its_ow
     )
 
 
-def _stateful_index(root: Path, store: _StatefulIngestor, force: bool) -> None:
+def _stateful_index(root: Path, store: StatefulIngestor, force: bool) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(ingestor=store, repo_path=root, parsers=parsers, queries=queries).run(
         force=force
     )
 
 
-def _stateful_calls_from(store: _StatefulIngestor, caller_suffix: str) -> set[str]:
+def _stateful_calls_from(store: StatefulIngestor, caller_suffix: str) -> set[str]:
     return {
         str(target)
         for _, source, rel, _, target in store.edges
@@ -252,7 +252,7 @@ def test_incremental_sync_of_the_caller_adds_no_edge(
         temp_repo,
         {"lib/handler.js": handler_source, "test/app.test.js": _TEST_CALLBACKS},
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _stateful_index(temp_repo, store, force=True)
     assert not _stateful_calls_from(store, ".lib.handler.handler")
 

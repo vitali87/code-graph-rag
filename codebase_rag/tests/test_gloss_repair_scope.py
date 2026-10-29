@@ -20,7 +20,7 @@ from codebase_rag.graph_dialects import DIALECT_SQLITE, get_dialect
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.graph_service import MemgraphIngestor
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 
 def test_every_sync_path_scopes_the_repair_to_its_project(
@@ -36,7 +36,7 @@ def test_every_sync_path_scopes_the_repair_to_its_project(
     (temp_repo / "a.py").write_text("def f(x):\n    return x + 1\n", encoding="utf-8")
     parsers, queries = load_parsers()
     updater = GraphUpdater(
-        ingestor=_StatefulIngestor(),
+        ingestor=StatefulIngestor(),
         repo_path=temp_repo,
         parsers=parsers,
         queries=queries,

@@ -23,7 +23,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.dead_code import dead_code_from_graph, default_dead_code_config
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _capture
+from evals.cgr_graph import capture
 
 PROJECT = "proj"
 
@@ -180,7 +180,7 @@ FILES = {
 
 class _Graph:
     def __init__(self, root: Path) -> None:
-        ingestor = _capture(root, PROJECT)
+        ingestor = capture(root, PROJECT)
         self.functions: dict[str, dict[str, object]] = {
             str(uid).removeprefix(f"{PROJECT}."): dict(props)
             for (label, uid), props in ingestor.nodes.items()

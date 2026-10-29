@@ -11,7 +11,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 FILES = {
     "src/App.cs": (
@@ -40,7 +40,7 @@ def _updater(root: Path) -> GraphUpdater:
     if cs.SupportedLanguage.CSHARP not in parsers:
         pytest.skip("csharp parser not available")
     return GraphUpdater(
-        ingestor=_StatefulIngestor(),  # type: ignore[arg-type]
+        ingestor=StatefulIngestor(),  # type: ignore[arg-type]
         repo_path=root,
         parsers=parsers,
         queries=queries,

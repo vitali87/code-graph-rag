@@ -35,7 +35,7 @@ from codebase_rag.tests.conftest import (
     run_updater,
 )
 from codebase_rag.types_defs import ScalaBinding
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 SKIP = "scala"
 PROJECT = "scalaimp"
@@ -1038,7 +1038,7 @@ def test_a_sibling_block_declaration_leaves_the_block_import_bound(
 # --- incremental runs -----------------------------------------------------------
 
 
-def _stateful_index(store: _StatefulIngestor, root: Path, force: bool) -> None:
+def _stateful_index(store: StatefulIngestor, root: Path, force: bool) -> None:
     parsers, queries = load_parsers()
     if cs.SupportedLanguage.SCALA not in parsers:
         pytest.skip("scala parser not available")
@@ -1048,7 +1048,7 @@ def _stateful_index(store: _StatefulIngestor, root: Path, force: bool) -> None:
 
 
 def _stateful_edges(
-    store: _StatefulIngestor, rel_type: str
+    store: StatefulIngestor, rel_type: str
 ) -> set[tuple[str, str, str]]:
     return {
         (str(source), str(label), str(target))
@@ -1076,7 +1076,7 @@ object App { def run(): Item = { val c = new Cart(); println(c.size); Item("x") 
 """,
         },
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _stateful_index(store, project, force=True)
     clean_imports = _stateful_edges(store, "IMPORTS")
 

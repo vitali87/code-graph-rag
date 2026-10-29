@@ -7,7 +7,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 from evals.incremental import (
     compare_states,
     run_neutral_edit_scenario,
@@ -28,14 +28,14 @@ _CONTAINS_FILE = cs.RelationshipType.CONTAINS_FILE.value
 _INBOUND_CALL = (_FUNCTION, "proj.caller.use", _CALLS, _FUNCTION, "proj.callee.target")
 
 
-def _node(store: _StatefulIngestor, label: str, **props: object) -> None:
+def _node(store: StatefulIngestor, label: str, **props: object) -> None:
     store.ensure_node_batch(label, props)
 
 
-def _module_subtree() -> _StatefulIngestor:
+def _module_subtree() -> StatefulIngestor:
     # Two modules: callee.py defines target(); caller.py defines use() which
     # CALLS target(). Mirrors the real graph shape captured from cgr.
-    s = _StatefulIngestor()
+    s = StatefulIngestor()
     _node(s, _MODULE, qualified_name="proj.callee", path="callee.py")
     _node(s, _FUNCTION, qualified_name="proj.callee.target", path="callee.py")
     _node(s, _MODULE, qualified_name="proj.caller", path="caller.py")
@@ -77,7 +77,7 @@ class TestStatefulStore:
         assert any(e[2] == _DEFINES and e[1] == "proj.caller" for e in s.edges)
 
     def test_delete_file_detaches(self) -> None:
-        s = _StatefulIngestor()
+        s = StatefulIngestor()
         _node(s, _FILE, path="callee.py", absolute_path="/r/callee.py")
         _node(s, _MODULE, qualified_name="proj", path="x")
         s.ensure_relationship_batch(
@@ -91,7 +91,7 @@ class TestStatefulStore:
         assert all(e[4] != "/r/callee.py" for e in s.edges)
 
     def test_fetch_all_excludes_external_modules(self) -> None:
-        s = _StatefulIngestor()
+        s = StatefulIngestor()
         _node(s, _FILE, path="a.py", absolute_path="/x/a.py")
         _node(s, _MODULE, qualified_name="proj.a", path="a.py")
         _node(s, _EXTERNAL_MODULE, qualified_name="ext", path="ext")
@@ -102,7 +102,7 @@ class TestStatefulStore:
         assert {r[cs.KEY_PATH] for r in mods} == {"a.py"}
 
     def test_delete_orphan_external_modules(self) -> None:
-        s = _StatefulIngestor()
+        s = StatefulIngestor()
         _node(s, _EXTERNAL_MODULE, qualified_name="ext.orphan", path="ext")
         _node(s, _EXTERNAL_MODULE, qualified_name="ext.used", path="ext2")
         _node(s, _MODULE, qualified_name="proj.m", path="m.py")
@@ -115,7 +115,7 @@ class TestStatefulStore:
         assert (_EXTERNAL_MODULE, "ext.used") in s.nodes
 
     def test_edges_are_deduped(self) -> None:
-        s = _StatefulIngestor()
+        s = StatefulIngestor()
         spec = (_MODULE, _QN, "proj")
         s.ensure_relationship_batch(spec, _DEFINES, spec)
         s.ensure_relationship_batch(spec, _DEFINES, spec)
@@ -147,7 +147,7 @@ class TestIncrementalScenario:
         parsers, queries = parsers_queries
         work = tmp_path / "work"
         shutil.copytree(src, work)
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         from codebase_rag.graph_updater import GraphUpdater
 
         GraphUpdater(
@@ -326,7 +326,7 @@ class TestIncrementalScenario:
         # must return them by base_index (the store is a set, so without the
         # base_index ordering the returned order would not be base0..base4).
         klass = cs.NodeLabel.CLASS.value
-        s = _StatefulIngestor()
+        s = StatefulIngestor()
         child = "proj.combined.Combined"
         want = [f"proj.mixins.Base{i}" for i in range(5)]
         for index in reversed(range(5)):

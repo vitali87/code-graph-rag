@@ -17,7 +17,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 SRC = """#include <stdio.h>
 #include <sys/types.h>
@@ -33,7 +33,7 @@ def _external_modules(root: Path) -> dict[str, str]:
         if language not in parsers:
             pytest.skip(f"{language} parser not available")
     (root / "m.c").write_text(SRC, encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(
         ingestor=store,
         repo_path=root,
@@ -93,7 +93,7 @@ def _import_targets(root: Path, source: str) -> set[str]:
         if language not in parsers:
             pytest.skip(f"{language} parser not available")
     (root / "m.c").write_text(source, encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(
         ingestor=store,
         repo_path=root,

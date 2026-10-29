@@ -24,7 +24,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers import dependency_parser
 from codebase_rag.parsers.dependency_parser import parse_dependencies
 from codebase_rag.tests.conftest import create_and_run_updater
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 _NVM_FIXTURE_DIRS = (
     "nested-both",
@@ -291,7 +291,7 @@ class TestReingest:
         _write(temp_repo / "m.py", "def f():\n    return 1\n")
         parsers, queries = load_parsers()
         updater = GraphUpdater(
-            ingestor=_StatefulIngestor(),
+            ingestor=StatefulIngestor(),
             repo_path=temp_repo,
             parsers=parsers,
             queries=queries,

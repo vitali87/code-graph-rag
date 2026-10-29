@@ -8,7 +8,7 @@ from pathlib import Path
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 _ROUTES = (
     "from flask import Flask\n\napp = Flask(__name__)\n\n\n"
@@ -21,7 +21,7 @@ _JS_ROUTES = (
 )
 
 
-def _updater(root: Path, store: _StatefulIngestor, project: str) -> GraphUpdater:
+def _updater(root: Path, store: StatefulIngestor, project: str) -> GraphUpdater:
     parsers, queries = load_parsers()
     return GraphUpdater(
         ingestor=store,
@@ -33,7 +33,7 @@ def _updater(root: Path, store: _StatefulIngestor, project: str) -> GraphUpdater
 
 
 def _svc_after_both_indexed(tmp_path: Path) -> GraphUpdater:
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     for project in ("svc", "svc.v2"):
         root = tmp_path / project
         (root / "pkg").mkdir(parents=True)
@@ -93,7 +93,7 @@ def test_route_handlers_are_this_projects_own(tmp_path: Path) -> None:
     assert _foreign(qns) == set()
 
 
-class _RegistryDown(_StatefulIngestor):
+class _RegistryDown(StatefulIngestor):
     def fetch_all(self, query, params=None):  # type: ignore[override]
         from codebase_rag import cypher_queries as cq
 
@@ -119,7 +119,7 @@ def test_route_modules_read_nothing_when_the_registry_is_unread(
     assert blind._graph_route_module_paths() == []
 
 
-class _RecordingStore(_StatefulIngestor):
+class _RecordingStore(StatefulIngestor):
     def __init__(self) -> None:
         super().__init__()
         self.written: list[str] = []

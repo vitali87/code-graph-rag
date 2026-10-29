@@ -15,7 +15,7 @@ from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import PropertyDict
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "proj"
 
@@ -38,7 +38,7 @@ def _write(root: Path, files: dict[str, str]) -> None:
 
 
 def _updater(
-    store: _StatefulIngestor, repo: Path, project: str = PROJECT
+    store: StatefulIngestor, repo: Path, project: str = PROJECT
 ) -> GraphUpdater:
     parsers, queries = load_parsers()
     return GraphUpdater(
@@ -50,7 +50,7 @@ def _updater(
     )
 
 
-def _dependencies(store: _StatefulIngestor) -> dict[str, str | None]:
+def _dependencies(store: StatefulIngestor) -> dict[str, str | None]:
     found: dict[str, str | None] = {}
     for edge in store.keyed_edges:
         from_label, from_val, rel, to_label, to_val, _site = edge
@@ -65,7 +65,7 @@ def _dependencies(store: _StatefulIngestor) -> dict[str, str | None]:
     return found
 
 
-def _packages(store: _StatefulIngestor) -> set[str]:
+def _packages(store: StatefulIngestor) -> set[str]:
     return {
         str(uid)
         for (label, uid) in store.nodes
@@ -73,7 +73,7 @@ def _packages(store: _StatefulIngestor) -> set[str]:
     }
 
 
-class _RecordingIngestor(_StatefulIngestor):
+class _RecordingIngestor(StatefulIngestor):
     def __init__(self) -> None:
         super().__init__()
         self.issued: list[str] = []
@@ -83,14 +83,14 @@ class _RecordingIngestor(_StatefulIngestor):
         super().execute_write(query, params)
 
 
-def _fresh(tmp_path: Path, repo: Path) -> _StatefulIngestor:
+def _fresh(tmp_path: Path, repo: Path) -> StatefulIngestor:
     clean = tmp_path / "clean"
     shutil.copytree(
         repo,
         clean,
         ignore=shutil.ignore_patterns(cs.HASH_CACHE_FILENAME, cs.DIR_MTIMES_FILENAME),
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(store, clean).run(force=True)
     return store
 

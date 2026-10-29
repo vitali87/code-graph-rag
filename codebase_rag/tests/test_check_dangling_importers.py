@@ -22,7 +22,7 @@ from codebase_rag.cli import app
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.structural_delta import StructuralDelta, has_findings, observe
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "reexport_fixture"
 
@@ -72,12 +72,12 @@ def _git(root: Path, *args: str) -> None:
 
 
 @pytest.fixture
-def indexed(temp_repo: Path) -> tuple[Path, _StatefulIngestor, GraphUpdater]:
+def indexed(temp_repo: Path) -> tuple[Path, StatefulIngestor, GraphUpdater]:
     root = temp_repo / PROJECT
     root.mkdir()
     for rel, text in FIXTURE.items():
         _write(root, rel, text)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
     updater = GraphUpdater(
         ingestor=store,
@@ -92,7 +92,7 @@ def indexed(temp_repo: Path) -> tuple[Path, _StatefulIngestor, GraphUpdater]:
 
 def _observe(
     root: Path,
-    store: _StatefulIngestor,
+    store: StatefulIngestor,
     updater: GraphUpdater,
     changed: list[str],
     deleted: list[str] | None = None,
@@ -141,7 +141,7 @@ def _all_entry(
 
 
 def test_removed_symbol_still_re_exported_by_the_package_is_a_finding(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _write(root, "app/core.py", CORE_WITHOUT_HELPER)
@@ -159,7 +159,7 @@ def test_removed_symbol_still_re_exported_by_the_package_is_a_finding(
 
 
 def test_renamed_symbol_still_imported_under_its_old_name_is_a_finding(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _write(root, "app/core.py", CORE.replace("def helper():", "def assist():"))
@@ -181,7 +181,7 @@ def test_renamed_symbol_still_imported_under_its_old_name_is_a_finding(
 
 
 def test_all_entry_left_in_the_defining_module_is_a_finding(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     # `unused` is imported by no one, but the module's own `__all__` still
@@ -214,7 +214,7 @@ def test_all_entry_left_in_the_defining_module_is_a_finding(
 
 
 def test_import_from_a_deleted_module_is_a_finding(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     (root / "app/core.py").unlink()
@@ -229,7 +229,7 @@ def test_import_from_a_deleted_module_is_a_finding(
 
 
 def test_check_fail_on_found_exits_nonzero_for_a_removed_re_export(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, _updater = indexed
     _git(root, "init", "-q")
@@ -256,7 +256,7 @@ def test_typescript_barrel_re_export_of_a_removed_function_is_a_finding(
     )
     _write(root, "src/core.ts", core)
     _write(root, "src/barrel.ts", "export { helper, keep } from './core';\n")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
     updater = GraphUpdater(
         ingestor=store,
@@ -292,7 +292,7 @@ def test_typescript_barrel_re_export_of_a_removed_function_is_a_finding(
 
 
 def _add_unchanged_module(
-    root: Path, store: _StatefulIngestor, updater: GraphUpdater, rel: str, text: str
+    root: Path, store: StatefulIngestor, updater: GraphUpdater, rel: str, text: str
 ) -> None:
     # Indexed in its own step, so the edit under test leaves it alone and
     # its definitions are absent from that edit's snapshots.
@@ -318,7 +318,7 @@ def _imports_cleanly(root: Path) -> bool:
 
 
 def test_re_export_from_an_unchanged_module_lacking_the_name_is_a_finding(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _add_unchanged_module(root, store, updater, "app/empty.py", "VALUE = 1\n")
@@ -338,7 +338,7 @@ def test_re_export_from_an_unchanged_module_lacking_the_name_is_a_finding(
 
 
 def test_check_fail_on_found_exits_nonzero_for_a_re_export_naming_nothing(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _add_unchanged_module(root, store, updater, "app/empty.py", "VALUE = 1\n")
@@ -354,7 +354,7 @@ def test_check_fail_on_found_exits_nonzero_for_a_re_export_naming_nothing(
 
 
 def test_wildcard_re_export_from_an_unchanged_module_defining_it_passes(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _add_unchanged_module(
@@ -371,7 +371,7 @@ def test_wildcard_re_export_from_an_unchanged_module_defining_it_passes(
 
 
 def test_check_fail_on_found_passes_a_working_wildcard_re_export(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _add_unchanged_module(
@@ -386,7 +386,7 @@ def test_check_fail_on_found_passes_a_working_wildcard_re_export(
 
 
 def test_name_in_a_comment_inside_all_is_not_an_export(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _write(root, "app/core.py", CORE_WITHOUT_HELPER)
@@ -405,7 +405,7 @@ def test_name_in_a_comment_inside_all_is_not_an_export(
 
 
 def test_comprehension_variable_named_like_the_removed_symbol_binds_nothing(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     # A comprehension's variable is local to it in Python 3: the module still
     # has no `helper` (Greptile, PR #2574).
@@ -426,7 +426,7 @@ def test_comprehension_variable_named_like_the_removed_symbol_binds_nothing(
 
 
 def test_wildcard_of_a_module_whose_all_leaves_the_name_out_is_a_finding(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     # `import *` takes only the names in `__all__` (Greptile, PR #2574).
     root, store, updater = indexed
@@ -450,7 +450,7 @@ def test_wildcard_of_a_module_whose_all_leaves_the_name_out_is_a_finding(
 
 
 def test_wildcard_skips_an_underscore_name_of_a_module_without_all(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     # With no `__all__`, `import *` takes the names that do not start with
     # an underscore (Greptile, PR #2574).
@@ -472,7 +472,7 @@ def test_wildcard_skips_an_underscore_name_of_a_module_without_all(
 
 
 def test_wildcard_of_a_module_that_reassigns_all_without_the_name_is_a_finding(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     # A later `__all__ = [...]` replaces the list before it, so `import *`
     # takes only `other` (Greptile, PR #2574).
@@ -497,7 +497,7 @@ def test_wildcard_of_a_module_that_reassigns_all_without_the_name_is_a_finding(
 
 
 def test_walrus_in_a_lambda_default_binds_the_module_name(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     # A lambda's defaults run in the enclosing scope when it is created;
     # only its body is a scope of its own (Greptile, PR #2574).
@@ -515,7 +515,7 @@ def test_walrus_in_a_lambda_default_binds_the_module_name(
 
 
 def test_walrus_in_a_def_default_binds_the_module_name(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     # A `def`'s defaults and decorators run where it is defined, as a
     # lambda's defaults do; only its body is a scope of its own.
@@ -533,7 +533,7 @@ def test_walrus_in_a_def_default_binds_the_module_name(
 
 
 def test_walrus_in_a_decorator_binds_the_module_name(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _write(
@@ -550,7 +550,7 @@ def test_walrus_in_a_decorator_binds_the_module_name(
 
 
 def test_walrus_in_a_class_keyword_binds_the_module_name(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     # A class's decorators, bases and keywords run where it is defined too.
     root, store, updater = indexed
@@ -608,7 +608,7 @@ def test_a_re_export_cycle_binds_nothing_and_terminates() -> None:
 
 
 def test_removing_a_symbol_nothing_imports_or_calls_passes(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _write(
@@ -623,7 +623,7 @@ def test_removing_a_symbol_nothing_imports_or_calls_passes(
 
 
 def test_check_fail_on_found_still_passes_a_removal_nothing_imports(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, _updater = indexed
     _git(root, "init", "-q")
@@ -639,7 +639,7 @@ def test_check_fail_on_found_still_passes_a_removal_nothing_imports(
 
 
 def test_same_named_import_from_another_module_is_not_reported(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _write(root, "app/core.py", CORE_WITHOUT_HELPER)
@@ -653,7 +653,7 @@ def test_same_named_import_from_another_module_is_not_reported(
 
 
 def test_importer_fixed_in_the_same_edit_is_not_reported(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _write(root, "app/core.py", CORE_WITHOUT_HELPER)
@@ -669,7 +669,7 @@ def test_importer_fixed_in_the_same_edit_is_not_reported(
 
 
 def test_moved_symbol_re_exported_from_its_old_module_is_not_reported(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     # The compatibility shim: `helper` now lives in `app.util`, and
@@ -692,7 +692,7 @@ def test_moved_symbol_re_exported_from_its_old_module_is_not_reported(
 
 
 def test_named_re_export_from_an_unchanged_module_defining_it_passes(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _add_unchanged_module(
@@ -710,7 +710,7 @@ def test_named_re_export_from_an_unchanged_module_defining_it_passes(
 
 
 def test_re_export_of_a_name_an_unchanged_module_assigns_passes(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     # The graph records no node for a module-level assignment; the source
@@ -727,7 +727,7 @@ def test_re_export_of_a_name_an_unchanged_module_assigns_passes(
 
 
 def test_removed_definition_replaced_by_an_assignment_passes(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _write(root, "app/core.py", CORE_WITHOUT_HELPER + "\n\nhelper = keep\n")
@@ -740,7 +740,7 @@ def test_removed_definition_replaced_by_an_assignment_passes(
 
 
 def test_wildcard_re_export_from_an_unchanged_module_lacking_it_is_a_finding(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _add_unchanged_module(root, store, updater, "app/empty.py", "VALUE = 1\n")
@@ -756,7 +756,7 @@ def test_wildcard_re_export_from_an_unchanged_module_lacking_it_is_a_finding(
 
 
 def test_re_export_from_outside_the_project_is_taken_at_its_word(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _write(
@@ -772,7 +772,7 @@ def test_re_export_from_outside_the_project_is_taken_at_its_word(
 
 
 def test_re_export_of_a_submodule_passes(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     # `from app import helpers` binds the submodule: its IMPORTS edge names
@@ -791,7 +791,7 @@ def test_re_export_of_a_submodule_passes(
 
 
 def test_all_entry_with_a_trailing_comment_is_still_an_export(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _write(
@@ -810,7 +810,7 @@ def test_all_entry_with_a_trailing_comment_is_still_an_export(
 
 
 def test_walrus_in_a_comprehension_binds_the_module_name(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     # The one comprehension target that binds in the enclosing scope.
     root, store, updater = indexed
@@ -827,7 +827,7 @@ def test_walrus_in_a_comprehension_binds_the_module_name(
 
 
 def test_wildcard_of_a_module_whose_all_lists_the_name_passes(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _add_unchanged_module(
@@ -846,7 +846,7 @@ def test_wildcard_of_a_module_whose_all_lists_the_name_passes(
 
 
 def test_wildcard_of_a_module_that_extends_a_reassigned_all_with_the_name_passes(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _add_unchanged_module(
@@ -866,7 +866,7 @@ def test_wildcard_of_a_module_that_extends_a_reassigned_all_with_the_name_passes
 
 
 def test_wildcard_of_a_module_that_reassigns_all_in_a_branch_is_taken_at_its_word(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     # A branch may not run, so the list before it may still be the one
     # `import *` reads.
@@ -888,7 +888,7 @@ def test_wildcard_of_a_module_that_reassigns_all_in_a_branch_is_taken_at_its_wor
 
 
 def test_walrus_in_a_lambda_body_binds_no_module_name(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _write(
@@ -907,7 +907,7 @@ def test_walrus_in_a_lambda_body_binds_no_module_name(
 
 
 def test_walrus_in_a_def_body_binds_no_module_name(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _write(
@@ -927,7 +927,7 @@ def test_walrus_in_a_def_body_binds_no_module_name(
 
 
 def test_def_parameter_named_like_the_removed_symbol_binds_no_module_name(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _write(
@@ -946,7 +946,7 @@ def test_def_parameter_named_like_the_removed_symbol_binds_no_module_name(
 
 
 def test_wildcard_of_a_module_whose_all_is_computed_is_taken_at_its_word(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     # An `__all__` built at run time cannot be read without running it.
     root, store, updater = indexed
@@ -965,7 +965,7 @@ def test_wildcard_of_a_module_whose_all_is_computed_is_taken_at_its_word(
     assert delta["dangling_importers"] == []
 
 
-def _run_cli_check(root: Path, store: _StatefulIngestor) -> Result:
+def _run_cli_check(root: Path, store: StatefulIngestor) -> Result:
     # The store itself, not a `MagicMock(wraps=...)`: the re-ingest must
     # really rewrite the graph, or the after-snapshot still holds the removed
     # symbol and the check measures no edit at all.

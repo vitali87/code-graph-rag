@@ -28,7 +28,7 @@ from codebase_rag.parser_loader import load_parsers
 
 from . import constants as ec
 from . import logs as ls
-from .cgr_graph import _CapturingIngestor
+from .cgr_graph import CapturingIngestor
 from .types_defs import IndexingStats
 
 console = Console()
@@ -71,7 +71,7 @@ def measure_indexing_run(target: Path, project_name: str) -> IndexingStats:
     t0 = time.perf_counter()
     parsers, queries = load_parsers()
     t1 = time.perf_counter()
-    ingestor = _CapturingIngestor()
+    ingestor = CapturingIngestor()
     GraphUpdater(
         ingestor=ingestor,
         repo_path=target,

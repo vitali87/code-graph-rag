@@ -106,7 +106,7 @@ def test_incremental_reparse_keeps_cross_file_macro_call(temp_repo: Path) -> Non
     # restores it (the is_property pattern).
     from codebase_rag.graph_updater import GraphUpdater
     from codebase_rag.parser_loader import load_parsers
-    from evals.cgr_graph import _StatefulIngestor
+    from evals.cgr_graph import StatefulIngestor
 
     src = temp_repo / "src"
     src.mkdir(parents=True)
@@ -126,20 +126,20 @@ def test_incremental_reparse_keeps_cross_file_macro_call(temp_repo: Path) -> Non
     )
     (src / "lib.rs").write_text(lib_src, encoding="utf-8")
 
-    def _calls(store: _StatefulIngestor) -> set[tuple[str, str]]:
+    def _calls(store: StatefulIngestor) -> set[tuple[str, str]]:
         return {
             (str(f), str(t))
             for _, f, rel, _, t in store.edges
             if rel == cs.RelationshipType.CALLS.value
         }
 
-    def _index(store: _StatefulIngestor, force: bool) -> None:
+    def _index(store: StatefulIngestor, force: bool) -> None:
         parsers, queries = load_parsers()
         GraphUpdater(
             ingestor=store, repo_path=temp_repo, parsers=parsers, queries=queries
         ).run(force=force)
 
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, force=True)
     expected = [
         (f, t)

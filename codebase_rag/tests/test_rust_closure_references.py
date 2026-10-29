@@ -5,7 +5,7 @@
 # as dead. This mirrors the inline-callback REFERENCES edge JS/TS already emit.
 from pathlib import Path
 
-from evals.cgr_graph import _capture
+from evals.cgr_graph import capture
 
 
 def _refs(ingestor) -> set[tuple[str, str]]:
@@ -34,7 +34,7 @@ def test_closure_arg_referenced_by_enclosing_fn(tmp_path: Path) -> None:
         "    xs.iter().map(|s| s.len()).sum()\n"
         "}\n",
     )
-    ingestor = _capture(tmp_path, "crate")
+    ingestor = capture(tmp_path, "crate")
     refs = _refs(ingestor)
     closures = _closure_nodes(ingestor)
     assert closures, "expected a closure node to be registered"
@@ -55,7 +55,7 @@ def test_closure_in_method_referenced(tmp_path: Path) -> None:
         "    }\n"
         "}\n",
     )
-    ingestor = _capture(tmp_path, "crate")
+    ingestor = capture(tmp_path, "crate")
     refs = _refs(ingestor)
     closures = _closure_nodes(ingestor)
     assert closures

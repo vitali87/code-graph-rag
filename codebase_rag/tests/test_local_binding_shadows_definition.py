@@ -23,7 +23,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 # Every case holds on the Rust scope walks and on their Python twins.
 pytestmark = pytest.mark.usefixtures("both_scope_walks")
@@ -164,7 +164,7 @@ def graph(tmp_path_factory: pytest.TempPathFactory) -> dict[Edge, str]:
     """(caller, rel, target) -> resolution label, for CALLS and REFERENCES."""
     repo = _build(tmp_path_factory.mktemp("shadow"))
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(ingestor=store, repo_path=repo, parsers=parsers, queries=queries).run(
         force=True
     )

@@ -18,7 +18,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.structural_check import CheckError, indexed_scope
 from codebase_rag.utils.path_utils import derive_project_name
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 _EXCLUDED = frozenset({"generated"})
 
@@ -28,7 +28,7 @@ def _index(root: Path, project_name: str | None, named: bool) -> None:
     (root / "lib.py").write_text("def greet(name):\n    return name\n")
     parsers, queries = load_parsers()
     GraphUpdater(
-        ingestor=_StatefulIngestor(),
+        ingestor=StatefulIngestor(),
         repo_path=root,
         parsers=parsers,
         queries=queries,

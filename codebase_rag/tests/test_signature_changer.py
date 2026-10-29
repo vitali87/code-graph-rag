@@ -23,7 +23,7 @@ from codebase_rag.editing.signature_spec import SignatureRefused, _Edit, _Header
 from codebase_rag.graph_query import CallSiteRow
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "sigchange"
 UTIL = "pkg/util.py"
@@ -57,14 +57,14 @@ BASE_MAKE = f"{PROJECT}.pkg.shapes.Base.make"
 
 def _indexed(
     temp_repo: Path, files: dict[str, str]
-) -> tuple[Path, _StatefulIngestor, GraphUpdater]:
+) -> tuple[Path, StatefulIngestor, GraphUpdater]:
     root = temp_repo / PROJECT
     for rel, text in files.items():
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = GraphUpdater(
         ingestor=store,
         repo_path=root,
@@ -77,7 +77,7 @@ def _indexed(
 
 
 @pytest.fixture
-def repo(temp_repo: Path) -> tuple[Path, _StatefulIngestor, GraphUpdater]:
+def repo(temp_repo: Path) -> tuple[Path, StatefulIngestor, GraphUpdater]:
     return _indexed(temp_repo, FILES)
 
 
@@ -89,7 +89,7 @@ def _read(root: Path, rel: str) -> str:
 
 
 def test_apply_rewrites_definition_and_sites_under_the_contract(
-    repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+    repo: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = repo
     report = change_signature(
@@ -114,7 +114,7 @@ def test_apply_rewrites_definition_and_sites_under_the_contract(
 
 
 def test_apply_without_reingest_skips_the_contract(
-    repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+    repo: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, _updater = repo
     report = change_signature(
@@ -128,7 +128,7 @@ def test_apply_without_reingest_skips_the_contract(
 
 
 def test_dry_run_returns_the_diff_and_writes_nothing(
-    repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+    repo: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, _updater = repo
     before = {rel: _read(root, rel) for rel in (UTIL, APP)}
@@ -148,7 +148,7 @@ def test_dry_run_returns_the_diff_and_writes_nothing(
 
 
 def test_plan_lists_the_edits_without_staging(
-    repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+    repo: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, _updater = repo
     changer = SignatureChanger(root, store.fetch_all, PROJECT)
@@ -167,7 +167,7 @@ def test_plan_lists_the_edits_without_staging(
 
 
 def test_a_rewrite_that_no_longer_parses_is_rolled_back(
-    repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+    repo: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, _updater = repo
     args = (root, store.fetch_all, PROJECT, HELPER, ["a", "n", "b"], {"n": "=)"})
@@ -184,7 +184,7 @@ def test_a_rewrite_that_no_longer_parses_is_rolled_back(
 
 
 def test_unknown_definition_is_refused(
-    repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+    repo: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, _updater = repo
     qn = f"{PROJECT}.pkg.util.nothing"
@@ -203,7 +203,7 @@ def test_non_python_definition_is_refused(temp_repo: Path) -> None:
 
 
 def test_definition_file_gone_since_indexing_is_refused(
-    repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+    repo: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, _updater = repo
     (root / UTIL).unlink()
@@ -212,7 +212,7 @@ def test_definition_file_gone_since_indexing_is_refused(
 
 
 def test_definition_moved_since_indexing_is_refused(
-    repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+    repo: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, _updater = repo
     (root / UTIL).write_text("\n\n\n\n" + FILES[UTIL], encoding="utf-8")
@@ -221,7 +221,7 @@ def test_definition_moved_since_indexing_is_refused(
 
 
 def test_dropping_a_parameter_the_body_reads_is_refused(
-    repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+    repo: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, _updater = repo
     with pytest.raises(SignatureRefused, match="Cannot drop parameter b"):
@@ -295,7 +295,7 @@ def test_a_dropped_argument_that_runs_code_leaves_the_site_unmapped(
 
 
 def test_literal_of_the_wrong_type_is_refused(
-    repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+    repo: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, _updater = repo
     with pytest.raises(SignatureRefused, match="does not fit the declared type"):
@@ -338,7 +338,7 @@ def test_a_header_python_would_reject_is_refused(
 
 
 def test_edit_the_patcher_cannot_apply_is_a_refusal(
-    repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+    repo: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, _updater = repo
     changer = SignatureChanger(root, store.fetch_all, PROJECT)
@@ -352,7 +352,7 @@ def test_edit_the_patcher_cannot_apply_is_a_refusal(
 
 
 def test_file_changed_after_planning_is_refused_not_spliced(
-    repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+    repo: tuple[Path, StatefulIngestor, GraphUpdater],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The edits carry byte offsets measured in the planned bytes. Splicing
@@ -482,7 +482,7 @@ def _function_header(changer: SignatureChanger, patcher: Patcher) -> _Header:
     ],
 )
 def test_site_the_operation_cannot_read_is_unmapped(
-    repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+    repo: tuple[Path, StatefulIngestor, GraphUpdater],
     overrides: dict[str, object],
     reason: str,
 ) -> None:

@@ -35,7 +35,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 from codebase_rag.workspaces import WorkspaceConfig, WorkspaceRepo
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 runner = CliRunner()
 
@@ -52,7 +52,7 @@ def _repos(tmp_path: Path) -> tuple[Path, Path]:
 
 def _sync(
     repo: Path,
-    store: _StatefulIngestor,
+    store: StatefulIngestor,
     *,
     force: bool = False,
     state_dir: Path | None = None,
@@ -71,7 +71,7 @@ def _sync(
     return updater
 
 
-def _functions(store: _StatefulIngestor) -> set[str]:
+def _functions(store: StatefulIngestor) -> set[str]:
     return {str(uid) for label, uid in store.nodes if label == cs.NodeLabel.FUNCTION}
 
 
@@ -79,7 +79,7 @@ def test_a_repo_whose_project_another_repo_replaced_is_rebuilt(
     tmp_path: Path,
 ) -> None:
     org_a, org_b = _repos(tmp_path)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _sync(org_a, store)
     _sync(org_b, store)
 
@@ -96,7 +96,7 @@ def test_a_replaced_project_is_rebuilt_when_the_cache_lives_outside_the_repo(
     state_a, state_b = tmp_path / "state_a", tmp_path / "state_b"
     state_a.mkdir()
     state_b.mkdir()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _sync(org_a, store, state_dir=state_a)
     _sync(org_b, store, state_dir=state_b)
 
@@ -112,7 +112,7 @@ def test_an_unchanged_repo_with_its_cache_outside_the_repo_is_still_in_sync(
     org_a, _ = _repos(tmp_path)
     state_a = tmp_path / "state_a"
     state_a.mkdir()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _sync(org_a, store, state_dir=state_a)
 
     again = _sync(org_a, store, state_dir=state_a)
@@ -123,7 +123,7 @@ def test_an_unchanged_repo_with_its_cache_outside_the_repo_is_still_in_sync(
 def test_an_unchanged_repo_is_still_in_sync(tmp_path: Path) -> None:
     # Negative: the root check must not defeat the fast path it guards.
     org_a, _ = _repos(tmp_path)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _sync(org_a, store)
 
     again = _sync(org_a, store)
@@ -135,7 +135,7 @@ def test_a_project_with_no_recorded_root_keeps_its_cache(tmp_path: Path) -> None
     # Negative: graphs written before `root_path` existed prove nothing about
     # which repository they hold.
     org_a, _ = _repos(tmp_path)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _sync(org_a, store)
     store.nodes[(cs.NodeLabel.PROJECT, "api2")].pop(cs.KEY_ROOT_PATH)
 
@@ -144,7 +144,7 @@ def test_a_project_with_no_recorded_root_keeps_its_cache(tmp_path: Path) -> None
     assert again.skipped_because_in_sync is True
 
 
-class _RootUnreadable(_StatefulIngestor):
+class _RootUnreadable(StatefulIngestor):
     """A graph that answers everything but the project-root read."""
 
     def fetch_all(self, query: str, params: object = None) -> list[dict[str, object]]:
@@ -164,7 +164,7 @@ def test_an_unreadable_root_stops_the_sync_before_its_project_write(
     store = _RootUnreadable()
     parsers, queries = load_parsers()
     GraphUpdater(
-        ingestor=_StatefulIngestor(),
+        ingestor=StatefulIngestor(),
         repo_path=org_a,
         parsers=parsers,
         queries=queries,
@@ -399,7 +399,7 @@ def test_a_padded_workspace_name_this_repo_owns_syncs_under_the_stripped_name(
     assert graph.updater.call_args.kwargs["project_name"] == "api2"
 
 
-class _SyncedGraph(_StatefulIngestor):
+class _SyncedGraph(StatefulIngestor):
     """The in-memory graph behind a CLI sync's connections."""
 
     def ensure_constraints(self) -> None:

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from evals.cgr_graph import _capture
+from evals.cgr_graph import capture
 
 
 def _make(root: Path) -> None:
@@ -22,7 +22,7 @@ def test_ts_arrow_const_caller_body_calls_resolve(tmp_path: Path) -> None:
     # no `name` field, so _get_node_name returned None and the arrow body went
     # unprocessed.
     _make(tmp_path)
-    ingestor = _capture(tmp_path, "p")
+    ingestor = capture(tmp_path, "p")
     calls = {
         (str(from_val), str(to_val))
         for _fl, from_val, rel, _tl, to_val in ingestor.rels

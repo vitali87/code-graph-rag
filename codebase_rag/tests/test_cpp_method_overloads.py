@@ -29,7 +29,6 @@ from codebase_rag.parsers.cpp import overloads as cpp_overloads
 from codebase_rag.parsers.cpp_frontend import cpp_frontend_available, run_cpp_frontend
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 from codebase_rag.tests.conftest import (
-    _MockIngestor,
     get_nodes,
     get_qualified_names,
     get_relationships,
@@ -44,7 +43,8 @@ from codebase_rag.utils.cpp_signatures import (
     parameter_types_may_match,
     signature_arity,
 )
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
+from evals.recorded_graph import RecordingIngestor
 
 PROJECT = "ovl"
 
@@ -82,13 +82,13 @@ def _write(root: Path, files: dict[str, str]) -> Path:
     return root
 
 
-def _index(root: Path) -> _MockIngestor:
-    ingestor = _MockIngestor()
+def _index(root: Path) -> RecordingIngestor:
+    ingestor = RecordingIngestor()
     run_updater(root, ingestor, skip_if_missing=cs.SupportedLanguage.CPP.value)
     return ingestor
 
 
-def _final_methods(ingestor: _MockIngestor, suffix: str) -> dict[str, dict]:
+def _final_methods(ingestor: RecordingIngestor, suffix: str) -> dict[str, dict]:
     # A node write MERGEs on qualified_name and SETs its properties, so the
     # graph holds the LAST write per qn: a declaration and its definition are
     # one node whose location is the definition's.
@@ -103,7 +103,7 @@ def _final_methods(ingestor: _MockIngestor, suffix: str) -> dict[str, dict]:
     return final
 
 
-def _calls(ingestor: _MockIngestor) -> list[tuple[str, str, object]]:
+def _calls(ingestor: RecordingIngestor) -> list[tuple[str, str, object]]:
     edges = []
     for call in get_relationships(ingestor, cs.RelationshipType.CALLS.value):
         props = call.args[3] if len(call.args) > 3 else call.kwargs.get("properties")
@@ -114,14 +114,14 @@ def _calls(ingestor: _MockIngestor) -> list[tuple[str, str, object]]:
     return edges
 
 
-def _overrides(ingestor: _MockIngestor) -> set[tuple[str, str]]:
+def _overrides(ingestor: RecordingIngestor) -> set[tuple[str, str]]:
     return {
         (str(call.args[0][2]), str(call.args[2][2]))
         for call in get_relationships(ingestor, cs.RelationshipType.OVERRIDES.value)
     }
 
 
-def _defines_method(ingestor: _MockIngestor) -> set[tuple[str, str]]:
+def _defines_method(ingestor: RecordingIngestor) -> set[tuple[str, str]]:
     return {
         (str(call.args[0][2]), str(call.args[2][2]))
         for call in get_relationships(
@@ -1134,7 +1134,7 @@ SEP_H_EDITED = SEP_H + "// touched\n"
 EDITS = {"sep.cpp": SEP_CPP_EDITED, "sep.h": SEP_H_EDITED}
 
 
-def _updater(store: _StatefulIngestor, repo: Path) -> GraphUpdater:
+def _updater(store: StatefulIngestor, repo: Path) -> GraphUpdater:
     parsers, queries = load_parsers()
     if cs.SupportedLanguage.CPP not in parsers:
         pytest.skip("cpp parser not available")
@@ -1147,7 +1147,7 @@ def _updater(store: _StatefulIngestor, repo: Path) -> GraphUpdater:
     )
 
 
-def _state(store: _StatefulIngestor, root: Path) -> tuple[frozenset, frozenset, dict]:
+def _state(store: StatefulIngestor, root: Path) -> tuple[frozenset, frozenset, dict]:
     # File nodes are keyed by absolute path; the clean index lives elsewhere.
     def uid(value: object) -> str:
         return str(value).replace(root.resolve().as_posix(), "<root>")
@@ -1173,7 +1173,7 @@ def _incremental_and_clean(
     temp_repo: Path, files: dict[str, str], edited: str, text: str, mode: str
 ) -> tuple[tuple, tuple]:
     root = _write(temp_repo / PROJECT, files)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(store, root).run(force=True)
 
     path = root / edited
@@ -1193,7 +1193,7 @@ def _incremental_and_clean(
         temp_repo / "clean" / PROJECT,
         {rel: (root / rel).read_text() for rel in files},
     )
-    clean_store = _StatefulIngestor()
+    clean_store = StatefulIngestor()
     _updater(clean_store, clean_root).run(force=True)
     return _state(store, root), _state(clean_store, clean_root)
 
@@ -1359,7 +1359,7 @@ def test_the_overload_properties_survive_a_protobuf_export(
         temp_repo / PROJECT,
         {"sep.h": SEP_H, "sep.cpp": SEP_CPP, "vref.h": VREF_H, "v.cpp": VREF_CPP},
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(store, root).run(force=True)
     graph = {
         str(value): (
@@ -1401,7 +1401,7 @@ def test_warm_reingest_of_a_definition_file_keeps_each_overload(
     temp_repo: Path,
 ) -> None:
     root = _write(temp_repo / PROJECT, {"sep.h": SEP_H, "sep.cpp": SEP_CPP})
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, root)
     updater.run(force=True)
     (root / "sep.cpp").write_text(SEP_CPP_EDITED, encoding="utf-8")
@@ -1428,7 +1428,7 @@ int use_sep() { Sep s; return s.g(1) + s.g(2.0); }
 """
 
 
-def _resolved_calls(store: _StatefulIngestor) -> set[tuple[str, str, str]]:
+def _resolved_calls(store: StatefulIngestor) -> set[tuple[str, str, str]]:
     return {
         (
             str(edge[1]),
@@ -1448,7 +1448,7 @@ def test_reparsing_only_the_caller_keeps_one_edge_per_overload(
         temp_repo / PROJECT,
         {"sep.h": SEP_H, "sep.cpp": SEP_DEFS_CPP, "use.cpp": USE_CPP},
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(store, root).run(force=True)
     clean_calls, clean = _resolved_calls(store), _state(store, root)
     caller = f"{PROJECT}.use.use_sep"
@@ -1633,7 +1633,7 @@ def test_pure_libclang_frontend_names_overloads_as_tree_sitter_does(
 ) -> None:
     root = _pure_libclang_project(temp_repo / PROJECT)
     tree_sitter = _index(root)
-    frontend = _MockIngestor()
+    frontend = RecordingIngestor()
     run_cpp_frontend(frontend, root, root.name, root)
 
     label = cs.NodeLabel.METHOD.value
@@ -1661,7 +1661,7 @@ def test_pure_libclang_frontend_binds_each_call_to_its_overload(
     temp_repo: Path,
 ) -> None:
     root = _pure_libclang_project(temp_repo / PROJECT)
-    frontend = _MockIngestor()
+    frontend = RecordingIngestor()
     run_cpp_frontend(frontend, root, root.name, root)
 
     nodes = get_qualified_names(get_nodes(frontend, cs.NodeLabel.METHOD.value))
@@ -1689,7 +1689,7 @@ def test_pure_libclang_call_to_an_overload_declared_later_binds_to_it(
     # is declared, not on whether the walk has reached it yet: both calls
     # pass a double, so both bind to `later(double)`, which is `later@5`.
     root = _pure_libclang_project(temp_repo / PROJECT)
-    frontend = _MockIngestor()
+    frontend = RecordingIngestor()
     run_cpp_frontend(frontend, root, root.name, root)
 
     fwd = f"{PROJECT}.fwd.h.Fwd"
@@ -1774,7 +1774,7 @@ def test_type_units_nest_template_arguments(type_text: str, rendered: str) -> No
     assert _render_units(_type_units(type_text)) == rendered
 
 
-def _member_writes(ingestor: _MockIngestor) -> list[tuple[str, int, str, dict]]:
+def _member_writes(ingestor: RecordingIngestor) -> list[tuple[str, int, str, dict]]:
     # Every Method write, not only the last per qn: the overload keys must
     # be right on each.
     keys = (cs.KEY_SIGNATURE, cs.KEY_DECLARED_IN_CLASS)
@@ -1855,7 +1855,7 @@ def test_another_language_keeps_its_line_suffix_and_no_overload_keys(
             )
         },
     )
-    ingestor = _MockIngestor()
+    ingestor = RecordingIngestor()
     run_updater(root, ingestor, skip_if_missing=cs.SupportedLanguage.PYTHON.value)
     dup = f"{PROJECT}.dup.Dup.f"
     assert _member_writes(ingestor) == [

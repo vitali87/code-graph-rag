@@ -27,7 +27,7 @@ from codebase_rag.structural_delta import (
     observe,
     strongly_connected,
 )
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "delta_fixture"
 
@@ -69,7 +69,7 @@ def _write(root: Path, rel: str, text: str) -> None:
     path.write_text(text)
 
 
-def _updater(store: _StatefulIngestor, root: Path) -> GraphUpdater:
+def _updater(store: StatefulIngestor, root: Path) -> GraphUpdater:
     parsers, queries = load_parsers()
     return GraphUpdater(
         ingestor=store,
@@ -81,12 +81,12 @@ def _updater(store: _StatefulIngestor, root: Path) -> GraphUpdater:
 
 
 @pytest.fixture
-def indexed(temp_repo: Path) -> tuple[Path, _StatefulIngestor, GraphUpdater]:
+def indexed(temp_repo: Path) -> tuple[Path, StatefulIngestor, GraphUpdater]:
     root = temp_repo / PROJECT
     root.mkdir()
     for rel, text in FIXTURE.items():
         _write(root, rel, text)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, root)
     updater.run(force=True)
     return root, store, updater
@@ -94,7 +94,7 @@ def indexed(temp_repo: Path) -> tuple[Path, _StatefulIngestor, GraphUpdater]:
 
 def _observe(
     root: Path,
-    store: _StatefulIngestor,
+    store: StatefulIngestor,
     updater: GraphUpdater,
     changed: list[str],
     deleted: list[str] | None = None,
@@ -116,7 +116,7 @@ def _qn(rel: str) -> str:
 
 def _assert_cli_check_accepts(
     root: Path,
-    store: _StatefulIngestor,
+    store: StatefulIngestor,
     project_name: str,
     projects: list[str],
 ) -> None:
@@ -143,7 +143,7 @@ def _assert_cli_check_accepts(
 
 
 def test_rename_without_updating_callers_reports_dangling_callers(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _write(
@@ -176,7 +176,7 @@ def test_rename_without_updating_callers_reports_dangling_callers(
 
 
 def test_updated_caller_is_not_dangling(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _write(
@@ -192,7 +192,7 @@ def test_updated_caller_is_not_dangling(
 
 
 def test_two_arg_call_to_one_arg_function_is_an_arity_finding(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _write(
@@ -217,7 +217,7 @@ def test_two_arg_call_to_one_arg_function_is_an_arity_finding(
 
 
 def test_signature_change_lists_every_site_with_a_verdict(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _write(
@@ -240,7 +240,7 @@ def test_signature_change_lists_every_site_with_a_verdict(
     assert site["declared_count"] == 2
 
 
-def _link_remote_callers(store: _StatefulIngestor) -> None:
+def _link_remote_callers(store: StatefulIngestor) -> None:
     """A handler in this project exposes an endpoint and an RPC resource;
     another project's client reaches the endpoint through a NETWORK resource
     and the RPC directly. Edges added the way the extractors emit them."""
@@ -301,7 +301,7 @@ def _link_remote_callers(store: _StatefulIngestor) -> None:
         )
 
 
-def _link_non_remote_kinds(store: _StatefulIngestor) -> None:
+def _link_non_remote_kinds(store: StatefulIngestor) -> None:
     """The same two shapes, built from kinds that are NOT service boundaries:
     a DATABASE resource resolving to the endpoint, and a plain ENDPOINT
     exposed directly. Neither is a remote call site (bot review on PR #1978).
@@ -336,7 +336,7 @@ def _link_non_remote_kinds(store: _StatefulIngestor) -> None:
 
 
 def test_only_network_rpc_and_dispatch_kinds_are_remote_callers(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     """A DATABASE resource resolving to an endpoint, and a plain ENDPOINT
     read directly, are not service boundaries. Without the kind filters both
@@ -360,7 +360,7 @@ def test_only_network_rpc_and_dispatch_kinds_are_remote_callers(
 
 
 def test_signature_change_lists_the_remote_callers_of_its_endpoint(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     """A changed handler's remote call sites, through the NETWORK resource
     that resolves to its endpoint and directly for its RPC resource, in any
@@ -422,7 +422,7 @@ def test_a_caller_both_query_shapes_return_is_listed_once() -> None:
 
 
 def test_remote_callers_alone_are_a_finding(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     """A signature change whose only impact is a remote caller still fails
     --fail-on-found: no local site would flag it (issue #1603)."""
@@ -452,7 +452,7 @@ def test_remote_callers_alone_are_a_finding(
 
 
 def test_a_signature_change_with_no_endpoint_has_no_remote_callers(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     """The control: the same change on a definition that exposes nothing
     reports an empty list, not a missing key."""
@@ -469,7 +469,7 @@ def test_a_signature_change_with_no_endpoint_has_no_remote_callers(
 
 
 def test_variadic_callee_is_never_too_many(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _write(
@@ -489,7 +489,7 @@ def test_variadic_callee_is_never_too_many(
 
 
 def test_keyword_arguments_to_a_kwargs_callee_are_not_too_many(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _write(
@@ -508,7 +508,7 @@ def test_keyword_arguments_to_a_kwargs_callee_are_not_too_many(
 
 
 def test_extra_positional_to_a_keyword_only_callee_is_too_many(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _write(
@@ -527,7 +527,7 @@ def test_extra_positional_to_a_keyword_only_callee_is_too_many(
 
 
 def test_pasting_a_helper_under_a_new_name_is_a_new_duplicate(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _write(root, "pkg/extra.py", "def summarise(items):\n" + BIG_BODY)
@@ -546,7 +546,7 @@ def test_pasting_a_helper_under_a_new_name_is_a_new_duplicate(
 
 
 def test_new_import_cycle_is_reported_once(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _write(
@@ -566,7 +566,7 @@ def test_new_import_cycle_is_reported_once(
 
 
 def test_tests_reaching_the_changed_symbols(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _write(root, "pkg/util.py", FIXTURE["pkg/util.py"].replace("a + 1", "a + 2"))
@@ -586,7 +586,7 @@ def test_tests_reaching_the_changed_symbols(
 
 
 def test_deleting_a_file_removes_its_symbols_and_dangles_callers(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     (root / "pkg/util.py").unlink()
@@ -599,7 +599,7 @@ def test_deleting_a_file_removes_its_symbols_and_dangles_callers(
 
 
 def test_neutral_edit_reports_nothing(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _write(root, "pkg/app.py", FIXTURE["pkg/app.py"] + "# trailing comment\n")
@@ -617,7 +617,7 @@ def test_neutral_edit_reports_nothing(
 
 
 def test_delta_overhead_is_small(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _write(root, "pkg/util.py", FIXTURE["pkg/util.py"].replace("a + 1", "a + 3"))
@@ -655,8 +655,8 @@ def test_normalise_paths_makes_repo_relative_posix(tmp_path: Path) -> None:
 
 @pytest.fixture
 def registry(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
-) -> tuple[Path, _StatefulIngestor, object]:
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
+) -> tuple[Path, StatefulIngestor, object]:
     from unittest.mock import MagicMock
 
     from codebase_rag.mcp.tools import MCPToolsRegistry
@@ -673,7 +673,7 @@ def registry(
 
 
 async def test_write_file_appends_the_structural_delta(
-    registry: tuple[Path, _StatefulIngestor, object],
+    registry: tuple[Path, StatefulIngestor, object],
 ) -> None:
     import json
 
@@ -689,7 +689,7 @@ async def test_write_file_appends_the_structural_delta(
 
 
 async def test_surgical_replace_appends_the_structural_delta(
-    registry: tuple[Path, _StatefulIngestor, object],
+    registry: tuple[Path, StatefulIngestor, object],
 ) -> None:
     import json
 
@@ -746,7 +746,7 @@ def test_a_failed_write_reingest_invalidates_the_live_graph(
 
 
 def test_check_reports_the_delta_since_a_git_ref(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     import subprocess
 
@@ -843,7 +843,7 @@ def test_check_uses_the_scope_the_graph_was_indexed_under(temp_repo: Path) -> No
         _write(root, rel, text)
     # No stamp yet: only `.cgrignore` (here, nothing) defines the scope.
     assert indexed_scope(root, PROJECT) == (None, None)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = __import__(
         "codebase_rag.parser_loader", fromlist=["load_parsers"]
     ).load_parsers()
@@ -865,7 +865,7 @@ def test_check_uses_the_scope_the_graph_was_indexed_under(temp_repo: Path) -> No
     # but each keeps its own entry, so the first project's check still reads
     # ITS scope rather than borrowing the other's (issue #1987).
     GraphUpdater(
-        ingestor=_StatefulIngestor(),
+        ingestor=StatefulIngestor(),
         repo_path=root,
         parsers=parsers,
         queries=queries,
@@ -907,7 +907,7 @@ def test_indexing_two_projects_on_one_tree_does_not_reuse_fast_path(
         "b",
     )
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
 
     GraphUpdater(
         ingestor=store,
@@ -1014,7 +1014,7 @@ def test_check_keeps_excluded_files_out_of_the_graph(
         cwd=root,
         check=True,
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(store, root).run(force=True)
     _write(root, "generated_src/thing.py", "def vendored():\n    return 1\n")
     parsers, queries = load_parsers()
@@ -1052,7 +1052,7 @@ def test_unnamed_check_preserves_unnamed_stamp_after_reingest(
         cwd=root,
         check=True,
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
     project_name = derive_project_name(root)
     GraphUpdater(
@@ -1107,7 +1107,7 @@ def test_check_works_when_the_project_is_below_the_git_toplevel(
         cwd=top,
         check=True,
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(store, root).run(force=True)
     _write(
         root,
@@ -1143,7 +1143,7 @@ def test_check_ignores_cgr_state_files(
         cwd=root,
         check=True,
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(store, root).run(force=True)
     # Indexing keeps its state out of the tree (issue #2427); one an older
     # cgr left there is still untracked and must not count as an edit.
@@ -1156,7 +1156,7 @@ def test_check_ignores_cgr_state_files(
 
 
 def test_keyword_arguments_are_counted_once(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _write(
@@ -1176,7 +1176,7 @@ def test_keyword_arguments_are_counted_once(
 
 
 def test_moved_definition_is_paired_across_files(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     # `tally` leaves util.py for core.py unchanged: a move, reported as a
@@ -1212,7 +1212,7 @@ def test_check_accepts_a_stamp_written_under_the_repositorys_default_name(
     # `cgr index` without --project: GraphUpdater stamps the bare directory
     # name, while `cgr check` derives the digest-suffixed one for the same tree.
     GraphUpdater(
-        ingestor=_StatefulIngestor(),
+        ingestor=StatefulIngestor(),
         repo_path=root,
         parsers=parsers,
         queries=queries,
@@ -1227,7 +1227,7 @@ def test_check_accepts_a_stamp_written_under_the_repositorys_default_name(
     # A later project's run takes the top-level stamp, but the unnamed run's
     # own entry still answers for this tree's default name (issue #1987)...
     GraphUpdater(
-        ingestor=_StatefulIngestor(),
+        ingestor=StatefulIngestor(),
         repo_path=root,
         parsers=parsers,
         queries=queries,
@@ -1262,7 +1262,7 @@ def test_check_refuses_the_default_names_stamp_for_a_named_project(
     ).load_parsers()
     # An unnamed run: stamps the bare directory name, excluding `generated_src`.
     GraphUpdater(
-        ingestor=_StatefulIngestor(),
+        ingestor=StatefulIngestor(),
         repo_path=root,
         parsers=parsers,
         queries=queries,
@@ -1295,7 +1295,7 @@ def test_a_callee_lookup_does_not_reach_another_project() -> None:
     """
     from codebase_rag.structural_delta import snapshot
 
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     store.ensure_node_batch(
         cs.NodeLabel.FUNCTION.value,
         {
@@ -1336,7 +1336,7 @@ def test_snapshot_uses_the_longest_registered_project_owner() -> None:
     """A dotted project name must not leak into its shorter sibling scope."""
     from codebase_rag.structural_delta import snapshot
 
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     for project_name in ("proj", "proj.extra"):
         store.ensure_node_batch(
             cs.NodeLabel.PROJECT.value,
@@ -1474,7 +1474,7 @@ def test_check_refuses_a_named_projects_stamp_for_the_default_project(
     ).load_parsers()
     # Named explicitly, and the name happens to equal the directory name.
     GraphUpdater(
-        ingestor=_StatefulIngestor(),
+        ingestor=StatefulIngestor(),
         repo_path=root,
         parsers=parsers,
         queries=queries,
@@ -1515,7 +1515,7 @@ def test_check_refuses_an_unnamed_stamp_for_a_named_project(
     ).load_parsers()
     # The unnamed run, which owns the stamp on disk.
     GraphUpdater(
-        ingestor=_StatefulIngestor(),
+        ingestor=StatefulIngestor(),
         repo_path=root,
         parsers=parsers,
         queries=queries,
@@ -1560,7 +1560,7 @@ def test_check_refuses_a_base_that_is_not_one_commit(
 # rename as a failure, so an invented one rolls back a correct edit
 # (Greptile, PR #1547).
 def test_an_unrelated_empty_class_is_not_reported_as_a_rename(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = indexed
     _write(root, "pkg/empty.py", "class Alpha:\n    pass\n")
@@ -1576,7 +1576,7 @@ def test_an_unrelated_empty_class_is_not_reported_as_a_rename(
 
 
 def test_an_empty_class_rename_is_reported_when_the_caller_DECLARES_it(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     # The control. The snapshots cannot tell this from the replacement above
     # -- they are the same edit -- so the only difference is that the
@@ -1610,7 +1610,7 @@ def test_an_empty_class_rename_is_reported_when_the_caller_DECLARES_it(
 
 
 def test_an_undeclared_empty_class_rename_is_a_removal_plus_an_addition(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     # The plain-write path (a file edited outside a rename operation) has no
     # declaration, and the snapshots hold no evidence, so the honest answer
@@ -1628,7 +1628,7 @@ def test_an_undeclared_empty_class_rename_is_a_removal_plus_an_addition(
 
 
 def test_two_declared_empty_class_renames_in_one_file_are_both_reported(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     # Issue #1836, fixed in #1880 -- this is the regression guard for it.
     # The three tests above each rename ONE empty class, so the candidate
@@ -1672,7 +1672,7 @@ def test_two_declared_empty_class_renames_in_one_file_are_both_reported(
 
 
 def test_an_undeclared_pair_is_still_refused_when_two_are_renamed(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     # The known-positive for the test above: admitting a declared pair past
     # the uniqueness guard must NOT admit an undeclared one alongside it.
@@ -1703,7 +1703,7 @@ def test_an_undeclared_pair_is_still_refused_when_two_are_renamed(
 
 
 def test_two_declared_nested_class_renames_are_both_reported(
-    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+    indexed: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     # The nested shape, which is what issue #1836 actually describes. The
     # test above renames two MODULE-LEVEL empty classes, so a regression

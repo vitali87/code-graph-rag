@@ -189,9 +189,9 @@ def test_a_large_go_file_indexes_without_crashing(tmp_path: Path) -> None:
         "from pathlib import Path\n"
         "from codebase_rag.graph_updater import GraphUpdater\n"
         "from codebase_rag.parser_loader import load_parsers\n"
-        "from evals.cgr_graph import _CapturingIngestor\n"
+        "from evals.cgr_graph import CapturingIngestor\n"
         "parsers, queries = load_parsers()\n"
-        f"GraphUpdater(ingestor=_CapturingIngestor(), repo_path=Path({str(repo)!r}),"
+        f"GraphUpdater(ingestor=CapturingIngestor(), repo_path=Path({str(repo)!r}),"
         " parsers=parsers, queries=queries, project_name='demo').run(force=True)\n"
     )
 
@@ -221,7 +221,7 @@ def test_a_files_type_declarations_are_walked_once(
     # binding bug. Rows stay below 257 here so the old code cannot crash.
     from codebase_rag.graph_updater import GraphUpdater
     from codebase_rag.parsers import call_processor as cp
-    from evals.cgr_graph import _CapturingIngestor
+    from evals.cgr_graph import CapturingIngestor
 
     parsers, queries = load_parsers()
     if cs.SupportedLanguage.GO not in parsers:
@@ -243,7 +243,7 @@ def test_a_files_type_declarations_are_walked_once(
     monkeypatch.setattr(settings, "GO_FRONTEND", cs.GoFrontend.TREESITTER)
 
     GraphUpdater(
-        ingestor=_CapturingIngestor(),
+        ingestor=CapturingIngestor(),
         repo_path=repo,
         parsers=parsers,
         queries=queries,

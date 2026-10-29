@@ -24,8 +24,8 @@ from codebase_rag.editing.rename import Renamer, RenameRefused, rename
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import create_and_run_updater
-from codebase_rag.tests.test_rename_op import RecordedGraph
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
+from evals.recorded_graph import RecordedGraph
 
 EXACT = cs.EdgeResolution.EXACT.value
 CALLS = cs.RelationshipType.CALLS.value
@@ -171,7 +171,7 @@ NEGATIVE_FILES = {
 }
 
 
-def _run(root: Path, files: dict[str, str]) -> tuple[GraphUpdater, _StatefulIngestor]:
+def _run(root: Path, files: dict[str, str]) -> tuple[GraphUpdater, StatefulIngestor]:
     for rel, text in files.items():
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -179,7 +179,7 @@ def _run(root: Path, files: dict[str, str]) -> tuple[GraphUpdater, _StatefulInge
     parsers, queries = load_parsers()
     if cs.SupportedLanguage.TS not in parsers:
         pytest.skip("typescript parser not available")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = GraphUpdater(
         ingestor=store,
         repo_path=root,
@@ -209,11 +209,11 @@ WIDGET_FILES = {
 }
 
 
-def _index(root: Path, files: dict[str, str]) -> _StatefulIngestor:
+def _index(root: Path, files: dict[str, str]) -> StatefulIngestor:
     return _run(root, files)[1]
 
 
-def _calls(store: _StatefulIngestor, caller: str) -> dict[int, tuple[str, str]]:
+def _calls(store: StatefulIngestor, caller: str) -> dict[int, tuple[str, str]]:
     """The CALLS edges out of `caller`, by call column: (target, resolution)."""
     out: dict[int, tuple[str, str]] = {}
     for edge in store.keyed_edges:
@@ -227,27 +227,27 @@ def _calls(store: _StatefulIngestor, caller: str) -> dict[int, tuple[str, str]]:
 
 
 @pytest.fixture(scope="module")
-def issue_store(tmp_path_factory: pytest.TempPathFactory) -> _StatefulIngestor:
+def issue_store(tmp_path_factory: pytest.TempPathFactory) -> StatefulIngestor:
     return _index(tmp_path_factory.mktemp("issue") / "barrel", ISSUE_FILES)
 
 
 @pytest.fixture(scope="module")
-def comment_store(tmp_path_factory: pytest.TempPathFactory) -> _StatefulIngestor:
+def comment_store(tmp_path_factory: pytest.TempPathFactory) -> StatefulIngestor:
     return _index(tmp_path_factory.mktemp("comment") / "shop", COMMENT_FILES)
 
 
 @pytest.fixture(scope="module")
-def chain_store(tmp_path_factory: pytest.TempPathFactory) -> _StatefulIngestor:
+def chain_store(tmp_path_factory: pytest.TempPathFactory) -> StatefulIngestor:
     return _index(tmp_path_factory.mktemp("chain") / "chain", CHAIN_FILES)
 
 
 @pytest.fixture(scope="module")
-def local_store(tmp_path_factory: pytest.TempPathFactory) -> _StatefulIngestor:
+def local_store(tmp_path_factory: pytest.TempPathFactory) -> StatefulIngestor:
     return _index(tmp_path_factory.mktemp("local") / "local", LOCAL_FILES)
 
 
 @pytest.fixture(scope="module")
-def negative_store(tmp_path_factory: pytest.TempPathFactory) -> _StatefulIngestor:
+def negative_store(tmp_path_factory: pytest.TempPathFactory) -> StatefulIngestor:
     return _index(tmp_path_factory.mktemp("negative") / "neg", NEGATIVE_FILES)
 
 
@@ -264,14 +264,14 @@ def negative_store(tmp_path_factory: pytest.TempPathFactory) -> _StatefulIngesto
     ],
 )
 def test_each_call_through_the_barrel_is_an_exact_call_to_the_definition(
-    issue_store: _StatefulIngestor, col: int, target: str
+    issue_store: StatefulIngestor, col: int, target: str
 ) -> None:
     calls = _calls(issue_store, "barrel.src.app.main.run")
     assert calls.get(col) == (target, EXACT), calls
 
 
 def test_callers_of_the_default_export_include_its_barrel_alias(
-    issue_store: _StatefulIngestor,
+    issue_store: StatefulIngestor,
 ) -> None:
     # `cgr graph callers …mul.mul` listed only the direct import (col 65).
     calls = _calls(issue_store, "barrel.src.app.main.run")
@@ -354,7 +354,7 @@ def test_an_export_naming_no_binding_records_nothing(tmp_path: Path) -> None:
     ],
 )
 def test_a_named_reexport_binds_exactly(
-    comment_store: _StatefulIngestor, caller: str, col: int
+    comment_store: StatefulIngestor, caller: str, col: int
 ) -> None:
     calls = _calls(comment_store, caller)
     assert calls.get(col) == (FORMAT_PRICE, EXACT), calls
@@ -373,7 +373,7 @@ def test_a_named_reexport_binds_exactly(
     ],
 )
 def test_a_chain_of_barrels_reaches_the_definition(
-    chain_store: _StatefulIngestor, col: int, target: str
+    chain_store: StatefulIngestor, col: int, target: str
 ) -> None:
     calls = _calls(chain_store, "chain.src.use.use")
     assert calls.get(col) == (target, EXACT), calls
@@ -392,7 +392,7 @@ def test_a_chain_of_barrels_reaches_the_definition(
     ],
 )
 def test_an_export_of_a_local_binding_reaches_the_definition(
-    local_store: _StatefulIngestor, col: int, target: str
+    local_store: StatefulIngestor, col: int, target: str
 ) -> None:
     calls = _calls(local_store, "local.src.main.main")
     assert calls.get(col) == (target, EXACT), calls
@@ -402,7 +402,7 @@ def test_an_export_of_a_local_binding_reaches_the_definition(
 
 
 def test_the_namespace_reexport_call_stays_exact(
-    issue_store: _StatefulIngestor,
+    issue_store: StatefulIngestor,
 ) -> None:
     calls = _calls(issue_store, "barrel.src.app.main.run")
     # `math.add(...)`: the site starts at `add` (issue #3166).
@@ -418,13 +418,13 @@ def test_the_namespace_reexport_call_stays_exact(
     ],
 )
 def test_direct_imports_of_the_definition_stay_exact(
-    comment_store: _StatefulIngestor, col: int
+    comment_store: StatefulIngestor, col: int
 ) -> None:
     calls = _calls(comment_store, "shop.src.cart.total")
     assert calls.get(col) == (FORMAT_PRICE, EXACT), calls
 
 
-def _imports(store: _StatefulIngestor) -> set[tuple[str, str]]:
+def _imports(store: StatefulIngestor) -> set[tuple[str, str]]:
     return {
         (str(edge[1]), str(edge[4]))
         for edge in store.keyed_edges
@@ -433,7 +433,7 @@ def _imports(store: _StatefulIngestor) -> set[tuple[str, str]]:
 
 
 def test_a_star_barrel_imports_the_module_it_reexports(
-    issue_store: _StatefulIngestor, chain_store: _StatefulIngestor
+    issue_store: StatefulIngestor, chain_store: StatefulIngestor
 ) -> None:
     # `export * from "./add"` in `math/index.ts` names the module `math.add`,
     # which the IMPORTS flush read as the name `add` of the `math` barrel:
@@ -449,7 +449,7 @@ def test_a_star_barrel_imports_the_module_it_reexports(
 
 
 def test_a_star_barrel_does_not_import_itself(
-    issue_store: _StatefulIngestor, chain_store: _StatefulIngestor
+    issue_store: StatefulIngestor, chain_store: StatefulIngestor
 ) -> None:
     for store in (issue_store, chain_store):
         imports = _imports(store)
@@ -457,7 +457,7 @@ def test_a_star_barrel_does_not_import_itself(
 
 
 def test_two_star_sources_exporting_one_name_bind_neither_exactly(
-    negative_store: _StatefulIngestor,
+    negative_store: StatefulIngestor,
 ) -> None:
     # TypeScript exports neither of two conflicting star names; picking one
     # would be a guess, so the call is not an exact edge to either.
@@ -466,14 +466,14 @@ def test_two_star_sources_exporting_one_name_bind_neither_exactly(
 
 
 def test_a_name_only_one_star_source_exports_still_binds(
-    negative_store: _StatefulIngestor,
+    negative_store: StatefulIngestor,
 ) -> None:
     calls = _calls(negative_store, "neg.src.neg.neg")
     assert calls.get(17) == ("neg.src.a.onlyA", EXACT), calls
 
 
 def test_a_star_reexport_does_not_carry_the_default(
-    negative_store: _StatefulIngestor,
+    negative_store: StatefulIngestor,
 ) -> None:
     # `export *` never re-exports `default`, so the barrel has no default and
     # `b`'s default export is not what `starDefault` names.
@@ -483,7 +483,7 @@ def test_a_star_reexport_does_not_carry_the_default(
 
 
 def test_a_barrels_private_import_does_not_stand_in_for_its_export(
-    negative_store: _StatefulIngestor,
+    negative_store: StatefulIngestor,
 ) -> None:
     # `private/index.ts` imports `dup` from `a` for its own use and exports
     # `d`'s `dup` through `export *`; the consumer's `dup` is `d`'s.
@@ -492,21 +492,21 @@ def test_a_barrels_private_import_does_not_stand_in_for_its_export(
 
 
 def test_the_barrels_own_call_keeps_its_private_import(
-    negative_store: _StatefulIngestor,
+    negative_store: StatefulIngestor,
 ) -> None:
     calls = _calls(negative_store, "neg.src.private.index.viaA")
     assert calls == {9: ("neg.src.a.dup", EXACT)}, calls
 
 
 def test_an_explicit_reexport_outranks_a_star(
-    negative_store: _StatefulIngestor,
+    negative_store: StatefulIngestor,
 ) -> None:
     calls = _calls(negative_store, "neg.src.neg.neg")
     assert calls.get(43) == ("neg.src.c.other", EXACT), calls
 
 
 def test_a_cycle_of_stars_ends_without_an_edge(
-    negative_store: _StatefulIngestor,
+    negative_store: StatefulIngestor,
 ) -> None:
     calls = _calls(negative_store, "neg.src.neg.neg")
     assert 54 not in calls, calls

@@ -9,11 +9,11 @@ from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import (
-    _MockIngestor,
     get_node_names,
     get_relationships,
     run_updater,
 )
+from evals.recorded_graph import RecordingIngestor
 
 
 @pytest.fixture
@@ -218,7 +218,7 @@ class TestSingleFileRunScope:
             queries=queries,
         ).run()
 
-        second = _MockIngestor()
+        second = RecordingIngestor()
         GraphUpdater(
             ingestor=second,
             repo_path=repo / "module_a.py",
@@ -270,7 +270,7 @@ class TestSingleFileRunScope:
         assert before, "fixture guard: the full build must record at least one"
 
         GraphUpdater(
-            ingestor=_MockIngestor(),
+            ingestor=RecordingIngestor(),
             repo_path=repo / "module_a.py",
             parsers=parsers,
             queries=queries,
@@ -309,13 +309,13 @@ class TestSingleFileRunScope:
             "def renamed_b():\n    pass\n", encoding="utf-8"
         )
         GraphUpdater(
-            ingestor=_MockIngestor(),
+            ingestor=RecordingIngestor(),
             repo_path=repo / "module_a.py",
             parsers=parsers,
             queries=queries,
         ).run()
 
-        third = _MockIngestor()
+        third = RecordingIngestor()
         GraphUpdater(
             ingestor=third,
             repo_path=repo,
@@ -363,7 +363,7 @@ class TestSingleFileRunScope:
         )
 
         second = GraphUpdater(
-            ingestor=_MockIngestor(),
+            ingestor=RecordingIngestor(),
             repo_path=repo / "module_a.py",
             parsers=parsers,
             queries=queries,
@@ -418,7 +418,7 @@ class TestSingleFileRunScope:
         )
 
         GraphUpdater(
-            ingestor=_MockIngestor(),
+            ingestor=RecordingIngestor(),
             repo_path=repo / "module_a.py",
             parsers=parsers,
             queries=queries,
@@ -475,7 +475,7 @@ class TestSingleFileRunScope:
             {cs.KEY_PATH: "module_b.py"},
             {cs.KEY_PATH: "__init__.py"},
         ]
-        single = _MockIngestor()
+        single = RecordingIngestor()
         single.fetch_all.return_value = graph_rows
         GraphUpdater(
             ingestor=single,
@@ -489,7 +489,7 @@ class TestSingleFileRunScope:
             "def module_b_function():\n    return 99\n", encoding="utf-8"
         )
 
-        project = _MockIngestor()
+        project = RecordingIngestor()
         project.fetch_all.return_value = graph_rows
         GraphUpdater(
             ingestor=project,
@@ -567,7 +567,7 @@ class TestSingleFileRunScope:
         if drop_cache:
             cache_path.unlink()
 
-        second = _MockIngestor()
+        second = RecordingIngestor()
         second.fetch_all.return_value = [
             {cs.KEY_PATH: "module_a.py"},
             {cs.KEY_PATH: "module_b.py"},
@@ -660,7 +660,7 @@ class TestSingleFileRunScope:
         # keyed relative to the PROJECT root. A plain MagicMock would make
         # the prune skip entirely (it is gated on QueryProtocol), so the
         # defect would be invisible rather than absent.
-        second = _MockIngestor()
+        second = RecordingIngestor()
         second.fetch_all.return_value = [
             {cs.KEY_PATH: "root_module.py", "qualified_name": "nested.root_module"},
             {cs.KEY_PATH: "pkg/module_a.py", "qualified_name": "nested.pkg.module_a"},
@@ -749,7 +749,7 @@ class TestSingleFileRunScope:
             queries=queries,
         ).run()
 
-        second = _MockIngestor()
+        second = RecordingIngestor()
         GraphUpdater(
             ingestor=second,
             repo_path=repo / "pkg" / "module_a.py",

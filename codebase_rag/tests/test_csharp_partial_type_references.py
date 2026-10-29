@@ -30,7 +30,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.type_facts import TypeReferenceResolver
 from codebase_rag.tests.conftest import get_relationships, run_updater
 from codebase_rag.types_defs import NodeType, PropertyDict, ResultRow
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 SKIP = "c_sharp"
 PROJECT = "cspart"
@@ -90,12 +90,12 @@ def _write(root: Path, files: dict[str, str]) -> None:
 
 def _indexed(
     root: Path, files: dict[str, str]
-) -> tuple[_StatefulIngestor, GraphUpdater]:
+) -> tuple[StatefulIngestor, GraphUpdater]:
     _write(root, files)
     parsers, queries = load_parsers()
     if SKIP not in parsers:
         pytest.skip(f"{SKIP} parser not available")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = GraphUpdater(
         ingestor=store,
         repo_path=root,
@@ -214,7 +214,7 @@ HOLDER = (
 EARLIER_PART = ORDER.replace("Total() { return Tax() + 1; }", "Early() { return 0; }")
 
 
-def _sync(root: Path, store: _StatefulIngestor, force: bool = False) -> None:
+def _sync(root: Path, store: StatefulIngestor, force: bool = False) -> None:
     # A fresh updater per run, as each `cgr` invocation is: the unchanged
     # files' partial groups come back from the graph, not from memory.
     parsers, queries = load_parsers()
@@ -230,7 +230,7 @@ def _sync(root: Path, store: _StatefulIngestor, force: bool = False) -> None:
     ).run(force=force)
 
 
-def _type_edges(store: _StatefulIngestor) -> set[tuple[str, str, str]]:
+def _type_edges(store: StatefulIngestor) -> set[tuple[str, str, str]]:
     return {
         (edge[1], edge[2], edge[4])
         for edge in store.keyed_edges
@@ -242,7 +242,7 @@ def _synced_and_clean(
     root: Path, before: dict[str, str], change: dict[str, str | None]
 ) -> tuple[set[tuple[str, str, str]], set[tuple[str, str, str]]]:
     _write(root, before)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _sync(root, store, force=True)
     for rel, text in change.items():
         if text is None:
@@ -250,7 +250,7 @@ def _synced_and_clean(
         else:
             _write(root, {rel: text})
     _sync(root, store)
-    clean = _StatefulIngestor()
+    clean = StatefulIngestor()
     _sync(root, clean, force=True)
     return _type_edges(store), _type_edges(clean)
 

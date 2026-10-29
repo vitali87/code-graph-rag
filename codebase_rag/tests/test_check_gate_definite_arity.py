@@ -24,7 +24,7 @@ from codebase_rag.cli import app
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.structural_delta import StructuralDelta, has_findings
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "reqp"
 LIB = "def send(msg):\n    return msg\n"
@@ -36,7 +36,7 @@ def _git(root: Path, *args: str) -> None:
 
 
 @pytest.fixture
-def indexed(temp_repo: Path) -> tuple[Path, _StatefulIngestor]:
+def indexed(temp_repo: Path) -> tuple[Path, StatefulIngestor]:
     root = temp_repo / PROJECT
     root.mkdir()
     (root / "lib.py").write_text(LIB)
@@ -45,7 +45,7 @@ def indexed(temp_repo: Path) -> tuple[Path, _StatefulIngestor]:
     _git(root, "add", "-A")
     _git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "b")
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(
         ingestor=store,
         repo_path=root,
@@ -56,7 +56,7 @@ def indexed(temp_repo: Path) -> tuple[Path, _StatefulIngestor]:
     return root, store
 
 
-def _check(root: Path, store: _StatefulIngestor) -> Result:
+def _check(root: Path, store: StatefulIngestor) -> Result:
     cli_store = MagicMock(wraps=store)
     cli_store.list_projects = MagicMock(return_value=[PROJECT])
     context = MagicMock()
@@ -86,7 +86,7 @@ def _verdicts(result: Result) -> list[str]:
 
 
 def test_an_added_optional_parameter_passes_the_gate(
-    indexed: tuple[Path, _StatefulIngestor],
+    indexed: tuple[Path, StatefulIngestor],
 ) -> None:
     root, store = indexed
     (root / "lib.py").write_text(LIB.replace("(msg)", "(msg, channel=None)"))
@@ -122,7 +122,7 @@ def test_a_possibly_missing_site_is_no_finding() -> None:
 
 
 def test_a_removed_parameter_a_caller_passes_still_fails_the_gate(
-    indexed: tuple[Path, _StatefulIngestor],
+    indexed: tuple[Path, StatefulIngestor],
 ) -> None:
     root, store = indexed
     (root / "lib.py").write_text("def send():\n    return 1\n")
@@ -158,7 +158,7 @@ def test_a_remote_caller_of_a_changed_handler_still_trips_the_gate() -> None:
 
 
 def test_an_untouched_tree_passes_the_gate(
-    indexed: tuple[Path, _StatefulIngestor],
+    indexed: tuple[Path, StatefulIngestor],
 ) -> None:
     root, store = indexed
 

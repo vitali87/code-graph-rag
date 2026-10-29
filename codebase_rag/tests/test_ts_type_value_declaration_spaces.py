@@ -27,7 +27,7 @@ from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 from codebase_rag.tests.conftest import get_relationships, run_updater
 from codebase_rag.types_defs import NodeType
 from codec import schema_pb2 as pb
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 TYPE_AND_FUNCTION_TS = """export type input<T> = { value: T };
 
@@ -397,7 +397,7 @@ def test_renaming_the_function_leaves_its_type_twin(temp_repo: Path) -> None:
     # by qualified name, so without scoping them to the renamed node's label
     # that RETURNS edge became a siteless structural edge and refused.
     _write(temp_repo, {"shape.ts": TYPE_AND_FUNCTION_TS, "use.ts": USE_INPUT_TS})
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
     updater = GraphUpdater(
         ingestor=store, repo_path=temp_repo, parsers=parsers, queries=queries
@@ -428,7 +428,7 @@ def test_renaming_a_function_whose_import_also_binds_its_type_twin_refuses(
         temp_repo,
         {"shape.ts": TYPE_AND_FUNCTION_TS, "use.ts": USE_INPUT_AND_ITS_TYPE_TS},
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
     updater = GraphUpdater(
         ingestor=store, repo_path=temp_repo, parsers=parsers, queries=queries
@@ -456,7 +456,7 @@ def test_renaming_a_function_whose_import_is_also_implemented_refuses(
         temp_repo,
         {"shape.ts": INTERFACE_AND_FUNCTION_TS, "use.ts": USE_OPTS_AND_IMPLEMENT_IT_TS},
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
     updater = GraphUpdater(
         ingestor=store, repo_path=temp_repo, parsers=parsers, queries=queries
@@ -518,7 +518,7 @@ def test_an_incremental_run_reads_both_twins_back(temp_repo: Path) -> None:
     # store. Registering the first row and skipping the second left the
     # interface as the name's only kind, and `new Box()` bound nothing.
     _write(temp_repo, {"shape.ts": INTERFACE_THEN_CLASS_TS, "use.ts": USE_BOX_TS})
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
 
     def updater() -> GraphUpdater:

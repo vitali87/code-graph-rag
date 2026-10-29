@@ -19,7 +19,7 @@ from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import PropertyValue, ResultRow
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "proj"
 
@@ -184,7 +184,7 @@ def _freeze(value: PropertyValue) -> str:
     return repr(value)
 
 
-def _snapshot(store: _StatefulIngestor) -> Snapshot:
+def _snapshot(store: StatefulIngestor) -> Snapshot:
     """Every node with its properties and every edge with its site and
     properties (the CALLS `resolution` label among them), so a kept edge
     that a clean index would have bound differently cannot hide."""
@@ -220,7 +220,7 @@ def _diff(actual: Snapshot, expected: Snapshot) -> str:
 
 
 def _updater(
-    store: _StatefulIngestor, root: Path, capture: CaptureSelection | None = None
+    store: StatefulIngestor, root: Path, capture: CaptureSelection | None = None
 ) -> GraphUpdater:
     parsers, queries = load_parsers()
     return GraphUpdater(
@@ -253,7 +253,7 @@ def _edit_after_cache(root: Path, edits: dict[str, str]) -> None:
 
 
 def _clean(root: Path, capture: CaptureSelection | None = None) -> Snapshot:
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(store, root, capture).run(force=True)
     return _snapshot(store)
 
@@ -267,7 +267,7 @@ def _sync(
     """Index `files`, apply `edits`, and sync the way the CLI does (a new
     updater over the populated graph): the files re-parsed, and the graph."""
     _materialise(root, files)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(store, root, capture).run(force=True)
     _edit_after_cache(root, edits)
     updater = _updater(store, root, capture)
@@ -395,7 +395,7 @@ def test_a_scoped_reingest_of_a_comment_edit_reports_no_dependents(
     re-parsed beside the edited file, and a comment touches nothing."""
     root = temp_repo / PROJECT
     _materialise(root, PYTHON)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, root)
     updater.run(force=True)
     (root / PY_TARGET).write_text(PY_CORE + "# trailing note\n", encoding="utf-8")
@@ -437,7 +437,7 @@ def test_a_scoped_reingest_of_an_interface_change_reparses_the_callers(
 ) -> None:
     root = temp_repo / PROJECT
     _materialise(root, PYTHON)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, root)
     updater.run(force=True)
     (root / PY_TARGET).write_text(edit(PY_CORE), encoding="utf-8")
@@ -462,7 +462,7 @@ def test_a_save_during_a_reingest_is_judged_before_its_callers_keep_edges(
     `Widget.size` for good."""
     root = temp_repo / PROJECT
     _materialise(root, PYTHON)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, root)
     updater.run(force=True)
     target = root / PY_TARGET
@@ -858,7 +858,7 @@ def test_a_scoped_reingest_of_a_stable_file_and_its_changed_dependency(
     fresh updater: a warm one keeps return types cached (issue #2927)."""
     root = temp_repo / PROJECT
     _materialise(root, CHAIN)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(store, root).run(force=True)
     (root / "factory.py").write_text(
         FACTORY_RETURNS_B(CHAIN["factory.py"]), encoding="utf-8"
@@ -985,7 +985,7 @@ def test_a_scoped_reingest_of_a_changed_constructor_argument_reparses_the_fields
     needs (issue #2927 above)."""
     root = temp_repo / PROJECT
     _materialise(root, FIELD_CALLS)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(store, root).run(force=True)
     (root / FIELD_TARGET).write_text(FIELD_HANDLER_B(FIELD_SPEC), encoding="utf-8")
 
@@ -1027,7 +1027,7 @@ def test_a_scoped_reingest_that_moves_no_named_argument_reports_no_dependents(
 ) -> None:
     root = temp_repo / PROJECT
     _materialise(root, FIELD_CALLS)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(store, root).run(force=True)
     (root / FIELD_TARGET).write_text(
         _replace('"ready"', '"set up"')(FIELD_SPEC), encoding="utf-8"
@@ -1260,7 +1260,7 @@ def test_a_scoped_reingest_creating_a_waited_on_file_reparses_the_waiters_caller
 ) -> None:
     root = temp_repo / PROJECT
     _materialise(root, WAITING)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(store, root).run(force=True)
     (root / "factory.py").write_text(CHAIN["factory.py"], encoding="utf-8")
 
@@ -1313,7 +1313,7 @@ def test_the_callers_of_a_method_defined_into_a_reindexed_module_are_reparsed(
     the module (a fresh one finds no such file, as before this change)."""
     root = temp_repo / PROJECT
     _materialise(root, GO_RECEIVER)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, root)
     updater.run(force=True)
     _edit_after_cache(root, edits)
@@ -1375,7 +1375,7 @@ def test_a_scoped_reingest_of_a_returned_method_read_through_a_local(
 ) -> None:
     root = temp_repo / PROJECT
     _materialise(root, files)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(store, root).run(force=True)
     (root / "app.py").write_text(RETURNED_FROM_B(files["app.py"]), encoding="utf-8")
 
@@ -1415,7 +1415,7 @@ def test_a_scoped_reingest_of_a_file_whose_callbacks_others_seed(
 ) -> None:
     root = temp_repo / PROJECT
     _materialise(root, FLOW_SEEDED)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(store, root).run(force=True)
     (root / "engine.py").write_text(
         _comment(FLOW_SEEDED["engine.py"]), encoding="utf-8"

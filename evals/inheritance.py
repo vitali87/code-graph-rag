@@ -20,7 +20,7 @@ from codebase_rag.utils.path_utils import should_skip_path
 from . import constants as ec
 from . import logs as ls
 from .ast_oracle import _from_base_parts, _iter_py_files, _module_dotted
-from .cgr_graph import _capture
+from .cgr_graph import capture
 from .ignore_rules import ignore_rules
 from .oracles.cpp_oracle import cpp_available, run_cpp_oracle
 
@@ -196,7 +196,7 @@ def oracle_inheritance(target: Path, project: str) -> OracleResult:
 
 
 def cgr_inheritance(target: Path, project: str) -> CgrResult:
-    ingestor = _capture(target, project)
+    ingestor = capture(target, project)
     first_party: set[str] = {
         str(uid)
         for (label, uid), props in ingestor.nodes.items()
@@ -239,7 +239,7 @@ def _indexed_file_filter(target: Path) -> Callable[[str], bool]:
 
     The located-supertype oracles walk the target themselves, so the
     configured exclusions have to be applied to their OUTPUT: the cgr side
-    captures through `_capture`, which passes the merged ignore rules to
+    captures through `capture`, which passes the merged ignore rules to
     `GraphUpdater` (issue #1520), and grading a wider set on the oracle side
     than the graph can contain scores every edge in an excluded directory as
     a miss (Greptile P1, PR #1519). Filtered through the indexer's own
@@ -296,7 +296,7 @@ def _located_cgr_inheritance(
     rel_types: tuple[str, ...] = _SUPERTYPE_RELS,
     skip_suffix: str | None = None,
 ) -> CgrResult:
-    ingestor = _capture(target, project)
+    ingestor = capture(target, project)
     props_by_node = {
         (label, str(uid)): props for (label, uid), props in ingestor.nodes.items()
     }

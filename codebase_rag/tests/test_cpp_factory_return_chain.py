@@ -7,11 +7,11 @@
 from pathlib import Path
 
 from codebase_rag import constants as cs
-from evals.cgr_graph import _capture
+from evals.cgr_graph import capture
 
 
 def _calls(tmp_path: Path) -> set[tuple[str, str]]:
-    ingestor = _capture(tmp_path, "crate")
+    ingestor = capture(tmp_path, "crate")
     return {
         (str(from_val), str(to_val))
         for _fl, from_val, rel, _tl, to_val in ingestor.rels
@@ -289,7 +289,7 @@ def test_braced_init_return_emits_ctor_call(tmp_path: Path) -> None:
         "int helper() { return 1; }\n"
         "void unrelated() { helper(); }\n",
     )
-    ingestor = _capture(tmp_path, "crate")
+    ingestor = capture(tmp_path, "crate")
     calls = {
         (str(f), str(r), str(t))
         for _fl, f, r, _tl, t in ingestor.rels

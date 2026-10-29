@@ -20,7 +20,7 @@ import pytest
 from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 LOCAL = "local"
 OTHER = "other"
@@ -28,7 +28,7 @@ REL = "pkg/mod.py"
 LOCAL_BODY = "def f():\n    return 'local checkout source'\n"
 
 
-def _function(store: _StatefulIngestor, project: str) -> str:
+def _function(store: StatefulIngestor, project: str) -> str:
     qn = f"{project}.pkg.mod.f"
     store.ensure_node_batch(
         cs.NodeLabel.FUNCTION.value,
@@ -44,11 +44,11 @@ def _function(store: _StatefulIngestor, project: str) -> str:
 
 
 @pytest.fixture
-def graph(temp_repo: Path) -> tuple[Path, _StatefulIngestor]:
+def graph(temp_repo: Path) -> tuple[Path, StatefulIngestor]:
     local_root = temp_repo / LOCAL
     (local_root / "pkg").mkdir(parents=True)
     (local_root / REL).write_text(LOCAL_BODY)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     for name, root in ((LOCAL, local_root), (OTHER, temp_repo / OTHER)):
         store.ensure_node_batch(
             cs.NodeLabel.PROJECT.value,
@@ -64,7 +64,7 @@ def _sources(payload: object) -> str:
 
 
 async def test_mcp_context_reads_no_local_source_for_another_project(
-    graph: tuple[Path, _StatefulIngestor],
+    graph: tuple[Path, StatefulIngestor],
 ) -> None:
     from codebase_rag.mcp.tools import MCPToolsRegistry
 
@@ -91,7 +91,7 @@ async def test_mcp_context_reads_no_local_source_for_another_project(
 
 
 def test_cli_context_reads_no_local_source_for_another_project(
-    graph: tuple[Path, _StatefulIngestor], monkeypatch: pytest.MonkeyPatch
+    graph: tuple[Path, StatefulIngestor], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from codebase_rag import graph_cli
     from codebase_rag.cli import app
@@ -123,7 +123,7 @@ def test_cli_context_reads_no_local_source_for_another_project(
 
 
 def test_cli_context_exits_nonzero_when_nothing_matches(
-    graph: tuple[Path, _StatefulIngestor], monkeypatch: pytest.MonkeyPatch
+    graph: tuple[Path, StatefulIngestor], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from codebase_rag import graph_cli
     from codebase_rag.cli import app
@@ -147,7 +147,7 @@ def test_cli_context_exits_nonzero_when_nothing_matches(
 
 
 async def test_mcp_context_scopes_free_text_search_to_the_resolved_project(
-    graph: tuple[Path, _StatefulIngestor], monkeypatch: pytest.MonkeyPatch
+    graph: tuple[Path, StatefulIngestor], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # With `project` omitted the tool reads the project this server's root
     # derives to; the embedding search that resolves free text must be held
@@ -194,7 +194,7 @@ async def test_mcp_context_scopes_free_text_search_to_the_resolved_project(
 
 
 def test_cli_context_reports_a_failing_search_as_itself(
-    graph: tuple[Path, _StatefulIngestor], monkeypatch: pytest.MonkeyPatch
+    graph: tuple[Path, StatefulIngestor], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A failed embedding search used to read as "Nothing in the graph matches".
     from codebase_rag import graph_cli
@@ -225,7 +225,7 @@ def test_cli_context_reports_a_failing_search_as_itself(
 
 
 async def test_mcp_context_reports_a_failing_free_text_search(
-    graph: tuple[Path, _StatefulIngestor], monkeypatch: pytest.MonkeyPatch
+    graph: tuple[Path, StatefulIngestor], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The embedding search used to swallow a store outage and answer [], so a
     # free-text target came back "unresolved" as if nothing matched.

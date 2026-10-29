@@ -5,7 +5,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 _MODELS = (
     "class Base:\n    pass\n\n"
@@ -15,7 +15,7 @@ _MODELS = (
 )
 
 
-def _make_project_updater(root: Path, store: _StatefulIngestor) -> GraphUpdater:
+def _make_project_updater(root: Path, store: StatefulIngestor) -> GraphUpdater:
     parsers, queries = load_parsers()
     return GraphUpdater(
         ingestor=store,
@@ -28,7 +28,7 @@ def _make_project_updater(root: Path, store: _StatefulIngestor) -> GraphUpdater:
 
 @pytest.fixture
 def rehydrated_updater(tmp_path: Path) -> GraphUpdater:
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     for project in ("proj", "proj_extra"):
         root = tmp_path / project
         root.mkdir()
@@ -84,7 +84,7 @@ def test_incremental_inheritance_contains_only_the_requested_project(
 
 
 def test_inheritance_scope_applies_to_child_not_base() -> None:
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     for qualified_name in ("proj.Child", "other.Base", "other.Child", "proj.Base"):
         store.ensure_node_batch(
             cs.NodeLabel.CLASS, {cs.KEY_QUALIFIED_NAME: qualified_name}

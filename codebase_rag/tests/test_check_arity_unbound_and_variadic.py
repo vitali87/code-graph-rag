@@ -21,7 +21,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.structural_delta import StructuralDelta, observe
 from codebase_rag.types_defs import PropertyParams, ResultRow
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "arity"
 
@@ -73,10 +73,10 @@ USE = (
     "    variadic(1, 2, 3)\n"
 )
 
-Indexed = tuple[Path, _StatefulIngestor, GraphUpdater]
+Indexed = tuple[Path, StatefulIngestor, GraphUpdater]
 
 
-def _fetch(store: _StatefulIngestor) -> QueryFn:
+def _fetch(store: StatefulIngestor) -> QueryFn:
     def fetch(query: str, params: PropertyParams | None) -> list[ResultRow]:
         return store.fetch_all(query, dict(params) if params is not None else None)
 
@@ -90,7 +90,7 @@ def delta(temp_repo: Path) -> StructuralDelta:
     (root / "lib.py").write_text(LIB)
     (root / "use.py").write_text(USE)
     (root / "vlib.pyi").write_text(STUB)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
     updater = GraphUpdater(
         ingestor=store,

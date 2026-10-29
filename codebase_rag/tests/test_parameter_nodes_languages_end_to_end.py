@@ -19,7 +19,7 @@ from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 _FILES = {
     "go/go.mod": "module lib\n\ngo 1.21\n",
@@ -98,14 +98,14 @@ _FILES = {
 Row = tuple[str, int, str | None, bool, bool]
 
 
-def _index(tmp_path: Path) -> _StatefulIngestor:
+def _index(tmp_path: Path) -> StatefulIngestor:
     repo = tmp_path / "proj"
     for rel, src in _FILES.items():
         target = repo / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(src)
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(
         ingestor=store,
         repo_path=repo,
@@ -116,7 +116,7 @@ def _index(tmp_path: Path) -> _StatefulIngestor:
     return store
 
 
-def _parameters(store: _StatefulIngestor) -> dict[str, dict]:
+def _parameters(store: StatefulIngestor) -> dict[str, dict]:
     return {
         str(props[cs.KEY_QUALIFIED_NAME]): props
         for (label, _uid), props in store.nodes.items()
@@ -124,7 +124,7 @@ def _parameters(store: _StatefulIngestor) -> dict[str, dict]:
     }
 
 
-def _rows(store: _StatefulIngestor, owner_qn: str) -> list[Row]:
+def _rows(store: StatefulIngestor, owner_qn: str) -> list[Row]:
     prefix = f"{owner_qn}{cs.SEPARATOR_DOT}"
     owned = [
         p
@@ -143,7 +143,7 @@ def _rows(store: _StatefulIngestor, owner_qn: str) -> list[Row]:
     ]
 
 
-def _edges(store: _StatefulIngestor, rel: str) -> set[tuple[str, str]]:
+def _edges(store: StatefulIngestor, rel: str) -> set[tuple[str, str]]:
     return {(str(s), str(t)) for _sl, s, r, _tl, t in store.edges if r == rel}
 
 

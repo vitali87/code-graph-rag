@@ -43,7 +43,7 @@ from codebase_rag.structural_delta import (
     _site,
     has_findings,
 )
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "sigs"
 
@@ -61,7 +61,7 @@ def _write(root: Path, files: Files) -> None:
         path.write_text(text)
 
 
-def _index(root: Path, files: Files) -> _StatefulIngestor:
+def _index(root: Path, files: Files) -> StatefulIngestor:
     """Commit `files` and index the commit, as the graph `cgr check` expects."""
     root.mkdir()
     _write(root, files)
@@ -69,7 +69,7 @@ def _index(root: Path, files: Files) -> _StatefulIngestor:
     _git(root, "add", "-A")
     _git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "b")
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(
         ingestor=store,
         repo_path=root,
@@ -80,7 +80,7 @@ def _index(root: Path, files: Files) -> _StatefulIngestor:
     return store
 
 
-def _check(root: Path, store: _StatefulIngestor, edits: Files) -> StructuralDelta:
+def _check(root: Path, store: StatefulIngestor, edits: Files) -> StructuralDelta:
     """What `cgr check` computes after `edits` land in the working tree."""
     _write(root, edits)
     parsers, queries = load_parsers()
@@ -185,7 +185,7 @@ def test_a_required_ts_parameter_added_to_a_called_function_is_reported(
     assert has_findings(delta)
 
 
-def _cli_check(root: Path, store: _StatefulIngestor) -> Result:
+def _cli_check(root: Path, store: StatefulIngestor) -> Result:
     cli_store = MagicMock(wraps=store)
     cli_store.list_projects = MagicMock(return_value=[PROJECT])
     context = MagicMock()

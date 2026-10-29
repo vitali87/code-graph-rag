@@ -16,7 +16,7 @@ from pathlib import Path
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "shop"
 
@@ -50,9 +50,7 @@ def use():
 """
 
 
-def _project(
-    root: Path, models: str = MODELS
-) -> tuple[_StatefulIngestor, GraphUpdater]:
+def _project(root: Path, models: str = MODELS) -> tuple[StatefulIngestor, GraphUpdater]:
     for rel, text in {
         "app/__init__.py": "",
         "app/models.py": models,
@@ -62,7 +60,7 @@ def _project(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = GraphUpdater(
         ingestor=store,
         repo_path=root,
@@ -74,7 +72,7 @@ def _project(
     return store, updater
 
 
-def _callees(store: _StatefulIngestor, caller: str) -> set[str]:
+def _callees(store: StatefulIngestor, caller: str) -> set[str]:
     prefix = f"{PROJECT}."
     return {
         str(dst).removeprefix(prefix)

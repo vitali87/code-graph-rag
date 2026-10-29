@@ -17,19 +17,19 @@ from codebase_rag import graph_updater as gu
 from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 ROUTES = '@app.get("/items")\ndef items():\n    return 1\n'
 
 
-class _RegistryDown(_StatefulIngestor):
+class _RegistryDown(StatefulIngestor):
     def fetch_all(self, query, params=None):  # type: ignore[override]
         if query == cq.CYPHER_LIST_PROJECTS:
             raise RuntimeError("registry unreadable")
         return super().fetch_all(query, params)
 
 
-def _updater(root: Path, store: _StatefulIngestor) -> GraphUpdater:
+def _updater(root: Path, store: StatefulIngestor) -> GraphUpdater:
     parsers, queries = load_parsers()
     return GraphUpdater(
         ingestor=store, repo_path=root, parsers=parsers, queries=queries
@@ -40,7 +40,7 @@ def test_a_skipped_cleanup_refuses_the_in_sync_path_until_done(tmp_path: Path) -
     root = tmp_path / "proj"
     root.mkdir()
     (root / "api.py").write_text(ROUTES, encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(root, store).run(force=True)
     assert _updater(root, store)._is_already_in_sync() is True
     marker = state_file(root, cs.EXPOSES_CLEANUP_PENDING_FILENAME)
@@ -84,12 +84,12 @@ def test_a_scoped_pass_never_settles_an_owed_cleanup(tmp_path: Path) -> None:
     root.mkdir()
     marker = state_file(root, cs.EXPOSES_CLEANUP_PENDING_FILENAME)
     marker.touch()
-    updater = _updater(root, _StatefulIngestor())
+    updater = _updater(root, StatefulIngestor())
     updater._record_exposes_cleanup(cleared_by_this_run=False)
     assert marker.exists()
 
 
-class _DeletesFail(_StatefulIngestor):
+class _DeletesFail(StatefulIngestor):
     def execute_write(self, query, params=None):  # type: ignore[override]
         if query in (cq.CYPHER_DELETE_HANDLER_EXPOSES, cq.CYPHER_DELETE_MODULE_EXPOSES):
             raise RuntimeError("write refused")

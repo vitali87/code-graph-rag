@@ -50,7 +50,7 @@ from codebase_rag.utils.path_utils import (
     is_eligible_rel_file,
     rescued_files,
 )
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 TRACKED = {
     "bin/main.dart": 'import "package:defex/defex.dart";\nvoid main() { print(greet()); }\n',
@@ -82,8 +82,8 @@ def defex(git_repo: Path) -> Path:
     return git_repo
 
 
-def _index(repo: Path) -> tuple[_StatefulIngestor, GraphUpdater]:
-    store = _StatefulIngestor()
+def _index(repo: Path) -> tuple[StatefulIngestor, GraphUpdater]:
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
     patterns = load_ignore_patterns(repo)
     updater = GraphUpdater(
@@ -99,7 +99,7 @@ def _index(repo: Path) -> tuple[_StatefulIngestor, GraphUpdater]:
     return store, updater
 
 
-def _file_paths(store: _StatefulIngestor) -> set[str]:
+def _file_paths(store: StatefulIngestor) -> set[str]:
     return {
         str(props.get(cs.KEY_PATH))
         for (label, _uid), props in store.nodes.items()
@@ -272,7 +272,7 @@ GO_PROMOTED = (
 )
 
 
-def _call_resolutions(store: _StatefulIngestor) -> dict[tuple[str, str], str]:
+def _call_resolutions(store: StatefulIngestor) -> dict[tuple[str, str], str]:
     return {
         (str(edge[1]), str(edge[4])): str(
             store.edge_props.get(edge, {}).get(cs.KEY_RESOLUTION)
@@ -486,10 +486,10 @@ def _interrupt(_seconds: float) -> None:
 
 def _start_watcher(
     repo: Path, monkeypatch: pytest.MonkeyPatch
-) -> tuple[_StatefulIngestor, FileSystemEventHandler]:
+) -> tuple[StatefulIngestor, FileSystemEventHandler]:
     """Run the real watcher start-up, then hand back its graph and handler."""
     observer = _Observer()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
     with monkeypatch.context() as patched:
         patched.setattr(watch, "Observer", lambda: observer)
@@ -501,7 +501,7 @@ def _start_watcher(
     return store, handler
 
 
-def _functions(store: _StatefulIngestor) -> set[str]:
+def _functions(store: StatefulIngestor) -> set[str]:
     return {str(uid) for label, uid in store.nodes if label == cs.NodeLabel.FUNCTION}
 
 

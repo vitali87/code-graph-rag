@@ -42,7 +42,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 
 class _QueryingIngestor:
@@ -234,12 +234,12 @@ class TestUnresolvedSpecifierWaiters:
     """
 
     @staticmethod
-    def _index(root: Path, files: dict[str, str]) -> _StatefulIngestor:
+    def _index(root: Path, files: dict[str, str]) -> StatefulIngestor:
         for rel, text in files.items():
             path = root / rel
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text, encoding="utf-8")
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         parsers, queries = load_parsers()
         GraphUpdater(
             ingestor=store,
@@ -251,7 +251,7 @@ class TestUnresolvedSpecifierWaiters:
         return store
 
     @staticmethod
-    def _module(store: _StatefulIngestor, path: str) -> dict[str, Any]:
+    def _module(store: StatefulIngestor, path: str) -> dict[str, Any]:
         return next(
             dict(props)
             for (label, _uid), props in store.nodes.items()
@@ -259,7 +259,7 @@ class TestUnresolvedSpecifierWaiters:
         )
 
     @staticmethod
-    def _updater_on(root: Path, store: _StatefulIngestor) -> GraphUpdater:
+    def _updater_on(root: Path, store: StatefulIngestor) -> GraphUpdater:
         parsers, queries = load_parsers()
         return GraphUpdater(
             ingestor=store,
@@ -596,7 +596,7 @@ class TestUnresolvedSpecifierWaiters:
         (root / "main.js").write_text(
             "import { go } from './index';\nexport const r = go;\n", encoding="utf-8"
         )
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         updater = self._updater_on(root, store)
         updater.run(force=True)
         assert self._module(store, "main.js")[cs.KEY_UNRESOLVED_SPECIFIERS] == [

@@ -13,7 +13,7 @@ from pathlib import Path
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 SOURCE = (
     "class Other { bar() { return 1; } }\n"
@@ -31,7 +31,7 @@ def test_a_factory_hop_is_not_folded_to_its_class(tmp_path: Path) -> None:
     root = tmp_path / "proj"
     root.mkdir()
     (root / "app.ts").write_text(SOURCE, encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
     GraphUpdater(ingestor=store, repo_path=root, parsers=parsers, queries=queries).run(
         force=True

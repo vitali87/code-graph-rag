@@ -30,7 +30,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 from codebase_rag.tests.conftest import get_relationships
 from codebase_rag.types_defs import GraphNodeRecord, GraphRelRecord, ResultRow
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 # The issue's repro, plus the ordinary interface-to-interface shapes the fix
 # must leave alone.
@@ -351,7 +351,7 @@ def _write(repo: Path, files: dict[str, str]) -> None:
         (repo / name).write_text(source)
 
 
-def _sync(store: _StatefulIngestor, repo: Path, tokens: list[str]) -> None:
+def _sync(store: StatefulIngestor, repo: Path, tokens: list[str]) -> None:
     # An incremental sync, as `cgr start --update-graph` runs one: a changed
     # capture selection changes the parser fingerprint, and that is what
     # re-parses the unchanged files.
@@ -365,7 +365,7 @@ def _sync(store: _StatefulIngestor, repo: Path, tokens: list[str]) -> None:
     ).run()
 
 
-def _findings(store: _StatefulIngestor) -> set[str]:
+def _findings(store: StatefulIngestor) -> set[str]:
     return {
         str(props[cs.KEY_QUALIFIED_NAME])
         for (label, _uid), props in store.nodes.items()
@@ -373,7 +373,7 @@ def _findings(store: _StatefulIngestor) -> set[str]:
     }
 
 
-def _attached_findings(store: _StatefulIngestor) -> set[str]:
+def _attached_findings(store: StatefulIngestor) -> set[str]:
     return {
         str(target)
         for _sl, _src, rel, target_label, target in store.edges
@@ -383,7 +383,7 @@ def _attached_findings(store: _StatefulIngestor) -> set[str]:
 
 def test_dropping_the_findings_group_deletes_its_nodes(tmp_path: Path) -> None:
     _write(tmp_path, {"app.py": FINDINGS_PY, "other.py": PLAIN_PY})
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _sync(store, tmp_path, _WITH_FINDINGS)
     labels = {label for (label, _uid) in store.nodes if label in _FINDING_LABELS}
     assert {cs.NodeLabel.PATTERN.value, cs.NodeLabel.SECURITY_ISSUE.value} <= labels, (
@@ -399,7 +399,7 @@ def test_a_finding_the_source_no_longer_has_is_deleted(tmp_path: Path) -> None:
     # The same leak without a capture change: an edit re-parses the module,
     # and a finding its new source no longer matches was left behind.
     _write(tmp_path, {"app.py": FINDINGS_PY})
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _sync(store, tmp_path, _WITH_FINDINGS)
     assert any(qn.endswith(".eval_use") for qn in _findings(store)), (
         "fixture guard: `eval(data)` produced no eval_use finding"
@@ -419,7 +419,7 @@ def test_findings_come_back_attached_when_the_group_is_re_enabled(
     # Negative: the drop removes the nodes, it does not stop the next
     # findings sync from writing them again, each one hanging off its module.
     _write(tmp_path, {"app.py": FINDINGS_PY})
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _sync(store, tmp_path, _WITH_FINDINGS)
     first = _findings(store)
 
@@ -434,7 +434,7 @@ def test_an_unchanged_module_keeps_its_findings(tmp_path: Path) -> None:
     # Negative: findings go with their module only when that module is
     # re-parsed. Editing a sibling file must not take them.
     _write(tmp_path, {"app.py": FINDINGS_PY, "other.py": PLAIN_PY})
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _sync(store, tmp_path, _WITH_FINDINGS)
     first = _findings(store)
     assert first, "fixture guard: the findings sync produced no findings"
@@ -456,7 +456,7 @@ def test_the_same_finding_in_two_modules_is_two_nodes_and_outlives_either(
     # same spots; they are separate nodes, so deleting one file must leave
     # the other's findings in place and attached.
     _write(tmp_path, {"app.py": FINDINGS_PY, "twin.py": FINDINGS_PY})
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _sync(store, tmp_path, _WITH_FINDINGS)
     holders: dict[str, set[str]] = {}
     for _sl, source, rel, target_label, target in store.edges:

@@ -28,7 +28,7 @@ from codebase_rag import constants as cs
 from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 PY_UTIL = "def helper():\n    return 1\n\n\ndef main():\n    return helper()\n"
 PY_APP = "from util import helper\n\n\ndef run():\n    return helper()\n"
@@ -53,7 +53,7 @@ _DEFINITIONS = {
 Snapshot = tuple[frozenset[tuple[str, str]], frozenset[tuple[str, ...]]]
 
 
-class _BufferingStore(_StatefulIngestor):
+class _BufferingStore(StatefulIngestor):
     """The emulator, with node writes landing only at flush.
 
     The real ingestor batches writes and a mid-run read does not see the
@@ -83,7 +83,7 @@ def _write(root: Path, files: dict[str, str]) -> None:
 
 
 def _updater(
-    store: _StatefulIngestor, root: Path, exclude: frozenset[str] | None = None
+    store: StatefulIngestor, root: Path, exclude: frozenset[str] | None = None
 ) -> GraphUpdater:
     parsers, queries = load_parsers()
     return GraphUpdater(
@@ -97,7 +97,7 @@ def _updater(
 
 
 def _index(
-    store: _StatefulIngestor,
+    store: StatefulIngestor,
     root: Path,
     force: bool,
     exclude: frozenset[str] | None = None,
@@ -114,7 +114,7 @@ def _bump(root: Path, *rels: str) -> None:
         os.utime(root / rel, (cache_mtime + 1, cache_mtime + 1))
 
 
-def _names_by_path(store: _StatefulIngestor) -> dict[str, str]:
+def _names_by_path(store: StatefulIngestor) -> dict[str, str]:
     """Qualified name -> the file of the definition or module holding it."""
     return {
         str(uid): str(props.get(cs.KEY_PATH))
@@ -123,7 +123,7 @@ def _names_by_path(store: _StatefulIngestor) -> dict[str, str]:
     }
 
 
-def _edges(store: _StatefulIngestor, rel: cs.RelationshipType) -> set[tuple[str, str]]:
+def _edges(store: StatefulIngestor, rel: cs.RelationshipType) -> set[tuple[str, str]]:
     paths = _names_by_path(store)
     return {
         (
@@ -135,7 +135,7 @@ def _edges(store: _StatefulIngestor, rel: cs.RelationshipType) -> set[tuple[str,
     }
 
 
-def _snapshot(store: _StatefulIngestor, root: Path) -> Snapshot:
+def _snapshot(store: StatefulIngestor, root: Path) -> Snapshot:
     prefix = root.resolve().as_posix() + "/"
 
     def norm(label: str, uid: str) -> str:
@@ -159,12 +159,12 @@ def _snapshot(store: _StatefulIngestor, root: Path) -> Snapshot:
 def _clean(tmp_path: Path, files: dict[str, str]) -> Snapshot:
     root = tmp_path / "clean" / "proj"
     _write(root, files)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, force=True)
     return _snapshot(store, root)
 
 
-def _module_qns(store: _StatefulIngestor) -> dict[str, str]:
+def _module_qns(store: StatefulIngestor) -> dict[str, str]:
     """Module path -> its qualified name."""
     return {
         str(props.get(cs.KEY_PATH)): str(uid)
@@ -179,7 +179,7 @@ def test_adding_a_sibling_in_another_language_hands_it_no_existing_name(
 ) -> None:
     root = tmp_path / "proj"
     _write(root, {"util.py": PY_UTIL, "app.py": PY_APP})
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, root)
     updater.run(force=True)
     held = {qn for qn, path in _names_by_path(store).items() if path == "util.py"}
@@ -212,7 +212,7 @@ def test_a_cross_language_pair_is_named_the_same_whichever_file_came_first(
 ) -> None:
     root = tmp_path / "proj"
     _write(root, dict([first]))
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, force=True)
     assert _module_qns(store) == {first[0]: "proj.util"}, "alone, a file is bare"
 
@@ -235,7 +235,7 @@ def test_callers_and_importers_keep_to_their_own_languages_file(
     root = tmp_path / "proj"
     python_side = {"util.py": PY_UTIL, "app.py": PY_APP}
     js_side = {"util.js": JS_UTIL, "jsapp.js": JS_APP}
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     if incremental:
         _write(root, python_side)
         _index(store, root, force=True)
@@ -269,7 +269,7 @@ def test_the_watcher_path_names_the_pair_as_a_clean_index_does(
     root = tmp_path / "proj"
     python_side = {"util.py": PY_UTIL, "app.py": PY_APP}
     _write(root, python_side if step == "add" else {**python_side, "util.js": JS_UTIL})
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, root)
     updater.run(force=True)
     if step == "add":
@@ -355,7 +355,7 @@ def test_the_added_sibling_keeps_its_calls_after_an_incremental_sync(
 def test_a_lone_file_keeps_its_bare_name(tmp_path: Path, name: str, text: str) -> None:
     root = tmp_path / "proj"
     _write(root, {name: text})
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, force=True)
 
     assert _module_qns(store) == {name: "proj.util"}
@@ -388,7 +388,7 @@ def test_a_same_language_pair_keeps_the_first_walked_rule(
     # the first file in walk order keeps it, as before.
     root = tmp_path / "proj"
     _write(root, files)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, force=True)
 
     assert _module_qns(store) == expected
@@ -404,7 +404,7 @@ def test_a_sibling_that_is_not_indexed_as_a_module_renames_nothing(
 ) -> None:
     root = tmp_path / "proj"
     _write(root, {"util.py": PY_UTIL, sibling[0]: sibling[1]})
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, force=True, exclude=exclude)
 
     assert _module_qns(store).get("util.py") == "proj.util"
@@ -426,7 +426,7 @@ def test_an_import_of_a_real_submodule_under_the_stem_is_left_alone(
             "app.py": "from util.sub import deep\n\n\ndef run():\n    return deep()\n",
         },
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, force=True)
 
     calls = _edges(store, cs.RelationshipType.CALLS)
@@ -442,7 +442,7 @@ def test_removing_the_other_language_sibling_restores_the_original_graph(
     root = tmp_path / "proj"
     original = {"util.py": PY_UTIL, "app.py": PY_APP}
     _write(root, original)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(store, root)
     updater.run(force=True)
     before = _snapshot(store, root)

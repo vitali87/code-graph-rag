@@ -24,7 +24,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.rs import utils as rs_utils
 from codebase_rag.tests.conftest import force_mtime_after_cache
 from codebase_rag.types_defs import PropertyValue
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 _CALLS = cs.RelationshipType.CALLS.value
 _IMPORTS = cs.RelationshipType.IMPORTS.value
@@ -183,7 +183,7 @@ RS_WORKSPACE_CONSUMER = "crates/app/src/main.rs"
 Snapshot = tuple[frozenset[tuple[str, str]], frozenset[tuple[str, ...]]]
 
 
-class _RelationshipRecorder(_StatefulIngestor):
+class _RelationshipRecorder(StatefulIngestor):
     """Records the source and type of every relationship written."""
 
     def __init__(self) -> None:
@@ -208,7 +208,7 @@ def _materialise(root: Path, files: dict[str, str]) -> None:
         path.write_text(text, encoding="utf-8")
 
 
-def _updater(store: _StatefulIngestor, root: Path, language: str) -> GraphUpdater:
+def _updater(store: StatefulIngestor, root: Path, language: str) -> GraphUpdater:
     parsers, queries = load_parsers()
     if cs.SupportedLanguage(language) not in parsers:
         pytest.skip(f"{language} parser not available")
@@ -226,9 +226,9 @@ class _Synced:
 
     def __init__(
         self,
-        store: _StatefulIngestor,
+        store: StatefulIngestor,
         updater: GraphUpdater,
-        clean: _StatefulIngestor,
+        clean: StatefulIngestor,
         clean_updater: GraphUpdater,
         root: Path,
     ) -> None:
@@ -240,7 +240,7 @@ class _Synced:
 
 
 def _index_then_edit(
-    store: _StatefulIngestor,
+    store: StatefulIngestor,
     root: Path,
     files: dict[str, str],
     edited: str,
@@ -258,19 +258,19 @@ def _sync_after_edit(
     tmp_path: Path, files: dict[str, str], edited: str, appended: str, language: str
 ) -> _Synced:
     root = tmp_path / "proj"
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index_then_edit(store, root, files, edited, appended, language)
     # A fresh updater, as `cgr start --update-graph` builds one per sync: it
     # holds nothing but what this run parses and reads back from the graph.
     updater = _updater(store, root, language)
     updater.run()
-    clean = _StatefulIngestor()
+    clean = StatefulIngestor()
     clean_updater = _updater(clean, root, language)
     clean_updater.run(force=True)
     return _Synced(store, updater, clean, clean_updater, root)
 
 
-def _calls_from(store: _StatefulIngestor, caller_qn: str) -> dict[str, str | None]:
+def _calls_from(store: StatefulIngestor, caller_qn: str) -> dict[str, str | None]:
     """Each CALLS target of `caller_qn`, with the edge's resolution."""
     out: dict[str, str | None] = {}
     for edge in store.edges:
@@ -281,7 +281,7 @@ def _calls_from(store: _StatefulIngestor, caller_qn: str) -> dict[str, str | Non
     return out
 
 
-def _snapshot(store: _StatefulIngestor, root: Path) -> Snapshot:
+def _snapshot(store: StatefulIngestor, root: Path) -> Snapshot:
     # File and Folder nodes are keyed by absolute path, identical here since
     # both indexes read the same tree; normalised anyway so a failure diff
     # reads as relative paths.
@@ -382,7 +382,7 @@ class TestPythonPackageReexport:
     ) -> None:
         # The MCP path: a new updater per call re-ingests just the named file.
         root = tmp_path / "proj"
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         _index_then_edit(store, root, PY_FIXTURE, PY_CONSUMER, _UNRELATED_FN, "python")
         _updater(store, root, "python").reingest([PY_CONSUMER])
         calls = _calls_from(store, "proj.tests.test_client.test_send")
@@ -404,7 +404,7 @@ class TestPythonPackageReexport:
         monkeypatch.setattr(GraphUpdater, "_restore_module_imports", record)
         root = tmp_path / "proj"
         _materialise(root, PY_FIXTURE)
-        _updater(_StatefulIngestor(), root, "python").run(force=True)
+        _updater(StatefulIngestor(), root, "python").run(force=True)
         assert restored == []
 
 
@@ -652,7 +652,7 @@ class TestRustDuplicateMethodReturnTypes:
         # The graph returns rows in no fixed order; the one defined last wins
         # whichever arrives first, and a later variant beats an earlier one
         # by line and then by column.
-        updater = _updater(_StatefulIngestor(), tmp_path, "rust")
+        updater = _updater(StatefulIngestor(), tmp_path, "rust")
         rows = [
             _rust_row(RS_TWO_TRAIT_RUN_KEY, "Alpha"),
             _rust_row(f"{RS_TWO_TRAIT_RUN_KEY}@30", "Beta"),
@@ -668,7 +668,7 @@ class TestRustDuplicateMethodReturnTypes:
     ) -> None:
         # Parsing records nothing for a fn whose annotation names no type, so
         # the earlier record stands; the read-back must not erase it either.
-        updater = _updater(_StatefulIngestor(), tmp_path, "rust")
+        updater = _updater(StatefulIngestor(), tmp_path, "rust")
         updater._rehydrate_rust_return_types(
             [
                 _rust_row(f"{RS_TWO_TRAIT_RUN_KEY}@30", "()"),
@@ -679,7 +679,7 @@ class TestRustDuplicateMethodReturnTypes:
         assert return_types.get(RS_TWO_TRAIT_RUN_KEY) == "Alpha"
 
     def test_a_reparsed_record_is_kept(self, tmp_path: Path) -> None:
-        updater = _updater(_StatefulIngestor(), tmp_path, "rust")
+        updater = _updater(StatefulIngestor(), tmp_path, "rust")
         return_types = updater.factory.definition_processor.method_return_types
         return_types[RS_TWO_TRAIT_RUN_KEY] = "Parsed"
         updater._rehydrate_rust_return_types(
@@ -762,7 +762,7 @@ class TestRustTwinsAcrossFiles:
         # its qn to mod.rs, filing a re-parsed b.rs under `proj.src.a.b.rs`.
         root = tmp_path / "proj"
         _materialise(root, RS_TWINS_IN_TWO_FILES)
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         _updater(store, root, "rust").run()
         module = store.nodes[(cs.NodeLabel.MODULE.value, "proj.src.a.b")]
         assert module[cs.KEY_PATH] == "src/a/b.rs"
@@ -786,7 +786,7 @@ class TestRustTwinsAcrossFiles:
     def test_the_file_walked_last_wins_over_a_higher_marker(
         self, tmp_path: Path, reverse: bool
     ) -> None:
-        updater = _updater(_StatefulIngestor(), tmp_path, "rust")
+        updater = _updater(StatefulIngestor(), tmp_path, "rust")
         rows = [
             _rust_row(RS_TWINS_KEY, "Alpha", "src/a/b.rs"),
             _rust_row(f"{RS_TWINS_KEY}@12", "Beta", "src/a/b.rs"),
@@ -802,7 +802,7 @@ class TestRustTwinsAcrossFiles:
     ) -> None:
         # `src/z.rs` before `src/y/b.rs`, though the full path sorts after it:
         # the walk yields a directory's own files before descending.
-        updater = _updater(_StatefulIngestor(), tmp_path, "rust")
+        updater = _updater(StatefulIngestor(), tmp_path, "rust")
         rows = [
             _rust_row(f"{RS_TWINS_KEY}@3", "Beta", "src/y/b.rs"),
             _rust_row(RS_TWINS_KEY, "Alpha", "src/z.rs"),

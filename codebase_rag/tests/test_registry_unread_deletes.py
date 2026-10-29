@@ -19,7 +19,7 @@ from codebase_rag import cypher_queries as cq
 from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 
 def _updater(repo: Path, ingestor: MagicMock) -> GraphUpdater:
@@ -65,7 +65,7 @@ def test_the_module_delete_still_runs_when_the_registry_is_unreadable(
 def test_the_module_delete_spares_nested_projects_the_parameter_misses() -> None:
     # The eval double mirrors the query's own Project-node exclusion, so an
     # empty `$nested_projects` (registry unread) still leaves `svc.v2` alone.
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     for name in ("svc", "svc.v2"):
         store.nodes[(cs.NodeLabel.PROJECT.value, name)] = {cs.KEY_NAME: name}
     for qn in ("svc.api", "svc.v2.api"):
@@ -172,7 +172,7 @@ def test_a_failed_flush_after_a_complete_prune_keeps_what_was_owed(
     temp_repo: Path,
 ) -> None:
     (temp_repo / "api.py").write_text("def f():\n    return 1\n", encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
 
     def updater() -> GraphUpdater:
@@ -202,7 +202,7 @@ def test_a_failed_flush_after_a_complete_prune_keeps_what_was_owed(
 
 def test_an_owed_prune_refuses_the_in_sync_fast_path(temp_repo: Path) -> None:
     (temp_repo / "api.py").write_text("def f():\n    return 1\n", encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
 
     def run() -> GraphUpdater:

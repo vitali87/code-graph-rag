@@ -20,7 +20,7 @@ from tree_sitter import Language, Parser
 from codebase_rag import constants as cs
 from codebase_rag.parsers.call_processor import _exceeds_receiver_chain_cap
 from codebase_rag.parsers.call_resolver import CallResolver, _split_receiver_chain
-from evals.cgr_graph import _capture
+from evals.cgr_graph import capture
 
 _CAP = cs.MAX_RECEIVER_CHAIN_HOPS
 
@@ -83,7 +83,7 @@ def test_a_huge_chain_resolves_a_bounded_number_of_calls(tmp_path: Path) -> None
         return original(self, call_name, *args, **kwargs)
 
     with patch.object(CallResolver, "resolve_function_call", counting):
-        _capture(tmp_path, "proj")
+        capture(tmp_path, "proj")
 
     # One resolution per call up to the cap; none of the skipped 4,936. The
     # returned-reference pass looks the whole `return` expression up once,
@@ -102,7 +102,7 @@ def test_a_typed_chain_under_the_cap_still_resolves(tmp_path: Path) -> None:
         "func (c *Command) Use() int { return c" + ".Root()" * hops + ".Run() }\n",
         encoding="utf-8",
     )
-    ingestor = _capture(tmp_path, "proj")
+    ingestor = capture(tmp_path, "proj")
     calls = {
         (str(f), str(t)) for _fl, f, rel, _tl, t in ingestor.rels if rel == "CALLS"
     }
@@ -121,7 +121,7 @@ def test_a_typed_chain_past_the_cap_leaves_its_tail_unresolved(tmp_path: Path) -
         "func (c *Command) Use() int { return c" + ".Root()" * hops + ".Run() }\n",
         encoding="utf-8",
     )
-    ingestor = _capture(tmp_path, "proj")
+    ingestor = capture(tmp_path, "proj")
     calls = {
         (str(f), str(t)) for _fl, f, rel, _tl, t in ingestor.rels if rel == "CALLS"
     }
@@ -152,7 +152,7 @@ def test_handlers_at_every_level_of_a_nested_literal_are_referenced(
         "    return x\n",
         encoding="utf-8",
     )
-    refs = _references(_capture(tmp_path, "proj"))
+    refs = _references(capture(tmp_path, "proj"))
 
     for name in ("h0", "h1", "h2", "h3"):
         assert ("proj.t.table", f"proj.t.{name}") in refs, sorted(refs)
@@ -176,7 +176,7 @@ def test_a_deeply_nested_literal_is_expanded_once(tmp_path: Path) -> None:
         return original(*args, **kwargs)
 
     with patch.object(call_processor, "_first_class_value_children", counting):
-        refs = _references(_capture(tmp_path, "proj"))
+        refs = _references(capture(tmp_path, "proj"))
 
     assert ("proj.t.table", "proj.t.h") in refs
     # Linear in the depth; re-expanding every level was depth^2 / 2.

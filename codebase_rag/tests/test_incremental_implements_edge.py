@@ -16,7 +16,7 @@ from codebase_rag import constants as cs
 from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 JAVA: dict[str, str] = {
     "src/Shape.java": "package app;\npublic interface Shape { int area(); }\n",
@@ -42,7 +42,7 @@ PHP: dict[str, str] = {
 Snapshot = tuple[frozenset[tuple[str, str]], frozenset[tuple[str, ...]]]
 
 
-def _snapshot(store: _StatefulIngestor) -> Snapshot:
+def _snapshot(store: StatefulIngestor) -> Snapshot:
     nodes = frozenset((label, str(uid)) for (label, uid) in store.nodes)
     edges = frozenset(
         (str(fl), str(fv), str(rel), str(tl), str(tv))
@@ -60,7 +60,7 @@ def _implements(snapshot: Snapshot) -> set[tuple[str, str]]:
 
 
 def _index(
-    store: _StatefulIngestor, repo: Path, language: cs.SupportedLanguage, force: bool
+    store: StatefulIngestor, repo: Path, language: cs.SupportedLanguage, force: bool
 ) -> None:
     parsers, queries = load_parsers()
     if language not in parsers:
@@ -103,7 +103,7 @@ def test_incremental_reindex_of_an_interface_keeps_its_implementors(
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, language, force=True)
     clean = _snapshot(store)
     assert len(_implements(clean)) == 1, "fixture must produce one IMPLEMENTS edge"

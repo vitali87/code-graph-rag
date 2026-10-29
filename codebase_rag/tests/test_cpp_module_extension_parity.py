@@ -25,7 +25,7 @@ from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.language_spec import get_language_for_extension
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 
 def test_every_module_extension_is_a_parsed_cpp_extension() -> None:
@@ -72,7 +72,7 @@ def test_a_module_interface_with_every_extension_is_indexed(
         "module M;\nint f() { return 1; }\n", encoding="utf-8"
     )
 
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(
         ingestor=store,
         repo_path=root,

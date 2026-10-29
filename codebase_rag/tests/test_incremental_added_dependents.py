@@ -24,7 +24,7 @@ from codebase_rag.tests.test_incremental_deleted_dependents import (
     _materialise,
     _snapshot,
 )
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 GO: dict[str, str] = {
     "go.mod": "module example.com/app\n\ngo 1.22\n",
@@ -77,7 +77,7 @@ def test_adding_a_file_reparses_the_files_that_waited_for_it(
 ) -> None:
     root = temp_repo / "proj"
     _materialise(root, {rel: text for rel, text in fixture.items() if rel != added})
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, language, force=True)
     _add_after_cache(root, added, fixture[added])
     _index(store, root, language, force=False)
@@ -86,7 +86,7 @@ def test_adding_a_file_reparses_the_files_that_waited_for_it(
     clean_root = temp_repo / "clean" / "proj"
     clean_root.parent.mkdir()
     _materialise(clean_root, fixture)
-    clean_store = _StatefulIngestor()
+    clean_store = StatefulIngestor()
     _index(clean_store, clean_root, language, force=True)
     clean = _snapshot(clean_store)
 
@@ -112,7 +112,7 @@ def test_a_module_records_what_it_could_not_resolve_and_clears_it(
     _materialise(
         root, {rel: text for rel, text in PYTHON.items() if rel != "pkg/base.py"}
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, cs.SupportedLanguage.PYTHON, force=True)
     module = store.nodes[(cs.NodeLabel.MODULE.value, "proj.pkg.derived")]
     recorded = module[cs.KEY_UNRESOLVED_REFERENCES]
@@ -139,7 +139,7 @@ def test_an_unresolved_include_is_recorded_as_a_repository_path_suffix(
     _materialise(
         root, {"use.cpp": '#include "./inc/../inc/shape.h"\nint use() { return 0; }\n'}
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, cs.SupportedLanguage.CPP, force=True)
     module = store.nodes[(cs.NodeLabel.MODULE.value, "proj.use")]
     assert module[cs.KEY_UNRESOLVED_REFERENCES] == ["inc/shape.h"]
@@ -155,7 +155,7 @@ def test_the_root_module_is_a_waiter_too(
     _materialise(
         root, {"__init__.py": "from .base import Base\n\nclass D(Base):\n    pass\n"}
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, cs.SupportedLanguage.PYTHON, force=True)
     assert (
         "Base"
@@ -192,7 +192,7 @@ def test_a_modified_file_that_gains_a_definition_reparses_its_waiters(
     after = dict(before, **{"base.go": gained})
     root = temp_repo / "proj"
     _materialise(root, before)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, cs.SupportedLanguage.GO, force=True)
     _add_after_cache(root, "base.go", gained)
     _index(store, root, cs.SupportedLanguage.GO, force=False)
@@ -200,7 +200,7 @@ def test_a_modified_file_that_gains_a_definition_reparses_its_waiters(
     clean_root = temp_repo / "clean" / "proj"
     clean_root.parent.mkdir()
     _materialise(clean_root, after)
-    clean_store = _StatefulIngestor()
+    clean_store = StatefulIngestor()
     _index(clean_store, clean_root, cs.SupportedLanguage.GO, force=True)
 
     def outgoing(snapshot: Snapshot) -> set[tuple[str, ...]]:
@@ -215,7 +215,7 @@ def test_a_go_module_records_its_unresolved_calls(temp_repo: Path) -> None:
     name is the only link to the file that will define it."""
     root = temp_repo / "proj"
     _materialise(root, {rel: text for rel, text in GO.items() if rel != "base.go"})
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, cs.SupportedLanguage.GO, force=True)
     module = store.nodes[(cs.NodeLabel.MODULE.value, "proj.derived")]
     assert "Run" in module[cs.KEY_UNRESOLVED_REFERENCES]
@@ -231,7 +231,7 @@ def test_the_batch_path_asks_both_added_file_lookups(
     _materialise(
         root, {rel: text for rel, text in PYTHON.items() if rel != "pkg/base.py"}
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     asked: dict[str, list[str]] = {}
     importers = GraphUpdater._unresolved_importer_keys
     waiters = GraphUpdater._unresolved_reference_waiters
@@ -274,7 +274,7 @@ def test_the_scoped_path_offers_created_files_only(
     _materialise(
         root, {rel: text for rel, text in PYTHON.items() if rel != "pkg/base.py"}
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
     updater = GraphUpdater(
         ingestor=store,
@@ -313,7 +313,7 @@ def test_a_duplicate_marker_is_not_part_of_a_known_simple_name(
     look like it GAINED `Foo` and re-parse every waiter on that name (bot
     review on PR #1979)."""
     updater = GraphUpdater(
-        ingestor=_StatefulIngestor(),
+        ingestor=StatefulIngestor(),
         repo_path=tmp_path,
         parsers={},
         queries={},

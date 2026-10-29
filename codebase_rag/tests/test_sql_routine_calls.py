@@ -24,7 +24,7 @@ from codebase_rag.tests.test_incremental_deleted_dependents import (
     _index as _index_into,
 )
 from codebase_rag.tests.test_incremental_deleted_dependents import _materialise
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 tree_sitter_sql = pytest.importorskip("tree_sitter_sql")
 
@@ -425,7 +425,7 @@ def _caller(call: str) -> str:
     )
 
 
-def _caller_edges(store: _StatefulIngestor) -> dict[str, str]:
+def _caller_edges(store: StatefulIngestor) -> dict[str, str]:
     # callee qn -> resolution label of the caller's CALLS edges
     return {
         str(edge[4]): str(store.props_for(edge).get(cs.KEY_RESOLUTION))
@@ -438,7 +438,7 @@ def _clean_edges(tmp_path: Path, files: dict[str, str]) -> dict[str, str]:
     root = tmp_path / "clean" / "proj"
     root.parent.mkdir()
     _materialise(root, files)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index_into(store, root, cs.SupportedLanguage.SQL, force=True)
     return _caller_edges(store)
 
@@ -475,7 +475,7 @@ class TestIncrementalMatchesCleanIndex:
     ) -> tuple[dict[str, str], dict[str, str]]:
         root = tmp_path / "proj"
         _materialise(root, before)
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         _index_into(store, root, cs.SupportedLanguage.SQL, force=True)
         for rel, text in changes.items():
             if text is None:
@@ -612,7 +612,7 @@ class TestIncrementalMatchesCleanIndex:
                 "SELECT FEE(1) + Billing.Fee(2) + count(*) FROM t; $$ LANGUAGE sql;\n",
             },
         )
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         _index_into(store, root, cs.SupportedLanguage.SQL, force=True)
         module = store.nodes[(cs.NodeLabel.MODULE.value, "proj.db.caller")]
         assert module[cs.KEY_UNRESOLVED_REFERENCES] == ["billing.fee", "count", "fee"]

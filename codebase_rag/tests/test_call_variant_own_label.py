@@ -18,7 +18,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 _CALLS = cs.RelationshipType.CALLS.value
 _METHOD = cs.NodeLabel.METHOD.value
@@ -58,7 +58,7 @@ class Q {
 """
 
 
-def _index(tmp_path: Path, files: dict[str, str]) -> _StatefulIngestor:
+def _index(tmp_path: Path, files: dict[str, str]) -> StatefulIngestor:
     root = tmp_path / "p"
     root.mkdir()
     for name, src in files.items():
@@ -66,7 +66,7 @@ def _index(tmp_path: Path, files: dict[str, str]) -> _StatefulIngestor:
     parsers, queries = load_parsers()
     if cs.SupportedLanguage.SCALA not in parsers:
         pytest.skip("scala parser not available")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(
         ingestor=store,
         repo_path=root,
@@ -77,7 +77,7 @@ def _index(tmp_path: Path, files: dict[str, str]) -> _StatefulIngestor:
     return store
 
 
-def _calls(store: _StatefulIngestor) -> set[tuple[str, str, str, str]]:
+def _calls(store: StatefulIngestor) -> set[tuple[str, str, str, str]]:
     return {
         (str(e[0]), str(e[1]), str(e[3]), str(e[4]))
         for e in store.keyed_edges

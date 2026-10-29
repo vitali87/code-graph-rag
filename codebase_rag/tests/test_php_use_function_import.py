@@ -10,7 +10,7 @@ from codebase_rag.parsers.import_processor import (
     ImportProcessor,
     _php_use_clause_binding,
 )
-from evals.cgr_graph import _capture
+from evals.cgr_graph import capture
 
 
 def _make(root: Path) -> None:
@@ -54,7 +54,7 @@ def test_use_function_import_call_resolves_across_namespace_path_mismatch(
     # external import, suppressing the simple-name trie fallback and dropping the
     # call. A bare call without `use function` already resolved via the trie.
     _make(tmp_path)
-    ingestor = _capture(tmp_path, "proj")
+    ingestor = capture(tmp_path, "proj")
     calls = {
         (str(from_val), str(to_val))
         for _fl, from_val, rel, _tl, to_val in ingestor.rels

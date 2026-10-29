@@ -18,7 +18,7 @@ from codebase_rag.types_defs import DeadCodeConfig
 
 from . import constants as ec
 from . import logs as ls
-from .cgr_graph import _capture
+from .cgr_graph import capture
 from .score import _prf
 from .types_defs import DiffBucket, LocationStats, ScoreResult, ScoreRow
 
@@ -27,7 +27,7 @@ _EMPTY_LOCATION = LocationStats(0, 0, 0, 0.0, 0)
 
 
 def cgr_dead_code(target: Path, project: str, config: DeadCodeConfig) -> set[str]:
-    ingestor = _capture(target, project)
+    ingestor = capture(target, project)
     prefix = project + cs.SEPARATOR_DOT
     return dead_code_from_graph(ingestor.nodes, list(ingestor.rels), prefix, config)
 

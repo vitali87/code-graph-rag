@@ -23,7 +23,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 # Every case holds on the Rust scope walks and on their Python twins.
 pytestmark = pytest.mark.usefixtures("both_scope_walks")
@@ -111,7 +111,7 @@ def _build(tmp_path: Path, body: str) -> Path:
 
 def _calls_from_use(repo: Path) -> set[str]:
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(ingestor=store, repo_path=repo, parsers=parsers, queries=queries).run(
         force=True
     )
@@ -289,7 +289,7 @@ def test_siblings_do_not_share_an_answer_through_the_cache(
         parts.reverse()
     repo = _build(tmp_path, "\n".join(parts))
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(ingestor=store, repo_path=repo, parsers=parsers, queries=queries).run(
         force=True
     )

@@ -22,7 +22,7 @@ from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import NodeType
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 _FILES = {
     "ILog.cs": "namespace App;\n\npublic interface ILog\n{\n    void Info(string m);\n}\n",
@@ -41,7 +41,7 @@ _FILES = {
 _EDIT = ("        Sink.Capture", "        // edit\n        Sink.Capture")
 
 
-def _index(store: _StatefulIngestor, root: Path, force: bool) -> GraphUpdater:
+def _index(store: StatefulIngestor, root: Path, force: bool) -> GraphUpdater:
     parsers, queries = load_parsers()
     updater = GraphUpdater(
         ingestor=store,
@@ -54,7 +54,7 @@ def _index(store: _StatefulIngestor, root: Path, force: bool) -> GraphUpdater:
     return updater
 
 
-def _hello_calls(store: _StatefulIngestor) -> set[str]:
+def _hello_calls(store: StatefulIngestor) -> set[str]:
     return {
         str(edge[4])
         for edge in store.edges
@@ -78,7 +78,7 @@ def _edit(root: Path, rel: str, text: str) -> None:
 def test_a_reparsed_caller_binds_as_a_fresh_index_does(temp_repo: Path) -> None:
     root = temp_repo / "proj"
     _write(root, _FILES)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, force=True)
     fresh = _hello_calls(store)
     assert "proj.ILog.App.ILog.Info(string)" in fresh, fresh
@@ -94,7 +94,7 @@ def test_a_rehydrated_method_is_indexed_by_its_name(temp_repo: Path) -> None:
     # names both methods, as it does after a full parse.
     root = temp_repo / "proj"
     _write(root, _FILES)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsed = _index(store, root, force=True)
     expected = parsed.function_registry.find_ending_with("Info")
     assert "proj.ILog.App.ILog.Info(string)" in expected, expected
@@ -112,7 +112,7 @@ def test_a_name_that_is_its_qns_last_segment_is_indexed_once(
     # index lists it once, never twice.
     root = temp_repo / "proj"
     _write(root, _FILES)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, force=True)
     _edit(root, "Tests.cs", _FILES["Tests.cs"].replace(*_EDIT))
     rehydrated = _index(store, root, force=False)
@@ -143,7 +143,7 @@ def test_a_removed_definition_leaves_no_cached_name_lookup(
     # call to the removed method.
     root = temp_repo / "proj"
     _write(root, _FILES)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _index(store, root, force=True)
     if incremental:
         _edit(root, "Tests.cs", _FILES["Tests.cs"].replace(*_EDIT))

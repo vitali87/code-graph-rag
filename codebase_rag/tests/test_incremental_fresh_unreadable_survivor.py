@@ -23,14 +23,14 @@ from codebase_rag import constants as cs
 from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 _HEADER = "static inline int helper(void) { return 2; }\nint util(void);\n"
 _MAIN = '#include "util.h"\nint main(void) { return util() + helper(); }\n'
 _ADDED = '#include "util.h"\nint util(void) { return 1; }\n'
 
 
-def _index(store: _StatefulIngestor, repo: Path, force: bool) -> None:
+def _index(store: StatefulIngestor, repo: Path, force: bool) -> None:
     parsers, queries = load_parsers()
     if cs.SupportedLanguage.C not in parsers:
         pytest.skip("c parser not available")
@@ -43,7 +43,7 @@ def _index(store: _StatefulIngestor, repo: Path, force: bool) -> None:
     ).run(force=force)
 
 
-def _modules(store: _StatefulIngestor) -> dict[str, str]:
+def _modules(store: StatefulIngestor) -> dict[str, str]:
     return {
         str(props.get(cs.KEY_QUALIFIED_NAME)): str(props.get(cs.KEY_PATH))
         for (label, _uid), props in store.nodes.items()
@@ -62,7 +62,7 @@ def test_a_fresh_updater_keeps_an_unreadable_survivors_module(
     root.mkdir()
     (root / "util.h").write_text(_HEADER, encoding="utf-8")
     (root / "main.c").write_text(_MAIN, encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, force=True)
     before = _modules(store)
     header_qn = next((qn for qn, path in before.items() if path == "util.h"), None)
@@ -115,7 +115,7 @@ def test_an_unchanged_survivor_whose_reparse_read_fails_keeps_its_module(
     parsers, queries = load_parsers()
     if cs.SupportedLanguage.C not in parsers:
         pytest.skip("c parser not available")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
 
     def updater() -> GraphUpdater:
         return GraphUpdater(
@@ -164,7 +164,7 @@ def test_an_unchanged_unopenable_survivor_is_marked_for_retry(
     root.mkdir()
     (root / "util.h").write_text(_HEADER, encoding="utf-8")
     (root / "main.c").write_text(_MAIN, encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, force=True)
     (root / "util.c").write_text(_ADDED, encoding="utf-8")
     header = root / "util.h"

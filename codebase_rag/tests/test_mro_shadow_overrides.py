@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from evals.cgr_graph import _capture
+from evals.cgr_graph import capture
 from evals.dead_code import cgr_dead_code, default_dead_code_config
 
 MIXIN_SHADOW_PY = """\
@@ -46,7 +46,7 @@ class Right:
 
 
 def _overrides(root: Path) -> set[tuple[str, str]]:
-    ingestor = _capture(root, "proj")
+    ingestor = capture(root, "proj")
     return {
         (str(f), str(t)) for _fl, f, rel, _tl, t in ingestor.rels if rel == "OVERRIDES"
     }
@@ -182,7 +182,7 @@ def test_shadow_edge_emitted_once_across_combining_classes(tmp_path: Path) -> No
     root.mkdir()
     (root / "s.py").write_text(TWO_COMBINERS_PY, encoding="utf-8")
 
-    ingestor = _capture(root, "proj")
+    ingestor = capture(root, "proj")
     shadow_edges = [
         (f, t)
         for _fl, f, rel, _tl, t in ingestor.rels

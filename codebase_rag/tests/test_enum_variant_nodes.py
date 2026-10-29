@@ -13,7 +13,7 @@ from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 SOURCES: dict[str, str] = {
     "shape.rs": (
@@ -35,7 +35,7 @@ LABEL = "EnumVariant"
 REL = "HAS_VARIANT"
 
 
-def _index(tmp_path: Path, tokens: list[str]) -> _StatefulIngestor:
+def _index(tmp_path: Path, tokens: list[str]) -> StatefulIngestor:
     repo = tmp_path / "proj"
     repo.mkdir(parents=True)
     for name, src in SOURCES.items():
@@ -55,7 +55,7 @@ def _index(tmp_path: Path, tokens: list[str]) -> _StatefulIngestor:
     ]
     if missing:
         pytest.skip(f"{missing[0]} parser not available")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(
         ingestor=store,  # type: ignore[arg-type]
         repo_path=repo,
@@ -66,7 +66,7 @@ def _index(tmp_path: Path, tokens: list[str]) -> _StatefulIngestor:
     return store
 
 
-def _variants(store: _StatefulIngestor, enum_name: str) -> dict[str, dict]:
+def _variants(store: StatefulIngestor, enum_name: str) -> dict[str, dict]:
     return {
         str(props[cs.KEY_NAME]): props
         for (label, _uid), props in store.nodes.items()
@@ -77,7 +77,7 @@ def _variants(store: _StatefulIngestor, enum_name: str) -> dict[str, dict]:
     }
 
 
-def _owner_edges(store: _StatefulIngestor, enum_name: str) -> set[tuple[str, str]]:
+def _owner_edges(store: StatefulIngestor, enum_name: str) -> set[tuple[str, str]]:
     return {
         (str(src), str(tgt))
         for sl, src, rel, _tl, tgt in store.edges
@@ -92,7 +92,7 @@ def test_the_default_index_emits_no_variant_and_no_edge(tmp_path: Path) -> None:
 
 
 @pytest.fixture(scope="module")
-def indexed(tmp_path_factory: pytest.TempPathFactory) -> _StatefulIngestor:
+def indexed(tmp_path_factory: pytest.TempPathFactory) -> StatefulIngestor:
     return _index(tmp_path_factory.mktemp("enums"), ["+enum_variants"])
 
 
@@ -109,7 +109,7 @@ def indexed(tmp_path_factory: pytest.TempPathFactory) -> _StatefulIngestor:
     ids=["rust", "java", "c", "cpp", "csharp", "php"],
 )
 def test_every_variant_becomes_a_node_in_declaration_order(
-    indexed: _StatefulIngestor, enum_name: str, names: list[str], values: dict[str, str]
+    indexed: StatefulIngestor, enum_name: str, names: list[str], values: dict[str, str]
 ) -> None:
     variants = _variants(indexed, enum_name)
     assert list(variants) == names, sorted(variants)
@@ -136,7 +136,7 @@ def test_every_variant_becomes_a_node_in_declaration_order(
 
 
 def test_a_variant_is_positioned_at_its_name_not_its_node(
-    indexed: _StatefulIngestor,
+    indexed: StatefulIngestor,
 ) -> None:
     # `start_col` is the column of the NAME, which for an attributed C#
     # member is not the column of the node: `[Obsolete] Red = 1` starts the
@@ -151,13 +151,13 @@ def test_a_variant_is_positioned_at_its_name_not_its_node(
     assert hearts[cs.KEY_START_LINE] == 3, hearts
 
 
-def test_a_variant_carries_its_doc_comment(indexed: _StatefulIngestor) -> None:
+def test_a_variant_carries_its_doc_comment(indexed: StatefulIngestor) -> None:
     assert _variants(indexed, "Shape")["Circle"][cs.KEY_DOCSTRING] == "Unit."
     assert _variants(indexed, "Colour")["RED"][cs.KEY_DOCSTRING] == "Red."
     assert cs.KEY_DOCSTRING not in _variants(indexed, "Shape")["Rect"]
 
 
-def test_java_enum_body_members_are_not_variants(indexed: _StatefulIngestor) -> None:
+def test_java_enum_body_members_are_not_variants(indexed: StatefulIngestor) -> None:
     # Constructors are not variants, and a nested enum's variants are its
     # own: only a direct child of the body is a constant of THIS enum.
     assert "Colour" not in _variants(indexed, "Colour")
@@ -236,7 +236,7 @@ def test_a_reparse_takes_stale_variants_with_their_owner(tmp_path: Path) -> None
     parsers, queries = load_parsers()
     if cs.SupportedLanguage.RUST not in parsers:
         pytest.skip("rust parser not available")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
 
     def _run() -> None:
         GraphUpdater(

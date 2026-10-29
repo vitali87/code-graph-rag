@@ -13,7 +13,7 @@ from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 _SRC = {
     "models.py": "class Widget:\n    pass\n\nclass Gadget:\n    pass\n",
@@ -47,14 +47,14 @@ _SRC = {
 }
 
 
-def _index(tmp_path: Path, tokens: list[str]) -> _StatefulIngestor:
+def _index(tmp_path: Path, tokens: list[str]) -> StatefulIngestor:
     repo = tmp_path / "proj"
     repo.mkdir(parents=True)
     (repo / "__init__.py").touch()
     for name, src in _SRC.items():
         (repo / name).write_text(src)
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(
         ingestor=store,
         repo_path=repo,
@@ -65,7 +65,7 @@ def _index(tmp_path: Path, tokens: list[str]) -> _StatefulIngestor:
     return store
 
 
-def _nodes(store: _StatefulIngestor, label: str) -> dict[str, dict]:
+def _nodes(store: StatefulIngestor, label: str) -> dict[str, dict]:
     return {
         str(props[cs.KEY_QUALIFIED_NAME]): props
         for (node_label, _uid), props in store.nodes.items()
@@ -73,7 +73,7 @@ def _nodes(store: _StatefulIngestor, label: str) -> dict[str, dict]:
     }
 
 
-def _edges(store: _StatefulIngestor, rel: str) -> set[tuple[str, str]]:
+def _edges(store: StatefulIngestor, rel: str) -> set[tuple[str, str]]:
     return {(str(src), str(tgt)) for _sl, src, r, _tl, tgt in store.edges if r == rel}
 
 
@@ -165,7 +165,7 @@ def test_index_offsets_against_param_types_as_documented(tmp_path: Path) -> None
     )
 
 
-def _reindex(store: _StatefulIngestor, repo: Path) -> None:
+def _reindex(store: StatefulIngestor, repo: Path) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=store,
@@ -255,7 +255,7 @@ def test_of_type_survives_on_a_reused_updater(tmp_path: Path) -> None:
     for name, src in _SRC.items():
         (repo / name).write_text(src)
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = GraphUpdater(
         ingestor=store,
         repo_path=repo,
@@ -283,7 +283,7 @@ def test_scoped_reingest_drops_the_old_annotation(tmp_path: Path) -> None:
         "class Old:\n    pass\n\nclass New:\n    pass\n\ndef f(x: Old) -> int:\n    return 0\n"
     )
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     capture = resolve_capture(["+parameters"])
     GraphUpdater(
         ingestor=store,
@@ -326,7 +326,7 @@ def test_the_deferred_pass_runs_for_parameter_facts_alone(tmp_path: Path) -> Non
     for name, src in _SRC.items():
         (repo / name).write_text(src)
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = GraphUpdater(
         ingestor=store,
         repo_path=repo,
@@ -364,7 +364,7 @@ def test_scoped_reingest_keeps_a_colliding_modules_facts(tmp_path: Path) -> None
         "def other(gadget: Gadget) -> int:\n    return 1\n"
     )
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     capture = resolve_capture(["+parameters"])
     GraphUpdater(
         ingestor=store,

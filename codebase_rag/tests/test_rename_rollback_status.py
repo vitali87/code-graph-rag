@@ -18,11 +18,11 @@ from codebase_rag.editing.transaction import (
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.tests.test_edit_contract import PROJECT, _real_project
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 
 @pytest.fixture
-def collision(tmp_path: Path) -> tuple[Path, _StatefulIngestor, GraphUpdater]:
+def collision(tmp_path: Path) -> tuple[Path, StatefulIngestor, GraphUpdater]:
     root = tmp_path / PROJECT
     root.mkdir()
     store, updater = _real_project(
@@ -82,7 +82,7 @@ def _reingest_with_interference(
     ],
 )
 def test_failed_contract_reports_rollback_without_running_success_hook(
-    collision: tuple[Path, _StatefulIngestor, GraphUpdater],
+    collision: tuple[Path, StatefulIngestor, GraphUpdater],
     interference: str,
     undone: bool,
     reingest_count: int,
@@ -132,7 +132,7 @@ def test_failed_contract_reports_rollback_without_running_success_hook(
     "interference", ["newer_edit", "hand_edit", "empty_entry", "none"]
 )
 def test_cli_failed_contract_exits_nonzero_and_serializes_rollback_status(
-    collision: tuple[Path, _StatefulIngestor, GraphUpdater], interference: str
+    collision: tuple[Path, StatefulIngestor, GraphUpdater], interference: str
 ) -> None:
     root, store, updater = collision
     calls: list[list[str]] = []
@@ -170,7 +170,7 @@ def test_cli_failed_contract_exits_nonzero_and_serializes_rollback_status(
 
 @pytest.mark.parametrize("interference", ["newer_edit", "empty_entry", "none"])
 def test_mcp_failed_contract_serializes_rollback_status(
-    collision: tuple[Path, _StatefulIngestor, GraphUpdater], interference: str
+    collision: tuple[Path, StatefulIngestor, GraphUpdater], interference: str
 ) -> None:
     root, store, updater = collision
     calls: list[list[str]] = []
@@ -193,7 +193,7 @@ def test_mcp_failed_contract_serializes_rollback_status(
 
 @pytest.mark.parametrize("mode", ["measured", "unchecked", "dry_run"])
 def test_rename_without_contract_failure_has_no_rollback_status(
-    collision: tuple[Path, _StatefulIngestor, GraphUpdater], mode: str
+    collision: tuple[Path, StatefulIngestor, GraphUpdater], mode: str
 ) -> None:
     root, store, updater = collision
     after_apply = MagicMock()

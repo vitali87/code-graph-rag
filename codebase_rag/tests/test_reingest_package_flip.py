@@ -31,7 +31,7 @@ from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.utils.path_utils import cached_resolve_posix
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 UTIL = "def helper():\n    return 1\n"
 
@@ -43,7 +43,7 @@ def _fixture(root: Path, *, with_init: bool) -> None:
     (root / "pkg" / "util.py").write_text(UTIL, encoding="utf-8")
 
 
-def _updater(root: Path, store: _StatefulIngestor) -> GraphUpdater:
+def _updater(root: Path, store: StatefulIngestor) -> GraphUpdater:
     parsers, queries = load_parsers()
     if cs.SupportedLanguage.PYTHON not in parsers:
         pytest.skip("python parser not available")
@@ -56,7 +56,7 @@ def _updater(root: Path, store: _StatefulIngestor) -> GraphUpdater:
     )
 
 
-def _containers(store: _StatefulIngestor) -> set[tuple[str, str]]:
+def _containers(store: StatefulIngestor) -> set[tuple[str, str]]:
     """Package and Folder nodes, with paths reduced to their last segment.
 
     A Folder is keyed on an absolute path and a Package on a dotted qn, so the
@@ -71,7 +71,7 @@ def _containers(store: _StatefulIngestor) -> set[tuple[str, str]]:
     }
 
 
-def _containment(store: _StatefulIngestor) -> set[tuple[str, str, str]]:
+def _containment(store: StatefulIngestor) -> set[tuple[str, str, str]]:
     return {
         (str(src).split("/")[-1], rel, str(dst).split("/")[-1])
         for (_sl, src, rel, _tl, dst) in store.edges
@@ -79,9 +79,9 @@ def _containment(store: _StatefulIngestor) -> set[tuple[str, str, str]]:
     }
 
 
-def _clean_index(root: Path, *, with_init: bool) -> _StatefulIngestor:
+def _clean_index(root: Path, *, with_init: bool) -> StatefulIngestor:
     _fixture(root, with_init=with_init)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(root, store).run(force=True)
     store.flush_all()
     return store
@@ -104,7 +104,7 @@ def test_reingest_re_evaluates_a_directorys_package_ness(
     root.mkdir()
     _fixture(root, with_init=started_as_package)
 
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(root, store)
     updater.run(force=True)
     store.flush_all()
@@ -155,7 +155,7 @@ def test_an_unrelated_reingest_does_not_disturb_a_package(tmp_path: Path) -> Non
     root.mkdir()
     _fixture(root, with_init=True)
 
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(root, store)
     updater.run(force=True)
     store.flush_all()
@@ -197,7 +197,7 @@ def test_a_flip_elsewhere_is_not_this_calls_to_reconcile(tmp_path: Path) -> None
     (root / "other" / "__init__.py").write_text("", encoding="utf-8")
     (root / "other" / "mod.py").write_text(UTIL, encoding="utf-8")
 
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(root, store)
     updater.run(force=True)
     store.flush_all()
@@ -240,7 +240,7 @@ def test_a_repo_root_that_stops_being_a_package_is_demoted(tmp_path: Path) -> No
     (root / "__init__.py").write_text("", encoding="utf-8")
     (root / "util.py").write_text(UTIL, encoding="utf-8")
 
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(root, store)
     updater.run(force=True)
     store.flush_all()
@@ -276,7 +276,7 @@ def test_an_aborted_reingest_leaves_the_graph_as_it_was(tmp_path: Path) -> None:
     root.mkdir()
     _fixture(root, with_init=True)
 
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(root, store)
     updater.run(force=True)
     store.flush_all()
@@ -318,7 +318,7 @@ def test_a_named_flip_does_not_drag_in_an_unnamed_one(tmp_path: Path) -> None:
     (root / "other" / "__init__.py").write_text("", encoding="utf-8")
     (root / "other" / "mod.py").write_text(UTIL, encoding="utf-8")
 
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(root, store)
     updater.run(force=True)
     store.flush_all()
@@ -373,7 +373,7 @@ def test_a_nested_directory_flips_under_its_parent_package(tmp_path: Path) -> No
     (root / "pkg" / "sub").mkdir()
     (root / "pkg" / "sub" / "mod.py").write_text(UTIL, encoding="utf-8")
 
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(root, store)
     updater.run(force=True)
     store.flush_all()
@@ -392,7 +392,7 @@ def test_a_nested_directory_flips_under_its_parent_package(tmp_path: Path) -> No
     (clean_root / "pkg" / "sub").mkdir()
     (clean_root / "pkg" / "sub" / "__init__.py").write_text("", encoding="utf-8")
     (clean_root / "pkg" / "sub" / "mod.py").write_text(UTIL, encoding="utf-8")
-    clean_store = _StatefulIngestor()
+    clean_store = StatefulIngestor()
     _updater(clean_root, clean_store).run(force=True)
     clean_store.flush_all()
 
@@ -432,7 +432,7 @@ def test_an_independently_changed_ancestor_keeps_one_identity(tmp_path: Path) ->
     (root / "outer" / "inner").mkdir()
     (root / "outer" / "inner" / "mod.py").write_text(UTIL, encoding="utf-8")
 
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(root, store)
     updater.run(force=True)
     store.flush_all()
@@ -448,7 +448,7 @@ def test_an_independently_changed_ancestor_keeps_one_identity(tmp_path: Path) ->
     (clean_root / "outer" / "inner").mkdir(parents=True)
     (clean_root / "outer" / "inner" / "__init__.py").write_text("", encoding="utf-8")
     (clean_root / "outer" / "inner" / "mod.py").write_text(UTIL, encoding="utf-8")
-    clean_store = _StatefulIngestor()
+    clean_store = StatefulIngestor()
     _updater(clean_root, clean_store).run(force=True)
     clean_store.flush_all()
 
@@ -501,7 +501,7 @@ def test_a_demoted_package_keeps_its_child_container_edge(tmp_path: Path) -> Non
     root = tmp_path / "incremental"
     root.mkdir()
     build(root, with_init=True)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(root, store)
     updater.run(force=True)
     store.flush_all()
@@ -513,7 +513,7 @@ def test_a_demoted_package_keeps_its_child_container_edge(tmp_path: Path) -> Non
     clean_root = tmp_path / "clean"
     clean_root.mkdir()
     build(clean_root, with_init=False)
-    clean_store = _StatefulIngestor()
+    clean_store = StatefulIngestor()
     _updater(clean_root, clean_store).run(force=True)
     clean_store.flush_all()
 
@@ -549,7 +549,7 @@ def test_a_FRESH_updater_still_detects_the_flip(tmp_path: Path, direction: str) 
     root.mkdir()
     _fixture(root, with_init=started_as_package)
 
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(root, store).run(force=True)
     store.flush_all()
 
@@ -577,7 +577,7 @@ def test_a_FRESH_updater_still_detects_the_flip(tmp_path: Path, direction: str) 
     clean_root = tmp_path / "clean"
     clean_root.mkdir()
     _fixture(clean_root, with_init=not started_as_package)
-    clean_store = _StatefulIngestor()
+    clean_store = StatefulIngestor()
     _updater(clean_root, clean_store).run(force=True)
     clean_store.flush_all()
 
@@ -610,7 +610,7 @@ def test_a_directory_recorded_as_BOTH_kinds_is_reconciled(tmp_path: Path) -> Non
     root.mkdir()
     _fixture(root, with_init=True)
 
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(root, store)
     updater.run(force=True)
     store.flush_all()

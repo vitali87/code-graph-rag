@@ -6,7 +6,7 @@
 # fingerprint off real definitions and corrupts every eval built on it
 # (dead-code loses path rules, duplicates counts the node as skipped).
 from codebase_rag import constants as cs
-from evals.cgr_graph import _CapturingIngestor, _StatefulIngestor
+from evals.cgr_graph import CapturingIngestor, StatefulIngestor
 
 _METHOD = cs.NodeLabel.METHOD.value
 _FULL = {
@@ -24,7 +24,7 @@ _PARTIAL = {
 
 
 def test_capturing_ingestor_merges_partial_node_rows() -> None:
-    ingestor = _CapturingIngestor()
+    ingestor = CapturingIngestor()
     ingestor.ensure_node_batch(_METHOD, dict(_FULL))
     ingestor.ensure_node_batch(_METHOD, dict(_PARTIAL))
     props = ingestor.nodes[(_METHOD, "proj.error.Error.fmt")]
@@ -36,7 +36,7 @@ def test_capturing_ingestor_merges_partial_node_rows() -> None:
 def test_capturing_ingestor_later_full_row_still_updates() -> None:
     # += semantics overwrite keys present in the new row; only absent keys
     # survive from the old one.
-    ingestor = _CapturingIngestor()
+    ingestor = CapturingIngestor()
     ingestor.ensure_node_batch(_METHOD, dict(_FULL))
     updated = dict(_FULL, **{cs.KEY_END_LINE: 720})
     ingestor.ensure_node_batch(_METHOD, updated)
@@ -44,7 +44,7 @@ def test_capturing_ingestor_later_full_row_still_updates() -> None:
 
 
 def test_stateful_ingestor_merges_partial_node_rows() -> None:
-    ingestor = _StatefulIngestor()
+    ingestor = StatefulIngestor()
     ingestor.ensure_node_batch(_METHOD, dict(_FULL))
     ingestor.ensure_node_batch(_METHOD, dict(_PARTIAL))
     props = ingestor.nodes[(_METHOD, "proj.error.Error.fmt")]

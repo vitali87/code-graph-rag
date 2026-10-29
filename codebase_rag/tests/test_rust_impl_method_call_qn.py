@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from evals.cgr_graph import _capture
+from evals.cgr_graph import capture
 
 
 def _make_crate(root: Path) -> None:
@@ -24,7 +24,7 @@ def test_rust_generic_impl_method_caller_qn_strips_generics(tmp_path: Path) -> N
     # to that bare-type caller qn, not a generic-bearing crate.lib.Chars<'a>.go
     # that matches no node and drops the CALLS edge.
     _make_crate(tmp_path)
-    ingestor = _capture(tmp_path, "crate")
+    ingestor = capture(tmp_path, "crate")
     calls = {
         (str(from_val), str(to_val))
         for _fl, from_val, rel, _tl, to_val in ingestor.rels
@@ -53,7 +53,7 @@ def test_rust_super_imported_free_fn_call_resolves(tmp_path: Path) -> None:
     # raw import target `super::b::helper` is `::`-separated and not project-prefixed,
     # so the external-import guard must not suppress the trie fallback.
     _make_super_import_crate(tmp_path)
-    ingestor = _capture(tmp_path, "crate")
+    ingestor = capture(tmp_path, "crate")
     calls = {
         (str(from_val), str(to_val))
         for _fl, from_val, rel, _tl, to_val in ingestor.rels

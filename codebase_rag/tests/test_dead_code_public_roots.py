@@ -34,7 +34,7 @@ from codebase_rag.types_defs import (
     ResultRow,
 )
 from codec import schema_pb2 as pb
-from evals.cgr_graph import _CapturingIngestor
+from evals.cgr_graph import CapturingIngestor
 
 _PROJECT = "proj"
 _PREFIX = _PROJECT + cs.SEPARATOR_DOT
@@ -310,7 +310,7 @@ def _parse(
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(source, encoding="utf-8")
-    ingestor = _CapturingIngestor()
+    ingestor = CapturingIngestor()
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(settings, "CSHARP_FRONTEND", cs.CSharpFrontend.TREESITTER)
         mp.setattr(settings, "QDRANT_URL", None)

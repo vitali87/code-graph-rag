@@ -25,7 +25,7 @@ from codebase_rag.tests.test_incremental_deleted_dependents import (
     _materialise,
     _snapshot,
 )
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 _SHAPES = {
     "pubspec.yaml": 'name: shapes\nenvironment:\n  sdk: ">=3.0.0 <4.0.0"\n',
@@ -295,7 +295,7 @@ def _shapes_with(pubspec: str | None) -> dict[str, str]:
     return files if pubspec is None else {**files, cs.DEP_FILE_PUBSPEC: pubspec}
 
 
-def _stateful_updater(store: _StatefulIngestor, root: Path) -> GraphUpdater:
+def _stateful_updater(store: StatefulIngestor, root: Path) -> GraphUpdater:
     parsers, queries = load_parsers()
     return GraphUpdater(
         ingestor=store,
@@ -336,7 +336,7 @@ def test_a_pubspec_change_alone_reparses_the_package_importers(
 ) -> None:
     root = temp_repo / "proj"
     _materialise(root, _shapes_with(before))
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _stateful_updater(store, root).run(force=True)
     _change_pubspec(root, after)
     _sync_pubspec(_stateful_updater(store, root), sync, deleted=after is None)
@@ -344,7 +344,7 @@ def test_a_pubspec_change_alone_reparses_the_package_importers(
     clean_root = temp_repo / "clean" / "proj"
     clean_root.parent.mkdir()
     _materialise(clean_root, _shapes_with(after))
-    clean = _StatefulIngestor()
+    clean = StatefulIngestor()
     _stateful_updater(clean, clean_root).run(force=True)
 
     # `lib/report.dart` imports its own package from inside `lib/`, and
@@ -361,7 +361,7 @@ def test_a_pubspec_edit_keeping_the_name_reparses_no_importer(
     root = temp_repo / "proj"
     pubspec = "name: shapes\n"
     _materialise(root, _shapes_with(pubspec))
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _stateful_updater(store, root).run(force=True)
     _change_pubspec(root, f"{pubspec}dependencies:\n  meta: ^1.9.0\n")
 

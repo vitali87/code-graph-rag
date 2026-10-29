@@ -23,12 +23,12 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 UTIL = "def helper():\n    return 1\n"
 
 
-def _updater(root: Path, store: _StatefulIngestor) -> GraphUpdater:
+def _updater(root: Path, store: StatefulIngestor) -> GraphUpdater:
     parsers, queries = load_parsers()
     if cs.SupportedLanguage.PYTHON not in parsers:
         pytest.skip("python parser not available")
@@ -41,7 +41,7 @@ def _updater(root: Path, store: _StatefulIngestor) -> GraphUpdater:
     )
 
 
-def _kinds_by_directory(store: _StatefulIngestor) -> dict[str, set[str]]:
+def _kinds_by_directory(store: StatefulIngestor) -> dict[str, set[str]]:
     """Container labels per DIRECTORY, keyed on absolute_path.
 
     Keyed on the path rather than the uid deliberately: a Package is keyed on
@@ -79,7 +79,7 @@ def test_hydration_does_not_give_an_unnamed_directory_two_identities(
     root.mkdir()
     _two_packages(root)
 
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(root, store).run(force=True)
     store.flush_all()
     assert _kinds_by_directory(store)["other"] == {cs.NodeLabel.PACKAGE.value}, (
@@ -117,7 +117,7 @@ def test_hydration_still_populates_the_package_map(tmp_path: Path) -> None:
     root.mkdir()
     _two_packages(root)
 
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(root, store).run(force=True)
     store.flush_all()
 
@@ -155,7 +155,7 @@ def test_suppressing_emission_writes_nothing_and_records_both_kinds(
     (root / "pkg" / "m.py").write_text(UTIL, encoding="utf-8")
     (root / "plain" / "n.py").write_text(UTIL, encoding="utf-8")
 
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = _updater(root, store)
     before = len(store.nodes)
 
@@ -183,7 +183,7 @@ def test_suppressing_emission_writes_nothing_and_records_both_kinds(
     )
 
 
-def _containment_from_missing_containers(store: _StatefulIngestor) -> list[tuple]:
+def _containment_from_missing_containers(store: StatefulIngestor) -> list[tuple]:
     """CONTAINS_* edges whose SOURCE container node does not exist.
 
     In production this is worse than a stray edge: the merge query MATCHes
@@ -216,7 +216,7 @@ def test_a_file_added_in_a_NEW_directory_still_gets_its_container(
     (root / "pkg" / "__init__.py").write_text("", encoding="utf-8")
     (root / "pkg" / "m.py").write_text(UTIL, encoding="utf-8")
 
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(root, store).run(force=True)
     store.flush_all()
 
@@ -261,7 +261,7 @@ def test_a_file_added_in_a_new_SUBdirectory_still_gets_its_container(
     (root / "pkg" / "__init__.py").write_text("", encoding="utf-8")
     (root / "pkg" / "m.py").write_text(UTIL, encoding="utf-8")
 
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(root, store).run(force=True)
     store.flush_all()
 
@@ -303,7 +303,7 @@ def test_an_unreadable_container_query_aborts_before_deriving(
     (root / "pkg" / "__init__.py").write_text("", encoding="utf-8")
     (root / "pkg" / "m.py").write_text(UTIL, encoding="utf-8")
 
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(root, store).run(force=True)
     store.flush_all()
     before = dict(store.nodes)
@@ -343,7 +343,7 @@ def test_a_sink_without_a_query_surface_still_reingests(tmp_path: Path) -> None:
     (root / "pkg" / "__init__.py").write_text("", encoding="utf-8")
     (root / "pkg" / "m.py").write_text(UTIL, encoding="utf-8")
 
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(root, store).run(force=True)
     store.flush_all()
 
@@ -380,7 +380,7 @@ def test_a_read_that_fails_on_the_SECOND_ask_still_aborts(tmp_path: Path) -> Non
     (root / "outer" / "__init__.py").write_text("", encoding="utf-8")
     (root / "outer" / "m.py").write_text(UTIL, encoding="utf-8")
 
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(root, store).run(force=True)
     store.flush_all()
 

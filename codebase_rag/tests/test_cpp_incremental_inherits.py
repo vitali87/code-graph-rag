@@ -11,7 +11,7 @@ from pathlib import Path
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 BASE_HDR = """
 #pragma once
@@ -35,14 +35,14 @@ public:
 """
 
 
-def _index(store: _StatefulIngestor, repo: Path, force: bool) -> None:
+def _index(store: StatefulIngestor, repo: Path, force: bool) -> None:
     parsers, queries = load_parsers()
     GraphUpdater(ingestor=store, repo_path=repo, parsers=parsers, queries=queries).run(
         force=force
     )
 
 
-def _inherits_edges(store: _StatefulIngestor) -> set[tuple[str, str]]:
+def _inherits_edges(store: StatefulIngestor) -> set[tuple[str, str]]:
     return {
         (str(from_val), str(to_val))
         for from_label, from_val, rel_type, to_label, to_val in store.edges
@@ -59,7 +59,7 @@ def test_incremental_reparse_keeps_cross_header_inherits(temp_repo: Path) -> Non
         f"{project}.Base.ast.Base",
     )
 
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, temp_repo, force=True)
     assert expected in _inherits_edges(store)
 

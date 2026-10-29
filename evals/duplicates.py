@@ -34,7 +34,7 @@ from codebase_rag.types_defs import (
 
 from . import constants as ec
 from . import logs as ls
-from .cgr_graph import _capture
+from .cgr_graph import capture
 from .score import _prf
 from .types_defs import DiffBucket, LocationStats, ScoreResult, ScoreRow
 
@@ -104,7 +104,7 @@ def _row(label: str, props: PropertyDict) -> ResultRow:
 def cgr_duplicates(
     target: Path, project: str, config: DuplicatesConfig
 ) -> DuplicatesReport:
-    ingestor = _capture(target, project)
+    ingestor = capture(target, project)
     return collect_duplicates_with_coverage(_GraphRows(ingestor.nodes), project, config)
 
 

@@ -29,7 +29,7 @@ from codebase_rag.tools.code_retrieval import CodeRetriever
 from codebase_rag.tools.file_reader import FileReader
 from codebase_rag.utils.source_encoding import grammar_bytes
 from codebase_rag.utils.source_extraction import extract_source_lines
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 _CS = (
     "namespace Acme\n{\n    public static class Util\n    {\n"
@@ -154,7 +154,7 @@ def test_an_unchanged_wide_files_global_using_scopes_an_edited_caller(
         "    public int Run() { return Twice(3); }\n}\n",
         encoding="utf-8",
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index_incremental(store, root, force=True)
     assert _twice_call(store), store.edges
 
@@ -165,7 +165,7 @@ def test_an_unchanged_wide_files_global_using_scopes_an_edited_caller(
     assert _twice_call(store), store.edges
 
 
-def _index_incremental(store: _StatefulIngestor, root: Path, force: bool) -> None:
+def _index_incremental(store: StatefulIngestor, root: Path, force: bool) -> None:
     parsers, queries = load_parsers()
     if cs.SupportedLanguage.CSHARP not in parsers:
         pytest.skip("c_sharp parser not available")
@@ -178,7 +178,7 @@ def _index_incremental(store: _StatefulIngestor, root: Path, force: bool) -> Non
     ).run(force=force)
 
 
-def _twice_call(store: _StatefulIngestor) -> bool:
+def _twice_call(store: StatefulIngestor) -> bool:
     return any(
         rel == cs.RelationshipType.CALLS
         and str(src).endswith("App.A.Run")

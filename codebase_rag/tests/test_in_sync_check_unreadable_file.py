@@ -16,10 +16,10 @@ from codebase_rag import graph_updater as gu
 from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 
-def _make_updater(root: Path, store: _StatefulIngestor) -> GraphUpdater:
+def _make_updater(root: Path, store: StatefulIngestor) -> GraphUpdater:
     parsers, queries = load_parsers()
     return GraphUpdater(
         ingestor=store, repo_path=root, parsers=parsers, queries=queries
@@ -33,7 +33,7 @@ def test_a_cached_file_that_became_unreadable_does_not_end_the_run(
     root.mkdir()
     (root / "a.py").write_text("def a():\n    return 1\n")
     (root / "b.py").write_text("def b():\n    return 2\n")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _make_updater(root, store).run(force=True)
     assert _make_updater(root, store)._is_already_in_sync() is True
 

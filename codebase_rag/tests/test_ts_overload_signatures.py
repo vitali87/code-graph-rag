@@ -28,7 +28,7 @@ from codebase_rag.parsers.js_ts.overloads import (
 from codebase_rag.structural_check import run_check
 from codebase_rag.structural_delta import has_findings
 from codebase_rag.types_defs import PropertyValue
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 from evals.incremental import run_neutral_edit_scenario
 
 PROJECT = "ovl"
@@ -178,12 +178,12 @@ export function use(r: Repo): string {
 """
 
 
-def _index(root: Path, files: dict[str, str]) -> tuple[_StatefulIngestor, GraphUpdater]:
+def _index(root: Path, files: dict[str, str]) -> tuple[StatefulIngestor, GraphUpdater]:
     root.mkdir(parents=True, exist_ok=True)
     for rel, text in files.items():
         (root / rel).write_text(text, encoding="utf-8")
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = GraphUpdater(
         ingestor=store,
         repo_path=root,
@@ -196,7 +196,7 @@ def _index(root: Path, files: dict[str, str]) -> tuple[_StatefulIngestor, GraphU
 
 
 def _spans(
-    store: _StatefulIngestor, stem: str
+    store: StatefulIngestor, stem: str
 ) -> dict[tuple[str, str], tuple[PropertyValue, PropertyValue]]:
     # Every Function/Method node for `stem`, its `@line` variants included.
     return {
@@ -207,7 +207,7 @@ def _spans(
     }
 
 
-def _calls_from(store: _StatefulIngestor, caller: str) -> set[tuple[str, str | None]]:
+def _calls_from(store: StatefulIngestor, caller: str) -> set[tuple[str, str | None]]:
     out: set[tuple[str, str | None]] = set()
     for (_fl, source, rel, _tl, target, *_site), props in store.edge_props.items():
         if str(source) == caller and rel == cs.RelationshipType.CALLS.value:
@@ -336,7 +336,7 @@ def test_an_unused_overloaded_function_is_one_dead_candidate(tmp_path: Path) -> 
 
 def _renamed(
     tmp_path: Path, files: dict[str, str], qn: str, new_name: str
-) -> tuple[Path, _StatefulIngestor]:
+) -> tuple[Path, StatefulIngestor]:
     root = tmp_path / PROJECT
     store, updater = _index(root, files)
     report = rename(

@@ -34,7 +34,7 @@ from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import PropertyDict, ResultRow
 from codebase_rag.utils.path_utils import derive_project_name
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 # The issue's reproduction: two checks fail, and `validate` raises both.
 APP = """\
@@ -452,9 +452,9 @@ def test_a_logged_error_caused_by_a_raised_one_is_the_failure() -> None:
 # --- explain_traceback and rank_root_causes -----------------------------------
 
 
-def _graph(root: Path) -> tuple[str, _StatefulIngestor]:
+def _graph(root: Path) -> tuple[str, StatefulIngestor]:
     project = derive_project_name(root)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=store,
@@ -466,7 +466,7 @@ def _graph(root: Path) -> tuple[str, _StatefulIngestor]:
     return project, store
 
 
-def _fetch_all(store: _StatefulIngestor) -> QueryFn:
+def _fetch_all(store: StatefulIngestor) -> QueryFn:
     """The two crash queries, answered from the indexed graph."""
     callable_labels = {
         cs.NodeLabel.FUNCTION.value,

@@ -198,10 +198,10 @@ def measure_indexing(corpus: Path, project_name: str) -> IndexingMeasurement:
 def _measure_in_this_process(corpus: Path, project_name: str) -> IndexingMeasurement:
     # Imported here rather than at module scope so that `--help` and the
     # dataclass stay usable without paying the parser-loading cost.
-    from evals.cgr_graph import _capture
+    from evals.cgr_graph import capture
 
     start = time.perf_counter()
-    ingestor = _capture(corpus, project_name)
+    ingestor = capture(corpus, project_name)
     duration = time.perf_counter() - start
 
     # FILE only. cgr emits BOTH a File and a Module node for every parsed

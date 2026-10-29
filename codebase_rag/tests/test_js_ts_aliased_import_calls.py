@@ -4,7 +4,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _capture
+from evals.cgr_graph import capture
 
 
 def _ts_grammar_available() -> bool:
@@ -59,7 +59,7 @@ def test_call_via_non_relative_aliased_import_resolves(tmp_path: Path) -> None:
     # simple-name trie fallback. It must resolve to the first-party function,
     # like the relative-import call does.
     _make(tmp_path)
-    ingestor = _capture(tmp_path, "proj")
+    ingestor = capture(tmp_path, "proj")
     calls = {
         (str(from_val), str(to_val))
         for _fl, from_val, rel, _tl, to_val in ingestor.rels

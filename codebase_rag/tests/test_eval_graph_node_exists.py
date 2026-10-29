@@ -6,13 +6,13 @@ from __future__ import annotations
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.graph_query import node_exists
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 QN = "other_project.pkg.mod.run"
 
 
-def _store() -> _StatefulIngestor:
-    store = _StatefulIngestor()
+def _store() -> StatefulIngestor:
+    store = StatefulIngestor()
     # The same name under two labels: two nodes, so two candidate rows.
     for label in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD):
         store.ensure_node_batch(label.value, {cs.KEY_QUALIFIED_NAME: QN})

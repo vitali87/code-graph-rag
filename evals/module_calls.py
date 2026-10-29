@@ -18,7 +18,7 @@ from codebase_rag import constants as cs
 
 from . import constants as ec
 from .ast_oracle import _iter_py_files
-from .cgr_graph import _capture
+from .cgr_graph import capture
 from .types_defs import NameEdge, NodeKey
 
 console = Console()
@@ -171,7 +171,7 @@ def oracle_module_calls(target: Path, project_name: str) -> set[NameEdge]:
 
 
 def cgr_module_calls(target: Path, project_name: str) -> set[NameEdge]:
-    ingestor = _capture(target, project_name)
+    ingestor = capture(target, project_name)
     module_label = cs.NodeLabel.MODULE.value
     module_paths: dict[str, str] = {
         str(uid): str(props[cs.KEY_PATH])

@@ -14,7 +14,7 @@ from pathlib import Path
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 USE = (
     "using Zeta;\n\nnamespace App;\n\npublic class Use\n{\n"
@@ -31,7 +31,7 @@ def _edges(tmp_path: Path, box_source: str) -> set[tuple[str, str]]:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(source, encoding="utf-8")
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(
         ingestor=store,  # type: ignore[arg-type]
         repo_path=root,

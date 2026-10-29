@@ -16,7 +16,7 @@ from codebase_rag import constants as cs
 from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 _FILES = {
     "Types.cs": (
@@ -43,7 +43,7 @@ _FILES = {
 _EXT = "proj.BoxExtensions.App.BoxExtensions"
 
 
-def _index(store: _StatefulIngestor, root: Path, force: bool) -> GraphUpdater:
+def _index(store: StatefulIngestor, root: Path, force: bool) -> GraphUpdater:
     parsers, queries = load_parsers()
     updater = GraphUpdater(
         ingestor=store,
@@ -56,7 +56,7 @@ def _index(store: _StatefulIngestor, root: Path, force: bool) -> GraphUpdater:
     return updater
 
 
-def _run_calls(store: _StatefulIngestor) -> set[tuple[str, str]]:
+def _run_calls(store: StatefulIngestor) -> set[tuple[str, str]]:
     return {
         (str(edge[4]), str(props.get(cs.KEY_RESOLUTION)))
         for edge, props in store.edge_props.items()
@@ -73,12 +73,12 @@ def _edit(root: Path, rel: str, text: str) -> None:
     os.utime(path, (cache_mtime + 1, cache_mtime + 1))
 
 
-def _fresh(temp_repo: Path) -> tuple[Path, _StatefulIngestor, set[tuple[str, str]]]:
+def _fresh(temp_repo: Path) -> tuple[Path, StatefulIngestor, set[tuple[str, str]]]:
     root = temp_repo / "proj"
     root.mkdir()
     for rel, text in _FILES.items():
         (root / rel).write_text(text, encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, force=True)
     return root, store, _run_calls(store)
 
@@ -127,7 +127,7 @@ def test_an_edited_extension_binds_as_a_fresh_index_does(temp_repo: Path) -> Non
     clean.mkdir(parents=True)
     for rel, text in {**_FILES, **edited}.items():
         (clean / rel).write_text(text, encoding="utf-8")
-    clean_store = _StatefulIngestor()
+    clean_store = StatefulIngestor()
     _index(clean_store, clean, force=True)
 
     assert _run_calls(store) == _run_calls(clean_store)
@@ -142,7 +142,7 @@ def test_the_rehydrated_index_is_the_one_a_parse_builds(temp_repo: Path) -> None
     root.mkdir()
     for rel, text in _FILES.items():
         (root / rel).write_text(text, encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsed = _index(store, root, force=True)
     expected = {
         name: sorted(entries)

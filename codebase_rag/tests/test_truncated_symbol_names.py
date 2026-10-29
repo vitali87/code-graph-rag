@@ -18,7 +18,7 @@ from loguru import logger
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 
 @pytest.fixture(scope="module")
@@ -37,7 +37,7 @@ def _index(
 
     captured: list[str] = []
     sink = logger.add(lambda m: captured.append(str(m)), level="WARNING")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     try:
         GraphUpdater(
             ingestor=store,

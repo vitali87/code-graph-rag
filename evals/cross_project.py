@@ -9,7 +9,7 @@ from pathlib import Path
 from codebase_rag import constants as cs
 
 from . import constants as ec
-from .cgr_graph import _capture
+from .cgr_graph import capture
 from .score import _prf
 from .types_defs import DiffBucket, LocationStats, ScoreResult, ScoreRow
 
@@ -31,7 +31,7 @@ def _top_package(qn: str, project: str) -> str | None:
 
 
 def cgr_cross_package(target: Path, project: str) -> tuple[set[Edge], set[Edge]]:
-    ingestor = _capture(target, project)
+    ingestor = capture(target, project)
     calls: set[Edge] = set()
     imports: set[Edge] = set()
     for from_label, from_val, rel_type, to_label, to_val in ingestor.rels:

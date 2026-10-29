@@ -33,7 +33,7 @@ from tree_sitter import Node
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "proj"
 CLIENT = f"{PROJECT}.pkg._client.Client"
@@ -176,7 +176,7 @@ def _build(tmp_path: Path, source: str, managers: bool) -> GraphUpdater:
         path.write_text(content, encoding="utf-8")
     parsers, queries = load_parsers()
     updater = GraphUpdater(
-        ingestor=_StatefulIngestor(), repo_path=repo, parsers=parsers, queries=queries
+        ingestor=StatefulIngestor(), repo_path=repo, parsers=parsers, queries=queries
     )
     updater.run(force=True)
     return updater
@@ -191,11 +191,11 @@ def _calls(
     untyped `client.send()` falls back to `pkg._api.send` exactly as reported.
     """
     ingestor = _build(tmp_path, source, managers).ingestor
-    assert isinstance(ingestor, _StatefulIngestor)
+    assert isinstance(ingestor, StatefulIngestor)
     return _app_calls(ingestor)
 
 
-def _app_calls(ingestor: _StatefulIngestor) -> dict[str, dict[str, str]]:
+def _app_calls(ingestor: StatefulIngestor) -> dict[str, dict[str, str]]:
     found: dict[str, dict[str, str]] = {}
     for edge in ingestor.keyed_edges:
         _src_label, src, rel, _dst_label, dst, _site = edge
@@ -999,7 +999,7 @@ def test_reingesting_only_the_caller_types_the_target_like_a_clean_index(
     # managers.py, which it does not re-parse, and must still decide the type.
     updater = _build(tmp_path, "def use():\n    return 1\n", managers=True)
     store = updater.ingestor
-    assert isinstance(store, _StatefulIngestor)
+    assert isinstance(store, StatefulIngestor)
     (tmp_path / PROJECT / "app.py").write_text(
         "from managers import Pool\n\n"
         "def use():\n"

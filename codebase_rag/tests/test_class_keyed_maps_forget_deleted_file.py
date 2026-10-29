@@ -23,7 +23,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.tests.conftest import _MockIngestor
+from evals.recorded_graph import RecordingIngestor
 
 # Declared by `proj/Core.cs`. A C# class qn embeds the namespace, so
 # `namespace Util` puts these classes at `proj.Core.Util.*` -- under the
@@ -120,7 +120,7 @@ def _create_graph_updater(root: Path, language: str) -> GraphUpdater:
     if language not in parsers:
         pytest.skip(f"{language} parser not available")
     return GraphUpdater(
-        ingestor=_MockIngestor(),
+        ingestor=RecordingIngestor(),
         repo_path=root,
         parsers=parsers,
         queries=queries,
@@ -271,7 +271,7 @@ def test_a_rehydrated_class_is_pruned_with_its_file(temp_repo: Path) -> None:
     if cs.SupportedLanguage.PYTHON not in parsers:
         pytest.skip("python parser not available")
 
-    ingestor = _MockIngestor()
+    ingestor = RecordingIngestor()
 
     def rows(query: str, params: object = None) -> list[dict[str, object]]:
         if "INHERITS" in query:

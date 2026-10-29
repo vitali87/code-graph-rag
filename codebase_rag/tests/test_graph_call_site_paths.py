@@ -17,7 +17,7 @@ from codebase_rag import cypher_queries as cq
 from codebase_rag import graph_query
 from codebase_rag.constants import graph as cs
 from codebase_rag.graph_cli import cli as graph_cli
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 P = "proj"
 _FN = cs.NodeLabel.FUNCTION.value
@@ -32,7 +32,7 @@ ROUND2 = f"{P}.app.helpers.round2"
 
 
 def _node(
-    store: _StatefulIngestor, label: str, qn: str, path: str | None = None
+    store: StatefulIngestor, label: str, qn: str, path: str | None = None
 ) -> None:
     props: dict[str, str] = {
         cs.NODE_UNIQUE_CONSTRAINTS[label]: qn,
@@ -44,7 +44,7 @@ def _node(
 
 
 def _call(
-    store: _StatefulIngestor,
+    store: StatefulIngestor,
     src: tuple[str, str],
     dst: tuple[str, str],
     site: tuple[int, int, int, int] | None,
@@ -67,11 +67,11 @@ def _call(
     )
 
 
-def _store() -> _StatefulIngestor:
+def _store() -> StatefulIngestor:
     """The issue's repro: `report()` in app/report.py calls `total` and
     `Square(2)` (both defined in app/shapes.py) on line 5; `total` in turn
     calls `round2` from app/helpers.py on its own line 9."""
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     store.ensure_node_batch(
         cs.NodeLabel.PROJECT.value, {cs.KEY_NAME: P, cs.KEY_QUALIFIED_NAME: P}
     )

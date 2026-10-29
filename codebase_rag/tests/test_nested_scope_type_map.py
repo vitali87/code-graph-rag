@@ -37,7 +37,7 @@ from tree_sitter import Node
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 # Every case holds on the Rust scope walks and on their Python twins.
 pytestmark = pytest.mark.usefixtures("both_scope_walks")
@@ -67,7 +67,7 @@ def _local_types(tmp_path: Path, body: str, function: str) -> dict[str, str]:
     (repo / "app.py").write_text(source)
     parsers, queries = load_parsers()
     updater = GraphUpdater(
-        ingestor=_StatefulIngestor(), repo_path=repo, parsers=parsers, queries=queries
+        ingestor=StatefulIngestor(), repo_path=repo, parsers=parsers, queries=queries
     )
     updater.run(force=True)
     tree = parsers[cs.SupportedLanguage.PYTHON].parse(source.encode())

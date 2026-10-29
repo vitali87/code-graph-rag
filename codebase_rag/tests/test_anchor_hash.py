@@ -17,7 +17,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.anchor_hash import anchor_hash, anchor_hash_props
 from codebase_rag.parsers.ast_fingerprint import compute_ast_fingerprint
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 BASE = '''def run(items, limit=10):
     """Return the first items."""
@@ -176,7 +176,7 @@ def test_an_indexed_decorated_method_hashes_its_decorator(tmp_path: Path) -> Non
         root = tmp_path / ("decorated" if source is decorated else "plain")
         root.mkdir()
         (root / "mod.py").write_text(source, encoding="utf-8")
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         GraphUpdater(
             ingestor=store,
             repo_path=root,
@@ -194,7 +194,7 @@ def test_an_indexed_decorated_method_hashes_its_decorator(tmp_path: Path) -> Non
     assert hashes[0] != hashes[1]
 
 
-class _BufferingStore(_StatefulIngestor):
+class _BufferingStore(StatefulIngestor):
     """The emulator, but nodes land only at flush (as the real ingestor's
     batching does below its batch size), and the grade statement records
     what it could see when it ran."""
@@ -271,7 +271,7 @@ def test_indexed_functions_and_methods_carry_the_hash(tmp_path: Path) -> None:
         BASE + "\n\nclass Store:\n    def get(self, key):\n        return key\n",
         encoding="utf-8",
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(
         ingestor=store,
         repo_path=tmp_path,
@@ -303,7 +303,7 @@ def test_indexed_containers_carry_the_hash_and_a_member_edit_flips_it(
     so a note on a class can be graded and moved like one on a function
     (issue #1808, container hashing)."""
     from codebase_rag.capture import resolve_capture
-    from evals.cgr_graph import _StatefulIngestor
+    from evals.cgr_graph import StatefulIngestor
 
     def hashes(folder: str, src: str) -> dict[str, str]:
         repo = tmp_path / folder
@@ -314,7 +314,7 @@ def test_indexed_containers_carry_the_hash_and_a_member_edit_flips_it(
             "export type Id = string\n"
         )
         parsers, queries = load_parsers()
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         GraphUpdater(
             ingestor=store,
             repo_path=repo,

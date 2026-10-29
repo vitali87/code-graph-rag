@@ -450,12 +450,12 @@ def test_incremental_run_requeues_unchanged_definitions(temp_repo: Path) -> None
     function's `-> Widget` annotation its RETURNS edge without re-parsing it."""
     from codebase_rag.graph_updater import GraphUpdater
     from codebase_rag.parser_loader import load_parsers
-    from evals.cgr_graph import _StatefulIngestor
+    from evals.cgr_graph import StatefulIngestor
 
     root = temp_repo / "requeue"
     _write(root, {"a.py": "def make() -> Widget:\n    return None\n"})
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
 
     def run(force: bool) -> None:
         GraphUpdater(

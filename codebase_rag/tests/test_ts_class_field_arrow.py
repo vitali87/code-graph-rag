@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from evals.cgr_graph import _capture
+from evals.cgr_graph import capture
 
 
 def _make(root: Path) -> None:
@@ -24,7 +24,7 @@ def test_ts_class_field_arrow_is_modeled_and_calls_resolve(tmp_path: Path) -> No
     # node (p.t.T.helper) like a normal method, with body calls attributed to it.
     # Previously the def pass created no node (no name field) and skipped its body.
     _make(tmp_path)
-    ingestor = _capture(tmp_path, "p")
+    ingestor = capture(tmp_path, "p")
     member_qns = {
         str(uid) for (label, uid) in ingestor.nodes if label in ("Method", "Function")
     }

@@ -28,7 +28,7 @@ from codebase_rag.structural_delta import (
     observe,
 )
 from codebase_rag.types_defs import PropertyParams, ResultRow
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "modimp"
 
@@ -76,8 +76,8 @@ def _move(root: Path, old: str, new: str) -> None:
     (root / old).rename(root / new)
 
 
-def _index(root: Path) -> tuple[_StatefulIngestor, GraphUpdater]:
-    store = _StatefulIngestor()
+def _index(root: Path) -> tuple[StatefulIngestor, GraphUpdater]:
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
     updater = GraphUpdater(
         ingestor=store,
@@ -92,7 +92,7 @@ def _index(root: Path) -> tuple[_StatefulIngestor, GraphUpdater]:
 
 def _observe(
     root: Path,
-    store: _StatefulIngestor,
+    store: StatefulIngestor,
     updater: GraphUpdater,
     changed: list[str],
     deleted: list[str],
@@ -529,7 +529,7 @@ def _commit_base(root: Path) -> None:
         subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
 
 
-def _run_cli_check(root: Path, store: _StatefulIngestor) -> Result:
+def _run_cli_check(root: Path, store: StatefulIngestor) -> Result:
     # The store itself, so the re-ingest really rewrites the graph.
     context = MagicMock()
     context.__enter__.return_value = store

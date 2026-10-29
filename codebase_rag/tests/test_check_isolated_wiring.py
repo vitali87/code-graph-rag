@@ -34,7 +34,7 @@ from codebase_rag.structural_check import (
 )
 from codebase_rag.tests.conftest import git_env
 from codebase_rag.types_defs import PropertyDict, ResultRow
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "wiring_fixture"
 
@@ -63,7 +63,7 @@ def _write(root: Path, rel: str, text: str) -> None:
 
 
 @pytest.fixture
-def indexed(temp_repo: Path) -> tuple[Path, _StatefulIngestor]:
+def indexed(temp_repo: Path) -> tuple[Path, StatefulIngestor]:
     root = temp_repo / PROJECT
     root.mkdir()
     for rel, text in FIXTURE.items():
@@ -71,7 +71,7 @@ def indexed(temp_repo: Path) -> tuple[Path, _StatefulIngestor]:
     _git(root, "init", "-q")
     _git(root, "add", "-A")
     _git(root, "commit", "-q", "-m", "base")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=store,
@@ -90,7 +90,7 @@ def _edit(root: Path) -> None:
     _write(root, "lib/tool.py", "def tool():\n    return 1\n")
 
 
-def _state(store: _StatefulIngestor) -> tuple[dict, set, dict]:
+def _state(store: StatefulIngestor) -> tuple[dict, set, dict]:
     return (
         copy.deepcopy(store.nodes),
         set(store.edges),
@@ -98,7 +98,7 @@ def _state(store: _StatefulIngestor) -> tuple[dict, set, dict]:
     )
 
 
-def _delta(root: Path, store: _StatefulIngestor, *, isolated: bool) -> dict:
+def _delta(root: Path, store: StatefulIngestor, *, isolated: bool) -> dict:
     parsers, queries = load_parsers()
     delta = run_check(
         root,
@@ -117,7 +117,7 @@ def _delta(root: Path, store: _StatefulIngestor, *, isolated: bool) -> dict:
 
 
 def test_an_isolated_check_reports_the_delta_and_leaves_graph_and_cache(
-    indexed: tuple[Path, _StatefulIngestor],
+    indexed: tuple[Path, StatefulIngestor],
 ) -> None:
     root, store = indexed
     _edit(root)
@@ -136,7 +136,7 @@ def test_an_isolated_check_reports_the_delta_and_leaves_graph_and_cache(
 
 
 def test_the_same_edit_applied_without_isolation_lands(
-    indexed: tuple[Path, _StatefulIngestor],
+    indexed: tuple[Path, StatefulIngestor],
 ) -> None:
     """The control: without the flag the re-ingest stays in the graph."""
     root, store = indexed
@@ -194,7 +194,7 @@ def test_a_graph_without_io_links_is_accepted() -> None:
 
 
 def test_an_isolated_check_refuses_before_writing_over_io_links(
-    indexed: tuple[Path, _StatefulIngestor],
+    indexed: tuple[Path, StatefulIngestor],
 ) -> None:
     root, store = indexed
     _edit(root)
@@ -218,7 +218,7 @@ def test_an_isolated_check_refuses_before_writing_over_io_links(
 
 
 def test_an_unreadable_hash_cache_refuses_the_isolated_check(
-    indexed: tuple[Path, _StatefulIngestor],
+    indexed: tuple[Path, StatefulIngestor],
 ) -> None:
     """A cache that cannot be read cannot be put back after the re-ingest
     rewrites it, so the run refuses before writing anything."""

@@ -12,10 +12,10 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 
-def _index(store: _StatefulIngestor, repo: Path) -> None:
+def _index(store: StatefulIngestor, repo: Path) -> None:
     parsers, queries = load_parsers()
     if cs.SupportedLanguage.PYTHON not in parsers:
         pytest.skip("python parser not available")
@@ -28,16 +28,16 @@ def _index(store: _StatefulIngestor, repo: Path) -> None:
     ).run(force=True)
 
 
-def _store_for(tmp_path: Path, source: str) -> _StatefulIngestor:
+def _store_for(tmp_path: Path, source: str) -> StatefulIngestor:
     repo = tmp_path / "proj"
     repo.mkdir()
     (repo / "mod.py").write_text(source, encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, repo)
     return store
 
 
-def _calls_between(store: _StatefulIngestor, caller: str, callee: str) -> list[tuple]:
+def _calls_between(store: StatefulIngestor, caller: str, callee: str) -> list[tuple]:
     return [
         edge
         for edge in store.keyed_edges
@@ -102,7 +102,7 @@ def test_two_bound_names_from_one_import_statement_are_two_edges(
         "def a():\n    pass\n\n\ndef b():\n    pass\n", encoding="utf-8"
     )
     (repo / "mod.py").write_text("from helpers import a, b\n", encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, repo)
 
     imports = [
@@ -139,7 +139,7 @@ def test_a_partial_site_cannot_collide_with_a_different_partial_site() -> None:
     # subsets of (line, col). Keying on the values alone would make
     # `{line: 3}` and `{col: 3}` the same edge; keying on (name, value) pairs
     # keeps them apart.
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     caller = (cs.NodeLabel.FUNCTION.value, cs.KEY_QUALIFIED_NAME, "proj.mod.run")
     callee = (cs.NodeLabel.FUNCTION.value, cs.KEY_QUALIFIED_NAME, "proj.mod.helper")
 
@@ -158,7 +158,7 @@ def test_a_row_with_no_site_merges_on_its_endpoints() -> None:
     # `MERGE_KEY_PROPS_BY_REL`'s stated rule: props absent from a batch's rows
     # are dropped from the key at flush time, so a CALLS row with no site
     # still merges on endpoints alone. Two such rows are one edge.
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     caller = (cs.NodeLabel.FUNCTION.value, cs.KEY_QUALIFIED_NAME, "proj.mod.run")
     callee = (cs.NodeLabel.FUNCTION.value, cs.KEY_QUALIFIED_NAME, "proj.mod.helper")
 
@@ -176,7 +176,7 @@ def test_a_module_import_delta_read_does_not_crash(tmp_path: Path) -> None:
     repo.mkdir()
     (repo / "helpers.py").write_text("def a():\n    pass\n", encoding="utf-8")
     (repo / "mod.py").write_text("from helpers import a\n", encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, repo)
 
     from codebase_rag import cypher_queries as cq
@@ -193,7 +193,7 @@ def test_endpoint_shaped_readers_still_see_properties() -> None:
     # The re-ingest and fuzz snapshots iterate the endpoint view and look the
     # properties up per edge. Keying `edge_props` by site made a five-element
     # lookup return {} -- the comparison still ran, and compared nothing.
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     caller = (cs.NodeLabel.FUNCTION.value, cs.KEY_QUALIFIED_NAME, "proj.mod.run")
     callee = (cs.NodeLabel.FUNCTION.value, cs.KEY_QUALIFIED_NAME, "proj.mod.helper")
     store.ensure_relationship_batch(
@@ -216,7 +216,7 @@ def test_endpoint_properties_cover_every_site() -> None:
     # Two sites between the same pair: an endpoint-shaped reader must not see
     # one of them silently, which is what a bare `edge_props[edge5]` would
     # have done once the key changed.
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     caller = (cs.NodeLabel.FUNCTION.value, cs.KEY_QUALIFIED_NAME, "proj.mod.run")
     callee = (cs.NodeLabel.FUNCTION.value, cs.KEY_QUALIFIED_NAME, "proj.mod.helper")
     for line, extra in ((3, "first"), (4, "second")):

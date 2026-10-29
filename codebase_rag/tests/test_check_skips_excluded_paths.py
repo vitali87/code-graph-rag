@@ -24,7 +24,7 @@ from codebase_rag.cli import app
 from codebase_rag.config import load_ignore_patterns
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "pyv"
 UTIL = 'def pad(s):\n    return s + " "\n'
@@ -36,7 +36,7 @@ def _git(root: Path, *args: str) -> None:
 
 
 @pytest.fixture
-def repo(temp_repo: Path) -> tuple[Path, _StatefulIngestor]:
+def repo(temp_repo: Path) -> tuple[Path, StatefulIngestor]:
     # Indexed and committed, then `pad` gains a parameter: the edit the
     # check is meant to report, whatever else sits untracked beside it.
     root = temp_repo / PROJECT
@@ -46,7 +46,7 @@ def repo(temp_repo: Path) -> tuple[Path, _StatefulIngestor]:
     _git(root, "init", "-q")
     _git(root, "add", "-A")
     _git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "b")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=store,
@@ -59,7 +59,7 @@ def repo(temp_repo: Path) -> tuple[Path, _StatefulIngestor]:
     return root, store
 
 
-def _run_check(root: Path, store: _StatefulIngestor) -> Result:
+def _run_check(root: Path, store: StatefulIngestor) -> Result:
     context = MagicMock()
     context.__enter__.return_value = store
     context.__exit__.return_value = False
@@ -84,7 +84,7 @@ def _write(root: Path, rel: str, text: str = "x = 1\n") -> None:
 
 
 def test_an_untracked_virtualenv_linking_outside_the_repo_is_skipped(
-    repo: tuple[Path, _StatefulIngestor],
+    repo: tuple[Path, StatefulIngestor],
 ) -> None:
     root, store = repo
     # What `python3 -m venv .venv` leaves: an interpreter symlink out of
@@ -109,7 +109,7 @@ def test_an_untracked_virtualenv_linking_outside_the_repo_is_skipped(
     ids=["node-modules", "pycache", "build-output"],
 )
 def test_an_untracked_file_the_indexer_skips_is_not_checked(
-    repo: tuple[Path, _StatefulIngestor], rel: str
+    repo: tuple[Path, StatefulIngestor], rel: str
 ) -> None:
     root, store = repo
     _write(root, rel)
@@ -130,7 +130,7 @@ def test_a_deleted_file_the_indexer_skips_is_not_checked(temp_repo: Path) -> Non
     _git(root, "init", "-q")
     _git(root, "add", "-A")
     _git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "b")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=store,
@@ -159,7 +159,7 @@ def test_a_cgrignore_exclusion_is_not_checked(temp_repo: Path) -> None:
     _git(root, "add", "-A")
     _git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "b")
     scope = load_ignore_patterns(root)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     parsers, queries = load_parsers()
     GraphUpdater(
         ingestor=store,
@@ -182,7 +182,7 @@ def test_a_cgrignore_exclusion_is_not_checked(temp_repo: Path) -> None:
 
 
 def test_an_untracked_source_file_is_still_checked(
-    repo: tuple[Path, _StatefulIngestor],
+    repo: tuple[Path, StatefulIngestor],
 ) -> None:
     root, store = repo
     _write(root, "extra.py", "def spare():\n    return 0\n")
@@ -194,7 +194,7 @@ def test_an_untracked_source_file_is_still_checked(
 
 
 def test_a_deleted_tracked_file_is_still_checked(
-    repo: tuple[Path, _StatefulIngestor],
+    repo: tuple[Path, StatefulIngestor],
 ) -> None:
     root, store = repo
     (root / "app.py").unlink()

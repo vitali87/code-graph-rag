@@ -18,7 +18,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 HEADER = "#ifndef FOO_H\n#define FOO_H\nint foo(void);\n#endif\n"
 
@@ -30,7 +30,7 @@ def _imports(root: Path, includer: str) -> set[tuple[str, str]]:
             pytest.skip(f"{language} parser not available")
     (root / "foo.h").write_text(HEADER, encoding="utf-8")
     (root / includer).write_text('#include "foo.h"\n', encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(
         ingestor=store,
         repo_path=root,
@@ -71,7 +71,7 @@ def _system_import_targets(root: Path, includer: str) -> set[str]:
         if language not in parsers:
             pytest.skip(f"{language} parser not available")
     (root / includer).write_text("#include <Foo>\nint x;\n", encoding="utf-8")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(
         ingestor=store,
         repo_path=root,
@@ -127,7 +127,7 @@ def test_every_system_header_lands_under_the_std_prefix(
         "#include <vector>\nint x;\n",
         encoding="utf-8",
     )
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(
         ingestor=store,
         repo_path=root,

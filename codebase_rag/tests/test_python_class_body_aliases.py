@@ -39,7 +39,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import create_and_run_updater
 from codebase_rag.types_defs import NodeType, ResultRow
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "aliasproj"
 MODULE = f"{PROJECT}.pkg.disp"
@@ -421,14 +421,14 @@ class TestCallsThroughAlias:
         )
         (root / "app.py").write_text(app_source, encoding="utf-8")
 
-        def calls_from_caller(store: _StatefulIngestor) -> set[str]:
+        def calls_from_caller(store: StatefulIngestor) -> set[str]:
             return {
                 str(target)
                 for _, source, rel, _, target in store.edges
                 if rel == _CALLS and str(source) == f"{PROJECT}.app.caller"
             }
 
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         GraphUpdater(
             ingestor=store, repo_path=root, parsers=parsers, queries=queries
         ).run(force=True)
@@ -812,14 +812,14 @@ class TestSubclassBindingHidesInheritedMember:
         )
         (root / "app.py").write_text(app_source, encoding="utf-8")
 
-        def calls_from(store: _StatefulIngestor, caller: str) -> set[str]:
+        def calls_from(store: StatefulIngestor, caller: str) -> set[str]:
             return {
                 str(target)
                 for _, source, rel, _, target in store.edges
                 if rel == _CALLS and str(source) == f"{PROJECT}.app.{caller}"
             }
 
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         GraphUpdater(
             ingestor=store, repo_path=root, parsers=parsers, queries=queries
         ).run(force=True)

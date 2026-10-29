@@ -2684,12 +2684,12 @@ class TestIncompleteMarkerInvariant:
         """
         from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
         from codebase_rag.parser_loader import load_parsers
-        from codebase_rag.tests.conftest import _MockIngestor
+        from evals.recorded_graph import RecordingIngestor
 
         (temp_project_root / "mod.py").write_text("def f(): pass\n", encoding="utf-8")
         parsers, queries = load_parsers()
         updater = GraphUpdater(
-            ingestor=_MockIngestor(),
+            ingestor=RecordingIngestor(),
             repo_path=temp_project_root,
             parsers=parsers,
             queries=queries,
@@ -2714,7 +2714,7 @@ class TestIncompleteMarkerInvariant:
         # mutating `reingest_mutated = True` to False left this test green
         # (measured, #1705 review round 7).
         fresh = GraphUpdater(
-            ingestor=_MockIngestor(),
+            ingestor=RecordingIngestor(),
             repo_path=temp_project_root,
             parsers=parsers,
             queries=queries,
@@ -2960,7 +2960,7 @@ class TestIncompleteMarkerInvariant:
         """
         from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
         from codebase_rag.parser_loader import load_parsers
-        from codebase_rag.tests.conftest import _MockIngestor
+        from evals.recorded_graph import RecordingIngestor
 
         pkg = temp_project_root / "pkg"
         pkg.mkdir()
@@ -2970,7 +2970,7 @@ class TestIncompleteMarkerInvariant:
 
         # A hook that refuses: the run aborts, nothing is deleted or written
         # beyond the idempotent structure upserts.
-        refusing = _MockIngestor()
+        refusing = RecordingIngestor()
         updater = GraphUpdater(
             ingestor=refusing,
             repo_path=temp_project_root,
@@ -2999,7 +2999,7 @@ class TestIncompleteMarkerInvariant:
 
         # A hook that records its place in the order of events.
         order: list[str] = []
-        ingestor = _MockIngestor()
+        ingestor = RecordingIngestor()
         ingestor.execute_write.side_effect = lambda *a, **k: order.append("write")
         fresh = GraphUpdater(
             ingestor=ingestor,
@@ -3019,7 +3019,7 @@ class TestIncompleteMarkerInvariant:
         # And the prologue abort never reaches the hook.
         never: list[str] = []
         aborting = GraphUpdater(
-            ingestor=_MockIngestor(),
+            ingestor=RecordingIngestor(),
             repo_path=temp_project_root,
             parsers=parsers,
             queries=queries,

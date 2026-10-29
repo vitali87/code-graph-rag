@@ -21,7 +21,8 @@ from codebase_rag import cli_help as ch
 from codebase_rag import constants as cs
 from codebase_rag.cli import app
 from codebase_rag.mcp.tools import MCPToolsRegistry
-from codebase_rag.tests.test_rename_op import RecordedGraph, _index, _write
+from codebase_rag.tests.test_rename_op import _index, _write
+from evals.recorded_graph import RecordedGraph
 
 OPT_IN = re.compile(r"pass (\S+) to rewrite through them")
 

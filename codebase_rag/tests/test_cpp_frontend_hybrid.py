@@ -14,7 +14,7 @@ from codebase_rag.parsers.cpp_frontend import (
     run_cpp_frontend_hybrid,
 )
 from codebase_rag.tests.conftest import get_nodes, get_qualified_names, run_updater
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 pytestmark = pytest.mark.skipif(
     not cpp_frontend_available(),
@@ -271,7 +271,7 @@ def test_hybrid_incremental_run_keeps_macro_callers_for_unchanged_files(
     _write_calc(root)
     monkeypatch.setattr(gu.settings, "CPP_FRONTEND", cs.CppFrontend.HYBRID)
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     gu.GraphUpdater(
         ingestor=store, repo_path=root, parsers=parsers, queries=queries
     ).run(force=True)
@@ -303,7 +303,7 @@ def test_hybrid_incremental_header_edit_keeps_macro_nodes(
     _write_calc(root)
     monkeypatch.setattr(gu.settings, "CPP_FRONTEND", cs.CppFrontend.HYBRID)
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     gu.GraphUpdater(
         ingestor=store, repo_path=root, parsers=parsers, queries=queries
     ).run(force=True)
@@ -594,7 +594,7 @@ def test_hybrid_incremental_expansion_call_reaches_unchanged_callee_file(
     )
     monkeypatch.setattr(gu.settings, "CPP_FRONTEND", cs.CppFrontend.HYBRID)
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     gu.GraphUpdater(
         ingestor=store, repo_path=root, parsers=parsers, queries=queries
     ).run(force=True)

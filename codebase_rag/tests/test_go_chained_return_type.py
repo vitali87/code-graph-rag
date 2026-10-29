@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from codebase_rag.parsers.call_resolver import _split_receiver_chain
-from evals.cgr_graph import _capture
+from evals.cgr_graph import capture
 
 
 def test_split_receiver_chain_ignores_dots_inside_arguments() -> None:
@@ -29,7 +29,7 @@ def _make(root: Path) -> None:
 
 def test_go_chained_return_type_resolves_second_hop(tmp_path: Path) -> None:
     _make(tmp_path)
-    ingestor = _capture(tmp_path, "proj")
+    ingestor = capture(tmp_path, "proj")
     calls = {
         (str(from_val), str(to_val))
         for _fl, from_val, rel, _tl, to_val in ingestor.rels
@@ -43,7 +43,7 @@ def test_go_chained_return_type_resolves_second_hop(tmp_path: Path) -> None:
 
 def _calls(tmp_path: Path, body: str) -> set[tuple[str, str]]:
     (tmp_path / "m.go").write_text(body, encoding="utf-8")
-    ingestor = _capture(tmp_path, "proj")
+    ingestor = capture(tmp_path, "proj")
     return {(str(f), str(t)) for _fl, f, rel, _tl, t in ingestor.rels if rel == "CALLS"}
 
 
@@ -145,7 +145,7 @@ def test_direct_field_hop_method_call_resolves(tmp_path: Path) -> None:
         "}\n",
         encoding="utf-8",
     )
-    ingestor = _capture(tmp_path, "proj")
+    ingestor = capture(tmp_path, "proj")
     calls = {
         (str(f), str(t)) for _fl, f, rel, _tl, t in ingestor.rels if rel == "CALLS"
     }

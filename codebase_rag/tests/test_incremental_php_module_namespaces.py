@@ -16,7 +16,7 @@ from codebase_rag import constants as cs
 from codebase_rag.checkout_state import state_file
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 _FILES = {
     "src/Util/strings.php": (
@@ -34,7 +34,7 @@ _FILES = {
 _EDIT = ("    return slug", "    // edit\n    return slug")
 
 
-def _index(store: _StatefulIngestor, root: Path, force: bool) -> GraphUpdater:
+def _index(store: StatefulIngestor, root: Path, force: bool) -> GraphUpdater:
     parsers, queries = load_parsers()
     updater = GraphUpdater(
         ingestor=store,
@@ -47,7 +47,7 @@ def _index(store: _StatefulIngestor, root: Path, force: bool) -> GraphUpdater:
     return updater
 
 
-def _run_calls(store: _StatefulIngestor) -> set[tuple[str, str]]:
+def _run_calls(store: StatefulIngestor) -> set[tuple[str, str]]:
     return {
         (str(edge[4]), str(props.get(cs.KEY_RESOLUTION)))
         for edge, props in store.edge_props.items()
@@ -70,7 +70,7 @@ def _edit(root: Path, rel: str, text: str) -> None:
 def test_a_reparsed_caller_keeps_its_use_function_binding(temp_repo: Path) -> None:
     root = temp_repo / "proj"
     _write(root, _FILES)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, force=True)
     fresh = _run_calls(store)
     assert fresh == {("proj.src.Util.strings.slug", cs.EdgeResolution.EXACT)}, fresh
@@ -92,7 +92,7 @@ def test_the_rehydrated_map_is_the_one_a_parse_builds(temp_repo: Path) -> None:
     }
     root = temp_repo / "proj"
     _write(root, files)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     expected = dict(
         _index(store, root, force=True).factory.import_processor.php_module_namespaces
     )
@@ -110,7 +110,7 @@ def test_an_edited_namespace_binds_as_a_fresh_index_does(temp_repo: Path) -> Non
     # index of the same tree binds, never the namespace the graph stored.
     root = temp_repo / "proj"
     _write(root, _FILES)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, force=True)
     edited = {
         "src/Util/strings.php": _FILES["src/Util/strings.php"].replace(
@@ -124,7 +124,7 @@ def test_an_edited_namespace_binds_as_a_fresh_index_does(temp_repo: Path) -> Non
 
     clean = temp_repo / "clean" / "proj"
     _write(clean, {**_FILES, **edited})
-    clean_store = _StatefulIngestor()
+    clean_store = StatefulIngestor()
     _index(clean_store, clean, force=True)
 
     assert _run_calls(store) == _run_calls(clean_store)

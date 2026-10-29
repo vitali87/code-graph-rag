@@ -13,7 +13,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 JAVA: dict[str, str] = {
     "src/Base.java": "package app;\npublic class Base { public int run() { return 1; } }\n",
@@ -42,7 +42,7 @@ Snapshot = tuple[frozenset[tuple[str, str]], frozenset[tuple[str, ...]]]
 _STRUCTURE = {cs.NodeLabel.FILE.value, cs.NodeLabel.FOLDER.value}
 
 
-def _snapshot(store: _StatefulIngestor) -> Snapshot:
+def _snapshot(store: StatefulIngestor) -> Snapshot:
     # File and Folder nodes carry absolute paths, which differ between the
     # two temporary trees; everything else is keyed by project-relative qns.
     nodes = frozenset(
@@ -65,7 +65,7 @@ def _materialise(root: Path, files: dict[str, str]) -> None:
 
 
 def _index(
-    store: _StatefulIngestor, repo: Path, language: cs.SupportedLanguage, force: bool
+    store: StatefulIngestor, repo: Path, language: cs.SupportedLanguage, force: bool
 ) -> None:
     parsers, queries = load_parsers()
     if language not in parsers:
@@ -97,7 +97,7 @@ def test_deleting_a_file_reparses_its_dependents(
 ) -> None:
     root = temp_repo / "proj"
     _materialise(root, fixture)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, language, force=True)
     (root / deleted).unlink()
     _index(store, root, language, force=False)
@@ -107,7 +107,7 @@ def test_deleting_a_file_reparses_its_dependents(
     clean_root = temp_repo / "clean" / "proj"
     clean_root.parent.mkdir()
     _materialise(clean_root, remaining)
-    clean_store = _StatefulIngestor()
+    clean_store = StatefulIngestor()
     _index(clean_store, clean_root, language, force=True)
     clean = _snapshot(clean_store)
 
@@ -136,7 +136,7 @@ def test_a_deleted_file_that_was_delombok_stale_still_joins_the_dependents_query
     # test is the derivation's treatment of a stale key, not overlay building.
     root = temp_repo / "proj"
     _materialise(root, JAVA)
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _index(store, root, cs.SupportedLanguage.JAVA, force=True)
 
     real_process = GraphUpdater._process_files

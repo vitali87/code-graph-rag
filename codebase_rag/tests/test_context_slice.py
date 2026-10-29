@@ -14,7 +14,7 @@ from codebase_rag.context_slice import _doc_pieces, context
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.utils.token_utils import count_tokens
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 
 # The doc-section reasons come from DocumentTier, which builds its own markdown
@@ -86,13 +86,13 @@ def _write(root: Path, rel: str, text: str) -> None:
 
 
 @pytest.fixture
-def repo(temp_repo: Path) -> tuple[Path, _StatefulIngestor, GraphUpdater]:
+def repo(temp_repo: Path) -> tuple[Path, StatefulIngestor, GraphUpdater]:
     root = temp_repo / PROJECT
     root.mkdir()
     for rel, text in FIXTURE.items():
         _write(root, rel, text)
     parsers, queries = load_parsers()
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     updater = GraphUpdater(
         ingestor=store,
         repo_path=root,
@@ -117,7 +117,7 @@ def _by_why(slice_: dict) -> dict[str, list[dict]]:
 
 @_needs_markdown
 def test_four_thousand_token_budget_returns_the_neighbourhood_and_nothing_else(
-    repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+    repo: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, _updater = repo
     slice_ = context(store.fetch_all, PROJECT, _qn("pkg.util.helper"), 4000, root)
@@ -157,7 +157,7 @@ def test_four_thousand_token_budget_returns_the_neighbourhood_and_nothing_else(
 
 
 def test_token_count_never_exceeds_the_budget(
-    repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+    repo: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, _updater = repo
     full = context(store.fetch_all, PROJECT, _qn("pkg.util.helper"), 4000, root)
@@ -181,7 +181,7 @@ def test_token_count_never_exceeds_the_budget(
 
 @_needs_markdown
 def test_ranking_prefers_distance_then_trace_hotness(
-    repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+    repo: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, _updater = repo
     edge = next(
@@ -202,7 +202,7 @@ def test_ranking_prefers_distance_then_trace_hotness(
 
 
 def test_targets_by_bare_name_location_and_free_text(
-    repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+    repo: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, _updater = repo
     assert context(store.fetch_all, PROJECT, "helper", 500, root)["resolved"] == _qn(
@@ -247,7 +247,7 @@ def test_targets_by_bare_name_location_and_free_text(
 
 
 async def test_mcp_context_tool(
-    repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+    repo: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     from unittest.mock import MagicMock
 
@@ -273,7 +273,7 @@ async def test_mcp_context_tool(
 
 
 async def test_mcp_context_tool_rejects_a_budget_below_one(
-    repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+    repo: tuple[Path, StatefulIngestor, GraphUpdater],
 ) -> None:
     from unittest.mock import MagicMock
 

@@ -7,11 +7,11 @@
 # reject it.
 from pathlib import Path
 
-from evals.cgr_graph import _capture
+from evals.cgr_graph import capture
 
 
 def _method_leaves(tmp_path: Path) -> set[str]:
-    ingestor = _capture(tmp_path, "proj")
+    ingestor = capture(tmp_path, "proj")
     return {
         str(uid).rsplit(".", 1)[-1]
         for (label, uid) in ingestor.nodes

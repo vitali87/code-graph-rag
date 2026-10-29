@@ -15,7 +15,7 @@ from codebase_rag import constants as cs
 from . import constants as ec
 from . import logs as ls
 from .ast_oracle import _from_base_parts
-from .cgr_graph import _capture
+from .cgr_graph import capture
 from .module_calls import _callee_name, _is_dunder
 from .retrieval import parse_py_trees
 from .score import _prf
@@ -81,7 +81,7 @@ def oracle_instantiations(target: Path, project: str) -> set[InstantiationEdge]:
 
 
 def cgr_instantiations(target: Path, project: str) -> set[InstantiationEdge]:
-    ingestor = _capture(target, project)
+    ingestor = capture(target, project)
     caller_path: dict[tuple[str, str], str] = {
         (str(label), str(uid)): str(props[cs.KEY_PATH])
         for (label, uid), props in ingestor.nodes.items()

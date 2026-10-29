@@ -11,10 +11,10 @@ from pathlib import Path
 
 from codebase_rag import constants as cs
 from codebase_rag.tests.conftest import (
-    _MockIngestor,
     create_and_run_updater,
     get_nodes,
 )
+from evals.recorded_graph import RecordingIngestor
 
 TOTAL_PRICE = """
 def total_price(items):
@@ -68,13 +68,13 @@ const V& choose_lead(const std::vector<V>& boxes, int floor) {
 
 
 def _props_by_name(
-    mock_ingestor: _MockIngestor, label: str
+    mock_ingestor: RecordingIngestor, label: str
 ) -> dict[str, dict[str, object]]:
     return {call[0][1]["name"]: call[0][1] for call in get_nodes(mock_ingestor, label)}
 
 
 def test_function_fingerprints_match_across_renamed_copies(
-    temp_repo: Path, mock_ingestor: _MockIngestor
+    temp_repo: Path, mock_ingestor: RecordingIngestor
 ) -> None:
     (temp_repo / "billing.py").write_text(TOTAL_PRICE)
     (temp_repo / "shipping.py").write_text(SUM_WEIGHTS)
@@ -95,7 +95,7 @@ def test_function_fingerprints_match_across_renamed_copies(
 
 
 def test_different_function_gets_a_different_fingerprint(
-    temp_repo: Path, mock_ingestor: _MockIngestor
+    temp_repo: Path, mock_ingestor: RecordingIngestor
 ) -> None:
     (temp_repo / "billing.py").write_text(TOTAL_PRICE)
     (temp_repo / "other.py").write_text("def greet(name):\n    return name.upper()\n")
@@ -109,7 +109,7 @@ def test_different_function_gets_a_different_fingerprint(
 
 
 def test_method_fingerprint_matches_the_module_function_twin(
-    temp_repo: Path, mock_ingestor: _MockIngestor
+    temp_repo: Path, mock_ingestor: RecordingIngestor
 ) -> None:
     (temp_repo / "billing.py").write_text(TOTAL_PRICE)
     (temp_repo / "counter.py").write_text(COUNTER_CLASS)
@@ -129,7 +129,7 @@ def test_method_fingerprint_matches_the_module_function_twin(
 
 
 def test_cpp_template_function_gets_a_fingerprint(
-    temp_repo: Path, mock_ingestor: _MockIngestor
+    temp_repo: Path, mock_ingestor: RecordingIngestor
 ) -> None:
     # A C++ template function is registered on its template_declaration
     # wrapper, which has no `body` field of its own - the body lives on the
@@ -161,7 +161,7 @@ class WeightSheet {
 
 
 def test_csharp_expression_bodied_property_gets_a_fingerprint(
-    temp_repo: Path, mock_ingestor: _MockIngestor
+    temp_repo: Path, mock_ingestor: RecordingIngestor
 ) -> None:
     # A C# property_declaration NEVER has a `body` field: an expression-bodied
     # property carries its logic in a plain arrow_expression_clause child, so

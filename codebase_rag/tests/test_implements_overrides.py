@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.parsers.class_ingest.method_override import check_method_overrides
 from codebase_rag.types_defs import NodeType
-from evals.cgr_graph import _capture
+from evals.cgr_graph import capture
 from evals.dead_code import cgr_dead_code, default_dead_code_config
 
 
@@ -30,7 +30,7 @@ def _java_project(tmp_path: Path, files: dict[str, str]) -> Path:
 
 
 def _overrides(root: Path) -> set[tuple[str, str]]:
-    ingestor = _capture(root, "proj")
+    ingestor = capture(root, "proj")
     return {
         (str(f), str(t)) for _fl, f, rel, _tl, t in ingestor.rels if rel == "OVERRIDES"
     }

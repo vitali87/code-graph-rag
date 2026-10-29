@@ -40,7 +40,7 @@ with atheris.instrument_imports():
     from codebase_rag import constants as cs
     from codebase_rag.graph_updater import GraphUpdater
     from codebase_rag.parser_loader import load_parsers
-    from evals.cgr_graph import _StatefulIngestor
+    from evals.cgr_graph import StatefulIngestor
 
 PROJECT = "proj"
 
@@ -67,7 +67,7 @@ def _materialise(root: Path) -> None:
         path.write_text(text, encoding="utf-8")
 
 
-def _updater(store: _StatefulIngestor, root: Path) -> GraphUpdater:
+def _updater(store: StatefulIngestor, root: Path) -> GraphUpdater:
     return GraphUpdater(
         ingestor=store,
         repo_path=root,
@@ -92,7 +92,7 @@ def _freeze(value: object) -> object:
 _RUN_TIME_PROPERTIES = frozenset({cs.KEY_LAST_SYNCED_AT})
 
 
-def _snapshot(store: _StatefulIngestor) -> tuple[frozenset, frozenset]:
+def _snapshot(store: StatefulIngestor) -> tuple[frozenset, frozenset]:
     """Nodes and edges, both carrying their properties.
 
     Node PROPERTIES are part of the comparison, not just node identity: a
@@ -344,7 +344,7 @@ def _is_only_known_defects(
 
 
 def _clean_index(root: Path) -> tuple[frozenset, frozenset]:
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     _updater(store, root).run(force=True)
     return _snapshot(store)
 
@@ -369,7 +369,7 @@ def fuzz_incremental_update(data: bytes) -> None:
         root.mkdir()
         _materialise(root)
 
-        store = _StatefulIngestor()
+        store = StatefulIngestor()
         updater = _updater(store, root)
         updater.run(force=True)
 

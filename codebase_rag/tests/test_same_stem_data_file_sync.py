@@ -28,7 +28,7 @@ from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import PropertyDict
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 _SHAPES = (
     "from pkg.helpers import base\n"
@@ -89,7 +89,7 @@ Edge = tuple[str, ...]
 _STRUCTURE = {cs.NodeLabel.FILE.value, cs.NodeLabel.FOLDER.value}
 
 
-class _Buffered(_StatefulIngestor):
+class _Buffered(StatefulIngestor):
     """Reads see only flushed nodes, as Memgraph's do.
 
     The emulator is write-through, so the registry rehydration that follows

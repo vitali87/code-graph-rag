@@ -17,7 +17,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 INHERITS = cs.RelationshipType.INHERITS.value
 CALLS = cs.RelationshipType.CALLS.value
@@ -93,7 +93,7 @@ NEGATIVE_FILES = {
 }
 
 
-def _index(root: Path, files: dict[str, str]) -> _StatefulIngestor:
+def _index(root: Path, files: dict[str, str]) -> StatefulIngestor:
     for rel, text in files.items():
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -101,7 +101,7 @@ def _index(root: Path, files: dict[str, str]) -> _StatefulIngestor:
     parsers, queries = load_parsers()
     if cs.SupportedLanguage.TS not in parsers or cs.SupportedLanguage.JS not in parsers:
         pytest.skip("javascript/typescript parsers not available")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(
         ingestor=store,
         repo_path=root,
@@ -112,7 +112,7 @@ def _index(root: Path, files: dict[str, str]) -> _StatefulIngestor:
     return store
 
 
-def _edges(store: _StatefulIngestor, rel_type: str) -> set[tuple[str, str]]:
+def _edges(store: StatefulIngestor, rel_type: str) -> set[tuple[str, str]]:
     return {
         (str(edge[1]), str(edge[4]))
         for edge in store.keyed_edges

@@ -18,7 +18,7 @@ from codebase_rag import constants as cs
 from codebase_rag.config import settings
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from evals.cgr_graph import _StatefulIngestor
+from evals.cgr_graph import StatefulIngestor
 
 
 @pytest.fixture(autouse=True)
@@ -42,11 +42,11 @@ BOX_GO = (
 )
 
 
-def _index(root: Path) -> _StatefulIngestor:
+def _index(root: Path) -> StatefulIngestor:
     parsers, queries = load_parsers()
     if cs.SupportedLanguage.GO not in parsers:
         pytest.skip("go parser not available")
-    store = _StatefulIngestor()
+    store = StatefulIngestor()
     GraphUpdater(
         ingestor=store,
         repo_path=root,
@@ -58,7 +58,7 @@ def _index(root: Path) -> _StatefulIngestor:
     return store
 
 
-def _project(tmp_path: Path, files: dict[str, str]) -> _StatefulIngestor:
+def _project(tmp_path: Path, files: dict[str, str]) -> StatefulIngestor:
     root = tmp_path / "proj"
     root.mkdir(parents=True)
     (root / "go.mod").write_text("module proj\n\ngo 1.22\n", encoding="utf-8")
@@ -69,7 +69,7 @@ def _project(tmp_path: Path, files: dict[str, str]) -> _StatefulIngestor:
     return _index(root)
 
 
-def _calls(store: _StatefulIngestor, caller: str) -> dict[str, str | None]:
+def _calls(store: StatefulIngestor, caller: str) -> dict[str, str | None]:
     # callee qn -> the edge's resolution stamp, for the caller's CALLS edges.
     out: dict[str, str | None] = {}
     for edge, props in store.edge_props.items():
@@ -83,7 +83,7 @@ def _calls(store: _StatefulIngestor, caller: str) -> dict[str, str | None]:
     return out
 
 
-def _instantiates(store: _StatefulIngestor, caller: str) -> set[str]:
+def _instantiates(store: StatefulIngestor, caller: str) -> set[str]:
     return {
         str(dst)
         for _sl, src, rel, _tl, dst in store.edges
@@ -413,7 +413,7 @@ QUALIFIED_BOX_GO = (
 )
 
 
-def _qualified_project(tmp_path: Path, app_body: str) -> _StatefulIngestor:
+def _qualified_project(tmp_path: Path, app_body: str) -> StatefulIngestor:
     # The app imports only box: every result type is spelled in box's file.
     return _project(
         tmp_path,

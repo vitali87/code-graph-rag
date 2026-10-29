@@ -22,7 +22,7 @@ from typing import NamedTuple
 from codebase_rag import constants as cs
 from codebase_rag.language_spec import get_language_for_extension
 
-from .cgr_graph import _capture
+from .cgr_graph import capture
 
 _MODULE = cs.NodeLabel.MODULE.value
 _DEFINITION_LABELS = frozenset(label.value for label in cs.SYMBOL_DEFINITION_LABELS)
@@ -251,7 +251,7 @@ def _language_of_path(path: str) -> cs.SupportedLanguage | None:
 
 
 def cgr_polyglot(target: Path, project: str) -> PolyglotReport:
-    ingestor = _capture(target, project)
+    ingestor = capture(target, project)
 
     # module qn -> language, from each Module node's recorded path.
     module_language: dict[str, cs.SupportedLanguage] = {}

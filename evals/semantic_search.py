@@ -17,7 +17,7 @@ from codebase_rag import constants as cs
 from codebase_rag.types_defs import PropertyParams, ResultRow
 
 from . import constants as ec
-from .cgr_graph import _capture
+from .cgr_graph import capture
 from .score import _prf
 from .types_defs import DiffBucket, LocationStats, ScoreResult, ScoreRow
 
@@ -43,7 +43,7 @@ def _cosine(a: list[float], b: list[float]) -> float:
 def function_snippets(target: Path, project: str) -> dict[str, str]:
     # The source of every first-party function/method, keyed by qualified name,
     # read from the captured node's file and span, the same text cgr embeds.
-    ingestor = _capture(target, project)
+    ingestor = capture(target, project)
     snippets: dict[str, str] = {}
     for (label, uid), props in ingestor.nodes.items():
         if label not in (_FUNCTION, _METHOD):
@@ -187,7 +187,7 @@ def proximity_edges(target: Path, project: str) -> dict[str, dict[str, set[str]]
     """
     from codebase_rag.tools.graph_rerank import _PROXIMITY_RELS
 
-    ingestor = _capture(target, project)
+    ingestor = capture(target, project)
     wanted = set(_PROXIMITY_RELS)
     adjacency: dict[str, dict[str, set[str]]] = {}
     for _from_label, from_val, rel_type, _to_label, to_val in ingestor.rels:
