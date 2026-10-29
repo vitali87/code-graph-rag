@@ -1227,7 +1227,7 @@ class FunctionIngestMixin:
             # A type each build declares again (`t_linux.go`, `t_windows.go`):
             # the one a build compiling this file holds, else the first by
             # name, never whichever a set yields first, which changes with
-            # the process (#3360 review).
+            # the process (#3360).
             method_rel = go_utils.rel_file(method_file, self.repo_path)
             building = [
                 qn
@@ -1400,7 +1400,7 @@ class FunctionIngestMixin:
             func_name, display_name = self._extract_lua_field_function_name(func_node)
             # A field value whose field has no name is anonymous; only a
             # function that is NOT a field value may take the assignment's
-            # name (#1750 review).
+            # name (#1750).
             if not func_name and not lua_utils.is_field_value(func_node):
                 func_name = self._extract_lua_assignment_function_name(func_node)
 
@@ -1802,7 +1802,7 @@ class FunctionIngestMixin:
         """(`table.key` path, `key`) for a table field's function value, else Nones.
 
         The walk lives in `lua_utils.field_function_path`, shared with the
-        call pass so both name the node identically (#1631 review).
+        call pass so both name the node identically (#1631).
         """
         found = lua_utils.field_function_path(func_node)
         return found if found is not None else (None, None)

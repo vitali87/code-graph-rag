@@ -218,7 +218,7 @@ def field_key_name(field: Node) -> str | None:
 
     tree-sitter-lua exposes `k = v` and `[k] = v` alike as `name: identifier`;
     the opening bracket is what tells a computed key from a literal one
-    (#1631 review), so a bracketed identifier is computed and names nothing.
+    (#1631), so a bracketed identifier is computed and names nothing.
     """
     key = field.child_by_field_name(cs.FIELD_NAME)
     if key is None:
@@ -234,7 +234,7 @@ def field_function_path(func_node: Node) -> tuple[str, str] | None:
 
     Shared by the definition pass, which registers the node under the path,
     and the call pass, which must recover the same name or the body's calls
-    are skipped or credited to the enclosing function (#1631 review). Nested
+    are skipped or credited to the enclosing function (#1631). Nested
     constructors chain their keys (`M = { sub = { f = ... } }` gives
     `M.sub.f`); the outermost table takes the name its statement assigns it,
     through `extract_assigned_name`. A constructor with no assignment (a
@@ -268,7 +268,7 @@ def field_function_path(func_node: Node) -> tuple[str, str] | None:
     # `extract_assigned_name` accepts any descendant of a value, so a table
     # passed as an ARGUMENT (`local r = register({ f = ... })`) would take
     # `r`, which receives `register`'s return value and not the table, and
-    # the function would carry a false identity `r.f` (#1750 review).
+    # the function would carry a false identity `r.f` (#1750).
     if table is not None and _is_assigned_value(table):
         owner = extract_assigned_name(
             table, accepted_var_types=cs.LUA_NAMING_ASSIGNMENT_TARGETS
@@ -296,7 +296,7 @@ def is_field_value(func_node: Node) -> bool:
     (a computed `[k]` key, a positional entry, a nesting under either). Only
     the first may fall back to the enclosing assignment's name; the second
     is anonymous, and falling back named `{ [k] = function() end }` after the
-    table it sits in (#1750 review).
+    table it sits in (#1750).
     """
     return _field_valued_by(func_node) is not None
 
@@ -307,7 +307,7 @@ def _field_valued_by(func_node: Node) -> Node | None:
     `f = (function() end)` parses as field > parenthesized_expression >
     function_definition, so the field's value is the parentheses and not
     the function; without unwrapping, the function was not a field value
-    and fell back to the assignment's name (CodeRabbit, #1750).
+    and fell back to the assignment's name (#1750).
     """
     value: Node = func_node
     parent = value.parent
@@ -397,7 +397,7 @@ def rebinds_locally(node: Node, name: str) -> bool:
     A `local name` (or `local function name`) earlier in an enclosing block,
     a parameter of an enclosing function, or a variable of an enclosing
     `for` loop is a separate variable from the chunk's own `name`, so a
-    table it holds is not the one the chunk returns (Greptile, PR #2617).
+    table it holds is not the one the chunk returns (PR #2617).
     The chunk's top level is where the module's variable lives, and the
     walk stops there.
     """

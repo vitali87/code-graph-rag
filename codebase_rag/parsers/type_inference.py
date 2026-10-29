@@ -151,7 +151,7 @@ class TypeInferenceEngine:
         # Shared reference (as with class_field_types): each Go file module's
         # `package` clause, recorded as the file is parsed. A directory can
         # hold two packages, `p` and the external test package `p_test`, so
-        # the free-function index keys by both (#2616 review).
+        # the free-function index keys by both (#2616).
         self.go_package_names = shared_or_new(go_package_names, dict)
         # Go interface -> the declarations of its name each build makes
         # (shared, filled by the interface link before any call is typed).
@@ -194,13 +194,13 @@ class TypeInferenceEngine:
         # `namespace Util` yields `proj.Core.Util.Helper`, which sits under
         # the sibling module `proj.Core.Util` (`Core/Util.cs`). Inferring
         # the owner by longest module prefix therefore attributes the class
-        # to the wrong file (#1769 review).
+        # to the wrong file (#1769).
         # Deliberately NOT forwarded to `CSharpTypeInferenceEngine` below:
         # resolution never consults it. Only `remove_file_from_state`'s prune
         # reads it, and it reads it from here. Passing it raised
         # `unexpected keyword argument` inside the call pass, where the
         # exception was SWALLOWED -- the arity map is populated earlier, so a
-        # probe checking only that map still looked correct (#1769 review).
+        # probe checking only that map still looked correct (#1769).
         self.csharp_class_owner_module = shared_or_new(csharp_class_owner_module, dict)
         self.csharp_class_namespaced = shared_or_new(csharp_class_namespaced, dict)
         self.csharp_namespaced_qns = shared_or_new(csharp_namespaced_qns, dict)
@@ -640,7 +640,7 @@ class TypeInferenceEngine:
             if len(segments) == 2 and not var_types.get(segments[0]):
                 # `r := router.New()` where a local `router` the walker could
                 # not type is in scope calls that local's method: the import it
-                # hides says nothing about `r` (#2616 review). A local declared
+                # hides says nothing about `r` (#2616). A local declared
                 # only after the call, or in a block already closed, hides
                 # nothing there.
                 scopes = scopes or go_utils.local_binding_scopes(caller_node)
@@ -863,7 +863,7 @@ class TypeInferenceEngine:
         # `p_test`'s `NewRouter` beside `p`'s is another package's function,
         # no variant of it, so the index keeps each file's `package` clause
         # and whether it is that external test package, and `admits` picks
-        # the asking package's files by them (#2616 review).
+        # the asking package's files by them (#2616).
         if len(self.go_function_return_types) != self._go_free_fn_index_size:
             self._go_free_fn_index = {}
             for qn, return_type in self.go_function_return_types.items():

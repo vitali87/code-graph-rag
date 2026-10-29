@@ -800,7 +800,7 @@ def _go_handler_signature(node: Node) -> bool:
     # Generated wrapper methods take http handler parameters
     # (`w http.ResponseWriter, r *http.Request`) or a framework context
     # (`ctx echo.Context`); an option method like `Header(timeout int)`
-    # does not (issue #909 review).
+    # does not (issue #909).
     parameters = node.child_by_field_name(cs.FIELD_PARAMETERS)
     if parameters is None or not parameters.named_children:
         return False

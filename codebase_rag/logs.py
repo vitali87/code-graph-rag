@@ -8,7 +8,7 @@ LOADED_GRAPH = "Loaded {nodes} nodes and {relationships} relationships with inde
 ENSURING_PROJECT = "Ensuring Project: {name}"
 # A dotted checkout's project from before #2412, whose qualified names alias
 # another project's package; retired once the checkout syncs under its new
-# name (review of PR 2497).
+# name (PR #2497).
 LEGACY_DOTTED_PROJECT_RETIRED = (
     "Removed project '{legacy}', which this checkout was indexed under before "
     "project names could not hold '.'; it is now project '{project}'"

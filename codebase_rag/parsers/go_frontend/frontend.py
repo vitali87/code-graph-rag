@@ -46,7 +46,7 @@ _UNKNOWN_FLOOR = "unknown"
 # with and when it failed: a failed build is not retried every sync, only once
 # Go or the helper's sources change or GO_FRONTEND_BUILD_FAILURE_TTL_S passes
 # (issue #2395). The time is stored in the file, not read from its mtime, which
-# copying or restoring the cache can reset (PR #2417 review).
+# copying or restoring the cache can reset (PR #2417).
 _BUILD_FAILED_MARKER = ".build-failed"
 _MARKER_GO_VERSION = "go_version"
 _MARKER_FAILED_AT = "failed_at"
@@ -110,7 +110,7 @@ def _cache_dir() -> Path:
     # Keyed by the Go the helper requires. Freshness compares only mtimes, so
     # a helper an older Go built while the floor was lower would otherwise be
     # reused after the floor rose, before `_too_old` ever looks at the Go
-    # (PR #2417 review). Each floor gets a cache directory of its own.
+    # (PR #2417). Each floor gets a cache directory of its own.
     required = _required_go_version()
     key = _dotted(required) if required is not None else _UNKNOWN_FLOOR
     return settings.CGR_HOME.expanduser() / f"{_CACHE_DIR_PREFIX}-{key}"
@@ -164,7 +164,7 @@ def _host_build_env() -> dict[str, str]:
     A GOOS or GOARCH set for the analysis (`GOOS=windows cgr ...` on Linux)
     picks the build go/types reads, and the helper's run honours it; built
     under it, the helper was a Windows binary this host cannot run, and the
-    index fell back to tree-sitter (#3360 review)."""
+    index fell back to tree-sitter (#3360)."""
     env = {key: value for key, value in os.environ.items() if key not in _TARGET_ENV}
     return {**env, **_GO_ENV}
 
@@ -304,7 +304,7 @@ def _build_tool(go: str) -> Path | None:
     retried on every sync (issue #2395). It is checked before a cached helper
     is reused too: the helper drives the `go` on PATH to load packages, and a
     version manager can put an older Go there after a newer one built it, so
-    a cached build must not let a Go below the floor run (PR #3410 review).
+    a cached build must not let a Go below the floor run (PR #3410).
     """
     cache = _cache_dir()
     src = cache / "src"

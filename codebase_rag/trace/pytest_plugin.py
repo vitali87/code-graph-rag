@@ -127,7 +127,7 @@ def pytest_unconfigure(config: pytest.Config) -> None:
     if tracer is not None and tracer.active:
         tracer.stop()
     # `--no-summary` skips `pytest_terminal_summary`; the trace written is
-    # still confirmed, after the progress line (Greptile, PR #2902).
+    # still confirmed, after the progress line (PR #2902).
     reporter = config.pluginmanager.get_plugin("terminalreporter")
     if isinstance(reporter, pytest.TerminalReporter):
         _report_summary(reporter, config)

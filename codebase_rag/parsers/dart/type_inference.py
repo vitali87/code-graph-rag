@@ -35,7 +35,7 @@ class DartTypeInferenceEngine:
         # heuristic types them as Base, but a registered member's RECORDED
         # return type should win (a `static String describe()` local is a
         # String, not the class). The hub enrichment consumes this map.
-        # OWN-scope only (PR #807 review): a nested function's same-named
+        # OWN-scope only (PR #807): a nested function's same-named
         # binding must never retype the outer local, and since the
         # enrichment cannot tell which scope produced a var_types entry, a
         # nested binding is never collected at all -- nested locals simply
@@ -118,7 +118,7 @@ class DartTypeInferenceEngine:
     def _collect_locals(
         self, body: Node, types: dict[str, str], conflicts: set[str]
     ) -> None:
-        # Two passes with precedence (PR #806 review): the caller's OWN
+        # Two passes with precedence (PR #806): the caller's OWN
         # scope first, with full conflict semantics; then nested
         # function/lambda scopes, fill-in only. Nested locals must still
         # be collected -- a Dart test body is a lambda argument

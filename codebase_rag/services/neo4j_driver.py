@@ -179,7 +179,7 @@ class Neo4jConnection:
         while pending:
             node = pending.pop()
             # Absent (or null) means none; any other value must have the right
-            # shape, a falsy wrong one included (CodeRabbit, PR #2255).
+            # shape, a falsy wrong one included (PR #2255).
             args = node.get(cs.NEO4J_PLAN_ARGS)
             args = {} if args is None else args
             children = node.get(cs.NEO4J_PLAN_CHILDREN)
@@ -187,7 +187,7 @@ class Neo4jConnection:
             # The read-only guard checks every operator this returns, so a
             # node it cannot fully walk must refuse the query rather than be
             # skipped: a skipped child is an operator nobody inspected
-            # (CodeRabbit, PR #2255).
+            # (PR #2255).
             if not isinstance(args, dict) or not isinstance(children, list):
                 raise ReadOnlyQueryError(
                     ex.READ_ONLY_UNREADABLE_PLAN.format(query=query)

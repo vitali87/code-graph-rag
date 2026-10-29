@@ -147,7 +147,7 @@ def _py_positional_param_names(func_node: Node) -> list[str | None]:
     # the first `*args`/`**kwargs`/bare-`*` boundary: positional arguments past
     # that point are absorbed by the variadic or are keyword-only, so mapping
     # arg:<index> into the full (variadic-dropping) name list would bind to the
-    # wrong parameter (issue #1142, Greptile review on PR #1167). A leading
+    # wrong parameter (issue #1142, PR #1167). A leading
     # self/cls is dropped so positions line up with call-site arguments.
     params_node = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
     if params_node is None:
@@ -996,7 +996,7 @@ class FlowProcessor:
             import_map=self._import_processor.import_mapping.get(module_qn, {}),
             # A READ_WRITE sink (PHP `curl_exec`/`fsockopen`, verb-agnostic like a DB
             # execute) is BOTH a read source and a write sink, so it enters both maps
-            # -- otherwise it would fall out of both and emit nothing (CodeRabbit, #1174).
+            # -- otherwise it would fall out of both and emit nothing (#1174).
             read_sinks={
                 s.callee: s
                 for s in sinks
@@ -1989,7 +1989,7 @@ class FlowProcessor:
             # An UNRESOLVED call may still be a libc arg-shaped handle write
             # (`fwrite(x, 1, n, f)`, `fprintf(f, fmt, x)`). A call that DOES resolve to
             # a project function of the same name is analysed as that function above
-            # -- not assumed to be libc (Greptile review, #1204).
+            # -- not assumed to be libc (#1204).
             if lean.arg_handle_sinks:
                 self._emit_arg_handle_write(raw, node, args, handles, lean)
             return
@@ -2148,7 +2148,7 @@ class FlowProcessor:
             # A static import (`import static java.nio.file.Path.of`) spells the
             # factory bare (`of("cfg")`); resolve it through the import map to its
             # qualified form before the identity-call check, so the literal is still
-            # recovered (Greptile review, #1204).
+            # recovered (#1204).
             # Membership is NOT shadow-aware (#1216, accepted limitation): a
             # same-class/inherited `of(..)` or a local nested `Path` class still
             # matches, mis-attributing a literal identity where `<dynamic>` would
@@ -2236,7 +2236,7 @@ class FlowProcessor:
         # destinations -- fread/fgets READ into a buffer, not a resource write.
         # Match through _lean_match_sink so this path honours the SAME shadowing /
         # import rules as every other sink -- a local named `fwrite` is not the libc
-        # symbol (CodeRabbit review, #1204).
+        # symbol (#1204).
         sink = self._lean_match_sink(raw, lean.arg_handle_sinks, lean)
         if sink is None or sink.direction == IODirection.READ:
             return False
@@ -2342,7 +2342,7 @@ class FlowProcessor:
             return list(block.named_children)
         # An expression-bodied declaration `=> expr` (function/method/getter) has no
         # block: the whole `function_body` is walked for the expression's call
-        # effects and evaluated as the implicit return value (Greptile review, #1173).
+        # effects and evaluated as the implicit return value (#1173).
         return [body]
 
     @staticmethod
@@ -2508,7 +2508,7 @@ class FlowProcessor:
     ) -> Taint | None:
         # `'$k'` and `'${a.b}'` embed expressions inside the literal; shell
         # payloads are routinely built this way, so each substitution is
-        # evaluated and the taints merged (issue #1224 review). The bare
+        # evaluated and the taints merged (issue #1224). The bare
         # `$k` form parses its name as identifier_dollar_escaped, which the
         # alias path does not recognise, so it is looked up by text.
         merged: Taint | None = None
@@ -2585,7 +2585,7 @@ class FlowProcessor:
             # The parameter SHADOWS every outer meaning of the name: a
             # same-named outer handle must not receive the callback's
             # calls, and a parameter named after a builtin sink must not
-            # match it (review on #1317).
+            # match it (#1317).
             inner[name] = seed
             inner_handles.pop(name, None)
             lean.local_names.add(name)
@@ -2612,7 +2612,7 @@ class FlowProcessor:
         # Optional-positional (`[data]`) and named (`{data}`) parameters sit
         # under wrapper nodes, so the list is walked recursively; a typed
         # parameter's NAME is its last identifier (`String data`), never the
-        # type (review on #1317).
+        # type (#1317).
         names: list[str] = []
         stack = list(plist.named_children)
         while stack:
@@ -3803,7 +3803,7 @@ class FlowProcessor:
         # A closure carried ANYWHERE in the RHS (holder.callback = send,
         # d[k] = (send), x = send if c else other) escapes, even when the
         # non-identifier target makes the assignment otherwise untrackable
-        # (issue #1211 review); direct-call callees are exempt.
+        # (issue #1211); direct-call callees are exempt.
         self._note_capture_escapes_in(right)
         if (
             left is None
@@ -4178,7 +4178,7 @@ class FlowProcessor:
         self._note_capture_call(raw, tainted)
         # Evaluate every argument through the value-taint evaluator, so a source
         # or tainted callee written inline -- log_it(os.getenv("K")) -- is seen,
-        # not only a bare tainted identifier (CodeRabbit review on PR #1167).
+        # not only a bare tainted identifier (PR #1167).
         arg_taints = self._arg_taints(node, tainted, ctx)
         if not arg_taints:
             return

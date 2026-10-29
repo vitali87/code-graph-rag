@@ -217,7 +217,7 @@ class _Collector:
             cs.KEY_END_LINE: cursor.extent.end.line,
             # libclang attaches the Doxygen comment to the cursor it documents;
             # without this the pure-libclang path emitted every documented
-            # definition with no docstring (Greptile on PR #1888).
+            # definition with no docstring (PR #1888).
             cs.KEY_DOCSTRING: libclang_docstring(getattr(cursor, "raw_comment", None)),
             cs.KEY_IS_EXPORTED: False,
             cs.KEY_PATH: rel,

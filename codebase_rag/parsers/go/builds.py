@@ -135,7 +135,7 @@ NEVER = Expr("or")
 # nothing and calls nothing exact.
 UNKNOWN = Expr("unknown")
 # A constraint built up past this many nodes, or nested past this deep, is
-# UNKNOWN too (#3360 review): the builds an interface inherits through a
+# UNKNOWN too (#3360): the builds an interface inherits through a
 # long chain of per-build embeds must not grow without end, nor nest past
 # what the decision's walk and Python's own hashing recurse through.
 _MAX_EXPR_SIZE = 4096
@@ -204,7 +204,7 @@ def _complementary(kept: tuple[Expr, ...]) -> bool:
 def _flat(op: str, parts: Iterable[Expr], unit: Expr) -> tuple[Expr, ...]:
     # The distinct operands, an operand of the same `op` spliced in: a
     # constraint built up level by level through an interface hierarchy
-    # stays as large as its distinct tags (#3360 review), where nesting
+    # stays as large as its distinct tags (#3360), where nesting
     # repeated each shared part once per path to it.
     kept: dict[Expr, None] = {}
     for part in parts:
@@ -267,7 +267,7 @@ def header_constraint(text: str, truncated: bool = False) -> Expr:
 
 
 class _Header:
-    """`go/build`'s parseFileHeader (#3360 review): a `//go:build` line
+    """`go/build`'s parseFileHeader (#3360): a `//go:build` line
     counts anywhere in the head outside a block comment; a `// +build` line
     only before the first line that is no line comment, and only when a
     blank line follows it there."""

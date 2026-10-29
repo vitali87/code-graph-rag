@@ -346,8 +346,8 @@ def _java_members(body: Node) -> list[Node]:
 
     An enum's fields sit under that wrapper after the constants and `;`, so a
     walk of `body.children` alone saw none of them; an interface's constants
-    are `constant_declaration` rather than `field_declaration` (local review),
-    and implicitly static (bot review).
+    are `constant_declaration` rather than `field_declaration`,
+    and implicitly static.
     """
     members: list[Node] = []
     for child in body.children:
@@ -384,7 +384,7 @@ def js_declared_fields(class_node: Node) -> list[DeclaredField]:
 
 def ts_declared_fields(class_node: Node) -> list[DeclaredField]:
     # A class member is a `public_field_definition`; an interface member is a
-    # `property_signature` with the same `name`/`type` fields (local review).
+    # `property_signature` with the same `name`/`type` fields.
     fields = _js_ts_fields(
         class_node,
         frozenset({cs.TS_PUBLIC_FIELD_DEFINITION, "property_signature"}),
@@ -398,7 +398,7 @@ def _ts_parameter_properties(class_node: Node) -> list[DeclaredField]:
     """`constructor(private p: number, readonly q?: string)` declares fields.
 
     A parameter with an accessibility modifier, `readonly` or `override` is a
-    parameter property; a plain one is not (local review).
+    parameter property; a plain one is not.
     """
     body = class_node.child_by_field_name(cs.FIELD_BODY)
     if body is None:
@@ -589,7 +589,7 @@ def _cpp_field_identifier(declarator: Node) -> Node | None:
         if node.type in _CPP_DECLARATOR_STOP:
             # `void (*cb)(int);` is a function POINTER field: the declarator
             # under the function_declarator is parenthesised. A method's is the
-            # bare field_identifier (local review).
+            # bare field_identifier.
             inner = node.child_by_field_name(cs.FIELD_DECLARATOR)
             if inner is not None and inner.type == "parenthesized_declarator":
                 node = inner
@@ -702,7 +702,7 @@ def _dart_type_text(member: Node) -> str | None:
     """`List<int>?` as written: the type identifier plus its arguments and `?`.
 
     Every other language records the full declared type; the bare
-    `type_identifier` alone gave `List` for `List<int>` (local review).
+    `type_identifier` alone gave `List` for `List<int>`.
     """
     parts: list[str] = []
     for child in member.children:
@@ -790,7 +790,7 @@ def scala_declared_fields(class_node: Node) -> list[DeclaredField]:
 
 def _scala_body_field(member: Node) -> DeclaredField | None:
     # A definition names its target in `pattern`; an abstract declaration
-    # (`val x: Int` in a trait) in `name` (local review).
+    # (`val x: Int` in a trait) in `name`.
     name_node = member.child_by_field_name("pattern") or member.child_by_field_name(
         cs.FIELD_NAME
     )
@@ -963,7 +963,7 @@ class PendingFieldType(NamedTuple):
     type_name: str
     # The owning file's relative path: scoped re-ingestion discards facts by
     # FILE, because two same-stem files (`foo.py`, `foo/__init__.py`) derive
-    # one module qn from their paths (#1891 round 3, #1892).
+    # one module qn from their paths (#1891, #1892).
     path: str
 
 

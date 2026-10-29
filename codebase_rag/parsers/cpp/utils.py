@@ -71,7 +71,7 @@ def _keeps_apart(previous: Node, previous_text: str, token: Node, text: str) -> 
     if _joins_template_lists(previous, token, text):
         return False
     # Maximal munch: written together, the two would lex as other tokens
-    # (review of PR 3356).
+    # (PR #3356).
     return _spells_punctuator(previous_text, text) or _continues_pp_number(
         previous, previous_text, text
     )
@@ -821,7 +821,7 @@ def cpp_vexing_parse_argument_names(decl_node: Node) -> list[str]:
 def cpp_enclosing_function_value_names(node: Node) -> set[str]:
     # Parameter and local-variable names VISIBLE at `node`, the in-scope
     # evidence that disambiguates a most-vexing-parse construction from a
-    # genuine local prototype. Lexical semantics matter (review round 1): a
+    # genuine local prototype. Lexical semantics matter: a
     # later declaration or a sibling nested block's local is not visible at
     # the candidate site and must not reclassify it, so only declarations
     # that PRECEDE the node among the direct children of its ancestor chain

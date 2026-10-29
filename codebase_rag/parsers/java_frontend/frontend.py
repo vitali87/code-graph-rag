@@ -195,7 +195,7 @@ def run_java_frontend(
     `.java` file by itself. Releasing the name instead let every untracked
     source under any directory of that name into the compilation, where a
     duplicate class could take a binding from the class the graph holds
-    (review of PR 2490). A file rather than the environment carries the list,
+    (PR #2490). A file rather than the environment carries the list,
     which a repo committing generated sources can make long.
     """
     javac = shutil.which(cs.JAVAC_BIN)

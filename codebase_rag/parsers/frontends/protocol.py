@@ -97,7 +97,7 @@ class SemanticFacts:
     degraded_roots: tuple[str, ...] = ()
     # The repo-relative files those analyses type-checked: a build reads only
     # the files its GOOS and tags select, so a pair resting on any other file
-    # was never compared, and the fallback keeps it (PR #3360 review).
+    # was never compared, and the fallback keeps it (PR #3360).
     checked_files: frozenset[str] = frozenset()
     # The declarations (file, line, col) of the types and interfaces those
     # analyses compared: a pair resting on any other is the fallback's too.
@@ -162,7 +162,7 @@ class LanguageFrontend(Protocol):
     # `rescued_files` are the repo-relative files the indexing walk keeps
     # although a default-excluded directory name is on their path; a
     # whole-repo tool that skips those names must still cover them, or they
-    # reach the graph without compiler facts (review of PR 2490).
+    # reach the graph without compiler facts (PR #2490).
     def run(
         self,
         repo_path: Path,

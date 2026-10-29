@@ -56,7 +56,7 @@ def _value_slots(node: Node) -> list[Node]:
             field = cs.FIELD_RIGHT
         case cs.TS_RETURN_STATEMENT:
             # `return handler;` hands the function to the caller, which may
-            # call it through the returned pointer (#2593 review).
+            # call it through the returned pointer (#2593).
             return node.named_children[:1]
         case _:
             return []
@@ -106,7 +106,7 @@ def c_file_scope(root: Node) -> CFileScope:
             _record_declaration(node, tu_local, objects)
         # An enum written anywhere outside a function body (alone, in a
         # typedef, a declaration, or even a struct member) declares its
-        # constants at file scope in C (#2593 review).
+        # constants at file scope in C (#2593).
         objects.update(enumerator_names(node))
     return CFileScope(frozenset(tu_local), frozenset(objects))
 

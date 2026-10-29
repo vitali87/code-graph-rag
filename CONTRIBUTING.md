@@ -899,6 +899,8 @@ The scope (in parentheses) is optional and can contain alphanumeric characters, 
 
 Write comments that explain **why** and **how**, not **what**. A comment that only restates the adjacent code adds no value; one that captures a non-obvious reason, a tricky invariant, or a concrete edge case earns its place.
 
+State the current contract, not how the code got there. Earlier attempts, which reviewer or bot caught what, and what was measured during review belong in the commit message or the linked issue; a comment keeps at most a pointer to that issue.
+
 ## Licensing of Contributions
 
 This project is licensed under the [MIT licence](LICENSE). By submitting a contribution, you agree that it is your own work (or that you have the right to submit it) and that it is licensed to the project and its users under the same MIT licence. You retain copyright in your contribution; no copyright assignment is required.

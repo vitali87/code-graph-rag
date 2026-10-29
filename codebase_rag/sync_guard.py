@@ -7,7 +7,7 @@ repository, so a name another repository indexes is not silently replaced
 marker going down and coming off, so one that stops part-way leaves a graph
 that says it is partial (#2219). The CLI turns a refusal into its own message
 and exit; the watcher runs these on its own connection for as long as it
-watches (review of PR 3365). Neither imports the other's module, so these
+watches (PR #3365). Neither imports the other's module, so these
 live here.
 """
 
@@ -66,7 +66,7 @@ def project_owner_refusal(
     The check claims the name for this repository in the same statement
     that reads its owner. A separate read let two syncs of a name nobody
     held both see no owner and both go ahead, and the later one replaced
-    the first one's graph (review of PR 2499).
+    the first one's graph (PR #2499).
     """
     if not repo.is_dir():
         return OwnerCheck(None)
@@ -105,7 +105,7 @@ def project_owner_refusal(
 def release_project_claim(
     ingestor: QueryProtocol, project_name: str, repo: Path
 ) -> None:
-    """Give back a claim whose writer failed before writing (review of PR 2499).
+    """Give back a claim whose writer failed before writing (PR #2499).
 
     The release query keeps it once that writer's marker or any code is
     down. Best effort: the writer's own failure is what is being reported.
@@ -133,7 +133,7 @@ def project_claim(
     Yields the roots `mark_sync_incomplete` must still find on the Project,
     so every later write is refused once the claim is lost. A claim this
     writer created is given back when it fails, as `cgr start` gives back
-    its own (review of PR 2499).
+    its own (PR #2499).
     """
     check = project_owner_refusal(ingestor, project_name, repo, assume_yes)
     if check.refusal is not None:
@@ -188,7 +188,7 @@ def mark_sync_incomplete(
 
     With `owned_roots`, the marker goes down only while the Project still
     has one of them, checked in the same statement: the claim the ownership
-    check saw may have been released and taken since (review of PR 2499).
+    check saw may have been released and taken since (PR #2499).
     """
     params = sync_marker_params(project_name) | owner
     params[cs.KEY_WRITING] = True
@@ -246,7 +246,7 @@ def clear_own_sync_incomplete(
     The CLI sync's marker is one node per project, re-marked by whichever
     writer marks next. A writer the checkout lock does not hold back (a sync
     of another checkout under the same name) may have marked since, and its
-    warning is its own to lift (review of PR 3365).
+    warning is its own to lift (PR #3365).
     """
     params = sync_marker_params(project_name)
     params[cs.KEY_OWNER_TOKEN] = owner[cs.KEY_OWNER_TOKEN]
@@ -280,7 +280,7 @@ class WriteMarker:
     watcher, the chat's graph refresh, `cgr rename` and `cgr edit undo` all
     write through it. It is the CLI sync's own marker, so `cgr start` clears
     what these left; a writer takes off only a marker it put down itself, so
-    one another writer put down since stays (review of PR 3365). With
+    one another writer put down since stays (PR #3365). With
     `owned_roots`, every mark holds to the claim `cgr watch` took on its
     project (#2411): once another repository has the name, the write is
     refused instead of replacing that repository's graph.
@@ -346,7 +346,7 @@ def marked_run(
     watcher stopped part-way through a re-ingest may have deleted an
     unchanged dependent's definitions, which an incremental run skips by
     their saved hash. So the run is forced, and only that rebuild takes the
-    marker off (review of PR 3365).
+    marker off (PR #3365).
     """
     if marker is None:
         if before_run is not None:

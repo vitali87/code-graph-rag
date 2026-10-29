@@ -493,7 +493,7 @@ def _resolve_location(
         # `x:a:b` is line a of `x` or line b of `x:a`. Only a reading whose
         # file the project holds is tried, and when it holds both neither
         # is: falling through to the second reading when the first line has
-        # no definition would answer from the other file (bot review).
+        # no definition would answer from the other file.
         held = _held_paths(fetch_all, project_name, every_path, owns)
         holding = [r for r in readings if held.intersection(spelled[r])]
         if len(holding) > 1:
@@ -937,7 +937,7 @@ def _binds_whole(row: ImporterRow, imported_qn: str) -> bool:
     `use crate::m;` and `pub use crate::m::*;` under the module's own name,
     as Python does `from pkg import m`. A JS/TS named import binds one
     export whatever its name: `import { index } from './index'` is the
-    barrel's `index`, not the barrel (#2573 review).
+    barrel's `index`, not the barrel (#2573).
     """
     name = row["imported_name"]
     if name is None or name == cs.IMPORTED_NAME_WILDCARD:
@@ -1354,7 +1354,7 @@ def endpoint_callers(
         if owns(row["handler"])
     }
     # Every field in the key: a caller that both reads and writes one URL is
-    # two rows, and two handlers can share a caller (bot review on PR #1975).
+    # two rows, and two handlers can share a caller (PR #1975).
     return [rows[key] for key in sorted(rows)]
 
 

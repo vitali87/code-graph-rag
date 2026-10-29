@@ -67,13 +67,13 @@ class ModuleDocSpec(NamedTuple):
     # -- a definition: functions and classes. `export default function () {}`
     # unwraps to a bare `function_expression` that is neither a declaration
     # type nor a binding statement, and was still taken as the file's doc
-    # (greptile-local on #1887).
+    # (#1887).
     definition_value_types: frozenset[str] = frozenset()
     # Wrappers that change nothing about what a value IS: `(() => {})`,
     # TypeScript's `expr as T`, `expr satisfies T`, `expr!`. The definition
     # pass binds the inner value as the definition, so the module must look
     # through them too or the adjacent doc is claimed here as the file's and
-    # the function is left undocumented (Greptile and CodeRabbit on #1889).
+    # the function is left undocumented (#1889).
     transparent_types: frozenset[str] = frozenset()
 
 
@@ -628,7 +628,7 @@ def _unwrap_transparent(node: ASTNode, spec: ModuleDocSpec) -> ASTNode:
     """
     while node.type in spec.transparent_types:
         # `<T>expr` puts its `type_arguments` BEFORE the expression, so the
-        # first named child is the type, not the value (CodeRabbit on #1889).
+        # first named child is the type, not the value (#1889).
         inner = next(
             (c for c in node.children if c.is_named and c.type != "type_arguments"),
             None,

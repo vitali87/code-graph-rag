@@ -38,7 +38,7 @@ from .utils import safe_decode_with_fallback
 # module, and both stay with the module spec. The first version listed `/*!`
 # here too (copied from the C-family table, where it is Doxygen's alternative
 # block form), so a `/*! ... */` opening a Rust file was stored on the module
-# AND on the first item beneath it (Greptile and CodeRabbit on PR #1888).
+# AND on the first item beneath it (PR #1888).
 _OUTER_LINE_MARKERS = ("///",)
 _OUTER_BLOCK_MARKERS = ("/**",)
 
@@ -251,7 +251,7 @@ def _doc_block_start(
     # sibling's trailing comment -- Doxygen's `int a; ///< The a field`, Go's
     # `var x = 1 // note` -- and go/parser, doxygen and javadoc all read it
     # so. Accepting it on adjacency alone wrote the previous line's remark to
-    # the NEXT declaration as its docstring (greptile-local, PR for #1809).
+    # the NEXT declaration as its docstring (PR for #1809).
     if _is_trailing(siblings, index):
         return None
     text = safe_decode_with_fallback(last).strip()
@@ -401,7 +401,7 @@ def libclang_docstring(raw_comment: object) -> str | None:
 
     The pure-libclang C++ frontend emits definitions without going through the
     tree-sitter walk above, so documented classes and functions came out with
-    `docstring=None` whenever `CPP_FRONTEND=libclang` (Greptile on PR #1888).
+    `docstring=None` whenever `CPP_FRONTEND=libclang` (PR #1888).
     `raw_comment` is typed loosely because a test double's attribute is not a
     string; anything that is not one yields None rather than a repr.
     """

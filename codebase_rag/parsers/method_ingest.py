@@ -248,7 +248,7 @@ def _register_method_qn(
     # TypeScript keeps a type and a same-named value as two nodes (#2520).
     kind = cs.NodeLabel.METHOD if language in cs.JS_TS_LANGUAGES else None
     # A Go method's natural qn is its receiver type's, which each build file
-    # declaring the method again shares (#3360 review).
+    # declaring the method again shares (#3360).
     origin = (
         str(file_path)
         if language == cs.SupportedLanguage.GO and file_path is not None

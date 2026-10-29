@@ -161,7 +161,7 @@ def _class_by_simple_name(
     # sorts first. Fall back to the first full-segment match otherwise. A
     # dotted name (`Outer.Inner`, a nested type through its outer) matches on
     # its whole segment sequence; `class_name in parts` could never match it
-    # and left every such base unresolved (CodeRabbit, #1770).
+    # and left every such base unresolved (#1770).
     wanted = class_name.split(SEPARATOR_DOT)
     module_prefix = f"{module_qn}{SEPARATOR_DOT}"
     same_module = [

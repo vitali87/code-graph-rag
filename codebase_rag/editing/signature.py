@@ -142,7 +142,7 @@ class SignatureChanger:
         # resolves to the PRIMARY's spec, so an explicitly spelled `a: int`
         # that happens to match the primary compared equal and counted as
         # carried -- leaving an override declaring `a: str` un-annotated,
-        # which is the opposite of what was asked (Copilot, PR #1533).
+        # which is the opposite of what was asked (PR #1533).
         carried = {
             text.strip()
             for text in new_params
@@ -509,7 +509,7 @@ def _passes_receiver(call: Node, source: bytes, method_qn: str) -> bool:
     counts as a class when it is the method's own class or is spelled the
     way PEP 8 spells classes (`CapWords`, not `ALL_CAPS`). A name an import
     binds is read as the name it imports: `from m import Base as base` makes
-    `base.f(obj, a)` a class call (Greptile, PR #2166). Erring towards a
+    `base.f(obj, a)` a class call (PR #2166). Erring towards a
     class leaves an instance call unmapped, which costs a hand edit; erring
     the other way shifts every argument one slot.
     """

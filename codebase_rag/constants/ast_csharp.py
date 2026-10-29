@@ -515,7 +515,7 @@ CSHARP_LITERAL_ACCEPTS: dict[str, frozenset[str]] = {
 }
 # A numeric literal's type comes from its suffix (`1L` is long, `1.0m` is
 # decimal), so the two numeric node types are typed from their text; an
-# unsuffixed integer too large for int is left unjudged (CodeRabbit, PR #2036).
+# unsuffixed integer too large for int is left unjudged (PR #2036).
 TS_CSHARP_INTEGER_LITERAL = "integer_literal"
 TS_CSHARP_REAL_LITERAL = "real_literal"
 CSHARP_INTEGER_SUFFIX_TYPES: dict[str, str] = {

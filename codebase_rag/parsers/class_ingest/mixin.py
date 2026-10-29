@@ -1546,7 +1546,7 @@ class ClassIngestMixin:
         # Emitted AFTER the owner node so a batch flush never writes the edge
         # before its endpoint, and from member_node: a templated C++ class's
         # wrapper has no body, its members live on the inner class_specifier
-        # (local review P1).
+        # .
         emit_declared_fields(
             self.ingestor,
             self.pending_field_types,
@@ -1904,7 +1904,7 @@ class ClassIngestMixin:
             self.csharp_class_generic_arity[class_qn] = arity
             # The declaring module, recorded because the class qn
             # cannot yield it: a namespace pushes the qn under a
-            # sibling module's qn (#1769 review).
+            # sibling module's qn (#1769).
             self.csharp_class_owner_module[class_qn] = module_qn
         # A `partial` type is split across files into N path-distinct
         # nodes; group the parts into one shared list so a typed receiver
@@ -1920,7 +1920,7 @@ class ClassIngestMixin:
         # with a dotted stem (`Widget.Designer.cs`) split from its sibling
         # under a last-dot rule, and once base resolution refused any
         # ambiguity that is not one partial group, the split lost the
-        # `: N.Widget` edge (bot review on #1999).
+        # `: N.Widget` edge (#1999).
         if cs.TS_CSHARP_MODIFIER_PARTIAL in modifiers:
             self._group_csharp_partial(class_qn, module_qn, file_path, arity)
 
@@ -2104,7 +2104,7 @@ class ClassIngestMixin:
 
         # Two blocks of one module can share `class_qn` while naming
         # different types (the crate's `String` and `std::string::String`),
-        # so each method keeps its own block's self type (#2595 review).
+        # so each method keeps its own block's self type (#2595).
         if written_path:
             for method_qn in impl_method_qns:
                 self.import_processor.record_rust_impl_self_path(
@@ -2594,7 +2594,7 @@ class ClassIngestMixin:
             # the Rust bodied-mod path and Rust sits in the source/sink
             # registry, so only the capture toggle decides — a missing
             # property would read as a spurious coverage gap under the
-            # file's real path (issue #1050 review).
+            # file's real path (issue #1050).
             cs.KEY_FLOW_COVERED: self.flow_capture_enabled,
         }
         if decorators:
@@ -2874,7 +2874,7 @@ class ClassIngestMixin:
         # match the tail of the class qn; a namespace the directory spells is
         # no longer in it, so the declared form is looked up instead, for a
         # C# reference only: a Python `Zeta.BaseC` is not this index's
-        # business (issue #1629, bot review).
+        # business (issue #1629).
         return csharp_utils.unique_carrier(
             self.csharp_namespaced_qns.get(class_name), self.csharp_partial_groups
         )

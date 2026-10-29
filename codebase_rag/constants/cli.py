@@ -108,7 +108,7 @@ CLI_ERR_PROJECT_OWNED_ELSEWHERE = (
     "--project-name, or pass --yes to replace it with this repository."
 )
 # An owner that cannot be read is not an absent one: syncing anyway would
-# replace the root that shows whose project it is (review of PR 2499).
+# replace the root that shows whose project it is (PR #2499).
 CLI_ERR_PROJECT_OWNER_UNREADABLE = (
     "Error: could not read which repository project '{project_name}' indexes "
     "({error}); nothing was changed. Retry once the graph answers, or pass "
@@ -217,7 +217,7 @@ CLI_ERR_SYNC_MARKER_FAILED = (
     "complete. Check the graph connection and retry."
 )
 # `cgr watch` ensures the graph's constraints before its first scan, under the
-# marker, as `cgr start` does (review of PR 3365).
+# marker, as `cgr start` does (PR #3365).
 CLI_ERR_GRAPH_CONSTRAINTS_FAILED = (
     "Error: could not ensure the graph's constraints and indexes before "
     "watching '{project}' ({error}). Nothing was scanned, and the project stays "
@@ -366,7 +366,7 @@ CHECK_NOT_INDEXED = (
 # walking out from the re-parsed modules. A Resource is never on that walk,
 # and the endpoint pass deletes every network RESOLVES_TO edge repo-wide
 # before rebuilding them from the edited tree, so those edges cannot be put
-# back. Refused rather than silently lost (greptile-local, #1718).
+# back. Refused rather than silently lost (#1718).
 CHECK_ISOLATED_GRAPH_HAS_IO = (
     "--isolated cannot restore the IO resource links project {project}'s code "
     "anchors ({groups}): cutting a changed file's subtree can leave a resource "

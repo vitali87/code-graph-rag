@@ -573,7 +573,7 @@ def _delete_scoped_embeddings(
     # guard, the progress logs, and the swallow-and-warn live here once.
     # Whether the vectors are gone: most callers carry on either way, but
     # retiring a project must not delete the node ids they are keyed by while
-    # they are still there (review of PR 2497).
+    # they are still there (PR #2497).
     if not point_ids:
         return True
     ids = list(point_ids)

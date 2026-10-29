@@ -203,7 +203,7 @@ def _overload_marker(callable_node: Node) -> str:
     # it defines (#2455): none for the overload its class body declares
     # first, `@<line>` of its declaration for another (`run@8`). Its local
     # types then hang off that node's name and stay its own in both the
-    # definition and the call pass (#2631 re-review). Read from the file
+    # definition and the call pass (#2631). Read from the file
     # alone, so a header parsed later cannot move it between runs.
     root = callable_node
     while root.parent is not None:

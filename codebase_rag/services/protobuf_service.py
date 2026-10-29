@@ -86,7 +86,7 @@ class ProtobufFileIngestor:
         # Keyed by (label, id): a Field and a Method may share `<owner>.<name>`,
         # and the read side (graph_diff._node_key) identifies a node by payload
         # kind plus identity, so the writer must too or one of the pair is lost
-        # (local review of #1899). Sorted output stays deterministic.
+        # (#1899). Sorted output stays deterministic.
         self._nodes: dict[tuple[str, str], pb.Node] = {}
         self._relationships: dict[_RelKey, pb.Relationship] = {}
         self.split_index = split_index

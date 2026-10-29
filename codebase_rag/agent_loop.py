@@ -667,7 +667,7 @@ def _compact_context_if_needed(
     `describe_prune` walk of the entire history on every turn above the
     threshold -- measured at 2.5ms per turn on an 8000-message history, paid
     only by users who turned the feature off, and growing with exactly the
-    history that opting out leaves unbounded (Copilot, #2106).
+    history that opting out leaves unbounded (#2106).
     """
     if not (
         settings.CONTEXT_COMPACTION_ENABLED
@@ -687,7 +687,7 @@ def _compact_context_if_needed(
     # proves: nothing changed. Measured at 2.27ms per turn on an 8000-message
     # history, and paid on EVERY turn above the threshold until the floor is
     # finally met -- which is most of them, since the floor is what holds
-    # compaction back (Copilot, #2106). The snapshot cannot serve as the
+    # compaction back (#2106). The snapshot cannot serve as the
     # identity check itself: `list()` always builds a new object, so
     # `describe_prune`'s own `after is before` shortcut can never fire here.
     if pruned_history is not message_history:
@@ -957,7 +957,7 @@ _background_tasks: set[asyncio.Task[None]] = set()
 # The context estimate runs on a DAEMON thread, not on `asyncio.to_thread`'s
 # default executor. That executor registers an atexit hook that JOINS its
 # threads, so a cancelled refresh still made shutdown wait out an in-flight
-# estimate -- seconds on a large history (Greptile, PR #1832). A daemon thread
+# estimate -- seconds on a large history (PR #1832). A daemon thread
 # is never joined, so an abandoned estimate cannot delay exit.
 #
 # Safe precisely because the estimate is pure and its result is discarded on
@@ -980,7 +980,7 @@ def _spawn_context_refresh(
     a compaction trigger, and an older history's total is stale the moment a
     turn completes. Without this, several turns in quick succession each
     started a full-history tokenisation and they ran CONCURRENTLY: measured at
-    5 simultaneous estimates from 5 refreshes (Greptile, PR #1832).
+    5 simultaneous estimates from 5 refreshes (PR #1832).
 
     Cancelling is safe because the estimate is pure and its result is
     discarded: `_settle` already ignores a future nobody holds.
@@ -1030,7 +1030,7 @@ def _settle(
         # is the normal shape of shutdown: nothing is awaiting this future any
         # more, and `call_soon_threadsafe` raises "Event loop is closed" on a
         # thread with no handler, surfacing as an uncaught exception at exit
-        # (Greptile, PR #1832).
+        # (PR #1832).
         #
         # Dropping the result is correct rather than merely quiet. The
         # estimate is pure and its only consumer is the future nobody holds;
@@ -1042,7 +1042,7 @@ def _settle(
 # One estimate at a time. Cancelling the awaiting TASK does not stop a daemon
 # thread already tokenising, so several turns in quick succession each started
 # a full-history walk and they ran concurrently -- measured at 5 simultaneous
-# estimates (Greptile, PR #1832). The lock makes a later estimate wait, and the
+# estimates (PR #1832). The lock makes a later estimate wait, and the
 # generation check below makes it exit instead: only the newest count is wanted.
 _estimate_lock = threading.Lock()
 _estimate_generation = 0
@@ -1114,7 +1114,7 @@ async def _refresh_context_tokens(
     The estimate runs in a THREAD. A coroutine runs synchronously until its
     first await, so tokenising here inline blocked the interactive loop for as
     long as it took -- measured at 3.3s on a twelve-message tool-call history,
-    with the whole UI frozen for the duration (Greptile, PR #1832). This is
+    with the whole UI frozen for the duration (PR #1832). This is
     a background refresh feeding a status line and a compaction trigger, so
     it must never be the reason a keystroke waits.
     """
@@ -1509,22 +1509,12 @@ def _input_history() -> History:
 
 
 def _input_session() -> PromptSession[str]:
-    """The chat prompt, built fresh each turn over the persistent history.
+    """The chat prompt, built fresh each turn over the persistent history
+    (issue #1495).
 
-    `get_multiline_input` previously called the bare `prompt()` function,
-    whose own docstring says it "will create a new PromptSession" and which
-    passes `history=None`. Every turn therefore started with an empty
-    history and the up arrow had nothing to recall (issue #1495). Passing
-    `_input_history()` is what fixes that; the session itself is deliberately
-    NOT cached.
-
-    `PromptSession` binds its `Application` to the ambient app session's
-    input and output at construction, so a cached one keeps reading the
-    console it was born under. Across two app sessions that means the
-    second prompt reads the first one's input; when that input is a closed
-    pipe, POSIX returns EOF but a Win32 pipe blocks, which timed out the
-    Windows CI job at thirty minutes. Rebuilding per turn is what the bare
-    `prompt()` did all along and costs nothing at human typing speed.
+    Not cached: a `PromptSession` binds to the console it was created under,
+    so a cached one reads a previous app session's input, which blocks on a
+    closed Win32 pipe.
     """
     return PromptSession(history=_input_history())
 
@@ -1833,7 +1823,7 @@ def _initialize_services_and_agent(
     # Fail closed: `None` is a session with no scope at all (`cgr optimize`),
     # but an empty list is a scope that came out empty, such as a workspace
     # with no repositories, and the prompts and the query tool below would
-    # read it as every project in the graph (Greptile review of PR 2507).
+    # read it as every project in the graph (PR #2507).
     if active_projects is not None and not active_projects:
         raise ValueError(ex.EMPTY_PROJECT_SCOPE)
     _validate_provider_config(

@@ -575,7 +575,7 @@ class ImportRewriter:
         this rename touched from one that merely matched. A pre-existing
         export of the NEW name made a complete undo look incomplete; a
         pre-existing export of the OLD name made an incomplete one look
-        complete (Greptile and CGR-3, PR #1547). Offsets carry the identity
+        complete (PR #1547). Offsets carry the identity
         that both aggregates discard.
         """
         source = self.patcher.source(path)
@@ -599,6 +599,6 @@ class ImportRewriter:
                 # is only meaningful against a file unmodified since staging;
                 # if an unrelated edit moves text before this entry AND the
                 # old name happens to land at the stale offset, a position-only
-                # check reads it as restored (Greptile, PR #1547).
+                # check reads it as restored (PR #1547).
                 offsets.append((start, m.start(1), m.end(1)))
         return offsets

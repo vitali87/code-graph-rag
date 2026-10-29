@@ -405,7 +405,7 @@ def java_declared_parameters(func_node: Node) -> list[DeclaredParameter]:
             slots.add(param.child_by_field_name(cs.FIELD_NAME), _field_type_text(param))
         elif param.type == cs.TS_SPREAD_PARAMETER:
             # `final String... xs` / `@NonNull T... ys`: the first named child
-            # is then `modifiers`, not the element type (local review P1).
+            # is then `modifiers`, not the element type.
             element = next(
                 (
                     c

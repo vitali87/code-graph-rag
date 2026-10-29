@@ -74,7 +74,7 @@ def _is_prunable_tool_return(part: object) -> bool:
 
     Both directions are the safe one for a mechanism whose entire value is
     that the history it compacts still works: recovering less is a cost,
-    corrupting the conversation is a defect (CodeRabbit, #1506).
+    corrupting the conversation is a defect (#1506).
     """
     from pydantic_ai.messages import NativeToolReturnPart, ToolReturnPart
 
@@ -142,7 +142,7 @@ def _prunable_candidates(
         # rewritten, so it is not a candidate at all. Clamping its
         # contribution to zero instead would still rewrite it, and the
         # reported recovery would then overstate the net change by the
-        # difference (Greptile, #2106).
+        # difference (#2106).
         if part_tokens <= placeholder_tokens:
             continue
         candidates.append((message_index, part_index))
@@ -206,7 +206,7 @@ def describe_prune(
                 # COSTS tokens to prune ('ok' -> -16). Summing raw deltas
                 # lets enough short results swamp the genuine saving and the
                 # total goes negative: "freeing ~-320 tokens" reached the
-                # user on a 5000-short-result history (greptile-local).
+                # user on a 5000-short-result history.
                 recovered += max(
                     0, _content_tokens(old_part) - _content_tokens(new_part)
                 )

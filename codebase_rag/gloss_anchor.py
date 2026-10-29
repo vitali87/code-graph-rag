@@ -13,7 +13,7 @@ The tokens are tree-sitter leaves, the way `anchor_hash` walks them, so
 the quote answers the same edits the hash does: whitespace between tokens
 and comments are not part of it, while a string literal's text is kept
 exactly as written -- `return "run"` and `return "execute"` are different
-bodies, and so are `"a  b"` and `"a b"` (bot review on PR #1966). Only a
+bodies, and so are `"a  b"` and `"a b"` (PR #1966). Only a
 token equal to the definition's name is masked, so a name inside a literal
 stays what it is. Without a parser for the file there is no quote: a
 text-only reading could not tell a literal from code.
@@ -62,7 +62,7 @@ _MASK = "\x00"
 # `template_declaration`, which made every leaf of a templated function
 # literal -- including its name, so a rename changed the quote and the
 # anchor could not follow it. The JS literal is `template_string`
-# (Copilot, PR #1966).
+# (PR #1966).
 _LITERAL_KINDS = ("string", "char", "template_string", "heredoc", "encapsed")
 # An expression inside a string (`f"{run()}"`, `${run()}`) is code, not
 # literal text: the walk up from a leaf meets the interpolation node before
@@ -97,7 +97,7 @@ def _definition_root(
     The span alone does not identify a definition: two declarations can
     share a line (valid in JavaScript, TypeScript and C++), and selecting
     by rows alone let each one's leaves into the other's quote, so editing
-    a sibling made an unchanged definition look changed (Copilot, #1808).
+    a sibling made an unchanged definition look changed (#1808).
     Falls back to the whole tree when no named node fits, which is the
     previous behaviour.
     """
@@ -215,7 +215,7 @@ def parse_source(
     tree is re-parsed with those lines blanked, and the indexed definition
     spans come from THAT tree. Parsing it plainly here produced different
     leaves for the same source, so a quote could disagree with the spans
-    it was selected by (Copilot, PR #1966).
+    it was selected by (PR #1966).
     """
     language = get_language_for_extension(path.suffix)
     parser = parsers.get(language) if language is not None else None

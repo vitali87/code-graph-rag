@@ -107,7 +107,7 @@ def _accepts_arg_count(
     # Can a call with `arg_count` arguments bind this overload without an
     # exact arity match? FEWER arguments than parameters compiles only when
     # the omitted ones have defaults, and MORE only through a `params` tail;
-    # `shape`, recorded at ingest, says which (CodeRabbit, PR #2036). A method
+    # `shape`, recorded at ingest, says which (PR #2036). A method
     # this run did not parse has no record and is judged from its signature
     # alone: the call site vouches for the defaults, and a trailing array is
     # the only tail that can be `params`.
@@ -406,7 +406,7 @@ class CSharpTypeInferenceEngine:
 
         The foreach binding is in scope in the loop BODY only; in the
         collection expression `foreach (var Config in Config.All())` the
-        name is still the class (CodeRabbit, #2011). Only its IMPLICIT form
+        name is still the class (#2011). Only its IMPLICIT form
         counts: an explicitly typed binding declares its type, reaches
         `local_var_types`, and must keep resolving normally.
         """
@@ -1010,7 +1010,7 @@ class CSharpTypeInferenceEngine:
         # C# puts in scope in every file of the compilation. A directive
         # written inside `namespace N { ... }` is in scope only there, which
         # the caller's qn shows: it embeds the namespace after the module qn
-        # (CodeRabbit, PR #2036).
+        # (PR #2036).
         imports = self.import_processor
         scope = [
             (path, module_qn)
@@ -1644,7 +1644,7 @@ class CSharpTypeInferenceEngine:
         # `local_var_types`. Falling through to the static branch below
         # read the name as a TYPE: `foreach (var Config in items) {
         # Config.Each(); }` emitted an edge to the registered class
-        # `N.Config` (Copilot, PR #1998). A local owns the name here
+        # `N.Config` (PR #1998). A local owns the name here
         # whatever its type, so the receiver is unresolved, not static.
         if self._binds_local(receiver, name):
             return None
@@ -1681,7 +1681,7 @@ class CSharpTypeInferenceEngine:
         # `Z.Widget` under `using Z = Zeta;` lands here as `Zeta.Widget`
         # (issues #2000, #2004).
         # `Widget` and `Widget<T>` share the declared form, so the written
-        # arity picks between them first (bot review).
+        # arity picks between them first.
         carriers = self.csharp_namespaced_qns.get(expanded)
         if carriers and len(carriers) > 1 and generic_arity is not None:
             carriers = {
@@ -1886,7 +1886,7 @@ class CSharpTypeInferenceEngine:
         # here; exact arity still wins when the type has one. An explicit
         # type argument (`M<int>(1)`) cannot bind a non-generic method, so a
         # generic overload of either tier is taken before a non-generic exact
-        # match (CodeRabbit, PR #2036); with no known generic overload the
+        # match (PR #2036); with no known generic overload the
         # tiers stand, since genericness is only recorded for parsed methods.
         exact = self._find_arity_matches_across_parts(class_qn, method_name, arg_count)
         compatible = self._find_compatible_matches(class_qn, method_name, arg_count)
@@ -2038,7 +2038,7 @@ class CSharpTypeInferenceEngine:
             return []
         name = name.split(cs.CHAR_ANGLE_OPEN, 1)[0]
         if receiver.type == cs.TS_CSHARP_BASE:
-            # `base.Handle`: the method group on the base chain (bot review).
+            # `base.Handle`: the method group on the base chain.
             own = self._containing_class_qn(caller_qn)
             return sorted(
                 {
@@ -2057,7 +2057,7 @@ class CSharpTypeInferenceEngine:
             # enclosing type or namespace, but only when a registered type
             # sits at exactly that written path. The last segment alone
             # would also bind `Config.Default.Handle`, a property value
-            # chain, to an unrelated `Default` type (bot review).
+            # chain, to an unrelated `Default` type.
             class_qn = self._dotted_type_path_qn(
                 safe_decode_text(receiver) or "", module_qn
             )
@@ -2086,12 +2086,12 @@ class CSharpTypeInferenceEngine:
             # Matched as `@<digits>`, never a bare `@`: a C# verbatim
             # identifier (`Lib.@Helper`) carries a leading `@` that IS part
             # of the name, and splitting at the first one truncated the
-            # candidate to `Lib.`, rejecting the real type (Copilot, #1998).
+            # candidate to `Lib.`, rejecting the real type (#1998).
             and qn_markers.strip_all_markers(qn).endswith(suffix)
         ]
         # The leaf's own arity picks between same-name twins; the leaf is
         # cut at the last dot outside generic arguments, so a qualified type
-        # argument (`Helper<System.String>`) keeps its arity (bot review).
+        # argument (`Helper<System.String>`) keeps its arity.
         return self._disambiguate_type_candidates(
             candidates,
             generic_arity_of_type_text(leaf_type_segment(dotted)),

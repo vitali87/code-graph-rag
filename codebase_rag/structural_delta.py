@@ -550,7 +550,7 @@ def _pair_lone_containers(
     reported as a removal plus an addition, which is the truth about what
     the snapshots show. Guessing here produced renames that never happened,
     and the contract treats an unexpected rename as a failure, so an
-    invented one rolls back a correct edit (Greptile, PR #1547).
+    invented one rolls back a correct edit (PR #1547).
     """
     lone_removed = [
         qn
@@ -809,7 +809,7 @@ def _stored_names(node: ast.AST) -> Iterator[str]:
 
     A lambda's body and a comprehension's own variables are scopes of their
     own in Python 3, so `[helper for helper in items]` binds no module-level
-    `helper` (Greptile, PR #2574); `:=` inside a comprehension still binds
+    `helper` (PR #2574); `:=` inside a comprehension still binds
     in the enclosing scope (PEP 572), and so does a `case` capture or a
     lambda's default values, which run where the lambda is made.
     """
@@ -832,7 +832,7 @@ def _pattern_capture(node: ast.AST) -> str | None:
 def _same_scope_children(node: ast.AST) -> Iterator[ast.AST]:
     if isinstance(node, ast.Lambda):
         # `lambda x=(helper := keep): x` binds `helper` where it is made
-        # (Greptile, PR #2574); a missing keyword-only default is None.
+        # (PR #2574); a missing keyword-only default is None.
         defaults = (*node.args.defaults, *node.args.kw_defaults)
         yield from (default for default in defaults if default is not None)
         return
@@ -977,7 +977,7 @@ def _star_names(
     """The `star` and `star_unknown` of `_SourceNames`, from `__all__` writes.
 
     Read in source order: an assignment at the top level replaces every
-    write before it (Greptile, PR #2574), while one in a branch may not run,
+    write before it (PR #2574), while one in a branch may not run,
     so the names it lists join the earlier ones -- a name any write that may
     survive lists may be in the final `__all__`, and only the rest are out.
     """
@@ -1005,7 +1005,7 @@ def _star_takes(names: _SourceNames | None, name: str) -> bool:
     """Whether `from module import *` binds `name`, by the module's source.
 
     Its `__all__` when it has one, else every name not starting with `_`
-    (Greptile, PR #2574). A module that is not Python, cannot be read or
+    (PR #2574). A module that is not Python, cannot be read or
     builds `__all__` at run time sets no limit that can be checked.
     """
     if names is None or names.star_unknown:
@@ -1570,7 +1570,7 @@ def _python_tree(path: str, mtime_ns: int, size: int) -> Tree | None:
 
 def _python_source_tree(path: Path) -> Tree | None:
     # A stub (`.pyi`) is Python source too: a call can resolve to a function
-    # only a stub defines (Greptile, PR #2946).
+    # only a stub defines (PR #2946).
     if path.suffix not in cs.PY_EXTENSIONS:
         return None
     try:
@@ -1803,12 +1803,12 @@ def _signature_verdict(
     written = site.arg_count - len(site.kwarg_names)
     # Only a keyword the def accepts by name fills a parameter: one naming a
     # positional-only parameter lands in `**kw` and leaves it unfilled
-    # (Greptile, PR #2947).
+    # (PR #2947).
     supplied = set(positional[:written]) | (set(site.kwarg_names) & by_keyword)
     expected = (set(positional) | set(signature.keyword_only)) & signature.required
     if site.star_args:
         # A `*rest` may fill any positional, but never a keyword-only
-        # parameter (CodeRabbit, PR #2947).
+        # parameter (PR #2947).
         expected &= set(signature.keyword_only)
     return cs.DELTA_ARITY_TOO_FEW if expected - supplied else None
 
@@ -1843,7 +1843,7 @@ def _passes_self_explicitly(
     that names a class, and a first positional argument that is `self`. A
     receiver names a class when it is the method's own class or is spelled
     as one (CapWords); `tool.m(self, x)` through an instance binds `tool`
-    and passes `self` as well (Greptile, PR #2946).
+    and passes `self` as well (PR #2946).
     """
     if repo_root is None or site.line is None or site.col is None:
         return False
@@ -1884,7 +1884,7 @@ def _passes_self_explicitly(
 
 def _is_classmethod(definition: Definition, repo_root: Path) -> bool:
     # `@classmethod` binds `cls` even through the class, so `Base.m(self,
-    # x)` passes it on top of `self` (Greptile, PR #2946).
+    # x)` passes it on top of `self` (PR #2946).
     node = _definition_node(definition, repo_root)
     decorated = node.parent if node is not None else None
     return (
@@ -2061,7 +2061,7 @@ def _arity_verdict(
     if verdict == cs.DELTA_ARITY_TOO_MANY:
         return declared_count, verdict
     # A guessed edge may lead to a same-named def the call never runs, whose
-    # header proves nothing about this call (CodeRabbit, PR #2947).
+    # header proves nothing about this call (PR #2947).
     if site.resolution not in _DEFINITE_RESOLUTIONS:
         return declared_count, verdict
     signature = _python_signature(definition, repo_root)
@@ -2083,7 +2083,7 @@ def _passes_receiver_by_keyword(site: CallSite, signature: _PySignature) -> bool
 
     A bound call naming its own receiver is a `TypeError` (multiple values
     for it), so a site that names it is an unbound call through the class
-    (Greptile, PR #2947).
+    (PR #2947).
     """
     return (
         signature.receiver
@@ -2190,7 +2190,7 @@ def _remote_callers(
     if not handlers:
         return found
     # Each query is DISTINCT within itself; a caller the two shapes both
-    # return is one caller (bot review on PR #1978).
+    # return is one caller (PR #1978).
     seen: set[tuple[str, str, str, str, str, str]] = set()
     for query in (
         cq.CYPHER_DELTA_REMOTE_CALLERS_OF,

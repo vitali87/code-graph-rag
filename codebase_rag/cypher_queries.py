@@ -104,7 +104,7 @@ CYPHER_CLAIM_PROJECT_ROOT = (
     "ON CREATE SET p.root_path = $root_path "
     "RETURN p.root_path AS root_path, holders = 0 AS created"
 )
-# The marker write of a sync that holds a claim (review of PR 2499). Another
+# The marker write of a sync that holds a claim (PR #2499). Another
 # sync of this repository may have created the claim, failed and released it
 # since this sync's check, and a different repository claimed the name. So
 # the marker goes down only while the Project's root is still one the check
@@ -171,7 +171,7 @@ CYPHER_RELEASE_PROJECT_CLAIM = (
 # exactly as it was. A marker from such a run says `writing = false`, and a
 # fresh process may clear it and carry on; one that reached its first graph
 # write says `writing = true` and refuses scoped work until a full update
-# recovers the graph (#1705 review). An absent property reads as `true`: a
+# recovers the graph (#1705). An absent property reads as `true`: a
 # marker written before the phase existed is treated the fail-closed way.
 # The phase only ever advances: a mark with `writing=false` must not demote a
 # marker another process left at `writing=true` over a graph it had started to
@@ -190,7 +190,7 @@ CYPHER_MARK_PROJECT_INCOMPLETE = (
 CYPHER_CLEAR_PROJECT_INCOMPLETE = (
     "MATCH (m:IncompleteRun {project: $project_name, run_id: $run_id}) DELETE m"
 )
-# The CLI sync's mark also records WHO holds it (PR #2532 review): every CLI
+# The CLI sync's mark also records WHO holds it (PR #2532): every CLI
 # sync of a project shares one run id, so the run id cannot say whether the
 # sync that left the marker still runs. `delete-project` reads the owner and
 # clears the marker only once that sync provably stopped. Set in the same
@@ -207,7 +207,7 @@ CYPHER_CLI_SYNC_MARKER_OWNER = (
 # Compare-and-delete on the owner token read above: a sync that started
 # after that read re-marked the node under its own token and keeps it. `cgr
 # watch` takes its own marker off the same way, so a marker another writer
-# has put down since its mark is left to that writer (review of PR 3365).
+# has put down since its mark is left to that writer (PR #3365).
 CYPHER_CLEAR_STOPPED_CLI_SYNC_MARKER = (
     "MATCH (m:IncompleteRun {project: $project_name, run_id: $run_id}) "
     "WHERE m.owner_token = $owner_token DELETE m"
@@ -236,14 +236,14 @@ CYPHER_RECOVER_PROJECT_INCOMPLETE = (
 # A marker written before run ids existed has no `run_id` property, so the
 # run-scoped clear can never match it while the read -- which matches on
 # project alone -- still sees it. Without this the project would stay blocked
-# forever after an upgrade (raised in review of #1850). Cleared alongside this
+# forever after an upgrade (#1850). Cleared alongside this
 # run's own marker on a successful completion, since a run that completes for
 # the project has established the graph is whole.
 #
 # Phase-guarded for the ROLLING DEPLOYMENT case: during an upgrade an
 # old-version process can still be writing under a legacy marker, and a
 # new-version run completing for the same project would otherwise delete the
-# protection for a graph that IS being written (#1850 review). A legacy
+# protection for a graph that IS being written (#1850). A legacy
 # marker with no `writing` property coalesces to true and is left alone, so
 # the pre-phase markers this was written for stay put until a run can prove
 # they are stale -- fail-closed, which is the safe direction here.
@@ -363,7 +363,7 @@ CYPHER_PROJECT_SYNC_TIMES = (
 # define; the shared Folder and File nodes stay with the project that still
 # contains them. A repository-root `__init__.py` makes the root Package and
 # Module's qn the bare project name, so the prefix test alone would miss them
-# (review of PR 2497); the trailing dot of the prefix still keeps a project
+# (PR #2497); the trailing dot of the prefix still keeps a project
 # whose name only starts with this one (`acme.webapp` beside `acme.web`).
 CYPHER_RETIRE_PROJECT = """
 MATCH (p:Project {name: $project_name})
@@ -431,7 +431,7 @@ FOREACH (n IN gone | DETACH DELETE n)
 # Project's root_path; a Project that records none predates it and counts as
 # legacy. root_path is the resolved path as the OS spells it, backslashes on
 # Windows, while absolute_path is POSIX, so both sides are compared with
-# forward slashes (review of PR 3216). A filesystem root (`/`, `C:\`) already
+# forward slashes (PR #3216). A filesystem root (`/`, `C:\`) already
 # ends in the separator, so the boundary one is added only to a root that
 # does not.
 def _outside_tree(root: str) -> str:
@@ -463,7 +463,7 @@ _ACROSS_ROOTS = (
 # purge judges them. A parent's own path cannot stand in for its Project's
 # root: a Package records its directory, so a File two projects reach through
 # their Packages read as inside both, hiding a rootless owner the purge counts
-# as legacy (review of PR 3216). Keyless rows match the second purge's
+# as legacy (PR #3216). Keyless rows match the second purge's
 # predicate directly.
 CYPHER_ANY_SHARED_STRUCTURE = (
     "MATCH (parent)-[:CONTAINS_FOLDER|CONTAINS_FILE]->(n) "
@@ -661,7 +661,7 @@ _SNIPPET_LABELS = "|".join(sorted(label.value for label in SNIPPET_NODE_LABELS))
 # The quote tier's candidates. A Module is a definition label but never
 # carries an `anchor_hash`, so the quote move could never bind one: a sole
 # module match would hold its note unattached on every pass instead of
-# grading it LOST (Copilot, PR #1966).
+# grading it LOST (PR #1966).
 _QUOTE_SPAN_LABELS = "|".join(sorted(label.value for label in SYMBOL_DEFINITION_LABELS))
 
 
@@ -1071,7 +1071,7 @@ RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.path AS path
 # Held means a Module of this project at the path (a source file or a
 # document). File and Folder nodes are keyed by absolute path, so projects
 # indexed from one root share them, and a containment walk from one Project
-# reaches files only another project indexed (bot review).
+# reaches files only another project indexed.
 CYPHER_GRAPH_LOCATION_FILES = f"""MATCH (m:{NodeLabel.MODULE.value})
 WHERE m.qualified_name STARTS WITH $project_prefix AND m.path IN $paths
 RETURN m.path AS path, m.qualified_name AS qualified_name"""
@@ -1133,7 +1133,7 @@ LIMIT 1"""
 # note that has since MOVED finds the same node still attached to the
 # definition it followed. A fresh write against a name is EXACT at that
 # name: any other subject edge is dropped before the new one is merged, and
-# the repair state (`moved_from`, `candidate_qns`) is cleared (bot review).
+# the repair state (`moved_from`, `candidate_qns`) is cleared.
 CYPHER_GLOSS_WRITE = f"""MATCH (t)
 WHERE {_any_label("t", _GRAPH_DEFINITION_LABELS)} AND t.qualified_name = $target_qn AND t.qualified_name STARTS WITH $project_prefix
 OPTIONAL MATCH (m)
@@ -1223,11 +1223,11 @@ RETURN t.qualified_name AS qualified_name, t.anchor_hash AS anchor_hash"""
 # PHYSICAL node -- so a same-name pair across two labels (two nodes, one
 # qualified name) is refused rather than given two edges, and a match that
 # appeared or a hash that changed between the repair pass's read and this
-# write makes the statement a no-op instead of a wrong binding (bot review).
+# write makes the statement a no-op instead of a wrong binding.
 # The note's own precondition is re-checked here too: the pass selected it
 # while it had no subject, but a writer may have attached it since, and a
 # MERGE would then give it a second subject. A note that already has one is
-# left exactly as the other writer left it (bot review, second round).
+# left exactly as the other writer left it (second round).
 # `origin` is the name the note was first written against (its first move
 # recorded it in `moved_from`). Following the hash back to that name is a
 # return home, not another move: the note is EXACT again with no `moved_from`.
@@ -1271,7 +1271,7 @@ RETURN t.qualified_name AS qualified_name, t.name AS name, t.path AS path,
 # between the span read and this write is not bound on the strength of its
 # name alone. A label without a hash (a class, until containers are hashed)
 # cannot be re-validated and is never bound here: null on both sides read as
-# equal would have bound a rewritten body (bot review, PR #1966, twice).
+# equal would have bound a rewritten body (PR #1966, twice).
 CYPHER_GLOSS_MOVE_TO_QN = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
 MATCH (t)
 WHERE {_any_label("t", _GRAPH_DEFINITION_LABELS)} AND t.qualified_name = $target_qn AND t.qualified_name STARTS WITH $project_prefix
@@ -1578,7 +1578,7 @@ RETURN a.qualified_name AS from_qn, a.path AS from_path, type(r) AS rel_type,
 # changed handler's endpoint is reached by call sites in OTHER projects,
 # through a NETWORK resource that RESOLVES_TO it, or directly for the RPC and
 # dispatch kinds. A caller inside the handler's own project is a local
-# site, whatever route it takes, and is excluded (bot review on PR #1978).
+# site, whatever route it takes, and is excluded (PR #1978).
 CYPHER_DELTA_REMOTE_CALLERS_OF = """MATCH (h)-[:EXPOSES]->(e:Resource)
 WHERE h.qualified_name IN $qns
 MATCH (c)-[r:READS_FROM|WRITES_TO]->(n:Resource {kind: 'NETWORK'})-[:RESOLVES_TO]->(e)
@@ -1756,7 +1756,7 @@ RETURN labels(c)[0] AS label, c.qualified_name AS qualified_name,
 # the reason CYPHER_DELETE_MODULE is: `$paths` are repo-relative, two
 # projects in the shared graph can hold the same relative path, and a
 # path-only match would take the sibling project's findings with it
-# (greptile-local, #1718). A finding's qualified name starts with its
+# (#1718). A finding's qualified name starts with its
 # module qn, so the prefix test applies unchanged.
 CYPHER_CHECK_DELETE_FINDINGS = f"""MATCH (n)
 WHERE (n:{NodeLabel.CODE_SMELL.value} OR n:{NodeLabel.SECURITY_ISSUE.value} OR n:{NodeLabel.PATTERN.value})
@@ -1793,7 +1793,7 @@ RETURN head(labels(n)) AS label, properties(n) AS props, inbound"""
 # isolated check refuses on one: deleting a changed file's subtree can leave
 # that resource unanchored, and the re-ingest's repo-wide
 # `prune_unanchored_resources` would delete it, chain edges and all, beyond
-# what the capture holds (bot review, #1718). Only a Resource one of the
+# what the capture holds (#1718). Only a Resource one of the
 # project's own nodes touches can be unanchored by the run: the prune keeps
 # every Resource another node still anchors, and a resource reached only down
 # a FLOWS_TO chain puts a FLOWS_TO edge on the one the project touches. So

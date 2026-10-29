@@ -308,7 +308,7 @@ _VARYING = "varying"
 
 
 class _MethodSetWalk:
-    """One pass's method sets, each interface's computed once (#3360 review).
+    """One pass's method sets, each interface's computed once (#3360).
     Without the memo an interface embedded on many paths was walked again
     on each: two interfaces per level, each embedding both of the level
     below, doubled the work per level. The walk keeps its own stack: one
@@ -491,7 +491,7 @@ def embedded_method_links(
     files: Mapping[str, Expr],
 ) -> list[tuple[str, str]]:
     """Links that join the declarations one interface's method set holds of
-    one method in one build (#3360 review): a method an interface declares
+    one method in one build (#3360): a method an interface declares
     again over an embed (`B interface { A; M() }`), and the declarations two
     embeds bring together (`D interface { B; C }`, both declaring `M`). Go
     requires them identical, so they are one method: renamed alone, one

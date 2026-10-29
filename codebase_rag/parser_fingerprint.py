@@ -62,7 +62,7 @@ _TOOL_INACTIVE = "inactive"
 # it is retried like a timeout. Every other start failure is permanent -- a
 # corrupt binary (ENOEXEC, WinError 193) or a script whose interpreter is gone
 # (ENOENT) -- and the frontend cannot run that tool either, so it is `absent`
-# rather than hidden behind a remembered version (Codex review of PR 3371).
+# rather than hidden behind a remembered version (PR #3371).
 _TRANSIENT_START_ERRNOS = frozenset(
     {errno.EAGAIN, errno.ENOMEM, errno.EMFILE, errno.ENFILE}
 )
@@ -75,7 +75,7 @@ _TRANSIENT_START_WINERRORS = frozenset({8, 14, 1450, 1455})
 def _digest_file(path: Path) -> str:
     # compile_commands.json is repository-controlled and can be very large,
     # so stream it in bounded chunks: reading it whole lets an oversized
-    # database exhaust memory and fail indexing (issue #1177 review).
+    # database exhaust memory and fail indexing (issue #1177).
     hasher = hashlib.md5(usedforsecurity=False)
     with path.open("rb") as stream:
         while chunk := stream.read(_FILE_HASH_CHUNK_SIZE):
@@ -121,7 +121,7 @@ def _probe_version(
     # timed out. The key cannot see every input that selects a toolchain (an
     # SDK installed beside an unchanged `dotnet` host and `global.json`), so a
     # long-lived process serving them first would keep a stale fingerprint
-    # (Codex review of PR 3368).
+    # (PR #3368).
     answer = _ask_version(binary, argument, cwd, cs.TOOL_VERSION_PROBE_TIMEOUT)
     if answer is None:
         answer = _PROBE_ANSWERS.get(key)
@@ -278,7 +278,7 @@ def _active_tools(repo_path: Path | None = None) -> dict[str, bool]:
     Go resolves to `gotypes` whenever a go toolchain exists, so without the
     second gate a Go upgrade invalidates the graph of a Python-only repo it
     can extract nothing from -- false staleness, which costs more than the
-    drift the versions were added to catch (issue #1465 review).
+    drift the versions were added to catch (issue #1465).
 
     A repo-less call keeps mode gating only, matching `_repo_frontend_inputs`:
     those callers have no repository to ask, and reporting everything inactive
@@ -450,7 +450,7 @@ def _repo_frontend_inputs(repo_path: Path | None) -> list[str]:
     # tree-sitter-only index, editing its flags, or a different database
     # winning discovery all change the edges for unchanged sources, so the
     # entry records which database was selected and a digest of its content
-    # (issue #1177 review). Only the updater passes a repo; repo-less calls
+    # (issue #1177). Only the updater passes a repo; repo-less calls
     # omit the entry consistently.
     if repo_path is None:
         return []

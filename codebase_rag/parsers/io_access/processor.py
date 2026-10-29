@@ -1511,7 +1511,7 @@ class IOAccessProcessor:
         # Package membership groups by the file's PARENT DIRECTORY when the
         # requester's path is known: extension disambiguation (`service.go`
         # next to `service.ts` -> qn `pkg.service.go`) would split a file
-        # from its Go package under qn-prefix grouping (issue #930 review).
+        # from its Go package under qn-prefix grouping (issue #930).
         # `_test.go` files, including the requesting one, contribute nothing.
         requester = self._module_paths.get(module_qn)
         requester_dir = requester.parent if requester is not None else None
@@ -1921,7 +1921,7 @@ class IOAccessProcessor:
             raw = call_name(arg)
             # A static import (`import static java.nio.file.Path.of`) spells the
             # factory bare (`of("cfg")`); resolve it through the import map to its
-            # qualified form so the literal is still recovered (Greptile review, #1204).
+            # qualified form so the literal is still recovered (#1204).
             # Membership is NOT shadow-aware (#1216, accepted limitation): a
             # same-class/inherited `of(..)` or a local nested `Path` class still
             # matches, mis-attributing a literal identity where `<dynamic>` would

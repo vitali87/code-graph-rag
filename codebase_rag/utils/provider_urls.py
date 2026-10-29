@@ -28,7 +28,7 @@ def join_endpoint_path(endpoint: str, path: str) -> str:
 
     Not `urljoin`: an absolute `path` replaces the endpoint's path there, so an
     Ollama served behind a proxy at `https://host/ollama` would be probed at
-    `https://host/api/tags` and reported as not running (review of PR 2502).
+    `https://host/api/tags` and reported as not running (PR #2502).
     """
     return (
         f"{endpoint.rstrip(cs.SEPARATOR_SLASH)}"

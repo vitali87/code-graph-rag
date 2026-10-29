@@ -274,7 +274,7 @@ class _FileSnapshot:
         self._times: tuple[int, int] | None = None
         # Absent and unreadable are different states and must not share one
         # representation: treating a permission error as absence made the
-        # restore DELETE a cache it could not read (Greptile, #1718). Only a
+        # restore DELETE a cache it could not read (#1718). Only a
         # confirmed absence licenses the unlink.
         self._absent = False
         self._readable = False
@@ -321,7 +321,7 @@ def _refuse_unrestorable_capture(capture: CaptureSelection) -> None:
     graph and rebuilds them from the edited tree, and a Resource-to-Resource
     `FLOWS_TO` chain touches no scoped node at all, so neither can be put
     back from the capture. Losing them silently is worse than not offering
-    the mode, so this refuses instead (greptile-local, #1718).
+    the mode, so this refuses instead (#1718).
     """
     enabled = [rel for rel in _UNRESTORABLE_RELS if capture.rel_enabled(rel)]
     if enabled:
@@ -339,7 +339,7 @@ def _refuse_project_holding_io_links(ingestor: GraphStore, project_name: str) ->
     earlier with IO enabled can hold resource chains of its own; deleting a
     changed file's subtree can leave one unanchored, and the re-ingest's
     repo-wide resource prune then deletes it, chain edges included, which
-    the capture cannot put back (bot review, #1718). Only a resource the
+    the capture cannot put back (#1718). Only a resource the
     project's own nodes touch can be unanchored by the run, so another
     project's links do not refuse it (issue #3188).
     """
@@ -385,7 +385,7 @@ def _measure_then_restore(
     # partial. The persistent incomplete-run marker every mutating path sets
     # (#1679) records that: set before the first write, cleared only once the
     # graph and the hash cache are both back, so a failed restore leaves
-    # readers refusing and the next full update repairing (bot review, #1718).
+    # readers refusing and the next full update repairing (#1718).
     marker: PropertyDict = {
         cs.KEY_PROJECT_NAME: project_name,
         cs.KEY_RUN_ID: uuid.uuid4().hex,
@@ -402,7 +402,7 @@ def _measure_then_restore(
             cache.put_back()
         # Only once BOTH are back: a cache left holding the re-parse's hashes
         # would make the next update skip the edited files, so a failed cache
-        # restore must keep the marker too (CodeRabbit, #1718).
+        # restore must keep the marker too (#1718).
         ingestor.execute_write(cq.CYPHER_CLEAR_PROJECT_INCOMPLETE, marker)
 
 
@@ -457,7 +457,7 @@ def run_check(
         # The selection isolated mode validated must be the one the run
         # uses; without it the updater falls back to the configured default,
         # which can enable the IO links `_refuse_unrestorable_capture` just
-        # refused (Greptile, #1718).
+        # refused (#1718).
         capture=capture,
     )
     fetch_all = ingestor.fetch_all

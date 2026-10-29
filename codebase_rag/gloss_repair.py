@@ -180,7 +180,7 @@ class _QuoteCandidate(NamedTuple):
     qualified_name: str
     anchor: TextAnchor
     # What the index saw, re-checked by the move statement: another
-    # updater may have replaced the definition since (bot review, PR #1966).
+    # updater may have replaced the definition since (PR #1966).
     path: str
     start_line: int
     end_line: int
@@ -413,7 +413,7 @@ def _repair_by_quote(
     if len(rows) == 1 and rows[0].anchor_hash is None:
         # The move re-validates the candidate by its hash; without one the
         # body cannot be checked at write time, so the note is left as it is
-        # for the next pass rather than bound on a name (bot review).
+        # for the next pass rather than bound on a name.
         return
     if len(rows) == 1:
         found = rows[0]

@@ -92,7 +92,7 @@ class StructureProcessor:
         side effect, which a read-only prologue must not do -- an aborted
         scoped re-ingest that had already emitted one left the graph holding
         two container nodes for one directory while reporting that nothing
-        changed (greptile-local, issue #1798).
+        changed (issue #1798).
         """
         return any(
             (directory / indicator).exists()
@@ -192,7 +192,7 @@ class StructureProcessor:
         derivation, including ones the call never named, so an unrelated
         directory whose `__init__.py` had been removed elsewhere gained a
         Folder node while keeping its Package node -- two container identities
-        for one directory (Greptile, PR #1835).
+        for one directory (PR #1835).
 
         `emit=False` populates `structural_elements` and writes NOTHING. A
         re-ingest's hydration needs the whole map, because a re-parsed
@@ -256,7 +256,7 @@ class StructureProcessor:
         # deliberately skips. Without this the root's stale package qn
         # survived a re-derivation, so a root that stopped being a package
         # still read as one and its Package node was never pruned
-        # (greptile-local, issue #1798). The repo root gets no Folder node --
+        # (issue #1798). The repo root gets no Folder node --
         # its parent is the Project -- but it still needs an accurate entry.
         self.structural_elements[relative_root] = None
         if root == self.repo_path:

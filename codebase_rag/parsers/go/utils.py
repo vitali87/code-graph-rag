@@ -29,7 +29,7 @@ def package_level_definitions(
     # (`helper.gen.go` files under `pkg.helper.gen`), so a qn's depth cannot
     # tell a file of `pkg` from one of the sub-package `pkg/helper` (whose
     # `gen.go` spells the same qn). `in_package` decides by the declaring
-    # file, from its recorded path where the caller knows it (#2616 review).
+    # file, from its recorded path where the caller knows it (#2616).
     return [
         qn
         for qn in registry.find_ending_with(name)
@@ -56,7 +56,7 @@ def file_package_qn(
     """The package of Go file module `module_qn`, spelled the way the import
     map spells one (`project.dir.sub`): its file's directory, whatever dots
     the file's stem holds. `types.gen.go` is filed as `pkg.types.gen` but is
-    a file of `pkg` (#2616 review). A module with no recorded file (a mock
+    a file of `pkg` (#2616). A module with no recorded file (a mock
     harness, or an unchanged file on an incremental run) falls back to the
     qn above it."""
     try:
@@ -131,7 +131,7 @@ def is_external_test(clause: str | None, in_test_file: bool) -> bool:
     `p_test` that only `go test` builds beside `p` and nothing can import: a
     `_test.go` file under a `_test` clause. The clause alone does not decide:
     a non-test file under `package library_test` is an ordinary, importable
-    package (#2616 review)."""
+    package (#2616)."""
     return (
         in_test_file and clause is not None and clause.endswith(cs.GO_TEST_FILE_SUFFIX)
     )

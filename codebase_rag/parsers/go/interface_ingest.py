@@ -565,7 +565,7 @@ class GoInterfaceMixin:
         # counts, and a method of that name declares none. A package is its
         # directory and `package` clause: `p_test`, the external test package
         # `go test` builds beside `p`, declaring `error` leaves p's `error`
-        # the predeclared one (#3360 review). What p's own `_test.go` files
+        # the predeclared one (#3360). What p's own `_test.go` files
         # declare is p's too, but `go build` never compiles it, so it is
         # recorded for those files alone (`go_utils.declaration_scope`).
         shadows: dict[str, set[str]] = {}
@@ -1027,7 +1027,7 @@ class GoInterfaceMixin:
         # Whether Go file `module_qn` is a file of the package an import
         # binding `package_qn` names: in its directory, and not in `p_test`,
         # the external test package beside it that nothing imports. Its
-        # `Reader` is no candidate for `p.Reader` (#3360 review). A module
+        # `Reader` is no candidate for `p.Reader` (#3360). A module
         # with no recorded file (an unchanged one) is judged by its stem.
         path = self.module_qn_to_file_path.get(module_qn)
         stem = path.stem if path else module_qn.rpartition(cs.SEPARATOR_DOT)[2]

@@ -43,7 +43,7 @@ class GraphDamage:
     # The project whose FAILED MARKER CLEAR raised `incomplete`, or None when
     # the flag came from somewhere else (a failed wipe, delete or update,
     # which wrote no marker for this project). Only a flag with this
-    # provenance may be healed by a marker recovery (#1705 review).
+    # provenance may be healed by a marker recovery (#1705).
     from_failed_clear: str | None = None
 
     def note_outstanding(self, *project_names: str | None) -> None:

@@ -24,7 +24,7 @@ load-time `this` or the module's `arguments` must be a read: a property read,
 a `switch`, a function body, a computed key, an assignment target's
 sub-expression, `exports` passed or aliased), `eval`, `with` or an early
 `return` leaves the module's exports unknowable here, so nothing is recorded
-(Greptile and CodeRabbit, PR #3355).
+(PR #3355).
 
 A published value names a binding only when it is a bare name that resolves,
 through the scopes this subset allows, to exactly one declaration at the
@@ -434,7 +434,7 @@ class _Exports:
 
     `module.exports` and `exports` are two references to objects (Greptile,
     PR #3355): replacing `module.exports` drops what the old object held
-    (CodeRabbit, PR #3355) while `exports` keeps pointing at it;
+    (PR #3355) while `exports` keeps pointing at it;
     `exports = module.exports` re-points `exports` at the current object, and
     `module.exports = exports` publishes the object `exports` holds, names
     and all. An assignment chain fixes every target's object before any of
@@ -727,7 +727,7 @@ def _is_callee(node: Node) -> bool:
 def _declared_names(scope: Node) -> Iterator[str]:
     # The names `scope` itself binds, exactly. A block (or a `switch` body)
     # binds its own `let`, `const`, `class` and function declarations, and
-    # keeps them (Greptile, PR #3355). A function binds its name, its
+    # keeps them (PR #3355). A function binds its name, its
     # parameters, every `var` in its body and the function declarations
     # directly in it. `catch` binds its parameter and a `for` head its
     # declarations.

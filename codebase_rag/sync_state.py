@@ -365,7 +365,7 @@ def publish_hash_cache(
         # place, after which a path-based `os.utime` rewrites the link
         # target's timestamp and `os.replace` publishes the link itself as the
         # cache -- with this function still reporting success. Verified
-        # exploitable before this change (#1701 review).
+        # exploitable before this change (#1701).
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(hashes, f, indent=2)
             f.flush()
@@ -376,7 +376,7 @@ def publish_hash_cache(
             # "TypeError: utime: path should be string, bytes or os.PathLike,
             # not int" and every hash-cache publish fails with it. This host is
             # POSIX, so the fd branch is the only one exercised locally and the
-            # break was invisible until CI's Windows job ran (#1701 review).
+            # break was invisible until CI's Windows job ran (#1701).
             stamp_by_fd = os.utime in os.supports_fd
             if observed_at is not None and stamp_by_fd:
                 os.utime(f.fileno(), (observed_at, observed_at))
@@ -385,13 +385,13 @@ def publish_hash_cache(
             # contents were never written -- and a truncated or empty cache is
             # worse than none, because `_is_already_in_sync` trusts whatever
             # is there. Sync after the utime so the timestamp is durable too,
-            # then take the inode: write, sync, then publish (#1701 review).
+            # then take the inode: write, sync, then publish (#1701).
             # `fstat` BEFORE `fsync`, not after. On Windows the fsync path
             # goes through `_commit()`, which can leave the descriptor
             # unusable, and the following `fstat` then raised
             # "[Errno 9] Bad file descriptor" -- every hash-cache publish
             # failed with it and 39 tests went red on that platform while
-            # ubuntu and macOS stayed green (#1701 review, measured in CI).
+            # ubuntu and macOS stayed green (#1701).
             #
             # Order is safe either way: the inode identifies the same file
             # before and after the sync, and nothing between them can change
@@ -402,7 +402,7 @@ def publish_hash_cache(
         # text wrapper, and it raised "[Errno 9] Bad file descriptor" there --
         # 39 tests red on Windows while ubuntu and macOS stayed green, twice
         # in a row, because reordering fstat and fsync inside the block was
-        # not enough (#1701 review, measured in CI both times). The reopen
+        # not enough (#1701). The reopen
         # is no-follow, so a link swapped in between the close and here
         # cannot redirect the sync; the inode check below still refuses a
         # swapped path before anything is published.
@@ -410,7 +410,7 @@ def publish_hash_cache(
         # A cheap refusal, not the security boundary. The boundary is the
         # threat model, and it is worth stating because "there is still a
         # window between this check and the rename" is true and does not
-        # matter (#1701 review):
+        # matter (#1701):
         #
         # The temporary is always a SIBLING of the cache (`with_name`), and
         # `rename(2)` moves directory ENTRIES without following symlinks on
@@ -433,7 +433,7 @@ def publish_hash_cache(
         # A link at the temporary's name is a swap, full stop, on every
         # platform -- including the one below where the inode comparison
         # cannot be made. `lstat` never follows, so this reads the entry
-        # itself (#1701 local review).
+        # itself (#1701).
         if stat.S_ISLNK(current.st_mode):
             raise OSError(f"temporary cache path {tmp_path} was replaced by a symlink")
         # Skipped where the identity comparison is not meaningful. On Windows
@@ -550,7 +550,7 @@ def embeddings_marker(state_dir: Path, project_name: str) -> Path:
     One per project, named by a digest because a project name may hold any
     character: each sync creates and removes only its own, so two projects
     syncing one checkout at once cannot erase each other's debt, as they
-    could while one file listed them all (review of PR #3358).
+    could while one file listed them all (PR #3358).
     """
     digest = hashlib.sha256(project_name.encode(cs.ENCODING_UTF8)).hexdigest()
     return state_dir / cs.EMBEDDINGS_PENDING_PROJECT_TEMPLATE.format(digest=digest)

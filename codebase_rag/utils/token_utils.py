@@ -96,7 +96,7 @@ def _part_tokens(part: object) -> int:
     That is the under-reporting direction -- a history of file writes measured
     0.1% of the window when it was really over 100% of it, so the compaction
     this estimate exists to trigger never fired for exactly the tool-heavy
-    sessions that need it (greptile-local, #1500).
+    sessions that need it (#1500).
 
     `args_as_json_str()` is preferred over `str(args)` because it is what
     actually goes on the wire; the repr of a dict is a near-enough number by

@@ -213,7 +213,7 @@ def grammar_bytes(
     have no encoding declaration, and a UTF-8 file (BOM or not) is already
     what the grammar reads. CPython refuses a UTF-16/32 source, which is not
     ASCII-compatible (the reason `_declared_codec` refuses a `utf-16`
-    cookie), so a wide `.py` is left as the bytes it was before (#3153 review).
+    cookie), so a wide `.py` is left as the bytes it was before (#3153).
     """
     if language != cs.SupportedLanguage.PYTHON:
         if (wide := decode_wide_source(source, path)) is not None:

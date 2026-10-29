@@ -86,7 +86,7 @@ LANGUAGE_FAMILIES: tuple[frozenset[SupportedLanguage], ...] = (
 # import (or a Rust `use`): a call the resolver could not bind there waits
 # on an import, which the importer lookup finds from the graph, so recording
 # the callee's name would only re-parse every module that calls a method of
-# that name (issue #1568; local review). Go, Java, C#, C++ and their like
+# that name (issue #1568). Go, Java, C#, C++ and their like
 # see same-package or same-namespace definitions with no import at all, and
 # for them the recorded name is the only link.
 IMPORT_BOUND_CALL_LANGUAGES = frozenset(

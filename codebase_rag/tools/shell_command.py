@@ -1884,7 +1884,7 @@ def _long_option_matches(arg: str, canonical: str) -> bool:
     # `--out`, `--outp`, ... all mean `--output` and `--files0` means
     # `--files0-from`. Match the arg's option name (before any `=`) as a
     # non-empty prefix of the canonical name, which covers the full spelling
-    # too (Greptile review on PR #1388). Abbreviation ambiguity only widens
+    # too (PR #1388). Abbreviation ambiguity only widens
     # what GNU rejects, never what it accepts, so treating every prefix as
     # the dangerous option is safe.
     name = arg.split("=", 1)[0]
@@ -1895,7 +1895,7 @@ def _noninteractive_write_form(parts: list[str]) -> bool:
     # Write-capable invocations of otherwise read-only commands: `sort -o` /
     # `--output[=]` writes a file, and uniq's SECOND positional operand is an
     # output file -- counted through `--`, after which every argument is an
-    # operand (CodeRabbit and Greptile reviews on PR #1388).
+    # operand (PR #1388).
     if parts[0] == "sort":
         return _sort_writes_output(parts)
     if parts[0] == "uniq":
@@ -1921,7 +1921,7 @@ def _sort_writes_output(parts: list[str]) -> bool:
 def _sort_cluster_writes(arg: str) -> bool:
     # Walk the short-option cluster: `-ro` hides the output option
     # behind other flags, and `-rT` hides the temp-dir option
-    # (Greptile review on PR #1388). A value-taking option (-k, -t,
+    # (PR #1388). A value-taking option (-k, -t,
     # -S) consumes the rest of the cluster as its value, so an `o`
     # after one is data, not a flag.
     for ch in arg[1:]:
@@ -1973,7 +1973,7 @@ def _option_carries_file_input(parts: list[str]) -> bool:
     # `sort --files0-from=paths` makes sort read every file a repo-local
     # list names, including /etc/passwd, and `--compress-program`/`--pre`
     # execute a program; the operand containment loop never sees either, so
-    # the whole indirect-input mode is denied (Greptile review on PR #1388).
+    # the whole indirect-input mode is denied (PR #1388).
     denied = cs.SHELL_NONINTERACTIVE_DENIED_OPTIONS.get(parts[0])
     if not denied:
         return False
@@ -2193,7 +2193,7 @@ def _noninteractive_path_escapes(parts: list[str], root: Path) -> bool:
     for arg in parts[1:]:
         if not operands_only and arg == "--":
             # After `--` every argument is an operand, even one that
-            # starts with `-` (CodeRabbit review on PR #1388).
+            # starts with `-` (PR #1388).
             operands_only = True
             continue
         if _ESCAPING_PATH_ARG.search(arg) or ".." in arg.split("/"):

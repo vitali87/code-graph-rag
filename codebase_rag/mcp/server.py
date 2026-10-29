@@ -364,7 +364,7 @@ async def serve_http(host: str, port: int, workspace: str | None = None) -> None
     uvicorn_server = uvicorn.Server(config)
     # Connected before uvicorn starts, as stdio connects before its
     # transport: uvicorn logs a failure inside the lifespan and returns, so
-    # the command exited 0 for a server that never started (PR 2504 review).
+    # the command exited 0 for a server that never started (PR #2504).
     with _service_lifecycle(ingestor):
         await uvicorn_server.serve()
 

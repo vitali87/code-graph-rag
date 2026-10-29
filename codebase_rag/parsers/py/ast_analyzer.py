@@ -244,7 +244,7 @@ def _reimported(qn: str | None, paths: Iterable[str]) -> bool:
     resolves, not a shadow. The map keeps a module-level entry over a body
     import it could not place (`import os as helpers` under `from . import
     helpers`), so the two must agree on the path, or the name means
-    something the project does not hold (CodeRabbit)."""
+    something the project does not hold."""
     if not qn:
         return False
     return any(
@@ -307,7 +307,7 @@ def _declared_non_local(scope: Node) -> set[str]:
     helpers` makes every `helpers = ...` write the module's binding, so an
     imported module of that name stays reachable and its calls still
     resolve. Treating the assignment as a shadow dropped a real edge
-    (Greptile on #1907).
+    (#1907).
     """
     declared: set[str] = set()
     stack = [scope]
@@ -488,7 +488,7 @@ def _locally_bound_names(caller: Node, import_map: dict[str, str]) -> frozenset[
     each enclosing def binds (a closure's free names), typed or not. Python
     makes a name bound ANYWHERE in a body local for the whole body, so an
     imported module or function it shadows is unreachable there even before
-    the binding runs (Greptile P1). An enclosing CLASS body is skipped, as
+    the binding runs. An enclosing CLASS body is skipped, as
     Python skips it; a body-level import the import map reflects is a
     re-import, not a shadow."""
     names: set[str] = set()
@@ -666,12 +666,12 @@ def _supersedes_annotation(name: str, before: int, caller: Node) -> bool:
 
     A parameter has no binding node in the body at all, so a typed
     parameter keeps its annotation until something in the body rebinds it
-    (greptile-local, #1900).
+    (#1900).
 
     Position matters and is why this lives here rather than in the pass
     that writes the map: a name rebound AFTER an unpack still held the
     annotated value at the unpack, and clearing the map entry would untype
-    that earlier use (Greptile, #1919).
+    that earlier use (#1919).
     """
     bindings = [
         (identifier.start_byte, binder)
@@ -698,11 +698,11 @@ def _declared_before(name: str, binder: Node, caller: Node) -> bool:
     type the name. Only that one: after `q: T; q = opaque(0); q = opaque(1)`
     the name holds the second call's result, which the declaration never
     described, so a later assignment supersedes it like any other rebinding
-    (Greptile, #1919).
+    (#1919).
     """
     # The NEAREST declaration before this binding, not the earliest: a body
     # may declare the same name twice, and the later declaration is the one
-    # describing the value bound after it (Greptile, #1919).
+    # describing the value bound after it (#1919).
     declarations = [
         other.end_byte
         for other, identifier in _bindings_in(caller)
@@ -742,7 +742,7 @@ def _enclosing_functions(own: Node, stop: Node) -> Iterator[Node]:
 
     `own` itself is skipped, whatever it is: a `nonlocal` never binds in the
     scope that declares it, and a class body's `nonlocal` binds the nearest
-    enclosing FUNCTION (bot review).
+    enclosing FUNCTION.
     """
     current = own.parent
     while current is not None:
@@ -790,10 +790,10 @@ def _owned_by(own: Node, name: str, scope: Node) -> bool:
     for fn in _enclosing_functions(own, scope):
         facts = scope_facts(fn)
         # A parameter is a binding too: `nonlocal v` inside a def nested in
-        # `middle(v)` names middle's parameter (bot review). A function that
+        # `middle(v)` names middle's parameter. A function that
         # itself declares the name `nonlocal` (or `global`) forwards it
         # rather than owning it, so the search continues outward past it
-        # (bot review).
+        # .
         if (name in facts.bound or name in facts.params) and (
             name not in facts.declared
         ):
@@ -832,7 +832,7 @@ def _own_bound_names(scope: Node) -> frozenset[str]:
 def _is_type_checking_guard(condition: Node | None) -> bool:
     """Whether an `if` condition is the `TYPE_CHECKING` flag itself, bare or
     qualified (`typing.TYPE_CHECKING`). `not typing.TYPE_CHECKING` guards
-    the code that runs (Greptile, #2582), so any other expression is not."""
+    the code that runs (#2582), so any other expression is not."""
     if condition is not None and condition.type == cs.TS_PY_ATTRIBUTE:
         condition = condition.child_by_field_name(cs.TS_PY_FIELD_ATTRIBUTE)
     return (
@@ -1107,7 +1107,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         #
         # The exception is `nonlocal`: it makes a nested assignment rebind
         # THIS body's name rather than create one of its own, so that
-        # binding does belong here (Greptile, #1922). `global` is not an
+        # binding does belong here (#1922). `global` is not an
         # exception -- it binds the module name, and the enclosing
         # function's local of the same name is untouched.
         assignments = [a for a in assignments if _belongs_to(a, node)]
@@ -1321,7 +1321,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         annotation is, so `Optional[Banner]` is `Banner` and `List[Widget]`
         the `list[Widget]` marker a loop can unwrap, where the raw text would
         be unreadable downstream and cost the name the fallback edge it had
-        untyped (local review P1); one that resolves to nothing types nothing.
+        untyped; one that resolves to nothing types nothing.
         A `tuple[...]` alone keeps its text: it is what `_unpacked_elements`
         splits position by position, and what a typed parameter stores.
 
@@ -1334,7 +1334,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         the annotated value for every use before the rebinding, and this
         map is flat per function -- it cannot say "Banner until line 5,
         unknown after". Clearing the entry would untype the earlier uses
-        too, which is what an earlier cut of this fix did (Greptile, #1919).
+        too, which is what an earlier cut of this fix did (#1919).
         The position test belongs where the value is read, so
         `_unpacked_elements` applies `_supersedes_annotation` at the unpack
         site, the way `_defining_call` already tests bindings before the
@@ -1349,7 +1349,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         # In document order, so that among SEVERAL annotations of one name
         # the last wins: a body may declare `q: A` and later `q: B`, and it
         # is the later one that describes the value bound after it
-        # (Greptile, #1919). `written` tracks what THIS pass stored, so a
+        # (#1919). `written` tracks what THIS pass stored, so a
         # second annotation may replace its own earlier entry while an
         # inferred type from the value passes still wins over both.
         written: set[str] = set()
@@ -1385,23 +1385,23 @@ class PythonAstAnalyzerMixin(_AstBase):
     ) -> None:
         """`_ol, _oc, inner = parsed`: bind each target to its element type.
 
-        The single-name processors above ignore a `pattern_list` /
-        `tuple_pattern` target, so an unpacked local had no type and a call on
-        it fell to the bare-name fallback (issue #1896, the real shape of
-        trace/sourcemap.py:225). The right-hand side is a call annotated
-        `tuple[A, B, C]`, a local that was assigned such a call earlier in
-        the same body, or -- when no call says anything -- a name whose own
-        stored type is a `tuple[...]`: a typed parameter or an annotated local
-        (#1900). The annotation is read RAW here because
-        `_annotated_return_type` deliberately refuses a heterogeneous tuple,
-        which is exactly what unpacking consumes position by position. The
-        walk captures every assignment under the caller, including a nested
-        def's, whose targets are that def's locals, not the caller's
-        (CodeRabbit).
+         The single-name processors above ignore a `pattern_list` /
+         `tuple_pattern` target, so an unpacked local had no type and a call on
+         it fell to the bare-name fallback (issue #1896, the real shape of
+         trace/sourcemap.py:225). The right-hand side is a call annotated
+         `tuple[A, B, C]`, a local that was assigned such a call earlier in
+         the same body, or -- when no call says anything -- a name whose own
+         stored type is a `tuple[...]`: a typed parameter or an annotated local
+         (#1900). The annotation is read RAW here because
+         `_annotated_return_type` deliberately refuses a heterogeneous tuple,
+         which is exactly what unpacking consumes position by position. The
+         walk captures every assignment under the caller, including a nested
+         def's, whose targets are that def's locals, not the caller's
+        .
         """
         # `nonlocal` is the same exception the value passes make: an
         # unpacking in a nested body whose target is declared `nonlocal`
-        # rebinds THIS caller's name, so it belongs here (CodeRabbit).
+        # rebinds THIS caller's name, so it belongs here.
         unpackings = [
             assignment
             for assignment in assignments
@@ -1442,7 +1442,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         # ONLY the declared names. Its siblings are locals of the nested
         # body: `nonlocal a` then `a, b = pair()` rebinds the enclosing
         # `a`, while `b` belongs to the inner scope and must not reach this
-        # map (Greptile, #1922).
+        # map (#1922).
         nested = _scope_of(assignment) != caller.id
         declared = _nonlocal_names(assignment, caller) if nested else frozenset()
         for target, (element, _homogeneous) in zip(targets, elements, strict=True):
@@ -1575,7 +1575,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         A name bound in the caller's own scope -- a parameter, an assignment,
         a loop or with target, typed or not -- is that local, never the
         imported module or function of the same name. An earlier guard asked
-        the type map, which an untyped local never reaches (Greptile P1).
+        the type map, which an untyped local never reaches.
         """
         func = call.child_by_field_name(cs.TS_FIELD_FUNCTION)
         if func is None:

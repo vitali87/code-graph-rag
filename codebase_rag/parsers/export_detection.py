@@ -759,7 +759,7 @@ def _lua_binding_exported(
 ) -> bool:
     # A table path is matched by name, so the name must be the chunk's own
     # variable: `M.other` stored in a function's `local M` is not the
-    # returned `M`'s member (Greptile, PR #2617).
+    # returned `M`'s member (PR #2617).
     binding = _lua_binding_name(node, name)
     return (
         bool(binding)

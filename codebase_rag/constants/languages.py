@@ -170,7 +170,7 @@ class GoFrontend(StrEnum):
 # get past the Go version check come from the environment (no network, a module
 # proxy outage, a full disk). An hour bounds how long go/types facts stay off
 # after such a failure clears, while a lasting failure costs one build attempt
-# an hour (PR #2417 review).
+# an hour (PR #2417).
 GO_FRONTEND_BUILD_FAILURE_TTL_S = 60 * 60
 
 

@@ -49,7 +49,7 @@ its path would otherwise have its target truncated and overwritten with the
 holder's name. Such a link refuses the sync instead of falling back to an
 unguarded one, and so does a lock file that is there but this user cannot
 open even read-only: the second user of a shared CGR_HOME would otherwise
-sync beside the first (review of PR 2512).
+sync beside the first (PR #2512).
 """
 
 from __future__ import annotations

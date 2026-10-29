@@ -169,7 +169,7 @@ def _body_reads(header: _Header, name: str) -> bool:
     Through `_is_a_reference`, so `obj.a` and `helper(a=1)` do not count:
     an attribute's name and a keyword argument's label are identifiers
     spelled the same as the parameter but are not uses of it, and
-    refusing on those blocked legitimate removals (CodeRabbit, PR #1533).
+    refusing on those blocked legitimate removals (PR #1533).
     """
     body = header.function.child_by_field_name(cs.FIELD_BODY)
     if body is None:
@@ -495,7 +495,7 @@ def _refuse_dropped_effects(
 
     Rendering leaves it out, so `helper(1, save())` with `b` dropped would
     become `helper(1)` and stop calling `save()`. A name or a plain literal
-    is safe to leave out (Greptile, PR #2166).
+    is safe to leave out (PR #2166).
     """
     taken = {s.index for s in sources if s is not None and s.literal is None}
     for index, binding in sorted(bound.items()):
@@ -553,12 +553,12 @@ def _refuse_body_conflicts(
     `def f(a): return a` emptied writes `def f(): return a`, which PARSES
     and raises NameError only when called, so neither the syntax nor the
     arity postcondition catches it. Renamed names are excluded: the body
-    rewrite follows those (Copilot, PR #1533).
+    rewrite follows those (PR #1533).
 
     The other way round, a genuinely new parameter shadows whatever the
     body read under that name, so `return len(a)` with a new `len=None`
     calls the parameter. Renamed targets are checked by the body rewrite
-    itself (Greptile, PR #2166).
+    itself (PR #2166).
     """
     kept = {spec.name for spec in new} | {old for old, _new in renamed}
     dropped = [name for name in old_names if name not in kept]
@@ -594,7 +594,7 @@ def _definition_edits(
         # A default is evaluated at DEFINITION time, in the enclosing scope,
         # so `def f(a, b=a)` renamed a->x writes `def f(x, b=a)` and raises
         # NameError the moment the module loads. `_body_references` walks the
-        # body only, so it cannot see the reference (Copilot, PR #1533).
+        # body only, so it cannot see the reference (PR #1533).
         _refuse_default_reading(header, texts, old_name, new_name)
         edits.extend(
             _Edit(header.path, span, new_name)
@@ -610,7 +610,7 @@ def _refuse_invalid_header(header: _Header, params: str) -> None:
     own defaults and the receiver is put back here: `Sub.f(self, a, b, c=2)`
     reordered to `a, c, b` reads `(self, a, c=2, b)`, and a new `self=None`
     repeats the receiver. Tree-sitter parses both, so the parse gate passes
-    them (Greptile, PR #2166). The symbol table pass is the compiler's own
+    them (PR #2166). The symbol table pass is the compiler's own
     check, and it neither builds nor runs any code.
     """
     try:
@@ -664,7 +664,7 @@ def _take_receiver(
     Staticness is decided BEFORE the name: `@staticmethod def f(self, x)`
     is legal Python and its `self` is an ordinary parameter, so popping it
     by name dropped a real one from the header and every call site's
-    binding shifted by one (Copilot, PR #1912).
+    binding shifted by one (PR #1912).
     """
     if label != cs.NodeLabel.METHOD or not specs:
         return None

@@ -334,7 +334,7 @@ class IsolationGuard:
         merges (`SET n += props`), so a key the check ADDED to a surviving
         node -- a File at a scope path, an ExternalModule, a Resource, a
         Gloss, a pre-existing shared node it re-emitted -- would
-        persist (bot review, #1718). Those keys are read back and removed by
+        persist (#1718). Those keys are read back and removed by
         name. Subtree nodes and swept orphans are recreated from the capture,
         so a fresh node has nothing extra.
         """
@@ -373,7 +373,7 @@ class IsolationGuard:
         behind. The repo-wide sweeps (`CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES`,
         `prune_unanchored_resources`) would collect it -- along with every
         pre-existing orphan elsewhere in the graph this check never touched,
-        which an isolated run must not delete (Greptile, #1718). Whether
+        which an isolated run must not delete (#1718). Whether
         each one is the check's own is decided against the snapshot.
 
         Read BEFORE the first delete: once the subtrees go, the edges that

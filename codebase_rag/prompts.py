@@ -38,7 +38,7 @@ def extract_tool_names(tools: list["Tool[None]"]) -> ToolNames:
         # `absence_is_handled` marks a tool the prompt can build around. Warning
         # about one would fire on precisely the configuration that now works,
         # and a warning that cries wolf gets the other five ignored too
-        # (CodeRabbit, #1446).
+        # (#1446).
         if canonical not in registered and not absence_is_handled:
             logger.warning(
                 f"Tool '{canonical}' is not registered on the agent; "

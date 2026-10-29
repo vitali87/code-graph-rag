@@ -175,7 +175,7 @@ C_FORWARD_DECLARING_NODE_TYPES = frozenset(
 # the name still reads as a dot. A C++ identifier cannot contain it.
 CPP_TEMPLATE_ARG_DOT = "\u2024"
 # How a U+2024 already inside a literal argument is written, so the two
-# never collide (review of PR 3356).
+# never collide (PR #3356).
 CPP_TEMPLATE_ARG_DOT_ESCAPE = "\\u2024"
 
 CPP_FALLBACK_OPERATOR = "operator_unknown"
@@ -295,7 +295,7 @@ TS_CPP_RAW_STRING_LITERAL = "raw_string_literal"
 TS_CPP_CHAR_LITERAL = "char_literal"
 # A literal template argument (a C++20 fixed string, a character) is one value
 # whose spaces belong to it: `Box<"a b">` and `Box<"a  b">` are two
-# specializations, so a name renders the literal whole (review of PR 3356).
+# specializations, so a name renders the literal whole (PR #3356).
 CPP_LITERAL_ARGUMENT_TYPES = frozenset(
     {TS_CPP_STRING_LITERAL, TS_CPP_RAW_STRING_LITERAL, TS_CPP_CHAR_LITERAL}
 )
@@ -312,7 +312,7 @@ CPP_LITERAL_ESCAPED_BACKSLASH = "\\\\"
 # token and the start of the next spell one of these, or begin one, writing
 # them together lexes differently (maximal munch): `a + ++b` would read
 # `a+++b`, which is `a++ + b`. A specialization's rendered name keeps a space
-# there (review of PR 3356).
+# there (PR #3356).
 CPP_MULTI_CHAR_PUNCTUATORS = frozenset(
     "<: :> <% %> %: %:%: ... :: .* -> ->* ++ -- += -= *= /= %= ^= &= |= "
     "== != <= >= <=> && || << >> <<= >>= ## ^^ /* //".split()

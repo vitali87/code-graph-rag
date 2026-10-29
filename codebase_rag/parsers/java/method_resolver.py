@@ -771,7 +771,7 @@ class JavaMethodResolverMixin:
     ) -> str | None:
         # The qualifier of `Outer.this` must name a lexically enclosing
         # class, so it is read from the declarations around the call, ahead
-        # of an imported or other same-named type (Greptile, PR #2972).
+        # of an imported or other same-named type (PR #2972).
         names: list[str] = []
         target = None
         current = context_node.parent if context_node is not None else None

@@ -17,7 +17,7 @@ is a different function and keeps its own node. Within a class body a
 `static` member and an instance member of one name live in different
 declaration spaces too, so every set here is keyed by name and staticness:
 an abstract `f` beside an overloaded `static f` is two functions, and
-renaming one must not touch the other's signatures (bot review, PR #3357).
+renaming one must not touch the other's signatures (PR #3357).
 
 A class body spells its overloads `method_signature`, which the function
 query never captures as a member there (issue #2524), and an interface's or

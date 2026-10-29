@@ -64,7 +64,7 @@ def _csharp_qualified_base_name(node: Node) -> str | None:
     # them so the written name matches the registered, generic-free qn.
     # Every argument span goes, not the tail from the first `<`: a nested
     # type of a generic outer (`Outer<int>.Inner`) keeps its `.Inner`
-    # (CodeRabbit, #1770).
+    # (#1770).
     if not node.text:
         return None
     text = safe_decode_text(node)

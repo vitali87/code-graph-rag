@@ -271,7 +271,7 @@ def structural_tier_config_names() -> tuple[str, ...]:
 
     Needs no YAML parser: PyYAML comes with the [ast-grep] extra, and a
     listing must still name the languages that extra adds when it is missing
-    (Greptile review of PR 2508). The file stem is also the name
+    (PR #2508). The file stem is also the name
     `load_pattern_configs` falls back to.
     """
     return tuple(path.stem for path in _pattern_config_paths())

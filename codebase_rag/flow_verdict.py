@@ -101,7 +101,7 @@ def flow_reachability_verdict(
     # Resource-to-handler hops join the graph up front (one read of edges
     # only); a handler project's own flow edges load when the walk reaches
     # a hop into it, and not before, so a local verdict never reads an
-    # unrelated project (issue #1603; bot review on PR #1978).
+    # unrelated project (issue #1603, PR #1978).
     remote: dict[str, set[str]] = {}
     for row in fetch_all(CYPHER_FLOW_REMOTE_EDGES, None):
         source, target = row.get("source"), row.get("target")
@@ -182,7 +182,7 @@ def _project_of(qn: str, projects: tuple[str, ...]) -> str:
     # The LONGEST registered name the qn sits under: project names may
     # contain dots, so the first segment of `svc.v2.api.items` is `svc`, a
     # different project (#1970). A qn no registered project owns falls back
-    # to its first segment, as before (bot review).
+    # to its first segment, as before.
     for name in projects:
         if qn == name or qn.startswith(f"{name}{cs.SEPARATOR_DOT}"):
             return name

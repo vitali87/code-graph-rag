@@ -527,9 +527,9 @@ def _has_non_route_root_decorator(
 ) -> bool:
     """A root decorator that is not the route itself: with endpoint roots
     off the route stops rooting its handler, a fixture or CLI command on the
-    same definition does not (bot review on PR #1975). A dispatch registrar
+    same definition does not (PR #1975). A dispatch registrar
     (`@task`, `@flow`) is the route of a dispatch endpoint, so it is not one
-    either (local review)."""
+    either."""
     from .parsers.endpoints import parse_route_decorator
     from .parsers.io_access.constants import DISPATCH_REGISTRARS
 

@@ -76,7 +76,7 @@ HEALTH_CHECK_MODEL_KEY_MISSING_ERROR = (
 )
 # Some providers are also satisfied by their own variable; naming both stops
 # the remediation from pointing at a credential the runtime will not read
-# (CodeRabbit on #1910). The alternative comes from the gate's own map.
+# (#1910). The alternative comes from the gate's own map.
 HEALTH_CHECK_MODEL_KEY_MISSING_EITHER = (
     "Set {env_name} (or {provider_env}) in your environment or .env file, "
     "or choose a local model."

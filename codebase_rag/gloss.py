@@ -169,7 +169,7 @@ def _split_descriptor(target: str) -> tuple[str, str | None]:
     its own base. A `#` that opens a name is part of it, not a descriptor:
     a JS/TS private member keeps its `#` in the qualified name
     (`Bank.#validatePin`), so a `#` right after a dot, or at the start,
-    leaves the target whole (bot review)."""
+    leaves the target whole."""
     if cs.GLOSS_DESCRIPTOR_SEPARATOR not in target:
         return target, None
     base, descriptor = target.rsplit(cs.GLOSS_DESCRIPTOR_SEPARATOR, 1)
@@ -224,7 +224,7 @@ def _orphaned_on(fetch_all: QueryFn, project_name: str, target: str) -> list[Glo
     """The unattached notes written against `target`. A note on a
     descriptor target (`Store.x#setter`) was filed on the member's
     `x@<line>` name, so when the base still resolves the search covers
-    every variant of it rather than the literal target (bot review)."""
+    every variant of it rather than the literal target."""
     base, descriptor = _split_descriptor(target)
     natural = resolve_one(fetch_all, project_name, base) if descriptor else None
     if natural is not None and not _is_refusal(natural):
@@ -427,7 +427,7 @@ def write_gloss(
         cs.KEY_ANCHOR_PREFIX: facts.anchor.prefix if facts.anchor else None,
         cs.KEY_ANCHOR_SUFFIX: facts.anchor.suffix if facts.anchor else None,
         # Recorded, not derived: a project name may contain dots, so the
-        # repair pass cannot read it back off `target_qn` (local review).
+        # repair pass cannot read it back off `target_qn`.
         cs.KEY_PROJECT_NAME: project_name,
         cs.KEY_ANCHOR_STATE: cs.GlossAnchorState.EXACT.value,
         cs.KEY_WRITE_ID: uuid.uuid4().hex,

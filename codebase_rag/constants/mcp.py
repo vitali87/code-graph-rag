@@ -233,7 +233,7 @@ MCP_UNKNOWN_PROJECT = "Unknown project {project!r}. Indexed projects: {known}"
 MCP_UNKNOWN_PROJECT_NAMED = "Unknown project {project!r}."
 # Under a workspace the list is the workspace's own indexed projects: the
 # graph is shared, and a project outside the workspace is not this server's
-# to name (CodeRabbit, PR #2562).
+# to name (PR #2562).
 MCP_UNKNOWN_WORKSPACE_PROJECT = (
     "Unknown project {project!r}. Indexed projects of workspace {workspace!r}: {known}"
 )

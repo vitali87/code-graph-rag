@@ -116,7 +116,7 @@ def ast_grep_languages() -> list[LanguageEntry]:
     except ImportError:
         # No PyYAML, which the [ast-grep] extra installs: the tier cannot run,
         # but its languages are still listed, unavailable, so the install
-        # hint names the extra that adds them (Greptile review of PR 2508).
+        # hint names the extra that adds them (PR #2508).
         # Their extensions are in the configs this cannot read.
         return [
             _ast_grep_entry(name, (), installed=False)

@@ -27,7 +27,7 @@ def _last_named(node: Node | None) -> Node | None:
 
 def _single_line_or_none(text: str | None) -> str | None:
     # A multi-line span is a grammar error-recovery span standing in for a
-    # name, not a name (no Julia name spans lines, issue #1882 review).
+    # name, not a name (no Julia name spans lines, issue #1882).
     if text is None or "\n" in text:
         return None
     return text
@@ -217,7 +217,7 @@ def arrow_assigned_name(node: Node) -> str | None:
     """The binding name of an arrow function, from its enclosing assignment.
 
     Only a DIRECT binding counts (the arrow must BE the assigned value):
-    `ys = map(x -> x + 1, xs)` names nothing (issue #1882 review).
+    `ys = map(x -> x + 1, xs)` names nothing (issue #1882).
     """
     current = node.parent
     while current is not None and current.type != cs.TS_JULIA_ASSIGNMENT:

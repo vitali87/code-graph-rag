@@ -239,7 +239,7 @@ def _unlink_if_created(target: Path, created: os.stat_result) -> None:
     An edit publishes its history with `os.replace` under the edit lock,
     which a sync moving the tree's copy does not hold. A file it published
     while the copy ran is the newest state there is, and the failed copy's
-    cleanup must leave it (Greptile, PR #2557).
+    cleanup must leave it (PR #2557).
     """
     with contextlib.suppress(OSError):
         if os.path.samestat(created, target.lstat()):

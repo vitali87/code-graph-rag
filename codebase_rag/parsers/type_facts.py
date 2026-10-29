@@ -343,7 +343,7 @@ class TypeReferenceResolver:
         # part. Which part comes first changes when a sync adds or drops one,
         # and the edges an unchanged file already holds would keep naming the
         # old choice beside the new one, a graph no clean index produces
-        # (review on #2829). Every part needs no such migration: a new part
+        # (#2829). Every part needs no such migration: a new part
         # gains its edges from the requeued facts, a dropped one loses them
         # with its node.
         found: dict[str, None] = {}
@@ -566,6 +566,6 @@ def emit_of_type_edges[F: tuple[str, str, str, str]](
             emitted += 1
     # Emptied like the sibling passes: a reused updater (watch mode) would
     # otherwise re-resolve every old fact each run and re-emit OF_TYPE from a
-    # member that no longer exists (local review P1).
+    # member that no longer exists.
     pending.clear()
     return emitted

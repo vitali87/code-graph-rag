@@ -232,7 +232,7 @@ def _module_level_assignments(root_node: Node) -> Iterator[Node]:
 
     A chained `Alias = Other = Outer` nests an assignment on the outer
     right-hand side; each link is yielded, so every direct target is seen
-    (CodeRabbit, #1759).
+    (#1759).
     """
     for child in root_node.children:
         if child.type != cs.TS_PY_EXPRESSION_STATEMENT or not child.children:
@@ -258,7 +258,7 @@ def _rebound_alias(assignment: Node, name: str, bound: str | None) -> str | None
         return bound
     # An unpacking target (`Alias, other = make_pair()`) rebinds the name to
     # a runtime value just as a plain assignment does, and it is never an
-    # alias (#1759 review).
+    # alias (#1759).
     if left.type in cs.PY_UNPACKING_TARGET_TYPES:
         return None if _binds_identifier(left, name) else bound
     if left.type != cs.TS_PY_IDENTIFIER or safe_decode_text(left) != name:
@@ -274,7 +274,7 @@ def _binds_identifier(target: Node, name: str) -> bool:
 
     Only bare identifiers bind a module-level name: `holder.Alias, x = ...`
     assigns an attribute and `table[Alias], x = ...` a subscript, so those
-    subtrees are not descended into (#1759 review).
+    subtrees are not descended into (#1759).
     """
     stack = [target]
     while stack:
@@ -379,7 +379,7 @@ class CallResolver:
         # enclosing scope is an inline mod IFF it is in here: an impl target is
         # not, and neither is registered under a type label when it is a
         # primitive or an unindexed foreign type, so absence-of-a-type-label
-        # cannot tell the two apart (issue #1093 review).
+        # cannot tell the two apart (issue #1093).
         self.declared_module_qns = shared_or_new(declared_module_qns, set)
         # {interface_qn: [implementer_qns]} (shared ref, populated during
         # ingestion). Used to redirect an interface-typed call to the single
@@ -867,7 +867,7 @@ class CallResolver:
         # can land on a same-named class nested in ANOTHER type (`Other.Inner`
         # for `Outer.Inner()`). Rejecting that answer must not lose the
         # construction the call spells out, so resolve the member under the
-        # receiver class itself, walking its bases (#1759 review).
+        # receiver class itself, walking its bases (#1759).
         member = call_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         if redirected := self._nested_class_under_receiver(receiver, module_qn, member):
             return cs.NodeLabel.CLASS, redirected
@@ -940,7 +940,7 @@ class CallResolver:
         # lookup that produced `resolved_qn` falls back to a search by the
         # bare member name, which can land on a same-named class nested in
         # another type, and an alias receiver has no precise member path at
-        # all (CodeRabbit, #1759). A module receiver keeps the namespace
+        # all (#1759). A module receiver keeps the namespace
         # check.
         if self.function_registry.get(full) == cs.NodeLabel.CLASS:
             return self._class_is_nested_in(resolved_qn, full)
@@ -996,7 +996,7 @@ class CallResolver:
             # An imported name that is neither a class nor a namespace may be
             # an alias defined in the module it was imported FROM
             # (`from mod_b import Alias` where mod_b says `Alias = Outer`);
-            # look it up there (#1672 local review).
+            # look it up there (#1672).
             owner_qn, _, alias_name = imported.rpartition(cs.SEPARATOR_DOT)
             return self._class_bound_by_module_alias(alias_name, owner_qn)
         # A module-level `Alias = Outer` names the class it binds: it is an
@@ -1026,7 +1026,7 @@ class CallResolver:
         dotted spelling (`Alias = pkg.Outer`) is kept so the class lookup
         can follow the import it names. The LAST module-level binding
         decides: `Alias = Outer` followed by `Alias = make()` holds a value
-        by the time anything runs, so it names nothing (#1672 local review).
+        by the time anything runs, so it names nothing (#1672).
         """
         root_node = self._cached_module_root(module_qn)
         if root_node is None:
@@ -1522,7 +1522,7 @@ class CallResolver:
         compiled only under `go test`. Without this filter a production
         `Error{}` in a third file of the package saw both `types.Error` and a
         same-named `Error` from `m_test.go`, and the ambiguity rule emitted
-        nothing (CodeRabbit, #1747). A test file is visible only to a test
+        nothing (#1747). A test file is visible only to a test
         requester of the same package, and within the requester's own
         directory the `package` clauses must agree. A lookup through an
         import is into ANOTHER package, whose clause the requester does not
@@ -1541,7 +1541,7 @@ class CallResolver:
             cs.GO_TEST_FILE_SUFFIX
         )
         # The package is the directory, whatever dots the file stems hold
-        # (#2616 review); path-less registrations (mock harnesses) group by qn.
+        # (#2616); path-less registrations (mock harnesses) group by qn.
         own_package = (
             declaring_path.parent == requester.parent
             if requester is not None
@@ -1617,7 +1617,7 @@ class CallResolver:
         # first its builds may hold, labelled by the builds it reaches
         # (`_go_build_targets`), and its sibling fan-out reaches the rest.
         # The name-only fallback took another package's same-named function
-        # there, `p_test`'s even, and no variant (#3360 review).
+        # there, `p_test`'s even, and no variant (#3360).
         candidates = self._go_build_variant_candidates(
             self._go_package_scope(call_name, module_qn, _GO_PACKAGE_FUNCTION_TYPES),
             module_qn,
@@ -1726,7 +1726,7 @@ class CallResolver:
         # declared dtors are targets. The full chain matters even when an
         # intermediate dtor is declared: its definition may live outside
         # the parsed source, in which case no caller pass ever emits its
-        # own base-dtor edge (Greptile, PR #894). A destructor cannot be
+        # own base-dtor edge (PR #894). A destructor cannot be
         # overloaded, so each qn is one direct registry lookup (PR #799).
         targets: set[tuple[str, str]] = set()
         seen: set[str] = set()
@@ -1891,7 +1891,7 @@ class CallResolver:
     def _with_go_variants(self, bases: Iterable[str]) -> list[str]:
         # A Go interface embedding a name each build declares again embeds
         # the one its build holds, so a method only one build's declares is
-        # still reached through it (#3360 review).
+        # still reached through it (#3360).
         found: list[str] = []
         for base in bases:
             found.append(base)
@@ -1912,7 +1912,7 @@ class CallResolver:
 
         `J` embedding `p.I` reached `i_linux.go`'s `M` for a caller every
         build compiles: an exact edge true on Linux alone, and Windows'
-        `M` never reached (#3360 review)."""
+        `M` never reached (#3360)."""
         owner, dot, name = callee_qn.rpartition(cs.SEPARATOR_DOT)
         group = self.go_declaration_variants.get(owner)
         if not dot or not group or self.go_builds is None:
@@ -2169,7 +2169,7 @@ class CallResolver:
 
         The relative rewrite attaches every segment as a child module, so a
         segment the named mod binds by `use` led nowhere: `self::alias::X`
-        after `use crate::a as alias;` lost its edge (PR #2791 review). Each
+        after `use crate::a as alias;` lost its edge (PR #2791). Each
         segment is read as the current mod's child module first, then as its
         `use` binding; a binding that leaves the repo names no first-party
         type, so the walk stops with None.
@@ -2311,7 +2311,7 @@ class CallResolver:
         # `T::assoc()` under the block's `use crate::beta::T`. The qualified
         # probe reads `T`'s own members alone, so a block written away from
         # `T`'s definition, or a trait default `T` inherits, is found the
-        # way a scoped `use` finds it (PR #2791 review).
+        # way a scoped `use` finds it (PR #2791).
         result = self._try_resolve_qualified_call(
             call.call_name,
             {first: block_target},
@@ -2378,7 +2378,7 @@ class CallResolver:
     def _go_local_in_scope(self, call: _CallSite) -> bool:
         # Only where the local is in scope: a `helper()` before an inner
         # block's `helper := ...`, or after that block closes, is the
-        # package's function (#2616 review). A call with no position falls
+        # package's function (#2616). A call with no position falls
         # back to the whole function.
         if not call.caller_qn or cs.SEPARATOR_DOT in call.call_name:
             return False
@@ -2519,7 +2519,7 @@ class CallResolver:
         graph, only the crate's own impl on it can. A block counts only when
         its own written self path names `bound`: the path names this type,
         so no other type's same-named item is the target, the shadowed one
-        the bare-name guess would bind included (PR #2791 review). None
+        the bare-name guess would bind included (PR #2791). None
         when the graph holds no such method (a derive or a macro made it).
         """
         if bound == cs.RUST_UNRESOLVABLE_QN:
@@ -3005,7 +3005,7 @@ class CallResolver:
         decides, read the way rustc reads it in the impl's own module: its
         first segment's binding there, the prelude for a bare `String`
         nothing rebinds, `crate::`/`self::`/`super::` for the crate's own
-        (#2595 review). A crate type that merely shares the name decides
+        (#2595). A crate type that merely shares the name decides
         nothing.
         """
         impl_module = owner.rpartition(cs.SEPARATOR_DOT)[0]
@@ -3384,7 +3384,7 @@ class CallResolver:
         # class qn: Go promotes methods from an embedded struct the inheritance
         # walk does not model, and Rust registers `impl` methods under the
         # impl's module and trait defaults under the trait. There the fallback
-        # stays as it was (found by the local review and CI on this change).
+        # stays as it was.
         if language != cs.SupportedLanguage.PYTHON:
             return False
         var_type = self._two_part_receiver_type(call_name, local_var_types)
@@ -3763,7 +3763,7 @@ class CallResolver:
             # walks a node per part, so `"proj.text."` yields a final EMPTY
             # part that is never a key and the lookup always returns []. An
             # earlier version passed the dot and the whole case-insensitive
-            # fallback was silently dead (caught in review on #1484). The
+            # fallback was silently dead (#1484). The
             # boundary is re-established below by requiring the remainder to
             # start with the separator.
             prefix = module_qn
@@ -4764,7 +4764,7 @@ class CallResolver:
         # the modules beside it, which its own qn does not prefix, so its
         # directory stands in for it there; but another crate's entry beside
         # it (main.rs beside lib.rs) and a binary under src/bin/ are crates
-        # of their own, which see none of it (#2599 review).
+        # of their own, which see none of it (#2599).
         if module_qn == root or module_qn.startswith(f"{root}{cs.SEPARATOR_DOT}"):
             return True
         parent, _, stem = root.rpartition(cs.SEPARATOR_DOT)
@@ -5114,7 +5114,7 @@ class CallResolver:
         # broke on qn order, so `using Zeta;` + `new Widget()` bound
         # `Other.Widget` (issue #2001). C# name lookup searches the caller's
         # own namespace, innermost first, before any `using`, so a candidate
-        # there wins outright (bot review); otherwise the candidates whose
+        # there wins outright; otherwise the candidates whose
         # owning type sits DIRECTLY in a namespace (or, for `using static`,
         # a type) the file imports: C# does not import nested namespaces.
         containers, import_keys, bare_members = self._csharp_import_keys(
@@ -5124,7 +5124,7 @@ class CallResolver:
         # A namespace holds types, not members: the caller's namespace makes
         # `App.Widget` nameable, never `App.Widget.S` callable bare. Only a
         # `using static` does that, which the import preference below checks
-        # (bot review).
+        # .
         local = [
             qn
             for qn in candidates
@@ -5150,12 +5150,12 @@ class CallResolver:
         self, candidates: list[str], call_name: str
     ) -> tuple[dict[str, str], dict[str, str], set[str]]:
         """(candidate -> namespace holding its type, candidate -> what an
-        import must name to make it available, the bare-called members).
+         import must name to make it available, the bare-called members).
 
-        A type, or a member reached through its type (`Widget.S()`), is
-        imported by a namespace directive naming the type's namespace; a BARE
-        member (`S()`) only by a `using static` naming its declaring type
-        (bot review).
+         A type, or a member reached through its type (`Widget.S()`), is
+         imported by a namespace directive naming the type's namespace; a BARE
+         member (`S()`) only by a `using static` naming its declaring type
+        .
         """
         declared = self.type_inference.csharp_class_namespaced
         bare = cs.SEPARATOR_DOT not in call_name
@@ -5177,10 +5177,10 @@ class CallResolver:
     def _csharp_enclosing_namespaces(self, module_qn: str) -> set[str]:
         """Every namespace enclosing the file's call sites, innermost included.
 
-        Only known when the file declares ONE nested chain; with sibling
-        namespaces (`App` and `Other` in one file) neither is local to every
-        call site, so no local precedence applies rather than a guessed one
-        (bot review).
+         Only known when the file declares ONE nested chain; with sibling
+         namespaces (`App` and `Other` in one file) neither is local to every
+         call site, so no local precedence applies rather than a guessed one
+        .
         """
         declared_here = sorted(
             self.import_processor._csharp_module_namespaces.get(module_qn, {}),
@@ -5563,7 +5563,7 @@ class CallResolver:
         and a head the file imports (`use crate::a;` then `a::Builder`)
         expands through its import. Matching the leaf by name instead let a
         receiver declared as `crate::a::Builder` bind whichever `Builder`
-        came first (PR #2791 review). None when the path leads to no type.
+        came first (PR #2791). None when the path leads to no type.
         """
         imports = self.import_processor
         target: str | None = imports._rewrite_rust_local_use_path(path, module_qn)
@@ -5951,7 +5951,7 @@ class CallResolver:
         # name is not enough: `1 + v` with V converting to int is built-in
         # `+` even beside an unrelated `operator+(W, W)`, so an overload set
         # counts only when one of its declarations takes the operand's class
-        # at the operand's position (issue #2554 review).
+        # at the operand's position (issue #2554).
         parts = operand_type_qn.split(cs.SEPARATOR_DOT)
         for depth in range(len(parts) - 1, 0, -1):
             scope = cs.SEPARATOR_DOT.join(parts[:depth])
@@ -6436,7 +6436,7 @@ class CallResolver:
         ended the chain (`o.move(1).sum()` on a subclass of Point, issue
         #2482). It is also written in the DECLARING library, so it resolves
         there: read in the caller's file instead, a bare `Result` bound to
-        whichever `Result` the CALLER sees (Greptile, PR #2804).
+        whichever `Result` the CALLER sees (PR #2804).
         """
         return_types = self.type_inference.method_return_types
         own_qn = f"{class_qn}{cs.SEPARATOR_DOT}{member}"
@@ -6526,14 +6526,14 @@ class CallResolver:
         # Applicability, then visibility, then specificity. Only an extension
         # `on` the receiver's class or an ancestor competes at all: filtering
         # by visibility first let a visible extension on an UNRELATED type
-        # push out the applicable one (Greptile, PR #2804).
+        # push out the applicable one (PR #2804).
         applicable = [
             candidate for candidate in candidates if candidate[2] in receiver_types
         ]
         if not applicable:
             return None
         # Among those, an unimported one `on Derived` must not beat an
-        # imported one `on Base` (Greptile, PR #2804). A `package:` import is
+        # imported one `on Base` (PR #2804). A `package:` import is
         # kept verbatim and proves nothing, so when no applicable candidate is
         # provably visible they all stay in play rather than the call being
         # dropped. A provable one also wins a same-level tie against an
@@ -6698,7 +6698,7 @@ class CallResolver:
         # import map, since a class in this module is not an import.
         # Dart only: elsewhere `Foo.create()` is a static FACTORY whose
         # recorded return type the chain must keep, and folding it to `Foo`
-        # dropped that hop (bot review).
+        # dropped that hop.
         if (
             language == cs.SupportedLanguage.DART
             and not (local_var_types and prefix in local_var_types)
@@ -6728,7 +6728,7 @@ class CallResolver:
             # The QUALIFIED name, not the bare one: `qn` is the exact class
             # the prefix names, and returning `name` sent the rest of the
             # chain back through a suffix lookup that another module's
-            # same-named class could win (Copilot, PR #2040).
+            # same-named class could win (PR #2040).
             return qn, parts[1:]
         # A function hop types the chain by its RECORDED return type instead;
         # with none recorded the chain stays unresolved rather than guessing.
@@ -6743,7 +6743,7 @@ class CallResolver:
         # `import 'helper.dart'; import 'other.dart' as helper;` the name
         # `helper` in the source is other.dart, while import_mapping still
         # holds helper.dart under that key so both IMPORTS edges survive
-        # (Greptile, PR #2040).
+        # (PR #2040).
         aliases = self.import_processor.dart_import_aliases.get(module_qn, {})
         import_map = self.import_processor.import_mapping.get(module_qn, {})
         return aliases.get(prefix) or (
@@ -6755,7 +6755,7 @@ class CallResolver:
     ) -> tuple[str, str, cs.NodeLabel] | None:
         # Imports sharing a prefix are searched together, and `p.Box` names
         # the ONE library defining `Box`; a name several of them define is
-        # an ambiguous import, so neither is guessed (CodeRabbit, PR #2040).
+        # an ambiguous import, so neither is guessed (PR #2040).
         if not targets or not name:
             return None
         hits = [

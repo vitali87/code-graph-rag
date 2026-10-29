@@ -334,7 +334,7 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         agree. A shim that returns the class it wraps types as nothing and
         does not disagree (issue #2621), but a def returning another class
         does, and picking either side bound `factory().m()` to a method that
-        never runs (PR #2789 review). Disagreement leaves the receiver
+        never runs (PR #2789). Disagreement leaves the receiver
         untyped rather than exactly wrong.
         """
         module_qn, _, name = qn.rpartition(cs.SEPARATOR_DOT)

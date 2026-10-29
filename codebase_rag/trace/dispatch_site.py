@@ -34,7 +34,7 @@ from ..types_defs import PropertyDict
 # function's dispatch site.
 # A literal binding under one of these did not necessarily run before a call
 # below it: `fn = fallback; if c: fn = table["x"]; fn()` calls the fallback on
-# the false branch, so the literal is not a definite site (#1543 review).
+# the false branch, so the literal is not a definite site (#1543).
 _CONDITIONAL_FLOW = frozenset(
     {
         cs.TS_PY_IF_STATEMENT,
@@ -83,7 +83,7 @@ def _through_parentheses(expr: Node) -> tuple[Node, Node | None]:
 
     `(expr)()` and `name = (expr)` mean the same as their bare forms; every
     check that asks what `expr` is the child of climbs through the wrapping
-    first (#1543 review).
+    first (#1543).
     """
     value: Node = expr
     parent = value.parent
@@ -107,7 +107,7 @@ def _bound_name(expr: Node) -> str | None:
 
     Seen through parentheses: `name = (expr)` binds the same lookup, and
     without the climb the literal form of a stored lookup was not recorded
-    as the binding (#1543 review).
+    as the binding (#1543).
     """
     value, parent = _through_parentheses(expr)
     if parent is None or parent.type != cs.TS_PY_ASSIGNMENT:
@@ -126,7 +126,7 @@ def _computed_lookup_target(node: Node) -> str | None:
         return None
     left = node.child_by_field_name(cs.FIELD_LEFT)
     # `fn = (registry[name])` stores the same lookup as the bare form
-    # (#1543 review).
+    # (#1543).
     right = unparenthesized(node.child_by_field_name(cs.FIELD_RIGHT))
     if left is None or right is None or left.type != cs.TS_PY_IDENTIFIER:
         return None
@@ -255,7 +255,7 @@ class _BodyScan:
     # but only for calls AFTER it. `rebound_inner` and `called` therefore
     # record the earliest line each name is rebound and called at: a rebind
     # below the first call cannot have supplied that call's value, so it must
-    # not hide the enclosing computed binding that did (#1543 review).
+    # not hide the enclosing computed binding that did (#1543).
     stored_outer: set[str] = field(default_factory=set)
     stored_inner: set[str] = field(default_factory=set)
     rebound_inner: dict[str, int] = field(default_factory=dict)
@@ -329,7 +329,7 @@ class _BodyScan:
         # A literal binding below the name's first call did not supply that
         # call: whatever did (an enclosing binding, or nothing) is what the
         # traced edge went through, so the later literal is not its site
-        # (#1543 review).
+        # (#1543).
         if any(
             name in self.called and line > self.called[name]
             for name, line in self.bound_literal_line.items()
@@ -338,7 +338,7 @@ class _BodyScan:
         # A literal binding under an `if`, a loop, a `try` or a `match` ran
         # on some paths to the call and not others; whether THIS call used it
         # or a fallback bound elsewhere is data flow the scan does not do, so
-        # the site is unlocatable rather than guessed at (#1543 review).
+        # the site is unlocatable rather than guessed at (#1543).
         if any(name in self.called for name in self.conditionally_bound):
             return None
         return self.direct + [

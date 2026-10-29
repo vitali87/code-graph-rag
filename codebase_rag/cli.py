@@ -532,7 +532,7 @@ def _clean_database_only(
     _import_vector_store()
     # Held until the embeddings and the hash cache are gone too: a sync let
     # in after the wipe would publish both, and the clean would then delete
-    # them under that sync's new graph (review of PR 2512).
+    # them under that sync's new graph (PR #2512).
     with _sync_lock_or_exit(repo_to_clean, project_name):
         with connect_memgraph(batch_size) as ingestor:
             _confirm_destructive_clean(ingestor, project_name, assume_yes)
@@ -552,7 +552,7 @@ def _session_project(
 ) -> tuple[str, bool]:
     # The project the session's writes re-ingest into: a workspace syncs a
     # repo under the name it was registered with, whatever --project-name
-    # says, so that name is the one in the graph (bot review on PR #2986).
+    # says, so that name is the one in the graph (PR #2986).
     if workspace_config is not None and (
         repo := workspace_config.find_repo(target_repo_path)
     ):
@@ -591,9 +591,9 @@ def _console_on_stderr() -> Iterator[None]:
 def _keep_stdout_for_the_answer[**P](command: Callable[P, None]) -> Callable[P, None]:
     # `-a` prints its answer, and only that, on stdout, which `main_single_query`
     # keeps clean of its logs for a script to read: the command's warnings,
-    # its sync's progress (Greptile review of PR 2507) and the query's result
+    # its sync's progress (PR #2507) and the query's result
     # tables go to stderr, from the first check until the command ends
-    # (CodeRabbit review of PR 2507). A decorator rather than a `typer.Context`
+    # (PR #2507). A decorator rather than a `typer.Context`
     # parameter, which `start` has too many of already (Sonar S107).
     @wraps(command)
     def run(*args: P.args, **kwargs: P.kwargs) -> None:
@@ -957,7 +957,7 @@ def _project_claim(
     Yields the roots `_mark_sync_incomplete` must still find on the Project.
     A claim the sync created is given back when the sync fails before its
     incomplete-run marker or any code is written; the release query checks
-    that, so a failure further in keeps it (review of PR 2499).
+    that, so a failure further in keeps it (PR #2499).
     """
     check = _exit_if_project_owned_elsewhere(
         batch_size, project_name, repo, clean=clean, assume_yes=assume_yes
@@ -979,7 +979,7 @@ def _mark_sync_incomplete(
     """Put the `:IncompleteRun` marker down before the sync writes, or exit.
 
     `mark_sync_incomplete` says why a refused marker stops the sync (#2219)
-    and what `owned_roots` holds it to (review of PR 2499).
+    and what `owned_roots` holds it to (PR #2499).
     """
     try:
         mark_sync_incomplete(ingestor, project_name, owner, owned_roots)
@@ -1063,7 +1063,7 @@ def _clear_stopped_sync_marker(ingestor: MemgraphIngestor, project_name: str) ->
 def _clear_deleted_project_markers(
     ingestor: MemgraphIngestor, project_name: str
 ) -> None:
-    """Take off the markers a deleted project no longer needs (#2444 review).
+    """Take off the markers a deleted project no longer needs (#2444).
 
     A marker sits on its own node, out of the delete's reach, so without this
     a sync that failed before the delete keeps the project in `cgr status`
@@ -1297,7 +1297,7 @@ def _delete_hash_cache(repo_path: Path) -> None:
 
 def _start_project_name(project_name: str | None, repo: Path) -> str:
     # Stripped as `normalize_project_name` strips it, so the ownership check
-    # asks about the name the sync writes (review of PR 2499). A blank name
+    # asks about the name the sync writes (PR #2499). A blank name
     # falls back to the derived one, which carries a hash of the path.
     return (project_name and project_name.strip()) or derive_project_name(repo)
 
@@ -2652,7 +2652,7 @@ def stats(
     requested = _requested_projects(names, workspace_config, repo_path)
     # An empty list is what "no scope" looks like to the queries below, so a
     # scope that was asked for and came out empty would report the whole
-    # shared graph as if it were that scope's (review of PR 2436).
+    # shared graph as if it were that scope's (PR #2436).
     if not requested and (names or workspace_config is not None):
         app_context.console.print(
             style(
@@ -2966,7 +2966,7 @@ def _emit_dead_code(
         return
 
     # The coverage notice follows the table into whichever sink it goes, so a
-    # saved report (CI artifact, shared review) never reads as "all clean"
+    # saved report (CI artifact) never reads as "all clean"
     # when whole languages went unanalyzed.
     notice = (
         cs.CLI_DEADCODE_STRUCTURAL_TIER_SKIPPED.format(count=structural_tier_symbols)
@@ -3003,7 +3003,7 @@ def _emit_dead_code(
 def _notice_single_project_endpoint_roots(show_progress: bool) -> None:
     """Endpoint roots off on a graph holding one project: every endpoint
     reads as uncalled. Stdout carries the JSON payload when that format is
-    chosen (local review P1), so the notice goes to stderr then."""
+    chosen, so the notice goes to stderr then."""
     if show_progress:
         app_context.console.print(
             style(cs.CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS, cs.Color.YELLOW)

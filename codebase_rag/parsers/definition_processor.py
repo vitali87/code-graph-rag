@@ -142,7 +142,7 @@ class DefinitionProcessor(
         # uses cannot attribute one. Nor can a prefix rule: a C# class qn
         # embeds its namespace, so `proj/Core.cs` with `namespace Util`
         # yields `proj.Core.Util.Helper`, sitting under the SIBLING module
-        # `proj.Core.Util` (#1769 review). This is the C#-only
+        # `proj.Core.Util` (#1769). This is the C#-only
         # `csharp_class_owner_module`'s cross-language counterpart, needed
         # because both maps above are written by every language's ingest
         # (#1772).
@@ -179,7 +179,7 @@ class DefinitionProcessor(
         # {Rust impl target qn: module of the file whose `impl Trait for T`
         # recorded its pair}. A primitive or foreign target (`u64`) has no
         # class node, so `class_owner_module` never names that file, and the
-        # pair outlived the impl on a reused updater (#2403 review).
+        # pair outlived the impl on a reused updater (#2403).
         self.rust_impl_owner_module: dict[str, str] = {}
         # {class_qn: {field_name: bare_type_name}} for C++ member fields, so a
         # member call `field_.method()` in a (possibly out-of-line, cross-file)
@@ -251,7 +251,7 @@ class DefinitionProcessor(
         self.csharp_class_namespaced: dict[str, str] = {}
         # The reverse: {namespace-qualified name: class qns carrying it}, so
         # a written `Zeta.BaseC` in a base list still finds the class whose
-        # qn no longer ends with those segments (bot review on #1629).
+        # qn no longer ends with those segments (#1629).
         self.csharp_namespaced_qns: dict[str, set[str]] = {}
         # {method qn: (normalized return type, its written generic arity)}
         # for chained-receiver typing; separate from the cross-language
@@ -534,7 +534,7 @@ class DefinitionProcessor(
         # Every queue, not just the first: a Parameter or Field fact with no
         # RETURNS/ACCEPTS fact beside it would otherwise be skipped outright,
         # and OF_TYPE silently absent. A class whose only annotations are on
-        # fields is the case that reaches this (found by the Field regression).
+        # fields is the case that reaches this.
         if not (
             self.pending_type_facts
             or self.pending_parameter_types
@@ -677,7 +677,7 @@ class DefinitionProcessor(
             if language == cs.SupportedLanguage.JULIA:
                 # Julia ingests types BEFORE functions: a struct and a free
                 # function may share a name (separate namespaces), and the
-                # TYPE is the primary owner of it (issue #1882 review).
+                # TYPE is the primary owner of it (issue #1882).
                 # The inline-module pass is skipped: a Julia `module` block
                 # is the file's declared module (an import index), not a
                 # nested module node, so a synthetic `fileqn.Module` node
@@ -911,7 +911,7 @@ class DefinitionProcessor(
         # Measured: it attributed a call to the MODULE alongside the
         # correct function-owned edge, so the graph gained a spurious
         # `proj.pkg.caller CALLS ...` beside `proj.pkg.caller.run CALLS
-        # ...` (Greptile, PR #1833). Absent is the honest state there, and
+        # ...` (PR #1833). Absent is the honest state there, and
         # it is what the reader already falls back on.
         if self._func_class_captures_cache is not None and (
             combined_captures is not None

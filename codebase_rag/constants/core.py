@@ -201,7 +201,7 @@ DIRECTORY_MODULE_STEM_BY_EXT: dict[str, str] = {
     # to `JS_TS_MODULE_EXTENSIONS`, which is the set cgr's own directory-index
     # resolution already searches, so omitting them here made `pkg/index.mts`
     # derive `pkg.index` instead of `pkg` and the unresolved-importer query
-    # asked for a name no waiter had written (issue #1682 review).
+    # asked for a name no waiter had written (issue #1682).
     ".mts": "index",
     ".cts": "index",
 }
@@ -410,7 +410,7 @@ PARSER_FINGERPRINT_SOURCE_FILES: tuple[str, ...] = (
     # derives: change the rule and every module node should be re-keyed. It
     # was absent, so a change touching ONLY this file left existing indexes on
     # the old identities with no staleness warning, and `utils/` is in neither
-    # of the directory globs above (issue #1720 review).
+    # of the directory globs above (issue #1720).
     "utils/path_utils.py",
     # Decides which bytes the grammar reads for a Python source, so every name
     # in a declared-encoding file depends on it (issue #2445).
@@ -432,7 +432,7 @@ PARSER_FINGERPRINT_TOOL_SOURCES: tuple[tuple[str, tuple[str, ...]], ...] = (
     # sources produce: the finding rules which Pattern/CodeSmell/SecurityIssue
     # nodes exist, the tier patterns which definitions do. A rule change with
     # unchanged sources otherwise kept the old rules' findings on the in-sync
-    # fast path (review of #2533).
+    # fast path (#2533).
     ("analyzers/ast_grep_rules", ("**/*.yaml",)),
     ("parsers/ast_grep_patterns", ("*.yaml",)),
 )

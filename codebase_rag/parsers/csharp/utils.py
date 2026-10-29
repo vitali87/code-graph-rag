@@ -280,7 +280,7 @@ def namespace_qualified_name(type_node: Node) -> str | None:
     own name. Read from the declaration rather than the qualified name,
     because a namespace the module's directory already spells is not in the
     qn (issue #1629). None for a declaration with no name: its enclosing
-    path alone would be the key of the type that encloses it (bot review)."""
+    path alone would be the key of the type that encloses it."""
     own = _declared_name(type_node)
     if not own:
         return None
@@ -378,7 +378,7 @@ def unique_carrier(
     spans the group, or two independent projects that each declare the name
     in their own directory; the latter must not be merged across assembly
     boundaries, so it is left unresolved like every other ambiguity here
-    (bot review on #1999).
+    (#1999).
     """
     if not carriers:
         return None

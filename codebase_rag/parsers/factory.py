@@ -83,7 +83,7 @@ class ProcessorFactory:
         assignments at the call site, which is an inventory that fails open: a
         processor added later keeps a stale policy and nothing says so. The
         declaration tie-break (#1720) became the third consumer and was missed
-        exactly that way (Greptile P1, PR #1728).
+        exactly that way (PR #1728).
 
         So the consumers are DERIVED from ``__slots__`` rather than listed. A
         processor built later picks the policy up at construction, because it

@@ -264,7 +264,7 @@ def _holds_only_type_arguments(selector: Node) -> bool:
 def _skip_type_argument_selectors(node: Node | None) -> Node | None:
     # `Box<int>.of(1);` in statement position is `Box` + selector(<int>) +
     # selector(.of) + selector((1)): a selector holding only type arguments
-    # is not a hop (local review).
+    # is not a hop.
     while (
         node is not None
         and node.type == cs.TS_DART_SELECTOR
@@ -602,7 +602,7 @@ def generic_call_argument(node: Node) -> Node | None:
     # The one argument of `X<T>(arg)` parsed as a chained comparison: the
     # parenthesised operand right after the outer `>`. A member read on the
     # result (`Box<int>(1).width`) nests its selector INSIDE the same node,
-    # after the operand, so the last child is not the anchor (local review).
+    # after the operand, so the last child is not the anchor.
     ops = [
         child
         for child in node.named_children

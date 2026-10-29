@@ -245,7 +245,7 @@ def module_directory_qn(module_qn: str, file_path: Path | None) -> str:
     # dot, and a same-stem sibling of another language gives the module a
     # `<stem>.<ext>` segment instead (`proj.src.Foo.cs`). A module whose
     # own segment is neither has no known directory, and nothing folds
-    # (bot review); without a path the last segment is the only guess.
+    # ; without a path the last segment is the only guess.
     if file_path is not None:
         stem = module_stem(file_path.name)
         for own in (stem, f"{stem}{cs.SEPARATOR_DOT}{file_path.suffix.lstrip('.')}"):
@@ -297,7 +297,7 @@ def csharp_namespaced_from_graph(
     index is rebuilt for the rest from what the node stores: its qn, path
     and declared namespace. The fold is undone by the same directory rule
     `_csharp_fold_scopes` applied, and a duplicate-qn marker (`Bench@24`)
-    is dropped as the parsed form never carries it (bot review on #1999),
+    is dropped as the parsed form never carries it (#1999),
     as is a generic twin's arity (`PB`1`, issue #2579): the declared form
     is the written name, which both twins share.
     A module qn that is neither of the two path spellings is not guessed.

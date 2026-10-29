@@ -65,7 +65,7 @@ def _binding_identifiers(target: Node) -> set[str]:
 def _python_parameter_names(scope_node: Node) -> set[str]:
     # A function's parameter names are local for the whole function (their scope
     # IS the body), so `def leak(os):` shadows a module-level `import os` for the
-    # entire body like any assignment (CodeRabbit review on PR #1325). A typed /
+    # entire body like any assignment (PR #1325). A typed /
     # default parameter binds only its `name` field -- its annotation / default
     # expressions are loads in the ENCLOSING scope, never bindings here.
     names: set[str] = set()
@@ -114,7 +114,7 @@ def _global_declared_names(scope_node: Node) -> set[str]:
     # defs/classes pruned): `global os` makes EVERY `os` use here resolve to
     # the module-level binding, so a same-named assignment is a GLOBAL rebind,
     # not a local -- the whole-scope locality rule must not treat it as a
-    # shadowing local (CodeRabbit review on PR #1325). A module scope is never
+    # shadowing local (PR #1325). A module scope is never
     # `global`-affected (there it is a legal no-op and the assignment still
     # rebinds the module name), so callers apply this only for non-module
     # scopes.
@@ -164,7 +164,7 @@ def _global_rebind_positions(scope_node: Node, name: str) -> list[int]:
     # replace the binding just like a plain assignment (Greptile review on
     # PR #1325). The end offset is used because the target is bound only
     # AFTER the RHS evaluates: in `os = os.environ['K']` the RHS subscript
-    # still reads through the module (CodeRabbit review on PR #1325).
+    # still reads through the module (PR #1325).
     positions: list[int] = []
     stack = list(scope_seed_nodes(scope_node))
     while stack:
@@ -192,7 +192,7 @@ def python_globally_rebound_before(scope_node: Node, name: str, at_byte: int) ->
     # True when a `global`-declared name was REBOUND at or before `at_byte` in
     # this scope's OWN body: the module binding is already replaced, so a use
     # after the rebind reads the rebound value, while a use before it still
-    # sees the module (CodeRabbit review on PR #1325). A module scope is never
+    # sees the module (PR #1325). A module scope is never
     # `global`-affected (the rebind is an ordinary local assignment), so it is
     # rejected here.
     if scope_node.type == cs.TS_PY_MODULE or name not in _global_declared_names(

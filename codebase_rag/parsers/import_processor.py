@@ -798,7 +798,7 @@ def _external_module_name(module_path: str) -> str:
     is served correctly; `<foo.bar.h>` gets `bar` where its binding says
     `foo`. Fixing that means passing the ORIGINAL include path down to node
     creation rather than deriving from the qn, which is a wider change than
-    the naming defect warrants (#1758 review).
+    the naming defect warrants (#1758).
     """
     segments = module_path.split(cs.SEPARATOR_DOT)
     # `stdio.h` occupies the last TWO dotted segments, stem and extension.
@@ -1010,7 +1010,7 @@ def _rust_patch_may_qualify(own: str | None, requirement: str | None) -> bool:
     # requirement. Its own `version` requirement says what it can be, and
     # one that cannot overlap the dependency's is a patch Cargo leaves
     # unused (`=2.0.0` against `=1.2.0`), so it never outranks the local
-    # copy (PR #2791 review).
+    # copy (PR #2791).
     return (
         own is None
         or requirement is None
@@ -1382,7 +1382,7 @@ class ImportProcessor:
         # types written for it (`std::string::String`, `crate::shadow::String`,
         # `String`). The qn alone cannot tell an impl on a foreign type from
         # one on the crate's own same-named type written in another module
-        # (#2595 review); the path, read in the impl's module, can. Keys are
+        # (#2595); the path, read in the impl's module, can. Keys are
         # tracked per declaring file for the re-parse drop.
         self.rust_impl_self_paths: dict[str, set[str]] = {}
         self._rust_impl_self_path_keys: dict[str, set[str]] = {}
@@ -1422,7 +1422,7 @@ class ImportProcessor:
         # when an unprefixed `import 'helper.dart';` already owns that key in
         # import_mapping. Kept separately so BOTH imports keep their IMPORTS
         # edge (those come from import_mapping's values) while the name the
-        # source writes resolves to the aliased library (Greptile, #2033).
+        # source writes resolves to the aliased library (#2033).
         self.dart_import_aliases: dict[str, dict[str, list[str]]] = {}
         # {library module qn: [module qns it hands to ITS importers]}: the
         # targets of its `export` and `part` directives. import_mapping holds
@@ -1465,7 +1465,7 @@ class ImportProcessor:
         # scope itself for a private (or `pub(self)`) one, the module a
         # `pub(crate)`/`pub(super)`/`pub(in path)` names. A glob re-export
         # (`pub use inner::*;`) written outside that subtree does not carry
-        # them (issue #2542, #2599 review). Keys are tracked per declaring
+        # them (issue #2542, #2599). Keys are tracked per declaring
         # file so a re-parse drops exactly what it wrote.
         self.rust_restricted_use_names: dict[str, dict[str, str]] = {}
         self._rust_restricted_use_keys: dict[str, set[str]] = {}
@@ -1697,7 +1697,7 @@ class ImportProcessor:
         # exemption that only ever matched the declaration binding it came
         # from -- already gone, so inert. The sweep matches on the resolved
         # qn instead, so the same stale entry can now suppress a real
-        # include's edge (#1758 review).
+        # include's edge (#1758).
         self._cpp_declaration_mappings = {
             entry for entry in self._cpp_declaration_mappings if entry[0] != module_qn
         }
@@ -1720,7 +1720,7 @@ class ImportProcessor:
 
         The mapping holds one binding per local name, so these are the rest
         of what a file includes: `a/util.h` and `b/util.h` both bind `util`,
-        and both are compiled into the file (Greptile, PR #2593).
+        and both are compiled into the file (PR #2593).
         """
         displaced: dict[str, set[str]] = {}
         for module_qn, target in self._cpp_shadowed_include_targets:
@@ -1780,7 +1780,7 @@ class ImportProcessor:
                 # wrote, not an include: re-emitting it here would
                 # rebuild the self-import the main loop above filters
                 # out, which `test_cpp_module_declarations_emit_no_
-                # self_import` forbids (#1758 review).
+                # self_import` forbids (#1758).
                 continue
             self._deferred_import_edges.append(
                 DeferredImportEdge(
@@ -2125,7 +2125,7 @@ class ImportProcessor:
         file's declared namespaces, identifiers and `global using static`
         directives are recovered here from a targeted parse of its source.
         Run before Pass 3: a global static import in an unchanged file scopes
-        the bare calls of every re-parsed one (CodeRabbit, PR #2036).
+        the bare calls of every re-parsed one (PR #2036).
         """
         self._recover_unparsed_csharp_namespaces(known_module_paths)
 
@@ -2178,7 +2178,7 @@ class ImportProcessor:
                 self._csharp_module_identifiers[module_qn] = frozenset()
                 continue
             # Parsed as the indexer parses it: a UTF-16 file's raw bytes read
-            # as no declarations at all (#3153 review).
+            # as no declarations at all (#3153).
             tree = parser.parse(
                 grammar_bytes(source, cs.SupportedLanguage.CSHARP, Path(path))
             )
@@ -2349,7 +2349,7 @@ class ImportProcessor:
                     if target_pkg is not None and target_pkg != importer_pkg:
                         # A target in ANOTHER nested package is unreachable
                         # from here; one in the SAME nested package is a
-                        # normal sibling import (issue #1882 review).
+                        # normal sibling import (issue #1882).
                         target = None
                     if target is not None:
                         break
@@ -3462,7 +3462,7 @@ class ImportProcessor:
                     # A PATHLESS table is still an explicit target at its
                     # conventional location ([lib] means src/lib.rs), and an
                     # explicit target must survive its kind's auto-discovery
-                    # opt-out (issue #1030 review).
+                    # opt-out (issue #1030).
                     paths.add(default)
         package = manifest.get(cs.RS_MANIFEST_PACKAGE_KEY)
         if not isinstance(package, dict):
@@ -3589,7 +3589,7 @@ class ImportProcessor:
                 return (*rel, *parts[:-1]), parts[-1][: -len(cs.EXT_RS)]
         # A pathless [lib] table is still an explicit target at the default
         # src/lib.rs; only a genuinely undeclared library respects the
-        # autolib opt-out (issue #1030 review).
+        # autolib opt-out (issue #1030).
         package = manifest.get(cs.RS_MANIFEST_PACKAGE_KEY)
         auto_lib = not (
             isinstance(package, dict)
@@ -3756,7 +3756,7 @@ class ImportProcessor:
         `base_alias::Meter`). Naming a workspace member, it binds the crate
         the repo holds, exactly as a version-only entry spelled with the
         member's own name does (issue #1048), though no lib is called
-        `base_alias` (PR #2791 review).
+        `base_alias` (PR #2791).
         """
         pkg = self._rust_package_of(module_qn)
         return pkg is not None and head in self._rust_dep_members_of(pkg)
@@ -3784,7 +3784,7 @@ class ImportProcessor:
         name, the published-workspace shape (#1048). A git, alternate
         registry or out-of-repo path entry fetches another copy of the
         package, which only a root `[patch.<source>]` path makes a repo
-        package (PR #2791 review). A patch of the package decides for its
+        package (PR #2791). A patch of the package decides for its
         source either way, the crates.io name rule included.
         `workspace = true` inherits the root's [workspace.dependencies]
         entry, source, rename and requirement included.
@@ -3826,10 +3826,10 @@ class ImportProcessor:
         Only a path patch lands in the repo, and Cargo applies one only when
         the patched package's version meets the dependency's requirement;
         otherwise it warns "patch was not used" and builds against the
-        source's own copy, which no local call reaches (PR #2791 review).
+        source's own copy, which no local call reaches (PR #2791).
         Among several patched versions it takes the highest that qualifies,
         wherever the table lists it, a git or out-of-repo patch included
-        (PR #2791 review). A dependency stating no requirement takes any of
+        (PR #2791). A dependency stating no requirement takes any of
         them; a version that cannot be read or checked never meets a
         requirement, so the dependency stays external.
         """
@@ -3977,7 +3977,7 @@ class ImportProcessor:
         location (src/bin/main.rs beside src/bin/mod.rs) or by explicit
         manifest path — it keeps its own crate: its qn carries the stem
         only when a sibling claimed the dir qn, and the ancestor mod.rs
-        check must not swallow it (issue #1031 review).
+        check must not swallow it (issue #1031).
         """
         if f"{stem}{cs.EXT_RS}" not in self._rust_dir_entries(
             self.repo_path.joinpath(*dir_parts)
@@ -5745,7 +5745,7 @@ class ImportProcessor:
         # (and their storm protection) only while their kind's
         # discovery opt-out permits them — an edit flipping autolib or
         # autobins to false must leave the map exactly as a clean
-        # index would (issue #1030 review).
+        # index would (issue #1030).
         self._rust_explicit_targets.clear()
         self._rust_auto_build_flags.clear()
         self._rust_auto_discovery_flags.clear()
@@ -6488,7 +6488,7 @@ class ImportProcessor:
             # that both exist is the cheaper error than a target no dotted
             # lookup can name at all. `test_two_spellings_of_one_header_path`
             # pins the behaviour so a later reader sees a decision rather
-            # than an oversight (#1758 review).
+            # than an oversight (#1758).
             return f"{cs.IMPORT_STD_PREFIX}{_dotted_include_path(include_path)}"
         if resolved := self._resolve_cpp_include_target(include_path, module_qn):
             # The include resolves to a real repo file; use that file's
@@ -6504,7 +6504,7 @@ class ImportProcessor:
         # branch above, for the same reason (issue #1758). Recorded for the
         # day the header is added (issue #1568), normalised to the repo path
         # suffix an added file offers: `./include/base.h` and
-        # `../include/base.h` both wait on `include/base.h` (bot review).
+        # `../include/base.h` both wait on `include/base.h`.
         self.note_unresolved(module_qn, _include_path_suffix(include_path))
         return f"{cs.IMPORT_STD_PREFIX}{_dotted_include_path(include_path)}"
 
@@ -6582,7 +6582,7 @@ class ImportProcessor:
         # later include displaces an earlier one. Record it the same way or
         # the header's IMPORTS edge is lost -- the declaration's own target is
         # then skipped by the deferred loop as a self-import, and nothing is
-        # emitted for the include at all (#1758 review).
+        # emitted for the include at all (#1758).
         displaced = self.import_mapping[module_qn].get(module_name)
         if displaced is not None and displaced != full_name:
             self._cpp_shadowed_include_targets.add((module_qn, displaced))
@@ -6746,7 +6746,7 @@ class ImportProcessor:
 
     def dart_import_target(self, uri: str, module_qn: str) -> str:
         # What `uri` resolves to under the package map as it is on disk now;
-        # a pubspec change is judged by whether this moved (#3278 review).
+        # a pubspec change is judged by whether this moved (#3278).
         packages = (
             self._dart_package_libs()
             if uri.startswith(cs.DART_SCHEME_PACKAGE)
@@ -6795,7 +6795,7 @@ class ImportProcessor:
         if prefix not in self.import_mapping[module_qn]:
             self.import_mapping[module_qn][prefix] = full_name
             # Its IMPORTS edge carries a span and alias like every
-            # other binding (Copilot, PR #2040).
+            # other binding (PR #2040).
             self._record_import_site(module_qn, prefix, import_node, uri)
 
     def _record_lua_require(
@@ -7220,7 +7220,7 @@ class ImportProcessor:
         )
         # The exact-path lookup is a first-party link only: an absolute
         # dotted import names an external package unless it starts with
-        # this project's own name (issue #1882 review).
+        # this project's own name (issue #1882).
         rel_file = (
             self._julia_find_by_path(dotted, depth, module_qn, importer_root)
             if depth > 0 or self_ref

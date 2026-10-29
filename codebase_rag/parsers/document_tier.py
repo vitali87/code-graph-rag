@@ -553,7 +553,7 @@ def _rendered_heading_text(
 
     The raw Markdown carries a link's destination, emphasis markers and HTML
     tags that the rendered heading does not, and a slug built from them
-    misses every anchor written against the page (PR #2830 review). Without
+    misses every anchor written against the page (PR #2830). Without
     the inline grammar the raw text is the best answer left.
     """
     inline = _heading_inline(node)

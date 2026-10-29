@@ -472,7 +472,7 @@ def link_endpoints(ingestor: QueryingIngestorProtocol) -> int:
         if exact:
             continue
         if rootful and not (suffix or mounts):
-            # An ingress-prefixed rootful call (`/y/<service>/review`)
+            # An ingress-prefixed rootful call
             # crosses projects by design, so the suffix search widens
             # beyond the same-origin scope; the tie gate still applies.
             _exact, suffix, mounts = _match_candidates(
@@ -623,7 +623,7 @@ def _resolve_suffix_matches(
     # Suffix matches are an inference: a unique match or a same-path method
     # group links; any other tie is dropped instead of guessed unless the
     # stripped lead itself names exactly one candidate's project
-    # (`/y/some-service/review`).
+    # .
     group = _same_path_group(suffix, endpoints)
     if group:
         return group

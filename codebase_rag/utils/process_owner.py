@@ -2,7 +2,7 @@
 
 The CLI sync's incomplete-run marker names the process that wrote it, so
 `cgr delete-project` can tell a sync that stopped from one still writing the
-project (PR #2532 review). Every answer errs towards "may be running": a
+project (PR #2532). Every answer errs towards "may be running": a
 marker wrongly kept only lists the project as interrupted, while one wrongly
 cleared leaves a partial graph that looks whole.
 

@@ -81,7 +81,7 @@ class DependencyParser:
         # names the unparsable ones in one WARNING (issue #2568).
         # `_collect` appends to a list this method owns, so the entries read
         # before a failure part-way through the file are kept, as each
-        # parser kept them before the shared reader (Greptile, PR #2613).
+        # parser kept them before the shared reader (PR #2613).
         dependencies: list[Dependency] = []
         try:
             self._collect(file_path, dependencies)

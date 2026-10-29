@@ -201,7 +201,7 @@ def _is_inline_module_path(path: str) -> bool:
     directory component, so a path-anchored test could only ever match at
     the repository root, and an extensionless `inline_module_data` there
     was still read as synthetic while `pkg/inline_module_data` was not
-    (local review, PR #1967).
+    (PR #1967).
     """
     name = Path(path).name
     return name.startswith(cs.INLINE_MODULE_PATH_PREFIX) and not Path(name).suffix
@@ -277,7 +277,7 @@ _CPP_SPAN_FILE_EXTENSIONS = frozenset(cs.CPP_EXTENSIONS) | frozenset(cs.C_EXTENS
 
 _PATH_GONE_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.ELOOP})
 # Windows reports a reparse-point loop as ERROR_CANT_RESOLVE_FILENAME, which
-# CPython maps to EINVAL rather than ELOOP (bot review).
+# CPython maps to EINVAL rather than ELOOP.
 _ERROR_CANT_RESOLVE_FILENAME = 1921
 
 
@@ -358,7 +358,7 @@ def _vanished(filepath: Path) -> bool:
     file or its directory as absence (issue #1983)."""
     # ENOTDIR here means an ancestor is now a regular file, so the path can
     # never exist again; reading it as "not gone" kept its subtree through
-    # every orphan prune (bot review). Only a permission-style failure is
+    # every orphan prune. Only a permission-style failure is
     # left as unreachable.
     try:
         os.lstat(filepath)
@@ -370,7 +370,7 @@ def _vanished(filepath: Path) -> bool:
     # path through a non-directory. Retrying one would mark the cache
     # `unreadable` on every run for as long as the link stays broken (bot
     # review). A link whose target exists but cannot be reached is not gone,
-    # and `Path.exists()` would raise on that (bot review).
+    # and `Path.exists()` would raise on that.
     try:
         os.stat(filepath)
     except OSError as exc:
@@ -494,7 +494,7 @@ def _registration_order(
     twin it meets takes the natural qn and each later one an `@line` (then
     `@line_col`) marker in document order. The marker alone cannot order
     twins from two files: an inline `mod b` and the file `b.rs` both declare
-    into `a.b` (#2805 review).
+    into `a.b` (#2805).
     """
     qn = row.get(cs.KEY_QUALIFIED_NAME)
     path = row.get(cs.KEY_PATH)
@@ -543,53 +543,15 @@ def _file_module_holding(name: str, module_paths: Mapping[str, Path]) -> str | N
 def _project_root_for_single_file(target: Path) -> Path:
     """The project root owning `target`, or its parent when none is found.
 
-    A single-file run used to treat the target's PARENT as the repo root, so a
-    file in a subdirectory was keyed relative to that subdirectory: the same
-    file indexed as `pkg/module_a.py` by a full build became `module_a.py`,
-    with a qualified name to match. The keys differ, so delete-before-reingest
-    misses the existing node and a duplicate set is written under the wrong
-    key, and `Project.root_path` is overwritten with the subdirectory (#1775).
-
-    Two markers, and they are NOT interchangeable -- the cache outranks `.git`
-    at any depth, which is the whole subtlety here:
-
-    * the hash cache (in `state_dir(repo_path)`, or in the tree itself where
-      an older cgr wrote it) is written by every directory run, so an
-      ancestor holding one is EVIDENCE of the root that actually indexed
-      this file. Agreeing with it is the entire point, since disagreeing is
-      what writes a second identity for the same file;
-    * `.git` is only a GUESS at a root. It earns its place because the cache
-      alone leaves a reachable gap -- the first single-file run on a fresh
-      clone finds no cache and reproduces #1775 exactly -- but it says nothing
-      about what has been indexed.
-
-    Ranking them, rather than taking the nearest of either, is required. A
-    submodule or linked worktree puts a `.git` INSIDE a project that owns the
-    cache, so a nearest-of-either walk picks the nested marker and keys the
-    file as `pkg/module_a.py` where the outer build keyed it as
-    `components/inner/pkg/module_a.py` -- reintroducing this very issue one
-    level down, and overwriting `Project.root_path` with the nested directory.
-    Measured on a nested worktree-style marker during review of this change.
-
-    So: the nearest CACHED ancestor wins; only if there is none does the
-    nearest `.git` apply. Two nested caches still resolve to the nearer,
-    which is the project that genuinely indexed the target.
-
-    A cache outranks a nearer `.git` only when it lists a file inside that
-    nested checkout, which is what makes it evidence about the target. The
-    cache lives under CGR_HOME, keyed by the checkout's path, so it outlives
-    the tree it describes: a removed checkout's path reused for a different
-    tree still holds the old cache, and that tree's nested checkout was never
-    indexed from there (Greptile, PR #2557). With no nested `.git` between
-    them the cached ancestor still wins whatever it lists. A nested checkout
-    added since the enclosing root's last directory run is listed by neither
-    and roots at its `.git`, as on a fresh clone, until that run.
-
-    The final fallback is the old behaviour: a target under neither marker is
-    not identifiably part of a project here, so there is no root to agree with
-    and inventing one (the filesystem root, say) would key it against a tree
-    nobody asked to index. That case still keys divergently from a later full
-    build of an enclosing directory -- it is a narrowed gap, not a closed one.
+    A single-file run must key the file as the directory run that indexed it
+    did, or delete-before-reingest misses the node and writes a duplicate
+    under the wrong key (#1775). The nearest ancestor whose hash cache lists
+    the target wins, since that cache is evidence of the root that indexed
+    it; only without one does the nearest `.git` apply, which is a guess. A
+    cache outranks a nearer `.git` only when it lists a file inside that
+    nested checkout: the cache lives under CGR_HOME and can outlive the tree
+    it described (PR #2557). A target under neither marker keys against its
+    parent, as before.
     """
     git_root: Path | None = None
     for ancestor in target.parents:
@@ -877,7 +839,7 @@ def _drop_class_keyed_entry(
     if (group := processor.csharp_partial_groups.pop(qn, None)) is not None:
         # One pass, and IN PLACE: the list is the very object
         # `_csharp_partial_index` holds, so rebinding a new list
-        # would leave that view holding the old one (bot review).
+        # would leave that view holding the old one.
         group[:] = [part for part in group if part != qn]
     # Same ownership, same reason (issue #1629): every C# class has
     # an entry, not only the generic ones #1769's sweep covers.
@@ -900,7 +862,7 @@ def _drop_implementers(
     """Forget the parsed implementer pairs of classes a removed file declared."""
     # A class that stopped implementing an interface kept its pair on a
     # reused updater, and a call typed to the interface still reached its
-    # method as the sole implementer's (#2403 review). The re-parse records
+    # method as the sole implementer's (#2403). The re-parse records
     # the pairs the class still has. In place: the call resolver holds the
     # map by reference.
     if not removed:
@@ -1148,7 +1110,7 @@ class GraphUpdater:
         # Whether the LAST `reingest` call got past its read-only prologue
         # into deletes and writes. Callers persisting recovery state use it to
         # tell "nothing changed, retry freely" from "partial, needs recovery"
-        # (#1705 review, round 7).
+        # (#1705).
         self.reingest_mutated = False
         self._delombok_stale_keys: set[str] = set()
         self._delombok_state_candidate: dict = empty_delombok_state()
@@ -2094,7 +2056,7 @@ class GraphUpdater:
 
         # Cleared only when a REAL indexing run begins: an in-sync no-op above
         # must keep the last run's ownership map, which a later watch-event
-        # prefix sweep still reads (issue #1025 review).
+        # prefix sweep still reads (issue #1025).
         self._frontend_owned_qns.clear()
 
         logger.info(ls.PASS_1_STRUCTURE)
@@ -2266,7 +2228,7 @@ class GraphUpdater:
         self.ingestor.flush_all()
         # A complete prune settles an owed one only once its deletes are
         # durable: cleared before this flush, a failed flush would leave the
-        # orphan AND an unmarked tree the next run skips (CodeRabbit, #2125).
+        # orphan AND an unmarked tree the next run skips (#2125).
         self._settle_prune_marker()
 
         self._generate_semantic_embeddings()
@@ -2449,7 +2411,7 @@ class GraphUpdater:
         indexed unnamed, then synced with --project-name), or run on a stamp
         written before the per-project map existed. Rewriting then keeps
         `cgr check` reading the right owner; rewriting an identical stamp
-        would only churn the file (CodeRabbit, PR #2251).
+        would only churn the file (PR #2251).
         """
         path = self.prepared_state_dir / cs.EXCLUSION_STATE_FILENAME
         state = exclusion_state(
@@ -2571,7 +2533,7 @@ class GraphUpdater:
         # `svc.v2`'s handlers can pass as `svc`'s (a seeded module map can hold
         # a sibling project's modules the same way), so no delete runs at all;
         # emission only MERGEs, and the next healthy run cleans up
-        # (CodeRabbit, PR #2129).
+        # (PR #2129).
         if self._run.registry_unread:
             self._run.exposes_cleanup_skipped = True
             return
@@ -2831,7 +2793,7 @@ class GraphUpdater:
         # These modules feed the EXPOSES cleanup, a DELETE. With the registry
         # unread, ownership degrades to the prefix rule and `svc.v2`'s
         # modules pass as `svc`'s, so read nothing, as a failed module read
-        # does; the next healthy run cleans up (CodeRabbit, PR #2129).
+        # does; the next healthy run cleans up (PR #2129).
         if self._run.registry_unread:
             return []
         return out
@@ -2981,7 +2943,7 @@ class GraphUpdater:
         if graph is None:
             return {}
         # The same posture as every other read in `_rehydrate_registry_from_graph`
-        # (local review): a full build parsed every file and degrades to the
+        #: a full build parsed every file and degrades to the
         # bare derivation with a warning; an incremental run would requeue
         # under the wrong owner, so the outage aborts it.
         try:
@@ -3009,7 +2971,7 @@ class GraphUpdater:
                 continue
             # The read is prefix-scoped, and `svc.` selects `svc.v2`'s
             # modules too; a nested project's module must not become this
-            # file's recorded owner (#1970; bot review).
+            # file's recorded owner (#1970).
             if not self._owns(qn):
                 continue
             if path not in found or (len(qn), qn) < (len(found[path]), found[path]):
@@ -3563,7 +3525,7 @@ class GraphUpdater:
         # Methods of two trait impls on one type share a key (`S.run` and
         # `S.run@13`), and parsing writes each one's type over the last in
         # registration order. The rows come in no fixed order, so they are
-        # replayed in that order and the last typed one stands (#2805 review).
+        # replayed in that order and the last typed one stands (#2805).
         for _position, (key, annotation, impl_target) in records:
             if (annotation, impl_target) not in reduced:
                 reduced[(annotation, impl_target)] = (
@@ -3625,7 +3587,7 @@ class GraphUpdater:
         )
         # The C# declared-form index (issue #1629) is filled only by
         # parsing; an unchanged type must stay reachable by `N.Widget`
-        # from a re-parsed base list or receiver (bot review).
+        # from a re-parsed base list or receiver.
         if node_type not in (
             cs.NodeLabel.FUNCTION,
             cs.NodeLabel.METHOD,
@@ -3657,7 +3619,7 @@ class GraphUpdater:
         # scope is (directory, clause): without it an unchanged
         # `//go:build ignore` generator's `package main` beside `package p`
         # competed, on an incremental run, with the function a re-parsed
-        # caller's bare call names (#2616 review). The file is unchanged
+        # caller's bare call names (#2616). The file is unchanged
         # since the graph recorded it, so its clause is read back from disk.
         if path in self._go_clauses_read:
             return
@@ -3691,7 +3653,7 @@ class GraphUpdater:
         # Rejoin the partial group parsing would have given it,
         # under the same key, so a declared name spanning
         # unchanged parts stays one type; a lone type's group of
-        # one reads exactly as no group (bot review).
+        # one reads exactly as no group.
         if key := csharp_partial_key_from_graph(qn, path, self.project_name, arity):
             group = processor._csharp_partial_index.setdefault(key, [])
             group.append(qn)
@@ -4487,7 +4449,7 @@ class GraphUpdater:
 
     def _dart_package_waiters(self, keys: Iterable[str]) -> set[str]:
         """Dart importers whose `package:` import a pubspec change moved
-        (issue #3278 review).
+        (issue #3278).
 
         A pubspec's `name:` is what `package:<name>/...` resolves by, so
         adding, deleting or renaming one moves an import between a project
@@ -4567,7 +4529,7 @@ class GraphUpdater:
                 cs.CYPHER_PARAM_NAMES: sorted(names),
                 cs.CYPHER_PARAM_PREFIXES: sorted(prefixes),
                 # The root module (`__init__.py`, `mod.rs`) IS the
-                # project name, not under its prefix (bot review).
+                # project name, not under its prefix.
                 cs.KEY_PROJECT_NAME: self.project_name,
             },
         )
@@ -5393,7 +5355,7 @@ class GraphUpdater:
         # `proj/Core.cs` with `namespace Util` yields `proj.Core.Util.Helper`,
         # sitting under the SIBLING module `proj.Core.Util` from
         # `proj/Core/Util.cs`. That rule would keep `Helper` after deleting
-        # the file that declares it (measured; caught in review of #1844).
+        # the file that declares it (measured, #1844).
         # #1769 hit the same trap and answered it the same way, with an
         # explicit owner record.
         #
@@ -5417,7 +5379,7 @@ class GraphUpdater:
         # "Not the file being deleted" is not enough: a definition recorded
         # against a file removed EARLIER also has a different path, and would
         # be preserved as a stale entry that goes on steering call resolution
-        # (raised by CodeRabbit on #1844). Require the recorded path to belong
+        # (#1844). Require the recorded path to belong
         # to a module that is still live.
         live_paths = {
             cached_relative_path(path, self.repo_path).as_posix()
@@ -5521,20 +5483,20 @@ class GraphUpdater:
         # (`owned_qns`), not from the registry sweep alone: a receiver method
         # whose registry row is already gone never enters `qns_to_remove`,
         # and no prefix of the declaring file matches it, so its return type
-        # outlived both (#1752 review). The prefix arm covers an entry filed
+        # outlived both (#1752). The prefix arm covers an entry filed
         # under this file's own module; `foreign_qns` protects a qn another
         # file still owns, as it does for the registry, EXCEPT where this
         # file owns the qn too: the map holds one value per qn, the deleted
         # definition may be the one that wrote it, and the survivor is not
         # re-parsed by this event, so the entry goes and the next parse of
         # the survivor re-records it. A missing type is a degraded answer; a
-        # stale one is a wrong answer (#1752 review).
+        # stale one is a wrong answer (#1752).
         # Ownership is compared on the NATURAL qn on both sides: the map is
         # usually keyed by it even when the registry filed the definition as
         # a `@line` duplicate (the second declaration of one receiver method
         # writes `...A.Clone`, its span record says `...A.Clone@3`), and a
         # few writers (deferred Rust functions, duplicate C++ out-of-class
-        # methods) key the map by the `@line` name itself (#1752 review).
+        # methods) key the map by the `@line` name itself (#1752).
         # The C# map (`csharp_method_return_types`, keyed the same way with a
         # (type, arity) value) is the same defect for a third map (issue
         # #1753), so both are swept by one filter.
@@ -5663,7 +5625,7 @@ class GraphUpdater:
         # prefix rule and a longest-prefix rule therefore attribute that
         # class to the wrong file and err in both directions -- deleting the
         # sibling drops a live class, and deleting its real declarer keeps a
-        # dead one (#1769 review). A class with no recorded owner (ingested
+        # dead one (#1769). A class with no recorded owner (ingested
         # before this map existed) is left alone rather than guessed at.
         owner_module = type_inference.csharp_class_owner_module
         class_qns = {
@@ -5876,7 +5838,7 @@ class GraphUpdater:
         A graph that cannot answer raises instead of reading as "no root":
         the cache would then be trusted for another repository's code, and
         the Project write that follows replaces the root that shows it
-        (review of PR 2499). A write-only sink holds no project to own.
+        (PR #2499). A write-only sink holds no project to own.
         """
         graph = self._graph
         if graph is None:
@@ -5989,7 +5951,7 @@ class GraphUpdater:
         # A failed read raises: without the ids the vectors could never be
         # found again, so the project must stay until a read succeeds. A
         # failed delete, which the vector store logs and swallows, returns
-        # False for the same reason (review of PR 2497).
+        # False for the same reason (PR #2497).
         rows = self._graph_rows(
             cs.CYPHER_QUERY_PROJECT_NODE_IDS, {cs.KEY_PROJECT_NAME: legacy}
         )
@@ -6323,7 +6285,7 @@ class GraphUpdater:
         Judged by the MISSING-PATH error from `lstat`, not by `Path.exists()`:
         `exists()` answers False to any metadata failure, so a target that is
         merely unreadable would have been classified as deleted and lose its
-        state and cache entry (#1755 review). `lstat` needs only search
+        state and cache entry (#1755). `lstat` needs only search
         permission on the directory, and `FileNotFoundError` from it means the
         directory entry itself is gone.
         """
@@ -6402,7 +6364,7 @@ class GraphUpdater:
         # mtime is at or below the CACHE FILE's own mtime, so deferring the
         # write must not defer that stamp: a file edited after its hash was
         # taken but before the commit point would otherwise be stamped newer
-        # than its own edit and skipped for good (issue #1615 review).
+        # than its own edit and skipped for good (issue #1615).
         # Capturing here rather than after the loop also covers a file edited
         # between its own hash and the end of the loop. Erring early only ever
         # costs a redundant rehash; erring late loses an edit.
@@ -6642,7 +6604,7 @@ class GraphUpdater:
         # before-reingest could not be scoped, so some old parser's edges
         # survive, and stamping anyway makes the NEXT run read back a
         # matching fingerprint and fast-path over exactly those rows --
-        # permanently (bot review). A file this run could not read keeps its
+        # permanently. A file this run could not read keeps its
         # old subtree too, but one carrying the unreadable mark cannot be
         # fast-pathed over: the next run refuses the in-sync check on the
         # mark and re-parses the file under the current parser, old subtree
@@ -6680,13 +6642,13 @@ class GraphUpdater:
         #    either. Merging over the popped dict would DROP every
         #    Lombok-affected sibling, which then takes the `is_new` path next
         #    run and skips delete-before-reingest, leaving the previous
-        #    parse's entities beside the fresh ones (#1619 review).
+        #    parse's entities beside the fresh ones (#1619).
         # 2. `force` -- which empties `old_hashes` to make this run RE-PARSE
         #    what it walked. A single-file run walked one file, so `force`
         #    says nothing about the siblings it never looked at. Reusing the
         #    emptied dict would persist a cache holding only the target and
         #    erase every sibling's hash, which is the same data loss the
-        #    unforced path already guards (#1619 review, round 2).
+        #    unforced path already guards (#1619).
         #
         # Only the single-file commit reads this; a project run replaces the
         # cache wholesale from its own complete walk, as it always has.
@@ -6695,7 +6657,7 @@ class GraphUpdater:
         # A cache stamped by ANOTHER project holds that project's hashes:
         # merging this project's file hash into it and publishing would tell
         # the other project's next sync the file is current while its graph
-        # still holds the old parse (CodeRabbit, PR #2251). Treated like a
+        # still holds the old parse (PR #2251). Treated like a
         # missing cache, so nothing is published.
         pristine_hashes = (
             load_hash_cache(cache_path)
@@ -6726,7 +6688,7 @@ class GraphUpdater:
         # Only when the cache named something: a cache file that loads empty
         # (corrupt JSON, or one this run already discarded) leaves nothing to
         # force, and that run stays the full build it always was, asking the
-        # graph what it holds (bot review).
+        # graph what it holds.
         reindex_all = self._run.parser_changed and bool(old_hashes)
         if reindex_all:
             forced_reparse_keys |= set(old_hashes)
@@ -6832,14 +6794,14 @@ class GraphUpdater:
         # through to True on a file the previous parse already indexed, skip
         # delete-before-reingest, and stack a second parse's entities on the
         # first -- renamed-away symbols and their CALLS/REFERENCES edges
-        # surviving beside the fresh ones (#1619 review, round 3).
+        # surviving beside the fresh ones (#1619).
         #
         # The condition mirrors `is_full_build` above deliberately: `force`
         # empties `old_hashes`, and a missing or evicted cache leaves it empty
         # the same way, so both must ask the graph. Guarding on `force` alone
         # left the identical defect on a fresh clone of an already-indexed
         # repo -- the cache lives in the working tree, the graph does not --
-        # and after any cache eviction (#1619 review, round 4).
+        # and after any cache eviction (#1619).
         cacheless_single_file = (force or not old_hashes) and (
             self._single_file is not None
         )
@@ -6897,7 +6859,7 @@ class GraphUpdater:
             # every later run. A file that exists but cannot be
             # reached (a permission failure on it or its directory)
             # is marked; `exists()` alone reads such a file as gone
-            # (bot review).
+            # .
             if not _vanished(filepath):
                 scan.new_hashes[file_key] = cs.HASH_CACHE_UNREADABLE
             return True
@@ -6938,7 +6900,7 @@ class GraphUpdater:
             # The same deletion, one step later: a target that passed the
             # existence check and was removed before its stat or read is
             # gone all the same, and the unreadable path would keep its
-            # state and cache entry (#1755 review).
+            # state and cache entry (#1755).
             if self._single_target_vanished(filepath):
                 scan.single_gone_key = file_key
                 return
@@ -7080,12 +7042,12 @@ class GraphUpdater:
                 # An unchanged flux-stem survivor is first read here, after
                 # the hash pass restored the unreadable ones' claims. Left
                 # unparsed its subtree stays, so it keeps its claim as they do
-                # and is marked for retry (CodeRabbit, PR #2248).
+                # and is marked for retry (PR #2248).
                 #
                 # The retry mark is owed whether or not a claim was forgotten:
                 # an unopenable survivor keeps its seeded claim, and without
                 # the mark its unchanged hash lets the next run skip it for
-                # good (CodeRabbit, PR #2248).
+                # good (PR #2248).
                 if caller_key in self._forgotten_flux_claims:
                     self._restore_unreadable_flux_claims({caller_key})
                 scan.unreadable_keys.add(caller_key)
@@ -7117,7 +7079,7 @@ class GraphUpdater:
         # in the ingestor's buffer, and the deletes below go to the graph
         # directly: flushed, they see what the frontend wrote whenever the
         # buffer happened to fill, rather than sometimes the old subtree and
-        # sometimes the new one (CodeRabbit, PR #2247).
+        # sometimes the new one (PR #2247).
         if self._cpp_frontend_covered:
             self.ingestor.flush_all()
 
@@ -7152,7 +7114,7 @@ class GraphUpdater:
             # not end the run here: with nothing covered the file pass below
             # rebuilds those files with tree-sitter, and the error is raised
             # before the cache commit so the next run retries, as a failed
-            # file is (CodeRabbit, PR #2247). A failed run leaves nothing it
+            # file is (PR #2247). A failed run leaves nothing it
             # can vouch for.
             try:
                 self._run_cpp_frontend()
@@ -7241,7 +7203,7 @@ class GraphUpdater:
                     # node can share the relative path (issue #897). The
                     # entry's own identity, as the File was indexed: a file
                     # replaced by a link resolves to the link's target, whose
-                    # File this deleted instead (#2451 review).
+                    # File this deleted instead (#2451).
                     graph.execute_write(
                         cs.CYPHER_DELETE_FILE,
                         {cs.KEY_PATH: cached_file_identity_posix(deleted_path)},
@@ -7318,7 +7280,7 @@ class GraphUpdater:
             # path, skips delete-before-reingest, and an edited sibling's
             # previous entities survive beside the fresh parse. Writing
             # nothing keeps the next project run a full build, which
-            # reconciles properly (#1619 review, round 5). Measured: with the
+            # reconciles properly (#1619). Measured: with the
             # cache removed, a single-file run then a project run left
             # `module_b.py` undeleted after an edit.
             merged_hashes = {**pristine_hashes, **new_hashes}
@@ -7336,7 +7298,7 @@ class GraphUpdater:
             # sibling was observed just now: a sibling edited before this run
             # then satisfies `file_mtime <= cache_mtime` with a hash that
             # still matches, and the next project run reports "already in
-            # sync" and never indexes the edit (#1619 review).
+            # sync" and never indexes the edit (#1619).
             #
             # Note this must be the previous mtime, NOT None. None skips the
             # `os.utime` in `run` altogether, which leaves the file its own
@@ -7907,7 +7869,7 @@ class GraphUpdater:
         # Deriving the structure here instead would WRITE the new container
         # node inside the prologue, and an abort in `before_write` then left
         # the graph holding both container nodes for one directory while
-        # reporting that nothing changed (greptile-local, issue #1798). The
+        # reporting that nothing changed (issue #1798). The
         # real derivation happens after the caller's last word.
         flipped = {rel for rel in touched if self._package_ness_changed(structure, rel)}
         if not flipped:
@@ -8008,7 +7970,7 @@ class GraphUpdater:
         `identify_structure()`, which derives the map FROM DISK. Both sides of
         the comparison were then the post-change state, no flip was ever
         detected, and the whole fix was inert on the path it exists for
-        (greptile-local, PR #1835).
+        (PR #1835).
         """
         graph = self._graph
         if graph is None:
@@ -8033,7 +7995,7 @@ class GraphUpdater:
         EVERY row, not the first: row order is unspecified, and a directory
         can already hold BOTH kinds (#1872), so "the first row wins" answers
         Package or Folder for the same graph depending on the driver
-        (CodeRabbit, PR #1835).
+        (PR #1835).
         """
         recorded: set[str] = set()
         for row in rows:
@@ -8060,7 +8022,7 @@ class GraphUpdater:
         Deriving the structure to answer this would WRITE the new container
         node inside the prologue, and an abort in `before_write` then left the
         graph holding both container nodes for one directory while reporting
-        that nothing changed (greptile-local, issue #1798).
+        that nothing changed (issue #1798).
         """
         directory = self.repo_path / rel if rel != "." else self.repo_path
         if not directory.is_dir():
@@ -8092,7 +8054,7 @@ class GraphUpdater:
         Without this the re-parse writes CONTAINS_FILE and CONTAINS_MODULE
         edges out of a container node nothing wrote -- and in production the
         merge query MATCHes both endpoints, so the edge is not created at all
-        and the new file is silently unparented (greptile-local, #1872).
+        and the new file is silently unparented (#1872).
 
         Guarded on the graph having NO container for the directory, not on
         the directory being in this call. An unconditional ancestor scope
@@ -8145,7 +8107,7 @@ class GraphUpdater:
         miss -- a child's parent identity comes from `structural_elements`,
         which hydration fills from DISK, so a child under a diverged ancestor
         gets a containment edge naming an identity the graph does not hold
-        and the subtree is left disconnected (Greptile, PR #1875).
+        and the subtree is left disconnected (PR #1875).
         """
         directory = self.repo_path if rel == "." else self.repo_path / rel
         recorded = self._container_kinds_or_unknown(directory)
@@ -8169,7 +8131,7 @@ class GraphUpdater:
         meant a failure BETWEEN the two turned an existing container into
         "no container", which skipped the prune and left both identities in
         the graph: the exact defect this path exists to remove, reachable
-        through its own guard (Greptile, PR #1875).
+        through its own guard (PR #1875).
 
         A sink with NO query surface is not a failure. It is a legitimate
         configuration the whole scoped path already tolerates, and treating
@@ -8207,7 +8169,7 @@ class GraphUpdater:
         containers with it. The sibling re-parse cannot restore those -- a
         child directory is not a file it re-parses -- so re-deriving the
         children re-emits their parent edge onto the surviving node
-        (Greptile, PR #1835).
+        (PR #1835).
 
         Never ANCESTORS. A re-derivation EMITS a node for whatever kind the
         directory is on disk now, so putting an ancestor in scope gave one
@@ -8255,7 +8217,7 @@ class GraphUpdater:
             # key `identify_structure` uses. An earlier version special-cased
             # a falsy `rel`, but `Path(key).parent.as_posix()` yields "." for
             # a root-level file and never "", so that branch was dead and the
-            # root was never resolved (greptile-local, issue #1798).
+            # root was never resolved (issue #1798).
             is_package_now = bool(elements.get(Path(rel)))
             stale = (
                 cs.CYPHER_DELETE_FOLDER if is_package_now else cs.CYPHER_DELETE_PACKAGE
@@ -8279,7 +8241,7 @@ class GraphUpdater:
         waiters = {
             *self._unresolved_importer_keys(sorted(present)),
             # Created files offer everything; modified files offer only the
-            # definitions they gained (bot review on PR #1979).
+            # definitions they gained (PR #1979).
             *self._unresolved_reference_waiters(
                 [
                     (key, self._delombok_overlay.get(key, _read_bytes(path)))
@@ -8422,7 +8384,7 @@ class GraphUpdater:
                 # Keyed on the absolute path: a sibling project's File node
                 # can share the relative path (issue #897). The entry's own
                 # identity, as the File was indexed: a file replaced by a
-                # link resolves to the link's target (#2451 review).
+                # link resolves to the link's target (#2451).
                 graph.execute_write(
                     cs.CYPHER_DELETE_FILE,
                     {cs.KEY_PATH: cached_file_identity_posix(path)},
@@ -8482,7 +8444,7 @@ class GraphUpdater:
         known_module_paths = self._resolve_deferred_definitions(rehydrate=False)
         # A fresh updater read the implementer pairs back BEFORE the delete,
         # so a class the edit stopped implementing still counted as the sole
-        # implementer and the re-parsed caller kept its edge (#2403 review).
+        # implementer and the re-parsed caller kept its edge (#2403).
         # Read back again now that the re-parse registered the traits, as
         # run() does. The inbound edges are not restored yet, and an
         # unchanged impl of a re-parsed trait that no edge makes a dependent
@@ -8620,7 +8582,7 @@ class GraphUpdater:
         caller persisting recovery state uses it to record that the graph is
         about to change; if it raises, the run aborts as `ex.ReingestAborted`
         with the graph as it was, the same as any other prologue failure
-        (#1705 review). "As it was" rather than "untouched": on a fresh
+        (#1705). "As it was" rather than "untouched": on a fresh
         updater the prologue's structure hydration re-emits Package and
         Folder upserts, which are idempotent and change nothing a later run
         would not write identically; nothing is deleted and no definition is
@@ -8747,14 +8709,14 @@ class GraphUpdater:
             # Published for the hook only: the declaration promises an empty
             # scope outside a call, and a long-lived updater (the watcher,
             # the MCP server) would otherwise carry the last call's keys into
-            # whatever reads it next (bot review, #1718).
+            # whatever reads it next (#1718).
             self.reingest_scope = ()
         # Past this point the run WILL issue deletes and writes. Callers that
         # persist recovery state need to know whether a failure left the graph
         # untouched or partial, and classifying by exception TYPE is not
         # enough: a future abort raised mid-run would be misread as "nothing
         # changed" and clear a marker that is protecting a partial graph
-        # (#1705 review, round 7). This flag records what actually happened.
+        # (#1705). This flag records what actually happened.
         self.reingest_mutated = True
         self._reparsed_file_keys = set(all_keys)
 
@@ -8784,7 +8746,7 @@ class GraphUpdater:
             # every directory that changed on disk since the last derivation,
             # so an unrelated directory whose indicator was removed elsewhere
             # gained a second container identity beside the one it already
-            # had (Greptile, PR #1835).
+            # had (PR #1835).
             self.factory.structure_processor.identify_structure(
                 only=self._flip_derivation_scope(flipped_dirs)
             )
@@ -8826,7 +8788,7 @@ class GraphUpdater:
         # rebuilt finding and link writes after it meant an interruption in
         # between left caches claiming the files were done while those writes
         # never landed -- and the next run would skip them as unchanged
-        # (raised in review of #1852).
+        # (#1852).
         self._reingest_rebuild_findings(reparse)
         self._link_endpoint_resources()
         # Unconditionally, because neither post-pass guarantees one:
@@ -8836,7 +8798,7 @@ class GraphUpdater:
         # flushes what the rebuild queued. The hash cache below records these
         # files as current, and a later run would take the in-sync path and
         # skip the post-passes entirely -- so an unflushed queue here is lost
-        # for good rather than retried (raised by CodeRabbit on #1852).
+        # for good rather than retried (#1852).
         self.ingestor.flush_all()
         self._reingest_update_hashes(cache_path, hashes, reparse, parsed, gone)
         flush_stdlib_cache()
@@ -8962,52 +8924,14 @@ class GraphUpdater:
         if graph is None:
             return
         if self._single_file is not None:
-            # A single-file run walked one file and cannot say what the
-            # project still holds, exactly as it cannot speak for the
-            # project's file set (`deleted_keys`) or its exclusion set (the
-            # stamp in `run`). The prune is a whole-project claim: it deletes
-            # every node whose path is absent from disk, on the premise that
-            # a full walk established which paths those are.
-            #
-            # Left unguarded it did not merely over-reach, it emptied the
-            # graph (issue #1756). At the time `repo_path` was the TARGET'S
-            # PARENT, so `pkg/module_a.py` made it `pkg/` and every module's
-            # relative path resolved against the wrong root: `root_module.py`
-            # was tested as `pkg/root_module.py`, found absent, and deleted.
-            # Modules are the worst case because
-            # CYPHER_ALL_MODULE_PATHS_INTERNAL returns no `absolute_path`, so
-            # the containment gate that spares out-of-repo File and Folder
-            # rows never runs for them.
-            #
-            # #1775 fixed that misrooting: `repo_path` is now the project
-            # root whenever an ancestor holds the hash cache or a `.git`.
-            #
-            # That removes the MEASURED cause of #1756 rather than the guard's
-            # justification. Two things were checked while looking at #1776:
-            #
-            # * the path test now agrees with disk truth -- on a correctly
-            #   rooted single-file run, surviving siblings survive and only a
-            #   genuinely absent path is selected;
-            # * `packages_now` is NOT a partial-walk artefact either, because
-            #   `identify_structure` rglobs the whole of `repo_path`
-            #   independently of which FILES are parsed. An earlier version of
-            #   this comment claimed the opposite; a test written to pin that
-            #   claim failed, which is how the error was found.
-            #
-            # So the guard is now conservative rather than load-bearing, and
-            # narrowing it is #1776. It is kept because "conservative" is the
-            # right default for a whole-project delete, and because the
-            # premise above is worth re-measuring against a live database
-            # before acting on it -- these observations come from the
-            # emulated store, which models fewer node kinds than production.
+            # The path prune is a whole-project claim (every node whose path
+            # is absent from disk), which a run that walked one file cannot
+            # make: unguarded it once emptied the graph (#1756). Narrowing it
+            # now that single-file runs are rooted correctly is #1776.
             logger.info(ls.PRUNE_SKIPPED_SINGLE_FILE)
-            # The two sweeps below still run. Unlike the path-keyed loop they
-            # take no path and no project: each deletes only nodes with zero
-            # inbound edges, so a partial walk cannot make them over-delete.
-            # And a single-file run DOES orphan them -- it deletes and
-            # re-ingests its target's entities, which is exactly what strands
-            # an ExternalModule whose import was removed or a Resource whose
-            # endpoint was (#1756 review).
+            # The two edge-count sweeps still run: they need no walk, and a
+            # single-file re-ingest is what strands an ExternalModule or a
+            # Resource its target no longer reaches.
             graph.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
             prune_unanchored_resources(graph)
             return
@@ -9071,7 +8995,7 @@ class GraphUpdater:
 
         # Rows left for the next healthy run are only swept by one that
         # actually prunes, so owe it through a marker the in-sync fast path
-        # refuses on (CodeRabbit, PR #2125).
+        # refuses on (PR #2125).
         self._record_prune_pending(read_failed or tally.registry_skipped > 0)
         if read_failed:
             # The same outage that broke the path reads would break (or act
@@ -9143,7 +9067,7 @@ class GraphUpdater:
         # With the registry unread `_owns` degrades to that same
         # prefix rule, so a row it cannot place is left for the next
         # healthy run, which prunes the whole project again
-        # (CodeRabbit, PR #2125). Path-keyed rows carry no qn and
+        # (PR #2125). Path-keyed rows carry no qn and
         # still prune.
         if isinstance(qn, str) and qn:
             owned = self._owns(qn)
@@ -9175,7 +9099,7 @@ class GraphUpdater:
         that is the node another checkout under this project name writes for
         its own directory at the same relative path, and the upsert shares
         one node between the two, so that checkout's stays even when this
-        repository's link points at it (#2451 review).
+        repository's link points at it (#2451).
         """
         if not isinstance(abs_path, str) or not self._outside_repo_row(
             abs_path, repo_abs
@@ -9217,7 +9141,7 @@ class GraphUpdater:
         # unreadable directory aborted the whole run HERE -- after
         # the unreadable branch had marked it for retry but before
         # that marker could commit, so the retry this PR adds never
-        # landed (bot review on PR #1993).
+        # landed (PR #1993).
         if stale_kind or _vanished(self.repo_path / path):
             # File/Folder deletes key on the absolute path: a sibling
             # project's node can share the relative path (issue #897).
@@ -9258,7 +9182,7 @@ class GraphUpdater:
         A project name that two checkouts share puts both on one Package
         node, holding the path of whichever wrote it last; only the absolute
         path the prune judged (in this repository, or behind one of its own
-        links) may be deleted, so the other checkout's stays (#2451 review).
+        links) may be deleted, so the other checkout's stays (#2451).
         """
         ingestor.execute_write(
             cs.CYPHER_DELETE_PACKAGE_BY_QN,
@@ -9435,12 +9359,12 @@ class GraphUpdater:
         pass that left a symbol without its point, or a stale point behind,
         an unchanged checkout took the in-sync fast path, which never
         embeds: an edited function whose new point the store refused stayed
-        unsearchable until another file changed (review of PR #2550). The
+        unsearchable until another file changed (PR #2550). The
         marker makes that fast path refuse. Each pass covers every function
         of the project, so one that stores, verifies and prunes them all
         settles whatever an earlier run of it owed, and only that: one
         checkout can be indexed under several projects, each with a marker
-        of its own (review of PR #3358).
+        of its own (PR #3358).
         """
         if pending:
             logger.warning(ls.EMBEDDINGS_PENDING.format(project=self.project_name))
@@ -9464,7 +9388,7 @@ class GraphUpdater:
         whether its marker took that. The shared marker goes only once every
         debt it holds is in a file of its own: a write that failed (a full
         disk refuses a new file but not a removal) leaves it for the next
-        sync to split again (review of PR #3358).
+        sync to split again (PR #3358).
         """
         shared = self.prepared_state_dir / cs.EMBEDDINGS_PENDING_FILENAME
         owed = load_shared_embeddings_owed(shared)

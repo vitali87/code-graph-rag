@@ -269,7 +269,7 @@ KEY_PREFIX = "prefix"
 KEY_PROJECT_NAME = "project_name"
 # Registered projects whose names extend this one (`svc.v2` under `svc`).
 KEY_NESTED_PROJECTS = "nested_projects"
-# The incomplete-run marker's phase (#1705 review): whether the run it records
+# The incomplete-run marker's phase (#1705): whether the run it records
 # had reached its first graph write when the marker was last updated.
 KEY_WRITING = "writing"
 # Identifies ONE run's incomplete-run marker. Two registries can index the
@@ -277,7 +277,7 @@ KEY_WRITING = "writing"
 # keyed only by project let the second run's clear delete the first run's
 # marker (issue #1709).
 KEY_RUN_ID = "run_id"
-# Who wrote the CLI sync's incomplete-run marker (PR #2532 review): the host
+# Who wrote the CLI sync's incomplete-run marker (PR #2532): the host
 # (machine and pid namespace) and pid of its process, and a token unique to
 # that one sync, so `delete-project` clears it only once that sync provably
 # stopped, and only if no newer sync has re-marked it since.
@@ -1027,7 +1027,7 @@ CYPHER_DELETE_MODULE = (
     # from a registry read that can fail, and an empty list would let `svc.`
     # take `svc.v2`'s module again. The delete must still run then (a full
     # rebuild over an unreadable graph deletes before it re-parses), so the
-    # query rules those modules out on its own (CodeRabbit, PR #2125).
+    # query rules those modules out on its own (PR #2125).
     # OPTIONAL MATCH rather than an EXISTS subquery, which Memgraph rejects.
     "OPTIONAL MATCH (nested:Project) "
     "WHERE nested.name STARTS WITH $project_prefix "
@@ -1075,7 +1075,7 @@ CYPHER_DELETE_PACKAGE_BY_QN = (
 # this: on a fresh updater (the MCP tool builds one per project) the map has
 # already been re-derived FROM DISK by `_hydrate_for_reingest`, so both sides
 # of the comparison are the post-change state and no flip is ever detected
-# (greptile-local, PR #1835).
+# (PR #1835).
 CYPHER_CONTAINER_KIND = (
     "MATCH (n) WHERE (n:Package OR n:Folder) AND n.absolute_path = $path "
     "RETURN labels(n) AS labels"
@@ -1181,7 +1181,7 @@ CYPHER_PROJECT_OUTSIDE_FILE_KEYS = (
 )
 # The module names a project records, by file path, for the incremental
 # requeue's owner lookup (issue #1935). Scoped in the query: the shared graph
-# holds every project, and filtering in Python read them all (bot review).
+# holds every project, and filtering in Python read them all.
 CYPHER_ALL_MODULE_PATHS_INTERNAL = (
     "MATCH (m:Module) RETURN m.path AS path, m.qualified_name AS qualified_name"
 )

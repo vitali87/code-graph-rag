@@ -1275,7 +1275,7 @@ def _csharp_call_qualifier(call: Node, function: Node) -> str | None:
         return ""
     if head.type == cs.TS_CSHARP_IDENTIFIER:
         # A string named `Util` makes `Util.Ext(1, 2)` an instance call
-        # even where an extension class `Util` exists (Greptile, #2832).
+        # even where an extension class `Util` exists (#2832).
         name = safe_decode_text(head)
         if not name or csharp_utils.binds_value(call, name):
             return ""
@@ -1362,7 +1362,7 @@ _GO_SCOPE_TYPES = frozenset(
 )
 # Each is an implicit block for a declaration inside it: a `case` clause's
 # body is its own scope without braces, so a type declared under `case 0:`
-# is invisible to the `default:` arm (#1747 review).
+# is invisible to the `default:` arm (#1747).
 _GO_BLOCK_TYPES = frozenset(
     {
         cs.TS_GO_BLOCK,
@@ -1872,7 +1872,7 @@ def _go_asserted_receiver_call_name(selector: Node) -> str | None:
     if type_node is None:
         return None
     # `other.Dog` keeps its package: read as `Dog` alone it named the
-    # caller's own `Dog` (Greptile, PR #2961).
+    # caller's own `Dog` (PR #2961).
     type_name = (
         decode_node_text(type_node.text)
         if type_node.type == cs.TS_GO_QUALIFIED_TYPE and type_node.text
@@ -2239,7 +2239,7 @@ class CallProcessor:
         # function name in C resolves outside its own file (issue #2529).
         self._c_file_scopes: dict[str, CFileScope] = {}
         # The repo headers each C/C++ file includes, directly or through
-        # another header (#2593 review).
+        # another header (#2593).
         self._c_include_closures: dict[str, frozenset[str]] = {}
         # factory qn -> the class its returns construct, read once per pass
         # (issue #2453). Strings only, so no tree is pinned.
@@ -2468,7 +2468,7 @@ class CallProcessor:
             ):
                 # No body field: the body is everything after the signature.
                 # A head the naming pass refuses owns no body: its calls
-                # bubble to the module (issue #1882 review).
+                # bubble to the module (issue #1882).
                 if func_node.named_children and julia_utils.function_head_name(
                     func_node
                 ):
@@ -3594,7 +3594,7 @@ class CallProcessor:
             # (issue #1631), through the SAME helper the definition pass
             # uses: a returned or passed table has no assignment target at
             # all, and without this the body's calls were dropped or
-            # credited to the enclosing function (#1631 review).
+            # credited to the enclosing function (#1631).
             func_name = self._lua_caller_func_name(func_node)
         if not func_name and language == cs.SupportedLanguage.JULIA:
             # Julia definition nodes carry no `name` field; recover it
@@ -3647,7 +3647,7 @@ class CallProcessor:
             return field[0]
         # A field with no name is anonymous in the definition pass too;
         # naming it after the assignment here would credit its calls to a
-        # node that does not exist (#1750 review).
+        # node that does not exist (#1750).
         if not lua_utils.is_field_value(func_node) and (
             name := lua_utils.extract_assigned_name(
                 func_node, accepted_var_types=cs.LUA_NAMING_ASSIGNMENT_TARGETS
@@ -3992,7 +3992,7 @@ class CallProcessor:
             method_name = self._class_method_name(method_node, language, module_qn)
             if not method_name and language == cs.SupportedLanguage.JULIA:
                 # Same name recovery as the module pass, else the inner
-                # constructor's body is skipped (issue #1882 review).
+                # constructor's body is skipped (issue #1882).
                 method_name = self._julia_caller_name(method_node, module_qn)
             if not method_name:
                 continue
@@ -4087,7 +4087,7 @@ class CallProcessor:
         # arrow) means the instance (True); a plain function / generator /
         # function expression rebinds `this` per call, so `this` is NOT the
         # instance (False). Prevents a false self-dispatch edge for `this.M()`
-        # inside a plain nested `function(){}` (adversarial review of issue #971).
+        # inside a plain nested `function(){}` (issue #971).
         current = call_node.parent
         while current is not None:
             node_type = current.type
@@ -5261,7 +5261,7 @@ class CallProcessor:
         # A file's package-level names cannot collide with its functions'
         # (the compiler rejects it), so only a function or method binds
         # names a bare call might mean instead of the package's (#2571),
-        # and only where each is in scope (#2616 review).
+        # and only where each is in scope (#2616).
         scopes = (
             {}
             if caller_type == cs.NodeLabel.MODULE
@@ -5543,7 +5543,7 @@ class CallProcessor:
                 # `super` is the `extends` class ONLY, as written in this
                 # file: a `with` mixin's same-named METHOD, an `implements`
                 # interface's constructor, or anything at all for a class
-                # with no `extends` is never what runs (Greptile, PR #2804).
+                # with no `extends` is never what runs (PR #2804).
                 written = dart_utils.superclass_type(caller_node)
                 if written is None:
                     continue
@@ -6863,7 +6863,7 @@ class CallProcessor:
         ):
             # A literal or a type assertion writes the receiver's type, read in
             # this file's imports: `a.(other.Dog).Fetch()` binds the imported
-            # package's Dog, never this package's (Greptile, PR #2961).
+            # package's Dog, never this package's (PR #2961).
             class_qn, owned = self._go_literal_receiver_class(
                 _go_written_type(root), ctx.module_qn
             )
@@ -7202,7 +7202,7 @@ class CallProcessor:
         # nothing names a type with no node, and must not reach the
         # name-based lookups.
         # A name declared with a qualified type (`::B g`, `ns::B n`) keeps
-        # the class its qualifier names (#2631 re-review). Where a name's
+        # the class its qualifier names (#2631). Where a name's
         # declarations disagree (a block local `B b` hiding a `::B b`
         # field), the widest one is the flat binding and each is returned
         # as a span binding over its window, so a call binds to the
@@ -7235,7 +7235,7 @@ class CallProcessor:
         # operator() reachable (issue #2555). The object is passed as a
         # value: whether the callee runs it or only stores it
         # (`values.push_back(f)`) is not visible here, so the pass is a
-        # REFERENCES edge, never an invocation (#2631 review). True when the
+        # REFERENCES edge, never an invocation (#2631). True when the
         # argument was one and its edge is out.
         if language != cs.SupportedLanguage.CPP:
             return False
@@ -7511,7 +7511,7 @@ class CallProcessor:
             if self._resolver.function_registry.get(variant) == cs.NodeLabel.CLASS
         ]
         # Twin classes take the same stamp the class branch gives a
-        # two-candidate construction (local review).
+        # two-candidate construction.
         self._resolution = (
             cs.EdgeResolution.OVERLOAD
             if len(owner_variants) > 1
@@ -7795,7 +7795,7 @@ class CallProcessor:
     ) -> None:
         # A shadowing free function wins, else the inner same-name
         # constructor (like Java/C#). The resolution describes the
-        # FILTERED target set (#1882 review).
+        # FILTERED target set (#1882).
         if fn_variants:
             self._resolution = (
                 cs.EdgeResolution.OVERLOAD
@@ -9131,7 +9131,7 @@ class CallProcessor:
                 else cs.EdgeResolution.EXACT
             )
         # A variable or enumeration constant this file or a header it
-        # includes declares is what the name denotes (#2593 review).
+        # includes declares is what the name denotes (#2593).
         if any(
             name in self._c_file_scope(visible).objects
             for visible in (module_qn, *self._c_include_closure(module_qn))
@@ -9160,7 +9160,7 @@ class CallProcessor:
         if file_path.name.endswith(cs.C_CPP_SOURCE_EXTENSIONS):
             return not internal
         # A header's `static inline` is compiled into the files including it
-        # and no other (#2593 review); a plain definition there links
+        # and no other (#2593); a plain definition there links
         # externally like a source file's.
         return not internal or module_qn in self._c_include_closure(referrer_qn)
 
@@ -9324,7 +9324,7 @@ class CallProcessor:
         # The full INHERITS closure, not just direct bases: construction and
         # destruction run EVERY ancestor's ctor/dtor unconditionally, and an
         # intermediate whose definition lives outside the parsed source has
-        # no bodied caller pass to carry the chain onward (PR #894 review).
+        # no bodied caller pass to carry the chain onward (PR #894).
         ancestors = self._cpp_registered_ancestors(class_qn)
         if not ancestors:
             return
@@ -9582,7 +9582,7 @@ class CallProcessor:
         search by simple name, which bound `Error{}` in package `m` to a
         same-named struct in package `a`, or to a Python `class Error`, and
         dead-code then revived the wrong type while reporting the constructed
-        one dead (#1642 review). The one Class named `Name` directly under a
+        one dead (#1642). The one Class named `Name` directly under a
         file of the right package is the answer; two candidates, or none,
         resolve to nothing rather than a guess.
         """
@@ -9593,7 +9593,7 @@ class CallProcessor:
         else:
             # Own package first; a bare name can also be an exported type of a
             # DOT-imported package (`import . "proj/m"`), which the import
-            # pass records under a `.`-prefixed key (#1747 review).
+            # pass records under a `.`-prefixed key (#1747).
             packages = [module_qn.rpartition(cs.SEPARATOR_DOT)[0]] + [
                 path
                 for key, path in import_map.items()
@@ -9616,7 +9616,7 @@ class CallProcessor:
         the shape that does occur is a function-local type shadowing a
         package-level one, which the registry also files directly under the
         declaring module. The one declared in THIS file wins then, because a
-        local type is what a bare literal in that file names (#1747 review).
+        local type is what a bare literal in that file names (#1747).
         Anything still ambiguous resolves to nothing rather than a guess.
         """
         registry = self._resolver.function_registry
@@ -9648,7 +9648,7 @@ class CallProcessor:
         type is visible from its declaration to the end of its innermost
         block and shadows the package-level twin there; a literal before the
         declaration, or outside the nested block that holds it, names the
-        package type (CodeRabbit and #1747 review). So choose by position
+        package type (#1747). So choose by position
         against that span. Any shape this cannot settle keeps the fan-out.
         """
         variants = self._resolver.function_registry.variants(class_qn)
@@ -9663,7 +9663,7 @@ class CallProcessor:
             return variants
         # A point, not a row: `x := Local{}; type Local struct{}` on one line
         # puts the literal BEFORE the declaration, and rows alone attributed
-        # it to the later local type (#1747 review).
+        # it to the later local type (#1747).
         point: _Point = (literal.start_point[0], literal.start_point[1])
         local = [
             variant
@@ -10548,12 +10548,12 @@ class CallProcessor:
         # this reference; `self._resolution` still describes the call whose
         # argument it is. Emitting through the stale value labelled a callback
         # found only by trie fallback as exact, so `dead-code --min-resolution
-        # exact` kept a target it should have dropped (#1543 review). Scoped:
+        # exact` kept a target it should have dropped (#1543). Scoped:
         # the enclosing call's label is restored on the way out, so the edge
         # it emits afterwards reads its own verdict back (issue #1526).
         # And, like a primary call, a callback that fans out to same-named
         # candidates is an `overload`: one reference, several targets, none
-        # chosen (#1543 review). The resolver's single-target verdict would
+        # chosen (#1543). The resolver's single-target verdict would
         # otherwise let an exact floor keep every one of them.
         prev_resolution = self._resolution
         targets = registry.variants(res_qn)
@@ -10639,7 +10639,7 @@ class CallProcessor:
         # the callback where it invokes `param_name`, so the edge waits for
         # finalize and that site instead of taking the argument's, a position
         # in this file rather than the callee's (issue #2459). The verdict is
-        # the one the callback resolution set for this edge (#1543 review).
+        # the one the callback resolution set for this edge (#1543).
         passed = self._flow_bucket.passed
 
         def record(
@@ -10775,7 +10775,7 @@ class CallProcessor:
         self, invocations: dict[tuple[str, str], tuple[PropertyDict, ...]]
     ) -> None:
         # After the propagated bindings, so where both reach one site the
-        # direct argument's own verdict is the one that stays (#1543 review).
+        # direct argument's own verdict is the one that stays (#1543).
         registry = self._resolver.function_registry
         file_flows = self._callable_flow.values()
         for passed in (p for flow in file_flows for p in flow.passed):

@@ -243,7 +243,7 @@ def grammar_installed(lang_name: str) -> bool:
     enough, as a checkout whose build fails has one and gives no parser. It
     is never imported or built here: importing runs the checkout's
     `__init__.py`, and a listing must not execute checkout code or start a
-    compile to answer a yes/no (Greptile reviews of PR 2508). So a binding
+    compile to answer a yes/no (PR #2508). So a binding
     built once that no longer loads still reads as installed.
     """
     lang_import = _IMPORT_SPECS.get(lang_name)
@@ -492,7 +492,7 @@ class _LazyGrammarStore:
     # load_parsers() call (which previously recompiled EVERY language's
     # query set on every call). The lock serializes loads: without it a
     # thread probing a language MID-LOAD would see it in _attempted but not
-    # yet in the dict and wrongly report it unavailable (PR #802 review).
+    # yet in the dict and wrongly report it unavailable (PR #802).
     def __init__(self) -> None:
         self._parser_data: dict[cs.SupportedLanguage, Parser] = {}
         self._query_data: dict[cs.SupportedLanguage, LanguageQueries] = {}

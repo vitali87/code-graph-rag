@@ -93,7 +93,7 @@ class IgnoreRules:
     `load_ignore_patterns` reads the root `.cgrignore` and `.gitignore` and
     asks git which files it tracks. Read once at start-up, a tracked file
     renamed within `out/` was refused as untracked and an edited ignore file
-    left later events filtered by the old rules (review of PR 2490), so the
+    left later events filtered by the old rules (PR #2490), so the
     handler re-reads them whenever one of these inputs changes. The git index
     stands for "what git tracks": `git mv`, `git add` and `git rm` rewrite it.
     """
@@ -343,7 +343,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         A full rebuild a failed re-ingest left owed runs instead, on the new
         updater, and clears the flag only when it succeeds: the incremental
         run skips an unchanged file whose nodes that failure deleted, then
-        stamps the partial graph as current (review of PR 2490).
+        stamps the partial graph as current (PR #2490).
         """
         with self._update_lock:
             if not rules.reload():
@@ -710,7 +710,7 @@ def start_watcher(
 def _ensure_constraints(ingestor: MemgraphIngestor, project_name: str) -> None:
     """Create the graph's constraints and indexes before the first scan writes.
 
-    As `cgr start` does before each sync (review of PR 3365): without them a
+    As `cgr start` does before each sync (PR #3365): without them a
     fresh or unmigrated graph lets parallel MERGE flushes create duplicate
     nodes, and lookups run unindexed. Once per watcher: they outlive every
     later write, and a `cgr start --clean` that wipes the graph ensures them
@@ -838,7 +838,7 @@ def _watcher_updater(
     # The same ignore sets `cgr index` loads, or the initial scan skips what
     # `.cgrignore`, `.gitignore` and the git-tracked rescue decide and the
     # event filter, which reads them from the updater, drops their edits
-    # (review of PR 2490).
+    # (PR #2490).
     return GraphUpdater(
         ingestor,
         repo_path_obj,

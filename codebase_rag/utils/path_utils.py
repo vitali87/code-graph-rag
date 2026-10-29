@@ -60,7 +60,7 @@ def default_project_name(repo_path: Path) -> str:
     separator: `acme.web/` would write the nodes of project `acme`'s package
     `web` (#2412). Such a checkout gets the digest-suffixed derived name, not
     just the `.` dropped, which would give `acme.web/` and `acme_web/` the
-    same project (review of PR 2497).
+    same project (PR #2497).
     """
     directory = repo_path.resolve().name
     if cs.SEPARATOR_DOT not in directory:
@@ -94,7 +94,7 @@ def separator_free_project_name(name: str) -> str:
 def normalize_project_name(project_name: str | None, repo_path: Path) -> str:
     # The name a sync writes its project under. The CLI's ownership check
     # asks about the same name, so a padded one cannot pass the check under
-    # one spelling and be written under another (review of PR 2499).
+    # one spelling and be written under another (PR #2499).
     return (project_name and project_name.strip()) or default_project_name(repo_path)
 
 
@@ -474,7 +474,7 @@ def has_implementation_sibling(
     excluded `foo.ts` is on disk and will never be a node, so yielding
     `proj.foo` to it leaves NOTHING owning the name imports of `./foo` resolve
     to -- #1720 reintroduced by its own fix, under a configuration the first
-    version of this predicate could not see (Greptile P1 on PR #1728).
+    version of this predicate could not see (PR #1728).
 
     So candidates are filtered through `should_skip_path`, the same predicate
     the repository walk prunes with. Sharing it is what stops this from
@@ -655,7 +655,7 @@ def walk_eligible_files(
     repo_str = str(repo_path)
     # A repo path that already ends in a separator (the filesystem root, "/")
     # must not have another counted, or the slice below eats the first
-    # character of every child -- "/tmp" became "mp" (CodeRabbit, PR #1511).
+    # character of every child -- "/tmp" became "mp" (PR #1511).
     repo_prefix_len = len(repo_str) + (0 if repo_str.endswith(os.sep) else 1)
     state_filenames = cs.CGR_STATE_FILENAMES
     for dirpath, dirnames, filenames in os.walk(repo_str):
@@ -691,7 +691,7 @@ def rescued_files(
     The compiler frontends skip those names on their own, so they must be told
     which files under them the graph holds: a git-tracked `pkg/out/out.go` or
     a file a `!` line rescues otherwise reaches the graph without its compiler
-    facts (review of PR 2490).
+    facts (PR #2490).
     """
     return frozenset(
         rel_path_str

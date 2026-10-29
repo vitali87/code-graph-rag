@@ -863,7 +863,7 @@ def _tracked_source_dirs(repo_path: Path) -> frozenset[str]:
     tracked file under such a directory is rescued by its own anchored path,
     not the directory: a directory-level `!` would let untracked build output
     written beside the tracked source (`bin/generated.js`) through as well
-    (review of PR 2490). An untracked `tools/bin/` stays excluded too, and an
+    (PR #2490). An untracked `tools/bin/` stays excluded too, and an
     explicit exclude still wins as for any `!` line (issue #2406). Outside a
     git checkout, or if git cannot answer, nothing is rescued.
     """
@@ -889,7 +889,7 @@ def _tracked_source_dirs(repo_path: Path) -> frozenset[str]:
         # the ambiguous names: a tracked `vendor/bin/x.js` is still vendored
         # code. A name with pattern characters or trailing whitespace is left
         # excluded rather than written as a pattern that could match untracked
-        # files beside it (review of PR 2490).
+        # files beside it (PR #2490).
         if (
             cs.TRACKED_PATH_PATTERN_CHARS.search(entry)
             or entry[-1:].isspace()
