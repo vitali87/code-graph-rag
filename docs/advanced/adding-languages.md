@@ -110,6 +110,23 @@ what each shipped language actually provides; the files in a language's
 package are not. For compiler-backed facts on top of the Tree-sitter
 backbone, see [Adding a Language Frontend](../architecture/language-frontends.md).
 
+## Where language-specific code lives
+
+The pass modules (`import_processor.py`, `call_processor.py`,
+`call_resolver.py`, `definition_processor.py` and `class_ingest/`) own the
+language-neutral algorithm and reach a language's code through one dispatch
+per language. Code that reads a language's syntax or applies its rules
+belongs in that language's package, `codebase_rag/parsers/<language>/`: its
+parser utils, its type-inference engine, its compiler frontend
+(`frontend.py`, beside the tool it drives) and helpers such as
+`parsers/rust/cargo.py` and `parsers/rust/source_scan.py`.
+
+Put new language-specific behaviour there, as a function or engine method
+the pass calls through its per-language dispatch, rather than as a new
+`if language == ...` branch with the logic inlined in a pass module. Older
+per-language method groups still sit in the pass modules and are moving into
+the language packages one language at a time.
+
 ## Example: Adding C# Support
 
 ```bash
