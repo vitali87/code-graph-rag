@@ -2006,7 +2006,12 @@ def mcp_server(
     workspace: str | None = typer.Option(
         None, "--workspace", help=ch.HELP_MCP_WORKSPACE
     ),
+    read_only: bool = typer.Option(False, "--read-only", help=ch.HELP_MCP_READ_ONLY),
 ) -> None:
+    # `is True`: typer passes a bool, while a direct call that omits the
+    # flag passes the truthy OptionInfo default, which must not turn the
+    # setting on.
+    settings.MCP_READ_ONLY = settings.MCP_READ_ONLY or read_only is True
     try:
         if transport == cs.MCPTransport.HTTP:
             from codebase_rag.mcp import serve_http

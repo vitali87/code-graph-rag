@@ -399,6 +399,14 @@ CGRIGNORE_READ_FAILED = "Failed to read {path}: {error}"
 
 CGR_INSTRUCTIONS_LOADED = "Loaded project instructions from {path} ({chars} chars)"
 CGR_INSTRUCTIONS_READ_FAILED = "Failed to read project instructions {path}: {error}"
+CGR_INSTRUCTIONS_UNAPPROVED = (
+    "Skipped {path}: its current content has not been approved. Approve it in an "
+    "interactive session (cgr start), or export CGR_TRUST_PROJECT_INSTRUCTIONS=true "
+    "(a .env file cannot set it)"
+)
+CGR_INSTRUCTIONS_STORE_UNREADABLE = (
+    "Ignoring unreadable instruction approvals {path}: {error}"
+)
 
 # File watcher logs
 WATCHER_ACTIVE = "File watcher is now active."
@@ -1173,6 +1181,7 @@ MCP_SERVER_INIT_SERVICES = "[GraphCode MCP] Initializing services..."
 MCP_SERVER_INIT_SUCCESS = "[GraphCode MCP] Services initialized successfully"
 MCP_SERVER_CALLING_TOOL = "[GraphCode MCP] Calling tool: {name}"
 MCP_SERVER_UNKNOWN_TOOL = "[GraphCode MCP] Unknown tool: {name}"
+MCP_SERVER_READ_ONLY_REFUSED = "[GraphCode MCP] Refused {name}: the server is read-only"
 MCP_SERVER_TOOL_ERROR = "[GraphCode MCP] Error executing tool '{name}': {error}"
 MCP_SERVER_STARTING = "[GraphCode MCP] Starting MCP server..."
 MCP_SERVER_CREATED = "[GraphCode MCP] Server created, starting stdio transport..."

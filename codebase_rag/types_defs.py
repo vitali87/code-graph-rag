@@ -835,6 +835,10 @@ class ShellCommandArgs(TypedDict, total=False):
     command: str
 
 
+class ReadFileArgs(TypedDict, total=False):
+    file_path: str
+
+
 class StructuralReplaceArgs(TypedDict, total=False):
     pattern: str
     rewrite: str
@@ -855,7 +859,13 @@ class RawToolArgs:
     dry_run: bool = True
 
 
-ToolArgs = ReplaceCodeArgs | CreateFileArgs | ShellCommandArgs | StructuralReplaceArgs
+ToolArgs = (
+    ReplaceCodeArgs
+    | CreateFileArgs
+    | ShellCommandArgs
+    | ReadFileArgs
+    | StructuralReplaceArgs
+)
 
 
 class LanguageQueries(TypedDict):

@@ -561,7 +561,26 @@ CLI_MSG_AUTO_EXCLUDE = (
 UI_DIFF_FILE_HEADER = "[bold cyan]File: {path}[/bold cyan]"
 UI_NEW_FILE_HEADER = "[bold cyan]New file: {path}[/bold cyan]"
 UI_SHELL_COMMAND_HEADER = "[bold cyan]Shell command:[/bold cyan]"
+UI_SENSITIVE_READ_HEADER = (
+    "[bold cyan]Read a file that may hold credentials "
+    "(its content goes to the model provider):[/bold cyan]"
+)
 UI_TOOL_APPROVAL = "[bold yellow]⚠️  Tool '{tool_name}' requires approval:[/bold yellow]"
+# The repository's .cgr.md, shown before it may reach the system prompt
+# (issue #3456). The titles are plain text: the path is not markup.
+UI_INSTRUCTIONS_NEW = "{path}: project instructions, not approved yet"
+UI_INSTRUCTIONS_CHANGED = "{path}: changed since you approved it"
+UI_INSTRUCTIONS_PROMPT = (
+    "This file comes from the repository and goes into the agent's system "
+    "prompt. Load it"
+)
+UI_INSTRUCTIONS_SKIPPED = (
+    "Continuing without the repository's .cgr.md. You will be asked again next session."
+)
+# Control characters (ANSI escapes, bidi overrides) are shown escaped, so
+# what the user approves is what the model reads.
+UI_VISIBLE_WHITESPACE = "\n\t"
+UI_ESCAPED_CHAR = "\\u{code:04x}"
 UI_FEEDBACK_PROMPT = "Feedback (why rejected, or press Enter to skip)"
 # `cgr start -a` has no operator to ask: what the model is told when it asks
 # for an edit or a non-read-only command without --no-confirm (issue #2657).

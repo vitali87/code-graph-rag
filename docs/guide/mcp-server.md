@@ -124,6 +124,28 @@ not hold. A refusal is a result with `isError: true` and the JSON
 means the name is in the graph and nothing matches it. `definition` still
 answers `found: false` for a qualified name it does not find.
 
+### Read-only mode and tool annotations
+
+Each tool tells the client whether it writes: `readOnlyHint` on the tools that
+only read, and `destructiveHint` on `wipe_database`, `delete_project`,
+`index_repository`, `rename`, `surgical_replace_code`, `write_file` and
+`structural_replace`. All of them carry `openWorldHint: false`: none reaches
+past this server's graph and files. A client with its own approval rules can
+key them on these.
+
+To give a client queries and nothing else, start the server read-only:
+
+```bash
+cgr mcp-server --read-only    # or MCP_READ_ONLY=true
+```
+
+`write_file`, the edit tools, indexing, `annotate`, `delete_project` and
+`wipe_database` are then neither listed nor run: a call by name returns an
+error with `isError: true`. In either mode `read_file` refuses files that look
+like credentials (`.env`, private keys, `.git/config`, ...); export
+`CGR_ALLOW_SENSITIVE_READS=true` in the server's environment to serve them (a
+`.env` in its working directory cannot set it).
+
 ![A Python MCP client over stdio listing the server's tools and calling list_projects, resolve, callers, get_code_snippet and find_duplicate_code on pallets/itsdangerous](../assets/demos/mcp-server-tools.gif)
 
 *`call_tools.py` is a small client built on the `mcp` Python SDK; none of these tools calls an LLM.*
