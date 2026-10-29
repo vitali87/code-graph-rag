@@ -119,7 +119,7 @@ def test_the_call_pass_still_links_the_file(
 
 
 # The bad byte is in a DECORATOR, not in any name the extractors read. It
-# reaches `parsers.utils.safe_decode_text`, a third pass that decodes
+# reaches `parsers.node_text.safe_decode_text`, a third pass that decodes
 # independently of the two above -- and Python is the repo's primary
 # language, so this is the most likely way a real repository hits #1797.
 _BAD_DECORATOR = b"@deco\xffr\ndef f(): pass\ndef other(): pass\n"

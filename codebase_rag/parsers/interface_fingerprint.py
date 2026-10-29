@@ -73,8 +73,9 @@ from tree_sitter import Node
 
 from .. import constants as cs
 from ..language_spec import LANGUAGE_SPECS
+from .node_text import safe_decode_text
 from .python.ast_analyzer import local_names, names_bound_within
-from .utils import callable_parameter_indices, safe_decode_text
+from .utils import callable_parameter_indices
 
 
 class _Rules(NamedTuple):

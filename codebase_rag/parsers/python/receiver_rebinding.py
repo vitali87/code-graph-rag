@@ -19,7 +19,7 @@ from typing import NamedTuple
 from tree_sitter import Node
 
 from ... import constants as cs
-from ..utils import safe_decode_text
+from ..node_text import safe_decode_text
 
 # Scopes whose assignments bind their own locals, not the method's receiver.
 _NESTED_SCOPES = frozenset(

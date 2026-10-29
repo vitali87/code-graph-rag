@@ -41,6 +41,7 @@ from .go.builds import GoBuilds
 from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
 from .method_ingest import ingest_method
+from .node_text import safe_decode_text
 from .parameter_nodes import (
     PendingParameterType,
     csharp_call_shape,
@@ -60,7 +61,6 @@ from .utils import (
     mark_js_ts_module_private,
     python_positional_parameter_names,
     record_cpp_definition_span,
-    safe_decode_text,
     warn_if_name_truncated,
 )
 

@@ -5,7 +5,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ... import logs as ls
-from ..utils import safe_decode_with_fallback
+from ..node_text import safe_decode_with_fallback
 
 
 def definition_label(

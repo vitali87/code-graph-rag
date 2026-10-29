@@ -65,6 +65,7 @@ from .js_ts.tsconfig import (
     ts_alias_target,
 )
 from .lua import utils as lua_utils
+from .node_text import safe_decode_text, safe_decode_with_fallback, sorted_captures
 from .php.namespaces import declared_namespace
 from .python.source_roots import discover_python_source_roots, resolve_via_source_roots
 from .rust import cargo_semver
@@ -77,14 +78,7 @@ from .stdlib_extractor import (
     flush_stdlib_cache,
     get_stdlib_cache_stats,
 )
-from .utils import (
-    follow_reexports,
-    node_site_properties,
-    safe_decode_text,
-    safe_decode_with_fallback,
-    shared_or_new,
-    sorted_captures,
-)
+from .utils import follow_reexports, node_site_properties, shared_or_new
 
 _JS_SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9.+-]*):")
 # A module known to declare no Scala package: not a Scala file, or unreadable.

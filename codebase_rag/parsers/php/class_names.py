@@ -16,7 +16,7 @@ from tree_sitter import Node
 from ... import constants as cs
 from ...language_spec import LANGUAGE_FQN_SPECS
 from ...utils.fqn_resolver import scoped_name_parts
-from ..utils import safe_decode_text
+from ..node_text import safe_decode_text
 
 ClassPath = tuple[str, ...]
 # A scope's typed variables, keyed by the scope's byte span.

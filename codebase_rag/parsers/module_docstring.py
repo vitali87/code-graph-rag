@@ -20,7 +20,7 @@ from typing import NamedTuple
 
 from ..constants import SupportedLanguage
 from ..types_defs import ASTNode
-from .utils import safe_decode_with_fallback
+from .node_text import safe_decode_with_fallback
 
 
 class ModuleDocSpec(NamedTuple):

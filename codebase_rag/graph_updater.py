@@ -99,12 +99,13 @@ from .parsers.java.lombok import (
     current_lombok_identity,
     overlay_identity,
 )
+from .parsers.node_text import sorted_captures
 from .parsers.notebook import NotebookSkipped, is_notebook_path, read_notebook
 from .parsers.parameter_nodes import PendingParameterType
 from .parsers.rust import utils as rs_utils
 from .parsers.stdlib_extractor import flush_stdlib_cache
 from .parsers.structure_processor import StructureProcessor
-from .parsers.utils import mark_js_ts_module_private, sorted_captures
+from .parsers.utils import mark_js_ts_module_private
 from .path_filters import matches_test_path
 from .services import (
     IngestorProtocol,

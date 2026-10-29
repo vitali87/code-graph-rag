@@ -24,7 +24,7 @@ from typing import NamedTuple
 from tree_sitter import Node
 
 from ... import constants as cs
-from ..utils import safe_decode_text
+from ..node_text import safe_decode_text
 
 _TARGET_PATTERNS = frozenset(
     {cs.TS_PY_PATTERN_LIST, cs.TS_PY_TUPLE_PATTERN, cs.TS_PY_LIST_PATTERN}

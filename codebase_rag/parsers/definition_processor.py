@@ -48,16 +48,13 @@ from .java.generated import generator_hint
 from .js_ts.ingest import JsTsIngestMixin
 from .js_ts.overloads import folded_overload_signatures, implementation_signatures
 from .module_docstring import extract_module_docstring
+from .node_text import safe_decode_with_fallback, sorted_captures
 from .notebook import is_notebook_path
 from .parameter_nodes import PendingParameterType
 from .php.namespaces import declared_namespace
 from .python.overloads import folded_overload_stubs
 from .sql_recovery import lost_sql_functions
-from .utils import (
-    get_function_captures,
-    safe_decode_with_fallback,
-    sorted_captures,
-)
+from .utils import get_function_captures
 
 if TYPE_CHECKING:
     from ..services import IngestorProtocol

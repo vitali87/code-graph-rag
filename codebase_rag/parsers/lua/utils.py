@@ -1,7 +1,8 @@
 from tree_sitter import Node
 
 from ... import constants as cs
-from ..utils import contains_node, safe_decode_text
+from ..node_text import safe_decode_text
+from ..utils import contains_node
 
 
 def extract_assigned_name(

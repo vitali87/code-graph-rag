@@ -6,7 +6,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ...types_defs import CppParameterType
-from ..utils import safe_decode_text
+from ..node_text import safe_decode_text
 from . import local_types
 
 # Declarations whose `type` field names the type of the names they declare.

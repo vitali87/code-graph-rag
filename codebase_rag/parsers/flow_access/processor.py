@@ -65,6 +65,7 @@ from ..io_access.registry import (
     LIBC_STD_STREAMS,
 )
 from ..io_access.resource_names import resource_qn
+from ..node_text import safe_decode_text
 from ..semantic_call_join import call_site_key
 from ..utils import (
     c_positional_parameter_slots,
@@ -81,7 +82,6 @@ from ..utils import (
     python_free_variable_names,
     python_parameter_names,
     rust_positional_parameter_slots,
-    safe_decode_text,
     scala_positional_parameter_slots,
     shared_or_new,
 )

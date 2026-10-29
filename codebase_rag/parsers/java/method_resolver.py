@@ -17,7 +17,8 @@ from ...types_defs import (
     JavaSupertypes,
 )
 from ..definition_facts import DefinitionFacts
-from ..utils import method_signature_arity, module_qn_for_entity, safe_decode_text
+from ..node_text import safe_decode_text
+from ..utils import method_signature_arity, module_qn_for_entity
 from .type_resolver import JAVA_TYPE_DECL_NODE_TYPES
 from .utils import (
     extract_class_info,

@@ -12,7 +12,7 @@ from ... import logs as ls
 from ...decorators import depth_exhausted, depth_guard, recursion_guard
 from ...types_defs import ASTNode
 from ..definition_facts import DefinitionFacts
-from ..utils import safe_decode_text
+from ..node_text import safe_decode_text
 from .utils import (
     extract_class_info,
     extract_field_info,

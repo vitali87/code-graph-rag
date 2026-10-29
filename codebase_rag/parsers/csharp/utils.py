@@ -8,7 +8,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ...types_defs import PropertyDict
-from ..utils import safe_decode_text
+from ..node_text import safe_decode_text
 
 
 def _first_attribute_list(node: Node) -> Node | None:

@@ -16,7 +16,7 @@ from ...types_defs import (
     JavaMethodInfo,
     JavaMethodReferenceParts,
 )
-from ..utils import safe_decode_text
+from ..node_text import safe_decode_text
 
 if TYPE_CHECKING:
     from ...types_defs import ASTCacheProtocol

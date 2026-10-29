@@ -13,8 +13,8 @@ from codebase_rag.parsers.dependency_parser import (
     PyProjectTomlParser,
     RequirementsTxtParser,
 )
+from codebase_rag.parsers.node_text import _cached_decode_bytes
 from codebase_rag.parsers.stdlib_extractor import StdlibExtractor
-from codebase_rag.parsers.utils import _cached_decode_bytes
 
 
 class TestDependencyParserSlots:

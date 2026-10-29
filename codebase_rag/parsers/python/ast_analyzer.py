@@ -19,12 +19,8 @@ from ...types_defs import (
 )
 from .. import native_trees
 from ..js_ts.utils import find_method_in_ast as find_js_method_in_ast
-from ..utils import (
-    get_cached_query,
-    note_query_fallback,
-    safe_decode_text,
-    sorted_captures,
-)
+from ..node_text import get_cached_query, safe_decode_text, sorted_captures
+from ..utils import note_query_fallback
 from .with_analyzer import WithTarget
 
 _WITH_STMT_CAPTURE = "with_stmt"

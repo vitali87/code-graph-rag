@@ -18,7 +18,7 @@ from tree_sitter import Node
 from .. import constants as cs
 from ..services import IngestorProtocol
 from ..types_defs import CSharpCallShape
-from .utils import safe_decode_text
+from .node_text import safe_decode_text
 
 
 class DeclaredParameter(NamedTuple):

@@ -1,16 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Collection, Mapping
-from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 from loguru import logger
-from tree_sitter import Language, Node, Query, QueryCursor
+from tree_sitter import Node, QueryCursor
 
 from .. import constants as cs
 from .. import logs as ls
-from ..language_spec import decode_node_text
 from ..types_defs import (
     ASTNode,
     CppDefinitionSpan,
@@ -18,9 +16,9 @@ from ..types_defs import (
     FunctionSpanKey,
     LanguageQueries,
     PropertyDict,
-    TreeSitterNodeProtocol,
 )
 from ..utils.path_utils import cached_relative_path
+from .node_text import safe_decode_text, sorted_captures
 
 if TYPE_CHECKING:
     from ..language_spec import LanguageSpec
@@ -173,10 +171,6 @@ def record_cpp_definition_span(
     )
 
 
-_QUERY_CACHE: dict[tuple[Language, str], Query] = {}
-_QUERY_LAST: tuple[tuple[Language, str], Query] | None = None
-
-
 # The traversal queries whose failure has been reported; reported once each,
 # since every later call falls back the same way.
 _FALLBACK_REPORTED: set[str] = set()
@@ -195,51 +189,9 @@ def note_query_fallback(query_text: str, error: Exception) -> None:
     )
 
 
-def get_cached_query(language_obj: Language, query_text: str) -> Query:
-    # Key by the Language itself, never id(): Language hashes by grammar pointer,
-    # so wrappers dedupe, and the dict pins the key so a GC'd wrapper's address
-    # can't be reused to serve a wrong-grammar Query.
-    global _QUERY_LAST
-    key = (language_obj, query_text)
-    if _QUERY_LAST is not None and _QUERY_LAST[0] == key:
-        return _QUERY_LAST[1]
-    if key not in _QUERY_CACHE:
-        _QUERY_CACHE[key] = Query(language_obj, query_text)
-    result = _QUERY_CACHE[key]
-    _QUERY_LAST = (key, result)
-    return result
-
-
 class FunctionCapturesResult(NamedTuple):
     lang_config: LanguageSpec
     captures: dict[str, list[ASTNode]]
-
-
-def sorted_captures(cursor: QueryCursor, node: ASTNode) -> dict[str, list[ASTNode]]:
-    # tree-sitter v0.25 captures() returns nodes in non-deterministic order;
-    # sort by (start_byte, end_byte) for reproducibility. start_byte alone leaves
-    # nested same-start captures (the outer `Greeter().greet()` chain and its
-    # inner `Greeter()` call) in raw order, flipping between runs.
-    raw = cursor.captures(node)
-    result: dict[str, list[ASTNode]] = {}
-    for name, nodes in raw.items():
-        if len(nodes) <= 1:
-            result[name] = nodes
-        else:
-            is_sorted = True
-            prev_key = _span_key(nodes[0])
-            for i in range(1, len(nodes)):
-                cur_key = _span_key(nodes[i])
-                if cur_key < prev_key:
-                    is_sorted = False
-                    break
-                prev_key = cur_key
-            result[name] = nodes if is_sorted else sorted(nodes, key=_span_key)
-    return result
-
-
-def _span_key(n: ASTNode) -> tuple[int, int]:
-    return (n.start_byte, n.end_byte)
 
 
 def get_function_captures(
@@ -359,15 +311,6 @@ def _append_unique_texts(
             out.append(text)
 
 
-@lru_cache(maxsize=50000)
-def _cached_decode_bytes(text_bytes: bytes) -> str:
-    # Replacement decode, not strict. `safe_decode_text` feeds decorators,
-    # modifiers and import paths, and a strict decode here raised
-    # UnicodeDecodeError and abandoned the whole file -- one bad byte in a
-    # Python decorator dropped every definition in it (issue #1797).
-    return decode_node_text(text_bytes)
-
-
 # The member-name fields a call's callee carries: JS/TS `property`, Python
 # `attribute`, Rust/Go/C++/Scala `field`.
 _MEMBER_NAME_FIELDS = (cs.FIELD_PROPERTY, cs.TS_PY_FIELD_ATTRIBUTE, cs.FIELD_FIELD)
@@ -430,26 +373,6 @@ def node_site_properties(node: Node) -> PropertyDict:
         cs.KEY_END_LINE: node.end_point[0] + 1,
         cs.KEY_END_COL: node.end_point[1],
     }
-
-
-def safe_decode_text(node: ASTNode | TreeSitterNodeProtocol | None) -> str | None:
-    """A node's text as `str`, or `None` when there is no text to decode.
-
-    "Safe" covers both failure modes: a null node or null `text` yields
-    `None`, and undecodable bytes are replaced rather than raised (the decode
-    goes through `language_spec.decode_node_text`, `errors="replace"`), so one
-    bad byte cannot drop a file's definitions (issue #1811). A `text` that is
-    not `bytes` is returned through `str()`.
-    """
-    if node is None or (text_bytes := node.text) is None:
-        return None
-    if isinstance(text_bytes, bytes):
-        return _cached_decode_bytes(text_bytes)
-    return str(text_bytes)
-
-
-def safe_decode_with_fallback(node: ASTNode | None, fallback: str = "") -> str:
-    return result if (result := safe_decode_text(node)) is not None else fallback
 
 
 def contains_node(parent: ASTNode, target: ASTNode) -> bool:

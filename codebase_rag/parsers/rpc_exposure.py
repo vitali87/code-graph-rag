@@ -22,7 +22,7 @@ from .go.type_inference import GoTypeInferenceEngine
 from .import_processor import ImportProcessor
 from .io_access.constants import KEY_KIND, RESOURCE_QN_FORMAT, ResourceKind
 from .io_access.processor import RPC_PACKAGE_SUFFIX, rpc_qualifier_resolves
-from .utils import safe_decode_text
+from .node_text import safe_decode_text
 
 # The connect-go handler constructor: `New<Stem>Handler`, qualified by a
 # generated package whose name ends in `connect` (the client-side mirror is

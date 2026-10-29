@@ -38,7 +38,7 @@ from tree_sitter import Node
 
 from .. import constants as cs
 from .js_ts.overloads import implementation_signatures
-from .utils import safe_decode_text
+from .node_text import safe_decode_text
 
 
 class _Unreadable(Exception):

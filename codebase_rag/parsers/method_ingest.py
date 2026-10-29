@@ -27,6 +27,7 @@ from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 from .anchor_hash import anchor_hash_props
 from .ast_fingerprint import fingerprint_props
 from .endpoints import emit_endpoints, queue_endpoints
+from .node_text import safe_decode_text
 from .utils import (
     _decorator_tail_names,
     _is_abstract_member,
@@ -35,7 +36,6 @@ from .utils import (
     extract_modifiers_and_decorators,
     is_static_decorator,
     python_positional_parameter_names,
-    safe_decode_text,
     warn_if_name_truncated,
 )
 

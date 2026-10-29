@@ -3,7 +3,7 @@ from __future__ import annotations
 from tree_sitter import Node
 
 from ... import constants as cs
-from ..utils import safe_decode_with_fallback
+from ..node_text import safe_decode_with_fallback
 
 
 def decode_node_stripped(node: Node) -> str:

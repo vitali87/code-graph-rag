@@ -40,7 +40,7 @@ from typing import NamedTuple
 from tree_sitter import Node
 
 from ... import constants as cs
-from ..utils import safe_decode_text
+from ..node_text import safe_decode_text
 
 _EXPORTS = cs.JS_EXPORTS_KEYWORD.encode()
 _MODULE = cs.JS_MODULE_KEYWORD.encode()

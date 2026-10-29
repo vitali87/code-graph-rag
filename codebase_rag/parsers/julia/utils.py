@@ -8,7 +8,7 @@ definition and call passes mint different qns for the same node.
 from tree_sitter import Node
 
 from ... import constants as cs
-from ..utils import safe_decode_text
+from ..node_text import safe_decode_text
 
 
 def _first_named(node: Node | None) -> Node | None:

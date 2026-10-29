@@ -8,7 +8,7 @@ from tree_sitter import Node
 from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import FunctionRegistryTrieProtocol, TreeSitterNodeProtocol
-from ..utils import safe_decode_text
+from ..node_text import safe_decode_text
 from . import utils as lua_utils
 
 if TYPE_CHECKING:

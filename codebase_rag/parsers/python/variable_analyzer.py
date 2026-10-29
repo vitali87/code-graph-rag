@@ -11,7 +11,8 @@ from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import ASTNode, FunctionRegistryTrieProtocol, LanguageQueries
 from ..definition_facts import DefinitionFacts
-from ..utils import get_cached_query, note_query_fallback, safe_decode_text
+from ..node_text import get_cached_query, safe_decode_text
+from ..utils import note_query_fallback
 from .forward_refs import unquote_forward_refs
 from .utils import resolve_class_name, resolve_dotted_class
 

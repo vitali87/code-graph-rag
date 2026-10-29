@@ -3,9 +3,7 @@ from __future__ import annotations
 from tree_sitter import Node
 
 from ... import constants as cs
-from ...language_spec import LANGUAGE_FQN_SPECS
-from ...utils.fqn_resolver import scoped_name_parts
-from ..utils import safe_decode_text
+from ..node_text import safe_decode_text
 
 # Where an anonymous class's anchor stops: the nearest type or namespace,
 # which the FQN scope walk names on its own.
@@ -88,20 +86,6 @@ def anonymous_class_anchor_stop(node: Node) -> Node | None:
     if node.type != cs.TS_PHP_ANONYMOUS_CLASS:
         return None
     return _anchor_walk(node)[1]
-
-
-def anonymous_class_qn(node: Node, module_qn: str) -> str | None:
-    """The qn the definition pass registers an anonymous class under.
-
-    The call pass's own class-qn builder walks class ancestors only and
-    would drop the enclosing callables, so it asks for this instead.
-    """
-    if node.type != cs.TS_PHP_ANONYMOUS_CLASS:
-        return None
-    parts = scoped_name_parts(
-        node, LANGUAGE_FQN_SPECS[cs.SupportedLanguage.PHP], module_qn, None
-    )
-    return cs.SEPARATOR_DOT.join([module_qn, *parts])
 
 
 def _declared_name(node: Node) -> str | None:

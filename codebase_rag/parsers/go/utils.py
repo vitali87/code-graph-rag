@@ -8,7 +8,8 @@ from tree_sitter import Node
 from ... import constants as cs
 from ...types_defs import FunctionRegistryTrieProtocol
 from ...utils.path_utils import cached_relative_path
-from ..utils import safe_decode_text, unparenthesized
+from ..node_text import safe_decode_text
+from ..utils import unparenthesized
 
 # What a Go type name can declare: a struct (Class), a named or alias type,
 # or an interface. Receiver and constructor-return types name one of them.

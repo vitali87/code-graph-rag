@@ -34,7 +34,7 @@ from codebase_rag.parsers.java.utils import (
     get_class_context_from_qn,
     get_root_node_from_module_qn,
 )
-from codebase_rag.parsers.utils import safe_decode_text
+from codebase_rag.parsers.node_text import safe_decode_text
 from codebase_rag.tests.conftest import (
     MockNode,
     create_mock_node,

@@ -11,7 +11,8 @@ from ... import logs as ls
 from ...decorators import recursion_guard
 from ...types_defs import FunctionRegistryTrieProtocol, SimpleNameLookup
 from ...utils import qn_markers
-from ..utils import follow_reexports, safe_decode_text
+from ..node_text import safe_decode_text
+from ..utils import follow_reexports
 from .utils import resolve_class_name, resolve_dotted_class
 
 # An inline receiver is handed to the expression rules only when its text can

@@ -14,7 +14,7 @@ from ...types_defs import (
     ScalaPackageIndex,
     ScalaPackageScan,
 )
-from ..utils import safe_decode_text
+from ..node_text import safe_decode_text
 
 # Subtrees whose identifiers name packages or import paths rather than use
 # anything, so they are no evidence that a file uses an imported member. The

@@ -19,8 +19,8 @@ from ...utils import qn_markers
 from ..definition_facts import DefinitionFacts
 from ..frontends.protocol import CallSiteKey
 from ..import_processor import ImportProcessor
+from ..node_text import safe_decode_text
 from ..semantic_call_join import call_site_key, resolve_call_site
-from ..utils import safe_decode_text
 from .arity import CSharpArityIndex
 from .arity import spellings as arity_spellings
 from .utils import (

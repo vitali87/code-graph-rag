@@ -9,7 +9,7 @@ from tree_sitter import Node
 from ... import constants as cs
 from ... import logs as ls
 from ...utils.path_utils import cached_relative_path, cached_resolve_posix
-from ..utils import safe_decode_text, safe_decode_with_fallback
+from ..node_text import safe_decode_text, safe_decode_with_fallback
 from .utils import decode_node_stripped
 
 if TYPE_CHECKING:

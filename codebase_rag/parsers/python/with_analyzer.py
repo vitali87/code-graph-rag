@@ -8,7 +8,8 @@ from tree_sitter import Node
 from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import FunctionRegistryTrieProtocol
-from ..utils import follow_reexports, safe_decode_text
+from ..node_text import safe_decode_text
+from ..utils import follow_reexports
 from .utils import resolve_class_name, resolve_dotted_class
 
 

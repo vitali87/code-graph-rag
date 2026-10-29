@@ -17,8 +17,8 @@ from .. import constants as cs
 from .. import logs as ls
 from ..capture import ALL_ENABLED, CaptureSelection
 from ..language_spec import (
+    LANGUAGE_FQN_SPECS,
     LanguageSpec,
-    decode_node_text,
     sql_object_reference_name,
 )
 from ..services import IngestorProtocol
@@ -31,6 +31,7 @@ from ..types_defs import (
     ScalaBinding,
 )
 from ..utils import qn_markers
+from ..utils.fqn_resolver import scoped_name_parts
 from ..utils.path_utils import cached_relative_path
 from .call_resolver import PY_EXTERNAL_TARGET, CallResolver
 from .class_ingest.identity import build_nested_qualified_name_for_class
@@ -61,6 +62,7 @@ from .java import utils as java_utils
 from .js_ts import utils as js_ts_utils
 from .julia import utils as julia_utils
 from .lua import utils as lua_utils
+from .node_text import decode_node_text, safe_decode_text, sorted_captures
 from .php import class_names as php_class_names
 from .php import utils as php_utils
 from .python.class_aliases import scan_class_body_aliases
@@ -83,9 +85,7 @@ from .utils import (
     module_qn_for_entity,
     node_site_properties,
     python_parameter_names,
-    safe_decode_text,
     shared_or_new,
-    sorted_captures,
     written_simple_name,
 )
 
@@ -405,6 +405,20 @@ def _exceeds_receiver_chain_cap(call_node: Node) -> bool:
     return False
 
 
+def _php_anonymous_class_qn(node: Node, module_qn: str) -> str | None:
+    """The qn the definition pass registers an anonymous class under.
+
+    The call pass's own class-qn builder walks class ancestors only and
+    would drop the enclosing callables, so it asks for this instead.
+    """
+    if node.type != cs.TS_PHP_ANONYMOUS_CLASS:
+        return None
+    parts = scoped_name_parts(
+        node, LANGUAGE_FQN_SPECS[cs.SupportedLanguage.PHP], module_qn, None
+    )
+    return cs.SEPARATOR_DOT.join([module_qn, *parts])
+
+
 def _class_qn_for_calls(
     class_node: Node,
     module_qn: str,
@@ -420,7 +434,7 @@ def _class_qn_for_calls(
     if language == cs.SupportedLanguage.CPP:
         return cpp_utils.build_qualified_name(class_node, module_qn, class_name)
     if language == cs.SupportedLanguage.PHP and (
-        anonymous_qn := php_utils.anonymous_class_qn(class_node, module_qn)
+        anonymous_qn := _php_anonymous_class_qn(class_node, module_qn)
     ):
         return anonymous_qn
     return (

@@ -34,7 +34,7 @@ from .io_access.constants import (
     RESOURCE_QN_FORMAT,
     ResourceKind,
 )
-from .utils import safe_decode_text
+from .node_text import safe_decode_text
 
 _HANDLER_NODE_LABELS = {
     cs.NodeLabel.FUNCTION: cs.NodeLabel.FUNCTION,

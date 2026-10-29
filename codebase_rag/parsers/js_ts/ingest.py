@@ -18,13 +18,13 @@ from ...types_defs import (
 )
 from ..definition_facts import DefinitionFacts
 from ..method_ingest import module_function_props
-from ..utils import (
+from ..node_text import (
     get_cached_query,
-    mark_js_ts_module_private,
     safe_decode_text,
     safe_decode_with_fallback,
     sorted_captures,
 )
+from ..utils import mark_js_ts_module_private
 from .module_system import JsTsModuleSystemMixin
 from .utils import (
     arrow_binding_name,

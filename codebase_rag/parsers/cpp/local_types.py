@@ -23,7 +23,8 @@ from tree_sitter import Node
 from ... import constants as cs
 from ...function_registry import FunctionRegistryTrie
 from ...types_defs import FunctionLocation, FunctionSpanKey
-from ..utils import function_span_key, safe_decode_text
+from ..node_text import safe_decode_text
+from ..utils import function_span_key
 from . import utils as cpp_utils
 from .overloads import cpp_overload_signature
 

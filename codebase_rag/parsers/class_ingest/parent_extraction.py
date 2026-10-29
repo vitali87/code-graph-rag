@@ -10,7 +10,7 @@ from ... import constants as cs
 from ... import logs as ls
 from ..cpp import utils as cpp_utils
 from ..csharp import utils as csharp_utils
-from ..utils import safe_decode_text
+from ..node_text import safe_decode_text
 from .utils import find_child_by_type
 
 if TYPE_CHECKING:

@@ -15,8 +15,8 @@ from ...types_defs import (
 from ..definition_facts import DefinitionFacts
 from ..frontends.protocol import CallSiteKey
 from ..import_processor import ImportProcessor
+from ..node_text import safe_decode_text
 from ..semantic_call_join import call_site_key, resolve_call_site
-from ..utils import safe_decode_text
 from .method_resolver import JavaMethodResolverMixin
 from .type_resolver import JavaClassHeaders, JavaTypeResolverMixin
 from .utils import find_package_start_index

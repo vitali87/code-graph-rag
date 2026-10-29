@@ -11,7 +11,8 @@ from tree_sitter import Node, QueryCursor
 from ... import constants as cs
 from ... import logs as ls
 from ...types_defs import ASTNode, FunctionRegistryTrieProtocol
-from ..utils import get_cached_query, safe_decode_text, unparenthesized
+from ..node_text import get_cached_query, safe_decode_text
+from ..utils import unparenthesized
 from . import utils as ut
 
 # Callable node types whose bodies own their locals and returns; the shared

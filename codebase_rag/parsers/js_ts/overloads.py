@@ -35,7 +35,7 @@ from collections.abc import Iterable, Iterator
 from tree_sitter import Node
 
 from ... import constants as cs
-from ..utils import safe_decode_text
+from ..node_text import safe_decode_text
 
 # Each wraps one declaration: `export ...`, `declare ...`, `export declare ...`.
 _WRAPPERS = frozenset({cs.TS_EXPORT_STATEMENT, cs.TS_AMBIENT_DECLARATION})

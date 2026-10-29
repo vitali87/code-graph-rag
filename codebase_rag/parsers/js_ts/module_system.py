@@ -14,13 +14,13 @@ from ... import logs as ls
 from ...types_defs import ASTNode
 from ..definition_facts import DefinitionFacts
 from ..method_ingest import ingest_exported_function
-from ..utils import (
-    function_span_key,
+from ..node_text import (
     get_cached_query,
     safe_decode_text,
     safe_decode_with_fallback,
     sorted_captures,
 )
+from ..utils import function_span_key
 from .utils import get_js_ts_language_obj
 
 if TYPE_CHECKING:

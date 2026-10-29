@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import pytest
 
-from codebase_rag.parsers.utils import safe_decode_text
+from codebase_rag.parsers.node_text import safe_decode_text
 
 
 class _Node:
@@ -86,10 +86,10 @@ def test_the_decode_routes_through_the_shared_helper() -> None:
     all route through one helper -- fixing one and leaving the rest losing
     data on the same input is what #1797 was.
     """
-    from codebase_rag.parsers import utils
+    from codebase_rag.parsers import node_text
 
     called: list[bytes] = []
-    real = utils.decode_node_text
+    real = node_text.decode_node_text
 
     def spy(raw: bytes) -> str:
         called.append(raw)
@@ -97,13 +97,13 @@ def test_the_decode_routes_through_the_shared_helper() -> None:
 
     # The decode is memoised, so use bytes no earlier test has decoded.
     unique = b"unique_for_the_spy_\xff"
-    utils._cached_decode_bytes.cache_clear()
+    node_text._cached_decode_bytes.cache_clear()
     monkey = pytest.MonkeyPatch()
-    monkey.setattr(utils, "decode_node_text", spy)
+    monkey.setattr(node_text, "decode_node_text", spy)
     try:
         assert safe_decode_text(_Node(unique)) is not None
     finally:
         monkey.undo()
-        utils._cached_decode_bytes.cache_clear()
+        node_text._cached_decode_bytes.cache_clear()
 
     assert called == [unique], "decode did not route through decode_node_text"

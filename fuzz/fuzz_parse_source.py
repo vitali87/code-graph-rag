@@ -29,7 +29,7 @@ with atheris.instrument_imports():
     from codebase_rag import constants as cs
     from codebase_rag.language_spec import LANGUAGE_FQN_SPECS, LANGUAGE_SPECS
     from codebase_rag.parser_loader import load_parsers
-    from codebase_rag.parsers.utils import sorted_captures
+    from codebase_rag.parsers.node_text import sorted_captures
 
 # Built once: loading a grammar per iteration would dominate the run and leave
 # the fuzzer exercising the loader instead of the parsers.

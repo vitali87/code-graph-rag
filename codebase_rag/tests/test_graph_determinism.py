@@ -147,7 +147,7 @@ def test_same_start_captures_order_by_span() -> None:
     from tree_sitter import QueryCursor
 
     from codebase_rag import constants as cs
-    from codebase_rag.parsers.utils import get_cached_query, sorted_captures
+    from codebase_rag.parsers.node_text import get_cached_query, sorted_captures
 
     parsers, queries = load_parsers()
     if "python" not in parsers:

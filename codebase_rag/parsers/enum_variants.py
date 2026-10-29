@@ -23,7 +23,7 @@ from tree_sitter import Node
 from .. import constants as cs
 from ..services import IngestorProtocol
 from .definition_docstring import extract_definition_docstring
-from .utils import safe_decode_text
+from .node_text import safe_decode_text
 
 # The right-hand sides a positional unpack pairs with its targets.
 _PY_VALUE_SEQUENCES = frozenset(

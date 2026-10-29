@@ -31,7 +31,7 @@ from .module_docstring import (
     _is_separator,
     _strip_line,
 )
-from .utils import safe_decode_with_fallback
+from .node_text import safe_decode_with_fallback
 
 # Rust's OUTER doc markers: the forms that document the NEXT item. `///` and
 # `/**` only -- `//!` and `/*!` are the INNER forms that describe the enclosing

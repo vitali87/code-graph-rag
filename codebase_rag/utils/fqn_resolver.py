@@ -7,6 +7,7 @@ from loguru import logger
 
 from .. import logs as ls
 from ..constants import SEPARATOR_DOT
+from ..parsers.node_text import safe_decode_text
 
 if TYPE_CHECKING:
     from tree_sitter import Node
@@ -69,8 +70,6 @@ def find_function_source_by_fqn(
     project_name: str,
     fqn_config: FQNSpec,
 ) -> str | None:
-    from ..parsers.utils import safe_decode_text
-
     try:
 
         def walk(node: Node) -> str | None:

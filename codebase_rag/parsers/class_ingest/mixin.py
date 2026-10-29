@@ -43,6 +43,7 @@ from ..go import interfaces as go_ifaces
 from ..java import utils as java_utils
 from ..js_ts import utils as js_ts_utils
 from ..method_ingest import ingest_method
+from ..node_text import safe_decode_text, sorted_captures
 from ..parameter_nodes import PendingParameterType, csharp_call_shape
 from ..php import namespaces as php_namespaces
 from ..python import (
@@ -60,8 +61,6 @@ from ..utils import (
     mark_js_ts_module_private,
     module_qn_for_entity,
     record_cpp_definition_span,
-    safe_decode_text,
-    sorted_captures,
     written_simple_name,
 )
 from . import base_targets as bt
@@ -2454,7 +2453,7 @@ class ClassIngestMixin:
         # (`Policy.Handle<T>().CircuitBreaker(...)`, Polly's whole
         # fluent surface) can type the receiver for the next hop.
         if rt_text := csharp_utils.normalize_csharp_type_name(rt_node):
-            raw = csharp_utils.safe_decode_text(rt_node) or rt_text
+            raw = safe_decode_text(rt_node) or rt_text
             self.facts.csharp_method_return_types[ingested_qn] = (
                 rt_text,
                 csharp_utils.generic_arity_of_type_text(raw),
