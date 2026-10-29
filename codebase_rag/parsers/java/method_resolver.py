@@ -10,6 +10,7 @@ from loguru import logger
 from ... import constants as cs
 from ... import logs as ls
 from ...decorators import depth_guard, recursion_guard
+from ...node_text import safe_decode_text
 from ...types_defs import (
     ASTNode,
     JavaCandidateLookups,
@@ -17,7 +18,6 @@ from ...types_defs import (
     JavaSupertypes,
 )
 from ..definition_facts import DefinitionFacts
-from ..node_text import safe_decode_text
 from ..utils import method_signature_arity, module_qn_for_entity
 from .type_resolver import JAVA_TYPE_DECL_NODE_TYPES
 from .utils import (

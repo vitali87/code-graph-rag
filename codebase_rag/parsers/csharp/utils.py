@@ -7,8 +7,8 @@ from types import MappingProxyType
 from tree_sitter import Node
 
 from ... import constants as cs
+from ...node_text import safe_decode_text
 from ...types_defs import PropertyDict
-from ..node_text import safe_decode_text
 
 
 def _first_attribute_list(node: Node) -> Node | None:

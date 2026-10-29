@@ -6,6 +6,7 @@ from itertools import pairwise
 from tree_sitter import Node
 
 from ... import constants as cs
+from ...node_text import safe_decode_text
 from ...types_defs import (
     ScalaBinding,
     ScalaClassBases,
@@ -14,7 +15,6 @@ from ...types_defs import (
     ScalaPackageIndex,
     ScalaPackageScan,
 )
-from ..node_text import safe_decode_text
 
 # Subtrees whose identifiers name packages or import paths rather than use
 # anything, so they are no evidence that a file uses an imported member. The

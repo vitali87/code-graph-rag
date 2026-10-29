@@ -17,8 +17,8 @@ import re
 from tree_sitter import Node
 
 from ... import constants as cs
+from ...node_text import safe_decode_with_fallback
 from ...types_defs import OverloadSignature
-from ..node_text import safe_decode_with_fallback
 
 _DECLARATOR_WRAPPERS = frozenset(
     {

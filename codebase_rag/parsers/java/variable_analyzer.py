@@ -10,9 +10,9 @@ from loguru import logger
 from ... import constants as cs
 from ... import logs as ls
 from ...decorators import depth_exhausted, depth_guard, recursion_guard
+from ...node_text import safe_decode_text
 from ...types_defs import ASTNode
 from ..definition_facts import DefinitionFacts
-from ..node_text import safe_decode_text
 from .utils import (
     extract_class_info,
     extract_field_info,

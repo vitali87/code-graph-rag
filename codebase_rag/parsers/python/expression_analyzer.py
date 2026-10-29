@@ -9,9 +9,9 @@ from tree_sitter import Node
 from ... import constants as cs
 from ... import logs as ls
 from ...decorators import recursion_guard
+from ...node_text import safe_decode_text
 from ...types_defs import FunctionRegistryTrieProtocol, SimpleNameLookup
 from ...utils import qn_markers
-from ..node_text import safe_decode_text
 from ..utils import follow_reexports
 from .utils import resolve_class_name, resolve_dotted_class
 

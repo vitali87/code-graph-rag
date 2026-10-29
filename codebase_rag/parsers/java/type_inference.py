@@ -6,6 +6,7 @@ from loguru import logger
 
 from ... import constants as cs
 from ... import logs as ls
+from ...node_text import safe_decode_text
 from ...types_defs import (
     ASTNode,
     FunctionRegistryTrieProtocol,
@@ -15,7 +16,6 @@ from ...types_defs import (
 from ..definition_facts import DefinitionFacts
 from ..frontends.protocol import CallSiteKey
 from ..import_processor import ImportProcessor
-from ..node_text import safe_decode_text
 from ..semantic_call_join import call_site_key, resolve_call_site
 from .method_resolver import JavaMethodResolverMixin
 from .type_resolver import JavaClassHeaders, JavaTypeResolverMixin

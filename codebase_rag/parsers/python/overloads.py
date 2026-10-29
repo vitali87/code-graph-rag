@@ -47,7 +47,7 @@ from collections.abc import Iterable, Iterator
 from tree_sitter import Node
 
 from ... import constants as cs
-from ..node_text import safe_decode_text
+from ...node_text import safe_decode_text
 
 # The shapes a target unpacks through to the names it binds: `a, b`, `(a, b)`,
 # `[a, b]`, `*a`, and the `tuple` / `list` / parenthesized EXPRESSIONS

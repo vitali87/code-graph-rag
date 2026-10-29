@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 from tree_sitter import Language, Node, QueryCursor
 
 from ... import constants as cs
-from ..node_text import get_cached_query, safe_decode_text
+from ...node_text import get_cached_query, safe_decode_text
 from ..utils import note_query_fallback
 
 if TYPE_CHECKING:

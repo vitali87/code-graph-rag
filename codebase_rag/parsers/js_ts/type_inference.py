@@ -10,8 +10,8 @@ from tree_sitter import Node, QueryCursor
 
 from ... import constants as cs
 from ... import logs as ls
+from ...node_text import get_cached_query, safe_decode_text
 from ...types_defs import ASTNode, FunctionRegistryTrieProtocol
-from ..node_text import get_cached_query, safe_decode_text
 from ..utils import unparenthesized
 from . import utils as ut
 

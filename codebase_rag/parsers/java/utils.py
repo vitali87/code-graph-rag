@@ -7,6 +7,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ...models import MethodModifiersAndAnnotations
+from ...node_text import safe_decode_text
 from ...types_defs import (
     ASTNode,
     JavaAnnotationInfo,
@@ -16,7 +17,6 @@ from ...types_defs import (
     JavaMethodInfo,
     JavaMethodReferenceParts,
 )
-from ..node_text import safe_decode_text
 
 if TYPE_CHECKING:
     from ...types_defs import ASTCacheProtocol

@@ -13,6 +13,7 @@ from tree_sitter import Node
 from .. import constants as cs
 from .. import logs as ls
 from ..language_spec import get_language_for_extension
+from ..node_text import safe_decode_text
 from ..types_defs import CppOperatorSignature, FunctionRegistryTrieProtocol
 from ..utils import qn_markers
 from .cpp import utils as cpp_utils
@@ -25,7 +26,6 @@ from .go.link_state import GoLinkState
 from .import_processor import ImportProcessor
 from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
-from .node_text import safe_decode_text
 from .parameter_nodes import c_family_parameter_list
 from .php import class_names as php_class_names
 from .php.class_names import ClassPath as PhpClassPath

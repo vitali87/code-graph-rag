@@ -23,6 +23,7 @@ from tree_sitter import Node
 
 from .. import constants as cs
 from ..capture import CaptureSelection
+from ..node_text import safe_decode_text
 from ..services import IngestorProtocol, QueryProtocol
 from ..types_defs import FunctionRegistryTrieProtocol
 from .io_access.constants import (
@@ -34,7 +35,6 @@ from .io_access.constants import (
     RESOURCE_QN_FORMAT,
     ResourceKind,
 )
-from .node_text import safe_decode_text
 
 _HANDLER_NODE_LABELS = {
     cs.NodeLabel.FUNCTION: cs.NodeLabel.FUNCTION,

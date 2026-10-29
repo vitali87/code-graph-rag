@@ -19,8 +19,8 @@ import re
 from typing import NamedTuple
 
 from ..constants import SupportedLanguage
+from ..node_text import safe_decode_with_fallback
 from ..types_defs import ASTNode
-from .node_text import safe_decode_with_fallback
 
 
 class ModuleDocSpec(NamedTuple):

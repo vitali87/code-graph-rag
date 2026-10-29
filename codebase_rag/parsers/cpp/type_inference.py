@@ -5,8 +5,8 @@ from collections.abc import Iterator
 from tree_sitter import Node
 
 from ... import constants as cs
+from ...node_text import safe_decode_text
 from ...types_defs import CppParameterType
-from ..node_text import safe_decode_text
 from . import local_types
 
 # Declarations whose `type` field names the type of the names they declare.

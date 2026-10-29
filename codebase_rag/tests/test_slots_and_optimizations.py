@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from codebase_rag.node_text import _cached_decode_bytes
 from codebase_rag.parsers.dependency_parser import (
     CargoTomlParser,
     ComposerJsonParser,
@@ -13,7 +14,6 @@ from codebase_rag.parsers.dependency_parser import (
     PyProjectTomlParser,
     RequirementsTxtParser,
 )
-from codebase_rag.parsers.node_text import _cached_decode_bytes
 from codebase_rag.parsers.stdlib_extractor import StdlibExtractor
 
 

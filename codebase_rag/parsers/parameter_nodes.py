@@ -16,9 +16,9 @@ from typing import NamedTuple
 from tree_sitter import Node
 
 from .. import constants as cs
+from ..node_text import safe_decode_text
 from ..services import IngestorProtocol
 from ..types_defs import CSharpCallShape
-from .node_text import safe_decode_text
 
 
 class DeclaredParameter(NamedTuple):

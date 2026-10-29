@@ -11,6 +11,7 @@ from tree_sitter import Node
 from .. import constants as cs
 from .. import logs as ls
 from ..language_spec import LANGUAGE_FQN_SPECS, LanguageSpec
+from ..node_text import safe_decode_text
 from ..types_defs import (
     ASTNode,
     CppDefinitionSpan,
@@ -41,7 +42,6 @@ from .go.builds import GoBuilds
 from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
 from .method_ingest import ingest_method
-from .node_text import safe_decode_text
 from .parameter_nodes import (
     PendingParameterType,
     csharp_call_shape,

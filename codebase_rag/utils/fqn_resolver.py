@@ -7,7 +7,7 @@ from loguru import logger
 
 from .. import logs as ls
 from ..constants import SEPARATOR_DOT
-from ..parsers.node_text import safe_decode_text
+from ..node_text import safe_decode_text
 
 if TYPE_CHECKING:
     from tree_sitter import Node

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import pytest
 
-from codebase_rag.parsers.node_text import safe_decode_text
+from codebase_rag.node_text import safe_decode_text
 
 
 class _Node:
@@ -86,7 +86,7 @@ def test_the_decode_routes_through_the_shared_helper() -> None:
     all route through one helper -- fixing one and leaving the rest losing
     data on the same input is what #1797 was.
     """
-    from codebase_rag.parsers import node_text
+    from codebase_rag import node_text
 
     called: list[bytes] = []
     real = node_text.decode_node_text

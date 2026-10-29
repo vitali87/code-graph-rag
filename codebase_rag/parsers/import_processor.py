@@ -20,6 +20,7 @@ from ..language_spec import (
     language_family,
     own_extension_module_qn,
 )
+from ..node_text import safe_decode_text, safe_decode_with_fallback, sorted_captures
 from ..services import IngestorProtocol
 from ..types_defs import (
     DeferredImportEdge,
@@ -65,7 +66,6 @@ from .js_ts.tsconfig import (
     ts_alias_target,
 )
 from .lua import utils as lua_utils
-from .node_text import safe_decode_text, safe_decode_with_fallback, sorted_captures
 from .php.namespaces import declared_namespace
 from .python.source_roots import discover_python_source_roots, resolve_via_source_roots
 from .rust import cargo_semver

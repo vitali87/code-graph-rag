@@ -37,7 +37,7 @@ from collections.abc import Iterator
 from tree_sitter import Node, Parser, Tree
 
 from ... import constants as cs
-from ..node_text import safe_decode_text
+from ...node_text import safe_decode_text
 
 _IDENTIFIER = re.compile(cs.CPP_IDENTIFIER_PATTERN)
 _ANNOTATION_MACRO = re.compile(cs.CPP_ANNOTATION_MACRO_PATTERN)

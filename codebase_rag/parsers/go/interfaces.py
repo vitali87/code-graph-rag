@@ -21,8 +21,8 @@ from typing import NamedTuple
 from tree_sitter import Node, Parser
 
 from ... import constants as cs
+from ...node_text import safe_decode_text
 from ...types_defs import PropertyDict
-from ..node_text import safe_decode_text
 from ..type_facts import extract_type_facts
 from . import utils as go_utils
 from .builds import ALWAYS, Expr, all_of, any_of, decide

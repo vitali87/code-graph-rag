@@ -21,6 +21,7 @@ from ..language_spec import (
     LanguageSpec,
     sql_object_reference_name,
 )
+from ..node_text import decode_node_text, safe_decode_text, sorted_captures
 from ..services import IngestorProtocol
 from ..types_defs import (
     ASTCacheProtocol,
@@ -62,7 +63,6 @@ from .java import utils as java_utils
 from .js_ts import utils as js_ts_utils
 from .julia import utils as julia_utils
 from .lua import utils as lua_utils
-from .node_text import decode_node_text, safe_decode_text, sorted_captures
 from .php import class_names as php_class_names
 from .php import utils as php_utils
 from .python.class_aliases import scan_class_body_aliases

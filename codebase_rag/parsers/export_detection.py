@@ -5,9 +5,9 @@ from collections.abc import Iterator
 from tree_sitter import Node
 
 from .. import constants as cs
+from ..node_text import safe_decode_text
 from .cpp import utils as cpp_utils
 from .lua import utils as lua_utils
-from .node_text import safe_decode_text
 
 # Once inside a function body the declaration is a local, not a module-level
 # export, so an `export` ancestor beyond this boundary must not count. A

@@ -21,6 +21,7 @@ from types import MappingProxyType
 from typing import NamedTuple
 
 from ..constants import SupportedLanguage
+from ..node_text import safe_decode_with_fallback
 from ..types_defs import ASTNode
 from .module_docstring import (
     MODULE_DOC_SPECS,
@@ -31,7 +32,6 @@ from .module_docstring import (
     _is_separator,
     _strip_line,
 )
-from .node_text import safe_decode_with_fallback
 
 # Rust's OUTER doc markers: the forms that document the NEXT item. `///` and
 # `/**` only -- `//!` and `/*!` are the INNER forms that describe the enclosing

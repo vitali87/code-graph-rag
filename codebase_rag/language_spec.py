@@ -9,14 +9,7 @@ from loguru import logger
 
 from . import constants as cs
 from .models import FQNSpec, LanguageSpec
-from .parsers.cpp import utils as cpp_utils
-from .parsers.csharp import utils as csharp_utils
-from .parsers.dart import utils as dart_utils
-from .parsers.js_ts import utils as js_ts_utils
-from .parsers.julia import utils as julia_utils
-from .parsers.node_text import decode_node_text
-from .parsers.php import utils as php_utils
-from .parsers.rust import utils as rs_utils
+from .node_text import decode_node_text
 from .sql_names import normalize_sql_reference
 from .utils import path_utils
 from .utils.path_utils import module_extension, module_stem, should_skip_path
@@ -28,6 +21,10 @@ if TYPE_CHECKING:
     from .types_defs import LanguageFamily
 
 
+# The naming callbacks below import their language's parser utils when first
+# called rather than here: `cgr` imports this module at start-up (through the
+# edit commands' structural delta), and a parser package brings its
+# tree-sitter grammar with it.
 def _python_get_name(node: Node) -> str | None:
     name_node = node.child_by_field_name("name")
     return decode_node_text(name_node.text) if name_node and name_node.text else None
@@ -64,6 +61,7 @@ def _js_get_name(node: Node) -> str | None:
         # An anonymous class expression carries its name on the binding it is
         # the value of (`static Proxy = class {...}`); recover it so the class
         # and its methods get a real qn (issue #970).
+        from .parsers.js_ts import utils as js_ts_utils
 
         return js_ts_utils.class_binding_name(node)
     if node.type in cs.JS_NAME_NODE_TYPES:
@@ -147,6 +145,7 @@ def _rust_get_name(node: Node) -> str | None:
         # target type anchors its methods' qns (owner_module.Foo.method).
         # Without this the scope walk drops `Foo`, so a nested fn in an impl
         # method binds to a phantom parent qn.
+        from .parsers.rust import utils as rs_utils
 
         return rs_utils.extract_impl_target(node)
 
@@ -180,6 +179,7 @@ def _c_get_name(node: Node) -> str | None:
         # `int CJSON_CDECL main(void)`: recovery moved the name into `type`
         # (issue #2528). The call pass names the caller through the same
         # helper, so both passes agree on the node.
+        from .parsers.cpp import utils as cpp_utils
 
         if split_name := cpp_utils.c_macro_split_function_name(node):
             return split_name
@@ -200,6 +200,7 @@ def _cpp_get_name(node: Node) -> str | None:
         if name_node and name_node.text:
             # A specialization's `Box<T, int>` is rendered from its tokens,
             # so it stays one line and free of `.` (issue #2434).
+            from .parsers.cpp import utils as cpp_utils
 
             return cpp_utils.type_name_text(name_node)
     elif node.type == cs.TS_CPP_FUNCTION_DEFINITION:
@@ -346,6 +347,8 @@ def _csharp_get_name(node: Node) -> str | None:
     # with the constructor; delegate to the shared synthesizer so the FQN
     # scope walk and the registered node qn agree.
     if node.type in cs.CSHARP_SYNTHESIZED_NAME_TYPES:
+        from .parsers.csharp import utils as csharp_utils
+
         return csharp_utils.synthesize_method_name(node)
     name = _generic_get_name(node)
     # A reserved keyword as the name means tree-sitter parse-recovered a broken
@@ -358,6 +361,8 @@ def _csharp_get_name(node: Node) -> str | None:
     # is decided here so the graph, a nested type's scope walk and the
     # source lookup by qualified name all spell it alike.
     if name and node.type in cs.SPEC_CSHARP_CLASS_TYPES:
+        from .parsers.csharp import utils as csharp_utils
+
         return csharp_utils.arity_qualified_name(node, name)
     return name
 
@@ -367,12 +372,16 @@ def _php_get_name(node: Node) -> str | None:
     # implementation lives in parsers.php.utils, which the call pass reaches
     # directly.
     if node.type == cs.TS_PHP_ANONYMOUS_CLASS:
+        from .parsers.php import utils as php_utils
+
         return php_utils.anonymous_class_name(node)
     return _generic_get_name(node)
 
 
 def _php_get_scope_name(node: Node) -> str | None:
     if node.type == cs.TS_PHP_ANONYMOUS_CLASS:
+        from .parsers.php import utils as php_utils
+
         return php_utils.anonymous_class_scope_name(node)
     return _generic_get_name(node)
 
@@ -380,12 +389,16 @@ def _php_get_scope_name(node: Node) -> str | None:
 def _dart_get_name(node: Node) -> str | None:
     # The single implementation lives in parsers.dart.utils, which the
     # parsers-internal callers (ingest_method) reach directly.
+    from .parsers.dart import utils as dart_utils
+
     return dart_utils.get_name(node)
 
 
 def _julia_get_name(node: Node) -> str | None:
     # The single implementation of function naming lives in
     # parsers.julia.utils, which the call pass reaches directly.
+    from .parsers.julia import utils as julia_utils
+
     if node.type in (
         cs.TS_JULIA_FUNCTION_DEFINITION,
         cs.TS_JULIA_MACRO_DEFINITION,

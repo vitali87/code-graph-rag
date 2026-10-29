@@ -14,6 +14,7 @@ from tree_sitter import Node
 
 from .. import constants as cs
 from .. import logs as ls
+from ..node_text import safe_decode_text
 from ..types_defs import (
     ASTNode,
     DeferredParentLink,
@@ -33,7 +34,6 @@ from .csharp import utils as csharp_utils
 from .dart import utils as dart_utils
 from .endpoints import emit_endpoints, queue_endpoints
 from .java import utils as java_utils
-from .node_text import safe_decode_text
 from .parameter_nodes import emit_declared_parameters
 from .positional_params import declared_positional_params
 from .type_facts import extract_type_facts, queue_type_facts, type_facts_props

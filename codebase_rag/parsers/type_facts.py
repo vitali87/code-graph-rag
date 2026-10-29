@@ -27,12 +27,12 @@ from typing import NamedTuple
 from tree_sitter import Node
 
 from .. import constants as cs
+from ..node_text import safe_decode_with_fallback
 from ..services import IngestorProtocol
 from ..types_defs import FunctionRegistryTrieProtocol, PendingTypeFact
 from .cpp import utils as cpp_utils
 from .csharp import arity as csharp_arity
 from .csharp import utils as csharp_utils
-from .node_text import safe_decode_with_fallback
 
 # Identifiers, dotted paths and Rust `::` paths inside an annotation. Generic
 # brackets, pointers, arrays and unions fall away; every candidate is then

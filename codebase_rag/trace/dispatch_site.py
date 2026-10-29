@@ -24,8 +24,8 @@ from tree_sitter import Node
 
 from .. import constants as cs
 from ..language_spec import get_language_for_extension
+from ..node_text import safe_decode_text
 from ..parser_loader import load_parsers
-from ..parsers.node_text import safe_decode_text
 from ..parsers.utils import node_site_properties, unparenthesized
 from ..types_defs import PropertyDict
 

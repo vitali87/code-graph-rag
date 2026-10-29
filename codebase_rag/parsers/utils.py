@@ -9,6 +9,7 @@ from tree_sitter import Node, QueryCursor
 
 from .. import constants as cs
 from .. import logs as ls
+from ..node_text import safe_decode_text, sorted_captures
 from ..types_defs import (
     ASTNode,
     CppDefinitionSpan,
@@ -18,7 +19,6 @@ from ..types_defs import (
     PropertyDict,
 )
 from ..utils.path_utils import cached_relative_path
-from .node_text import safe_decode_text, sorted_captures
 
 if TYPE_CHECKING:
     from ..language_spec import LanguageSpec

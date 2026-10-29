@@ -18,9 +18,9 @@ from typing import NamedTuple
 from tree_sitter import Node
 
 from .. import constants as cs
+from ..node_text import safe_decode_text
 from ..services import IngestorProtocol
 from .definition_docstring import extract_definition_docstring
-from .node_text import safe_decode_text
 
 # Keyword children that are modifiers in the C-family grammars. Annotations
 # and decorators are deliberately not modifiers: the Field schema carries none.

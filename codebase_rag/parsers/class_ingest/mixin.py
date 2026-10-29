@@ -14,6 +14,7 @@ from ... import constants as cs
 from ... import logs as ls
 from ...config import settings
 from ...language_spec import LanguageSpec, module_directory_qn
+from ...node_text import safe_decode_text, sorted_captures
 from ...types_defs import (
     ASTNode,
     CppDefinitionSpan,
@@ -43,7 +44,6 @@ from ..go import interfaces as go_ifaces
 from ..java import utils as java_utils
 from ..js_ts import utils as js_ts_utils
 from ..method_ingest import ingest_method
-from ..node_text import safe_decode_text, sorted_captures
 from ..parameter_nodes import PendingParameterType, csharp_call_shape
 from ..php import namespaces as php_namespaces
 from ..python import (

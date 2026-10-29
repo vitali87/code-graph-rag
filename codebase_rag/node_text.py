@@ -10,8 +10,8 @@ from functools import lru_cache
 
 from tree_sitter import Language, Query, QueryCursor
 
-from .. import constants as cs
-from ..types_defs import ASTNode, TreeSitterNodeProtocol
+from . import constants as cs
+from .types_defs import ASTNode, TreeSitterNodeProtocol
 
 
 def decode_node_text(raw: bytes) -> str:

@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 from ... import constants as cs
 from ...capture import CaptureSelection
+from ...node_text import safe_decode_text
 from ...services import IngestorProtocol
 from ...types_defs import FunctionLocations
 from ..call_resolver import CallResolver
@@ -65,7 +66,6 @@ from ..io_access.registry import (
     LIBC_STD_STREAMS,
 )
 from ..io_access.resource_names import resource_qn
-from ..node_text import safe_decode_text
 from ..semantic_call_join import call_site_key
 from ..utils import (
     c_positional_parameter_slots,

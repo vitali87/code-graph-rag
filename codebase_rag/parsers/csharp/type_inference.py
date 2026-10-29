@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from tree_sitter import Node
 
 from ... import constants as cs
+from ...node_text import safe_decode_text
 from ...types_defs import (
     CSharpCallShape,
     FunctionRegistryTrieProtocol,
@@ -19,7 +20,6 @@ from ...utils import qn_markers
 from ..definition_facts import DefinitionFacts
 from ..frontends.protocol import CallSiteKey
 from ..import_processor import ImportProcessor
-from ..node_text import safe_decode_text
 from ..semantic_call_join import call_site_key, resolve_call_site
 from .arity import CSharpArityIndex
 from .arity import spellings as arity_spellings

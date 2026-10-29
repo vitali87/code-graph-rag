@@ -6,9 +6,9 @@ from pathlib import Path
 from tree_sitter import Node
 
 from ... import constants as cs
+from ...node_text import safe_decode_text
 from ..definition_facts import DefinitionFacts
 from ..frontends.protocol import CallSiteKey
-from ..node_text import safe_decode_text
 from ..semantic_call_join import call_site_key, resolve_call_site
 from . import utils as go_utils
 from .utils import type_identifier_text, written_type_text

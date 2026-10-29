@@ -6,8 +6,8 @@ from collections.abc import Iterable, Sequence
 from tree_sitter import Node, Parser
 
 from ... import constants as cs
+from ...node_text import safe_decode_text
 from ...types_defs import FunctionRegistryTrieProtocol
-from ..node_text import safe_decode_text
 
 # `#[path = "support/helpers.rs"]` redirects the mod declaration it sits on
 # to an arbitrary file. Only the plain string form is read: a cfg_attr

@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from tree_sitter import Language
 
-from codebase_rag.parsers.node_text import get_cached_query
+from codebase_rag.node_text import get_cached_query
 
 try:
     import tree_sitter_javascript as tsjs

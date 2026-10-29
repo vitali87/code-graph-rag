@@ -42,6 +42,7 @@ from .language_spec import (
     get_language_spec,
     sql_object_reference_name,
 )
+from .node_text import sorted_captures
 from .parser_fingerprint import compute_parser_fingerprint
 from .parsers import utils as parser_utils
 from .parsers.ast_grep_tier import AstGrepTier
@@ -99,7 +100,6 @@ from .parsers.java.lombok import (
     current_lombok_identity,
     overlay_identity,
 )
-from .parsers.node_text import sorted_captures
 from .parsers.notebook import NotebookSkipped, is_notebook_path, read_notebook
 from .parsers.parameter_nodes import PendingParameterType
 from .parsers.rust import utils as rs_utils

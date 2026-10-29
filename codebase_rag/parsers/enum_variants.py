@@ -21,9 +21,9 @@ from typing import NamedTuple
 from tree_sitter import Node
 
 from .. import constants as cs
+from ..node_text import safe_decode_text
 from ..services import IngestorProtocol
 from .definition_docstring import extract_definition_docstring
-from .node_text import safe_decode_text
 
 # The right-hand sides a positional unpack pairs with its targets.
 _PY_VALUE_SEQUENCES = frozenset(

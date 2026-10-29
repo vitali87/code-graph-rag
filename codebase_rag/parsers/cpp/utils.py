@@ -3,7 +3,7 @@ from collections.abc import Iterator
 from tree_sitter import Node
 
 from ... import constants as cs
-from ..node_text import safe_decode_text, safe_decode_with_fallback
+from ...node_text import safe_decode_text, safe_decode_with_fallback
 
 
 def convert_operator_symbol_to_name(symbol: str) -> str:

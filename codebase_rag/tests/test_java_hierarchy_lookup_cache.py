@@ -26,6 +26,7 @@ from codebase_rag import constants as cs
 from codebase_rag.ast_cache import BoundedASTCache
 from codebase_rag.function_registry import FunctionRegistryTrie
 from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.node_text import safe_decode_text
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.definition_facts import DefinitionFacts
 from codebase_rag.parsers.import_processor import ImportProcessor
@@ -34,7 +35,6 @@ from codebase_rag.parsers.java.utils import (
     get_class_context_from_qn,
     get_root_node_from_module_qn,
 )
-from codebase_rag.parsers.node_text import safe_decode_text
 from codebase_rag.tests.conftest import (
     MockNode,
     create_mock_node,

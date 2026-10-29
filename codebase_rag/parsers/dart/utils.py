@@ -6,7 +6,7 @@ from typing import NamedTuple
 from tree_sitter import Node
 
 from ... import constants as cs
-from ..node_text import decode_node_text
+from ...node_text import decode_node_text
 
 
 class DartConstructorDelegation(NamedTuple):

@@ -7,10 +7,10 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ...language_spec import LANGUAGE_FQN_SPECS
+from ...node_text import safe_decode_text
 from ...utils.fqn_resolver import scoped_name_parts
 from .. import export_detection
 from ..cpp import utils as cpp_utils
-from ..node_text import safe_decode_text
 from ..rust import utils as rs_utils
 from ..utils import warn_if_name_truncated
 

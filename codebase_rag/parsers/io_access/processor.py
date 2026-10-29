@@ -9,10 +9,10 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ...capture import CaptureSelection
+from ...node_text import safe_decode_text
 from ...services import IngestorProtocol
 from ...types_defs import ASTCacheProtocol
 from ..import_processor import ImportProcessor
-from ..node_text import safe_decode_text
 from ..utils import cpp_declarator_name, shared_or_new
 from .constants import (
     DYNAMIC_TARGET,

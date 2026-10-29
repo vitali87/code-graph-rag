@@ -3,7 +3,7 @@ from __future__ import annotations
 from tree_sitter import Node
 
 from ... import constants as cs
-from ..node_text import safe_decode_text
+from ...node_text import safe_decode_text
 
 # Where an anonymous class's anchor stops: the nearest type or namespace,
 # which the FQN scope walk names on its own.

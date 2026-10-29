@@ -1,7 +1,7 @@
 from tree_sitter import Node
 
 from ... import constants as cs
-from ..node_text import safe_decode_text
+from ...node_text import safe_decode_text
 from ..utils import contains_node
 
 

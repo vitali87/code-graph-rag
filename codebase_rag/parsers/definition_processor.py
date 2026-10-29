@@ -10,6 +10,7 @@ from tree_sitter import QueryCursor
 from .. import constants as cs
 from .. import logs as ls
 from ..language_spec import has_other_language_sibling, own_extension_module_qn
+from ..node_text import safe_decode_with_fallback, sorted_captures
 from ..types_defs import (
     ASTNode,
     CppDefinitionSpan,
@@ -48,7 +49,6 @@ from .java.generated import generator_hint
 from .js_ts.ingest import JsTsIngestMixin
 from .js_ts.overloads import folded_overload_signatures, implementation_signatures
 from .module_docstring import extract_module_docstring
-from .node_text import safe_decode_with_fallback, sorted_captures
 from .notebook import is_notebook_path
 from .parameter_nodes import PendingParameterType
 from .php.namespaces import declared_namespace

@@ -37,8 +37,8 @@ from collections.abc import Callable
 from tree_sitter import Node
 
 from .. import constants as cs
+from ..node_text import safe_decode_text
 from .js_ts.overloads import implementation_signatures
-from .node_text import safe_decode_text
 
 
 class _Unreadable(Exception):

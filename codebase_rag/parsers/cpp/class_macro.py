@@ -18,7 +18,7 @@
 from tree_sitter import Node, Parser, QueryCursor, Tree
 
 from ... import constants as cs
-from ..node_text import get_cached_query
+from ...node_text import get_cached_query
 from .trailing_annotation import _blank_spans, _damage
 
 
