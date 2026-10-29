@@ -45,6 +45,8 @@ _VARIABLES = (
     "CPP_FRONTEND",
     "GRAPH_BACKEND",
     "QDRANT_BATCH_SIZE",
+    # python-dotenv's switch, which the suite's conftest sets.
+    cs.ENV_PYTHON_DOTENV_DISABLED,
 )
 # Resolves the batch size before it connects, so a bad value is reached
 # without a database.
@@ -152,6 +154,16 @@ def _write_dotenv(directory: Path, *lines: str) -> Path:
     path = directory / ".env"
     path.write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
     return path
+
+
+def _load_as_cgr_starts(
+    directory: Path, unset: dict[str, str] | None = None
+) -> tuple[config.AppConfig, tuple[str, ...]]:
+    # As `cgr` starts: the environment it inherited, `.env` merged into it,
+    # then the settings read from the environment.
+    inherited = frozenset(os.environ)
+    refused = config.merge_dotenv(directory / ".env")
+    return config.load_settings(inherited, {**refused, **(unset or {})})
 
 
 class TestTheCliStartsWithAnInvalidSetting:
@@ -447,11 +459,11 @@ class TestLoadSettings:
         )
 
     def test_a_value_only_in_dotenv_is_traced_to_the_file(
-        self, clean_env: Path
+        self, scratch_environ: Path
     ) -> None:
-        (clean_env / ".env").write_text("MEMGRAPH_PORT=76 87\n", encoding="utf-8")
+        _write_dotenv(scratch_environ, "MEMGRAPH_PORT=76 87")
 
-        _, errors = config.load_settings(frozenset(os.environ))
+        _, errors = _load_as_cgr_starts(scratch_environ)
 
         assert errors == (
             "Invalid value for MEMGRAPH_PORT in ./.env: '76 87' is not a valid integer.",
@@ -497,25 +509,23 @@ class TestLoadSettings:
 
 
 class TestAVariableTheEnvironmentRefused:
-    """pydantic-settings reads `.env` itself, so it still sees a value the
-    environment refused; the setting must not keep it, nor report it twice."""
+    """A `.env` value the environment refused is reported once, with the
+    message `merge_dotenv` returned, and its setting keeps the default."""
 
     _MESSAGE = (
         "Invalid value for SHELL_COMMAND_ALLOWLIST in ./.env: "
         f"the operating system refused it ({_WINDOWS_REFUSAL})."
     )
 
-    def test_it_is_reported_once_though_its_value_is_also_invalid(
-        self, clean_env: Path
+    def test_it_is_reported_once_and_the_rest_of_the_file_is_kept(
+        self, scratch_environ: Path
     ) -> None:
-        _write_dotenv(
-            clean_env,
-            f"SHELL_COMMAND_ALLOWLIST={_TOO_LONG_FOR_WINDOWS}",
-            "MEMGRAPH_HOST=db.internal",
-        )
+        # The refusal itself, on an OS that makes it, is
+        # test_a_value_too_long_for_the_environment_is_reported_not_raised.
+        _write_dotenv(scratch_environ, "MEMGRAPH_HOST=db.internal")
 
-        loaded, errors = config.load_settings(
-            frozenset(os.environ), {"SHELL_COMMAND_ALLOWLIST": self._MESSAGE}
+        loaded, errors = _load_as_cgr_starts(
+            scratch_environ, {"SHELL_COMMAND_ALLOWLIST": self._MESSAGE}
         )
 
         assert errors == (self._MESSAGE,)
@@ -573,13 +583,16 @@ class TestAListSettingThatIsNotJson:
             f"{_NOT_JSON}",
         )
 
-    def test_the_other_settings_from_dotenv_are_kept(self, clean_env: Path) -> None:
-        (clean_env / ".env").write_text(
-            "SHELL_COMMAND_ALLOWLIST=ls,cat\nMEMGRAPH_HOST=db.internal\n",
-            encoding="utf-8",
+    def test_the_other_settings_from_dotenv_are_kept(
+        self, scratch_environ: Path
+    ) -> None:
+        _write_dotenv(
+            scratch_environ,
+            "SHELL_COMMAND_ALLOWLIST=ls,cat",
+            "MEMGRAPH_HOST=db.internal",
         )
 
-        loaded, errors = config.load_settings(frozenset(os.environ))
+        loaded, errors = _load_as_cgr_starts(scratch_environ)
 
         assert loaded.MEMGRAPH_HOST == "db.internal"
         assert errors == (
@@ -603,14 +616,15 @@ class TestAListSettingThatIsNotJson:
         ]
 
     def test_one_nested_too_deeply_falls_back_to_its_default(
-        self, clean_env: Path
+        self, scratch_environ: Path
     ) -> None:
-        (clean_env / ".env").write_text(
-            f"SHELL_COMMAND_ALLOWLIST={_TOO_DEEP}\nMEMGRAPH_HOST=db.internal\n",
-            encoding="utf-8",
+        _write_dotenv(
+            scratch_environ,
+            f"SHELL_COMMAND_ALLOWLIST={_TOO_DEEP}",
+            "MEMGRAPH_HOST=db.internal",
         )
 
-        loaded, errors = config.load_settings(frozenset(os.environ))
+        loaded, errors = _load_as_cgr_starts(scratch_environ)
 
         assert errors == (
             "Invalid value for SHELL_COMMAND_ALLOWLIST in ./.env: "

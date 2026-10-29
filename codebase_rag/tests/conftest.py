@@ -18,6 +18,13 @@ from unittest.mock import MagicMock
 import pytest
 from loguru import logger
 
+# The suite starts from the shipped defaults, not from the `.env` in the
+# directory pytest runs from: importing `codebase_rag.config` merges that file
+# into the environment, and a developer's points QDRANT_URL, MEMGRAPH_HOST and
+# the like at a live stack. Set before the first import below that reaches
+# config; the tests of `.env` loading itself unset it.
+os.environ["PYTHON_DOTENV_DISABLED"] = "1"
+
 from codebase_rag import constants as rag_cs
 from codebase_rag.capture import CaptureSelection
 from codebase_rag.doctor import graph_audit
@@ -335,9 +342,10 @@ def _isolate_vector_store(
 ) -> None:
     # Tests must never touch the developer's real vector store: a clean-path
     # test would purge it for real, and parallel xdist workers would collide
-    # on its file lock. A developer .env sets QDRANT_URL to the live daemon
-    # stack, and URL mode never reads QDRANT_DB_PATH, so the URL must be
-    # cleared too or the purge lands on the live server.
+    # on its file lock. The suite keeps `.env` out, but an exported QDRANT_URL
+    # still points at the live daemon stack, and URL mode never reads
+    # QDRANT_DB_PATH, so the URL must be cleared too or the purge lands on the
+    # live server.
     from codebase_rag.config import settings
 
     monkeypatch.setattr(settings, "QDRANT_URL", None)

@@ -250,13 +250,16 @@ class AppConfig(BaseSettings):
     # `.env.example` used to connect to the empty host name rather than fall
     # back to `localhost` (#2474).
     #
+    # The settings read the environment only. The working directory's `.env`
+    # reaches them through `merge_dotenv` above, which loads it into the
+    # environment once, at import, and honours PYTHON_DOTENV_DISABLED; reading
+    # it a second time as pydantic's `env_file` ignored that switch.
+    #
     # List settings are decoded by `_decode_json_list`, not by the source:
     # pydantic-settings raises on a value that is not JSON while it reads the
     # environment, before validation and without saying which field, so one
     # such value cost every other setting too (#2474).
     model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
         env_ignore_empty=True,
@@ -758,8 +761,8 @@ def load_settings(
     tells a value exported in the shell from one read out of `.env`.
 
     `unset` holds the message for each `.env` variable the environment
-    refused, as `merge_dotenv` returns them. pydantic-settings reads `.env`
-    itself, so such a variable is refused here too, with that message alone.
+    refused, as `merge_dotenv` returns them. Such a variable keeps its
+    default and is reported with that message alone.
     """
     held_back = unset or {}
     try:

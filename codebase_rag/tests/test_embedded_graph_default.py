@@ -285,13 +285,9 @@ class TestMemgraphSetWithoutBackend:
     Memgraph while cgr now opens an empty file, so it is told so, once."""
 
     @pytest.fixture
-    def notes(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> Iterator[list[str]]:
+    def notes(self, monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
         for name in (GRAPH_BACKEND_SETTING, *MEMGRAPH_CONNECTION_SETTINGS):
             monkeypatch.delenv(name, raising=False)
-        # AppConfig reads `.env` from the working directory.
-        monkeypatch.chdir(tmp_path)
         graph_service._note_memgraph_set_without_backend.cache_clear()
         messages: list[str] = []
         sink = logger.add(
@@ -344,7 +340,8 @@ class TestMemgraphSetWithoutBackend:
     def test_a_blank_host_copied_from_the_example_is_not_a_setting(
         self, notes: list[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        (tmp_path / ".env").write_text("MEMGRAPH_HOST=\n", encoding="utf-8")
+        # What loading `.env` leaves for the example's blank `MEMGRAPH_HOST=`.
+        monkeypatch.setenv("MEMGRAPH_HOST", "")
         self._open(monkeypatch, tmp_path)
         assert notes == []
 

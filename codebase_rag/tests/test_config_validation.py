@@ -20,6 +20,9 @@ def test_import_does_not_walk_parent_directories_for_dotenv(tmp_path) -> None:
 
     env = os.environ.copy()
     env.pop("GOOGLE_API_KEY", None)
+    # The suite disables `.env` loading; the walk is only absent if loading
+    # is on.
+    env.pop(cs.ENV_PYTHON_DOTENV_DISABLED, None)
     result = subprocess.run(
         [
             sys.executable,
@@ -224,6 +227,7 @@ def _load_config_from_dotenv(
     (tmp_path / ".env").write_text(f"{line}\n", encoding="utf-8")
     env = os.environ.copy()
     env.pop(unset, None)
+    env.pop(cs.ENV_PYTHON_DOTENV_DISABLED, None)
     return subprocess.run(
         [
             sys.executable,
@@ -304,3 +308,30 @@ def test_an_ignored_dotenv_key_does_not_become_a_setting(tmp_path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert "loaded" in result.stdout
+
+
+def test_disabling_dotenv_keeps_the_file_out_of_the_settings_too(tmp_path) -> None:
+    # PYTHON_DOTENV_DISABLED stopped the import-time merge, but AppConfig read
+    # the same `.env` again as its own `env_file`, so the switch left the
+    # settings on the file's values all the same.
+    (tmp_path / ".env").write_text("MEMGRAPH_PORT=7999\n", encoding="utf-8")
+    env = os.environ.copy()
+    env.pop("MEMGRAPH_PORT", None)
+    env[cs.ENV_PYTHON_DOTENV_DISABLED] = "1"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from codebase_rag.config import AppConfig; "
+            "print(AppConfig().MEMGRAPH_PORT)",
+        ],
+        cwd=tmp_path,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding=cs.ENCODING_UTF8,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "7687"
