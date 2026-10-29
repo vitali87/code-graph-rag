@@ -184,10 +184,11 @@ class TestContextManager:
         assert ("WARNING", ls.MG_INTERRUPTED) in records
         flush.assert_called_once_with()
 
-    def test_exit_on_an_error_still_logs_it_as_one(self) -> None:
+    def test_exit_on_an_error_leaves_its_report_to_the_boundary(self) -> None:
         records, flush = self._exit_log(ValueError("boom"))
 
-        assert ("ERROR", ls.MG_EXCEPTION.format(error="boom")) in records
+        assert ("DEBUG", ls.MG_EXCEPTION.format(error="boom")) in records
+        assert "ERROR" not in {level for level, _message in records}
         assert "WARNING" not in {level for level, _message in records}
         flush.assert_called_once_with()
 

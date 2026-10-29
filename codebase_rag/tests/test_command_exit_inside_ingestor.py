@@ -125,10 +125,12 @@ def test_check_of_an_unindexed_project_prints_one_line(
 # Negative: what must not change.
 
 
-def test_an_error_is_still_logged_as_one(records: Records) -> None:
+def test_an_error_is_logged_once_by_its_boundary_not_here(records: Records) -> None:
+    # Kept at DEBUG: the error propagates to the command that reports it.
     flush = _exit(ValueError("boom"))
 
-    assert ("ERROR", ls.MG_EXCEPTION.format(error="boom")) in records
+    assert ("DEBUG", ls.MG_EXCEPTION.format(error="boom")) in records
+    assert "ERROR" not in _levels(records)
     flush.assert_called_once_with()
 
 

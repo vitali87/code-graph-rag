@@ -420,7 +420,14 @@ class MemgraphIngestor:
                         ls.MG_DELIBERATE_EXIT.format(kind=exc_type.__name__)
                     )
                 elif issubclass(exc_type, Exception):
-                    logger.exception(ls.MG_EXCEPTION.format(error=exc_val))
+                    # Also at DEBUG: the exception propagates unchanged to a
+                    # boundary that reports it (a CLI command, an MCP tool,
+                    # the caller), so an ERROR traceback here printed every
+                    # failure twice, and undid `cgr export`'s quiet report
+                    # (issue #2410).
+                    logger.opt(exception=exc_val).debug(
+                        ls.MG_EXCEPTION.format(error=exc_val)
+                    )
                 else:
                     # Ctrl+C or a cancelled task: the user stopped the run,
                     # and a traceback here read as a crash.

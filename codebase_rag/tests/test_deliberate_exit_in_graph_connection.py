@@ -180,16 +180,17 @@ class TestWhatMustNotChange:
             ),
         ],
     )
-    def test_a_real_error_is_still_logged_with_its_traceback_and_propagates(
+    def test_a_real_error_keeps_its_traceback_and_propagates(
         self, error: Exception, conn: MagicMock, logged: list[_Logged]
     ) -> None:
         with pytest.raises(type(error)) as raised, _ingestor():
             raise error
 
         assert raised.value is error
-        errors = [r for r in logged if r.level == "ERROR"]
-        assert [r.message for r in errors] == [ls.MG_EXCEPTION.format(error=error)]
-        assert errors[0].error is error
+        # At DEBUG: the command or tool the error reaches reports it, so an
+        # ERROR here printed every failure twice.
+        mine = [r for r in logged if r.message == ls.MG_EXCEPTION.format(error=error)]
+        assert [(r.level, r.error) for r in mine] == [("DEBUG", error)]
 
     @pytest.mark.parametrize(
         "stop",
@@ -266,9 +267,16 @@ class TestDeletingAProjectThatIsNotThere:
 
         assert result.exit_code == 1, result.output
         assert "bolt connection lost" in _plain(result.output)
-        assert ls.MG_EXCEPTION.format(error=failure) in {
-            r.message for r in logged if r.level == "ERROR"
-        }
+        # Reported once, by the command, with the traceback.
+        errors = [r for r in logged if r.level == "ERROR"]
+        assert [(r.message, r.error) for r in errors] == [
+            (
+                cs.CLI_ERR_DELETE_PROJECT_FAILED.format(
+                    project_name="click", error=failure
+                ),
+                failure,
+            )
+        ]
         conn.close.assert_called_once_with()
 
 
