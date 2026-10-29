@@ -43,7 +43,7 @@ from codebase_rag.parsers.frontends.csharp import CSharpFrontend
 from codebase_rag.parsers.frontends.go import GoFrontend
 from codebase_rag.parsers.frontends.java import JavaJavacFrontend
 from codebase_rag.parsers.go import frontend as go_frontend
-from codebase_rag.parsers.java_frontend import frontend as java_frontend
+from codebase_rag.parsers.java import frontend as java_frontend
 from codebase_rag.tests.conftest import git_env
 from codebase_rag.utils.path_utils import (
     frontend_ignored_dirs,

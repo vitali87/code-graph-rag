@@ -26,7 +26,6 @@ from .. import logs as ls
 from ..config import settings
 from ..language_spec import LANGUAGE_SPECS, LanguageSpec
 from ..parser_loader import grammar_installed
-from ..parsers import java_frontend
 from ..parsers.ast_grep_tier import (
     structural_tier_config_names,
     structural_tier_languages,
@@ -35,6 +34,7 @@ from ..parsers.cpp import frontend as cpp_frontend
 from ..parsers.csharp import frontend as csharp_frontend
 from ..parsers.document_tier import DOCUMENT_EXTENSIONS, document_tier_available
 from ..parsers.go import frontend as go_frontend
+from ..parsers.java import frontend as java_frontend
 from ..parsers.python import frontend as py_frontend
 from ..utils.dependencies import has_ast_grep
 

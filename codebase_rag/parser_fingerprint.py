@@ -290,7 +290,7 @@ def _active_tools(repo_path: Path | None = None) -> dict[str, bool]:
     """
     from .parsers.csharp.frontend import find_csharp_project, resolve_csharp_frontend
     from .parsers.go.frontend import find_go_module, resolve_go_frontend
-    from .parsers.java_frontend import resolve_java_frontend
+    from .parsers.java.frontend import resolve_java_frontend
 
     def _in_repo(probe: Callable[[Path], object | None]) -> bool:
         # No repository to ask: fall back to mode gating alone rather than
@@ -479,8 +479,8 @@ def _frontend_settings() -> list[str]:
     from .parsers.cpp.frontend import resolve_cpp_frontend
     from .parsers.csharp.frontend import resolve_csharp_frontend
     from .parsers.go.frontend import resolve_go_frontend
+    from .parsers.java.frontend import resolve_java_frontend
     from .parsers.java.lombok import current_lombok_version
-    from .parsers.java_frontend import resolve_java_frontend
     from .parsers.python.frontend import resolve_python_frontend
 
     return [

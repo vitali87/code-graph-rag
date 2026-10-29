@@ -372,7 +372,7 @@ def test_disabled_frontend_is_not_active_even_with_its_toolchain(
 ) -> None:
     monkeypatch.setattr(settings, "JAVA_FRONTEND", cs.JavaFrontend.HEURISTIC)
     monkeypatch.setattr(
-        "codebase_rag.parsers.java_frontend.java_frontend_available", lambda: True
+        "codebase_rag.parsers.java.frontend.java_frontend_available", lambda: True
     )
     rows = _by_name(_table(_invoke().output, _FRONTEND_HEADERS), "Frontend")
 
@@ -388,10 +388,10 @@ def test_enabled_frontend_probes_its_toolchain_once(
     probe = MagicMock(return_value=True)
     monkeypatch.setattr(settings, "JAVA_FRONTEND", cs.JavaFrontend.JAVAC)
     monkeypatch.setattr(
-        "codebase_rag.parsers.java_frontend.frontend.java_frontend_available", probe
+        "codebase_rag.parsers.java.frontend.java_frontend_available", probe
     )
     monkeypatch.setattr(
-        "codebase_rag.parsers.java_frontend.java_frontend_available", probe
+        "codebase_rag.parsers.java.frontend.java_frontend_available", probe
     )
     rows = _by_name(_table(_invoke().output, _FRONTEND_HEADERS), "Frontend")
 

@@ -19,11 +19,9 @@ from unittest.mock import patch
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _FRONTEND_ROOT = _REPO_ROOT / "codebase_rag" / "parsers"
 
-# Frontend packages that shell out to a compiler or language server.
-_FRONTEND_DIRS = ("java_frontend",)
-
-# Frontend modules that live in their language's package, and parser helpers
-# that also invoke external language tools. All are bounded today; they are
+# The frontend modules that shell out to a compiler or language server, each
+# in its language's package, and parser helpers that also invoke external
+# language tools. All are bounded today; they are
 # scanned so that STAYS true, which is the point of a gate rather than a
 # sweep. Greptile found the helpers missing by adding an unbounded call to
 # each and observing the test still passed.
@@ -33,23 +31,19 @@ _FRONTEND_FILES = (
     "csharp/frontend.py",
     "go/frontend.py",
     "python/frontend.py",
+    "java/frontend.py",
     "java/lombok.py",
     "stdlib_extractor.py",
 )
 
 
 def _scanned_paths() -> list[Path]:
-    """Every file the gate covers: the frontend packages plus the loose files.
+    """Every file the gate covers.
 
-    A listed directory or file that no longer exists fails here: a frontend
-    moved elsewhere would otherwise leave the gate scanning nothing for it.
+    A listed file that no longer exists fails here: a frontend moved
+    elsewhere would otherwise leave the gate scanning nothing for it.
     """
-    for d in _FRONTEND_DIRS:
-        assert (_FRONTEND_ROOT / d).is_dir(), d
-    paths = [
-        p for d in _FRONTEND_DIRS for p in sorted((_FRONTEND_ROOT / d).rglob("*.py"))
-    ]
-    paths += [_FRONTEND_ROOT / name for name in _FRONTEND_FILES]
+    paths = [_FRONTEND_ROOT / name for name in _FRONTEND_FILES]
     for path in paths:
         assert path.is_file(), path
     return paths
@@ -114,7 +108,7 @@ def test_the_scan_reaches_the_frontend_packages() -> None:
     """
     seen = _scanned_paths()
 
-    assert len(seen) >= len(_FRONTEND_DIRS), f"only {len(seen)} files scanned"
+    assert len(seen) == len(_FRONTEND_FILES), f"only {len(seen)} files scanned"
     # Every named loose helper must actually exist, or a rename silently
     # removes it from the gate's coverage and nothing reports the hole.
     missing = [

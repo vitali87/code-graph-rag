@@ -427,7 +427,7 @@ PARSER_FINGERPRINT_TOOL_GLOBS: tuple[str, ...] = ("*.cs", "*.csproj")
 PARSER_FINGERPRINT_TOOL_SOURCES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("parsers/csharp/roslyn", ("*.cs", "*.csproj")),
     ("parsers/go/gotypes", ("*.go", "*.mod", "*.sum")),
-    ("parsers/java_frontend/javac", ("**/*.java",)),
+    ("parsers/java/javac", ("**/*.java",)),
     # The ast-grep YAML is data, not code, but it decides what unchanged
     # sources produce: the finding rules which Pattern/CodeSmell/SecurityIssue
     # nodes exist, the tier patterns which definitions do. A rule change with

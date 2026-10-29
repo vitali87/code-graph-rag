@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from ...constants.languages import SupportedLanguage
-from ..java_frontend import java_frontend_available, run_java_frontend
+from ..java.frontend import java_frontend_available, run_java_frontend
 from .protocol import SemanticFacts
 from .registry import register_frontend
 

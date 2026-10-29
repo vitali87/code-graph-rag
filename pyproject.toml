@@ -136,7 +136,7 @@ codebase_rag = [
     "parsers/go/gotypes/*.go",
     "parsers/go/gotypes/go.mod",
     "parsers/go/gotypes/go.sum",
-    "parsers/java_frontend/javac/cgr/*.java",
+    "parsers/java/javac/cgr/*.java",
     "parsers/ast_grep_patterns/*.yaml",
     "analyzers/ast_grep_rules/*/*.yaml",
     # Julia's pip grammar ships no HIGHLIGHTS_QUERY, so its highlights come

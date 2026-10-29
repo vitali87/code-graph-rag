@@ -14,7 +14,7 @@ from codebase_rag import constants as cs
 from codebase_rag.config import settings
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.parsers.java_frontend import java_frontend_available
+from codebase_rag.parsers.java.frontend import java_frontend_available
 from codebase_rag.tests.conftest import get_relationships
 
 # The argument is a call into the JDK, whose return type the tree-sitter side

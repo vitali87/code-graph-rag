@@ -13,13 +13,14 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.parsers.java_frontend import frontend as java_frontend_module
-from codebase_rag.parsers.java_frontend import (
+from codebase_rag.parsers.java import frontend as java_frontend_module
+from codebase_rag.parsers.java.frontend import (
+    _compile_tool,
+    _parse_payload,
     java_frontend_available,
     resolve_java_frontend,
     run_java_frontend,
 )
-from codebase_rag.parsers.java_frontend.frontend import _compile_tool, _parse_payload
 
 _WIDGET = (
     "package com.app;\n\n"
