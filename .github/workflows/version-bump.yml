@@ -63,6 +63,9 @@ jobs:
         with:
           fetch-depth: 2
           ssh-key: ${{ secrets.VERSION_BUMP_SSH_KEY }}
+          # "Commit version bump" and "Create git tag" push with this deploy
+          # key, so it has to stay configured after the checkout.
+          persist-credentials: true
 
       - name: Check if version was manually changed
         id: check_manual

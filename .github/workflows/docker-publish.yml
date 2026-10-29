@@ -26,6 +26,8 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # No image of a commit main's CI has not passed: a release created by
       # hand and a dispatch reach this job too, not only version-bump.yml's
