@@ -18,6 +18,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.call_resolver import CallResolver
 from codebase_rag.parsers.definition_facts import DefinitionFacts
+from codebase_rag.tests.conftest import recorded_triples
 
 TS_CLOSURE_HOLDER = (
     "export const createSseClient = () => {\n"
@@ -40,10 +41,7 @@ def _run_rels(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str, str]
         p.write_text(content, encoding="utf-8")
     mock = MagicMock()
     GraphUpdater(ingestor=mock, repo_path=root, parsers=parsers, queries=queries).run()
-    return {
-        (c.args[0][2], str(c.args[1]), c.args[2][2])
-        for c in mock.ensure_relationship_batch.call_args_list
-    }
+    return recorded_triples(mock)
 
 
 def _calls(rels: set[tuple[str, str, str]], caller_suffix: str) -> set[str]:

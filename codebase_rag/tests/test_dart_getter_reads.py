@@ -14,6 +14,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import recorded_triples
 
 REFERENCES = cs.RelationshipType.REFERENCES.value
 
@@ -34,10 +35,7 @@ def _run(tmp_path: Path, files: dict[str, str]) -> MagicMock:
 
 
 def _rels(mock: MagicMock) -> set[tuple[str, str, str]]:
-    return {
-        (c.args[0][2], str(c.args[1]), c.args[2][2])
-        for c in mock.ensure_relationship_batch.call_args_list
-    }
+    return recorded_triples(mock)
 
 
 def _has(

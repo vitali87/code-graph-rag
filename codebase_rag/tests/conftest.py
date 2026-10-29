@@ -1170,6 +1170,14 @@ def recorded_edges(ingestor: MagicMock, rel_type: str) -> set[tuple[str, str]]:
     }
 
 
+def recorded_triples(ingestor: MagicMock) -> set[tuple[str, str, str]]:
+    """Every recorded relationship as (source key, type, target key)."""
+    return {
+        (str(rel.from_spec[2]), rel.rel_type, str(rel.to_spec[2]))
+        for rel in recorded_relationships(ingestor)
+    }
+
+
 def get_relationships(mock_ingestor: MagicMock, rel_type: str) -> list:
     """Extract relationships of a specific type from mock_ingestor calls."""
     return [

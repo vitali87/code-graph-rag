@@ -7,6 +7,7 @@ import pytest
 
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.tests.conftest import recorded_triples
 
 
 def _run(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str, str]]:
@@ -21,10 +22,7 @@ def _run(tmp_path: Path, files: dict[str, str]) -> set[tuple[str, str, str]]:
     GraphUpdater(
         ingestor=mock, repo_path=tmp_path, parsers=parsers, queries=queries
     ).run()
-    return {
-        (c.args[0][2], str(c.args[1]), c.args[2][2])
-        for c in mock.ensure_relationship_batch.call_args_list
-    }
+    return recorded_triples(mock)
 
 
 def test_nested_class_method_call_edge_uses_full_qn(tmp_path: Path) -> None:
