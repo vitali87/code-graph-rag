@@ -140,7 +140,12 @@ class ScalaImporter:
         self._scala_imports.pop(module_qn, None)
         self._scala_block_imports.pop(module_qn, None)
 
-    def parse_imports(self, captures: dict[str, list[Node]], module_qn: str) -> None:
+    def parse_imports(
+        self,
+        captures: dict[str, list[Node]],
+        module_qn: str,
+        root_node: Node | None = None,
+    ) -> None:
         """Scala imports: plain, selector group, rename and wildcard.
 
         Scala writes the package path as loose `identifier` and `.` children

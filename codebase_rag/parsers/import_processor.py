@@ -1,5 +1,6 @@
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Protocol
 
 from loguru import logger
 from tree_sitter import Node, QueryCursor
@@ -111,6 +112,20 @@ def _external_module_name(module_path: str) -> str:
     return segments[-1]
 
 
+class LanguageImporter(Protocol):
+    """What the per-language dispatch calls on the importer a language's
+    files go to: the parse of one file's import captures. `root_node` is the
+    whole file, which JS/TS, PHP and Dart read beyond their captures."""
+
+    def parse_imports(
+        self,
+        captures: dict[str, list[Node]],
+        module_qn: str,
+        root_node: Node,
+        /,
+    ) -> None: ...
+
+
 class ImportProcessor:
     __slots__ = (
         "repo_path",
@@ -139,6 +154,7 @@ class ImportProcessor:
         "cpp",
         "go",
         "python",
+        "_importers",
     )
 
     def __init__(
@@ -313,6 +329,29 @@ class ImportProcessor:
             import_mapping=self.import_mapping,
             module_qn_to_file_path=shared_or_new(module_qn_to_file_path, dict),
         )
+        # The importer each language's files go to; a language with none
+        # binds nothing, its import nodes only logged.
+        self._importers: dict[cs.SupportedLanguage, LanguageImporter] = {
+            cs.SupportedLanguage.PYTHON: self.python,
+            cs.SupportedLanguage.JS: self.js_ts,
+            cs.SupportedLanguage.TS: self.js_ts,
+            cs.SupportedLanguage.TSX: self.js_ts,
+            cs.SupportedLanguage.JAVA: self.java,
+            cs.SupportedLanguage.RUST: self.rust,
+            cs.SupportedLanguage.GO: self.go,
+            cs.SupportedLanguage.CPP: self.cpp,
+            # C shares the include grammar and the resolver: without its
+            # own entry here a `.c` file's `#include "foo.h"` never reached
+            # the import map, so it emitted no IMPORTS edge while a `.h`
+            # including the same header (parsed as C++) did (issue #1654).
+            cs.SupportedLanguage.C: self.cpp,
+            cs.SupportedLanguage.LUA: self.lua,
+            cs.SupportedLanguage.JULIA: self.julia,
+            cs.SupportedLanguage.PHP: self.php,
+            cs.SupportedLanguage.CSHARP: self.csharp,
+            cs.SupportedLanguage.DART: self.dart,
+            cs.SupportedLanguage.SCALA: self.scala,
+        }
 
     @staticmethod
     def flush_stdlib_cache() -> None:
@@ -460,41 +499,10 @@ class ImportProcessor:
                 cursor = QueryCursor(imports_query)
                 captures = sorted_captures(cursor, root_node)
 
-            match language:
-                case cs.SupportedLanguage.PYTHON:
-                    self.python.parse_imports(captures, module_qn)
-                case (
-                    cs.SupportedLanguage.JS
-                    | cs.SupportedLanguage.TS
-                    | cs.SupportedLanguage.TSX
-                ):
-                    self.js_ts.parse_imports(captures, module_qn, root_node)
-                case cs.SupportedLanguage.JAVA:
-                    self.java.parse_imports(captures, module_qn)
-                case cs.SupportedLanguage.RUST:
-                    self.rust.parse_imports(captures, module_qn)
-                case cs.SupportedLanguage.GO:
-                    self.go.parse_imports(captures, module_qn)
-                # C shares the include grammar and the resolver: without its
-                # own arm here a `.c` file's `#include "foo.h"` never reached
-                # the import map, so it emitted no IMPORTS edge while a `.h`
-                # including the same header (parsed as C++) did (issue #1654).
-                case cs.SupportedLanguage.CPP | cs.SupportedLanguage.C:
-                    self.cpp.parse_imports(captures, module_qn)
-                case cs.SupportedLanguage.LUA:
-                    self.lua.parse_imports(captures, module_qn)
-                case cs.SupportedLanguage.JULIA:
-                    self.julia.parse_imports(captures, module_qn)
-                case cs.SupportedLanguage.PHP:
-                    self.php.parse_imports(captures, module_qn, root_node)
-                case cs.SupportedLanguage.CSHARP:
-                    self.csharp.parse_imports(captures, module_qn)
-                case cs.SupportedLanguage.DART:
-                    self.dart.parse_imports(captures, module_qn, root_node)
-                case cs.SupportedLanguage.SCALA:
-                    self.scala.parse_imports(captures, module_qn)
-                case _:
-                    self._parse_generic_imports(captures, lang_config)
+            if (importer := self._importers.get(language)) is not None:
+                importer.parse_imports(captures, module_qn, root_node)
+            else:
+                self._parse_generic_imports(captures, lang_config)
 
             logger.debug(
                 ls.IMP_PARSED_COUNT,

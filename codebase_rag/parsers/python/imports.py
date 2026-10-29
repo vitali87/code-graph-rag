@@ -130,7 +130,12 @@ class PythonImporter:
 
         self._is_local_module_cached = _is_local_module_cached
 
-    def parse_imports(self, captures: dict[str, list[Node]], module_qn: str) -> None:
+    def parse_imports(
+        self,
+        captures: dict[str, list[Node]],
+        module_qn: str,
+        root_node: Node | None = None,
+    ) -> None:
         all_imports = captures.get(cs.CAPTURE_IMPORT, []) + captures.get(
             cs.CAPTURE_IMPORT_FROM, []
         )

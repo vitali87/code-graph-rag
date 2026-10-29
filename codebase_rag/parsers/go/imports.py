@@ -70,7 +70,12 @@ class GoImporter:
 
         self._map_go_import_path = _map_go_import_path_cached
 
-    def parse_imports(self, captures: dict[str, list[Node]], module_qn: str) -> None:
+    def parse_imports(
+        self,
+        captures: dict[str, list[Node]],
+        module_qn: str,
+        root_node: Node | None = None,
+    ) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type == cs.TS_GO_IMPORT_DECLARATION:
                 self._parse_go_import_declaration(import_node, module_qn)

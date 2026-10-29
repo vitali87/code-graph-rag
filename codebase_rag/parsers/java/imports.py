@@ -124,7 +124,12 @@ class JavaImporter:
         self._is_local_java_import_cached = _is_local_java_import_cached
         self._java_source_root_prefix_cached = _java_source_root_prefix_cached
 
-    def parse_imports(self, captures: dict[str, list[Node]], module_qn: str) -> None:
+    def parse_imports(
+        self,
+        captures: dict[str, list[Node]],
+        module_qn: str,
+        root_node: Node | None = None,
+    ) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type != cs.TS_IMPORT_DECLARATION:
                 continue

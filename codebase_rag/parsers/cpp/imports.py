@@ -151,7 +151,12 @@ class CppImporter:
         # really does include both headers, so the edge is kept here.
         self._cpp_shadowed_include_targets: set[tuple[str, str]] = set()
 
-    def parse_imports(self, captures: dict[str, list[Node]], module_qn: str) -> None:
+    def parse_imports(
+        self,
+        captures: dict[str, list[Node]],
+        module_qn: str,
+        root_node: Node | None = None,
+    ) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type == cs.TS_PREPROC_INCLUDE:
                 self._parse_cpp_include(import_node, module_qn)

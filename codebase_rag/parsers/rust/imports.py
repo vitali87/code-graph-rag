@@ -463,7 +463,12 @@ class RustImporter:
         self.rust_impl_self_paths.setdefault(impl_qn, set()).add(written_path)
         self._rust_impl_self_path_keys.setdefault(module_qn, set()).add(impl_qn)
 
-    def parse_imports(self, captures: dict[str, list[Node]], module_qn: str) -> None:
+    def parse_imports(
+        self,
+        captures: dict[str, list[Node]],
+        module_qn: str,
+        root_node: Node | None = None,
+    ) -> None:
         self.drop_rust_module_import_state(module_qn)
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type == cs.TS_USE_DECLARATION:

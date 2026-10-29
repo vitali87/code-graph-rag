@@ -162,7 +162,12 @@ class JuliaImporter:
             node = node.parent
         return cs.SEPARATOR_DOT.join(reversed(names)) if names else None
 
-    def parse_imports(self, captures: dict[str, list[Node]], module_qn: str) -> None:
+    def parse_imports(
+        self,
+        captures: dict[str, list[Node]],
+        module_qn: str,
+        root_node: Node | None = None,
+    ) -> None:
         # `using A.B` / `using A.B as C` / `import A: b, c as d` / `using .S`:
         # the local name is the alias / selected member / last path segment,
         # the target the dotted path. Relative `.`/`..` stay in the

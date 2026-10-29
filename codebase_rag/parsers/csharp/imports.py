@@ -157,7 +157,12 @@ class CSharpImporter:
                     import_node, module_qn, imported_path, alias_node, global_only=True
                 )
 
-    def parse_imports(self, captures: dict[str, list[Node]], module_qn: str) -> None:
+    def parse_imports(
+        self,
+        captures: dict[str, list[Node]],
+        module_qn: str,
+        root_node: Node | None = None,
+    ) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type != cs.TS_CSHARP_USING_DIRECTIVE:
                 continue

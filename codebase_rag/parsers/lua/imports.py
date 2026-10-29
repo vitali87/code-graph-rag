@@ -75,7 +75,12 @@ class LuaImporter:
         self.import_mapping[module_qn][local_name] = resolved
         self._host._record_import_site(module_qn, local_name, call_node, module_path)
 
-    def parse_imports(self, captures: dict[str, list[Node]], module_qn: str) -> None:
+    def parse_imports(
+        self,
+        captures: dict[str, list[Node]],
+        module_qn: str,
+        root_node: Node | None = None,
+    ) -> None:
         for call_node in captures.get(cs.CAPTURE_IMPORT, []):
             if self._lua_is_require_call(call_node):
                 if module_path := self._lua_extract_require_arg(call_node):
