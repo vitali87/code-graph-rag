@@ -69,7 +69,7 @@ def test_limit_without_order_compares_only_the_count() -> None:
 def graph(tmp_path: Path) -> str:
     path = str(tmp_path / "source.sqlite")
     with MemgraphIngestor(
-        host="unused", port=0, dialect=get_dialect(DIALECT_SQLITE), sqlite_path=path
+        dialect=get_dialect(DIALECT_SQLITE), sqlite_path=path
     ) as ingestor:
         ingestor.ensure_constraints()
         ingestor.ensure_node_batch("Project", {"name": "p", "root_path": "/r"})

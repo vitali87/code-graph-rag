@@ -118,7 +118,7 @@ def _index(parent: Path, project: str, files: dict[str, str]) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
     parsers, queries = load_parsers()
-    with MemgraphIngestor(host="unused", port=0) as ingestor:
+    with MemgraphIngestor() as ingestor:
         ingestor.ensure_constraints()
         GraphUpdater(
             ingestor=ingestor,
@@ -152,7 +152,7 @@ def _check(
     include_tests: bool = False,
     project: str = PROJECT,
 ) -> ParityReport:
-    with MemgraphIngestor(host="unused", port=0) as ingestor:
+    with MemgraphIngestor() as ingestor:
         return port_check(
             ingestor.fetch_all,
             PortScope(project, old),

@@ -290,6 +290,15 @@ def _log_failed_relationships(
         logger.warning(ls.MG_RELS_FAILED_MORE.format(count=failed - len(named)))
 
 
+def _dialect_for_arguments(addressed: bool) -> GraphDialect:
+    configured = get_dialect(settings.GRAPH_BACKEND)
+    if not addressed or configured.name == DIALECT_MEMGRAPH:
+        return configured
+    if configured.name == DIALECT_SQLITE:
+        return get_dialect(DIALECT_MEMGRAPH)
+    raise ValueError(ex.MEMGRAPH_ADDRESS_UNDER_BACKEND.format(backend=configured.name))
+
+
 class MemgraphIngestor:
     __slots__ = (
         "_conn_lock",
@@ -315,8 +324,8 @@ class MemgraphIngestor:
 
     def __init__(
         self,
-        host: str,
-        port: int,
+        host: str | None = None,
+        port: int | None = None,
         batch_size: int = 1000,
         username: str | None = None,
         password: str | None = None,
@@ -324,10 +333,20 @@ class MemgraphIngestor:
         dialect: GraphDialect | None = None,
         sqlite_path: str | None = None,
     ):
+        """A graph ingestor for the engine GRAPH_BACKEND selects, or `dialect`.
+
+        A Memgraph address or login passed here names a Memgraph server, so
+        without a `dialect` it selects Memgraph even when GRAPH_BACKEND is the
+        embedded default, which has no address to apply it to; under Neo4j,
+        which connects through NEO4J_URI, it is refused. A field left out is
+        read from its MEMGRAPH_* setting.
+        """
         # The engine is resolved once here rather than read from settings at
         # each call site, so a single ingestor cannot straddle two dialects
         # mid-run if configuration changes underneath it.
-        self._dialect = dialect or get_dialect(settings.GRAPH_BACKEND)
+        self._dialect = dialect or _dialect_for_arguments(
+            addressed=any(v is not None for v in (host, port, username, password))
+        )
         # Only the engine the settings chose: a caller naming its own dialect
         # or file picked it on purpose.
         if (
@@ -346,8 +365,12 @@ class MemgraphIngestor:
         # its own statements, so a slow generated query need not hold the
         # lock every write takes.
         self._read_lock = threading.Lock()
-        self._host = host
-        self._port = port
+        self._host = host if host is not None else settings.MEMGRAPH_HOST
+        self._port = port if port is not None else settings.MEMGRAPH_PORT
+        if username is None:
+            username = settings.MEMGRAPH_USERNAME
+        if password is None:
+            password = settings.MEMGRAPH_PASSWORD
         self._username = username.strip() if username and username.strip() else None
         self._password = password.strip() if password and password.strip() else None
         # Only for the engine these credentials belong to: Neo4j
@@ -375,7 +398,7 @@ class MemgraphIngestor:
     def __enter__(self) -> MemgraphIngestor:
         logger.debug(ls.MG_CONNECTING.format(host=self._host, port=self._port))
         try:
-            self.conn = self._create_connection()
+            self.conn = self.open_connection()
         except GraphUnavailableError:
             raise
         except _MgclientError as e:
@@ -393,7 +416,7 @@ class MemgraphIngestor:
             self._executor = ThreadPoolExecutor(
                 max_workers=settings.FLUSH_THREAD_POOL_SIZE
             )
-        logger.debug(ls.MG_CONNECTED)
+        logger.debug(ls.MG_CONNECTED.format(engine=self._dialect.name))
         return self
 
     def _unavailable_message(self, error: Exception) -> str:
@@ -508,7 +531,7 @@ class MemgraphIngestor:
                     logger.error(ls.MG_CYPHER_PARAMS.format(params=params))
                 raise
 
-    def _create_connection(self) -> ConnectionProtocol:
+    def open_connection(self) -> ConnectionProtocol:
         """Open one connection for the configured engine.
 
         The parallel flush calls this once per worker, so whatever comes
@@ -864,7 +887,7 @@ class MemgraphIngestor:
         label: str,
         props_list: list[dict[str, PropertyValue]],
     ) -> tuple[int, int]:
-        conn = self._create_connection()
+        conn = self.open_connection()
         try:
             return self._flush_node_label_group(label, props_list, conn=conn)
         finally:
@@ -875,7 +898,7 @@ class MemgraphIngestor:
         pattern: tuple[str, str, str, str, str],
         params_list: list[RelBatchRow],
     ) -> int:
-        conn = self._create_connection()
+        conn = self.open_connection()
         try:
             return self._flush_rel_pattern_group(pattern, params_list, conn=conn)
         finally:

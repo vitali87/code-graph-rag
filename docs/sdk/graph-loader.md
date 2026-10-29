@@ -65,7 +65,11 @@ for func in functions[:5]:
 
 ## Query Memgraph Directly
 
-For live queries against a running Memgraph instance:
+For live queries against a running Memgraph instance. A host, port or
+login passed to `MemgraphIngestor` selects Memgraph whatever `GRAPH_BACKEND`
+says (under `neo4j` it is refused, since Neo4j connects through `NEO4J_URI`);
+with none, it opens the engine `GRAPH_BACKEND` selects, the embedded graph
+by default, and reads any field left out from its `MEMGRAPH_*` setting:
 
 ```python
 from cgr import MemgraphIngestor

@@ -7,7 +7,6 @@ names, so `main.app_context` and `cli.app_context` are the same object.
 """
 
 from . import constants as cs
-from .config import settings
 from .models import AppContext
 from .services.graph_service import MemgraphIngestor
 
@@ -28,10 +27,4 @@ app_context = AppContext()
 
 
 def connect_memgraph(batch_size: int) -> MemgraphIngestor:
-    return MemgraphIngestor(
-        host=settings.MEMGRAPH_HOST,
-        port=settings.MEMGRAPH_PORT,
-        batch_size=batch_size,
-        username=settings.MEMGRAPH_USERNAME,
-        password=settings.MEMGRAPH_PASSWORD,
-    )
+    return MemgraphIngestor(batch_size=batch_size)

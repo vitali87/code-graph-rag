@@ -74,7 +74,7 @@ def logged() -> Generator[list[_Logged], None, None]:
 @pytest.fixture
 def conn() -> Generator[MagicMock, None, None]:
     connection = MagicMock()
-    with patch.object(MemgraphIngestor, "_create_connection", return_value=connection):
+    with patch.object(MemgraphIngestor, "open_connection", return_value=connection):
         yield connection
 
 

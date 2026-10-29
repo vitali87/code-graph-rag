@@ -28,6 +28,7 @@ from typer.testing import CliRunner
 
 from codebase_rag import logs as ls
 from codebase_rag.cli import app
+from codebase_rag.graph_dialects import DIALECT_MEMGRAPH
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.stack.constants import StackState
 from codebase_rag.stack.manager import StackStatus
@@ -437,7 +438,7 @@ def test_debug_still_traces_the_connection_and_flush_lifecycle() -> None:
     debug = [line.text for line in lines]
     for text in (
         ls.MG_CONNECTING.format(host="db.example", port=7699),
-        ls.MG_CONNECTED,
+        ls.MG_CONNECTED.format(engine=DIALECT_MEMGRAPH),
         ls.MG_FLUSH_START,
         ls.MG_FLUSH_COMPLETE,
         ls.MG_DISCONNECTED,

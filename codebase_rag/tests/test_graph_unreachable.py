@@ -146,7 +146,7 @@ def test_a_failure_after_connecting_is_not_reported_as_unreachable(
             pass
 
     broke = RuntimeError("query broke")
-    with patch.object(MemgraphIngestor, "_create_connection", return_value=_Conn()):
+    with patch.object(MemgraphIngestor, "open_connection", return_value=_Conn()):
         with pytest.raises(RuntimeError, match="query broke"):
             with MemgraphIngestor(host="127.0.0.1", port=nothing_listening):
                 raise broke
@@ -198,7 +198,7 @@ class _Connection:
 @pytest.fixture
 def graph_answers() -> Iterator[None]:
     with patch.object(
-        MemgraphIngestor, "_create_connection", return_value=_Connection()
+        MemgraphIngestor, "open_connection", return_value=_Connection()
     ):
         yield
 

@@ -98,8 +98,6 @@ def test_the_name_tier_mentions_and_grade_touch_only_the_syncing_project(
     # is `app.sub`'s, and `other`'s notes, attached or not, are left exactly
     # as their own syncs left them (CodeRabbit, PR #3319).
     with MemgraphIngestor(
-        host="unused",
-        port=0,
         dialect=get_dialect(DIALECT_SQLITE),
         sqlite_path=str(tmp_path / "graph.sqlite"),
     ) as store:

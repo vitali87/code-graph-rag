@@ -89,7 +89,7 @@ class TestReportedEndpoint:
             "codebase_rag.tools.health_checker.settings.MEMGRAPH_HOST", "mg-host"
         )
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.MemgraphIngestor._create_connection",
+            "codebase_rag.tools.health_checker.MemgraphIngestor.open_connection",
             lambda self: FakeConn(),
         )
         result = HealthChecker().check_memgraph_connection()
@@ -107,7 +107,7 @@ class TestReportedEngineName:
         )
         monkeypatch.setattr("codebase_rag.tools.health_checker.settings.NEO4J_URI", uri)
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.MemgraphIngestor._create_connection",
+            "codebase_rag.tools.health_checker.MemgraphIngestor.open_connection",
             lambda self: FakeConn(),
         )
         monkeypatch.setattr(
@@ -157,7 +157,7 @@ class TestDriverIsReleased:
         conn = FakeConn()
 
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.MemgraphIngestor._create_connection",
+            "codebase_rag.tools.health_checker.MemgraphIngestor.open_connection",
             lambda self: conn,
         )
         monkeypatch.setattr(
@@ -174,7 +174,7 @@ class TestDriverIsReleased:
     def test_the_driver_is_closed_even_when_the_body_raises(self, monkeypatch) -> None:
         closed: list[str] = []
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.MemgraphIngestor._create_connection",
+            "codebase_rag.tools.health_checker.MemgraphIngestor.open_connection",
             lambda self: FakeConn(),
         )
         monkeypatch.setattr(
@@ -191,7 +191,7 @@ class TestDriverIsReleased:
     def test_the_integrity_audit_releases_its_driver(self, monkeypatch) -> None:
         closed: list[str] = []
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.MemgraphIngestor._create_connection",
+            "codebase_rag.tools.health_checker.MemgraphIngestor.open_connection",
             lambda self: FakeConn(),
         )
         monkeypatch.setattr(
@@ -281,7 +281,7 @@ class TestConnectionFailureClassification:
             "codebase_rag.tools.health_checker.settings.GRAPH_BACKEND", DIALECT_NEO4J
         )
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.MemgraphIngestor._create_connection",
+            "codebase_rag.tools.health_checker.MemgraphIngestor.open_connection",
             lambda self: ExplodingConn(),
         )
         monkeypatch.setattr(
@@ -302,7 +302,7 @@ class TestCleanupDoesNotMaskTheAuditResult:
                 raise RuntimeError("close blew up")
 
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.MemgraphIngestor._create_connection",
+            "codebase_rag.tools.health_checker.MemgraphIngestor.open_connection",
             lambda self: BadCloseConn(),
         )
         monkeypatch.setattr(
@@ -318,7 +318,7 @@ class TestCleanupDoesNotMaskTheAuditResult:
             raise ConnectionError("down")
 
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.MemgraphIngestor._create_connection",
+            "codebase_rag.tools.health_checker.MemgraphIngestor.open_connection",
             explode,
         )
         assert HealthChecker().check_graph_integrity() == []
@@ -361,7 +361,7 @@ class TestReachabilityNeedsAQuery:
                 return RecordingCursor()
 
         monkeypatch.setattr(
-            "codebase_rag.tools.health_checker.MemgraphIngestor._create_connection",
+            "codebase_rag.tools.health_checker.MemgraphIngestor.open_connection",
             lambda self: RecordingConn(),
         )
         monkeypatch.setattr(

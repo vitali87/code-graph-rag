@@ -566,8 +566,6 @@ class TestIngestor:
     @pytest.fixture
     def ingestor(self, tmp_path: Path) -> Iterator[MemgraphIngestor]:
         with MemgraphIngestor(
-            host="unused",
-            port=0,
             dialect=get_dialect(DIALECT_SQLITE),
             sqlite_path=str(tmp_path / "graph.sqlite"),
         ) as ingestor:

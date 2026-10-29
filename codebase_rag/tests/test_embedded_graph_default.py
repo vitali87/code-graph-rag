@@ -245,7 +245,7 @@ def test_doctor_names_the_embedded_graph(embedded) -> None:
 
 
 def test_the_default_graph_opens_under_cgr_home(embedded) -> None:
-    with MemgraphIngestor(host="unused", port=0) as ingestor:
+    with MemgraphIngestor() as ingestor:
         ingestor.ensure_constraints()
     assert settings.graph_db_file.is_file()
     assert settings.graph_db_file.parent == settings.CGR_HOME
@@ -255,8 +255,6 @@ def test_an_unwritable_graph_path_is_one_clear_error(tmp_path: Path) -> None:
     blocker = tmp_path / "a-file"
     blocker.write_text("")
     ingestor = MemgraphIngestor(
-        host="unused",
-        port=0,
         dialect=get_dialect(DIALECT_SQLITE),
         sqlite_path=str(blocker / "graph.sqlite"),
     )
@@ -309,7 +307,7 @@ class TestMemgraphSetWithoutBackend:
         monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sqlite_path: str | None = None
     ) -> None:
         monkeypatch.setattr(graph_service, "settings", AppConfig(CGR_HOME=tmp_path))
-        MemgraphIngestor(host="unused", port=0, sqlite_path=sqlite_path)
+        MemgraphIngestor(sqlite_path=sqlite_path)
 
     def test_memgraph_settings_without_a_backend_are_noted_once(
         self, notes: list[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path

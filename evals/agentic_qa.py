@@ -700,11 +700,7 @@ def main(
     results: dict[str, dict[str, float]] = {}
     all_records: list[QARecord] = []
     if needs_graph:
-        with MemgraphIngestor(
-            host=settings.MEMGRAPH_HOST,
-            port=settings.MEMGRAPH_PORT,
-            batch_size=settings.MEMGRAPH_BATCH_SIZE,
-        ) as ingestor:
+        with MemgraphIngestor(batch_size=settings.MEMGRAPH_BATCH_SIZE) as ingestor:
             # The CLI path creates constraints and indexes before ingesting;
             # this harness must too, or every generated query runs against an
             # unindexed graph and the latency numbers measure Memgraph scans,

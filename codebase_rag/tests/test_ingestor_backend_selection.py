@@ -10,7 +10,9 @@ raising -- and the parallel MERGE flush depends on those constraints.
 
 from __future__ import annotations
 
-from codebase_rag.config import AppConfig
+import pytest
+
+from codebase_rag.config import AppConfig, settings
 from codebase_rag.graph_dialects import (
     DIALECT_MEMGRAPH,
     DIALECT_NEO4J,
@@ -138,9 +140,40 @@ class TestDialectResolution:
         # A first run must work with no server and no configuration (#386).
         assert AppConfig.model_fields["GRAPH_BACKEND"].default == DIALECT_SQLITE
 
-    def test_the_ingestor_follows_the_configured_engine(self) -> None:
-        # The suite pins GRAPH_BACKEND to Memgraph (conftest).
-        assert MemgraphIngestor(host="h", port=1)._dialect.name == DIALECT_MEMGRAPH
+    def test_the_ingestor_follows_the_configured_engine(self, monkeypatch) -> None:
+        for name in (DIALECT_SQLITE, DIALECT_MEMGRAPH, DIALECT_NEO4J):
+            monkeypatch.setattr(settings, "GRAPH_BACKEND", name)
+            assert MemgraphIngestor()._dialect.name == name
+
+    def test_a_memgraph_address_selects_memgraph_over_the_embedded_default(
+        self, monkeypatch
+    ) -> None:
+        # The SDK's "query Memgraph directly" example passes an address and
+        # nothing else: under the embedded default it opened the local file,
+        # answered from an empty graph and logged a Memgraph connection.
+        monkeypatch.setattr(settings, "GRAPH_BACKEND", DIALECT_SQLITE)
+        for ingestor in (
+            MemgraphIngestor(host="h", port=1),
+            MemgraphIngestor(port=1),
+            MemgraphIngestor(username="u", password="p"),
+        ):
+            assert ingestor._dialect.name == DIALECT_MEMGRAPH
+
+    def test_a_memgraph_address_under_neo4j_is_refused(self, monkeypatch) -> None:
+        # Neo4j connects through NEO4J_URI: the address would be ignored.
+        monkeypatch.setattr(settings, "GRAPH_BACKEND", DIALECT_NEO4J)
+        with pytest.raises(ValueError, match="GRAPH_BACKEND is neo4j"):
+            MemgraphIngestor(host="h", port=1)
+
+    def test_an_address_left_out_comes_from_the_memgraph_settings(
+        self, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(settings, "MEMGRAPH_HOST", "db.internal")
+        monkeypatch.setattr(settings, "MEMGRAPH_PORT", 7700)
+        default = MemgraphIngestor()
+        assert (default._host, default._port) == ("db.internal", 7700)
+        partial = MemgraphIngestor(port=7801)
+        assert (partial._host, partial._port) == ("db.internal", 7801)
 
     def test_an_explicit_dialect_wins(self) -> None:
         ingestor = MemgraphIngestor(
@@ -184,7 +217,7 @@ class TestNeo4jDriverLifecycle:
     """The pooled driver is shared state; these are its two failure modes."""
 
     def test_one_driver_is_shared_across_concurrent_creators(self, monkeypatch) -> None:
-        # The parallel flush calls _create_connection from several worker
+        # The parallel flush calls open_connection from several worker
         # threads at once. An unguarded `if self._driver is None` builds a
         # second pool, which then leaks.
         import threading

@@ -555,7 +555,7 @@ MG_SET_WITHOUT_BACKEND = (
 )
 MG_CONNECTING = "Connecting to Memgraph at {host}:{port}..."
 MG_CONNECT_FAILED = "Could not connect to Memgraph at {host}:{port}: {error}"
-MG_CONNECTED = "Successfully connected to Memgraph."
+MG_CONNECTED = "Connected to the {engine} graph."
 MG_EXCEPTION = "An exception occurred: {error}. Attempting best-effort flush..."
 MG_DELIBERATE_EXIT = (
     "Command ended with {kind} inside the graph connection; closing it normally"

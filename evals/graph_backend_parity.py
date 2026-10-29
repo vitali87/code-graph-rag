@@ -84,16 +84,7 @@ def read_queries() -> dict[str, str]:
 
 
 def _ingestor(engine: ec.ParityEngine, sqlite_path: str | None) -> MemgraphIngestor:
-    from codebase_rag.config import settings
-
-    return MemgraphIngestor(
-        host=settings.MEMGRAPH_HOST,
-        port=settings.MEMGRAPH_PORT,
-        username=settings.MEMGRAPH_USERNAME,
-        password=settings.MEMGRAPH_PASSWORD,
-        dialect=get_dialect(engine),
-        sqlite_path=sqlite_path,
-    )
+    return MemgraphIngestor(dialect=get_dialect(engine), sqlite_path=sqlite_path)
 
 
 def _text(row: ResultRow, column: str) -> str | None:

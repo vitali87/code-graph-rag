@@ -1551,7 +1551,7 @@ class TestMarkerAgainstOtherWriters:
 
 
 class TestConnectionAndStack:
-    def test_it_connects_with_the_cli_memgraph_settings(
+    def test_it_connects_through_the_cli_connection(
         self, shop: Path, graph: _Graph, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from codebase_rag import cli_runtime, watch
@@ -1564,15 +1564,16 @@ class TestConnectionAndStack:
         monkeypatch.setattr(
             watch, "time", SimpleNamespace(sleep=_interrupt, time=lambda: 1000.0)
         )
-        monkeypatch.setattr(settings, "MEMGRAPH_HOST", "graph.internal")
-        monkeypatch.setattr(settings, "MEMGRAPH_PORT", 7699)
 
         result = _watch("--repo-path", str(shop), "--no-start-stack")
 
         assert result.exit_code == 0, result.output
-        kwargs = ingestor_cls.call_args.kwargs
-        assert (kwargs["host"], kwargs["port"]) == ("graph.internal", 7699)
-        assert kwargs["batch_size"] == settings.resolve_batch_size(None)
+        # No address: the ingestor reads the configured engine and its
+        # MEMGRAPH_* settings itself, and an address passed here would
+        # select Memgraph whatever GRAPH_BACKEND says.
+        assert ingestor_cls.call_args.kwargs == {
+            "batch_size": settings.resolve_batch_size(None)
+        }
 
     def test_the_stack_is_started_unless_told_not_to(
         self, shop: Path, watching: _Watch

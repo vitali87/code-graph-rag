@@ -207,6 +207,11 @@ LLM_INIT_RESEARCH = "Failed to initialize research sub-agent: {error}"
 # Graph service errors
 BATCH_SIZE = "batch_size must be a positive integer"
 CONN = "Not connected to Memgraph."
+MEMGRAPH_ADDRESS_UNDER_BACKEND = (
+    "A Memgraph host, port or login was passed, but GRAPH_BACKEND is "
+    "{backend}, which does not connect through them. Pass dialect= to choose "
+    "the engine, or set GRAPH_BACKEND=memgraph."
+)
 AUTH_INCOMPLETE = (
     "Both username and password are required for authentication. "
     "Either provide both or neither."

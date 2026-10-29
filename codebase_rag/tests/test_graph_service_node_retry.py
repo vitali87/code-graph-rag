@@ -23,7 +23,7 @@ def graph_cursor(
         connection.cursor.return_value = cursor
         return connection
 
-    monkeypatch.setattr(MemgraphIngestor, "_create_connection", connect)
+    monkeypatch.setattr(MemgraphIngestor, "open_connection", connect)
     ingestor = MemgraphIngestor(
         host="localhost", port=7687, dialect=get_dialect(DIALECT_MEMGRAPH)
     )

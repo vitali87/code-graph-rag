@@ -240,8 +240,6 @@ def sqlite_ingestor(tmp_path: Path) -> Generator[MemgraphIngestor, None, None]:
     from codebase_rag.graph_dialects import DIALECT_SQLITE, get_dialect
 
     with MemgraphIngestor(
-        host="unused",
-        port=0,
         dialect=get_dialect(DIALECT_SQLITE),
         sqlite_path=str(tmp_path / "graph.sqlite"),
     ) as ingestor:

@@ -105,13 +105,7 @@ def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngesto
 
     logger.info(ls.MCP_SERVER_INIT_SERVICES)
 
-    ingestor = MemgraphIngestor(
-        host=settings.MEMGRAPH_HOST,
-        port=settings.MEMGRAPH_PORT,
-        batch_size=settings.MEMGRAPH_BATCH_SIZE,
-        username=settings.MEMGRAPH_USERNAME,
-        password=settings.MEMGRAPH_PASSWORD,
-    )
+    ingestor = MemgraphIngestor(batch_size=settings.MEMGRAPH_BATCH_SIZE)
 
     # Scope Cypher generation to this server's project (named exactly as
     # indexing names it) so queries don't bleed into other projects sharing
