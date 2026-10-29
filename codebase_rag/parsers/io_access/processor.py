@@ -144,6 +144,19 @@ class _LeanHandles(NamedTuple):
     rpc_fields: dict[str, str]
 
 
+class _SinkWalk(NamedTuple):
+    # What every walker of one caller's body reads unchanged: the caller,
+    # how its names resolve, the language's sink tables and its handle state.
+    caller_spec: tuple[str, str, str]
+    import_map: dict[str, str]
+    sink_by_name: dict[str, IOSink]
+    macro_sinks: dict[str, IOSink]
+    stream_sinks: dict[str, IOSink]
+    member_reads: tuple[tuple[str, ResourceKind], ...]
+    descriptor: LanguageDescriptor
+    lean_handles: _LeanHandles | None
+
+
 # The connect-go constructor: `New<Stem>Client`, qualified by a generated
 # package whose name ends in `connect`.
 _RPC_CLIENT_RE = re.compile(r"^New([A-Z]\w*)Client$")
@@ -602,9 +615,7 @@ class IOAccessProcessor:
         params = self._param_names(caller_node, descriptor)
         if descriptor.enclosing_scope_shadows:
             params |= self._enclosing_scope_names(caller_node, descriptor)
-        self._walk_scope(
-            statements,
-            frozenset(params),
+        walk = _SinkWalk(
             caller_spec,
             import_map,
             sink_by_name,
@@ -614,29 +625,23 @@ class IOAccessProcessor:
             descriptor,
             lean_handles,
         )
+        self._walk_scope(walk, statements, frozenset(params))
 
     def _walk_scope(
         self,
+        walk: _SinkWalk,
         statements: list[Node],
         inherited: frozenset[str],
-        caller_spec: tuple[str, str, str],
-        import_map: dict[str, str],
-        sink_by_name: dict[str, IOSink],
-        macro_sinks: dict[str, IOSink],
-        stream_sinks: dict[str, IOSink],
-        member_reads: tuple[tuple[str, ResourceKind], ...],
-        descriptor: LanguageDescriptor,
-        lean_handles: _LeanHandles | None,
     ) -> None:
         # Go wraps a block's statements in a single `statement_list`; unwrap it so the
         # source-order walk iterates the real statements, not one container.
-        if descriptor.statement_container_type is not None:
+        if walk.descriptor.statement_container_type is not None:
             statements = [
                 child
                 for stmt in statements
                 for child in (
                     stmt.named_children
-                    if stmt.type == descriptor.statement_container_type
+                    if stmt.type == walk.descriptor.statement_container_type
                     else (stmt,)
                 )
             ]
@@ -646,24 +651,17 @@ class IOAccessProcessor:
         # _block_declarations skips it; but a local `const fs = {}` IS a shadow, even
         # if `fs` is imported module-wide, so import names are NOT blanket-removed
         # here.
-        if descriptor.hoisted_declarations:
+        if walk.descriptor.hoisted_declarations:
             # JS/TS: declarations hoist / are lexically in scope block-wide (a use
             # before a const/let is a TDZ error, not the outer name), so every
             # declaration shadows the whole block at once.
-            in_scope = inherited | self._block_declarations(statements, descriptor)
+            in_scope = inherited | self._block_declarations(statements, walk.descriptor)
             for stmt in statements:
                 self._walk_stmt_sinks(
+                    walk,
                     stmt,
                     in_scope,
                     frozenset(),
-                    caller_spec,
-                    import_map,
-                    sink_by_name,
-                    macro_sinks,
-                    stream_sinks,
-                    member_reads,
-                    descriptor,
-                    lean_handles,
                 )
             return
         # Declare-at-point languages (Go, Java): a local is in scope only from its
@@ -680,58 +678,37 @@ class IOAccessProcessor:
         # body_extra and never added to `live` here.
         live = set(inherited)
         for stmt in statements:
-            loop_vars = self._loop_declarations(stmt, descriptor)
-            plain = self._block_declarations([stmt], descriptor) - loop_vars
+            loop_vars = self._loop_declarations(stmt, walk.descriptor)
+            plain = self._block_declarations([stmt], walk.descriptor) - loop_vars
             if (
-                descriptor.declaration_statement_type is not None
-                and stmt.type == descriptor.declaration_statement_type
+                walk.descriptor.declaration_statement_type is not None
+                and stmt.type == walk.descriptor.declaration_statement_type
             ):
                 # Java multi-declarator: each declarator's initialiser sees only the
                 # declarators up to and including itself, so walk them in source order.
                 self._walk_declaration_ordered(
+                    walk,
                     stmt,
                     frozenset(live),
-                    caller_spec,
-                    import_map,
-                    sink_by_name,
-                    macro_sinks,
-                    stream_sinks,
-                    member_reads,
-                    descriptor,
-                    lean_handles,
                 )
             else:
                 # decl_in_own_initializer (Java): the name is in scope in its own
                 # initialiser, so seed BEFORE walking; Go (=False): the initialiser
                 # still reads the global, so the name is added only AFTER (below).
-                pre = live | plain if descriptor.decl_in_own_initializer else live
+                pre = live | plain if walk.descriptor.decl_in_own_initializer else live
                 self._walk_stmt_sinks(
+                    walk,
                     stmt,
                     frozenset(pre),
                     loop_vars,
-                    caller_spec,
-                    import_map,
-                    sink_by_name,
-                    macro_sinks,
-                    stream_sinks,
-                    member_reads,
-                    descriptor,
-                    lean_handles,
                 )
             live |= plain
 
     def _walk_declaration_ordered(
         self,
+        walk: _SinkWalk,
         stmt: Node,
         base_scope: frozenset[str],
-        caller_spec: tuple[str, str, str],
-        import_map: dict[str, str],
-        sink_by_name: dict[str, IOSink],
-        macro_sinks: dict[str, IOSink],
-        stream_sinks: dict[str, IOSink],
-        member_reads: tuple[tuple[str, ResourceKind], ...],
-        descriptor: LanguageDescriptor,
-        lean_handles: _LeanHandles | None,
     ) -> None:
         # Walk a declaration statement's declarators in SOURCE ORDER (Java
         # `local_variable_declaration`): a declarator's name enters scope for its own
@@ -739,21 +716,14 @@ class IOAccessProcessor:
         # initialiser's sink is not shadowed by a LATER declarator's name.
         cur = set(base_scope)
         for child in stmt.named_children:
-            if child.type != descriptor.declarator_type:
+            if child.type != walk.descriptor.declarator_type:
                 continue
-            cur |= self._declarator_names(child, descriptor)
+            cur |= self._declarator_names(child, walk.descriptor)
             self._walk_stmt_sinks(
+                walk,
                 child,
                 frozenset(cur),
                 frozenset(),
-                caller_spec,
-                import_map,
-                sink_by_name,
-                macro_sinks,
-                stream_sinks,
-                member_reads,
-                descriptor,
-                lean_handles,
             )
 
     def _loop_declarations(
@@ -778,17 +748,10 @@ class IOAccessProcessor:
 
     def _walk_stmt_sinks(
         self,
+        walk: _SinkWalk,
         stmt: Node,
         in_scope: frozenset[str],
         body_extra: frozenset[str],
-        caller_spec: tuple[str, str, str],
-        import_map: dict[str, str],
-        sink_by_name: dict[str, IOSink],
-        macro_sinks: dict[str, IOSink],
-        stream_sinks: dict[str, IOSink],
-        member_reads: tuple[tuple[str, ResourceKind], ...],
-        descriptor: LanguageDescriptor,
-        lean_handles: _LeanHandles | None,
     ) -> None:
         # Emit the direct sinks / member reads within one statement subtree, under
         # the given in-scope shadow set. A nested { } is a child lexical scope:
@@ -802,131 +765,110 @@ class IOAccessProcessor:
         while stack:
             node = stack.pop()
             # Nested function/method: its own caller, walked separately.
-            if node.type in descriptor.nested_scope_types:
+            if node.type in walk.descriptor.nested_scope_types:
                 continue
-            if node.type == descriptor.block_scope_type:
+            if node.type == walk.descriptor.block_scope_type:
                 self._walk_nested_block(
+                    walk,
                     node,
                     in_scope | body_extra,
-                    caller_spec,
-                    import_map,
-                    sink_by_name,
-                    macro_sinks,
-                    stream_sinks,
-                    member_reads,
-                    descriptor,
-                    lean_handles,
                 )
                 continue
-            if lean_handles is not None:
+            if walk.lean_handles is not None:
                 self._maybe_bind_lean_handle(
-                    node, in_scope, import_map, descriptor, lean_handles
+                    node, in_scope, walk.import_map, walk.descriptor, walk.lean_handles
                 )
             if self._emit_node_sinks(
+                walk,
                 node,
                 in_scope,
-                caller_spec,
-                import_map,
-                sink_by_name,
-                macro_sinks,
-                stream_sinks,
-                member_reads,
-                descriptor,
-                lean_handles,
             ):
                 stack.extend(reversed(node.named_children))
 
     def _walk_nested_block(
         self,
+        walk: _SinkWalk,
         node: Node,
         in_scope: frozenset[str],
-        caller_spec: tuple[str, str, str],
-        import_map: dict[str, str],
-        sink_by_name: dict[str, IOSink],
-        macro_sinks: dict[str, IOSink],
-        stream_sinks: dict[str, IOSink],
-        member_reads: tuple[tuple[str, ResourceKind], ...],
-        descriptor: LanguageDescriptor,
-        lean_handles: _LeanHandles | None,
     ) -> None:
         # A nested block is a child lexical scope for handles too: a handle declared
         # inside it is out of scope after the block, so its binding must not leak to
         # later statements (mirrors the in_scope shadow set, passed by value).
-        snapshot = dict(lean_handles.bindings) if lean_handles is not None else None
+        snapshot = (
+            dict(walk.lean_handles.bindings) if walk.lean_handles is not None else None
+        )
         self._walk_scope(
+            walk,
             list(node.named_children),
             in_scope,
-            caller_spec,
-            import_map,
-            sink_by_name,
-            macro_sinks,
-            stream_sinks,
-            member_reads,
-            descriptor,
-            lean_handles,
         )
-        if lean_handles is not None and snapshot is not None:
-            lean_handles.bindings.clear()
-            lean_handles.bindings.update(snapshot)
+        if walk.lean_handles is not None and snapshot is not None:
+            walk.lean_handles.bindings.clear()
+            walk.lean_handles.bindings.update(snapshot)
 
     def _emit_node_sinks(
         self,
+        walk: _SinkWalk,
         node: Node,
         in_scope: frozenset[str],
-        caller_spec: tuple[str, str, str],
-        import_map: dict[str, str],
-        sink_by_name: dict[str, IOSink],
-        macro_sinks: dict[str, IOSink],
-        stream_sinks: dict[str, IOSink],
-        member_reads: tuple[tuple[str, ResourceKind], ...],
-        descriptor: LanguageDescriptor,
-        lean_handles: _LeanHandles | None,
     ) -> bool:
         # Emit whatever sink `node` itself is; returns whether the walk should
         # descend into its children (False only for macros, whose token-stream body
         # _emit_macro consumes whole).
-        if node.type == descriptor.call_type:
+        if node.type == walk.descriptor.call_type:
             self._emit_direct_call(
                 node,
-                caller_spec,
-                import_map,
-                sink_by_name,
-                descriptor,
+                walk.caller_spec,
+                walk.import_map,
+                walk.sink_by_name,
+                walk.descriptor,
                 in_scope,
-                lean_handles,
+                walk.lean_handles,
             )
-        elif descriptor.macro_type is not None and node.type == descriptor.macro_type:
+        elif (
+            walk.descriptor.macro_type is not None
+            and node.type == walk.descriptor.macro_type
+        ):
             # A macro sink (`println!`) writes STDOUT AND may inline a real call
             # sink in its args (`println!("{}", env::var("X"))`); tree-sitter
             # flattens the macro body to raw tokens (no call_expression node), so
             # _emit_macro reconstructs scoped calls from the token stream itself.
             self._emit_macro(
                 node,
-                caller_spec,
-                import_map,
-                sink_by_name,
-                macro_sinks,
+                walk.caller_spec,
+                walk.import_map,
+                walk.sink_by_name,
+                walk.macro_sinks,
                 in_scope,
-                descriptor,
+                walk.descriptor,
             )
             return False
         elif (
-            (stream_sinks or lean_handles is not None)
-            and descriptor.stream_sink_type is not None
-            and node.type == descriptor.stream_sink_type
+            (walk.stream_sinks or walk.lean_handles is not None)
+            and walk.descriptor.stream_sink_type is not None
+            and node.type == walk.descriptor.stream_sink_type
         ):
             # A stream-insertion sink (`std::cout << x`) or a stream operator on
             # a bound handle (`out << x`, `in >> word`); descend still so a call
             # sink in an inserted operand (`std::cout << getenv("X")`) is caught.
             self._emit_stream_sink(
-                node, caller_spec, stream_sinks, descriptor, lean_handles
+                node,
+                walk.caller_spec,
+                walk.stream_sinks,
+                walk.descriptor,
+                walk.lean_handles,
             )
-        elif member_reads and node.type in (
-            descriptor.member_expression_type,
-            descriptor.subscript_type,
+        elif walk.member_reads and node.type in (
+            walk.descriptor.member_expression_type,
+            walk.descriptor.subscript_type,
         ):
             self._emit_member_read(
-                node, caller_spec, member_reads, in_scope, import_map, descriptor
+                node,
+                walk.caller_spec,
+                walk.member_reads,
+                in_scope,
+                walk.import_map,
+                walk.descriptor,
             )
         return True
 
