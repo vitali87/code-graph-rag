@@ -2,7 +2,7 @@
 
 Python gets the deepest FLOWS_TO walk in the repo and had no semantic layer:
 re-export chains, decorated callables, and MRO dispatch were all approximated
-by the parsers/py heuristics plus the shared name trie. Jedi is pure Python
+by the parsers/python heuristics plus the shared name trie. Jedi is pure Python
 and needs no external toolchain, making it the cheapest semantic win in the
 roadmap. The frontend enumerates call sites with the stdlib ast (byte-exact
 name-token positions matching the tree-sitter CallSiteKey convention), asks
