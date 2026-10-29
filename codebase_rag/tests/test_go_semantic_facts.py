@@ -391,7 +391,7 @@ def test_gotypes_end_to_end_emits_implements_from_real_facts(
     (root / "go.mod").write_text("module example.com/imple2e\n\ngo 1.23\n")
     (root / "sample.go").write_text(_IMPLEMENTS_SRC, encoding="utf-8")
 
-    if not run_go_frontend(root).implements:
+    if not run_go_frontend(root).implements_pairs:
         pytest.skip("gotypes frontend could not build in this environment")
 
     monkeypatch.setattr(gu.settings, "GO_FRONTEND", cs.GoFrontend.GOTYPES)
