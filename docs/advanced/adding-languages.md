@@ -74,9 +74,10 @@ line needs language-specific code that someone has written:
 
 C# and Dart show where that code lives: dedicated extraction paths
 (`split_csharp_bases` and `extract_dart_parent_classes` in
-`class_ingest/parent_extraction.py`; `_parse_csharp_imports` and
-`_parse_dart_imports` in `import_processor.py`), with the language's own
-helpers in its package under `codebase_rag/parsers/<language>/`.
+`class_ingest/parent_extraction.py`; the `CSharpImporter` and
+`DartImporter` in `parsers/csharp/imports.py` and `parsers/dart/imports.py`),
+with the language's own helpers in its package under
+`codebase_rag/parsers/<language>/`.
 
 What matters is that **somebody wrote it for that language**. `add-grammar`
 does not, and cannot: the shape of an `extends` clause or an import alias is
@@ -102,8 +103,8 @@ So treat `add-grammar` as *"parse this language"*, not *"support this
 language"*. If you need inheritance or import edges, someone has to write the
 language-specific extraction — in the language's package under
 `codebase_rag/parsers/`, reached from the per-language branches of
-`class_ingest/parent_extraction.py` and `import_processor.py`, as C# and Dart
-do.
+`class_ingest/parent_extraction.py` and the importer lookup in
+`import_processor.py`, as C# and Dart do.
 
 The [support matrix](../architecture/language-support.md) is the authority on
 what each shipped language actually provides; the files in a language's
@@ -125,10 +126,14 @@ Put new language-specific behaviour there, as a function or engine method
 the pass calls through its per-language dispatch, rather than as a new
 `if language == ...` branch with the logic inlined in a pass module. Older
 per-language method groups still sit in the pass modules and are moving into
-the language packages one language at a time. Rust's import handling is the
-first to move: `ImportProcessor` builds a `RustImporter`
-(`parsers/rust/imports.py`) and hands it every Rust file's imports, keeping
-the shared import map and the deferred IMPORTS edges for itself.
+the language packages one language at a time. Import handling has moved for
+every language: `ImportProcessor` builds one importer per language package
+(`RustImporter` in `parsers/rust/imports.py`, `JsTsImporter` in
+`parsers/js_ts/imports.py`, and so on), looks a file's language up to hand
+the importer its imports, and keeps the shared import map, the import sites
+and the deferred IMPORTS edges and their flush for itself. A new language's
+import parsing goes in an importer in its own package, registered in that
+lookup.
 
 ## Example: Adding C# Support
 
